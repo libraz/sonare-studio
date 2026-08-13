@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   barRangeAt,
   createRulerTickCache,
+  DEFAULT_MIN_BAR_SPACING_PX,
   localizeMeter,
   type MeterSegment,
   nearestBarPpq,
@@ -36,6 +37,28 @@ describe('rulerTicks', () => {
     const ticks = rulerTicks(FOUR_FOUR, 0, 64, 4);
     expect(beats(ticks)).toEqual([]);
     expect(bars(ticks).length).toBeGreaterThan(0);
+  });
+
+  it('caps extreme zoom-out bar ticks with a power-of-two stride', () => {
+    const lowZoom = bars(rulerTicks(FOUR_FOUR, 0, 10_000, 0.01));
+    const lessZoomedOut = bars(rulerTicks(FOUR_FOUR, 0, 10_000, 0.02));
+    const visibleWidthPx = 10_000 * 0.01;
+
+    expect(lowZoom.length).toBeLessThanOrEqual(
+      Math.ceil(visibleWidthPx / DEFAULT_MIN_BAR_SPACING_PX) + 1,
+    );
+    expect(lowZoom.length).toBeLessThanOrEqual(lessZoomedOut.length);
+  });
+
+  it('keeps meter boundaries and global bar numbers when bars are strided', () => {
+    const meter: MeterSegment[] = [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 256, numerator: 3, denominator: 4 },
+    ];
+    const ticks = bars(rulerTicks(meter, 0, 4_000, 0.01, { minBarSpacingPx: 6 }));
+
+    expect(ticks.map((tick) => tick.ppq)).toEqual([0, 256, 1024, 1792, 2560, 3328]);
+    expect(ticks.map((tick) => tick.barNumber)).toEqual([1, 65, 321, 577, 833, 1089]);
   });
 
   it('labels every bar at high zoom and thins labels in powers of two', () => {

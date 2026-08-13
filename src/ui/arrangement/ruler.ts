@@ -38,6 +38,8 @@ export interface RulerTick {
 export interface RulerTickOptions {
   /** Minimum px between beats before beat ticks are emitted. Default 6. */
   minBeatSpacingPx?: number;
+  /** Minimum px between bar ticks; bars thin out in powers of two. Default 6. */
+  minBarSpacingPx?: number;
   /** Minimum px between bar labels; labels thin out in powers of two. Default 44. */
   minBarLabelSpacingPx?: number;
 }
@@ -45,11 +47,29 @@ export interface RulerTickOptions {
 /** Default minimum px spacing before beat ticks are emitted. */
 export const DEFAULT_MIN_BEAT_SPACING_PX = 6;
 
+/** Default minimum px spacing between bar ticks. */
+export const DEFAULT_MIN_BAR_SPACING_PX = 6;
+
 /** Default minimum px spacing between bar-number labels. */
 export const DEFAULT_MIN_BAR_LABEL_SPACING_PX = 44;
 
 /** Epsilon absorbing float noise in bar-index math. */
 const PPQ_EPSILON = 1e-9;
+
+/** Returns a stable power-of-two stride that meets a minimum pixel spacing. */
+function barStrideForSpacing(barSpacingPx: number, minSpacingPx: number): number {
+  if (
+    !Number.isFinite(barSpacingPx) ||
+    !(barSpacingPx > 0) ||
+    !Number.isFinite(minSpacingPx) ||
+    !(minSpacingPx > 0)
+  ) {
+    return 1;
+  }
+  let stride = 1;
+  while (barSpacingPx * stride < minSpacingPx) stride *= 2;
+  return stride;
+}
 
 /** Length of one bar of a meter segment in PPQ. */
 export function barLengthPpq(segment: MeterSegment): number {
@@ -139,7 +159,8 @@ export function nearestBarPpq(meter: ReadonlyArray<MeterSegment>, ppq: number): 
  *
  * Bar numbering is continuous across meter changes (a change always starts a
  * new bar). Beat ticks are omitted when beats are closer than the minimum
- * spacing; bar labels thin out in powers of two so they never collide.
+ * spacing, and bar ticks/labels thin out in powers of two so they never
+ * overwhelm a zoomed-out view.
  *
  * @param meter - Time-signature map (4/4 assumed when empty).
  * @param startPpq - Left edge of the visible range in PPQ.
@@ -157,6 +178,7 @@ export function rulerTicks(
 ): RulerTick[] {
   if (!(pxPerPpq > 0) || !(endPpq > startPpq)) return [];
   const minBeatSpacing = options.minBeatSpacingPx ?? DEFAULT_MIN_BEAT_SPACING_PX;
+  const minBarSpacing = options.minBarSpacingPx ?? DEFAULT_MIN_BAR_SPACING_PX;
   const minLabelSpacing = options.minBarLabelSpacingPx ?? DEFAULT_MIN_BAR_LABEL_SPACING_PX;
   const drawLabels = Number.isFinite(minLabelSpacing) && minLabelSpacing >= 0;
   const segments = normalizeMeter(meter);
@@ -175,12 +197,16 @@ export function rulerTicks(
       if (drawLabels) {
         while (bar * pxPerPpq * labelEvery < minLabelSpacing) labelEvery *= 2;
       }
+      const barStride = barStrideForSpacing(bar * pxPerPpq, minBarSpacing);
       const drawBeats = beat * pxPerPpq >= minBeatSpacing;
-      const firstIndex = Math.max(
+      const firstVisibleIndex = Math.max(
         0,
-        Math.floor((visibleStart - segment.startPpq) / bar + PPQ_EPSILON),
+        Math.ceil((visibleStart - segment.startPpq) / bar - PPQ_EPSILON),
       );
-      for (let k = firstIndex; segment.startPpq + k * bar < visibleEnd; k++) {
+      // Start each segment's stride at its own boundary. This keeps the
+      // density stable while preserving labels and the segment's first bar.
+      const firstIndex = Math.floor(firstVisibleIndex / barStride) * barStride;
+      for (let k = firstIndex; segment.startPpq + k * bar < visibleEnd; k += barStride) {
         const barPpq = segment.startPpq + k * bar;
         if (barPpq >= visibleStart) {
           const barNumber = barsBefore + k + 1;
