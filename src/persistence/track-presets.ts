@@ -6,6 +6,7 @@ import {
   type TrackChannelPreset,
 } from '@/project/track-preset';
 import { isNotFoundError } from './fs-utils';
+import { withPersistenceMutationLock } from './mutation-lock';
 import { isOpfsAvailable, OpfsUnavailableError } from './opfs';
 
 const PRESETS_DIR = 'track-presets';
@@ -60,7 +61,12 @@ async function writeTrackChannelPresets(presets: readonly TrackChannelPreset[]):
 }
 
 /** Saves one preset, replacing a previous preset with the same display name. */
-export async function saveTrackChannelPreset(preset: TrackChannelPreset): Promise<void> {
+export function saveTrackChannelPreset(preset: TrackChannelPreset): Promise<void> {
+  return withPersistenceMutationLock(() => saveTrackChannelPresetUnlocked(preset));
+}
+
+/** Saves one preset while the caller owns the persistence mutation lock. */
+export async function saveTrackChannelPresetUnlocked(preset: TrackChannelPreset): Promise<void> {
   const normalized = normalizeTrackChannelPreset(preset);
   const existing = await listTrackChannelPresets();
   await writeTrackChannelPresets([
@@ -70,7 +76,12 @@ export async function saveTrackChannelPreset(preset: TrackChannelPreset): Promis
 }
 
 /** Deletes one named user preset. Missing names are a no-op. */
-export async function deleteTrackChannelPreset(name: string): Promise<void> {
+export function deleteTrackChannelPreset(name: string): Promise<void> {
+  return withPersistenceMutationLock(() => deleteTrackChannelPresetUnlocked(name));
+}
+
+/** Deletes one preset while the caller owns the persistence mutation lock. */
+export async function deleteTrackChannelPresetUnlocked(name: string): Promise<void> {
   const normalized = normalizeTrackChannelPresetName(name);
   const existing = await listTrackChannelPresets();
   if (!existing.some((entry) => entry.name === normalized)) return;

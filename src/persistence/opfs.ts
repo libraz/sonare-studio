@@ -10,6 +10,7 @@
 
 import { isNotFoundError } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
+import { prepareProjectRename } from './revisions';
 
 /** Directory under the OPFS root that holds the project files. */
 const PROJECTS_DIR = 'projects';
@@ -87,6 +88,14 @@ export interface StoredProjectInfo {
 export interface StoredProjectSnapshot {
   bytes: Uint8Array;
   revision: string;
+}
+
+/** Optional metadata hooks for a project rename transaction. */
+export interface ProjectRenameHooks {
+  /** Publishes related metadata while the old project still exists. */
+  beforeSourceDelete?: () => Promise<void>;
+  /** Restores metadata when publication or source deletion fails. */
+  rollback?: () => Promise<void>;
 }
 
 /** Content revision used for compare-and-swap named saves. */
@@ -322,10 +331,22 @@ export function deleteProject(name: string): Promise<void> {
  *   new name.
  */
 export async function renameProject(oldName: string, newName: string): Promise<void> {
-  return withPersistenceMutationLock(() => renameProjectUnlocked(oldName, newName));
+  return withPersistenceMutationLock(async () => {
+    const from = sanitizeProjectName(oldName);
+    const to = sanitizeProjectName(newName);
+    if (from === to) return;
+    // The revision index lives in a separate module to keep the raw project
+    // store independent. Read its rename hooks only after acquiring the same
+    // mutation lock, so the project bytes and metadata commit as one unit.
+    await renameProjectUnlocked(from, to, await prepareProjectRename(from, to));
+  });
 }
 
-async function renameProjectUnlocked(oldName: string, newName: string): Promise<void> {
+export async function renameProjectUnlocked(
+  oldName: string,
+  newName: string,
+  hooks?: ProjectRenameHooks,
+): Promise<void> {
   const from = sanitizeProjectName(oldName);
   const to = sanitizeProjectName(newName);
   if (from === to) return;
@@ -337,6 +358,48 @@ async function renameProjectUnlocked(oldName: string, newName: string): Promise<
     if (!isNotFoundError(error)) throw error;
   }
   const bytes = await loadProject(from);
-  await saveProjectUnlocked(to, bytes);
-  await deleteProjectUnlocked(from);
+  try {
+    await saveProjectUnlocked(to, bytes);
+  } catch (error) {
+    // The writable stream may have created a partial destination before it
+    // failed. The destination was verified absent above, so it is safe to
+    // remove it while leaving the source untouched.
+    try {
+      await deleteProjectUnlocked(to);
+    } catch {
+      // Preserve the original copy failure.
+    }
+    throw error;
+  }
+  try {
+    await hooks?.beforeSourceDelete?.();
+    await deleteProjectUnlocked(from);
+  } catch (error) {
+    // The source should still exist when metadata publication fails. If the
+    // delete itself failed after partially taking effect, restore its bytes
+    // from the copy before removing the destination.
+    try {
+      await hooks?.rollback?.();
+    } catch {
+      // Preserve the original rename failure; a later persistence pass can
+      // retry the metadata repair.
+    }
+    try {
+      await loadProject(from);
+    } catch (sourceError) {
+      if (sourceError instanceof ProjectNotFoundError) {
+        try {
+          await saveProjectUnlocked(from, bytes);
+        } catch {
+          // Preserve the original rename failure.
+        }
+      }
+    }
+    try {
+      await deleteProjectUnlocked(to);
+    } catch {
+      // Preserve the original rename failure.
+    }
+    throw error;
+  }
 }

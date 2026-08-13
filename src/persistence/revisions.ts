@@ -10,14 +10,18 @@
  */
 
 import { isNotFoundError } from './fs-utils';
+import { withPersistenceMutationLock } from './mutation-lock';
 import {
-  deleteProject,
+  deleteProjectUnlocked,
   isOpfsAvailable,
   listProjects,
   loadProject,
   OpfsUnavailableError,
+  ProjectAlreadyExistsError,
+  ProjectNotFoundError,
+  type ProjectRenameHooks,
   sanitizeProjectName,
-  saveProject,
+  saveProjectUnlocked,
 } from './opfs';
 
 const REVISIONS_DIR = 'revisions';
@@ -72,17 +76,14 @@ async function revisionsDirectory(): Promise<FileSystemDirectoryHandle> {
   return root.getDirectoryHandle(REVISIONS_DIR, { create: true });
 }
 
-/** Reads the index, dropping malformed records rather than failing the read. */
-async function readIndex(): Promise<ProjectRevision[]> {
-  const directory = await revisionsDirectory();
-  let raw: unknown;
-  try {
-    const file = await (await directory.getFileHandle(INDEX_FILE)).getFile();
-    raw = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
-  } catch (error) {
-    if (isNotFoundError(error) || error instanceof SyntaxError) return [];
-    throw error;
-  }
+interface RevisionIndexRead {
+  /** Parsed records; malformed records are intentionally omitted. */
+  entries: ProjectRevision[];
+  /** True only when a readable JSON array was published. */
+  usable: boolean;
+}
+
+function parseRevisionIndex(raw: unknown): ProjectRevision[] {
   if (!Array.isArray(raw)) return [];
   const entries: ProjectRevision[] = [];
   for (const candidate of raw) {
@@ -109,12 +110,71 @@ async function readIndex(): Promise<ProjectRevision[]> {
   return entries;
 }
 
-async function writeIndex(entries: readonly ProjectRevision[]): Promise<void> {
+/** Reads the index, dropping malformed records rather than failing the read. */
+async function readIndexState(): Promise<RevisionIndexRead> {
+  const directory = await revisionsDirectory();
+  let raw: unknown;
+  try {
+    const file = await (await directory.getFileHandle(INDEX_FILE)).getFile();
+    raw = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
+  } catch (error) {
+    if (isNotFoundError(error) || error instanceof SyntaxError) {
+      // A missing or corrupt index cannot distinguish valid historical slots
+      // from an interrupted write. Keep those slots readable for recovery.
+      return { entries: [], usable: false };
+    }
+    throw error;
+  }
+  if (!Array.isArray(raw)) return { entries: [], usable: false };
+  return { entries: parseRevisionIndex(raw), usable: true };
+}
+
+async function readIndex(): Promise<ProjectRevision[]> {
+  return (await readIndexState()).entries;
+}
+
+/** Snapshot of the raw revision store for an enclosing persistence transaction. */
+export interface ProjectRevisionStoreSnapshot {
+  /** Parsed revision metadata; stale entries are retained when their slot is absent. */
+  index: ProjectRevision[];
+  /** Every physically stored revision slot, including orphaned slots. */
+  slots: ReadonlyMap<string, Uint8Array>;
+  /** Original index bytes, or null when the index has never been published. */
+  indexBytes: Uint8Array | null;
+}
+
+/** Reads the revision store without acquiring the mutation lock. */
+export async function readProjectRevisionStoreUnlocked(): Promise<ProjectRevisionStoreSnapshot> {
+  const directory = await revisionsDirectory();
+  let indexBytes: Uint8Array | null = null;
+  try {
+    const file = await (await directory.getFileHandle(INDEX_FILE)).getFile();
+    indexBytes = new Uint8Array(await file.arrayBuffer());
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  const slots = new Map<string, Uint8Array>();
+  for (const project of await listProjects()) {
+    if (!isRevisionSlot(project.name)) continue;
+    try {
+      slots.set(project.name, await loadProject(project.name));
+    } catch (error) {
+      // A slot can disappear between listProjects() and loadProject(). The
+      // index remains useful even when one of its old payloads is missing.
+      if (!(error instanceof ProjectNotFoundError)) throw error;
+    }
+  }
+  return { index: await readIndex(), slots, indexBytes };
+}
+
+/** Publishes raw index bytes while the caller owns the mutation lock. */
+export async function writeProjectRevisionIndexBytesUnlocked(bytes: Uint8Array): Promise<void> {
   const directory = await revisionsDirectory();
   const handle = await directory.getFileHandle(INDEX_FILE, { create: true });
   const writable = await handle.createWritable();
   try {
-    await writable.write(new TextEncoder().encode(JSON.stringify(entries)));
+    await writable.write(new Uint8Array(bytes));
     await writable.close();
   } catch (error) {
     try {
@@ -124,6 +184,82 @@ async function writeIndex(entries: readonly ProjectRevision[]): Promise<void> {
     }
     throw error;
   }
+}
+
+/** Removes the revision index while the caller owns the mutation lock. */
+export async function deleteProjectRevisionIndexUnlocked(): Promise<void> {
+  const directory = await revisionsDirectory();
+  try {
+    await directory.removeEntry(INDEX_FILE);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+}
+
+async function writeIndex(entries: readonly ProjectRevision[]): Promise<void> {
+  await writeProjectRevisionIndexBytesUnlocked(new TextEncoder().encode(JSON.stringify(entries)));
+}
+
+/**
+ * Prepares revision-index hooks for an enclosing project rename transaction.
+ *
+ * The caller invokes the returned hooks while the project copy is already
+ * present and the old project still exists. Keeping the old index snapshot in
+ * the rollback closure prevents a failed source delete from orphaning the
+ * revision records under the old name.
+ */
+export async function prepareProjectRename(
+  oldName: string,
+  newName: string,
+): Promise<ProjectRenameHooks> {
+  const from = sanitizeProjectName(oldName);
+  const to = sanitizeProjectName(newName);
+  if (from === to) return {};
+
+  const entries = await readIndex();
+  if (entries.some((entry) => entry.projectName === to)) {
+    throw new ProjectAlreadyExistsError(to);
+  }
+  const renamed = entries.map((entry) =>
+    entry.projectName === from ? { ...entry, projectName: to } : entry,
+  );
+  if (entries.every((entry, index) => entry === renamed[index])) return {};
+  return {
+    beforeSourceDelete: () => writeIndex(renamed),
+    rollback: () => writeIndex(entries),
+  };
+}
+
+/**
+ * Updates revision ownership after a project slot has already been moved.
+ * Normal project renames use {@link prepareProjectRename} through
+ * {@link renameProject} so the index update participates in the byte move
+ * transaction. This entry point is for recovery/migration callers that have
+ * moved the project bytes themselves.
+ */
+export async function renameProjectRevisions(oldName: string, newName: string): Promise<number> {
+  return withPersistenceMutationLock(() => renameProjectRevisionsUnlocked(oldName, newName));
+}
+
+/** Updates revision ownership without acquiring the mutation lock. */
+export async function renameProjectRevisionsUnlocked(
+  oldName: string,
+  newName: string,
+): Promise<number> {
+  const from = sanitizeProjectName(oldName);
+  const to = sanitizeProjectName(newName);
+  if (from === to) return 0;
+  const entries = await readIndex();
+  if (entries.some((entry) => entry.projectName === to)) {
+    throw new ProjectAlreadyExistsError(to);
+  }
+  const renamed = entries.map((entry) =>
+    entry.projectName === from ? { ...entry, projectName: to } : entry,
+  );
+  const changed = entries.filter((entry) => entry.projectName === from).length;
+  if (changed === 0) return 0;
+  await writeIndex(renamed);
+  return changed;
 }
 
 /**
@@ -151,6 +287,48 @@ function nextSlot(taken: ReadonlySet<string>, savedAt: number): string {
   return candidate;
 }
 
+/** Reads a revision slot when present, retaining null for stale index entries. */
+async function readOptionalProjectSlot(slot: string): Promise<Uint8Array | null> {
+  try {
+    return await loadProject(slot);
+  } catch (error) {
+    if (error instanceof ProjectNotFoundError) return null;
+    throw error;
+  }
+}
+
+/**
+ * Captures physical revision slots that the published index does not name.
+ * A readable index is required before classifying a slot as orphaned: when
+ * the index is missing or corrupt, the payloads may be the only recoverable
+ * copy of a user's history.
+ */
+async function readOrphanedProjectSlots(
+  index: RevisionIndexRead,
+  stored: readonly { name: string }[],
+): Promise<{ slot: string; bytes: Uint8Array | null }[]> {
+  if (!index.usable) return [];
+  const indexedSlots = new Set(index.entries.map((entry) => entry.slot));
+  return Promise.all(
+    stored
+      .filter((info) => isRevisionSlot(info.name) && !indexedSlots.has(info.name))
+      .map(async (info) => ({
+        slot: info.name,
+        bytes: await readOptionalProjectSlot(info.name),
+      })),
+  );
+}
+
+/** Restores slot pre-images captured before a revision transaction. */
+async function restoreProjectSlots(
+  images: readonly { slot: string; bytes: Uint8Array | null }[],
+): Promise<void> {
+  for (const image of images) {
+    if (image.bytes === null) await deleteProjectUnlocked(image.slot);
+    else await saveProjectUnlocked(image.slot, image.bytes);
+  }
+}
+
 /**
  * Saves a labelled snapshot of a project's archive bytes.
  *
@@ -160,7 +338,19 @@ function nextSlot(taken: ReadonlySet<string>, savedAt: number): string {
  * @param savedAt Capture time in epoch milliseconds.
  * @returns The stored revision record.
  */
-export async function saveProjectRevision(
+export function saveProjectRevision(
+  projectName: string,
+  label: string,
+  bytes: Uint8Array,
+  savedAt: number,
+): Promise<ProjectRevision> {
+  return withPersistenceMutationLock(() =>
+    saveProjectRevisionUnlocked(projectName, label, bytes, savedAt),
+  );
+}
+
+/** Saves a labelled revision while the caller owns the mutation lock. */
+export async function saveProjectRevisionUnlocked(
   projectName: string,
   label: string,
   bytes: Uint8Array,
@@ -168,8 +358,10 @@ export async function saveProjectRevision(
 ): Promise<ProjectRevision> {
   const project = sanitizeProjectName(projectName);
   const cleanLabel = sanitizeRevisionLabel(label);
-  const entries = await readIndex();
+  const index = await readIndexState();
+  const entries = index.entries;
   const stored = await listProjects();
+  const orphanedImages = await readOrphanedProjectSlots(index, stored);
   const taken = new Set([
     ...entries.map((entry) => entry.slot),
     ...stored.map((info) => info.name),
@@ -181,7 +373,6 @@ export async function saveProjectRevision(
     savedAt,
     size: bytes.byteLength,
   };
-  await saveProject(revision.slot, bytes);
   const next = [...entries, revision];
   // Prune this project's oldest generations; other projects are untouched.
   const mine = next
@@ -189,13 +380,48 @@ export async function saveProjectRevision(
     .sort((a, b) => b.savedAt - a.savedAt);
   const dropped = mine.slice(MAX_REVISIONS_PER_PROJECT);
   const droppedSlots = new Set(dropped.map((entry) => entry.slot));
-  await writeIndex(next.filter((entry) => !droppedSlots.has(entry.slot)));
-  for (const entry of dropped) {
-    try {
-      await deleteProject(entry.slot);
-    } catch {
-      // A slot that is already gone still leaves the index consistent.
+  const published = next.filter((entry) => !droppedSlots.has(entry.slot));
+  const droppedImages = await Promise.all(
+    dropped.map(async (entry) => ({
+      slot: entry.slot,
+      bytes: await readOptionalProjectSlot(entry.slot),
+    })),
+  );
+  const cleanupImages = [...orphanedImages, ...droppedImages];
+
+  let revisionPublished = false;
+  const deletedCleanup: typeof cleanupImages = [];
+  try {
+    await saveProjectUnlocked(revision.slot, bytes);
+    await writeIndex(published);
+    revisionPublished = true;
+    for (const image of cleanupImages) {
+      deletedCleanup.push(image);
+      await deleteProjectUnlocked(image.slot);
     }
+  } catch (error) {
+    // Restore the old index and any pruned bytes before removing the newly
+    // written slot. Every operation stays inside this lock, so no observer
+    // can interleave a conflicting revision transaction during rollback.
+    if (revisionPublished) {
+      try {
+        await restoreProjectSlots(deletedCleanup);
+      } catch {
+        // Preserve the original failure; a later pass can retry the repair.
+      }
+    }
+    try {
+      await writeIndex(entries);
+    } catch {
+      // Preserve the original failure; the previous index is still the
+      // recoverable source of truth when the underlying write is transient.
+    }
+    try {
+      await deleteProjectUnlocked(revision.slot);
+    } catch {
+      // Preserve the original failure; the slot remains readable for repair.
+    }
+    throw error;
   }
   return revision;
 }
@@ -210,30 +436,84 @@ export function loadProjectRevision(slot: string): Promise<Uint8Array> {
 }
 
 /** Deletes one revision and its index entry. Unknown slots are a no-op. */
-export async function deleteProjectRevision(slot: string): Promise<void> {
+export function deleteProjectRevision(slot: string): Promise<void> {
+  return withPersistenceMutationLock(() => deleteProjectRevisionUnlocked(slot));
+}
+
+/** Deletes one revision while the caller owns the mutation lock. */
+export async function deleteProjectRevisionUnlocked(slot: string): Promise<void> {
   const entries = await readIndex();
   if (!entries.some((entry) => entry.slot === slot)) return;
-  await writeIndex(entries.filter((entry) => entry.slot !== slot));
+  const existingBytes = await readOptionalProjectSlot(slot);
+  const next = entries.filter((entry) => entry.slot !== slot);
+  let indexPublished = false;
   try {
-    await deleteProject(slot);
+    await writeIndex(next);
+    indexPublished = true;
+    await deleteProjectUnlocked(slot);
   } catch (error) {
-    if (!isNotFoundError(error)) throw error;
+    // If the slot delete failed after index publication, restore both pieces.
+    // A missing slot is already represented by the new index and needs no
+    // byte pre-image.
+    if (existingBytes !== null) {
+      try {
+        await saveProjectUnlocked(slot, existingBytes);
+      } catch {
+        // Preserve the original deletion failure; a later pass can retry.
+      }
+    }
+    if (indexPublished || !isNotFoundError(error)) {
+      try {
+        await writeIndex(entries);
+      } catch {
+        // Preserve the original deletion failure.
+      }
+    }
+    throw error;
   }
 }
 
 /** Drops every revision of a project (used when the project itself is deleted). */
-export async function deleteProjectRevisions(projectName: string): Promise<number> {
+export function deleteProjectRevisions(projectName: string): Promise<number> {
+  return withPersistenceMutationLock(() => deleteProjectRevisionsUnlocked(projectName));
+}
+
+/** Drops every revision while the caller owns the mutation lock. */
+export async function deleteProjectRevisionsUnlocked(projectName: string): Promise<number> {
   const project = sanitizeProjectName(projectName);
   const entries = await readIndex();
   const mine = entries.filter((entry) => entry.projectName === project);
   if (mine.length === 0) return 0;
-  await writeIndex(entries.filter((entry) => entry.projectName !== project));
-  for (const entry of mine) {
-    try {
-      await deleteProject(entry.slot);
-    } catch {
-      // Keep deleting the rest; the index no longer references this slot.
+  const images = await Promise.all(
+    mine.map(async (entry) => ({
+      slot: entry.slot,
+      bytes: await readOptionalProjectSlot(entry.slot),
+    })),
+  );
+  const next = entries.filter((entry) => entry.projectName !== project);
+  let indexPublished = false;
+  const deleted: typeof images = [];
+  try {
+    await writeIndex(next);
+    indexPublished = true;
+    for (const image of images) {
+      deleted.push(image);
+      await deleteProjectUnlocked(image.slot);
     }
+  } catch (error) {
+    if (indexPublished) {
+      try {
+        await restoreProjectSlots(deleted);
+      } catch {
+        // Preserve the original deletion failure; a later pass can retry.
+      }
+    }
+    try {
+      await writeIndex(entries);
+    } catch {
+      // Preserve the original deletion failure.
+    }
+    throw error;
   }
   return mine.length;
 }

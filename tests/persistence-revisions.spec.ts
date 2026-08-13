@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isReservedProjectName, listProjects, loadProject, saveProject } from '@/persistence/opfs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetPersistenceMutationLockForTests } from '@/persistence/mutation-lock';
+import {
+  isReservedProjectName,
+  listProjects,
+  loadProject,
+  renameProject,
+  saveProject,
+} from '@/persistence/opfs';
 import {
   deleteProjectRevision,
   deleteProjectRevisions,
@@ -15,7 +22,12 @@ import {
 } from '@/persistence/revisions';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
-import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
+import {
+  installMockOpfs,
+  type MemoryDirectoryHandle,
+  MemoryFileHandle,
+  uninstallMockOpfs,
+} from './opfs-mock';
 
 /** Distinguishable archive bytes for a revision. */
 function bytes(marker: number): Uint8Array {
@@ -24,12 +36,19 @@ function bytes(marker: number): Uint8Array {
 
 describe('project revisions', () => {
   let root: MemoryDirectoryHandle;
+  const originalLocks = Object.getOwnPropertyDescriptor(navigator, 'locks');
 
   beforeEach(() => {
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
+    resetPersistenceMutationLockForTests();
     root = installMockOpfs();
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
+    resetPersistenceMutationLockForTests();
+    if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks);
+    else Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined });
     uninstallMockOpfs();
   });
 
@@ -65,6 +84,185 @@ describe('project revisions', () => {
     expect(await deleteProjectRevisions('Song')).toBe(1);
     expect(await listProjectRevisions('Song')).toHaveLength(0);
     expect(await listProjectRevisions('Other')).toHaveLength(1);
+  });
+
+  it('serializes concurrent saves so neither revision index update is lost', async () => {
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let releaseFirstIndexWrite!: () => void;
+    let firstIndexWriteStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      firstIndexWriteStarted = resolve;
+    });
+    const firstIndexWriteGate = new Promise<void>((resolve) => {
+      releaseFirstIndexWrite = resolve;
+    });
+    let indexWrites = 0;
+    vi.spyOn(MemoryFileHandle.prototype, 'createWritable').mockImplementation(async function (
+      this: MemoryFileHandle,
+    ) {
+      const writable = await originalCreateWritable.call(this);
+      if (this.name === 'index.json' && indexWrites++ === 0) {
+        firstIndexWriteStarted();
+        await firstIndexWriteGate;
+      }
+      return writable;
+    });
+
+    const first = saveProjectRevision('Song', 'first', bytes(1), 1000);
+    await firstStarted;
+    const second = saveProjectRevision('Song', 'second', bytes(2), 1000);
+    await Promise.resolve();
+    releaseFirstIndexWrite();
+    await Promise.all([first, second]);
+
+    const listed = await listProjectRevisions('Song');
+    expect(listed).toHaveLength(2);
+    expect(listed.map((entry) => entry.label).sort()).toEqual(['first', 'second']);
+    expect(new Set(listed.map((entry) => entry.slot)).size).toBe(2);
+  });
+
+  it('serializes concurrent deletes so neither revision slot is left behind', async () => {
+    const first = await saveProjectRevision('Song', 'first', bytes(1), 1000);
+    const second = await saveProjectRevision('Song', 'second', bytes(2), 2000);
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let releaseFirstIndexWrite!: () => void;
+    let firstIndexWriteStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      firstIndexWriteStarted = resolve;
+    });
+    const firstIndexWriteGate = new Promise<void>((resolve) => {
+      releaseFirstIndexWrite = resolve;
+    });
+    let indexWrites = 0;
+    vi.spyOn(MemoryFileHandle.prototype, 'createWritable').mockImplementation(async function (
+      this: MemoryFileHandle,
+    ) {
+      const writable = await originalCreateWritable.call(this);
+      if (this.name === 'index.json' && indexWrites++ === 0) {
+        firstIndexWriteStarted();
+        await firstIndexWriteGate;
+      }
+      return writable;
+    });
+
+    const removeFirst = deleteProjectRevision(first.slot);
+    await firstStarted;
+    const removeSecond = deleteProjectRevision(second.slot);
+    await Promise.resolve();
+    releaseFirstIndexWrite();
+    await Promise.all([removeFirst, removeSecond]);
+
+    expect(await listProjectRevisions('Song')).toEqual([]);
+    expect((await listProjects()).filter((info) => isRevisionSlot(info.name))).toEqual([]);
+  });
+
+  it('serializes a deletion with a concurrent save without leaving an unindexed slot', async () => {
+    const old = await saveProjectRevision('Song', 'old', bytes(1), 1000);
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    let releaseDeleteIndexWrite!: () => void;
+    let deleteIndexWriteStarted!: () => void;
+    const deleteIndexWrite = new Promise<void>((resolve) => {
+      deleteIndexWriteStarted = resolve;
+    });
+    const deleteIndexWriteGate = new Promise<void>((resolve) => {
+      releaseDeleteIndexWrite = resolve;
+    });
+    let indexWrites = 0;
+    vi.spyOn(MemoryFileHandle.prototype, 'createWritable').mockImplementation(async function (
+      this: MemoryFileHandle,
+    ) {
+      const writable = await originalCreateWritable.call(this);
+      if (this.name === 'index.json' && indexWrites++ === 0) {
+        deleteIndexWriteStarted();
+        await deleteIndexWriteGate;
+      }
+      return writable;
+    });
+
+    const deleting = deleteProjectRevision(old.slot);
+    await deleteIndexWrite;
+    const saving = saveProjectRevision('Song', 'new', bytes(2), 2000);
+    await Promise.resolve();
+    releaseDeleteIndexWrite();
+    const [, saved] = await Promise.all([deleting, saving]);
+
+    expect(await listProjectRevisions('Song')).toMatchObject([{ slot: saved.slot, label: 'new' }]);
+    expect(
+      (await listProjects()).filter((info) => isRevisionSlot(info.name)).map((info) => info.name),
+    ).toEqual([saved.slot]);
+  });
+
+  it('removes a newly written slot when revision index publication fails', async () => {
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    const writableSpy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function (this: MemoryFileHandle) {
+        if (this.name === 'index.json') throw new Error('revision index write failed');
+        return originalCreateWritable.call(this);
+      });
+
+    await expect(saveProjectRevision('Song', 'failed', bytes(7), 1000)).rejects.toThrow(
+      'revision index write failed',
+    );
+    writableSpy.mockRestore();
+
+    expect(await listProjectRevisions('Song')).toEqual([]);
+    expect((await listProjects()).filter((info) => isRevisionSlot(info.name))).toEqual([]);
+  });
+
+  it('reclaims a slot left between payload and index publication on the next save', async () => {
+    const kept = await saveProjectRevision('Song', 'kept history', bytes(1), 1000);
+
+    // Simulate process interruption after the revision payload was published
+    // but before its index record could be written.
+    await saveProject('revision-interrupted', bytes(9));
+    expect((await listProjects()).filter((info) => isRevisionSlot(info.name))).toHaveLength(2);
+
+    const next = await saveProjectRevision('Song', 'new history', bytes(2), 2000);
+
+    expect(await listProjectRevisions('Song')).toMatchObject([
+      { slot: next.slot, label: 'new history' },
+      { slot: kept.slot, label: 'kept history' },
+    ]);
+    expect([...(await loadProjectRevision(kept.slot))]).toEqual([1, 1, 1]);
+    expect([...(await loadProjectRevision(next.slot))]).toEqual([2, 2, 2]);
+    expect((await listProjects()).map((info) => info.name)).not.toContain('revision-interrupted');
+  });
+
+  it('renames revision ownership with the project and deletes it under the new name', async () => {
+    await saveProject('Song', bytes(9));
+    const revision = await saveProjectRevision('Song', 'before rename', bytes(1), 1000);
+
+    await renameProject('Song', 'Renamed Song');
+
+    expect(await listProjectRevisions('Song')).toHaveLength(0);
+    expect(await listProjectRevisions('Renamed Song')).toMatchObject([
+      { slot: revision.slot, projectName: 'Renamed Song' },
+    ]);
+    expect(await deleteProjectRevisions('Renamed Song')).toBe(1);
+    expect((await listProjects()).filter((info) => isRevisionSlot(info.name))).toHaveLength(0);
+  });
+
+  it('keeps the old project and revision index when rename publication fails', async () => {
+    await saveProject('Song', bytes(9));
+    const revision = await saveProjectRevision('Song', 'before failure', bytes(1), 1000);
+    const originalCreateWritable = MemoryFileHandle.prototype.createWritable;
+    const writableSpy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function (this: MemoryFileHandle) {
+        if (this.name === 'index.json') throw new Error('revision index write failed');
+        return originalCreateWritable.call(this);
+      });
+
+    await expect(renameProject('Song', 'Renamed Song')).rejects.toThrow(
+      'revision index write failed',
+    );
+    writableSpy.mockRestore();
+
+    expect(await loadProject('Song')).toEqual(bytes(9));
+    expect((await listProjects()).map((info) => info.name)).not.toContain('Renamed Song');
+    expect(await listProjectRevisions('Song')).toMatchObject([{ slot: revision.slot }]);
+    expect(await listProjectRevisions('Renamed Song')).toHaveLength(0);
   });
 
   it('deletes one revision with its stored slot', async () => {
@@ -154,7 +352,7 @@ describe('revision entry points', () => {
 
   it('restores into the editor without overwriting the stored project', () => {
     expect(persistence).toContain('const bytes = await loadProjectRevision(slot);');
-    expect(persistence).toContain('savedProjectRevision.value = null;');
+    expect(persistence).toContain('savedProjectRevision.value = savedBaseline;');
   });
 
   it('drops a project’s revisions with the project itself', () => {
