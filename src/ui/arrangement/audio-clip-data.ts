@@ -23,6 +23,7 @@ const loadedAssets = new Map<string, LoadedAudioAsset>();
 const failedAssets = new Set<string>();
 const pendingListeners = new Map<string, Set<() => void>>();
 const assetVersions = new Map<string, number>();
+let loadedAssetBytes = 0;
 let peaksCache: WaveformPeaksCache | null = null;
 let cacheEpoch = 0;
 
@@ -33,17 +34,38 @@ function assetByteLength(asset: LoadedAudioAsset): number {
   return asset.channels.reduce((total, channel) => total + channel.byteLength, 0);
 }
 
-function cacheAsset(assetId: string, asset: LoadedAudioAsset): void {
-  // Map insertion order is our LRU order. A cache hit refreshes the entry.
+function removeCachedAsset(assetId: string): LoadedAudioAsset | undefined {
+  const cached = loadedAssets.get(assetId);
+  if (!cached) return undefined;
   loadedAssets.delete(assetId);
+  loadedAssetBytes -= assetByteLength(cached);
+  return cached;
+}
+
+/** Refreshes LRU order without touching the cached byte accounting. */
+function touchCachedAsset(assetId: string): LoadedAudioAsset | undefined {
+  const cached = loadedAssets.get(assetId);
+  if (!cached) return undefined;
+  loadedAssets.delete(assetId);
+  loadedAssets.set(assetId, cached);
+  return cached;
+}
+
+function cacheAsset(assetId: string, asset: LoadedAudioAsset): void {
+  const previous = loadedAssets.get(assetId);
+  if (previous === asset) {
+    touchCachedAsset(assetId);
+    return;
+  }
+  if (previous !== undefined) {
+    loadedAssets.delete(assetId);
+    loadedAssetBytes -= assetByteLength(previous);
+  }
+  loadedAssetBytes += assetByteLength(asset);
   loadedAssets.set(assetId, asset);
-  let bytes = 0;
-  for (const cached of loadedAssets.values()) bytes += assetByteLength(cached);
-  while (bytes > MAX_AUDIO_CLIP_CACHE_BYTES && loadedAssets.size > 1) {
+  while (loadedAssetBytes > MAX_AUDIO_CLIP_CACHE_BYTES && loadedAssets.size > 1) {
     const oldestId = loadedAssets.keys().next().value as string;
-    const oldest = loadedAssets.get(oldestId);
-    loadedAssets.delete(oldestId);
-    if (oldest) bytes -= assetByteLength(oldest);
+    removeCachedAsset(oldestId);
     peaksCache?.invalidate(oldestId);
   }
 }
@@ -69,9 +91,8 @@ function ensurePeaksCache(): WaveformPeaksCache {
  * @returns The cached asset, or null when it has not been loaded (yet).
  */
 export function getLoadedAudioAsset(assetId: string): LoadedAudioAsset | null {
-  const asset = loadedAssets.get(assetId);
+  const asset = touchCachedAsset(assetId);
   if (!asset) return null;
-  cacheAsset(assetId, asset);
   return asset;
 }
 
@@ -90,9 +111,8 @@ export function requestAudioAsset(
   assetId: string,
   onSettled?: () => void,
 ): LoadedAudioAsset | null {
-  const cached = loadedAssets.get(assetId);
+  const cached = touchCachedAsset(assetId);
   if (cached) {
-    cacheAsset(assetId, cached);
     return cached;
   }
   if (failedAssets.has(assetId)) return null;
@@ -143,7 +163,7 @@ export function audioAssetMergedPeaks(
  * the next request reloads it.
  */
 export function invalidateAudioAsset(assetId: string): void {
-  loadedAssets.delete(assetId);
+  removeCachedAsset(assetId);
   failedAssets.delete(assetId);
   pendingListeners.delete(assetId);
   assetVersions.set(assetId, (assetVersions.get(assetId) ?? 0) + 1);
@@ -154,6 +174,7 @@ export function invalidateAudioAsset(assetId: string): void {
 export function clearAudioClipData(): void {
   cacheEpoch++;
   loadedAssets.clear();
+  loadedAssetBytes = 0;
   failedAssets.clear();
   pendingListeners.clear();
   assetVersions.clear();

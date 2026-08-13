@@ -113,4 +113,26 @@ describe('audio clip data cache', () => {
     expect(getLoadedAudioAsset('asset-a')).toBeNull();
     expect(getLoadedAudioAsset('asset-b')).toBe(next);
   });
+
+  it('does not rescan channel byte lengths on repeated cache hits', async () => {
+    let byteLengthReads = 0;
+    const channel = {
+      get byteLength() {
+        byteLengthReads += 1;
+        return 8;
+      },
+    } as unknown as Float32Array;
+    const asset = { ...loaded('asset-a'), channels: [channel] };
+    assetStore.loadAsset.mockResolvedValueOnce(asset);
+
+    requestAudioAsset('asset-a');
+    await flushLoadChain();
+    expect(byteLengthReads).toBe(1);
+
+    for (let index = 0; index < 20; index += 1) {
+      expect(requestAudioAsset('asset-a')).toBe(asset);
+      expect(getLoadedAudioAsset('asset-a')).toBe(asset);
+    }
+    expect(byteLengthReads).toBe(1);
+  });
 });
