@@ -82,12 +82,12 @@ function toFrame(snapshot: SonareWorkletScopeSnapshot): ScopeFrame {
 /**
  * Creates a scope bridge for a running engine.
  *
- * Delivery mirrors the meter bridge and is single-source per mode: a
- * requestAnimationFrame loop drains `engine.pollScope()` in SAB mode (the only
- * mode scope is available in), while `engine.onScope` push callbacks are used
- * otherwise. The two never run together, so no frame is delivered twice. Every
- * frame is routed by its target id; the bridge's own latest/subscribe track
- * the master output.
+ * Delivery has one supported path: when capabilities are SAB + embind, one
+ * requestAnimationFrame loop drains `engine.pollScope()`. The current engine
+ * capability contract has no postMessage scope transport, so this bridge never
+ * subscribes to `engine.onScope`; unavailable transports have no live delivery
+ * mechanism. Every frame is routed by its target id; the bridge's own
+ * latest/subscribe track the master output.
  *
  * @param handle The engine handle returned by `createEngine`.
  * @returns A bridge exposing per-target scope sources plus dispose.
@@ -99,9 +99,10 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
   const listenersByTarget = new Map<number, Set<ScopeListener>>();
   const sources = new Map<number, ScopeSource>();
   let disposed = false;
-  let rafId = 0;
+  let rafId: number | null = null;
 
   const publish = (snapshot: SonareWorkletScopeSnapshot): void => {
+    if (disposed) return;
     const targetId = snapshot.targetId ?? MASTER_METER_TARGET_ID;
     const frame = toFrame(snapshot);
     latestByTarget.set(targetId, frame);
@@ -113,11 +114,10 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     }
   };
 
-  // SAB mode drains pollScope() below and also fires onScope push callbacks;
-  // subscribing to both would publish every frame twice. Push is the sole
-  // source in postMessage mode (where pollScope yields nothing).
-  const isSab = handle.capabilities.mode === 'sab';
-  const unsubscribeOnScope = available && !isSab ? handle.engine.onScope(publish) : () => undefined;
+  // The current capability contract exposes scope only for SAB + embind. Keep
+  // the cleanup slot optional so disposal remains safe if a future capability
+  // adds a subscription-based delivery path; no current path calls onScope.
+  let unsubscribeOnScope: (() => void) | undefined;
 
   const raf =
     typeof requestAnimationFrame === 'function'
@@ -133,9 +133,11 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     for (const snapshot of handle.engine.pollScope()) {
       publish(snapshot);
     }
-    rafId = raf(poll);
+    if (!disposed) {
+      rafId = raf(poll);
+    }
   };
-  if (available && isSab) {
+  if (available) {
     rafId = raf(poll);
   }
 
@@ -183,8 +185,11 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      cancelRaf(rafId);
-      unsubscribeOnScope();
+      if (rafId !== null) {
+        cancelRaf(rafId);
+        rafId = null;
+      }
+      unsubscribeOnScope?.();
       for (const listeners of listenersByTarget.values()) {
         listeners.clear();
       }
