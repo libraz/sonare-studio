@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { layoutToVerovioOptions, VerovioClient } from '@/notation/verovio';
+import { layoutToVerovioOptions, VerovioClient, VerovioFatalError } from '@/notation/verovio';
 import type { VerovioRequest, VerovioResponse } from '@/workers/verovio.worker';
 
 /**
@@ -233,6 +233,31 @@ describe('VerovioClient', () => {
     expect(worker.listenerCount('error')).toBe(0);
     const postedBefore = worker.posted.length;
     await expect(client.renderPage(1)).rejects.toThrow('worker exploded');
+    expect(worker.posted).toHaveLength(postedBefore);
+  });
+
+  it('treats a typed toolkit-init fatal response as terminal and marks the client failed', async () => {
+    const { client, worker } = createClient();
+    const loading = client.load('<score-partwise/>');
+    const queued = client.renderPage(1);
+    const [loadRequest] = worker.posted;
+
+    worker.respond({
+      id: loadRequest.id,
+      type: 'fatal',
+      error: 'Verovio toolkit initialization failed: wasm bootstrap rejected',
+    });
+
+    expect(client.failed).toBe(true);
+    await expect(loading).rejects.toBeInstanceOf(VerovioFatalError);
+    await expect(queued).rejects.toMatchObject({
+      name: 'VerovioFatalError',
+      message: 'Verovio toolkit initialization failed: wasm bootstrap rejected',
+    });
+    expect(worker.terminated).toBe(true);
+
+    const postedBefore = worker.posted.length;
+    await expect(client.load('<score-partwise/>')).rejects.toBeInstanceOf(VerovioFatalError);
     expect(worker.posted).toHaveLength(postedBefore);
   });
 });

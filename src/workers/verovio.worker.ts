@@ -8,7 +8,9 @@
  * always sees the loaded document.
  *
  * Protocol: each request carries a caller-generated `id`; every response echoes
- * it back. Failures are reported per-request as `{ id, type: 'error', error }`.
+ * it back. Request failures are reported as `{ id, type: 'error', error }`;
+ * toolkit bootstrap failures are reported as `{ id, type: 'fatal', error }`
+ * because the worker cannot recover without a replacement instance.
  */
 
 // @ts-expect-error -- 'verovio/esm' has no type declarations
@@ -63,7 +65,8 @@ export type VerovioResponse =
   | { id: number; type: 'options'; pageCount: number }
   | { id: number; type: 'cancel' }
   | { id: number; type: 'destroy' }
-  | { id: number; type: 'error'; error: string };
+  | { id: number; type: 'error'; error: string }
+  | { id: number; type: 'fatal'; error: string };
 
 /** The subset of the Verovio toolkit API this worker uses (package has no .d.ts). */
 interface Toolkit {
@@ -82,10 +85,25 @@ interface Toolkit {
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
+/** Marks a failure that leaves this worker unable to process any request. */
+class ToolkitInitializationError extends Error {
+  constructor(cause: unknown) {
+    super(
+      `Verovio toolkit initialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+    this.name = 'ToolkitInitializationError';
+  }
+}
+
 /** Single shared toolkit instance; created once when the worker boots. */
-const toolkitPromise: Promise<Toolkit> = createVerovioModule().then(
-  (module: unknown) => new VerovioToolkit(module) as Toolkit,
-);
+const toolkitPromise: Promise<Toolkit> = createVerovioModule()
+  .then((module: unknown) => new VerovioToolkit(module) as Toolkit)
+  .catch((error: unknown) => {
+    throw new ToolkitInitializationError(error);
+  });
+// Keep a bootstrap rejection from becoming an unhandled worker rejection while
+// retaining the rejected promise for the first request to report as `fatal`.
+void toolkitPromise.catch(() => undefined);
 
 /** Whether a document has been successfully loaded into the toolkit. */
 let loaded = false;
@@ -168,7 +186,7 @@ scope.onmessage = (event: MessageEvent<VerovioRequest>) => {
     } catch (error) {
       post({
         id: request.id,
-        type: 'error',
+        type: error instanceof ToolkitInitializationError ? 'fatal' : 'error',
         error: error instanceof Error ? error.message : String(error),
       });
     }

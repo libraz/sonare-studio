@@ -4,8 +4,9 @@
  * Wraps the worker message protocol in promise-returning methods with
  * request-id correlation: every call gets a unique id, responses are matched
  * back to the originating promise, and per-request errors reject only that
- * promise. The worker itself processes requests in order, so callers may fire
- * load/renderPage back-to-back without awaiting in between.
+ * promise. Fatal worker conditions reject all pending calls and mark the
+ * client for replacement. The worker itself processes requests in order, so
+ * callers may fire load/renderPage back-to-back without awaiting in between.
  */
 
 import type {
@@ -17,6 +18,14 @@ import type {
 } from '@/workers/verovio.worker';
 
 export type { VerovioOptions, VerovioTimemapEntry };
+
+/** A worker failure that makes the current Verovio client unusable. */
+export class VerovioFatalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VerovioFatalError';
+  }
+}
 
 /** Layout options exposed to the app, mapped 1:1 onto Verovio option names. */
 export interface LayoutOptions {
@@ -102,7 +111,7 @@ export class VerovioClient {
   private sessionId = 0;
   private disposed = false;
   /** Set when the worker dies; later sends reject with this instead of hanging. */
-  private fatalError: Error | null = null;
+  private fatalError: VerovioFatalError | null = null;
 
   /** @param worker Optional worker instance (injected in tests); defaults to the bundled one. */
   constructor(worker?: Worker) {
@@ -231,6 +240,10 @@ export class VerovioClient {
 
   private readonly handleMessage = (event: MessageEvent<VerovioResponse>): void => {
     const response = event.data;
+    if (response.type === 'fatal') {
+      this.handleFatalError(new VerovioFatalError(response.error));
+      return;
+    }
     const entry = this.pending.get(response.id);
     if (!entry) {
       return;
@@ -250,12 +263,18 @@ export class VerovioClient {
     if (this.disposed) {
       return;
     }
-    const error = new Error(event.message || 'Verovio worker error');
+    this.handleFatalError(new VerovioFatalError(event.message || 'Verovio worker error'));
+  };
+
+  private handleFatalError(error: VerovioFatalError): void {
+    if (this.disposed) {
+      return;
+    }
     this.fatalError = error;
     this.disposed = true;
     this.teardownWorker();
     this.rejectAll(error);
-  };
+  }
 
   private teardownWorker(): void {
     this.worker.removeEventListener('message', this.handleMessage as EventListener);
