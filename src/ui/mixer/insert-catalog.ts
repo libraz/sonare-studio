@@ -3,14 +3,16 @@
  *
  * Processor names follow the wasm catalog convention 'category.camelName'
  * (e.g. 'dynamics.compressor'). The catalog itself is runtime data; a curated
- * static fallback keeps the popover usable when the module is not loaded
- * (tests, early boot).
+ * static fallback keeps the offline popover usable when the module is not
+ * loaded (tests, early boot).
  *
- * The structured `masteringProcessorCatalog()` is the source of truth when the
+ * The structured `masteringProcessorCatalog()` supplies metadata when the
  * module is loaded: each entry carries `kind` (realtime/offline/pair),
- * `realtimeInsertable` and `stereoOnly`, so the popover can offer exactly the
- * ids a scope accepts and tag stereo-only processors. Two legacy name catalogs
- * are the fallback (and must not be confused):
+ * `realtimeInsertable` and `stereoOnly`, so the popover can tag stereo-only
+ * processors. Realtime ids are always guarded by the authoritative
+ * `masteringInsertNames()` set; the structured catalog cannot widen that set.
+ * Two legacy name catalogs are available for their respective scopes (and
+ * must not be confused):
  * - `masteringInsertNames()` — processors the realtime engine accepts as strip
  *   inserts. Mixer strips (track/bus/master) are validated against this set, so
  *   their popover MUST use it or the engine throws "Unsupported insert
@@ -31,6 +33,13 @@ interface WasmCatalogEntry {
   kind: InsertProcessorKind;
   realtimeInsertable: boolean;
   stereoOnly: boolean;
+}
+
+/** The wasm functions used by this module (kept loose for older builds/tests). */
+interface WasmModule {
+  masteringProcessorCatalog?: () => WasmCatalogEntry[];
+  masteringProcessorNames?: () => string[];
+  masteringInsertNames?: () => string[];
 }
 
 /**
@@ -196,19 +205,53 @@ export function groupInsertCatalogEntries(
   }));
 }
 
-/**
- * Reads the structured `masteringProcessorCatalog()` from the wasm module, or
- * null when the module/function is unavailable.
- */
-function loadWasmCatalog(): WasmCatalogEntry[] | null {
+/** Reads the wasm module, or null when the store/module is unavailable. */
+function loadWasmModule(): WasmModule | null {
   try {
-    const wasm = getWasmModule() as unknown as {
-      masteringProcessorCatalog?: () => WasmCatalogEntry[];
-    };
-    const entries = wasm.masteringProcessorCatalog?.();
-    if (entries && entries.length > 0) return entries;
+    return getWasmModule() as unknown as WasmModule;
   } catch {
     // Module not loaded yet.
+  }
+  return null;
+}
+
+/**
+ * Reads the structured `masteringProcessorCatalog()` from a wasm module, or
+ * null when the module/function is unavailable.
+ */
+function loadWasmCatalog(wasm: WasmModule | null): WasmCatalogEntry[] | null {
+  try {
+    const entries = wasm?.masteringProcessorCatalog?.();
+    if (Array.isArray(entries) && entries.length > 0) return entries;
+  } catch {
+    // Older modules may not expose this catalog yet.
+  }
+  return null;
+}
+
+/**
+ * Reads the authoritative realtime insert names. Null means that the API is
+ * unavailable; an empty array is a valid authoritative empty set.
+ */
+function loadRealtimeInsertNames(wasm: WasmModule | null): string[] | null {
+  if (!wasm || typeof wasm.masteringInsertNames !== 'function') return null;
+  try {
+    const names = wasm.masteringInsertNames();
+    if (!Array.isArray(names) || !names.every((name) => typeof name === 'string')) return null;
+    return names;
+  } catch {
+    // A partially loaded/older module cannot prove any realtime insert ids.
+    return null;
+  }
+}
+
+/** Reads the offline name catalogs, retaining the legacy fallback order. */
+function loadOfflineInsertNames(wasm: WasmModule | null): string[] | null {
+  try {
+    const names = wasm?.masteringProcessorNames?.() ?? wasm?.masteringInsertNames?.();
+    if (names && names.length > 0) return names;
+  } catch {
+    // Module not loaded yet; use the static offline fallback below.
   }
   return null;
 }
@@ -221,8 +264,10 @@ function entryInScope(entry: WasmCatalogEntry, scope: InsertCatalogScope): boole
 
 /**
  * Loads the processor catalog as structured entries (with `kind`/`stereoOnly`
- * metadata) for the given scope. Prefers `masteringProcessorCatalog()`; falls
- * back to the name catalogs (no metadata), then the curated static list.
+ * metadata) for the given scope. Realtime entries are intersected with the
+ * authoritative `masteringInsertNames()` set; if that API is unavailable, no
+ * realtime entries are offered. Offline prefers `masteringProcessorCatalog()`
+ * and falls back to the name catalogs (no metadata), then the curated list.
  *
  * @param scope `'realtime'` keeps the engine's insert-safe subset (mixer
  *   strips); `'offline'` keeps the full set minus pair processors (mastering
@@ -232,10 +277,18 @@ function entryInScope(entry: WasmCatalogEntry, scope: InsertCatalogScope): boole
 export function loadInsertCatalogEntries(
   scope: InsertCatalogScope = 'realtime',
 ): InsertProcessorEntry[] {
-  const catalog = loadWasmCatalog();
+  const wasm = loadWasmModule();
+  const catalog = loadWasmCatalog(wasm);
   if (catalog) {
+    const realtimeNames = scope === 'realtime' ? loadRealtimeInsertNames(wasm) : null;
+    if (scope === 'realtime' && realtimeNames === null) return [];
+    const realtimeSet = realtimeNames ? new Set(realtimeNames) : null;
     return catalog
-      .filter((entry) => entryInScope(entry, scope))
+      .filter(
+        (entry) =>
+          entryInScope(entry, scope) &&
+          (scope === 'offline' || realtimeSet?.has(entry.id) === true),
+      )
       .map((entry) => ({
         id: entry.id,
         label: humanizeInsertName(entry.id),
@@ -247,34 +300,41 @@ export function loadInsertCatalogEntries(
 }
 
 /**
- * Loads the processor ids for a scope, falling back to the curated static list
- * when the module is unavailable. Prefer {@link loadInsertCatalogEntries} when
- * the `kind`/`stereoOnly` metadata is useful.
+ * Loads the processor ids for a scope. Realtime requires the authoritative
+ * `masteringInsertNames()` API and returns an empty result when it is
+ * unavailable; it never falls back to the broader processor/static catalogs.
+ * Offline retains the curated static fallback. Prefer
+ * {@link loadInsertCatalogEntries} when the `kind`/`stereoOnly` metadata is
+ * useful.
  *
  * @param scope Which catalog to load: `'realtime'` returns the engine's
  *   insert-safe subset (`masteringInsertNames`) for mixer strips; `'offline'`
  *   returns the full processor set (`masteringProcessorNames`) for the
- *   mastering chain. Each falls back to the other catalog function when its
- *   own is missing, and to the curated static list when neither is available.
+ *   mastering chain. Offline falls back to the insert names and then the
+ *   curated static list when needed.
  * @returns Catalog processor ids.
  */
 export function loadInsertCatalog(scope: InsertCatalogScope = 'realtime'): string[] {
-  const catalog = loadWasmCatalog();
+  const wasm = loadWasmModule();
+  const catalog = loadWasmCatalog(wasm);
   if (catalog) {
+    if (scope === 'realtime') {
+      const realtimeNames = loadRealtimeInsertNames(wasm);
+      if (realtimeNames === null) return [];
+      const realtimeSet = new Set(realtimeNames);
+      return catalog
+        .filter((entry) => entryInScope(entry, scope) && realtimeSet.has(entry.id))
+        .map((entry) => entry.id);
+    }
     return catalog.filter((entry) => entryInScope(entry, scope)).map((entry) => entry.id);
   }
-  try {
-    const wasm = getWasmModule() as unknown as {
-      masteringProcessorNames?: () => string[];
-      masteringInsertNames?: () => string[];
-    };
-    const names =
-      scope === 'offline'
-        ? (wasm.masteringProcessorNames?.() ?? wasm.masteringInsertNames?.())
-        : (wasm.masteringInsertNames?.() ?? wasm.masteringProcessorNames?.());
-    if (names && names.length > 0) return names;
-  } catch {
-    // Module not loaded yet; use the fallback below.
+
+  if (scope === 'realtime') {
+    const realtimeNames = loadRealtimeInsertNames(wasm);
+    return realtimeNames ?? [];
   }
+
+  const offlineNames = loadOfflineInsertNames(wasm);
+  if (offlineNames) return offlineNames;
   return [...FALLBACK_INSERT_CATALOG];
 }

@@ -149,6 +149,9 @@ describe('quick controls', () => {
         'releaseMs',
         'kneeDb',
         'makeupGainDb',
+        'autoMakeup',
+        'detector',
+        'sidechainHpfEnabled',
       ]);
       expect(controls[0]).toMatchObject({
         name: 'Threshold Db',
@@ -165,6 +168,45 @@ describe('quick controls', () => {
         value: 10,
         defaultValue: 10,
       });
+      expect(controls.find((c) => c.id === 'autoMakeup')).toMatchObject({
+        kind: 'boolean',
+        value: false,
+        defaultValue: false,
+      });
+      expect(controls.find((c) => c.id === 'detector')).toMatchObject({
+        kind: 'enum',
+        value: 1,
+        options: [
+          { value: 0, label: 'Peak' },
+          { value: 1, label: 'RMS' },
+          { value: 2, label: 'Log RMS' },
+        ],
+      });
+      expect(controls.find((c) => c.id === 'sidechainHpfEnabled')).toMatchObject({
+        kind: 'boolean',
+        value: false,
+      });
+    });
+
+    it('uses the explicit catalog for indexed EQ booleans and enums', () => {
+      addInsert(trackId, 'eq.parametric', {
+        'band0.enabled': true,
+        'band0.type': 5,
+      });
+      const controls = listQuickControls(
+        { type: 'insert', trackId, index: 0 },
+        { resolveInsertParams: () => ['band0.enabled', 'band0.type'] },
+      );
+
+      expect(controls).toEqual([
+        expect.objectContaining({ kind: 'boolean', id: 'band0.enabled', value: true }),
+        expect.objectContaining({
+          kind: 'enum',
+          id: 'band0.type',
+          value: 5,
+          options: expect.arrayContaining([{ value: 5, label: 'Band Pass' }]),
+        }),
+      ]);
     });
 
     it('falls back to explicitly set params for unknown processors', () => {
@@ -270,6 +312,26 @@ describe('quick controls', () => {
       expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'attackMs', 900);
       expect(store.tracks[0].mixer?.inserts[0].params.attackMs).toBe(200);
+    });
+
+    it('writes typed processor controls and rejects invalid values', () => {
+      addInsert(trackId, 'dynamics.compressor');
+
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'autoMakeup', true);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 2);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'sidechainHpfEnabled', true);
+
+      expect(store.tracks[0].mixer?.inserts[0].params).toMatchObject({
+        autoMakeup: true,
+        detector: 2,
+        sidechainHpfEnabled: true,
+      });
+      expect(() => setQuickControl({ type: 'insert', trackId, index: 0 }, 'autoMakeup', 1)).toThrow(
+        RangeError,
+      );
+      expect(() => setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 3)).toThrow(
+        RangeError,
+      );
     });
 
     it('does not clamp an un-catalogued processor parameter to a display heuristic', () => {

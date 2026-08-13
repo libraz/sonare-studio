@@ -39,6 +39,7 @@ import {
   PAN_LAW_IDS,
   PAN_MODE_IDS,
 } from '@/project/mixer';
+import { processorControlValueFromMidi } from '@/project/processor-controls';
 import {
   listQuickControls,
   type QuickControlTarget,
@@ -232,7 +233,11 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     try {
       const control = listQuickControls(target).find((c) => c.id === paramId);
       if (!control) return false;
-      setQuickControl(target, paramId, ccToRange(value, control.min, control.max), { commit });
+      const mapped =
+        control.kind === 'boolean' || control.kind === 'enum'
+          ? processorControlValueFromMidi(control, value)
+          : ccToRange(value, control.min, control.max);
+      setQuickControl(target, paramId, mapped, { commit });
       return true;
     } catch {
       // Stale binding (e.g. the device/track was removed): drop it.
@@ -432,9 +437,12 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
           (entry) => entry.id === mastering.paramId,
         );
         if (!control) return false;
-        setMasteringParam(index, mastering.paramId, ccToRange(value, control.min, control.max), {
-          commit,
-        });
+        const mapped =
+          control.kind === 'boolean' || control.kind === 'enum'
+            ? processorControlValueFromMidi(control, value)
+            : ccToRange(value, control.min, control.max);
+        if (typeof mapped === 'string') return false;
+        setMasteringParam(index, mastering.paramId, mapped, { commit });
         return true;
       } catch {
         return false;
@@ -556,7 +564,9 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
   function apply(id: string, value: number): void {
     if (!dispatch(id, value, false)) {
       clearTimer(id);
-      bindings.delete(id);
+      // Stale targets are project metadata too: remove them through the
+      // command layer so the cleanup is undoable like an explicit clear.
+      clearMidiCcBinding(id);
       return;
     }
     clearTimer(id);
@@ -564,7 +574,9 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
       id,
       setTimeout(() => {
         commitTimers.delete(id);
-        dispatch(id, value, true);
+        // The target may have disappeared while the gesture was pending. Keep
+        // the same command/history guarantee as the immediate apply path.
+        if (!dispatch(id, value, true)) clearMidiCcBinding(id);
       }, COMMIT_DELAY_MS),
     );
   }

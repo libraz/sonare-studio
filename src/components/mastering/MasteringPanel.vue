@@ -32,7 +32,7 @@ import {
   type MasteringControl,
   masteringProcessorControls,
 } from '@/ui/mastering/chain-controls';
-import { isClippingRisk } from '@/ui/mastering/loudness';
+import { isClippingRisk, type LoudnessRow } from '@/ui/mastering/loudness';
 import {
   filterPresetCatalog,
   humanizePresetName,
@@ -410,6 +410,22 @@ function onParamChange(
   value: number,
   commit: boolean,
 ): void {
+  if (control.kind === 'boolean' || control.kind === 'enum') {
+    try {
+      const next =
+        control.kind === 'boolean'
+          ? value >= 0.5
+          : control.options.find((option) => option.value === value)?.value;
+      if (next === undefined || typeof next === 'string') {
+        throw new RangeError(`Invalid value for ${control.kind} control "${control.id}"`);
+      }
+      setMasteringParam(index, control.id, next, { commit: true });
+      error.value = '';
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+    return;
+  }
   const gestureKey = `${index}:${control.id}`;
   const apply = (v: number, options: CommandGestureOptions): void => {
     setMasteringParam(index, control.id, clampControlValue(control, v), options);
@@ -625,39 +641,46 @@ function onSelectVariant(next: 'processed' | 'bypassed'): void {
 
 // --- Loudness readout --------------------------------------------------------------
 
-/** One readout row: label plus the A and B values. */
-interface LoudnessRow {
-  label: string;
-  unit: string;
-  a: number | undefined;
-  b: number | undefined;
-}
-
 const loudnessRows = computed<LoudnessRow[]>(() => {
   const state = previewState.value;
   const a = state?.processed?.report;
   const b = state?.bypassed?.report;
   if (!a && !b) return [];
   return [
-    { label: t.value.shell.mastering.loudness.peak, unit: 'dBFS', a: a?.peakDb, b: b?.peakDb },
+    {
+      label: t.value.shell.mastering.loudness.peak,
+      unit: 'dBFS',
+      a: a?.peakDb,
+      b: b?.peakDb,
+      barScale: 'level',
+    },
     {
       label: t.value.shell.mastering.loudness.truePeak,
       unit: 'dBTP',
       a: a?.truePeakDb,
       b: b?.truePeakDb,
+      barScale: 'level',
     },
-    { label: t.value.shell.mastering.loudness.loudness, unit: 'LUFS', a: a?.lufs, b: b?.lufs },
+    {
+      label: t.value.shell.mastering.loudness.loudness,
+      unit: 'LUFS',
+      a: a?.lufs,
+      b: b?.lufs,
+      barScale: 'level',
+    },
     {
       label: t.value.shell.mastering.loudness.momentary,
       unit: 'LUFS',
       a: a?.momentaryLufs,
       b: b?.momentaryLufs,
+      barScale: 'level',
     },
     {
       label: t.value.shell.mastering.loudness.shortTerm,
       unit: 'LUFS',
       a: a?.shortTermLufs,
       b: b?.shortTermLufs,
+      barScale: 'level',
     },
     {
       label: t.value.shell.mastering.loudness.lra,

@@ -11,6 +11,16 @@ export const LOUDNESS_BAR_MIN_DB = -60;
 /** Useful upper bound for LRA and dynamic-range comparison bars. */
 export const RANGE_BAR_MAX_DB = 20;
 
+/** One A/B loudness readout row and the scale used by its comparison bars. */
+export interface LoudnessRow {
+  label: string;
+  unit: string;
+  a: number | undefined;
+  b: number | undefined;
+  /** Level rows use dB/LUFS scaling; range rows use a positive range scale. */
+  barScale: 'level' | 'range';
+}
+
 /**
  * Maps a dB value onto a 0..1 bar fraction over [minDb, maxDb].
  * Non-finite values (silence) map to 0.

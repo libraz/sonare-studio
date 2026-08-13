@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import { useI18n } from '@/ui/i18n';
-import { formatLevel, loudnessBarFraction, rangeBarFraction } from '@/ui/mastering/loudness';
+import {
+  formatLevel,
+  type LoudnessRow,
+  loudnessBarFraction,
+  rangeBarFraction,
+} from '@/ui/mastering/loudness';
 
 defineProps<{
-  rows: ReadonlyArray<{
-    label: string;
-    unit: string;
-    a: number | undefined;
-    b: number | undefined;
-    /** LRA / dynamic-range bars use a positive range scale, not dBFS. */
-    barScale?: 'level' | 'range';
-  }>;
+  rows: ReadonlyArray<LoudnessRow>;
   clipWarning: boolean;
 }>();
 

@@ -119,6 +119,23 @@ describe('QuickControls.vue', () => {
     expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
   });
 
+  it('renders typed insert controls as toggles and enum menus', async () => {
+    addInsert(trackId, 'dynamics.compressor');
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'insert', trackId, index: 0 } },
+    });
+
+    expect(wrapper.findAll('.qc-toggle')).toHaveLength(2);
+    expect(wrapper.find('.qc-select').exists()).toBe(true);
+
+    await wrapper.find('.qc-toggle').trigger('click');
+    expect(store.tracks[0].mixer?.inserts[0].params.autoMakeup).toBe(true);
+
+    wrapper.findComponent({ name: 'SelectMenu' }).vm.$emit('change', 2);
+    await wrapper.vm.$nextTick();
+    expect(store.tracks[0].mixer?.inserts[0].params.detector).toBe(2);
+  });
+
   it('touch-records an insert knob into an automation lane in a write mode', async () => {
     addInsert(trackId, 'dynamics.compressor');
     // The strip is armed for touch recording; the playhead getter is supplied.

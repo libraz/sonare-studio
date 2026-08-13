@@ -15,7 +15,8 @@ import {
   encodePatchFieldValue,
   type NumericPatchField,
 } from '@/ui/devices/patch-draft';
-import type { SynthPatch } from '@/wasm/index.js';
+import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
+import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
   isMixerBusStripTarget,
@@ -27,27 +28,19 @@ import {
 import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-domains';
 import { trackInstrument } from './instrument';
 import type { InsertSlot, MixerStrip } from './mixer';
+import {
+  type ProcessorControl,
+  type ProcessorControlValue,
+  type ProcessorEnumOption,
+  processorControl,
+  processorControls,
+  processorNumberSpec,
+  validateProcessorControlValue,
+} from './processor-controls';
 import { getWasmModule, useProjectStore } from './store';
 
-/** One quick-control descriptor (a knob in the device rack). */
-export interface QuickControl {
-  /** Parameter id (SynthPatch field name or insert param name). */
-  id: string;
-  /** Display name. */
-  name: string;
-  /** Current value. */
-  value: number;
-  /** Lower bound of the control range. */
-  min: number;
-  /** Upper bound of the control range. */
-  max: number;
-  /** Value mapping across the knob travel (logarithmic when min > 0). */
-  scale?: 'linear' | 'log';
-  /** Value restored by the knob's double-click and Reset menu action. */
-  defaultValue?: number;
-  /** Display unit (e.g. 'Hz', 'ms', 'dB'); omitted for unitless values. */
-  unit?: string;
-}
+/** One quick-control descriptor (knob, toggle, or enum menu). */
+export type QuickControl = ProcessorControl;
 
 /** Addresses what a quick-control rack edits. */
 export type QuickControlTarget =
@@ -70,6 +63,8 @@ export interface QuickControlParamInfo {
   name: string;
   /** Engine-provided physical unit, when it declares one. */
   unit?: string;
+  /** Engine-provided value kind, when available. */
+  type?: 'number' | 'boolean' | 'enum';
 }
 
 /** One entry of the NativeSynth quick-control table. */
@@ -82,6 +77,15 @@ interface SynthControlSpec {
   unit?: string;
   /** Value shown when neither patch nor preset defines the field. */
   fallback: number;
+}
+
+interface SynthEnumControlSpec {
+  id: 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
+  name: string;
+  table: keyof Pick<
+    SynthEnumTables,
+    'engineModes' | 'waveforms' | 'filterModels' | 'filterOutputs' | 'bodyTypes'
+  >;
 }
 
 /**
@@ -143,6 +147,15 @@ const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   { id: 'ampReleaseMs', name: 'Damp', min: 0, max: 5000, unit: 'ms', fallback: 120 },
 ];
 
+/** NativeSynth enum fields exposed after the stable numeric quick controls. */
+const SYNTH_ENUM_CONTROLS: ReadonlyArray<SynthEnumControlSpec> = [
+  { id: 'engineMode', name: 'Engine', table: 'engineModes' },
+  { id: 'waveform', name: 'Waveform', table: 'waveforms' },
+  { id: 'filterModel', name: 'Filter Model', table: 'filterModels' },
+  { id: 'filterOutput', name: 'Filter Output', table: 'filterOutputs' },
+  { id: 'body', name: 'Body', table: 'bodyTypes' },
+];
+
 const WIND_OR_BRASS_PRESET_TOKENS = [
   'bassoon',
   'clarinet',
@@ -174,60 +187,75 @@ function isPluckedStringPreset(
   return mode === 'karplus-strong' || mode === 3 || basePatch?.body === 'guitar';
 }
 
-/** One insert-parameter range heuristic, matched by name pattern. */
-interface ParamRangeRule {
-  test: RegExp;
-  min: number;
-  max: number;
-  scale?: 'linear' | 'log';
-  unit?: string;
-  fallback: number;
-}
-
-/**
- * Range heuristics for insert parameters: the wasm catalog exposes parameter
- * names only (masteringInsertParamNames), so ranges are inferred from the
- * camelCase naming conventions of the processor params.
- */
-const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
-  { test: /thresholdDb$/i, min: -60, max: 0, unit: 'dB', fallback: -24 },
-  { test: /Db$/, min: -24, max: 24, unit: 'dB', fallback: 0 },
-  { test: /ratio$/i, min: 1, max: 20, fallback: 4 },
-  { test: /Ms$/, min: 0, max: 5000, unit: 'ms', fallback: 10 },
-  { test: /Hz$/, min: 20, max: 20000, scale: 'log', unit: 'Hz', fallback: 1000 },
-  // Filter Q factor: a standalone 'q' or a name ending in 'Q' (e.g.
-  // 'resonanceQ', 'bandQ'). The start anchor must also end the string, or any
-  // name merely starting with 'q' (e.g. 'quantize') would be misread as a Q.
-  { test: /^q$|Q$/, min: 0.1, max: 18, scale: 'log', fallback: Math.SQRT1_2 },
-];
-
-/** Fallback range for parameters no rule matches (normalized amounts). */
-const DEFAULT_PARAM_RULE: Omit<ParamRangeRule, 'test'> = { min: 0, max: 1, fallback: 0 };
-
-/** Returns the range rule for an insert parameter, preferring the shared domain catalog. */
-function paramRule(
-  processor: string,
-  name: string,
-  engineUnit?: string,
-): Omit<ParamRangeRule, 'test'> {
-  const heuristic = PARAM_RANGE_RULES.find((rule) => rule.test.test(name)) ?? DEFAULT_PARAM_RULE;
-  const domain = insertParamDomain(processor, name);
-  if (domain !== INSERT_PARAM_DOMAIN_FALLBACK) {
-    return {
-      min: domain.min,
-      max: domain.max,
-      ...(heuristic.scale !== undefined && domain.min > 0 ? { scale: heuristic.scale } : {}),
-      ...(engineUnit || domain.unit ? { unit: engineUnit || domain.unit } : {}),
-      fallback: Math.min(domain.max, Math.max(domain.min, heuristic.fallback)),
+/** Resolves the runtime NativeSynth enum tables, retaining complete fallbacks. */
+function defaultResolveSynthEnums(): SynthEnumTables {
+  try {
+    const wasm = getWasmModule() as unknown as {
+      synthEnumTables?: () => Partial<SynthEnumTables>;
     };
+    return resolveSynthEnums(
+      typeof wasm.synthEnumTables === 'function' ? wasm.synthEnumTables() : null,
+    );
+  } catch {
+    return resolveSynthEnums(FALLBACK_SYNTH_ENUMS);
   }
-  return { ...heuristic, ...(engineUnit ? { unit: engineUnit } : {}) };
 }
 
-/** Splits a camelCase parameter name into a capitalized display name. */
-function humanizeParamName(name: string): string {
-  const spaced = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+/** Returns a patch enum value, with numeric ordinals resolved to labels. */
+function patchEnumValue(
+  patch: SynthPatch | null,
+  spec: SynthEnumControlSpec,
+  options: ReadonlyArray<ProcessorEnumOption>,
+): string | number | null {
+  if (!patch) return null;
+  const raw = (patch as Record<string, unknown>)[spec.id];
+  if (raw === 'default' || raw === undefined || raw === null) return null;
+  if (typeof raw === 'string' && options.some((option) => option.value === raw)) return raw;
+  if (typeof raw === 'number') {
+    const option = options.find((entry) => entry.value === raw);
+    if (option) return option.value;
+    const label = defaultResolveSynthEnums()[spec.table][raw];
+    if (typeof label === 'string') return label;
+  }
+  return null;
+}
+
+/** Maps a synth enum table to SelectMenu options. */
+function synthEnumOptions(
+  spec: SynthEnumControlSpec,
+  tables: SynthEnumTables,
+): ReadonlyArray<ProcessorEnumOption> {
+  return tables[spec.table].map((value) => ({
+    value,
+    label: value
+      .split('-')
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' '),
+  }));
+}
+
+/** Builds the synth enum descriptors after numeric controls. */
+function synthEnumControls(patch: SynthPatch | null, basePatch: SynthPatch | null): QuickControl[] {
+  const tables = defaultResolveSynthEnums();
+  return SYNTH_ENUM_CONTROLS.flatMap((spec) => {
+    const options = synthEnumOptions(spec, tables);
+    if (options.length === 0) return [];
+    const value =
+      patchEnumValue(patch, spec, options) ??
+      patchEnumValue(basePatch, spec, options) ??
+      options[0]?.value;
+    if (value === undefined) return [];
+    return [
+      {
+        kind: 'enum' as const,
+        id: spec.id,
+        name: spec.name,
+        value,
+        options,
+        defaultValue: options[0]?.value ?? value,
+      },
+    ];
+  });
 }
 
 /** Reads a synth patch field as a set value (0/undefined = keep base). */
@@ -336,9 +364,10 @@ export function listQuickControls(
     const specs = isPluckedStringPreset(presetName, basePatch)
       ? PLUCKED_STRING_QUICK_CONTROLS
       : SYNTH_QUICK_CONTROLS;
-    return specs.map((spec) => {
+    const numericControls = specs.map((spec) => {
       const value = patchValue(patch, spec.id) ?? patchValue(basePatch, spec.id) ?? spec.fallback;
       const control: QuickControl = {
+        kind: 'number',
         id: spec.id,
         name: spec.name,
         value,
@@ -350,29 +379,21 @@ export function listQuickControls(
       if (spec.unit !== undefined) control.unit = spec.unit;
       return control;
     });
+    // Enum fields appear once a patch/preset actually selects one. NativeSynth
+    // has no parameter-info catalog, so an omitted enum remains an ABI
+    // "keep" sentinel rather than a guessed default control.
+    const enumControls = synthEnumControls(patch, basePatch).filter((control) => {
+      if (control.kind !== 'enum') return false;
+      return control.value !== control.defaultValue;
+    });
+    return [...numericControls, ...enumControls];
   }
   const slot = requireInsertSlot(target);
   const resolveParams = resolvers.resolveInsertParams ?? defaultResolveInsertParams;
   const catalogNames = resolveParams(slot.processor);
   const resolveInfo = resolvers.resolveInsertParamInfo ?? defaultResolveInsertParamInfo;
-  const paramInfo = new Map(resolveInfo(slot.processor).map((info) => [info.name, info]));
-  const setNames = Object.keys(slot.params).filter((name) => typeof slot.params[name] === 'number');
-  const names = [...new Set([...catalogNames, ...paramInfo.keys(), ...setNames])];
-  return names.map((name) => {
-    const rule = paramRule(slot.processor, name, paramInfo.get(name)?.unit);
-    const raw = slot.params[name];
-    const control: QuickControl = {
-      id: name,
-      name: humanizeParamName(name),
-      value: typeof raw === 'number' ? raw : rule.fallback,
-      min: rule.min,
-      max: rule.max,
-      defaultValue: rule.fallback,
-    };
-    if (rule.scale !== undefined && rule.min > 0) control.scale = rule.scale;
-    if (rule.unit !== undefined) control.unit = rule.unit;
-    return control;
-  });
+  const paramInfo = resolveInfo(slot.processor);
+  return processorControls(slot.processor, catalogNames, slot.params, paramInfo);
 }
 
 /**
@@ -393,17 +414,10 @@ export function listQuickControls(
 export function setQuickControl(
   target: QuickControlTarget,
   id: string,
-  value: number,
+  value: ProcessorControlValue,
   options?: CommandGestureOptions,
 ): void {
-  if (!Number.isFinite(value)) {
-    throw new RangeError(`Quick control value must be finite, got ${value}`);
-  }
   if (target.type === 'instrument') {
-    const spec =
-      SYNTH_QUICK_CONTROLS.find((entry) => entry.id === id) ??
-      PLUCKED_STRING_QUICK_CONTROLS.find((entry) => entry.id === id);
-    if (!spec) throw new RangeError(`Unknown instrument quick control: ${id}`);
     const store = useProjectStore();
     const track = store.tracks.find((t) => t.id === target.trackId);
     if (!track) throw new RangeError(`Unknown track id: ${target.trackId}`);
@@ -414,20 +428,78 @@ export function setQuickControl(
     if (instrument.kind === 'external-midi') {
       throw new RangeError('External MIDI instruments expose no quick controls');
     }
-    const clamped = Math.min(spec.max, Math.max(spec.min, value));
-    const encoded = encodePatchFieldValue(spec.id as NumericPatchField, clamped);
-    const basePatch: SynthPatch =
+    const patch = instrument.kind === 'synth-patch' ? instrument.patch : null;
+    const presetName = instrument.kind === 'synth-preset' ? instrument.preset : patch?.preset;
+    const presetBasePatch = presetName !== undefined ? defaultResolvePresetPatch(presetName) : null;
+    const numericSpec =
+      SYNTH_QUICK_CONTROLS.find((entry) => entry.id === id) ??
+      PLUCKED_STRING_QUICK_CONTROLS.find((entry) => entry.id === id);
+    if (numericSpec) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new RangeError(`Quick control "${id}" requires a finite number`);
+      }
+      const control: QuickControl = {
+        kind: 'number',
+        id,
+        name: numericSpec.name,
+        value: numericSpec.fallback,
+        min: numericSpec.min,
+        max: numericSpec.max,
+        defaultValue: numericSpec.fallback,
+        ...(numericSpec.scale !== undefined ? { scale: numericSpec.scale } : {}),
+        ...(numericSpec.unit !== undefined ? { unit: numericSpec.unit } : {}),
+      };
+      validateProcessorControlValue(control, value);
+      const clamped = Math.min(numericSpec.max, Math.max(numericSpec.min, value));
+      const encoded = encodePatchFieldValue(id as NumericPatchField, clamped);
+      const basePatch: SynthPatch =
+        instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
+      const nextPatch = { ...basePatch, [id]: encoded } as SynthPatch;
+      setTrackInstrument(target.trackId, { kind: 'synth-patch', patch: nextPatch }, options);
+      return;
+    }
+    const enumSpec = SYNTH_ENUM_CONTROLS.find((entry) => entry.id === id);
+    if (!enumSpec) throw new RangeError(`Unknown instrument quick control: ${id}`);
+    const optionsForEnum = synthEnumOptions(enumSpec, defaultResolveSynthEnums());
+    const current =
+      patchEnumValue(patch, enumSpec, optionsForEnum) ??
+      patchEnumValue(presetBasePatch, enumSpec, optionsForEnum) ??
+      optionsForEnum[0]?.value;
+    const enumControl: QuickControl = {
+      kind: 'enum',
+      id,
+      name: enumSpec.name,
+      value: current ?? 'default',
+      options: optionsForEnum,
+      defaultValue: optionsForEnum[0]?.value ?? 'default',
+    };
+    validateProcessorControlValue(enumControl, value);
+    const patchBase: SynthPatch =
       instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
-    const patch = { ...basePatch, [id]: encoded } as SynthPatch;
-    setTrackInstrument(target.trackId, { kind: 'synth-patch', patch }, options);
+    const nextPatch = { ...patchBase, [id]: value } as SynthPatch;
+    setTrackInstrument(target.trackId, { kind: 'synth-patch', patch: nextPatch }, options);
     return;
   }
   const slot = requireInsertSlot(target);
-  const rule = paramRule(slot.processor, id);
+  const raw = slot.params[id];
+  const paramInfo = defaultResolveInsertParamInfo(slot.processor).find((info) => info.name === id);
+  const control = processorControl(slot.processor, id, raw, paramInfo);
+  if (control) validateProcessorControlValue(control, value);
+  else if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new RangeError(`Unknown insert control "${id}" requires a finite number`);
+  }
+  const rule = processorNumberSpec(slot.processor, id);
   // The app-side range catalog is a drawing/interaction convenience, not an
   // engine contract. Preserve values for an unknown processor parameter so a
   // harmless LFO rate such as 2 Hz is not silently turned into 20 Hz.
   const hasExplicitDomain = insertParamDomain(slot.processor, id) !== INSERT_PARAM_DOMAIN_FALLBACK;
-  const next = hasExplicitDomain ? Math.min(rule.max, Math.max(rule.min, value)) : value;
+  if (control?.kind !== 'number') {
+    setInsertParam(target.trackId, target.index, id, value as number | boolean, options);
+    return;
+  }
+  const next =
+    hasExplicitDomain && typeof value === 'number'
+      ? Math.min(rule.max, Math.max(rule.min, value))
+      : (value as number);
   setInsertParam(target.trackId, target.index, id, next, options);
 }

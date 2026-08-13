@@ -65,8 +65,8 @@ describe('mastering chain controls', () => {
     );
 
     expect(controls).toHaveLength(13);
-    expect(controls.map((control) => control.id)).toEqual(['customGain', ...catalog]);
-    expect(controls[0]).toMatchObject({ value: 0.5 });
+    expect(controls.map((control) => control.id)).toEqual([...catalog, 'customGain']);
+    expect(controls.at(-1)).toMatchObject({ value: 0.5 });
   });
 
   it('uses the resolved control range for clamping', () => {

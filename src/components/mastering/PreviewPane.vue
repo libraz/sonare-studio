@@ -3,7 +3,7 @@ import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessRe
 import StreamingTargetsTable from '@/components/mastering/StreamingTargetsTable.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { useI18n } from '@/ui/i18n';
-import { formatLevel } from '@/ui/mastering/loudness';
+import { formatLevel, type LoudnessRow } from '@/ui/mastering/loudness';
 import type { MonoCompatibilityReport } from '@/ui/mastering/stereo-analysis';
 import type { StreamingPlatformConfig, StreamingTarget } from '@/ui/mastering/streaming';
 
@@ -14,14 +14,6 @@ import type { StreamingPlatformConfig, StreamingTarget } from '@/ui/mastering/st
  * the preview controller, the panel-local playback and the wasm measurement
  * are owned by the panel, which this pane drives through emitted intents.
  */
-
-/** One loudness readout row: label plus the A and B values. */
-interface LoudnessRow {
-  label: string;
-  unit: string;
-  a: number | undefined;
-  b: number | undefined;
-}
 
 defineProps<{
   /** True while a preview render is in flight. */

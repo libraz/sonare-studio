@@ -361,6 +361,18 @@ describe('MasteringPanel.vue', () => {
     expect(loudnessText).toContain('4.5 LU');
     expect(loudnessText).toContain('DR');
     expect(loudnessText).toContain('9.1 dB');
+    // Positive range metrics use their 0..20 comparison scale, not the -60..0 level scale.
+    const loudnessRows = wrapper.findAll('.loudness-row');
+    const rangeWidths = loudnessRows.slice(5).map((row) =>
+      Number.parseFloat(
+        row
+          .find('.loudness-fill')
+          .attributes('style')
+          ?.match(/[\d.]+/)?.[0] ?? 'NaN',
+      ),
+    );
+    expect(rangeWidths[0]).toBeCloseTo(22.5);
+    expect(rangeWidths[1]).toBeCloseTo(45.5);
     // truePeakDb -0.1 exceeds the -0.3 dBTP warning threshold.
     expect(wrapper.find('.clip-warning').exists()).toBe(true);
     expect(wrapper.find('.mono-compat').text()).toContain('Mono compatibility');

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, reactive, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import {
   type AutomationTarget,
@@ -13,6 +14,8 @@ import {
   removeAutomationLane,
   setAutomationLanePoints,
 } from '@/project/commands';
+import type { NumberProcessorControl, ProcessorControlValue } from '@/project/processor-controls';
+import { formatProcessorControlValue } from '@/project/processor-controls';
 import {
   listQuickControls,
   type QuickControl,
@@ -23,7 +26,6 @@ import {
 import { useProjectStore } from '@/project/store';
 import {
   controlPercent,
-  formatControlValue,
   knobRotationDeg,
   knobValueForDrag,
   valueAtControlPercent,
@@ -82,7 +84,7 @@ const controls = computed<QuickControl[]>(() => {
 });
 
 /** Applies one control value through the undoable command layer. */
-function apply(id: string, value: number, commit: boolean): void {
+function apply(id: string, value: ProcessorControlValue, commit: boolean): void {
   try {
     setQuickControl(props.target, id, value, { commit });
     error.value = '';
@@ -125,10 +127,11 @@ interface KnobWriteContext {
 }
 
 /** Resolves the touch-record context for a control, or null (not recording). */
-function writeContextFor(controlId: string): KnobWriteContext | null {
+function writeContextFor(control: QuickControl): KnobWriteContext | null {
+  if (control.kind !== 'number') return null;
   if (props.positionPpq === undefined) return null;
   const target = insertAutomationTarget.value;
-  const param = insertParamToken(controlId);
+  const param = insertParamToken(control.id);
   if (target === null || param === null) return null;
   const mode = automationStripMode(target);
   if (!isAutomationWriteMode(mode)) return null;
@@ -142,7 +145,7 @@ let writeGesture: AutomationWriteGesture | null = null;
 const writeValue = ref<{ id: string; value: number } | null>(null);
 
 /** Knob value shown: the live write drag for that knob, else the store value. */
-function shownValue(control: QuickControl): number {
+function shownValue(control: NumberProcessorControl): number {
   return writeValue.value?.id === control.id ? writeValue.value.value : control.value;
 }
 
@@ -192,7 +195,7 @@ interface KnobDrag {
 
 const drag = ref<KnobDrag | null>(null);
 
-function onKnobPointerDown(control: QuickControl, event: PointerEvent): void {
+function onKnobPointerDown(control: NumberProcessorControl, event: PointerEvent): void {
   if (event.button !== 0) return;
   const el = event.currentTarget as HTMLElement;
   if (typeof el.setPointerCapture === 'function') el.setPointerCapture(event.pointerId);
@@ -209,7 +212,7 @@ function onKnobPointerDown(control: QuickControl, event: PointerEvent): void {
   };
   // A write-mode strip turns this drag into a touch-recording of the lane
   // instead of a manual parameter edit; null keeps the manual command path.
-  writeContext = writeContextFor(control.id);
+  writeContext = writeContextFor(control);
 }
 
 function onKnobPointerMove(event: PointerEvent): void {
@@ -253,7 +256,7 @@ function onKnobPointerCancel(event: PointerEvent): void {
 /** Fraction of the range one arrow-key step moves. */
 const KEY_STEP_FRACTION = 0.02;
 
-function onKnobKeydown(control: QuickControl, event: KeyboardEvent): void {
+function onKnobKeydown(control: NumberProcessorControl, event: KeyboardEvent): void {
   let direction = 0;
   if (event.key === 'ArrowUp' || event.key === 'ArrowRight') direction = 1;
   else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') direction = -1;
@@ -323,7 +326,7 @@ function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
   // Open when the knob has at least one menu action: MIDI learn (when a handle
   // is injected and the target is mappable) or automation (any insert knob).
   const midiAvailable = midiLearn !== null && learnTargetId(control.id) !== '';
-  const automateAvailable = insertAutomationTarget.value !== null;
+  const automateAvailable = control.kind === 'number' && insertAutomationTarget.value !== null;
   if (!midiAvailable && !automateAvailable) return;
   event.preventDefault();
   menu.open = true;
@@ -351,11 +354,35 @@ function onToggleAutomation(): void {
     } else {
       // Seed a breakpoint holding the current value so the lane exists and is
       // selectable; further points come from drawing or touch recording.
-      const value = controls.value.find((control) => control.id === menu.controlId)?.value ?? 0;
-      setAutomationLanePoints(target, param, [{ ppq: 0, value }]);
+      const control = controls.value.find((entry) => entry.id === menu.controlId);
+      if (control?.kind === 'number') {
+        setAutomationLanePoints(target, param, [{ ppq: 0, value: control.value }]);
+      }
     }
   }
   closeMenu();
+}
+
+/** Whether the current menu target can be written to a numeric automation lane. */
+function menuControlIsNumeric(): boolean {
+  return controls.value.find((control) => control.id === menu.controlId)?.kind === 'number';
+}
+
+function onBooleanToggle(control: Extract<QuickControl, { kind: 'boolean' }>): void {
+  apply(control.id, !control.value, true);
+}
+
+function onEnumChange(
+  control: Extract<QuickControl, { kind: 'enum' }>,
+  value: string | number,
+): void {
+  apply(control.id, value, true);
+}
+
+function controlDisplay(control: QuickControl): string {
+  return control.kind === 'number'
+    ? formatProcessorControlValue({ ...control, value: shownValue(control) })
+    : formatProcessorControlValue(control);
 }
 
 function onMidiLearn(): void {
@@ -388,34 +415,51 @@ onBeforeUnmount(() => {
     <div v-else class="qc-grid">
       <div v-for="control in controls" :key="control.id" class="qc-cell">
         <div
-          class="qc-knob"
+          class="qc-control"
           :class="{
             'qc-knob-armed': learnState(control.id) === 'armed',
             'qc-knob-bound': learnState(control.id) === 'bound',
+            'qc-control-number': control.kind === 'number',
+            'qc-control-boolean': control.kind === 'boolean',
+            'qc-control-enum': control.kind === 'enum',
           }"
-          role="slider"
-          tabindex="0"
-          :data-control="control.id"
+          :data-control="control.kind === 'number' ? undefined : control.id"
           :aria-label="control.name"
-          :aria-valuemin="control.min"
-          :aria-valuemax="control.max"
-          :aria-valuenow="shownValue(control)"
-          @pointerdown="onKnobPointerDown(control, $event)"
-          @pointermove="onKnobPointerMove"
-          @pointerup="onKnobPointerUp"
-          @pointercancel="onKnobPointerCancel"
-          @keydown="onKnobKeydown(control, $event)"
           @contextmenu="onKnobContextMenu(control, $event)"
         >
-          <div
-            class="qc-knob-indicator"
-            :style="{
+          <div v-if="control.kind === 'number'" class="qc-knob" role="slider" tabindex="0"
+            :data-control="control.id" :aria-label="control.name"
+            :aria-valuemin="control.min" :aria-valuemax="control.max" :aria-valuenow="shownValue(control)"
+            @pointerdown="onKnobPointerDown(control, $event)" @pointermove="onKnobPointerMove"
+            @pointerup="onKnobPointerUp" @pointercancel="onKnobPointerCancel"
+            @keydown="onKnobKeydown(control, $event)">
+            <div class="qc-knob-indicator" :style="{
               transform: `rotate(${knobRotationDeg(shownValue(control), control.min, control.max, control.scale)}deg)`,
-            }"
+            }" />
+          </div>
+          <button
+            v-else-if="control.kind === 'boolean'"
+            type="button"
+            class="qc-toggle"
+            :class="{ on: control.value }"
+            :aria-pressed="control.value"
+            :aria-label="control.name"
+            @click="onBooleanToggle(control)"
+          >
+            {{ control.value ? 'On' : 'Off' }}
+          </button>
+          <SelectMenu
+            v-else
+            class="qc-select"
+            :model-value="control.value"
+            :options="control.options"
+            :aria-label="control.name"
+            size="sm"
+            @change="(value) => onEnumChange(control, value)"
           />
         </div>
         <span class="qc-name" v-tooltip="control.name">{{ control.name }}</span>
-        <span class="qc-value">{{ formatControlValue(shownValue(control), control.unit) }}</span>
+        <span class="qc-value">{{ controlDisplay(control) }}</span>
       </div>
     </div>
     <Transition name="pop">
@@ -426,7 +470,7 @@ onBeforeUnmount(() => {
       role="menu"
     >
       <button
-        v-if="insertAutomationTarget !== null"
+        v-if="insertAutomationTarget !== null && menuControlIsNumeric()"
         type="button"
         role="menuitem"
         @click="onToggleAutomation"
@@ -494,6 +538,14 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.qc-control {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+}
+
 .qc-knob {
   position: relative;
   width: 34px;
@@ -551,6 +603,33 @@ onBeforeUnmount(() => {
 
 .qc-knob-armed {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 1px var(--accent);
+}
+
+.qc-toggle {
+  min-width: 44px;
+  min-height: 28px;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-3);
+  background: var(--control-bg);
+  box-shadow: var(--control-lift);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  cursor: pointer;
+}
+
+.qc-toggle.on {
+  color: var(--text-1);
+  background: var(--accent-muted);
+}
+
+.qc-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.qc-select {
+  width: 100%;
+  max-width: 116px;
 }
 
 /* Positioning only; the shared .control-menu primitive supplies the glass face. */

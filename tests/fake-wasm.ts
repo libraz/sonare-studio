@@ -751,6 +751,11 @@ export class FakeProject {
     this.state = next;
   }
 
+  clearHistory(): void {
+    this.history.length = 0;
+    this.future.length = 0;
+  }
+
   setMaxUndoDepth(depth: number): void {
     this.maxUndoDepth = Math.max(1, Math.floor(depth));
     while (this.history.length > this.maxUndoDepth) this.history.shift();
@@ -975,6 +980,9 @@ export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
     'releaseMs',
     'kneeDb',
     'makeupGainDb',
+    'autoMakeup',
+    'detector',
+    'sidechainHpfEnabled',
   ],
   'dynamics.limiter': ['thresholdDb', 'lookaheadMs', 'releaseMs'],
   'dynamics.brickwallLimiter': ['ceilingDb', 'lookaheadMs', 'releaseMs'],
@@ -992,6 +1000,30 @@ export const FAKE_INSERT_PARAMS: Record<string, string[]> = {
   'saturation.waveshaper': ['driveDb', 'mix', 'outputGainDb'],
   'stereo.imager': ['width', 'decorrelationAmount', 'outputGainDb'],
   'stereo.monoMaker': ['amount'],
+};
+
+/** Mirrors the realtime parameter-info catalog used by processor controls. */
+export const FAKE_INSERT_PARAM_INFO: Record<
+  string,
+  Array<{
+    name: string;
+    id: number;
+    rtSafe: boolean;
+    type: 'number' | 'boolean' | 'enum';
+    unit?: string;
+  }>
+> = {
+  'dynamics.compressor': [
+    { name: 'thresholdDb', id: 0, rtSafe: true, type: 'number', unit: 'dB' },
+    { name: 'ratio', id: 1, rtSafe: true, type: 'number' },
+    { name: 'attackMs', id: 2, rtSafe: true, type: 'number', unit: 'ms' },
+    { name: 'releaseMs', id: 3, rtSafe: true, type: 'number', unit: 'ms' },
+    { name: 'kneeDb', id: 4, rtSafe: true, type: 'number', unit: 'dB' },
+    { name: 'makeupGainDb', id: 5, rtSafe: true, type: 'number', unit: 'dB' },
+    { name: 'autoMakeup', id: 6, rtSafe: true, type: 'number' },
+    { name: 'detector', id: 7, rtSafe: true, type: 'number' },
+    { name: 'sidechainHpfEnabled', id: 8, rtSafe: true, type: 'boolean' },
+  ],
 };
 
 /** Mastering preset names the fake catalog reports (subset of the real build). */
@@ -1288,6 +1320,7 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
         latencySamples: 0,
       })),
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
+    masteringInsertParamInfo: (name: string) => FAKE_INSERT_PARAM_INFO[name] ?? [],
     masteringPresetNames: fakeMasteringPresetNames,
     mixingScenePresetNames: fakeMixingScenePresetNames,
     mixingScenePresetJson: fakeMixingScenePresetJson,

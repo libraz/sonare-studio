@@ -82,9 +82,13 @@ describe('groupInsertCatalog', () => {
 });
 
 describe('loadInsertCatalog', () => {
-  it('falls back to the curated list when the wasm module is unavailable', () => {
+  it('returns an empty realtime catalog when the wasm module is unavailable', () => {
     // The project store is not initialized in this spec, so getWasmModule throws.
-    expect(loadInsertCatalog()).toEqual([...FALLBACK_INSERT_CATALOG]);
+    expect(loadInsertCatalog()).toEqual([]);
+  });
+
+  it('retains the curated fallback for offline catalogs when the wasm module is unavailable', () => {
+    expect(loadInsertCatalog('offline')).toEqual([...FALLBACK_INSERT_CATALOG]);
   });
 
   it('curated fallback entries are well-formed category.name ids', () => {

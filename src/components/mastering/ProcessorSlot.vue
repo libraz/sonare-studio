@@ -3,8 +3,11 @@ import { inject } from 'vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import CloseIcon from '@/components/shell/CloseIcon.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { InsertSlot } from '@/project/mixer';
+import type { ProcessorControlValue } from '@/project/processor-controls';
+import { formatProcessorControlValue } from '@/project/processor-controls';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MasteringControl } from '@/ui/mastering/chain-controls';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
@@ -64,9 +67,39 @@ function processorCategory(processor: string): string {
 
 /** Formatted knob value with the control's unit. */
 function controlDisplay(control: MasteringControl): string {
-  const value =
-    Math.abs(control.value) >= 100 ? Math.round(control.value) : control.value.toFixed(1);
-  return control.unit ? `${value} ${control.unit}` : `${value}`;
+  return formatProcessorControlValue(control);
+}
+
+function isNumberControl(control: MasteringControl): boolean {
+  return control.kind === 'number' || !control.kind;
+}
+
+function numberControl(control: MasteringControl): {
+  value: number;
+  min: number;
+  max: number;
+  scale?: 'linear' | 'log';
+  defaultValue?: number;
+} {
+  return control as Extract<MasteringControl, { kind: 'number' }>;
+}
+
+function enumControl(control: MasteringControl): Extract<MasteringControl, { kind: 'enum' }> {
+  return control as Extract<MasteringControl, { kind: 'enum' }>;
+}
+
+/** ProcessorRack's legacy event carries a number; encode nonnumeric UI choices
+ * as a transport ordinal and let MasteringPanel restore the native type. */
+function emitBooleanChange(control: Extract<MasteringControl, { kind: 'boolean' }>): void {
+  emit('param-change', props.index, control, control.value ? 0 : 1, true);
+}
+
+function emitEnumChange(
+  control: Extract<MasteringControl, { kind: 'enum' }>,
+  value: ProcessorControlValue,
+): void {
+  if (typeof value !== 'number') return;
+  emit('param-change', props.index, control, value, true);
 }
 
 function learnMasteringId(index: number, control: MasteringControl): string {
@@ -178,17 +211,45 @@ function onMidiForgetMastering(index: number, control: MasteringControl): void {
       :message="t.shell.mastering.noParameters"
     />
     <div v-for="control in controls" :key="control.id" class="chain-param-control">
-      <MixerKnob
-        :value="control.value"
-        :min="control.min"
-        :max="control.max"
-        :scale="control.scale"
-        :default-value="control.defaultValue"
-        :label="control.name"
-        :display="controlDisplay(control)"
-        :size="22"
-        @change="(value, commit) => emit('param-change', index, control, value, commit)"
-      />
+      <template v-if="isNumberControl(control)">
+        <MixerKnob
+          :value="numberControl(control).value"
+          :min="numberControl(control).min"
+          :max="numberControl(control).max"
+          :scale="numberControl(control).scale"
+          :default-value="numberControl(control).defaultValue"
+          :label="control.name"
+          :display="controlDisplay(control)"
+          :size="22"
+          @change="(value, commit) => emit('param-change', index, control, value, commit)"
+        />
+      </template>
+      <button
+        v-else-if="control.kind === 'boolean'"
+        type="button"
+        class="chain-param-toggle"
+        :class="{ on: control.value }"
+        :data-control="control.id"
+        :aria-label="control.name"
+        :aria-pressed="control.value"
+        :title="`${control.name}: ${controlDisplay(control)}`"
+        @click="emitBooleanChange(control)"
+      >
+        <span class="chain-param-label">{{ control.name }}</span>
+        <span>{{ controlDisplay(control) }}</span>
+      </button>
+      <template v-else>
+        <span class="chain-param-label">{{ control.name }}</span>
+        <SelectMenu
+          class="chain-param-select"
+          :model-value="enumControl(control).value"
+          :options="enumControl(control).options"
+          :aria-label="control.name"
+          :title="`${control.name}: ${controlDisplay(control)}`"
+          size="sm"
+          @change="(value) => emitEnumChange(enumControl(control), value)"
+        />
+      </template>
       <div v-if="learnMasteringState(index, control)" class="chain-param-midi">
         <button
           type="button"
@@ -220,3 +281,33 @@ function onMidiForgetMastering(index: number, control: MasteringControl): void {
 </template>
 
 <style scoped src="./processor-slot.css"></style>
+
+<style scoped>
+.chain-param-toggle {
+  min-width: 44px;
+  min-height: 28px;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-3);
+  background: var(--control-bg);
+  box-shadow: var(--control-lift);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  cursor: pointer;
+}
+
+.chain-param-toggle.on {
+  color: var(--text-1);
+  background: var(--accent-muted);
+}
+
+.chain-param-label {
+  margin-right: 3px;
+  color: var(--text-4);
+  font: 8px var(--font-sans);
+  text-transform: uppercase;
+}
+
+.chain-param-select {
+  min-width: 100px;
+}
+</style>

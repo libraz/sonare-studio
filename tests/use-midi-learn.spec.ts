@@ -685,6 +685,50 @@ describe('useMidiLearn', () => {
     );
   });
 
+  it('maps MIDI to typed insert controls without coercing their values to numbers', () => {
+    listQuickControls.mockReturnValue([
+      {
+        kind: 'boolean',
+        id: 'autoMakeup',
+        name: 'Auto Makeup',
+        value: false,
+        defaultValue: false,
+      },
+      {
+        kind: 'enum',
+        id: 'detector',
+        name: 'Detector',
+        value: 0,
+        options: [
+          { value: 0, label: 'Peak' },
+          { value: 1, label: 'RMS' },
+          { value: 2, label: 'Log RMS' },
+        ],
+        defaultValue: 0,
+      },
+    ]);
+    const learn = useMidiLearn();
+    const boolId = midiLearnInsertTargetId('master', 0, 'autoMakeup');
+    learn.armId(boolId);
+    learn.handleCc({ channel: 0, controller: 31, value: 127 });
+    expect(setQuickControl).toHaveBeenCalledWith(
+      { type: 'insert', trackId: 'master', index: 0 },
+      'autoMakeup',
+      true,
+      { commit: false },
+    );
+
+    const enumId = midiLearnInsertTargetId('master', 0, 'detector');
+    learn.armId(enumId);
+    learn.handleCc({ channel: 0, controller: 32, value: 127 });
+    expect(setQuickControl).toHaveBeenLastCalledWith(
+      { type: 'insert', trackId: 'master', index: 0 },
+      'detector',
+      2,
+      { commit: false },
+    );
+  });
+
   it('drops an insert binding when the parameter is no longer present', () => {
     listQuickControls.mockReturnValue([]);
     const learn = useMidiLearn();

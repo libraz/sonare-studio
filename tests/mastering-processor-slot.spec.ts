@@ -35,4 +35,47 @@ describe('ProcessorSlot', () => {
       defaultValue: 1000,
     });
   });
+
+  it('renders boolean and enum processor controls with native-value intents', async () => {
+    const wrapper = mount(ProcessorSlot, {
+      props: {
+        slot: { processor: 'dynamics.compressor', params: {}, enabled: true },
+        index: 0,
+        expanded: true,
+        dragging: false,
+        dropTarget: false,
+        canMoveUp: false,
+        canMoveDown: false,
+        controls: [
+          {
+            kind: 'boolean',
+            id: 'autoMakeup',
+            name: 'Auto Makeup',
+            value: false,
+            defaultValue: false,
+          },
+          {
+            kind: 'enum',
+            id: 'detector',
+            name: 'Detector',
+            value: 0,
+            options: [
+              { value: 0, label: 'Peak' },
+              { value: 1, label: 'RMS' },
+            ],
+            defaultValue: 0,
+          },
+        ],
+      },
+      global: {
+        directives: { tooltip: () => undefined },
+        stubs: { SelectMenu: true },
+      },
+    });
+
+    expect(wrapper.find('.chain-param-toggle').exists()).toBe(true);
+    expect(wrapper.find('.chain-param-select').exists()).toBe(true);
+    await wrapper.find('.chain-param-toggle').trigger('click');
+    expect(wrapper.emitted('param-change')?.at(-1)).toEqual([0, expect.anything(), 1, true]);
+  });
 });

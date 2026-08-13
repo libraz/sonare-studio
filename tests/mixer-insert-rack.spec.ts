@@ -144,6 +144,27 @@ describe('InsertRack sidechain source options', () => {
     expect(pivot?.props()).toMatchObject({ scale: 'log', defaultValue: 1000 });
   });
 
+  it('renders compressor booleans and enums with typed controls', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const targetId = store.tracks[0].id;
+    addInsert(targetId, 'dynamics.compressor');
+    const wrapper = mount(InsertRack, {
+      props: { target: targetId },
+      global: { directives: { tooltip: () => undefined } },
+    });
+
+    await wrapper.find('.insert-name').trigger('click');
+    expect(wrapper.findAll('.insert-param-toggle')).toHaveLength(2);
+    expect(wrapper.find('.insert-param-select').exists()).toBe(true);
+
+    await wrapper.find('.insert-param-toggle').trigger('click');
+    expect(store.tracks[0].mixer?.inserts[0].params.autoMakeup).toBe(true);
+  });
+
   it('removes the add-menu outside-click listener on unmount', async () => {
     setActivePinia(createPinia());
     const store = useProjectStore();

@@ -11,6 +11,8 @@ import {
   setInsertSidechain,
 } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
+import type { ProcessorControlValue } from '@/project/processor-controls';
+import { formatProcessorControlValue } from '@/project/processor-controls';
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
@@ -91,24 +93,33 @@ function toggleExpanded(index: number): void {
 /** In-flight knob gestures keyed by control id (one per dragged knob). */
 const gestures = new Map<string, ValueGesture>();
 
-function onParamChange(control: QuickControl, value: number, commit: boolean): void {
+function onParamChange(control: QuickControl, value: ProcessorControlValue, commit: boolean): void {
   const index = expandedIndex.value;
   if (index === null) return;
   const apply = (v: number, options: CommandGestureOptions): void => {
     setQuickControl({ type: 'insert', trackId: props.target, index }, control.id, v, options);
   };
   try {
+    if (control.kind !== 'number') {
+      // Toggles and enum selections are atomic edits; only number knobs need a
+      // coalesced gesture map.
+      setQuickControl({ type: 'insert', trackId: props.target, index }, control.id, value, {
+        commit: true,
+      });
+      error.value = '';
+      return;
+    }
     if (!commit) {
       let gesture = gestures.get(control.id);
       if (!gesture) {
         gesture = createValueGesture(apply, control.value);
         gestures.set(control.id, gesture);
       }
-      gesture.update(value);
+      gesture.update(value as number);
     } else {
       const gesture = gestures.get(control.id);
-      if (gesture) gesture.end(value);
-      else apply(value, { commit: true });
+      if (gesture) gesture.end(value as number);
+      else apply(value as number, { commit: true });
       gestures.delete(control.id);
     }
     error.value = '';
@@ -119,9 +130,18 @@ function onParamChange(control: QuickControl, value: number, commit: boolean): v
 
 /** Formatted knob value with the control's unit. */
 function controlDisplay(control: QuickControl): string {
-  const value =
-    Math.abs(control.value) >= 100 ? Math.round(control.value) : control.value.toFixed(1);
-  return control.unit ? `${value} ${control.unit}` : `${value}`;
+  return formatProcessorControlValue(control);
+}
+
+function onBooleanToggle(control: Extract<QuickControl, { kind: 'boolean' }>): void {
+  onParamChange(control, !control.value, true);
+}
+
+function onEnumChange(
+  control: Extract<QuickControl, { kind: 'enum' }>,
+  value: string | number,
+): void {
+  onParamChange(control, value, true);
 }
 
 // --- MIDI learn (shared app handle, injected; null in isolated tests) --------
@@ -391,22 +411,90 @@ onBeforeUnmount(() => {
           variant="inline"
           :message="t.shell.inserts.noParameters"
         />
-        <MixerKnob
-          v-for="control in expandedControls"
-          :key="control.id"
-          :value="control.value"
-          :min="control.min"
-          :max="control.max"
-          :scale="control.scale"
-          :default-value="control.defaultValue"
-          :label="control.name"
-          :display="controlDisplay(control)"
-          :size="22"
-          :midi-learn-state="learnState(control)"
-          @change="(value, commit) => onParamChange(control, value, commit)"
-          @midi-learn="onMidiLearn(control)"
-          @midi-forget="onMidiForget(control)"
-        />
+        <template v-for="control in expandedControls" :key="control.id">
+          <MixerKnob
+            v-if="control.kind === 'number'"
+            :value="control.value"
+            :min="control.min"
+            :max="control.max"
+            :scale="control.scale"
+            :default-value="control.defaultValue"
+            :label="control.name"
+            :display="controlDisplay(control)"
+            :size="22"
+            :midi-learn-state="learnState(control)"
+            @change="(value, commit) => onParamChange(control, value, commit)"
+            @midi-learn="onMidiLearn(control)"
+            @midi-forget="onMidiForget(control)"
+          />
+          <div v-else-if="control.kind === 'boolean'" class="insert-param-value">
+            <span class="insert-param-label" v-tooltip="control.name">{{ control.name }}</span>
+            <button
+              type="button"
+              class="insert-param-toggle"
+              :class="{ on: control.value }"
+              :aria-label="control.name"
+              :aria-pressed="control.value"
+              :title="`${control.name}: ${controlDisplay(control)}`"
+              :data-control="control.id"
+              @click="onBooleanToggle(control)"
+            >
+              {{ controlDisplay(control) }}
+            </button>
+            <div v-if="learnState(control)" class="insert-param-midi">
+              <button
+                type="button"
+                class="insert-param-midi-learn"
+                :class="learnState(control)"
+                :aria-label="t.shell.mixer.controls.midiLearn"
+                @click="onMidiLearn(control)"
+              >
+                MIDI
+              </button>
+              <button
+                v-if="learnState(control) === 'bound'"
+                type="button"
+                class="insert-param-midi-forget"
+                :aria-label="t.shell.mixer.controls.midiForget"
+                @click="onMidiForget(control)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <div v-else class="insert-param-value">
+            <span class="insert-param-label" v-tooltip="control.name">{{ control.name }}</span>
+            <SelectMenu
+              class="insert-param-select"
+              :model-value="control.value"
+              :options="control.options"
+              :aria-label="control.name"
+              :title="`${control.name}: ${controlDisplay(control)}`"
+              size="sm"
+              @change="(value) => onEnumChange(control, value)"
+            />
+            <div v-if="learnState(control)" class="insert-param-midi">
+              <button
+                type="button"
+                class="insert-param-midi-learn"
+                :class="learnState(control)"
+                :aria-label="t.shell.mixer.controls.midiLearn"
+                @click="onMidiLearn(control)"
+              >
+                MIDI
+              </button>
+              <button
+                v-if="learnState(control) === 'bound'"
+                type="button"
+                class="insert-param-midi-forget"
+                :aria-label="t.shell.mixer.controls.midiForget"
+                @click="onMidiForget(control)"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
     </template>
     <div ref="addMenu" class="insert-add-wrap">
@@ -556,6 +644,79 @@ onBeforeUnmount(() => {
   border-radius: 3px;
   padding: var(--sp-2) var(--sp-1);
   box-shadow: var(--inset-well);
+}
+
+.insert-param-toggle {
+  min-width: 44px;
+  min-height: 28px;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--text-3);
+  background: var(--control-bg);
+  box-shadow: var(--control-lift);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  cursor: pointer;
+}
+
+.insert-param-toggle.on {
+  color: var(--text-1);
+  background: var(--accent-muted);
+}
+
+.insert-param-value {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.insert-param-label {
+  max-width: 74px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-4);
+  font: 8px var(--font-sans);
+  text-transform: uppercase;
+}
+
+.insert-param-select {
+  min-width: 100px;
+}
+
+.insert-param-midi {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.insert-param-midi-learn,
+.insert-param-midi-forget {
+  flex: none;
+  height: 14px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--text-4);
+  background: var(--surface-3);
+  font: 7px var(--font-sans);
+  line-height: 1;
+  padding: 0 3px;
+  cursor: pointer;
+}
+
+.insert-param-midi-learn.armed {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.insert-param-midi-learn.bound {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.insert-param-midi-forget {
+  width: 14px;
+  padding: 0;
 }
 
 .insert-add-wrap {
