@@ -11,6 +11,7 @@ import type {
   ClipWarp,
   EditorClip,
   EditorTrack,
+  MidiClipTake,
   SmfSysExPacket,
 } from '../types';
 import { sanitizeWarpAnchors, warpSourceSecondsAt } from '../warp';
@@ -85,6 +86,12 @@ interface PpqPoint {
   ppq: number;
 }
 
+function clampedTakeIndex(index: number | undefined, takeCount: number): number {
+  if (takeCount <= 0) return 0;
+  const candidate = Number.isFinite(index) ? Math.floor(index as number) : takeCount - 1;
+  return Math.min(Math.max(0, candidate), takeCount - 1);
+}
+
 function transformLanePoints<T extends PpqPoint>(
   points: ReadonlyArray<T>,
   windowStartPpq: number,
@@ -107,19 +114,97 @@ function transformLanePoints<T extends PpqPoint>(
   return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
 }
 
-function transformCompSegments(
-  source: EditorClip,
+function transformLaneList<T extends { points: ReadonlyArray<PpqPoint> }>(
+  lanes: ReadonlyArray<T> | undefined,
   windowStartPpq: number,
   windowLengthPpq: number,
-): ClipCompSegment[] | undefined {
-  const takes = source.takes;
-  if (takes === undefined || takes.length === 0) return undefined;
+): T[] | undefined {
+  const transformed = lanes?.map((lane) => ({
+    ...lane,
+    points: transformLanePoints(lane.points, windowStartPpq, windowLengthPpq),
+  })) as T[] | undefined;
+  return transformed?.filter((lane) => lane.points.length > 0);
+}
+
+/**
+ * Keeps MIDI take notes in the source-relative coordinate frame while
+ * clipping them to the derived source window. The native Project uses this
+ * same frame for clip notes after a split/trim; rebasing them to zero would
+ * make switching the derived clip's active take play at the wrong source
+ * offset.
+ */
+function transformMidiTakeNotes(
+  notes: MidiClipTake['notes'],
+  sourceWindowStartPpq: number,
+  sourceWindowEndPpq: number,
+): MidiClipTake['notes'] {
+  const transformed: MidiClipTake['notes'] = [];
+  for (const note of notes) {
+    if (!Number.isFinite(note.startPpq) || !Number.isFinite(note.durationPpq)) continue;
+    const start = Math.max(note.startPpq, sourceWindowStartPpq);
+    const end = Math.min(note.startPpq + note.durationPpq, sourceWindowEndPpq);
+    if (!(end > start)) continue;
+    transformed.push({ ...note, startPpq: start, durationPpq: end - start });
+  }
+  return transformed.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
+}
+
+function transformMidiTake(
+  take: MidiClipTake,
+  sourceWindowStartPpq: number,
+  sourceWindowEndPpq: number,
+  windowStartPpq: number,
+  windowLengthPpq: number,
+): MidiClipTake {
+  const next: MidiClipTake = {
+    name: take.name,
+    notes: transformMidiTakeNotes(take.notes, sourceWindowStartPpq, sourceWindowEndPpq),
+  };
+  const ccLanes = transformLaneList(take.ccLanes, windowStartPpq, windowLengthPpq);
+  if (ccLanes !== undefined && ccLanes.length > 0) next.ccLanes = ccLanes;
+  const pitchBendLanes = transformLaneList(take.pitchBendLanes, windowStartPpq, windowLengthPpq);
+  if (pitchBendLanes !== undefined && pitchBendLanes.length > 0) {
+    next.pitchBendLanes = pitchBendLanes;
+  }
+  const programChangeLanes = transformLaneList(
+    take.programChangeLanes,
+    windowStartPpq,
+    windowLengthPpq,
+  );
+  if (programChangeLanes !== undefined && programChangeLanes.length > 0) {
+    next.programChangeLanes = programChangeLanes;
+  }
+  const channelPressureLanes = transformLaneList(
+    take.channelPressureLanes,
+    windowStartPpq,
+    windowLengthPpq,
+  );
+  if (channelPressureLanes !== undefined && channelPressureLanes.length > 0) {
+    next.channelPressureLanes = channelPressureLanes;
+  }
+  const polyPressureLanes = transformLaneList(
+    take.polyPressureLanes,
+    windowStartPpq,
+    windowLengthPpq,
+  );
+  if (polyPressureLanes !== undefined && polyPressureLanes.length > 0) {
+    next.polyPressureLanes = polyPressureLanes;
+  }
+  return next;
+}
+
+function transformTakeCompSegments(
+  segments: ReadonlyArray<ClipCompSegment> | undefined,
+  takeCount: number,
+  defaultTakeIndex: number,
+  sourceLengthPpq: number,
+  windowStartPpq: number,
+  windowLengthPpq: number,
+): ClipCompSegment[] {
   const current = sanitizeCompSegments(
-    source.compSegments && source.compSegments.length > 0
-      ? source.compSegments
-      : [{ startPpq: 0, takeIndex: 0 }],
-    takes.length,
-    source.lengthPpq,
+    segments && segments.length > 0 ? segments : [{ startPpq: 0, takeIndex: defaultTakeIndex }],
+    takeCount,
+    sourceLengthPpq,
   );
   const windowEndPpq = windowStartPpq + windowLengthPpq;
   let firstSource = current[0];
@@ -129,7 +214,7 @@ function transformCompSegments(
   }
   const first: ClipCompSegment = {
     startPpq: 0,
-    takeIndex: firstSource?.takeIndex ?? 0,
+    takeIndex: firstSource?.takeIndex ?? defaultTakeIndex,
     ...(firstSource?.startPpq === windowStartPpq && firstSource.crossfadePpq !== undefined
       ? { crossfadePpq: firstSource.crossfadePpq }
       : {}),
@@ -144,7 +229,24 @@ function transformCompSegments(
         ...(segment.crossfadePpq !== undefined ? { crossfadePpq: segment.crossfadePpq } : {}),
       })),
   ];
-  return sanitizeCompSegments(next, takes.length, windowLengthPpq);
+  return sanitizeCompSegments(next, takeCount, windowLengthPpq);
+}
+
+function transformCompSegments(
+  source: EditorClip,
+  windowStartPpq: number,
+  windowLengthPpq: number,
+): ClipCompSegment[] | undefined {
+  const takes = source.takes;
+  if (takes === undefined || takes.length === 0) return undefined;
+  return transformTakeCompSegments(
+    source.compSegments,
+    takes.length,
+    0,
+    source.lengthPpq,
+    windowStartPpq,
+    windowLengthPpq,
+  );
 }
 
 function transformWarp(
@@ -190,8 +292,9 @@ function transformWarp(
 
 /**
  * Copies app-level metadata that the wasm Project does not derive itself onto
- * a duplicated, split, or trimmed clip mirror. MIDI lane points are transformed
- * from the source clip's window into the derived clip's window.
+ * a duplicated, split, or trimmed clip mirror. MIDI lane points and cycle-take
+ * comp ranges are transformed from the source clip's window into the derived
+ * clip's window; cycle-take notes stay source-relative and are clipped to it.
  */
 export function withDerivedClipMetadata(
   target: EditorClip,
@@ -213,6 +316,39 @@ export function withDerivedClipMetadata(
   } else {
     delete next.takes;
     delete next.compSegments;
+  }
+  if (source.midiTakes !== undefined && source.midiTakes.length > 0) {
+    const sourceWindowStartPpq = source.sourceOffsetPpq + windowStartPpq;
+    const sourceWindowEndPpq = sourceWindowStartPpq + windowLengthPpq;
+    next.midiTakes = source.midiTakes.map((take) =>
+      transformMidiTake(
+        take,
+        sourceWindowStartPpq,
+        sourceWindowEndPpq,
+        windowStartPpq,
+        windowLengthPpq,
+      ),
+    );
+    const activeTakeIndex = clampedTakeIndex(source.midiActiveTakeIndex, source.midiTakes.length);
+    next.midiActiveTakeIndex = activeTakeIndex;
+    if (source.midiCompSegments !== undefined && source.midiCompSegments.length > 0) {
+      const midiCompSegments = transformTakeCompSegments(
+        source.midiCompSegments,
+        source.midiTakes.length,
+        activeTakeIndex,
+        source.lengthPpq,
+        windowStartPpq,
+        windowLengthPpq,
+      );
+      if (midiCompSegments.length > 0) next.midiCompSegments = midiCompSegments;
+      else delete next.midiCompSegments;
+    } else {
+      delete next.midiCompSegments;
+    }
+  } else {
+    delete next.midiTakes;
+    delete next.midiActiveTakeIndex;
+    delete next.midiCompSegments;
   }
   const warp = transformWarp(source, target, windowStartPpq, windowLengthPpq);
   if (warp !== undefined) next.warp = warp;

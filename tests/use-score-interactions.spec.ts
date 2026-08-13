@@ -39,6 +39,16 @@ function clickEvent(target: EventTarget): MouseEvent {
   return event;
 }
 
+function doubleClickEvent(target: EventTarget, clientX: number): MouseEvent {
+  const event = new MouseEvent('dblclick', {
+    bubbles: true,
+    cancelable: true,
+    clientX,
+  });
+  Object.defineProperty(event, 'target', { value: target });
+  return event;
+}
+
 function interactions(overrides: Partial<Parameters<typeof useScoreInteractions>[0]> = {}) {
   return useScoreInteractions({
     store: {
@@ -173,5 +183,104 @@ describe('useScoreInteractions', () => {
     expect(onAnnotateClick).toHaveBeenCalledWith(expect.any(MouseEvent), [7]);
     expect(setSelection).toHaveBeenCalledWith([7]);
     expect(seek).toHaveBeenCalledWith(10);
+  });
+
+  it('converts a moved and trimmed double-click to active-clip source PPQ', () => {
+    const host = document.createElement('div');
+    host.innerHTML = '<svg><g class="note" id="note-1"><path/></g></svg>';
+    document.body.append(host);
+    const note = host.querySelector('g.note') as SVGGElement;
+    const path = host.querySelector('path') as SVGPathElement;
+    Object.defineProperty(note, 'getBoundingClientRect', {
+      value: () => ({ left: 100, width: 20 }),
+    });
+    const onInsertAt = vi.fn();
+    const score = interactions({
+      store: {
+        clipStartPpq: 12,
+        clipLengthPpq: 4,
+        activeClip: {
+          startPpq: 12,
+          lengthPpq: 4,
+          sourceOffsetPpq: 3,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          kind: 'midi',
+        },
+        notes: [],
+      } as never,
+      getTimemap: () => [{ qstamp: 1.5, on: ['note-1'] }],
+      onInsertAt,
+    });
+
+    score.onSvgDoubleClick(doubleClickEvent(path, 110));
+
+    expect(onInsertAt).toHaveBeenCalledWith(4.5);
+  });
+
+  it('folds a looped double-click to its first source window', () => {
+    const host = document.createElement('div');
+    host.innerHTML = '<svg><g class="note" id="note-1"><path/></g></svg>';
+    document.body.append(host);
+    const note = host.querySelector('g.note') as SVGGElement;
+    const path = host.querySelector('path') as SVGPathElement;
+    Object.defineProperty(note, 'getBoundingClientRect', {
+      value: () => ({ left: 100, width: 20 }),
+    });
+    const onInsertAt = vi.fn();
+    const score = interactions({
+      store: {
+        clipStartPpq: 8,
+        clipLengthPpq: 5,
+        activeClip: {
+          startPpq: 8,
+          lengthPpq: 5,
+          sourceOffsetPpq: 2,
+          loopEnabled: true,
+          loopLengthPpq: 2,
+          kind: 'midi',
+        },
+        notes: [],
+      } as never,
+      getTimemap: () => [{ qstamp: 2.25, on: ['note-1'] }],
+      onInsertAt,
+    });
+
+    score.onSvgDoubleClick(doubleClickEvent(path, 110));
+
+    expect(onInsertAt).toHaveBeenCalledWith(2.25);
+  });
+
+  it('rejects a double-click at or beyond the audible clip end', () => {
+    const host = document.createElement('div');
+    host.innerHTML = '<svg><g class="note" id="note-1"><path/></g></svg>';
+    document.body.append(host);
+    const note = host.querySelector('g.note') as SVGGElement;
+    const path = host.querySelector('path') as SVGPathElement;
+    Object.defineProperty(note, 'getBoundingClientRect', {
+      value: () => ({ left: 100, width: 20 }),
+    });
+    const onInsertAt = vi.fn();
+    const score = interactions({
+      store: {
+        clipStartPpq: 8,
+        clipLengthPpq: 5,
+        activeClip: {
+          startPpq: 8,
+          lengthPpq: 5,
+          sourceOffsetPpq: 2,
+          loopEnabled: true,
+          loopLengthPpq: 2,
+          kind: 'midi',
+        },
+        notes: [],
+      } as never,
+      getTimemap: () => [{ qstamp: 5, on: ['note-1'] }],
+      onInsertAt,
+    });
+
+    score.onSvgDoubleClick(doubleClickEvent(path, 110));
+
+    expect(onInsertAt).not.toHaveBeenCalled();
   });
 });

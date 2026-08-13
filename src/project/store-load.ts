@@ -124,7 +124,6 @@ export function applyDocumentClipMetadata(
               note.velocity <= 127 &&
               Number.isFinite(note.startPpq) &&
               note.startPpq >= 0 &&
-              note.startPpq < clip.lengthPpq &&
               Number.isFinite(note.durationPpq) &&
               note.durationPpq > 0 &&
               isValidChannel(note.channel) &&

@@ -14,8 +14,9 @@
 import { scoreSourceIdentitiesFromXmlId } from '@/notation/source-identity';
 import type { VerovioTimemapEntry } from '@/notation/verovio';
 import { setActiveClip, setSelection } from '@/project/commands';
-import { projectMidiNoteOccurrences } from '@/project/midi-projection';
+import { midiTimelinePpqToSource, projectMidiNoteOccurrences } from '@/project/midi-projection';
 import type { useProjectStore } from '@/project/store';
+import { clipKind } from '@/project/types';
 
 /** Selection matching tolerance on the quantized onset grid, in PPQ. */
 export const ONSET_MATCH_EPSILON_PPQ = 1e-3;
@@ -41,8 +42,8 @@ export interface ScoreInteractionsOptions {
   onAnnotateStaffDrag?: (ids: number[], staff: 1 | 2) => void;
   /** Normal-mode vertical drag writes a semitone delta back to source notes. */
   onNotePitchDrag?: (ids: number[], semitones: number[]) => void;
-  /** Double-click insertion target resolved from the nearest engraved onset. */
-  onInsertAt?: (ppq: number) => void;
+  /** Double-click insertion target in active-clip source coordinates. */
+  onInsertAt?: (sourcePpq: number) => void;
   /** True while the annotate tool is active. */
   isAnnotateEnabled: () => boolean;
 }
@@ -167,7 +168,12 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
         }
       }
     }
-    if (nearest !== undefined) options.onInsertAt?.(nearest.ppq);
+    if (nearest === undefined) return;
+    const clip = store.activeClip;
+    if (!clip || clipKind(clip) !== 'midi') return;
+    const sourcePpq = midiTimelinePpqToSource(clip, nearest.ppq);
+    if (sourcePpq === null) return;
+    options.onInsertAt?.(sourcePpq);
   }
 
   function onSvgPointerDown(event: PointerEvent): void {

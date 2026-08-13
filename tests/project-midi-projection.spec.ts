@@ -6,6 +6,7 @@ import {
   audibleMidiSourceNotes,
   audibleMidiSourcePoints,
   mergeAudibleMidiSourcePoints,
+  midiTimelinePpqToSource,
   projectMidiClipNoteOccurrences,
   projectMidiNoteOccurrences,
 } from '@/project/midi-projection';
@@ -119,5 +120,32 @@ describe('projectMidiNoteOccurrences', () => {
     expect(liveOnsets).toEqual(expectedTimelineOnsets);
     expect(scoreOnsets).toEqual(expectedTimelineOnsets);
     expect(ghostOnsets).toEqual(expectedTimelineOnsets);
+  });
+});
+
+describe('midiTimelinePpqToSource', () => {
+  it('inverts moved and trimmed clip coordinates', () => {
+    const moved = clip({
+      startPpq: 12,
+      lengthPpq: 4,
+      sourceOffsetPpq: 3,
+      loopEnabled: false,
+      loopLengthPpq: 0,
+    });
+
+    expect(midiTimelinePpqToSource(moved, 12)).toBe(3);
+    expect(midiTimelinePpqToSource(moved, 13.5)).toBe(4.5);
+    expect(midiTimelinePpqToSource(moved, 16)).toBeNull();
+    expect(midiTimelinePpqToSource(moved, 11.99)).toBeNull();
+  });
+
+  it('folds repeated timeline windows onto a trimmed source window', () => {
+    const looped = clip(); // source window [2, 4), repeated every two PPQ
+
+    expect(midiTimelinePpqToSource(looped, 8)).toBe(2);
+    expect(midiTimelinePpqToSource(looped, 9.25)).toBe(3.25);
+    expect(midiTimelinePpqToSource(looped, 10)).toBe(2);
+    expect(midiTimelinePpqToSource(looped, 12.99)).toBeCloseTo(2.99, 9);
+    expect(midiTimelinePpqToSource(looped, 13)).toBeNull();
   });
 });

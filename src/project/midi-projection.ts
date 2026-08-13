@@ -90,6 +90,53 @@ export function midiSourcePpqToTimeline(
   return clip.startPpq + sourcePpq - clip.sourceOffsetPpq;
 }
 
+/**
+ * Maps a project-timeline PPQ position back into the source-coordinate
+ * window of a MIDI clip.
+ *
+ * The returned value is suitable for editor commands, whose note starts are
+ * stored in source coordinates. A looped clip therefore folds every repeated
+ * timeline window back onto the first source window. Positions outside the
+ * audible clip window (including its right edge) return `null` instead of
+ * being clamped into a different source location.
+ */
+export function midiTimelinePpqToSource(
+  clip: Pick<
+    MidiProjectionClip,
+    'startPpq' | 'lengthPpq' | 'sourceOffsetPpq' | 'loopEnabled' | 'loopLengthPpq'
+  >,
+  timelinePpq: number,
+): number | null {
+  if (!Number.isFinite(timelinePpq)) return null;
+  const clipLength = Math.max(0, clip.lengthPpq);
+  if (!(clipLength > 0) || !Number.isFinite(clip.startPpq)) return null;
+  const clipEndPpq = clip.startPpq + clipLength;
+  if (timelinePpq < clip.startPpq || timelinePpq >= clipEndPpq) return null;
+
+  const sourceWindow = audibleMidiSourceWindow(clip);
+  if (
+    !(sourceWindow.lengthPpq > 0) ||
+    !Number.isFinite(sourceWindow.startPpq) ||
+    !Number.isFinite(sourceWindow.endPpq)
+  ) {
+    return null;
+  }
+  const clipRelativePpq = timelinePpq - clip.startPpq;
+  const sourceRelativePpq =
+    clip.loopEnabled === true && (clip.loopLengthPpq ?? 0) > 0
+      ? clipRelativePpq % sourceWindow.lengthPpq
+      : clipRelativePpq;
+  const sourcePpq = sourceWindow.startPpq + sourceRelativePpq;
+  if (
+    !Number.isFinite(sourcePpq) ||
+    sourcePpq < sourceWindow.startPpq ||
+    sourcePpq >= sourceWindow.endPpq
+  ) {
+    return null;
+  }
+  return sourcePpq;
+}
+
 /** Resolves the source window shared by playback, editors, and projection. */
 export function audibleMidiSourceWindow(
   clip: Pick<MidiProjectionClip, 'lengthPpq' | 'sourceOffsetPpq' | 'loopEnabled' | 'loopLengthPpq'>,
