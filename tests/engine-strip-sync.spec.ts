@@ -381,6 +381,62 @@ describe('createStripSync', () => {
     expect(engine.setStripEq).toHaveBeenCalledWith('master', 0, band);
   });
 
+  it('replays master DSP state after a lane-scene declaration replaces its retained scene', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const band: EqBand = { frequencyHz: 8000, gainDb: -1, enabled: true };
+    const master = makeStrip({
+      inserts: [{ processor: 'saturation.tape', params: { drive: 0.2 }, enabled: false }],
+      eq: { enabled: true, bands: [band] },
+    });
+    let masterScene = '';
+    const masterEq = new Map<number, EqBand>();
+    const masterBypassed = new Map<number, boolean>();
+    engine.setMasterStripJson.mockImplementation((scene: string) => {
+      // The realtime facade retains and replays the JSON scene when lanes are
+      // redeclared, but that scene does not carry the EQ/bypass side channels.
+      masterScene = scene;
+      masterEq.clear();
+      masterBypassed.clear();
+    });
+    engine.setStripEq.mockImplementation(
+      (target: number | 'master', index: number, next: EqBand) => {
+        if (target === 'master') masterEq.set(index, next);
+      },
+    );
+    engine.setStripInsertBypassed.mockImplementation(
+      (target: number | 'master', index: number, bypassed: boolean) => {
+        if (target === 'master') masterBypassed.set(index, bypassed);
+      },
+    );
+
+    sync.sync([makeTrack(1)], makeMixer({ master }), 1);
+    expect(masterEq.get(0)).toEqual(band);
+    expect(masterBypassed.get(0)).toBe(true);
+    expect(JSON.parse(masterScene).strips[0].inserts[0].params).toBe(
+      JSON.stringify({ drive: 0.2 }),
+    );
+
+    // Simulate a new lane declaration in the facade. It replaces the master
+    // strip from its retained scene, so the dedicated side-channel state is
+    // now empty until StripSync sees the next scene generation.
+    engine.setMasterStripJson(masterScene);
+    expect(masterEq).toEqual(new Map());
+    expect(masterBypassed).toEqual(new Map());
+    clearCalls(engine);
+
+    sync.sync([makeTrack(1), makeTrack(2)], makeMixer({ master }), 2);
+
+    expect(engine.setMasterStripJson).toHaveBeenCalledWith(stripSceneJson('master', master));
+    expect(engine.setStripEq).toHaveBeenCalledWith('master', 0, band);
+    expect(engine.setStripInsertBypassed).toHaveBeenCalledWith('master', 0, true);
+    expect(masterEq.get(0)).toEqual(band);
+    expect(masterBypassed.get(0)).toBe(true);
+    expect(JSON.parse(masterScene).strips[0].inserts[0].params).toBe(
+      JSON.stringify({ drive: 0.2 }),
+    );
+  });
+
   it('patches master insert numeric params without replacing the master strip', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);

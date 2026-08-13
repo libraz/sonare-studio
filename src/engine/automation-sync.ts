@@ -43,6 +43,8 @@ export interface AutomationSyncOptions {
   groupBusIdFor?: (trackId: number) => number | undefined;
   /** Increments whenever logical bus ids are reassigned to engine bus numbers. */
   busMappingGeneration?: () => number;
+  /** Increments whenever a strip scene can have cleared installed automation. */
+  sceneGeneration?: () => number;
   /** Engine insert index for a store bus insert slot, after disabled slots are omitted. */
   busInsertIndexFor?: (storeBusId: string, storeInsertIndex: number) => number | undefined;
   /** Engine insert index for a group-track insert slot, after disabled slots are omitted. */
@@ -96,9 +98,23 @@ export function createAutomationSync(
 ): AutomationSync {
   const installed = new Map<number, InstalledLane>();
   let lastBusMappingGeneration = options.busMappingGeneration?.() ?? 0;
+  let lastSceneGeneration = options.sceneGeneration?.() ?? 0;
 
   const sync = (lanes: ReadonlyArray<AutomationLaneState>): void => {
     const busMappingGeneration = options.busMappingGeneration?.() ?? 0;
+    const sceneGeneration = options.sceneGeneration?.() ?? 0;
+    if (sceneGeneration !== lastSceneGeneration) {
+      // A retained strip scene can be replayed by a structural mixer command.
+      // Its automation side channels are cleared with it, so forget and
+      // explicitly replace every previously installed lane before publishing
+      // the current set below.
+      for (const [paramId, lane] of installed) {
+        handle.engine.setAutomationLane(paramId, []);
+        options.restoreParam(lane.target, lane.param);
+      }
+      installed.clear();
+      lastSceneGeneration = sceneGeneration;
+    }
     if (busMappingGeneration !== lastBusMappingGeneration) {
       // Bus numbers are positional. Clear old mappings before installing any
       // lane at a reassigned number, then restore each logical target's base

@@ -16,6 +16,7 @@ import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync, groupBusGainDb } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
 import { createWebMidiOutput } from '@/engine/web-midi-output';
+import { SILENCE_DB } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import {
   busIdFromAutomationTarget,
@@ -34,10 +35,10 @@ import {
 } from '@/project/insert-latency';
 import {
   clampPan,
-  effectiveMixerBusGainDb,
   effectiveTrackMute,
   laneGainDb,
   type MixerStrip,
+  returnSoloRouting,
   vcaOffsetDb,
 } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
@@ -317,6 +318,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
           groupBusIdFor: (trackId) => nextStripSync.groupBusIdFor(trackId),
           busMappingGeneration: () => nextStripSync.busMappingGeneration(),
+          sceneGeneration: () => nextStripSync.sceneGeneration(),
           busInsertIndexFor: (storeBusId, index) =>
             nextStripSync.busInsertIndexFor(storeBusId, index),
           groupInsertIndexFor: (trackId, index) =>
@@ -341,11 +343,15 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             return effectiveTrackMute(track.mute, track.vcaId, vcaControls);
           },
           suppressParam: (target, param) => {
+            const returnSolo = returnSoloRouting(store.mixer.buses);
             if (isBusAutomationTarget(target)) {
+              if (param !== 'faderDb') return false;
+              const bus = store.mixer.buses.find(
+                (entry) => entry.id === busIdFromAutomationTarget(target),
+              );
               return (
-                param === 'faderDb' &&
-                store.mixer.buses.find((bus) => bus.id === busIdFromAutomationTarget(target))
-                  ?.mute === true
+                bus?.mute === true ||
+                (bus !== undefined && returnSolo.active && !returnSolo.isSoloed(bus.id))
               );
             }
             if (typeof target !== 'number' || (param !== 'faderDb' && param !== 'pan'))
@@ -354,9 +360,13 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               (store.mixer.vcaGroups ?? []).map((group) => [group.id, group]),
             );
             const trackIndex = store.tracks.findIndex((track) => track.id === target);
+            const track = trackIndex >= 0 ? store.tracks[trackIndex] : undefined;
+            if (param === 'faderDb' && track?.kind === 'group') {
+              return returnSolo.active || effectiveTrackMute(track.mute, track.vcaId, vcaControls);
+            }
             return (
               trackIndex >= 0 &&
-              store.tracks[trackIndex]?.kind !== 'group' &&
+              track?.kind !== 'group' &&
               pflAuditionStates(store.tracks, vcaControls, store.mixer.soloMode)[trackIndex] ===
                 true
             );
@@ -465,7 +475,10 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               const busId = nextStripSync.busIdFor(storeBusId);
               const bus = store.mixer.buses.find((entry) => entry.id === storeBusId);
               if (busId !== undefined && bus) {
-                stagedHandle.engine.setBusGain(busId, effectiveMixerBusGainDb(bus));
+                stagedHandle.engine.setBusGain(
+                  busId,
+                  returnSoloRouting(store.mixer.buses).busGainDb(bus),
+                );
               }
               return;
             }
@@ -502,13 +515,16 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                 ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
                 : undefined;
               const vcaControls = new Map(vcaGroups.map((group) => [group.id, group]));
+              const returnSolo = returnSoloRouting(store.mixer.buses);
               stagedHandle.engine.setBusGain(
                 groupBusId,
-                groupBusGainDb(
-                  track,
-                  vcaOffsetDb(track.vcaId, vcaGainDb),
-                  effectiveTrackMute(track.mute, track.vcaId, vcaControls),
-                ),
+                returnSolo.active
+                  ? SILENCE_DB
+                  : groupBusGainDb(
+                      track,
+                      vcaOffsetDb(track.vcaId, vcaGainDb),
+                      effectiveTrackMute(track.mute, track.vcaId, vcaControls),
+                    ),
               );
               return;
             }

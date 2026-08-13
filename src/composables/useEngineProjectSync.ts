@@ -267,7 +267,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.mixer.soloMode,
         store.mixer.buses,
       );
-      stripSync.sync(store.tracks, store.mixer);
+      stripSync.sync(store.tracks, store.mixer, mixerSync.sceneGeneration?.());
     } catch (err) {
       errorMessage.value = describeError(err);
       if (syncOptions.throwOnError) throw err;

@@ -74,6 +74,10 @@ describe('createMixerSync', () => {
     expect(engine.setTrackLanes).toHaveBeenCalledTimes(1);
     expect(engine.setTrackLanes).toHaveBeenCalledWith([1, 2]);
     expect(sync.laneTrackIds()).toEqual([1, 2]);
+    expect(sync.sceneGeneration?.()).toBe(1);
+
+    sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
+    expect(sync.sceneGeneration?.()).toBe(1);
   });
 
   it('keeps existing lanes in place and appends new tracks', () => {

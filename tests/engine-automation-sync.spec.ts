@@ -58,6 +58,31 @@ function makeLane(
 }
 
 describe('createAutomationSync', () => {
+  it('reinstalls lanes after a structural strip-scene generation changes', () => {
+    const { handle, engine } = makeHandle();
+    const restoreParam = vi.fn();
+    let generation = 0;
+    const lane = makeLane('master', [{ ppq: 0, value: -9 }]);
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [],
+      sceneGeneration: () => generation,
+      restoreParam,
+    });
+
+    sync.sync([lane]);
+    engine.setAutomationLane.mockClear();
+    restoreParam.mockClear();
+
+    generation += 1;
+    sync.sync([lane]);
+
+    expect(engine.setAutomationLane.mock.calls).toEqual([
+      [1000, []],
+      [1000, [{ ppq: 0, value: -9, curveToNext: 0 }]],
+    ]);
+    expect(restoreParam).toHaveBeenCalledWith('master', 'faderDb');
+  });
+
   it('installs a bus fader lane through the bus automation parameter id', () => {
     const { handle, engine } = makeHandle();
     const sync = createAutomationSync(handle, {

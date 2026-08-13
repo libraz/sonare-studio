@@ -79,6 +79,7 @@ describe('useEngineProjectSync', () => {
     const mixerSync: MixerSync = {
       sync: vi.fn(() => calls.push('mixer')),
       laneTrackIds: () => [1],
+      sceneGeneration: () => 7,
     };
     const stripSync = { sync: vi.fn(() => calls.push('strip')) } as unknown as StripSync;
     const midiSync: MidiSync = {
@@ -112,6 +113,7 @@ describe('useEngineProjectSync', () => {
     await projectSync.syncMidiState();
 
     expect(calls).toEqual(['mixer', 'strip', 'midi']);
+    expect(stripSync.sync).toHaveBeenCalledWith(store.tracks, store.mixer, 7);
     scope.stop();
   });
 

@@ -259,14 +259,24 @@ type BusEqEngine = {
 
 /** Mirrors store strip/bus/send state onto a running engine. */
 export interface StripSync {
-  /** Diffs the given state against what was last sent and emits only the changed engine calls. */
-  sync(tracks: ReadonlyArray<EditorTrack>, mixer: ProjectMixerState): void;
+  /**
+   * Diffs the given state against what was last sent and emits only the changed engine calls.
+   * `sceneGeneration` must advance after another mixer facade call can replay
+   * retained strip JSON and thereby clear its non-scene EQ/bypass state.
+   */
+  sync(
+    tracks: ReadonlyArray<EditorTrack>,
+    mixer: ProjectMixerState,
+    sceneGeneration?: number,
+  ): void;
   /** Engine bus id assigned to a store bus id (undefined when never seen). */
   busIdFor(storeBusId: string): number | undefined;
   /** Engine bus id assigned to a group track id (undefined when never seen). */
   groupBusIdFor(trackId: number): number | undefined;
   /** Monotonic generation of logical-to-engine bus number assignments. */
   busMappingGeneration(): number;
+  /** Monotonic generation of structural scene sends that can clear automation. */
+  sceneGeneration(): number;
   /** ABI-correct engine insert index for a return-bus strip slot. */
   busInsertIndexFor(storeBusId: string, storeInsertIndex: number): number | undefined;
   /** ABI-correct engine insert index for a group-track strip slot. */
@@ -302,6 +312,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   const lastBusStrip = new Map<number, StripMemory>();
   const lastSidechains = new Map<string, { trackId: number; index: number; source: number }>();
   let masterStripMemory: StripMemory | undefined;
+  let lastSceneGeneration: number | undefined;
+  let stripSceneGeneration = 0;
   let busStripsByStoreId = new Map<string, MixerStrip | undefined>();
   let groupStripsByTrackId = new Map<number, MixerStrip | undefined>();
 
@@ -315,6 +327,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     memory: StripMemory | undefined,
     sendStripJson: (sceneJson: string) => void,
     sendInsertParam: (insertIndex: number, paramName: string, value: number) => void,
+    forceScene = false,
   ): StripMemory | undefined => {
     const inserts = strip?.inserts ?? [];
     const insertParams = insertNumericParams(inserts);
@@ -338,7 +351,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       return undefined;
     }
 
-    if (!memory || memory.structureKey !== structureKey) {
+    if (forceScene || !memory || memory.structureKey !== structureKey) {
       // Full re-send: the engine replaces the whole strip, resetting its EQ
       // bands and bypass flags, so both are replayed after the JSON.
       sendStripJson(stripSceneJson(target, strip, insertCatalog));
@@ -378,6 +391,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     strip: MixerStrip | undefined,
     memory: StripMemory | undefined,
     forceScene = false,
+    onSceneSend?: () => void,
   ): StripMemory | undefined => {
     const supportsBypass = typeof busInsertBypass === 'function';
     const supportsBusEq = typeof busEq === 'function';
@@ -394,6 +408,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     }
 
     if (forceScene || !memory || memory.structureKey !== structureKey) {
+      onSceneSend?.();
       handle.engine.setBusStripJson(
         busId,
         busSceneJson(busId, sceneStrip, insertCatalog, { includeEq: supportsBusEq }),
@@ -443,7 +458,17 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   // 3. declare/re-declare the bus set, or adjust changed gains in place,
   // 4. send the final per-track send lists,
   // 5. sync the track strips, then the master strip.
-  const sync = (tracks: ReadonlyArray<EditorTrack>, mixer: ProjectMixerState): void => {
+  const sync = (
+    tracks: ReadonlyArray<EditorTrack>,
+    mixer: ProjectMixerState,
+    sceneGeneration?: number,
+  ): void => {
+    // The facade retains strip JSON and can replay it as part of a structural
+    // mixer command (notably setTrackLanes). That replacement clears master
+    // EQ, bypass and by-name parameters, which live outside that JSON.
+    let replayMasterState =
+      sceneGeneration !== undefined && lastSceneGeneration !== sceneGeneration;
+    lastSceneGeneration = sceneGeneration;
     // Group tracks consume engine buses next to the user send buses.
     const groupTracks = tracks.filter((track) => track.kind === 'group');
     const vcaGainDb = new Map((mixer.vcaGroups ?? []).map((group) => [group.id, group.gainDb]));
@@ -528,7 +553,10 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const presentTrackIds = new Set(tracks.map((track) => track.id));
     for (const trackId of [...lastSendsByTrack.keys()]) {
       if (presentTrackIds.has(trackId)) continue;
-      if (lastSendsByTrack.get(trackId) !== '[]') handle.engine.setSends(trackId, []);
+      if (lastSendsByTrack.get(trackId) !== '[]') {
+        handle.engine.setSends(trackId, []);
+        replayMasterState = true;
+      }
       lastSendsByTrack.delete(trackId);
     }
     for (const trackId of [...trackStripMemory.keys()]) {
@@ -546,6 +574,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       if (lastSends.some((send) => !newBusIdSet.has(send.busId))) {
         const pruned = lastSends.filter((send) => newBusIdSet.has(send.busId));
         handle.engine.setSends(track.id, pruned);
+        replayMasterState = true;
         lastSendsByTrack.set(track.id, JSON.stringify(pruned));
       }
     }
@@ -556,6 +585,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       newBusIds.some((busId, i) => busId !== lastBusList[i])
     ) {
       handle.engine.setTrackBuses(busGainEntries.map((entry) => ({ ...entry })));
+      replayMasterState = true;
       lastBusList = newBusIds;
       lastBusGain.clear();
       for (const entry of busGainEntries) {
@@ -593,6 +623,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       }
       if ((lastOutputBus.get(track.id) ?? 0) !== outputBus) {
         handle.engine.setTrackOutputBus(track.id, outputBus);
+        replayMasterState = true;
         lastOutputBus.set(track.id, outputBus);
       }
     }
@@ -613,6 +644,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       const json = JSON.stringify(desired);
       if ((lastSendsByTrack.get(track.id) ?? '[]') !== json) {
         handle.engine.setSends(track.id, desired);
+        replayMasterState = true;
         lastSendsByTrack.set(track.id, json);
       }
     }
@@ -622,14 +654,30 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     for (const bus of mixer.buses) {
       const busId = busNumberByStoreId.get(bus.id) as number;
       if (!bus.strip && !lastBusStrip.has(busId) && !reapplyBusScenes) continue;
-      const memory = syncBusStrip(busId, bus.strip, lastBusStrip.get(busId), reapplyBusScenes);
+      const memory = syncBusStrip(
+        busId,
+        bus.strip,
+        lastBusStrip.get(busId),
+        reapplyBusScenes,
+        () => {
+          replayMasterState = true;
+        },
+      );
       if (memory) lastBusStrip.set(busId, memory);
     }
 
     for (const track of tracks) {
       if (track.kind === 'group') {
         const busId = groupBusByTrackId.get(track.id) as number;
-        const memory = syncBusStrip(busId, track.mixer, lastBusStrip.get(busId), reapplyBusScenes);
+        const memory = syncBusStrip(
+          busId,
+          track.mixer,
+          lastBusStrip.get(busId),
+          reapplyBusScenes,
+          () => {
+            replayMasterState = true;
+          },
+        );
         if (memory) lastBusStrip.set(busId, memory);
         continue;
       }
@@ -641,6 +689,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         stripState,
         trackStripMemory.get(track.id),
         (json) => {
+          replayMasterState = true;
           handle.engine.setTrackStripJson(track.id, json);
         },
         (insertIndex, paramName, value) =>
@@ -653,10 +702,12 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       liveMasterStrip(mixer.master, mixer.masteringChain, insertCatalog),
       masterStripMemory,
       (json) => {
+        replayMasterState = true;
         handle.engine.setMasterStripJson(json);
       },
       (insertIndex, paramName, value) =>
         handle.engine.setMasterStripInsertParamByName(insertIndex, paramName, value),
+      replayMasterState,
     );
 
     // Insert sidechain keys, replayed after the strips exist. Bindings are
@@ -683,6 +734,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       handle.engine.setLaneSidechain(binding.trackId, binding.index, binding.source);
       lastSidechains.set(key, binding);
     }
+    if (replayMasterState) stripSceneGeneration += 1;
   };
 
   return {
@@ -690,6 +742,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     busIdFor: (storeBusId) => busNumberByStoreId.get(storeBusId),
     groupBusIdFor: (trackId) => busNumberByStoreId.get(`group:${trackId}`),
     busMappingGeneration: () => busMappingGeneration,
+    sceneGeneration: () => stripSceneGeneration,
     busInsertIndexFor: (storeBusId, storeInsertIndex) =>
       engineBusInsertAutomationIndex(
         busStripsByStoreId.get(storeBusId),

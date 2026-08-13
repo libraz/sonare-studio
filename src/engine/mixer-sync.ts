@@ -74,6 +74,11 @@ export interface MixerSync {
   ): void;
   /** Current lane order (lane index -> project track id). */
   laneTrackIds(): readonly number[];
+  /**
+   * Monotonic generation of lane-scene declarations. A consumer that caches
+   * state outside the lane scene must replay it when this changes.
+   */
+  sceneGeneration?(): number;
 }
 
 /** Options for {@link createMixerSync}. */
@@ -120,6 +125,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
   const laneIds: number[] = [];
   const laneStates = new Map<number, LaneState>();
   let masterState: { gainDb: number; pan: number } | undefined;
+  let sceneGeneration = 0;
   const resolveInsertLatency = options.insertLatency ?? zeroInsertLatency;
 
   const sync = (
@@ -141,6 +147,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     ) {
       laneIds.splice(0, laneIds.length, ...nextLaneIds);
       handle.engine.setTrackLanes([...laneIds]);
+      sceneGeneration += 1;
       // A new lane declaration replaces the engine's lane state, so all live
       // values must be replayed even when the track mirror itself is unchanged.
       laneStates.clear();
@@ -215,5 +222,5 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     masterState = masterNext;
   };
 
-  return { sync, laneTrackIds: () => laneIds };
+  return { sync, laneTrackIds: () => laneIds, sceneGeneration: () => sceneGeneration };
 }
