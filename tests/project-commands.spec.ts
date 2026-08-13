@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { busAutomationTarget } from '@/project/automation';
-import { executeApp } from '@/project/command/history';
+import { executeApp, executeAtomic } from '@/project/command/history';
 import {
   addAudioClip,
   addGroupTrack,
@@ -78,6 +78,7 @@ import {
   setClipPolyPressureForPitches,
   setClipSelection,
   setMarker,
+  setNoteAnnotation,
   setProjectChords,
   setProjectExternalMidiDefault,
   setProjectExternalMidiDefaultForTracks,
@@ -105,7 +106,7 @@ import {
   undo,
 } from '@/project/commands';
 import { sanitizeMidiFxConfig } from '@/project/midi-fx';
-import { getProject, useProjectStore } from '@/project/store';
+import { getProject, PROJECT_MAX_UNDO_DEPTH, useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -153,13 +154,21 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
     it('removeTrack drops the track and its clips; undo restores app metadata and note ids', () => {
       const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
       const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      setNoteAnnotation(firstClipId, noteId, { dynamics: 'f' });
+      const secondClipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 });
+      setActiveClip(secondClipId);
+      const secondNoteId = addNote({ pitch: 64, startPpq: 0, durationPpq: 1 });
+      setNoteAnnotation(secondClipId, secondNoteId, { articulation: 'staccato' });
+      setActiveClip(firstClipId);
       setTrackColor(trackId, '#abcdef');
       setTrackMute(trackId, true);
 
       removeTrack(trackId);
       expect(store.tracks).toHaveLength(0);
       expect(store.clips).toHaveLength(0);
+      expect(store.scoreAnnotations).toEqual({});
       expect(store.clipId).toBe(-1);
       expect(store.activeTrackId).toBe(-1);
       expect(store.notes).toEqual([]);
@@ -168,6 +177,10 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       const restored = store.tracks.find((t) => t.id === trackId);
       expect(restored).toMatchObject({ color: '#abcdef', mute: true });
       expect(store.notes.map((n) => n.id)).toEqual([noteId]);
+      expect(store.scoreAnnotations[firstClipId]?.[noteId]).toEqual({ dynamics: 'f' });
+      expect(store.scoreAnnotations[secondClipId]?.[secondNoteId]).toEqual({
+        articulation: 'staccato',
+      });
     });
 
     it('removing the active track makes the first remaining track and clip active', () => {
@@ -1805,6 +1818,25 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(canUndo()).toBe(false);
     });
 
+    it('prunes deleted clips before additive selection can reuse the live ids', () => {
+      const trackId = store.tracks[0].id;
+      const firstClipId = store.clipId;
+      const deletedClipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 4 });
+      const addedClipId = addMidiClip({ trackId, startPpq: 16, lengthPpq: 4 });
+      setClipSelection([firstClipId, deletedClipId], deletedClipId);
+
+      deleteClip(deletedClipId);
+
+      expect(store.clipSelection).toEqual(new Set([firstClipId]));
+      expect(
+        [...store.clipSelection].every((id) => store.clips.some((clip) => clip.id === id)),
+      ).toBe(true);
+      expect(() =>
+        setClipSelection([...store.clipSelection, addedClipId], addedClipId),
+      ).not.toThrow();
+      expect(store.clipSelection).toEqual(new Set([firstClipId, addedClipId]));
+    });
+
     it('setActiveClip retargets the note mirror without touching the history', () => {
       const trackId = store.tracks[0].id;
       const firstClipId = store.clipId;
@@ -1863,6 +1895,35 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
   });
 
   describe('marker and section commands', () => {
+    it('removes clip score annotations on direct and ripple deletion, and undo restores them', () => {
+      const trackId = store.tracks[0].id;
+      const directClipId = store.clipId;
+      const directNoteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+      setNoteAnnotation(directClipId, directNoteId, { dynamics: 'f' });
+      setClipSelection([directClipId], directClipId);
+      clearHistory();
+
+      deleteClip(directClipId);
+      expect(store.scoreAnnotations).toEqual({});
+      expect(undo()).toBe(true);
+      expect(store.scoreAnnotations[directClipId]?.[directNoteId]).toEqual({ dynamics: 'f' });
+
+      const rippleClipId = addMidiClip({ trackId, startPpq: 8, lengthPpq: 2 });
+      setActiveClip(rippleClipId);
+      const rippleNoteId = addNote({ pitch: 64, startPpq: 0, durationPpq: 1 });
+      setNoteAnnotation(rippleClipId, rippleNoteId, { articulation: 'staccato' });
+      clearHistory();
+
+      deleteTime(8, 10);
+      expect(store.clips.some((clip) => clip.id === rippleClipId)).toBe(false);
+      expect(store.scoreAnnotations[rippleClipId]).toBeUndefined();
+      expect(undo()).toBe(true);
+      expect(store.clips.some((clip) => clip.id === rippleClipId)).toBe(true);
+      expect(store.scoreAnnotations[rippleClipId]?.[rippleNoteId]).toEqual({
+        articulation: 'staccato',
+      });
+    });
+
     it('setMarker creates, updates and sorts markers; removeMarker deletes; both undoable', () => {
       const a = setMarker(null, 8, 'Chorus');
       const b = setMarker(0, 0, 'Intro');
@@ -2204,6 +2265,7 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
     it('duplicateTime copies a section window and all timeline metadata in one undo step', () => {
       const sourceId = store.clipId;
       const trackId = store.tracks[0].id;
+      const sourceNoteId = addNote({ pitch: 60, startPpq: 5, durationPpq: 1 });
       const followingId = addMidiClip({ trackId, startPpq: 16, lengthPpq: 4 });
       setMarker(null, 4, 'Hit');
       setSections([
@@ -2232,6 +2294,21 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
         (clip) => clip.id !== sourceId && clip.startPpq === 8 && clip.lengthPpq === 4,
       );
       expect(copy).toBeDefined();
+      expect(store.selection).toEqual(new Set());
+      expect(store.clipSelection).toEqual(new Set([copy?.id]));
+      const copiedNoteId = copy?.notes[0]?.id;
+      expect(copiedNoteId).toBeDefined();
+      setSelection([copiedNoteId as number]);
+      transposeSelection(12);
+      expect(store.clips.find((clip) => clip.id === sourceId)?.notes).toEqual([
+        expect.objectContaining({ id: sourceNoteId, pitch: 60, startPpq: 5 }),
+      ]);
+      expect(store.clips.find((clip) => clip.id === copy?.id)?.notes).toEqual([
+        expect.objectContaining({ id: copiedNoteId, pitch: 72 }),
+      ]);
+      // The follow-up note edit is its own command; undo it before checking
+      // that duplicateTime itself remains one atomic undo step.
+      expect(undo()).toBe(true);
       expect(store.clips.find((clip) => clip.id === followingId)).toMatchObject({ startPpq: 20 });
       expect(store.markers.map((marker) => marker.ppq)).toEqual([4, 8]);
       expect(store.sections.map((section) => [section.startPpq, section.endPpq])).toEqual([
@@ -2349,6 +2426,62 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
   });
 
   describe('mixed undo across project-backed and app-only commands', () => {
+    it('bounds native project edits across deep local history', () => {
+      clearHistory();
+      const editsPerCommand = 6;
+      const commandCount = 100;
+      const firstRetainedCommand = Math.ceil(
+        (commandCount * editsPerCommand - PROJECT_MAX_UNDO_DEPTH) / editsPerCommand,
+      );
+      for (let index = 0; index < commandCount; index++) {
+        executeAtomic((edit) => {
+          for (let step = 0; step < editsPerCommand; step++) {
+            edit(1, () =>
+              getProject().setTempoSegments([
+                { startPpq: 0, bpm: 100 + index * editsPerCommand + step },
+              ]),
+            );
+          }
+          store.refresh();
+        });
+      }
+
+      const stats = historyBudgetStats();
+      expect(stats.projectEdits).toBeLessThanOrEqual(PROJECT_MAX_UNDO_DEPTH);
+      expect(stats.projectEditBudget).toBe(PROJECT_MAX_UNDO_DEPTH);
+      expect(stats.undoEntries).toBe(commandCount - firstRetainedCommand);
+
+      let undoCount = 0;
+      while (undo()) undoCount += 1;
+      expect(undoCount).toBe(stats.undoEntries);
+      expect(store.tempoSegments).toEqual([
+        { startPpq: 0, bpm: 100 + firstRetainedCommand * editsPerCommand - 1 },
+      ]);
+      expect(canUndo()).toBe(false);
+      expect(getProject().toJson()).toContain(
+        `"bpm":${100 + firstRetainedCommand * editsPerCommand - 1}`,
+      );
+    });
+
+    it('rolls back all completed native edits when an atomic command exceeds the depth', () => {
+      clearHistory();
+      const project = getProject();
+      const nativeBefore = project.toJson();
+      expect(() =>
+        executeAtomic((edit) => {
+          for (let index = 0; index < PROJECT_MAX_UNDO_DEPTH; index++) {
+            edit(1, () => project.setTempoSegments([{ startPpq: 0, bpm: 100 + (index % 100) }]));
+          }
+          // This edit is rejected before its mutation, so the 512 completed
+          // edits above must all be undone as one atomic rollback.
+          edit(1, () => project.setTimeSignatures([{ startPpq: 0, numerator: 3, denominator: 4 }]));
+        }),
+      ).toThrow(/exceeds native undo depth/);
+      expect(project.toJson()).toBe(nativeBefore);
+      expect(historyBudgetStats()).toMatchObject({ projectEdits: 0, undoEntries: 0 });
+      expect(store.tempoSegments).toEqual([{ startPpq: 0, bpm: 120 }]);
+    });
+
     it('subtracts redo bytes when a non-commit gesture makes redo stale', () => {
       const track = store.tracks[0];
       executeApp(() => {
@@ -2407,6 +2540,21 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(bounded.undoEntries).toBeLessThan(10);
       clearHistory();
     }, 15_000);
+
+    it('keeps the latest edit undoable when its snapshot alone exceeds the byte budget', () => {
+      configureHistoryByteBudget(0);
+      const trackId = store.tracks[0].id;
+      const originalColor = store.tracks[0].color;
+
+      setTrackColor(trackId, '#112233');
+
+      const stats = historyBudgetStats();
+      expect(stats).toMatchObject({ undoEntries: 1, budgetBytes: 0 });
+      expect(stats.bytes).toBeGreaterThan(0);
+      expect(canUndo()).toBe(true);
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].color).toBe(originalColor);
+    });
 
     it('replays each command kind in reverse order', () => {
       const trackId = store.tracks[0].id;

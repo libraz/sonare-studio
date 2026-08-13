@@ -129,9 +129,8 @@ function isDocumentSection(
 
 /**
  * Mirrors libsonare's bounded Project history rather than relying on its
- * engine default. The command layer retains at most 100 user operations, some
- * of which expand into multiple Project edits, so this leaves ample headroom
- * while keeping native undo memory bounded.
+ * engine default. The command layer accounts for every native edit represented
+ * by local history and evicts whole entries before this limit is exceeded.
  */
 export const PROJECT_MAX_UNDO_DEPTH = 512;
 
@@ -482,6 +481,8 @@ export const useProjectStore = defineStore('project', () => {
       allocateNoteId,
     );
     clips.value = nextClips;
+    const liveClipIds = new Set(nextClips.map((clip) => clip.id));
+    clipSelection.value = new Set([...clipSelection.value].filter((id) => liveClipIds.has(id)));
 
     // Active track/clip fixup: a live active clip pins the active track;
     // otherwise fall back to the first clip of the active (or first) track.
@@ -579,6 +580,10 @@ export const useProjectStore = defineStore('project', () => {
     scoreDisplaySettings.value = createDefaultScoreDisplaySettings();
     initialized.value = true;
     refresh();
+    // Initialization edits establish the document baseline, not user
+    // commands. Keep them out of the native undo window so the command-layer
+    // projectEdits budget has the same origin as the local history.
+    created.clearHistory();
     documentGeneration.value += 1;
   }
 
@@ -1091,6 +1096,9 @@ export const useProjectStore = defineStore('project', () => {
       }));
       initialized.value = true;
       refresh();
+      // Loading establishes a new document baseline; the replay edits used to
+      // hydrate the native Project must not consume user undo depth.
+      created.clearHistory();
       // Clip names, kinds and asset references are app metadata: apply them
       // after refresh built the clip mirror from the Project.
       clips.value = applyDocumentClipMetadata(clips.value, clipMeta);

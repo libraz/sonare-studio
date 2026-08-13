@@ -4,7 +4,7 @@ import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import { cloneInstrument, type ExternalMidiInstrument } from '../instrument';
 import { cloneCcLanes } from '../midi-cc';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
-import { getProject, setHistoryResetHook, useProjectStore } from '../store';
+import { getProject, PROJECT_MAX_UNDO_DEPTH, setHistoryResetHook, useProjectStore } from '../store';
 import type {
   EditorClip,
   EditorMarker,
@@ -26,6 +26,8 @@ export const DEFAULT_HISTORY_BYTE_BUDGET = 64 * 1024 * 1024;
 
 let historyByteBudget = DEFAULT_HISTORY_BYTE_BUDGET;
 let historyBytes = 0;
+/** Sum of native Project history entries represented by local history. */
+let historyProjectEdits = 0;
 
 /**
  * Snapshot of the reactive mirror taken around every command.
@@ -533,23 +535,47 @@ export function collectHistoryReferencedMediaIds(): HistoryReferencedMediaIds {
 
 /** Pushes a finished history entry, trimming overflow and dropping redo. */
 function clearRedoStack(): void {
-  for (const redo of redoStack) historyBytes -= redo.byteSize;
+  for (const redo of redoStack) {
+    historyBytes -= redo.byteSize;
+    historyProjectEdits -= redo.projectEdits;
+  }
   redoStack.length = 0;
   historyBytes = Math.max(0, historyBytes);
+  historyProjectEdits = Math.max(0, historyProjectEdits);
 }
 
 function pushHistory(entry: HistoryEntry): void {
+  validateProjectEditCount(entry.projectEdits);
   clearRedoStack();
   undoStack.push(entry);
   historyBytes += entry.byteSize;
+  historyProjectEdits += entry.projectEdits;
   lastSnapshot = entry.after;
-  while (undoStack.length > MAX_HISTORY || historyBytes > historyByteBudget) {
+  while (
+    undoStack.length > 1 &&
+    (undoStack.length > MAX_HISTORY ||
+      historyBytes > historyByteBudget ||
+      historyProjectEdits > PROJECT_MAX_UNDO_DEPTH)
+  ) {
     const removed = undoStack.shift();
     if (!removed) break;
     historyBytes -= removed.byteSize;
+    historyProjectEdits -= removed.projectEdits;
   }
   historyBytes = Math.max(0, historyBytes);
+  historyProjectEdits = Math.max(0, historyProjectEdits);
   dropUnreachableSnapshotMemo();
+}
+
+function validateProjectEditCount(projectEdits: number): void {
+  if (!Number.isInteger(projectEdits) || projectEdits < 0) {
+    throw new RangeError(`Project edit count must be a non-negative integer`);
+  }
+  if (projectEdits > PROJECT_MAX_UNDO_DEPTH) {
+    throw new RangeError(
+      `Project edit count ${projectEdits} exceeds native undo depth ${PROJECT_MAX_UNDO_DEPTH}`,
+    );
+  }
 }
 
 /** Runtime statistics for diagnostics and memory-pressure tests. */
@@ -559,6 +585,8 @@ export function historyBudgetStats(): {
   bytes: number;
   accountedBytes: number;
   budgetBytes: number;
+  projectEdits: number;
+  projectEditBudget: number;
 } {
   return {
     undoEntries: undoStack.length,
@@ -569,12 +597,16 @@ export function historyBudgetStats(): {
       0,
     ),
     budgetBytes: historyByteBudget,
+    projectEdits: historyProjectEdits,
+    projectEditBudget: PROJECT_MAX_UNDO_DEPTH,
   };
 }
 
 /**
  * Changes the snapshot byte budget and immediately evicts oldest entries.
- * The newest reachable undo entries are retained preferentially.
+ * The newest reachable undo entry is never evicted solely for exceeding a
+ * byte budget: a successful edit must remain undoable even when its detached
+ * mirror snapshot is larger than the configured budget by itself.
  */
 export function configureHistoryByteBudget(bytes: number): void {
   if (!Number.isFinite(bytes) || bytes < 0) {
@@ -582,11 +614,13 @@ export function configureHistoryByteBudget(bytes: number): void {
   }
   historyByteBudget = Math.floor(bytes);
   while (historyBytes > historyByteBudget) {
-    const removed = undoStack.shift() ?? redoStack.shift();
+    const removed = undoStack.length > 1 ? undoStack.shift() : redoStack.shift();
     if (!removed) break;
     historyBytes -= removed.byteSize;
+    historyProjectEdits -= removed.projectEdits;
   }
   historyBytes = Math.max(0, historyBytes);
+  historyProjectEdits = Math.max(0, historyProjectEdits);
   dropUnreachableSnapshotMemo();
 }
 
@@ -628,6 +662,7 @@ function flushPendingGesture(): void {
  * history entries the action produced.
  */
 export function execute<T>(projectEdits: number, action: () => T): T {
+  validateProjectEditCount(projectEdits);
   flushPendingGesture();
   const store = useProjectStore();
   const before = captureSnapshot(store);
@@ -652,8 +687,11 @@ export function executeAtomic<T>(action: (edit: AtomicProjectEdit) => T): T {
   const before = captureSnapshot(store);
   let completedProjectEdits = 0;
   const edit: AtomicProjectEdit = (projectEdits, mutation) => {
-    if (!Number.isInteger(projectEdits) || projectEdits < 0) {
-      throw new RangeError(`Atomic project edit count must be a non-negative integer`);
+    validateProjectEditCount(projectEdits);
+    if (completedProjectEdits + projectEdits > PROJECT_MAX_UNDO_DEPTH) {
+      throw new RangeError(
+        `Atomic project edit count ${completedProjectEdits + projectEdits} exceeds native undo depth ${PROJECT_MAX_UNDO_DEPTH}`,
+      );
     }
     const result = mutation();
     completedProjectEdits += projectEdits;
@@ -763,10 +801,24 @@ export function canRedo(): boolean {
 
 /** Drops all local undo/redo history; call alongside the store's dispose(). */
 export function clearHistory(): void {
+  // Keep the native history aligned with the local stacks. This is also
+  // called by store.dispose(), before the Project handle is deleted; the
+  // explicit not-initialized guard keeps setup calls harmless.
+  try {
+    getProject().clearHistory();
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !error.message.startsWith('Project store is not initialized;')
+    ) {
+      throw error;
+    }
+  }
   undoStack.length = 0;
   redoStack.length = 0;
   pendingGesture = null;
   historyBytes = 0;
+  historyProjectEdits = 0;
   lastSnapshot = null;
   historyByteBudget = DEFAULT_HISTORY_BYTE_BUDGET;
 }
