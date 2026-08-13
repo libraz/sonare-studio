@@ -188,8 +188,7 @@ function assertPlanar(channels: ReadonlyArray<Float32Array>): number {
 
 function chooseBlockSize(frames: number, requestedBlockSize: number): number {
   if (frames === 0) return requestedBlockSize;
-  if (frames <= requestedBlockSize) return frames;
-  return requestedBlockSize;
+  return Math.max(FLAC_MIN_BLOCK_SIZE, Math.min(frames, requestedBlockSize));
 }
 
 function crc8(bytes: Uint8Array | readonly number[]): number {
@@ -834,7 +833,9 @@ export function encodeFlac(
   onProgress?.(1);
   const finalBlockSize = frames % effectiveBlockSize || effectiveBlockSize;
   const minBlockSize =
-    frames === 0 ? effectiveBlockSize : Math.min(effectiveBlockSize, finalBlockSize);
+    frames === 0
+      ? effectiveBlockSize
+      : Math.max(FLAC_MIN_BLOCK_SIZE, Math.min(effectiveBlockSize, finalBlockSize));
 
   const signature = new Uint8Array([0x66, 0x4c, 0x61, 0x43]); // fLaC
   const info = streamInfo(

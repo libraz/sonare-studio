@@ -273,13 +273,17 @@ describe('encodeFlac', () => {
     expect(u16(oneFrame, 10)).toBe(17);
 
     const adjusted = encodeFlac([new Float32Array(4097)], 44100, { blockSize: 4096 });
-    expect(u16(adjusted, 8)).toBe(1);
+    expect(u16(adjusted, 8)).toBe(16);
     expect(u16(adjusted, 10)).toBe(4096);
 
     for (let frames = 1; frames < 16; frames += 1) {
       const short = encodeFlac([new Float32Array(frames)], 44100);
-      expect(u16(short, 8)).toBe(frames);
+      expect(u16(short, 8)).toBe(16);
+      expect(u16(short, 10)).toBe(16);
       expect(Number(streamInfoPacked(short) & 0xfffffffffn)).toBe(frames);
+      // The STREAMINFO contract uses the legal minimum, while the frame
+      // header still declares the actual number of samples in the final frame.
+      expect(u16(short, 42 + 5) + 1).toBe(frames);
     }
   });
 
