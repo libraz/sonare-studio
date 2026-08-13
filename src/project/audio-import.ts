@@ -415,14 +415,13 @@ export async function ingestAudioBuffer(
   const analysis = options.analysis === undefined ? await resolveAudioAnalysis() : options.analysis;
   const detected = analyzeAudioTags(channels, sampleRate, analysis);
   const tags: AudioAssetTags = { ...detected, ...options.tags };
+  const hasTags = Object.values(tags).some((value) => value !== undefined);
   return saveAsset(
     {
       name,
       sampleRate,
       ...(options.id !== undefined ? { id: options.id } : {}),
-      ...(tags.bpm !== undefined || tags.key !== undefined || tags.lufs !== undefined
-        ? { tags }
-        : {}),
+      ...(hasTags ? { tags } : {}),
     },
     channels,
   );

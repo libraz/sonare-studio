@@ -189,6 +189,57 @@ describe('ingestAudioBuffer', () => {
     expect(loaded.meta.tags).toEqual({ lufs: -11.7 });
   });
 
+  it('persists rhythm, dynamics, timbre and caller tags without bpm/key/lufs', async () => {
+    const meta = await ingestAudioBuffer(stereo(), 44100, 'Untuned one-shot', {
+      analysis: {
+        analyze: () => ({
+          rhythm: {
+            timeSignature: { numerator: 5, denominator: 8, confidence: 0.73 },
+            syncopation: 0.58,
+            grooveType: 'broken',
+          },
+          dynamics: {
+            dynamicRangeDb: 12.4,
+            peakDb: -0.8,
+            rmsDb: -16.2,
+            crestFactor: 11.1,
+            loudnessRangeDb: 4.6,
+            isCompressed: false,
+          },
+          timbre: {
+            brightness: 0.68,
+            warmth: 0.21,
+            density: 0.76,
+            roughness: 0.19,
+            complexity: 0.49,
+          },
+        }),
+      },
+      tags: { form: 'custom-one-shot', grooveType: 'custom-groove' },
+    });
+
+    expect(meta.tags).toEqual({
+      timeSignature: '5/8',
+      timeSignatureConfidence: 0.73,
+      syncopation: 0.58,
+      grooveType: 'custom-groove',
+      dynamicRangeDb: 12.4,
+      peakDb: -0.8,
+      rmsDb: -16.2,
+      crestFactor: 11.1,
+      loudnessRangeDb: 4.6,
+      isCompressed: false,
+      brightness: 0.68,
+      warmth: 0.21,
+      density: 0.76,
+      roughness: 0.19,
+      complexity: 0.49,
+      form: 'custom-one-shot',
+    });
+    clearAudioAssetCache();
+    expect((await loadAsset(meta.id)).meta.tags).toEqual(meta.tags);
+  });
+
   it('caller tags win over detected ones', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Loop', {
       analysis: { detectBpm: () => 100 },
