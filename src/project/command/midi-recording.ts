@@ -10,7 +10,8 @@ import type {
   ClipProgramChangeLane,
   MidiClipTake,
 } from '../types';
-import { execute } from './history';
+import { removeClipWithin, splitClipWithin } from './clips-internal';
+import { execute, executeAtomic } from './history';
 import { requireTrack } from './utils';
 
 /** Copies app-level MIDI take data so callers cannot mutate the clip mirror. */
@@ -298,9 +299,14 @@ export function setClipMidiCompSegments(
   for (let i = 0; i < selected.length; i++) {
     const start = selected[i].startPpq;
     const end = selected[i + 1]?.startPpq ?? clip.lengthPpq;
+    // MIDI take notes use the clip's source-relative coordinate frame, while
+    // comp segments are relative to the audible clip window. Offset only the
+    // note comparison; expression lanes below are already clip-window-local.
+    const sourceStart = clip.sourceOffsetPpq + start;
+    const sourceEnd = clip.sourceOffsetPpq + end;
     for (const note of takes[selected[i].takeIndex].notes) {
-      const noteStart = Math.max(start, note.startPpq);
-      const noteEnd = Math.min(end, note.startPpq + note.durationPpq);
+      const noteStart = Math.max(sourceStart, note.startPpq);
+      const noteEnd = Math.min(sourceEnd, note.startPpq + note.durationPpq);
       if (noteEnd > noteStart)
         notes.push({ ...note, startPpq: noteStart, durationPpq: noteEnd - noteStart });
     }
@@ -378,3 +384,183 @@ export function flattenClipMidiComp(clipId: number): void {
     store.refresh();
   });
 }
+
+/**
+ * Replaces MIDI material in one timeline interval as one atomic command.
+ *
+ * Existing clips are split at the interval edges and their middle fragments
+ * are removed, leaving material before and after the cycle untouched. The new
+ * recording is then added as one MIDI clip in the same atomic history entry.
+ * This keeps overwrite distinct from keep-last, which merely commits another
+ * overlapping recording clip.
+ */
+export function overwriteRecordedMidiClip(input: AddRecordedMidiClipInput): number {
+  const store = useProjectStore();
+  const track = requireTrack(store, input.trackId);
+  if (track.kind !== 'midi') {
+    throw new RangeError(`Track ${input.trackId} is not a MIDI track`);
+  }
+  if (!Number.isFinite(input.startPpq) || input.startPpq < 0) {
+    throw new RangeError(`Clip startPpq must be finite and >= 0, got ${input.startPpq}`);
+  }
+  if (!Number.isFinite(input.lengthPpq) || input.lengthPpq <= 0) {
+    throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${input.lengthPpq}`);
+  }
+  const intervalStart = input.startPpq;
+  const intervalEnd = input.startPpq + input.lengthPpq;
+  if (!Number.isFinite(intervalEnd) || intervalEnd <= intervalStart) {
+    throw new RangeError('MIDI overwrite interval must have a finite positive length');
+  }
+  const project = getProject();
+  const midiTakes = input.midiTakes?.map(cloneMidiTake);
+  const activeMidiTakeIndex =
+    midiTakes && midiTakes.length > 0
+      ? Math.min(
+          Math.max(0, input.activeMidiTakeIndex ?? midiTakes.length - 1),
+          midiTakes.length - 1,
+        )
+      : undefined;
+  const activeTake =
+    activeMidiTakeIndex === undefined ? undefined : midiTakes?.[activeMidiTakeIndex];
+  const notes = activeTake?.notes ?? input.notes;
+  const events = notesToProjectEvents(notes.map((note) => ({ ...note })));
+
+  return executeAtomic((edit) => {
+    // Snapshot ids first: splitting inserts right-hand clips into the mirror,
+    // but each original clip is handled independently.
+    const overlapping = store.clips
+      .filter(
+        (clip) =>
+          clip.trackId === input.trackId &&
+          (clip.kind ?? 'midi') === 'midi' &&
+          (clip.notes.length > 0 ||
+            clip.ccLanes?.some((lane) => lane.points.length > 0) === true ||
+            clip.pitchBendLanes?.some((lane) => lane.points.length > 0) === true ||
+            clip.programChangeLanes?.some((lane) => lane.points.length > 0) === true ||
+            clip.channelPressureLanes?.some((lane) => lane.points.length > 0) === true ||
+            clip.polyPressureLanes?.some((lane) => lane.points.length > 0) === true) &&
+          clip.startPpq < intervalEnd &&
+          clip.startPpq + clip.lengthPpq > intervalStart,
+      )
+      .map((clip) => clip.id);
+    for (const clipId of overlapping) {
+      const source = store.clips.find((clip) => clip.id === clipId);
+      if (source === undefined) continue;
+      const overlapStart = Math.max(intervalStart, source.startPpq);
+      const overlapEnd = Math.min(intervalEnd, source.startPpq + source.lengthPpq);
+      if (overlapEnd <= overlapStart) continue;
+      let middleId = clipId;
+      if (source.startPpq < overlapStart) {
+        middleId = splitClipWithin(edit, middleId, overlapStart);
+      }
+      const middle = store.clips.find((clip) => clip.id === middleId);
+      if (middle === undefined) continue;
+      if (middle.startPpq + middle.lengthPpq > overlapEnd) {
+        splitClipWithin(edit, middleId, overlapEnd);
+      }
+      removeClipWithin(edit, middleId);
+    }
+
+    // Project.addClip records source registration and clip creation as two
+    // native edits (the same accounting used by addRecordedMidiClip).
+    const newClipId = edit(2, () =>
+      project.addClip({
+        trackId: input.trackId,
+        isMidi: true,
+        startPpq: input.startPpq,
+        lengthPpq: input.lengthPpq,
+      }),
+    );
+    if (events.length > 0) {
+      edit(1, () => project.setMidiEvents(newClipId, events));
+    }
+    if (
+      input.name !== undefined ||
+      activeTake !== undefined ||
+      input.ccLanes !== undefined ||
+      input.pitchBendLanes !== undefined ||
+      input.programChangeLanes !== undefined ||
+      input.channelPressureLanes !== undefined ||
+      input.polyPressureLanes !== undefined
+    ) {
+      store.clips = [
+        ...store.clips,
+        {
+          id: newClipId,
+          trackId: input.trackId,
+          name: input.name ?? `Clip ${newClipId}`,
+          startPpq: input.startPpq,
+          lengthPpq: input.lengthPpq,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: [],
+          ...(activeTake?.ccLanes !== undefined || input.ccLanes !== undefined
+            ? {
+                ccLanes: (activeTake?.ccLanes ?? input.ccLanes ?? []).map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(activeTake?.pitchBendLanes !== undefined || input.pitchBendLanes !== undefined
+            ? {
+                pitchBendLanes: (activeTake?.pitchBendLanes ?? input.pitchBendLanes ?? []).map(
+                  (lane) => ({
+                    ...lane,
+                    points: lane.points.map((point) => ({ ...point })),
+                  }),
+                ),
+              }
+            : {}),
+          ...(activeTake?.programChangeLanes !== undefined || input.programChangeLanes !== undefined
+            ? {
+                programChangeLanes: (
+                  activeTake?.programChangeLanes ??
+                  input.programChangeLanes ??
+                  []
+                ).map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(activeTake?.channelPressureLanes !== undefined ||
+          input.channelPressureLanes !== undefined
+            ? {
+                channelPressureLanes: (
+                  activeTake?.channelPressureLanes ??
+                  input.channelPressureLanes ??
+                  []
+                ).map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(activeTake?.polyPressureLanes !== undefined || input.polyPressureLanes !== undefined
+            ? {
+                polyPressureLanes: (
+                  activeTake?.polyPressureLanes ??
+                  input.polyPressureLanes ??
+                  []
+                ).map((lane) => ({
+                  ...lane,
+                  points: lane.points.map((point) => ({ ...point })),
+                })),
+              }
+            : {}),
+          ...(midiTakes && midiTakes.length > 0
+            ? { midiTakes, midiActiveTakeIndex: activeMidiTakeIndex }
+            : {}),
+        },
+      ];
+    }
+    store.refresh();
+    return newClipId;
+  });
+}
+
+/** Descriptive alias for callers that use the replace terminology. */
+export const replaceRecordedMidiMaterial = overwriteRecordedMidiClip;

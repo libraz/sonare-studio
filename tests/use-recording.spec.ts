@@ -410,7 +410,7 @@ describe('useRecording', () => {
     await expect(recording.stopRecord()).resolves.toBeNull();
     writeSpy.mockRestore();
 
-    expect(recording.error.value).toContain('storage quota exhausted');
+    expect(recording.error.value).toContain('Project storage is full');
     expect(await listAssets()).toEqual([]);
     expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
   });

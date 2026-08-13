@@ -310,7 +310,14 @@ describe('useRecordingControls', () => {
     await vi.waitFor(() => expect(recording.record).toHaveBeenCalledOnce());
 
     expect(recording.record).toHaveBeenCalledOnce();
-    expect(midiRecording.record).toHaveBeenCalledWith(8);
+    const sharedPlan = recording.record.mock.calls[0][0];
+    expect(sharedPlan).toMatchObject({
+      punchInPpq: 8,
+      startedFromRest: true,
+      countInMode: 'bars',
+      transportOwner: 'audio',
+    });
+    expect(midiRecording.record).toHaveBeenCalledWith(sharedPlan);
   });
 
   it('waits for delayed audio prewarm and starts audio and MIDI at one no-count-in tick', async () => {
@@ -361,8 +368,14 @@ describe('useRecordingControls', () => {
     micReady.resolve(true);
     await vi.waitFor(() => expect(recording.record).toHaveBeenCalledOnce());
 
-    expect(recording.record).toHaveBeenCalledWith(8);
-    expect(midiRecording.record).toHaveBeenCalledWith(8);
+    const sharedPlan = recording.record.mock.calls[0][0];
+    expect(sharedPlan).toMatchObject({
+      punchInPpq: 8,
+      startedFromRest: true,
+      countInMode: 'none',
+      transportOwner: 'audio',
+    });
+    expect(midiRecording.record).toHaveBeenCalledWith(sharedPlan);
   });
 
   it('does not start MIDI recording when audio prewarm fails before shared count-in', async () => {

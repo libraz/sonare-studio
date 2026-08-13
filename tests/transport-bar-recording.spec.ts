@@ -39,13 +39,16 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
       autoPunchEnabled: false,
       bbtDisplay: '1.1.000',
       bridge: null,
+      canRecord: true,
       countInChoices: [
         { value: 0, label: 'Off' },
         { value: 1, label: '1 bar' },
       ],
       handle: {},
       hasLocatorWindow: true,
+      isCountingIn: false,
       isPlaying: false,
+      isRecording: false,
       loopEnabled: false,
       metronomeEnabled: false,
       metronomeVolume: 0.35,
@@ -78,6 +81,24 @@ function menuButton(wrapper: VueWrapper, label: string) {
 }
 
 describe('TransportBar recording settings', () => {
+  it('keeps the record control available and active for a MIDI-only session', async () => {
+    const wrapper = mountBar({
+      canRecord: true,
+      isCountingIn: true,
+      isRecording: true,
+      recording: makeRecording({ armedTrackId: ref(null), isRecording: ref(false) }),
+      midiRecording: makeMidiRecording({ isRecording: ref(true) }),
+    });
+
+    const record = wrapper.get('.record-button');
+    expect(record.attributes('disabled')).toBeUndefined();
+    expect(record.attributes('aria-pressed')).toBe('true');
+    expect(record.classes()).toContain('recording');
+    expect(record.classes()).toContain('counting-in');
+    await record.trigger('click');
+    expect(wrapper.emitted('toggleRecord')).toEqual([[]]);
+  });
+
   it('emits metronome-volume changes from the transport control', async () => {
     const wrapper = mountBar();
     await wrapper.find('.metronome-volume-input').setValue('0.6');

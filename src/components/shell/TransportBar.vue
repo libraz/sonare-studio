@@ -20,10 +20,13 @@ const props = defineProps<{
   autoPunchEnabled: boolean;
   bbtDisplay: string;
   bridge: MeterBridge | null;
+  canRecord: boolean;
   countInChoices: readonly { value: number; label: string }[];
   handle: EngineHandle | null;
   hasLocatorWindow: boolean;
+  isCountingIn: boolean;
   isPlaying: boolean;
+  isRecording: boolean;
   loopEnabled: boolean;
   metronomeEnabled: boolean;
   metronomeVolume: number;
@@ -263,18 +266,19 @@ function onRetuneInput(event: Event): void {
           type="button"
           class="transport-key record-button"
           :class="{
-            recording: recording.isRecording.value,
-            'counting-in': recording.isCountingIn.value,
+            recording: isRecording,
+            'counting-in': isCountingIn,
           }"
           :aria-label="t.shell.transport.record"
-          :aria-pressed="recording.isRecording.value"
+          :aria-pressed="isRecording"
           :disabled="
             !handle ||
-            (recordingOperationState !== 'idle' && recordingOperationState !== 'recording') ||
-            (recordingOperationState === 'idle' && recording.armedTrackId.value === null)
+            (!isRecording &&
+              ((recordingOperationState !== 'idle' && recordingOperationState !== 'recording') ||
+                (recordingOperationState === 'idle' && !canRecord)))
           "
           v-tooltip="
-            recording.isRecording.value
+            isRecording
               ? t.shell.transport.recordStopTitle
               : t.shell.transport.recordStartTitle
           "

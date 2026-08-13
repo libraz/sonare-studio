@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { overwriteRecordedMidiClip } from '@/project/command/midi-recording';
 import {
   addAudioTrack,
   addRecordedMidiClip,
@@ -9,6 +10,7 @@ import {
   setActiveClip,
   setClipMidiActiveTake,
   setClipMidiCompSegments,
+  trimClip,
   undo,
 } from '@/project/commands';
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
@@ -169,6 +171,44 @@ describe('addRecordedMidiClip', () => {
     expect(clip.programChangeLanes).toEqual([{ channel: 0, points: [{ ppq: 0, program: 41 }] }]);
   });
 
+  it('retains source-relative take notes beyond a trimmed clip window', async () => {
+    const trackId = store.tracks[0].id;
+    const clipId = addRecordedMidiClip({
+      trackId,
+      startPpq: 0,
+      lengthPpq: 8,
+      notes: [{ pitch: 60, velocity: 90, startPpq: 0, durationPpq: 1, channel: 0 }],
+      midiTakes: [
+        {
+          name: 'Pass 1',
+          notes: [{ pitch: 60, velocity: 90, startPpq: 0, durationPpq: 1, channel: 0 }],
+        },
+        {
+          name: 'Pass 2',
+          // This note is valid in the original source-relative take, but lies
+          // outside the clip after the user trims its current window.
+          notes: [{ pitch: 72, velocity: 100, startPpq: 6, durationPpq: 1, channel: 0 }],
+        },
+      ],
+      activeMidiTakeIndex: 0,
+    });
+    trimClip(clipId, 0, 4);
+
+    const before = JSON.parse(JSON.stringify(serializeProject()));
+    const beforeTakeNotes = before.tracks[0].clips.find(
+      (clip: { name: string }) => clip.name === `Clip ${clipId}`,
+    ).midiTakes[1].notes;
+
+    await loadProjectDocument(before);
+
+    const after = JSON.parse(JSON.stringify(serializeProject()));
+    const restoredClip = after.tracks[0].clips.find(
+      (clip: { name: string }) => clip.name === `Clip ${clipId}`,
+    );
+    expect(restoredClip.midiTakes[1].notes).toEqual(beforeTakeNotes);
+    expect(after).toEqual(before);
+  });
+
   it('comps ranges from MIDI takes into the playable clip', () => {
     const trackId = store.tracks[0].id;
     const clipId = addRecordedMidiClip({
@@ -250,5 +290,57 @@ describe('addRecordedMidiClip', () => {
     expect(() =>
       addRecordedMidiClip({ trackId: 9999, startPpq: 0, lengthPpq: 4, notes: [] }),
     ).toThrow();
+  });
+});
+
+describe('overwriteRecordedMidiClip', () => {
+  let store: ReturnType<typeof useProjectStore>;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+  });
+
+  it('replaces only the cycle interval and restores the prior material in one undo', () => {
+    const trackId = store.tracks[0].id;
+    const oldClipId = addRecordedMidiClip({
+      trackId,
+      startPpq: 0,
+      lengthPpq: 12,
+      notes: [
+        { pitch: 60, velocity: 90, startPpq: 1, durationPpq: 1, channel: 0 },
+        { pitch: 64, velocity: 90, startPpq: 5, durationPpq: 1, channel: 0 },
+        { pitch: 67, velocity: 90, startPpq: 9, durationPpq: 1, channel: 0 },
+      ],
+    });
+    const before = JSON.parse(JSON.stringify(store.clips));
+    clearHistory();
+
+    const replacementId = overwriteRecordedMidiClip({
+      trackId,
+      startPpq: 4,
+      lengthPpq: 4,
+      notes: [{ pitch: 72, velocity: 100, startPpq: 0.5, durationPpq: 1, channel: 0 }],
+    });
+    expect(replacementId).not.toBe(oldClipId);
+    const material = store.clips
+      .map((clip) => ({
+        start: clip.startPpq,
+        end: clip.startPpq + clip.lengthPpq,
+        pitches: clip.notes.map((note) => note.pitch),
+      }))
+      .filter((clip) => clip.pitches.length > 0);
+    expect(material).toEqual([
+      { start: 0, end: 4, pitches: [60] },
+      { start: 4, end: 8, pitches: [72] },
+      { start: 8, end: 12, pitches: [67] },
+    ]);
+
+    expect(undo()).toBe(true);
+    expect(store.clips).toEqual(before);
+    expect(undo()).toBe(false);
   });
 });

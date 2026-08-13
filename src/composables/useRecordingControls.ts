@@ -3,6 +3,7 @@ import type { useAppSettings } from '@/composables/useAppSettings';
 import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
+import { resolveRecordingStartPlan } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -135,6 +136,17 @@ export function useRecordingControls(options: RecordingControlsOptions) {
     if (midiRecording.armedTrackId.value !== null) ids.push(midiRecording.armedTrackId.value);
     return ids;
   });
+  // This is the one recording-session state exposed to shell/UI consumers.
+  // Audio and MIDI recorders share a transport, so using either recorder's
+  // legacy primary armed ID makes MIDI-only recording unreachable from some
+  // surfaces.
+  const canRecord = computed(() => armedTrackIds.value.length > 0);
+  const isRecording = computed(
+    () => recording.isRecording.value || midiRecording.isRecording.value,
+  );
+  const isCountingIn = computed(
+    () => recording.isCountingIn.value || midiRecording.isCountingIn.value,
+  );
 
   watch(recording.error, (message) => {
     if (message) errorMessage.value = message;
@@ -227,13 +239,23 @@ export function useRecordingControls(options: RecordingControlsOptions) {
         // alone.
         if (!(await recording.requestMic())) return;
         if (disposed || generation !== sharedRecordGeneration) return;
-        const startPpq = Math.max(0, transport.positionPpq.value);
-        const preserveCountIn = !transport.isPlaying.value && appSettings.settings.countInBars > 0;
-        const started = preserveCountIn
-          ? await recording.record()
-          : await recording.record(startPpq);
+        // Resolve every transport decision once after microphone prewarm. The
+        // audio recorder owns the shared transport; MIDI consumes this exact
+        // plan without re-reading isPlaying or the live playhead.
+        const plan = resolveRecordingStartPlan({
+          positionPpq: transport.positionPpq.value,
+          audiblePositionPpq: transport.audiblePositionPpq.value,
+          startedFromRest: !transport.isPlaying.value,
+          loopEnabled: transport.loopEnabled.value,
+          loopStartPpq: transport.loopStartPpq.value,
+          loopEndPpq: transport.loopEndPpq.value,
+          countInBars: appSettings.settings.countInBars,
+          timeSignatures: store.timeSignatures,
+          transportOwner: 'audio',
+        });
+        const started = await recording.record(plan);
         if (disposed || generation !== sharedRecordGeneration || !started) return;
-        midiRecording.record(startPpq);
+        midiRecording.record(plan);
       })();
       return;
     }
@@ -243,6 +265,9 @@ export function useRecordingControls(options: RecordingControlsOptions) {
 
   return {
     armedTrackIds,
+    canRecord,
+    isRecording,
+    isCountingIn,
     recordMenuOpen,
     recordMenuRoot,
     recordingInputDeviceOptions,

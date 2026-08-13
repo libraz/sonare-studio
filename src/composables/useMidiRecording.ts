@@ -12,8 +12,16 @@
 
 import { getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { describeError } from '@/lib/errors';
+import {
+  type AddRecordedMidiClipInput,
+  overwriteRecordedMidiClip as overwriteRecordedMidiClipCommand,
+} from '@/project/command/midi-recording';
 import { addRecordedMidiClip as addRecordedMidiClipCommand } from '@/project/commands';
-import { snapLoopRecordingStartPpq } from '@/project/loop-recording';
+import {
+  type RecordingStartPlan,
+  resolveAutoPunchRecordingStartPlan,
+  resolveRecordingStartPlan,
+} from '@/project/loop-recording';
 import {
   sanitizeCcPoints,
   sanitizePitchBendPoints,
@@ -37,7 +45,6 @@ import {
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
-import { countInStartPpq } from '@/project/time-signature';
 import type {
   ClipCcLane,
   ClipChannelPressureLane,
@@ -96,6 +103,8 @@ export interface CapturedPolyPressureEvent extends CapturedChannelPressureEvent 
 export interface UseMidiRecordingOptions {
   /** Clip-creation command; defaults to addRecordedMidiClip from commands. */
   addRecordedMidiClip?: typeof addRecordedMidiClipCommand;
+  /** Cycle-overwrite command; defaults to the atomic project command. */
+  overwriteRecordedMidiClip?: (input: AddRecordedMidiClipInput) => number;
   /** High-resolution clock in milliseconds, injectable for tests. */
   now?: () => number;
 }
@@ -146,7 +155,7 @@ export interface UseMidiRecordingReturn {
    *   playhead is used.
    * @returns True when recording started; false with `error` set otherwise.
    */
-  record(startAtPpq?: number): boolean;
+  record(startAtPpq?: number | RecordingStartPlan): boolean;
   /**
    * Stops capturing, pairs the take into notes and adds a MIDI clip at the
    * recorded position. The transport keeps rolling.
@@ -171,6 +180,7 @@ export function useMidiRecording(
 ): UseMidiRecordingReturn {
   const store = useProjectStore();
   const addClip = options.addRecordedMidiClip ?? addRecordedMidiClipCommand;
+  const overwriteClip = options.overwriteRecordedMidiClip ?? overwriteRecordedMidiClipCommand;
   const now = options.now ?? (() => globalThis.performance?.now?.() ?? Date.now());
 
   const armedTrackId = ref<number | null>(null);
@@ -566,7 +576,7 @@ export function useMidiRecording(
       .filter((lane) => lane.points.length > 0);
   }
 
-  const record = (startAtPpq?: number): boolean => {
+  const record = (startAtPpq?: number | RecordingStartPlan): boolean => {
     error.value = null;
     if (isRecording.value) return false;
     const trackId = armedTrackId.value;
@@ -579,40 +589,50 @@ export function useMidiRecording(
       error.value = 'MIDI recording requires a MIDI track.';
       return false;
     }
-    const explicit = startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
-    const wasRolling = transport.isPlaying.value;
-    let startPpq = explicit
-      ? (startAtPpq as number)
-      : Math.max(0, (wasRolling ? transport.audiblePositionPpq : transport.positionPpq).value);
-    if (!explicit) {
-      startPpq = snapLoopRecordingStartPpq(startPpq, {
-        explicit: false,
-        wasRolling,
-        loopEnabled: transport.loopEnabled.value,
-        loopStartPpq: transport.loopStartPpq.value,
-        loopEndPpq: transport.loopEndPpq.value,
-      });
-    }
-    let countInPpq = 0;
+    const suppliedPlan = typeof startAtPpq === 'object' && startAtPpq !== null ? startAtPpq : null;
+    const legacyStart = typeof startAtPpq === 'number' ? startAtPpq : undefined;
+    const plan =
+      suppliedPlan ??
+      (legacyStart !== undefined && Number.isFinite(legacyStart) && legacyStart >= 0
+        ? resolveAutoPunchRecordingStartPlan({
+            positionPpq: transport.positionPpq.value,
+            audiblePositionPpq: transport.audiblePositionPpq.value,
+            startedFromRest: !transport.isPlaying.value,
+            requestedStartPpq: legacyStart,
+            loopEnabled: transport.loopEnabled.value,
+            loopStartPpq: transport.loopStartPpq.value,
+            loopEndPpq: transport.loopEndPpq.value,
+            countInBars: countInBars.value,
+            timeSignatures: store.timeSignatures,
+            transportOwner: 'midi',
+          })
+        : resolveRecordingStartPlan({
+            positionPpq: transport.positionPpq.value,
+            audiblePositionPpq: transport.audiblePositionPpq.value,
+            startedFromRest: !transport.isPlaying.value,
+            loopEnabled: transport.loopEnabled.value,
+            loopStartPpq: transport.loopStartPpq.value,
+            loopEndPpq: transport.loopEndPpq.value,
+            countInBars: countInBars.value,
+            timeSignatures: store.timeSignatures,
+            transportOwner: 'midi',
+          }));
+    const startedFromRest = plan.startedFromRest;
+    const startPpq = plan.punchInPpq;
     const tempoBpm = transport.tempo.value;
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
-    if (!explicit && !wasRolling && countInBars.value > 0) {
-      countInPpq = startPpq - countInStartPpq(store.timeSignatures, startPpq, countInBars.value);
-    }
-    if (!wasRolling) {
-      if (countInPpq > 0 && !transport.metronomeEnabled.value) {
+    const ownsTransport = plan.transportOwner === 'midi';
+    if (ownsTransport && startedFromRest) {
+      if (plan.countInPpq > 0 && !transport.metronomeEnabled.value) {
         transport.toggleMetronome(true);
         restoreMetronomeOff = true;
       }
-      transport.seekPpq(startPpq - countInPpq);
+      transport.seekPpq(plan.countInStartPpq);
       if (!transport.play()) {
         finishCountIn();
         error.value = 'The engine rejected the transport play command.';
         return false;
       }
-    } else if (!explicit) {
-      // Punch-in on a rolling transport: capture from where it is now.
-      startPpq = Math.max(0, transport.audiblePositionPpq.value);
     }
     buffer = [];
     ccBuffer = [];
@@ -626,36 +646,34 @@ export function useMidiRecording(
     recordingTempoMap = tempoMap;
     recordingStartSeconds = ppqToSecondsMap(recordingTempoMap, startPpq);
     const recordStartTimestampMs = now();
-    const rollingPrerollMs =
-      explicit && wasRolling
-        ? Math.max(
-            0,
-            recordingStartSeconds -
-              ppqToSecondsMap(recordingTempoMap, Math.max(0, transport.audiblePositionPpq.value)),
-          ) * 1000
-        : 0;
-    const stoppedStartLatencyMs = !wasRolling ? transport.playbackLatencySeconds.value * 1000 : 0;
+    // Anchor timestamped MIDI to the live audible origin captured by the
+    // plan. A shared audio start can finish after a few async setup turns, so
+    // account for transport progress without consulting the mutable rolling
+    // flag (and without changing the plan's original rest decision).
+    const rollingOffsetMs = !startedFromRest
+      ? (ppqToSecondsMap(recordingTempoMap, Math.max(0, transport.audiblePositionPpq.value)) -
+          recordingStartSeconds) *
+        1000
+      : 0;
+    // The plan snapshots the rest/rolling state. Never consult live
+    // transport.isPlaying here: audio may have started transport between plan
+    // resolution and this call in the shared recording path.
+    const stoppedStartLatencyMs = startedFromRest
+      ? transport.playbackLatencySeconds.value * 1000
+      : 0;
     recordingStartTimestampMs =
-      !wasRolling && countInPpq > 0
+      startedFromRest && plan.countInPpq > 0
         ? recordStartTimestampMs +
-          ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000 +
+          ppqRangeSeconds(tempoMap, plan.countInStartPpq, plan.countInEndPpq) * 1000 +
           stoppedStartLatencyMs
-        : recordStartTimestampMs + rollingPrerollMs + stoppedStartLatencyMs;
+        : recordStartTimestampMs - rollingOffsetMs + stoppedStartLatencyMs;
     lastCaptureTimestampMs = null;
-    recordingLoopLengthPpq =
-      transport.loopEnabled.value && transport.loopEndPpq.value > transport.loopStartPpq.value
-        ? transport.loopEndPpq.value - transport.loopStartPpq.value
-        : 0;
-    recordingLoop =
-      !explicit &&
-      recordingLoopLengthPpq > 0 &&
-      Math.abs(startPpq - transport.loopStartPpq.value) < 1e-6
-        ? { startPpq: transport.loopStartPpq.value, endPpq: transport.loopEndPpq.value }
-        : null;
+    recordingLoop = plan.cycle;
+    recordingLoopLengthPpq = plan.cycle ? plan.cycle.endPpq - plan.cycle.startPpq : 0;
     recordingWrapOffsetPpq = 0;
     lastCapturePpq = startPpq;
     isRecording.value = true;
-    if (countInPpq > 0) {
+    if (ownsTransport && plan.countInPpq > 0) {
       isCountingIn.value = true;
       countInTimer = globalThis.setTimeout(
         () => {
@@ -663,7 +681,8 @@ export function useMidiRecording(
           activatePreRollHeld();
           finishCountIn();
         },
-        ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000 + stoppedStartLatencyMs,
+        ppqRangeSeconds(tempoMap, plan.countInStartPpq, plan.countInEndPpq) * 1000 +
+          stoppedStartLatencyMs,
       );
     }
     return true;
@@ -984,7 +1003,7 @@ export function useMidiRecording(
       ) {
         return null;
       }
-      return addClip({
+      const input: AddRecordedMidiClipInput = {
         trackId,
         startPpq: loop?.startPpq ?? recordingStartPpq,
         lengthPpq,
@@ -998,7 +1017,10 @@ export function useMidiRecording(
           ? { midiTakes, activeMidiTakeIndex: midiTakes.length - 1 }
           : {}),
         name: `MIDI Recording ${recordingCounter}`,
-      });
+      };
+      return loopLengthPpq > 0 && cycleRecordMode.value === 'overwrite'
+        ? overwriteClip(input)
+        : addClip(input);
     } catch (err) {
       error.value = `Failed to store the recording: ${describeError(err)}`;
       return null;

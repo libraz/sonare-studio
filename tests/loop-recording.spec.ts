@@ -3,6 +3,9 @@ import {
   loopRecordingSplits,
   loopRecordingTakeSlices,
   nativeLoopRecordingDesc,
+  resolveAutoPunchRecordingStartPlan,
+  resolveExplicitRecordingStartPlan,
+  resolveRecordingStartPlan,
   snapLoopRecordingStartPpq,
 } from '@/project/loop-recording';
 
@@ -54,6 +57,76 @@ describe('snapLoopRecordingStartPpq', () => {
         loopEndPpq: 8,
       }),
     ).toBe(8.1);
+  });
+});
+
+describe('resolveRecordingStartPlan', () => {
+  const loop = {
+    loopEnabled: true,
+    loopStartPpq: 8,
+    loopEndPpq: 12,
+  };
+
+  it('resolves one shared cycle/count-in decision from stopped transport state', () => {
+    expect(
+      resolveRecordingStartPlan({
+        positionPpq: 8.4,
+        audiblePositionPpq: 8.35,
+        startedFromRest: true,
+        ...loop,
+        countInBars: 1,
+        timeSignatures: [],
+        transportOwner: 'audio',
+      }),
+    ).toMatchObject({
+      punchInPpq: 8,
+      startPpq: 8,
+      startedFromRest: true,
+      countInStartPpq: 4,
+      countInEndPpq: 8,
+      countInPpq: 4,
+      countInMode: 'bars',
+      cycle: { startPpq: 8, endPpq: 12 },
+      transportOwner: 'audio',
+    });
+  });
+
+  it('keeps legacy explicit auto-punch named and cycle/count-in independent', () => {
+    const plan = resolveAutoPunchRecordingStartPlan({
+      positionPpq: 8.4,
+      audiblePositionPpq: 8.35,
+      startedFromRest: true,
+      requestedStartPpq: 8,
+      ...loop,
+      countInBars: 2,
+      timeSignatures: [],
+      transportOwner: 'midi',
+    });
+    expect(plan).toMatchObject({
+      punchInPpq: 8,
+      mode: 'auto-punch',
+      countInMode: 'none',
+      cycle: null,
+      transportOwner: 'midi',
+    });
+  });
+
+  it('keeps cycle behavior for an explicit-start plan at the cycle boundary', () => {
+    expect(
+      resolveExplicitRecordingStartPlan({
+        positionPpq: 2,
+        audiblePositionPpq: 2,
+        startedFromRest: true,
+        requestedStartPpq: 8,
+        ...loop,
+        countInBars: 0,
+        timeSignatures: [],
+      }),
+    ).toMatchObject({
+      mode: 'explicit-start',
+      punchInPpq: 8,
+      cycle: { startPpq: 8, endPpq: 12 },
+    });
   });
 });
 

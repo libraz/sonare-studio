@@ -121,6 +121,8 @@ export type { AddRecordedMidiClipInput } from './command/midi-recording';
 export {
   addRecordedMidiClip,
   flattenClipMidiComp,
+  overwriteRecordedMidiClip,
+  replaceRecordedMidiMaterial,
   setClipMidiActiveTake,
   setClipMidiCompSegments,
 } from './command/midi-recording';

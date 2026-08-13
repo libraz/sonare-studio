@@ -41,7 +41,9 @@ import { createInsertPdcPlan, insertLatencyResolverFromCatalog } from '@/project
 import {
   loopRecordingSplits,
   loopRecordingTakeSlices,
-  snapLoopRecordingStartPpq,
+  type RecordingStartPlan,
+  resolveAutoPunchRecordingStartPlan,
+  resolveRecordingStartPlan,
 } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 import {
@@ -50,7 +52,6 @@ import {
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
-import { countInStartPpq } from '@/project/time-signature';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import type { UseTransportReturn } from './useTransport';
 
@@ -154,14 +155,14 @@ export interface UseRecordingReturn {
    * pre-rolls the count-in (metronome forced on for its duration when it was
    * off), starts the transport when stopped, and begins capturing.
    *
-   * @param startAtPpq Explicit punch-in position; when omitted the current
-   *   playhead is used.
+   * @param startAtPpq Legacy numeric auto-punch position, or a resolved
+   *   {@link RecordingStartPlan} shared with MIDI recording.
    * @param endAtPpq Optional explicit punch-out position. Pass the right
-   *   locator for sample-accurate auto-punch out. An explicit start/end never
-   *   count-ins or cycle-splits.
+   *   locator for sample-accurate auto-punch out. Legacy numeric starts use the
+   *   named auto-punch path; resolved plans carry their own count-in/cycle mode.
    * @returns True when recording started; false with `error` set otherwise.
    */
-  record(startAtPpq?: number, endAtPpq?: number): Promise<boolean>;
+  record(startAtPpq?: number | RecordingStartPlan, endAtPpq?: number): Promise<boolean>;
   /**
    * Stops capturing, ingests the take as an audio asset and adds an audio
    * clip at the recorded position. The transport keeps rolling.
@@ -233,6 +234,7 @@ export function useRecording(
     recorder: Recorder;
     handle: EngineHandle;
     targetTrackIds: readonly number[];
+    plan: RecordingStartPlan | null;
     startAtPpq?: number;
     endAtPpq?: number;
   }
@@ -263,7 +265,7 @@ export function useRecording(
 
   const recordingIdentity = (
     targetTrackIds: readonly number[],
-    startAtPpq?: number,
+    startAtPpq?: number | RecordingStartPlan,
     endAtPpq?: number,
   ): OperationIdentity => {
     const routeRevision = targetTrackIds.map((id) => {
@@ -279,7 +281,9 @@ export function useRecording(
         captureSource.value,
         inputDeviceId.value,
         recorderDeviceSignature,
-        startAtPpq ?? '',
+        typeof startAtPpq === 'object'
+          ? `${startAtPpq.punchInPpq}:${startAtPpq.transportOwner}:${startAtPpq.startedFromRest}`
+          : (startAtPpq ?? ''),
         endAtPpq ?? '',
         ...routeRevision,
       ].join('|'),
@@ -601,11 +605,14 @@ export function useRecording(
     return createInsertPdcPlan(store.tracks, store.mixer.buses, resolveLatency).maxLatencySamples;
   };
 
-  const record = async (startAtPpq?: number, endAtPpq?: number): Promise<boolean> => {
+  const record = async (
+    startAtPpq?: number | RecordingStartPlan,
+    endAtPpq?: number,
+  ): Promise<boolean> => {
     error.value = null;
     if (recordingOperations.disposed || state.value !== 'idle') return false;
-    const explicitStart =
-      startAtPpq !== undefined && Number.isFinite(startAtPpq) && startAtPpq >= 0;
+    const suppliedPlan = typeof startAtPpq === 'object' && startAtPpq !== null ? startAtPpq : null;
+    const legacyStart = typeof startAtPpq === 'number' ? startAtPpq : undefined;
     const explicitEnd = endAtPpq !== undefined && Number.isFinite(endAtPpq);
     const rec = ensureRecorder();
     if (!rec) {
@@ -634,7 +641,8 @@ export function useRecording(
       recorder: rec,
       handle: recorderHandle as EngineHandle,
       targetTrackIds,
-      ...(startAtPpq !== undefined ? { startAtPpq } : {}),
+      plan: null,
+      ...(legacyStart !== undefined ? { startAtPpq: legacyStart } : {}),
       ...(endAtPpq !== undefined ? { endAtPpq } : {}),
     };
     activeOperation = operation;
@@ -657,39 +665,49 @@ export function useRecording(
     }
     if (!operationIsCurrent(operation)) return fail();
 
+    // Resolve the plan only after microphone prewarm. A caller that already
+    // resolved a plan (the shared audio+MIDI path) is consumed verbatim.
+    const plan =
+      suppliedPlan ??
+      (legacyStart !== undefined && Number.isFinite(legacyStart) && legacyStart >= 0
+        ? resolveAutoPunchRecordingStartPlan({
+            positionPpq: transport.positionPpq.value,
+            audiblePositionPpq: transport.audiblePositionPpq.value,
+            startedFromRest: !transport.isPlaying.value,
+            requestedStartPpq: legacyStart,
+            loopEnabled: transport.loopEnabled.value,
+            loopStartPpq: transport.loopStartPpq.value,
+            loopEndPpq: transport.loopEndPpq.value,
+            countInBars: countInBars.value,
+            timeSignatures: store.timeSignatures,
+            transportOwner: 'audio',
+          })
+        : resolveRecordingStartPlan({
+            positionPpq: transport.positionPpq.value,
+            audiblePositionPpq: transport.audiblePositionPpq.value,
+            startedFromRest: !transport.isPlaying.value,
+            loopEnabled: transport.loopEnabled.value,
+            loopStartPpq: transport.loopStartPpq.value,
+            loopEndPpq: transport.loopEndPpq.value,
+            countInBars: countInBars.value,
+            timeSignatures: store.timeSignatures,
+            transportOwner: 'audio',
+          }));
+    operation.plan = plan;
     const tempoBpm = transport.tempo.value;
-    let startPpq = Math.max(0, transport.positionPpq.value);
-    const wasRolling = transport.isPlaying.value;
-    if (explicitStart) {
-      // Auto-punch: the engine punch window opens exactly at this position;
-      // no loop-snap, count-in or cycle-split applies.
-      startPpq = startAtPpq as number;
-    } else {
-      startPpq = snapLoopRecordingStartPpq(startPpq, {
-        explicit: false,
-        wasRolling,
-        loopEnabled: transport.loopEnabled.value,
-        loopStartPpq: transport.loopStartPpq.value,
-        loopEndPpq: transport.loopEndPpq.value,
-      });
-    }
+    const startPpq = plan.punchInPpq;
     const endPpq = explicitEnd ? (endAtPpq as number) : undefined;
     if (endPpq !== undefined && endPpq <= startPpq) {
       return fail('The punch-out locator must be after the punch-in locator.');
     }
-    // Count-in only applies when starting from stop; punching in on a
-    // rolling transport records from the current position immediately.
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
-    let countInPpq = 0;
-    if (!explicitStart && !wasRolling && countInBars.value > 0) {
-      countInPpq = startPpq - countInStartPpq(store.timeSignatures, startPpq, countInBars.value);
-    }
-    if (!wasRolling) {
-      if (countInPpq > 0 && !transport.metronomeEnabled.value) {
+    const ownsTransport = plan.transportOwner !== 'midi';
+    if (ownsTransport && plan.startedFromRest) {
+      if (plan.countInPpq > 0 && !transport.metronomeEnabled.value) {
         transport.toggleMetronome(true);
         restoreMetronomeOff = true;
       }
-      transport.seekPpq(startPpq - countInPpq);
+      transport.seekPpq(plan.countInStartPpq);
     }
     const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm, tempoMap };
     if (endPpq !== undefined) {
@@ -721,8 +739,8 @@ export function useRecording(
     try {
       rec.arm(targetTrackIds[0]);
       state.value = 'armed';
-      // The punch window starts at startPpq, so the count-in pre-roll (the
-      // transport was seeked earlier above) is never part of the capture.
+      // The punch window starts at startPpq, so count-in pre-roll is never
+      // part of the captured audio.
       await rec.start(startOptions);
     } catch (err) {
       finishCountIn();
@@ -745,34 +763,25 @@ export function useRecording(
       const track = store.tracks.find((entry) => entry.id === trackId);
       return track?.kind === 'audio' ? track.recordInputChannel : undefined;
     });
-    // Cycle mode: loop enabled and the capture starts at the loop start (a
-    // punch-in elsewhere, or an explicit auto-punch, records one linear take).
-    const loopStart = transport.loopStartPpq.value;
-    const loopEnd = transport.loopEndPpq.value;
-    recordingLoop =
-      !explicitStart &&
-      transport.loopEnabled.value &&
-      loopEnd > loopStart &&
-      Math.abs(startPpq - loopStart) < 1e-6
-        ? { startPpq: loopStart, endPpq: loopEnd }
-        : null;
+    recordingLoop = plan.cycle;
     isRecording.value = true;
     state.value = 'recording';
-    // Capture reset/arm/punch is complete before the transport can expose the
-    // first timeline sample to the recorder.
-    if (!wasRolling && !transport.play()) {
+    // Capture reset/arm/punch is complete before transport can expose the
+    // first timeline sample to the recorder. MIDI consumes a shared plan and
+    // therefore never starts or seeks transport here.
+    if (ownsTransport && plan.startedFromRest && !transport.play()) {
       await rec.stop().catch(() => undefined);
       finishCountIn();
       return fail('The engine rejected the transport play command.');
     }
-    if (countInPpq > 0) {
+    if (ownsTransport && plan.countInPpq > 0) {
       isCountingIn.value = true;
       countInTimer = globalThis.setTimeout(
         () => {
           countInTimer = null;
           finishCountIn();
         },
-        ppqRangeSeconds(tempoMap, startPpq - countInPpq, startPpq) * 1000,
+        ppqRangeSeconds(tempoMap, plan.countInStartPpq, plan.countInEndPpq) * 1000,
       );
     }
     return true;

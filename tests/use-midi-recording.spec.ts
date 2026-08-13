@@ -5,6 +5,7 @@ import { useMidiRecording } from '@/composables/useMidiRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import type { AddRecordedMidiClipInput } from '@/project/commands';
 import { addAudioTrack, clearHistory, setTempoSegments } from '@/project/commands';
+import { resolveRecordingStartPlan } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -476,6 +477,37 @@ describe('useMidiRecording', () => {
     expect(calls[0].startPpq).toBeCloseTo(3.9, 6);
     expect(calls[0].notes[0].startPpq).toBeCloseTo(0.02, 6);
     expect(calls[0].notes[0].durationPpq).toBeCloseTo(0.1, 6);
+  });
+
+  it('uses the plan rest snapshot for latency after audio owns transport start', () => {
+    let nowMs = 1000;
+    const { recording, positionPpq, isPlaying, calls, transport } = setup({
+      now: () => nowMs,
+      playbackLatency: 0.05,
+    });
+    recording.arm(store.tracks[0].id);
+    const plan = resolveRecordingStartPlan({
+      positionPpq: 0,
+      audiblePositionPpq: 0,
+      startedFromRest: true,
+      loopEnabled: false,
+      loopStartPpq: 0,
+      loopEndPpq: 0,
+      countInBars: 0,
+      transportOwner: 'audio',
+    });
+    // The shared audio owner may have turned this live flag on before MIDI
+    // consumes the plan. The original rest state still requires latency.
+    isPlaying.value = true;
+    expect(recording.record(plan)).toBe(true);
+    recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0, timeStampMs: 1050 });
+    recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0, timeStampMs: 1100 });
+    positionPpq.value = 1;
+    nowMs = 1200;
+    recording.stopRecord();
+
+    expect(transport.play).not.toHaveBeenCalled();
+    expect(calls[0].notes[0]).toMatchObject({ startPpq: 0, durationPpq: 0.1 });
   });
 
   it('anchors explicit punch-in timestamps after a rolling count-in pre-roll', () => {
