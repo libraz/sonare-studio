@@ -1,9 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cloneScoreAnnotations } from '@/project/annotations';
 import { setProjectChords } from '@/project/command/chords';
 import { setTrackFrozen } from '@/project/command/clips-state';
 import { generateTracksBatchCommand, partForTrackName } from '@/project/command/generate-batch';
 import { clearHistory, redo, undo } from '@/project/command/history';
+import { addNote, setNoteAnnotation } from '@/project/commands';
 import { createDefaultStrip } from '@/project/mixer';
 import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -99,6 +101,17 @@ describe('generateTracksBatchCommand', () => {
     const oldClipIds = store.clips
       .filter((clip) => clip.trackId === trackId)
       .map((clip) => clip.id);
+    const oldClip = store.clips.find((clip) => clip.id === oldClipIds[0]);
+    const oldNoteId = oldClip?.notes[0]?.id;
+    if (oldClip === undefined || oldNoteId === undefined) {
+      throw new Error('missing generated clip note fixture');
+    }
+    setNoteAnnotation(oldClip.id, oldNoteId, { dynamics: 'f' });
+    const unrelatedClip = store.clips.find((clip) => clip.trackId !== trackId);
+    if (unrelatedClip === undefined) throw new Error('missing unrelated clip fixture');
+    const unrelatedNoteId = addNote({ pitch: 48, startPpq: 0, durationPpq: 1 });
+    setNoteAnnotation(unrelatedClip.id, unrelatedNoteId, { articulation: 'tenuto' });
+    const beforeScoreAnnotations = cloneScoreAnnotations(store.scoreAnnotations);
     const strip = {
       ...createDefaultStrip(),
       inserts: [
@@ -174,12 +187,17 @@ describe('generateTracksBatchCommand', () => {
     expect(replacement).toHaveLength(1);
     expect(replacement[0].id).not.toBe(oldClipIds[0]);
     expect(replacement[0].lengthPpq).toBe(8);
+    expect(store.scoreAnnotations[oldClipIds[0]]).toBeUndefined();
+    expect(store.scoreAnnotations[unrelatedClip.id]?.[unrelatedNoteId]).toEqual({
+      articulation: 'tenuto',
+    });
 
     expect(undo()).toBe(true);
     expect(store.tracks.find((track) => track.id === trackId)).toEqual(beforeTrack);
     expect(store.clips.filter((clip) => clip.trackId === trackId).map((clip) => clip.id)).toEqual(
       oldClipIds,
     );
+    expect(store.scoreAnnotations).toEqual(beforeScoreAnnotations);
   });
 
   it('rejects frozen clip and replacement targets before changing native or mirror state', () => {

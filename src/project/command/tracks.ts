@@ -21,6 +21,28 @@ export interface AddTrackInput {
 }
 
 /**
+ * Removes score annotations for clips that no longer exist.
+ *
+ * Score annotations are app-only mirror state, so clip deletion must update
+ * them separately from the native Project. Copy the outer record before
+ * deleting keys so callers never mutate a snapshot or another mirror value;
+ * history captures the previous record and restores it on undo.
+ */
+export function pruneClipScoreAnnotations(
+  store: ReturnType<typeof useProjectStore>,
+  clipIds: Iterable<number>,
+): void {
+  const nextAnnotations = { ...store.scoreAnnotations };
+  let changed = false;
+  for (const clipId of clipIds) {
+    if (!Object.hasOwn(nextAnnotations, clipId)) continue;
+    delete nextAnnotations[clipId];
+    changed = true;
+  }
+  if (changed) store.scoreAnnotations = nextAnnotations;
+}
+
+/**
  * Adds a track as one undoable edit (MIDI unless `input.kind` says otherwise).
  *
  * @param input Optional name/color/kind overrides.
@@ -84,7 +106,11 @@ export function applyTrackRemoval(
   trackId: number,
 ): void {
   const project = getProject();
+  const removedClipIds = store.clips
+    .filter((clip) => clip.trackId === trackId)
+    .map((clip) => clip.id);
   project.removeTrack(trackId);
+  pruneClipScoreAnnotations(store, removedClipIds);
   pruneTrackTargetReferences(store, trackId);
   applyTrackRemovalMirror(store, trackId);
   store.refresh();

@@ -22,6 +22,7 @@ import { buildDrumsPlan, type GenerateDrumsParams } from './generate-drums';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
 import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { type AtomicProjectEdit, executeAtomic } from './history';
+import { pruneClipScoreAnnotations } from './tracks';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
 /** The five instrumental parts the batch command can generate. */
@@ -108,6 +109,10 @@ function replaceTrack(
   }
   const oldClips = store.clips.filter((clip) => clip.trackId === trackId);
   for (const clip of oldClips) edit(1, () => getProject().removeClip(clip.id));
+  pruneClipScoreAnnotations(
+    store,
+    oldClips.map((clip) => clip.id),
+  );
   const clipId = edit(2, () =>
     getProject().addClip({
       trackId,

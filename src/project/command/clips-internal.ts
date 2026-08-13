@@ -123,5 +123,7 @@ export function removeClipWithin(edit: AtomicProjectEdit, clipId: number): void 
   const project = getProject();
   clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
   edit(1, () => project.removeClip(clipId));
-  delete store.scoreAnnotations[clipId];
+  const nextAnnotations = { ...store.scoreAnnotations };
+  delete nextAnnotations[clipId];
+  store.scoreAnnotations = nextAnnotations;
 }

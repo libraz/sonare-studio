@@ -78,6 +78,9 @@ export function deleteClip(clipId: number): void {
   executeAtomic((edit) => {
     clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
     edit(1, () => project.removeClip(clipId));
+    const nextAnnotations = { ...store.scoreAnnotations };
+    delete nextAnnotations[clipId];
+    store.scoreAnnotations = nextAnnotations;
     if (store.clipId === clipId) store.clipId = -1;
     store.refresh();
   });
