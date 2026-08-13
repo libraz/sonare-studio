@@ -2,6 +2,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
+import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 import {
   addAudioTrack,
   addTrack,
@@ -393,7 +394,10 @@ describe('DeviceRack.vue', () => {
     await flushPromises();
 
     const input = wrapper.find('.load-sf2-input');
-    const file = new File([new Uint8Array([0x52, 0x49, 0x46, 0x46])], 'Custom.sf2');
+    const file = new File(
+      [new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x73, 0x66, 0x62, 0x6b])],
+      'Custom.sf2',
+    );
     Object.defineProperty(input.element, 'files', { value: [file] });
     await input.trigger('change');
     await flushPromises();
@@ -402,6 +406,30 @@ describe('DeviceRack.vue', () => {
     // The freshly stored font becomes the picker selection.
     await wrapper.find('.use-sf2').trigger('click');
     expect(store.tracks[0].instrument).toEqual({ kind: 'sf2', fontId: 'savedfont0000003' });
+  });
+
+  it('rejects an oversized SF2 before allocating its bytes', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    const file = new File([new Uint8Array(1)], 'Too-large.sf2');
+    const arrayBuffer = vi.fn(file.arrayBuffer.bind(file));
+    Object.defineProperty(file, 'size', {
+      configurable: true,
+      value: MAX_SOUNDFONT_FILE_BYTES + 1,
+    });
+    Object.defineProperty(file, 'arrayBuffer', { configurable: true, value: arrayBuffer });
+    const input = wrapper.find('.load-sf2-input');
+    Object.defineProperty(input.element, 'files', { value: [file] });
+    await input.trigger('change');
+    await flushPromises();
+
+    expect(arrayBuffer).not.toHaveBeenCalled();
+    expect(fontsMock.saveFont).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('File "Too-large.sf2" is too large');
   });
 
   it('applies a project External MIDI default to every MIDI track while leaving audio tracks alone', async () => {

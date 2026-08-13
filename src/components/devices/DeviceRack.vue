@@ -7,6 +7,8 @@ import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
 import { deleteFontGuarded } from '@/persistence/asset-leases';
+import { readFileBytesBounded } from '@/persistence/local-file';
+import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import {
   addInsert,
@@ -54,6 +56,7 @@ import {
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
+import { formatSize } from '@/ui/shell/format';
 import type { Sf2ProgramStatus } from '@/wasm/index.js';
 import PatchEditor from './PatchEditor.vue';
 import QuickControls from './QuickControls.vue';
@@ -363,11 +366,6 @@ function fontIsReferenced(fontId: string): boolean {
   return store.tracks.some(
     (track) => track.instrument?.kind === 'sf2' && track.instrument.fontId === fontId,
   );
-}
-
-function formatFontBytes(byteLength: number): string {
-  if (byteLength < 1024 * 1024) return `${Math.round(byteLength / 1024)} KB`;
-  return `${(byteLength / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function removeFont(fontId: string): Promise<void> {
@@ -693,7 +691,7 @@ async function onSf2FileChange(event: Event): Promise<void> {
   input.value = '';
   if (!file) return;
   try {
-    const data = new Uint8Array(await file.arrayBuffer());
+    const data = await readFileBytesBounded(file, MAX_SOUNDFONT_FILE_BYTES);
     const meta = await saveFont({ name: file.name }, data);
     fontNames.value = { ...fontNames.value, [meta.id]: meta.name };
     await refreshFonts();
@@ -1089,7 +1087,7 @@ const instrumentSourceCaption = computed(() => {
                 >
                   {{ font.name }}
                 </button>
-                <span class="font-size">{{ formatFontBytes(font.byteLength) }}</span>
+                <span class="font-size">{{ formatSize(font.byteLength) }}</span>
                 <button
                   type="button"
                   class="font-remove"

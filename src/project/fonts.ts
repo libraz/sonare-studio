@@ -16,6 +16,7 @@
 import { bytesEqual, isNotFoundError } from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import { isOpfsAvailable, OpfsUnavailableError } from '@/persistence/opfs';
+import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 
 /** Directory under the OPFS root that holds the SoundFont files. */
 const FONTS_DIR = 'fonts';
@@ -244,6 +245,28 @@ function validateFontId(id: string): string {
   return id;
 }
 
+/** Rejects non-SF2 bytes before they can be published into the font store. */
+function validateSoundFontData(data: Uint8Array): void {
+  if (data.byteLength > MAX_SOUNDFONT_FILE_BYTES) {
+    throw new InvalidFontError(
+      `Font data exceeds the ${MAX_SOUNDFONT_FILE_BYTES}-byte SoundFont limit`,
+    );
+  }
+  if (
+    data.byteLength < 12 ||
+    data[0] !== 0x52 ||
+    data[1] !== 0x49 ||
+    data[2] !== 0x46 ||
+    data[3] !== 0x46 ||
+    data[8] !== 0x73 ||
+    data[9] !== 0x66 ||
+    data[10] !== 0x62 ||
+    data[11] !== 0x6b
+  ) {
+    throw new InvalidFontError('Font data is not a RIFF sfbk SoundFont');
+  }
+}
+
 /** 32-bit FNV-1a hash over bytes, with a configurable seed. */
 function fnv1a32Bytes(bytes: Uint8Array, seed: number): number {
   let hash = seed >>> 0;
@@ -399,6 +422,7 @@ export async function saveFontWithStatusUnlocked(
   if (data.length === 0) {
     throw new InvalidFontError('Font data must not be empty');
   }
+  validateSoundFontData(data);
   const id = validateFontId(input.id ?? computeFontId(data));
   const requestedMeta: SoundFontMeta = { id, name: input.name, byteLength: data.length };
   const dir = await fontsDirectory();
@@ -611,7 +635,11 @@ export async function deleteFontUnlocked(id: string): Promise<void> {
   for (const key of fontManifestCache.keys()) {
     if (key.startsWith(`${id}:`)) removeCachedManifest(key);
   }
-  for (const fileName of [id + SF2_EXTENSION, id + META_EXTENSION]) {
+  // Remove the metadata sidecar before its payload: the sidecar is the
+  // publish marker, so an interrupted deletion leaves only an orphan payload
+  // that listFontPayloads()/GC can see and collect. Removing the payload first
+  // would strand an invisible sidecar that makes re-import fail permanently.
+  for (const fileName of [id + META_EXTENSION, id + SF2_EXTENSION]) {
     try {
       await dir.removeEntry(fileName);
     } catch (error) {

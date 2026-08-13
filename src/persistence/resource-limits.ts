@@ -25,3 +25,6 @@ export const MAX_DAWPROJECT_ARCHIVE_BYTES = 256 * MIB;
 // corresponding decoded-sample cap before copying channel data.
 export const MAX_EXTERNAL_AUDIO_FILE_BYTES = MAX_AUDIO_SAMPLE_BYTES;
 export const MAX_EXTERNAL_AUDIO_TOTAL_BYTES = 1024 * MIB;
+
+/** Largest individual SoundFont accepted before allocating its file bytes. */
+export const MAX_SOUNDFONT_FILE_BYTES = MAX_AUDIO_SAMPLE_BYTES;

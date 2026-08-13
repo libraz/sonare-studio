@@ -55,6 +55,11 @@ function mono(): Float32Array[] {
   return [new Float32Array([0.1, 0.2, 0.3, 0.4])];
 }
 
+/** A minimal RIFF/sfbk prefix; payload contents are irrelevant to OPFS tests. */
+function sf2(...payload: number[]): Uint8Array {
+  return new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x73, 0x66, 0x62, 0x6b, ...payload]);
+}
+
 describe('media garbage collection', () => {
   let root: MemoryDirectoryHandle;
 
@@ -85,8 +90,8 @@ describe('media garbage collection', () => {
   it('removes assets and fonts no project references and reports reclaimed bytes', async () => {
     await saveAsset({ id: 'keep', name: 'Keep', sampleRate: 48000 }, mono());
     await saveAsset({ id: 'orphan', name: 'Orphan', sampleRate: 48000 }, mono());
-    await saveFont({ id: 'keepFont', name: 'Keep' }, new Uint8Array([1, 2, 3, 4, 5]));
-    await saveFont({ id: 'orphanFont', name: 'Orphan' }, new Uint8Array([9, 9, 9]));
+    await saveFont({ id: 'keepFont', name: 'Keep' }, sf2(1, 2, 3, 4, 5));
+    await saveFont({ id: 'orphanFont', name: 'Orphan' }, sf2(9, 9, 9));
 
     const live = makeDocument('Live', 'keep', 'keepFont');
     const result = await garbageCollectMedia({ liveDocument: live });
@@ -94,8 +99,8 @@ describe('media garbage collection', () => {
     expect(result.incompleteReferences).toBe(false);
     expect(result.removedAssetIds).toEqual(['orphan']);
     expect(result.removedFontIds).toEqual(['orphanFont']);
-    // orphan asset: 4 frames * 1 channel * 4 bytes = 16; orphan font: 3 bytes.
-    expect(result.reclaimedBytes).toBe(19);
+    // orphan asset: 4 frames * 1 channel * 4 bytes = 16; orphan font: 15 bytes.
+    expect(result.reclaimedBytes).toBe(31);
 
     expect((await listAssets()).map((a) => a.id)).toEqual(['keep']);
     expect((await listFonts()).map((f) => f.id)).toEqual(['keepFont']);
@@ -104,8 +109,8 @@ describe('media garbage collection', () => {
   it('preserves media referenced only by protected undo history ids', async () => {
     await saveAsset({ id: 'undoAsset', name: 'Undo', sampleRate: 48000 }, mono());
     await saveAsset({ id: 'orphan', name: 'Orphan', sampleRate: 48000 }, mono());
-    await saveFont({ id: 'undoFont', name: 'Undo' }, new Uint8Array([1, 2, 3]));
-    await saveFont({ id: 'orphanFont', name: 'Orphan' }, new Uint8Array([9]));
+    await saveFont({ id: 'undoFont', name: 'Undo' }, sf2(1, 2, 3));
+    await saveFont({ id: 'orphanFont', name: 'Orphan' }, sf2(9));
 
     const result = await garbageCollectMedia({
       referencedAssetIds: ['undoAsset'],
@@ -133,7 +138,7 @@ describe('media garbage collection', () => {
   it('preserves a leased SoundFont no stored project references', async () => {
     // A font another tab's live document references (but that no .szd holds yet)
     // must survive GC. The lease stands in for that live cross-tab reference.
-    await saveFont({ id: 'liveOnlyFont', name: 'Live' }, new Uint8Array([1, 2, 3]));
+    await saveFont({ id: 'liveOnlyFont', name: 'Live' }, sf2(1, 2, 3));
     const fontLease = leaseFonts(['liveOnlyFont']);
 
     expect((await garbageCollectMedia()).removedFontIds).toEqual([]);
@@ -183,7 +188,7 @@ describe('media garbage collection', () => {
 
   it('preserves media held only by an unbundled autosave slot', async () => {
     await saveAsset({ id: 'slotAsset', name: 'Slot', sampleRate: 48000 }, mono());
-    await saveFont({ id: 'slotFont', name: 'Slot' }, new Uint8Array([1, 2, 3]));
+    await saveFont({ id: 'slotFont', name: 'Slot' }, sf2(1, 2, 3));
     // The autosave slot writes its .szd without a media bundle, so the shared
     // store is the only place this media lives.
     await saveProject('__autosave__', encodeSzd(makeDocument('Auto', 'slotAsset', 'slotFont')));
@@ -198,7 +203,7 @@ describe('media garbage collection', () => {
 
   it('preserves media a saved revision is the last reference to', async () => {
     await saveAsset({ id: 'revAsset', name: 'Rev', sampleRate: 48000 }, mono());
-    await saveFont({ id: 'revFont', name: 'Rev' }, new Uint8Array([1, 2, 3]));
+    await saveFont({ id: 'revFont', name: 'Rev' }, sf2(1, 2, 3));
     await saveProjectRevision(
       'Song',
       'before the rewrite',

@@ -26,7 +26,14 @@ import {
   uninstallMockOpfs,
 } from './opfs-mock';
 
-const BYTES = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4]);
+function sf2Bytes(fill = 0): Uint8Array {
+  const bytes = new Uint8Array(12).fill(fill);
+  bytes.set([0x52, 0x49, 0x46, 0x46], 0);
+  bytes.set([0x73, 0x66, 0x62, 0x6b], 8);
+  return bytes;
+}
+
+const BYTES = sf2Bytes(1);
 
 describe('SoundFont store', () => {
   let root: MemoryDirectoryHandle;
@@ -51,14 +58,14 @@ describe('SoundFont store', () => {
 
   it('saves a font and reads it back', async () => {
     const meta = await saveFont({ name: 'GM Basic.sf2' }, BYTES);
-    expect(meta).toEqual({ id: computeFontId(BYTES), name: 'GM Basic.sf2', byteLength: 8 });
+    expect(meta).toEqual({ id: computeFontId(BYTES), name: 'GM Basic.sf2', byteLength: 12 });
 
     clearFontCache(); // force the OPFS read path
     const data = await loadFont(meta.id);
     expect(Array.from(data)).toEqual(Array.from(BYTES));
     expect(await loadFontMeta(meta.id)).toEqual(meta);
 
-    const dir = await root.getDirectoryHandle('fonts');
+    const dir = await root.getDirectoryHandle('fonts', { create: true });
     expect([...dir.files.keys()].sort()).toEqual([`${meta.id}.json`, `${meta.id}.sf2`]);
   });
 
@@ -73,9 +80,9 @@ describe('SoundFont store', () => {
 
   it('rejects an explicit-id content collision without replacing the font', async () => {
     await saveFont({ id: 'shared', name: 'Original' }, BYTES);
-    await expect(
-      saveFont({ id: 'shared', name: 'Collision' }, new Uint8Array([9, 9, 9])),
-    ).rejects.toThrow(/immutable SF2 content collision/);
+    await expect(saveFont({ id: 'shared', name: 'Collision' }, sf2Bytes(9))).rejects.toThrow(
+      /immutable SF2 content collision/,
+    );
     clearFontCache();
     expect(Array.from(await loadFont('shared'))).toEqual(Array.from(BYTES));
     expect((await loadFontMeta('shared')).name).toBe('Original');
@@ -106,7 +113,7 @@ describe('SoundFont store', () => {
 
   it('accepts an explicit id and lists fonts sorted by name', async () => {
     await saveFont({ id: 'zeta', name: 'Zeta' }, BYTES);
-    await saveFont({ id: 'alpha', name: 'Alpha' }, new Uint8Array([9]));
+    await saveFont({ id: 'alpha', name: 'Alpha' }, sf2Bytes(9));
     const listed = await listFonts();
     expect(listed.map((f) => f.name)).toEqual(['Alpha', 'Zeta']);
   });
@@ -123,14 +130,17 @@ describe('SoundFont store', () => {
     await expect(loadFontMeta('00000000deadbeef')).rejects.toBeInstanceOf(FontNotFoundError);
   });
 
-  it('rejects empty data, empty names and unsafe ids', async () => {
+  it('rejects empty, malformed, oversized, or unsafe font inputs before publishing files', async () => {
     await expect(saveFont({ name: '' }, BYTES)).rejects.toBeInstanceOf(InvalidFontError);
     await expect(saveFont({ name: 'X' }, new Uint8Array(0))).rejects.toBeInstanceOf(
       InvalidFontError,
     );
+    await expect(saveFont({ name: 'X' }, new Uint8Array(12))).rejects.toThrow('RIFF sfbk');
     await expect(saveFont({ id: '../evil', name: 'X' }, BYTES)).rejects.toBeInstanceOf(
       InvalidFontError,
     );
+    const dir = await root.getDirectoryHandle('fonts', { create: true });
+    expect([...dir.files.keys()]).toEqual([]);
   });
 
   it('deleteFont is idempotent and drops both files', async () => {
@@ -142,6 +152,28 @@ describe('SoundFont store', () => {
     expect([...dir.files.keys()]).toEqual([]);
   });
 
+  it('removes the sidecar before the payload so an interrupted delete can be retried', async () => {
+    const meta = await saveFont({ id: 'interrupted-font', name: 'GM' }, BYTES);
+    const dir = await root.getDirectoryHandle('fonts');
+    const original = dir.removeEntry.bind(dir);
+    vi.spyOn(dir, 'removeEntry').mockImplementation(async (name: string, options?) => {
+      if (name.endsWith('.sf2')) throw new Error('payload removal interrupted');
+      return original(name, options);
+    });
+
+    await expect(deleteFont(meta.id)).rejects.toThrow('payload removal interrupted');
+    expect(dir.files.has(`${meta.id}.json`)).toBe(false);
+    expect(dir.files.has(`${meta.id}.sf2`)).toBe(true);
+
+    vi.restoreAllMocks();
+    await expect(saveFont({ id: meta.id, name: 'Re-imported' }, BYTES)).resolves.toMatchObject({
+      id: meta.id,
+      name: 'Re-imported',
+    });
+    expect(dir.files.has(`${meta.id}.json`)).toBe(true);
+    expect(dir.files.has(`${meta.id}.sf2`)).toBe(true);
+  });
+
   it('caches loaded fonts in memory', async () => {
     const meta = await saveFont({ name: 'GM' }, BYTES);
     const first = await loadFont(meta.id);
@@ -150,19 +182,19 @@ describe('SoundFont store', () => {
   });
 
   it('evicts least-recently-used font bytes within the configured byte budget', async () => {
-    setFontCacheByteBudgetsForTests(8);
-    const first = await saveFont({ id: 'first', name: 'First' }, new Uint8Array(8).fill(1));
-    await saveFont({ id: 'second', name: 'Second' }, new Uint8Array(8).fill(2));
+    setFontCacheByteBudgetsForTests(12);
+    const first = await saveFont({ id: 'first', name: 'First' }, sf2Bytes(1));
+    await saveFont({ id: 'second', name: 'Second' }, sf2Bytes(2));
 
-    expect(getFontCacheStats()).toMatchObject({ entries: 1, byteLength: 8, budget: 8 });
+    expect(getFontCacheStats()).toMatchObject({ entries: 1, byteLength: 12, budget: 12 });
     const reloaded = await loadFont(first.id);
-    expect(reloaded).toEqual(new Uint8Array(8).fill(1));
-    expect(getFontCacheStats()).toMatchObject({ entries: 1, byteLength: 8 });
+    expect(reloaded).toEqual(sf2Bytes(1));
+    expect(getFontCacheStats()).toMatchObject({ entries: 1, byteLength: 12 });
   });
 
   it('does not retain a font larger than the byte budget', async () => {
     setFontCacheByteBudgetsForTests(4);
-    const meta = await saveFont({ name: 'Large' }, new Uint8Array(8).fill(3));
+    const meta = await saveFont({ name: 'Large' }, sf2Bytes(3));
     const first = await loadFont(meta.id);
     const second = await loadFont(meta.id);
 
