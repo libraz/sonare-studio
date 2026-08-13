@@ -56,19 +56,17 @@ function baseLayoutOptions(settings: ScoreLayoutSettings): LayoutOptions {
 /**
  * Paginated Verovio layout used for print/PDF export.
  *
- * `line` honors the system breaks injected per `barsPerSystem` (see
- * `applyLayoutBreaks`) so each system holds a bounded, readable number of
- * measures, while pages break automatically to fill each sheet — so every
- * measure is emitted across as many pages as needed. Pure `auto` ignores the
- * injected breaks and can collapse a busy run into one oversized, unreadable
- * system; `encoded` also forces the injected page breaks, which leaves pages
- * half-empty. With no injected breaks (`barsPerSystem` = 0) Verovio falls back
- * to automatic system breaks.
+ * When `barsPerPage` is enabled, `encoded` honors the page breaks injected by
+ * `applyLayoutBreaks`, while also honoring its per-`barsPerSystem` system
+ * breaks. With no page limit, retain the previous `line` behavior: systems
+ * use explicit system breaks when present and Verovio fills pages naturally.
+ * With no injected system breaks (`barsPerSystem` = 0), Verovio falls back to
+ * automatic system breaks.
  */
 export function scorePrintLayoutOptions(settings: ScoreLayoutSettings): LayoutOptions {
   return {
     ...baseLayoutOptions(settings),
-    breaks: 'line',
+    breaks: settings.barsPerPage > 0 ? 'encoded' : 'line',
   };
 }
 

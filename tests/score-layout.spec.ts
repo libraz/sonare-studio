@@ -33,19 +33,20 @@ describe('scorePageDimsMm', () => {
 });
 
 describe('score layout option builders', () => {
-  it('paginates the print layout at full page size, honoring injected system breaks', () => {
+  it('uses encoded page breaks when a bars-per-page limit is enabled', () => {
     const print = scorePrintLayoutOptions(SETTINGS);
-    // `line` honors the injected per-barsPerSystem system breaks (readable,
-    // bounded systems) while pages break automatically to fill each sheet, so
-    // the whole score is emitted. `auto` crams a dense run into one system and
-    // `encoded` leaves pages half-empty by forcing the injected page breaks.
-    expect(print.breaks).toBe('line');
+    expect(print.breaks).toBe('encoded');
     expect(print.pageWidth).toBe(2100);
     expect(print.pageHeight).toBe(2970);
     // The page must not be cropped to content, otherwise the printed SVG
     // collapses into a thin band centered on an otherwise blank sheet.
     expect(print.adjustPageHeight).toBe(false);
     expect(print.adjustPageWidth).toBe(false);
+  });
+
+  it('preserves line breaking when bars-per-page is disabled', () => {
+    const print = scorePrintLayoutOptions({ ...SETTINGS, barsPerPage: 0 });
+    expect(print.breaks).toBe('line');
   });
 
   it('crops the screen layout to content as one continuous system', () => {
