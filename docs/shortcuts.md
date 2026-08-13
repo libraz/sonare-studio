@@ -12,33 +12,36 @@ input, textarea, select or contenteditable element has focus.
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `Space` | Play / Stop | global |
-| `L` | Toggle loop between the left and right locators | global |
-| `R` | Record | global |
-| `Home` | Go to project start | global |
-| `End` | Go to project end | global |
-| `,` / `.` | Nudge playhead back / forward one bar | global |
-| `[` / `]` | Set left / right locator at the playhead | global |
+| `Space` | Play / Stop <!-- shortcut-action: transport.togglePlayback --> | global |
+| `L` | Toggle loop between the left and right locators <!-- shortcut-action: transport.toggleLoop --> | global |
+| `R` | Record <!-- shortcut-action: transport.toggleRecord --> | global |
+| `Home` | Go to project start <!-- shortcut-action: transport.toStart --> | global |
+| `End` | Go to project end <!-- shortcut-action: transport.toEnd --> | global |
+| `,` / `.` | Nudge playhead back / forward one bar <!-- shortcut-action: transport.nudgeBack --> <!-- shortcut-action: transport.nudgeForward --> | global |
+| `[` / `]` | Set left / right locator at the playhead <!-- shortcut-action: transport.setLeftLocator --> <!-- shortcut-action: transport.setRightLocator --> | global |
 
 ## Project
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `Mod+S` | Save project (OPFS; also refreshes the autosave slot) | global |
-| `Mod+Shift+S` | Save project as… | global |
-| `Mod+O` | Open project | global |
+| `Mod+S` | Save project (OPFS; also refreshes the autosave slot) <!-- shortcut-action: project.save --> | global |
+| `Mod+Shift+S` | Save project as… <!-- shortcut-action: project.saveAs --> | global |
+| `Mod+O` | Open project <!-- shortcut-action: project.open --> | global |
 
 ## Editing
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `Mod+Z` | Undo | global |
-| `Mod+Shift+Z` | Redo | global |
-| `Mod+A` | Select all notes in the active clip | global |
-| `Q` | Quantize selected notes | global |
-| `Backspace` / `Delete` | Delete selected notes | editor dock |
-| `Shift+ArrowUp` / `Shift+ArrowDown` | Transpose selected notes up / down a semitone | editor dock |
-| `Mod+Shift+ArrowUp` / `Mod+Shift+ArrowDown` | Transpose selected notes up / down an octave | editor dock |
+| `Mod+Z` | Undo <!-- shortcut-action: edit.undo --> | global |
+| `Mod+Shift+Z` | Redo <!-- shortcut-action: edit.redo --> | global |
+| `Mod+C` | Copy the current selection <!-- shortcut-action: edit.copy --> | global |
+| `Mod+X` | Cut the current selection <!-- shortcut-action: edit.cut --> | global |
+| `Mod+V` | Paste at the playhead <!-- shortcut-action: edit.paste --> | global |
+| `Mod+A` | Select all notes in the active clip <!-- shortcut-action: edit.selectAllNotes --> | global |
+| `Q` | Quantize selected notes <!-- shortcut-action: edit.quantizeSelection --> | global |
+| `Backspace` / `Delete` | Delete selected notes <!-- shortcut-action: edit.deleteSelectedNotes --> | editor dock |
+| `Shift+ArrowUp` / `Shift+ArrowDown` | Transpose selected notes up / down a semitone <!-- shortcut-action: edit.transposeUp --> <!-- shortcut-action: edit.transposeDown --> | editor dock |
+| `Mod+Shift+ArrowUp` / `Mod+Shift+ArrowDown` | Transpose selected notes up / down an octave <!-- shortcut-action: edit.transposeOctaveUp --> <!-- shortcut-action: edit.transposeOctaveDown --> | editor dock |
 | `Escape` | Cancel an in-flight drag gesture (piano roll) | editor dock |
 
 ## Arrangement
@@ -47,33 +50,46 @@ These fire when the arrangement zone has focus (last pointer-down).
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `Mod+D` | Duplicate the active clip right after itself | arrangement |
-| `B` | Split clip at the playhead | arrangement |
-| `Backspace` / `Delete` | Delete the active clip (falls back to deleting selected notes when no clip is active) | arrangement |
+| `Mod+D` | Duplicate the active clip right after itself <!-- shortcut-action: arrange.duplicateClip --> | arrangement |
+| `B` | Split clip at the playhead <!-- shortcut-action: arrange.splitClipAtPlayhead --> | arrangement |
+| `Backspace` / `Delete` | Delete the active clip <!-- shortcut-action: arrange.deleteClip --> | arrangement |
+
+## Track
+
+These act on the active arrangement track.
+
+| Keys | Action | Scope |
+| --- | --- | --- |
+| `Alt+M` | Toggle active track mute <!-- shortcut-action: track.toggleMute --> | arrangement |
+| `Alt+S` | Toggle active track solo <!-- shortcut-action: track.toggleSolo --> | arrangement |
+| `Alt+A` | Toggle active track record arm <!-- shortcut-action: track.toggleArm --> | arrangement |
 
 ## View
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `Mod+G` | Toggle snap grid | global |
-| `Mod+E` | Toggle the score panel (switches the dock to the piano roll) | global |
+| `Mod+G` | Toggle snap grid <!-- shortcut-action: view.toggleSnap --> | global |
+| `Mod+E` | Toggle the score panel (switches the dock to the piano roll) <!-- shortcut-action: view.toggleScorePanel --> | global |
+| `Mod+=` | Zoom in <!-- shortcut-action: view.zoomIn --> | global |
+| `Mod+-` | Zoom out <!-- shortcut-action: view.zoomOut --> | global |
+| `Mod+Shift+F` | Zoom to fit <!-- shortcut-action: view.zoomToFit --> | global |
 
 ## Tools
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `1` | Select tool | global |
-| `2` | Draw tool | global |
-| `3` | Split tool | global |
-| `4` | Erase tool | global |
+| `1` | Select tool <!-- shortcut-action: tool.select --> | global |
+| `2` | Draw tool <!-- shortcut-action: tool.draw --> | global |
+| `3` | Split tool <!-- shortcut-action: tool.split --> | global |
+| `4` | Erase tool <!-- shortcut-action: tool.erase --> | global |
 
 ## Application
 
 | Keys | Action | Scope |
 | --- | --- | --- |
-| `Mod+,` | Open settings | global |
-| `Mod+K` | Open command palette | global |
-| `?` | Show shortcut help | global |
+| `Mod+,` | Open settings <!-- shortcut-action: app.settings --> | global |
+| `Mod+K` | Open command palette <!-- shortcut-action: app.commandPalette --> | global |
+| `?` | Show shortcut help <!-- shortcut-action: help.shortcuts --> | global |
 
 ## Music typing (fixed, not remappable)
 

@@ -18,8 +18,9 @@ A digital audio workstation that runs entirely in the browser, built on the
 - Sample editor for audio clip content
 - Mastering chain (e.g. brickwall limiter, tape) on the master bus
 - Import/export: `.szd` projects, DAWproject, Standard MIDI File (SMF),
-  MusicXML, and WAV / FLAC / MP3 mixdown (plus AAC / Opus where the browser
-  provides them), with loudness reports for audio exports
+  MIDI 2.0 clip files, MusicXML, and WAV / FLAC / MP3 mixdown (plus AAC / Opus
+  where the browser provides them), with browser backup import/export and
+  loudness reports for audio exports
 - Projects persist as `.szd` files (zip-packed JSON + assets) in the browser's
   origin-private file system (OPFS), with autosave; Web MIDI input, and output
   to external devices via a shared project-default route, are supported where
@@ -31,8 +32,8 @@ A digital audio workstation that runs entirely in the browser, built on the
   light/dark theme toggle
 - Remappable keyboard shortcuts with a `?` cheatsheet overlay, an application
   settings dialog (theme, language, editor density, playhead follow), named
-  workspace layouts (Compose / Mix / Score presets plus saved layouts) and a
-  first-run welcome tour; the editors and arrangement follow the playhead
+  workspace layouts (Compose / Mix / Score / Arrange presets plus saved layouts)
+  and a first-run welcome tour; the editors and arrangement follow the playhead
   during playback
 
 ## Requirements
