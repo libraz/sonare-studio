@@ -46,6 +46,10 @@ describe('patchFieldsForSection', () => {
       'busDrive',
     ]);
   });
+
+  it('keeps a stable i18n key for every numeric field', () => {
+    expect(PATCH_FIELD_SPECS.every((spec) => spec.labelKey === spec.id)).toBe(true);
+  });
 });
 
 describe('clampPatchField', () => {

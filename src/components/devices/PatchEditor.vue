@@ -141,6 +141,11 @@ function fieldValue(spec: PatchFieldSpec): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+/** Resolves numeric patch field captions from the active locale. */
+function fieldLabel(spec: PatchFieldSpec): string {
+  return t.value.shell.patchEditor.fields[spec.labelKey] ?? spec.label;
+}
+
 function onFieldInput(spec: PatchFieldSpec, event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(raw)) return;
@@ -386,7 +391,7 @@ function onKeydown(event: KeyboardEvent): void {
             />
           </label>
           <label v-for="field in oscFields" :key="field.id" class="field-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ fieldLabel(field) }}</span>
             <input
               type="range"
               :data-field="field.id"
@@ -413,7 +418,7 @@ function onKeydown(event: KeyboardEvent): void {
             />
           </label>
           <label v-for="field in filterFields" :key="field.id" class="field-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ fieldLabel(field) }}</span>
             <input
               type="range"
               :data-field="field.id"
@@ -438,7 +443,7 @@ function onKeydown(event: KeyboardEvent): void {
             :aria-label="t.shell.patchEditor.sections.ampEnvelopeCurve"
           />
           <label v-for="field in ampFields" :key="field.id" class="field-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ fieldLabel(field) }}</span>
             <input
               type="range"
               :data-field="field.id"
@@ -455,7 +460,7 @@ function onKeydown(event: KeyboardEvent): void {
         <section class="patch-section" :aria-label="t.shell.patchEditor.sections.filterEnvelope">
           <h3 class="section-title">{{ t.shell.patchEditor.sections.filterEnvelopeTitle }}</h3>
           <label v-for="field in filterEnvFields" :key="field.id" class="field-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ fieldLabel(field) }}</span>
             <input
               type="range"
               :data-field="field.id"
@@ -472,7 +477,7 @@ function onKeydown(event: KeyboardEvent): void {
         <section class="patch-section" :aria-label="t.shell.patchEditor.sections.lfo">
           <h3 class="section-title">{{ t.shell.patchEditor.sections.lfo }}</h3>
           <label v-for="field in lfoFields" :key="field.id" class="field-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ fieldLabel(field) }}</span>
             <input
               type="range"
               :data-field="field.id"
@@ -499,7 +504,7 @@ function onKeydown(event: KeyboardEvent): void {
             />
           </label>
           <label v-for="field in globalFields" :key="field.id" class="field-row">
-            <span class="field-label">{{ field.label }}</span>
+            <span class="field-label">{{ fieldLabel(field) }}</span>
             <input
               type="range"
               :data-field="field.id"

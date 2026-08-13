@@ -52,10 +52,12 @@ const pageFormatOptions = computed(() =>
 );
 
 /** Orientation options; values mirror the boolean `landscape` flag. */
-const ORIENTATION_OPTIONS: ReadonlyArray<{ value: 'portrait' | 'landscape'; label: string }> = [
-  { value: 'portrait', label: 'Portrait' },
-  { value: 'landscape', label: 'Landscape' },
-];
+const orientationOptions = computed<
+  ReadonlyArray<{ value: 'portrait' | 'landscape'; label: string }>
+>(() => [
+  { value: 'portrait', label: t.value.shell.score.portrait },
+  { value: 'landscape', label: t.value.shell.score.landscape },
+]);
 
 /** String proxy over the boolean `landscape` flag for the select binding. */
 const orientation = computed<'portrait' | 'landscape'>({
@@ -127,7 +129,7 @@ const transposeOptions = computed(() =>
       {{ t.shell.score.orientation }}
       <SelectMenu
         v-model="orientation"
-        :options="ORIENTATION_OPTIONS"
+        :options="orientationOptions"
         :aria-label="t.shell.score.orientation"
         size="sm"
       />
