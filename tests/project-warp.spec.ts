@@ -178,6 +178,28 @@ describe('warpSegments', () => {
     ]);
   });
 
+  it('keeps an explicit trimmed source window when anchors bend the mapping', () => {
+    const clip = makeWarpClip({
+      lengthPpq: 8,
+      sourceOffsetPpq: 2,
+      warp: {
+        enabled: true,
+        sourceBpm: 120,
+        sourceStartSeconds: 3,
+        sourceEndSeconds: 9,
+        anchors: [
+          { ppq: 2, sourceSeconds: 1 },
+          { ppq: 6, sourceSeconds: 4 },
+        ],
+      },
+    });
+    expect(warpSegments(clip)).toEqual([
+      { ppq: 0, lengthPpq: 2, sourceStartSeconds: 3, sourceLengthSeconds: 1 },
+      { ppq: 2, lengthPpq: 4, sourceStartSeconds: 4, sourceLengthSeconds: 3 },
+      { ppq: 6, lengthPpq: 2, sourceStartSeconds: 7, sourceLengthSeconds: 2 },
+    ]);
+  });
+
   it('ignores anchors outside the clip window', () => {
     const clip = makeWarpClip({
       warp: {

@@ -60,6 +60,19 @@ function loadedAsset() {
   };
 }
 
+function sourceWindowAsset() {
+  return {
+    meta: {
+      id: 'asset-1',
+      name: 'window.wav',
+      sampleRate: 1,
+      numChannels: 1,
+      numFrames: 12,
+    },
+    channels: [Float32Array.from({ length: 12 }, (_, index) => index)],
+  };
+}
+
 /** Creates a manually-settled promise for async race tests. */
 function deferred<T>(): {
   promise: Promise<T>;
@@ -94,7 +107,13 @@ describe('useSampleWarp', () => {
     const { scope, warp } = setup({
       clips: [
         audioClip({
-          warp: { enabled: true, sourceBpm: 100, anchors: [{ ppq: 2, sourceSeconds: 1.2 }] },
+          warp: {
+            enabled: true,
+            sourceBpm: 100,
+            sourceStartSeconds: 2,
+            sourceEndSeconds: 8,
+            anchors: [{ ppq: 2, sourceSeconds: 1.2 }],
+          },
         }),
       ],
     });
@@ -106,7 +125,56 @@ describe('useSampleWarp', () => {
     expect(setClipWarp).toHaveBeenCalledWith(7, {
       enabled: true,
       sourceBpm: 96,
+      sourceStartSeconds: 2,
+      sourceEndSeconds: 8,
       anchors: [{ ppq: 2, sourceSeconds: 1.2 }],
+    });
+    scope.stop();
+  });
+
+  it('preserves trimmed nonlinear source bounds on toggle and anchor edits', () => {
+    const { scope, warp } = setup({
+      clips: [
+        audioClip({
+          warp: {
+            enabled: true,
+            sourceBpm: 90,
+            sourceStartSeconds: 3,
+            sourceEndSeconds: 9,
+            anchors: [
+              { ppq: 2, sourceSeconds: 1 },
+              { ppq: 6, sourceSeconds: 4 },
+            ],
+          },
+        }),
+      ],
+    });
+
+    warp.onToggleWarp();
+    expect(setClipWarp).toHaveBeenLastCalledWith(7, {
+      enabled: false,
+      sourceBpm: 90,
+      sourceStartSeconds: 3,
+      sourceEndSeconds: 9,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1 },
+        { ppq: 6, sourceSeconds: 4 },
+      ],
+    });
+
+    setClipWarp.mockClear();
+    warp.onAnchorEdit(0, 'sourceSeconds', {
+      target: { value: '2' },
+    } as unknown as Event);
+    expect(setClipWarp).toHaveBeenLastCalledWith(7, {
+      enabled: true,
+      sourceBpm: 90,
+      sourceStartSeconds: 3,
+      sourceEndSeconds: 9,
+      anchors: [
+        { ppq: 2, sourceSeconds: 2 },
+        { ppq: 6, sourceSeconds: 4 },
+      ],
     });
     scope.stop();
   });
@@ -170,6 +238,63 @@ describe('useSampleWarp', () => {
         { ppq: 1, sourceSeconds: 0.5 },
         { ppq: 2, sourceSeconds: 1.1 },
         { ppq: 3, sourceSeconds: 1.7 },
+      ],
+    });
+    scope.stop();
+  });
+
+  it('auto-warps from the clip source BPM window instead of the project tempo', async () => {
+    setClipWarp.mockClear();
+    const project = reactive({
+      clips: [
+        audioClip({
+          sourceOffsetPpq: 2,
+          lengthPpq: 4,
+          warp: {
+            enabled: true,
+            sourceBpm: 60,
+            sourceStartSeconds: 2,
+            sourceEndSeconds: 6,
+            anchors: [{ ppq: 2, sourceSeconds: 1 }],
+          },
+        }),
+      ],
+      clipId: 7,
+      tempoBpm: 120,
+      tempoSegments: [],
+    });
+    const errors: string[] = [];
+    let observedWindow: Float32Array | undefined;
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: (message) => errors.push(message),
+        autoWarp: {
+          loadAudioAsset: async () => sourceWindowAsset() as never,
+          detectBeats: (samples) => {
+            observedWindow = samples;
+            return [0, 1, 2, 3];
+          },
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    await warp.onAutoWarp();
+
+    expect(errors).toEqual([]);
+    expect(observedWindow).toEqual(new Float32Array([2, 3, 4, 5]));
+    expect(setClipWarp).toHaveBeenCalledWith(7, {
+      enabled: true,
+      sourceBpm: 60,
+      sourceStartSeconds: 2,
+      sourceEndSeconds: 6,
+      anchors: [
+        { ppq: 1, sourceSeconds: 1 },
+        { ppq: 2, sourceSeconds: 2 },
+        { ppq: 3, sourceSeconds: 3 },
       ],
     });
     scope.stop();

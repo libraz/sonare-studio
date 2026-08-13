@@ -182,7 +182,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
         asset.meta.sampleRate,
         clip.sourceOffsetPpq,
         clip.lengthPpq,
-        project.tempoBpm,
+        clip.warp?.sourceBpm ?? project.tempoBpm,
       );
       const mono = mixdownToMono(window);
       if (mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');

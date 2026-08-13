@@ -67,6 +67,7 @@ export function mergedWarp(
     enabled: current?.enabled ?? false,
     sourceBpm: current?.sourceBpm ?? fallbackBpm,
     anchors: current?.anchors ?? [],
+    ...current,
     ...overrides,
   };
 }

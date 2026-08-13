@@ -109,7 +109,7 @@ describe('useProjectAudioAssets', () => {
     expect(undo()).toBe(false);
   });
 
-  it('redetects clip tempo from the clip source window, not the whole asset', async () => {
+  it('redetects clip tempo from the source-BPM window, not the whole asset', async () => {
     const renderInfo = ref('');
     const trackId = addAudioTrack();
     const clipId = await addAudioClip({
@@ -119,15 +119,22 @@ describe('useProjectAudioAssets', () => {
       sourceOffsetPpq: 1,
       lengthPpq: 2,
       name: 'Windowed loop',
+      warp: {
+        enabled: false,
+        sourceBpm: 60,
+        sourceStartSeconds: 1,
+        sourceEndSeconds: 3,
+        anchors: [{ ppq: 1, sourceSeconds: 0.5 }],
+      },
     });
     assetStore.loadAsset.mockResolvedValue({
-      channels: [new Float32Array([1, 2, 3, 4, 5, 6, 7, 8])],
+      channels: [new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])],
       meta: {
         id: 'asset-1',
         name: 'Loop',
         sampleRate: 4,
         numChannels: 1,
-        numFrames: 8,
+        numFrames: 12,
       },
     });
     audioImport.resolveAudioAnalysis.mockResolvedValue({ detectBpm: vi.fn() });
@@ -141,12 +148,19 @@ describe('useProjectAudioAssets', () => {
 
     await assets.onRedetectClipTempo(clipId);
 
-    expect(audioImport.analyzeAudioTags).toHaveBeenCalledWith([new Float32Array([3, 4, 5, 6])], 4, {
-      detectBpm: expect.any(Function),
-    });
-    expect(store.clips.find((clip) => clip.id === clipId)?.warp).toMatchObject({
+    expect(audioImport.analyzeAudioTags).toHaveBeenCalledWith(
+      [new Float32Array([5, 6, 7, 8, 9, 10, 11, 12])],
+      4,
+      {
+        detectBpm: expect.any(Function),
+      },
+    );
+    expect(store.clips.find((clip) => clip.id === clipId)?.warp).toEqual({
       enabled: false,
       sourceBpm: 96,
+      sourceStartSeconds: 1,
+      sourceEndSeconds: 3,
+      anchors: [{ ppq: 1, sourceSeconds: 0.5 }],
     });
     expect(renderInfo.value).toContain('96.0');
   });

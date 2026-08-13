@@ -78,6 +78,46 @@ describe('mergedWarp', () => {
     });
     expect(mergedWarp(current, { enabled: false }, 120)).toEqual({ ...current, enabled: false });
   });
+
+  it('preserves explicit trimmed source bounds across every partial edit', () => {
+    const current = {
+      enabled: true,
+      sourceBpm: 90,
+      sourceStartSeconds: 3,
+      sourceEndSeconds: 9,
+      anchors: [
+        { ppq: 2, sourceSeconds: 1 },
+        { ppq: 6, sourceSeconds: 4 },
+      ],
+    };
+
+    expect(mergedWarp(current, { enabled: false }, 120)).toEqual({
+      ...current,
+      enabled: false,
+    });
+    expect(mergedWarp(current, { sourceBpm: 100 }, 120)).toEqual({
+      ...current,
+      sourceBpm: 100,
+    });
+    expect(
+      mergedWarp(
+        current,
+        {
+          anchors: [
+            { ppq: 2, sourceSeconds: 2 },
+            { ppq: 6, sourceSeconds: 4 },
+          ],
+        },
+        120,
+      ),
+    ).toEqual({
+      ...current,
+      anchors: [
+        { ppq: 2, sourceSeconds: 2 },
+        { ppq: 6, sourceSeconds: 4 },
+      ],
+    });
+  });
 });
 
 describe('defaultWarpAnchor', () => {

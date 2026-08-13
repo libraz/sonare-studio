@@ -190,9 +190,9 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       if (!isCurrent() || !current || !isAudioClip(current)) return;
       const bpm = Math.round(tags.bpm * 10) / 10;
       setClipWarp(clipId, {
+        ...(current.warp ?? {}),
         enabled: current.warp?.enabled ?? false,
         sourceBpm: bpm,
-        ...(current.warp?.anchors ? { anchors: current.warp.anchors } : {}),
       });
       renderInfo.value = formatMessage(t.value.dialogs.prompts.tempoDetected, {
         bpm: bpm.toFixed(1),
