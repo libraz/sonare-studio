@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue';
+import type { MeterListener, MeterSource } from '@/engine/meters';
 import {
   bankSlotTrackId,
   bankWindow,
@@ -30,6 +31,7 @@ import {
   surfaceKeepAlive,
   surfaceRequiresSysEx,
 } from '@/ui/midi/surface-protocol';
+import { meterFraction } from '@/ui/mixer/meter-model';
 import type { MidiLearnHandle } from './useMidiLearn';
 
 /** A Web MIDI port as the surface pickers show it. */
@@ -64,6 +66,8 @@ export interface ControlSurfaceOptions {
   armedTrackIds?: Ref<readonly number[]>;
   /** Normalized 0..1 output level of a track, for the strip meters. */
   trackMeter?: (trackId: number) => number;
+  /** Live engine meter source for a track, for the strip meters. */
+  trackMeterSource?: (trackId: number) => MeterSource | null;
 }
 
 /** Reactive control-surface state returned by {@link useControlSurface}. */
@@ -155,6 +159,18 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
   let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   let decoder: SurfaceDecoder = createSurfaceDecoder('none');
   let lastSent: SurfaceSnapshot | null = null;
+  /** Latest normalized meter fraction for each track in the current bank. */
+  const meterValues = new Map<number, number>();
+  /** Sources currently subscribed for the current bank. */
+  const meterSources = new Map<number, MeterSource>();
+  const meterSubscriptions = new Map<
+    MeterSource,
+    { trackIds: Set<number>; unsubscribe: (() => void) | null }
+  >();
+  const meterSourceIds = new WeakMap<object, number>();
+  let nextMeterSourceId = 1;
+  let meterBindingGeneration = 0;
+  let rebindingMeters = false;
   let disposed = false;
 
   const settings = computed(() => useProjectStore().controlSurface);
@@ -177,6 +193,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
   }
 
   function send(messages: ReadonlyArray<number[]>): void {
+    if (disposed) return;
     const port = outputPort();
     if (!port) return;
     for (const message of messages) {
@@ -188,6 +205,118 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
         error.value = err instanceof Error ? err.message : String(err);
         return;
       }
+    }
+  }
+
+  /** Converts one stereo peak reading to the surface's normalized meter level. */
+  function meterFractionFor(source: MeterSource): number {
+    const levels = source.latest;
+    // meterFraction owns the shared dB-floor and clamping rules used by the UI
+    // meters. Taking the louder channel keeps a stereo strip readable when one
+    // side carries the signal and the other is silent.
+    return meterFraction(Math.max(levels.peakDbL, levels.peakDbR));
+  }
+
+  /** Returns a stable identity token so a reactive source change can rebind. */
+  function meterSourceId(source: MeterSource | null): number {
+    if (source === null) return 0;
+    const object = source as object;
+    const existing = meterSourceIds.get(object);
+    if (existing !== undefined) return existing;
+    const id = nextMeterSourceId;
+    nextMeterSourceId += 1;
+    meterSourceIds.set(object, id);
+    return id;
+  }
+
+  /** Track ids currently visible on the native surface's physical strips. */
+  function currentMeterTrackIds(): Array<number | null> {
+    const store = useProjectStore();
+    return bankWindow(
+      store.tracks.map((track) => track.id),
+      settings.value.bankOffset,
+      stripCount(),
+    );
+  }
+
+  /**
+   * Reactive identity of the current bank and its live meter sources. Calling
+   * the source resolver here is intentional: the resolver normally reads the
+   * reactive engine bridge, so an engine replacement causes a rebind even when
+   * the project tracks and surface settings stay unchanged.
+   */
+  function meterBindingSignature(): string {
+    const surface = settings.value;
+    const trackIds = currentMeterTrackIds();
+    const resolveMeterSource = options.trackMeterSource;
+    const sourceIds = resolveMeterSource
+      ? trackIds.map((trackId) =>
+          trackId === null ? 0 : meterSourceId(resolveMeterSource(trackId)),
+        )
+      : [];
+    return JSON.stringify({
+      protocol: surface.protocol,
+      feedback: surface.feedback,
+      bank: `${surface.bankOffset}|${surface.bankSize}|${trackIds.join(',')}`,
+      sourceIds,
+    });
+  }
+
+  function clearMeterSubscriptions(): void {
+    meterBindingGeneration += 1;
+    for (const subscription of meterSubscriptions.values()) subscription.unsubscribe?.();
+    meterSubscriptions.clear();
+    meterSources.clear();
+    meterValues.clear();
+  }
+
+  /** Rebinds only the sources for the strips currently shown by the surface. */
+  function rebindMeterSources(): void {
+    clearMeterSubscriptions();
+    if (disposed || !settings.value.feedback || settings.value.protocol === 'none') return;
+
+    const generation = meterBindingGeneration;
+    const trackIds = currentMeterTrackIds();
+    rebindingMeters = true;
+    try {
+      for (const trackId of trackIds) {
+        if (trackId === null) continue;
+        const source = options.trackMeterSource?.(trackId) ?? null;
+        meterValues.set(
+          trackId,
+          source ? meterFractionFor(source) : (options.trackMeter?.(trackId) ?? 0),
+        );
+        if (!source) continue;
+
+        meterSources.set(trackId, source);
+        const existing = meterSubscriptions.get(source);
+        if (existing) {
+          existing.trackIds.add(trackId);
+          continue;
+        }
+        const subscription: {
+          trackIds: Set<number>;
+          unsubscribe: (() => void) | null;
+        } = { trackIds: new Set([trackId]), unsubscribe: null };
+        meterSubscriptions.set(source, subscription);
+        const listener: MeterListener = (levels): void => {
+          if (disposed || generation !== meterBindingGeneration) {
+            return;
+          }
+          const next = meterFraction(Math.max(levels.peakDbL, levels.peakDbR));
+          let changed = false;
+          for (const subscribedTrackId of subscription.trackIds) {
+            if (meterSources.get(subscribedTrackId) !== source) continue;
+            if (meterValues.get(subscribedTrackId) === next) continue;
+            meterValues.set(subscribedTrackId, next);
+            changed = true;
+          }
+          if (changed && !rebindingMeters) pushFeedback(false);
+        };
+        subscription.unsubscribe = source.subscribe(listener);
+      }
+    } finally {
+      rebindingMeters = false;
     }
   }
 
@@ -212,7 +341,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
         solo: track.solo === true,
         armed: armed.has(trackId),
         selected: store.activeTrackId === trackId,
-        meter: options.trackMeter?.(trackId) ?? 0,
+        meter: meterValues.get(trackId) ?? options.trackMeter?.(trackId) ?? 0,
       };
     });
     return {
@@ -225,11 +354,25 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
   }
 
   function pushFeedback(force: boolean): void {
+    if (disposed) return;
     if (!settings.value.feedback || settings.value.protocol === 'none') return;
     const next = snapshot();
     const items = surfaceFeedbackDiff(force ? null : lastSent, next);
     lastSent = next;
     for (const item of items) send(encodeSurfaceFeedback(settings.value.protocol, item));
+  }
+
+  /**
+   * Leaves a physical surface in a harmless neutral state before this binding
+   * stops driving it. This must run before `disposed` flips because `send()`
+   * deliberately rejects all output after disposal.
+   */
+  function resetFeedback(protocol: ControlSurfaceProtocol): void {
+    if (protocol === 'none' || lastSent === null) return;
+    for (const item of surfaceResetFeedback(stripCount())) {
+      send(encodeSurfaceFeedback(protocol, item));
+    }
+    lastSent = null;
   }
 
   /** Track a slot addresses right now, or null when the slot is unused. */
@@ -333,7 +476,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
   }
 
   function handleMessage(bytes: readonly number[]): void {
-    if (settings.value.protocol === 'none') return;
+    if (disposed || settings.value.protocol === 'none') return;
     for (const event of decoder.decode(bytes)) applyEvent(event);
   }
 
@@ -448,14 +591,50 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
       // session that no longer drives them, so the reset is encoded with the
       // protocol the surface was still speaking.
       const leaving = previous?.split('|')[0] as ControlSurfaceProtocol | undefined;
-      if (leaving !== undefined && leaving !== 'none' && lastSent !== null) {
-        for (const item of surfaceResetFeedback(stripCount())) {
-          send(encodeSurfaceFeedback(leaving, item));
-        }
-      }
-      lastSent = null;
+      if (leaving !== undefined) resetFeedback(leaving);
       if (access) void refresh();
     },
+  );
+
+  // Meter sources are live subscriptions rather than one-shot reads. Rebind
+  // when the bank/track topology, feedback mode, protocol, or engine-provided
+  // source identities change; a source callback handles level-only changes.
+  watch(
+    meterBindingSignature,
+    (next, previous) => {
+      const nextState = JSON.parse(next) as {
+        protocol: ControlSurfaceProtocol;
+        feedback: boolean;
+        bank: string;
+      };
+      const previousState = previous
+        ? (JSON.parse(previous) as {
+            protocol: ControlSurfaceProtocol;
+            feedback: boolean;
+            bank: string;
+          })
+        : null;
+      rebindMeterSources();
+      if (!nextState.feedback || nextState.protocol === 'none') return;
+      if (!previousState) {
+        pushFeedback(true);
+      } else if (nextState.protocol !== previousState.protocol) {
+        // The protocol watcher above re-attaches and performs the full push.
+        return;
+      } else if (
+        nextState.bank !== previousState.bank ||
+        nextState.feedback !== previousState.feedback
+      ) {
+        // A bank/topology change points every physical strip at a new track;
+        // enabling feedback also needs a complete initial state.
+        pushFeedback(true);
+      } else {
+        // A new engine/source has the same strip topology; reflect its latest
+        // reading without needlessly re-driving every motor fader and lamp.
+        pushFeedback(false);
+      }
+    },
+    { immediate: true },
   );
 
   // Mirror mixer and transport state back to the surface as it changes.
@@ -467,16 +646,14 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
     () => pushFeedback(false),
   );
 
-  // A bank move re-points every strip at once; the surface has to be told in
-  // full because its previous positions belong to other tracks now.
-  watch(
-    () => `${settings.value.bankOffset}|${settings.value.bankSize}|${settings.value.feedback}`,
-    () => pushFeedback(true),
-  );
-
   if (getCurrentScope()) {
     onScopeDispose(() => {
+      // A scoped composable is normally torn down when the app/session is
+      // replaced. Explicitly clear motor faders, lamps, meters, and rings so
+      // hardware never keeps displaying that no-longer-live session.
+      resetFeedback(settings.value.protocol);
       disposed = true;
+      clearMeterSubscriptions();
       detach();
       detachStateChange?.();
       detachStateChange = null;

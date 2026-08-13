@@ -4,9 +4,12 @@ import { effectScope, nextTick, ref } from 'vue';
 import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import { useControlSurface } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
+import { METER_SILENCE_DB, type MeterSource, type StereoMeterLevels } from '@/engine/meters';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { ccToGainDbFine } from '@/ui/midi/midi-learn';
+import { surfaceResetFeedback } from '@/ui/midi/surface-feedback';
+import { encodeSurfaceFeedback } from '@/ui/midi/surface-protocol';
 
 const setStripGain = vi.fn();
 const setStripPan = vi.fn();
@@ -90,6 +93,43 @@ function trackList(count: number): EditorTrack[] {
   }));
 }
 
+function mutableMeterSource(levels: Partial<StereoMeterLevels> = {}): {
+  source: MeterSource;
+  emit: (next: Partial<StereoMeterLevels>) => void;
+  unsubscribeCount: () => number;
+} {
+  let latest: StereoMeterLevels = {
+    frame: 0,
+    peakDbL: METER_SILENCE_DB,
+    peakDbR: METER_SILENCE_DB,
+    rmsDbL: METER_SILENCE_DB,
+    rmsDbR: METER_SILENCE_DB,
+    correlation: 0,
+    ...levels,
+  };
+  const listeners = new Set<(value: StereoMeterLevels) => void>();
+  let unsubscribed = 0;
+  return {
+    source: {
+      get latest() {
+        return latest;
+      },
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => {
+          unsubscribed += 1;
+          listeners.delete(listener);
+        };
+      },
+    },
+    emit(next) {
+      latest = { ...latest, ...next };
+      for (const listener of listeners) listener(latest);
+    },
+    unsubscribeCount: () => unsubscribed,
+  };
+}
+
 /** Sends raw bytes to the surface as if the port had delivered them. */
 function fromSurface(bytes: number[]): void {
   input.onmidimessage?.({ data: new Uint8Array(bytes) });
@@ -100,7 +140,10 @@ let scope: ReturnType<typeof effectScope>;
 /** Builds a configured surface handle inside its own effect scope. */
 async function mountSurface(
   overrides: Partial<ReturnType<typeof useProjectStore>['controlSurface']> = {},
-  options: { isPlaying?: ReturnType<typeof ref<boolean>> } = {},
+  options: {
+    isPlaying?: ReturnType<typeof ref<boolean>>;
+    trackMeterSource?: (trackId: number) => MeterSource | null;
+  } = {},
 ): Promise<ControlSurfaceHandle> {
   const store = useProjectStore();
   store.tracks = trackList(10);
@@ -118,6 +161,7 @@ async function mountSurface(
     useControlSurface({
       learn: useMidiLearn(),
       isPlaying: options.isPlaying,
+      trackMeterSource: options.trackMeterSource,
     }),
   );
   if (!handle) throw new Error('effect scope did not run');
@@ -286,6 +330,73 @@ describe('control surface feedback', () => {
     await nextTick();
 
     expect(sent).toEqual([[0x90, 94, 127]]);
+  });
+
+  it('subscribes to live meter levels and uses the louder stereo peak', async () => {
+    const meter = mutableMeterSource();
+    await mountSurface({}, { trackMeterSource: () => meter.source });
+    sent.length = 0;
+
+    meter.emit({ peakDbL: -24, peakDbR: -6 });
+
+    // -6 dBFS maps to 0.9 of the shared -60..0 dB meter scale, i.e. MCU
+    // segment 11. A one-shot closure read would not produce this delta.
+    expect(sent).toContainEqual([0xd0, 11]);
+  });
+
+  it('maps a silent source to the bottom MCU meter segment', async () => {
+    const meter = mutableMeterSource({
+      peakDbL: METER_SILENCE_DB,
+      peakDbR: METER_SILENCE_DB,
+    });
+    await mountSurface({}, { trackMeterSource: () => meter.source });
+
+    expect(sent).toContainEqual([0xd0, 0]);
+  });
+
+  it('rebinds meter subscriptions when the bank moves', async () => {
+    const meters = new Map<number, ReturnType<typeof mutableMeterSource>>();
+    for (const track of trackList(10)) meters.set(track.id, mutableMeterSource());
+    const store = useProjectStore();
+    await mountSurface({}, { trackMeterSource: (trackId) => meters.get(trackId)?.source ?? null });
+    sent.length = 0;
+
+    store.controlSurface = { ...store.controlSurface, bankOffset: 2 };
+    await nextTick();
+
+    expect(meters.get(100)?.unsubscribeCount()).toBe(1);
+    sent.length = 0;
+    meters.get(100)?.emit({ peakDbL: 0, peakDbR: 0 });
+    expect(sent).toEqual([]);
+
+    meters.get(102)?.emit({ peakDbL: -6, peakDbR: -6 });
+    expect(sent).toContainEqual([0xd0, 11]);
+  });
+
+  it('stops a disposed meter source from producing output', async () => {
+    const meter = mutableMeterSource();
+    await mountSurface({}, { trackMeterSource: () => meter.source });
+    sent.length = 0;
+
+    scope.stop();
+    // Scope disposal emits one final hardware reset; later engine callbacks
+    // must not resurrect feedback after the subscription was released.
+    sent.length = 0;
+    meter.emit({ peakDbL: 0, peakDbR: 0 });
+
+    expect(meter.unsubscribeCount()).toBe(1);
+    expect(sent).toEqual([]);
+  });
+
+  it('resets the hardware before a live surface scope is disposed', async () => {
+    await mountSurface();
+    sent.length = 0;
+
+    scope.stop();
+
+    expect(sent).toEqual(
+      surfaceResetFeedback(8).flatMap((item) => encodeSurfaceFeedback('mcu', item)),
+    );
   });
 });
 

@@ -1,5 +1,5 @@
 import { computed, getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
-import { useControlSurface } from '@/composables/useControlSurface';
+import { type ControlSurfaceOptions, useControlSurface } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useMusicTyping } from '@/composables/useMusicTyping';
 import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
@@ -86,6 +86,8 @@ export interface InputControlsOptions {
   isLooping?: Ref<boolean>;
   /** Record-armed tracks; lights a surface's ARM lamps. */
   armedTrackIds?: Ref<readonly number[]>;
+  /** Live engine meter source lookup for the surface's strip meters. */
+  trackMeterSource?: ControlSurfaceOptions['trackMeterSource'];
   runAction: RunAction;
 }
 
@@ -126,6 +128,9 @@ export function useInputControls(options: InputControlsOptions) {
     ...(options.isRecording === undefined ? {} : { isRecording: options.isRecording }),
     ...(options.isLooping === undefined ? {} : { isLooping: options.isLooping }),
     ...(options.armedTrackIds === undefined ? {} : { armedTrackIds: options.armedTrackIds }),
+    ...(options.trackMeterSource === undefined
+      ? {}
+      : { trackMeterSource: options.trackMeterSource }),
   });
   const midiLearnOpen = ref(false);
   const webMidi = useWebMidi({

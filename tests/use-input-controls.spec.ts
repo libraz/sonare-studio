@@ -5,6 +5,9 @@ const handleCc = vi.fn();
 const webMidiConnect = vi.fn(async () => true);
 const webMidiDisconnect = vi.fn();
 const surfaceRefresh = vi.fn(async () => true);
+let surfaceOptions:
+  | Parameters<typeof import('@/composables/useControlSurface').useControlSurface>[0]
+  | null = null;
 let webMidiOptions: Parameters<typeof import('@/composables/useWebMidi').useWebMidi>[0] | null =
   null;
 let musicTypingOptions:
@@ -26,17 +29,22 @@ vi.mock('@/composables/useMusicTyping', () => ({
 }));
 
 vi.mock('@/composables/useControlSurface', () => ({
-  useControlSurface: () => ({
-    available: ref(null),
-    inputs: ref([]),
-    outputs: ref([]),
-    error: ref<string | null>(null),
-    connected: ref(false),
-    excludedInputIds: computed(() => []),
-    refresh: surfaceRefresh,
-    handleMessage: vi.fn(),
-    refreshFeedback: vi.fn(),
-  }),
+  useControlSurface: (
+    options: Parameters<typeof import('@/composables/useControlSurface').useControlSurface>[0],
+  ) => {
+    surfaceOptions = options;
+    return {
+      available: ref(null),
+      inputs: ref([]),
+      outputs: ref([]),
+      error: ref<string | null>(null),
+      connected: ref(false),
+      excludedInputIds: computed(() => []),
+      refresh: surfaceRefresh,
+      handleMessage: vi.fn(),
+      refreshFeedback: vi.fn(),
+    };
+  },
 }));
 
 vi.mock('@/composables/useWebMidi', () => ({
@@ -90,6 +98,7 @@ function makeOptions() {
 
 beforeEach(() => {
   FakeRealtimeEngine.instances = [];
+  surfaceOptions = null;
   webMidiOptions = null;
   musicTypingOptions = null;
   handleCc.mockClear();
@@ -102,6 +111,15 @@ afterEach(() => {
 });
 
 describe('useInputControls MIDI routing engine lifecycle', () => {
+  it('passes the live track meter source through to the control surface', () => {
+    const trackMeterSource = vi.fn(() => null);
+    const scope = effectScope();
+    scope.run(() => useInputControls({ ...makeOptions(), trackMeterSource }));
+
+    expect(surfaceOptions?.trackMeterSource).toBe(trackMeterSource);
+    scope.stop();
+  });
+
   it('destroys the routing engine and disconnects Web MIDI when the scope disposes', async () => {
     const scope = effectScope();
     let controls!: ReturnType<typeof useInputControls>;
