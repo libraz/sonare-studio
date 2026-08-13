@@ -1,4 +1,6 @@
+import { parseMidiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import type { SendTiming } from '@/wasm/index.js';
+import { parseInsertAutomationParam } from '../automation';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -45,6 +47,44 @@ import {
   writeStrip,
 } from './mixer-internal';
 import { requireTrack } from './utils';
+
+/**
+ * Drops references to the old slot identity when a replacement changes the
+ * processor type. Positional references at this slot are also unsafe: unlike
+ * a reorder, they describe the old processor and cannot be rebound to the
+ * replacement's parameter set. References to other slots remain untouched.
+ */
+function pruneReplacedInsertReferences(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+  index: number,
+  oldProcessorId?: string,
+): void {
+  store.automationLanes = store.automationLanes.filter((lane) => {
+    if (lane.target !== target) return true;
+    const ref = parseInsertAutomationParam(lane.param);
+    if (ref === undefined) return true;
+    return ref.processorId !== oldProcessorId && ref.insertIndex !== index;
+  });
+
+  const nextBindings = new Map(store.midiCcBindings);
+  for (const [id] of nextBindings) {
+    const ref = parseMidiLearnInsertTargetId(id);
+    if (!ref || !sameMidiLearnScope(target, ref.scope)) continue;
+    if (
+      (oldProcessorId !== undefined && ref.processorId === oldProcessorId) ||
+      ref.index === index
+    ) {
+      nextBindings.delete(id);
+    }
+  }
+  store.midiCcBindings.clear();
+  for (const [id, binding] of nextBindings) store.midiCcBindings.set(id, binding);
+}
+
+function sameMidiLearnScope(target: MixerStripTarget, scope: number | 'master'): boolean {
+  return (target === 'master' || typeof target === 'number') && target === scope;
+}
 
 // ---------------------------------------------------------------------------
 // Instrument / mixer commands (app-level metadata, execute(0)-style)
@@ -532,9 +572,10 @@ export function setInsertEnabled(target: MixerStripTarget, index: number, enable
 }
 
 /**
- * Replaces an insert's processor settings while retaining the destination
- * processor id, so existing automation and MIDI bindings remain attached to
- * the slot being pasted into.
+ * Replaces an insert's processor settings as one atomic edit. Replacing with
+ * the same processor type retains the destination id, so existing automation
+ * and MIDI bindings remain attached. A different processor gets a fresh id and
+ * references to the old parameter set are pruned in the same edit.
  */
 export function replaceInsert(
   target: MixerStripTarget,
@@ -549,8 +590,9 @@ export function replaceInsert(
   validateInsertParams(source.params);
   executeApp(() => {
     const next = cloneStrip(strip);
+    const processorChanged = destination.processor !== source.processor;
     const slot: InsertSlot = {
-      id: destination.id,
+      id: processorChanged ? createReplacementProcessorId(next) : destination.id,
       processor: source.processor,
       enabled: source.enabled,
       params: { ...source.params },
@@ -560,8 +602,22 @@ export function replaceInsert(
     };
     next.inserts[index] = slot;
     writeStrip(store, target, next);
+    if (processorChanged) {
+      pruneReplacedInsertReferences(store, target, index, destination.id);
+    }
     store.refresh();
   });
+}
+
+/** Creates a fresh slot identity without colliding with a sibling insert. */
+function createReplacementProcessorId(strip: ReturnType<typeof cloneStrip>): string {
+  const used = new Set<string>();
+  for (const slot of strip.inserts) {
+    if (slot.id !== undefined) used.add(slot.id);
+  }
+  let id = createProcessorId();
+  while (used.has(id)) id = createProcessorId();
+  return id;
 }
 
 /**

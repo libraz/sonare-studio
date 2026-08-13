@@ -877,7 +877,7 @@ describe('mixer commands', () => {
     it('replaces settings atomically while retaining the destination processor id', () => {
       addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18, ratio: 4 });
       const destinationTrackId = addAudioTrack({ name: 'Snare' });
-      addInsert(destinationTrackId, 'saturation.tape', { drive: 0.4 });
+      addInsert(destinationTrackId, 'dynamics.compressor', { thresholdDb: -6 });
       const source = store.tracks[0].mixer!.inserts[0];
       const destinationId = store.tracks[1].mixer!.inserts[0].id;
       const { id: _sourceId, ...copied } = source;
@@ -893,9 +893,73 @@ describe('mixer commands', () => {
       expect(undo()).toBe(true);
       expect(store.tracks[1].mixer!.inserts[0]).toMatchObject({
         id: destinationId,
+        processor: 'dynamics.compressor',
+        params: { thresholdDb: -6 },
+      });
+    });
+
+    it('changes identity and prunes old processor references when the type changes', () => {
+      addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18 });
+      addInsert(trackId, 'eq.tilt', { tiltDb: 1 });
+      const oldId = store.tracks[0].mixer!.inserts[0].id as string;
+      const laterId = store.tracks[0].mixer!.inserts[1].id as string;
+      const oldStableParam = insertAutomationParam(oldId, 'thresholdDb');
+      const oldLegacyParam = 'insert:0:thresholdDb' as const;
+      const laterParam = insertAutomationParam(laterId, 'tiltDb');
+      store.automationLanes = [
+        {
+          target: trackId,
+          param: oldStableParam,
+          points: [{ ppq: 0, value: -12 }],
+          enabled: true,
+        },
+        {
+          target: trackId,
+          param: oldLegacyParam,
+          points: [{ ppq: 0, value: -6 }],
+          enabled: true,
+        },
+        {
+          target: trackId,
+          param: laterParam,
+          points: [{ ppq: 0, value: 2 }],
+          enabled: true,
+        },
+      ];
+      const oldStableTarget = midiLearnInsertTargetId(trackId, oldId, 'thresholdDb');
+      const oldLegacyTarget = midiLearnInsertTargetId(trackId, 0, 'thresholdDb');
+      const laterTarget = midiLearnInsertTargetId(trackId, laterId, 'tiltDb');
+      store.midiCcBindings.set(oldStableTarget, { channel: 0, controller: 20 });
+      store.midiCcBindings.set(oldLegacyTarget, { channel: 0, controller: 21 });
+      store.midiCcBindings.set(laterTarget, { channel: 0, controller: 22 });
+      clearHistory();
+
+      replaceInsert(trackId, 0, {
         processor: 'saturation.tape',
         params: { drive: 0.4 },
+        enabled: true,
       });
+
+      const replacementId = store.tracks[0].mixer!.inserts[0].id;
+      expect(replacementId).toBeDefined();
+      expect(replacementId).not.toBe(oldId);
+      expect(store.automationLanes.map((lane) => lane.param)).toEqual([laterParam]);
+      expect(store.midiCcBindings.has(oldStableTarget)).toBe(false);
+      expect(store.midiCcBindings.has(oldLegacyTarget)).toBe(false);
+      expect(store.midiCcBindings.get(laterTarget)).toEqual({ channel: 0, controller: 22 });
+
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].mixer!.inserts[0]).toMatchObject({
+        id: oldId,
+        processor: 'dynamics.compressor',
+      });
+      expect(store.automationLanes.map((lane) => lane.param)).toEqual([
+        oldStableParam,
+        oldLegacyParam,
+        laterParam,
+      ]);
+      expect(store.midiCcBindings.get(oldStableTarget)).toEqual({ channel: 0, controller: 20 });
+      expect(store.midiCcBindings.get(oldLegacyTarget)).toEqual({ channel: 0, controller: 21 });
     });
   });
 
