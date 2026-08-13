@@ -2,7 +2,7 @@
 import AppModal from '@/components/shell/AppModal.vue';
 import type { ProjectRevision } from '@/persistence/revisions';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { formatSize } from '@/ui/shell/format';
+import { formatSize, formatTimestamp } from '@/ui/shell/format';
 
 /**
  * Named revisions of the current project: pick one to bring back, or drop the
@@ -23,12 +23,7 @@ const emit = defineEmits<{
   saveRevision: [];
 }>();
 
-const { t } = useI18n();
-
-/** Locale-formatted capture time of a revision. */
-function formatSavedAt(savedAt: number): string {
-  return new Date(savedAt).toLocaleString();
-}
+const { locale, t } = useI18n();
 </script>
 
 <template>
@@ -50,7 +45,7 @@ function formatSavedAt(savedAt: number): string {
         >
           {{ revision.label }}
         </button>
-        <span class="stored-size">{{ formatSavedAt(revision.savedAt) }}</span>
+        <span class="stored-size">{{ formatTimestamp(revision.savedAt, locale) }}</span>
         <span class="stored-size">{{ formatSize(revision.size) }}</span>
         <button
           type="button"

@@ -4,6 +4,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AboutDialog from '@/components/shell/AboutDialog.vue';
 import { formatBuildTime } from '@/lib/build-info';
+import { formatTimestamp } from '@/lib/date-format';
 
 // The build stamp is injected by Vite defines, which are absent under Vitest,
 // so the dialog reads it through a module the test replaces.
@@ -39,7 +40,7 @@ describe('formatBuildTime', () => {
     const formatted = formatBuildTime('2026-08-05T04:30:00.000Z', 'en');
     expect(formatted).not.toBe('');
     expect(formatted).toBe(
-      new Date('2026-08-05T04:30:00.000Z').toLocaleString('en', {
+      formatTimestamp(new Date('2026-08-05T04:30:00.000Z'), 'en', {
         dateStyle: 'medium',
         timeStyle: 'short',
       }),

@@ -5,7 +5,7 @@ import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MenuBarMenu } from '@/ui/menu/menu-bar';
 import type { ResolvedAppTheme } from '@/ui/settings/app-settings';
-import { formatSavedAt } from '@/ui/shell/format';
+import { formatTimestamp } from '@/ui/shell/format';
 
 defineProps<{
   autosaveLastSavedAt: Date | null;
@@ -14,6 +14,7 @@ defineProps<{
   canInstallPwa: boolean;
   deviceRackOpen: boolean;
   dirty: boolean;
+  layoutMenu?: MenuBarMenu | null;
   menus: readonly MenuBarMenu[];
   projectName: string;
   resolvedTheme: ResolvedAppTheme;
@@ -31,7 +32,7 @@ const emit = defineEmits<{
   undo: [];
 }>();
 
-const { t } = useI18n();
+const { locale, t } = useI18n();
 </script>
 
 <template>
@@ -72,6 +73,14 @@ const { t } = useI18n();
 
     <span class="bar-spacer" />
 
+    <MenuBar
+      v-if="layoutMenu"
+      :menus="[layoutMenu]"
+      :aria-label="t.shell.layout.menuLabel"
+      align="end"
+      chevron
+    />
+
     <div class="history-tools" :aria-label="t.shell.menus.edit">
       <button
         type="button"
@@ -96,7 +105,11 @@ const { t } = useI18n();
     </div>
 
     <span v-if="autosaveLastSavedAt" class="autosave-state">
-      {{ formatMessage(t.shell.savedAt, { time: formatSavedAt(autosaveLastSavedAt) }) }}
+      {{
+        formatMessage(t.shell.savedAt, {
+          time: formatTimestamp(autosaveLastSavedAt, locale, 'time'),
+        })
+      }}
     </span>
 
     <button

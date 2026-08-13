@@ -1,3 +1,5 @@
+import { formatTimestamp } from './date-format';
+
 /**
  * Build stamp injected by the Vite build.
  *
@@ -26,5 +28,5 @@ export function formatBuildTime(iso: string, locale: string): string {
   if (iso === '') return '';
   const built = new Date(iso);
   if (Number.isNaN(built.getTime())) return '';
-  return built.toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' });
+  return formatTimestamp(built, locale, { dateStyle: 'medium', timeStyle: 'short' });
 }

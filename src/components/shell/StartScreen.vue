@@ -4,7 +4,7 @@ import AppModal from '@/components/shell/AppModal.vue';
 import BrandMark from '@/components/shell/BrandMark.vue';
 import type { StoredProjectInfo } from '@/persistence/opfs';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { formatSize } from '@/ui/shell/format';
+import { formatSize, formatTimestamp } from '@/ui/shell/format';
 
 /**
  * First-run / on-demand launcher. Shown over a freshly loaded empty project so
@@ -67,7 +67,7 @@ const primaryAction = computed<'continue' | 'new'>(() => (props.hasAutosave ? 'c
 /** Localized last-modified date for a stored project, or an empty string. */
 function projectDate(info: StoredProjectInfo): string {
   if (info.lastModified === undefined) return '';
-  return new Date(info.lastModified).toLocaleDateString(locale.value);
+  return formatTimestamp(info.lastModified, locale.value, 'date');
 }
 
 /** Compact "size · date" meta line for a stored project. */
