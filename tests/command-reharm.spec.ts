@@ -1,8 +1,12 @@
+import { chordPitchClasses } from '@libraz/libcantus';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { editorChordToChord } from '@/compose/chord-io';
 import { reharmCandidatesFor } from '@/compose/reharm';
-import { setProjectChords } from '@/project/command/chords';
+import { arrangementMelodyPitchClasses, setProjectChords } from '@/project/command/chords';
+import { moveClip, trimClip } from '@/project/command/clips-editing';
 import { clearHistory, undo } from '@/project/command/history';
+import { addNote } from '@/project/command/notes';
 import { reharmonizeChord } from '@/project/command/reharm';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -63,5 +67,23 @@ describe('reharmonizeChord', () => {
     const [candidate] = reharmCandidatesFor(store.chords[0], C_MAJOR);
     reharmonizeChord(5, candidate);
     expect(store.chords[0]).toMatchObject({ rootPc: 7, quality: 4 });
+  });
+
+  it('uses absolute projection for a moved and trimmed sustained melody note', () => {
+    addNote({ pitch: 61, startPpq: 0, durationPpq: 8 });
+    moveClip(store.clipId, 32);
+    trimClip(store.clipId, 34, 6);
+
+    const melodyPcs = arrangementMelodyPitchClasses(34, 40);
+    expect(melodyPcs).toEqual([1]);
+
+    const source = { startPpq: 34, endPpq: 40, rootPc: 0, quality: 0 };
+    const candidates = reharmCandidatesFor(source, C_MAJOR, melodyPcs);
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(
+      candidates.every((candidate) =>
+        chordPitchClasses(editorChordToChord(candidate.symbol)).includes(1),
+      ),
+    ).toBe(true);
   });
 });

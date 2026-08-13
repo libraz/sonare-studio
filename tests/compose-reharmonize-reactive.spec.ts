@@ -130,6 +130,32 @@ describe('proposeReactiveReharmonization', () => {
     expect(vi.mocked(harmonizeMelody).mock.calls.map(([input]) => input.harmonicRhythm)).toEqual([
       4, 3,
     ]);
+    expect(vi.mocked(harmonizeMelody).mock.calls.map(([input]) => input.ts)).toEqual([
+      { numerator: 4, denominator: 4 },
+      { numerator: 3, denominator: 4 },
+    ]);
+  });
+
+  it('passes 3/4 and 6/8 meters and threads an inferred key across ranges', () => {
+    vi.mocked(harmonizeMelody).mockClear();
+    proposeReactiveReharmonization({
+      current: [chord(0, 3, 11), chord(3, 6, 11)],
+      melody: [...clashBar(0).slice(0, 3), ...clashBar(3).slice(0, 3)],
+      editedSpan: { startPpq: 0, endPpq: 6 },
+      key: KEY_INFERENCE,
+      timeSignatures: [
+        { startPpq: 0, numerator: 3, denominator: 4 },
+        { startPpq: 3, numerator: 6, denominator: 8 },
+      ],
+    });
+
+    const calls = vi.mocked(harmonizeMelody).mock.calls.map(([input]) => input);
+    expect(calls.map((input) => input.ts)).toEqual([
+      { numerator: 3, denominator: 4 },
+      { numerator: 6, denominator: 8 },
+    ]);
+    expect(calls[0]).not.toHaveProperty('key');
+    expect(calls[1]?.key).toBeDefined();
   });
 
   it('starts a meter-changing reharmonization at the enclosing bar line', () => {

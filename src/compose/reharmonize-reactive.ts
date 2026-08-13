@@ -25,6 +25,7 @@ import {
   type ChordSpan,
   evaluateSafety,
   harmonizeMelody,
+  type KeyScale,
   type MelodyNote,
   NoteSafety,
   type SafetyProfile,
@@ -246,15 +247,14 @@ export function proposeReactiveReharmonization(
   // cross bar lines under 3/4, 6/8, etc.
   let spans: ChordSpan[];
   let inferredKey: ReturnType<typeof effectiveKeyScale> | undefined;
+  const configuredKey = input.key.enabled ? scaleHighlightToKeyScale(input.key) : undefined;
   try {
     const startPpq = Math.min(...input.melody.map((note) => note.startPpq));
     const endPpq = Math.max(...input.melody.map((note) => note.startPpq + note.durationPpq));
     const meterStartPpq = measureRangeAt(input.timeSignatures, startPpq).startPpq;
     const meterRanges = timeSignatureRanges(input.timeSignatures, meterStartPpq, endPpq);
     if (input.harmonicRhythm === undefined && meterRanges.length > 1) {
-      let segmentKey: ReturnType<typeof scaleHighlightToKeyScale> | 'infer' = input.key.enabled
-        ? scaleHighlightToKeyScale(input.key)
-        : 'infer';
+      let segmentKey: KeyScale | undefined = configuredKey;
       spans = [];
       for (const range of meterRanges) {
         const segmentMelody = input.melody.flatMap((note) => {
@@ -267,13 +267,14 @@ export function proposeReactiveReharmonization(
         if (segmentMelody.length === 0) continue;
         const result = harmonizeMelody({
           melody: segmentMelody,
-          key: segmentKey,
+          ...(segmentKey !== undefined ? { key: segmentKey } : {}),
           harmonicRhythm: meterBarLengthPpq(range),
+          ts: { numerator: range.numerator, denominator: range.denominator },
           reharmonize: input.reharmonize ?? 'diatonic',
           placement: { transposeSearch: false, octaveSearch: false },
           seed: input.seed ?? 0,
         });
-        segmentKey = result.key;
+        segmentKey = configuredKey ?? result.key;
         if (!input.key.enabled) inferredKey ??= result.key;
         const offset = range.startPpq - gridOriginPpq;
         spans.push(
@@ -281,13 +282,13 @@ export function proposeReactiveReharmonization(
         );
       }
     } else {
-      const harmonicRhythm =
-        input.harmonicRhythm ??
-        meterBarLengthPpq(timeSignatureAt(input.timeSignatures, gridOriginPpq));
+      const analysisMeter = meterRanges[0] ?? timeSignatureAt(input.timeSignatures, startPpq);
+      const harmonicRhythm = input.harmonicRhythm ?? meterBarLengthPpq(analysisMeter);
       const result = harmonizeMelody({
         melody: melodyNotes,
-        key: input.key.enabled ? scaleHighlightToKeyScale(input.key) : 'infer',
+        ...(configuredKey !== undefined ? { key: configuredKey } : {}),
         harmonicRhythm,
+        ts: { numerator: analysisMeter.numerator, denominator: analysisMeter.denominator },
         reharmonize: input.reharmonize ?? 'diatonic',
         placement: { transposeSearch: false, octaveSearch: false },
         seed: input.seed ?? 0,

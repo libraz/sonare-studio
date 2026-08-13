@@ -3,7 +3,7 @@
  * harmony and a coarse tension curve for a whole multi-track piece.
  *
  * A thin adapter over libcantus's analyze layer ({@link analyzeArrangement} /
- * {@link tensionCurve}). The heavy lifting — pooling every track's notes into
+ * {@link tensionCurveFrom}). The heavy lifting — pooling every track's notes into
  * one inferred harmony, fanning polyphonic tracks into monophonic sub-voices,
  * and flagging clashes — happens in the library. This module's job is input
  * hygiene and shaping the result for the UI:
@@ -27,7 +27,7 @@ import {
   type KeyScale,
   type NoteSafety,
   type TensionPoint,
-  tensionCurve,
+  tensionCurveFrom,
 } from '@libraz/libcantus';
 import { measureRangeAt, timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
@@ -201,11 +201,23 @@ export function arrangementTensionCurve(
 ): TensionPoint[] {
   const { harmonic } = harmonicTracksOnly(tracks);
   if (harmonic.length === 0) return [];
-  return analysisRanges(harmonic, timeSignatures).flatMap((range) =>
-    tensionCurve(toArrangementTracks(tracksInMeterRange(harmonic, range.startPpq, range.endPpq)), {
-      ...optionsFor(key, undefined),
+  let resolvedKey = key;
+  const points: TensionPoint[] = [];
+  for (const range of analysisRanges(harmonic, timeSignatures)) {
+    const local = tracksInMeterRange(harmonic, range.startPpq, range.endPpq);
+    if (local.every((track) => track.notes.length === 0)) continue;
+    const arrangementTracks = toArrangementTracks(local);
+    const analysis = analyzeArrangement(arrangementTracks, {
+      ...optionsFor(resolvedKey, undefined),
       ts: { numerator: range.numerator, denominator: range.denominator },
-      step,
-    }).map((point) => ({ ...point, beat: point.beat + range.startPpq })),
-  );
+    });
+    if (key === undefined) resolvedKey = analysis.key;
+    points.push(
+      ...tensionCurveFrom(arrangementTracks, analysis, {
+        ts: { numerator: range.numerator, denominator: range.denominator },
+        step,
+      }).map((point) => ({ ...point, beat: point.beat + range.startPpq })),
+    );
+  }
+  return points;
 }

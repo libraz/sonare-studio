@@ -77,6 +77,57 @@ describe('estimateChordsFromTracks', () => {
     expect(result.symbols.some((symbol) => symbol.startPpq >= 4 && symbol.endPpq <= 7)).toBe(true);
   });
 
+  it('does not reclassify a globally harmonic track in a meter-range subset', () => {
+    const tracks: TrackWithNotes[] = [
+      {
+        track: track(1, 'Hybrid'),
+        notes: [
+          note(60, 0, 3, 9),
+          note(64, 0, 3, 9),
+          note(67, 0, 3),
+          note(62, 4, 3),
+          note(65, 4, 3),
+          note(69, 4, 3),
+        ],
+      },
+    ];
+    const result = estimateChordsFromTracks(tracks, {
+      key: C_MAJOR,
+      timeSignatures: [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ],
+    });
+
+    expect(result.excludedTrackNames).toEqual([]);
+    expect(result.symbols.some((symbol) => symbol.startPpq < 4)).toBe(true);
+  });
+
+  it('infers the first non-empty meter range and seeds later ranges when no key is set', () => {
+    const tracks: TrackWithNotes[] = [
+      {
+        track: track(1, 'Piano'),
+        notes: [
+          note(64, 0, 3),
+          note(68, 0, 3),
+          note(71, 0, 3),
+          note(64, 3, 3),
+          note(68, 3, 3),
+          note(71, 3, 3),
+        ],
+      },
+    ];
+    const result = estimateChordsFromTracks(tracks, {
+      timeSignatures: [
+        { startPpq: 0, numerator: 3, denominator: 4 },
+        { startPpq: 3, numerator: 6, denominator: 8 },
+      ],
+    });
+
+    expect(result.key.rootPc).toBe(4);
+    expect(result.symbols.some((symbol) => symbol.startPpq >= 3)).toBe(true);
+  });
+
   it('anchors an estimate with an opening rest to the containing measure boundary', () => {
     const tracks: TrackWithNotes[] = [
       {

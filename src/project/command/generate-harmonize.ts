@@ -114,8 +114,12 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   const transpose = params.transpose ?? false;
   const meterRanges = timeSignatureRanges(target.timeSignatures, target.startPpq, target.endPpq);
   const shouldSplitForMeter = params.harmonicRhythm === undefined && meterRanges.length > 1;
+  const analysisMeter = meterRanges[0] ?? timeSignatureAt(target.timeSignatures, target.startPpq);
+  // `undefined` means infer. Keep the first meter range unkeyed so libcantus
+  // can infer it, then feed that result into each following range.
+  const explicitKey = key === 'infer' ? undefined : key;
   let shift = 0;
-  let analysisKey = key;
+  const analysisKey = explicitKey;
   let analysisMelody = melody;
   const audibleOccurrences = audibleMidiProjector(clip, { expandLoops: false });
   if (transpose) {
@@ -125,10 +129,9 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
     // keep one range-safe shift for every subsequent analysis.
     const probe = harmonizeMelody({
       melody,
-      key,
-      harmonicRhythm:
-        params.harmonicRhythm ??
-        meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq)),
+      ...(explicitKey !== undefined ? { key: explicitKey } : {}),
+      harmonicRhythm: params.harmonicRhythm ?? meterBarLengthPpq(analysisMeter),
+      ts: { numerator: analysisMeter.numerator, denominator: analysisMeter.denominator },
       reharmonize: params.reharmonize ?? 'diatonic',
       placement: { transposeSearch: true, octaveSearch: true },
       seed: params.seed ?? 0,
@@ -141,7 +144,6 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       )
     ) {
       shift = candidate;
-      analysisKey = probe.key;
       if (shift !== 0)
         analysisMelody = melody.map((note) => ({ ...note, pitch: note.pitch + shift }));
     }
@@ -163,13 +165,14 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       if (segmentMelody.length === 0) continue;
       const result = harmonizeMelody({
         melody: segmentMelody,
-        key: segmentKey,
+        ...(segmentKey !== undefined ? { key: segmentKey } : {}),
         harmonicRhythm: meterBarLengthPpq(range),
+        ts: { numerator: range.numerator, denominator: range.denominator },
         reharmonize: params.reharmonize ?? 'diatonic',
         placement: { transposeSearch: false, octaveSearch: false },
         seed: params.seed ?? 0,
       });
-      segmentKey = result.key;
+      segmentKey = explicitKey ?? result.key;
       symbols.push(
         ...spansToChordSymbols(result, localEnd - localStart, range.startPpq).map((chord) => ({
           ...chord,
@@ -180,13 +183,12 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
     }
     generated = sanitizeChordSymbols(symbols);
   } else {
-    const harmonicRhythm =
-      params.harmonicRhythm ??
-      meterBarLengthPpq(timeSignatureAt(target.timeSignatures, target.startPpq));
+    const harmonicRhythm = params.harmonicRhythm ?? meterBarLengthPpq(analysisMeter);
     const result = harmonizeMelody({
       melody: analysisMelody,
-      key: analysisKey,
+      ...(analysisKey !== undefined ? { key: analysisKey } : {}),
       harmonicRhythm,
+      ts: { numerator: analysisMeter.numerator, denominator: analysisMeter.denominator },
       reharmonize: params.reharmonize ?? 'diatonic',
       placement: { transposeSearch: false, octaveSearch: false },
       seed: params.seed ?? 0,

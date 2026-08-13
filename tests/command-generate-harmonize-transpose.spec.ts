@@ -17,10 +17,10 @@ import { MAJOR_MODE_MASK } from '@/project/types';
 
 const key = { rootPc: 0, modeMask12: MAJOR_MODE_MASK };
 
-function result(shift: number) {
+function result(shift: number, resolvedKey = key) {
   return {
     transposeSemitones: shift,
-    key,
+    key: resolvedKey,
     chords: [{ rootPc: 0, quality: 'maj' as const, startBeat: 0 }],
     melodyRoles: [],
   };
@@ -58,6 +58,10 @@ describe('harmonizeFromMelodyCommand transpose placement', () => {
       { transposeSearch: false, octaveSearch: false },
       { transposeSearch: false, octaveSearch: false },
     ]);
+    expect(segmentInputs.map((input) => input.ts)).toEqual([
+      { numerator: 4, denominator: 4 },
+      { numerator: 3, denominator: 4 },
+    ]);
     expect(segmentInputs.map((input) => input.melody[0].pitch)).toEqual([65, 69]);
     expect(store.activeClip?.notes.map((note) => note.pitch)).toEqual([65, 69]);
   });
@@ -72,5 +76,33 @@ describe('harmonizeFromMelodyCommand transpose placement', () => {
 
     expect(harmonize.mock.calls[1][0].melody[0].pitch).toBe(126);
     expect(store.activeClip?.notes[0]?.pitch).toBe(126);
+  });
+
+  it('passes each meter to its range and threads inferred keys after the first range', () => {
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    addNote({ pitch: 64, startPpq: 3, durationPpq: 1 });
+    store.scaleHighlight = { enabled: false, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 3, denominator: 4 },
+      { startPpq: 3, numerator: 6, denominator: 8 },
+    ];
+    const inferred = { rootPc: 4, modeMask12: MAJOR_MODE_MASK };
+    let segmentCall = 0;
+    harmonize.mockImplementation((input) => {
+      if (input.placement.transposeSearch) return result(0, inferred);
+      segmentCall += 1;
+      return result(0, inferred);
+    });
+
+    harmonizeFromMelodyCommand();
+
+    const segmentInputs = harmonize.mock.calls.map(([input]) => input);
+    expect(segmentCall).toBe(2);
+    expect(segmentInputs.map((input) => input.ts)).toEqual([
+      { numerator: 3, denominator: 4 },
+      { numerator: 6, denominator: 8 },
+    ]);
+    expect(segmentInputs[0]).not.toHaveProperty('key');
+    expect(segmentInputs[1]?.key).toEqual(inferred);
   });
 });

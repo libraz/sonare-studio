@@ -144,6 +144,52 @@ describe('arrangementTensionCurve', () => {
     expect(curve[0]?.beat).toBe(0);
   });
 
+  it('carries the first inferred key across a meter change', () => {
+    const melody: TrackWithNotes = {
+      track: track({ id: 1, name: 'Lead' }),
+      notes: [
+        // The first range establishes C major.
+        note({ id: 1, pitch: 60, startPpq: 0, durationPpq: 2 }),
+        note({ id: 2, pitch: 64, startPpq: 0, durationPpq: 2 }),
+        note({ id: 3, pitch: 67, startPpq: 0, durationPpq: 2 }),
+        // D minor alone would infer D minor; with the first range's key it is
+        // heard as ii in C major and therefore has the higher tension value.
+        note({ id: 4, pitch: 62, startPpq: 4, durationPpq: 1 }),
+        note({ id: 5, pitch: 65, startPpq: 4, durationPpq: 1 }),
+        note({ id: 6, pitch: 69, startPpq: 4, durationPpq: 1 }),
+      ],
+    };
+    const meters = [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 4, numerator: 3, denominator: 4 },
+    ];
+
+    const inferred = arrangementTensionCurve([melody], 1, undefined, meters);
+    const explicit = arrangementTensionCurve([melody], 1, C_MAJOR, meters);
+    const laterAlone = arrangementTensionCurve(
+      [
+        {
+          ...melody,
+          notes: melody.notes
+            .filter((item) => item.startPpq >= 4)
+            .map((item) => ({ ...item, startPpq: item.startPpq - 4 })),
+        },
+      ],
+      1,
+      undefined,
+      [{ startPpq: 0, numerator: 3, denominator: 4 }],
+    );
+    const inferredLater = inferred.find((point) => point.beat === 4);
+    const explicitLater = explicit.find((point) => point.beat === 4);
+    const aloneLater = laterAlone.find((point) => point.beat === 0);
+
+    expect(inferredLater).toBeDefined();
+    expect(explicitLater).toBeDefined();
+    expect(aloneLater).toBeDefined();
+    expect(inferredLater).toEqual({ beat: 4, tension: explicitLater?.tension });
+    expect(inferredLater?.tension).toBeGreaterThan(aloneLater?.tension ?? -1);
+  });
+
   it('is empty without harmonic tracks', () => {
     const drums: TrackWithNotes = {
       track: track({ id: 1, name: 'Drums' }),

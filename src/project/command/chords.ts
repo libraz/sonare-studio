@@ -157,7 +157,7 @@ export function arrangementMelodyPitchClasses(startPpq: number, endPpq: number):
     namedMelody.length > 0
       ? namedMelody.flatMap((item) => item.notes)
       : active && clipKind(active) === 'midi'
-        ? projectMidiClipNoteOccurrences(active)
+        ? projectMidiNoteOccurrences(active)
         : [];
   return melodyPitchClassesInRegion(notes, startPpq, endPpq, 1e-6, {
     isStrongBeat: (ppq) => strongBeatAt(store.timeSignatures, ppq),

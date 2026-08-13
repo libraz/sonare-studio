@@ -49,11 +49,78 @@ export interface EstimatedChords {
   excludedTrackNames: string[];
 }
 
+type EstimatedChordsCore = Omit<EstimatedChords, 'excludedTrackNames'>;
+
 /** Places an inferred chord on a beat as a libcantus {@link ChordSpan}. */
 function chordToSpan(chord: ChordData): ChordSpan {
   const span: ChordSpan = { rootPc: chord.rootPc, quality: chord.quality, startBeat: 0 };
   if (chord.bassPc !== undefined) span.bassPc = chord.bassPc;
   return span;
+}
+
+/**
+ * Estimates from tracks that have already passed {@link harmonicTracksOnly}.
+ * Keeping this separate from the public boundary prevents meter-range clips
+ * from being classified again using their local channel distribution.
+ */
+function estimateChordsFromHarmonicTracks(
+  harmonic: ReadonlyArray<TrackWithNotes>,
+  options?: EstimateChordsOptions,
+): EstimatedChordsCore {
+  const notes = harmonic.flatMap((item) => editorNotesToNoteEvents(item.notes));
+  if (notes.length === 0) {
+    return {
+      symbols: [],
+      key: options?.key ?? DEFAULT_KEY_SCALE,
+      confidence: [],
+    };
+  }
+  if (options?.timeSignatures !== undefined) {
+    const firstNotePpq = Math.min(...notes.map((note) => note.startBeat));
+    const startPpq = measureRangeAt(options.timeSignatures, firstNotePpq).startPpq;
+    const endPpq = Math.max(...notes.map((note) => note.startBeat + note.durationBeat));
+    const ranges = timeSignatureRanges(options.timeSignatures, startPpq, endPpq);
+    const symbols: EditorChordSymbol[] = [];
+    const confidence: number[] = [];
+    // Leave the first non-empty range unkeyed when no key was supplied so the
+    // estimator can infer it. Each subsequent range receives that result as
+    // context; an explicit key is passed unchanged to every range.
+    let resolvedKey = options.key;
+    for (const range of ranges) {
+      const localTracks = harmonic.map((item) => ({
+        track: item.track,
+        notes: item.notes.flatMap((note) => {
+          const start = Math.max(note.startPpq, range.startPpq);
+          const end = Math.min(note.startPpq + note.durationPpq, range.endPpq);
+          return end > start
+            ? [{ ...note, startPpq: start - range.startPpq, durationPpq: end - start }]
+            : [];
+        }),
+      }));
+      if (localTracks.every((item) => item.notes.length === 0)) continue;
+      const local = estimateChordsFromHarmonicTracks(localTracks, {
+        ...(resolvedKey !== undefined ? { key: resolvedKey } : {}),
+        ts: { numerator: range.numerator, denominator: range.denominator },
+        harmonicRhythm: meterBarLengthPpq(range),
+        totalBeats: range.endPpq - range.startPpq,
+      });
+      resolvedKey = options.key ?? local.key;
+      symbols.push(
+        ...local.symbols.map((symbol) => ({
+          ...symbol,
+          startPpq: symbol.startPpq + range.startPpq,
+          endPpq: symbol.endPpq + range.startPpq,
+        })),
+      );
+      confidence.push(...local.confidence);
+    }
+    return { symbols, key: resolvedKey ?? DEFAULT_KEY_SCALE, confidence };
+  }
+  const result = inferChordTimelineFromNotes(notes, options);
+  const symbols = result.timeline.segments.map((segment) =>
+    chordSpanToEditorChord(chordToSpan(segment.chord), segment.startBeat, segment.endBeat),
+  );
+  return { symbols, key: result.key, confidence: result.segmentConfidence };
 }
 
 /**
@@ -70,55 +137,6 @@ export function estimateChordsFromTracks(
 ): EstimatedChords {
   const { harmonic, excluded } = harmonicTracksOnly(tracks);
   const excludedTrackNames = excluded.map((item) => item.track.name);
-  const notes = harmonic.flatMap((item) => editorNotesToNoteEvents(item.notes));
-  if (notes.length === 0) {
-    return {
-      symbols: [],
-      key: options?.key ?? DEFAULT_KEY_SCALE,
-      confidence: [],
-      excludedTrackNames,
-    };
-  }
-  if (options?.timeSignatures !== undefined) {
-    const firstNotePpq = Math.min(...notes.map((note) => note.startBeat));
-    const startPpq = measureRangeAt(options.timeSignatures, firstNotePpq).startPpq;
-    const endPpq = Math.max(...notes.map((note) => note.startBeat + note.durationBeat));
-    const ranges = timeSignatureRanges(options.timeSignatures, startPpq, endPpq);
-    const symbols: EditorChordSymbol[] = [];
-    const confidence: number[] = [];
-    let resolvedKey = options.key ?? DEFAULT_KEY_SCALE;
-    for (const range of ranges) {
-      const localTracks = harmonic.map((item) => ({
-        track: item.track,
-        notes: item.notes.flatMap((note) => {
-          const start = Math.max(note.startPpq, range.startPpq);
-          const end = Math.min(note.startPpq + note.durationPpq, range.endPpq);
-          return end > start
-            ? [{ ...note, startPpq: start - range.startPpq, durationPpq: end - start }]
-            : [];
-        }),
-      }));
-      const local = estimateChordsFromTracks(localTracks, {
-        key: options.key ?? resolvedKey,
-        ts: { numerator: range.numerator, denominator: range.denominator },
-        harmonicRhythm: meterBarLengthPpq(range),
-        totalBeats: range.endPpq - range.startPpq,
-      });
-      resolvedKey = local.key;
-      symbols.push(
-        ...local.symbols.map((symbol) => ({
-          ...symbol,
-          startPpq: symbol.startPpq + range.startPpq,
-          endPpq: symbol.endPpq + range.startPpq,
-        })),
-      );
-      confidence.push(...local.confidence);
-    }
-    return { symbols, key: resolvedKey, confidence, excludedTrackNames };
-  }
-  const result = inferChordTimelineFromNotes(notes, options);
-  const symbols = result.timeline.segments.map((segment) =>
-    chordSpanToEditorChord(chordToSpan(segment.chord), segment.startBeat, segment.endBeat),
-  );
-  return { symbols, key: result.key, confidence: result.segmentConfidence, excludedTrackNames };
+  const result = estimateChordsFromHarmonicTracks(harmonic, options);
+  return { ...result, excludedTrackNames };
 }
