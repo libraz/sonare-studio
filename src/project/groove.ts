@@ -79,5 +79,8 @@ export function applyGrooveToPosition(
 ): number {
   const amount = Math.min(1, Math.max(0, strength));
   if (amount === 0) return positionPpq;
-  return positionPpq + grooveOffsetPpq(groove, positionPpq) * amount;
+  if (!(groove.gridPpq > 0) || groove.offsetsPpq.length === 0) return positionPpq;
+  const straightPpq = Math.round(positionPpq / groove.gridPpq) * groove.gridPpq;
+  const targetPpq = straightPpq + grooveOffsetPpq(groove, positionPpq);
+  return positionPpq + (targetPpq - positionPpq) * amount;
 }

@@ -23,6 +23,15 @@ describe('groove templates', () => {
     expect(applyGrooveToPosition(groove, 2.5, 0)).toBe(2.5);
   });
 
+  it('targets the nearest straight grid plus its offset and is idempotent at full strength', () => {
+    const groove = { gridPpq: 0.5, offsetsPpq: [0, 0.1] };
+    const first = applyGrooveToPosition(groove, 0.4);
+
+    expect(first).toBeCloseTo(0.6);
+    expect(applyGrooveToPosition(groove, 0.4, 0.5)).toBeCloseTo(0.5);
+    expect(applyGrooveToPosition(groove, first)).toBeCloseTo(first);
+  });
+
   it('reports templates that cannot move anything as unusable', () => {
     expect(grooveTemplateIsUsable(null)).toBe(false);
     expect(grooveTemplateIsUsable({ gridPpq: 0.5, offsetsPpq: [0, 0] })).toBe(false);
