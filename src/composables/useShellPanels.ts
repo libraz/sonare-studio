@@ -2,7 +2,7 @@ import { type Ref, ref } from 'vue';
 import { promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { LayoutBindings } from '@/ui/settings/layouts';
+import { type LayoutBindings, localizedLayoutName } from '@/ui/settings/layouts';
 
 interface TourHandle {
   open: () => void;
@@ -48,8 +48,11 @@ export function useShellPanels(options: ShellPanelsOptions) {
       });
       if (!name) return;
       if (!namedLayouts.saveCurrent(name, options.layoutBindings)) {
-        options.errorMessage.value = namedLayouts.isPreset(name)
-          ? formatMessage(t.value.dialogs.prompts.builtInLayoutName, { name })
+        const trimmedName = name.trim();
+        options.errorMessage.value = namedLayouts.isPreset(trimmedName)
+          ? formatMessage(t.value.dialogs.prompts.builtInLayoutName, {
+              name: localizedLayoutName(trimmedName, t.value.settings?.layouts?.presetNames ?? {}),
+            })
           : t.value.dialogs.prompts.layoutSaveFailed;
       }
     })();

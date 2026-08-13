@@ -2,12 +2,20 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref, shallowRef } from 'vue';
 import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
-import { useProjectStore } from '@/project/store';
+import { addMidiClip } from '@/project/commands';
+import { serializeProject } from '@/project/serialization';
+import { getProject, useProjectStore } from '@/project/store';
 import {
   resetShortcutBlockingOverlaysForTest,
   shortcutBlockingOverlayOpen,
   useShortcutBlockingOverlay,
 } from '@/ui/overlay-registry';
+
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
 
 describe('useAppShortcutsMenu', () => {
   beforeEach(() => {
@@ -250,14 +258,16 @@ describe('useAppShortcutsMenu', () => {
     expect(commandPaletteOpen.value).toBe(true);
   });
 
-  it('ignores the record shortcut when no track is armed, but fires it once armed', () => {
+  it('ignores the record shortcut when no track is armed, but fires it for a MIDI-only arm', () => {
     const armedTrackId = ref<number | null>(null);
+    const midiArmedTrackId = ref<number | null>(null);
     const toggleRecord = vi.fn();
     const { menu } = harness(
       { value: false },
       {
         handle: shallowRef({} as never),
         recording: { armedTrackId, isRecording: ref(false) } as never,
+        midiRecording: { armedTrackId: midiArmedTrackId, isRecording: ref(false) } as never,
         toggleRecord,
         shortcuts: {
           match: vi.fn(() => 'transport.toggleRecord'),
@@ -271,10 +281,17 @@ describe('useAppShortcutsMenu', () => {
     menu.onGlobalKeyDown(new KeyboardEvent('keydown', { key: 'r', cancelable: true }));
     expect(toggleRecord).not.toHaveBeenCalled();
 
-    // Arming a track satisfies the guard; the shortcut now toggles recording.
-    armedTrackId.value = 3;
+    // A MIDI-only arm satisfies the same guard; the shortcut now toggles recording.
+    midiArmedTrackId.value = 3;
     menu.onGlobalKeyDown(new KeyboardEvent('keydown', { key: 'r', cancelable: true }));
     expect(toggleRecord).toHaveBeenCalledTimes(1);
+
+    const transportMenu = menu.menuBarModel.value.find((entry) => entry.id === 'transport');
+    const recordItem = transportMenu?.items.find((item) => item.id === 'transport.toggleRecord');
+    expect(recordItem?.disabled).toBe(false);
+    expect(menu.commandPaletteItems.value.map((item) => item.id)).toContain(
+      'transport.transport.toggleRecord',
+    );
   });
 
   it('uses the same unavailable guards for Save and Quantize as their menu items', () => {
@@ -304,6 +321,69 @@ describe('useAppShortcutsMenu', () => {
     const quantize = new KeyboardEvent('keydown', { key: 'q', cancelable: true });
     quantizeMenu.onGlobalKeyDown(quantize);
     expect(quantize.defaultPrevented).toBe(false);
+  });
+
+  it('reports failed global-shortcut and menu actions through the shared error callback', () => {
+    const onError = vi.fn();
+    const failure = 42;
+    const togglePlayback = vi.fn(() => {
+      throw failure;
+    });
+    const { menu } = harness(
+      { value: false },
+      {
+        onError,
+        togglePlayback,
+      },
+    );
+    const event = new KeyboardEvent('keydown', { key: ' ', cancelable: true });
+
+    menu.onGlobalKeyDown(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onError).toHaveBeenCalledWith(
+      'The audio engine library rejected the operation (code 42).',
+    );
+
+    const transport = menu.menuBarModel.value.find((entry) => entry.id === 'transport');
+    transport?.items.find((item) => item.id === 'transport.togglePlayback')?.run?.();
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(togglePlayback).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the project unchanged and surfaces a raw WASM duplicate failure from both entry points', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const clipId = addMidiClip({ trackId: store.tracks[0].id, startPpq: 16, lengthPpq: 8 });
+    store.clipId = clipId;
+    const before = serializeProject();
+    const onError = vi.fn();
+    const match = vi.fn(() => 'arrange.duplicateClip');
+    const { menu } = harness(
+      { value: false },
+      { onError, shortcuts: { match, keysFor: vi.fn(() => ['mod+d']) } as never },
+    );
+    menu.focusZone.value = 'arrange';
+    const duplicate = vi.spyOn(getProject(), 'duplicateClip').mockImplementation(() => {
+      throw 42;
+    });
+
+    const event = new KeyboardEvent('keydown', { key: 'd', metaKey: true, cancelable: true });
+    menu.onGlobalKeyDown(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(onError).toHaveBeenCalledWith(
+      'The audio engine library rejected the operation (code 42).',
+    );
+    expect(serializeProject()).toEqual(before);
+
+    const duplicateItem = menu.menuBarModel.value
+      .flatMap((entry) => entry.items)
+      .find((item) => item.id === 'arrange.duplicateClip');
+    duplicateItem?.run?.();
+    expect(onError).toHaveBeenCalledTimes(2);
+    expect(serializeProject()).toEqual(before);
+    duplicate.mockRestore();
+    store.dispose();
   });
 
   it('lists saved layouts only once, in the dedicated Layout menu', () => {

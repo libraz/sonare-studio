@@ -5,7 +5,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog, promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { LayoutBindings } from '@/ui/settings/layouts';
+import { type LayoutBindings, localizedLayoutName } from '@/ui/settings/layouts';
 
 /**
  * Named workspace layouts panel: applies built-in presets and saved layouts to
@@ -25,11 +25,6 @@ const props = withDefaults(
 const namedLayouts = useLayouts();
 const appSettings = useAppSettings();
 const { t } = useI18n();
-
-function presetLabel(name: string): string {
-  const names = t.value.settings.layouts.presetNames as Readonly<Record<string, string>>;
-  return names[name] ?? name;
-}
 
 const newLayoutName = ref('');
 const layoutError = ref('');
@@ -105,7 +100,9 @@ function renameLayout(name: string): void {
           :key="layout.name"
           class="settings-row"
         >
-          <span class="settings-row__label layout-name">{{ presetLabel(layout.name) }}</span>
+          <span class="settings-row__label layout-name">
+            {{ localizedLayoutName(layout.name, t.settings.layouts.presetNames) }}
+          </span>
           <span class="settings-row__control">
             <button
               type="button"

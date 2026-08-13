@@ -48,6 +48,19 @@ export interface NamedLayout {
   state: WorkspaceLayoutState;
 }
 
+/**
+ * Resolves a layout name for display without changing its persisted identity.
+ * Built-in presets use stable English ids in project/storage state; callers
+ * provide the active locale's preset-name map, while user-saved names pass
+ * through unchanged.
+ */
+export function localizedLayoutName(
+  name: string,
+  presetNames: Readonly<Record<string, string>>,
+): string {
+  return presetNames[name] ?? name;
+}
+
 /** The shell refs a layout reads from and writes to. */
 export interface LayoutBindings {
   arrangeHeightPx: Ref<number>;

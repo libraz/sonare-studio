@@ -3,6 +3,7 @@ import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
 import type { useShortcuts } from '@/composables/useShortcuts';
 import type { EngineHandle } from '@/engine/engine';
+import { describeError } from '@/lib/errors';
 import {
   canRedo,
   canUndo,
@@ -36,6 +37,7 @@ import {
   type MenuBarMenu,
 } from '@/ui/menu/menu-bar';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
+import { localizedLayoutName } from '@/ui/settings/layouts';
 
 type Recording = ReturnType<typeof useRecording>;
 type MidiRecording = ReturnType<typeof useMidiRecording>;
@@ -54,12 +56,16 @@ interface PianoRollCommands {
 }
 
 export interface AppShortcutsMenuOptions {
+  /** Unified session state from useRecordingControls. */
+  canRecord?: Ref<boolean>;
   deviceRackOpen: Ref<boolean>;
   commandPaletteOpen: Ref<boolean>;
   editorTool: Ref<EditorToolId>;
   handle: ShallowRef<EngineHandle | null>;
   helpOpen: Ref<boolean>;
   isPlaying: Ref<boolean>;
+  /** Unified session state from useRecordingControls. */
+  isRecording?: Ref<boolean>;
   isGlobalShortcutBlocked?: () => boolean;
   layouts: Ref<readonly { name: string }[]>;
   loopEnabled: Ref<boolean>;
@@ -99,6 +105,8 @@ export interface AppShortcutsMenuOptions {
   openDemo: () => void;
   openShortcutsHelp: () => void;
   openWelcomeTour: () => void;
+  /** Publishes a user-visible failure from a menu or global shortcut command. */
+  onError?: (message: string) => void;
   saveCurrentLayout: () => void;
   saveProjectAction: () => void;
   saveProjectAsAction: () => void;
@@ -135,6 +143,19 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     return store.activeTrack?.frozen !== undefined;
   }
 
+  function reportActionError(error: unknown): void {
+    options.onError?.(describeError(error));
+  }
+
+  /** Ensures menu and palette command failures use the shell error surface. */
+  function runMenuAction(action: () => unknown): void {
+    try {
+      void Promise.resolve(action()).catch(reportActionError);
+    } catch (error) {
+      reportActionError(error);
+    }
+  }
+
   function runShortcutAction(actionId: string): boolean {
     switch (actionId) {
       case 'transport.togglePlayback':
@@ -165,7 +186,16 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         // Mirror the menu item's guard: recording needs both an engine and an
         // armed track. Without this the shortcut fired a no-op toggle with no
         // track armed, diverging from the (disabled) menu entry.
-        if (!options.handle.value || options.recording.armedTrackId.value === null) return false;
+        if (
+          !options.handle.value ||
+          !(
+            options.canRecord?.value ??
+            (options.recording.armedTrackId.value !== null ||
+              options.midiRecording.armedTrackId.value !== null)
+          )
+        ) {
+          return false;
+        }
         options.toggleRecord();
         return true;
       case 'project.save':
@@ -338,7 +368,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       disabled: extra.disabled,
       checked: extra.checked,
       run: () => {
-        runShortcutAction(actionId);
+        runMenuAction(() => runShortcutAction(actionId));
       },
     };
   }
@@ -356,7 +386,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       hint: extra.hintFor ? hintFor(extra.hintFor) : undefined,
       disabled: extra.disabled,
       checked: extra.checked,
-      run,
+      run: () => runMenuAction(run),
     };
   }
 
@@ -503,7 +533,11 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   function transportItems(): MenuBarItem[] {
     const a = t.value.shortcuts.actions;
     const engineReady = Boolean(options.handle.value);
-    const canRecord = engineReady && options.recording.armedTrackId.value !== null;
+    const canRecord =
+      engineReady &&
+      (options.canRecord?.value ??
+        (options.recording.armedTrackId.value !== null ||
+          options.midiRecording.armedTrackId.value !== null));
     return [
       actionItem(
         'transport.togglePlayback',
@@ -514,7 +548,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       }),
       actionItem('transport.toggleRecord', a['transport.toggleRecord'], {
         disabled: !canRecord,
-        checked: options.recording.isRecording.value,
+        checked:
+          options.isRecording?.value ??
+          (options.recording.isRecording.value ||
+            options.midiRecording.isRecording?.value === true),
       }),
       sep('transport.sep-nav'),
       actionItem('transport.toStart', a['transport.toStart'], { disabled: !engineReady }),
@@ -599,8 +636,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   const layoutMenu: ComputedRef<MenuBarMenu> = computed(() => {
     const l = t.value.shell.layout;
     const items: MenuBarItem[] = options.layouts.value.map((layout) =>
-      commandItem(`layout.${layout.name}`, layout.name, () =>
-        options.applyNamedLayout(layout.name),
+      commandItem(
+        `layout.${layout.name}`,
+        localizedLayoutName(layout.name, t.value.settings.layouts.presetNames),
+        () => options.applyNamedLayout(layout.name),
       ),
     );
     items.push(
@@ -630,7 +669,15 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     const scope = focusZone.value === 'arrange' ? 'arrangement' : 'editor';
     const actionId = options.shortcuts.match(event, scope);
     if (actionId === null) return;
-    if (runShortcutAction(actionId)) event.preventDefault();
+    try {
+      if (runShortcutAction(actionId)) event.preventDefault();
+    } catch (error) {
+      // A matched shortcut has claimed the browser event even if its command
+      // failed. Surface that failure instead of letting a raw WASM throw end
+      // the key handler without feedback.
+      event.preventDefault();
+      reportActionError(error);
+    }
   }
 
   return {
