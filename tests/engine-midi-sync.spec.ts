@@ -693,6 +693,24 @@ describe('midiStateAtPpq', () => {
     );
     expect(state.some((event) => event.word0 === noteOnWord(0, 60, 100))).toBe(false);
   });
+
+  it('chooses the latest timeline state even when clips arrive in a different order', () => {
+    const track = makeTrack(1);
+    const earlier = makeClip(20, 1, {
+      notes: [],
+      ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 1, value: 20 }] }],
+    });
+    const later = makeClip(10, 1, {
+      notes: [],
+      ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 3, value: 90 }] }],
+    });
+
+    const fromDocumentOrder = midiStateAtPpq([track], [earlier, later], TEMPO_120, SAMPLE_RATE, 4);
+    const fromReverseOrder = midiStateAtPpq([track], [later, earlier], TEMPO_120, SAMPLE_RATE, 4);
+
+    expect(fromDocumentOrder).toEqual([{ destinationId: 1, word0: ccWord(0, 11, 90) }]);
+    expect(fromReverseOrder).toEqual(fromDocumentOrder);
+  });
 });
 
 describe('createMidiSync', () => {

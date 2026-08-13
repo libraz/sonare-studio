@@ -507,8 +507,7 @@ export function midiStateAtPpq(
     projectExternalMidi,
     midiDestinationForTrack,
   );
-  const latest = new Map<string, MidiStateEvent & { frame: number; sequence: number }>();
-  let sequence = 0;
+  const latest = new Map<string, MidiStateEvent & { frame: number }>();
   for (const schedule of schedules) {
     for (const event of schedule.events) {
       if (event.renderFrame > targetFrame) continue;
@@ -534,17 +533,27 @@ export function midiStateAtPpq(
         default:
           continue;
       }
-      latest.set(key, {
+      const candidate = {
         destinationId,
         word0,
         frame: event.renderFrame,
-        sequence,
-      });
-      sequence += 1;
+      };
+      const previous = latest.get(key);
+      // State is defined by the latest message on the render timeline, not by
+      // the order in which clips happened to be supplied to this helper. A
+      // same-frame collision has no timeline-defined winner, so use the
+      // encoded message as a stable tie-breaker instead of map iteration order.
+      if (
+        previous === undefined ||
+        candidate.frame > previous.frame ||
+        (candidate.frame === previous.frame && candidate.word0 > previous.word0)
+      ) {
+        latest.set(key, candidate);
+      }
     }
   }
   return [...latest.values()]
-    .sort((a, b) => a.frame - b.frame || a.sequence - b.sequence)
+    .sort((a, b) => a.frame - b.frame || a.destinationId - b.destinationId || a.word0 - b.word0)
     .map(({ destinationId, word0 }) => ({ destinationId, word0 }));
 }
 
