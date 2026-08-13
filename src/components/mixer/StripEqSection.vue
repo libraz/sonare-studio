@@ -206,6 +206,8 @@ watch(() => props.scope, bindScope, { immediate: true });
 onBeforeUnmount(() => {
   unsubscribeScope?.();
   unsubscribeScope = null;
+  for (const gesture of gestures.values()) gesture.end();
+  gestures.clear();
 });
 
 function scopeSpectrumPath(frame: ScopeFrame | null, sampleRate: number | undefined): string {

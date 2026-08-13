@@ -38,4 +38,25 @@ describe('NumericReadout', () => {
     await wrapper.get('input[type="number"]').trigger('keydown', { key: 'Escape' });
     expect(wrapper.emitted('change')).toEqual([[12]]);
   });
+
+  it('does not commit when disabled changes while editing', async () => {
+    const blurWrapper = mount(NumericReadout, { props });
+    await blurWrapper.get('button').trigger('click');
+    await blurWrapper.setProps({ disabled: true });
+
+    const blurInput = blurWrapper.get('input[type="number"]');
+    expect(blurInput.attributes('disabled')).toBeDefined();
+    await blurInput.setValue('-6');
+    await blurInput.trigger('blur');
+    expect(blurWrapper.emitted('change')).toBeUndefined();
+    blurWrapper.unmount();
+
+    const enterWrapper = mount(NumericReadout, { props });
+    await enterWrapper.get('button').trigger('click');
+    await enterWrapper.setProps({ disabled: true });
+    await enterWrapper.get('input[type="number"]').setValue('-6');
+    await enterWrapper.get('input[type="number"]').trigger('keydown', { key: 'Enter' });
+    expect(enterWrapper.emitted('change')).toBeUndefined();
+    enterWrapper.unmount();
+  });
 });

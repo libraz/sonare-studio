@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import StripOptionsPopover from '@/components/mixer/StripOptionsPopover.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
-import { clearHistory } from '@/project/commands';
+import { clearHistory, setStripPanMode, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { midiLearnStripControlTargetId } from '@/ui/midi/midi-learn';
 
@@ -116,5 +116,24 @@ describe('StripOptionsPopover MIDI learn', () => {
 
     await buttons[6].trigger('click');
     expect(learn.isArmedId(panModeId)).toBe(true);
+  });
+
+  it('coalesces each dual-pan slider drag into one undo entry', async () => {
+    setStripPanMode(trackId, 'dualPan');
+    clearHistory();
+    const wrapper = mount(StripOptionsPopover, { props: { target: trackId, name: 'Track 1' } });
+    await wrapper.find('.strip-options-btn').trigger('click');
+    const left = wrapper.get('input[aria-label="Dual pan L"]');
+
+    (left.element as HTMLInputElement).value = '0.2';
+    await left.trigger('input');
+    (left.element as HTMLInputElement).value = '0.7';
+    await left.trigger('input');
+    await left.trigger('change');
+    expect(store.tracks[0].mixer?.dualPan?.left).toBeCloseTo(0.7);
+
+    expect(undo()).toBe(true);
+    expect(store.tracks[0].mixer?.dualPan?.left).toBeCloseTo(0);
+    expect(undo()).toBe(false);
   });
 });

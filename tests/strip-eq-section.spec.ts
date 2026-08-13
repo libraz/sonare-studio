@@ -5,7 +5,7 @@ import StripEqSection from '@/components/mixer/StripEqSection.vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { ScopeFrame, ScopeListener, ScopeSource } from '@/engine/scope';
-import { clearHistory, setStripEq } from '@/project/commands';
+import { clearHistory, setStripEq, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
 import { midiLearnEqTargetId } from '@/ui/midi/midi-learn';
@@ -179,6 +179,25 @@ describe('StripEqSection', () => {
     expect(wrapper.get('.eq-spectrum').attributes('d')).not.toBe(initialPath);
     wrapper.unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes an in-flight band gesture when unmounted', async () => {
+    setStripEq(trackId, {
+      enabled: true,
+      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
+    });
+    clearHistory();
+    const wrapper = mountEq();
+    const gain = wrapper.findAllComponents({ name: 'MixerKnob' })[1];
+    gain.vm.$emit('change', 6, false);
+    wrapper.unmount();
+
+    setStripEq(trackId, {
+      enabled: true,
+      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 9, q: 1, enabled: true }],
+    });
+    expect(undo()).toBe(true);
+    expect(store.tracks[0].mixer?.eq?.bands[0]?.gainDb).toBe(6);
   });
 
   it('keeps existing EQ bands when Match flat confirmation is cancelled', async () => {

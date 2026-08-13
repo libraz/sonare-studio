@@ -156,14 +156,14 @@ function onPanModeChange(value: string): void {
   setStripPanMode(props.target, value as PanModeId);
 }
 
-/** Commits a dual-pan slider edit, keeping the unchanged channel as-is. */
-function onDualPanInput(channel: 'left' | 'right', event: Event): void {
+/** Updates or commits a dual-pan slider edit, keeping the other channel intact. */
+function onDualPanInput(channel: 'left' | 'right', event: Event, commit: boolean): void {
   if (typeof props.target !== 'number') return;
   const raw = Number.parseFloat((event.target as HTMLInputElement).value);
   const value = Number.isFinite(raw) ? Math.min(1, Math.max(-1, raw)) : 0;
   const left = channel === 'left' ? value : dualPanLeft.value;
   const right = channel === 'right' ? value : dualPanRight.value;
-  setStripDualPan(props.target, left, right);
+  setStripDualPan(props.target, left, right, { commit });
 }
 
 function learnTargetId(param: MidiLearnStripControlParam): string {
@@ -528,7 +528,8 @@ onBeforeUnmount(() => {
               step="0.01"
               :value="dualPanLeft"
               :aria-label="t.shell.mixer.strip.dualPanLeft"
-              @input="onDualPanInput('left', $event)"
+              @input="onDualPanInput('left', $event, false)"
+              @change="onDualPanInput('left', $event, true)"
             />
             <span class="strip-options-unit">{{ formatPan(dualPanLeft) }}</span>
             <button
@@ -568,7 +569,8 @@ onBeforeUnmount(() => {
               step="0.01"
               :value="dualPanRight"
               :aria-label="t.shell.mixer.strip.dualPanRight"
-              @input="onDualPanInput('right', $event)"
+              @input="onDualPanInput('right', $event, false)"
+              @change="onDualPanInput('right', $event, true)"
             />
             <span class="strip-options-unit">{{ formatPan(dualPanRight) }}</span>
             <button

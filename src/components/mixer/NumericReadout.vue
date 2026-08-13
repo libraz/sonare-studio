@@ -54,9 +54,10 @@ function startEditing(): void {
 function finish(commit: boolean): void {
   if (!editing.value) return;
   editing.value = false;
+  if (!commit || props.disabled) return;
   const text = String(draft.value).trim();
   const value = text === '' ? Number.NaN : Number(text);
-  if (commit && Number.isFinite(value)) emit('change', clamp(value));
+  if (Number.isFinite(value)) emit('change', clamp(value));
 }
 
 function onKeyDown(event: KeyboardEvent): void {
@@ -81,6 +82,7 @@ function onKeyDown(event: KeyboardEvent): void {
     :max="props.max"
     :step="props.step"
     :aria-label="props.ariaLabel"
+    :disabled="props.disabled"
     @blur="finish(true)"
     @keydown="onKeyDown"
   />
