@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
@@ -8,6 +10,11 @@ import {
   resetShortcutBlockingOverlaysForTest,
   shortcutBlockingOverlayOpen,
 } from '@/ui/overlay-registry';
+
+const hintCardSource = readFileSync(
+  resolve(process.cwd(), 'src/components/onboarding/HintCard.vue'),
+  'utf8',
+);
 
 const STORAGE_KEY = 'sonare-studio.test.tourSeen';
 
@@ -203,6 +210,14 @@ describe('WelcomeTour', () => {
 });
 
 describe('HintCard', () => {
+  it('uses theme-aware shell tokens for the light-theme empty state', () => {
+    document.documentElement.dataset.theme = 'light';
+
+    expect(hintCardSource).toContain('background: var(--surface-2);');
+    expect(hintCardSource).toContain('color: var(--text-2);');
+    expect(hintCardSource).not.toContain('--canvas-surface-2');
+  });
+
   it('renders the message and optional title', () => {
     const wrapper = mount(HintCard, { props: { message: 'Drop a clip here', title: 'Empty' } });
     expect(wrapper.find('[role="note"]').exists()).toBe(true);

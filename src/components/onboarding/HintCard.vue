@@ -33,9 +33,9 @@ defineProps<{
   max-width: 22rem;
   margin: auto;
   padding: var(--sp-5) var(--sp-6);
-  background: var(--canvas-surface-2);
+  background: var(--surface-2);
   border-radius: var(--radius-lg);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-sm);
   text-align: center;
   /* Soft solid edge + drop shadow reads as a finished surface rather than
