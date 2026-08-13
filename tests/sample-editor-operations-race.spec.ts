@@ -1,10 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import { clearAudioAssetLeases, isAudioAssetLeased } from '@/persistence/asset-leases';
 import type { AudioAssetMeta, LoadedAudioAsset, SaveAssetInput } from '@/persistence/assets';
 import { createHistory } from '@/ui/sample-editor/history';
 import type { SampleRange } from '@/ui/sample-editor/ops';
+import { SAMPLE_OPERATION_TIMEOUT_MS } from '@/ui/sample-editor/ops-client';
 import { useSampleOperations } from '@/ui/sample-editor/use-sample-operations';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
 
@@ -48,12 +49,27 @@ function meta(id: string): AudioAssetMeta {
   return { id, name: id, sampleRate: 48000, numChannels: 1, numFrames: 4 };
 }
 
+class UnresponsiveWorker {
+  terminated = false;
+
+  addEventListener(_type: string, _listener: EventListener): void {}
+
+  removeEventListener(_type: string, _listener?: EventListener): void {}
+
+  postMessage(_request: unknown, _transfer: Transferable[]): void {}
+
+  terminate(): void {
+    this.terminated = true;
+  }
+}
+
 function setupOperation(target = loadedAsset('asset-a')) {
   const asset = ref<LoadedAudioAsset | null>(target);
   const currentAssetId = ref(target.meta.id);
   const historyState = ref(createHistory({ assetId: target.meta.id, label: 'Original' }));
   const busy = ref(false);
   const selection = ref<SampleRange | null>(null);
+  const error = ref<string | null>(null);
   let projectGeneration = 1;
   const loadCurrent = vi.fn<(assetId: string) => Promise<void>>(async () => undefined);
   const emitAssetCreated = vi.fn();
@@ -63,7 +79,7 @@ function setupOperation(target = loadedAsset('asset-a')) {
     historyState,
     busy,
     loading: ref(false),
-    error: ref(null),
+    error,
     wasmOps: ref({} as SampleEditorWasmOps),
     selRange: () => selection.value,
     loadCurrent,
@@ -76,6 +92,7 @@ function setupOperation(target = loadedAsset('asset-a')) {
     currentAssetId,
     historyState,
     busy,
+    error,
     selection,
     loadCurrent,
     emitAssetCreated,
@@ -92,6 +109,11 @@ describe('sample editor operation ownership', () => {
     vi.clearAllMocks();
     clearAudioAssetLeases();
     assetStore.listAssets.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('does not commit an edit after a rapid target, selection, or project switch', async () => {
@@ -154,5 +176,31 @@ describe('sample editor operation ownership', () => {
 
     expect(assetStore.saveAsset).not.toHaveBeenCalled();
     expect(context.emitAssetCreated).not.toHaveBeenCalled();
+  });
+
+  it('clears busy and reports a bounded error when a worker stops responding', async () => {
+    vi.useFakeTimers();
+    const workers: UnresponsiveWorker[] = [];
+    vi.stubGlobal(
+      'Worker',
+      class extends UnresponsiveWorker {
+        constructor() {
+          super();
+          workers.push(this);
+        }
+      },
+    );
+    const context = setupOperation();
+
+    const pending = context.operations.onGain();
+    expect(context.busy.value).toBe(true);
+    await vi.advanceTimersByTimeAsync(SAMPLE_OPERATION_TIMEOUT_MS);
+    await pending;
+
+    expect(context.busy.value).toBe(false);
+    expect(context.operations.opsDisabled.value).toBe(false);
+    expect(context.error.value).toMatch(/timed out/i);
+    expect(workers).toHaveLength(1);
+    expect(workers[0].terminated).toBe(true);
   });
 });

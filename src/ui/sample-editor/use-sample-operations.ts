@@ -401,6 +401,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     produce: (
       channels: Float32Array[],
       range: SampleRange,
+      signal: AbortSignal,
     ) => Float32Array[] | Promise<Float32Array[]>,
   ): Promise<boolean> {
     const loaded = asset.value;
@@ -412,8 +413,9 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     error.value = null;
     try {
       const range = resolveRange(loaded.channels, token.range);
-      // Asset channels are cached and shared: operations copy, never mutate.
-      const result = produce(loaded.channels, range);
+      // Synchronous fallbacks copy shared asset channels. Worker operations
+      // receive a defensive copy, transfer its ownership, and mutate it there.
+      const result = produce(loaded.channels, range, token.operation.signal);
       const channels = result instanceof Promise ? await result : result;
       const meta = await assets.save(
         {
@@ -453,11 +455,15 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   function runBuiltinOp(
     operation: SampleOperation,
     fallback: (channels: Float32Array[], range: SampleRange) => Float32Array[],
-  ): (channels: Float32Array[], range: SampleRange) => Promise<Float32Array[]> | Float32Array[] {
-    return (channels, range) =>
+  ): (
+    channels: Float32Array[],
+    range: SampleRange,
+    signal: AbortSignal,
+  ) => Promise<Float32Array[]> | Float32Array[] {
+    return (channels, range, signal) =>
       typeof Worker === 'undefined'
         ? fallback(channels, range)
-        : runSampleOperationInWorker(operation, channels, range);
+        : runSampleOperationInWorker(operation, channels, range, { signal });
   }
 
   async function onGain(): Promise<void> {
