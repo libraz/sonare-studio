@@ -62,16 +62,16 @@ function makeExternalAudioDawproject(path: string): Uint8Array {
     'project.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
 <Project version="1.0">
   <Application name="ExternalTest" version="1.0"/>
-  <Transport id="transport">
+  <Transport>
     <Tempo id="tempo" unit="bpm" value="120"/>
     <TimeSignature id="meter" numerator="4" denominator="4"/>
   </Transport>
   <Structure>
     <Track id="track-0" name="Audio" contentType="audio" color="#60a5fa">
       <Channel id="channel-0" role="regular" audioChannels="2" solo="false">
-        <Volume id="volume-0" unit="linear" min="0" max="2" value="1"/>
-        <Pan id="pan-0" unit="normalized" min="0" max="1" value="0.5"/>
         <Mute id="mute-0" value="false"/>
+        <Pan id="pan-0" unit="normalized" min="0" max="1" value="0.5"/>
+        <Volume id="volume-0" unit="linear" min="0" max="2" value="1"/>
       </Channel>
     </Track>
   </Structure>
@@ -86,6 +86,58 @@ function makeExternalAudioDawproject(path: string): Uint8Array {
           </Clip>
         </Clips>
       </Lanes>
+    </Lanes>
+  </Arrangement>
+</Project>`),
+  });
+}
+
+/**
+ * Builds schema-valid official MIDI-expression forms. A DAWproject Clip has a
+ * content choice, so each expression Point timeline is its own Points-only
+ * Clip rather than an invalid Notes+Points hybrid. Track timelines exercise
+ * the sibling `<Arrangement><Lanes><Points track="…">` form DAWs emit.
+ */
+function makeMidiExpressionDawproject(
+  clipPoints: readonly string[],
+  trackPoints: readonly string[] = [],
+): Uint8Array {
+  const clips = clipPoints
+    .map(
+      (points, index) => `
+          <Clip time="${index * 8}" duration="8" name="Expression clip">
+            ${points}
+          </Clip>`,
+    )
+    .join('');
+  const arrangementPoints = trackPoints
+    .map((points) => points.replace('<Points', '<Points track="track-0"'))
+    .join('');
+  return zipSync({
+    'project.xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+<Project version="1.0">
+  <Application name="ExpressionTest" version="1.0"/>
+  <Transport>
+    <Tempo id="tempo" unit="bpm" value="120"/>
+    <TimeSignature id="meter" numerator="4" denominator="4"/>
+  </Transport>
+  <Structure>
+    <Track id="track-0" name="Expression" contentType="notes" color="#60a5fa">
+      <Channel id="channel-0" role="regular" audioChannels="2" solo="false">
+        <Mute id="mute-0" value="false"/>
+        <Pan id="pan-0" unit="normalized" min="0" max="1" value="0.5"/>
+        <Volume id="volume-0" unit="linear" min="0" max="2" value="1"/>
+      </Channel>
+    </Track>
+  </Structure>
+  <Arrangement id="arrangement">
+    <Lanes id="arrangement-lanes" timeUnit="beats">
+      <Lanes id="lanes-0" track="track-0">
+        <Clips id="clips-0">
+          ${clips}
+        </Clips>
+      </Lanes>
+      ${arrangementPoints}
     </Lanes>
   </Arrangement>
 </Project>`),
@@ -368,6 +420,189 @@ describe('importDawproject', () => {
     expect(readTempoPoints(exported2)).toEqual(readTempoPoints(exported1));
   });
 
+  it('imports official Target expression MIDI lanes with normalized and raw values in both paths', async () => {
+    const archive = makeMidiExpressionDawproject([
+      `<Points id="cc-normalized" unit="normalized">
+        <Target expression="channelController" channel="1" controller="11"/>
+        <RealPoint time="0" value="0.5"/>
+      </Points>`,
+      `<Points id="cc-raw" unit="linear">
+        <Target expression="channelController" channel="2" controller="74"/>
+        <RealPoint time="1" value="32" interpolation="linear"/>
+      </Points>`,
+      `<Points id="pitch-normalized" unit="normalized">
+        <Target expression="pitchBend" channel="3"/>
+        <RealPoint time="2" value="0.5"/>
+      </Points>`,
+      `<Points id="channel-pressure" unit="normalized">
+        <Target expression="channelPressure" channel="4"/>
+        <RealPoint time="3" value="0.5"/>
+      </Points>`,
+      `<Points id="poly-pressure" unit="normalized">
+        <Target expression="polyPressure" channel="5" key="64"/>
+        <RealPoint time="4" value="0.5"/>
+      </Points>`,
+      `<Points id="program-change">
+        <Target expression="programChange" channel="6"/>
+        <IntegerPoint time="5" value="24"/>
+      </Points>`,
+    ]);
+
+    const direct = importDawproject(archive);
+    const worker = await importDawprojectWithMediaResult(archive, {
+      ingestAudio: vi.fn(async () => ({ id: 'unused' })),
+    });
+
+    expect(worker.document).toEqual(direct);
+    expect(worker.losses).toEqual([]);
+    const clips = direct.tracks[0].clips;
+    expect(clips).toHaveLength(6);
+    expect(clips[0]).toMatchObject({
+      kind: 'midi',
+      notes: [],
+      ccLanes: [{ channel: 1, controller: 11, points: [{ ppq: 0, value: 64 }] }],
+    });
+    expect(clips[1]).toMatchObject({
+      ccLanes: [{ channel: 2, controller: 74, points: [{ ppq: 1, value: 32, curve: 'linear' }] }],
+    });
+    expect(clips[2]).toMatchObject({
+      pitchBendLanes: [{ channel: 3, points: [{ ppq: 2, value: 8192 }] }],
+    });
+    expect(clips[3]).toMatchObject({
+      channelPressureLanes: [{ channel: 4, points: [{ ppq: 3, value: 64 }] }],
+    });
+    expect(clips[4]).toMatchObject({
+      polyPressureLanes: [{ channel: 5, pitch: 64, points: [{ ppq: 4, value: 64 }] }],
+    });
+    expect(clips[5]).toMatchObject({
+      programChangeLanes: [{ channel: 6, points: [{ ppq: 5, program: 24 }] }],
+    });
+  });
+
+  it('imports official track-targeted MIDI expression Points in both paths', async () => {
+    const archive = makeMidiExpressionDawproject(
+      [],
+      [
+        `<Points id="track-cc" unit="normalized">
+        <Target expression="channelController" channel="3" controller="1"/>
+        <RealPoint time="0" value="0" interpolation="linear"/>
+        <RealPoint time="8" value="1" interpolation="hold"/>
+      </Points>`,
+      ],
+    );
+
+    const direct = importDawproject(archive);
+    const worker = await importDawprojectWithMediaResult(archive, {
+      ingestAudio: vi.fn(async () => ({ id: 'unused' })),
+    });
+
+    expect(worker.document).toEqual(direct);
+    expect(worker.losses).toEqual([]);
+    expect(direct.tracks[0].clips).toEqual([
+      expect.objectContaining({
+        kind: 'midi',
+        notes: [],
+        startPpq: 0,
+        lengthPpq: 8,
+        ccLanes: [
+          {
+            channel: 3,
+            controller: 1,
+            points: [
+              { ppq: 0, value: 0, curve: 'linear' },
+              { ppq: 8, value: 127 },
+            ],
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it('keeps legacy dotted MIDI expression parameters working with raw values', async () => {
+    const archive = makeMidiExpressionDawproject([
+      `<Points id="legacy-cc">
+        <Target parameter="midi.cc.2.11"/>
+        <RealPoint time="0" value="96"/>
+      </Points>`,
+      `<Points id="legacy-pitch">
+        <Target parameter="midi.pitchBend.3"/>
+        <RealPoint time="1" value="4096"/>
+      </Points>`,
+      `<Points id="legacy-program">
+        <Target parameter="midi.program.4"/>
+        <RealPoint time="2" value="7"/>
+      </Points>`,
+    ]);
+
+    const result = await importDawprojectWithMediaResult(archive);
+
+    expect(result.losses).toEqual([]);
+    expect(result.document.tracks[0].clips[0]).toMatchObject({
+      ccLanes: [{ channel: 2, controller: 11, points: [{ ppq: 0, value: 96 }] }],
+    });
+    expect(result.document.tracks[0].clips[1]).toMatchObject({
+      pitchBendLanes: [{ channel: 3, points: [{ ppq: 1, value: 4096 }] }],
+    });
+    expect(result.document.tracks[0].clips[2]).toMatchObject({
+      programChangeLanes: [{ channel: 4, points: [{ ppq: 2, program: 7 }] }],
+    });
+  });
+
+  it('reports malformed and unknown non-empty MIDI expression lanes as losses', async () => {
+    const archive = makeMidiExpressionDawproject([
+      `<Points id="missing-controller" unit="normalized">
+        <Target expression="channelController" channel="1"/>
+        <RealPoint time="0" value="0.5"/>
+      </Points>`,
+      `<Points id="unknown-expression" unit="normalized">
+        <Target expression="timbre" channel="1"/>
+        <RealPoint time="1" value="0.5"/>
+      </Points>`,
+      `<Points id="wrong-point-type">
+        <Target expression="pitchBend" channel="1"/>
+        <IntegerPoint time="2" value="8192"/>
+      </Points>`,
+      `<Points id="malformed-point" unit="normalized">
+        <Target expression="channelPressure" channel="1"/>
+        <RealPoint time="not-a-time" value="0.5"/>
+      </Points>`,
+    ]);
+
+    const result = await importDawprojectWithMediaResult(archive);
+
+    expect(result.losses).toEqual([
+      {
+        kind: 'unsupported-midi-expression',
+        clipName: 'Expression clip',
+        expression: 'channelController',
+        reason: 'missing-controller',
+      },
+      {
+        kind: 'unsupported-midi-expression',
+        clipName: 'Expression clip',
+        expression: 'timbre',
+        reason: 'unknown-expression',
+      },
+      {
+        kind: 'unsupported-midi-expression',
+        clipName: 'Expression clip',
+        expression: 'pitchBend',
+        reason: 'unsupported-point-type',
+      },
+      {
+        kind: 'unsupported-midi-expression',
+        clipName: 'Expression clip',
+        expression: 'channelPressure',
+        reason: 'unsupported-point-type',
+      },
+    ]);
+    for (const clip of result.document.tracks[0].clips) {
+      expect(clip).not.toHaveProperty('ccLanes');
+      expect(clip).not.toHaveProperty('pitchBendLanes');
+      expect(clip).not.toHaveProperty('channelPressureLanes');
+    }
+  });
+
   it('keeps MIDI expression out of portable XML and round-trips it in vendor metadata', async () => {
     const exported = await exportDawproject(
       makeDoc({
@@ -422,6 +657,113 @@ describe('importDawproject', () => {
     expect(clip.polyPressureLanes).toEqual([
       { channel: 5, pitch: 64, points: [{ ppq: 3.5, value: 70 }] },
     ]);
+  });
+
+  it('binds Sonare metadata by track ids across nested groups in sync and worker imports', async () => {
+    const childExpression = makeMidiClip({
+      ccLanes: [{ channel: 1, controller: 11, points: [{ ppq: 0, value: 32 }] }],
+      pitchBendLanes: [{ channel: 2, points: [{ ppq: 1, value: 8192 }] }],
+      programChangeLanes: [{ channel: 3, points: [{ ppq: 2, program: 24 }] }],
+      channelPressureLanes: [{ channel: 4, points: [{ ppq: 3, value: 80 }] }],
+      polyPressureLanes: [{ channel: 5, pitch: 64, points: [{ ppq: 4, value: 70 }] }],
+    });
+    const source = makeDoc({
+      // Deliberately place the nested child before its parent. Exporting the
+      // DAWproject must nest it, so import traversal order differs from this
+      // document order and positional metadata associations would drift.
+      tracks: [
+        makeTrack([childExpression], {
+          name: 'Nested Child',
+          mixer: {
+            gainDb: 0,
+            pan: 0,
+            inserts: [
+              {
+                processor: 'dynamics.compressor',
+                params: { thresholdDb: -18 },
+                enabled: true,
+                // The source index points at the group (track-1), whose
+                // traversal index becomes zero after nesting.
+                sidechainSourceIndex: 1,
+              } as InsertSlot & { sidechainSourceIndex: number },
+            ],
+            sends: [],
+          },
+          kind: 'midi',
+          groupIndex: 1,
+        }),
+        makeTrack([], { name: 'Nested Group', kind: 'group' }),
+        makeTrack([], { name: 'Key Source', kind: 'audio' }),
+      ],
+      mixer: {
+        master: {
+          gainDb: 0,
+          pan: 0,
+          inserts: [
+            {
+              processor: 'eq.tilt',
+              params: { tiltDb: 1.5 },
+              enabled: true,
+              sidechainSourceIndex: 1,
+            } as InsertSlot & { sidechainSourceIndex: number },
+          ],
+          sends: [],
+        },
+        buses: [
+          {
+            id: 'bus-1',
+            name: 'Return',
+            gainDb: 0,
+            strip: {
+              gainDb: 0,
+              pan: 0,
+              inserts: [
+                {
+                  processor: 'saturation.tape',
+                  params: { drive: 0.5 },
+                  enabled: true,
+                  sidechainSourceIndex: 0,
+                } as InsertSlot & { sidechainSourceIndex: number },
+              ],
+              sends: [],
+            },
+          },
+        ],
+      },
+    });
+
+    const exported = await exportDawproject(source, { includeAudio: false });
+    const sync = importDawproject(exported);
+    const worker = await importDawprojectWithMediaResult(exported, {
+      ingestAudio: vi.fn(async () => ({ id: 'unused' })),
+    });
+
+    expect(worker.document).toEqual(sync);
+    expect(sync.tracks.map((track) => track.name)).toEqual([
+      'Nested Group',
+      'Nested Child',
+      'Key Source',
+    ]);
+    expect(sync.tracks[1].groupIndex).toBe(0);
+    expect(sync.tracks[1].clips[0]).toMatchObject({
+      ccLanes: childExpression.ccLanes,
+      pitchBendLanes: childExpression.pitchBendLanes,
+      programChangeLanes: childExpression.programChangeLanes,
+      channelPressureLanes: childExpression.channelPressureLanes,
+      polyPressureLanes: childExpression.polyPressureLanes,
+    });
+    const childInsert = sync.tracks[1].mixer?.inserts[0] as InsertSlot & {
+      sidechainSourceIndex?: number;
+    };
+    const busInsert = sync.mixer?.buses[0].strip?.inserts[0] as InsertSlot & {
+      sidechainSourceIndex?: number;
+    };
+    const masterInsert = sync.mixer?.master.inserts[0] as InsertSlot & {
+      sidechainSourceIndex?: number;
+    };
+    expect(childInsert.sidechainSourceIndex).toBe(0);
+    expect(busInsert.sidechainSourceIndex).toBe(1);
+    expect(masterInsert.sidechainSourceIndex).toBe(0);
   });
 
   it('imports audio clips as placement-only clips without media ingest', async () => {
@@ -1129,6 +1471,46 @@ describe('importDawproject', () => {
       volume: 0.5,
     });
     expect(imported.tracks[1].vcaId).toBeUndefined();
+  });
+
+  it('inverts the exported VCA offset exactly once for fader automation', async () => {
+    const source = makeDoc({
+      tracks: [
+        makeTrack([], {
+          name: 'VCA Member',
+          volume: 0.75,
+          vcaId: 'vca-1',
+          mixer: { gainDb: -3, pan: 0, inserts: [], sends: [] },
+          automation: [
+            {
+              param: 'faderDb',
+              enabled: true,
+              points: [
+                { ppq: 0, value: -120, curve: 'linear' },
+                { ppq: 4, value: -119, curve: 'linear' },
+                { ppq: 8, value: -114, curve: 'linear' },
+                { ppq: 12, value: -113, curve: 'hold' },
+                { ppq: 16, value: -10, curve: 'linear' },
+              ],
+            },
+          ],
+        }),
+      ],
+      mixer: {
+        master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+        buses: [],
+        vcaGroups: [{ id: 'vca-1', name: 'Mix VCA', gainDb: -6 }],
+      },
+    });
+
+    const exported = await exportDawproject(source, { includeAudio: false });
+    const once = importDawproject(exported);
+    const worker = await importDawprojectWithMediaResult(exported);
+    const twice = importDawproject(await exportDawproject(once, { includeAudio: false }));
+
+    expect(once.tracks[0].automation).toEqual(source.tracks[0].automation);
+    expect(worker.document.tracks[0].automation).toEqual(source.tracks[0].automation);
+    expect(twice.tracks[0].automation).toEqual(source.tracks[0].automation);
   });
 
   it('round-trips sonare BuiltinDevice insert chains on tracks, buses and master', async () => {

@@ -10,7 +10,7 @@
  */
 
 import { strFromU8 } from 'fflate';
-import { linearToDb } from '@/lib/db';
+import { dbToLinear, linearToDb } from '@/lib/db';
 import {
   preflightXmlBytes,
   preflightXmlDocument,
@@ -137,6 +137,27 @@ export type DawprojectImportLoss =
       /** Sonare has no disabled-clip model, so disabled content is skipped. */
       kind: 'disabled-clip';
       clipName: string;
+    }
+  | {
+      /** A non-empty MIDI expression lane could not be interpreted. */
+      kind: 'unsupported-midi-expression';
+      clipName: string;
+      expression: string;
+      reason:
+        | 'missing-target'
+        | 'unknown-expression'
+        | 'missing-channel'
+        | 'invalid-channel'
+        | 'missing-controller'
+        | 'invalid-controller'
+        | 'missing-key'
+        | 'invalid-key'
+        | 'unsupported-point-type'
+        | 'malformed-point'
+        /** A timeline-level expression cannot be attached to an audio/group track. */
+        | 'non-midi-track'
+        /** A timeline-level expression did not identify the Structure track it targets. */
+        | 'missing-track';
     };
 
 function parseXml(bytes: Uint8Array, entryName: string): Document {
@@ -336,14 +357,23 @@ function panFromNormalized(value: number): number {
 
 function readAutomationParameterRefs(
   channel: Element | null | undefined,
+  faderOffsetDb = 0,
 ): Map<string, AutomationParameterRef> {
   const refs = new Map<string, AutomationParameterRef>();
   // Read only the channel's own direct Volume/Pan: querySelector would descend
   // into the Sends emitted earlier in the channel and grab a send's nested
   // Volume instead, mapping fader automation to the wrong parameter id.
   const volumeId = children(channel, 'Volume')[0]?.getAttribute('id')?.trim();
-  if (volumeId)
-    refs.set(volumeId, { param: 'faderDb', fromDawValue: (value) => linearToDb(value) });
+  if (volumeId) {
+    refs.set(volumeId, {
+      param: 'faderDb',
+      // The exporter folds a member VCA's offset into DAWproject channel
+      // values. Remove that same offset in the linear domain, before the dB
+      // conversion's -120 dB floor, so a second export does not apply it
+      // again.
+      fromDawValue: (value) => linearToDb(value * dbToLinear(-faderOffsetDb)),
+    });
+  }
   const panId = children(channel, 'Pan')[0]?.getAttribute('id')?.trim();
   if (panId) refs.set(panId, { param: 'pan', fromDawValue: panFromNormalized });
 
@@ -373,7 +403,7 @@ function readAutomationParameterRefs(
 
 function readTracks(
   project: Document,
-  validVcaIds: ReadonlySet<string> = new Set(),
+  vcaGainDbById: ReadonlyMap<string, number> = new Map(),
   sonareMetadata: SonareDawprojectMetadata = { schemaVersion: 1 },
 ): ImportedTrack[] {
   const tracks: ImportedTrack[] = [];
@@ -401,7 +431,8 @@ function readTracks(
     // and querySelector would return that send level as the track's fader gain.
     const channelVolume = Math.max(0, numberAttr(children(channel, 'Volume')[0], 'value') ?? 1);
     const sonareVcaId = extension?.vcaId ?? track.getAttribute('sonareVcaId')?.trim();
-    const vcaId = sonareVcaId && validVcaIds.has(sonareVcaId) ? sonareVcaId : undefined;
+    const vcaId = sonareVcaId && vcaGainDbById.has(sonareVcaId) ? sonareVcaId : undefined;
+    const vcaOffsetDb = vcaId === undefined ? 0 : (vcaGainDbById.get(vcaId) ?? 0);
     const sonareVolume = extension?.volume ?? numberAttr(track, 'sonareVolume');
     const sonareStripGainDb = extension?.stripGainDb ?? numberAttr(track, 'sonareStripGainDb');
     tracks.push({
@@ -434,7 +465,7 @@ function readTracks(
         new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),
       ),
       automation: [],
-      automationRefs: readAutomationParameterRefs(channel),
+      automationRefs: readAutomationParameterRefs(channel, vcaOffsetDb),
       ...(groupIndex !== undefined ? { groupIndex } : {}),
       ...(vcaId !== undefined ? { vcaId } : {}),
     });
@@ -492,6 +523,55 @@ function scrubImportedSidechainSourceIndexes(
   };
   for (const track of tracks) scrubStrip(track);
   scrubStrip(master);
+}
+
+/**
+ * Rebinds sidechain indexes written by Sonare's exporter to the order in
+ * which Structure tracks were actually visited. A nested group can reorder a
+ * document's positional track list (for example when a child precedes its
+ * parent in the plain document), while the exporter still names that source
+ * `track-${index}`. Prefer that stable XML id and retain the numeric index as
+ * a compatibility fallback for foreign/legacy archives.
+ */
+function rebindImportedSidechainSourceIndexes(
+  tracks: ImportedTrack[],
+  master: ReturnType<typeof createDefaultStrip>,
+): void {
+  const importedIndexById = new Map(tracks.map((track, index) => [track.id, index]));
+  const rebindStrip = (strip: { inserts: InsertSlot[] }): void => {
+    for (const slot of strip.inserts) {
+      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      if (typeof sourceIndex !== 'number' || !Number.isInteger(sourceIndex)) continue;
+      const stableSourceIndex = importedIndexById.get(`track-${sourceIndex}`);
+      if (stableSourceIndex !== undefined) {
+        (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = stableSourceIndex;
+      }
+    }
+  };
+  for (const track of tracks) rebindStrip(track);
+  rebindStrip(master);
+}
+
+/** Rebinds imported Structure indexes to the final document-track indexes. */
+function rebindDocumentSidechainSourceIndexes(
+  tracks: ImportedTrack[],
+  master: ReturnType<typeof createDefaultStrip>,
+  documentIndexByImportedIndex: ReadonlyMap<number, number>,
+): void {
+  const rebindStrip = (strip: { inserts: InsertSlot[] }): void => {
+    for (const slot of strip.inserts) {
+      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      if (typeof sourceIndex !== 'number' || !Number.isInteger(sourceIndex)) continue;
+      const documentIndex = documentIndexByImportedIndex.get(sourceIndex);
+      if (documentIndex === undefined) {
+        delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      } else {
+        (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = documentIndex;
+      }
+    }
+  };
+  for (const track of tracks) rebindStrip(track);
+  rebindStrip(master);
 }
 
 function applyMixerRouting(
@@ -777,7 +857,11 @@ function flattenClipLeaves(root: Element, losses: DawprojectImportLoss[]): Flatt
   return walk(root, initial);
 }
 
-function readMidiClip(clip: Element, placement?: FlattenedClipPlacement): DocumentClip {
+function readMidiClip(
+  clip: Element,
+  placement: FlattenedClipPlacement | undefined,
+  losses: DawprojectImportLoss[],
+): DocumentClip {
   const playStart = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
   const loopStart = numberAttr(clip, 'loopStart');
   const loopEnd = numberAttr(clip, 'loopEnd');
@@ -807,72 +891,298 @@ function readMidiClip(clip: Element, placement?: FlattenedClipPlacement): Docume
       };
     }),
   };
-  readMidiExpressionPoints(clip, out);
+  readMidiExpressionPoints(clip, out, losses);
   return out;
 }
 
-function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): void {
+type MidiExpressionName =
+  | 'channelController'
+  | 'pitchBend'
+  | 'channelPressure'
+  | 'polyPressure'
+  | 'programChange';
+
+interface MidiExpressionTarget {
+  expression: MidiExpressionName;
+  channel: number;
+  controller?: number;
+  key?: number;
+}
+
+interface MidiExpressionPoint {
+  ppq: number;
+  value: number;
+  curve?: 'linear';
+}
+
+type MidiExpressionTargetAttribute = 'channel' | 'controller' | 'key';
+
+function midiExpressionLoss(
+  clip: Pick<DocumentClip, 'name'>,
+  expression: string,
+  reason: Extract<DawprojectImportLoss, { kind: 'unsupported-midi-expression' }>['reason'],
+  losses: DawprojectImportLoss[],
+): void {
+  losses.push({ kind: 'unsupported-midi-expression', clipName: clip.name, expression, reason });
+}
+
+function readMidiTargetInteger(
+  target: Element,
+  attribute: MidiExpressionTargetAttribute,
+  min: number,
+  max: number,
+): { ok: true; value: number } | { ok: false; reason: 'missing' | 'invalid' } {
+  const raw = target.getAttribute(attribute)?.trim();
+  if (!raw) return { ok: false, reason: 'missing' };
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= min && value <= max
+    ? { ok: true, value }
+    : { ok: false, reason: 'invalid' };
+}
+
+function midiTargetAttributeLossReason(
+  attribute: MidiExpressionTargetAttribute,
+  reason: 'missing' | 'invalid',
+): Extract<DawprojectImportLoss, { kind: 'unsupported-midi-expression' }>['reason'] {
+  return `${reason}-${attribute}` as Extract<
+    DawprojectImportLoss,
+    { kind: 'unsupported-midi-expression' }
+  >['reason'];
+}
+
+function readOfficialMidiExpressionTarget(target: Element):
+  | { ok: true; target: MidiExpressionTarget }
+  | {
+      ok: false;
+      reason: Extract<DawprojectImportLoss, { kind: 'unsupported-midi-expression' }>['reason'];
+    } {
+  const expression = target.getAttribute('expression')?.trim() ?? '';
+  if (
+    expression !== 'channelController' &&
+    expression !== 'pitchBend' &&
+    expression !== 'channelPressure' &&
+    expression !== 'polyPressure' &&
+    expression !== 'programChange'
+  ) {
+    return { ok: false, reason: 'unknown-expression' };
+  }
+  const channel = readMidiTargetInteger(target, 'channel', 0, 15);
+  if (!channel.ok) {
+    return { ok: false, reason: midiTargetAttributeLossReason('channel', channel.reason) };
+  }
+  if (expression === 'channelController') {
+    const controller = readMidiTargetInteger(target, 'controller', 0, 127);
+    if (!controller.ok) {
+      return {
+        ok: false,
+        reason: midiTargetAttributeLossReason('controller', controller.reason),
+      };
+    }
+    return {
+      ok: true,
+      target: { expression, channel: channel.value, controller: controller.value },
+    };
+  }
+  if (expression === 'polyPressure') {
+    const key = readMidiTargetInteger(target, 'key', 0, 127);
+    if (!key.ok) {
+      return { ok: false, reason: midiTargetAttributeLossReason('key', key.reason) };
+    }
+    return { ok: true, target: { expression, channel: channel.value, key: key.value } };
+  }
+  return { ok: true, target: { expression, channel: channel.value } };
+}
+
+function readLegacyMidiExpressionTarget(parameter: string):
+  | { ok: true; target: MidiExpressionTarget }
+  | {
+      ok: false;
+      reason: Extract<DawprojectImportLoss, { kind: 'unsupported-midi-expression' }>['reason'];
+    }
+  | null {
+  const parts = parameter.split('.');
+  if (parts[0] !== 'midi') return null;
+  const readIndex = (raw: string | undefined, min: number, max: number): number | null => {
+    if (raw === undefined || raw.trim() === '') return null;
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= min && value <= max ? value : null;
+  };
+  const channel = readIndex(parts[2], 0, 15);
+  if (parts[1] === 'cc' && parts.length === 4) {
+    const controller = readIndex(parts[3], 0, 127);
+    return channel === null || controller === null
+      ? { ok: false, reason: 'malformed-point' }
+      : { ok: true, target: { expression: 'channelController', channel, controller } };
+  }
+  if (parts[1] === 'pitchBend' && parts.length === 3) {
+    return channel === null
+      ? { ok: false, reason: 'malformed-point' }
+      : { ok: true, target: { expression: 'pitchBend', channel } };
+  }
+  if (parts[1] === 'program' && parts.length === 3) {
+    return channel === null
+      ? { ok: false, reason: 'malformed-point' }
+      : { ok: true, target: { expression: 'programChange', channel } };
+  }
+  if (parts[1] === 'channelPressure' && parts.length === 3) {
+    return channel === null
+      ? { ok: false, reason: 'malformed-point' }
+      : { ok: true, target: { expression: 'channelPressure', channel } };
+  }
+  if (parts[1] === 'polyPressure' && parts.length === 4) {
+    const key = readIndex(parts[3], 0, 127);
+    return channel === null || key === null
+      ? { ok: false, reason: 'malformed-point' }
+      : { ok: true, target: { expression: 'polyPressure', channel, key } };
+  }
+  return { ok: false, reason: 'unknown-expression' };
+}
+
+function readMidiExpressionPointsElement(
+  points: Element,
+  pointName: 'RealPoint' | 'IntegerPoint',
+  normalizedMaximum: number | null,
+): MidiExpressionPoint[] | null {
+  const unit = points.getAttribute('unit')?.trim() ?? '';
+  if (pointName === 'RealPoint' && unit !== '' && unit !== 'linear' && unit !== 'normalized') {
+    return null;
+  }
+  const normalized = unit === 'normalized';
+  const pointElements = children(points).filter((point) => point.tagName !== 'Target');
+  if (pointElements.length === 0 || pointElements.some((point) => point.tagName !== pointName)) {
+    return null;
+  }
+  const parsed: MidiExpressionPoint[] = [];
+  for (const point of pointElements) {
+    const rawTime = point.getAttribute('time')?.trim();
+    const rawValue = point.getAttribute('value')?.trim();
+    if (!rawTime || !rawValue) return null;
+    const ppq = Number(rawTime);
+    const value = Number(rawValue);
+    if (!Number.isFinite(ppq) || !Number.isFinite(value)) return null;
+    if (pointName === 'IntegerPoint' && !Number.isInteger(value)) return null;
+    const interpolation = point.getAttribute('interpolation')?.trim();
+    if (pointName === 'RealPoint' && interpolation !== undefined && interpolation !== '') {
+      if (interpolation !== 'hold' && interpolation !== 'linear') return null;
+    }
+    parsed.push({
+      ppq,
+      value: normalized && normalizedMaximum !== null ? value * normalizedMaximum : value,
+      ...(interpolation === 'linear' ? { curve: 'linear' } : {}),
+    });
+  }
+  return parsed;
+}
+
+function readMidiExpressionPoints(
+  clipElement: Element,
+  clip: DocumentClip,
+  losses: DawprojectImportLoss[],
+): void {
   const ccLanes: NonNullable<DocumentClip['ccLanes']> = [];
   const pitchBendLanes: NonNullable<DocumentClip['pitchBendLanes']> = [];
   const programChangeLanes: NonNullable<DocumentClip['programChangeLanes']> = [];
   const channelPressureLanes: NonNullable<DocumentClip['channelPressureLanes']> = [];
   const polyPressureLanes: NonNullable<DocumentClip['polyPressureLanes']> = [];
-  for (const points of children(clipElement, 'Points')) {
-    const target = points.querySelector('Target')?.getAttribute('parameter')?.trim() ?? '';
-    const parts = target.split('.');
-    if (parts[0] !== 'midi') continue;
-    const realPoints = children(points, 'RealPoint')
-      .map((point) => ({
-        ppq: numberAttr(point, 'time'),
-        value: numberAttr(point, 'value'),
-        curve: point.getAttribute('interpolation') === 'linear' ? ('linear' as const) : undefined,
-      }))
-      .filter(
-        (point): point is { ppq: number; value: number; curve: 'linear' | undefined } =>
-          point.ppq !== null && point.value !== null,
-      );
-    if (realPoints.length === 0) continue;
-    if (parts[1] === 'cc' && parts.length === 4) {
+  // A DAWproject Clip owns a <Points> child, while timeline-level expression
+  // is itself a <Points> timeline. Supporting both here avoids making the
+  // official track-targeted form a special, silently dropped parser path.
+  const pointTimelines =
+    clipElement.tagName === 'Points' ? [clipElement] : children(clipElement, 'Points');
+  for (const points of pointTimelines) {
+    const targets = children(points, 'Target');
+    const pointElements = children(points).filter((point) => point.tagName !== 'Target');
+    if (pointElements.length === 0) continue;
+    const targetElement = targets[0];
+    const parameter = targetElement?.getAttribute('parameter')?.trim() ?? '';
+    const expression = targetElement?.getAttribute('expression')?.trim() ?? parameter;
+    if (targets.length !== 1 || !targetElement) {
+      midiExpressionLoss(clip, expression, 'missing-target', losses);
+      continue;
+    }
+
+    let parsedTarget:
+      | { ok: true; target: MidiExpressionTarget }
+      | {
+          ok: false;
+          reason: Extract<DawprojectImportLoss, { kind: 'unsupported-midi-expression' }>['reason'];
+        }
+      | null;
+    if (targetElement.hasAttribute('expression')) {
+      parsedTarget = readOfficialMidiExpressionTarget(targetElement);
+    } else {
+      parsedTarget = readLegacyMidiExpressionTarget(parameter);
+      if (parsedTarget === null) {
+        midiExpressionLoss(clip, parameter, 'unknown-expression', losses);
+        continue;
+      }
+    }
+    if (!parsedTarget.ok) {
+      midiExpressionLoss(clip, expression, parsedTarget.reason, losses);
+      continue;
+    }
+    const target = parsedTarget.target;
+    const isLegacy = !targetElement.hasAttribute('expression');
+    const pointName =
+      target.expression === 'programChange' && !isLegacy ? 'IntegerPoint' : 'RealPoint';
+    const normalizedMaximum =
+      target.expression === 'channelController' ||
+      target.expression === 'channelPressure' ||
+      target.expression === 'polyPressure'
+        ? 127
+        : target.expression === 'pitchBend'
+          ? 16383
+          : null;
+    const parsedPoints = readMidiExpressionPointsElement(
+      points,
+      pointName,
+      isLegacy ? null : normalizedMaximum,
+    );
+    if (parsedPoints === null) {
+      midiExpressionLoss(clip, expression, 'unsupported-point-type', losses);
+      continue;
+    }
+    if (target.expression === 'channelController') {
       ccLanes.push({
-        channel: clampInt(Number(parts[2]), 0, 15),
-        controller: clampInt(Number(parts[3]), 0, 127),
-        points: realPoints.map((point) => ({
+        channel: target.channel,
+        controller: target.controller as number,
+        points: parsedPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 127),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
-    } else if (parts[1] === 'pitchBend' && parts.length === 3) {
+    } else if (target.expression === 'pitchBend') {
       pitchBendLanes.push({
-        channel: clampInt(Number(parts[2]), 0, 15),
-        points: realPoints.map((point) => ({
+        channel: target.channel,
+        points: parsedPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 16383),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
-    } else if (parts[1] === 'program' && parts.length === 3) {
+    } else if (target.expression === 'programChange') {
       programChangeLanes.push({
-        channel: clampInt(Number(parts[2]), 0, 15),
-        points: realPoints.map((point) => ({
+        channel: target.channel,
+        points: parsedPoints.map((point) => ({
           ppq: point.ppq,
           program: clampInt(point.value, 0, 127),
         })),
       });
-    } else if (parts[1] === 'channelPressure' && parts.length === 3) {
+    } else if (target.expression === 'channelPressure') {
       channelPressureLanes.push({
-        channel: clampInt(Number(parts[2]), 0, 15),
-        points: realPoints.map((point) => ({
+        channel: target.channel,
+        points: parsedPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 127),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
-    } else if (parts[1] === 'polyPressure' && parts.length === 4) {
+    } else {
       polyPressureLanes.push({
-        channel: clampInt(Number(parts[2]), 0, 15),
-        pitch: clampInt(Number(parts[3]), 0, 127),
-        points: realPoints.map((point) => ({
+        channel: target.channel,
+        pitch: target.key as number,
+        points: parsedPoints.map((point) => ({
           ppq: point.ppq,
           value: clampInt(point.value, 0, 127),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
@@ -885,6 +1195,61 @@ function readMidiExpressionPoints(clipElement: Element, clip: DocumentClip): voi
   if (programChangeLanes.length > 0) clip.programChangeLanes = programChangeLanes;
   if (channelPressureLanes.length > 0) clip.channelPressureLanes = channelPressureLanes;
   if (polyPressureLanes.length > 0) clip.polyPressureLanes = polyPressureLanes;
+}
+
+function isPotentialMidiExpressionPoints(points: Element): boolean {
+  const target = children(points, 'Target')[0];
+  if (!target) return true;
+  if (target.hasAttribute('expression')) return true;
+  return target.getAttribute('parameter')?.trim().startsWith('midi.') === true;
+}
+
+function midiExpressionName(points: Element): string {
+  const target = children(points, 'Target')[0];
+  return (
+    target?.getAttribute('expression')?.trim() ?? target?.getAttribute('parameter')?.trim() ?? ''
+  );
+}
+
+function hasMidiExpressionLanes(clip: DocumentClip): boolean {
+  return (
+    (clip.ccLanes?.length ?? 0) > 0 ||
+    (clip.pitchBendLanes?.length ?? 0) > 0 ||
+    (clip.programChangeLanes?.length ?? 0) > 0 ||
+    (clip.channelPressureLanes?.length ?? 0) > 0 ||
+    (clip.polyPressureLanes?.length ?? 0) > 0
+  );
+}
+
+/**
+ * Reifies a DAWproject timeline-level MIDI expression as one CC-only clip.
+ * Its Points times are arrangement-relative, so the carrier starts at zero
+ * and retains those times as its source-relative expression positions.
+ */
+function readArrangementMidiExpressionClip(
+  points: Element,
+  track: ImportedTrack,
+  losses: DawprojectImportLoss[],
+): DocumentClip | null {
+  let lengthPpq = 0.0001;
+  for (const point of children(points)) {
+    if (point.tagName === 'Target') continue;
+    const time = numberAttr(point, 'time');
+    if (time !== null && time >= 0) lengthPpq = Math.max(lengthPpq, time);
+  }
+  const clip: DocumentClip = {
+    name: `${track.name} MIDI expression`,
+    startPpq: 0,
+    lengthPpq,
+    sourceOffsetPpq: 0,
+    gain: 1,
+    loopEnabled: false,
+    loopLengthPpq: 0,
+    kind: 'midi',
+    notes: [],
+  };
+  readMidiExpressionPoints(points, clip, losses);
+  return hasMidiExpressionLanes(clip) ? clip : null;
 }
 
 interface DawprojectAudioFileRef {
@@ -1127,13 +1492,73 @@ function attachArrangementClips(
     const clips = children(children(lane, 'Clips')[0], 'Clip');
     for (const clip of clips) {
       for (const leaf of flattenClipLeaves(clip, losses)) {
-        track.clips.push(
-          children(leaf.element, 'Notes').length > 0
-            ? readMidiClip(leaf.element, leaf.placement)
-            : readAudioClip(leaf.element, tempoMap, mediaAssets, losses, leaf.placement),
-        );
+        const points = children(leaf.element, 'Points');
+        const hasMidiContent =
+          children(leaf.element, 'Notes').length > 0 ||
+          (points.length > 0 && track.kind === 'midi');
+        if (hasMidiContent) {
+          // The official schema makes Clip content a choice: an expression
+          // clip contains Points *instead of* Notes. A notes-only predicate
+          // therefore misclassified valid MIDI expression clips as audio.
+          track.clips.push(readMidiClip(leaf.element, leaf.placement, losses));
+        } else if (points.some(isPotentialMidiExpressionPoints)) {
+          // A MIDI expression on a non-MIDI track has no faithful Sonare
+          // destination. Report it rather than manufacture an audio clip or
+          // silently discard its non-empty timeline.
+          const clipName = leaf.placement.name;
+          for (const entry of points.filter(isPotentialMidiExpressionPoints)) {
+            midiExpressionLoss(
+              { name: clipName },
+              midiExpressionName(entry),
+              'non-midi-track',
+              losses,
+            );
+          }
+        } else {
+          track.clips.push(
+            readAudioClip(leaf.element, tempoMap, mediaAssets, losses, leaf.placement),
+          );
+        }
       }
     }
+  }
+}
+
+/**
+ * Imports official arrangement-level MIDI expression (`<Points track="…">`).
+ * Sonare stores expression on clips, so a zero-origin CC-only carrier keeps
+ * the point positions and makes the expression audible without inventing
+ * notes. Malformed or unaddressable non-empty timelines become explicit loss
+ * entries instead of disappearing during the automation pass.
+ */
+function attachArrangementMidiExpressions(
+  project: Document,
+  tracks: ImportedTrack[],
+  losses: DawprojectImportLoss[],
+): void {
+  const byId = new Map(tracks.map((track) => [track.id, track]));
+  const arrangementLanes = project.querySelector('Arrangement > Lanes');
+  if (!arrangementLanes) return;
+  for (const points of Array.from(arrangementLanes.querySelectorAll('Points'))) {
+    if (points.closest('Clip') || !isPotentialMidiExpressionPoints(points)) continue;
+    const pointElements = children(points).filter((point) => point.tagName !== 'Target');
+    if (pointElements.length === 0) continue;
+    const trackId =
+      points.getAttribute('track')?.trim() ||
+      points.parentElement?.getAttribute('track')?.trim() ||
+      '';
+    const track = byId.get(trackId);
+    const name = midiExpressionName(points);
+    if (!track) {
+      midiExpressionLoss({ name: 'MIDI expression' }, name, 'missing-track', losses);
+      continue;
+    }
+    if (track.kind !== 'midi') {
+      midiExpressionLoss({ name: track.name }, name, 'non-midi-track', losses);
+      continue;
+    }
+    const clip = readArrangementMidiExpressionClip(points, track, losses);
+    if (clip) track.clips.push(clip);
   }
 }
 
@@ -1191,36 +1616,48 @@ function attachArrangementAutomation(
   const byId = new Map(tracks.map((track) => [track.id, track]));
   const masterAutomation: DocumentAutomationLane[] = [];
   const arrangementLanes = project.querySelector('Arrangement > Lanes');
-  for (const lane of children(arrangementLanes, 'Lanes')) {
-    const laneTrackId = lane.getAttribute('track') ?? '';
+  // DAWproject permits Points directly under the arrangement Lanes timeline;
+  // DAWs emit that form for track-targeted MIDI expression. Parameter
+  // automation uses the same placement, so handle both the root and ordinary
+  // per-track lane containers here.
+  for (const lane of [arrangementLanes, ...children(arrangementLanes, 'Lanes')]) {
     const points = children(lane, 'Points');
-    if (points.length === 0) continue;
-    const track = byId.get(laneTrackId);
-    if (track) {
-      const lanes = points
-        .map((entry) => readAutomationLane(entry, track.automationRefs))
-        .filter(
-          (entry): entry is DocumentAutomationLane =>
-            entry !== null && !(track.kind === 'group' && entry.param === 'pan'),
-        );
-      if (lanes.length === 0) continue;
-      if (track.mixerBusId) {
-        const bus = mixer?.buses.find((entry) => entry.id === track.mixerBusId);
-        if (bus) bus.automation = [...(bus.automation ?? []), ...lanes];
-      } else {
-        track.automation.push(...lanes);
+    for (const entry of points) {
+      const laneTrackId = entry.getAttribute('track') ?? lane?.getAttribute('track') ?? '';
+      if (!laneTrackId) continue;
+      const track = byId.get(laneTrackId);
+      if (track) {
+        const automation = readAutomationLane(entry, track.automationRefs);
+        if (automation === null || (track.kind === 'group' && automation.param === 'pan')) continue;
+        if (track.mixerBusId) {
+          const bus = mixer?.buses.find((entry) => entry.id === track.mixerBusId);
+          if (bus) bus.automation = [...(bus.automation ?? []), automation];
+        } else {
+          track.automation.push(automation);
+        }
+        continue;
       }
-      continue;
-    }
-    if (laneTrackId === master.trackId) {
-      masterAutomation.push(
-        ...points
-          .map((entry) => readAutomationLane(entry, master.automationRefs))
-          .filter((entry): entry is DocumentAutomationLane => entry !== null),
-      );
+      if (laneTrackId === master.trackId) {
+        const automation = readAutomationLane(entry, master.automationRefs);
+        if (automation) masterAutomation.push(automation);
+      }
     }
   }
   return masterAutomation;
+}
+
+/** Restores clip expression by the Structure track id, not traversal order. */
+function attachSonareMidiExpressions(
+  tracks: ImportedTrack[],
+  sonareMetadata: SonareDawprojectMetadata,
+): void {
+  for (const track of tracks) {
+    track.clips.forEach((clip, clipIndex) => {
+      if (clip.kind === 'audio') return;
+      const expression = sonareMetadata.midiExpressions?.[`${track.id}-clip-${clipIndex}`];
+      if (expression) Object.assign(clip, expression);
+    });
+  }
 }
 
 function readMarkers(project: Document): ProjectDocument['markers'] {
@@ -1341,12 +1778,16 @@ function importDawprojectDocuments(
   assertBeatBasedArrangement(project);
   const losses: DawprojectImportLoss[] = [];
   const vcaGroups = readSonareVcaGroups(project, sonareMetadata);
-  const tracks = readTracks(project, new Set(vcaGroups.map((group) => group.id)), sonareMetadata);
+  const vcaGainDbById = new Map(vcaGroups.map((group) => [group.id, group.gainDb]));
+  const tracks = readTracks(project, vcaGainDbById, sonareMetadata);
   const master = readMaster(project, sonareMetadata);
+  rebindImportedSidechainSourceIndexes(tracks, master.strip);
   scrubImportedSidechainSourceIndexes(tracks, master.strip);
   const mixer = applyMixerRouting(tracks, master.strip, vcaGroups);
   const tempoSegments = readTempo(project);
   attachArrangementClips(project, tracks, normalizeTempoMap(tempoSegments), mediaAssets, losses);
+  attachArrangementMidiExpressions(project, tracks, losses);
+  attachSonareMidiExpressions(tracks, sonareMetadata);
   const masterAutomation = attachArrangementAutomation(project, tracks, mixer, master);
   const documentTracks = tracks.filter((track) => !track.isEffectBus);
   const sections = sonareMetadata.sections ?? [];
@@ -1355,6 +1796,7 @@ function importDawprojectDocuments(
     if (track.isEffectBus) return;
     documentIndexByImportedIndex.set(importedIndex, documentIndexByImportedIndex.size);
   });
+  rebindDocumentSidechainSourceIndexes(tracks, master.strip, documentIndexByImportedIndex);
 
   const doc: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
@@ -1391,13 +1833,6 @@ function importDawprojectDocuments(
   };
   if (mixer) doc.mixer = mixer;
   if (masterAutomation.length > 0) doc.masterAutomation = masterAutomation;
-  doc.tracks.forEach((track, trackIndex) => {
-    track.clips.forEach((clip, clipIndex) => {
-      if (clip.kind === 'audio') return;
-      const expression = sonareMetadata.midiExpressions?.[`track-${trackIndex}-clip-${clipIndex}`];
-      if (expression) Object.assign(clip, expression);
-    });
-  });
   return { document: doc, losses };
 }
 
