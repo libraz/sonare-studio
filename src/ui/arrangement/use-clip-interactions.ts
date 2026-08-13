@@ -13,7 +13,14 @@ import { type Ref, ref } from 'vue';
 import { type ClipSplitBlockReason, clipSplitBlockReason } from '@/project/clip-split';
 import { snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
-import { clampFadePpq, type FadeEdge, hitTestFadeHandles } from './audio-fades';
+import {
+  clampFadePpq,
+  clipRenderTopPx,
+  clipRenderWidthPx,
+  type FadeEdge,
+  fadeHandleRect,
+  hitTestFadeHandles,
+} from './audio-fades';
 import {
   type ArrangeClipRect,
   type ClipHitZone,
@@ -220,6 +227,8 @@ export interface ClipInteractions {
 interface PendingGesture {
   kind: 'pending';
   start: ClipPoint;
+  /** Musical pointer position captured before the viewport can scroll. */
+  pointerStartPpq: number;
   clip: ArrangeClip;
   zone: ClipHitZone;
   duplicate: boolean;
@@ -229,6 +238,7 @@ interface PendingGesture {
 interface MoveGesture {
   kind: 'move';
   start: ClipPoint;
+  pointerStartPpq: number;
   origin: ArrangeClip;
   origins: ArrangeClip[];
   duplicate: boolean;
@@ -246,6 +256,7 @@ interface TrimGesture {
   kind: 'trim';
   edge: 'start' | 'end';
   start: ClipPoint;
+  pointerStartPpq: number;
   origin: ArrangeClip;
 }
 
@@ -253,6 +264,7 @@ interface FadeGesture {
   kind: 'fade';
   edge: FadeEdge;
   start: ClipPoint;
+  pointerStartPpq: number;
   origin: ArrangeClip;
 }
 
@@ -300,6 +312,16 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
 
   function snapPosition(ppq: number, step: number): number {
     return step > 0 ? (options.snapPpq?.(ppq) ?? snapPpqToStep(ppq, step)) : Math.max(0, ppq);
+  }
+
+  /**
+   * Resolves horizontal movement from the PPQ recorded at pointerdown rather
+   * than from the old screen x. A TimelineRange can scroll while a drag is in
+   * progress (wheel, follow-playhead or autoscroll), so subtracting two
+   * current xToPpq calls would incorrectly cancel that scroll distance.
+   */
+  function pointerDeltaPpq(pointerStartPpq: number, point: ClipPoint): number {
+    return view.xToPpq(point.x) - pointerStartPpq;
   }
 
   /** Resolves the lane and track under a point (track id null when off-lane). */
@@ -433,11 +455,18 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       const laneIndex = laneByTrack.get(clip.trackId);
       if (laneIndex === undefined) continue;
       const left = view.ppqToX(clip.startPpq);
-      const right = view.ppqToX(clip.startPpq + clip.lengthPpq);
-      const pxPerPpq = clip.lengthPpq > 0 ? (right - left) / clip.lengthPpq : 0;
+      const pxPerPpq =
+        clip.lengthPpq > 0
+          ? (view.ppqToX(clip.startPpq + clip.lengthPpq) - left) / clip.lengthPpq
+          : 0;
+      const rect = fadeHandleRect(
+        left,
+        clipRenderTopPx(view.laneTop(laneIndex)),
+        clipRenderWidthPx(clip.lengthPpq, pxPerPpq),
+      );
       const edge = hitTestFadeHandles(
         point,
-        { left, right, top: view.laneTop(laneIndex) },
+        rect,
         clip.fadeInPpq ?? 0,
         clip.fadeOutPpq ?? 0,
         pxPerPpq,
@@ -455,7 +484,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   ): { fadeInPpq: number; fadeOutPpq: number } {
     const bypass = modifiers.meta === true;
     const step = options.getGridPpq();
-    const delta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
+    const delta = pointerDeltaPpq(g.pointerStartPpq, point);
     const length = g.origin.lengthPpq;
     const originIn = g.origin.fadeInPpq ?? 0;
     const originOut = g.origin.fadeOutPpq ?? 0;
@@ -483,7 +512,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     point: ClipPoint,
     modifiers: ClipModifiers,
   ): { startPpq: number; trackId: number } {
-    const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
+    const rawDelta = pointerDeltaPpq(g.pointerStartPpq, point);
     const startPpq =
       modifiers.meta === true
         ? Math.max(0, g.origin.startPpq + rawDelta)
@@ -546,7 +575,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   ): { startPpq: number; lengthPpq: number } {
     const bypass = modifiers.meta === true;
     const step = options.getGridPpq();
-    const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
+    const rawDelta = pointerDeltaPpq(g.pointerStartPpq, point);
     const originEnd = g.origin.startPpq + g.origin.lengthPpq;
     const bounds = options.getSourceBounds?.(g.origin.id) ?? null;
     if (g.edge === 'end') {
@@ -606,6 +635,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
         kind: 'fade',
         edge: fadeHit.edge,
         start: point,
+        pointerStartPpq: view.xToPpq(point.x),
         origin: { ...fadeHit.clip },
       };
       return;
@@ -637,6 +667,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     gesture = {
       kind: 'pending',
       start: point,
+      pointerStartPpq: view.xToPpq(point.x),
       clip: { ...clip },
       zone: hit.zone,
       duplicate: modifiers.alt === true,
@@ -651,6 +682,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       return {
         kind: 'move',
         start: pending.start,
+        pointerStartPpq: pending.pointerStartPpq,
         origin: pending.clip,
         origins: pending.origins,
         duplicate: pending.duplicate,
@@ -661,6 +693,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       kind: 'trim',
       edge: pending.zone === 'trim-start' ? 'start' : 'end',
       start: pending.start,
+      pointerStartPpq: pending.pointerStartPpq,
       origin: pending.clip,
     };
   }

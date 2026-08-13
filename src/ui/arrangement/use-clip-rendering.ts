@@ -26,30 +26,40 @@ import {
   waveformColumns,
 } from '@/ui/arrangement/audio-clip-content';
 import { audioAssetMergedPeaks, requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
-import { FADE_HANDLE_SIZE_PX, fadeHandleXs } from '@/ui/arrangement/audio-fades';
+import {
+  clipRenderTopPx,
+  clipRenderWidthPx,
+  FADE_HANDLE_SIZE_PX,
+  fadeHandleRect,
+  fadeHandlesVisible,
+  fadeHandleXs,
+} from '@/ui/arrangement/audio-fades';
 import {
   arrangementMidiNoteSpans,
   type ClipNoteSpan,
   clipContentMode,
   densityBuckets,
-  miniNoteRects,
   type UnitRect,
+  visibleMiniNoteRects,
 } from '@/ui/arrangement/clip-content';
 import type { ClipInteractions } from '@/ui/arrangement/use-clip-interactions';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 
 type ArrangementColors = typeof ARRANGEMENT_COLORS;
 
-// Per-clip memo of the zoom-dependent note-content geometry. The arrangement
-// repaints its entire base layer on every playhead-follow frame, but a clip's
-// mini-note rects and per-bar densities depend only on its note array and
-// window — both immutable during playback — not on the horizontal scroll.
-// Keyed by the note array identity: an edit rebuilds that array (store refresh
-// or command-history clone), so it misses and recomputes, and the entry is
-// dropped automatically once the old array is no longer referenced.
+// Per-clip memo of the most recent zoom/window-dependent note-content geometry.
+// The arrangement repaints its entire base layer on every playhead-follow
+// frame. The pure mini-note selector owns the start index and pitch-bounds
+// caches; this small entry avoids repeating the same viewport lookup during
+// duplicate paints. Keyed by the note array identity: an edit rebuilds that
+// array (store refresh or command-history clone), so it misses and recomputes,
+// and the entry is dropped automatically once the old array is no longer
+// referenced.
 interface MiniNoteCacheEntry {
   windowStartPpq: number;
   windowLengthPpq: number;
+  visibleStartPpq: number;
+  visibleEndPpq: number;
   rects: UnitRect[];
 }
 const miniNoteRectsCache = new WeakMap<ReadonlyArray<ClipNoteSpan>, MiniNoteCacheEntry>();
@@ -58,13 +68,33 @@ function cachedMiniNoteRects(
   notes: ReadonlyArray<ClipNoteSpan>,
   windowStartPpq: number,
   windowLengthPpq: number,
+  visibleStartPpq: number,
+  visibleEndPpq: number,
 ): UnitRect[] {
   const hit = miniNoteRectsCache.get(notes);
-  if (hit && hit.windowStartPpq === windowStartPpq && hit.windowLengthPpq === windowLengthPpq) {
+  if (
+    hit &&
+    hit.windowStartPpq === windowStartPpq &&
+    hit.windowLengthPpq === windowLengthPpq &&
+    hit.visibleStartPpq === visibleStartPpq &&
+    hit.visibleEndPpq === visibleEndPpq
+  ) {
     return hit.rects;
   }
-  const rects = miniNoteRects(notes, windowStartPpq, windowLengthPpq);
-  miniNoteRectsCache.set(notes, { windowStartPpq, windowLengthPpq, rects });
+  const rects = visibleMiniNoteRects(
+    notes,
+    windowStartPpq,
+    windowLengthPpq,
+    visibleStartPpq,
+    visibleEndPpq,
+  );
+  miniNoteRectsCache.set(notes, {
+    windowStartPpq,
+    windowLengthPpq,
+    visibleStartPpq,
+    visibleEndPpq,
+    rects,
+  });
   return rects;
 }
 
@@ -195,9 +225,9 @@ export function drawClip(
   if (laneIndex === undefined) return;
   const track = tracks[laneIndex];
   const x = range.ppqToX(geometry.startPpq);
-  const wPx = Math.max(2, geometry.lengthPpq * range.pxPerPpq - 1);
+  const wPx = clipRenderWidthPx(geometry.lengthPpq, range.pxPerPpq);
   if (x + wPx < 0 || x > range.widthPx) return;
-  const y = laneTop(laneIndex) + 2;
+  const y = clipRenderTopPx(laneTop(laneIndex));
   const hPx = laneHeight - 5;
   if (y + hPx < RULER_HEIGHT_PX || y > range.heightPx) return;
 
@@ -223,7 +253,15 @@ export function drawClip(
     const noteSpans = cachedArrangementMidiNoteSpans(source);
     if (clipContentMode(range.pxPerPpq) === 'mini-notes') {
       ctx.fillStyle = colorWithAlpha(track.color, 0.95);
-      for (const rect of cachedMiniNoteRects(noteSpans, 0, source.lengthPpq)) {
+      const visibleStartPpq = Math.max(0, range.startPpq - geometry.startPpq);
+      const visibleEndPpq = Math.min(source.lengthPpq, range.endPpq - geometry.startPpq);
+      for (const rect of cachedMiniNoteRects(
+        noteSpans,
+        0,
+        source.lengthPpq,
+        visibleStartPpq,
+        visibleEndPpq,
+      )) {
         ctx.fillRect(
           x + rect.u * wPx,
           contentTop + rect.v * contentH,
@@ -399,8 +437,9 @@ export function drawAudioFades(
     ctx.lineTo(x + wPx, bottom);
     ctx.stroke();
   }
-  if (wPx >= FADE_HANDLE_SIZE_PX * 2) {
-    const xs = fadeHandleXs(x, x + wPx, fades.fadeInPpq, fades.fadeOutPpq, pxPerPpq);
+  const rect = fadeHandleRect(x, y, wPx);
+  if (fadeHandlesVisible(rect)) {
+    const xs = fadeHandleXs(rect.left, rect.right, fades.fadeInPpq, fades.fadeOutPpq, pxPerPpq);
     drawFadeHandle(ctx, xs.inX, y, colors);
     drawFadeHandle(ctx, xs.outX, y, colors);
   }
@@ -512,9 +551,9 @@ function drawDraft(
   const laneIndex = trackIndexById.get(draft.trackId);
   if (laneIndex === undefined) return;
   const x = range.ppqToX(draft.startPpq);
-  const wPx = Math.max(2, draft.lengthPpq * range.pxPerPpq - 1);
+  const wPx = clipRenderWidthPx(draft.lengthPpq, range.pxPerPpq);
   if (x + wPx < 0 || x > range.widthPx) return;
-  const y = laneTop(laneIndex) + 2;
+  const y = clipRenderTopPx(laneTop(laneIndex));
   const hPx = laneHeight - 5;
   if (y + hPx < RULER_HEIGHT_PX || y > range.heightPx) return;
   ctx.save();

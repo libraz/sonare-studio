@@ -19,6 +19,19 @@ export const FADE_HANDLE_BAND_PX = 12;
 /** Rendered size (base width and height) of a fade handle triangle, in px. */
 export const FADE_HANDLE_SIZE_PX = 8;
 
+/** Minimum width of the rendered clip rectangle before both fade handles appear. */
+const MIN_FADE_HANDLE_CLIP_WIDTH_PX = FADE_HANDLE_SIZE_PX * 2;
+
+/** Width of an arrangement clip as used by the canvas renderer. */
+export function clipRenderWidthPx(lengthPpq: number, pxPerPpq: number): number {
+  return Math.max(2, lengthPpq * pxPerPpq - 1);
+}
+
+/** Top edge of an arrangement clip's rendered rectangle for a lane top. */
+export function clipRenderTopPx(laneTopPx: number): number {
+  return laneTopPx + 2;
+}
+
 /** Horizontal positions of both fade handles, in viewport px. */
 export interface FadeHandleXs {
   /** Fade-in handle x (clip left edge + fade-in length). */
@@ -58,8 +71,18 @@ export interface FadeHandleRect {
   left: number;
   /** Clip right edge in viewport px. */
   right: number;
-  /** Clip top edge in viewport px (lane top). */
+  /** Rendered clip top edge in viewport px. */
   top: number;
+}
+
+/** Builds the fade-handle rectangle from the rendered clip geometry. */
+export function fadeHandleRect(left: number, top: number, width: number): FadeHandleRect {
+  return { left, right: left + width, top };
+}
+
+/** Whether the renderer draws the pair of fade handles for this rectangle. */
+export function fadeHandlesVisible(rect: FadeHandleRect): boolean {
+  return rect.right - rect.left >= MIN_FADE_HANDLE_CLIP_WIDTH_PX;
 }
 
 /** Options for {@link hitTestFadeHandles}. */
@@ -94,7 +117,15 @@ export function hitTestFadeHandles(
 ): FadeEdge | null {
   const tolerance = options.tolerancePx ?? FADE_HANDLE_TOLERANCE_PX;
   const band = options.bandPx ?? FADE_HANDLE_BAND_PX;
-  if (point.y < rect.top || point.y >= rect.top + band) return null;
+  if (
+    !fadeHandlesVisible(rect) ||
+    point.x < rect.left ||
+    point.x >= rect.right ||
+    point.y < rect.top ||
+    point.y >= rect.top + band
+  ) {
+    return null;
+  }
   const { inX, outX } = fadeHandleXs(rect.left, rect.right, fadeInPpq, fadeOutPpq, pxPerPpq);
   const dIn = Math.abs(point.x - inX);
   const dOut = Math.abs(point.x - outX);

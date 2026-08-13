@@ -7,6 +7,7 @@ import {
   MIN_MINI_NOTE_PITCH_SPAN,
   MINI_NOTES_MIN_PX_PER_BEAT,
   miniNoteRects,
+  visibleMiniNoteRects,
 } from '@/ui/arrangement/clip-content';
 
 const note = (startPpq: number, durationPpq: number, pitch: number): ClipNoteSpan => ({
@@ -65,6 +66,38 @@ describe('miniNoteRects', () => {
   it('returns nothing for an empty note list or degenerate window', () => {
     expect(miniNoteRects([], 0, 8)).toEqual([]);
     expect(miniNoteRects([note(0, 1, 60)], 0, 0)).toEqual([]);
+  });
+});
+
+describe('visibleMiniNoteRects', () => {
+  it('returns only the visible notes while retaining a sustained off-screen onset', () => {
+    const rects = visibleMiniNoteRects(
+      [note(0, 100, 40), note(5, 1, 50), note(10, 1, 60), note(15, 1, 70)],
+      0,
+      40,
+      10,
+      15,
+    );
+
+    expect(rects).toHaveLength(2);
+    // Rectangles stay in full-clip coordinates: the note at 10 starts at
+    // 10/40, even though the visible sub-window starts at 10.
+    expect(rects[0].u).toBe(0);
+    expect(rects[0].uWidth).toBeCloseTo(1);
+    expect(rects[1].u).toBeCloseTo(10 / 40);
+    expect(rects[1].uWidth).toBeCloseTo(1 / 40);
+  });
+
+  it('culls notes that only touch the visible sub-window edges', () => {
+    const rects = visibleMiniNoteRects(
+      [note(9, 1, 60), note(10, 1, 60), note(15, 1, 60)],
+      0,
+      20,
+      10,
+      15,
+    );
+    expect(rects).toHaveLength(1);
+    expect(rects[0].u).toBeCloseTo(0.5);
   });
 });
 

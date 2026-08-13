@@ -220,6 +220,38 @@ describe('useClipInteractions move', () => {
     expect(commands.moveClip).toHaveBeenCalledWith(1, 6.4, undefined);
   });
 
+  it('keeps the clip under the pointer when the arrangement scrolls mid-drag', () => {
+    let viewportStartPpq = 0;
+    const scrollingView: ClipInteractionsView = {
+      ...view,
+      ppqToX: (ppq) => (ppq - viewportStartPpq) * 10,
+      xToPpq: (x) => viewportStartPpq + x / 10,
+    };
+    const commands = {
+      selectClip: vi.fn(),
+      moveClip: vi.fn(),
+      trimClip: vi.fn(),
+      duplicateClip: vi.fn(() => 99),
+      createClip: vi.fn(() => null),
+    };
+    const interactions = useClipInteractions({
+      view: scrollingView,
+      getClips: () => [{ id: 1, trackId: 10, startPpq: 4, lengthPpq: 8 }],
+      getTrackIds: () => [10, 20],
+      getGridPpq: () => 1,
+      getBarRange: (ppq) => ({ startPpq: ppq, lengthPpq: 4 }),
+      commands,
+    });
+
+    interactions.onPointerDown({ x: 80, y: 25 }); // PPQ 8, grab offset 4 from the clip start.
+    viewportStartPpq = 10;
+    interactions.onPointerMove({ x: 84, y: 25 }, { meta: true }); // now PPQ 18.4
+    expect(interactions.previewClip.value?.startPpq).toBeCloseTo(14.4, 9);
+    interactions.onPointerUp({ x: 84, y: 25 }, { meta: true });
+
+    expect(commands.moveClip).toHaveBeenCalledWith(1, expect.closeTo(14.4, 9), undefined);
+  });
+
   it('uses the supplied meter-aware snap position for a move', () => {
     const { interactions, commands } = makeSetup({ snapPpq: () => 6.5 });
     interactions.onPointerDown({ x: 80, y: 25 });
@@ -407,11 +439,14 @@ interface AudioSetup {
 
 /**
  * One audio clip (id 2) at x [40, 120) on lane 0 with a 1-PPQ fade-in: the
- * fade-in handle sits at x = 50, the fade-out handle at x = 120.
+ * fade-in handle sits at x = 50, and the rendered fade-out handle at x = 119.
  */
-function makeAudioSetup(bounds: { minStartPpq: number; maxEndPpq: number } | null): AudioSetup {
+function makeAudioSetup(
+  bounds: { minStartPpq: number; maxEndPpq: number } | null,
+  lengthPpq = 8,
+): AudioSetup {
   const clips: ArrangeClip[] = [
-    { id: 2, trackId: 10, startPpq: 4, lengthPpq: 8, kind: 'audio', fadeInPpq: 1 },
+    { id: 2, trackId: 10, startPpq: 4, lengthPpq, kind: 'audio', fadeInPpq: 1 },
   ];
   const commands = {
     selectClip: vi.fn(),
@@ -498,7 +533,7 @@ describe('useClipInteractions fade handles', () => {
 
   it('drags the fade-out handle from the clip end', () => {
     const { interactions, commands } = makeAudioSetup(null);
-    interactions.onPointerDown({ x: 119, y: 3 }); // fade-out handle at x = 120
+    interactions.onPointerDown({ x: 118, y: 3 }); // rendered fade-out handle is at x = 119
     interactions.onPointerMove({ x: 99, y: 3 }); // boundary 12 -> 10 PPQ
     expect(interactions.previewFades.value).toEqual({ clipId: 2, fadeInPpq: 1, fadeOutPpq: 2 });
     interactions.onPointerUp({ x: 99, y: 3 });
@@ -519,6 +554,43 @@ describe('useClipInteractions fade handles', () => {
     interactions.onPointerUp({ x: 70, y: 25 });
     expect(commands.setClipFades).not.toHaveBeenCalled();
     expect(commands.moveClip).toHaveBeenCalledWith(2, 6, undefined);
+  });
+
+  it('does not start a fade on a narrow clip in the upper hit band', () => {
+    const { interactions, commands } = makeAudioSetup(null, 0.8);
+    interactions.onPointerDown({ x: 43.5, y: 3 });
+    interactions.onPointerMove({ x: 63.5, y: 3 });
+    interactions.onPointerUp({ x: 63.5, y: 3 });
+
+    expect(commands.setClipFades).not.toHaveBeenCalled();
+    expect(commands.selectClip).toHaveBeenCalledWith(2);
+    expect(commands.moveClip).toHaveBeenCalledWith(2, 6, undefined);
+  });
+
+  it('leaves the narrow clip edge reachable for trim outside its rendered rect', () => {
+    const { interactions, commands } = makeAudioSetup(null, 0.8);
+    interactions.onPointerDown({ x: 47, y: 3 });
+    interactions.onPointerMove({ x: 67, y: 3 });
+    interactions.onPointerUp({ x: 67, y: 3 });
+
+    expect(commands.setClipFades).not.toHaveBeenCalled();
+    expect(commands.trimClip).toHaveBeenCalledWith(2, 4, 3);
+  });
+
+  it('leaves an empty-area drag reachable near a narrow clip handle', () => {
+    const { interactions, commands } = makeAudioSetup(null, 0.8);
+    interactions.onPointerDown({ x: 35, y: 3 });
+    interactions.onPointerMove({ x: 25, y: 3 });
+
+    expect(interactions.previewMarquee.value).toEqual({
+      left: 25,
+      top: 3,
+      width: 10,
+      height: 0,
+    });
+    expect(commands.setClipFades).not.toHaveBeenCalled();
+    interactions.onPointerUp({ x: 25, y: 3 });
+    expect(interactions.previewMarquee.value).toBeNull();
   });
 });
 

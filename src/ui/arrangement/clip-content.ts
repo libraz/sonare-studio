@@ -7,6 +7,7 @@
  * [windowStartPpq, windowStartPpq + windowLengthPpq).
  */
 
+import { visibleNotesInWindow } from '@/components/piano-roll/visible-notes';
 import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
 import type { EditorClip } from '@/project/types';
 
@@ -76,6 +77,103 @@ export interface UnitRect {
  */
 export const MIN_MINI_NOTE_PITCH_SPAN = 8;
 
+interface PitchBounds {
+  minPitch: number;
+  maxPitch: number;
+}
+
+const pitchBoundsCache = new WeakMap<
+  ReadonlyArray<ClipNoteSpan>,
+  Map<string, PitchBounds | null>
+>();
+
+function pitchBoundsForWindow(
+  notes: ReadonlyArray<ClipNoteSpan>,
+  startPpq: number,
+  endPpq: number,
+): PitchBounds | null {
+  const key = `${startPpq}:${endPpq}`;
+  let cache = pitchBoundsCache.get(notes);
+  if (!cache) {
+    cache = new Map();
+    pitchBoundsCache.set(notes, cache);
+  }
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  let minPitch = Number.POSITIVE_INFINITY;
+  let maxPitch = Number.NEGATIVE_INFINITY;
+  for (const note of notes) {
+    if (note.startPpq >= endPpq || note.startPpq + note.durationPpq <= startPpq) continue;
+    minPitch = Math.min(minPitch, note.pitch);
+    maxPitch = Math.max(maxPitch, note.pitch);
+  }
+  if (minPitch === Number.POSITIVE_INFINITY) {
+    cache.set(key, null);
+    return null;
+  }
+  const bounds = { minPitch, maxPitch };
+  cache.set(key, bounds);
+  return bounds;
+}
+
+function miniNotePitchGeometry(bounds: PitchBounds): { top: number; span: number } {
+  const span = Math.max(bounds.maxPitch - bounds.minPitch + 1, MIN_MINI_NOTE_PITCH_SPAN);
+  return {
+    span,
+    // Center the actual pitch range inside the (possibly padded) span.
+    top: (bounds.minPitch + bounds.maxPitch + 1) / 2 + span / 2,
+  };
+}
+
+/**
+ * Computes only the mini-note rectangles intersecting a visible sub-window.
+ *
+ * Returned rectangles remain in the full clip-window coordinate frame, so
+ * horizontal scrolling never changes their pitch scaling or moves a note's
+ * x-position. The start-sorted/prefix-max-end index is built once per note
+ * array; subsequent viewport changes visit the candidate visible spans only.
+ *
+ * @param notes - Source-relative note spans.
+ * @param windowStartPpq - Full clip window start in source-relative PPQ.
+ * @param windowLengthPpq - Full clip window length in PPQ (> 0).
+ * @param visibleStartPpq - Visible sub-window start in source-relative PPQ.
+ * @param visibleEndPpq - Visible sub-window end in source-relative PPQ.
+ * @returns Rectangles intersecting the visible sub-window, in input order.
+ */
+export function visibleMiniNoteRects(
+  notes: ReadonlyArray<ClipNoteSpan>,
+  windowStartPpq: number,
+  windowLengthPpq: number,
+  visibleStartPpq: number,
+  visibleEndPpq: number,
+): UnitRect[] {
+  if (!(windowLengthPpq > 0)) return [];
+  const windowEndPpq = windowStartPpq + windowLengthPpq;
+  const visibleStart = Math.max(windowStartPpq, visibleStartPpq);
+  const visibleEnd = Math.min(windowEndPpq, visibleEndPpq);
+  if (!(visibleEnd > visibleStart)) return [];
+
+  const bounds = pitchBoundsForWindow(notes, windowStartPpq, windowEndPpq);
+  if (!bounds) return [];
+  const { top, span } = miniNotePitchGeometry(bounds);
+  const visible = visibleNotesInWindow(notes, {
+    startPpq: visibleStart,
+    endPpq: visibleEnd,
+    minPitch: Number.NEGATIVE_INFINITY,
+    maxPitch: Number.POSITIVE_INFINITY,
+  });
+  return visible.map((note) => {
+    const start = Math.max(note.startPpq, windowStartPpq);
+    const end = Math.min(note.startPpq + note.durationPpq, windowEndPpq);
+    return {
+      u: (start - windowStartPpq) / windowLengthPpq,
+      v: (top - (note.pitch + 1)) / span,
+      uWidth: (end - start) / windowLengthPpq,
+      vHeight: 1 / span,
+    };
+  });
+}
+
 /**
  * Computes mini-note rectangles for the notes audible in a clip window.
  *
@@ -87,38 +185,24 @@ export const MIN_MINI_NOTE_PITCH_SPAN = 8;
  * @param notes - Source-relative note spans.
  * @param windowStartPpq - Window start in source-relative PPQ.
  * @param windowLengthPpq - Window length in PPQ (> 0).
- * @returns One rect per audible note, in input order.
+ * @param visibleStartPpq - Optional visible sub-window start; defaults to the window start.
+ * @param visibleEndPpq - Optional visible sub-window end; defaults to the window end.
+ * @returns One rect per selected note, in input order.
  */
 export function miniNoteRects(
   notes: ReadonlyArray<ClipNoteSpan>,
   windowStartPpq: number,
   windowLengthPpq: number,
+  visibleStartPpq: number = windowStartPpq,
+  visibleEndPpq: number = windowStartPpq + windowLengthPpq,
 ): UnitRect[] {
-  if (!(windowLengthPpq > 0)) return [];
-  const windowEnd = windowStartPpq + windowLengthPpq;
-  const audible = notes.filter(
-    (note) => note.startPpq < windowEnd && note.startPpq + note.durationPpq > windowStartPpq,
+  return visibleMiniNoteRects(
+    notes,
+    windowStartPpq,
+    windowLengthPpq,
+    visibleStartPpq,
+    visibleEndPpq,
   );
-  if (audible.length === 0) return [];
-  let minPitch = Number.POSITIVE_INFINITY;
-  let maxPitch = Number.NEGATIVE_INFINITY;
-  for (const note of audible) {
-    minPitch = Math.min(minPitch, note.pitch);
-    maxPitch = Math.max(maxPitch, note.pitch);
-  }
-  const span = Math.max(maxPitch - minPitch + 1, MIN_MINI_NOTE_PITCH_SPAN);
-  // Center the actual pitch range inside the (possibly padded) span.
-  const top = (minPitch + maxPitch + 1) / 2 + span / 2;
-  return audible.map((note) => {
-    const start = Math.max(note.startPpq, windowStartPpq);
-    const end = Math.min(note.startPpq + note.durationPpq, windowEnd);
-    return {
-      u: (start - windowStartPpq) / windowLengthPpq,
-      v: (top - (note.pitch + 1)) / span,
-      uWidth: (end - start) / windowLengthPpq,
-      vHeight: 1 / span,
-    };
-  });
 }
 
 /**

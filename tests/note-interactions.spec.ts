@@ -257,6 +257,20 @@ describe('useNoteInteractions', () => {
       expect(update.pitch).toBe(60);
     });
 
+    it('keeps a note under the pointer when the piano roll scrolls mid-drag', () => {
+      const { commands, interactions, view } = makeHarness([makeNote({ id: 1 })]);
+      interactions.onPointerDown({ x: 150, y: 675 }); // PPQ 1.5, half a PPQ into the note.
+      view.setStartPpq(10);
+      interactions.onPointerMove({ x: 188, y: 675 }, { meta: true }); // now PPQ 11.88
+
+      expect(interactions.previewNotes.value?.[0]?.startPpq).toBeCloseTo(11.38, 9);
+      interactions.onPointerUp({ x: 188, y: 675 }, { meta: true });
+
+      expect(commands.updateNotes).toHaveBeenCalledWith([
+        { id: 1, startPpq: expect.closeTo(11.38, 9), pitch: 60 },
+      ]);
+    });
+
     it('snaps moved pitches through the supplied scale resolver', () => {
       const { commands, interactions } = makeHarness(
         [makeNote({ id: 1, pitch: 60 })],

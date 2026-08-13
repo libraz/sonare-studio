@@ -168,6 +168,8 @@ interface MoveDeltas {
 interface PendingNoteGesture {
   kind: 'pending-note';
   start: InteractionPoint;
+  /** Musical pointer position captured before the viewport can scroll. */
+  pointerStartPpq: number;
   noteId: number;
   zone: NoteHitZone;
   targetIds: number[];
@@ -193,6 +195,7 @@ interface MarqueeGesture {
 interface MoveGesture {
   kind: 'move';
   start: InteractionPoint;
+  pointerStartPpq: number;
   grabbedId: number;
   origins: Map<number, EditorNote>;
   duplicate: boolean;
@@ -202,6 +205,7 @@ interface ResizeGesture {
   kind: 'resize';
   edge: 'start' | 'end';
   start: InteractionPoint;
+  pointerStartPpq: number;
   grabbedId: number;
   origins: Map<number, EditorNote>;
 }
@@ -258,6 +262,11 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   const { view, commands } = options;
   const threshold = options.dragThresholdPx ?? DEFAULT_DRAG_THRESHOLD_PX;
   const minDuration = options.minDurationPpq ?? DEFAULT_MIN_DURATION_PPQ;
+
+  /** See the matching arrangement gesture helper: viewport scrolling is movement. */
+  function pointerDeltaPpq(pointerStartPpq: number, point: InteractionPoint): number {
+    return view.xToPpq(point.x) - pointerStartPpq;
+  }
 
   /** Returns only notes that can cover the current pointer pixel. */
   function notesAtPoint(point: InteractionPoint): EditorNote[] {
@@ -464,7 +473,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     if (!grabbed) return { deltaPpq: 0, deltaPitch: 0 };
     const bypass = modifiers.meta === true;
     const step = options.getGridPpq();
-    const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
+    const rawDelta = pointerDeltaPpq(g.pointerStartPpq, point);
     const targetStart = bypass
       ? clampStartPpq(grabbed.startPpq + rawDelta)
       : clampStartPpq(
@@ -515,7 +524,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     if (!grabbed) return 0;
     const bypass = modifiers.meta === true;
     const step = options.getGridPpq();
-    const rawDelta = view.xToPpq(point.x) - view.xToPpq(g.start.x);
+    const rawDelta = pointerDeltaPpq(g.pointerStartPpq, point);
     if (g.edge === 'end') {
       const end = grabbed.startPpq + grabbed.durationPpq;
       const targetEnd = clampPpq(
@@ -676,6 +685,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     gesture = {
       kind: 'pending-note',
       start: point,
+      pointerStartPpq: view.xToPpq(point.x),
       noteId: id,
       zone: hit.zone,
       targetIds: [...options.getSelection()],
@@ -695,6 +705,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         return {
           kind: 'move',
           start: pending.start,
+          pointerStartPpq: pending.pointerStartPpq,
           grabbedId: pending.noteId,
           origins,
           duplicate: pending.duplicate,
@@ -705,6 +716,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         kind: 'resize',
         edge: pending.zone === 'resize-start' ? 'start' : 'end',
         start: pending.start,
+        pointerStartPpq: pending.pointerStartPpq,
         grabbedId: pending.noteId,
         origins,
       };
