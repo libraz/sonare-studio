@@ -27,6 +27,29 @@ const ONSET_SNAP_PX = 6;
 /** Visible waveform snapshots retained while scrubbing or redrawing overlays. */
 export const MAX_VISIBLE_PEAK_CACHE_ENTRIES = 24;
 
+/**
+ * Returns the number of real sample buckets needed for one visible window.
+ *
+ * At high zoom there can be fewer source frames than display columns. Keeping
+ * the peak resolution at the frame count avoids asking the peak scanner for
+ * synthetic empty buckets that would otherwise render as a false zero line.
+ */
+export function visiblePeakBucketCount(widthPx: number, frameCount: number): number {
+  if (!(widthPx > 0) || !(frameCount > 0)) return 0;
+  return Math.min(Math.floor(widthPx), Math.floor(frameCount));
+}
+
+/** Maps a display column to one of the real buckets in a rendered peak set. */
+export function peakBucketForDisplayColumn(
+  columnPx: number,
+  widthPx: number,
+  bucketCount: number,
+): number {
+  if (!(widthPx > 0) || !(bucketCount > 0)) return 0;
+  const column = Math.min(Math.max(0, Math.floor(columnPx)), Math.ceil(widthPx) - 1);
+  return Math.min(bucketCount - 1, Math.floor((column * bucketCount) / widthPx));
+}
+
 /** Canvas color tokens, derived from the dark palette mirror in tokens.ts. */
 const COLORS = {
   background: TOKENS.surface2,
@@ -117,10 +140,11 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     const startFrame = Math.max(0, Math.floor(view.startFrame));
     const endFrame = Math.min(loaded.meta.numFrames, Math.ceil(view.endFrame));
     if (endFrame > startFrame) {
-      const key = `${loaded.meta.id}:${startFrame}:${endFrame}:${widthPx}`;
+      const bucketCount = visiblePeakBucketCount(widthPx, endFrame - startFrame);
+      const key = `${loaded.meta.id}:${startFrame}:${endFrame}:${bucketCount}`;
       const peaks = visiblePeaks.getOrCompute(key, () => {
         const windows = loaded.channels.map((channel) => channel.subarray(startFrame, endFrame));
-        return computePeaks(windows, widthPx);
+        return computePeaks(windows, bucketCount);
       });
       for (let c = 0; c < peaks.length; c++) {
         const laneTop = c * LANE_HEIGHT_PX;
@@ -135,8 +159,9 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
         ctx.fillStyle = COLORS.waveform;
         const { min, max } = peaks[c];
         for (let x = 0; x < widthPx; x++) {
-          const hi = Math.min(1, Math.max(-1, max[x]));
-          const lo = Math.min(1, Math.max(-1, min[x]));
+          const bucket = peakBucketForDisplayColumn(x, widthPx, bucketCount);
+          const hi = Math.min(1, Math.max(-1, max[bucket]));
+          const lo = Math.min(1, Math.max(-1, min[bucket]));
           const y = mid - hi * amp;
           ctx.fillRect(x, y, 1, Math.max(1, (hi - lo) * amp));
         }
