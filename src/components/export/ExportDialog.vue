@@ -364,6 +364,13 @@ async function encodeAudio(
   );
 }
 
+/** Whether this target uses encodeAudioInWorker's protective PCM copy path. */
+function workerBackedEncoding(encoder: AudioEncoder): boolean {
+  return (
+    props.encoders === null && typeof Worker === 'function' && isWorkerAudioEncoderId(encoder.id)
+  );
+}
+
 async function onExport(): Promise<void> {
   if (!canExport.value) return;
   const encoders = selectedEncoders.value;
@@ -506,6 +513,7 @@ async function onExport(): Promise<void> {
         estimateCodecPayloadMemory({
           encoderId: target.encoder.id,
           inputBytes: rawBytes,
+          workerBacked: workerBackedEncoding(target.encoder),
           retainedBytes: meter.snapshot().activeBytes,
         }),
         memoryBudgetBytes,
@@ -659,6 +667,7 @@ async function onExport(): Promise<void> {
             estimateCodecPayloadMemory({
               encoderId: target.encoder.id,
               inputBytes: result.channels[0].byteLength + result.channels[1].byteLength,
+              workerBacked: workerBackedEncoding(target.encoder),
             }),
             memoryBudgetBytes,
           );

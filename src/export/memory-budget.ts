@@ -108,6 +108,8 @@ export function assertRenderPayloadMemory(
 export interface CodecPayloadMemoryEstimate {
   inputBytes: number;
   inputGenerations: number;
+  /** Additional caller PCM copy made before transferring to an encode worker. */
+  workerInputCopyBytes: number;
   retainedBytes: number;
   outputUpperBoundBytes: number;
   encodedGenerations: number;
@@ -119,10 +121,13 @@ export interface CodecPayloadMemoryEstimate {
 export function estimateCodecPayloadMemory(options: {
   encoderId: string;
   inputBytes: number;
+  /** True when encodeAudioInWorker clones caller-owned PCM before transfer. */
+  workerBacked?: boolean;
   retainedBytes?: number;
 }): CodecPayloadMemoryEstimate {
   const inputBytes = safePayloadBytes(options.inputBytes, 'Audio codec input');
   const retainedBytes = safePayloadBytes(options.retainedBytes ?? 0, 'Retained export payload');
+  const workerInputCopyBytes = options.workerBacked === true ? inputBytes : 0;
   const mediaRecorder = new Set(['aac', 'opus-webm', 'opus-ogg']).has(options.encoderId);
   // MediaRecorder first copies the planar Float32 input into an AudioBuffer,
   // then retains Blob chunks while `toBlobBytes()` allocates the final encoded
@@ -142,6 +147,7 @@ export function estimateCodecPayloadMemory(options: {
   // AudioBuffer copy, not scratch.
   const codecScratchBytes =
     (inputGenerations - 1) * inputBytes +
+    workerInputCopyBytes +
     (options.encoderId === 'flac' ? 16 * MEBIBYTE : options.encoderId === 'mp3' ? 64 * 1024 : 0);
   const peakPayloadBytes = safePayloadBytes(
     retainedBytes + inputBytes + outputUpperBoundBytes + codecScratchBytes,
@@ -150,6 +156,7 @@ export function estimateCodecPayloadMemory(options: {
   return {
     inputBytes,
     inputGenerations,
+    workerInputCopyBytes,
     retainedBytes,
     outputUpperBoundBytes,
     encodedGenerations,

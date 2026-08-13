@@ -22,7 +22,10 @@ class FakeWorker {
   }
 
   postMessage(message: AudioEncodeWorkerRequest, transfer: Transferable[]): void {
-    this.posted.push(message);
+    // WorkerGlobalScope.postMessage() structured-clones the request and then
+    // detaches every transferred ArrayBuffer. Keep this seam honest so tests
+    // catch ownership mistakes that jsdom's plain mock would hide.
+    this.posted.push(structuredClone(message, { transfer }));
     this.transfers.push(transfer);
   }
 
@@ -52,9 +55,31 @@ describe('encodeAudioInWorker', () => {
       options: { bitDepth: 24 },
     });
     expect(worker.transfers[0]).toHaveLength(1);
+    // The worker received a clone, not the caller-owned render buffer.
+    expect(source).toEqual(new Float32Array([0.25, -0.25]));
     worker.emit({ type: 'encoded', bytes: new Uint8Array([1, 2, 3]) });
     await expect(result).resolves.toEqual(new Uint8Array([1, 2, 3]));
     expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('detaches input only when the caller explicitly transfers ownership', async () => {
+    const worker = new FakeWorker();
+    const source = new Float32Array([0.25, -0.25]);
+    const result = encodeAudioInWorker(
+      'wav',
+      [source],
+      48000,
+      {},
+      undefined,
+      () => worker as unknown as Worker,
+      undefined,
+      true,
+    );
+
+    expect(source.byteLength).toBe(0);
+    expect(worker.posted[0]?.channels[0]).toHaveLength(2);
+    worker.emit({ type: 'encoded', bytes: new Uint8Array([4, 5]) });
+    await expect(result).resolves.toEqual(new Uint8Array([4, 5]));
   });
 
   it('forwards worker progress ticks without settling the encode', async () => {

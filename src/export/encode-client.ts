@@ -24,7 +24,10 @@ function createAudioEncodeWorker(): Worker {
   });
 }
 
-function transferableChannels(channels: ReadonlyArray<Float32Array>): {
+function transferableChannels(
+  channels: ReadonlyArray<Float32Array>,
+  transferOwnership: boolean,
+): {
   channels: Float32Array[];
   transfer: ArrayBuffer[];
 } {
@@ -37,7 +40,10 @@ function transferableChannels(channels: ReadonlyArray<Float32Array>): {
       channel.byteOffset === 0 &&
       channel.byteLength === channel.buffer.byteLength &&
       !used.has(channel.buffer);
-    const transferable = wholeBuffer ? channel : new Float32Array(channel);
+    // A rendered mixdown/stem is normally reused by every selected target.
+    // Copy unless the caller explicitly proves that this encode owns the PCM;
+    // transferring the caller's buffer would detach it at postMessage().
+    const transferable = transferOwnership && wholeBuffer ? channel : new Float32Array(channel);
     const buffer = transferable.buffer as ArrayBuffer;
     used.add(buffer);
     output.push(transferable);
@@ -63,8 +69,11 @@ function workerOptions(
 }
 
 /**
- * Encodes in a disposable worker. Transferrable input channel buffers are
- * consumed; cancellation terminates synchronous codec work immediately.
+ * Encodes in a disposable worker. Caller-owned input channel buffers are
+ * copied before transfer by default so a render result can be reused for
+ * another target. Set `transferOwnership` only when this call is the final
+ * consumer and detaching the supplied buffers is intentional; cancellation
+ * terminates synchronous codec work immediately.
  */
 export function encodeAudioInWorker(
   encoderId: WorkerAudioEncoderId,
@@ -74,6 +83,7 @@ export function encodeAudioInWorker(
   signal?: AbortSignal,
   workerFactory: AudioEncodeWorkerFactory = createAudioEncodeWorker,
   onProgress?: (fraction: number) => void,
+  transferOwnership = false,
 ): Promise<Uint8Array> {
   signal?.throwIfAborted();
   const worker = workerFactory();
@@ -112,7 +122,7 @@ export function encodeAudioInWorker(
     worker.addEventListener('message', onMessage as EventListener);
     worker.addEventListener('error', onError as EventListener);
 
-    const input = transferableChannels(channels);
+    const input = transferableChannels(channels, transferOwnership);
     const request: AudioEncodeWorkerRequest = {
       type: 'encode',
       encoderId,

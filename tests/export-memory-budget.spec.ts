@@ -113,6 +113,22 @@ describe('export payload memory benchmarks', () => {
     expect(estimate.outputUpperBoundBytes).toBe(2 * (100 * MEBIBYTE + 64 * 1024));
   });
 
+  it('counts the worker transfer copy once without charging main-thread encoders', () => {
+    const inputBytes = 100 * MEBIBYTE;
+    const worker = estimateCodecPayloadMemory({
+      encoderId: 'wav',
+      inputBytes,
+      workerBacked: true,
+    });
+    const mainThread = estimateCodecPayloadMemory({ encoderId: 'wav', inputBytes });
+
+    expect(worker.workerInputCopyBytes).toBe(inputBytes);
+    expect(worker.codecScratchBytes).toBe(inputBytes);
+    expect(worker.peakPayloadBytes - mainThread.peakPayloadBytes).toBe(inputBytes);
+    expect(mainThread.workerInputCopyBytes).toBe(0);
+    expect(mainThread.codecScratchBytes).toBe(0);
+  });
+
   it('tracks and releases one consumer payload at a time', () => {
     const samples: number[] = [];
     const meter = new PayloadMemoryMeter({

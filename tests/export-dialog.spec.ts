@@ -5,12 +5,18 @@ import { nextTick } from 'vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import type { ExportRenderHandle } from '@/export/client';
+import { type EncodeFlacOptions, encodeFlac } from '@/export/flac';
 import {
   MixdownCancelledError,
   type MixdownProgressFn,
   type MixdownResult,
 } from '@/export/mixdown';
+import { type EncodeWavOptions, encodeWav } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
+import type {
+  AudioEncodeWorkerRequest,
+  AudioEncodeWorkerResponse,
+} from '@/workers/audio-encode.worker';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 import { chooseOption, openOptionLabels } from './helpers/select-menu';
 
@@ -27,6 +33,94 @@ function includesTag(bytes: Uint8Array, value: string): boolean {
   return Array.from({ length: Math.max(0, bytes.length - 3) }, (_, offset) =>
     String.fromCharCode(...bytes.slice(offset, offset + 4)),
   ).includes(value);
+}
+
+/**
+ * Worker seam that follows the browser's structured-clone + transfer rules,
+ * then runs the real deterministic codecs on the worker-side clone.
+ */
+class StructuredCloneEncodeWorker {
+  private readonly listeners = new Map<string, Set<EventListener>>();
+  private terminated = false;
+  readonly requests: AudioEncodeWorkerRequest[] = [];
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? new Set<EventListener>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: EventListener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  postMessage(message: AudioEncodeWorkerRequest, transfer: Transferable[]): void {
+    // This is the critical part of the seam: transferred buffers are detached
+    // from the request object immediately, just as in a browser Worker.
+    const request = structuredClone(message, { transfer }) as AudioEncodeWorkerRequest;
+    this.requests.push(request);
+    queueMicrotask(() => {
+      if (this.terminated) return;
+      try {
+        const bytes =
+          request.encoderId === 'wav'
+            ? encodeWav(request.channels, request.sampleRate, request.options as EncodeWavOptions)
+            : request.encoderId === 'flac'
+              ? encodeFlac(
+                  request.channels,
+                  request.sampleRate,
+                  request.options as EncodeFlacOptions,
+                )
+              : (() => {
+                  throw new Error(`Unsupported test worker encoder: ${request.encoderId}`);
+                })();
+        const response = structuredClone(
+          { type: 'encoded', bytes } satisfies AudioEncodeWorkerResponse,
+          { transfer: [bytes.buffer as ArrayBuffer] },
+        ) as AudioEncodeWorkerResponse;
+        this.emit(response);
+      } catch (error) {
+        this.emit({
+          type: 'error',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+  }
+
+  terminate = vi.fn(() => {
+    this.terminated = true;
+  });
+
+  private emit(response: AudioEncodeWorkerResponse): void {
+    for (const listener of this.listeners.get('message') ?? []) {
+      listener({ data: response } as MessageEvent<AudioEncodeWorkerResponse>);
+    }
+  }
+}
+
+function hasNonZeroWavPayload(bytes: Uint8Array): boolean {
+  for (let offset = 0; offset + 8 <= bytes.length; offset += 1) {
+    if (String.fromCharCode(...bytes.slice(offset, offset + 4)) !== 'data') continue;
+    const size = new DataView(bytes.buffer, bytes.byteOffset + offset + 4, 4).getUint32(0, true);
+    return bytes
+      .slice(offset + 8, Math.min(bytes.length, offset + 8 + size))
+      .some((sample) => sample !== 0);
+  }
+  return false;
+}
+
+function hasNonZeroFlacPayload(bytes: Uint8Array): boolean {
+  // Walk FLAC metadata blocks so this assertion inspects encoded frames rather
+  // than passing on a non-empty stream marker/comment/header alone.
+  let offset = 4; // fLaC marker
+  while (offset + 4 <= bytes.length) {
+    const blockHeader = bytes[offset]!;
+    const blockLength = (bytes[offset + 1]! << 16) | (bytes[offset + 2]! << 8) | bytes[offset + 3]!;
+    offset += 4 + blockLength;
+    if (blockHeader & 0x80) break;
+  }
+  return bytes.slice(Math.min(bytes.length, offset)).some((sample) => sample !== 0);
 }
 
 /** Opens the SelectMenu matched by `selector` via its teleported trigger. */
@@ -226,6 +320,7 @@ afterEach(() => {
   mounted = [];
   document.body.innerHTML = '';
   dialogQueue.splice(0);
+  vi.unstubAllGlobals();
 });
 
 describe('ExportDialog', () => {
@@ -512,6 +607,31 @@ describe('ExportDialog', () => {
     ]);
   });
 
+  it('shows the typed streaming-metering limitation in the export report', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await clickExport();
+
+    control.resolve(
+      makeResult({
+        report: {
+          peakDb: -6,
+          limitations: [
+            {
+              kind: 'streaming-metering-unavailable',
+              measurements: ['lufs', 'true-peak'],
+            },
+          ],
+        },
+      }),
+    );
+    await flushPromises();
+
+    expect(q('.report-limitations')?.textContent).toContain(
+      'Streaming export could not measure: lufs, true-peak',
+    );
+  });
+
   it('renders once and encodes every selected mixdown format in sequence', async () => {
     const control = makeRender();
     const wavEncode = vi.fn(() => new Uint8Array([1]));
@@ -537,6 +657,38 @@ describe('ExportDialog', () => {
     expect(mp3Encode).toHaveBeenCalledTimes(1);
     expect(download.mock.calls.map((call) => call[1])).toEqual(['My Song.wav', 'My Song.mp3']);
     expect(wrapper.emitted('exported')).toHaveLength(2);
+  });
+
+  it('keeps mixdown PCM reusable across worker-backed target formats', async () => {
+    vi.stubGlobal('Worker', StructuredCloneEncodeWorker);
+    const control = makeRender();
+    const { download } = mountDialog(control);
+    const flac = q<HTMLInputElement>('.additional-format-input[data-encoder-id="flac"]');
+    if (!flac) throw new Error('FLAC supplemental format control is missing');
+    flac.checked = true;
+    flac.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    await clickExport();
+
+    const result = makeResult({
+      channels: [new Float32Array([0.25, -0.25, 0.125]), new Float32Array([0.5, -0.5, -0.125])],
+    });
+    const sourceByteLengths = result.channels.map((channel) => channel.byteLength);
+    control.resolve(result);
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(2));
+
+    // Both worker calls transferred private clones; the render result remains
+    // readable when the second target starts and after both files finish.
+    expect(result.channels.map((channel) => channel.byteLength)).toEqual(sourceByteLengths);
+    const outputs = await Promise.all(
+      download.mock.calls.map(
+        async (call) => new Uint8Array(await (call[0] as Blob).arrayBuffer()),
+      ),
+    );
+    expect(outputs[0]?.byteLength).toBeGreaterThan(0);
+    expect(outputs[1]?.byteLength).toBeGreaterThan(0);
+    expect(hasNonZeroWavPayload(outputs[0]!)).toBe(true);
+    expect(hasNonZeroFlacPayload(outputs[1]!)).toBe(true);
   });
 
   it('blocks download when the render discovers media issues after preflight', async () => {
@@ -809,6 +961,62 @@ describe('ExportDialog', () => {
     expect(Object.keys(unzipSync(await downloadedBytes(download)))).toEqual(['01 Drums.wav']);
     const second = new Uint8Array(await (download.mock.calls[1][0] as Blob).arrayBuffer());
     expect(Object.keys(unzipSync(second))).toEqual(['01 Drums.mp3']);
+  });
+
+  it('keeps stem PCM reusable across worker-backed target formats', async () => {
+    vi.stubGlobal('Worker', StructuredCloneEncodeWorker);
+    const control = makeRender();
+    const { download } = mountDialog(control);
+    const flac = q<HTMLInputElement>('.additional-format-input[data-encoder-id="flac"]');
+    if (!flac) throw new Error('FLAC supplemental format control is missing');
+    flac.checked = true;
+    flac.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    await checkRadio('.mode-stems');
+    await clickExport();
+
+    const stems = [
+      {
+        trackIndex: 0,
+        name: 'Drums',
+        channels: [new Float32Array([0.1, 0.2]), new Float32Array([0.3, 0.4])] as [
+          Float32Array,
+          Float32Array,
+        ],
+      },
+      {
+        trackIndex: 1,
+        name: 'Bass',
+        channels: [new Float32Array([0.5, 0.6]), new Float32Array([0.7, 0.8])] as [
+          Float32Array,
+          Float32Array,
+        ],
+      },
+    ];
+    const sourceByteLengths = stems.flatMap((stem) =>
+      stem.channels.map((channel) => channel.byteLength),
+    );
+    control.resolve(makeResult({ stems }));
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(2));
+
+    expect(stems.flatMap((stem) => stem.channels.map((channel) => channel.byteLength))).toEqual(
+      sourceByteLengths,
+    );
+    const archives = await Promise.all(
+      download.mock.calls.map(async (call) =>
+        unzipSync(new Uint8Array(await (call[0] as Blob).arrayBuffer())),
+      ),
+    );
+    expect(Object.keys(archives[0] ?? {}).sort()).toEqual(['01 Drums.wav', '02 Bass.wav']);
+    expect(Object.keys(archives[1] ?? {}).sort()).toEqual(['01 Drums.flac', '02 Bass.flac']);
+    for (const bytes of Object.values(archives[0] ?? {})) {
+      expect(bytes.byteLength).toBeGreaterThan(0);
+      expect(hasNonZeroWavPayload(bytes)).toBe(true);
+    }
+    for (const bytes of Object.values(archives[1] ?? {})) {
+      expect(bytes.byteLength).toBeGreaterThan(0);
+      expect(hasNonZeroFlacPayload(bytes)).toBe(true);
+    }
   });
 
   it('encodes streamed stems before the render result settles', async () => {
