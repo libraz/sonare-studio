@@ -6,7 +6,12 @@ import type {
   NotatedVoiceNumber,
   NoteValue,
 } from '@/notation/model';
-import { escapeXml, extractPartScore, serializeMusicXml } from '@/notation/musicxml';
+import {
+  escapeXml,
+  extractPartScore,
+  extractPartsScore,
+  serializeMusicXml,
+} from '@/notation/musicxml';
 import { quantizeToScore } from '@/notation/quantize';
 
 /** Builds a note/chord event with sensible defaults. */
@@ -501,6 +506,54 @@ describe('serializeMusicXml structure', () => {
     expect(q(second, 'print').getAttribute('new-system')).toBe('yes');
   });
 
+  it('encodes ottava and quindicesima spans with matching up/down shifts', () => {
+    const quarter: NoteValue = { base: 'quarter', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Lead',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 4,
+              timeSig: { beats: 4, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    note([60], 1, 0, 1, quarter, {}, [1]),
+                    note([62], 1, 1, 1, quarter, {}, [2]),
+                    note([64], 1, 2, 1, quarter, {}, [3]),
+                    note([65], 1, 3, 1, quarter, {}, [4]),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+      noteAnnotations: {
+        1: { lineSpan: 'ottava-down', lineSpanToNoteId: 2 },
+        3: { lineSpan: 'ottava-15-up', lineSpanToNoteId: 4 },
+      },
+    };
+
+    const shifts = qa(parse(serializeMusicXml(score)), 'octave-shift');
+    expect(shifts.map((shift) => [shift.getAttribute('type'), shift.getAttribute('size')])).toEqual(
+      [
+        ['up', '8'],
+        ['stop', '8'],
+        ['down', '15'],
+        ['stop', '15'],
+      ],
+    );
+  });
+
   it('emits multi-measure rest measure-style on the start measure', () => {
     const whole: NoteValue = { base: 'whole', dots: 0 };
     const score: NotatedScore = {
@@ -570,6 +623,38 @@ describe('serializeMusicXml structure', () => {
     const doc = parse(serializeMusicXml(partScore));
     expect(qa(doc, 'part-list > score-part')).toHaveLength(1);
     expect(q(doc, 'credit-type').textContent).toBe('part name');
+  });
+
+  it('extracts multiple parts in requested order without mutating the source score', () => {
+    const score = grandStaffFixture();
+    score.parts.push({
+      id: 'P2',
+      name: 'Violin',
+      clef: 'treble',
+      measures: score.parts[0].measures,
+    });
+    const before = structuredClone(score);
+
+    const selected = extractPartsScore(score, [1, 0]);
+
+    expect(selected.parts.map((part) => part.id)).toEqual(['P2', 'P1']);
+    expect(selected.metadata).toEqual(score.metadata);
+    expect(score).toEqual(before);
+    expect(selected.parts).not.toBe(score.parts);
+  });
+
+  it('rejects duplicate part ids before emitting an ambiguous MusicXML document', () => {
+    const score = grandStaffFixture();
+    score.parts.push({ ...score.parts[0], name: 'Second piano' });
+
+    expect(() => serializeMusicXml(score)).toThrow(/part ids must be unique/);
+  });
+
+  it('rejects empty, out-of-range, and duplicate part selections', () => {
+    const score = grandStaffFixture();
+    expect(() => extractPartsScore(score, [])).toThrow(/at least one/i);
+    expect(() => extractPartsScore(score, [1])).toThrow(/unknown score part index/i);
+    expect(() => extractPartsScore(score, [0, 0])).toThrow(/indices must be unique/);
   });
 
   it('emits divisions, key, time and grand-staff clefs in the first measure only', () => {

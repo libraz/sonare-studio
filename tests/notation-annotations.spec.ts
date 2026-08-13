@@ -388,7 +388,7 @@ describe('serializeMusicXml line spans', () => {
     });
     parse(xml);
     expect(xml).toContain(
-      '<direction placement="above"><direction-type><octave-shift type="up" size="8" number="1"/></direction-type></direction>',
+      '<direction placement="above"><direction-type><octave-shift type="down" size="8" number="1"/></direction-type></direction>',
     );
     expect(xml).toContain(
       '<direction placement="above"><direction-type><octave-shift type="stop" size="8" number="1"/></direction-type></direction>',
@@ -404,7 +404,7 @@ describe('serializeMusicXml line spans', () => {
       },
     });
     parse(xml);
-    expect(xml).toContain('<octave-shift type="up" size="8" number="1"/>');
+    expect(xml).toContain('<octave-shift type="down" size="8" number="1"/>');
     expect(xml).toContain('<octave-shift type="stop" size="8" number="1"/>');
     expect(xml).toContain('<glissando type="start" number="2"/>');
     expect(xml).toContain('<glissando type="stop" number="2"/>');
@@ -420,13 +420,13 @@ describe('serializeMusicXml line spans', () => {
     );
     parse(xml);
     expect(xml).toContain(
-      '<direction placement="above"><direction-type><octave-shift type="up" size="15" number="1"/></direction-type></direction>',
+      '<direction placement="above"><direction-type><octave-shift type="down" size="15" number="1"/></direction-type></direction>',
     );
     expect(xml).toContain(
       '<direction placement="above"><direction-type><octave-shift type="stop" size="15" number="1"/></direction-type></direction>',
     );
     expect(xml).toContain(
-      '<direction placement="below"><direction-type><octave-shift type="down" size="15" number="1"/></direction-type></direction>',
+      '<direction placement="below"><direction-type><octave-shift type="up" size="15" number="1"/></direction-type></direction>',
     );
     expect(xml).toContain(
       '<direction placement="below"><direction-type><octave-shift type="stop" size="15" number="1"/></direction-type></direction>',

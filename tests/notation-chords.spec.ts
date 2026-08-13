@@ -207,6 +207,21 @@ describe('estimateChordSymbols', () => {
     expect(symbols[0].bassPc).toBeUndefined();
   });
 
+  it('uses the lowest pitch at the first delayed onset when the window starts empty', () => {
+    const symbols = estimateChordSymbols(
+      [
+        note(64, 1, 3),
+        note(67, 1, 3),
+        note(72, 1, 3),
+        // This later low root must not replace the first-onset inversion bass.
+        note(48, 2, 1),
+      ],
+      OPTIONS,
+    );
+
+    expect(symbols[0]).toMatchObject({ text: 'C/E', rootPc: 0, bassPc: 4 });
+  });
+
   it('spells roots with flats in flat keys', () => {
     const symbols = estimateChordSymbols([note(58, 0, 4), note(62, 0, 4), note(65, 0, 4)], {
       ...OPTIONS,

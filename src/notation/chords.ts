@@ -132,8 +132,9 @@ function pitchClassName(pc: number, keyFifths: number): string {
  * over all 12 roots (score = matched weight - non-chord weight - a penalty
  * per missing template tone). Measures with fewer than two distinct pitch
  * classes, or where no template scores positively with its root present,
- * produce no symbol. The bass is the pitch class of the lowest sounding
- * note in the measure; a differing bass yields a slash chord.
+ * produce no symbol. The bass is the lowest pitch sounding at the window
+ * start, or (when the window starts empty) the lowest pitch at the first
+ * onset; a differing bass yields a slash chord.
  *
  * Pure and read-only over the notes; the result is sorted by ppq.
  *

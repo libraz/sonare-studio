@@ -601,6 +601,7 @@ function appendScoreCredits(lines: string[], metadata: ScoreMetadata | undefined
  * @returns A complete MusicXML document string (newline-separated).
  */
 export function serializeMusicXml(score: NotatedScore): string {
+  validatePartIds(score);
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 4.0 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">',
@@ -625,6 +626,22 @@ export function serializeMusicXml(score: NotatedScore): string {
 }
 
 /**
+ * MusicXML uses the part id as the global key joining `<score-part>` entries
+ * in `<part-list>` to their corresponding `<part>` elements. Duplicate ids
+ * therefore make an otherwise well-formed document ambiguous. Validate the
+ * complete score before writing any XML so malformed input fails atomically.
+ */
+function validatePartIds(score: NotatedScore): void {
+  const seen = new Set<string>();
+  for (const part of score.parts) {
+    if (seen.has(part.id)) {
+      throw new RangeError(`MusicXML part ids must be unique: ${part.id}`);
+    }
+    seen.add(part.id);
+  }
+}
+
+/**
  * Returns a new score containing one part, preserving shared score annotations
  * useful for a printed part. The input score is not mutated.
  */
@@ -640,14 +657,47 @@ export function extractPartScore(
   if (part === undefined) {
     throw new RangeError(`Unknown score part: ${String(partIdOrIndex)}`);
   }
-  return {
-    ...score,
-    metadata: {
-      ...score.metadata,
-      partName: part.name,
-    },
-    parts: [part],
-  };
+  return extractPartsScore(score, [index]);
+}
+
+/**
+ * Returns a new score containing the selected parts in the requested order.
+ *
+ * The source score and all of its part/event objects are read only; only the
+ * top-level score, metadata and parts array are copied. Shared score-level
+ * notation data (annotations, lyrics, breaks, harmonies, and so on) remains
+ * available to the serializer, which naturally ignores entries that do not
+ * resolve onto a selected part.
+ *
+ * A one-part selection gets the selected part's name as `metadata.partName`,
+ * matching {@link extractPartScore}; multi-part selections preserve the
+ * source metadata unchanged.
+ */
+export function extractPartsScore(
+  score: NotatedScore,
+  indices: ReadonlyArray<number>,
+): NotatedScore {
+  if (indices.length === 0) {
+    throw new RangeError('At least one score part must be selected');
+  }
+  const seenIndices = new Set<number>();
+  const parts = indices.map((index) => {
+    if (!Number.isInteger(index) || index < 0 || index >= score.parts.length) {
+      throw new RangeError(`Unknown score part index: ${String(index)}`);
+    }
+    if (seenIndices.has(index)) {
+      throw new RangeError(`Score part indices must be unique: ${index}`);
+    }
+    seenIndices.add(index);
+    return score.parts[index];
+  });
+  const metadata =
+    parts.length === 1
+      ? { ...score.metadata, partName: parts[0].name }
+      : score.metadata === undefined
+        ? undefined
+        : { ...score.metadata };
+  return { ...score, metadata, parts };
 }
 
 /** Builds a score-part entry with a deterministic abbreviation. */
@@ -1318,21 +1368,30 @@ function dynamicsPlacement(event: NotatedEvent, measure: NotatedMeasure): string
   return slurPlacement(event);
 }
 
-function octaveShiftDirection(lineSpan: Exclude<NoteLineSpan, 'pedal' | 'glissando'>): {
+type OctaveLineSpan = Exclude<NoteLineSpan, 'pedal' | 'glissando'>;
+
+/**
+ * MusicXML octave-shift semantics for the four editor ottava markings.
+ *
+ * MusicXML's direction is relative to the true pitch in the note data, not
+ * the visual direction of the printed 8va/8vb label: an 8va label moves the
+ * written notes up, so its MusicXML shift is `down`; 8vb is the inverse.
+ */
+const OCTAVE_SHIFT_BY_LINE_SPAN: Readonly<
+  Record<OctaveLineSpan, { placement: 'above' | 'below'; shift: 'up' | 'down'; size: 8 | 15 }>
+> = {
+  'ottava-up': { placement: 'above', shift: 'down', size: 8 },
+  'ottava-down': { placement: 'below', shift: 'up', size: 8 },
+  'ottava-15-up': { placement: 'above', shift: 'down', size: 15 },
+  'ottava-15-down': { placement: 'below', shift: 'up', size: 15 },
+};
+
+function octaveShiftDirection(lineSpan: OctaveLineSpan): {
   placement: 'above' | 'below';
   shift: 'up' | 'down';
   size: 8 | 15;
 } {
-  switch (lineSpan) {
-    case 'ottava-up':
-      return { placement: 'above', shift: 'up', size: 8 };
-    case 'ottava-down':
-      return { placement: 'below', shift: 'down', size: 8 };
-    case 'ottava-15-up':
-      return { placement: 'above', shift: 'up', size: 15 };
-    case 'ottava-15-down':
-      return { placement: 'below', shift: 'down', size: 15 };
-  }
+  return OCTAVE_SHIFT_BY_LINE_SPAN[lineSpan];
 }
 
 /** Builds non-glissando span directions. */
