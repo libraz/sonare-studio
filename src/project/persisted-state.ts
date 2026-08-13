@@ -21,6 +21,10 @@ export function persistedProjectStateKey(store: ProjectStore) {
       sections: store.sections,
       tempoSegments: store.tempoSegments,
       timeSignatures: store.timeSignatures,
+      // Keep the complete serialized control-surface block in the revision
+      // key, including bankOffset: serialization persists that field, and a
+      // direct surface-setting change must dirty/autosave the project.
+      controlSurface: store.controlSurface,
       mixer: store.mixer,
       externalMidiDefault: store.projectExternalMidi,
       scoreAnnotations: store.scoreAnnotations,

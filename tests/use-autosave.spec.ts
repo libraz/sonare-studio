@@ -239,6 +239,25 @@ describe('useAutosave', () => {
     expect(saved.scaleHighlight).toEqual(store.scaleHighlight);
   });
 
+  it('autosaves a direct control-surface setting change, including the bank offset', async () => {
+    createAutosave();
+    store.controlSurface = {
+      protocol: 'mcu',
+      bankSize: 8,
+      bankOffset: 3,
+      inputPortId: 'surface-in',
+      outputPortId: 'surface-out',
+      feedback: true,
+    };
+    await flushWatchers();
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(opfsMocks.saveProject).toHaveBeenCalledTimes(1);
+    expect(decodeSzd(opfsMocks.saveProject.mock.calls[0][1]).controlSurface).toEqual(
+      store.controlSurface,
+    );
+  });
+
   it('saveNow flushes the pending debounce and saves immediately', async () => {
     const autosave = createAutosave();
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
