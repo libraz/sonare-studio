@@ -639,10 +639,18 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
     store.refresh();
     reinstallTimelineWarps(edit);
     store.refresh();
-    store.selection = new Set(copies.map((copy) => copy.id));
+    // Timeline duplication selects the copied clips in the arrangement. Clip
+    // ids are not note ids, so never leak them into the active piano-roll
+    // selection; the next note command must start with an empty, valid set.
+    store.clipSelection = new Set(copies.map((copy) => copy.id));
+    store.selection = new Set();
     if (copies[0]) {
       store.clipId = copies[0].id;
       store.activeTrackId = store.clips.find((clip) => clip.id === copies[0]?.id)?.trackId ?? -1;
+      // The preceding refresh read the source clip. Refresh once more after
+      // moving the editor focus so note edits target the copied clip.
+      store.refresh();
+      store.selection = new Set();
     }
   });
 }
