@@ -437,6 +437,7 @@ watch(
 // Pointer routing: ruler scrub vs automation vs takes vs clip gestures.
 const {
   laneCursor,
+  cancelAll,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -461,7 +462,7 @@ const {
 });
 
 function onEscape(): void {
-  props.interactions.cancel();
+  cancelAll();
 }
 </script>
 

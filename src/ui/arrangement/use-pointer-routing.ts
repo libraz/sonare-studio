@@ -54,6 +54,8 @@ export interface PointerRoutingOptions {
 export interface PointerRouting {
   /** Cursor over the lanes (a hot sublane wins over clip gestures). */
   laneCursor: ComputedRef<string>;
+  /** Aborts every in-flight arrangement gesture and resets ruler drag state. */
+  cancelAll(): void;
   onPointerDown(event: PointerEvent): void;
   onPointerMove(event: PointerEvent): void;
   onPointerUp(event: PointerEvent): void;
@@ -174,6 +176,7 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
     }
     const target = pressTarget;
     pressTarget = 'none';
+    if (target === 'none') return;
     if (target === 'automation') {
       automation.onPointerUp(localPoint(event), modifiers(event));
       return;
@@ -185,13 +188,17 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
     interactions.onPointerUp(localPoint(event), modifiers(event));
   }
 
-  function onPointerCancel(): void {
+  function cancelAll(): void {
     rulerScrub = false;
     rulerLoopStartPpq = null;
     pressTarget = 'none';
     automation.cancel();
     takes.cancel();
     interactions.cancel();
+  }
+
+  function onPointerCancel(): void {
+    cancelAll();
   }
 
   function onDoubleClick(event: MouseEvent): void {
@@ -227,6 +234,7 @@ export function usePointerRouting(options: PointerRoutingOptions): PointerRoutin
 
   return {
     laneCursor,
+    cancelAll,
     onPointerDown,
     onPointerMove,
     onPointerUp,
