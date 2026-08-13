@@ -19,7 +19,7 @@ import {
   saveAsset,
   validateAssetPayload,
 } from '@/persistence/assets';
-import { OpfsUnavailableError } from '@/persistence/opfs';
+import { OpfsQuotaExceededError, OpfsUnavailableError } from '@/persistence/opfs';
 import {
   installMockOpfs,
   type MemoryDirectoryHandle,
@@ -245,6 +245,36 @@ describe('audio asset store', () => {
 
     expect((await assetsDir(root)).files.size).toBe(0);
     expect(await listAssets()).toEqual([]);
+  });
+
+  it('cleans a quota-truncated PCM write and allows the same asset to be retried', async () => {
+    const original = MemoryFileHandle.prototype.createWritable;
+    let failed = false;
+    const quota = new DOMException('storage quota exhausted', 'QuotaExceededError');
+    const spy = vi
+      .spyOn(MemoryFileHandle.prototype, 'createWritable')
+      .mockImplementation(async function () {
+        const writable = await original.call(this);
+        if (!this.name.endsWith('.pcm') || failed) return writable;
+        failed = true;
+        const write = writable.write.bind(writable);
+        writable.write = (async (chunk: Uint8Array) => {
+          await write(chunk.subarray(0, Math.min(4, chunk.byteLength)));
+          throw quota;
+        }) as typeof writable.write;
+        return writable;
+      });
+
+    await expect(
+      saveAsset({ id: 'quota-retry', name: 'Quota retry', sampleRate: 48000 }, stereo()),
+    ).rejects.toBeInstanceOf(OpfsQuotaExceededError);
+    expect((await assetsDir(root)).files.size).toBe(0);
+
+    spy.mockRestore();
+    await expect(
+      saveAsset({ id: 'quota-retry', name: 'Quota retry', sampleRate: 48000 }, stereo()),
+    ).resolves.toMatchObject({ id: 'quota-retry', name: 'Quota retry' });
+    expect((await loadAsset('quota-retry')).channels).toEqual(stereo());
   });
 
   it('computeAssetId is pure and stable', () => {

@@ -16,7 +16,7 @@
 
 import { bytesEqual, isNotFoundError } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
-import { isOpfsAvailable, OpfsUnavailableError } from './opfs';
+import { isOpfsAvailable, OpfsQuotaExceededError, OpfsUnavailableError } from './opfs';
 import {
   MAX_AUDIO_CHANNELS,
   MAX_AUDIO_SAMPLE_BYTES,
@@ -449,6 +449,34 @@ async function writeFile(
   }
 }
 
+/** True when an OPFS write ran out of origin storage quota. */
+function isQuotaExceededError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'QuotaExceededError'
+  );
+}
+
+/** Maps the browser's raw quota exception to the persistence-facing error. */
+function mapWriteError(error: unknown): never {
+  if (isQuotaExceededError(error)) throw new OpfsQuotaExceededError();
+  throw error;
+}
+
+/** Best-effort removal used to discard an unpublished/partial file. */
+async function removeOptionalFile(dir: FileSystemDirectoryHandle, fileName: string): Promise<void> {
+  try {
+    await dir.removeEntry(fileName);
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      // Preserve the original write error. An orphan payload has no sidecar
+      // publish marker and remains visible to the media GC on the next pass.
+    }
+  }
+}
+
 function validatedContentMeta(
   value: Partial<AudioAssetMeta>,
   id: string,
@@ -684,10 +712,16 @@ export async function saveAssetWithStatusUnlocked(
     interleaved.byteOffset,
     interleaved.byteLength,
   );
-  const existingPcmMatches = await pcmFileMatches(dir, id + PCM_EXTENSION, pcmBytes);
+  let existingPcmMatches = await pcmFileMatches(dir, id + PCM_EXTENSION, pcmBytes);
   const existingSidecar = await readOptionalFile(dir, id + META_EXTENSION);
   if (existingPcmMatches === false) {
-    throw new InvalidAssetError(`Asset "${id}": immutable PCM content collision`);
+    if (existingSidecar !== null) {
+      throw new InvalidAssetError(`Asset "${id}": immutable PCM content collision`);
+    }
+    // A sidecarless payload is unpublished. It may be a truncated write left
+    // by a quota failure, so discard it before retrying the same content.
+    await removeOptionalFile(dir, id + PCM_EXTENSION);
+    existingPcmMatches = null;
   }
   if (existingPcmMatches === null && existingSidecar !== null) {
     throw new InvalidAssetError(`Asset "${id}": metadata exists without its PCM payload`);
@@ -715,23 +749,26 @@ export async function saveAssetWithStatusUnlocked(
   const record = recordFromMeta(requestedMeta, aliases);
   const latestMeta = validatedContentMeta(record.content, id, aliases[aliases.length - 1]);
   const created = existingPcmMatches === null;
-  if (created) await writeFile(dir, id + PCM_EXTENSION, pcmBytes);
+  const sidecarCreated = existingSidecar === null;
+  if (created) {
+    try {
+      await writeFile(dir, id + PCM_EXTENSION, pcmBytes);
+    } catch (error) {
+      // createWritable() may create an empty/truncated entry before write()
+      // rejects. Never leave that unpublished payload to become a collision.
+      await removeOptionalFile(dir, id + PCM_EXTENSION);
+      mapWriteError(error);
+    }
+  }
   try {
     await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
   } catch (error) {
-    if (created) {
-      for (const fileName of [id + PCM_EXTENSION, id + META_EXTENSION]) {
-        try {
-          await dir.removeEntry(fileName);
-        } catch (cleanupError) {
-          if (!isNotFoundError(cleanupError)) {
-            // Best effort: the sidecar is the publish marker, so an orphan PCM
-            // remains invisible and is later collected by asset GC.
-          }
-        }
-      }
-    }
-    throw error;
+    // A sidecar that did not exist before this attempt is itself unpublished
+    // when its write fails. Remove it along with any newly created PCM so a
+    // retry cannot parse a truncated JSON file or collide with partial data.
+    if (sidecarCreated) await removeOptionalFile(dir, id + META_EXTENSION);
+    if (created) await removeOptionalFile(dir, id + PCM_EXTENSION);
+    mapWriteError(error);
   }
   cacheAsset(id, {
     meta: latestMeta,
