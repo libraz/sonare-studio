@@ -29,6 +29,15 @@ function optionsMenu(): MenuBarMenu {
   };
 }
 
+function layoutMenu(): MenuBarMenu {
+  return {
+    id: 'layout',
+    label: 'Layout',
+    ariaLabel: 'Layout menu',
+    items: [{ id: 'layout.compose', label: 'Compose', run: vi.fn() }],
+  };
+}
+
 /** Mounts AppHeader and opens the File menu in the command bar. */
 async function openFileMenu(): Promise<VueWrapper> {
   wrapper = mount(AppHeader, {
@@ -59,6 +68,28 @@ afterEach(() => {
 });
 
 describe('AppHeader export menu', () => {
+  it('renders the supplied Layout menu once in the end-aligned menu bar', () => {
+    wrapper = mount(AppHeader, {
+      attachTo: document.body,
+      props: {
+        autosaveLastSavedAt: null,
+        canRedo: false,
+        canUndo: false,
+        deviceRackOpen: false,
+        dirty: false,
+        layoutMenu: layoutMenu(),
+        menus: [fileMenu()],
+        projectName: 'Demo',
+        resolvedTheme: 'light',
+      },
+    });
+
+    const layoutTriggers = wrapper.findAll('.app-menubar--end .app-menubar__trigger');
+    expect(layoutTriggers).toHaveLength(1);
+    expect(layoutTriggers[0]?.text()).toContain('Layout');
+    expect(wrapper.findAll('#menubar-trigger-layout')).toHaveLength(1);
+  });
+
   it('offers SMF and MIDI 2.0 clip-file exports as distinct menu items', async () => {
     const w = await openFileMenu();
     const labels = w.findAll('[role="menuitem"]').map((node) => node.text());

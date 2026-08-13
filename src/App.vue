@@ -78,6 +78,7 @@ import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
+import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import {
   canRedo,
@@ -114,6 +115,7 @@ import { installSonareDevDebug } from '@/ui/shell/dev-debug';
 const version = ref('…');
 const isolated = ref(globalThis.crossOriginIsolated === true);
 const errorMessage = ref('');
+const autosaveErrorMessage = ref('');
 const mediaWarning = ref('');
 const busy = ref(false);
 const contextMenuState = useContextMenuState();
@@ -198,6 +200,23 @@ const historyCanRedo = computed(() => {
   return canRedo();
 });
 
+/** Keep header history controls on the same user-visible error surface as menus and shortcuts. */
+function onUndo(): void {
+  try {
+    undo();
+  } catch (error) {
+    errorMessage.value = describeError(error);
+  }
+}
+
+function onRedo(): void {
+  try {
+    redo();
+  } catch (error) {
+    errorMessage.value = describeError(error);
+  }
+}
+
 // --- User preferences ----------------------------------------------------------
 
 const appSettings = useAppSettings();
@@ -271,7 +290,7 @@ onScopeDispose(clearAudioClipData);
 // Surface a failed background autosave: the user's recent edits are not on
 // disk, so warn them to save manually rather than failing silently.
 watch(autosave.lastError, (error) => {
-  if (error) errorMessage.value = t.value.shell.autosaveFailed;
+  if (error) autosaveErrorMessage.value = t.value.shell.autosaveFailed;
 });
 const { downloadBlobFile, lastDownload } = useFileDownloads();
 
@@ -316,6 +335,9 @@ const recording = useRecording(() => handle.value, transport);
 const midiRecording = useMidiRecording(transport);
 const {
   armedTrackIds,
+  canRecord,
+  isCountingIn,
+  isRecording,
   recordMenuOpen,
   recordMenuRoot,
   recordingInputDeviceOptions,
@@ -540,7 +562,7 @@ const {
   previewNoteOn,
   previewNoteOff,
   previewChannelVoice,
-  recordingActive: midiRecording.isRecording,
+  recordingActive: isRecording,
   onRecordNoteOn: midiRecording.captureNoteOn,
   onRecordNoteOff: midiRecording.captureNoteOff,
   onRecordControlChange: midiRecording.captureControlChange,
@@ -567,9 +589,10 @@ const {
     store.activeTrackId = trackId;
   },
   isPlaying,
-  isRecording: midiRecording.isRecording,
+  isRecording,
   isLooping: loopEnabled,
   armedTrackIds,
+  trackMeterSource,
   runAction,
 });
 
@@ -755,12 +778,14 @@ const {
   shortcutTitle,
 } = useAppShortcutsMenu({
   commandPaletteOpen,
+  canRecord,
   deviceRackOpen,
   editorTool,
   handle,
   helpOpen,
   isGlobalShortcutBlocked: () => globalShortcutsBlocked.value,
   isPlaying,
+  isRecording,
   layouts: namedLayouts.layouts,
   loopEnabled,
   opfsAvailable,
@@ -798,6 +823,9 @@ const {
   openDemo,
   openShortcutsHelp,
   openWelcomeTour,
+  onError: (message) => {
+    errorMessage.value = message;
+  },
   saveCurrentLayout: saveCurrentLayoutAction,
   saveProjectAction,
   saveProjectAsAction,
@@ -864,7 +892,7 @@ onMounted(installLaunchQueueConsumer);
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" data-app-shell-focus-fallback tabindex="-1">
     <AppHeader
       :autosave-last-saved-at="autosave.lastSavedAt.value"
       :can-redo="historyCanRedo"
@@ -872,6 +900,7 @@ onMounted(installLaunchQueueConsumer);
       :can-install-pwa="canInstallPwa"
       :device-rack-open="deviceRackOpen"
       :dirty="dirty"
+      :layout-menu="layoutMenu"
       :menus="menuBarModel"
       :project-name="store.projectName"
       :resolved-theme="appSettings.resolvedTheme.value"
@@ -880,13 +909,18 @@ onMounted(installLaunchQueueConsumer);
       @midi-import-change="onMidiImportChange"
       @midi-import-input-ref="(el) => (midiImportInput = el)"
       @install-pwa="requestPwaInstall"
-      @redo="redo"
+      @redo="onRedo"
       @toggle-theme="toggleTheme"
       @toggle-device-rack="toggleDeviceRack"
-      @undo="undo"
+      @undo="onUndo"
     />
 
     <ErrorBanner :message="errorMessage" @dismiss="errorMessage = ''" />
+    <ErrorBanner
+      :message="autosaveErrorMessage"
+      :auto-dismiss-ms="0"
+      @dismiss="autosaveErrorMessage = ''"
+    />
     <ErrorBanner
       :message="mediaWarning"
       :auto-dismiss-ms="0"
@@ -1254,9 +1288,6 @@ onMounted(installLaunchQueueConsumer);
             :style="scoreResized ? { flex: 'none', height: `${scoreHeight}px` } : undefined"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
-            :loop-enabled="loopEnabled"
-            :loop-start-ppq="loopStartPpq"
-            :loop-end-ppq="loopEndPpq"
             @seek="onSeek"
           />
         </section>
@@ -1377,10 +1408,13 @@ onMounted(installLaunchQueueConsumer);
       :auto-punch-enabled="autoPunchEnabled"
       :bbt-display="bbtDisplay"
       :bridge="bridge"
+      :can-record="canRecord"
       :count-in-choices="COUNT_IN_CHOICES"
       :handle="handle"
       :has-locator-window="hasLocatorWindow"
+      :is-counting-in="isCountingIn"
       :is-playing="isPlaying"
+      :is-recording="isRecording"
       :loop-enabled="loopEnabled"
       :metronome-enabled="metronomeEnabled"
       :metronome-volume="metronomeVolume"
