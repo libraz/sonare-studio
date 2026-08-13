@@ -4,12 +4,12 @@
  * the root is in the scale). Pure module (no DOM, no framework imports).
  */
 
+import { keyScaleToKeyFifths, scaleHighlightToKeyScale } from '@/compose/key';
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
-import { keyToKeyFifths } from '@/notation/pitch-spelling';
 import type { ScaleHighlightConfig } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
-import type { Key } from '@/wasm/index.js';
 
+export { keyScaleToKeyFifths } from '@/compose/key';
 export { PITCH_CLASS_NAMES };
 
 export type KeyModeId =
@@ -122,12 +122,7 @@ export function modeOrdinalForChoice(id: string): number {
  */
 export function keyFifthsForScaleHighlight(config: ScaleHighlightConfig): number {
   if (!config.enabled) return 0;
-  const modeId = matchModeChoiceId(config.modeMask);
-  if (modeId === null) return 0;
-  return keyToKeyFifths({
-    root: (((config.rootPc % 12) + 12) % 12) as Key['root'],
-    mode: modeOrdinalForChoice(modeId) as Key['mode'],
-  });
+  return keyScaleToKeyFifths(scaleHighlightToKeyScale(config));
 }
 
 /**

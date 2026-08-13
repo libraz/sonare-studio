@@ -8,6 +8,7 @@ import {
   modeOrdinalForChoice,
   rotateModeMask,
 } from '@/components/lists/key-modes';
+import { keyScaleToKeyFifths } from '@/compose/key';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
 /** Builds a 12-bit mask from semitone intervals above the root. */
@@ -96,6 +97,16 @@ describe('keyFifthsForScaleHighlight', () => {
   it('uses neutral spelling for disabled and custom scale highlights', () => {
     expect(keyFifthsForScaleHighlight({ enabled: false, rootPc: 10, modeMask: 0 })).toBe(0);
     expect(keyFifthsForScaleHighlight({ enabled: true, rootPc: 10, modeMask: 1 })).toBe(0);
+  });
+});
+
+describe('keyScaleToKeyFifths', () => {
+  it('derives E major fifths directly from the KeyScale mask', () => {
+    expect(keyScaleToKeyFifths({ rootPc: 4, modeMask12: MAJOR_MODE_MASK })).toBe(4);
+  });
+
+  it('uses neutral spelling for a custom KeyScale mask', () => {
+    expect(keyScaleToKeyFifths({ rootPc: 4, modeMask12: 1 })).toBe(0);
   });
 });
 
