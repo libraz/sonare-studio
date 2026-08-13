@@ -14,7 +14,63 @@ import {
   RecorderStateError,
 } from '@/engine/recorder';
 import { STREAMING_RETUNE_PROCESSOR } from '@/engine/streaming-retune';
+import { ensureWasm } from '@/lib/wasm';
 import { normalizeTempoMap } from '@/project/tempo-map';
+
+const { presetConfigs } = vi.hoisted(() => {
+  const makePod = (overrides: Record<string, number | boolean>) => ({
+    inputGainDb: 0,
+    outputGainDb: 0,
+    wetMix: 1,
+    retuneSemitones: 0,
+    retuneMix: 0,
+    retuneGrainSize: 0,
+    formantFactor: 1,
+    formantAmount: 0,
+    formantBody: 0,
+    formantBrightness: 0,
+    formantNasal: 0,
+    eqHighpassHz: 75,
+    eqBodyDb: 0,
+    eqPresenceDb: 0,
+    eqAirDb: 0,
+    gateThresholdDb: -55,
+    gateAttackMs: 2,
+    gateReleaseMs: 100,
+    gateRangeDb: 18,
+    compressorThresholdDb: -24,
+    compressorRatio: 1.8,
+    compressorAttackMs: 8,
+    compressorReleaseMs: 120,
+    compressorMakeupGainDb: 0.5,
+    deesserFrequencyHz: 7200,
+    deesserThresholdDb: -28,
+    deesserRatio: 4,
+    deesserRangeDb: 8,
+    reverbMix: 0,
+    reverbTimeMs: 320,
+    reverbDamping: 0.55,
+    reverbSeed: 1,
+    limiterCeilingDb: -1,
+    limiterReleaseMs: 50,
+    limiterEnableIspLimiter: true,
+    limiterIspCeilingDbtp: -1,
+    ...overrides,
+  });
+  return {
+    presetConfigs: {
+      'bright-idol': makePod({ retuneSemitones: 4, retuneMix: 1, outputGainDb: 2.2 }),
+      'dark-villain': makePod({ retuneSemitones: -9, retuneMix: 1, outputGainDb: 4.5 }),
+    },
+  };
+});
+
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: vi.fn(async () => ({
+    realtimeVoiceChangerPresetConfig: (preset: string) =>
+      presetConfigs[preset as keyof typeof presetConfigs],
+  })),
+}));
 
 /** Builds a full meter snapshot; only targetId and the peak fields matter here. */
 function meterSnapshot(targetId: number, peakDbL: number, peakDbR = peakDbL) {
@@ -295,6 +351,8 @@ describe('createRecorder microphone acquisition', () => {
       voiceChangerPreset: 'bright-idol',
       streamingRetuneSemitones: 7,
     });
+    const wasm = await ensureWasm();
+    const darkConfig = wasm.realtimeVoiceChangerPresetConfig('dark-villain');
 
     await recorder.requestMicrophone();
 
@@ -308,11 +366,19 @@ describe('createRecorder microphone acquisition', () => {
     expect(retuneNode.options.processorOptions).toMatchObject({ semitones: 7, mix: 1 });
 
     expect(recorder.setVoiceChangerPreset('dark-villain')).toBe(true);
+    expect(
+      recorder.setVoiceChangerPreset({
+        schemaVersion: 1,
+        name: 'custom',
+        dsp: { formantFactor: 1.2 },
+      }),
+    ).toBe(false);
     expect(recorder.setStreamingRetuneSemitones(-5)).toBe(true);
     expect(voiceNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
-      preset: 'dark-villain',
+      config: darkConfig,
     });
+    expect(voiceNode.port.postMessage).toHaveBeenCalledTimes(1);
     expect(retuneNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
       config: { semitones: -5, mix: 1 },

@@ -5,6 +5,117 @@ import {
   REALTIME_VOICE_CHANGER_PROCESSOR,
 } from '@/engine/realtime-voice-changer';
 import { STREAMING_RETUNE_PROCESSOR } from '@/engine/streaming-retune';
+import { ensureWasm } from '@/lib/wasm';
+
+const { presetConfigs } = vi.hoisted(() => {
+  const makePod = (overrides: Record<string, number | boolean>) => ({
+    inputGainDb: 0,
+    outputGainDb: 0,
+    wetMix: 1,
+    retuneSemitones: 0,
+    retuneMix: 0,
+    retuneGrainSize: 0,
+    formantFactor: 1,
+    formantAmount: 0,
+    formantBody: 0,
+    formantBrightness: 0,
+    formantNasal: 0,
+    eqHighpassHz: 75,
+    eqBodyDb: 0,
+    eqPresenceDb: 0,
+    eqAirDb: 0,
+    gateThresholdDb: -55,
+    gateAttackMs: 2,
+    gateReleaseMs: 100,
+    gateRangeDb: 18,
+    compressorThresholdDb: -24,
+    compressorRatio: 1.8,
+    compressorAttackMs: 8,
+    compressorReleaseMs: 120,
+    compressorMakeupGainDb: 0.5,
+    deesserFrequencyHz: 7200,
+    deesserThresholdDb: -28,
+    deesserRatio: 4,
+    deesserRangeDb: 8,
+    reverbMix: 0,
+    reverbTimeMs: 320,
+    reverbDamping: 0.55,
+    reverbSeed: 1,
+    limiterCeilingDb: -1,
+    limiterReleaseMs: 50,
+    limiterEnableIspLimiter: true,
+    limiterIspCeilingDbtp: -1,
+    ...overrides,
+  });
+  return {
+    presetConfigs: {
+      'bright-idol': makePod({
+        outputGainDb: 2.2,
+        retuneSemitones: 4,
+        retuneMix: 1,
+        formantFactor: 1.18,
+        formantAmount: 1,
+        formantBrightness: 0.7,
+        formantNasal: 0.05,
+        eqHighpassHz: 160,
+        eqBodyDb: -2.5,
+        eqPresenceDb: 4.5,
+        eqAirDb: 3.5,
+        gateThresholdDb: -50,
+        gateReleaseMs: 80,
+        gateRangeDb: 22,
+        compressorThresholdDb: -23,
+        compressorRatio: 3.2,
+        compressorAttackMs: 4.5,
+        compressorReleaseMs: 75,
+        compressorMakeupGainDb: 2,
+        deesserFrequencyHz: 7600,
+        deesserThresholdDb: -30,
+        deesserRangeDb: 9,
+        reverbMix: 0.11,
+        reverbTimeMs: 380,
+        reverbDamping: 0.35,
+        reverbSeed: 7,
+      }),
+      'dark-villain': makePod({
+        outputGainDb: 4.5,
+        retuneSemitones: -9,
+        retuneMix: 1,
+        formantFactor: 0.72,
+        formantAmount: 1,
+        formantBody: 0.8,
+        formantBrightness: -0.7,
+        formantNasal: -0.2,
+        eqHighpassHz: 80,
+        eqBodyDb: 5.5,
+        eqPresenceDb: -2,
+        eqAirDb: -5,
+        gateThresholdDb: -50,
+        gateReleaseMs: 110,
+        gateRangeDb: 26,
+        compressorThresholdDb: -25,
+        compressorRatio: 4.2,
+        compressorReleaseMs: 120,
+        compressorMakeupGainDb: 1,
+        deesserFrequencyHz: 6100,
+        deesserThresholdDb: -24,
+        deesserRatio: 3,
+        deesserRangeDb: 4,
+        reverbMix: 0.13,
+        reverbTimeMs: 820,
+        reverbDamping: 0.9,
+        reverbSeed: 19,
+      }),
+    },
+  };
+});
+
+vi.mock('@/lib/wasm', () => ({
+  ensureWasm: vi.fn(async () => ({
+    realtimeVoiceChangerPresetConfig: (preset: string) =>
+      presetConfigs[preset as keyof typeof presetConfigs],
+  })),
+}));
 
 class FakeNode {
   readonly connect = vi.fn();
@@ -73,6 +184,9 @@ describe('bindRealtimeVoiceChangerInput', () => {
       createMediaStreamSource: vi.fn(() => source),
     } as unknown as AudioContext;
     const stream = makeStream();
+    const wasm = await ensureWasm();
+    const brightConfig = wasm.realtimeVoiceChangerPresetConfig('bright-idol');
+    const darkConfig = wasm.realtimeVoiceChangerPresetConfig('dark-villain');
 
     const binding = await bindRealtimeVoiceChangerInput(ctx, engineNode, {
       stream,
@@ -91,7 +205,7 @@ describe('bindRealtimeVoiceChangerInput', () => {
       channelCount: 2,
       outputChannelCount: [2],
       processorOptions: {
-        preset: 'bright-idol',
+        preset: brightConfig,
         sampleRate: 48_000,
         blockSize: 256,
         channelCount: 2,
@@ -101,14 +215,22 @@ describe('bindRealtimeVoiceChangerInput', () => {
     expect(voiceNode.connect).toHaveBeenCalledWith(engineNode);
     expect(voiceNode.port.start).toHaveBeenCalledTimes(1);
 
-    binding.setVoiceChangerPreset?.('dark-villain');
+    expect(binding.setVoiceChangerPreset?.('dark-villain')).toBe(true);
+    expect(
+      binding.setVoiceChangerPreset?.({
+        schemaVersion: 1,
+        name: 'custom',
+        dsp: { formantFactor: 1.2 },
+      }),
+    ).toBe(false);
     binding.close();
 
     expect(voiceNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
-      preset: 'dark-villain',
+      config: darkConfig,
     });
     expect(voiceNode.port.postMessage).toHaveBeenCalledWith({ type: 'destroy' });
+    expect(voiceNode.port.postMessage).toHaveBeenCalledTimes(2);
     expect(source.disconnect).toHaveBeenCalledTimes(1);
     expect(voiceNode.disconnect).toHaveBeenCalledTimes(1);
     expect(stream.tracks.map((track) => track.stop.mock.calls.length)).toEqual([1, 1]);
@@ -177,6 +299,9 @@ describe('bindRealtimeVoiceChangerInput', () => {
       createMediaStreamSource: vi.fn(() => source),
     } as unknown as AudioContext;
     const stream = makeStream();
+    const wasm = await ensureWasm();
+    const brightConfig = wasm.realtimeVoiceChangerPresetConfig('bright-idol');
+    const darkConfig = wasm.realtimeVoiceChangerPresetConfig('dark-villain');
 
     const binding = await bindRealtimeVoiceChangerRetuneInput(ctx, engineNode, {
       stream,
@@ -191,7 +316,7 @@ describe('bindRealtimeVoiceChangerInput', () => {
     expect(voiceNode.name).toBe(REALTIME_VOICE_CHANGER_PROCESSOR);
     expect(retuneNode.name).toBe(STREAMING_RETUNE_PROCESSOR);
     expect(voiceNode.options.processorOptions).toMatchObject({
-      preset: 'bright-idol',
+      preset: brightConfig,
       sampleRate: 48_000,
       blockSize: 256,
       channelCount: 1,
@@ -212,13 +337,20 @@ describe('bindRealtimeVoiceChangerInput', () => {
     expect(voiceNode.port.start).toHaveBeenCalledTimes(1);
     expect(retuneNode.port.start).toHaveBeenCalledTimes(1);
 
-    binding.setVoiceChangerPreset?.('dark-villain');
+    expect(binding.setVoiceChangerPreset?.('dark-villain')).toBe(true);
+    expect(
+      binding.setVoiceChangerPreset?.({
+        schemaVersion: 1,
+        name: 'custom',
+        dsp: { formantFactor: 1.2 },
+      }),
+    ).toBe(false);
     binding.setStreamingRetuneConfig?.({ semitones: -7, mix: 1 });
     binding.close();
 
     expect(voiceNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
-      preset: 'dark-villain',
+      config: darkConfig,
     });
     expect(retuneNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
@@ -226,6 +358,7 @@ describe('bindRealtimeVoiceChangerInput', () => {
     });
     expect(voiceNode.port.postMessage).toHaveBeenCalledWith({ type: 'destroy' });
     expect(retuneNode.port.postMessage).toHaveBeenCalledWith({ type: 'destroy' });
+    expect(voiceNode.port.postMessage).toHaveBeenCalledTimes(2);
     expect(source.disconnect).toHaveBeenCalledTimes(1);
     expect(voiceNode.disconnect).toHaveBeenCalledTimes(1);
     expect(retuneNode.disconnect).toHaveBeenCalledTimes(1);

@@ -187,7 +187,7 @@ export interface MicrophoneBinding {
   /** The Web Audio source node wrapping the stream. */
   source: AudioNode;
   /** Updates an in-place realtime voice changer binding, when present. */
-  setVoiceChangerPreset?(preset: RealtimeVoiceChangerConfigInput): void;
+  setVoiceChangerPreset?(preset: RealtimeVoiceChangerConfigInput): boolean;
   /** Updates an in-place StreamingRetune binding, when present. */
   setStreamingRetuneConfig?(config: { semitones?: number; mix?: number; grainSize?: number }): void;
   /** Disconnects the source and stops the stream tracks. */
@@ -840,8 +840,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
 
   const setVoiceChangerPreset = (preset: RealtimeVoiceChangerConfigInput): boolean => {
     if (!binding?.setVoiceChangerPreset) return false;
-    binding.setVoiceChangerPreset(preset);
-    return true;
+    return binding.setVoiceChangerPreset(preset);
   };
 
   const setStreamingRetuneSemitones = (semitones: number): boolean => {

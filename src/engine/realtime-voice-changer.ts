@@ -1,4 +1,8 @@
-import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+import { ensureWasm } from '@/lib/wasm';
+import type {
+  RealtimeVoiceChangerConfigInput,
+  RealtimeVoiceChangerPodConfig,
+} from '@/wasm/index.js';
 import { fetchWasmBinary, waitForWorkletReady } from './engine';
 import type { MicrophoneBinding } from './recorder';
 import { clampStreamingRetuneSemitones, STREAMING_RETUNE_PROCESSOR } from './streaming-retune';
@@ -20,6 +24,94 @@ export interface RealtimeVoiceChangerRetuneInputOptions extends RealtimeVoiceCha
   semitones: number;
 }
 
+const REALTIME_VOICE_CHANGER_NUMERIC_FIELDS = [
+  'inputGainDb',
+  'outputGainDb',
+  'wetMix',
+  'retuneSemitones',
+  'retuneMix',
+  'retuneGrainSize',
+  'formantFactor',
+  'formantAmount',
+  'formantBody',
+  'formantBrightness',
+  'formantNasal',
+  'eqHighpassHz',
+  'eqBodyDb',
+  'eqPresenceDb',
+  'eqAirDb',
+  'gateThresholdDb',
+  'gateAttackMs',
+  'gateReleaseMs',
+  'gateRangeDb',
+  'compressorThresholdDb',
+  'compressorRatio',
+  'compressorAttackMs',
+  'compressorReleaseMs',
+  'compressorMakeupGainDb',
+  'deesserFrequencyHz',
+  'deesserThresholdDb',
+  'deesserRatio',
+  'deesserRangeDb',
+  'reverbMix',
+  'reverbTimeMs',
+  'reverbDamping',
+  'reverbSeed',
+  'limiterCeilingDb',
+  'limiterReleaseMs',
+  'limiterIspCeilingDbtp',
+] as const satisfies ReadonlyArray<keyof RealtimeVoiceChangerPodConfig>;
+
+function isRealtimeVoiceChangerPodConfig(value: unknown): value is RealtimeVoiceChangerPodConfig {
+  if (value === null || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    REALTIME_VOICE_CHANGER_NUMERIC_FIELDS.every(
+      (field) => typeof record[field] === 'number' && Number.isFinite(record[field]),
+    ) && typeof record.limiterEnableIspLimiter === 'boolean'
+  );
+}
+
+/** Resolves only inputs safe to send over the realtime worklet control port. */
+function normalizeRealtimeVoiceChangerPreset(
+  wasm: typeof import('@/wasm/index.js'),
+  preset: RealtimeVoiceChangerConfigInput,
+): RealtimeVoiceChangerPodConfig | null {
+  if (typeof preset !== 'string' && isRealtimeVoiceChangerPodConfig(preset)) return preset;
+  if (typeof preset !== 'string') return null;
+
+  const resolver = (
+    wasm as {
+      realtimeVoiceChangerPresetConfig?: (presetId: string) => unknown;
+    }
+  ).realtimeVoiceChangerPresetConfig;
+  if (typeof resolver !== 'function') return null;
+  try {
+    const config = resolver(preset);
+    return isRealtimeVoiceChangerPodConfig(config) ? config : null;
+  } catch {
+    return null;
+  }
+}
+
+interface VoiceChangerWorkletSetup {
+  wasm: typeof import('@/wasm/index.js');
+  wasmBinary: ArrayBuffer;
+  initialPreset: RealtimeVoiceChangerConfigInput | RealtimeVoiceChangerPodConfig;
+}
+
+async function prepareVoiceChangerWorklet(
+  preset: RealtimeVoiceChangerConfigInput | undefined,
+): Promise<VoiceChangerWorkletSetup> {
+  const [wasmBinary, wasm] = await Promise.all([fetchWasmBinary(), ensureWasm()]);
+  const initialPreset = preset ?? 'neutral-monitor';
+  return {
+    wasm,
+    wasmBinary,
+    initialPreset: normalizeRealtimeVoiceChangerPreset(wasm, initialPreset) ?? initialPreset,
+  };
+}
+
 /** Connects microphone input through libsonare's realtime voice changer before the engine input. */
 export async function bindRealtimeVoiceChangerInput(
   ctx: AudioContext,
@@ -29,9 +121,11 @@ export async function bindRealtimeVoiceChangerInput(
   const source = ctx.createMediaStreamSource(options.stream);
   const channelCount = Math.max(1, Math.floor(options.channelCount ?? 1));
   let node: AudioWorkletNode | null = null;
+  let setup: VoiceChangerWorkletSetup;
   try {
-    // The worklet scope cannot fetch its own WASM; hand it the shared bytes.
-    const wasmBinary = await fetchWasmBinary();
+    // The worklet scope cannot fetch its own WASM or resolve preset IDs; hand it
+    // the shared bytes and a main-thread-normalized initial config.
+    setup = await prepareVoiceChangerWorklet(options.preset);
     options.signal?.throwIfAborted();
     node = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
       numberOfInputs: 1,
@@ -39,11 +133,11 @@ export async function bindRealtimeVoiceChangerInput(
       channelCount,
       outputChannelCount: [channelCount],
       processorOptions: {
-        preset: options.preset ?? 'neutral-monitor',
+        preset: setup.initialPreset,
         sampleRate: ctx.sampleRate,
         blockSize: Math.max(1, Math.floor(options.blockSize ?? 128)),
         channelCount,
-        wasmBinary,
+        wasmBinary: setup.wasmBinary,
       },
     });
     await waitForWorkletReady(node.port, {
@@ -75,8 +169,11 @@ export async function bindRealtimeVoiceChangerInput(
   return {
     stream: options.stream,
     source,
-    setVoiceChangerPreset(preset: RealtimeVoiceChangerConfigInput): void {
-      readyNode.port.postMessage({ type: 'setConfig', preset });
+    setVoiceChangerPreset(preset: RealtimeVoiceChangerConfigInput): boolean {
+      const config = normalizeRealtimeVoiceChangerPreset(setup.wasm, preset);
+      if (!config) return false;
+      readyNode.port.postMessage({ type: 'setConfig', config });
+      return true;
     },
     close(): void {
       readyNode.port.postMessage({ type: 'destroy' });
@@ -104,9 +201,11 @@ export async function bindRealtimeVoiceChangerRetuneInput(
   if (options.signal?.aborted) onAbort();
   let voiceNode: AudioWorkletNode | null = null;
   let retuneNode: AudioWorkletNode | null = null;
+  let setup: VoiceChangerWorkletSetup;
   try {
-    // The worklet scope cannot fetch its own WASM; hand both processors the bytes.
-    const wasmBinary = await fetchWasmBinary();
+    // The worklet scope cannot fetch its own WASM or resolve preset IDs; hand
+    // both processors the shared bytes and the normalized initial config.
+    setup = await prepareVoiceChangerWorklet(options.preset);
     startup.signal.throwIfAborted();
     voiceNode = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
       numberOfInputs: 1,
@@ -114,11 +213,11 @@ export async function bindRealtimeVoiceChangerRetuneInput(
       channelCount,
       outputChannelCount: [channelCount],
       processorOptions: {
-        preset: options.preset ?? 'neutral-monitor',
+        preset: setup.initialPreset,
         sampleRate: ctx.sampleRate,
         blockSize,
         channelCount,
-        wasmBinary,
+        wasmBinary: setup.wasmBinary,
       },
     });
     retuneNode = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
@@ -133,7 +232,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
         sampleRate: ctx.sampleRate,
         blockSize,
         channelCount,
-        wasmBinary,
+        wasmBinary: setup.wasmBinary,
       },
     });
     await Promise.all([
@@ -175,8 +274,11 @@ export async function bindRealtimeVoiceChangerRetuneInput(
   return {
     stream: options.stream,
     source,
-    setVoiceChangerPreset(preset: RealtimeVoiceChangerConfigInput): void {
-      readyVoiceNode.port.postMessage({ type: 'setConfig', preset });
+    setVoiceChangerPreset(preset: RealtimeVoiceChangerConfigInput): boolean {
+      const config = normalizeRealtimeVoiceChangerPreset(setup.wasm, preset);
+      if (!config) return false;
+      readyVoiceNode.port.postMessage({ type: 'setConfig', config });
+      return true;
     },
     setStreamingRetuneConfig(config): void {
       readyRetuneNode.port.postMessage({ type: 'setConfig', config });
