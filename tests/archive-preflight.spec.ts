@@ -30,6 +30,33 @@ function zeroCentralDirUncompressedSize(zip: Uint8Array): Uint8Array {
   return patched;
 }
 
+function centralDirectoryRecords(zip: Uint8Array): number[] {
+  const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  let eocd = -1;
+  for (let i = zip.length - 22; i >= 0; i -= 1) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error('no end-of-central-directory record found');
+  const count = view.getUint16(eocd + 8, true);
+  let cursor = view.getUint32(eocd + 16, true);
+  const records: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) {
+      throw new Error('central-directory header not found');
+    }
+    records.push(cursor);
+    cursor +=
+      46 +
+      view.getUint16(cursor + 28, true) +
+      view.getUint16(cursor + 30, true) +
+      view.getUint16(cursor + 32, true);
+  }
+  return records;
+}
+
 describe('archive preflight', () => {
   it('returns entries and exact size/count metadata after one bounded expansion', () => {
     const zip = zipSync({
@@ -90,6 +117,36 @@ describe('archive preflight', () => {
     const zip = zipSync({ 'lie.bin': new Uint8Array(1024 * 1024) });
     const patched = zeroCentralDirUncompressedSize(zip);
     expect(() => preflightAndUnzip(patched)).toThrow(/declares zero size but carries/);
+  });
+
+  it('budgets stored entries by their actual copied payload, not originalSize', async () => {
+    const payload = new Uint8Array(32);
+    const stored = zipSync({ 'stored.bin': [payload, { level: 0 }] });
+    const records = centralDirectoryRecords(stored);
+    const patched = stored.slice();
+    new DataView(patched.buffer).setUint32(records[0]! + 24, 1, true);
+
+    expect(preflightAndUnzip(patched).report.uncompressedBytes).toBe(payload.byteLength);
+    expect(() => preflightAndUnzip(patched, { maxEntryBytes: payload.byteLength - 1 })).toThrow(
+      /entry is too large/,
+    );
+    await expect(
+      preflightAndUnzipInWorker(patched, { maxUncompressedBytes: payload.byteLength - 1 }),
+    ).rejects.toThrow(/expands beyond/);
+  });
+
+  it('rejects central-directory entries that alias one local payload', async () => {
+    const archive = zipSync({ first: new Uint8Array([1, 2]), second: new Uint8Array([3, 4]) });
+    const records = centralDirectoryRecords(archive);
+    const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+    const firstLocalOffset = view.getUint32(records[0]! + 42, true);
+    const patched = archive.slice();
+    new DataView(patched.buffer).setUint32(records[1]! + 42, firstLocalOffset, true);
+
+    expect(() => preflightAndUnzip(patched)).toThrow(/aliased local-header offsets/);
+    await expect(preflightAndUnzipInWorker(patched)).rejects.toThrow(
+      /aliased local-header offsets/,
+    );
   });
 
   it('honors an already-aborted operation before parsing', () => {
