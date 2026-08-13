@@ -332,6 +332,24 @@ export interface DocumentLineSpanAnnotation {
 /** Display-quantize choices supported by the score toolbar. */
 export type ScoreDisplayQuantizeKey = '4' | '8' | '16' | '32' | '8t' | '16t';
 
+/**
+ * Display-quantize grid lengths in quarter-note PPQ.
+ *
+ * The explicit Record keeps the persisted key union and every consumer's
+ * division mapping in lockstep: adding a key without adding its grid value is
+ * a type error at this definition rather than a runtime fallback.
+ */
+export const SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ: Readonly<
+  Record<ScoreDisplayQuantizeKey, number>
+> = {
+  '4': 1,
+  '8': 0.5,
+  '16': 0.25,
+  '32': 0.125,
+  '8t': 1 / 3,
+  '16t': 1 / 6,
+};
+
 /** Project-owned score display/layout settings. */
 export interface ScoreDisplaySettings {
   displayQuantizeKey: ScoreDisplayQuantizeKey;

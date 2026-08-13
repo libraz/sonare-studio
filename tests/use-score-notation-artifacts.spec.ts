@@ -105,6 +105,7 @@ function notationHarness(
   store: ReturnType<typeof useProjectStore>,
   fullScore = false,
   exportClient = vi.fn(() => fakeVerovio().client),
+  createClient?: () => VerovioClient,
 ) {
   const verovio = fakeVerovio();
   const notation = useScoreNotation({
@@ -121,6 +122,7 @@ function notationHarness(
     getFullScoreEnabled: () => fullScore,
     getLayoutSettings: () => LAYOUT,
     resetPlayheadScan: vi.fn(),
+    ...(createClient === undefined ? {} : { createClient }),
     createExportClient: exportClient,
   });
   return { exportClient, notation, verovio };
@@ -227,6 +229,21 @@ describe('score artifact identity and exports', () => {
     expect(notation.getCurrentXml()).toContain('<score-partwise');
   });
 
+  it('replaces a fatally failed display client before the next transcription', async () => {
+    const replacement = fakeVerovio();
+    const createClient = vi.fn(() => replacement.client);
+    const { notation, verovio } = notationHarness(store, false, undefined, createClient);
+    (verovio.client as unknown as { failed: boolean }).failed = true;
+
+    await notation.transcribe();
+
+    expect(verovio.client.dispose).toHaveBeenCalledOnce();
+    expect(createClient).toHaveBeenCalledOnce();
+    expect(replacement.load).toHaveBeenCalledOnce();
+    expect(replacement.renderPage).toHaveBeenCalledWith(1);
+    expect(notation.getCurrentXml()).toContain('<score-partwise');
+  });
+
   it('exports the active non-first full-score part and includes its name in the filename', async () => {
     const firstClipId = store.clipId;
     const leadTrackId = addTrack({ name: 'Lead', kind: 'midi' });
@@ -259,5 +276,21 @@ describe('score artifact identity and exports', () => {
 
     await notation.transcribe();
     expect(notation.getCurrentPartName()).toBe('Piano');
+  });
+
+  it('exports both emitted halves when the active full-score track is hybrid', async () => {
+    addNote({ pitch: 36, channel: 9, startPpq: 1, durationPpq: 1 });
+    store.tracks[0].name = 'Hybrid';
+    const { notation } = notationHarness(store, true);
+
+    await notation.transcribe();
+    notation.onExportPartMusicXml();
+    await settleExports();
+
+    const [xml, filename] = vi.mocked(exportMusicXml).mock.calls[0] as [string, string];
+    expect(xml).toContain('<part-name>Hybrid</part-name>');
+    expect(xml).toContain('<part-name>Hybrid Percussion</part-name>');
+    expect(filename).toContain('Hybrid.part.musicxml');
+    expect((xml.match(/<part id=/g) ?? []).length).toBe(2);
   });
 });

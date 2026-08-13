@@ -6,6 +6,7 @@ import type { MixdownRangePpq } from '@/export/mixdown';
 import { projectFilename } from '@/lib/filename';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { scoreClipWindow } from '@/notation/score-clip-window';
+import { SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ } from '@/project/annotations';
 import {
   parseInsertAutomationParam,
   parseInstrumentAutomationParam,
@@ -21,23 +22,17 @@ import {
 } from '@/project/mixer';
 import { type ProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import {
+  scoreExportAvailability as resolveScoreExportAvailability,
+  type ScoreExportAvailability,
+} from '@/ui/score/export-availability';
 import { buildProjectScore } from '@/ui/score/use-score-notation';
 
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type DownloadBlobFile = (blob: Blob, filename: string) => void;
 
 const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
-
-const SCORE_DIVISION_PPQ: Readonly<Record<string, number>> = {
-  '4': 1,
-  '8': 0.5,
-  '16': 0.25,
-  '32': 0.125,
-  '8t': 1 / 3,
-  '16t': 1 / 6,
-};
 
 export interface ProjectExportOptions {
   closeProjectMenu: () => void;
@@ -53,6 +48,15 @@ export function useProjectExport(options: ProjectExportOptions) {
   const { t } = useI18n();
   const exportDialogOpen = ref(false);
 
+  const musicXmlAvailability = computed<ScoreExportAvailability>(() =>
+    resolveScoreExportAvailability({
+      fullScoreEnabled: store.scoreDisplaySettings.fullScoreEnabled,
+      activeClip: store.activeClip,
+      hasMidiTrack: store.tracks.some((track) => track.kind === 'midi'),
+      hasScoreWindow: store.clipLengthPpq > 0,
+    }),
+  );
+
   const exportLoopRegion = computed<MixdownRangePpq | null>(() =>
     options.loopEnabled.value && options.loopEndPpq.value > options.loopStartPpq.value
       ? { startPpq: options.loopStartPpq.value, endPpq: options.loopEndPpq.value }
@@ -62,6 +66,21 @@ export function useProjectExport(options: ProjectExportOptions) {
   function openExportDialog(): void {
     options.closeProjectMenu();
     exportDialogOpen.value = true;
+  }
+
+  /** Routes a direct unavailable invocation through the app error surface. */
+  function reportMusicXmlUnavailable(reason: string): void {
+    void Promise.resolve()
+      .then(() =>
+        options.runAction(async () => {
+          throw new Error(`MusicXML export unavailable: ${reason}`);
+        }),
+      )
+      .catch(() => {
+        // The application runner reports the error. Test/embedding runners may
+        // reject instead; the returned availability result remains the signal
+        // for those callers and this prevents an unhandled rejection.
+      });
   }
 
   function dawprojectLossItems(doc: ProjectDocument): string[] {
@@ -288,19 +307,27 @@ export function useProjectExport(options: ProjectExportOptions) {
     });
   }
 
-  function exportMusicXmlAction(): void {
+  /**
+   * Starts MusicXML export and returns the same eligibility result consumed by
+   * menu callers. An unavailable action is therefore observable even when a
+   * caller invokes it directly rather than through a disabled menu row.
+   */
+  function exportMusicXmlAction(): ScoreExportAvailability {
     options.closeProjectMenu();
+    const availability = musicXmlAvailability.value;
+    if (!availability.available) {
+      reportMusicXmlUnavailable(availability.reason ?? 'unknown');
+      return availability;
+    }
     void options.runAction(async () => {
       const clip = store.activeClip;
-      const fullScore = store.scoreDisplaySettings.fullScoreEnabled;
-      const hasMidiTrack = store.tracks.some((track) => track.kind === 'midi');
-      if (
-        !clip ||
-        store.clipLengthPpq <= 0 ||
-        (!fullScore && clipKind(clip) !== 'midi') ||
-        (fullScore && !hasMidiTrack)
-      ) {
-        return;
+      const currentAvailability = musicXmlAvailability.value;
+      if (!currentAvailability.available) {
+        throw new Error(`MusicXML export unavailable: ${currentAvailability.reason}`);
+      }
+      const fullScore = currentAvailability.mode === 'full-score';
+      if (!clip && !fullScore) {
+        throw new Error('MusicXML export unavailable: active-midi-clip-required');
       }
       const scoreWindow = scoreClipWindow({
         clipStartPpq: store.clipStartPpq,
@@ -310,7 +337,8 @@ export function useProjectExport(options: ProjectExportOptions) {
       });
       const keyFifths = keyFifthsForScaleHighlight(store.scaleHighlight);
       const score = await buildProjectScore(store, {
-        divisionPpq: SCORE_DIVISION_PPQ[store.scoreDisplaySettings.displayQuantizeKey] ?? 0.25,
+        divisionPpq:
+          SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ[store.scoreDisplaySettings.displayQuantizeKey],
         timeSig: scoreWindow.timeSig,
         measureLenPpq: scoreWindow.measureLenPpq,
         clipLengthPpq: scoreWindow.clipLengthPpq,
@@ -322,20 +350,20 @@ export function useProjectExport(options: ProjectExportOptions) {
         estimateFingering: store.scoreDisplaySettings.estimateFingering,
         grandStaffSplitPitch: store.scoreDisplaySettings.grandStaffSplitPitch,
         layoutSettings: store.scoreDisplaySettings,
-        // Transport looping is not a notated repeat and must never be baked
-        // into the exported MusicXML score.
-        loopRegion: null,
       });
       options.downloadBlobFile(
         new Blob([serializeMusicXml(score)], { type: MUSICXML_MIME }),
         projectFilename(store.projectName, '.musicxml', 'score'),
       );
     });
+    return availability;
   }
 
   return {
     exportDialogOpen,
     exportLoopRegion,
+    musicXmlAvailability,
+    scoreExportAvailability: musicXmlAvailability,
     exportDawprojectAction,
     exportMusicXmlAction,
     openExportDialog,

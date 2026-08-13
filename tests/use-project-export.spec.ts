@@ -139,9 +139,50 @@ describe('useProjectExport', () => {
     await loadProjectDocument(makeDoc('audio'));
     const { downloadBlobFile, projectExport } = setup();
 
-    projectExport.exportMusicXmlAction();
+    const availability = projectExport.exportMusicXmlAction();
     await flushPromises();
 
+    expect(availability).toEqual(projectExport.scoreExportAvailability.value);
+    expect(availability).toMatchObject({
+      available: false,
+      mode: 'part',
+      reason: 'active-midi-clip-required',
+    });
+    expect(downloadBlobFile).not.toHaveBeenCalled();
+  });
+
+  it('allows Full Score export when the active clip is audio but a MIDI track exists', async () => {
+    await loadProjectDocument(makeDoc('audio'));
+    const store = useProjectStore();
+    const midiTrackId = addTrack({ name: 'MIDI source', kind: 'midi' });
+    store.scoreDisplaySettings = { ...store.scoreDisplaySettings, fullScoreEnabled: true };
+    const { downloadBlobFile, projectExport } = setup();
+
+    const availability = projectExport.exportMusicXmlAction();
+    await flushPromises();
+
+    expect(availability).toEqual({ available: true, mode: 'full-score', reason: null });
+    expect(store.tracks.some((track) => track.id === midiTrackId && track.kind === 'midi')).toBe(
+      true,
+    );
+    expect(downloadBlobFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares the Full Score blocker reason between availability and the action', async () => {
+    await loadProjectDocument(makeDoc('audio'));
+    const store = useProjectStore();
+    store.scoreDisplaySettings = { ...store.scoreDisplaySettings, fullScoreEnabled: true };
+    const { downloadBlobFile, projectExport } = setup();
+
+    const availability = projectExport.exportMusicXmlAction();
+    await flushPromises();
+
+    expect(availability).toEqual(projectExport.musicXmlAvailability.value);
+    expect(availability).toMatchObject({
+      available: false,
+      mode: 'full-score',
+      reason: 'midi-track-required',
+    });
     expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 

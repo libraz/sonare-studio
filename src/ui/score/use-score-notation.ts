@@ -40,7 +40,8 @@ import {
   type NotatedTempoMark,
   type NotatedTempoText,
 } from '@/notation/model';
-import { extractPartScore, serializeMusicXml } from '@/notation/musicxml';
+import { extractPartsScore, serializeMusicXml } from '@/notation/musicxml';
+import { chordPitchClassName } from '@/notation/pitch-spelling';
 import { createPdfPageWriter, createPrintPageWriter, downloadBlob } from '@/notation/print';
 import type { ScoreInputNote } from '@/notation/quantize';
 import { quantizeToScore } from '@/notation/quantize';
@@ -104,12 +105,12 @@ export interface ScoreNotationOptions {
   getEstimateFingering?: () => boolean;
   /** Grand-staff split pitch as MIDI note number (defaulted by quantizeToScore). */
   getGrandStaffSplitPitch?: () => number;
-  /** Active transport loop range in project PPQ, or null when disabled/unusable. */
-  getLoopRegion?: () => { startPpq: number; endPpq: number } | null;
   /** Current layout settings (page, orientation, margins, scale, spacing). */
   getLayoutSettings: () => ScoreLayoutSettings;
   /** Resets the playhead highlight scan after every render / layout change. */
   resetPlayheadScan: () => void;
+  /** Creates a replacement display client after a fatal worker failure. */
+  createClient?: () => VerovioClient;
   /** Creates an isolated client for print/PDF rendering (injectable in tests). */
   createExportClient?: () => VerovioClient;
 }
@@ -264,7 +265,6 @@ export interface ProjectScoreBuildOptions {
   estimateFingering?: boolean;
   grandStaffSplitPitch?: number;
   layoutSettings: Pick<ScoreLayoutSettings, 'barsPerSystem' | 'barsPerPage'>;
-  loopRegion?: { startPpq: number; endPpq: number } | null;
 }
 
 /**
@@ -359,16 +359,6 @@ export async function buildProjectScore(
     options.clipLengthPpq,
     options.measureLenPpq,
   );
-  if (options.loopRegion) {
-    applyLoopMarks(
-      score,
-      options.loopRegion.startPpq,
-      options.loopRegion.endPpq,
-      store.clipStartPpq,
-      options.clipLengthPpq,
-      options.measureLenPpq,
-    );
-  }
   applyMultiMeasureRests(score);
   if (options.chordsEnabled) {
     try {
@@ -381,7 +371,11 @@ export async function buildProjectScore(
       });
       const symbols = await canonicalizeChordSymbols(estimated);
       if (symbols.length > 0) {
-        score.chordSymbols = transposeChordSymbols(symbols, displayTransposeSemitones);
+        score.chordSymbols = transposeChordSymbols(
+          symbols,
+          displayTransposeSemitones,
+          displayKeyFifths,
+        );
       }
     } catch {
       // Chord symbols are supplementary display data; a wasm failure must not
@@ -438,7 +432,6 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
           fullScoreEnabled: options.getFullScoreEnabled?.(),
           estimateFingering: options.getEstimateFingering?.(),
           grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
-          loopRegion: options.getLoopRegion?.(),
           displayTransposeSemitones: store.displayTransposeSemitones,
           projectName: store.projectName,
           layoutBreaks: {
@@ -510,7 +503,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     // so the user can recover by re-transcribing instead of reloading the app.
     if (client.value?.failed) {
       client.value.dispose();
-      client.value = new VerovioClient();
+      client.value = options.createClient?.() ?? new VerovioClient();
     }
     const verovio = client.value;
     const fullScoreRequested = options.getFullScoreEnabled?.() === true;
@@ -548,9 +541,6 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         estimateFingering: options.getEstimateFingering?.(),
         grandStaffSplitPitch: options.getGrandStaffSplitPitch?.(),
         layoutSettings: options.getLayoutSettings(),
-        // Transport looping is playback state, not score form. Keeping it out
-        // of the cached artifact also keeps PDF and MusicXML exports clean.
-        loopRegion: null,
       });
       const partTrackIds = fullScore
         ? fullScorePartTrackIds(store, store.clipStartPpq, options.getScreenClipLengthPpq())
@@ -755,12 +745,15 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     if (loading.value) return;
     const artifact = artifactForCurrentState();
     if (!artifact || artifact.score.parts.length === 0) return;
-    const partIndex = artifact.partTrackIds.indexOf(store.activeTrackId);
-    if (partIndex < 0 || partIndex >= artifact.score.parts.length) return;
-    const part = artifact.score.parts[partIndex];
+    const partIndices = artifact.partTrackIds.flatMap((trackId, index) =>
+      trackId === store.activeTrackId ? [index] : [],
+    );
+    if (partIndices.length === 0) return;
+    const part = artifact.score.parts[partIndices[0]];
+    if (!part) return;
     void runExport(async () => {
       if (artifactForCurrentState() !== artifact) return;
-      const partScore = extractPartScore(artifact.score, partIndex);
+      const partScore = extractPartsScore(artifact.score, partIndices);
       const xml = serializeMusicXml(partScore);
       const projectName = artifact.projectName.trim() || 'score';
       exportMusicXml(
@@ -955,15 +948,31 @@ export function fullScorePartTrackIds(
     });
 }
 
+/** Allocates a stable MusicXML part id without colliding with earlier parts. */
+function allocateMusicXmlPartId(preferred: string, used: Set<string>): string {
+  const base = preferred.trim() || 'P1';
+  let candidate = base;
+  let suffix = 2;
+  while (used.has(candidate)) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
 export function buildFullScore(
   store: ProjectStore,
   options: FullScoreBuildOptions,
   projection = buildFullScoreProjection(store, options.clipStartPpq, options.clipLengthPpq),
 ): NotatedScore {
+  const usedPartIds = new Set<string>();
   const parts = store.tracks
     .filter((track) => track.kind === 'midi')
     .flatMap((track, index) => {
       const notes = projection.notesByTrack.get(track.id) ?? [];
+      const requestedPartId = track.musicXmlPartId?.trim() || `P${index + 1}`;
+      const partId = allocateMusicXmlPartId(requestedPartId, usedPartIds);
       const score = buildScorePart(notes, {
         divisionPpq: options.divisionPpq,
         timeSig: options.timeSig,
@@ -972,13 +981,21 @@ export function buildFullScore(
         clipLengthPpq: options.clipLengthPpq,
         timeSignatures: options.timeSignatures,
         pickupLengthPpq: options.pickupLengthPpq,
-        partId: track.musicXmlPartId?.trim() || `P${index + 1}`,
+        partId,
         partName: track.name || `Track ${index + 1}`,
         displayTransposeSemitones: options.displayTransposeSemitones,
         grandStaffSplitPitch: options.grandStaffSplitPitch,
         estimateFingering: options.estimateFingering,
       });
-      return score.parts;
+      const partIds = score.parts.map((_, partIndex) =>
+        partIndex === 0
+          ? partId
+          : allocateMusicXmlPartId(
+              partIndex === 1 ? `${partId}-percussion` : `${partId}-${partIndex + 1}`,
+              usedPartIds,
+            ),
+      );
+      return score.parts.map((part, partIndex) => ({ ...part, id: partIds[partIndex] }));
     });
   if (parts.length === 0) {
     return buildScorePart([], {
@@ -1032,39 +1049,6 @@ export function applySectionMarks(
   }
   if (Object.keys(rehearsals).length > 0) score.measureRehearsals = rehearsals;
   if (Object.keys(barlines).length > 0) score.measureBarlines = barlines;
-}
-
-/** Adds repeat marks for an active loop range aligned to score measures. */
-export function applyLoopMarks(
-  score: NotatedScore,
-  loopStartPpq: number,
-  loopEndPpq: number,
-  clipStartPpq: number,
-  clipLengthPpq: number,
-  measureLenPpq: number,
-): void {
-  if (measureLenPpq <= 0 || score.parts.length === 0) return;
-  if (loopEndPpq <= loopStartPpq + PPQ_EPSILON) return;
-  const measureCount = score.parts[0].measures.length;
-  const clipEndPpq = clipStartPpq + clipLengthPpq;
-  if (loopStartPpq < clipStartPpq - PPQ_EPSILON || loopEndPpq > clipEndPpq + PPQ_EPSILON) return;
-  const startIndex = measureIndexForPpq(score, loopStartPpq, clipStartPpq, measureLenPpq);
-  const endBoundaryIndex = measureBoundaryIndexForPpq(
-    score,
-    loopEndPpq,
-    clipStartPpq,
-    measureLenPpq,
-  );
-  if (startIndex === undefined || endBoundaryIndex === undefined) return;
-  if (startIndex < 0 || startIndex >= measureCount || endBoundaryIndex <= startIndex) return;
-  if (endBoundaryIndex > measureCount) return;
-  const endIndex = endBoundaryIndex - 1;
-  const repeats: Record<number, 'start' | 'end' | 'start-end'> = {
-    ...(score.measureRepeats ?? {}),
-  };
-  repeats[startIndex] = repeats[startIndex] === 'end' ? 'start-end' : 'start';
-  repeats[endIndex] = repeats[endIndex] === 'start' ? 'start-end' : 'end';
-  score.measureRepeats = repeats;
 }
 
 /** Adds exact metronome marks and textual ramp directions across the score grid. */
@@ -1246,20 +1230,47 @@ export function transposeKeyFifths(fifths: number, semitones: number): number {
   return modulo > 6 ? modulo - 12 : modulo;
 }
 
-/** Moves root and slash-bass pitch classes alongside display-transposed notes. */
+/**
+ * Moves root and slash-bass pitch classes alongside display-transposed notes.
+ * The display key controls the enharmonic spelling of the rebuilt text.
+ */
 export function transposeChordSymbols(
   symbols: ReadonlyArray<NotatedChordSymbol>,
   semitones: number,
+  displayKeyFifths = 0,
 ): NotatedChordSymbol[] {
   const shift = ((semitones % 12) + 12) % 12;
   if (shift === 0) return [...symbols];
+  const isPitchClass = (pitchClass: number | undefined): pitchClass is number =>
+    pitchClass !== undefined && Number.isInteger(pitchClass) && pitchClass >= 0 && pitchClass <= 11;
   const transposePitchClass = (pitchClass: number | undefined): number | undefined =>
-    pitchClass === undefined ? undefined : (pitchClass + shift) % 12;
-  return symbols.map((symbol) => ({
-    ...symbol,
-    rootPc: transposePitchClass(symbol.rootPc),
-    bassPc: transposePitchClass(symbol.bassPc),
-  }));
+    isPitchClass(pitchClass) ? (pitchClass + shift) % 12 : pitchClass;
+  const transposeText = (
+    symbol: NotatedChordSymbol,
+    rootPc: number | undefined,
+    bassPc: number | undefined,
+  ): string => {
+    if (!isPitchClass(rootPc)) return symbol.text;
+    const rootToken = symbol.text.match(/^([A-Ga-g](?:#|b|♯|♭)?)/)?.[0];
+    if (rootToken === undefined) return symbol.text;
+    const remainder = symbol.text.slice(rootToken.length);
+    const rootName = chordPitchClassName(rootPc, displayKeyFifths);
+    if (!isPitchClass(bassPc)) return `${rootName}${remainder}`;
+    const bassToken = remainder.match(/\/([A-Ga-g](?:#|b|♯|♭)?)$/)?.[0];
+    if (bassToken === undefined) return `${rootName}${remainder}`;
+    const suffix = remainder.slice(0, -bassToken.length);
+    return `${rootName}${suffix}/${chordPitchClassName(bassPc, displayKeyFifths)}`;
+  };
+  return symbols.map((symbol) => {
+    const rootPc = transposePitchClass(symbol.rootPc);
+    const bassPc = transposePitchClass(symbol.bassPc);
+    return {
+      ...symbol,
+      text: transposeText(symbol, rootPc, bassPc),
+      rootPc,
+      bassPc,
+    };
+  });
 }
 
 /** Adds MusicXML key-signature changes from measure-aligned "Key: ..." markers. */
@@ -1394,28 +1405,6 @@ function measurePositionForPpq(
     measureIndex,
     offsetPpq: Math.max(0, relative - measureIndex * measureLenPpq),
   };
-}
-
-function measureBoundaryIndexForPpq(
-  score: NotatedScore,
-  ppq: number,
-  clipStartPpq: number,
-  measureLenPpq: number,
-): number | undefined {
-  const measures = scoreMeasures(score);
-  if (!measuresUseClipOrigin(measures, clipStartPpq)) {
-    const rel = ppq - clipStartPpq;
-    const index = Math.round(rel / measureLenPpq);
-    if (index < 0 || index > measures.length) return undefined;
-    return Math.abs(rel - index * measureLenPpq) <= PPQ_EPSILON ? index : undefined;
-  }
-  const startIndex = measureIndexForPpq(score, ppq, clipStartPpq, measureLenPpq);
-  if (startIndex !== undefined) return startIndex;
-  const last = measures[measures.length - 1];
-  if (last && Math.abs(ppq - (last.startPpq + last.lengthPpq)) <= PPQ_EPSILON) {
-    return measures.length;
-  }
-  return undefined;
 }
 
 function keySignaturePayload(name: string): { fifths: number } | null {

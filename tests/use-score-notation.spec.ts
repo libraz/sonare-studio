@@ -6,7 +6,6 @@ import { scoreKeyMarkerName, scoreLyricMarkerName } from '@/ui/score/marker-edit
 import {
   applyKeySignatureMarks,
   applyLayoutBreaks,
-  applyLoopMarks,
   applyLyricMarks,
   applyMarkerTexts,
   applyMultiMeasureRests,
@@ -298,6 +297,63 @@ describe('buildFullScore', () => {
     expect(out.parts.map((part) => part.id)).toEqual(['hybrid-01', 'hybrid-01-percussion']);
   });
 
+  it('allocates every emitted part id against one deterministic set', () => {
+    const out = buildFullScore(
+      {
+        tracks: [
+          { ...track(1), name: 'Hybrid', musicXmlPartId: 'shared' },
+          { ...track(2), name: 'Percussion', musicXmlPartId: 'shared-percussion' },
+          { ...track(3), name: 'Lead', musicXmlPartId: 'shared' },
+        ],
+        clips: [
+          midiClip({
+            id: 1,
+            trackId: 1,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            lengthPpq: 4,
+            notes: [
+              { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+              { id: 2, pitch: 36, velocity: 96, startPpq: 1, durationPpq: 1, channel: 9 },
+            ],
+          }),
+          midiClip({
+            id: 2,
+            trackId: 2,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            lengthPpq: 4,
+            notes: [{ id: 3, pitch: 40, velocity: 96, startPpq: 0, durationPpq: 1, channel: 9 }],
+          }),
+          midiClip({
+            id: 3,
+            trackId: 3,
+            startPpq: 0,
+            sourceOffsetPpq: 0,
+            lengthPpq: 4,
+            notes: [{ id: 4, pitch: 72, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+          }),
+        ],
+      } as never,
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: 0,
+      },
+    );
+
+    expect(out.parts.map((part) => part.id)).toEqual([
+      'shared',
+      'shared-percussion',
+      'shared-percussion-2',
+      'shared-2',
+    ]);
+    expect(new Set(out.parts.map((part) => part.id)).size).toBe(out.parts.length);
+  });
+
   it('maps every hybrid Full Score part back to its source track', () => {
     const store = {
       tracks: [
@@ -480,36 +536,6 @@ describe('applySectionMarks', () => {
     applySectionMarks(out, [section(1, 'Bridge', 7)], 0, 10, 4);
     expect(out.measureRehearsals).toEqual({ 2: 'Bridge' });
     expect(out.measureBarlines).toEqual({ 1: 'double' });
-  });
-});
-
-describe('applyLoopMarks', () => {
-  it('adds repeat marks for a measure-aligned loop range', () => {
-    const out = score();
-    applyLoopMarks(out, 4, 12, 0, 12, 4);
-    expect(out.measureRepeats).toEqual({ 1: 'start', 2: 'end' });
-  });
-
-  it('marks a one-measure loop as both start and end', () => {
-    const out = score();
-    applyLoopMarks(out, 4, 8, 0, 12, 4);
-    expect(out.measureRepeats).toEqual({ 1: 'start-end' });
-  });
-
-  it('ignores unaligned and out-of-clip loop ranges', () => {
-    const unaligned = score();
-    applyLoopMarks(unaligned, 2, 8, 0, 12, 4);
-    expect(unaligned.measureRepeats).toBeUndefined();
-
-    const outOfClip = score();
-    applyLoopMarks(outOfClip, 4, 16, 0, 12, 4);
-    expect(outOfClip.measureRepeats).toBeUndefined();
-  });
-
-  it('uses score measure starts for loops after time-signature changes', () => {
-    const out = variableMeterScore();
-    applyLoopMarks(out, 4, 10, 0, 10, 4);
-    expect(out.measureRepeats).toEqual({ 1: 'start', 2: 'end' });
   });
 });
 
@@ -770,9 +796,30 @@ describe('applyLyricMarks', () => {
 describe('applyKeySignatureMarks', () => {
   it('transposes key signatures and chord pitch classes together', () => {
     expect(transposeKeyFifths(-1, 2)).toBe(1); // F major -> G major
-    expect(transposeChordSymbols([{ ppq: 0, text: 'F/C', rootPc: 5, bassPc: 0 }], 2)).toEqual([
-      { ppq: 0, text: 'F/C', rootPc: 7, bassPc: 2 },
+    expect(transposeChordSymbols([{ ppq: 0, text: 'F/C', rootPc: 5, bassPc: 0 }], 2, 1)).toEqual([
+      { ppq: 0, text: 'G/D', rootPc: 7, bassPc: 2 },
     ]);
+  });
+
+  it('uses flat and sharp display-key spellings for transposed slash chords', () => {
+    expect(
+      transposeChordSymbols([{ ppq: 0, text: 'Ab7/Db', rootPc: 8, bassPc: 1, quality: 4 }], 2, -5),
+    ).toEqual([{ ppq: 0, text: 'Bb7/Eb', rootPc: 10, bassPc: 3, quality: 4 }]);
+    expect(
+      transposeChordSymbols([{ ppq: 0, text: 'E7/Bb', rootPc: 4, bassPc: 10, quality: 4 }], 2, 1),
+    ).toEqual([{ ppq: 0, text: 'F#7/C', rootPc: 6, bassPc: 0, quality: 4 }]);
+  });
+
+  it('keeps unknown-quality MusicXML fallback text aligned with transposed pitch classes', () => {
+    const [symbol] = transposeChordSymbols(
+      [{ ppq: 0, text: 'Cmystery/Eb', rootPc: 0, bassPc: 3 }],
+      2,
+      1,
+    );
+    expect(symbol).toEqual({ ppq: 0, text: 'Dmystery/F', rootPc: 2, bassPc: 5 });
+    const out = score();
+    out.chordSymbols = [symbol];
+    expect(serializeMusicXml(out)).toContain('<kind text="Dmystery/F">other</kind>');
   });
 
   it('transposes key markers by the display transposition', () => {

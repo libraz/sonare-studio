@@ -16,11 +16,13 @@ import type { TheoryCard } from '@/compose/explain';
 import { formatPitch } from '@/lib/pitch';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
-import type {
-  NoteHairpin,
-  NoteLineSpan,
-  ScoreDisplaySettings,
-  ScoreNoteAnnotation,
+import {
+  type NoteHairpin,
+  type NoteLineSpan,
+  SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ,
+  type ScoreDisplayQuantizeKey,
+  type ScoreDisplaySettings,
+  type ScoreNoteAnnotation,
 } from '@/project/annotations';
 import {
   addNote,
@@ -74,12 +76,6 @@ const props = defineProps<{
   positionPpq?: () => number;
   /** True while the transport is playing; enables horizontal score following. */
   isPlaying?: boolean;
-  /** True when the transport loop region should be engraved as repeats. */
-  loopEnabled?: boolean;
-  /** Transport loop start in project PPQ. */
-  loopStartPpq?: number;
-  /** Transport loop end in project PPQ. */
-  loopEndPpq?: number;
 }>();
 
 const emit = defineEmits<{
@@ -98,20 +94,18 @@ const RETRANSCRIBE_DEBOUNCE_MS = 600;
 
 /** One Display Quantize grid choice. */
 interface DqChoice {
-  key: string;
+  key: ScoreDisplayQuantizeKey;
   label: string;
-  divisionPpq: number;
-  disabled?: boolean;
 }
 
-const DQ_CHOICES: ReadonlyArray<DqChoice> = [
-  { key: '4', label: '1/4', divisionPpq: 1 },
-  { key: '8', label: '1/8', divisionPpq: 0.5 },
-  { key: '16', label: '1/16', divisionPpq: 0.25 },
-  { key: '32', label: '1/32', divisionPpq: 0.125 },
-  { key: '8t', label: '1/8 T', divisionPpq: 1 / 3 },
-  { key: '16t', label: '1/16 T', divisionPpq: 1 / 6 },
-];
+function displayQuantizeLabel(key: ScoreDisplayQuantizeKey): string {
+  const triplet = key.endsWith('t');
+  return `1/${triplet ? key.slice(0, -1) : key}${triplet ? ' T' : ''}`;
+}
+
+const DQ_CHOICES: ReadonlyArray<DqChoice> = (
+  Object.keys(SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ) as ScoreDisplayQuantizeKey[]
+).map((key) => ({ key, label: displayQuantizeLabel(key) }));
 
 function projectScoreSetting<K extends keyof ScoreDisplaySettings>(key: K) {
   return computed<ScoreDisplaySettings[K]>({
@@ -138,7 +132,6 @@ const dqOptions = computed(() =>
   DQ_CHOICES.map((choice) => ({
     value: choice.key,
     label: choice.label,
-    disabled: choice.disabled,
   })),
 );
 const keyRootOptions = computed(() =>
@@ -322,8 +315,7 @@ let notesHandledForClipId: number | null = null;
 
 /** Current Display Quantize grid step in PPQ. */
 function divisionPpq(): number {
-  const choice = DQ_CHOICES.find((c) => c.key === dqKey.value && !c.disabled);
-  return choice ? choice.divisionPpq : 0.25;
+  return SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ[dqKey.value];
 }
 
 /**
@@ -365,15 +357,9 @@ const notation = useScoreNotation({
   getFullScoreEnabled: () => fullScoreEnabled.value,
   getEstimateFingering: () => estimateFingering.value,
   getGrandStaffSplitPitch: () => grandStaffSplitPitch.value,
-  getLoopRegion: () =>
-    props.loopEnabled === true &&
-    props.loopStartPpq !== undefined &&
-    props.loopEndPpq !== undefined &&
-    props.loopEndPpq > props.loopStartPpq
-      ? { startPpq: props.loopStartPpq, endPpq: props.loopEndPpq }
-      : null,
   getLayoutSettings: layoutSettings,
   resetPlayheadScan: () => playhead?.resetScan(),
+  createClient: () => new VerovioClient(),
 });
 
 // --- Playhead highlight ---------------------------------------------------------
@@ -705,9 +691,6 @@ watch(
     () => store.timeSignatures,
     () => store.pickupLengthPpq,
     () => store.projectName,
-    () => props.loopEnabled,
-    () => props.loopStartPpq,
-    () => props.loopEndPpq,
   ],
   scheduleRetranscribe,
 );

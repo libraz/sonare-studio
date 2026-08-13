@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import LayoutPopover from '@/components/score/LayoutPopover.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import type { ScoreDisplayQuantizeKey } from '@/project/annotations';
 import { useI18n } from '@/ui/i18n';
 import type { ScorePageFormatKey } from '@/ui/score/layout';
 
@@ -15,7 +16,11 @@ import type { ScorePageFormatKey } from '@/ui/score/layout';
 
 defineProps<{
   /** Display Quantize options for the grid select. */
-  dqOptions: ReadonlyArray<{ value: string; label: string; disabled?: boolean }>;
+  dqOptions: ReadonlyArray<{
+    value: ScoreDisplayQuantizeKey;
+    label: string;
+    disabled?: boolean;
+  }>;
   /** True while a render is in flight (disables transcribe / refresh / nav). */
   loading: boolean;
   /** True while a print/export action is running. */
@@ -40,7 +45,7 @@ defineProps<{
   transpose: number;
 }>();
 
-const dqKey = defineModel<string>('dqKey', { required: true });
+const dqKey = defineModel<ScoreDisplayQuantizeKey>('dqKey', { required: true });
 const chordsEnabled = defineModel<boolean>('chordsEnabled', { required: true });
 const fullScoreEnabled = defineModel<boolean>('fullScoreEnabled', { required: true });
 const estimateFingering = defineModel<boolean>('estimateFingering', { required: true });
