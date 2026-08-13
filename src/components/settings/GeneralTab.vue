@@ -107,21 +107,27 @@ const autosaveSeconds = computed<number>(() =>
 );
 
 function onAutosaveSecondsInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
+  const input = event.target as HTMLInputElement;
+  const value = Number(input.value);
   if (!Number.isFinite(value)) return;
   appSettings.set('autosaveIntervalMs', value * 1000);
+  input.value = String(autosaveSeconds.value);
 }
 
 function onCountInInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
+  const input = event.target as HTMLInputElement;
+  const value = Number(input.value);
   if (!Number.isFinite(value)) return;
   appSettings.set('countInBars', value);
+  input.value = String(appSettings.settings.countInBars);
 }
 
 function onLoudnessTargetInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value);
+  const input = event.target as HTMLInputElement;
+  const value = Number(input.value);
   if (!Number.isFinite(value)) return;
   appSettings.set('loudnessTargetLufs', value);
+  input.value = String(appSettings.settings.loudnessTargetLufs);
 }
 </script>
 

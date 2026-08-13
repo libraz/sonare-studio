@@ -22,6 +22,16 @@ function qa<T extends Element = HTMLElement>(selector: string): T[] {
   return Array.from(document.body.querySelectorAll<T>(selector));
 }
 
+/** Finds a numeric General-tab input by its visible row label. */
+function inputForLabel(label: string): HTMLInputElement {
+  const row = qa<HTMLElement>('.settings-row').find(
+    (item) => item.querySelector('.settings-row__label')?.textContent?.trim() === label,
+  );
+  const input = row?.querySelector<HTMLInputElement>('input[type="number"]');
+  if (!input) throw new Error(`numeric input not found for ${label}`);
+  return input;
+}
+
 /** Opens the SelectMenu matched by `selector` and picks the option `label`. */
 async function selectOption(selector: string, label: string): Promise<void> {
   q(`${selector} .select-trigger`)?.click();
@@ -145,6 +155,29 @@ describe('SettingsDialog', () => {
     open();
     await selectByAria('Recording source', 'Master output');
     expect(useAppSettings().settings.recordingCaptureSource).toBe('output');
+  });
+
+  it('writes sanitized numeric settings back into their inputs', () => {
+    open();
+
+    const countIn = inputForLabel('Count-in (bars)');
+    countIn.value = '-9';
+    countIn.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const autosave = inputForLabel('Autosave interval (seconds)');
+    autosave.value = '0';
+    autosave.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const loudness = inputForLabel('Loudness target (LUFS)');
+    loudness.value = '-99';
+    loudness.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(useAppSettings().settings.countInBars).toBe(0);
+    expect(countIn.value).toBe('0');
+    expect(useAppSettings().settings.autosaveIntervalMs).toBe(5000);
+    expect(autosave.value).toBe('5');
+    expect(useAppSettings().settings.loudnessTargetLufs).toBe(-31);
+    expect(loudness.value).toBe('-31');
   });
 
   it('adds a captured shortcut without discarding existing bindings', async () => {
