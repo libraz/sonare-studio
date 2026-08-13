@@ -8,7 +8,7 @@ import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { DEFAULT_XML_LIMITS } from '@/lib/xml-preflight';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
 import { createBrowserBackupWithReport, restoreBrowserBackup } from '@/persistence/backup';
-import { gatherProjectBundleWithReport } from '@/persistence/bundle';
+import { gatherProjectBundleWithReport, restoreProjectBundle } from '@/persistence/bundle';
 import {
   downloadBrowserBackup,
   downloadSzd,
@@ -26,6 +26,7 @@ import {
   saveProjectChecked,
 } from '@/persistence/opfs';
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
+import { loadProjectRevision } from '@/persistence/revisions';
 import { encodeSzd } from '@/persistence/szd';
 import {
   addNote,
@@ -61,6 +62,14 @@ vi.mock('@/persistence/opfs', () => ({
       .replace(/[\\/:*?"<>|]/g, '_')
       .trim(),
   saveProjectChecked: vi.fn(),
+}));
+
+vi.mock('@/persistence/revisions', () => ({
+  deleteProjectRevision: vi.fn(),
+  deleteProjectRevisions: vi.fn(),
+  listProjectRevisions: vi.fn(async () => []),
+  loadProjectRevision: vi.fn(),
+  saveProjectRevision: vi.fn(),
 }));
 
 vi.mock('@/composables/useDialogs', () => ({
@@ -113,7 +122,12 @@ vi.mock('@/persistence/bundle', () => ({
     bundle: { assets: [], fonts: [] },
     report: { complete: true, issues: [] },
   })),
-  restoreProjectBundle: vi.fn(async () => undefined),
+  restoreProjectBundle: vi.fn(async () => ({
+    assetIds: new Set<string>(),
+    fontIds: new Set<string>(),
+    release: vi.fn(),
+    rollback: vi.fn(async () => undefined),
+  })),
 }));
 
 function makeDocument(name: string): ProjectDocument {
@@ -131,6 +145,19 @@ function makeDocument(name: string): ProjectDocument {
 
 function nextTask(): Promise<void> {
   return new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+}
+
+function makeRestoreLease() {
+  const release = vi.fn();
+  const rollback = vi.fn(async () => {
+    release();
+  });
+  return {
+    assetIds: new Set<string>(),
+    fontIds: new Set<string>(),
+    release,
+    rollback,
+  };
 }
 
 function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}) {
@@ -177,6 +204,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     store.dispose();
     clearMixerSnapshots();
     vi.mocked(loadProjectWithRevision).mockReset();
+    vi.mocked(loadProjectRevision).mockReset();
     vi.mocked(renameProject).mockReset();
     vi.mocked(loadProjectWithRevision).mockResolvedValue({
       bytes: encodeSzd(makeDocument('Stored Project')),
@@ -209,6 +237,8 @@ describe('useProjectPersistence autosave refresh after load', () => {
       bundle: { assets: [], fonts: [] },
       report: { complete: true, issues: [] },
     });
+    vi.mocked(restoreProjectBundle).mockReset();
+    vi.mocked(restoreProjectBundle).mockResolvedValue(makeRestoreLease());
     localStorage.clear();
   });
 
@@ -300,6 +330,53 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(useProjectStore().projectName).toBe('Stored Project');
   });
 
+  it('restores a revision and saves the result back to the existing slot', async () => {
+    const originalBytes = encodeSzd(makeDocument('Stored Project'));
+    const restoredBytes = encodeSzd(makeDocument('Restored Project'));
+    let slotBytes = originalBytes;
+    vi.mocked(loadProjectWithRevision).mockImplementation(async () => ({
+      bytes: slotBytes,
+      revision: slotBytes === originalBytes ? 'revision-1' : 'revision-2',
+    }));
+    vi.mocked(loadProjectRevision).mockResolvedValue(restoredBytes);
+    vi.mocked(saveProjectChecked).mockImplementation(async (_name, bytes) => {
+      slotBytes = new Uint8Array(bytes);
+      return 'revision-2';
+    });
+    const { autosave, confirmAction, persistence } = setup();
+
+    await persistence.openStoredProject('Stored Slot');
+    await flushPromises();
+    vi.mocked(saveProjectChecked).mockClear();
+
+    persistence.restoreRevision('revision-restored');
+    await flushPromises();
+    await nextTask();
+    expect(persistence.dirty.value).toBe(true);
+    confirmAction.mockResolvedValueOnce(false);
+    await persistence.openStoredProject('Other Slot');
+    await flushPromises();
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ title: expect.any(String) }),
+    );
+    persistence.saveProjectAction();
+    await flushPromises();
+    await nextTask();
+
+    expect(autosave.saveNow).toHaveBeenCalledTimes(3);
+    expect(saveProjectChecked).toHaveBeenCalledWith(
+      'Stored Slot',
+      expect.any(Uint8Array),
+      'revision-1',
+    );
+    await expect(loadProjectWithRevision('Stored Slot')).resolves.toMatchObject({
+      bytes: slotBytes,
+      revision: 'revision-2',
+    });
+    expect(slotBytes).not.toEqual(originalBytes);
+  });
+
   it('refreshes the autosave slot after importing an .szd file', async () => {
     vi.mocked(pickAndReadSzd).mockResolvedValue({
       name: 'imported.szd',
@@ -312,6 +389,24 @@ describe('useProjectPersistence autosave refresh after load', () => {
 
     expect(autosave.saveNow).toHaveBeenCalledTimes(1);
     expect(useProjectStore().projectName).toBe('Imported Project');
+  });
+
+  it('keeps an imported bundle lease through autosave and releases it on success', async () => {
+    vi.mocked(pickAndReadSzd).mockResolvedValue({
+      name: 'imported.szd',
+      bytes: encodeSzd(makeDocument('Imported Project')),
+    });
+    const restoreLease = makeRestoreLease();
+    vi.mocked(restoreProjectBundle).mockResolvedValue(restoreLease);
+    const { autosave, persistence } = setup();
+
+    await persistence.importSzdFile();
+    await flushPromises();
+
+    expect(restoreProjectBundle).toHaveBeenCalledOnce();
+    expect(autosave.saveNow).toHaveBeenCalledOnce();
+    expect(restoreLease.rollback).not.toHaveBeenCalled();
+    expect(restoreLease.release).toHaveBeenCalledOnce();
   });
 
   it('refreshes the autosave slot after importing a DAWproject file', async () => {
@@ -738,6 +833,18 @@ describe('useProjectPersistence autosave refresh after load', () => {
     store.pickupLengthPpq = 1;
     await flushPromises();
     expect(persistence.dirty.value).toBe(true);
+
+    await persistence.markClean();
+    store.controlSurface = {
+      protocol: 'mcu',
+      bankSize: 8,
+      bankOffset: 2,
+      inputPortId: 'surface-in',
+      outputPortId: 'surface-out',
+      feedback: true,
+    };
+    await flushPromises();
+    expect(persistence.dirty.value).toBe(true);
   });
 
   it('marks external MIDI and mixer snapshot registry changes dirty', async () => {
@@ -765,11 +872,13 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(persistence.dirty.value).toBe(true);
   });
 
-  it('keeps an imported project dirty when its required autosave fails', async () => {
+  it('keeps imported media live and the project dirty when its required autosave fails', async () => {
     vi.mocked(pickAndReadSzd).mockResolvedValue({
       name: 'imported.szd',
       bytes: encodeSzd(makeDocument('Imported Project')),
     });
+    const restoreLease = makeRestoreLease();
+    vi.mocked(restoreProjectBundle).mockResolvedValue(restoreLease);
     const { errorMessage, persistence } = setup({
       autosaveResult: false,
       autosaveError: new Error('autosave quota exceeded'),
@@ -781,6 +890,10 @@ describe('useProjectPersistence autosave refresh after load', () => {
 
     expect(persistence.dirty.value).toBe(true);
     expect(errorMessage.value).toContain('autosave quota exceeded');
+    // The document was already replaced, so rollback would delete media it
+    // references. The tab-lifetime lease owns protection after handoff.
+    expect(restoreLease.rollback).not.toHaveBeenCalled();
+    expect(restoreLease.release).toHaveBeenCalledOnce();
   });
 
   it('saves freshly after deleting the open project instead of a stale revision', async () => {

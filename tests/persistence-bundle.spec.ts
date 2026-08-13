@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  clearAudioAssetLeases,
+  isAudioAssetLeased,
+  isFontLeased,
+} from '@/persistence/asset-leases';
+import {
   clearAudioAssetCache,
   computeAssetId,
   loadAsset,
@@ -14,6 +19,7 @@ import {
   prepareAssetRestore,
   restoreProjectBundle,
 } from '@/persistence/bundle';
+import { garbageCollectMedia } from '@/persistence/gc';
 import { clearFontCache, loadFont, loadFontMeta, saveFont } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
@@ -58,6 +64,11 @@ function makeDocument(): ProjectDocument {
 
 function stereo(): Float32Array[] {
   return [new Float32Array([0.1, 0.2, 0.3, 0.4]), new Float32Array([-0.1, -0.2, -0.3, -0.4])];
+}
+
+/** A minimal RIFF/sfbk prefix; payload contents are irrelevant to bundle tests. */
+function sf2(...payload: number[]): Uint8Array {
+  return new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x73, 0x66, 0x62, 0x6b, ...payload]);
 }
 
 describe('bundle id collection', () => {
@@ -116,16 +127,20 @@ describe('bundled audio resource limits', () => {
 });
 
 describe('bundle gather/restore round-trip', () => {
+  let root: ReturnType<typeof installMockOpfs>;
+
   beforeEach(() => {
-    installMockOpfs();
+    root = installMockOpfs();
     clearAudioAssetCache();
     clearFontCache();
+    clearAudioAssetLeases();
   });
 
   afterEach(() => {
     uninstallMockOpfs();
     clearAudioAssetCache();
     clearFontCache();
+    clearAudioAssetLeases();
   });
 
   it('gathers referenced media and restores it into a fresh store', async () => {
@@ -136,7 +151,7 @@ describe('bundle gather/restore round-trip', () => {
     );
     await saveAsset({ id: 'take1', name: 'Take', sampleRate: 44100 }, stereo());
     await saveAsset({ id: 'frozen1', name: 'Frozen', sampleRate: 48000 }, stereo());
-    await saveFont({ id: 'fontA', name: 'Grand' }, new Uint8Array([1, 2, 3, 4, 5]));
+    await saveFont({ id: 'fontA', name: 'Grand' }, sf2(1, 2, 3, 4, 5));
     // An unreferenced asset must not be bundled.
     await saveAsset({ id: 'unused', name: 'Unused', sampleRate: 48000 }, stereo());
 
@@ -152,14 +167,18 @@ describe('bundle gather/restore round-trip', () => {
     clearFontCache();
     await expect(loadAsset('clip1')).rejects.toThrow();
 
-    await restoreProjectBundle(doc, bundle);
+    const restoreLease = await restoreProjectBundle(doc, bundle);
 
-    expect((await loadAsset('clip1')).channels).toEqual(stereo());
-    expect((await loadAssetMeta('clip1')).tags).toEqual({ lufs: -12 });
-    expect((await loadAsset('take1')).meta.sampleRate).toBe(44100);
-    expect((await loadAsset('frozen1')).channels).toEqual(stereo());
-    expect(await loadFont('fontA')).toEqual(new Uint8Array([1, 2, 3, 4, 5]));
-    expect((await loadFontMeta('fontA')).name).toBe('Grand');
+    try {
+      expect((await loadAsset('clip1')).channels).toEqual(stereo());
+      expect((await loadAssetMeta('clip1')).tags).toEqual({ lufs: -12 });
+      expect((await loadAsset('take1')).meta.sampleRate).toBe(44100);
+      expect((await loadAsset('frozen1')).channels).toEqual(stereo());
+      expect(await loadFont('fontA')).toEqual(sf2(1, 2, 3, 4, 5));
+      expect((await loadFontMeta('fontA')).name).toBe('Grand');
+    } finally {
+      restoreLease.release();
+    }
   });
 
   it('skips media that is not stored rather than failing the export', async () => {
@@ -184,7 +203,7 @@ describe('bundle gather/restore round-trip', () => {
     doc.tracks[0].frozen = undefined;
     doc.tracks[0].instrument = undefined;
 
-    await restoreProjectBundle(doc, {
+    const restoreLease = await restoreProjectBundle(doc, {
       assets: [
         {
           id: 'unreferenced',
@@ -194,6 +213,7 @@ describe('bundle gather/restore round-trip', () => {
       ],
       fonts: [],
     });
+    restoreLease.release();
 
     await expect(loadAsset('unreferenced')).rejects.toThrow();
   });
@@ -268,7 +288,7 @@ describe('bundle gather/restore round-trip', () => {
   });
 
   it('preflights font conflicts before committing an otherwise new audio asset', async () => {
-    const existingFont = new Uint8Array([1, 2, 3]);
+    const existingFont = sf2(1, 2, 3);
     await saveFont({ id: 'fontA', name: 'Existing font' }, existingFont);
     const audio = new Float32Array([0.25]);
     const doc = makeDocument();
@@ -296,9 +316,13 @@ describe('bundle gather/restore round-trip', () => {
           {
             id: 'fontA',
             meta: new TextEncoder().encode(
-              JSON.stringify({ id: 'fontA', name: 'Conflict', byteLength: 3 }),
+              JSON.stringify({
+                id: 'fontA',
+                name: 'Conflict',
+                byteLength: sf2(9, 9, 9).byteLength,
+              }),
             ),
-            sf2: new Uint8Array([9, 9, 9]),
+            sf2: sf2(9, 9, 9),
           },
         ],
       }),
@@ -306,5 +330,146 @@ describe('bundle gather/restore round-trip', () => {
 
     await expect(loadAsset('clip1')).rejects.toThrow();
     expect(await loadFont('fontA')).toEqual(existingFont);
+  });
+
+  it('keeps restored media leased until the importing caller commits it', async () => {
+    const doc = makeDocument();
+    doc.tracks[0].clips[0].takes = [];
+    doc.tracks[0].frozen = undefined;
+    const restoreLease = await restoreProjectBundle(doc, {
+      assets: [
+        {
+          id: 'clip1',
+          meta: new TextEncoder().encode(
+            JSON.stringify({
+              id: 'clip1',
+              name: 'Imported',
+              sampleRate: 48000,
+              numChannels: 2,
+              numFrames: 4,
+            }),
+          ),
+          pcm: new Uint8Array(
+            new Float32Array([0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]).buffer,
+          ).slice(),
+        },
+      ],
+      fonts: [
+        {
+          id: 'fontA',
+          meta: new TextEncoder().encode(
+            JSON.stringify({
+              id: 'fontA',
+              name: 'Imported font',
+              byteLength: sf2(1, 2, 3, 4).byteLength,
+            }),
+          ),
+          sf2: sf2(1, 2, 3, 4),
+        },
+      ],
+    });
+
+    expect(isAudioAssetLeased('clip1')).toBe(true);
+    expect(isFontLeased('fontA')).toBe(true);
+    await expect(garbageCollectMedia()).resolves.toMatchObject({
+      removedAssetIds: [],
+      removedFontIds: [],
+    });
+
+    restoreLease.release();
+    expect(isAudioAssetLeased('clip1')).toBe(false);
+    expect(isFontLeased('fontA')).toBe(false);
+    await expect(garbageCollectMedia()).resolves.toMatchObject({
+      removedAssetIds: ['clip1'],
+      removedFontIds: ['fontA'],
+    });
+  });
+
+  it('rolls back created media through the returned protected lease', async () => {
+    const doc = makeDocument();
+    doc.tracks[0].clips[0].takes = [];
+    doc.tracks[0].frozen = undefined;
+    const restoreLease = await restoreProjectBundle(doc, {
+      assets: [
+        {
+          id: 'clip1',
+          meta: new TextEncoder().encode(
+            JSON.stringify({
+              id: 'clip1',
+              name: 'Imported',
+              sampleRate: 48000,
+              numChannels: 2,
+              numFrames: 4,
+            }),
+          ),
+          pcm: new Uint8Array(
+            new Float32Array([0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]).buffer,
+          ).slice(),
+        },
+      ],
+      fonts: [],
+    });
+
+    await restoreLease.rollback();
+
+    await expect(loadAsset('clip1')).rejects.toThrow();
+    expect(isAudioAssetLeased('clip1')).toBe(false);
+  });
+
+  it('cleans newly-created media on restore failure before releasing its lease', async () => {
+    const doc = makeDocument();
+    doc.tracks[0].clips[0].takes = [];
+    doc.tracks[0].frozen = undefined;
+    const fonts = await root.getDirectoryHandle('fonts', { create: true });
+    const originalGetFileHandle = fonts.getFileHandle.bind(fonts);
+    fonts.getFileHandle = async (name, options) => {
+      const handle = await originalGetFileHandle(name, options);
+      if (name === 'fontA.json') {
+        handle.createWritable = async () => {
+          throw new Error('injected SoundFont publish failure');
+        };
+      }
+      return handle;
+    };
+
+    await expect(
+      restoreProjectBundle(doc, {
+        assets: [
+          {
+            id: 'clip1',
+            meta: new TextEncoder().encode(
+              JSON.stringify({
+                id: 'clip1',
+                name: 'Imported',
+                sampleRate: 48000,
+                numChannels: 2,
+                numFrames: 4,
+              }),
+            ),
+            pcm: new Uint8Array(
+              new Float32Array([0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]).buffer,
+            ).slice(),
+          },
+        ],
+        fonts: [
+          {
+            id: 'fontA',
+            meta: new TextEncoder().encode(
+              JSON.stringify({
+                id: 'fontA',
+                name: 'Imported font',
+                byteLength: sf2(1, 2, 3, 4).byteLength,
+              }),
+            ),
+            sf2: sf2(1, 2, 3, 4),
+          },
+        ],
+      }),
+    ).rejects.toThrow('injected SoundFont publish failure');
+
+    await expect(loadAsset('clip1')).rejects.toThrow();
+    await expect(loadFont('fontA')).rejects.toThrow();
+    expect(isAudioAssetLeased('clip1')).toBe(false);
+    expect(isFontLeased('fontA')).toBe(false);
   });
 });

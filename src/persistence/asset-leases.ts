@@ -181,7 +181,14 @@ publishLocalLeases();
 
 function increment(assetId: string): void {
   pruneExpiredRemoteLeases();
-  if (deletingIds.has(assetId) || remoteDeletingAssetIds.has(assetId))
+  // A second local owner may safely join an already-held lease while a remote
+  // tab has announced delete intent. The original local lease was advertised
+  // before that intent, so the remote collector's final recheck must retain
+  // the asset; rejecting the handoff would create a protection gap instead.
+  if (
+    (deletingIds.has(assetId) || remoteDeletingAssetIds.has(assetId)) &&
+    !leaseCounts.has(assetId)
+  )
     throw new AssetDeletionInProgressError(assetId);
   leaseCounts.set(assetId, (leaseCounts.get(assetId) ?? 0) + 1);
 }
@@ -194,7 +201,10 @@ function decrement(assetId: string): void {
 
 function incrementFont(fontId: string): void {
   pruneExpiredRemoteLeases();
-  if (deletingFontIds.has(fontId) || remoteDeletingFontIds.has(fontId))
+  if (
+    (deletingFontIds.has(fontId) || remoteDeletingFontIds.has(fontId)) &&
+    !fontLeaseCounts.has(fontId)
+  )
     throw new FontDeletionInProgressError(fontId);
   fontLeaseCounts.set(fontId, (fontLeaseCounts.get(fontId) ?? 0) + 1);
 }
@@ -227,7 +237,10 @@ export function leaseAudioAssets(assetIds: Iterable<string>): AudioAssetLease {
       const next = new Set(nextIds);
       const additions = [...next].filter((assetId) => !held.has(assetId));
       for (const assetId of additions) {
-        if (deletingIds.has(assetId) || remoteDeletingAssetIds.has(assetId))
+        if (
+          (deletingIds.has(assetId) || remoteDeletingAssetIds.has(assetId)) &&
+          !leaseCounts.has(assetId)
+        )
           throw new AssetDeletionInProgressError(assetId);
       }
       for (const assetId of additions) increment(assetId);
@@ -325,7 +338,10 @@ export function leaseFonts(fontIds: Iterable<string>): FontLease {
       const next = new Set(nextIds);
       const additions = [...next].filter((fontId) => !held.has(fontId));
       for (const fontId of additions) {
-        if (deletingFontIds.has(fontId) || remoteDeletingFontIds.has(fontId))
+        if (
+          (deletingFontIds.has(fontId) || remoteDeletingFontIds.has(fontId)) &&
+          !fontLeaseCounts.has(fontId)
+        )
           throw new FontDeletionInProgressError(fontId);
       }
       for (const fontId of additions) incrementFont(fontId);

@@ -26,6 +26,7 @@ import {
   mediaFailureIssues,
 } from '@/project/media-completeness';
 import type { ProjectDocument } from '@/project/serialization';
+import { type AudioAssetLease, type FontLease, leaseAudioAssets, leaseFonts } from './asset-leases';
 import {
   AssetNotFoundError,
   type AudioAssetMeta,
@@ -137,6 +138,83 @@ export interface PreparedFontRestore {
   id: string;
   meta: SoundFontMeta;
   data: Uint8Array;
+}
+
+/**
+ * Protects media published by an .szd restore until its document commit is
+ * visible to the live-document lease or has been persisted to a project slot.
+ *
+ * The caller owns this lease. It must release it after the live-document
+ * lease has acquired the restored ids (or after durable slot publication). A
+ * failed restore never returns a lease: its cleanup runs while the internal
+ * lease is still held, then the lease is released before the error propagates.
+ */
+export interface ProjectBundleRestoreLease {
+  readonly assetIds: ReadonlySet<string>;
+  readonly fontIds: ReadonlySet<string>;
+  /** Releases all media protection. Idempotent. */
+  release(): void;
+  /**
+   * Removes only pairs created by this restore while still protected. Use this
+   * when the caller fails before making the imported document live; once the
+   * document is visible, release the lease instead so its references remain
+   * valid even if a later autosave/reporting step fails.
+   */
+  rollback(): Promise<void>;
+}
+
+interface MutableProjectBundleRestoreLease extends ProjectBundleRestoreLease {
+  registerCreatedAsset(id: string): void;
+  registerCreatedFont(id: string): void;
+}
+
+function acquireProjectBundleRestoreLease(
+  assetIds: Iterable<string>,
+  fontIds: Iterable<string>,
+): MutableProjectBundleRestoreLease {
+  const protectedAssetIds = new Set(assetIds);
+  const protectedFontIds = new Set(fontIds);
+  const createdAssetIds = new Set<string>();
+  const createdFontIds = new Set<string>();
+  let audioLease: AudioAssetLease | undefined;
+  try {
+    audioLease = leaseAudioAssets(protectedAssetIds);
+    const soundFontLease: FontLease = leaseFonts(protectedFontIds);
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      soundFontLease.release();
+      audioLease?.release();
+    };
+    return {
+      assetIds: protectedAssetIds,
+      fontIds: protectedFontIds,
+      release,
+      async rollback(): Promise<void> {
+        if (released) return;
+        try {
+          await withPersistenceMutationLock(async () => {
+            await Promise.allSettled([
+              ...[...createdAssetIds].map((id) => deleteAssetUnlocked(id)),
+              ...[...createdFontIds].map((id) => deleteFontUnlocked(id)),
+            ]);
+          });
+        } finally {
+          release();
+        }
+      },
+      registerCreatedAsset(id): void {
+        createdAssetIds.add(id);
+      },
+      registerCreatedFont(id): void {
+        createdFontIds.add(id);
+      },
+    };
+  } catch (error) {
+    audioLease?.release();
+    throw error;
+  }
 }
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
@@ -276,7 +354,8 @@ export async function preflightFontRestore(entry: PreparedFontRestore): Promise<
 async function restoreProjectBundleUnlocked(
   doc: ProjectDocument,
   bundle: SzdMediaBundle,
-): Promise<void> {
+  restoreLease: MutableProjectBundleRestoreLease,
+): Promise<ProjectBundleRestoreLease> {
   const referencedAssets = collectReferencedAssetIds(doc);
   const referencedFonts = collectReferencedFontIds(doc);
   const assetEntries = bundle.assets
@@ -309,8 +388,7 @@ async function restoreProjectBundleUnlocked(
   try {
     for (const entry of assetEntries) {
       if (existingAssets.has(entry.id)) continue;
-      createdAssets.push(entry.id);
-      await saveAssetWithStatusUnlocked(
+      const saved = await saveAssetWithStatusUnlocked(
         {
           id: entry.id,
           name: entry.meta.name,
@@ -320,11 +398,21 @@ async function restoreProjectBundleUnlocked(
         },
         audioFromPreparedAssetRestore(entry),
       );
+      if (saved.created) {
+        createdAssets.push(entry.id);
+        restoreLease.registerCreatedAsset(entry.id);
+      }
     }
     for (const entry of fontEntries) {
       if (existingFonts.has(entry.id)) continue;
-      createdFonts.push(entry.id);
-      await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);
+      const saved = await saveFontWithStatusUnlocked(
+        { id: entry.id, name: entry.meta.name },
+        entry.data,
+      );
+      if (saved.created) {
+        createdFonts.push(entry.id);
+        restoreLease.registerCreatedFont(entry.id);
+      }
     }
   } catch (error) {
     await Promise.allSettled([
@@ -333,8 +421,43 @@ async function restoreProjectBundleUnlocked(
     ]);
     throw error;
   }
+  return restoreLease;
 }
 
-export function restoreProjectBundle(doc: ProjectDocument, bundle: SzdMediaBundle): Promise<void> {
-  return withPersistenceMutationLock(() => restoreProjectBundleUnlocked(doc, bundle));
+/**
+ * Restores document-referenced media and returns the lease protecting it.
+ *
+ * The lease is acquired before entering the origin-wide mutation lock so a
+ * concurrent tab's GC cannot observe a newly published pair without a
+ * protection announcement. Callers must release it after the imported
+ * document has become visible and/or durable. If preflight or commit fails,
+ * newly-created pairs are removed while this lease is still held.
+ */
+export function restoreProjectBundle(
+  doc: ProjectDocument,
+  bundle: SzdMediaBundle,
+): Promise<ProjectBundleRestoreLease> {
+  const referencedAssets = collectReferencedAssetIds(doc);
+  const referencedFonts = collectReferencedFontIds(doc);
+  const assetIds = bundle.assets
+    .filter((entry) => referencedAssets.has(entry.id))
+    .map((entry) => entry.id);
+  const fontIds = bundle.fonts
+    .filter((entry) => referencedFonts.has(entry.id))
+    .map((entry) => entry.id);
+  const restoreLease = acquireProjectBundleRestoreLease(assetIds, fontIds);
+  return (async () => {
+    try {
+      return await withPersistenceMutationLock(() =>
+        restoreProjectBundleUnlocked(doc, bundle, restoreLease),
+      );
+    } catch (error) {
+      // The unlocked restore has already cleaned newly-created media before
+      // rejecting. Keep this release outside the lock callback so lock
+      // acquisition failures are protected too, without masking the original
+      // error with a cleanup failure.
+      restoreLease.release();
+      throw error;
+    }
+  })();
 }

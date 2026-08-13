@@ -169,6 +169,39 @@ describe('cross-tab audio asset leases', () => {
     remote.close();
   });
 
+  it('allows a live lease to take over ids already protected locally during delete intent', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    vi.resetModules();
+    const leases = await import('@/persistence/asset-leases');
+    const remote = new FakeBroadcastChannel('sonare-studio:audio-asset-leases:v1');
+    const bundleAudioLease = leases.leaseAudioAssets(['bundle-audio']);
+    const liveAudioLease = leases.leaseAudioAssets([]);
+    const bundleFontLease = leases.leaseFonts(['bundle-font']);
+    const liveFontLease = leases.leaseFonts([]);
+
+    remote.postMessage({
+      type: 'delete-intent',
+      sessionId: 'deleting-tab',
+      assetIds: ['bundle-audio'],
+      fontIds: ['bundle-font'],
+    });
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+
+    // The bundle lease was advertised before the intent. Its handoff to the
+    // live document must not be rejected, otherwise releasing it could leave
+    // the just-imported document unprotected.
+    expect(() => liveAudioLease.update(['bundle-audio'])).not.toThrow();
+    expect(() => liveFontLease.update(['bundle-font'])).not.toThrow();
+    bundleAudioLease.release();
+    bundleFontLease.release();
+    expect(leases.isAudioAssetLeased('bundle-audio')).toBe(true);
+    expect(leases.isFontLeased('bundle-font')).toBe(true);
+
+    liveAudioLease.release();
+    liveFontLease.release();
+    remote.close();
+  });
+
   it('does not delete an asset when a newly observed tab replies late to delete synchronization', async () => {
     installMockOpfs();
     vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);

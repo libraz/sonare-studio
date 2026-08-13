@@ -21,7 +21,11 @@ import {
   reclaimOrphanedRestoreStagesAtStartup,
   restoreBrowserBackup,
 } from '@/persistence/backup';
-import { gatherProjectBundleWithReport, restoreProjectBundle } from '@/persistence/bundle';
+import {
+  gatherProjectBundleWithReport,
+  type ProjectBundleRestoreLease,
+  restoreProjectBundle,
+} from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
 import {
   downloadBrowserBackup,
@@ -159,7 +163,13 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   // tab still references. The lease is broadcast cross-tab (asset-leases.ts).
   const liveAssetLease = leaseAudioAssets([]);
   const liveFontLease = leaseFonts([]);
-  watchEffect(() => {
+  // A bundle lease that could not be handed off immediately stays here until
+  // the live-document lease can acquire the same ids. This is deliberately
+  // safer than dropping protection during a concurrent tab's delete intent.
+  const pendingBundleRestoreLeases = new Set<ProjectBundleRestoreLease>();
+  let bundleLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function updateLiveMediaLeases(): void {
     const fontIds = new Set<string>();
     for (const track of store.tracks) {
       if (track.instrument?.kind === 'sf2' && track.instrument.fontId) {
@@ -170,15 +180,65 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     const assetIds = collectReferencedAudioAssetIds(store.clips, store.tracks);
     for (const assetId of historyRefs.assetIds) assetIds.add(assetId);
     for (const fontId of historyRefs.fontIds) fontIds.add(fontId);
+    liveAssetLease.update(assetIds);
+    liveFontLease.update(fontIds);
+  }
+
+  function releasePendingBundleRestoreLeases(): void {
+    for (const lease of pendingBundleRestoreLeases) lease.release();
+    pendingBundleRestoreLeases.clear();
+    if (bundleLeaseRetryTimer !== undefined) {
+      clearTimeout(bundleLeaseRetryTimer);
+      bundleLeaseRetryTimer = undefined;
+    }
+  }
+
+  function scheduleBundleLeaseRetry(): void {
+    if (pendingBundleRestoreLeases.size === 0 || bundleLeaseRetryTimer !== undefined) return;
+    // GC waits at most one known-peer lease-synchronization interval before
+    // completing its intent, so retry after that window while the temporary
+    // bundle lease remains continuously advertised.
+    bundleLeaseRetryTimer = setTimeout(() => {
+      bundleLeaseRetryTimer = undefined;
+      try {
+        updateLiveMediaLeases();
+        releasePendingBundleRestoreLeases();
+      } catch (error) {
+        errorMessage.value = describeError(error);
+        scheduleBundleLeaseRetry();
+      }
+    }, 1_100);
+  }
+
+  function handOffBundleRestoreLease(lease: ProjectBundleRestoreLease): void {
     try {
-      liveAssetLease.update(assetIds);
-      liveFontLease.update(fontIds);
-    } catch {
-      // A concurrent delete of a now-referenced id is a transient race; the
-      // next document change re-attempts the lease.
+      // Do this explicitly rather than merely waiting for the watcher: the
+      // temporary bundle lease may be released only after the tab-lifetime
+      // lease has definitely acquired every document reference.
+      updateLiveMediaLeases();
+      lease.release();
+    } catch (error) {
+      pendingBundleRestoreLeases.add(lease);
+      errorMessage.value = describeError(error);
+      scheduleBundleLeaseRetry();
+    }
+  }
+
+  watchEffect(() => {
+    try {
+      updateLiveMediaLeases();
+      releasePendingBundleRestoreLeases();
+    } catch (error) {
+      // A live document reference must never be silently abandoned. Existing
+      // pending bundle leases remain held and the retry path keeps trying.
+      errorMessage.value = describeError(error);
+      scheduleBundleLeaseRetry();
     }
   });
   onScopeDispose(() => {
+    if (bundleLeaseRetryTimer !== undefined) clearTimeout(bundleLeaseRetryTimer);
+    for (const lease of pendingBundleRestoreLeases) lease.release();
+    pendingBundleRestoreLeases.clear();
     liveAssetLease.release();
     liveFontLease.release();
   });
@@ -463,16 +523,48 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       // Restore only document-referenced media after a full conflict preflight.
       // A conflicting/malformed bundle must block the import before the active
       // project changes, otherwise its ids could alias unrelated shared media.
-      if (opfsAvailable) {
-        await restoreProjectBundle(doc, decoded.bundle);
+      let restoreLease: ProjectBundleRestoreLease | undefined;
+      let documentBecameLive = false;
+      try {
+        if (opfsAvailable) {
+          restoreLease = await restoreProjectBundle(doc, decoded.bundle);
+        }
+        await replaceProjectDocument(doc);
+        documentBecameLive = true;
+        savedProjectSlot.value = null;
+        savedProjectRevision.value = null;
+        // Vue's live-document watcher normally runs in this turn. Await its
+        // flush, then make the lease handoff explicit before autosave; a later
+        // autosave failure must not roll back media the live document uses.
+        await nextTick();
+        if (restoreLease !== undefined) {
+          handOffBundleRestoreLease(restoreLease);
+          restoreLease = undefined;
+        }
+        const documentKey = await saveLoadedProjectToAutosave();
+        await markClean(documentKey);
+        openDialogOpen.value = false;
+        startScreenOpen.value = false;
+      } catch (error) {
+        if (restoreLease !== undefined) {
+          if (documentBecameLive) {
+            // The document now references these ids. Keep the temporary lease
+            // until the retryable live-lease handoff succeeds; deleting them
+            // here would turn a recoverable autosave failure into data loss.
+            pendingBundleRestoreLeases.add(restoreLease);
+            scheduleBundleLeaseRetry();
+          } else {
+            try {
+              await restoreLease.rollback();
+            } catch {
+              // Preserve the import failure; rollback releases the lease in
+              // its own finally block even when storage cleanup cannot
+              // complete.
+            }
+          }
+        }
+        throw error;
       }
-      await replaceProjectDocument(doc);
-      savedProjectSlot.value = null;
-      savedProjectRevision.value = null;
-      const documentKey = await saveLoadedProjectToAutosave();
-      await markClean(documentKey);
-      openDialogOpen.value = false;
-      startScreenOpen.value = false;
     });
   }
 
@@ -792,13 +884,26 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void (async () => {
       if (!(await confirmDiscard())) return;
       void runAction(async () => {
+        // Restoring a revision replaces only the live document; the named
+        // project slot remains untouched until the user saves. Re-read that
+        // slot's current content revision so the subsequent Save can compare
+        // against a real baseline instead of passing null (which means
+        // "create a new slot" to saveProjectChecked).
+        const savedSlot = savedProjectSlot.value;
+        const savedBaseline =
+          savedSlot === null ? null : (await loadProjectWithRevision(savedSlot)).revision;
         const bytes = await loadProjectRevision(slot);
         await replaceProjectDocument(await decodeSzdInWorker(bytes));
         // The restored document is unsaved work against the project slot: the
         // stored project keeps whatever it had until the user saves.
-        savedProjectRevision.value = null;
+        savedProjectRevision.value = savedBaseline;
         const documentKey = await saveLoadedProjectToAutosave();
         await markClean(documentKey);
+        // The autosave protects crash recovery, but it is not the named
+        // project commit promised by the revisions dialog. Keep the restored
+        // document dirty so opening another project still asks whether to
+        // discard it until an explicit Save succeeds.
+        dirty.value = true;
         revisionsDialogOpen.value = false;
         startScreenOpen.value = false;
       });
