@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { METER_SILENCE_DB, type MeterBridge } from '@/engine/meters';
+import type { MeterBridge } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
-import { isMeterAtFloor } from '@/ui/mixer/meter-model';
+import {
+  advanceMeterChannel,
+  createMeterChannel,
+  isMeterAtFloor,
+  METER_MIN_DB,
+  type MeterChannelModel,
+  meterFraction,
+  resetMeterClip,
+} from '@/ui/mixer/meter-model';
 import { colorWithAlpha, METER_ZONE_ALPHA, TOKENS } from '@/ui/theme/tokens';
 
 const props = withDefaults(
@@ -16,19 +24,10 @@ const props = withDefaults(
     /** Bottom of the visible dB range (top is 0 dBFS). */
     minDb?: number;
   }>(),
-  { bridge: null, width: 64, height: 180, minDb: -60 },
+  { bridge: null, width: 64, height: 180, minDb: METER_MIN_DB },
 );
 
 const { t } = useI18n();
-
-/** Displayed-peak falloff in dB per second. */
-const PEAK_DECAY_DB_PER_S = 24;
-/** RMS falloff in dB per second (slightly slower for a steadier bar). */
-const RMS_DECAY_DB_PER_S = 18;
-/** Peak-hold marker hold time in milliseconds before it starts falling. */
-const PEAK_HOLD_MS = 1000;
-/** Peak-hold marker falloff after the hold time, in dB per second. */
-const PEAK_HOLD_DECAY_DB_PER_S = 12;
 
 const GREEN_BELOW_DB = -12;
 const YELLOW_BELOW_DB = -6;
@@ -39,23 +38,17 @@ const ZONE_GREEN = colorWithAlpha(TOKENS.meterGreen, METER_ZONE_ALPHA);
 const ZONE_YELLOW = colorWithAlpha(TOKENS.meterYellow, METER_ZONE_ALPHA);
 const ZONE_RED = colorWithAlpha(TOKENS.meterRed, METER_ZONE_ALPHA);
 
-interface ChannelState {
-  peak: number;
-  rms: number;
-  hold: number;
-  holdAt: number;
-}
-
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let canvasCtx: CanvasRenderingContext2D | null = null;
 let rafId = 0;
 let lastTs = 0;
 /** True once the floor state was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
-const channels: ChannelState[] = [
-  { peak: METER_SILENCE_DB, rms: METER_SILENCE_DB, hold: METER_SILENCE_DB, holdAt: 0 },
-  { peak: METER_SILENCE_DB, rms: METER_SILENCE_DB, hold: METER_SILENCE_DB, holdAt: 0 },
+const channels: MeterChannelModel[] = [
+  createMeterChannel(props.minDb),
+  createMeterChannel(props.minDb),
 ];
+const clipped = ref(false);
 
 /** Resizes the canvas backing store for the current devicePixelRatio. */
 function resizeCanvas(): void {
@@ -73,26 +66,7 @@ function resizeCanvas(): void {
 
 /** Maps a dB value to a y coordinate (0 dB at top, minDb at bottom). */
 function dbToY(db: number, h: number): number {
-  const clamped = Math.min(0, Math.max(props.minDb, db));
-  return ((0 - clamped) / (0 - props.minDb)) * h;
-}
-
-/** Advances decay/falloff for one channel toward its target levels. */
-function updateChannel(
-  state: ChannelState,
-  targetPeak: number,
-  targetRms: number,
-  dt: number,
-  now: number,
-): void {
-  state.peak = Math.max(targetPeak, state.peak - PEAK_DECAY_DB_PER_S * dt, props.minDb);
-  state.rms = Math.max(targetRms, state.rms - RMS_DECAY_DB_PER_S * dt, props.minDb);
-  if (targetPeak >= state.hold) {
-    state.hold = targetPeak;
-    state.holdAt = now;
-  } else if (now - state.holdAt > PEAK_HOLD_MS) {
-    state.hold = Math.max(state.hold - PEAK_HOLD_DECAY_DB_PER_S * dt, props.minDb);
-  }
+  return (1 - meterFraction(db, props.minDb)) * h;
 }
 
 /** Draws one vertical meter bar (RMS fill + peak cap + hold marker). */
@@ -101,7 +75,7 @@ function drawBar(
   x: number,
   barW: number,
   h: number,
-  state: ChannelState,
+  model: MeterChannelModel,
 ): void {
   // Zone backdrop (dimmed) so the scale is visible even when silent.
   const yYellow = dbToY(GREEN_BELOW_DB, h);
@@ -114,7 +88,7 @@ function drawBar(
   ctx.fillRect(x, 0, barW, yRed);
 
   // RMS fill, clipped per zone for green/yellow/red coloring.
-  const yRms = dbToY(state.rms, h);
+  const yRms = dbToY(model.rmsDb, h);
   const fillZone = (color: string, zoneTop: number, zoneBottom: number): void => {
     const top = Math.max(yRms, zoneTop);
     if (top < zoneBottom) {
@@ -127,20 +101,20 @@ function drawBar(
   fillZone(TOKENS.meterRed, 0, yRed);
 
   // Peak cap line (color follows its own zone).
-  if (state.peak > props.minDb) {
-    const yPeak = dbToY(state.peak, h);
+  if (model.peakDb > props.minDb) {
+    const yPeak = dbToY(model.peakDb, h);
     ctx.fillStyle =
-      state.peak >= YELLOW_BELOW_DB
+      model.peakDb >= YELLOW_BELOW_DB
         ? TOKENS.meterPeakHot
-        : state.peak >= GREEN_BELOW_DB
+        : model.peakDb >= GREEN_BELOW_DB
           ? TOKENS.meterPeakWarm
           : TOKENS.meterPeakCool;
-    ctx.fillRect(x, Math.max(0, yPeak - 1), barW, 2);
+    ctx.fillRect(x, Math.max(0, yPeak - 1), barW, 1.5);
   }
 
   // Peak-hold marker.
-  if (state.hold > props.minDb) {
-    const yHold = dbToY(state.hold, h);
+  if (model.holdDb > props.minDb) {
+    const yHold = dbToY(model.holdDb, h);
     ctx.fillStyle = TOKENS.meterHold;
     ctx.fillRect(x, Math.max(0, yHold - 0.5), barW, 1);
   }
@@ -157,13 +131,26 @@ function draw(ts: number): void {
   lastTs = ts;
 
   const levels = props.bridge?.latest;
-  updateChannel(channels[0], levels?.peakDbL ?? props.minDb, levels?.rmsDbL ?? props.minDb, dt, ts);
-  updateChannel(channels[1], levels?.peakDbR ?? props.minDb, levels?.rmsDbR ?? props.minDb, dt, ts);
+  advanceMeterChannel(
+    channels[0],
+    { peakDb: levels?.peakDbL ?? props.minDb, rmsDb: levels?.rmsDbL ?? props.minDb },
+    dt,
+    ts,
+    props.minDb,
+  );
+  advanceMeterChannel(
+    channels[1],
+    { peakDb: levels?.peakDbR ?? props.minDb, rmsDb: levels?.rmsDbR ?? props.minDb },
+    dt,
+    ts,
+    props.minDb,
+  );
+  clipped.value = channels[0].clipped || channels[1].clipped;
 
   // Silent meters render identically every frame: paint the floor state once,
   // then skip the canvas work until levels rise again.
   const atFloor = channels.every((state) =>
-    isMeterAtFloor(state.peak, state.rms, state.hold, props.minDb),
+    isMeterAtFloor(state.peakDb, state.rmsDb, state.holdDb, props.minDb),
   );
   if (atFloor && idleFrameDrawn) return;
   idleFrameDrawn = atFloor;
@@ -180,6 +167,11 @@ function draw(ts: number): void {
   const barW = (w - scaleW - gap) / 2;
   drawBar(ctx, 0, barW, h, channels[0]);
   drawBar(ctx, barW + gap, barW, h, channels[1]);
+
+  // Keep the clip indicator in the scale lane so the transport meter retains
+  // its existing bar dimensions while exposing the same latch as StripMeter.
+  ctx.fillStyle = clipped.value ? TOKENS.meterRed : TOKENS.meterClipOff;
+  ctx.fillRect(2 * barW + gap, 0, scaleW, 3);
 
   // dB scale ticks + labels. Every tick gets a mark, but a label is skipped
   // when it would collide with the previous one so compact meters (e.g. the
@@ -199,6 +191,17 @@ function draw(ts: number): void {
     ctx.fillStyle = TOKENS.text3;
     ctx.fillText(`${db}`, 2 * barW + gap + 7, y);
   }
+}
+
+function onClick(): void {
+  for (const channel of channels) {
+    resetMeterClip(channel);
+    channel.holdDb = props.minDb;
+    channel.holdAtMs = 0;
+  }
+  clipped.value = false;
+  // The clip LED changed; force a repaint even when the bars are at rest.
+  idleFrameDrawn = false;
 }
 
 onMounted(() => {
@@ -221,8 +224,9 @@ watch(
   <canvas
     ref="canvasRef"
     class="level-meter"
-    :aria-label="t.shell.meters.stereo"
+    :aria-label="clipped ? t.shell.mixer.meter.clipped : t.shell.meters.stereo"
     role="img"
+    @click="onClick"
   />
 </template>
 
@@ -234,5 +238,6 @@ watch(
   background: var(--meter-well);
   border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
+  cursor: pointer;
 }
 </style>

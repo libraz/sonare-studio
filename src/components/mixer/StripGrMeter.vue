@@ -17,8 +17,10 @@ const props = withDefaults(
   defineProps<{
     /** Strip meter source; null leaves the readout hidden. */
     bridge?: MeterSource | null;
+    /** Whether the mixer dock is visible and this readout should refresh. */
+    visible?: boolean;
   }>(),
-  { bridge: null },
+  { bridge: null, visible: true },
 );
 
 const { t } = useI18n();
@@ -33,16 +35,19 @@ const fraction = computed(() =>
 let unsubscribe: (() => void) | null = null;
 
 function update(levels: StereoMeterLevels | undefined): void {
+  if (!props.visible) return;
   amountDb.value = gainReductionAmountDb(levels?.gainReductionDb) ?? null;
 }
 
 watch(
-  () => props.bridge,
-  (bridge) => {
+  () => [props.bridge, props.visible] as const,
+  ([bridge, visible]) => {
     unsubscribe?.();
     unsubscribe = null;
-    update(bridge?.latest);
-    if (bridge) unsubscribe = bridge.subscribe(update);
+    if (visible) {
+      update(bridge?.latest);
+      if (bridge) unsubscribe = bridge.subscribe(update);
+    }
   },
   { immediate: true },
 );

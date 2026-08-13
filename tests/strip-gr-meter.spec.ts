@@ -20,10 +20,12 @@ function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
 function makeMutableSource(levels: Partial<StereoMeterLevels> = {}): {
   source: MeterSource;
   emit: (levels: Partial<StereoMeterLevels>) => void;
+  subscribeCount: () => number;
   unsubscribeCount: () => number;
 } {
   let latest = sourceWith(levels).latest;
   const listeners = new Set<(levels: StereoMeterLevels) => void>();
+  let subscribed = 0;
   let unsubscribed = 0;
   return {
     source: {
@@ -31,6 +33,7 @@ function makeMutableSource(levels: Partial<StereoMeterLevels> = {}): {
         return latest;
       },
       subscribe(listener) {
+        subscribed += 1;
         listeners.add(listener);
         return () => {
           unsubscribed += 1;
@@ -42,6 +45,7 @@ function makeMutableSource(levels: Partial<StereoMeterLevels> = {}): {
       latest = { ...latest, ...next };
       for (const listener of listeners) listener(latest);
     },
+    subscribeCount: () => subscribed,
     unsubscribeCount: () => unsubscribed,
   };
 }
@@ -109,5 +113,31 @@ describe('StripGrMeter', () => {
     expect(first.unsubscribeCount()).toBe(1);
     await wrapper.vm.$nextTick();
     expect(wrapper.find('.strip-gr-value').text()).toBe('-2.0');
+  });
+
+  it('does not read or subscribe while the mixer dock is hidden', async () => {
+    const source = makeMutableSource({ gainReductionDb: -2 });
+    wrapper = mount(StripGrMeter, {
+      props: { bridge: source.source, visible: false },
+    });
+    await wrapper.vm.$nextTick();
+
+    expect(source.subscribeCount()).toBe(0);
+    expect(wrapper.find('.strip-gr').exists()).toBe(false);
+
+    await wrapper.setProps({ visible: true });
+    await wrapper.vm.$nextTick();
+    expect(source.subscribeCount()).toBe(1);
+    expect(wrapper.find('.strip-gr-value').text()).toBe('-2.0');
+
+    source.emit({ gainReductionDb: -4 });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('.strip-gr-value').text()).toBe('-4.0');
+
+    await wrapper.setProps({ visible: false });
+    expect(source.unsubscribeCount()).toBe(1);
+    source.emit({ gainReductionDb: -7 });
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('.strip-gr-value').text()).toBe('-4.0');
   });
 });

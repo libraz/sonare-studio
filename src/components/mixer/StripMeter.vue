@@ -66,6 +66,11 @@ const clipped = ref(false);
 const peakHoldDb = ref(props.minDb);
 const { t } = useI18n();
 
+/** Displays the floor as silence while preserving numeric peak values above it. */
+const peakHoldDisplay = computed(() =>
+  peakHoldDb.value <= props.minDb ? '-inf' : formatDb(peakHoldDb.value),
+);
+
 const title = computed(() =>
   props.placeholder
     ? t.value.shell.mixer.meter.noLive
@@ -292,7 +297,7 @@ watch(
       v-tooltip="title"
       @click="onClick"
     />
-    <span class="strip-meter-peak">{{ formatDb(peakHoldDb) }}</span>
+    <span class="strip-meter-peak">{{ peakHoldDisplay }}</span>
   </div>
 </template>
 

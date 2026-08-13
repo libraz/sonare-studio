@@ -501,7 +501,7 @@ onBeforeUnmount(() => {
       @change="(value) => onGainChange(value, true)"
     />
 
-    <StripGrMeter v-if="!isMaster" :bridge="props.bridge" />
+    <StripGrMeter v-if="!isMaster" :bridge="props.bridge" :visible="props.visible" />
 
     <MasterMeterReadout
       v-if="isMaster"

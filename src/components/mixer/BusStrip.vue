@@ -272,7 +272,7 @@ onBeforeUnmount(() => {
       :disabled="followsFader"
       @change="(value) => onFaderChange(value, true)"
     />
-    <StripGrMeter :bridge="props.bridge" />
+    <StripGrMeter :bridge="props.bridge" :visible="props.visible" />
 
     <div v-if="props.scope?.available" class="strip-analyzers">
       <SpectrumAnalyzer :scope="props.scope" :height="32" :visible="props.visible" />
