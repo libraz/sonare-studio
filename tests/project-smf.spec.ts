@@ -309,6 +309,20 @@ describe('smfToProjectDocument', () => {
     ]);
   });
 
+  it('imports 140,000 CC events without an argument-spread limit', async () => {
+    const count = 140_000;
+    const events: number[] = [];
+    for (let index = 0; index < count; index += 1) {
+      events.push(...varLen(index === 0 ? 0 : 1), 0xb0, 1, index & 0x7f);
+    }
+    events.push(...eot());
+
+    const doc = await smfToProjectDocument(smf(0, 480, [events]), 'many-cc.mid');
+    const clip = doc.tracks[0].clips[0];
+    expect(clip.ccLanes?.[0].points).toHaveLength(count);
+    expect(clip.lengthPpq).toBeGreaterThanOrEqual(count / 480);
+  });
+
   it('keeps an imported MIDI track with an empty clip', async () => {
     const bytes = smf(1, 480, [
       [...meta(0, 0x51, [0x07, 0xa1, 0x20]), ...eot()],
@@ -498,6 +512,17 @@ describe('smfToProjectDocument', () => {
     const exported = await projectDocumentToSmf(document);
     expect(extractSmfSysEx(exported)).toEqual(packets);
     expect(inspectSmfSysEx(exported)).toEqual({ packets: 2, payloadBytes: 7 });
+  });
+
+  it('round-trips a 200,000-byte F0 packet without an argument-spread limit', async () => {
+    const payload = Array.from({ length: 200_000 }, (_, index) => index & 0x7f);
+    const bytes = smf(0, 96, [
+      [...varLen(0), 0xf0, ...varLen(payload.length), ...payload, ...eot()],
+    ]);
+
+    const document = await smfToProjectDocument(bytes, 'large-sysex.mid');
+    const exported = await projectDocumentToSmf(document);
+    expect(extractSmfSysEx(exported)).toEqual([{ ppq: 0, status: 0xf0, data: payload }]);
   });
 
   it('rejects oversized SysEx before handing bytes to the native importer', async () => {

@@ -251,7 +251,7 @@ export function extractSmfSysEx(bytes: Uint8Array): SmfSysExPacket[] {
         packets.push({
           ppq: absoluteTicks / header.ticksPerQuarter,
           status: status as 0xf0 | 0xf7,
-          data: [...bytes.subarray(size[1], size[1] + size[0])],
+          data: Array.from(bytes.subarray(size[1], size[1] + size[0])),
         });
         offset = size[1] + size[0];
         continue;
@@ -671,16 +671,18 @@ function clipFromEvents(
     if (status === STATUS_POLY_PRESSURE)
       pushPolyPressure(polyPressures, ch, data1(event), event.ppq, data2(event));
   }
+  let maximumEventPpq = lengthPpq;
+  for (const note of notes) {
+    const noteEndPpq = note.startPpq + note.durationPpq;
+    if (noteEndPpq > maximumEventPpq) maximumEventPpq = noteEndPpq;
+  }
+  for (const event of events) {
+    if (event.ppq > maximumEventPpq) maximumEventPpq = event.ppq;
+  }
   const clip: DocumentClip = {
     name,
     startPpq: 0,
-    lengthPpq: displayClipLength(
-      Math.max(
-        lengthPpq,
-        ...notes.map((note) => note.startPpq + note.durationPpq),
-        ...events.map((event) => event.ppq),
-      ),
-    ),
+    lengthPpq: displayClipLength(maximumEventPpq),
     sourceOffsetPpq: 0,
     gain: 1,
     loopEnabled: false,
@@ -801,7 +803,13 @@ function documentFromProjectJson(
     const track = tracksById.get(clip.track_id);
     if (track?.kind !== 1) continue;
     const events = extractEvents(parsed.midi_content?.[String(clip.id)]);
-    tracks.push(...splitTrackByChannelAndProgram(track, clip, events, tracks.length));
+    // A valid SMF can split into one derived track per channel/bank/program
+    // group. Append iteratively rather than expanding an unbounded list as
+    // call arguments, which has a much smaller engine-specific limit than the
+    // accepted SMF event/file limits.
+    for (const derived of splitTrackByChannelAndProgram(track, clip, events, tracks.length)) {
+      tracks.push(derived);
+    }
   }
   const documentTracks: DocumentTrack[] =
     tracks.length > 0
@@ -819,7 +827,10 @@ function documentFromProjectJson(
           },
         ];
   if (sysEx.length > 0) {
-    const lastPpq = Math.max(0, ...sysEx.map((packet) => packet.ppq));
+    let lastPpq = 0;
+    for (const packet of sysEx) {
+      if (packet.ppq > lastPpq) lastPpq = packet.ppq;
+    }
     documentTracks.push({
       name: 'SMF SysEx',
       color: TRACK_COLOR_PALETTE[documentTracks.length % TRACK_COLOR_PALETTE.length],
@@ -831,7 +842,7 @@ function documentFromProjectJson(
       clips: [
         {
           ...clipFromEvents('SMF SysEx', Math.max(DEFAULT_CLIP_LENGTH_PPQ, lastPpq + 1), []),
-          smfSysEx: sysEx.map((packet) => ({ ...packet, data: [...packet.data] })),
+          smfSysEx: sysEx.map((packet) => ({ ...packet, data: packet.data.slice() })),
         },
       ],
     });
@@ -1124,12 +1135,17 @@ async function projectFromDocument(
     // SMF has no separate empty-clip representation. The scratch clip gives
     // native exporters a bounded timeline, but an event-free track can still
     // be omitted by an SMF writer; callers must treat it as a lossy boundary.
-    const startPpq = clips.length
-      ? Math.min(...clips.map((clip) => finiteNonNegative(clip.startPpq)))
-      : 0;
-    const endPpq = clips.length
-      ? Math.max(...clips.map((clip) => finiteNonNegative(clip.startPpq) + scratchClipLength(clip)))
-      : DEFAULT_CLIP_LENGTH_PPQ;
+    let startPpq = 0;
+    let endPpq = DEFAULT_CLIP_LENGTH_PPQ;
+    if (clips.length > 0) {
+      startPpq = Number.POSITIVE_INFINITY;
+      endPpq = 0;
+      for (const clip of clips) {
+        const clipStartPpq = finiteNonNegative(clip.startPpq);
+        startPpq = Math.min(startPpq, clipStartPpq);
+        endPpq = Math.max(endPpq, clipStartPpq + scratchClipLength(clip));
+      }
+    }
     const clipId = project.addClip({
       trackId,
       isMidi: true,
@@ -1274,7 +1290,7 @@ function documentSysExPackets(doc: ProjectDocument): TimelineSysExPacket[] {
         packets.push({
           ppq: packet.ppq,
           status: packet.status,
-          data: [...packet.data],
+          data: packet.data.slice(),
           timelinePpq: finiteNonNegative(clip.startPpq) + packet.ppq,
           order: packets.length,
         });
@@ -1301,12 +1317,12 @@ function appendDocumentSysEx(nativeSmf: Uint8Array, doc: ProjectDocument): Uint8
   let previousTick = 0;
   for (const packet of packets) {
     const tick = Math.max(0, Math.round(packet.timelinePpq * header.ticksPerQuarter));
-    trackData.push(
-      ...writeSmfVlq(tick - previousTick),
-      packet.status,
-      ...writeSmfVlq(packet.data.length),
-      ...packet.data,
-    );
+    const delta = writeSmfVlq(tick - previousTick);
+    for (const byte of delta) trackData.push(byte);
+    trackData.push(packet.status);
+    const payloadLength = writeSmfVlq(packet.data.length);
+    for (const byte of payloadLength) trackData.push(byte);
+    for (const byte of packet.data) trackData.push(byte);
     previousTick = tick;
   }
   trackData.push(0, 0xff, 0x2f, 0);
