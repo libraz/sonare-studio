@@ -1,18 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyGainDb,
+  applyGainDbInPlace,
   clampRange,
   dbToGain,
   fadeInLinear,
+  fadeInLinearInPlace,
   fadeOutLinear,
+  fadeOutLinearInPlace,
   frameCount,
   normalizeToDb,
+  normalizeToDbInPlace,
   peakAmplitude,
   resolveRange,
   reverse,
+  reverseInPlace,
   silence,
+  silenceInPlace,
   spliceRange,
   trimToRange,
+  trimToRangeInPlace,
 } from '@/ui/sample-editor/ops';
 
 /** Shorthand: plain number arrays to planar Float32Array channels. */
@@ -111,6 +118,43 @@ describe('applyGainDb', () => {
   it('rejects non-finite gain', () => {
     expect(() => applyGainDb(ch([1]), Number.NaN)).toThrow(RangeError);
     expect(() => applyGainDb(ch([1]), Number.POSITIVE_INFINITY)).toThrow(RangeError);
+  });
+});
+
+describe('owned worker operations', () => {
+  it('mutates transferred buffers in place instead of allocating copies', () => {
+    const channels = ch([1, 1, 1, 1]);
+    expect(applyGainDbInPlace(channels, -20)).toBe(channels);
+    expect(plain(channels)[0][0]).toBeCloseTo(0.1, 6);
+
+    const fades = ch([1, 1, 1]);
+    expect(fadeInLinearInPlace(fades)).toBe(fades);
+    expect(plain(fades)).toEqual([[0, 0.5, 1]]);
+
+    const fadeOut = ch([1, 1, 1]);
+    expect(fadeOutLinearInPlace(fadeOut)).toBe(fadeOut);
+    expect(plain(fadeOut)).toEqual([[1, 0.5, 0]]);
+
+    const normalized = ch([0.25, -0.5]);
+    expect(normalizeToDbInPlace(normalized, 0)).toBe(normalized);
+    expect(plain(normalized)).toEqual([[0.5, -1]]);
+
+    const reversed = ch([1, 2, 3]);
+    expect(reverseInPlace(reversed)).toBe(reversed);
+    expect(plain(reversed)).toEqual([[3, 2, 1]]);
+
+    const silenced = ch([1, 2, 3]);
+    expect(silenceInPlace(silenced, { startFrame: 1, endFrame: 3 })).toBe(silenced);
+    expect(plain(silenced)).toEqual([[1, 0, 0]]);
+  });
+
+  it('trims with views into the transferred backing buffer', () => {
+    const channels = ch([1, 2, 3, 4]);
+    const result = trimToRangeInPlace(channels, { startFrame: 1, endFrame: 3 });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual(new Float32Array([2, 3]));
+    expect(result[0].buffer).toBe(channels[0].buffer);
+    expect(result[0].byteOffset).toBe(channels[0].BYTES_PER_ELEMENT);
   });
 });
 

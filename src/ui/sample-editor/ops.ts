@@ -111,6 +111,24 @@ export function applyGainDb(
   return out;
 }
 
+/** Applies gain in place to channel buffers owned by a worker. */
+export function applyGainDbInPlace(
+  channels: Float32Array[],
+  gainDb: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  if (!Number.isFinite(gainDb)) {
+    throw new RangeError(`gainDb must be finite, got ${gainDb}`);
+  }
+  assertPlanar(channels);
+  const { startFrame, endFrame } = resolveRange(channels, range);
+  const gain = dbToGain(gainDb);
+  for (const channel of channels) {
+    for (let i = startFrame; i < endFrame; i++) channel[i] *= gain;
+  }
+  return channels;
+}
+
 /**
  * Scales the range so its peak hits the target level. The scale factor is
  * shared across channels (the stereo image is preserved) and both the peak
@@ -142,6 +160,26 @@ export function normalizeToDb(
   return out;
 }
 
+/** Normalizes in place to channel buffers owned by a worker. */
+export function normalizeToDbInPlace(
+  channels: Float32Array[],
+  targetDb: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  if (!Number.isFinite(targetDb)) {
+    throw new RangeError(`targetDb must be finite, got ${targetDb}`);
+  }
+  assertPlanar(channels);
+  const resolved = resolveRange(channels, range);
+  const peak = peakAmplitude(channels, resolved);
+  if (peak === 0) return channels;
+  const gain = dbToGain(targetDb) / peak;
+  for (const channel of channels) {
+    for (let i = resolved.startFrame; i < resolved.endFrame; i++) channel[i] *= gain;
+  }
+  return channels;
+}
+
 /** Ramp multiplier at frame i of an n-frame linear fade-in (0 at i=0). */
 function fadeInMultiplier(i: number, n: number): number {
   return n <= 1 ? 0 : i / (n - 1);
@@ -170,6 +208,20 @@ export function fadeInLinear(
   return out;
 }
 
+/** Applies a fade-in in place to channel buffers owned by a worker. */
+export function fadeInLinearInPlace(
+  channels: Float32Array[],
+  range?: SampleRange | null,
+): Float32Array[] {
+  assertPlanar(channels);
+  const { startFrame, endFrame } = resolveRange(channels, range);
+  const n = endFrame - startFrame;
+  for (const channel of channels) {
+    for (let i = 0; i < n; i++) channel[startFrame + i] *= fadeInMultiplier(i, n);
+  }
+  return channels;
+}
+
 /**
  * Applies a linear fade-out across the range (whole file when omitted): the
  * first frame keeps its original level and the last frame becomes silent.
@@ -186,6 +238,20 @@ export function fadeOutLinear(
     for (let i = 0; i < n; i++) channel[startFrame + i] *= fadeOutMultiplier(i, n);
   }
   return out;
+}
+
+/** Applies a fade-out in place to channel buffers owned by a worker. */
+export function fadeOutLinearInPlace(
+  channels: Float32Array[],
+  range?: SampleRange | null,
+): Float32Array[] {
+  assertPlanar(channels);
+  const { startFrame, endFrame } = resolveRange(channels, range);
+  const n = endFrame - startFrame;
+  for (const channel of channels) {
+    for (let i = 0; i < n; i++) channel[startFrame + i] *= fadeOutMultiplier(i, n);
+  }
+  return channels;
 }
 
 /** Reverses the samples inside the range (whole file when omitted). */
@@ -206,6 +272,23 @@ export function reverse(
   return out;
 }
 
+/** Reverses in place inside channel buffers owned by a worker. */
+export function reverseInPlace(
+  channels: Float32Array[],
+  range?: SampleRange | null,
+): Float32Array[] {
+  assertPlanar(channels);
+  const { startFrame, endFrame } = resolveRange(channels, range);
+  for (const channel of channels) {
+    for (let lo = startFrame, hi = endFrame - 1; lo < hi; lo++, hi--) {
+      const tmp = channel[lo];
+      channel[lo] = channel[hi];
+      channel[hi] = tmp;
+    }
+  }
+  return channels;
+}
+
 /** Replaces the range (whole file when omitted) with silence. */
 export function silence(
   channels: ReadonlyArray<Float32Array>,
@@ -216,6 +299,17 @@ export function silence(
   const out = copyChannels(channels);
   for (const channel of out) channel.fill(0, startFrame, endFrame);
   return out;
+}
+
+/** Silences in place inside channel buffers owned by a worker. */
+export function silenceInPlace(
+  channels: Float32Array[],
+  range?: SampleRange | null,
+): Float32Array[] {
+  assertPlanar(channels);
+  const { startFrame, endFrame } = resolveRange(channels, range);
+  for (const channel of channels) channel.fill(0, startFrame, endFrame);
+  return channels;
 }
 
 /**
@@ -236,6 +330,20 @@ export function trimToRange(
     throw new RangeError('Cannot trim to an empty range');
   }
   return channels.map((channel) => channel.slice(startFrame, endFrame));
+}
+
+/**
+ * Returns views into transferred channel buffers without copying them. The
+ * worker owns those buffers, so retaining the original backing allocation is
+ * safe and avoids a second full-size allocation for a trim.
+ */
+export function trimToRangeInPlace(channels: Float32Array[], range: SampleRange): Float32Array[] {
+  assertPlanar(channels);
+  const { startFrame, endFrame } = clampRange(range, frameCount(channels));
+  if (endFrame <= startFrame) {
+    throw new RangeError('Cannot trim to an empty range');
+  }
+  return channels.map((channel) => channel.subarray(startFrame, endFrame));
 }
 
 /**

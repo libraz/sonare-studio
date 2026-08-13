@@ -2,23 +2,36 @@
 
 import {
   applyGainDb,
+  applyGainDbInPlace,
   fadeInLinear,
+  fadeInLinearInPlace,
   fadeOutLinear,
+  fadeOutLinearInPlace,
   normalizeToDb,
+  normalizeToDbInPlace,
   reverse,
+  reverseInPlace,
   type SampleRange,
   silence,
+  silenceInPlace,
   trimToRange,
+  trimToRangeInPlace,
 } from '@/ui/sample-editor/ops';
 
 export type SampleOperationRequest =
-  | { type: 'gain'; channels: Float32Array[]; range: SampleRange; db: number }
-  | { type: 'normalize'; channels: Float32Array[]; range: SampleRange; targetDb: number }
-  | { type: 'fade-in'; channels: Float32Array[]; range: SampleRange }
-  | { type: 'fade-out'; channels: Float32Array[]; range: SampleRange }
-  | { type: 'reverse'; channels: Float32Array[]; range: SampleRange }
-  | { type: 'silence'; channels: Float32Array[]; range: SampleRange }
-  | { type: 'trim'; channels: Float32Array[]; range: SampleRange };
+  | { type: 'gain'; channels: Float32Array[]; range: SampleRange; db: number; owned?: boolean }
+  | {
+      type: 'normalize';
+      channels: Float32Array[];
+      range: SampleRange;
+      targetDb: number;
+      owned?: boolean;
+    }
+  | { type: 'fade-in'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
+  | { type: 'fade-out'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
+  | { type: 'reverse'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
+  | { type: 'silence'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
+  | { type: 'trim'; channels: Float32Array[]; range: SampleRange; owned?: boolean };
 
 export type SampleOperationResponse =
   | { type: 'done'; channels: Float32Array[] }
@@ -26,21 +39,26 @@ export type SampleOperationResponse =
 
 function perform(request: SampleOperationRequest): Float32Array[] {
   const { channels, range } = request;
+  const owned = request.owned === true;
   switch (request.type) {
     case 'gain':
-      return applyGainDb(channels, request.db, range);
+      return owned
+        ? applyGainDbInPlace(channels, request.db, range)
+        : applyGainDb(channels, request.db, range);
     case 'normalize':
-      return normalizeToDb(channels, request.targetDb, range);
+      return owned
+        ? normalizeToDbInPlace(channels, request.targetDb, range)
+        : normalizeToDb(channels, request.targetDb, range);
     case 'fade-in':
-      return fadeInLinear(channels, range);
+      return owned ? fadeInLinearInPlace(channels, range) : fadeInLinear(channels, range);
     case 'fade-out':
-      return fadeOutLinear(channels, range);
+      return owned ? fadeOutLinearInPlace(channels, range) : fadeOutLinear(channels, range);
     case 'reverse':
-      return reverse(channels, range);
+      return owned ? reverseInPlace(channels, range) : reverse(channels, range);
     case 'silence':
-      return silence(channels, range);
+      return owned ? silenceInPlace(channels, range) : silence(channels, range);
     case 'trim':
-      return trimToRange(channels, range);
+      return owned ? trimToRangeInPlace(channels, range) : trimToRange(channels, range);
   }
 }
 
