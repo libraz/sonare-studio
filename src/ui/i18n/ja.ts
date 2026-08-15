@@ -2151,6 +2151,30 @@ export const ja = {
       playheadPositionTitle: '小節.拍.16分.ティック - 位置を入力してEnterで再生ヘッドを移動',
     },
   },
+  harmony: {
+    cadence: {
+      label: '終止形',
+      authentic: '正格終止',
+      plagal: '変格終止',
+      half: '半終止',
+      deceptive: '偽終止',
+      short: {
+        authentic: '正格',
+        plagal: '変格',
+        half: '半',
+        deceptive: '偽',
+      },
+    },
+    borrowed: {
+      label: '借用和音',
+      parallelMinor: '同主短調からの借用和音',
+      parallelMajor: '同主長調からの借用和音',
+      neapolitan: 'ナポリの和音',
+    },
+    applied: {
+      label: '副属和音 {roman}',
+    },
+  },
   dialogs: {
     common: {
       ok: 'OK',
@@ -2505,6 +2529,31 @@ export const ja = {
       '11': '長7度',
       '12': 'オクターブ',
     },
+    scaleNames: {
+      major: 'メジャー',
+      ionian: 'イオニアン',
+      naturalMinor: '自然的短音階',
+      aeolian: 'エオリアン',
+      harmonicMinor: '和声的短音階',
+      melodicMinor: '旋律的短音階',
+      dorian: 'ドリアン',
+      phrygian: 'フリジアン',
+      lydian: 'リディアン',
+      mixolydian: 'ミクソリディアン',
+      locrian: 'ロクリアン',
+      lydianDominant: 'リディアン・ドミナント',
+      mixolydianB13: 'ミクソリディアン♭13',
+      locrianNatural2: 'ロクリアン♮2',
+      altered: 'オルタード',
+      phrygianDominant: 'フリジアン・ドミナント',
+      majorPentatonic: 'メジャー・ペンタトニック',
+      minorPentatonic: 'マイナー・ペンタトニック',
+      blues: 'ブルース',
+      wholeTone: 'ホールトーン',
+      octatonicHalfWhole: 'コンビネーション・ディミニッシュ',
+      octatonicWholeHalf: 'ディミニッシュ',
+      chromatic: '半音階',
+    },
     levelName: {
       beginner: '初心者',
       normal: '通常',
@@ -2539,6 +2588,7 @@ export const ja = {
         chordScale: {
           tensions: '重ねられる彩りの音:',
           avoid: '扱いに注意する音:',
+          alternates: 'ほかに合うスケール:',
         },
         counterpoint: {
           toBass: '下の音と {interval}（{consonance}）',
@@ -2581,6 +2631,7 @@ export const ja = {
         chordScale: {
           tensions: 'テンション',
           avoid: '回避',
+          alternates: 'または',
         },
         counterpoint: {
           toBass: '対バス {interval}（{consonance}）',
@@ -2623,6 +2674,7 @@ export const ja = {
         chordScale: {
           tensions: '使用可能テンション',
           avoid: 'アヴォイド音',
+          alternates: 'または',
         },
         counterpoint: {
           toBass: '対バス {interval}（{consonance}）',
@@ -2658,6 +2710,11 @@ export const ja = {
       tension: {
         term: 'テンション',
         definition: 'コードの基本構成音の上に重ねる彩りの音（9th・11th・13th）。',
+      },
+      chordScale: {
+        term: 'コードスケール',
+        definition:
+          '鳴っているコードに合うスケール。そのコード上でなじむ音と、重ねられる彩りの音を示す。',
       },
       anticipation: {
         term: '先取音（アンティシペーション）',

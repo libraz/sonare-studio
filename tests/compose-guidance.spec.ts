@@ -406,7 +406,7 @@ describe('buildTheoryCard', () => {
     expect(card.lines.length).toBeGreaterThan(0);
   });
 
-  it('adds a color-tone line with the chord scale available tensions', () => {
+  it('adds a color-tone line naming the chord scale and its available tensions', () => {
     const result = buildGuidance(
       guidanceInput({
         // A note over a Cmaj7 chord: ionian offers D and A as color tones.
@@ -416,6 +416,7 @@ describe('buildTheoryCard', () => {
     );
     const analysis = result.byNoteId.get(61);
     expect(analysis?.chordScale).toBeDefined();
+    expect(analysis?.chordScale?.rootPc).toBe(0);
     if (analysis === undefined) return;
     const card = buildTheoryCard(
       analysis,
@@ -424,9 +425,53 @@ describe('buildTheoryCard', () => {
     );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     expect(colorLine).toBeDefined();
-    expect(colorLine?.text).toContain('tensions');
-    expect(colorLine?.text).toContain('D');
-    expect(colorLine?.text).toContain('A');
+    expect(colorLine?.text).toBe('C Ionian · tensions D, A · avoid F · or Lydian');
+    expect(colorLine?.term?.term).toBe('Chord scale');
+  });
+
+  it('names the chord scale on its root even with no tensions or avoid notes', () => {
+    const analysis = {
+      degree: 1,
+      isScaleTone: true,
+      chordScale: { scaleName: 'dorian', rootPc: 2, tensions: [], avoid: [] },
+    } as NoteAnalysis;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 62, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    const colorLine = card.lines.find((line) => line.label === 'Color');
+    expect(colorLine?.text).toBe('D Dorian');
+  });
+
+  it('spells the chord-scale root with the key signature and localizes its name', () => {
+    const analysis = {
+      degree: 0,
+      isScaleTone: true,
+      chordScale: { scaleName: 'melodicMinor', rootPc: 10, tensions: [], avoid: [] },
+    } as NoteAnalysis;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 70, keySet: true, keyFifths: -2 },
+      theoryLabelsFor(MESSAGES.ja.theory, 'normal'),
+    );
+    const colorLine = card.lines.find((line) => line.label === 'カラー');
+    expect(colorLine?.text).toBe('Bb 旋律的短音階');
+  });
+
+  it('falls back to the raw scale name when the locale has no name for it', () => {
+    const analysis = {
+      degree: 0,
+      isScaleTone: true,
+      chordScale: { scaleName: 'bebopDominant', rootPc: 0, tensions: [], avoid: [] },
+    } as NoteAnalysis;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 60, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    const colorLine = card.lines.find((line) => line.label === 'Color');
+    expect(colorLine?.text).toBe('C bebopDominant');
   });
 
   it('localizes the card from the Japanese message bundle', () => {

@@ -74,14 +74,19 @@ export interface TheoryLabels {
   >;
   /** Simple interval names keyed by semitone distance "0".."12" (unison..octave). */
   intervalNames: Readonly<Record<string, string>>;
+  /** Scale display names keyed by libcantus scale name (e.g. 'dorian'). */
+  scaleNames: Readonly<Record<string, string>>;
   /** Scale-degree line template, with a `{degree}` placeholder. */
   scaleDegree: string;
   /** Suffix appended to the scale line for a non-scale tone. */
   nonScaleSuffix: string;
   /** Scale line shown when the degree is unknown. */
   nonScaleTone: string;
-  /** Prefixes for the color-tone line's available tensions and avoid notes. */
-  chordScale: Readonly<Record<'tensions' | 'avoid', string>>;
+  /**
+   * Prefixes for the color-tone line's available tensions, avoid notes, and
+   * runner-up scale fits.
+   */
+  chordScale: Readonly<Record<'tensions' | 'avoid' | 'alternates', string>>;
   /** Voice-relative (counterpoint) wording. */
   counterpoint: CounterpointLabels;
   /** Glossary of jargon terms, keyed by term id (see {@link GLOSSARY_KEY_FOR_KIND}). */
@@ -130,6 +135,7 @@ export interface LocalizedTheory {
   functions: TheoryLabels['functions'];
   lines: TheoryLabels['lines'];
   intervalNames: TheoryLabels['intervalNames'];
+  scaleNames: TheoryLabels['scaleNames'];
   levels: Readonly<Record<string, TheoryLevelLabels>>;
   glossary: TheoryLabels['glossary'];
 }
@@ -149,6 +155,7 @@ export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryL
     functions: theory.functions,
     lines: theory.lines,
     intervalNames: theory.intervalNames,
+    scaleNames: theory.scaleNames,
     lock: levelLabels.lock,
     safety: levelLabels.safety,
     labels: levelLabels.labels,
@@ -168,17 +175,26 @@ const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>>
   [NoteSafety.Dissonant]: 'dissonant',
 };
 
-/** Joins pitch classes into a sharp-spelled name list (e.g. "D, A"). */
+/** Octave-less name of a pitch class, spelled for the key (e.g. "Eb"). */
+function pitchClassName(pc: number, keyFifths?: number): string {
+  return pitchName(60 + (((pc % 12) + 12) % 12), keyFifths).replace(/-?\d+$/, '');
+}
+
+/** Joins pitch classes into a name list (e.g. "D, A"). */
 function pitchClassList(pitchClasses: ReadonlyArray<number>, keyFifths?: number): string {
-  return pitchClasses
-    .map((pc) => pitchName(60 + (((pc % 12) + 12) % 12), keyFifths).replace(/4$/, ''))
-    .join(', ');
+  return pitchClasses.map((pc) => pitchClassName(pc, keyFifths)).join(', ');
+}
+
+/** Localized scale name, falling back to the library's raw name when unmapped. */
+function scaleDisplayName(scaleName: string, labels: TheoryLabels): string {
+  return labels.scaleNames[scaleName] ?? scaleName;
 }
 
 /**
- * The color-tone line for the sounding chord's best-fit scale: its available
- * tensions and avoid notes. Returns undefined when neither is present (a plain
- * triad in its own scale has nothing extra to say).
+ * The color-tone line for the sounding chord: the best-fit scale named on its
+ * root, then its available tensions and avoid notes, then any runner-up fits.
+ * The scale name alone is worth the line, so it is emitted even when the chord
+ * offers neither tensions nor avoid notes.
  */
 function chordScaleText(
   analysis: NoteAnalysis,
@@ -187,14 +203,21 @@ function chordScaleText(
 ): string | undefined {
   const chordScale = analysis.chordScale;
   if (chordScale === undefined) return undefined;
-  const parts: string[] = [];
+  const parts: string[] = [
+    `${pitchClassName(chordScale.rootPc, keyFifths)} ${scaleDisplayName(chordScale.scaleName, labels)}`,
+  ];
   if (chordScale.tensions.length > 0) {
     parts.push(`${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions, keyFifths)}`);
   }
   if (chordScale.avoid.length > 0) {
     parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid, keyFifths)}`);
   }
-  return parts.length > 0 ? parts.join(' · ') : undefined;
+  const alternates = chordScale.alternates ?? [];
+  if (alternates.length > 0) {
+    const names = alternates.map((name) => scaleDisplayName(name, labels)).join(', ');
+    parts.push(`${labels.chordScale.alternates} ${names}`);
+  }
+  return parts.join(' · ');
 }
 
 /** Beginner text for one non-chord-tone label, or undefined when unmapped. */
@@ -384,7 +407,14 @@ export function buildTheoryCard(
     lines.push({ label: labels.lines.scale, text });
   }
   const colorTones = chordScaleText(analysis, labels, ctx.keyFifths);
-  if (colorTones !== undefined) lines.push({ label: labels.lines.chordScale, text: colorTones });
+  if (colorTones !== undefined) {
+    const term = labels.glossary.chordScale;
+    lines.push({
+      label: labels.lines.chordScale,
+      text: colorTones,
+      ...(term !== undefined ? { term } : {}),
+    });
+  }
   lines.push(...counterpointLines(analysis, labels, ctx.keyFifths));
   const nct = nctLine(analysis, labels);
   if (nct !== undefined) {

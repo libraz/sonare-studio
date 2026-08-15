@@ -2155,6 +2155,30 @@ export const en = {
         'Bar.Beat.Sixteenth.Tick - type a position and press Enter to move the playhead',
     },
   },
+  harmony: {
+    cadence: {
+      label: 'Cadence',
+      authentic: 'Authentic cadence',
+      plagal: 'Plagal cadence',
+      half: 'Half cadence',
+      deceptive: 'Deceptive cadence',
+      short: {
+        authentic: 'auth',
+        plagal: 'plag',
+        half: 'half',
+        deceptive: 'dec',
+      },
+    },
+    borrowed: {
+      label: 'Borrowed chord',
+      parallelMinor: 'Borrowed from the parallel minor',
+      parallelMajor: 'Borrowed from the parallel major',
+      neapolitan: 'Neapolitan chord',
+    },
+    applied: {
+      label: 'Applied dominant {roman}',
+    },
+  },
   dialogs: {
     common: {
       ok: 'OK',
@@ -2503,6 +2527,31 @@ export const en = {
       '11': 'major 7th',
       '12': 'octave',
     },
+    scaleNames: {
+      major: 'Major',
+      ionian: 'Ionian',
+      naturalMinor: 'Natural minor',
+      aeolian: 'Aeolian',
+      harmonicMinor: 'Harmonic minor',
+      melodicMinor: 'Melodic minor',
+      dorian: 'Dorian',
+      phrygian: 'Phrygian',
+      lydian: 'Lydian',
+      mixolydian: 'Mixolydian',
+      locrian: 'Locrian',
+      lydianDominant: 'Lydian dominant',
+      mixolydianB13: 'Mixolydian ♭13',
+      locrianNatural2: 'Locrian ♮2',
+      altered: 'Altered',
+      phrygianDominant: 'Phrygian dominant',
+      majorPentatonic: 'Major pentatonic',
+      minorPentatonic: 'Minor pentatonic',
+      blues: 'Blues',
+      wholeTone: 'Whole tone',
+      octatonicHalfWhole: 'Octatonic (half-whole)',
+      octatonicWholeHalf: 'Octatonic (whole-half)',
+      chromatic: 'Chromatic',
+    },
     levelName: {
       beginner: 'Beginner',
       normal: 'Normal',
@@ -2537,6 +2586,7 @@ export const en = {
         chordScale: {
           tensions: 'Colour notes you can add:',
           avoid: 'Notes to handle with care:',
+          alternates: 'also fits:',
         },
         counterpoint: {
           toBass: 'A {interval} above the lower note ({consonance})',
@@ -2579,6 +2629,7 @@ export const en = {
         chordScale: {
           tensions: 'tensions',
           avoid: 'avoid',
+          alternates: 'or',
         },
         counterpoint: {
           toBass: '{interval} above the bass ({consonance})',
@@ -2621,6 +2672,7 @@ export const en = {
         chordScale: {
           tensions: 'available tensions',
           avoid: 'avoid notes',
+          alternates: 'or',
         },
         counterpoint: {
           toBass: '{interval} above the bass ({consonance})',
@@ -2660,6 +2712,11 @@ export const en = {
         term: 'Tension',
         definition:
           'A colour note added above the basic chord (the 9th, 11th or 13th) that enriches its sound.',
+      },
+      chordScale: {
+        term: 'Chord scale',
+        definition:
+          'The scale that fits over the chord sounding underneath: the notes at home on it, plus the colour notes it invites.',
       },
       anticipation: {
         term: 'Anticipation',

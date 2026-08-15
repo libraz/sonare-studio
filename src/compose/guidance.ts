@@ -41,6 +41,12 @@ import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
 /** Representative octave anchor: pitch class pc is evaluated as MIDI 60 + pc. */
 const CENTER_C = 60;
 
+/**
+ * Scale fits kept per chord: the best one names the chord scale, the rest are
+ * offered as runners-up. Few enough that the card stays readable.
+ */
+const CHORD_SCALES_REPORTED = 3;
+
 export interface GuidanceInput {
   /** Active clip notes (clip-relative PPQ). */
   notes: ReadonlyArray<EditorNote>;
@@ -88,10 +94,17 @@ export interface GuidanceSegment {
 export interface ChordScaleInfo {
   /** Scale name (a key of libcantus NAMED_SCALES, e.g. 'ionian'). */
   scaleName: string;
+  /** Pitch class the scale is rooted on (the chord root). */
+  rootPc: number;
   /** Available-tension pitch classes (usable color tones) over the chord. */
   tensions: number[];
   /** Avoid-note pitch classes over the chord. */
   avoid: number[];
+  /**
+   * Runner-up scale names, next-best fit first. Same root as {@link scaleName},
+   * since the chord-scale relationship only roots scales on the chord root.
+   */
+  alternates?: string[];
 }
 
 /**
@@ -352,11 +365,18 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     const identity = `${chord.rootPc}:${chord.quality}:${chord.intervals.join(',')}:${chord.bassPc ?? -1}`;
     const cached = chordScaleCache.get(identity);
     if (cached !== undefined || chordScaleCache.has(identity)) return cached;
-    const report = tryEval(() => chordScaleReport(chord, 1));
+    const report = tryEval(() => chordScaleReport(chord, CHORD_SCALES_REPORTED));
     const best = report?.[0];
+    const alternates = (report ?? []).slice(1).map((entry) => entry.name);
     const info: ChordScaleInfo | undefined =
       best !== undefined
-        ? { scaleName: best.name, tensions: best.tensions, avoid: best.avoid }
+        ? {
+            scaleName: best.name,
+            rootPc: best.rootPc,
+            tensions: best.tensions,
+            avoid: best.avoid,
+            ...(alternates.length > 0 ? { alternates } : {}),
+          }
         : undefined;
     chordScaleCache.set(identity, info);
     return info;

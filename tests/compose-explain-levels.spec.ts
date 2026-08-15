@@ -1,3 +1,4 @@
+import { NAMED_SCALES } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { GLOSSARY_KEY_FOR_KIND, theoryLabelsFor } from '@/compose/explain';
 import { MESSAGES } from '@/ui/i18n';
@@ -5,8 +6,10 @@ import { MESSAGES } from '@/ui/i18n';
 /**
  * Coverage guard for the explanation-level wording table. Every explanation
  * level, in every locale, must carry non-empty wording for the full theory
- * vocabulary, and every glossary term the card can reference must exist. A gap
- * here means a note card would render a blank line or a missing definition.
+ * vocabulary, every scale the chord-scale report can name must have a display
+ * name, and every glossary term the card can reference must exist. A gap here
+ * means a note card would render a blank line, a raw library name, or a missing
+ * definition.
  */
 
 const LOCALES = ['en', 'ja'] as const;
@@ -19,9 +22,13 @@ const LABEL_KINDS = Object.entries(GLOSSARY_KEY_FOR_KIND)
   keyof (typeof MESSAGES)['en']['theory']['levels']['normal']['labels']
 >;
 
-/** Glossary keys the card resolves: the labelled kinds plus the three functions. */
+/**
+ * Glossary keys the card resolves: the labelled kinds, the chord-scale line's
+ * term, and the three functions.
+ */
 const GLOSSARY_KEYS = [
   ...new Set([...Object.values(GLOSSARY_KEY_FOR_KIND).filter((k): k is string => k !== undefined)]),
+  'chordScale',
   'tonic',
   'subdominant',
   'dominant',
@@ -42,8 +49,16 @@ describe('explanation-level wording', () => {
         expect(labels.nonScaleTone.length).toBeGreaterThan(0);
         expect(labels.chordScale.tensions.length).toBeGreaterThan(0);
         expect(labels.chordScale.avoid.length).toBeGreaterThan(0);
+        expect(labels.chordScale.alternates.length).toBeGreaterThan(0);
       });
     }
+
+    it(`${locale} names every scale the chord-scale report can return`, () => {
+      const { scaleNames } = MESSAGES[locale].theory;
+      for (const name of Object.keys(NAMED_SCALES)) {
+        expect(scaleNames[name as keyof typeof scaleNames], `scaleNames.${name}`).toBeTruthy();
+      }
+    });
 
     it(`${locale} defines every glossary term the card can reference`, () => {
       const { glossary } = MESSAGES[locale].theory;
