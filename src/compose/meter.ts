@@ -22,20 +22,6 @@ export function segmentToTimeSignature(segment: TimeSignatureSegment): TimeSigna
   };
 }
 
-/** Validated additive group lengths, or null when the segment is conventional. */
-function additiveGrouping(segment: TimeSignatureSegment): number[] | null {
-  const grouping = segment.grouping;
-  if (
-    grouping === undefined ||
-    grouping.length === 0 ||
-    !grouping.every((group) => Number.isInteger(group) && group > 0) ||
-    grouping.reduce((sum, group) => sum + group, 0) !== segment.numerator
-  ) {
-    return null;
-  }
-  return grouping;
-}
-
 /**
  * Returns the meter segment governing an absolute PPQ position: the last
  * segment starting at or before `ppq`, or the earliest segment when `ppq`
@@ -68,21 +54,11 @@ export function strongBeatAt(
 ): boolean {
   const segment = segmentAtPpq(segments, absBeat);
   const inSegmentBeat = Math.max(0, absBeat - segment.startPpq);
-  const grouping = additiveGrouping(segment);
-  if (grouping !== null) {
-    const unitPpq = 4 / segment.denominator;
-    const barLengthPpq = segment.numerator * unitPpq;
-    const inBarPpq = inSegmentBeat % barLengthPpq;
-    let boundaryPpq = 0;
-    for (const group of grouping) {
-      if (Math.abs(inBarPpq - boundaryPpq) < 1e-6) return true;
-      boundaryPpq += group * unitPpq;
-    }
-    return false;
-  }
   try {
     return isStrongBeat(inSegmentBeat, segmentToTimeSignature(segment));
   } catch {
+    // libcantus rejects a grouping that is empty, holds a non-positive-integer
+    // group, or sums to neither the numerator nor the bar's pulse count.
     return false;
   }
 }
