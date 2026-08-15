@@ -8,16 +8,29 @@
  * field may hold.
  */
 
-import { formatNote, midiToNote, noteNames, noteToMidi, parseNote } from '@libraz/libcantus';
+import { formatNote, midiToNote, noteToMidi, parseNote } from '@libraz/libcantus';
 
-/** Sharp-based pitch class names indexed by pitch class (0 = C ... 11 = B). */
-export const PITCH_CLASS_NAMES: readonly string[] = noteNames(
-  Array.from({ length: 12 }, (_unused, pitchClass) => {
-    // Drop the octave so each note names a bare pitch class.
-    const { letter, alter } = midiToNote(pitchClass, 'sharp');
-    return { letter, alter };
-  }),
-);
+/**
+ * Sharp-based pitch class names indexed by pitch class (0 = C ... 11 = B).
+ *
+ * Spelled out rather than derived at module scope: importing this module must
+ * not evaluate libcantus. The spec pins these against the library's own note
+ * names, so a drift in spelling convention still fails the suite.
+ */
+export const PITCH_CLASS_NAMES = [
+  'C',
+  'C#',
+  'D',
+  'D#',
+  'E',
+  'F',
+  'F#',
+  'G',
+  'G#',
+  'A',
+  'A#',
+  'B',
+] as const;
 
 /** ASCII accidental libcantus expects for each accepted accidental character. */
 const ACCIDENTALS: Readonly<Record<string, string>> = { '#': '#', '♯': '#', b: 'b', '♭': 'b' };

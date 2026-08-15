@@ -1,3 +1,4 @@
+import { midiToNote, noteNames } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { formatPitch, PITCH_CLASS_NAMES, parsePitch } from '@/lib/pitch';
 
@@ -149,6 +150,14 @@ describe('PITCH_CLASS_NAMES', () => {
       'A#',
       'B',
     ]);
+  });
+
+  it('matches the note names libcantus spells for the same pitch classes', () => {
+    const bare = Array.from({ length: 12 }, (_unused, pitchClass) => {
+      const { letter, alter } = midiToNote(pitchClass, 'sharp');
+      return { letter, alter };
+    });
+    expect(noteNames(bare)).toEqual([...PITCH_CLASS_NAMES]);
   });
 });
 
