@@ -273,6 +273,10 @@ export function buildClipMirror(
       // serialized values when the binding reports them.
       if (previous?.kind !== undefined) entry.kind = previous.kind;
       if (previous?.assetId !== undefined) entry.assetId = previous.assetId;
+      if (previous?.externalStemRole !== undefined) {
+        entry.externalStemRole = previous.externalStemRole;
+      }
+      if (previous?.contentHash !== undefined) entry.contentHash = previous.contentHash;
       if (previous?.takes !== undefined) {
         entry.takes = previous.takes.map((take) => ({ ...take }));
         if (previous.compSegments !== undefined) {

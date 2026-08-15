@@ -1,6 +1,7 @@
 import type { MidiNote } from '@/engine/instruments';
 import type { ChordFollowMode } from './chord-follow';
 import type { TrackExpressionMap } from './expression-map';
+import type { ExternalStemRole } from './external-stems';
 import type { TrackInstrument } from './instrument';
 import type { MidiFxConfig } from './midi-fx';
 import type { MixerStrip } from './mixer';
@@ -408,6 +409,16 @@ export interface EditorClip {
   kind?: ClipKind;
   /** Audio asset id (src/persistence/assets.ts); audio clips only. */
   assetId?: string;
+  /**
+   * Role of an externally separated stem this clip carries; absent for audio
+   * that did not come from a stem import (src/project/external-stems.ts).
+   */
+  externalStemRole?: ExternalStemRole;
+  /**
+   * Content hash of the clip's audio source, mirrored from the stem import;
+   * absent unless the clip carries external-stem provenance.
+   */
+  contentHash?: string;
   /** Fade-in length in PPQ (> 0 when present); audio clips only. */
   fadeInPpq?: number;
   /** Fade-out length in PPQ (> 0 when present); audio clips only. */

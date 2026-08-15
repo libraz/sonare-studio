@@ -23,6 +23,8 @@ defineProps<{
 const emit = defineEmits<{
   audioImportChange: [event: Event];
   audioImportInputRef: [el: HTMLInputElement | null];
+  stemImportChange: [event: Event];
+  stemImportInputRef: [el: HTMLInputElement | null];
   midiImportChange: [event: Event];
   midiImportInputRef: [el: HTMLInputElement | null];
   installPwa: [];
@@ -50,6 +52,16 @@ const { locale, t } = useI18n();
       aria-hidden="true"
       tabindex="-1"
       @change="emit('audioImportChange', $event)"
+    />
+    <input
+      :ref="(el) => emit('stemImportInputRef', el as HTMLInputElement | null)"
+      class="hidden-file-input"
+      type="file"
+      multiple
+      accept="audio/*"
+      aria-hidden="true"
+      tabindex="-1"
+      @change="emit('stemImportChange', $event)"
     />
     <input
       :ref="(el) => emit('midiImportInputRef', el as HTMLInputElement | null)"

@@ -64,6 +64,11 @@ export {
   splitClip,
   trimClip,
 } from './command/clips';
+export type {
+  ExternalStemImport,
+  ImportExternalStemsOptions,
+} from './command/external-stems';
+export { importExternalStems } from './command/external-stems';
 export type { GenerateArrangementParams } from './command/generate-arrangement';
 export { generateArrangementCommand } from './command/generate-arrangement';
 export type { BackingStyle, GenerateBackingParams } from './command/generate-backing';

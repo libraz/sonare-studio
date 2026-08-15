@@ -433,25 +433,35 @@ function stripExtension(fileName: string): string {
   return dot > 0 ? fileName.slice(0, dot) : fileName;
 }
 
+/** Planar result of {@link decodeAudioFile}. */
+export interface DecodedAudioFile {
+  /** Planar channel buffers (the source channel count is preserved). */
+  channels: Float32Array[];
+  /** Sample rate of the buffers in Hz (the decode context rate). */
+  sampleRate: number;
+  /** Display name taken from the file (extension stripped). */
+  name: string;
+}
+
 /**
- * Decodes an audio file in the browser and stores it as an asset.
+ * Decodes an audio file in the browser into planar buffers, without storing
+ * anything.
  *
  * Decoding uses OfflineAudioContext.decodeAudioData, which preserves the
  * source channel count (stereo stays stereo) but resamples to the context
  * rate (`options.sampleRate`, default 48000 Hz). Decoding allocates no audio
  * output and produces no sound.
  *
- * Not testable under jsdom (no OfflineAudioContext); all logic beyond the
- * decode lives in {@link ingestAudioBuffer}.
+ * Not testable under jsdom (no OfflineAudioContext).
  *
  * @param file Audio file (or its raw bytes).
- * @param options Optional name/rate/id/tags/analysis overrides.
- * @returns The stored asset metadata.
+ * @param options Optional name/rate overrides.
+ * @returns The decoded channels, their sample rate and the display name.
  */
-export async function decodeAndIngest(
+export async function decodeAudioFile(
   file: File | Blob | ArrayBuffer,
-  options: DecodeAndIngestOptions = {},
-): Promise<AudioAssetMeta> {
+  options: { name?: string; sampleRate?: number } = {},
+): Promise<DecodedAudioFile> {
   const inputByteLength = file instanceof ArrayBuffer ? file.byteLength : file.size;
   if (inputByteLength > MAX_EXTERNAL_AUDIO_FILE_BYTES) {
     throw new RangeError(
@@ -475,5 +485,23 @@ export async function decodeAndIngest(
   for (let c = 0; c < decoded.numberOfChannels; c++) {
     channels.push(new Float32Array(decoded.getChannelData(c)));
   }
-  return ingestAudioBuffer(channels, decoded.sampleRate, name, options);
+  return { channels, sampleRate: decoded.sampleRate, name };
+}
+
+/**
+ * Decodes an audio file in the browser and stores it as an asset.
+ *
+ * Not testable under jsdom (no OfflineAudioContext); all logic beyond the
+ * decode lives in {@link decodeAudioFile} and {@link ingestAudioBuffer}.
+ *
+ * @param file Audio file (or its raw bytes).
+ * @param options Optional name/rate/id/tags/analysis overrides.
+ * @returns The stored asset metadata.
+ */
+export async function decodeAndIngest(
+  file: File | Blob | ArrayBuffer,
+  options: DecodeAndIngestOptions = {},
+): Promise<AudioAssetMeta> {
+  const decoded = await decodeAudioFile(file, options);
+  return ingestAudioBuffer(decoded.channels, decoded.sampleRate, decoded.name, options);
 }

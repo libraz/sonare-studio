@@ -128,6 +128,7 @@ export const en = {
       openRecent: 'Open {name}',
       importMidi: 'Import MIDI...',
       importAudio: 'Import audio...',
+      importStems: 'Import separated stems...',
       importDawproject: 'Import DAWproject...',
       importMusicXml: 'Import MusicXML...',
       importBackup: 'Restore browser backup...',

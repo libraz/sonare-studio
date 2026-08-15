@@ -87,6 +87,7 @@ export interface AppShortcutsMenuOptions {
   exportSmf: () => void;
   exportSzd: () => void;
   importAudio: () => void;
+  importStems: () => void;
   importBrowserBackup: () => void;
   importDawproject: () => void;
   importMusicXml: () => void;
@@ -433,6 +434,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       sep('file.sep-import'),
       commandItem('file.importMidi', m.importMidi, options.importMidi),
       commandItem('file.importAudio', m.importAudio, options.importAudio),
+      commandItem('file.importStems', m.importStems, options.importStems),
       commandItem('file.importDawproject', m.importDawproject, options.importDawproject),
       commandItem('file.importMusicXml', m.importMusicXml, options.importMusicXml),
       commandItem('file.importBackup', m.importBackup, options.importBrowserBackup, {

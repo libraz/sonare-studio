@@ -41,6 +41,7 @@ import {
   sanitizeControlSurfaceSettings,
 } from './control-surface';
 import { sanitizeExpressionMap } from './expression-map';
+import { isExternalStemRole } from './external-stems';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
@@ -780,6 +781,15 @@ export const useProjectStore = defineStore('project', () => {
                 sourceUri: audioAssetUri(assetId),
               });
               loadedSourceIds.set(assetId, created.sourceCount());
+              // External-stem provenance rides the source, so replay it once
+              // per asset, on the clip that registered the source.
+              if (isExternalStemRole(clip.externalStemRole)) {
+                created.setAudioSourceMetadata(
+                  created.sourceCount(),
+                  typeof clip.contentHash === 'string' ? clip.contentHash : '',
+                  clip.externalStemRole,
+                );
+              }
             } else {
               // Later clips register a throwaway placeholder source and are
               // rebound to the asset's shared source right after.

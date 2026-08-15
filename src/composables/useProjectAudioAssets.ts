@@ -3,14 +3,22 @@ import { confirmDialog } from '@/composables/useDialogs';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
-import { analyzeAudioTags, decodeAndIngest, resolveAudioAnalysis } from '@/project/audio-import';
+import {
+  analyzeAudioTags,
+  decodeAndIngest,
+  decodeAudioFile,
+  resolveAudioAnalysis,
+} from '@/project/audio-import';
 import {
   addAudioClip,
   addBouncedClip,
+  type ExternalStemImport,
+  importExternalStems,
   replaceAudioClipAsset,
   setActiveClip,
   setClipWarp,
 } from '@/project/commands';
+import { inferExternalStemRole } from '@/project/external-stems';
 import { sliceAudioClipWindow } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
@@ -31,6 +39,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   const store = useProjectStore();
   const { t } = useI18n();
   const audioImportInput = ref<HTMLInputElement | null>(null);
+  const stemImportInput = ref<HTMLInputElement | null>(null);
   const tempoDetectionOperations = new OperationGeneration();
 
   if (getCurrentScope()) {
@@ -98,6 +107,37 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
         const meta = await decodeAndIngest(file);
         await placeAssetAtPlayhead(meta.id);
       }
+    });
+  }
+
+  function importStemsAction(): void {
+    closeProjectMenu();
+    stemImportInput.value?.click();
+  }
+
+  function onStemImportChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    input.value = '';
+    if (files.length === 0) return;
+    void runAction(async () => {
+      const stems: ExternalStemImport[] = [];
+      for (const file of files) {
+        const decoded = await decodeAudioFile(file);
+        stems.push({
+          channels: decoded.channels,
+          sampleRate: decoded.sampleRate,
+          name: decoded.name,
+          role: inferExternalStemRole(file.name),
+        });
+      }
+      // Every stem lands at the playhead, so a separator's output stays
+      // aligned with itself on the timeline.
+      const clipIds = await importExternalStems(stems, {
+        startPpq: Math.max(0, positionPpq.value),
+      });
+      const lastClipId = clipIds.at(-1);
+      if (lastClipId !== undefined) setActiveClip(lastClipId);
     });
   }
 
@@ -204,12 +244,15 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
   return {
     audioImportInput,
     sampleAssetId,
+    stemImportInput,
     importAudioAction,
+    importStemsAction,
     onAddAssetToProject,
     onApplyAsset,
     onAssetCreated,
     onAudioImportChange,
     onRedetectClipTempo,
+    onStemImportChange,
     placeAssetAtPlayhead,
   };
 }

@@ -128,6 +128,7 @@ export const ja = {
       openRecent: '{name} を開く',
       importMidi: 'MIDIを読み込み...',
       importAudio: 'オーディオを読み込み...',
+      importStems: '分離済みステムを読み込み...',
       importDawproject: 'DAWprojectを読み込み...',
       importMusicXml: 'MusicXMLを読み込み...',
       importBackup: 'ブラウザバックアップを復元...',

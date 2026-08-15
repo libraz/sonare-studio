@@ -39,6 +39,7 @@ import {
 import { clearHistory } from './commands';
 import { type ControlSurfaceSettings, controlSurfaceSettingsAreDefault } from './control-surface';
 import type { TrackExpressionMap } from './expression-map';
+import type { ExternalStemRole } from './external-stems';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -133,6 +134,11 @@ import {
  *   Additionally (still version 3, additive): the document may carry an
  *   optional `externalMidiDefault` route, and tracks may opt into it with
  *   `externalMidiMode: "project"`.
+ *   Additionally (still version 3, additive): audio clips imported from an
+ *   external source separation may carry `externalStemRole` and `contentHash`,
+ *   replayed onto their audio source on load. Both are omitted for every other
+ *   clip, so documents written before them load unchanged and loaders that
+ *   predate them simply ignore the fields.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -164,6 +170,13 @@ export interface DocumentClip {
   kind?: ClipKind;
   /** Audio asset id resolved against the OPFS asset store; audio clips only. */
   assetId?: string;
+  /**
+   * Role of an externally separated stem (see src/project/external-stems.ts);
+   * absent for audio that did not come from a stem import.
+   */
+  externalStemRole?: ExternalStemRole;
+  /** Content hash of the clip's audio source; absent without stem provenance. */
+  contentHash?: string;
   /** Fade-in length in PPQ (> 0 when present); audio clips only. */
   fadeInPpq?: number;
   /** Fade-out length in PPQ (> 0 when present); audio clips only. */
@@ -616,6 +629,8 @@ function toDocumentClip(
     kind: clip.kind ?? 'midi',
   };
   if (clip.assetId !== undefined) out.assetId = clip.assetId;
+  if (clip.externalStemRole !== undefined) out.externalStemRole = clip.externalStemRole;
+  if (clip.contentHash !== undefined) out.contentHash = clip.contentHash;
   if (clip.fadeInPpq !== undefined) out.fadeInPpq = clip.fadeInPpq;
   if (clip.fadeOutPpq !== undefined) out.fadeOutPpq = clip.fadeOutPpq;
   if (clip.takes !== undefined && clip.takes.length > 0) {

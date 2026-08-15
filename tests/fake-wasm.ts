@@ -7,8 +7,8 @@
  *   midi_content, tempo_segments, time_signatures, markers).
  * - The undo history granularity matches the real binding: most edits push
  *   one history entry; addClip pushes two (source registration + clip add)
- *   and addMidiClip pushes three (source + track + clip). setClipSource and
- *   setClipFade push one entry each.
+ *   and addMidiClip pushes three (source + track + clip). setClipSource,
+ *   setClipFade and setAudioSourceMetadata push one entry each.
  * - splitClip partitions MIDI events between the halves and tracks source
  *   offsets the way the real Project does.
  * - addClip registers one source per call (inline audio fields or a
@@ -51,6 +51,8 @@ interface FakeSource {
   audioFrames?: number;
   audioChannels?: number;
   audioSampleRate?: number;
+  contentHash?: string;
+  externalStemRole?: string;
 }
 
 interface FakeMarker {
@@ -434,6 +436,33 @@ export class FakeProject {
       if (!this.state.sources.has(sourceId)) throw new Error(`unknown source ${sourceId}`);
       clip.source_id = sourceId;
     });
+  }
+
+  /** Replaces an audio source's metadata strings (one history entry). */
+  setAudioSourceMetadata(sourceId: number, contentHash: string, externalStemRole: string): void {
+    this.edit(() => {
+      const source = this.state.sources.get(sourceId);
+      if (!source) throw new Error(`unknown source ${sourceId}`);
+      source.contentHash = contentHash;
+      source.externalStemRole = externalStemRole;
+    });
+  }
+
+  /** Registered source by zero-based registration index (source ids are 1-based). */
+  sourceByIndex(index: number): {
+    id: number;
+    nameOrUri: string;
+    contentHash: string;
+    externalStemRole: string;
+  } {
+    const source = this.state.sources.get(index + 1);
+    if (!source) throw new RangeError(`Unknown source index ${index}`);
+    return {
+      id: source.id,
+      nameOrUri: source.uri ?? '',
+      contentHash: source.contentHash ?? '',
+      externalStemRole: source.externalStemRole ?? '',
+    };
   }
 
   /** Sets a clip's fade-in/out lengths (one history entry). */

@@ -1,5 +1,6 @@
 import { annotationsFromDocument, type ScoreAnnotations } from './annotations';
 import { sanitizeCompSegments } from './comping';
+import { isExternalStemRole } from './external-stems';
 import {
   isValidChannel,
   isValidController,
@@ -45,6 +46,12 @@ export function applyDocumentClipMetadata(
     if (kind === 'audio') {
       next.kind = 'audio';
       if (meta.assetId !== undefined) next.assetId = meta.assetId;
+      // External-stem provenance: unknown roles drop, so a document written by
+      // a newer role vocabulary degrades to a plain imported clip.
+      if (isExternalStemRole(meta.externalStemRole)) next.externalStemRole = meta.externalStemRole;
+      if (typeof meta.contentHash === 'string' && meta.contentHash.length > 0) {
+        next.contentHash = meta.contentHash;
+      }
       if ((meta.fadeInPpq ?? 0) > 0) next.fadeInPpq = meta.fadeInPpq as number;
       if ((meta.fadeOutPpq ?? 0) > 0) next.fadeOutPpq = meta.fadeOutPpq as number;
       // Takes/comping are document metadata; malformed selections are

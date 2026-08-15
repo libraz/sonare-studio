@@ -449,12 +449,15 @@ const {
 const {
   audioImportInput,
   sampleAssetId,
+  stemImportInput,
   importAudioAction,
+  importStemsAction,
   onAddAssetToProject,
   onApplyAsset,
   onAssetCreated,
   onAudioImportChange,
   onRedetectClipTempo,
+  onStemImportChange,
   placeAssetAtPlayhead,
 } = useProjectAudioAssets({
   closeProjectMenu,
@@ -805,6 +808,7 @@ const {
   exportSmf: exportSmfAction,
   exportSzd: exportSzdAction,
   importAudio: importAudioAction,
+  importStems: importStemsAction,
   importBrowserBackup: importBrowserBackupAction,
   importDawproject: importDawprojectAction,
   importMusicXml: importMusicXmlAction,
@@ -906,6 +910,8 @@ onMounted(installLaunchQueueConsumer);
       :resolved-theme="appSettings.resolvedTheme.value"
       @audio-import-change="onAudioImportChange"
       @audio-import-input-ref="(el) => (audioImportInput = el)"
+      @stem-import-change="onStemImportChange"
+      @stem-import-input-ref="(el) => (stemImportInput = el)"
       @midi-import-change="onMidiImportChange"
       @midi-import-input-ref="(el) => (midiImportInput = el)"
       @install-pwa="requestPwaInstall"
