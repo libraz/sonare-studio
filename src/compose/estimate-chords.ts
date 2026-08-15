@@ -2,8 +2,9 @@
  * Chord-progression estimation from note content, for projects that carry no
  * chord track (classical, sketches, imported MIDI). The arrangement's harmonic
  * tracks are pooled into a single note histogram and sliced into per-bar chord
- * slots by libcantus's {@link inferChordTimelineFromNotes}; the inferred segments
- * become an {@link EditorChordSymbol} stream ready for the chord track.
+ * slots by the shared {@link detectChordRegions}, one range per meter so a time
+ * signature change gets its own bar length; the detected regions become an
+ * {@link EditorChordSymbol} stream ready for the chord track.
  *
  * Percussion tracks are dropped first ({@link harmonicTracksOnly}) so drum hits
  * neither poison the key/chord estimate nor appear as spurious harmony. The
@@ -18,6 +19,7 @@ import type { EditorChordSymbol } from '@/project/chords';
 import { measureRangeAt, meterBarLengthPpq, timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { inferChordTimelineFromNotes } from './chord-at-tick';
+import { type ChordDetectionRange, detectChordRegions } from './chord-detection';
 import { chordSpanToEditorChord } from './chord-io';
 import { DEFAULT_KEY_SCALE } from './key';
 import { editorNotesToNoteEvents } from './notes-io';
@@ -79,42 +81,28 @@ function estimateChordsFromHarmonicTracks(
     const firstNotePpq = Math.min(...notes.map((note) => note.startBeat));
     const startPpq = measureRangeAt(options.timeSignatures, firstNotePpq).startPpq;
     const endPpq = Math.max(...notes.map((note) => note.startBeat + note.durationBeat));
-    const ranges = timeSignatureRanges(options.timeSignatures, startPpq, endPpq);
-    const symbols: EditorChordSymbol[] = [];
-    const confidence: number[] = [];
-    // Leave the first non-empty range unkeyed when no key was supplied so the
-    // estimator can infer it. Each subsequent range receives that result as
-    // context; an explicit key is passed unchanged to every range.
-    let resolvedKey = options.key;
-    for (const range of ranges) {
-      const localTracks = harmonic.map((item) => ({
-        track: item.track,
-        notes: item.notes.flatMap((note) => {
-          const start = Math.max(note.startPpq, range.startPpq);
-          const end = Math.min(note.startPpq + note.durationPpq, range.endPpq);
-          return end > start
-            ? [{ ...note, startPpq: start - range.startPpq, durationPpq: end - start }]
-            : [];
-        }),
-      }));
-      if (localTracks.every((item) => item.notes.length === 0)) continue;
-      const local = estimateChordsFromHarmonicTracks(localTracks, {
-        ...(resolvedKey !== undefined ? { key: resolvedKey } : {}),
-        ts: { numerator: range.numerator, denominator: range.denominator },
-        harmonicRhythm: meterBarLengthPpq(range),
-        totalBeats: range.endPpq - range.startPpq,
-      });
-      resolvedKey = options.key ?? local.key;
-      symbols.push(
-        ...local.symbols.map((symbol) => ({
-          ...symbol,
-          startPpq: symbol.startPpq + range.startPpq,
-          endPpq: symbol.endPpq + range.startPpq,
-        })),
-      );
-      confidence.push(...local.confidence);
-    }
-    return { symbols, key: resolvedKey ?? DEFAULT_KEY_SCALE, confidence };
+    const ranges: ChordDetectionRange[] = timeSignatureRanges(
+      options.timeSignatures,
+      startPpq,
+      endPpq,
+    ).map((range) => ({
+      startPpq: range.startPpq,
+      endPpq: range.endPpq,
+      slotLengthPpq: meterBarLengthPpq(range),
+      ts: { numerator: range.numerator, denominator: range.denominator },
+    }));
+    const detected = detectChordRegions(
+      notes,
+      ranges,
+      options.key !== undefined ? { key: options.key } : {},
+    );
+    return {
+      symbols: detected.regions.map((region) =>
+        chordSpanToEditorChord(region.span, region.startPpq, region.endPpq),
+      ),
+      key: detected.key,
+      confidence: detected.regions.map((region) => region.confidence),
+    };
   }
   const result = inferChordTimelineFromNotes(notes, options);
   const symbols = result.timeline.segments.map((segment) =>

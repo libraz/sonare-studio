@@ -203,8 +203,9 @@ export function estimateChordsFromArrangement(): EstimatedChordSummary {
  * within the clip's region so re-running is idempotent.
  *
  * Estimation is app-side music theory over the clip's notes (see
- * {@link estimateChordSymbols}); it does not call the engine's audio chord
- * detector. The merged stream is persisted through the engine annotation API.
+ * {@link estimateChordSymbols}, which shares the chord track's libcantus
+ * detector); it does not call the engine's audio chord detector. The merged
+ * stream is persisted through the engine annotation API.
  *
  * @param clipId Editor id of a MIDI clip.
  * @returns The number of chord symbols detected in the clip.

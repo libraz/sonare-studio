@@ -1,10 +1,13 @@
 /**
  * Display-only chord symbol estimation for the score view.
  *
- * Derives one chord symbol per measure from the editor notes by matching a
- * duration-weighted pitch-class histogram against common chord templates.
- * The result is purely a view annotation: nothing here reads or writes MIDI
- * note data.
+ * Detection itself is not done here: the notes go through the shared
+ * {@link detectChordRegions}, the same libcantus path the chord track uses, so
+ * the score and the chord track can never disagree about the harmony. This
+ * module owns only the display concern — chord windows follow the score's
+ * measures, the root is spelled for the displayed key signature, and the bass
+ * of the region becomes a slash chord. The result is purely a view annotation:
+ * nothing here reads or writes MIDI note data.
  *
  * Estimated symbols can additionally be round-tripped through
  * `Project.annotateChords` on a scratch wasm Project so the displayed values
@@ -14,6 +17,10 @@
  * undo stack pairs 1:1 with note-edit history entries.
  */
 
+import type { ChordQuality } from '@libraz/libcantus';
+import { type ChordDetectionRange, detectChordRegions } from '@/compose/chord-detection';
+import { libcantusQualityToEditor } from '@/compose/chord-io';
+import { editorNotesToNoteEvents } from '@/compose/notes-io';
 import { ensureWasm } from '@/lib/wasm';
 import type { NotatedChordSymbol } from '@/notation/model';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
@@ -43,15 +50,6 @@ export interface EstimatedChordSymbol extends NotatedChordSymbol {
   endPpq: number;
 }
 
-/** One chord template: audio-domain ChordQuality ordinal + intervals + suffix. */
-interface ChordTemplate {
-  quality: number;
-  intervals: ReadonlyArray<number>;
-  suffix: string;
-  /** Non-intrinsic tones retained in the project annotation and MusicXML. */
-  extensions?: ReadonlyArray<number>;
-}
-
 /** One absolute PPQ region used for chord estimation. */
 interface ChordWindow {
   start: number;
@@ -59,39 +57,57 @@ interface ChordWindow {
 }
 
 /**
- * Templates in tie-break priority order (earlier wins on equal score), using
- * audio-domain ChordQuality ordinals (Major = 0).
+ * Chord-symbol suffix per libcantus quality. Exhaustive over the union so a
+ * quality added upstream is a compile error rather than an unnamed chord.
  */
-const CHORD_TEMPLATES: ReadonlyArray<ChordTemplate> = [
-  { quality: 4, intervals: [0, 4, 7, 10, 2, 9], suffix: '13', extensions: [2, 9] }, // dominant 13
-  { quality: 4, intervals: [0, 4, 7, 10, 2, 5], suffix: '11', extensions: [2, 5] }, // dominant 11
-  { quality: 8, intervals: [0, 5, 7, 10, 2], suffix: '9sus4', extensions: [2, 10] },
-  { quality: 8, intervals: [0, 5, 7, 10], suffix: '7sus4', extensions: [10] },
-  { quality: 4, intervals: [0, 4, 7, 10, 1, 6], suffix: '7(b9,#11)', extensions: [1, 6] },
-  { quality: 4, intervals: [0, 4, 7, 10, 3, 8], suffix: '7(#9,b13)', extensions: [3, 8] },
-  { quality: 14, intervals: [0, 4, 7, 11, 2], suffix: 'maj9' }, // major 9
-  { quality: 15, intervals: [0, 4, 7, 10, 2], suffix: '9' }, // dominant 9
-  { quality: 0, intervals: [0, 4, 7, 9], suffix: '6', extensions: [9] }, // major 6
-  { quality: 1, intervals: [0, 3, 7, 9], suffix: 'm6', extensions: [9] }, // minor 6
-  { quality: 10, intervals: [0, 4, 7, 2], suffix: 'add9' }, // add 9
-  { quality: 11, intervals: [0, 3, 7, 2], suffix: 'm(add9)' }, // minor add 9
-  { quality: 0, intervals: [0, 4, 7], suffix: '' }, // major
-  { quality: 1, intervals: [0, 3, 7], suffix: 'm' }, // minor
-  { quality: 4, intervals: [0, 4, 7, 10], suffix: '7' }, // dominant 7
-  { quality: 5, intervals: [0, 4, 7, 11], suffix: 'maj7' }, // major 7
-  { quality: 6, intervals: [0, 3, 7, 10], suffix: 'm7' }, // minor 7
-  { quality: 2, intervals: [0, 3, 6], suffix: 'dim' }, // diminished
-  { quality: 3, intervals: [0, 4, 8], suffix: 'aug' }, // augmented
-  { quality: 8, intervals: [0, 5, 7], suffix: 'sus4' },
-  { quality: 7, intervals: [0, 2, 7], suffix: 'sus2' },
-  { quality: 12, intervals: [0, 3, 6, 9], suffix: 'dim7' },
-  { quality: 13, intervals: [0, 3, 6, 10], suffix: 'm7b5' }, // half-diminished
-];
+const QUALITY_SUFFIX: Readonly<Record<ChordQuality, string>> = {
+  maj: '',
+  min: 'm',
+  dim: 'dim',
+  aug: 'aug',
+  maj7: 'maj7',
+  min7: 'm7',
+  dom7: '7',
+  dim7: 'dim7',
+  m7b5: 'm7b5',
+  minMaj7: 'm(maj7)',
+  minMaj9: 'm(maj9)',
+  minMaj11: 'm(maj11)',
+  minMaj13: 'm(maj13)',
+  aug7: 'aug7',
+  augMaj7: 'aug(maj7)',
+  majb5: 'majb5',
+  '6': '6',
+  min6: 'm6',
+  '6/9': '6/9',
+  sus2: 'sus2',
+  sus4: 'sus4',
+  add9: 'add9',
+  add11: 'add11',
+  maj9: 'maj9',
+  min9: 'm9',
+  dom9: '9',
+  '7b9': '7b9',
+  '7#9': '7#9',
+  '7#11': '7#11',
+  '7b13': '7b13',
+  '11': '11',
+  '13': '13',
+  '5': '5',
+  '7sus4': '7sus4',
+  '7b5': '7b5',
+  '7alt': '7alt',
+  '13b9': '13b9',
+  maj13: 'maj13',
+  'maj7#11': 'maj7#11',
+  min11: 'm11',
+  min13: 'm13',
+  minAdd9: 'm(add9)',
+  'min6/9': 'm6/9',
+};
 
-/** Weight a template pitch class must reach to count as present. */
+/** Onset tolerance when deciding which notes sound at a region boundary. */
 const PRESENCE_EPSILON = 1e-9;
-/** Penalty factor for template tones that are absent from the measure. */
-const MISSING_TONE_PENALTY = 0.5;
 
 function chordWindows(options: ChordEstimateOptions): ChordWindow[] {
   const { clipStartPpq, clipLengthPpq, measureLengthPpq } = options;
@@ -125,22 +141,71 @@ function pitchClassName(pc: number, keyFifths: number): string {
 }
 
 /**
- * Estimates one chord symbol per measure from the editor notes.
+ * Groups the chord windows into runs of equal, contiguous length, one analysis
+ * range each. Detection slices a range from its own origin, so a measure-length
+ * change (a meter change, or the clip's truncated last measure) must start a new
+ * range or the following slots would drift off the barlines.
+ */
+function detectionRanges(windows: ReadonlyArray<ChordWindow>): ChordDetectionRange[] {
+  const ranges: ChordDetectionRange[] = [];
+  for (const window of windows) {
+    const length = window.end - window.start;
+    const open = ranges[ranges.length - 1];
+    if (open !== undefined && open.endPpq === window.start && open.slotLengthPpq === length) {
+      open.endPpq = window.end;
+      continue;
+    }
+    ranges.push({ startPpq: window.start, endPpq: window.end, slotLengthPpq: length });
+  }
+  return ranges;
+}
+
+/**
+ * The bass pitch class of a detected region: the lowest pitch sounding at the
+ * region start, or (when the region starts empty) the lowest pitch at the first
+ * onset inside it. Returns null when no note overlaps the region.
+ */
+function regionBassPc(notes: ReadonlyArray<EditorNote>, start: number, end: number): number | null {
+  let bassAtStart = Number.POSITIVE_INFINITY;
+  let firstOnset = Number.POSITIVE_INFINITY;
+  let bassAtFirstOnset = Number.POSITIVE_INFINITY;
+  for (const note of notes) {
+    const overlap =
+      Math.min(note.startPpq + note.durationPpq, end) - Math.max(note.startPpq, start);
+    if (overlap <= 0) continue;
+    if (note.startPpq <= start + PRESENCE_EPSILON) {
+      bassAtStart = Math.min(bassAtStart, note.pitch);
+    } else if (note.startPpq < firstOnset - PRESENCE_EPSILON) {
+      firstOnset = note.startPpq;
+      bassAtFirstOnset = note.pitch;
+    } else if (Math.abs(note.startPpq - firstOnset) <= PRESENCE_EPSILON) {
+      bassAtFirstOnset = Math.min(bassAtFirstOnset, note.pitch);
+    }
+  }
+  const bassPitch = Number.isFinite(bassAtStart) ? bassAtStart : bassAtFirstOnset;
+  return Number.isFinite(bassPitch) ? bassPitch % 12 : null;
+}
+
+/**
+ * Estimates the score's displayed chord symbols from the editor notes.
  *
- * For each measure the overlapping note durations are accumulated into a
- * pitch-class histogram, which is matched against {@link CHORD_TEMPLATES}
- * over all 12 roots (score = matched weight - non-chord weight - a penalty
- * per missing template tone). Measures with fewer than two distinct pitch
- * classes, or where no template scores positively with its root present,
- * produce no symbol. The bass is the lowest pitch sounding at the window
- * start, or (when the window starts empty) the lowest pitch at the first
- * onset; a differing bass yields a slash chord.
+ * Windows follow the score measures when supplied and the fixed measure length
+ * otherwise; runs of equal-length windows are handed to {@link detectChordRegions},
+ * so the displayed chords are exactly the ones the chord track would infer.
+ * Adjacent measures carrying the same chord form one region, measures without
+ * notes produce no symbol, and GM percussion notes are dropped before detection
+ * because drum-map pitches are not harmonic material.
+ *
+ * The display text is built studio-side as the key-spelled root plus the
+ * quality suffix, so flat keys keep printing flats. The bass is the lowest pitch
+ * sounding at the region start, or (when the region starts empty) the lowest
+ * pitch at the first onset; a differing bass yields a slash chord.
  *
  * Pure and read-only over the notes; the result is sorted by ppq.
  *
  * @param notes Editor notes (not mutated).
  * @param options Clip window, measure length and key spelling context.
- * @returns Estimated symbols, one per matched measure.
+ * @returns Estimated symbols, one per detected region.
  */
 export function estimateChordSymbols(
   notes: ReadonlyArray<EditorNote>,
@@ -156,70 +221,31 @@ export function estimateChordSymbols(
   ) {
     throw new RangeError('Chord estimation requires a positive clip window and measure length');
   }
+  // GM channel 10 (zero-based channel 9) is percussion; its drum-map pitches
+  // must not reach the histogram, nor become a slash bass.
+  const harmonic = notes.filter((note) => note.channel !== GM_PERCUSSION_CHANNEL);
+  const { regions } = detectChordRegions(
+    editorNotesToNoteEvents(harmonic),
+    detectionRanges(chordWindows(options)),
+  );
+
   const out: EstimatedChordSymbol[] = [];
-
-  for (const { start, end } of chordWindows(options)) {
-    const weights = new Array<number>(12).fill(0);
-    let bassAtWindowStart = Number.POSITIVE_INFINITY;
-    let firstOnset = Number.POSITIVE_INFINITY;
-    let bassAtFirstOnset = Number.POSITIVE_INFINITY;
-    for (const note of notes) {
-      // GM channel 10 (zero-based channel 9) is percussion. Its drum-map
-      // pitches are not harmonic material and must not produce score chords.
-      if (note.channel === GM_PERCUSSION_CHANNEL) continue;
-      const overlap =
-        Math.min(note.startPpq + note.durationPpq, end) - Math.max(note.startPpq, start);
-      if (overlap <= 0) continue;
-      weights[note.pitch % 12] += overlap;
-      if (note.startPpq <= start + PRESENCE_EPSILON) {
-        bassAtWindowStart = Math.min(bassAtWindowStart, note.pitch);
-      } else if (note.startPpq < firstOnset - PRESENCE_EPSILON) {
-        firstOnset = note.startPpq;
-        bassAtFirstOnset = note.pitch;
-      } else if (Math.abs(note.startPpq - firstOnset) <= PRESENCE_EPSILON) {
-        bassAtFirstOnset = Math.min(bassAtFirstOnset, note.pitch);
-      }
-    }
-    const distinct = weights.filter((w) => w > PRESENCE_EPSILON).length;
-    if (distinct < 2) continue;
-    const total = weights.reduce((sum, w) => sum + w, 0);
-    const meanWeight = total / distinct;
-
-    let best: { score: number; root: number; template: ChordTemplate } | null = null;
-    for (const template of CHORD_TEMPLATES) {
-      for (let root = 0; root < 12; root++) {
-        if (weights[root] <= PRESENCE_EPSILON) continue; // require the root to sound
-        let matched = 0;
-        let missing = 0;
-        for (const interval of template.intervals) {
-          const w = weights[(root + interval) % 12];
-          if (w > PRESENCE_EPSILON) matched += w;
-          else missing++;
-        }
-        const score = matched - (total - matched) - missing * meanWeight * MISSING_TONE_PENALTY;
-        if (score > 0 && (!best || score > best.score)) {
-          best = { score, root, template };
-        }
-      }
-    }
-    if (!best) continue;
-
-    const rootPc = best.root;
-    const bassPitch = Number.isFinite(bassAtWindowStart) ? bassAtWindowStart : bassAtFirstOnset;
-    const bassPc = Number.isFinite(bassPitch) ? bassPitch % 12 : rootPc;
-    const rootName = pitchClassName(rootPc, keyFifths);
-    let text = `${rootName}${best.template.suffix}`;
+  for (const region of regions) {
+    const rootPc = ((region.span.rootPc % 12) + 12) % 12;
+    const mapped = libcantusQualityToEditor(region.span.quality);
     const symbol: EstimatedChordSymbol = {
-      ppq: start,
-      endPpq: end,
-      text,
+      ppq: region.startPpq,
+      endPpq: region.endPpq,
+      text: `${pitchClassName(rootPc, keyFifths)}${QUALITY_SUFFIX[region.span.quality]}`,
       rootPc,
-      quality: best.template.quality,
+      quality: mapped.quality,
     };
-    if (best.template.extensions !== undefined) symbol.extensions = [...best.template.extensions];
-    if (bassPc !== rootPc) {
-      text = `${text}/${pitchClassName(bassPc, keyFifths)}`;
-      symbol.text = text;
+    if (mapped.extensions !== undefined && mapped.extensions.length > 0) {
+      symbol.extensions = [...mapped.extensions];
+    }
+    const bassPc = regionBassPc(harmonic, region.startPpq, region.endPpq);
+    if (bassPc !== null && bassPc !== rootPc) {
+      symbol.text = `${symbol.text}/${pitchClassName(bassPc, keyFifths)}`;
       symbol.bassPc = bassPc;
     }
     out.push(symbol);

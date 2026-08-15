@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { estimateChordsFromTracks } from '@/compose/estimate-chords';
 import {
   type ChordEstimateOptions,
   canonicalizeChordSymbols,
   type EstimatedChordSymbol,
   estimateChordSymbols,
 } from '@/notation/chords';
-import type { EditorNote } from '@/project/types';
+import type { EditorNote, EditorTrack } from '@/project/types';
 
 /** Shared mock state for the fake wasm Project used by canonicalize tests. */
 const wasmState = vi.hoisted(() => ({
@@ -120,7 +121,7 @@ describe('estimateChordSymbols', () => {
     expect(symbols).toMatchObject([
       { ppq: 0, text: 'C6', rootPc: 0, quality: 0, extensions: [9] },
       { ppq: 4, text: 'G7sus4', rootPc: 7, quality: 8, extensions: [10] },
-      { ppq: 8, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
+      { ppq: 8, text: 'C13', rootPc: 0, quality: 4, extensions: [9] },
     ]);
   });
 
@@ -230,9 +231,10 @@ describe('estimateChordSymbols', () => {
     expect(symbols[0]).toMatchObject({ text: 'Bb', rootPc: 10 });
   });
 
-  it('skips empty and single-pitch-class measures', () => {
+  it('skips empty measures and names a bare octave without a third', () => {
     const symbols = estimateChordSymbols([note(60, 0, 2), note(72, 0, 2)], OPTIONS);
-    expect(symbols).toHaveLength(0);
+    expect(symbols).toHaveLength(1);
+    expect(symbols[0]).toMatchObject({ ppq: 0, endPpq: 4, text: 'C5', rootPc: 0 });
   });
 
   it('does not infer chords from GM percussion-channel notes', () => {
@@ -248,6 +250,97 @@ describe('estimateChordSymbols', () => {
 
   it('throws on a non-positive clip window', () => {
     expect(() => estimateChordSymbols([], { ...OPTIONS, clipLengthPpq: 0 })).toThrow(RangeError);
+  });
+});
+
+describe('score and chord-track detection agree', () => {
+  const progression = [
+    // Cmaj7 | Am7 | Dm7 | G7
+    note(60, 0, 4),
+    note(64, 0, 4),
+    note(67, 0, 4),
+    note(71, 0, 4),
+    note(57, 4, 4),
+    note(60, 4, 4),
+    note(64, 4, 4),
+    note(67, 4, 4),
+    note(62, 8, 4),
+    note(65, 8, 4),
+    note(69, 8, 4),
+    note(72, 8, 4),
+    note(55, 12, 4),
+    note(59, 12, 4),
+    note(62, 12, 4),
+    note(65, 12, 4),
+  ];
+
+  it('produces the same chord over the same span from both entry points', () => {
+    const scoreSymbols = estimateChordSymbols(progression, {
+      ...OPTIONS,
+      clipLengthPpq: 16,
+    });
+    const trackSymbols = estimateChordsFromTracks(
+      [{ track: { id: 1, name: 'Piano' } as EditorTrack, notes: progression }],
+      { timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }] },
+    ).symbols;
+
+    expect(
+      scoreSymbols.map((symbol) => ({
+        startPpq: symbol.ppq,
+        endPpq: symbol.endPpq,
+        rootPc: symbol.rootPc,
+        quality: symbol.quality,
+        extensions: symbol.extensions,
+      })),
+    ).toEqual(
+      trackSymbols.map((symbol) => ({
+        startPpq: symbol.startPpq,
+        endPpq: symbol.endPpq,
+        rootPc: symbol.rootPc,
+        quality: symbol.quality,
+        extensions: symbol.extensions,
+      })),
+    );
+    expect(scoreSymbols.length).toBeGreaterThan(1);
+  });
+
+  it('agrees across a measure-length change', () => {
+    const notes = [
+      // 4/4 bar, then two 3/4 bars.
+      note(60, 0, 4),
+      note(64, 0, 4),
+      note(67, 0, 4),
+      note(55, 4, 3),
+      note(59, 4, 3),
+      note(62, 4, 3),
+      note(65, 7, 3),
+      note(69, 7, 3),
+      note(72, 7, 3),
+    ];
+    const scoreSymbols = estimateChordSymbols(notes, {
+      ...OPTIONS,
+      clipLengthPpq: 10,
+      measures: [
+        { startPpq: 0, lengthPpq: 4 },
+        { startPpq: 4, lengthPpq: 3 },
+        { startPpq: 7, lengthPpq: 3 },
+      ],
+    });
+    const trackSymbols = estimateChordsFromTracks(
+      [{ track: { id: 1, name: 'Piano' } as EditorTrack, notes }],
+      {
+        timeSignatures: [
+          { startPpq: 0, numerator: 4, denominator: 4 },
+          { startPpq: 4, numerator: 3, denominator: 4 },
+        ],
+      },
+    ).symbols;
+
+    expect(
+      scoreSymbols.map((symbol) => [symbol.ppq, symbol.endPpq, symbol.rootPc, symbol.quality]),
+    ).toEqual(
+      trackSymbols.map((symbol) => [symbol.startPpq, symbol.endPpq, symbol.rootPc, symbol.quality]),
+    );
   });
 });
 

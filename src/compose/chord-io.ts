@@ -3,8 +3,8 @@
  * libcantus's {@link ChordData}/{@link ChordSpan}.
  *
  * The two sides describe chord quality differently. The editor uses the
- * audio-domain quality ordinal (Major = 0), matching the templates in
- * src/notation/chords.ts and the wasm annotation encoding — a fixed set of ~15
+ * audio-domain quality ordinal (Major = 0), matching the quality choices in
+ * src/project/chords.ts and the wasm annotation encoding — a fixed set of ~15
  * qualities plus a free `extensions` list of semitone offsets. libcantus uses a
  * 40-member string union covering richer qualities (`7#9`, `min6`, `6/9`, ...).
  *
