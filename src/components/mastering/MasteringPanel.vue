@@ -214,6 +214,20 @@ function onClearPresetOverride(key: string): void {
 const suggestion = ref<MasteringSuggestion | null>(null);
 const suggesting = ref(false);
 
+/**
+ * The rendered channels as a left/right pair, or null when the render is not
+ * stereo. A `0.5 * (left + right)` downmix cancels on decorrelated material and
+ * measures the program several dB low, so a stereo render is analyzed through
+ * the channel-summing entry points instead of {@link downmixMono}.
+ */
+function stereoPair(
+  channels: ReadonlyArray<Float32Array>,
+): { left: Float32Array; right: Float32Array } | null {
+  if (channels.length !== 2) return null;
+  const [left, right] = channels;
+  return left && right ? { left, right } : null;
+}
+
 /** Averages the rendered channels to a mono buffer for the assistant. */
 function downmixMono(channels: ReadonlyArray<Float32Array>): Float32Array {
   if (channels.length === 1) return channels[0];
@@ -248,14 +262,19 @@ async function onAutoSuggest(): Promise<void> {
       return;
     }
     const wasm = await ensureWasm();
+    const pair = stereoPair(source.channels);
+    const suggestStereo = wasm.masteringAssistantSuggestStereo;
     const suggest = wasm.masteringAssistantSuggest;
-    if (typeof suggest !== 'function') {
+    let json: string;
+    if (pair && typeof suggestStereo === 'function') {
+      json = suggestStereo({ ...pair, sampleRate: source.sampleRate });
+    } else if (typeof suggest === 'function') {
+      json = suggest(downmixMono(source.channels), source.sampleRate);
+    } else {
       error.value = t.value.shell.mastering.assistant.unavailable;
       return;
     }
-    const parsed = parseMasteringSuggestion(
-      suggest(downmixMono(source.channels), source.sampleRate),
-    );
+    const parsed = parseMasteringSuggestion(json);
     if (
       previewState.value?.bypassed !== source ||
       previewRevision.value !== analyzedRevision ||
@@ -326,14 +345,19 @@ async function onCheckTargets(): Promise<void> {
       return;
     }
     const wasm = await ensureWasm();
+    const pair = stereoPair(source.channels);
+    const previewStereo = wasm.masteringStreamingPreviewStereo;
     const preview = wasm.masteringStreamingPreview;
-    if (typeof preview !== 'function') {
+    let json: string;
+    if (pair && typeof previewStereo === 'function') {
+      json = previewStereo({ ...pair, sampleRate: source.sampleRate, platforms });
+    } else if (typeof preview === 'function') {
+      json = preview(downmixMono(source.channels), source.sampleRate, platforms);
+    } else {
       error.value = t.value.shell.mastering.streaming.unavailable;
       return;
     }
-    streamingTargets.value = parseStreamingPreview(
-      preview(downmixMono(source.channels), source.sampleRate, platforms),
-    );
+    streamingTargets.value = parseStreamingPreview(json);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {

@@ -1038,6 +1038,36 @@ export function fakeMixingScenePresetNames(): string[] {
   return ['vocalReverbSend', 'drumBusSubgroup', 'commentaryDucking'];
 }
 
+/** Integrated loudness the streaming-preview fakes report per measurement path. */
+export const FAKE_DOWNMIX_LUFS = -13;
+export const FAKE_STEREO_LUFS = -7;
+
+/** Platform rows the streaming-preview fakes fall back to when given none. */
+const FAKE_STREAMING_PLATFORMS = [
+  { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
+  { name: 'Apple Music', targetLufs: -16, ceilingDb: -1 },
+  { name: 'YouTube', targetLufs: -14, ceilingDb: -1 },
+];
+
+/** Builds the report both streaming-preview fakes return, at a given loudness. */
+function fakeStreamingPreviewJson(
+  platforms: Array<{ name: string; targetLufs: number; ceilingDb: number }>,
+  integratedLufs: number,
+): string {
+  return JSON.stringify({
+    platforms: (platforms.length ? platforms : FAKE_STREAMING_PLATFORMS).map((platform) => {
+      const normalizationGainDb = platform.targetLufs - integratedLufs;
+      return {
+        name: platform.name,
+        integratedLufs,
+        truePeakDb: -0.8,
+        normalizationGainDb,
+        ceilingRisk: -0.8 + normalizationGainDb > platform.ceilingDb,
+      };
+    }),
+  });
+}
+
 export function fakeMixingScenePresetJson(preset: string): string {
   const scenes: Record<string, unknown> = {
     commentaryDucking: {
@@ -1328,23 +1358,17 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
       _samples: Float32Array,
       _sampleRate = 48000,
       platforms: Array<{ name: string; targetLufs: number; ceilingDb: number }> = [],
-    ) =>
-      JSON.stringify({
-        platforms: (platforms.length
-          ? platforms
-          : [
-              { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
-              { name: 'Apple Music', targetLufs: -16, ceilingDb: -1 },
-              { name: 'YouTube', targetLufs: -14, ceilingDb: -1 },
-            ]
-        ).map((platform) => ({
-          name: platform.name,
-          integratedLufs: -13,
-          truePeakDb: -0.8,
-          normalizationGainDb: platform.targetLufs + 13,
-          ceilingRisk: -0.8 + platform.targetLufs + 13 > platform.ceilingDb,
-        })),
-      }),
+    ) => fakeStreamingPreviewJson(platforms, FAKE_DOWNMIX_LUFS),
+    // BS.1770 channel summing reads hotter than the mono downmix the caller
+    // would otherwise have to build, which is the reason the stereo entry
+    // point exists; the fake reproduces that offset so callers can tell the
+    // two paths apart.
+    masteringStreamingPreviewStereo: (request: {
+      left: Float32Array;
+      right: Float32Array;
+      sampleRate?: number;
+      platforms?: Array<{ name: string; targetLufs: number; ceilingDb: number }>;
+    }) => fakeStreamingPreviewJson(request.platforms ?? [], FAKE_STEREO_LUFS),
     masteringPairAnalyze: (name: string) => {
       if (name === 'match.matchEqCurve') {
         return JSON.stringify({ frequencies: [100, 1000], gainDb: [1, -2] });

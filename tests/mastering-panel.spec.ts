@@ -19,9 +19,17 @@ import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
+  const { vi: vitest } = await import('vitest');
   const fakeModule = createFakeWasmModule();
-  (fakeModule as unknown as { masteringAssistantSuggest: () => string }).masteringAssistantSuggest =
-    () => JSON.stringify({ genreCandidates: [{ name: 'pop', score: 1 }] });
+  // Distinct genres per entry point so a test can tell which one ran.
+  Object.assign(fakeModule, {
+    masteringAssistantSuggest: vitest.fn(() =>
+      JSON.stringify({ genreCandidates: [{ name: 'pop', score: 1 }] }),
+    ),
+    masteringAssistantSuggestStereo: vitest.fn(() =>
+      JSON.stringify({ genreCandidates: [{ name: 'edm', score: 1 }] }),
+    ),
+  });
   return { ensureWasm: async () => fakeModule };
 });
 
@@ -40,6 +48,24 @@ function makeResult(value: number): MixdownResult {
       dynamicRangeDb: 9.1,
     },
   };
+}
+
+/** A render whose report carries no loudness, forcing the wasm measurement path. */
+function makeResultWithoutLoudness(value: number): MixdownResult {
+  const result = makeResult(value);
+  return { ...result, report: { peakDb: result.report.peakDb } };
+}
+
+/** The wasm double the panel resolves through ensureWasm. */
+interface MasteringWasmDouble {
+  masteringAssistantSuggest: ReturnType<typeof vi.fn>;
+  masteringAssistantSuggestStereo?: ReturnType<typeof vi.fn>;
+  masteringStreamingPreviewStereo?: (request: unknown) => string;
+}
+
+async function masteringWasm(): Promise<MasteringWasmDouble> {
+  const { ensureWasm } = await import('@/lib/wasm');
+  return (await ensureWasm()) as unknown as MasteringWasmDouble;
 }
 
 interface FakeRenderCall {
@@ -507,6 +533,84 @@ describe('MasteringPanel.vue', () => {
     await flush();
 
     expect(store.mixer.masteringChain?.preset).toBeUndefined();
+  });
+
+  it('analyzes a stereo preview through the channel-summing assistant', async () => {
+    const wasm = await masteringWasm();
+    wasm.masteringAssistantSuggest.mockClear();
+    wasm.masteringAssistantSuggestStereo?.mockClear();
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    await wrapper.find('.assist-button').trigger('click');
+    await flush();
+
+    expect(wasm.masteringAssistantSuggest).not.toHaveBeenCalled();
+    const request = wasm.masteringAssistantSuggestStereo?.mock.calls[0][0] as {
+      left: Float32Array;
+      right: Float32Array;
+      sampleRate: number;
+    };
+    expect(request.left).toBeInstanceOf(Float32Array);
+    expect(request.right).toBeInstanceOf(Float32Array);
+    expect(request.sampleRate).toBe(48000);
+    expect(store.mixer.masteringChain?.preset).toBe('edm');
+  });
+
+  it('falls back to the mono assistant when the stereo entry point is absent', async () => {
+    const wasm = await masteringWasm();
+    wasm.masteringAssistantSuggest.mockClear();
+    const stereo = wasm.masteringAssistantSuggestStereo;
+    wasm.masteringAssistantSuggestStereo = undefined;
+    try {
+      addMasteringProcessor('eq.tilt');
+      const fake = makeFakeRender();
+      const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+      await wrapper.find('.preview-button').trigger('click');
+      fake.calls[0].resolve(makeResult(0.5));
+      await flush();
+      fake.calls[1].resolve(makeResult(0.25));
+      await flush();
+
+      await wrapper.find('.assist-button').trigger('click');
+      await flush();
+
+      expect(wasm.masteringAssistantSuggest).toHaveBeenCalledTimes(1);
+      expect(store.mixer.masteringChain?.preset).toBe('pop');
+    } finally {
+      wasm.masteringAssistantSuggestStereo = stereo;
+    }
+  });
+
+  it('measures streaming targets from both channels when the report has no loudness', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResultWithoutLoudness(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResultWithoutLoudness(0.25));
+    await flush();
+
+    const firstTarget = wrapper.find('.targets-editor-row');
+    const inputs = firstTarget.findAll('input');
+    await inputs[0].setValue('Bandcamp');
+    await inputs[1].setValue('-18');
+    await inputs[2].setValue('-2');
+    await wrapper.find('.targets-button').trigger('click');
+    await flush();
+
+    // Channel summing reports FAKE_STEREO_LUFS, so the gain to -18 LUFS is
+    // -11 dB; the mono downmix would have understated it as -5 dB.
+    const tableText = wrapper.find('.targets-table').text();
+    expect(tableText).toContain('Bandcamp');
+    expect(tableText).toContain('-11.0');
   });
 
   it('cancels an in-flight preview render', async () => {
