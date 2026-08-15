@@ -5,8 +5,15 @@
  * (step/alter/octave) using the key signature to choose between sharp and
  * flat spellings, and converts between MusicXML key fifths and libsonare
  * key descriptions.
+ *
+ * The diatonic letters of a key come from libcantus, so scales, chords and
+ * engraved notes all name a scale degree the same way. What stays here is the
+ * notation layer's own two rules: chromatic tones follow the side of the key
+ * signature, and local melodic/harmonic context can override both.
  */
 
+import { isScaleTone, spellPitchClass } from '@libraz/libcantus';
+import { keyFifthsToSpelledKey } from '@/compose/key';
 import type { Key, Mode } from '@/wasm/index.js';
 
 /** Diatonic step letter (MusicXML `<step>`). */
@@ -66,26 +73,24 @@ const STEP_SEMITONES: Record<Step, number> = {
 
 const STEPS: readonly Step[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 
-const SHARP_STEPS: readonly Step[] = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
-const FLAT_STEPS: readonly Step[] = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
-
-/** Key-signature alteration for a diatonic step. */
-function keySignatureAlter(step: Step, fifths: number): SpelledPitch['alter'] {
-  if (fifths > 0 && SHARP_STEPS.slice(0, fifths).includes(step)) return 1;
-  if (fifths < 0 && FLAT_STEPS.slice(0, -fifths).includes(step)) return -1;
-  return 0;
-}
-
-/** Signature spelling when a pitch class is one of the key's seven scale tones. */
+/**
+ * Signature spelling when a pitch class is one of the key's seven scale tones.
+ *
+ * Delegated to libcantus so a scale degree carries the same letter here as in
+ * chord and scale spelling; extreme signatures therefore keep E#/B# and Cb/Fb.
+ * Chromatic pitch classes return undefined for the caller to spell.
+ */
 function signatureSpelling(
   pitchClass: number,
   fifths: number,
 ): Pick<SpelledPitch, 'step' | 'alter'> | undefined {
-  for (const step of Object.keys(STEP_SEMITONES) as Step[]) {
-    const alter = keySignatureAlter(step, fifths);
-    if ((STEP_SEMITONES[step] + alter + 12) % 12 === pitchClass) return { step, alter };
-  }
-  return undefined;
+  const { tonic, key } = keyFifthsToSpelledKey(fifths);
+  if (!isScaleTone(pitchClass, key)) return undefined;
+  const note = spellPitchClass(pitchClass, tonic, key);
+  return {
+    step: STEPS[((note.letter % 7) + 7) % 7],
+    alter: note.alter as SpelledPitch['alter'],
+  };
 }
 
 /** Derives MusicXML's octave after spelling has crossed B#/Cb boundaries. */
@@ -115,6 +120,8 @@ export function spellPitchInKeySignature(midi: number, keyFifths: number): Spell
     throw new RangeError(`spellPitchInKeySignature: midi must be an integer in 0-127, got ${midi}`);
   }
   const pitchClass = midi % 12;
+  // Engraving spells a chromatic tone on the side of the key signature, not by
+  // its interval above the tonic: B natural in Bb major is B, never Cb.
   const fallback = (keyFifths < 0 ? FLAT_SPELLINGS : SHARP_SPELLINGS)[pitchClass];
   const { step, alter } = signatureSpelling(pitchClass, keyFifths) ?? fallback;
   return { step, alter, octave: octaveForSpelling(midi, step, alter) };

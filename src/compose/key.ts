@@ -13,7 +13,7 @@
  * Pure module (no Vue/Pinia); the store-reading helpers live in the callers.
  */
 
-import { type KeyScale, MAJOR_MASK } from '@libraz/libcantus';
+import { type KeyScale, MAJOR_MASK, type NoteData } from '@libraz/libcantus';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
 
 /** Default key used when the project has no key set: C major. */
@@ -104,6 +104,47 @@ export function keyScaleToKeyFifths(key: KeyScale): number {
  */
 export function tonicPcFromKeyFifths(keyFifths: number): number {
   return (((keyFifths * 7) % 12) + 12) % 12;
+}
+
+/** A key signature expressed the way libcantus's spelling functions take it. */
+export interface SpelledKeySignature {
+  /** Spelled tonic anchoring the letters (libcantus letter 0..6 = C..B). */
+  tonic: NoteData;
+  /** The scale those letters belong to. */
+  key: KeyScale;
+}
+
+/**
+ * Letter of the major tonic for a fifths count, walking the circle of fifths
+ * (C G D A E B F...). Four letters up per fifth, modulo the seven letters.
+ */
+function tonicLetterFromKeyFifths(keyFifths: number): number {
+  return (((keyFifths * 4) % 7) + 7) % 7;
+}
+
+/**
+ * Converts MusicXML key-signature fifths to a spelled tonic and scale for
+ * libcantus.
+ *
+ * A key signature fixes seven diatonic letters and nothing else: a major key
+ * and its relative natural minor share both the signature and the pitch-class
+ * set. The major reading is therefore always sufficient, and it is the only
+ * one derivable from `fifths` alone. Each further sharp moves the tonic four
+ * letters up the alphabet, and every seventh step adds an accidental, so the
+ * spelling extends past the -7..7 MusicXML range (fifths 13 = F## major)
+ * without a lookup table.
+ *
+ * @param keyFifths Key signature as MusicXML fifths (-7..7 in practice).
+ * @returns The major tonic spelling and its scale.
+ */
+export function keyFifthsToSpelledKey(keyFifths: number): SpelledKeySignature {
+  return {
+    tonic: {
+      letter: tonicLetterFromKeyFifths(keyFifths),
+      alter: Math.floor((keyFifths + 1) / 7),
+    },
+    key: { rootPc: tonicPcFromKeyFifths(keyFifths), modeMask12: MAJOR_MASK },
+  };
 }
 
 /**
