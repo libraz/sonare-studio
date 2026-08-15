@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import type { KeyScale } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { analyzeHarmony, type BorrowedKind, type CadenceType } from '@/compose/harmonic-analysis';
+import { keyFifthsToSpelledKey } from '@/compose/key';
 import type { EditorChordSymbol } from '@/project/chords';
 import { formatChordName } from '@/project/chords';
 import {
@@ -23,6 +26,12 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  * while scrolled. `hasContent` (arrangement only) drives the "chords are a
  * guide, tracks are still empty" hint that teaches the chords/tracks
  * distinction the moment a progression is generated on an empty project.
+ *
+ * The functional reading of the progression rides along as display-only
+ * annotation: an applied-dominant numeral or a borrowing mark beside the chord
+ * name, and a rule where a cadence lands. Every marker is inert
+ * (`pointer-events: none`), so seeking and the chord-list shortcut behave the
+ * same with or without an analysis.
  */
 
 const props = defineProps<{
@@ -36,6 +45,11 @@ const props = defineProps<{
   timeSignatures: ReadonlyArray<MeterSegment>;
   /** MusicXML key-signature fifths used for root and slash-bass spelling. */
   keyFifths?: number;
+  /**
+   * Key the progression is analyzed in. Defaults to the major key `keyFifths`
+   * implies, which is all a key signature alone can name.
+   */
+  keyScale?: KeyScale;
   /** Absolute PPQ the lane's local frame is shifted by (default 0). */
   originPpq?: number;
   /** Whether any track carries audible content (arrangement only; drives the tracks-empty hint). */
@@ -61,6 +75,19 @@ const LABEL_TAIL_GUARD_PX = 24;
 const TRACKS_HINT_MIN_GAP_PX = 200;
 /** How long the first-populate brightness pulse lasts. */
 const POPULATE_PULSE_MS = 1200;
+/** Room the approaching band needs before a cadence gets a written label. */
+const CADENCE_LABEL_MIN_ROOM_PX = 40;
+
+/**
+ * Conventional shorthand per borrowing source: borrowing from the parallel
+ * minor lowers degrees, borrowing from the parallel major restores them, and N
+ * is the standard Neapolitan symbol. The band tooltip names the source in full.
+ */
+const BORROWED_MARK: Readonly<Record<BorrowedKind, string>> = {
+  parallelMinor: '♭',
+  parallelMajor: '♮',
+  neapolitan: 'N',
+};
 
 /** One repeated chord-name label, positioned relative to its band's left edge. */
 interface ChordLabel {
@@ -76,6 +103,17 @@ interface ChordBand {
   leftPx: number;
   widthPx: number;
   labels: ChordLabel[];
+  /** Applied numeral and/or borrowing mark drawn beside the name; '' for none. */
+  mark: string;
+}
+
+/** One positioned, culled cadence marker. */
+interface CadenceMarker {
+  key: number;
+  type: CadenceType;
+  leftPx: number;
+  /** Whether the approaching band is wide enough for the written abbreviation. */
+  showLabel: boolean;
 }
 
 /** Bar-boundary label anchors within the band's visible span (sticky first anchor). */
@@ -110,6 +148,29 @@ function labelsFor(
   return labels;
 }
 
+/** The key the progression is read in (see the `keyScale` prop). */
+const analysisKey = computed<KeyScale>(
+  () => props.keyScale ?? keyFifthsToSpelledKey(props.keyFifths ?? 0).key,
+);
+
+/** Display-only functional reading of the whole chord track. */
+const analysis = computed(() => analyzeHarmony(props.chords, analysisKey.value));
+
+/** Cadence type by the absolute PPQ of the chord it resolves onto. */
+const cadenceByPpq = computed(
+  () => new Map(analysis.value.cadences.map((cadence) => [cadence.atPpq, cadence.type])),
+);
+
+/** Applied numeral and borrowing mark of one chord, as one short string. */
+function markFor(startPpq: number): string {
+  const annotation = analysis.value.byStartPpq.get(startPpq);
+  if (annotation === undefined) return '';
+  const parts: string[] = [];
+  if (annotation.appliedRoman !== undefined) parts.push(annotation.appliedRoman);
+  if (annotation.borrowed !== undefined) parts.push(BORROWED_MARK[annotation.borrowed]);
+  return parts.join(' ');
+}
+
 const bands = computed<ChordBand[]>(() => {
   void props.revision;
   const origin = props.originPpq ?? 0;
@@ -125,6 +186,33 @@ const bands = computed<ChordBand[]>(() => {
       leftPx: x0,
       widthPx: Math.max(2, x1 - x0),
       labels: labelsFor(chord, origin, x0, x1),
+      mark: markFor(chord.startPpq),
+    });
+  }
+  return out;
+});
+
+const cadenceMarkers = computed<CadenceMarker[]>(() => {
+  void props.revision;
+  const origin = props.originPpq ?? 0;
+  const starts = props.chords.map((chord) => chord.startPpq);
+  const out: CadenceMarker[] = [];
+  // Cadences and chords are both in time order, so the band a cadence is
+  // approached from is found by advancing one shared cursor.
+  let index = 0;
+  for (const cadence of analysis.value.cadences) {
+    while (index + 1 < starts.length && starts[index + 1] < cadence.atPpq) index += 1;
+    const x = props.range.ppqToX(cadence.atPpq - origin);
+    if (x < 0 || x > props.range.widthPx) continue;
+    // The abbreviation is written into the tail of the approaching band, so it
+    // only appears where that band still has visible room for it.
+    const approach = starts.length > 0 && starts[index] < cadence.atPpq ? starts[index] : null;
+    const roomPx = approach === null ? x : x - Math.max(0, props.range.ppqToX(approach - origin));
+    out.push({
+      key: cadence.atPpq,
+      type: cadence.type,
+      leftPx: x,
+      showLabel: roomPx >= CADENCE_LABEL_MIN_ROOM_PX,
     });
   }
   return out;
@@ -145,8 +233,27 @@ function seekTo(band: ChordBand): void {
   emit('seek', Math.max(0, band.startPpq));
 }
 
+/** Localized abbreviation written next to a cadence rule. */
+function cadenceShort(type: CadenceType): string {
+  return t.value.harmony.cadence.short[type];
+}
+
+/**
+ * Band tooltip: the seek hint, plus the functional reading in words, since the
+ * markers themselves stay inert and abbreviated.
+ */
 function seekTitle(band: ChordBand): string {
-  return formatMessage(t.value.shell.arrangement.chordSeek, { name: band.name });
+  const base = formatMessage(t.value.shell.arrangement.chordSeek, { name: band.name });
+  const harmony = t.value.harmony;
+  const annotation = analysis.value.byStartPpq.get(band.startPpq);
+  const cadence = cadenceByPpq.value.get(band.startPpq);
+  const parts: string[] = [];
+  if (annotation?.appliedRoman !== undefined) {
+    parts.push(formatMessage(harmony.applied.label, { roman: annotation.appliedRoman }));
+  }
+  if (annotation?.borrowed !== undefined) parts.push(harmony.borrowed[annotation.borrowed]);
+  if (cadence !== undefined) parts.push(harmony.cadence[cadence]);
+  return parts.length === 0 ? base : `${base} · ${parts.join(' · ')}`;
 }
 
 // First-populate pulse: draws the eye to the lane the moment a progression
@@ -196,7 +303,16 @@ onBeforeUnmount(() => {
         :style="{ left: `${label.offsetPx}px` }"
       >
         {{ band.name }}
+        <span v-if="band.mark !== ''" class="chord-mark">{{ band.mark }}</span>
       </span>
+    </div>
+    <div
+      v-for="marker in cadenceMarkers"
+      :key="marker.key"
+      class="cadence-mark"
+      :style="{ left: `${marker.leftPx}px` }"
+    >
+      <span v-if="marker.showLabel" class="cadence-label">{{ cadenceShort(marker.type) }}</span>
     </div>
     <span v-if="props.showHints && props.chords.length === 0" class="chord-hint">
       {{ t.shell.arrangement.chordEmptyHint }}
@@ -256,6 +372,36 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+}
+
+.chord-mark {
+  margin-left: var(--sp-1);
+  font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.cadence-mark {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+  pointer-events: none;
+}
+
+.cadence-label {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--sp-2);
+  display: flex;
+  align-items: center;
+  font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
+  color: var(--accent);
+  white-space: nowrap;
 }
 
 .chord-hint {
