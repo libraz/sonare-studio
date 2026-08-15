@@ -12,6 +12,7 @@
 
 import type { HarmonyRole, LockLevel, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
+import { PITCH_CLASS_NAMES } from '@/lib/pitch';
 import { spellPitch } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 
@@ -159,22 +160,6 @@ export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryL
     glossary: theory.glossary,
   };
 }
-
-/** Pitch-class names, sharp spelling (index = pitch class). */
-const PITCH_CLASS_NAMES = [
-  'C',
-  'C#',
-  'D',
-  'D#',
-  'E',
-  'F',
-  'F#',
-  'G',
-  'G#',
-  'A',
-  'A#',
-  'B',
-] as const;
 
 /** Maps a safety verdict to its label key. */
 const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>> = {

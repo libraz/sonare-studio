@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { formatNote, midiToNote, NoteSafety } from '@libraz/libcantus';
+import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
 import type { ArrangementConflict } from '@/compose/arrangement';
+import { formatPitch } from '@/lib/pitch';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
@@ -106,7 +107,10 @@ function positionLabel(ppq: number): string {
 
 /** Spelled note name (e.g. "C#4") of a conflict's MIDI pitch. */
 function pitchLabel(pitch: number): string {
-  return formatNote(midiToNote(pitch));
+  // A conflict pitch always comes from note data in the MIDI range; falling
+  // back to the raw number keeps a malformed one from throwing mid-render.
+  if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) return String(pitch);
+  return formatPitch(pitch);
 }
 
 /** Localized severity text for a conflict's safety verdict. */

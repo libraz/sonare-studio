@@ -2,35 +2,25 @@
  * Pitch-name helpers for note fields (e.g., the piano-roll Info Line).
  *
  * Convention: scientific pitch notation with middle C (MIDI 60) = C4, so the
- * full MIDI range reads C-1 (0) through G9 (127).
+ * full MIDI range reads C-1 (0) through G9 (127). Note spelling and note
+ * arithmetic come from libcantus; this module owns the studio's input
+ * contract — which note-name shapes are accepted, and the MIDI range a pitch
+ * field may hold.
  */
 
-/** Sharp-based pitch class names indexed by pitch class (0 = C ... 11 = B). */
-export const PITCH_CLASS_NAMES = [
-  'C',
-  'C#',
-  'D',
-  'D#',
-  'E',
-  'F',
-  'F#',
-  'G',
-  'G#',
-  'A',
-  'A#',
-  'B',
-] as const;
+import { formatNote, midiToNote, noteNames, noteToMidi, parseNote } from '@libraz/libcantus';
 
-/** Natural pitch class for each note letter. */
-const LETTER_TO_PITCH_CLASS: Readonly<Record<string, number>> = {
-  c: 0,
-  d: 2,
-  e: 4,
-  f: 5,
-  g: 7,
-  a: 9,
-  b: 11,
-};
+/** Sharp-based pitch class names indexed by pitch class (0 = C ... 11 = B). */
+export const PITCH_CLASS_NAMES: readonly string[] = noteNames(
+  Array.from({ length: 12 }, (_unused, pitchClass) => {
+    // Drop the octave so each note names a bare pitch class.
+    const { letter, alter } = midiToNote(pitchClass, 'sharp');
+    return { letter, alter };
+  }),
+);
+
+/** ASCII accidental libcantus expects for each accepted accidental character. */
+const ACCIDENTALS: Readonly<Record<string, string>> = { '#': '#', '♯': '#', b: 'b', '♭': 'b' };
 
 /** Note-name pattern: letter, optional accidental, octave (-1..9, two digits max). */
 const NOTE_NAME_PATTERN = /^([a-g])([#♯b♭]?)(-?\d{1,2})$/i;
@@ -50,8 +40,7 @@ export function formatPitch(midi: number): string {
   if (!Number.isInteger(midi) || midi < 0 || midi > 127) {
     throw new RangeError(`MIDI pitch must be an integer in [0, 127], got ${midi}`);
   }
-  const octave = Math.floor(midi / 12) - 1;
-  return `${PITCH_CLASS_NAMES[midi % 12]}${octave}`;
+  return formatNote(midiToNote(midi, 'sharp'));
 }
 
 /**
@@ -73,15 +62,10 @@ export function parsePitch(text: string): number | null {
   }
   const match = NOTE_NAME_PATTERN.exec(trimmed);
   if (!match) return null;
-  const pitchClass = LETTER_TO_PITCH_CLASS[match[1].toLowerCase()];
-  const accidentalChar = match[2].toLowerCase();
-  const accidental =
-    accidentalChar === '#' || accidentalChar === '♯'
-      ? 1
-      : accidentalChar === 'b' || accidentalChar === '♭'
-        ? -1
-        : 0;
-  const octave = Number.parseInt(match[3], 10);
-  const midi = (octave + 1) * 12 + pitchClass + accidental;
+  // The pattern above is the accepted input, so hand libcantus a canonical
+  // spelling: it reads only ASCII accidentals, and takes an uppercase "B" as a
+  // note letter rather than a flat.
+  const name = `${match[1].toUpperCase()}${ACCIDENTALS[match[2].toLowerCase()] ?? ''}${match[3]}`;
+  const midi = noteToMidi(parseNote(name));
   return midi >= 0 && midi <= 127 ? midi : null;
 }
