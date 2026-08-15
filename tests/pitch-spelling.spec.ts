@@ -4,49 +4,49 @@ import {
   keyToKeyFifths,
   modeToProjectMode,
   projectModeToMode,
-  spellPitch,
+  spellPitchInKeySignature,
   spellPitchWithContext,
 } from '@/notation/pitch-spelling';
 
-describe('spellPitch', () => {
+describe('spellPitchInKeySignature', () => {
   it('spells naturals identically in every key', () => {
     for (const fifths of [-5, -1, 0, 1, 5]) {
-      expect(spellPitch(60, fifths)).toEqual({ step: 'C', alter: 0, octave: 4 });
-      expect(spellPitch(65, fifths)).toEqual({ step: 'F', alter: 0, octave: 4 });
-      expect(spellPitch(71, fifths)).toEqual({ step: 'B', alter: 0, octave: 4 });
+      expect(spellPitchInKeySignature(60, fifths)).toEqual({ step: 'C', alter: 0, octave: 4 });
+      expect(spellPitchInKeySignature(65, fifths)).toEqual({ step: 'F', alter: 0, octave: 4 });
+      expect(spellPitchInKeySignature(71, fifths)).toEqual({ step: 'B', alter: 0, octave: 4 });
     }
   });
 
   it('spells black keys as sharps in C major (fifths = 0)', () => {
-    expect(spellPitch(61, 0)).toEqual({ step: 'C', alter: 1, octave: 4 });
-    expect(spellPitch(63, 0)).toEqual({ step: 'D', alter: 1, octave: 4 });
-    expect(spellPitch(66, 0)).toEqual({ step: 'F', alter: 1, octave: 4 });
-    expect(spellPitch(68, 0)).toEqual({ step: 'G', alter: 1, octave: 4 });
-    expect(spellPitch(70, 0)).toEqual({ step: 'A', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(61, 0)).toEqual({ step: 'C', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(63, 0)).toEqual({ step: 'D', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(66, 0)).toEqual({ step: 'F', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(68, 0)).toEqual({ step: 'G', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(70, 0)).toEqual({ step: 'A', alter: 1, octave: 4 });
   });
 
   it('spells black keys as sharps in G major (fifths = 1)', () => {
-    expect(spellPitch(66, 1)).toEqual({ step: 'F', alter: 1, octave: 4 });
-    expect(spellPitch(61, 1)).toEqual({ step: 'C', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(66, 1)).toEqual({ step: 'F', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(61, 1)).toEqual({ step: 'C', alter: 1, octave: 4 });
   });
 
   it('spells black keys as flats in F major (fifths = -1)', () => {
-    expect(spellPitch(70, -1)).toEqual({ step: 'B', alter: -1, octave: 4 });
-    expect(spellPitch(63, -1)).toEqual({ step: 'E', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(70, -1)).toEqual({ step: 'B', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(63, -1)).toEqual({ step: 'E', alter: -1, octave: 4 });
   });
 
   it('spells black keys as flats in Db major (fifths = -5)', () => {
-    expect(spellPitch(61, -5)).toEqual({ step: 'D', alter: -1, octave: 4 });
-    expect(spellPitch(66, -5)).toEqual({ step: 'G', alter: -1, octave: 4 });
-    expect(spellPitch(68, -5)).toEqual({ step: 'A', alter: -1, octave: 4 });
-    expect(spellPitch(70, -5)).toEqual({ step: 'B', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(61, -5)).toEqual({ step: 'D', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(66, -5)).toEqual({ step: 'G', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(68, -5)).toEqual({ step: 'A', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(70, -5)).toEqual({ step: 'B', alter: -1, octave: 4 });
   });
 
   it('uses signature spellings across E#/Cb octave boundaries', () => {
     // F# major's leading tone is E#, not F natural.
-    expect(spellPitch(65, 6)).toEqual({ step: 'E', alter: 1, octave: 4 });
+    expect(spellPitchInKeySignature(65, 6)).toEqual({ step: 'E', alter: 1, octave: 4 });
     // Gb major's fourth degree is Cb; Cb4 is MIDI 59 rather than Cb3.
-    expect(spellPitch(59, -6)).toEqual({ step: 'C', alter: -1, octave: 4 });
+    expect(spellPitchInKeySignature(59, -6)).toEqual({ step: 'C', alter: -1, octave: 4 });
   });
 
   it('uses melodic and harmonic context for chromatic spellings and double sharps', () => {
@@ -77,17 +77,17 @@ describe('spellPitch', () => {
   });
 
   it('uses MusicXML octaves (C4 = MIDI 60)', () => {
-    expect(spellPitch(59, 0).octave).toBe(3);
-    expect(spellPitch(60, 0).octave).toBe(4);
-    expect(spellPitch(72, 0).octave).toBe(5);
-    expect(spellPitch(0, 0)).toEqual({ step: 'C', alter: 0, octave: -1 });
-    expect(spellPitch(127, 0)).toEqual({ step: 'G', alter: 0, octave: 9 });
+    expect(spellPitchInKeySignature(59, 0).octave).toBe(3);
+    expect(spellPitchInKeySignature(60, 0).octave).toBe(4);
+    expect(spellPitchInKeySignature(72, 0).octave).toBe(5);
+    expect(spellPitchInKeySignature(0, 0)).toEqual({ step: 'C', alter: 0, octave: -1 });
+    expect(spellPitchInKeySignature(127, 0)).toEqual({ step: 'G', alter: 0, octave: 9 });
   });
 
   it('rejects out-of-range MIDI numbers', () => {
-    expect(() => spellPitch(-1, 0)).toThrow(RangeError);
-    expect(() => spellPitch(128, 0)).toThrow(RangeError);
-    expect(() => spellPitch(60.5, 0)).toThrow(RangeError);
+    expect(() => spellPitchInKeySignature(-1, 0)).toThrow(RangeError);
+    expect(() => spellPitchInKeySignature(128, 0)).toThrow(RangeError);
+    expect(() => spellPitchInKeySignature(60.5, 0)).toThrow(RangeError);
   });
 });
 

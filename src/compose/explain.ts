@@ -13,7 +13,7 @@
 import type { HarmonyRole, LockLevel, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
-import { spellPitch } from '@/notation/pitch-spelling';
+import { spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 
 /** A glossary term: a short display name and its plain-language definition. */
@@ -269,7 +269,7 @@ function pitchName(midi: number, keyFifths?: number): string {
     const pc = ((midi % 12) + 12) % 12;
     return `${PITCH_CLASS_NAMES[pc]}${Math.floor(midi / 12) - 1}`;
   }
-  const pitch = spellPitch(midi, keyFifths);
+  const pitch = spellPitchInKeySignature(midi, keyFifths);
   return `${pitch.step}${pitch.alter === 0 ? '' : pitch.alter === 1 ? '#' : 'b'}${pitch.octave}`;
 }
 

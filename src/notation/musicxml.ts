@@ -49,7 +49,7 @@ import {
   type SpelledPitch,
   type Step,
   spellChordPitchClass,
-  spellPitch,
+  spellPitchInKeySignature,
   spellPitchWithContext,
 } from './pitch-spelling';
 import { staffForMeanPitch } from './quantize';
@@ -1449,7 +1449,7 @@ function buildAccidentalIndex(
     const suppressDisplay = event.tieStop;
     const staff = staffMap?.get(event) ?? 1;
     event.pitches.forEach((midi, pitchIndex) => {
-      const pitch = spellings.get(event)?.[pitchIndex] ?? spellPitch(midi, keyFifths);
+      const pitch = spellings.get(event)?.[pitchIndex] ?? spellPitchInKeySignature(midi, keyFifths);
       const key = `${staff}:${pitch.step}:${pitch.octave}`;
       const current = state.get(key) ?? keySignatureAlter(pitch.step, keyFifths);
       if (!suppressDisplay && pitch.alter !== current) {
@@ -1717,7 +1717,7 @@ function pushNoteEvent(
         : '';
     const pitch = eventPercussion
       ? unpitchedXml(display ?? percussionDisplay(midi))
-      : pitchXml(spellings.get(event)?.[pitchIndex] ?? spellPitch(midi, keyFifths));
+      : pitchXml(spellings.get(event)?.[pitchIndex] ?? spellPitchInKeySignature(midi, keyFifths));
     const accidental = eventPercussion
       ? ''
       : accidentalXml(accidentals.get(event)?.get(pitchIndex));

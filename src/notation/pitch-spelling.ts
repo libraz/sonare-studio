@@ -110,9 +110,9 @@ function octaveForSpelling(midi: number, step: Step, alter: SpelledPitch['alter'
  * @returns The spelled pitch.
  * @throws RangeError If `midi` is not an integer in 0-127.
  */
-export function spellPitch(midi: number, keyFifths: number): SpelledPitch {
+export function spellPitchInKeySignature(midi: number, keyFifths: number): SpelledPitch {
   if (!Number.isInteger(midi) || midi < 0 || midi > 127) {
-    throw new RangeError(`spellPitch: midi must be an integer in 0-127, got ${midi}`);
+    throw new RangeError(`spellPitchInKeySignature: midi must be an integer in 0-127, got ${midi}`);
   }
   const pitchClass = midi % 12;
   const fallback = (keyFifths < 0 ? FLAT_SPELLINGS : SHARP_SPELLINGS)[pitchClass];
@@ -160,25 +160,31 @@ function chromaticCandidates(midi: number): SpelledPitch[] {
 
 /**
  * Spells a chromatic note using local musical context in addition to a key
- * signature. The plain {@link spellPitch} remains the stable fallback for
- * callers which only have a pitch class. At score-export time this resolves
- * raised leading tones (C#→D in D minor), secondary dominants (D–F#–A), and
- * double sharps such as F##→G# without changing the underlying MIDI data.
+ * signature. The plain {@link spellPitchInKeySignature} remains the stable
+ * fallback for callers which only have a pitch class. At score-export time this
+ * resolves raised leading tones (C#→D in D minor), secondary dominants
+ * (D–F#–A), and double sharps such as F##→G# without changing the underlying
+ * MIDI data.
  */
 export function spellPitchWithContext(
   midi: number,
   keyFifths: number,
   context: PitchSpellingContext = {},
 ): SpelledPitch {
-  const fallback = spellPitch(midi, keyFifths);
+  const fallback = spellPitchInKeySignature(midi, keyFifths);
   const candidates = chromaticCandidates(midi);
   if (candidates.length === 1) return candidates[0];
   const rootMidi = context.chordRootMidi;
   const rootSpelling =
     rootMidi === undefined ? undefined : spellChordPitchClass(rootMidi % 12, keyFifths);
   const previous =
-    context.previousMidi === undefined ? undefined : spellPitch(context.previousMidi, keyFifths);
-  const next = context.nextMidi === undefined ? undefined : spellPitch(context.nextMidi, keyFifths);
+    context.previousMidi === undefined
+      ? undefined
+      : spellPitchInKeySignature(context.previousMidi, keyFifths);
+  const next =
+    context.nextMidi === undefined
+      ? undefined
+      : spellPitchInKeySignature(context.nextMidi, keyFifths);
   const score = (candidate: SpelledPitch): number => {
     let value = candidate.step === fallback.step && candidate.alter === fallback.alter ? 1 : 0;
     if (rootMidi !== undefined && rootSpelling !== undefined) {
