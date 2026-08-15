@@ -8,6 +8,7 @@
  * tests can run against plain mock functions.
  */
 
+import { stepOf } from '@libraz/libcantus';
 import { ensureWasm } from '@/lib/wasm';
 import {
   type MatchEqAnalysis,
@@ -501,11 +502,6 @@ export function tuneToReferenceRange(
   return spliceRange(channels, resolved, planar);
 }
 
-/** 12-TET MIDI number of a frequency (A4 = 440 Hz = MIDI 69). */
-function hzToMidi(hz: number): number {
-  return 69 + 12 * Math.log2(hz / 440);
-}
-
 /**
  * Pitch-corrects the range to the nearest in-scale note. The selection's pitch
  * is detected once on its mono downmix, snapped to the scale (`root` +
@@ -547,7 +543,8 @@ export function scaleCorrectRange(
   if (!(medianF0 > 0)) {
     throw new Error('Could not detect a pitch to correct in the selection');
   }
-  const currentMidi = hzToMidi(medianF0);
+  // 12-TET step index is the MIDI number the engine's pitch ops expect.
+  const currentMidi = stepOf(medianF0);
   const targetMidi = quantize(root, modeMask, currentMidi);
   const corrected = segments.map((segment) =>
     correct(segment, sampleRate, currentMidi, targetMidi),

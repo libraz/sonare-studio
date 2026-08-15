@@ -12,6 +12,7 @@
  * creation lives in command/melody.
  */
 
+import { nearestStep } from '@libraz/libcantus';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
@@ -105,15 +106,11 @@ const KEY_ROOTS = new Map<string, number>([
   ['cb', 11],
 ]);
 
-/** 12-TET MIDI number of a frequency (A4 = 440 Hz = MIDI 69). */
-function hzToMidi(hz: number): number {
-  return 69 + 12 * Math.log2(hz / 440);
-}
-
 /** True when a frame is voiced and its pitch lands in the MIDI range. */
 function pitchOf(point: DetectedMelodyPoint): number | null {
   if (!(point.frequency > 0)) return null;
-  const midi = Math.round(hzToMidi(point.frequency));
+  // 12-TET step index is the MIDI number: A4 = 440 Hz = 69.
+  const midi = nearestStep(point.frequency);
   return midi >= 0 && midi <= 127 ? midi : null;
 }
 
