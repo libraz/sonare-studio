@@ -131,7 +131,7 @@ describe('PatchEditor.vue', () => {
     ]);
   });
 
-  it('applies zero sustain as an explicit near-silent patch override', async () => {
+  it('applies zero sustain as an explicit patch override', async () => {
     const wrapper = mountOpen();
     await wrapper.find('[data-field="ampSustain"]').setValue('0');
     const apply = wrapper.findAll('button').find((b) => b.text() === 'Apply');
@@ -142,7 +142,23 @@ describe('PatchEditor.vue', () => {
       patch: { ampSustain?: number };
     };
     expect(instrument.kind).toBe('synth-patch');
-    expect(instrument.patch.ampSustain).toBe(0.0001);
+    expect(instrument.patch.ampSustain).toBe(0);
+  });
+
+  it('commits the GM program toggle and omits it again when turned off', async () => {
+    const wrapper = mountOpen();
+    const apply = () => wrapper.findAll('button').find((b) => b.text() === 'Apply');
+    const toggle = wrapper.find('[data-field="useGmPrograms"]');
+    const patch = () =>
+      (store.tracks[0].instrument as { patch: { useGmPrograms?: boolean } }).patch;
+
+    await toggle.setValue(true);
+    await apply()?.trigger('click');
+    expect(patch().useGmPrograms).toBe(true);
+
+    await toggle.setValue(false);
+    await apply()?.trigger('click');
+    expect('useGmPrograms' in patch()).toBe(false);
   });
 
   it('removes mod rows', async () => {

@@ -64,7 +64,7 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'drive')?.value).toBe(0.9);
     });
 
-    it('displays the encoded zero sustain override as zero', () => {
+    it('displays a legacy epsilon-encoded zero sustain as zero', () => {
       setTrackInstrument(trackId, {
         kind: 'synth-patch',
         patch: { preset: 'saw-lead', ampSustain: 0.0001 },
@@ -298,11 +298,11 @@ describe('quick controls', () => {
       });
     });
 
-    it('sets zero sustain as an explicit near-silent patch override', () => {
+    it('sets zero sustain as an explicit patch override', () => {
       setQuickControl({ type: 'instrument', trackId }, 'ampSustain', 0);
       expect(store.tracks[0].instrument).toEqual({
         kind: 'synth-patch',
-        patch: { preset: 'e-piano', ampSustain: 0.0001 },
+        patch: { preset: 'e-piano', ampSustain: 0 },
       });
     });
 

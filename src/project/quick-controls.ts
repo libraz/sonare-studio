@@ -10,11 +10,7 @@
  * call).
  */
 
-import {
-  decodePatchFieldValue,
-  encodePatchFieldValue,
-  type NumericPatchField,
-} from '@/ui/devices/patch-draft';
+import { decodePatchFieldValue, type NumericPatchField } from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
 import {
@@ -258,11 +254,11 @@ function synthEnumControls(patch: SynthPatch | null, basePatch: SynthPatch | nul
   });
 }
 
-/** Reads a synth patch field as a set value (0/undefined = keep base). */
+/** Reads a synth patch field as a set value (omitted = keep base). */
 function patchValue(patch: SynthPatch | null, id: string): number | null {
   if (!patch) return null;
   const value = (patch as Record<string, unknown>)[id];
-  if (typeof value !== 'number' || value === 0) return null;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return decodePatchFieldValue(id as NumericPatchField, value);
 }
 
@@ -451,10 +447,9 @@ export function setQuickControl(
       };
       validateProcessorControlValue(control, value);
       const clamped = Math.min(numericSpec.max, Math.max(numericSpec.min, value));
-      const encoded = encodePatchFieldValue(id as NumericPatchField, clamped);
       const basePatch: SynthPatch =
         instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
-      const nextPatch = { ...basePatch, [id]: encoded } as SynthPatch;
+      const nextPatch = { ...basePatch, [id]: clamped } as SynthPatch;
       setTrackInstrument(target.trackId, { kind: 'synth-patch', patch: nextPatch }, options);
       return;
     }

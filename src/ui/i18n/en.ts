@@ -833,6 +833,11 @@ export const en = {
         engine: 'Engine',
         body: 'Body',
       },
+      toggles: {
+        useGmPrograms: 'GM programs',
+        useGmProgramsHint:
+          'Program changes in the clip select the matching General MIDI voice; this patch stays the fallback.',
+      },
       fields: {
         unison: 'Unison',
         detuneCents: 'Detune',

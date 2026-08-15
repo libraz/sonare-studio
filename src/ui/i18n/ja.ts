@@ -830,6 +830,11 @@ export const ja = {
         engine: 'エンジン',
         body: 'ボディ',
       },
+      toggles: {
+        useGmPrograms: 'GM プログラム',
+        useGmProgramsHint:
+          'クリップ内のプログラムチェンジで対応する GM 音色を選びます。このパッチはフォールバックとして残ります。',
+      },
       fields: {
         unison: 'ユニゾン',
         detuneCents: 'デチューン',

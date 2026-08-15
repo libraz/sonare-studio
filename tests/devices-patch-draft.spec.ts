@@ -59,21 +59,22 @@ describe('clampPatchField', () => {
     expect(clampPatchField('ampSustain', 1.5)).toBe(1);
   });
 
-  it('passes the keep-base sentinel (0) through unclamped', () => {
-    // cutoffHz min is 20, but 0 means "keep the preset value" in the ABI.
-    expect(clampPatchField('cutoffHz', 0)).toBe(0);
-    expect(clampPatchField('unison', 0)).toBe(0);
+  it('lifts zero into the range of fields that exclude it', () => {
+    expect(clampPatchField('cutoffHz', 0)).toBe(20);
+    expect(clampPatchField('unison', 0)).toBe(1);
   });
 
-  it('encodes sustain zero as an explicit near-silent override', () => {
-    expect(clampPatchField('ampSustain', 0)).toBe(0.0001);
-    expect(clampPatchField('filterSustain', 0)).toBe(0.0001);
+  it('keeps zero verbatim as an explicit override', () => {
+    expect(clampPatchField('ampSustain', 0)).toBe(0);
+    expect(clampPatchField('filterSustain', 0)).toBe(0);
+    expect(clampPatchField('glideMs', 0)).toBe(0);
   });
 
-  it('rounds integer fields and degrades non-finite input to the sentinel', () => {
+  it('rounds integer fields and degrades non-finite input into range', () => {
     expect(clampPatchField('unison', 3.6)).toBe(4);
     expect(clampPatchField('polyphony', 200)).toBe(64);
     expect(clampPatchField('gain', Number.NaN)).toBe(0);
+    expect(clampPatchField('cutoffHz', Number.NaN)).toBe(20);
   });
 });
 
@@ -148,6 +149,14 @@ describe('createPatchDraft', () => {
     });
   });
 
+  it('carries the GM program flag over from the instrument patch', () => {
+    const draft = createPatchDraft(
+      { kind: 'synth-patch', patch: { preset: 'saw-lead', useGmPrograms: true } },
+      () => null,
+    );
+    expect(draft.useGmPrograms).toBe(true);
+  });
+
   it('never copies the binding-internal destinationId', () => {
     const draft = createPatchDraft(
       { kind: 'synth-patch', patch: { destinationId: 3, gain: 0.5 } },
@@ -158,7 +167,7 @@ describe('createPatchDraft', () => {
 });
 
 describe('sanitizePatchDraft', () => {
-  it('clamps numerics, keeps enums and drops sentinels', () => {
+  it('clamps numerics and drops the keep-base enum spelling', () => {
     const patch = sanitizePatchDraft({
       preset: 'saw-lead',
       cutoffHz: 99999,
@@ -173,7 +182,7 @@ describe('sanitizePatchDraft', () => {
     expect(patch).toEqual({
       preset: 'saw-lead',
       cutoffHz: 20000,
-      drive: 0.0001,
+      drive: 0,
       lfo2RateHz: 20,
       bodyMix: 0.4,
       busDrive: 0.7,
@@ -182,7 +191,7 @@ describe('sanitizePatchDraft', () => {
     });
   });
 
-  it('keeps explicit zero numeric fields instead of dropping them as ABI sentinels', () => {
+  it('emits explicit zero numeric fields verbatim', () => {
     const patch = sanitizePatchDraft({
       ampSustain: 0,
       filterSustain: 0,
@@ -191,12 +200,22 @@ describe('sanitizePatchDraft', () => {
       glideMs: 0,
     });
     expect(patch).toEqual({
-      ampSustain: 0.0001,
-      filterSustain: 0.0001,
-      drive: 0.0001,
-      envToCutoffCents: 0.001,
-      glideMs: 0.001,
+      ampSustain: 0,
+      filterSustain: 0,
+      drive: 0,
+      envToCutoffCents: 0,
+      glideMs: 0,
     });
+  });
+
+  it('drops non-finite numeric fields', () => {
+    expect(sanitizePatchDraft({ gain: Number.NaN, cutoffHz: 440 })).toEqual({ cutoffHz: 440 });
+  });
+
+  it('carries the GM program flag only when enabled', () => {
+    expect(sanitizePatchDraft({ useGmPrograms: true }).useGmPrograms).toBe(true);
+    expect('useGmPrograms' in sanitizePatchDraft({ useGmPrograms: false })).toBe(false);
+    expect('useGmPrograms' in sanitizePatchDraft({})).toBe(false);
   });
 
   it('filters and clamps mod routings', () => {
@@ -209,11 +228,15 @@ describe('sanitizePatchDraft', () => {
     expect(patch.modRoutings).toEqual([{ source: 'lfo1', destination: 'pitch-cents', depth: -1 }]);
   });
 
-  it('uses an inert routing to explicitly replace inherited modulations', () => {
+  it('emits an empty routing list to clear inherited modulations', () => {
     const patch = sanitizePatchDraft({
       modRoutings: [{ source: 'none', destination: 'none', depth: 0 }],
     });
-    expect(patch.modRoutings).toEqual([{ source: 'none', destination: 'none', depth: 0 }]);
+    expect(patch.modRoutings).toEqual([]);
+  });
+
+  it('keeps the base mod matrix when the draft omits routings', () => {
+    expect(sanitizePatchDraft({ gain: 0.5 }).modRoutings).toBeUndefined();
   });
 });
 

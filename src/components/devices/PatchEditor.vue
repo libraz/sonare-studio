@@ -185,6 +185,18 @@ function onEnumChange(field: EnumFieldView, value: string): void {
   draft.value = { ...draft.value, [field.id]: value };
 }
 
+/**
+ * Toggles GM program resolution. Off is the patch default, so the flag is
+ * dropped rather than stored as false.
+ */
+function onGmProgramsChange(event: Event): void {
+  const enabled = (event.target as HTMLInputElement).checked;
+  const next = { ...draft.value };
+  if (enabled) next.useGmPrograms = true;
+  else delete next.useGmPrograms;
+  draft.value = next;
+}
+
 // --- Mod matrix --------------------------------------------------------------
 
 /** Mod source options for the matrix selects. */
@@ -296,9 +308,8 @@ watch([draft, modRows], () => {
 /** Builds the sanitized patch the dialog would commit. */
 function buildPatch(): SynthPatch {
   const merged: SynthPatch = { ...draft.value };
-  const routings = modRowsToRoutings(modRows.value);
-  merged.modRoutings =
-    routings.length > 0 ? routings : [{ source: 'none', destination: 'none', depth: 0 }];
+  // The editor owns the whole mod matrix, so it always replaces the base one.
+  merged.modRoutings = modRowsToRoutings(modRows.value);
   return sanitizePatchDraft(merged);
 }
 
@@ -516,6 +527,16 @@ function onKeydown(event: KeyboardEvent): void {
             />
             <span class="field-value">{{ formatControlValue(fieldValue(field), field.unit) }}</span>
           </label>
+          <label class="toggle-row">
+            <input
+              type="checkbox"
+              data-field="useGmPrograms"
+              :checked="draft.useGmPrograms === true"
+              @change="onGmProgramsChange"
+            />
+            <span class="field-label">{{ t.shell.patchEditor.toggles.useGmPrograms }}</span>
+          </label>
+          <p class="toggle-hint">{{ t.shell.patchEditor.toggles.useGmProgramsHint }}</p>
         </section>
 
         <section class="patch-section mod-matrix" :aria-label="t.shell.patchEditor.sections.modMatrix">
@@ -709,6 +730,23 @@ function onKeydown(event: KeyboardEvent): void {
   text-align: right;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.toggle-row input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.toggle-hint {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  line-height: 1.4;
 }
 
 .field-row input[type='range'] {

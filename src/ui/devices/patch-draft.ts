@@ -3,9 +3,9 @@
  *
  * The editor keeps a local draft the user mutates freely; Apply sanitizes it
  * back into a SynthPatch and commits a single undoable setTrackInstrument.
- * The frozen patch ABI treats numeric 0 / omitted fields as "keep the base
- * preset value", so every user-facing zero is encoded as a tiny positive
- * value that avoids the ABI sentinel while remaining inaudible.
+ * A field the patch omits keeps the base preset value and a field it carries
+ * overrides it, explicit zeros included; an empty `modRoutings` array clears
+ * the base mod matrix.
  */
 
 import type { TrackInstrument } from '@/project/instrument';
@@ -309,35 +309,22 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
   },
 ];
 
-/** Smallest positive normalized/Hz override distinguishable from the ABI sentinel. */
-export const EXPLICIT_ZERO_AMOUNT = 0.0001;
+/**
+ * Epsilons a project may carry in place of an explicit zero, from when the
+ * patch ABI read a literal 0 as "keep the base preset value". Reading maps them
+ * back to the zero the user asked for; nothing writes them any more.
+ */
+const LEGACY_ZERO_AMOUNT = 0.0001;
+const LEGACY_ZERO_TIME_OR_CENTS = 0.001;
 
-/** Smallest positive cents/milliseconds override distinguishable from the sentinel. */
-export const EXPLICIT_ZERO_TIME_OR_CENTS = 0.001;
-
-/** @deprecated Use {@link EXPLICIT_ZERO_AMOUNT}. */
-export const EXPLICIT_ZERO_SUSTAIN = EXPLICIT_ZERO_AMOUNT;
-
-export function isSustainField(id: string): id is 'ampSustain' | 'filterSustain' {
-  return id === 'ampSustain' || id === 'filterSustain';
-}
-
-function explicitZeroForField(id: NumericPatchField): number {
-  const unit = patchFieldSpec(id)?.unit;
-  return unit === 'ct' || unit === 'ms' ? EXPLICIT_ZERO_TIME_OR_CENTS : EXPLICIT_ZERO_AMOUNT;
-}
-
-/** Encodes a UI numeric value for the ABI, where literal 0 means "keep base". */
-export function encodePatchFieldValue(id: NumericPatchField, value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  if (value === 0 && (patchFieldSpec(id)?.min ?? 0) <= 0) return explicitZeroForField(id);
-  return value;
-}
-
-/** Decodes stored ABI epsilon back to the user's requested zero. */
+/** Maps the epsilon such a project stored for a field back to zero. */
 export function decodePatchFieldValue(id: NumericPatchField, value: number): number {
-  if (value > 0 && value <= explicitZeroForField(id)) return 0;
-  return value;
+  const spec = patchFieldSpec(id);
+  // Fields whose range excludes zero were never epsilon-encoded.
+  if ((spec?.min ?? 0) > 0) return value;
+  const epsilon =
+    spec?.unit === 'ct' || spec?.unit === 'ms' ? LEGACY_ZERO_TIME_OR_CENTS : LEGACY_ZERO_AMOUNT;
+  return value > 0 && value <= epsilon ? 0 : value;
 }
 
 /** Returns the numeric field specs of one editor section, in display order. */
@@ -351,20 +338,19 @@ export function patchFieldSpec(id: string): PatchFieldSpec | null {
 }
 
 /**
- * Clamps a numeric patch field to its spec range. Zero is the ABI's
- * "keep the base value" sentinel and passes through untouched; non-finite
- * input degrades to the sentinel as well.
+ * Clamps a numeric patch field to its spec range. Zero is an ordinary override
+ * the patch carries like any other value; non-finite input degrades to the
+ * in-range value nearest zero.
  *
  * @param id Numeric patch field id.
  * @param value Raw value from the editor.
  * @returns The clamped value (integer fields rounded).
  */
 export function clampPatchField(id: NumericPatchField, value: number): number {
-  const encoded = encodePatchFieldValue(id, value);
-  if (!Number.isFinite(encoded) || encoded === 0) return 0;
+  const raw = Number.isFinite(value) ? value : 0;
   const spec = patchFieldSpec(id);
-  if (!spec) return encoded;
-  const clamped = Math.min(spec.max, Math.max(spec.min, encoded));
+  if (!spec) return raw;
+  const clamped = Math.min(spec.max, Math.max(spec.min, raw));
   return spec.integer ? Math.round(clamped) : clamped;
 }
 
@@ -454,7 +440,7 @@ function copyPatchFields(target: SynthPatch, source: SynthPatch): void {
   const record = source as Record<string, unknown>;
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
-    if (typeof value === 'number' && Number.isFinite(value) && value !== 0) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
       (target as Record<string, unknown>)[spec.id] = decodePatchFieldValue(spec.id, value);
     }
   }
@@ -464,6 +450,7 @@ function copyPatchFields(target: SynthPatch, source: SynthPatch): void {
       (target as Record<string, unknown>)[field] = value;
     }
   }
+  if (source.useGmPrograms === true) target.useGmPrograms = true;
   if (Array.isArray(source.modRoutings) && source.modRoutings.length > 0) {
     target.modRoutings = source.modRoutings.map((routing) => ({ ...routing }));
   }
@@ -505,10 +492,9 @@ export function createPatchDraft(
 
 /**
  * Sanitizes a draft into a SynthPatch ready to commit: numeric fields are
- * clamped to their spec ranges (non-finite values are dropped; UI zeros are
- * encoded as tiny positive overrides), enum fields are kept as strings, mod routings are
- * filtered/clamped/capped, and binding-internal fields (destinationId) are
- * never emitted.
+ * clamped to their spec ranges (non-finite values are dropped), enum fields are
+ * kept as strings, mod routings are filtered/clamped/capped, and
+ * binding-internal fields (destinationId) are never emitted.
  *
  * @param draft Editor draft (not mutated).
  * @returns A clean patch.
@@ -519,9 +505,8 @@ export function sanitizePatchDraft(draft: SynthPatch): SynthPatch {
   const record = draft as Record<string, unknown>;
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
-    if (typeof value !== 'number') continue;
-    const clamped = clampPatchField(spec.id, value);
-    if (clamped !== 0) (out as Record<string, unknown>)[spec.id] = clamped;
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    (out as Record<string, unknown>)[spec.id] = clampPatchField(spec.id, value);
   }
   for (const field of ENUM_PATCH_FIELDS) {
     const value = record[field];
@@ -529,11 +514,10 @@ export function sanitizePatchDraft(draft: SynthPatch): SynthPatch {
       (out as Record<string, unknown>)[field] = value;
     }
   }
-  if (Array.isArray(draft.modRoutings)) {
-    const routings = modRowsToRoutings(modMatrixRows(draft));
-    out.modRoutings =
-      routings.length > 0 ? routings : [{ source: 'none', destination: 'none', depth: 0 }];
-  }
+  // Emitted only when on, so an untouched patch stays byte-identical.
+  if (draft.useGmPrograms === true) out.useGmPrograms = true;
+  // An empty array clears the base mod matrix; omitting the key would keep it.
+  if (Array.isArray(draft.modRoutings)) out.modRoutings = modRowsToRoutings(modMatrixRows(draft));
   return out;
 }
 
@@ -543,13 +527,15 @@ export function patchEditCount(patch: SynthPatch): number {
   let count = 0;
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
-    if (typeof value === 'number' && value !== 0) count += 1;
+    if (typeof value === 'number' && Number.isFinite(value)) count += 1;
   }
   for (const field of ENUM_PATCH_FIELDS) {
     const value = record[field];
     if (typeof value === 'string' && value !== '' && value !== 'default') count += 1;
   }
-  if (Array.isArray(patch.modRoutings) && patch.modRoutings.length > 0) count += 1;
+  if (patch.useGmPrograms === true) count += 1;
+  // Any routing list is an edit — an empty one clears the base mod matrix.
+  if (Array.isArray(patch.modRoutings)) count += 1;
   return count;
 }
 
