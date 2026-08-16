@@ -10,9 +10,12 @@
  * engraved notes all name a scale degree the same way. What stays here is the
  * notation layer's own two rules: chromatic tones follow the side of the key
  * signature, and local melodic/harmonic context can override both.
+ *
+ * A melodic line is spelled as a whole by libcantus rather than note by note,
+ * because the reading of one chromatic tone depends on the notes around it.
  */
 
-import { isScaleTone, spellPitchClass } from '@libraz/libcantus';
+import { isLibcantusError, isScaleTone, spellLine, spellPitchClass } from '@libraz/libcantus';
 import { keyFifthsToSpelledKey } from '@/compose/key';
 import type { Key, Mode } from '@/wasm/index.js';
 
@@ -150,6 +153,16 @@ function ascendingStepDistance(from: Step, to: Step): number {
   return (stepIndex(to) - stepIndex(from) + 7) % 7;
 }
 
+/**
+ * Whether a melodic motion is a written second, the only interval whose
+ * direction dictates a spelling. A leap says nothing about which letter its
+ * departure note takes, so treating one as a resolution is what makes a plain
+ * D read as C## on the way up to F#.
+ */
+function isStepMotion(semitones: number): boolean {
+  return semitones === 1 || semitones === 2;
+}
+
 function chromaticCandidates(midi: number): SpelledPitch[] {
   const pitchClass = midi % 12;
   const candidates: SpelledPitch[] = [];
@@ -168,10 +181,15 @@ function chromaticCandidates(midi: number): SpelledPitch[] {
 /**
  * Spells a chromatic note using local musical context in addition to a key
  * signature. The plain {@link spellPitchInKeySignature} remains the stable
- * fallback for callers which only have a pitch class. At score-export time this
- * resolves raised leading tones (C#→D in D minor), secondary dominants
- * (D–F#–A), and double sharps such as F##→G# without changing the underlying
- * MIDI data.
+ * fallback for callers which only have a pitch class.
+ *
+ * Chord context spells a tone by its interval above the chord root, so a
+ * seventh chord keeps its stacked thirds whatever the key signature says.
+ * Melodic context only speaks for a written second: a chromatic tone stepping
+ * to a natural neighbour takes the letter next to that neighbour (C#-D, not
+ * Db-D). A whole melodic line is better spelled by
+ * {@link spellLineInKeySignature}, which weighs each note against the entire
+ * line rather than against one neighbour at a time.
  */
 export function spellPitchWithContext(
   midi: number,
@@ -205,8 +223,9 @@ export function spellPitchWithContext(
       }
     }
     if (previous !== undefined && context.previousMidi !== undefined) {
+      const motion = context.previousMidi - midi;
       const resolvesDownwardByStep =
-        midi < context.previousMidi &&
+        isStepMotion(motion) &&
         previous.alter === 0 &&
         ascendingStepDistance(candidate.step, previous.step) === 1;
       if (resolvesDownwardByStep) value += 4;
@@ -214,9 +233,9 @@ export function spellPitchWithContext(
     if (next !== undefined && context.nextMidi !== undefined) {
       const motion = context.nextMidi - midi;
       const resolvesUpwardByStep =
-        motion > 0 &&
-        ((ascendingStepDistance(candidate.step, next.step) === 1 && next.alter === 0) ||
-          candidate.alter === 2);
+        isStepMotion(motion) &&
+        next.alter === 0 &&
+        ascendingStepDistance(candidate.step, next.step) === 1;
       if (resolvesUpwardByStep) value += 4;
     }
     return value;
@@ -224,6 +243,96 @@ export function spellPitchWithContext(
   return candidates.reduce((best, candidate) =>
     score(candidate) > score(best) ? candidate : best,
   );
+}
+
+/** Whether a spelling sits in the octave next to the one its pitch lives in. */
+function crossesOctaveBoundary(pitch: Pick<SpelledPitch, 'step' | 'alter'>): boolean {
+  return (pitch.step === 'C' && pitch.alter < 0) || (pitch.step === 'B' && pitch.alter > 0);
+}
+
+/**
+ * Keeps a spelled note on the side of the key signature where reading it any
+ * other way would move it into the neighbouring octave.
+ *
+ * Cb and B# are the only spellings whose staff position and octave number
+ * belong to the octave next to the pitch they sound, so a B natural written
+ * Cb5 is engraved above the C it stands below. A reader expects that only when
+ * the key signature itself names the pitch that way, as Gb and Cb major name
+ * Cb and C# major names B#. In every other key the notation layer's own rule
+ * holds and the chromatic tone follows the signature's side, which is what
+ * keeps a lower neighbour of C written as B.
+ *
+ * Line spelling is otherwise left alone: an interval is what tells a leap into
+ * a borrowed chord to read Ab-C-Eb rather than G#-C-D#, and only these two
+ * letters carry the octave cost.
+ */
+function keySignatureSide(pitch: SpelledPitch, midi: number, keyFifths: number): SpelledPitch {
+  if (!crossesOctaveBoundary(pitch)) return pitch;
+  const signature = spellPitchInKeySignature(midi, keyFifths);
+  return crossesOctaveBoundary(signature) ? pitch : signature;
+}
+
+/** One sounding note of a melodic line, positioned in quarter-note beats. */
+export interface LineNote {
+  /** MIDI note number (integer 0-127). */
+  midi: number;
+  /** Onset in quarter-note beats from the start of the line's timeline. */
+  startBeat: number;
+  /** Sounding duration in quarter-note beats. */
+  durationBeat: number;
+}
+
+/**
+ * Spells a whole melodic line at once so its notes agree with each other.
+ *
+ * A chromatic tone cannot be read from its own pitch class: the same key
+ * signature spells a rising run with sharps and a falling one with flats, and
+ * one note taken alone has no direction. libcantus prices every spelling of
+ * every note against the intervals its neighbours would then be written with
+ * and takes the cheapest reading of the entire line, which is why the line has
+ * to be handed over in one piece rather than a note or a measure at a time.
+ *
+ * No chord timeline is supplied: the notation pipeline has no harmonic
+ * analysis at this point, and without one a chromatic chord simply falls back
+ * to the key's own reading of its tones.
+ *
+ * @param line The notes of one voice, in time order.
+ * @param keyFifths Key signature as MusicXML fifths (-7..7).
+ * @returns One spelled pitch per input note, in input order.
+ */
+export function spellLineInKeySignature(
+  line: readonly LineNote[],
+  keyFifths: number,
+): SpelledPitch[] {
+  if (line.length === 0) return [];
+  const { tonic, key } = keyFifthsToSpelledKey(keyFifths);
+  try {
+    const spelled = spellLine(
+      line.map((note) => ({
+        pitch: note.midi,
+        startBeat: note.startBeat,
+        durationBeat: note.durationBeat,
+      })),
+      null,
+      key,
+      { tonic },
+    );
+    return spelled.map((note, index) => {
+      const step = STEPS[((note.letter % 7) + 7) % 7];
+      const alter = note.alter as SpelledPitch['alter'];
+      // The spelled octave already accounts for B#/Cb crossing the octave
+      // boundary; it is only absent for a bare pitch class, which a line of
+      // sounding notes never produces.
+      const octave = note.octave ?? octaveForSpelling(line[index].midi, step, alter);
+      return keySignatureSide({ step, alter, octave }, line[index].midi, keyFifths);
+    });
+  } catch (error) {
+    // Score export must still produce a document when the line is longer than
+    // the solver's budget or carries a pitch it rejects; spelling every note
+    // from the key signature alone loses the melodic reading, nothing else.
+    if (!isLibcantusError(error)) throw error;
+    return line.map((note) => spellPitchInKeySignature(note.midi, keyFifths));
+  }
 }
 
 /**

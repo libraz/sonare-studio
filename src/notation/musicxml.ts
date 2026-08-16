@@ -49,6 +49,7 @@ import {
   type SpelledPitch,
   type Step,
   spellChordPitchClass,
+  spellLineInKeySignature,
   spellPitchInKeySignature,
   spellPitchWithContext,
 } from './pitch-spelling';
@@ -863,7 +864,8 @@ function serializePart(
   lines.push(`<part id="${escapeXml(part.id)}">`);
   let prevTimeSig: NotatedTimeSig | undefined;
   let prevClef: NotatedClef | undefined;
-  let activeKeyFifths = score.keyFifths;
+  const keyFifthsByMeasure = activeKeyFifthsByMeasure(part, score);
+  const spellings = buildPartPitchSpellingIndex(part, keyFifthsByMeasure);
   // Percussion velocity directions are inferred display metadata. Keep the
   // previous value per voice across measure boundaries so a steady groove
   // does not print the same dynamic at the start of every measure.
@@ -873,7 +875,7 @@ function serializePart(
     // identities, not a reason to switch between pitched clefs per measure.
     const measureClef = percussion ? part.clef : clefForMeasure(part.clef, measure, prevClef);
     const keyFifths = score.measureKeyFifths?.[measure.index];
-    if (keyFifths !== undefined) activeKeyFifths = keyFifths;
+    const activeKeyFifths = keyFifthsByMeasure[measureIndex];
     const percussionLegend =
       percussion && measureIndex === 0 ? percussionLegendDirectionXml(part) : '';
     const legacyTempo = score.measureTempos?.[measure.index];
@@ -900,6 +902,7 @@ function serializePart(
       percussionLegend,
       symbolsByMeasure.get(measure.index) ?? [],
       staffMap,
+      spellings,
       annotations,
       lyrics,
       score.measureBarlines?.[measure.index] ??
@@ -936,6 +939,7 @@ function serializeMeasure(
   percussionLegend: string,
   chordSymbols: ReadonlyArray<NotatedChordSymbol>,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
+  spellings: PitchSpellingIndex,
   annotations: AnnotationIndex,
   lyrics: LyricIndex,
   rightBarline: NotatedBarlineStyle | undefined,
@@ -1003,7 +1007,6 @@ function serializeMeasure(
       '<barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>',
     );
   }
-  const spellings = buildPitchSpellingIndex(measure, activeKeyFifths);
   const accidentals = buildAccidentalIndex(measure, activeKeyFifths, staffMap, spellings);
   for (const symbol of chordSymbols) {
     for (const harmony of harmonyXml(symbol, measure, score, activeKeyFifths)) {
@@ -1411,25 +1414,84 @@ function lineSpanDirectionXml(
   return `<direction placement="${placement}"><direction-type><octave-shift type="${type}" size="${size}" number="${lineSpan.number}"/></direction-type>${staffXml}</direction>`;
 }
 
-/** Derives one contextual spelling per sounding event/pitch in a measure. */
-function buildPitchSpellingIndex(measure: NotatedMeasure, keyFifths: number): PitchSpellingIndex {
+/**
+ * Derives one contextual spelling per sounding event/pitch across a whole part.
+ *
+ * The line is solved per voice over every measure at once, not measure by
+ * measure. Which side of the key signature a chromatic run is written on is a
+ * property of the run, so a chromatic ascent that crosses a barline would
+ * otherwise flip from sharps to flats at the bar it happens to be split on.
+ * Measures are grouped into runs sharing one key signature, because a key
+ * change genuinely restarts how the line reads.
+ *
+ * Only the top pitch of an event joins the line: a chord is a vertical
+ * sonority rather than a melody, and its top voice is the one carrying the
+ * melodic shape. The remaining chord tones keep the chord-root spelling, which
+ * reads them as stacked thirds above the root instead of as neighbours in a
+ * line they are not part of.
+ */
+function buildPartPitchSpellingIndex(
+  part: NotatedPart,
+  keyFifthsByMeasure: ReadonlyArray<number>,
+): PitchSpellingIndex {
   const spellings = new Map<NotatedEvent, ReadonlyArray<SpelledPitch>>();
-  for (const voice of measure.voices) {
-    const events = voice.events.filter((event) => event.kind === 'note');
-    for (let index = 0; index < events.length; index += 1) {
-      const event = events[index];
-      const previousMidi = events[index - 1]?.pitches[0];
-      const nextMidi = events[index + 1]?.pitches[0];
-      const chordRootMidi = inferChordRootMidi(event.pitches);
-      spellings.set(
-        event,
-        event.pitches.map((midi) =>
-          spellPitchWithContext(midi, keyFifths, { previousMidi, nextMidi, chordRootMidi }),
-        ),
-      );
+  let runStart = 0;
+  while (runStart < part.measures.length) {
+    const keyFifths = keyFifthsByMeasure[runStart];
+    let runEnd = runStart;
+    while (runEnd + 1 < part.measures.length && keyFifthsByMeasure[runEnd + 1] === keyFifths) {
+      runEnd += 1;
     }
+    for (const events of noteEventsByVoice(part.measures.slice(runStart, runEnd + 1))) {
+      const line = spellLineInKeySignature(
+        events.map((event) => ({
+          midi: event.pitches[event.pitches.length - 1],
+          startBeat: event.startPpq,
+          durationBeat: event.durationPpq,
+        })),
+        keyFifths,
+      );
+      events.forEach((event, index) => {
+        const chordRootMidi = inferChordRootMidi(event.pitches);
+        const top = event.pitches.length - 1;
+        spellings.set(
+          event,
+          event.pitches.map((midi, pitchIndex) =>
+            pitchIndex === top
+              ? line[index]
+              : spellPitchWithContext(midi, keyFifths, { chordRootMidi }),
+          ),
+        );
+      });
+    }
+    runStart = runEnd + 1;
   }
   return spellings;
+}
+
+/** Collects the sounding events of a measure range into one list per voice. */
+function noteEventsByVoice(measures: ReadonlyArray<NotatedMeasure>): NotatedEvent[][] {
+  const byVoice = new Map<NotatedVoiceNumber, NotatedEvent[]>();
+  for (const measure of measures) {
+    for (const voice of measure.voices) {
+      for (const event of voice.events) {
+        if (event.kind !== 'note' || event.pitches.length === 0) continue;
+        const events = byVoice.get(voice.voice);
+        if (events === undefined) byVoice.set(voice.voice, [event]);
+        else events.push(event);
+      }
+    }
+  }
+  return [...byVoice.values()];
+}
+
+/** Resolves the key signature sounding in each measure of a part. */
+function activeKeyFifthsByMeasure(part: NotatedPart, score: NotatedScore): number[] {
+  let active = score.keyFifths;
+  return part.measures.map((measure) => {
+    active = score.measureKeyFifths?.[measure.index] ?? active;
+    return active;
+  });
 }
 
 /** Builds explicit accidentals only when the visible pitch state changes. */

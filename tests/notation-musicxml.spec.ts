@@ -2180,7 +2180,7 @@ describe('serializeMusicXml dynamics', () => {
 });
 
 describe('serializeMusicXml accidentals', () => {
-  it('uses contextual spellings for leading tones, secondary dominants and double sharps', () => {
+  it('uses contextual spellings for chromatic tones and secondary dominants', () => {
     const quarter: NoteValue = { base: 'quarter', dots: 0 };
     const score: NotatedScore = {
       parts: [
@@ -2198,10 +2198,10 @@ describe('serializeMusicXml accidentals', () => {
                 {
                   voice: 1,
                   events: [
-                    note([61], 1, 0, 1, quarter), // C# resolving to D
+                    note([61], 1, 0, 1, quarter), // Db, the flat sixth of F major
                     note([62], 1, 1, 1, quarter),
                     note([57, 60, 62, 66], 1, 2, 1, quarter), // D7 inversion = A–C–D–F#
-                    note([67], 1, 3, 0.5, { base: 'eighth', dots: 0 }), // F## to G#
+                    note([67], 1, 3, 0.5, { base: 'eighth', dots: 0 }), // G rising to Ab
                     note([68], 1, 3.5, 0.5, { base: 'eighth', dots: 0 }),
                   ],
                 },
@@ -2215,13 +2215,19 @@ describe('serializeMusicXml accidentals', () => {
     };
     const document = parse(serializeMusicXml(score));
     const pitches = qa(document, 'note > pitch');
-    expect(q(pitches[0], 'step').textContent).toBe('C');
-    expect(q(pitches[0], 'alter').textContent).toBe('1');
+    // A chromatic tone of a flat key is written on the flat side of the
+    // signature: F major's altered sixth degree is Db, not C#.
+    expect(q(pitches[0], 'step').textContent).toBe('D');
+    expect(q(pitches[0], 'alter').textContent).toBe('-1');
+    // The chord still spells its tones as thirds above its root: D7 is
+    // D–F#–A–C wherever the key signature would have said Gb.
     expect(q(pitches[5], 'step').textContent).toBe('F');
     expect(q(pitches[5], 'alter').textContent).toBe('1');
-    expect(q(pitches[6], 'step').textContent).toBe('F');
-    expect(q(pitches[6], 'alter').textContent).toBe('2');
-    expect(qa(document, 'accidental').map((el) => el.textContent)).toContain('double-sharp');
+    // The line above it is a plain G and Ab. Neither letter is raised twice,
+    // so nothing in the phrase carries a double accidental.
+    expect(q(pitches[6], 'step').textContent).toBe('G');
+    expect(pitches[6].querySelector('alter')).toBeNull();
+    expect(qa(document, 'accidental').map((el) => el.textContent)).not.toContain('double-sharp');
   });
 
   it('emits accidentals when a pitch leaves and returns to the measure state', () => {
@@ -2240,12 +2246,15 @@ describe('serializeMusicXml accidentals', () => {
               timeSig: { beats: 4, beatUnit: 4 },
               voices: [
                 {
+                  // F# and F share a staff position, so the returning F has to
+                  // cancel the sharp. A pitch pair whose spelling the key
+                  // signature fixes keeps this about accidental state.
                   voice: 1,
                   events: [
-                    note([61], 1, 0, 1, quarter),
-                    note([61], 1, 1, 1, quarter),
-                    note([60], 1, 2, 1, quarter),
-                    note([60], 1, 3, 1, quarter),
+                    note([66], 1, 0, 1, quarter),
+                    note([66], 1, 1, 1, quarter),
+                    note([65], 1, 2, 1, quarter),
+                    note([65], 1, 3, 1, quarter),
                   ],
                 },
               ],
@@ -2288,7 +2297,7 @@ describe('serializeMusicXml accidentals', () => {
       .split('\n')
       .find((line) => line.startsWith('<note><pitch>'));
     expect(noteXml).toContain(
-      '<duration>1440</duration><voice>1</voice><type>quarter</type><dot/><accidental>sharp</accidental>',
+      '<duration>1440</duration><voice>1</voice><type>quarter</type><dot/><accidental>flat</accidental>',
     );
   });
 
@@ -2318,7 +2327,7 @@ describe('serializeMusicXml accidentals', () => {
       .split('\n')
       .find((line) => line.startsWith('<note><pitch>'));
     expect(noteXml).toContain(
-      '<type>eighth</type><accidental>sharp</accidental><time-modification>',
+      '<type>eighth</type><accidental>flat</accidental><time-modification>',
     );
   });
 
@@ -2360,6 +2369,8 @@ describe('serializeMusicXml accidentals', () => {
   });
 
   it('does not restate accidentals on tied continuations', () => {
+    // The tied pitch is spelled Db here, so the accidental under test is a
+    // flat; which accidental it is has no bearing on tie restatement.
     const half: NoteValue = { base: 'half', dots: 0 };
     const score: NotatedScore = {
       parts: [
@@ -2389,7 +2400,7 @@ describe('serializeMusicXml accidentals', () => {
       divisions: 960,
     };
     expect(qa(parse(serializeMusicXml(score)), 'accidental').map((el) => el.textContent)).toEqual([
-      'sharp',
+      'flat',
     ]);
   });
 
@@ -2432,8 +2443,8 @@ describe('serializeMusicXml accidentals', () => {
       divisions: 960,
     };
     expect(qa(parse(serializeMusicXml(score)), 'accidental').map((el) => el.textContent)).toEqual([
-      'sharp',
-      'sharp',
+      'flat',
+      'flat',
     ]);
   });
 
@@ -2479,8 +2490,80 @@ describe('serializeMusicXml accidentals', () => {
       divisions: 960,
     };
     expect(qa(parse(serializeMusicXml(score)), 'accidental').map((el) => el.textContent)).toEqual([
-      'sharp',
+      'flat',
     ]);
+  });
+});
+
+describe('serializeMusicXml chromatic lines', () => {
+  const quarter: NoteValue = { base: 'quarter', dots: 0 };
+
+  /** A single-voice score whose notes are split into measures of four beats. */
+  function chromaticScore(midis: readonly number[], keyFifths = 0): NotatedScore {
+    const measures = [];
+    for (let start = 0; start < midis.length; start += 4) {
+      const slice = midis.slice(start, start + 4);
+      measures.push({
+        index: measures.length,
+        startPpq: start,
+        lengthPpq: 4,
+        timeSig: { beats: 4, beatUnit: 4 } as const,
+        voices: [
+          {
+            voice: 1 as NotatedVoiceNumber,
+            events: slice.map((midi, offset) => note([midi], 1, start + offset, 1, quarter)),
+          },
+        ],
+      });
+    }
+    return {
+      parts: [{ id: 'P1', name: 'Lead', clef: 'treble', measures }],
+      keyFifths,
+      divisions: 960,
+    };
+  }
+
+  function engravedPitches(xml: string): string[] {
+    return qa(parse(xml), 'note > pitch').map((pitch) => {
+      const alter = Number(pitch.querySelector('alter')?.textContent ?? 0);
+      const accidental = alter === 0 ? '' : alter > 0 ? '#'.repeat(alter) : 'b'.repeat(-alter);
+      return `${q(pitch, 'step').textContent}${accidental}${q(pitch, 'octave').textContent}`;
+    });
+  }
+
+  it('keeps a rising chromatic line on the sharp side across a barline', () => {
+    // Which accidental a chromatic run takes is a property of the run, not of
+    // the measure it happens to be written in. Solving each measure on its own
+    // let the first half of this line turn to double sharps while the second
+    // half read plainly; the whole voice is spelled together instead.
+    expect(
+      engravedPitches(serializeMusicXml(chromaticScore([67, 68, 69, 70, 71, 72, 73, 74]))),
+    ).toEqual(['G4', 'G#4', 'A4', 'A#4', 'B4', 'C5', 'C#5', 'D5']);
+  });
+
+  it('keeps a falling chromatic line on the flat side across a barline', () => {
+    // The same line descending is written with flats throughout, so the reader
+    // follows one direction of accidental from the first measure to the last.
+    expect(
+      engravedPitches(serializeMusicXml(chromaticScore([74, 73, 72, 71, 70, 69, 68, 67]))),
+    ).toEqual(['D5', 'Db5', 'C5', 'B4', 'Bb4', 'A4', 'Ab4', 'G4']);
+  });
+
+  it('writes a secondary dominant with the letters of its own chord', () => {
+    // D–F#–A resolving to G is the dominant of the dominant of C major. Every
+    // tone is a letter the key already owns, so the phrase carries one sharp
+    // and no double accidental at all.
+    const xml = serializeMusicXml(chromaticScore([62, 66, 69, 67]));
+    expect(engravedPitches(xml)).toEqual(['D4', 'F#4', 'A4', 'G4']);
+    expect(qa(parse(xml), 'accidental').map((el) => el.textContent)).toEqual(['sharp']);
+  });
+
+  it('restarts the line at a key change', () => {
+    // A key change is a new reading of the line, so the run before it and the
+    // run after it are spelled in their own signatures.
+    const score = chromaticScore([61, 63, 66, 68, 61, 63, 66, 68]);
+    const xml = serializeMusicXml({ ...score, measureKeyFifths: { 1: -4 } });
+    expect(engravedPitches(xml)).toEqual(['C#4', 'D#4', 'F#4', 'G#4', 'Db4', 'Eb4', 'Gb4', 'Ab4']);
   });
 });
 

@@ -145,11 +145,14 @@ describe('MusicXML engraving at extreme key signatures', () => {
     expect(engravedAccidentals(xml)).toEqual(['natural']);
   });
 
-  it('engraves a double sharp when a raised degree resolves upward', () => {
-    // B major: F## rises to G#, so the accidental is a double sharp.
+  it('lowers a degree of the signature rather than raising the letter below it twice', () => {
+    // B major: the note under G# is the sixth degree lowered, so it is written
+    // G natural and cancelled by the following sharp. Writing it F## would
+    // raise a degree the signature already sharpens a second time, and a
+    // double sharp is what a harmony asks for, not what a rising line does.
     const xml = serializeMusicXml(phrase([67, 68], 5));
-    expect(engravedPitches(xml)).toEqual(['F##4', 'G#4']);
-    expect(engravedAccidentals(xml)).toEqual(['double-sharp']);
+    expect(engravedPitches(xml)).toEqual(['G4', 'G#4']);
+    expect(engravedAccidentals(xml)).toEqual(['natural', 'sharp']);
   });
 
   it('spells a leading tone into the tonic of an extreme flat key', () => {

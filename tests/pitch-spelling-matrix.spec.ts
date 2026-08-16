@@ -113,24 +113,46 @@ describe('spelling matrix', () => {
 });
 
 describe('contextual spelling matrix', () => {
-  it('prefers upward resolution and double sharps when the line rises by a semitone', () => {
+  it('names a note rising to a natural neighbour by the letter below it, never by a double accidental', () => {
+    // Melodic context can only argue about the letter of a chromatic tone, and
+    // only when the neighbour is a written second away: a note stepping up to a
+    // natural is written one letter below it, so a semitone below D is C#. Two
+    // consequences are visible in every row.
+    //
+    // A tone the key signature already names keeps that name — a white key is
+    // written with its own letter, so the third of C major is E and never D##.
+    // And no cell carries a double accidental: raising a letter twice is how a
+    // score spells a harmony that demands it, not how it spells a rising line.
     expect(contextMatrix((midi) => ({ nextMidi: midi + 1 }))).toEqual([
-      '-7 | C4 C#4 C##4 Eb4 D##4 F4 E##4 F##4 G#4 G##4 Bb4 A##4',
-      '-6 | C4 C#4 C##4 D#4 E4 F4 E##4 F##4 G#4 G##4 Bb4 A##4',
-      '-5 | C4 C#4 C##4 D#4 E4 F4 E##4 F##4 G#4 G##4 A#4 B4',
-      '-4 | C4 C#4 C##4 D#4 E4 F4 E##4 F##4 G#4 G##4 A#4 B4',
-      '-3 | C4 C#4 C##4 D#4 E4 F4 E##4 F##4 G#4 G##4 A#4 B4',
-      '-2 | C4 C#4 C##4 D#4 E4 F4 E##4 F##4 G#4 G##4 A#4 B4',
-      '-1 | C4 C#4 C##4 D#4 E4 F4 E##4 F##4 G#4 G##4 A#4 B4',
-      '0 | C4 C#4 C##4 D#4 E4 F4 F#4 F##4 G#4 G##4 A#4 B4',
-      '1 | C4 C#4 C##4 D#4 E4 F4 F#4 F##4 G#4 G##4 A#4 B4',
-      '2 | C4 C#4 C##4 D#4 E4 F4 F#4 F##4 G#4 G##4 A#4 B4',
-      '3 | C4 C#4 C##4 D#4 E4 F4 F#4 F##4 G#4 G##4 A#4 B4',
-      '4 | C4 C#4 C##4 D#4 E4 F4 F#4 F##4 G#4 G##4 A#4 B4',
-      '5 | C4 C#4 C##4 D#4 E4 F4 F#4 F##4 G#4 G##4 A#4 B4',
-      '6 | C4 C#4 C##4 D#4 D##4 E#4 F#4 F##4 G#4 G##4 A#4 B4',
-      '7 | B#3 C#4 C##4 D#4 D##4 E#4 F#4 F##4 G#4 G##4 A#4 A##4',
+      '-7 | C4 C#4 D4 Eb4 E4 F4 F#4 G4 G#4 A4 Bb4 B4',
+      '-6 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 Bb4 B4',
+      '-5 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '-4 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '-3 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '-2 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '-1 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '0 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '1 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '2 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '3 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '4 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '5 | C4 C#4 D4 D#4 E4 F4 F#4 G4 G#4 A4 A#4 B4',
+      '6 | C4 C#4 D4 D#4 E4 E#4 F#4 G4 G#4 A4 A#4 B4',
+      '7 | B#3 C#4 D4 D#4 E4 E#4 F#4 G4 G#4 A4 A#4 B4',
     ]);
+  });
+
+  it('leaves a leap to the key signature, because a leap argues for no letter', () => {
+    // Nothing about jumping to a note a third or a fourth away says how the
+    // note left behind should be written, so the key signature decides alone.
+    // Reading a leap as a resolution is what used to write the D of a D-F#-A-G
+    // phrase as C##.
+    expect(contextMatrix((midi) => ({ nextMidi: midi + 4 }))).toEqual(
+      matrix(spellPitchInKeySignature),
+    );
+    expect(contextMatrix((midi) => ({ previousMidi: midi + 5 }))).toEqual(
+      matrix(spellPitchInKeySignature),
+    );
   });
 
   it('spells chord tones by their interval above the chord root', () => {
