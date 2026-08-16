@@ -69,7 +69,43 @@ describe('buildGuidance', () => {
     expect(analysis?.role?.lock).toBe('quality');
     expect(analysis?.safety?.safety).toBe(NoteSafety.Safe);
     expect(analysis?.isScaleTone).toBe(true);
-    expect(analysis?.degree).toBe(2);
+    expect(analysis?.degree).toBe(3);
+  });
+
+  it('counts scale degrees from 1 and answers -1 off the scale', () => {
+    // The tonic and the leading tone bracket the scale, and C# is outside it:
+    // the three answers a card has to tell apart. A degree counted from 0 would
+    // put the tonic at 0 and make "not in the scale" indistinguishable from it.
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 1, pitch: 60, startPpq: 0, durationPpq: 1 }),
+          note({ id: 2, pitch: 71, startPpq: 1, durationPpq: 1 }),
+          note({ id: 3, pitch: 61, startPpq: 2, durationPpq: 1 }),
+        ],
+      }),
+    );
+    expect(result.byNoteId.get(1)?.degree).toBe(1);
+    expect(result.byNoteId.get(2)?.degree).toBe(7);
+    expect(result.byNoteId.get(3)?.degree).toBe(-1);
+    expect(result.byNoteId.get(3)?.isScaleTone).toBe(false);
+  });
+
+  it('reads the scale-degree line straight off the degree, without an offset', () => {
+    // The card used to add 1 to a degree that was counted from 0. Both ends of
+    // that convention have to agree, and only a rendered line proves they do.
+    const result = buildGuidance(
+      guidanceInput({ notes: [note({ id: 1, pitch: 71, startPpq: 0, durationPpq: 1 })] }),
+    );
+    const analysis = result.byNoteId.get(1);
+    expect(analysis).toBeDefined();
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 71, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    expect(card.lines.find((line) => line.label === 'Scale')?.text).toBe('Scale degree 7');
   });
 
   it('flags a note a semitone above a chord tone as not safe', () => {
@@ -131,7 +167,7 @@ describe('buildGuidance', () => {
     expect(result.segments).toHaveLength(1);
     expect([...result.segments[0].safetyByPc]).toEqual(new Array<number>(12).fill(NoteSafety.Safe));
     const analysis = result.byNoteId.get(40);
-    expect(analysis?.degree).toBe(1); // D is the second degree of C major
+    expect(analysis?.degree).toBe(2); // D is the second degree of C major
     expect(analysis?.isScaleTone).toBe(true);
   });
 
@@ -353,7 +389,7 @@ describe('buildTheoryCard', () => {
 
   it('spells suspension resolution targets with the active key signature', () => {
     const analysis = {
-      degree: 0,
+      degree: 1,
       isScaleTone: true,
       safety: { reasons: ReasonFlag.Suspension, resolveTo: 70 },
     } as NoteAnalysis;
@@ -369,7 +405,7 @@ describe('buildTheoryCard', () => {
 
   it('uses a spelling-neutral Japanese name for a six-semitone interval', () => {
     const analysis = {
-      degree: 0,
+      degree: 1,
       isScaleTone: true,
       vertical: { toBass: 6, consonance: 'dissonant' },
     } as NoteAnalysis;
@@ -431,7 +467,7 @@ describe('buildTheoryCard', () => {
 
   it('names the chord scale on its root even with no tensions or avoid notes', () => {
     const analysis = {
-      degree: 1,
+      degree: 2,
       isScaleTone: true,
       chordScale: { scaleName: 'dorian', rootPc: 2, tensions: [], avoid: [] },
     } as NoteAnalysis;
@@ -446,7 +482,7 @@ describe('buildTheoryCard', () => {
 
   it('spells the chord-scale root with the key signature and localizes its name', () => {
     const analysis = {
-      degree: 0,
+      degree: 1,
       isScaleTone: true,
       chordScale: { scaleName: 'melodicMinor', rootPc: 10, tensions: [], avoid: [] },
     } as NoteAnalysis;
@@ -461,7 +497,7 @@ describe('buildTheoryCard', () => {
 
   it('falls back to the raw scale name when the locale has no name for it', () => {
     const analysis = {
-      degree: 0,
+      degree: 1,
       isScaleTone: true,
       chordScale: { scaleName: 'bebopDominant', rootPc: 0, tensions: [], avoid: [] },
     } as NoteAnalysis;
@@ -497,7 +533,7 @@ describe('buildTheoryCard', () => {
   });
 
   it('attaches a glossary term to the chord-function line', () => {
-    const analysis = { degree: 2, isScaleTone: true } as NoteAnalysis;
+    const analysis = { degree: 3, isScaleTone: true } as NoteAnalysis;
     const card = buildTheoryCard(
       analysis,
       { pitch: 64, keySet: true, chordFunction: 'tonic' },
@@ -510,7 +546,7 @@ describe('buildTheoryCard', () => {
 
   it('attaches a glossary term to a non-chord-tone line', () => {
     const analysis = {
-      degree: 6,
+      degree: 7,
       isScaleTone: true,
       analyzed: { noteId: 1, labels: [{ kind: 'leadingTone', resolveTo: 60 }] },
     } as NoteAnalysis;
@@ -526,7 +562,7 @@ describe('buildTheoryCard', () => {
 
   it('switches wording between explanation levels for the same note', () => {
     const analysis = {
-      degree: 6,
+      degree: 7,
       isScaleTone: true,
       analyzed: { noteId: 1, labels: [{ kind: 'leadingTone', resolveTo: 60 }] },
     } as NoteAnalysis;

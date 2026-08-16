@@ -404,8 +404,8 @@ export function buildTheoryCard(
   }
   if (ctx.keySet) {
     const text =
-      analysis.degree >= 0
-        ? labels.scaleDegree.replace('{degree}', String(analysis.degree + 1)) +
+      analysis.degree > 0
+        ? labels.scaleDegree.replace('{degree}', String(analysis.degree)) +
           (analysis.isScaleTone ? '' : labels.nonScaleSuffix)
         : labels.nonScaleTone;
     lines.push({ label: labels.lines.scale, text });

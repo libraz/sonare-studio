@@ -126,7 +126,7 @@ export interface NoteAnalysis {
   safety?: SafetyResult;
   role?: VoicedRole;
   analyzed?: AnalyzedNote;
-  /** 0-based scale degree of the note in the key (-1 for non-scale tones). */
+  /** Scale degree of the note in the key, counted from 1 (-1 off the scale). */
   degree: number;
   isScaleTone: boolean;
   /** Best-fit scale and its color/avoid tones for the sounding chord, if any. */
