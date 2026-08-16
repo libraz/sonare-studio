@@ -272,7 +272,7 @@ export function proposeReactiveReharmonization(
           ts: { numerator: range.numerator, denominator: range.denominator },
           reharmonize: input.reharmonize ?? 'diatonic',
           placement: { transposeSearch: false, octaveSearch: false },
-          seed: input.seed ?? 0,
+          ctx: { seed: input.seed ?? 0 },
         });
         segmentKey = configuredKey ?? result.key;
         if (!input.key.enabled) inferredKey ??= result.key;
@@ -291,7 +291,7 @@ export function proposeReactiveReharmonization(
         ts: { numerator: analysisMeter.numerator, denominator: analysisMeter.denominator },
         reharmonize: input.reharmonize ?? 'diatonic',
         placement: { transposeSearch: false, octaveSearch: false },
-        seed: input.seed ?? 0,
+        ctx: { seed: input.seed ?? 0 },
       });
       spans = result.chords;
       if (!input.key.enabled) inferredKey = result.key;

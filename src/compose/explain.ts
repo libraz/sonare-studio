@@ -57,6 +57,7 @@ export interface TheoryLabels {
   labels: Readonly<
     Record<
       | 'suspension'
+      | 'appoggiatura'
       | 'passing'
       | 'neighbor'
       | 'avoid'
@@ -225,6 +226,8 @@ function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined
   switch (label.kind) {
     case 'suspension':
       return labels.labels.suspension;
+    case 'appoggiatura':
+      return labels.labels.appoggiatura;
     case 'passing':
       return labels.labels.passing;
     case 'neighbor':
@@ -254,6 +257,7 @@ function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined
 export const GLOSSARY_KEY_FOR_KIND: Readonly<Record<TheoryLabel['kind'], string | undefined>> = {
   chordTone: undefined,
   suspension: 'suspension',
+  appoggiatura: 'appoggiatura',
   passing: 'passing',
   neighbor: 'neighbor',
   avoid: 'avoid',

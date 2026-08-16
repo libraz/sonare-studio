@@ -134,7 +134,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       ts: { numerator: analysisMeter.numerator, denominator: analysisMeter.denominator },
       reharmonize: params.reharmonize ?? 'diatonic',
       placement: { transposeSearch: true, octaveSearch: true },
-      seed: params.seed ?? 0,
+      ctx: { seed: params.seed ?? 0 },
     });
     const candidate = probe.transposeSemitones;
     if (
@@ -170,7 +170,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
         ts: { numerator: range.numerator, denominator: range.denominator },
         reharmonize: params.reharmonize ?? 'diatonic',
         placement: { transposeSearch: false, octaveSearch: false },
-        seed: params.seed ?? 0,
+        ctx: { seed: params.seed ?? 0 },
       });
       segmentKey = explicitKey ?? result.key;
       symbols.push(
@@ -191,7 +191,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       ts: { numerator: analysisMeter.numerator, denominator: analysisMeter.denominator },
       reharmonize: params.reharmonize ?? 'diatonic',
       placement: { transposeSearch: false, octaveSearch: false },
-      seed: params.seed ?? 0,
+      ctx: { seed: params.seed ?? 0 },
     });
     generated = sanitizeChordSymbols(
       spansToChordSymbols(result, melodyEndBeat, target.startPpq).map((chord) => ({

@@ -97,7 +97,7 @@ function resolveChords(
     key,
     style: params.progressionStyle ?? 'idol',
     bars,
-    seed: params.seed ?? 0,
+    ctx: { seed: params.seed ?? 0 },
   });
   const regions = spans.map((span, index) => {
     const start = span.startBeat;
@@ -133,11 +133,9 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
   if (params.drums !== false) {
     const hits = generateDrums({
       bars,
-      bpm: store.tempoBpm,
       style: 'standard',
       section: 'verse',
-      density: 0.6,
-      seed,
+      ctx: { seed, bpm: store.tempoBpm, complexity: { rhythmic: 0.6 } },
     });
     const notes = noteEventsToNewEditorNotes(hits, { channel: GM_PERCUSSION_CHANNEL }).map(
       materializeNote,
@@ -156,7 +154,7 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
         chord: editorChordToChord(region),
       })),
       key,
-      seed,
+      ctx: { seed },
     });
     const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
     const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);

@@ -2573,6 +2573,7 @@ export const ja = {
         },
         labels: {
           suspension: 'コードに寄りかかってから、一歩下がって収まります',
+          appoggiatura: '跳んで入って寄りかかり、一歩動いて収まります',
           passing: 'コードの音と音の間を通り抜けてつなぐ音です',
           neighbor: '隣へ動いてすぐ戻る、ちょっとした飾りです',
           avoid: 'ここではぶつかりやすい音。通り過ぎる程度に',
@@ -2616,6 +2617,7 @@ export const ja = {
         },
         labels: {
           suspension: '掛留音: 次で下行して解決',
+          appoggiatura: '倚音: 跳んで入り、順次で解決',
           passing: '経過音',
           neighbor: '刺繍音',
           avoid: 'ここでは回避音',
@@ -2659,6 +2661,7 @@ export const ja = {
         },
         labels: {
           suspension: '掛留 — 順次下行で解決',
+          appoggiatura: '倚音（強拍）— 跳躍で入り順次解決',
           passing: '経過音（順次・弱拍）',
           neighbor: '刺繍音（上／下）',
           avoid: 'アヴォイド（コード音の半音上）',
@@ -2694,6 +2697,11 @@ export const ja = {
       suspension: {
         term: '掛留（サスペンション）',
         definition: '前のコードから引き伸ばされてぶつかり、順次下行してコード音へ解決する音。',
+      },
+      appoggiatura: {
+        term: '倚音（アポジャトゥーラ）',
+        definition:
+          '拍頭で寄りかかる非和声音。跳躍で入り、順次進行でコード音へ解決する。掛留と違い、前のコードから保たれるのではなく跳んで現れる。',
       },
       passing: {
         term: '経過音',

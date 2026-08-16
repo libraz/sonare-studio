@@ -2571,6 +2571,7 @@ export const en = {
         },
         labels: {
           suspension: 'Leans on the chord, then steps down to settle',
+          appoggiatura: 'Arrives with a leap and leans in, then steps away to settle',
           passing: 'Fills the gap between two chord notes as you pass through',
           neighbor: 'Steps away and comes right back — a little decoration',
           avoid: 'Tends to clash here — use it only in passing',
@@ -2614,6 +2615,7 @@ export const en = {
         },
         labels: {
           suspension: 'Suspension: resolve down by step',
+          appoggiatura: 'Appoggiatura: arrives by leap, resolve by step',
           passing: 'Passing tone',
           neighbor: 'Neighbor tone',
           avoid: 'Avoid note here',
@@ -2657,6 +2659,7 @@ export const en = {
         },
         labels: {
           suspension: 'Suspension — resolves stepwise down',
+          appoggiatura: 'Appoggiatura (accented) — approached by leap, resolves stepwise',
           passing: 'Passing tone (stepwise, unaccented)',
           neighbor: 'Neighbor tone (upper/lower)',
           avoid: 'Avoid tone (half-step above a chord tone)',
@@ -2693,6 +2696,11 @@ export const en = {
         term: 'Suspension',
         definition:
           'A note held over from the previous chord that clashes, then resolves down by step to a chord tone.',
+      },
+      appoggiatura: {
+        term: 'Appoggiatura',
+        definition:
+          'A note leant on at the start of a beat, reached by a leap and left by a step to a chord tone; unlike a suspension it is not held over from the previous chord.',
       },
       passing: {
         term: 'Passing tone',

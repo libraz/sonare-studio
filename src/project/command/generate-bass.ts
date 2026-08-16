@@ -55,7 +55,7 @@ export function buildBassPlan(
     key,
     ...(params.style !== undefined ? { style: params.style } : {}),
     ...(params.octave !== undefined ? { octave: params.octave } : {}),
-    seed: params.seed ?? 0,
+    ctx: { seed: params.seed ?? 0 },
   });
 
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);

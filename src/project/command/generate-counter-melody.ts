@@ -73,7 +73,7 @@ export function buildCounterPlan(
     ...(params.register !== undefined ? { register: params.register } : {}),
     ...(params.rhythm !== undefined ? { rhythm: params.rhythm } : {}),
     ...(params.profile !== undefined ? { profile: params.profile } : {}),
-    seed: params.seed ?? 0,
+    ctx: { seed: params.seed ?? 0 },
   });
 
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);

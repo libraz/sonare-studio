@@ -108,7 +108,7 @@ function estimateChordsFromHarmonicTracks(
   const symbols = result.timeline.segments.map((segment) =>
     chordSpanToEditorChord(chordToSpan(segment.chord), segment.startBeat, segment.endBeat),
   );
-  return { symbols, key: result.key, confidence: result.segmentConfidence };
+  return { symbols, key: result.prevailingKey, confidence: result.segmentConfidence };
 }
 
 /**

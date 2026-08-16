@@ -73,16 +73,18 @@ export function buildDrumsPlan(
 
   const hits = generateDrums({
     bars,
-    bpm: store.tempoBpm,
     style: params.style ?? 'standard',
     section,
-    density: params.density ?? 0.6,
     ...(params.fills !== undefined ? { fills: params.fills } : {}),
     ...(params.nextSection !== undefined ? { nextSection: params.nextSection } : {}),
     ...(params.feel !== undefined ? { feel: params.feel } : {}),
     ...(params.role !== undefined ? { role: params.role } : {}),
     ...(params.euclideanKick !== undefined ? { euclideanKick: params.euclideanKick } : {}),
-    seed: params.seed ?? 0,
+    ctx: {
+      seed: params.seed ?? 0,
+      bpm: store.tempoBpm,
+      complexity: { rhythmic: params.density ?? 0.6 },
+    },
   });
 
   const notes = noteEventsToNewEditorNotes(hits, { channel: GM_PERCUSSION_CHANNEL }).map(

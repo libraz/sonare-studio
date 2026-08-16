@@ -106,7 +106,7 @@ export function buildMotifCell(
     bars,
     ...(params.contour !== undefined ? { contour: params.contour } : {}),
     ...(params.jitter !== undefined ? { jitter: params.jitter } : {}),
-    seed: params.seed ?? 0,
+    ctx: { seed: params.seed ?? 0 },
   });
   if (params.transform !== undefined) {
     cell = transformMotif(cell, params.transform, params.transformAmount, key);

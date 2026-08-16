@@ -16,7 +16,7 @@
 import {
   type BorrowedSource,
   borrowedSource,
-  type Cadence,
+  type CadenceResult,
   type ChordData,
   chordToRoman,
   detectCadences,
@@ -26,8 +26,34 @@ import type { EditorChordSymbol } from '@/project/chords';
 import { buildChordTimeline } from './chord-at-tick';
 import { editorChordToChord } from './chord-io';
 
-/** A recognized cadence type (the null case is "no cadence"). */
-export type CadenceType = Exclude<Cadence, null>;
+/** A cadence type as libcantus names it (the null case is "no cadence"). */
+type LibraryCadenceType = NonNullable<CadenceResult['type']>;
+
+/** The cadence types the editor has a label for; libcantus names more. */
+const DISPLAYED_CADENCE_TYPES = [
+  'authentic',
+  'plagal',
+  'half',
+  'deceptive',
+] as const satisfies ReadonlyArray<LibraryCadenceType>;
+
+/** A recognized cadence type the editor can name. */
+export type CadenceType = (typeof DISPLAYED_CADENCE_TYPES)[number];
+
+/**
+ * The type each of libcantus's cadence types is read as. A phrygian cadence is
+ * a species of half cadence and is reported in place of one, so it reads as
+ * `'half'`; every other type reads as itself. Keyed by the library's union, so
+ * a type added there fails to compile until it is given a reading.
+ */
+const CADENCE_READING: Readonly<Record<LibraryCadenceType, LibraryCadenceType>> = {
+  authentic: 'authentic',
+  plagal: 'plagal',
+  half: 'half',
+  deceptive: 'deceptive',
+  phrygian: 'half',
+  modal: 'modal',
+};
 
 /** Where a recognized non-diatonic chord was borrowed from. */
 export type BorrowedKind = Exclude<BorrowedSource, null>;
@@ -87,6 +113,19 @@ function annotationFor(chord: ChordData, key: KeyScale): ChordAnnotation | undef
     : annotation;
 }
 
+/** Whether a cadence type is one of the types the editor can name. */
+function isDisplayedCadence(type: LibraryCadenceType): type is CadenceType {
+  return DISPLAYED_CADENCE_TYPES.some((displayed) => displayed === type);
+}
+
+/** How a detected cadence reads on the lane, or undefined when it has no label. */
+function displayedCadence(cadence: CadenceResult): CadenceType | undefined {
+  if (cadence.type === null) return undefined;
+  const reading = CADENCE_READING[cadence.type];
+  // `'modal'` (the bVII-to-I arrival) has no label of its own, so it goes unmarked.
+  return isDisplayedCadence(reading) ? reading : undefined;
+}
+
 /**
  * Analyzes a chord track for display.
  *
@@ -116,6 +155,9 @@ export function analyzeHarmony(
   const hits = tryEval(() => detectCadences(buildChordTimeline(symbols), key)) ?? [];
   return {
     byStartPpq,
-    cadences: hits.map((hit) => ({ atPpq: hit.atBeat, type: hit.type })),
+    cadences: hits.flatMap((hit) => {
+      const type = displayedCadence(hit.cadence);
+      return type === undefined ? [] : [{ atPpq: hit.atBeat, type }];
+    }),
   };
 }

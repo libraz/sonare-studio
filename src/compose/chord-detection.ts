@@ -101,7 +101,7 @@ export function detectChordRegions(
       harmonicRhythm: range.slotLengthPpq,
       totalBeats: range.endPpq - range.startPpq,
     });
-    resolvedKey = options.key ?? result.key;
+    resolvedKey = options.key ?? result.prevailingKey;
     result.timeline.segments.forEach((segment, index) => {
       const span: ChordSpan = {
         rootPc: segment.chord.rootPc,

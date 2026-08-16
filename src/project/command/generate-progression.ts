@@ -106,8 +106,15 @@ export function generateProgressionCommand(params: GenerateProgressionParams = {
     style: params.style ?? 'minimal',
     bars,
     ...(params.presetId !== undefined ? { presetId: params.presetId } : {}),
-    seed: params.seed ?? 0,
-    ...(params.reharmonize !== undefined ? { reharmonize: params.reharmonize } : {}),
+    // `params.reharmonize` is a boolean toggle (secondary-dominant substitution
+    // on/off); libcantus 1.0 folds it into the continuous harmonic-complexity
+    // dial, so true/false map to above/below its midpoint.
+    ctx: {
+      seed: params.seed ?? 0,
+      ...(params.reharmonize !== undefined
+        ? { complexity: { harmonic: params.reharmonize ? 0.75 : 0.25 } }
+        : {}),
+    },
     ...(params.ext !== undefined ? { ext: params.ext } : {}),
   });
 

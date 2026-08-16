@@ -168,7 +168,7 @@ export function analyzeArrangementTracks(
       ...optionsFor(resolvedKey, undefined),
       ts: { numerator: range.numerator, denominator: range.denominator },
     });
-    resolvedKey = analysis.key;
+    resolvedKey = analysis.prevailingKey;
     conflicts.push(
       ...analysis.conflicts.map<ArrangementConflict>((conflict) => ({
         ppq: conflict.beat + range.startPpq,
@@ -211,7 +211,7 @@ export function arrangementTensionCurve(
       ...optionsFor(resolvedKey, undefined),
       ts: { numerator: range.numerator, denominator: range.denominator },
     });
-    if (key === undefined) resolvedKey = analysis.key;
+    if (key === undefined) resolvedKey = analysis.prevailingKey;
     points.push(
       ...tensionCurveFrom(arrangementTracks, analysis, {
         ts: { numerator: range.numerator, denominator: range.denominator },
