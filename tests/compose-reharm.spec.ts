@@ -169,7 +169,8 @@ describe('presetNotation', () => {
     const preset = {
       id: 'neapolitanPop',
       name: 'Neapolitan Pop',
-      degrees: [5, 12, 13, 4, 0],
+      // Diatonic degrees are 1-based; 12 and 13 are borrowed-chord codes.
+      degrees: [6, 12, 13, 5, 1],
       functional: 'cadenceStrong',
       styles: ['minimal'],
     } as const;
@@ -180,7 +181,7 @@ describe('presetNotation', () => {
     const preset = {
       id: 'fourChordPop',
       name: 'Four Chord Pop',
-      degrees: [0, 4, 5, 3],
+      degrees: [1, 5, 6, 4],
       functional: 'loop',
       styles: ['minimal'],
     } as const;

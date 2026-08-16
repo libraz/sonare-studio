@@ -107,21 +107,31 @@ describe('generation command suite', () => {
     });
 
     it('expands looped audible melody and derives the default rhythm from 3/4', () => {
-      [60, 64, 67].forEach((pitch, index) => {
+      // Two 3/4 bars of source, so the loop alternates harmony bar by bar. A run
+      // of the same chord is reported as one span, so a loop whose bars all
+      // imply the same chord says nothing about the grid it was cut on.
+      [60, 64, 67, 62, 65, 69].forEach((pitch, index) => {
         addNote({ pitch, startPpq: index, durationPpq: 1 });
       });
-      setClipLoop(store.clipId, true, 3);
+      setClipLoop(store.clipId, true, 6);
       store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
 
       const count = harmonizeFromMelodyCommand({ seed: 0 });
 
       expect(count).toBeGreaterThan(1);
       expect(store.chords[0]).toMatchObject({ startPpq: 0, endPpq: 3 });
+      expect(store.chords.every((chord) => chord.startPpq % 3 === 0)).toBe(true);
+      // The chords cover the looped clip, not just its six-beat source window.
       expect(store.chords.at(-1)?.endPpq).toBe(store.activeClip?.lengthPpq);
     });
 
     it('restarts the default harmonization grid at a meter change', () => {
-      addCMajorMelody();
+      // C major, then a dominant bar and a closing bar of three beats each: the
+      // 3/4 bar line is only visible in the output when the harmony moves
+      // across it, since a run of the same chord is reported as one span.
+      [60, 62, 64, 65, 67, 71, 62, 65, 69, 60].forEach((pitch, index) => {
+        addNote({ pitch, startPpq: index, durationPpq: 1 });
+      });
       store.timeSignatures = [
         { startPpq: 0, numerator: 4, denominator: 4 },
         { startPpq: 4, numerator: 3, denominator: 4 },
@@ -162,9 +172,20 @@ describe('generation command suite', () => {
       const count = generateMotifCommand({ bars: 1, seed: 2, mode: 'replace', develop: true });
 
       expect(count).toBeGreaterThan(0);
+      // Development pulls the structural onsets — the bar lines — onto a chord
+      // tone of the chord sounding there and keeps the notes between them in
+      // the key. The clip starts at bar 9, so its bar line spells F# major
+      // rather than the C major sounding at the song start.
       const fSharpMajorPitchClasses = new Set([6, 10, 1]);
+      const cMajorScalePitchClasses = new Set([0, 2, 4, 5, 7, 9, 11]);
+      const notes = store.activeClip?.notes ?? [];
+      const onBarLine = notes.filter((note) => note.startPpq % 4 === 0);
+      expect(onBarLine.length).toBeGreaterThan(0);
+      expect(onBarLine.every((note) => fSharpMajorPitchClasses.has(note.pitch % 12))).toBe(true);
       expect(
-        store.activeClip?.notes.every((note) => fSharpMajorPitchClasses.has(note.pitch % 12)),
+        notes
+          .filter((note) => note.startPpq % 4 !== 0)
+          .every((note) => cMajorScalePitchClasses.has(note.pitch % 12)),
       ).toBe(true);
     });
 
