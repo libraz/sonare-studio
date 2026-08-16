@@ -11,7 +11,9 @@ import {
   ppqFromBarBeat,
   TICKS_PER_QUARTER,
 } from '@/components/lists/bar-beat';
+import { measureRangeAt } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
+import { rulerTicks } from '@/ui/arrangement/ruler';
 
 const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
@@ -19,6 +21,17 @@ const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denomina
 const MIXED: TimeSignatureSegment[] = [
   { startPpq: 0, numerator: 4, denominator: 4 },
   { startPpq: 8, numerator: 6, denominator: 8 },
+];
+
+/**
+ * A zero-length segment: two entries share a start, so the 3/4 never governs
+ * any bar. This module keeps such a segment (it resolves the later entry),
+ * while the shared meter helpers drop the shadowed one.
+ */
+const ZERO_LENGTH: TimeSignatureSegment[] = [
+  { startPpq: 0, numerator: 4, denominator: 4 },
+  { startPpq: 8, numerator: 3, denominator: 4 },
+  { startPpq: 8, numerator: 5, denominator: 4 },
 ];
 
 describe('bar/beat lengths', () => {
@@ -53,6 +66,39 @@ describe('barBeatFromPpq', () => {
 
   it('clamps negative positions to 1.1', () => {
     expect(barBeatFromPpq(-3, FOUR_FOUR)).toEqual({ bar: 1, beat: 1 });
+  });
+});
+
+describe('continuous bar numbering across surfaces', () => {
+  // Three modules count bars over the meter map independently: this one for
+  // the transport display, measureRangeAt for the score/compose grid and
+  // rulerTicks for the arrangement ruler labels. They must never disagree.
+
+  /** Bar number from the score/grid path, made 1-based for comparison. */
+  function gridBar(meter: TimeSignatureSegment[], ppq: number): number {
+    return measureRangeAt(meter, ppq).index + 1;
+  }
+
+  it('matches the score grid across a meter change', () => {
+    for (const ppq of [0, 4, 7.5, 8, 11, 14, 20]) {
+      expect(barBeatFromPpq(ppq, MIXED).bar).toBe(gridBar(MIXED, ppq));
+    }
+  });
+
+  it('matches the score grid over a zero-length segment', () => {
+    for (const ppq of [0, 4, 8, 12, 13, 18]) {
+      expect(barBeatFromPpq(ppq, ZERO_LENGTH).bar).toBe(gridBar(ZERO_LENGTH, ppq));
+    }
+  });
+
+  it('matches the arrangement ruler bar labels', () => {
+    for (const meter of [FOUR_FOUR, MIXED, ZERO_LENGTH]) {
+      const bars = rulerTicks(meter, 0, 24, 40).filter((tick) => tick.kind === 'bar');
+      expect(bars.length).toBeGreaterThan(0);
+      for (const tick of bars) {
+        expect(barBeatFromPpq(tick.ppq, meter).bar).toBe(tick.barNumber);
+      }
+    }
   });
 });
 
