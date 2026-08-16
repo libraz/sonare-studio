@@ -73,6 +73,13 @@ export function chordSymbolAtPpq(
  * track. Callers must exclude percussion tracks (harmonicTracksOnly) before
  * flattening notes here — the histogram pools every note.
  *
+ * Boundaries are placed on the grid rather than searched for. Every surface
+ * that reads an inferred timeline draws one chord per measure window — the
+ * score's symbol row, and the chord track that mirrors it — so the window is
+ * the answer's unit, and `harmonicRhythm` is the exact window length rather
+ * than a prior the search may depart from. A caller wanting boundaries at the
+ * real harmonic rhythm asks for `'dynamic'` explicitly.
+ *
  * @param notes Flattened note events from harmonic tracks (timeline beats).
  * @param options Analysis options (key, meter, harmonic rhythm, span).
  */
@@ -80,5 +87,5 @@ export function inferChordTimelineFromNotes(
   notes: ReadonlyArray<NoteEvent>,
   options?: ChordTimelineOptions,
 ): ChordTimelineResult {
-  return chordTimelineFromNotes([...notes], options);
+  return chordTimelineFromNotes([...notes], { segmentation: 'grid', ...options });
 }

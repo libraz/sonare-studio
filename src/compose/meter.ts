@@ -43,8 +43,13 @@ export function timeSignatureAtPpq(
 }
 
 /**
- * Whether an absolute beat is metrically strong under its governing meter. The
- * beat is measured from the segment's own start so bar lines follow meter
+ * Whether an absolute beat is metrically accented under its governing meter:
+ * the downbeat, or the bar's secondary strong pulse. This is narrower than "is
+ * a pulse at all" — 4/4 is accented on beats 1 and 3, not on 2 and 4 — and it
+ * is the reading the safety evaluation wants, since what makes a dissonance
+ * exposed is the accent rather than the pulse.
+ *
+ * The beat is measured from the segment's own start so bar lines follow meter
  * changes rather than assuming bars anchored at beat 0. A failed libcantus
  * evaluation degrades to `false` (not strong) rather than throwing.
  */

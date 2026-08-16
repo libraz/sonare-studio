@@ -50,10 +50,15 @@ describe('strongBeatAt grid', () => {
     ['6/8 compound', meter(6, 8), 9, 'S.....S.....S.....S.....S.....S.....'],
     ['6/8 grouped 3+3', meter(6, 8, [3, 3]), 9, 'S.....S.....S.....S.....S.....S.....'],
     [
-      '9/8 grouped 1+1+1 (pulse reading)',
+      // A grouping of equal-length groups only restates the division the meter
+      // already has, so 9/8 as 1+1+1 reads as an ungrouped bar. Its three dotted
+      // quarters are pulses, but none of them is the bar's midpoint, so the bar
+      // has no secondary accent and only the downbeat is strong. Compare 6/8
+      // below, where the second pulse is the midpoint and does carry one.
+      '9/8 grouped 1+1+1 (states the meter, so no accent of its own)',
       meter(9, 8, [1, 1, 1]),
       13.5,
-      'S.....S.....S.....S.....S.....S.....S.....S.....S.....',
+      'S.................S.................S.................',
     ],
     [
       '9/8 grouped 2+2+2+3 (unit reading)',
