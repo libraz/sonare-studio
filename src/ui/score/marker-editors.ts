@@ -18,6 +18,12 @@ export interface ScoreLyricMarkerOptions {
   extend?: boolean;
 }
 
+/**
+ * Key roots offered by the score toolbar: one root per key signature the score
+ * can engrave, in both modes. Engraved key fifths are normalized to -5..+6, so
+ * the further spellings the marker parser accepts (Cb, Gb and C# major, G#, D#
+ * and A# minor) would only restate a signature this list already reaches.
+ */
 export const SCORE_KEY_ROOTS = [
   'C',
   'G',

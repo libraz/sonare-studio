@@ -404,7 +404,7 @@ function keySignatureLabel(fifths: number, minor: boolean): string {
 function keySignaturePayload(label: string): { fifths: number; minor: boolean } | null {
   const match = label.trim().match(/^([A-G](?:b|#)?)\s+(major|minor)$/i);
   if (!match) return null;
-  const tonic = match[1].replace(/[a-g]/, (letter) => letter.toUpperCase());
+  const tonic = `${match[1][0].toUpperCase()}${match[1].slice(1)}`;
   const mode = match[2].toLowerCase();
   const major = new Map([
     ['Cb', -7],
@@ -424,6 +424,10 @@ function keySignaturePayload(label: string): { fifths: number; minor: boolean } 
     ['C#', 7],
   ]);
   const minor = new Map([
+    // Db minor needs eight flats, outside the -7..7 key-signature range, so it
+    // has no canonical label. Markers holding it stay readable and export the
+    // C# minor signature instead of losing the key change.
+    ['Db', 4],
     ['Ab', -7],
     ['Eb', -6],
     ['Bb', -5],
