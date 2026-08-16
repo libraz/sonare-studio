@@ -11,6 +11,20 @@ const METER = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 const MAJOR = 0;
 const MINOR = 1;
 const DOM7 = 4;
+const MAJ7 = 5;
+const MIN7 = 6;
+
+/** ii-V-I in C followed by ii-V-I in Eb, one chord per bar. */
+const MODULATING: ReadonlyArray<[number, number]> = [
+  [2, MIN7],
+  [7, DOM7],
+  [0, MAJ7],
+  [0, MAJ7],
+  [5, MIN7],
+  [10, DOM7],
+  [3, MAJ7],
+  [3, MAJ7],
+];
 
 function chord(startPpq: number, endPpq: number, rootPc = 0, quality = MAJOR): EditorChordSymbol {
   return { startPpq, endPpq, rootPc, quality };
@@ -78,6 +92,53 @@ describe('ChordLane harmonic annotation', () => {
     const wrapper = laneWith([chord(0, 4, 7), chord(4, 8, 0)]);
     await wrapper.findAll('.chord-band')[1].trigger('click');
     expect(wrapper.emitted('seek')).toEqual([[4]]);
+  });
+
+  it('draws no key-span band on a progression that stays in one key', () => {
+    const wrapper = laneWith([chord(0, 4, 7), chord(4, 8, 0)]);
+    expect(wrapper.find('.key-span').exists()).toBe(false);
+  });
+
+  it('bands and names each key a modulating progression passes through', () => {
+    const chords = MODULATING.map(([rootPc, quality], index) =>
+      chord(index * 4, index * 4 + 4, rootPc, quality),
+    );
+    const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
+    const wrapper = mount(ChordLane, {
+      props: { range, revision: 0, chords, timeSignatures: METER },
+    });
+    const spans = wrapper.findAll('.key-span');
+    expect(spans.length).toBe(2);
+    expect(spans[0].attributes('style')).toContain('left: 0px');
+    expect(spans[1].attributes('style')).toContain('left: 160px');
+    const modes = MESSAGES.en.shell.lists.key.modes;
+    expect(wrapper.findAll('.key-span-label').map((label) => label.text())).toEqual([
+      `C ${modes.major}`,
+      `Eb ${modes.major}`,
+    ]);
+  });
+
+  it('drops the key name when the visible span is too narrow', () => {
+    const chords = MODULATING.map(([rootPc, quality], index) =>
+      chord(index * 4, index * 4 + 4, rootPc, quality),
+    );
+    const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 2 });
+    const wrapper = mount(ChordLane, {
+      props: { range, revision: 0, chords, timeSignatures: METER },
+    });
+    expect(wrapper.findAll('.key-span').length).toBe(2);
+    expect(wrapper.findAll('.key-span-label').length).toBe(0);
+  });
+
+  it('shifts key-span bands by originPpq', () => {
+    const chords = MODULATING.map(([rootPc, quality], index) =>
+      chord(100 + index * 4, 104 + index * 4, rootPc, quality),
+    );
+    const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
+    const wrapper = mount(ChordLane, {
+      props: { range, revision: 0, chords, timeSignatures: METER, originPpq: 100 },
+    });
+    expect(wrapper.findAll('.key-span')[1].attributes('style')).toContain('left: 160px');
   });
 
   it('shifts cadence markers by originPpq', () => {

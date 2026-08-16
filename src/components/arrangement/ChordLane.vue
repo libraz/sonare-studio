@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { KeyScale } from '@libraz/libcantus';
+import { formatNote, type KeyScale, spelledKeyOf } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { matchModeChoiceId } from '@/components/lists/key-modes';
 import { analyzeHarmony, type BorrowedKind, type CadenceType } from '@/compose/harmonic-analysis';
 import { keyFifthsToSpelledKey } from '@/compose/key';
 import type { EditorChordSymbol } from '@/project/chords';
@@ -29,7 +30,8 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  *
  * The functional reading of the progression rides along as display-only
  * annotation: an applied-dominant numeral or a borrowing mark beside the chord
- * name, and a rule where a cadence lands. Every marker is inert
+ * name, a rule where a cadence lands, and — only on a track that modulates — a
+ * named band per key the track passes through. Every marker is inert
  * (`pointer-events: none`), so seeking and the chord-list shortcut behave the
  * same with or without an analysis.
  */
@@ -77,6 +79,8 @@ const TRACKS_HINT_MIN_GAP_PX = 200;
 const POPULATE_PULSE_MS = 1200;
 /** Room the approaching band needs before a cadence gets a written label. */
 const CADENCE_LABEL_MIN_ROOM_PX = 40;
+/** Room a key span needs on screen before its name is written into it. */
+const KEY_LABEL_MIN_ROOM_PX = 40;
 
 /**
  * Conventional shorthand per borrowing source: borrowing from the parallel
@@ -105,6 +109,17 @@ interface ChordBand {
   labels: ChordLabel[];
   /** Applied numeral and/or borrowing mark drawn beside the name; '' for none. */
   mark: string;
+}
+
+/** One positioned, culled key-span band. */
+interface KeySpanBand {
+  key: number;
+  /** Key name as it is written into the band, e.g. "Eb Major (Ionian)". */
+  name: string;
+  leftPx: number;
+  widthPx: number;
+  /** Whether the visible span is wide enough for the written name. */
+  showLabel: boolean;
 }
 
 /** One positioned, culled cadence marker. */
@@ -187,6 +202,39 @@ const bands = computed<ChordBand[]>(() => {
       widthPx: Math.max(2, x1 - x0),
       labels: labelsFor(chord, origin, x0, x1),
       mark: markFor(chord.startPpq),
+    });
+  }
+  return out;
+});
+
+/**
+ * Name of a key as the band writes it: the tonic spelled the way the key's own
+ * signature writes it (so a flat key reads Eb, not D#), plus the mode named in
+ * the vocabulary the key editor already uses.
+ */
+function keyName(key: KeyScale): string {
+  const labels = t.value.shell.lists.key;
+  const modes: Readonly<Record<string, string>> = labels.modes;
+  const modeId = matchModeChoiceId(key.modeMask12);
+  const mode = (modeId === null ? undefined : modes[modeId]) ?? labels.customScale;
+  return `${formatNote(spelledKeyOf(key).tonic)} ${mode}`;
+}
+
+const keySpanBands = computed<KeySpanBand[]>(() => {
+  void props.revision;
+  const origin = props.originPpq ?? 0;
+  const out: KeySpanBand[] = [];
+  for (const span of analysis.value.keySpans) {
+    const x0 = props.range.ppqToX(span.startPpq - origin);
+    const x1 = props.range.ppqToX(span.endPpq - origin);
+    if (x1 <= 0 || x0 >= props.range.widthPx) continue;
+    const visibleWidthPx = Math.min(x1, props.range.widthPx) - Math.max(x0, 0);
+    out.push({
+      key: span.startPpq,
+      name: keyName(span.key),
+      leftPx: x0,
+      widthPx: Math.max(2, x1 - x0),
+      showLabel: visibleWidthPx >= KEY_LABEL_MIN_ROOM_PX,
     });
   }
   return out;
@@ -307,6 +355,14 @@ onBeforeUnmount(() => {
       </span>
     </div>
     <div
+      v-for="span in keySpanBands"
+      :key="span.key"
+      class="key-span"
+      :style="{ left: `${span.leftPx}px`, width: `${span.widthPx}px` }"
+    >
+      <span v-if="span.showLabel" class="key-span-label">{{ span.name }}</span>
+    </div>
+    <div
       v-for="marker in cadenceMarkers"
       :key="marker.key"
       class="cadence-mark"
@@ -378,6 +434,35 @@ onBeforeUnmount(() => {
   margin-left: var(--sp-1);
   font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
+  white-space: nowrap;
+}
+
+/*
+ * The band tints the span it covers and rules its left edge, where the key
+ * changes; the name is written into the span's tail, the strip the chord-name
+ * tiler already keeps clear (see LABEL_TAIL_GUARD_PX).
+ */
+.key-span {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 0 color-mix(in srgb, var(--accent) 65%, transparent);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.key-span-label {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--sp-2);
+  display: flex;
+  align-items: center;
+  font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
+  color: var(--accent);
   white-space: nowrap;
 }
 
