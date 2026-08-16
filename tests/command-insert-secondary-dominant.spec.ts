@@ -1,6 +1,11 @@
+import {
+  chordQualities,
+  makeChord,
+  secondaryDominantOf as secondaryDominantOfChord,
+} from '@libraz/libcantus';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { secondaryDominantLabel } from '@/compose/secondary-dominant';
+import { secondaryDominantLabel, secondaryDominantOf } from '@/compose/secondary-dominant';
 import { setProjectChords } from '@/project/command/chords';
 import { clearHistory, undo } from '@/project/command/history';
 import { insertSecondaryDominantBefore } from '@/project/command/insert-secondary-dominant';
@@ -12,6 +17,9 @@ vi.mock('@/lib/wasm', async () => {
   const fakeModule = createFakeWasmModule();
   return { ensureWasm: async () => fakeModule };
 });
+
+/** Editor quality ordinal for a dominant seventh (see CHORD_QUALITIES). */
+const DOMINANT_SEVENTH = 4;
 
 describe('insertSecondaryDominantBefore', () => {
   let store: ReturnType<typeof useProjectStore>;
@@ -81,6 +89,27 @@ describe('insertSecondaryDominantBefore', () => {
 
     expect(insertSecondaryDominantBefore(0)).toBe(false);
     expect(store.chords).toEqual([{ startPpq: 0, endPpq: 4, rootPc: 11, quality: 2 }]);
+  });
+
+  it('answers what libcantus does for every chord quality at every root', () => {
+    // The local implementation is kept because an editor chord symbol is a bare
+    // pitch class, with nowhere to put the root spelling the library adds. That
+    // is only worth keeping while the two agree on the chord itself, so the
+    // agreement is checked rather than assumed.
+    for (const quality of chordQualities()) {
+      for (let rootPc = 0; rootPc < 12; rootPc += 1) {
+        const expected = secondaryDominantOfChord(makeChord(rootPc, quality));
+        const actual = secondaryDominantOf(
+          { startPpq: 0, endPpq: 4, rootPc, quality: 0 },
+          { startPpq: 0, endPpq: 4 },
+        );
+        expect({ rootPc: actual.rootPc, quality: actual.quality }).toEqual({
+          rootPc: expected.rootPc,
+          quality: DOMINANT_SEVENTH,
+        });
+        expect(expected.quality).toBe('dom7');
+      }
+    }
   });
 
   it('labels the target by its root degree without quality or inversion figures', () => {

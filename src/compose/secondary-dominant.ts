@@ -2,10 +2,13 @@
  * Secondary-dominant insertion for the editor's chord track.
  *
  * The dominant seventh that tonicizes a chord sits a perfect fifth above its
- * root (V7/x) — this computes the root directly from the target chord rather
- * than through libcantus's `secondaryDominant(degree, key)`, which needs a
- * scale degree and would mislabel borrowed/chromatic targets that have no
- * clean diatonic degree.
+ * root (V7/x), computed here directly from the target chord.
+ *
+ * libcantus's `secondaryDominantOf` answers the same question and agrees on
+ * every chord quality at every root, but what it adds over the fifth is a root
+ * spelling carried over from the target — and an editor chord symbol is a bare
+ * pitch class with nowhere to put one. Delegating would therefore buy nothing
+ * and would route a total function through a conversion that throws.
  */
 
 import { chordToRoman, type KeyScale } from '@libraz/libcantus';
