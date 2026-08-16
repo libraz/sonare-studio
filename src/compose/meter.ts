@@ -2,9 +2,12 @@
  * Time-signature bridge between the project's {@link TimeSignatureSegment} map
  * and libcantus's single-signature {@link TimeSignature}.
  *
- * libcantus meter functions take one `TimeSignature`, so a project with meter
- * changes must resolve the governing segment for the PPQ position of interest
- * and pass that; callers spanning a meter change split their work per segment.
+ * libcantus's positional functions accept the whole meter map, and answer
+ * identically to resolving the governing segment and rebasing onto it — across
+ * a meter change landing mid-bar as well. The segment is resolved here anyway
+ * because {@link strongBeatAt} is asked once per note: a lookup over the
+ * project's segments costs nothing, where handing over a map would mean
+ * building one on every call.
  *
  * Pure module.
  */
