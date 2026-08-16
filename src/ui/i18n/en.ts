@@ -2717,7 +2717,7 @@ export const en = {
       avoid: {
         term: 'Avoid note',
         definition:
-          'A scale note a half-step above a chord tone; it clashes if held, so it is used only in passing.',
+          'A scale note that clashes against the chord, usually a half-step above a chord tone. It is left out altogether rather than moved through; the note you may move through is the passing tone.',
       },
       tension: {
         term: 'Tension',
