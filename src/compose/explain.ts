@@ -84,10 +84,10 @@ export interface TheoryLabels {
   /** Scale line shown when the degree is unknown. */
   nonScaleTone: string;
   /**
-   * Prefixes for the color-tone line's available tensions, avoid notes, and
-   * runner-up scale fits.
+   * Prefixes for the color-tone line's available tensions, passing tones, avoid
+   * notes, and runner-up scale fits.
    */
-  chordScale: Readonly<Record<'tensions' | 'avoid' | 'alternates', string>>;
+  chordScale: Readonly<Record<'tensions' | 'passing' | 'avoid' | 'alternates', string>>;
   /** Voice-relative (counterpoint) wording. */
   counterpoint: CounterpointLabels;
   /** Glossary of jargon terms, keyed by term id (see {@link GLOSSARY_KEY_FOR_KIND}). */
@@ -193,9 +193,12 @@ function scaleDisplayName(scaleName: string, labels: TheoryLabels): string {
 
 /**
  * The color-tone line for the sounding chord: the best-fit scale named on its
- * root, then its available tensions and avoid notes, then any runner-up fits.
+ * root, then the non-chord scale tones sorted by what may be done with them,
+ * then any runner-up fits. The three groups run from freest to strictest —
+ * tensions may be added at will, passing tones only passed through, avoid notes
+ * not played at all — so the line reads as descending permission.
  * The scale name alone is worth the line, so it is emitted even when the chord
- * offers neither tensions nor avoid notes.
+ * offers none of the three.
  */
 function chordScaleText(
   analysis: NoteAnalysis,
@@ -209,6 +212,9 @@ function chordScaleText(
   ];
   if (chordScale.tensions.length > 0) {
     parts.push(`${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions, keyFifths)}`);
+  }
+  if (chordScale.passing.length > 0) {
+    parts.push(`${labels.chordScale.passing} ${pitchClassList(chordScale.passing, keyFifths)}`);
   }
   if (chordScale.avoid.length > 0) {
     parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid, keyFifths)}`);

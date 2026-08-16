@@ -2588,6 +2588,7 @@ export const ja = {
         nonScaleTone: 'スケールの外の音',
         chordScale: {
           tensions: '重ねられる彩りの音:',
+          passing: '通り過ぎるだけにする音:',
           avoid: '扱いに注意する音:',
           alternates: 'ほかに合うスケール:',
         },
@@ -2632,6 +2633,7 @@ export const ja = {
         nonScaleTone: 'スケール外の音',
         chordScale: {
           tensions: 'テンション',
+          passing: '経過',
           avoid: '回避',
           alternates: 'または',
         },
@@ -2676,6 +2678,7 @@ export const ja = {
         nonScaleTone: 'ノンダイアトニック音',
         chordScale: {
           tensions: '使用可能テンション',
+          passing: '経過音',
           avoid: 'アヴォイド音',
           alternates: 'または',
         },

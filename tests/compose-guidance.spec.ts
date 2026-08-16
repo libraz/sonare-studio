@@ -445,7 +445,8 @@ describe('buildTheoryCard', () => {
   it('adds a color-tone line naming the chord scale and its available tensions', () => {
     const result = buildGuidance(
       guidanceInput({
-        // A note over a Cmaj7 chord: ionian offers D and A as color tones.
+        // A note over a Cmaj7 chord: ionian offers D and A as color tones and
+        // F only as a note to pass through.
         notes: [note({ id: 61, pitch: 60, startPpq: 0, durationPpq: 1 })],
         chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 5 })],
       }),
@@ -461,15 +462,50 @@ describe('buildTheoryCard', () => {
     );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     expect(colorLine).toBeDefined();
-    expect(colorLine?.text).toBe('C Ionian · tensions D, A · avoid F · or Lydian');
+    expect(colorLine?.text).toBe('C Ionian · tensions D, A · passing F · or Lydian');
     expect(colorLine?.term?.term).toBe('Chord scale');
   });
 
-  it('names the chord scale on its root even with no tensions or avoid notes', () => {
+  it('keeps passing tones and avoid notes apart on the color-tone line', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        // Cm6/E fits the half-whole octatonic, the one reading that reports all
+        // three groups at once: F# is free color, A# may only be passed
+        // through, and C# may not be played at all.
+        notes: [note({ id: 62, pitch: 60, startPpq: 0, durationPpq: 1 })],
+        chordSymbols: [
+          chordSymbol({
+            startPpq: 0,
+            endPpq: 4,
+            rootPc: 0,
+            quality: 1,
+            extensions: [9],
+            bassPc: 4,
+          }),
+        ],
+      }),
+    );
+    const analysis = result.byNoteId.get(62);
+    expect(analysis?.chordScale?.scaleName).toBe('octatonicHalfWhole');
+    expect(analysis?.chordScale?.tensions).toEqual([6]);
+    expect(analysis?.chordScale?.passing).toEqual([10]);
+    expect(analysis?.chordScale?.avoid).toEqual([1]);
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 60, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    const colorLine = card.lines.find((line) => line.label === 'Color');
+    // Freest first: tensions, then passing, then avoid.
+    expect(colorLine?.text).toBe('C Octatonic (half-whole) · tensions F# · passing A# · avoid C#');
+  });
+
+  it('names the chord scale on its root even with no tensions, passing or avoid notes', () => {
     const analysis = {
       degree: 2,
       isScaleTone: true,
-      chordScale: { scaleName: 'dorian', rootPc: 2, tensions: [], avoid: [] },
+      chordScale: { scaleName: 'dorian', rootPc: 2, tensions: [], passing: [], avoid: [] },
     } as NoteAnalysis;
     const card = buildTheoryCard(
       analysis,
@@ -484,7 +520,7 @@ describe('buildTheoryCard', () => {
     const analysis = {
       degree: 1,
       isScaleTone: true,
-      chordScale: { scaleName: 'melodicMinor', rootPc: 10, tensions: [], avoid: [] },
+      chordScale: { scaleName: 'melodicMinor', rootPc: 10, tensions: [], passing: [], avoid: [] },
     } as NoteAnalysis;
     const card = buildTheoryCard(
       analysis,
@@ -499,7 +535,7 @@ describe('buildTheoryCard', () => {
     const analysis = {
       degree: 1,
       isScaleTone: true,
-      chordScale: { scaleName: 'bebopDominant', rootPc: 0, tensions: [], avoid: [] },
+      chordScale: { scaleName: 'bebopDominant', rootPc: 0, tensions: [], passing: [], avoid: [] },
     } as NoteAnalysis;
     const card = buildTheoryCard(
       analysis,

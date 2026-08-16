@@ -48,6 +48,7 @@ describe('explanation-level wording', () => {
         expect(labels.scaleDegree).toContain('{degree}');
         expect(labels.nonScaleTone.length).toBeGreaterThan(0);
         expect(labels.chordScale.tensions.length).toBeGreaterThan(0);
+        expect(labels.chordScale.passing.length).toBeGreaterThan(0);
         expect(labels.chordScale.avoid.length).toBeGreaterThan(0);
         expect(labels.chordScale.alternates.length).toBeGreaterThan(0);
       });

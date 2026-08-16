@@ -2586,6 +2586,7 @@ export const en = {
         nonScaleTone: 'Outside the current scale',
         chordScale: {
           tensions: 'Colour notes you can add:',
+          passing: 'Notes to pass through only:',
           avoid: 'Notes to handle with care:',
           alternates: 'also fits:',
         },
@@ -2630,6 +2631,7 @@ export const en = {
         nonScaleTone: 'Non-scale tone',
         chordScale: {
           tensions: 'tensions',
+          passing: 'passing',
           avoid: 'avoid',
           alternates: 'or',
         },
@@ -2674,6 +2676,7 @@ export const en = {
         nonScaleTone: 'Non-diatonic tone',
         chordScale: {
           tensions: 'available tensions',
+          passing: 'passing tones',
           avoid: 'avoid notes',
           alternates: 'or',
         },

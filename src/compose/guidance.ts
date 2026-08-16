@@ -98,7 +98,9 @@ export interface ChordScaleInfo {
   rootPc: number;
   /** Available-tension pitch classes (usable color tones) over the chord. */
   tensions: number[];
-  /** Avoid-note pitch classes over the chord. */
+  /** Pitch classes a line may pass through melodically but not sound on. */
+  passing: number[];
+  /** Avoid-note pitch classes over the chord (not to be played at all). */
   avoid: number[];
   /**
    * Runner-up scale names, next-best fit first. Same root as {@link scaleName},
@@ -374,6 +376,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
             scaleName: best.name,
             rootPc: best.rootPc,
             tensions: best.tensions,
+            passing: best.passing,
             avoid: best.avoid,
             ...(alternates.length > 0 ? { alternates } : {}),
           }
