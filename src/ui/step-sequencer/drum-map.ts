@@ -1,12 +1,22 @@
 /**
- * General MIDI percussion map (channel 10, key range 35-81) used to label
- * drum-mode rows. The names follow the GM1 sound set; they intentionally
- * match what the wasm Project.gmDrumName helper reports so labels stay
- * consistent across the app without loading the wasm module here.
+ * General MIDI percussion map (channel 10, key range 27-87) used to label
+ * drum-mode rows. The names follow the GM2 percussion key map, which keeps the
+ * GM1 sound set on 35-81 — those match what the wasm Project.gmDrumName helper
+ * reports, so labels stay consistent across the app without loading the wasm
+ * module here — and extends it with 27-34 and 82-87. The extension is not
+ * cosmetic: the drum generator writes a shaker on 82.
  */
 import { formatPitch } from '@/lib/pitch';
 
 const GM_DRUM_NAMES: Readonly<Record<number, string>> = {
+  27: 'High Q',
+  28: 'Slap',
+  29: 'Scratch Push',
+  30: 'Scratch Pull',
+  31: 'Sticks',
+  32: 'Square Click',
+  33: 'Metronome Click',
+  34: 'Metronome Bell',
   35: 'Acoustic Bass Drum',
   36: 'Bass Drum 1',
   37: 'Side Stick',
@@ -54,15 +64,21 @@ const GM_DRUM_NAMES: Readonly<Record<number, string>> = {
   79: 'Open Cuica',
   80: 'Mute Triangle',
   81: 'Open Triangle',
+  82: 'Shaker',
+  83: 'Jingle Bell',
+  84: 'Bell Tree',
+  85: 'Castanets',
+  86: 'Mute Surdo',
+  87: 'Open Surdo',
 };
 
 /** First pitch covered by the GM percussion map. */
-export const GM_DRUM_MIN_PITCH = 35;
+export const GM_DRUM_MIN_PITCH = 27;
 /** Last pitch covered by the GM percussion map. */
-export const GM_DRUM_MAX_PITCH = 81;
+export const GM_DRUM_MAX_PITCH = 87;
 
 /**
- * Returns the GM percussion name for a pitch, or null outside 35-81.
+ * Returns the GM percussion name for a pitch, or null outside 27-87.
  *
  * @param pitch MIDI note number.
  */
@@ -112,11 +128,11 @@ export function gm2DrumKitName(
 
 /**
  * Percussion name for a pitch in a specific GM2 drum kit, falling back to the
- * GM1 name (then null) when the kit has no override or the helper is
- * unavailable.
+ * standard percussion map name (then null) when the kit has no override or the
+ * helper is unavailable.
  *
  * @param pitch MIDI note number.
- * @param kitLsb Kit index (bank LSB, 0-127); omitted uses the GM1 map only.
+ * @param kitLsb Kit index (bank LSB, 0-127); omitted uses the standard map only.
  * @param source wasm Project helpers (e.g. `getWasmModule().Project`).
  */
 export function drumNoteName(

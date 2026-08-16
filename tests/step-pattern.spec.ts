@@ -24,9 +24,16 @@ describe('drum map', () => {
     expect(gmDrumName(81)).toBe('Open Triangle');
   });
 
+  it('names the GM2 pitches outside the GM1 key range', () => {
+    expect(gmDrumName(27)).toBe('High Q');
+    expect(gmDrumName(34)).toBe('Metronome Bell');
+    expect(gmDrumName(82)).toBe('Shaker');
+    expect(gmDrumName(87)).toBe('Open Surdo');
+  });
+
   it('returns null outside the GM percussion range', () => {
-    expect(gmDrumName(34)).toBeNull();
-    expect(gmDrumName(82)).toBeNull();
+    expect(gmDrumName(26)).toBeNull();
+    expect(gmDrumName(88)).toBeNull();
   });
 
   it('names pitches with middle C as C4', () => {

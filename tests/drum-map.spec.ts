@@ -1,3 +1,4 @@
+import { DRUM_NOTES, type DrumsOptions, generateDrums } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import {
   drumNoteName,
@@ -57,5 +58,59 @@ describe('drumNoteName', () => {
 
   it('returns null outside the GM percussion range with no kit name', () => {
     expect(drumNoteName(20, 8, source)).toBeNull();
+  });
+});
+
+describe('coverage of the drum generator', () => {
+  const STYLES: ReadonlyArray<DrumsOptions['style']> = [
+    'standard',
+    'funk',
+    'shuffle',
+    'bossa',
+    'trap',
+    'halftime',
+    'breakbeat',
+    'house',
+    'synthpop',
+  ];
+  const SECTIONS: ReadonlyArray<DrumsOptions['section']> = [
+    'intro',
+    'verse',
+    'prechorus',
+    'chorus',
+    'bridge',
+    'outro',
+  ];
+  const ROLES: ReadonlyArray<DrumsOptions['role']> = ['full', 'ambient', 'minimal', 'fxOnly'];
+
+  it('names every voice libcantus can emit', () => {
+    for (const [voice, pitch] of Object.entries(DRUM_NOTES)) {
+      expect(gmDrumName(pitch), `${voice} (${pitch})`).not.toBeNull();
+    }
+  });
+
+  it('names every pitch a generation sweep produces', () => {
+    const pitches = new Set<number>();
+    for (const style of STYLES) {
+      for (const section of SECTIONS) {
+        for (const role of ROLES) {
+          const hits = generateDrums({
+            bars: 4,
+            style,
+            section,
+            role,
+            fills: true,
+            ctx: { seed: 0, bpm: 120, complexity: { rhythmic: 0.6 } },
+          });
+          for (const hit of hits) pitches.add(hit.pitch);
+        }
+      }
+    }
+    // The sweep must reach the shaker, the one voice above the GM1 key range.
+    expect(pitches.has(DRUM_NOTES.shaker)).toBe(true);
+    const unnamed = [...pitches]
+      .filter((pitch) => gmDrumName(pitch) === null)
+      .sort((a, b) => a - b);
+    expect(unnamed).toEqual([]);
   });
 });

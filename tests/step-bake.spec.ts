@@ -221,13 +221,16 @@ describe('patternFromNotes (pull from clip)', () => {
   it('appends rows for pitches missing from the template', () => {
     const notes: EditorNote[] = [
       { id: 1, pitch: 56, velocity: 100, startPpq: 0, durationPpq: 0.125, channel: 9 },
-      { id: 2, pitch: 90, velocity: 100, startPpq: 0.25, durationPpq: 0.125, channel: 9 },
+      { id: 2, pitch: 82, velocity: 100, startPpq: 0.125, durationPpq: 0.125, channel: 9 },
+      { id: 3, pitch: 90, velocity: 100, startPpq: 0.25, durationPpq: 0.125, channel: 9 },
     ];
     const { pattern, droppedNotes } = patternFromNotes(notes, createDrumPattern());
     expect(droppedNotes).toBe(0);
     const cowbell = pattern.rows.find((row) => row.pitch === 56);
     expect(cowbell?.name).toBe('Cowbell');
     expect(cowbell?.steps[0].active).toBe(true);
+    // Above the GM1 key range but inside the GM2 percussion map.
+    expect(pattern.rows.find((row) => row.pitch === 82)?.name).toBe('Shaker');
     // Outside the GM map the row falls back to the pitch name.
     expect(pattern.rows.find((row) => row.pitch === 90)?.name).toBe('F#6');
   });
