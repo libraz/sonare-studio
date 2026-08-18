@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
-import { computed, ref, shallowRef } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
+import { detectScaleHighlightFromTracks } from '@/compose/key';
 import { linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { audioAssetUri } from '@/persistence/assets';
@@ -375,6 +376,14 @@ export const useProjectStore = defineStore('project', () => {
     modeMask: MAJOR_MODE_MASK,
   });
   /**
+   * Whether the current {@link scaleHighlight} was estimated from the project's
+   * notes instead of chosen (editor-only, not undoable and never written to the
+   * document — an estimate is re-derived on every load, so persisting it would
+   * turn a guess into an authored key). The theory card hedges its readings
+   * while this is set.
+   */
+  const scaleHighlightEstimated = ref(false);
+  /**
    * Display-only score annotations keyed by clip id then editor note id
    * (app-level metadata; never written to the Project or to MIDI data).
    * Entries whose note no longer exists are ignored by the score pipeline.
@@ -407,6 +416,56 @@ export const useProjectStore = defineStore('project', () => {
       mod.scalePitchClassEnabled(config.rootPc, config.modeMask, pc),
     );
   });
+
+  /**
+   * The key detection installed on the last load, kept so a later write can be
+   * told apart from it. Null once the estimate no longer stands.
+   */
+  let estimatedKey: { rootPc: number; modeMask: number } | null = null;
+
+  /**
+   * Applies a scale highlight the user chose, which is what makes the key
+   * theirs: an estimate stops being reported (and starts being persisted) even
+   * when they land on exactly the key detection had guessed, since settling on
+   * a reading is a decision the app must not keep second-guessing.
+   *
+   * This is the contract for every key-editing surface. The watch below is only
+   * a backstop for code that assigns `scaleHighlight` directly.
+   *
+   * @param config The chosen scale highlight.
+   */
+  function setScaleHighlight(config: ScaleHighlightConfig): void {
+    scaleHighlight.value = { ...config };
+    scaleHighlightEstimated.value = false;
+    estimatedKey = null;
+  }
+
+  /**
+   * Shows or hides the scale highlight without touching the key it draws.
+   *
+   * Visibility is not authorship: hiding the highlight says nothing about which
+   * key the piece is in, so an estimate stays an estimate (and stays out of the
+   * document) across the toggle.
+   *
+   * @param enabled Whether the highlight is drawn.
+   */
+  function setScaleHighlightEnabled(enabled: boolean): void {
+    scaleHighlight.value = { ...scaleHighlight.value, enabled };
+  }
+
+  // Backstop for writers that bypass setScaleHighlight and assign the ref
+  // directly: a key other than the detected one cannot be an estimate, whoever
+  // wrote it. Only the two key fields are watched, so the visibility toggle
+  // above passes through without disturbing the flag.
+  watch(
+    () => [scaleHighlight.value.rootPc, scaleHighlight.value.modeMask] as const,
+    ([rootPc, modeMask]) => {
+      if (!scaleHighlightEstimated.value) return;
+      if (rootPc === estimatedKey?.rootPc && modeMask === estimatedKey.modeMask) return;
+      scaleHighlightEstimated.value = false;
+      estimatedKey = null;
+    },
+  );
 
   /** Currently selected notes, in mirror order. */
   const selectedNotes = computed<EditorNote[]>(() =>
@@ -950,6 +1009,7 @@ export const useProjectStore = defineStore('project', () => {
         quantizeSwing: quantizeSwing.value,
         snapEnabled: snapEnabled.value,
         scaleHighlight: scaleHighlight.value,
+        scaleHighlightEstimated: scaleHighlightEstimated.value,
         scoreAnnotations: scoreAnnotations.value,
         displayTransposeSemitones: displayTransposeSemitones.value,
         scoreDisplaySettings: scoreDisplaySettings.value,
@@ -989,6 +1049,7 @@ export const useProjectStore = defineStore('project', () => {
         quantizeSwing.value = previousState.quantizeSwing;
         snapEnabled.value = previousState.snapEnabled;
         scaleHighlight.value = previousState.scaleHighlight;
+        scaleHighlightEstimated.value = previousState.scaleHighlightEstimated;
         scoreAnnotations.value = previousState.scoreAnnotations;
         displayTransposeSemitones.value = previousState.displayTransposeSemitones;
         scoreDisplaySettings.value = previousState.scoreDisplaySettings;
@@ -1149,7 +1210,7 @@ export const useProjectStore = defineStore('project', () => {
           : 0;
       generationSeed.value = normalizeGenerationSeed(doc.generationSeed);
       const scale = doc.scaleHighlight;
-      scaleHighlight.value =
+      const authoredScale =
         scale !== undefined &&
         typeof scale.enabled === 'boolean' &&
         Number.isInteger(scale.rootPc) &&
@@ -1159,7 +1220,33 @@ export const useProjectStore = defineStore('project', () => {
         scale.modeMask >= 0 &&
         scale.modeMask < 1 << 12
           ? { enabled: scale.enabled, rootPc: scale.rootPc, modeMask: scale.modeMask }
-          : { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+          : null;
+      // A document that names no key used to be read as C major, which every
+      // theory surface then measured the music against without saying so.
+      // Estimate one from what was loaded instead; C major remains the answer
+      // only when there is nothing to estimate from (an empty project, or notes
+      // that settle on no tonic).
+      const estimated =
+        authoredScale === null
+          ? detectScaleHighlightFromTracks(
+              tracks.value.map((track) => ({
+                track,
+                notes: clips.value
+                  .filter((clip) => clip.trackId === track.id)
+                  .flatMap((clip) =>
+                    clip.notes.map((clipNote) => ({
+                      ...clipNote,
+                      startPpq: clip.startPpq + clipNote.startPpq,
+                    })),
+                  ),
+              })),
+            )
+          : null;
+      scaleHighlight.value = authoredScale ??
+        estimated ?? { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+      scaleHighlightEstimated.value = estimated !== null;
+      estimatedKey =
+        estimated !== null ? { rootPc: estimated.rootPc, modeMask: estimated.modeMask } : null;
       documentGeneration.value += 1;
       restorePreviousState = null;
       try {
@@ -1223,6 +1310,8 @@ export const useProjectStore = defineStore('project', () => {
     grooveTemplate.value = null;
     snapEnabled.value = true;
     scaleHighlight.value = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+    scaleHighlightEstimated.value = false;
+    estimatedKey = null;
     scoreAnnotations.value = {};
     displayTransposeSemitones.value = 0;
     scoreDisplaySettings.value = createDefaultScoreDisplaySettings();
@@ -1260,6 +1349,9 @@ export const useProjectStore = defineStore('project', () => {
     grooveTemplate,
     snapEnabled,
     scaleHighlight,
+    scaleHighlightEstimated,
+    setScaleHighlight,
+    setScaleHighlightEnabled,
     scoreAnnotations,
     displayTransposeSemitones,
     scoreDisplaySettings,

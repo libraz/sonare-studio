@@ -10,17 +10,24 @@
  * future drift on either side is caught by the adapter unit test rather than
  * silently mis-highlighting scales.
  *
+ * The same conversion is what a detected key comes back through: a project that
+ * never had a key set gets one estimated from its notes here, rather than every
+ * theory surface reading against a silently assumed C major.
+ *
  * Pure module (no Vue/Pinia); the store-reading helpers live in the callers.
  */
 
 import {
+  detectKeyFromNotes,
   type KeyScale,
   keySignatureFifths,
   MAJOR_MASK,
   type NoteData,
+  type NoteEvent,
   spelledKeyOf,
 } from '@libraz/libcantus';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
+import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
 
 /** Default key used when the project has no key set: C major. */
 export const DEFAULT_KEY_SCALE: KeyScale = { rootPc: 0, modeMask12: MAJOR_MODE_MASK };
@@ -52,6 +59,75 @@ export function keyScaleToScaleHighlight(key: KeyScale, enabled = true): ScaleHi
  */
 export function effectiveKeyScale(config: ScaleHighlightConfig): KeyScale {
   return config.enabled ? scaleHighlightToKeyScale(config) : DEFAULT_KEY_SCALE;
+}
+
+/**
+ * How far the best-ranked key must outscore the best candidate on a different
+ * tonic before the estimate is taken.
+ *
+ * libcantus ranks all 24 keys and always names a winner, so the top entry alone
+ * says nothing about whether the music actually establishes a tonic: a
+ * chromatic cluster or a whole-tone passage scores the same on every tonic and
+ * the winner is decided by the tie-break. Requiring a margin over the best
+ * rival tonic rejects exactly those, while leaving an ordinary tonal piece —
+ * whose relative major/minor pair trails it by far more than this — detected.
+ */
+const KEY_DETECTION_MIN_TONIC_MARGIN = 0.02;
+
+/**
+ * Estimates the key of a set of notes, as a scale-highlight configuration.
+ *
+ * Callers must treat the result as a guess: it is derived from what the notes
+ * emphasise (duration times velocity), not from anything the composer stated.
+ *
+ * @param notes Sounding notes, onsets and durations in quarter-note beats.
+ * @returns The estimated key with highlighting on, or null when nothing sounds
+ *   or no tonic stands out (see {@link KEY_DETECTION_MIN_TONIC_MARGIN}).
+ */
+export function detectScaleHighlight(notes: ReadonlyArray<NoteEvent>): ScaleHighlightConfig | null {
+  let ranked: ReturnType<typeof detectKeyFromNotes>;
+  try {
+    ranked = detectKeyFromNotes(notes);
+  } catch {
+    // Malformed note events are an input problem, not something the editor
+    // should surface as a key: it simply goes on without an estimate.
+    return null;
+  }
+  const best = ranked[0];
+  if (best === undefined || best.score <= 0) return null;
+  const rival = ranked.find((match) => match.key.rootPc !== best.key.rootPc);
+  if (rival !== undefined && best.score - rival.score < KEY_DETECTION_MIN_TONIC_MARGIN) return null;
+  return keyScaleToScaleHighlight(best.key);
+}
+
+/**
+ * Estimates the key of a project from its tracks' notes.
+ *
+ * Percussion tracks are dropped first (see {@link harmonicTracksOnly}), since a
+ * drum kit's note numbers are instrument slots rather than pitches and would
+ * weigh on the histogram as if they were.
+ *
+ * @param items Tracks paired with their notes; note positions must share one
+ *   beat frame across the tracks.
+ * @returns The estimated key, or null when there is nothing to estimate from.
+ */
+export function detectScaleHighlightFromTracks(
+  items: ReadonlyArray<TrackWithNotes>,
+): ScaleHighlightConfig | null {
+  const { harmonic } = harmonicTracksOnly(items);
+  const notes: NoteEvent[] = [];
+  for (const item of harmonic) {
+    for (const note of item.notes) {
+      if (note.durationPpq <= 0) continue;
+      notes.push({
+        pitch: note.pitch,
+        startBeat: note.startPpq,
+        durationBeat: note.durationPpq,
+        velocity: note.velocity,
+      });
+    }
+  }
+  return notes.length > 0 ? detectScaleHighlight(notes) : null;
 }
 
 /**

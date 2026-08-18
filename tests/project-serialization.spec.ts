@@ -96,6 +96,47 @@ function buildSampleProject(store: ReturnType<typeof useProjectStore>): void {
   ]);
 }
 
+/**
+ * A document carrying an unmistakable D minor phrase and no key of its own, for
+ * the paths that estimate one from the notes.
+ */
+function dMinorDocument(base: ProjectDocument): ProjectDocument {
+  const phrase = [62, 65, 69, 62, 57, 62, 65, 69, 74, 69, 65, 62];
+  const doc: ProjectDocument = JSON.parse(JSON.stringify(base));
+  delete doc.scaleHighlight;
+  doc.tracks = [
+    {
+      name: 'Organ',
+      color: '#8899ff',
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      clips: [
+        {
+          name: 'Subject',
+          startPpq: 0,
+          lengthPpq: phrase.length + 4,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: phrase.map((pitch, index) => ({
+            pitch,
+            velocity: 96,
+            startPpq: index,
+            // The tonic is held longest, which is what the estimate weighs.
+            durationPpq: pitch === 62 ? 2 : 1,
+            channel: 0,
+          })),
+        },
+      ],
+    },
+  ];
+  return doc;
+}
+
 describe('project serialization', () => {
   let store: ReturnType<typeof useProjectStore>;
 
@@ -129,6 +170,66 @@ describe('project serialization', () => {
     store.scaleHighlight = { enabled: false, rootPc: 7, modeMask: 0 };
     await loadProjectDocument(keyed);
     expect(store.scaleHighlight).toEqual({ enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK });
+  });
+
+  it('estimates the key of a document that names none, and never writes it back', async () => {
+    // A document with notes but no key: the key is read off the notes so the
+    // theory surfaces stop measuring against a silently assumed C major, and it
+    // must stay out of the document, which the composer never gave a key to.
+    const doc = dMinorDocument(serializeProject());
+    await loadProjectDocument(doc);
+
+    expect(store.scaleHighlightEstimated).toBe(true);
+    expect(store.scaleHighlight).toMatchObject({ enabled: true, rootPc: 2 });
+
+    const written = serializeProject();
+    expect(written.scaleHighlight).toBeUndefined();
+    expect('scaleHighlight' in written).toBe(false);
+  });
+
+  it('keeps a user-set key authored across a round trip', async () => {
+    await loadProjectDocument(dMinorDocument(serializeProject()));
+    expect(store.scaleHighlightEstimated).toBe(true);
+
+    store.setScaleHighlight({ enabled: true, rootPc: 5, modeMask: MAJOR_MODE_MASK });
+    expect(store.scaleHighlightEstimated).toBe(false);
+    const written = serializeProject();
+    expect(written.scaleHighlight).toEqual({
+      enabled: true,
+      rootPc: 5,
+      modeMask: MAJOR_MODE_MASK,
+    });
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(written)) as ProjectDocument);
+    expect(store.scaleHighlight).toEqual({ enabled: true, rootPc: 5, modeMask: MAJOR_MODE_MASK });
+    expect(store.scaleHighlightEstimated).toBe(false);
+  });
+
+  it('adopts the estimated key as an authored one once the user chooses it', async () => {
+    // Confirming the guess in the key editor is a decision, even though it
+    // changes no value: the card must stop hedging and the document must start
+    // carrying the key.
+    await loadProjectDocument(dMinorDocument(serializeProject()));
+    const estimated = { ...store.scaleHighlight };
+    expect(store.scaleHighlightEstimated).toBe(true);
+
+    store.setScaleHighlight(estimated);
+    expect(store.scaleHighlightEstimated).toBe(false);
+    expect(serializeProject().scaleHighlight).toEqual(estimated);
+  });
+
+  it('leaves an estimate standing when the highlight is only hidden', async () => {
+    // Hiding the highlight says nothing about what key the piece is in.
+    await loadProjectDocument(dMinorDocument(serializeProject()));
+    expect(store.scaleHighlightEstimated).toBe(true);
+
+    store.setScaleHighlightEnabled(false);
+    expect(store.scaleHighlightEstimated).toBe(true);
+    expect(store.scaleHighlight.enabled).toBe(false);
+    expect(serializeProject().scaleHighlight).toBeUndefined();
+
+    store.setScaleHighlightEnabled(true);
+    expect(store.scaleHighlightEstimated).toBe(true);
   });
 
   it('captures tracks, clips, notes, markers, sections, tempo and meter', () => {

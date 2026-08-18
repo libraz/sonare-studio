@@ -894,10 +894,15 @@ export function serializeProject(): ProjectDocument {
   };
   if (store.pickupLengthPpq > 0) doc.pickupLengthPpq = store.pickupLengthPpq;
   if (store.generationSeed > 0) doc.generationSeed = store.generationSeed;
+  // An estimated key is never written: it is re-derived from the notes on every
+  // load, and freezing it into the document would present the app's own guess
+  // back as a key the composer set. Documents that carry no key therefore
+  // round-trip unchanged.
   if (
-    !store.scaleHighlight.enabled ||
-    store.scaleHighlight.rootPc !== 0 ||
-    store.scaleHighlight.modeMask !== MAJOR_MODE_MASK
+    !store.scaleHighlightEstimated &&
+    (!store.scaleHighlight.enabled ||
+      store.scaleHighlight.rootPc !== 0 ||
+      store.scaleHighlight.modeMask !== MAJOR_MODE_MASK)
   ) {
     doc.scaleHighlight = { ...store.scaleHighlight };
   }

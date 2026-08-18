@@ -15,8 +15,8 @@ import { KEY_MODE_CHOICES, keyLabel, matchModeChoiceId, modeMaskForChoice } from
  * piano-roll highlighting. Score key changes are authored as measure-aligned
  * markers from the Score toolbar, so this editor presents the scale-highlight
  * key as a single fixed row. Like the piano-roll scale-highlight toggle,
- * changes are editor-only state: they are not undoable and are not part of
- * the saved project document.
+ * changes here are not undoable; a key the user picks is saved with the
+ * document, while one the app estimated from the notes is not.
  */
 
 const store = useProjectStore();
@@ -26,17 +26,21 @@ const { pitchClassNames, system: noteNameSystem } = useNoteNames();
 /** Sentinel select value shown when the mask matches no diatonic mode. */
 const CUSTOM_MODE = 'custom';
 
+// Picking a root or a mode here is the user settling the key, so both go
+// through setScaleHighlight: the store stops reporting the key as estimated and
+// starts writing it to the document. Showing or hiding the highlight is not
+// that decision and leaves an estimate as it was.
 const enabled = computed({
   get: () => store.scaleHighlight.enabled,
   set: (value: boolean) => {
-    store.scaleHighlight = { ...store.scaleHighlight, enabled: value };
+    store.setScaleHighlightEnabled(value);
   },
 });
 
 const rootPc = computed({
   get: () => store.scaleHighlight.rootPc,
   set: (value: number) => {
-    store.scaleHighlight = { ...store.scaleHighlight, rootPc: value };
+    store.setScaleHighlight({ ...store.scaleHighlight, rootPc: value });
   },
 });
 
@@ -44,7 +48,7 @@ const modeId = computed({
   get: () => matchModeChoiceId(store.scaleHighlight.modeMask) ?? CUSTOM_MODE,
   set: (value: string) => {
     if (value === CUSTOM_MODE) return;
-    store.scaleHighlight = { ...store.scaleHighlight, modeMask: modeMaskForChoice(value) };
+    store.setScaleHighlight({ ...store.scaleHighlight, modeMask: modeMaskForChoice(value) });
   },
 });
 
