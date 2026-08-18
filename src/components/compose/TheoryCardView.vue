@@ -6,7 +6,8 @@ import type { TheoryCard } from '@/compose/explain';
  * Renders a {@link TheoryCard} (a note's theory analysis) as a compact titled
  * card. Lines that refer to a jargon term carry an ⓘ affordance that expands
  * the term's glossary definition in place. Presentation only — the host
- * positions it and decides when to show it.
+ * positions it and decides when to show it; the `hold` event tells the host
+ * when the ⓘ is being reached for, so a hover-driven host can keep the card up.
  */
 
 const props = defineProps<{
@@ -14,11 +15,37 @@ const props = defineProps<{
   card: TheoryCard;
 }>();
 
+const emit = defineEmits<{
+  /**
+   * True while the ⓘ affordance has the pointer or keyboard focus. Hosts that
+   * dismiss the card on hover keep it alive while this is set, otherwise
+   * reaching the button would close the card it lives in.
+   */
+  hold: [held: boolean];
+}>();
+
 /** Index of the line whose glossary definition is expanded, or null. */
 const openTerm = ref<number | null>(null);
 
 function toggleTerm(index: number): void {
   openTerm.value = openTerm.value === index ? null : index;
+}
+
+// Pointer and focus presence on the ⓘ, reported to the host as one flag and
+// emitted synchronously: the host arms its dismissal on the very event that
+// hands the pointer over, so a deferred hold would arrive too late to be read
+// as one continuous reach.
+let infoPointer = false;
+let infoFocus = false;
+let held = false;
+
+function setInfoHold(part: 'pointer' | 'focus', on: boolean): void {
+  if (part === 'pointer') infoPointer = on;
+  else infoFocus = on;
+  const next = infoPointer || infoFocus;
+  if (next === held) return;
+  held = next;
+  emit('hold', next);
 }
 
 // A new card (hovering a different note) starts with every definition collapsed.
@@ -45,6 +72,10 @@ watch(
           :aria-label="line.term.term"
           :aria-expanded="openTerm === index"
           @click="toggleTerm(index)"
+          @pointerenter="setInfoHold('pointer', true)"
+          @pointerleave="setInfoHold('pointer', false)"
+          @focus="setInfoHold('focus', true)"
+          @blur="setInfoHold('focus', false)"
         >
           ⓘ
         </button>

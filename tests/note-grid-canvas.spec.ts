@@ -1,8 +1,9 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from 'vue';
+import { nextTick, ref } from 'vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
+import type { TheoryCard } from '@/compose/explain';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -51,7 +52,7 @@ beforeEach(() => {
   vi.mocked(painter.schedule).mockClear();
 });
 
-function mountGrid(noteId: number | null) {
+function mountGrid(noteId: number | null, noteCard?: (id: number) => TheoryCard | null) {
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -77,6 +78,7 @@ function mountGrid(noteId: number | null) {
       clipLengthPpq: 16,
       timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
       interactions: makeInteractions(noteId),
+      ...(noteCard ? { noteCard } : {}),
     },
   });
 }
@@ -156,5 +158,92 @@ describe('NoteGridCanvas', () => {
     wrapper = null;
 
     expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('NoteGridCanvas theory card', () => {
+  function theoryCard(noteId: number): TheoryCard {
+    return {
+      title: `C4 #${noteId}`,
+      lines: [
+        {
+          label: 'Role',
+          text: 'Chord tone',
+          term: { term: 'Chord tone', definition: 'A note belonging to the chord.' },
+        },
+      ],
+    };
+  }
+
+  /** The card is teleported to the body, so it lives outside the wrapper. */
+  function shownCard(): HTMLElement | null {
+    return document.querySelector('.note-grid-theory-card');
+  }
+
+  function movePointerTo(x: number, y: number): void {
+    wrapper
+      ?.get('.note-grid')
+      .element.dispatchEvent(
+        new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y }),
+      );
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('pins the card where the hovered note was picked up', async () => {
+    wrapper = mountGrid(1, theoryCard);
+
+    movePointerTo(100, 200);
+    await nextTick();
+    const pinned = shownCard();
+    expect(pinned?.textContent).toContain('C4 #1');
+    const style = pinned?.getAttribute('style');
+
+    movePointerTo(140, 260);
+    await nextTick();
+
+    expect(shownCard()?.getAttribute('style')).toBe(style);
+  });
+
+  it('dismisses the card shortly after the pointer leaves the grid', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    wrapper = mountGrid(1, theoryCard);
+    movePointerTo(100, 200);
+    await nextTick();
+    expect(shownCard()).not.toBeNull();
+
+    await wrapper.get('.note-grid').trigger('pointerleave');
+    expect(shownCard()).not.toBeNull();
+
+    vi.advanceTimersByTime(1000);
+    await nextTick();
+    expect(shownCard()).toBeNull();
+  });
+
+  it('keeps the card up while its glossary affordance holds the pointer', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    wrapper = mountGrid(1, theoryCard);
+    movePointerTo(100, 200);
+    await nextTick();
+
+    // Reaching the affordance takes the pointer off the grid, which is exactly
+    // the leave that used to dismiss the card before it could be clicked.
+    const info = document.querySelector('.theory-card-info');
+    info?.dispatchEvent(new PointerEvent('pointerenter'));
+    await wrapper.get('.note-grid').trigger('pointerleave');
+    vi.advanceTimersByTime(1000);
+    await nextTick();
+    expect(shownCard()).not.toBeNull();
+
+    (info as HTMLElement).click();
+    await nextTick();
+    expect(shownCard()?.textContent).toContain('A note belonging to the chord.');
+
+    info?.dispatchEvent(new PointerEvent('pointerleave'));
+    vi.advanceTimersByTime(1000);
+    await nextTick();
+    expect(shownCard()).toBeNull();
   });
 });

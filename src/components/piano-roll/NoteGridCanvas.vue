@@ -2,6 +2,8 @@
 import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
+import TheoryCardView from '@/components/compose/TheoryCardView.vue';
+import { useTheoryCardHold } from '@/components/compose/use-theory-card-hold';
 import type { ResolutionArrow } from '@/composables/useCompositionGuidance';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { TheoryCard } from '@/compose/explain';
@@ -121,29 +123,54 @@ const CARD_POINTER_OFFSET_PX = 14;
 const CARD_ESTIMATED_WIDTH_PX = 230;
 const CARD_ESTIMATED_HEIGHT_PX = 150;
 
-/**
- * Theory card for the hovered note, resolved through the `noteCard` prop.
- * Suppressed while a ghost is hovered or a gesture readout is showing, matching
- * the canvas hover HUD.
- */
-const hoveredCard = computed<TheoryCard | null>(() => {
-  const resolve = props.noteCard;
-  const note = hoveredNote.value;
-  if (!resolve || !note) return null;
-  if (hoveredGhost.value || (props.interactions.gestureReadout?.value ?? null)) return null;
-  return resolve(note.id);
+/** Theory card of the hovered note; state, so it can outlive the hover itself. */
+const hoveredCard = ref<TheoryCard | null>(null);
+/** Note the shown card was resolved for. */
+const cardNoteId = ref<number | null>(null);
+/** Local grid point the shown card is pinned at. */
+const cardPoint = ref<InteractionPoint | null>(null);
+
+const cardHold = useTheoryCardHold(() => {
+  hoveredCard.value = null;
+  cardNoteId.value = null;
+  cardPoint.value = null;
 });
 
 /**
- * Fixed-viewport position and palette for the hover theory card. The card is
- * teleported to the document body (so a lower-stacking bottom panel can never
- * cover it and the grid's `overflow: hidden` can never clip it), so its
- * coordinates are the grid rect plus the local pointer point. It flips to the
- * opposite side of the pointer near the right/bottom viewport edges and is
- * clamped fully on screen.
+ * Resolves the theory card for the note under the pointer through the `noteCard`
+ * prop. The card is pinned where its note was picked up — one that follows the
+ * pointer can never be aimed at, so its ⓘ affordance would stay out of reach —
+ * and it survives a moment off the note so that affordance can be reached.
+ * Suppressed while a ghost is hovered or a gesture readout is showing, matching
+ * the canvas hover HUD.
+ */
+function updateTheoryCard(point: InteractionPoint): void {
+  if (hoveredGhost.value || (props.interactions.gestureReadout?.value ?? null)) {
+    cardHold.dismiss();
+    return;
+  }
+  const resolve = props.noteCard;
+  const note = hoveredNote.value;
+  if (!resolve || !note) {
+    cardHold.release();
+    return;
+  }
+  cardHold.keep();
+  if (note.id === cardNoteId.value) return;
+  cardNoteId.value = note.id;
+  hoveredCard.value = resolve(note.id);
+  cardPoint.value = point;
+}
+
+/**
+ * Fixed-viewport position of the hover theory card. The card is teleported to
+ * the document body (so a lower-stacking bottom panel can never cover it and the
+ * grid's `overflow: hidden` can never clip it), so its coordinates are the grid
+ * rect plus the pinned local point. It flips to the opposite side of that point
+ * near the right/bottom viewport edges and is clamped fully on screen.
  */
 const theoryCardStyle = computed<Record<string, string> | null>(() => {
-  const point = hoverPoint.value;
+  const point = cardPoint.value;
   const el = wrapper.value;
   if (!point || !el) return null;
   const rect = el.getBoundingClientRect();
@@ -161,12 +188,7 @@ const theoryCardStyle = computed<Record<string, string> | null>(() => {
     top = py - CARD_POINTER_OFFSET_PX - CARD_ESTIMATED_HEIGHT_PX;
   }
   top = Math.max(4, Math.min(top, vh - CARD_ESTIMATED_HEIGHT_PX - 4));
-  return {
-    left: `${left}px`,
-    top: `${top}px`,
-    background: COLORS.hudBackground,
-    color: COLORS.hudText,
-  };
+  return { left: `${left}px`, top: `${top}px` };
 });
 
 /** Unique painter layer suffix so several editors can share one painter. */
@@ -788,6 +810,9 @@ watch(
       hoveredGhost.value,
       hoveredNote.value,
       hoverPoint.value,
+      // The card outlives the hover, so its own comings and goings drive the
+      // HUD suppression the overlay applies while it is up.
+      hoveredCard.value,
     ] as const,
   () => scheduleOverlay(),
 );
@@ -835,6 +860,7 @@ function onPointerMove(event: PointerEvent): void {
       hitId === null ? null : (props.notes.find((note) => note.id === hitId) ?? null);
   }
   hoverPoint.value = point;
+  updateTheoryCard(point);
   emit('hover-status', {
     ppq: Math.max(0, props.range.xToPpq(point.x)),
     pitch: props.range.yToPitch(point.y),
@@ -851,6 +877,7 @@ function onPointerCancel(): void {
   hoveredGhost.value = null;
   hoveredNote.value = null;
   hoverPoint.value = null;
+  cardHold.dismiss();
   emit('hover-status', null);
   props.interactions.cancel();
 }
@@ -859,6 +886,9 @@ function onPointerLeave(): void {
   hoveredGhost.value = null;
   hoveredNote.value = null;
   hoverPoint.value = null;
+  // The card is teleported outside the grid, so reaching its ⓘ leaves the grid
+  // too; the grace period is what lets the pointer get there.
+  cardHold.release();
   emit('hover-status', null);
   scheduleOverlay();
 }
@@ -913,18 +943,13 @@ function onContextMenu(event: MouseEvent): void {
       @set-value="onAccessibleNoteValue"
     />
     <Teleport to="body">
-      <div
+      <TheoryCardView
         v-if="hoveredCard && theoryCardStyle"
         class="note-grid-theory-card"
+        :card="hoveredCard"
         :style="theoryCardStyle"
-        aria-hidden="true"
-      >
-        <div class="theory-card-title">{{ hoveredCard.title }}</div>
-        <div v-for="(line, index) in hoveredCard.lines" :key="index" class="theory-card-line">
-          <span class="theory-card-label">{{ line.label }}</span>
-          <span>{{ line.text }}</span>
-        </div>
-      </div>
+        @hold="cardHold.onHold"
+      />
     </Teleport>
     <div class="note-grid-live" role="status" aria-live="polite" aria-atomic="true">
       {{ liveStatus }}
@@ -949,33 +974,14 @@ function onContextMenu(event: MouseEvent): void {
   display: block;
 }
 
-/* Read-only theory card floated near the pointer over a hovered note. Teleported
- * to the body and fixed-positioned at the tooltip layer so no panel can cover it
- * and the grid's overflow clip cannot cut it; ignores the pointer so it can
- * never block a gesture. */
+/* Theory card pinned near the note it explains. Teleported to the body and
+ * fixed-positioned at the tooltip layer so no panel can cover it and the grid's
+ * overflow clip cannot cut it; the card ignores the pointer so it can never
+ * block a gesture, while its ⓘ affordance opts back in to stay clickable. */
 .note-grid-theory-card {
   position: fixed;
   z-index: 200;
-  max-width: 230px;
-  padding: 6px 9px;
-  border-radius: 5px;
-  font: var(--fs-xs) / 1.45 var(--font-sans);
   pointer-events: none;
-}
-
-.theory-card-title {
-  margin-bottom: 2px;
-  font-weight: 600;
-}
-
-.theory-card-line {
-  display: flex;
-  gap: 6px;
-}
-
-.theory-card-label {
-  flex: none;
-  opacity: 0.62;
 }
 
 .note-grid-live {

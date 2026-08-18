@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import TheoryCardView from '@/components/compose/TheoryCardView.vue';
+import { useTheoryCardHold } from '@/components/compose/use-theory-card-hold';
 import {
   keyFifthsForScaleHighlight,
   matchModeChoiceId,
@@ -418,37 +419,52 @@ const hoverCard = ref<TheoryCard | null>(null);
 const hoverCardNoteId = ref<number | null>(null);
 /** Position of the hover card within the score body wrap, in px. */
 const hoverCardPos = ref({ x: 0, y: 0 });
+/** Offset of the hover card from the pointer that picked its note up, in px. */
+const CARD_POINTER_OFFSET_PX = 12;
+
+const cardHold = useTheoryCardHold(() => {
+  hoverCardNoteId.value = null;
+  hoverCard.value = null;
+});
 
 /**
  * Combined score-body pointer move: forwards to the annotate staff-drag tracker
  * and, outside annotate mode, resolves the theory card for the hovered note.
+ * The card is pinned where its note was picked up — one that follows the pointer
+ * can never be aimed at, so its ⓘ affordance would be out of reach.
  */
 function onScorePointerMove(event: PointerEvent): void {
   interactions.onSvgPointerMove(event);
   if (annotateEnabled.value) {
-    hoverCard.value = null;
+    cardHold.dismiss();
     return;
   }
   const resolve = guidance.noteCard.value;
   const ids = resolve ? interactions.noteIdsAtEvent(event) : [];
   const noteId = ids[0] ?? null;
-  if (noteId !== hoverCardNoteId.value) {
-    hoverCardNoteId.value = noteId;
-    hoverCard.value = resolve && noteId !== null ? resolve(noteId) : null;
+  if (noteId === null || !resolve) {
+    cardHold.release();
+    return;
   }
-  if (hoverCard.value !== null) {
-    const rect = svgHost.value?.parentElement?.getBoundingClientRect();
-    hoverCardPos.value = {
-      x: event.clientX - (rect?.left ?? 0) + 12,
-      y: event.clientY - (rect?.top ?? 0) + 12,
-    };
-  }
+  cardHold.keep();
+  if (noteId === hoverCardNoteId.value) return;
+  hoverCardNoteId.value = noteId;
+  hoverCard.value = resolve(noteId);
+  if (hoverCard.value === null) return;
+  const rect = svgHost.value?.parentElement?.getBoundingClientRect();
+  hoverCardPos.value = {
+    x: event.clientX - (rect?.left ?? 0) + CARD_POINTER_OFFSET_PX,
+    y: event.clientY - (rect?.top ?? 0) + CARD_POINTER_OFFSET_PX,
+  };
 }
 
-/** Clears the theory hover card when the pointer leaves the score body. */
+/**
+ * Starts the theory card's dismissal when the pointer leaves the score body.
+ * The card sits outside the body, so reaching its ⓘ leaves the body too — the
+ * grace period is what lets the pointer get there.
+ */
 function onScorePointerLeave(): void {
-  hoverCardNoteId.value = null;
-  hoverCard.value = null;
+  cardHold.release();
 }
 
 // --- Annotation palette ------------------------------------------------------------
@@ -890,6 +906,7 @@ onBeforeUnmount(() => {
         class="score-theory-card"
         :card="hoverCard"
         :style="{ left: `${hoverCardPos.x}px`, top: `${hoverCardPos.y}px` }"
+        @hold="cardHold.onHold"
       />
       <div v-if="notation.loading.value" class="score-loading">
         <span class="score-state-text">{{ t.shell.score.engraving }}</span>
