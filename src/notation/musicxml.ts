@@ -10,6 +10,7 @@
  * on any particular whitespace beyond well-formedness.
  */
 
+import { chordSuffix, normalizedChordExtensions } from '@/compose/chord-quality';
 import type {
   GlissandoLineType,
   NoteArticulation,
@@ -96,24 +97,6 @@ const CHORD_QUALITY_KIND: ReadonlyMap<number, string> = new Map([
   [13, 'half-diminished'],
   [14, 'major-ninth'],
   [15, 'dominant-ninth'],
-]);
-
-/** Display suffixes preserved on MusicXML `<kind text="...">` where useful. */
-const CHORD_QUALITY_TEXT: ReadonlyMap<number, string> = new Map([
-  [1, 'm'],
-  [2, 'dim'],
-  [3, 'aug'],
-  [4, '7'],
-  [5, 'maj7'],
-  [6, 'm7'],
-  [7, 'sus2'],
-  [8, 'sus4'],
-  [10, 'add9'],
-  [11, 'm(add9)'],
-  [12, 'dim7'],
-  [13, 'm7b5'],
-  [14, 'maj9'],
-  [15, '9'],
 ]);
 
 /** MusicXML articulation element name per annotation marking. */
@@ -2188,50 +2171,29 @@ function chordKindXml(symbol: NotatedChordSymbol): string {
   if (kindName === undefined) {
     return `<kind text="${escapeXml(symbol.text)}">other</kind>`;
   }
-  const text =
-    chordKindText(symbol) ?? (quality === undefined ? undefined : CHORD_QUALITY_TEXT.get(quality));
+  const text = quality === undefined ? undefined : chordKindText(quality, symbol.extensions);
   const textXml = text === undefined ? '' : ` text="${escapeXml(text)}"`;
   return `<kind${textXml}>${kindName}</kind>`;
 }
 
-/** Returns a conventional visible suffix for a base quality plus extensions. */
-function chordKindText(symbol: NotatedChordSymbol): string | undefined {
-  const extensions = normalizedChordExtensions(symbol.extensions);
-  if (extensions.length === 0) return undefined;
-  const key = `${symbol.quality ?? -1}:${extensions.join(',')}`;
-  return (
-    (
-      {
-        '0:9': '6',
-        '1:9': 'm6',
-        '4:1,6': '7(b9,#11)',
-        '4:1,9': '13b9',
-        '4:2,5': '11',
-        '4:2,9': '13',
-        '4:3,8': '7(#9,b13)',
-        '4:9': '13',
-        '8:10': '7sus4',
-        '8:2,10': '9sus4',
-      } as Readonly<Record<string, string>>
-    )[key] ?? undefined
-  );
-}
-
-/** Keeps extension pitch classes in deterministic, valid MusicXML order. */
-function normalizedChordExtensions(extensions: ReadonlyArray<number> | undefined): number[] {
-  if (extensions === undefined) return [];
-  return [
-    ...new Set(
-      extensions.filter(
-        (extension) => Number.isInteger(extension) && extension > 0 && extension < 12,
-      ),
-    ),
-  ].sort((a, b) => a - b);
+/**
+ * Visible `<kind text>` suffix for a base quality plus extensions, taken from
+ * the shared chord naming so the exported text matches the score view and the
+ * chord track. A plain major carries no text attribute.
+ */
+function chordKindText(
+  quality: number,
+  extensions: ReadonlyArray<number> | undefined,
+): string | undefined {
+  const suffix = chordSuffix(quality, extensions);
+  return suffix === '' ? undefined : suffix;
 }
 
 /** Adds explicit MusicXML degree data for non-intrinsic chord tones. */
 function chordDegreeXml(symbol: NotatedChordSymbol): string {
-  const extensions = new Set(normalizedChordExtensions(symbol.extensions));
+  const extensions = new Set(normalizedChordExtensions(symbol.quality, symbol.extensions));
+  // add9 and minAdd9 export as a plain major/minor kind, so their ninth is
+  // intrinsic to the editor quality but still needs an explicit degree.
   if (symbol.quality === 10 || symbol.quality === 11) extensions.add(2);
   return [...extensions]
     .map((extension) => chordDegreeForExtension(extension, symbol.quality))

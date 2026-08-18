@@ -14,6 +14,11 @@
  * at the wasm boundary. Canvas-free and side-effect-free.
  */
 
+import {
+  chordSuffix,
+  normalizedChordExtensions,
+  TONE_PCS_BY_QUALITY,
+} from '@/compose/chord-quality';
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
 
@@ -35,98 +40,50 @@ export interface ChordQualityChoice {
   extensions?: ReadonlyArray<number>;
 }
 
-/**
- * Chord qualities offered in the editor, in dropdown order. The ordinals and
- * suffixes match the templates in src/notation/chords.ts so detected and
- * hand-entered symbols render identically.
- */
-export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> = [
-  { quality: 0, suffix: '', label: 'Major' },
-  { quality: 1, suffix: 'm', label: 'Minor' },
-  { quality: 4, suffix: '7', label: 'Dominant 7' },
-  { quality: 5, suffix: 'maj7', label: 'Major 7' },
-  { quality: 6, suffix: 'm7', label: 'Minor 7' },
-  { quality: 10, suffix: 'add9', label: 'Add 9' },
-  { quality: 11, suffix: 'm(add9)', label: 'Minor add 9' },
-  { quality: 14, suffix: 'maj9', label: 'Major 9' },
-  { quality: 15, suffix: '9', label: 'Dominant 9' },
-  { quality: 0, suffix: '6', label: 'Major 6', extensions: [9] },
-  { quality: 1, suffix: 'm6', label: 'Minor 6', extensions: [9] },
-  { quality: 8, suffix: '7sus4', label: 'Dominant 7 sus4', extensions: [10] },
-  { quality: 8, suffix: '9sus4', label: 'Dominant 9 sus4', extensions: [2, 10] },
-  { quality: 4, suffix: '11', label: 'Dominant 11', extensions: [2, 5] },
-  { quality: 4, suffix: '13', label: 'Dominant 13', extensions: [2, 9] },
-  { quality: 4, suffix: '7(b9,#11)', label: 'Dominant 7 b9 #11', extensions: [1, 6] },
-  { quality: 4, suffix: '7(#9,b13)', label: 'Dominant 7 #9 b13', extensions: [3, 8] },
-  { quality: 2, suffix: 'dim', label: 'Diminished' },
-  { quality: 3, suffix: 'aug', label: 'Augmented' },
-  { quality: 8, suffix: 'sus4', label: 'Sus4' },
-  { quality: 7, suffix: 'sus2', label: 'Sus2' },
-  { quality: 12, suffix: 'dim7', label: 'Diminished 7' },
-  { quality: 13, suffix: 'm7b5', label: 'Half-diminished' },
+/** A dropdown entry before its suffix is resolved from the shared naming table. */
+interface ChordQualityChoiceSpec {
+  quality: number;
+  label: string;
+  extensions?: ReadonlyArray<number>;
+}
+
+/** Chord qualities offered in the editor, in dropdown order. */
+const CHORD_QUALITY_CHOICE_SPECS: ReadonlyArray<ChordQualityChoiceSpec> = [
+  { quality: 0, label: 'Major' },
+  { quality: 1, label: 'Minor' },
+  { quality: 4, label: 'Dominant 7' },
+  { quality: 5, label: 'Major 7' },
+  { quality: 6, label: 'Minor 7' },
+  { quality: 10, label: 'Add 9' },
+  { quality: 11, label: 'Minor add 9' },
+  { quality: 14, label: 'Major 9' },
+  { quality: 15, label: 'Dominant 9' },
+  { quality: 0, label: 'Major 6', extensions: [9] },
+  { quality: 1, label: 'Minor 6', extensions: [9] },
+  { quality: 8, label: 'Dominant 7 sus4', extensions: [10] },
+  { quality: 8, label: 'Dominant 9 sus4', extensions: [2, 10] },
+  { quality: 4, label: 'Dominant 11', extensions: [2, 5] },
+  { quality: 4, label: 'Dominant 13', extensions: [2, 9] },
+  { quality: 4, label: 'Dominant 7 b9 #11', extensions: [1, 6] },
+  { quality: 4, label: 'Dominant 7 #9 b13', extensions: [3, 8] },
+  { quality: 2, label: 'Diminished' },
+  { quality: 3, label: 'Augmented' },
+  { quality: 8, label: 'Sus4' },
+  { quality: 7, label: 'Sus2' },
+  { quality: 12, label: 'Diminished 7' },
+  { quality: 13, label: 'Half-diminished' },
 ];
 
-const SUFFIX_BY_QUALITY = new Map(
-  CHORD_QUALITY_CHOICES.filter((choice) => choice.extensions === undefined).map((choice) => [
-    choice.quality,
-    choice.suffix,
-  ]),
-);
-
-/** Intrinsic pitch classes for each editor quality, used to discard redundant extensions. */
-const TONE_PCS_BY_QUALITY: Readonly<Record<number, ReadonlyArray<number>>> = {
-  0: [0, 4, 7],
-  1: [0, 3, 7],
-  2: [0, 3, 6],
-  3: [0, 4, 8],
-  4: [0, 4, 7, 10],
-  5: [0, 4, 7, 11],
-  6: [0, 3, 7, 10],
-  7: [0, 2, 7],
-  8: [0, 5, 7],
-  10: [0, 2, 4, 7],
-  11: [0, 2, 3, 7],
-  12: [0, 3, 6, 9],
-  13: [0, 3, 6, 10],
-  14: [0, 2, 4, 7, 11],
-  15: [0, 2, 4, 7, 10],
-};
-
-/** Conventional suffixes for base-quality plus extension combinations. */
-const SUFFIX_BY_QUALITY_EXTENSIONS: Readonly<Record<string, string>> = {
-  '0:5': 'add11',
-  '0:6': 'maj♭5',
-  '0:9': '6',
-  '0:2,9': '6/9',
-  '1:2': 'm(add9)',
-  '1:9': 'm6',
-  '1:11': 'm(maj7)',
-  '1:2,9': 'm6/9',
-  '3:10': 'aug7',
-  '3:11': 'aug(maj7)',
-  '4:1': '7b9',
-  '4:3': '7#9',
-  '4:5': '11',
-  '4:6': '7#11',
-  '4:8': '7b13',
-  '4:9': '13',
-  '4:1,9': '13b9',
-  '4:2,5': '11',
-  '4:2,9': '13',
-  '4:3,8': '7alt',
-  '5:6': 'maj7#11',
-  '6:2': 'm9',
-  '6:2,5': 'm11',
-  '6:2,9': 'm13',
-  '8:10': '7sus4',
-  '8:2,10': '9sus4',
-  '14:9': 'maj13',
-};
-
-/** Reduces an integer semitone offset to pitch-class space. */
-function extensionPitchClass(value: number): number {
-  return ((value % 12) + 12) % 12;
-}
+/**
+ * Selectable chord qualities with their display suffix resolved through
+ * {@link chordSuffix}, so a dropdown entry always names the symbol the chord
+ * track, the score view and MusicXML export then print.
+ */
+export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> =
+  CHORD_QUALITY_CHOICE_SPECS.map((spec) => ({
+    ...spec,
+    suffix: chordSuffix(spec.quality, spec.extensions),
+  }));
 
 /** A chord symbol on the project chord track (absolute PPQ region). */
 export interface EditorChordSymbol {
@@ -146,19 +103,9 @@ export interface EditorChordSymbol {
   romanNumeral?: string;
 }
 
-/**
- * Returns sorted, deduplicated extension pitch classes that are not already
- * intrinsic to the selected editor quality.
- */
-export function normalizedChordExtensions(symbol: EditorChordSymbol): number[] {
-  const intrinsic = new Set(TONE_PCS_BY_QUALITY[symbol.quality] ?? [0]);
-  const extensions = new Set<number>();
-  for (const value of symbol.extensions ?? []) {
-    if (!Number.isInteger(value)) continue;
-    const pc = extensionPitchClass(value);
-    if (pc !== 0 && !intrinsic.has(pc)) extensions.add(pc);
-  }
-  return [...extensions].sort((a, b) => a - b);
+/** Non-intrinsic extension pitch classes of a chord symbol, ascending. */
+function symbolExtensions(symbol: EditorChordSymbol): number[] {
+  return normalizedChordExtensions(symbol.quality, symbol.extensions);
 }
 
 /**
@@ -168,7 +115,7 @@ export function normalizedChordExtensions(symbol: EditorChordSymbol): number[] {
  */
 export function chordTonePitchClasses(symbol: EditorChordSymbol): number[] {
   const rootRelative = new Set<number>(TONE_PCS_BY_QUALITY[symbol.quality] ?? [0]);
-  for (const extension of normalizedChordExtensions(symbol)) rootRelative.add(extension);
+  for (const extension of symbolExtensions(symbol)) rootRelative.add(extension);
   const absolute = new Set<number>();
   for (const offset of rootRelative) absolute.add((symbol.rootPc + offset) % 12);
   if (symbol.bassPc !== undefined) absolute.add(symbol.bassPc % 12);
@@ -177,7 +124,7 @@ export function chordTonePitchClasses(symbol: EditorChordSymbol): number[] {
 
 /** Stable semantic identity for a symbol's non-intrinsic extensions. */
 export function chordExtensionSignature(symbol: EditorChordSymbol): string {
-  return normalizedChordExtensions(symbol).join(',');
+  return symbolExtensions(symbol).join(',');
 }
 
 /**
@@ -192,37 +139,6 @@ export function sameChord(a: EditorChordSymbol, b: EditorChordSymbol): boolean {
     chordExtensionSignature(a) === chordExtensionSignature(b) &&
     (a.bassPc ?? -1) === (b.bassPc ?? -1)
   );
-}
-
-/** Generic readable label for an extension without a named quality mapping. */
-function extensionLabel(pc: number): string {
-  return (
-    (
-      {
-        1: 'b9',
-        2: 'add9',
-        3: '#9',
-        4: 'add3',
-        5: 'add11',
-        6: '#11',
-        7: 'add5',
-        8: 'b13',
-        9: 'add13',
-        10: 'addb7',
-        11: 'addmaj7',
-      } as Readonly<Record<number, string>>
-    )[pc] ?? `add${pc}`
-  );
-}
-
-/** Resolves the complete visible suffix, including normalized extensions. */
-function chordSuffix(symbol: EditorChordSymbol): string {
-  const extensions = normalizedChordExtensions(symbol);
-  if (extensions.length === 0) return SUFFIX_BY_QUALITY.get(symbol.quality) ?? '';
-  const known = SUFFIX_BY_QUALITY_EXTENSIONS[`${symbol.quality}:${extensions.join(',')}`];
-  if (known !== undefined) return known;
-  const base = SUFFIX_BY_QUALITY.get(symbol.quality) ?? '';
-  return `${base}(${extensions.map(extensionLabel).join(',')})`;
 }
 
 /** Chord-symbol payload accepted by `Project.annotateChords`. */
@@ -262,7 +178,7 @@ function clampPitchClass(value: number): number | null {
  */
 export function formatChordName(symbol: EditorChordSymbol, keyFifths = 0): string {
   const root = chordPitchClassName(symbol.rootPc, keyFifths);
-  const suffix = chordSuffix(symbol);
+  const suffix = chordSuffix(symbol.quality, symbol.extensions);
   const name = `${root}${suffix}`;
   if (symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc) return name;
   const bass = chordPitchClassName(symbol.bassPc, keyFifths);
@@ -294,7 +210,7 @@ export function sanitizeChordSymbols(
     };
     const bassPc = symbol.bassPc === undefined ? null : clampPitchClass(symbol.bassPc);
     if (bassPc !== null && bassPc !== rootPc) next.bassPc = bassPc;
-    const extensions = normalizedChordExtensions(symbol);
+    const extensions = symbolExtensions(symbol);
     if (extensions.length > 0) next.extensions = extensions;
     if (typeof symbol.romanNumeral === 'string' && symbol.romanNumeral.length > 0) {
       next.romanNumeral = symbol.romanNumeral;
@@ -319,7 +235,7 @@ export function toProjectChordSymbol(symbol: EditorChordSymbol): ProjectChordSym
     slashBassPc:
       symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc ? PC_NONE : symbol.bassPc,
   };
-  const extensions = normalizedChordExtensions(symbol);
+  const extensions = symbolExtensions(symbol);
   if (extensions.length > 0) input.extensions = extensions;
   if (symbol.romanNumeral !== undefined && symbol.romanNumeral.length > 0) {
     input.romanNumeral = symbol.romanNumeral;

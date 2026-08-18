@@ -17,9 +17,8 @@
  * undo stack pairs 1:1 with note-edit history entries.
  */
 
-import type { ChordQuality } from '@libraz/libcantus';
 import { type ChordDetectionRange, detectChordRegions } from '@/compose/chord-detection';
-import { libcantusQualityToEditor } from '@/compose/chord-io';
+import { libcantusQualityToEditor, QUALITY_SUFFIX } from '@/compose/chord-quality';
 import { editorNotesToNoteEvents } from '@/compose/notes-io';
 import { ensureWasm } from '@/lib/wasm';
 import type { NotatedChordSymbol } from '@/notation/model';
@@ -55,56 +54,6 @@ interface ChordWindow {
   start: number;
   end: number;
 }
-
-/**
- * Chord-symbol suffix per libcantus quality. Exhaustive over the union so a
- * quality added upstream is a compile error rather than an unnamed chord.
- */
-const QUALITY_SUFFIX: Readonly<Record<ChordQuality, string>> = {
-  maj: '',
-  min: 'm',
-  dim: 'dim',
-  aug: 'aug',
-  maj7: 'maj7',
-  min7: 'm7',
-  dom7: '7',
-  dim7: 'dim7',
-  m7b5: 'm7b5',
-  minMaj7: 'm(maj7)',
-  minMaj9: 'm(maj9)',
-  minMaj11: 'm(maj11)',
-  minMaj13: 'm(maj13)',
-  aug7: 'aug7',
-  augMaj7: 'aug(maj7)',
-  majb5: 'majb5',
-  '6': '6',
-  min6: 'm6',
-  '6/9': '6/9',
-  sus2: 'sus2',
-  sus4: 'sus4',
-  add9: 'add9',
-  add11: 'add11',
-  maj9: 'maj9',
-  min9: 'm9',
-  dom9: '9',
-  '7b9': '7b9',
-  '7#9': '7#9',
-  '7#11': '7#11',
-  '7b13': '7b13',
-  '11': '11',
-  '13': '13',
-  '5': '5',
-  '7sus4': '7sus4',
-  '7b5': '7b5',
-  '7alt': '7alt',
-  '13b9': '13b9',
-  maj13: 'maj13',
-  'maj7#11': 'maj7#11',
-  min11: 'm11',
-  min13: 'm13',
-  minAdd9: 'm(add9)',
-  'min6/9': 'm6/9',
-};
 
 /** Onset tolerance when deciding which notes sound at a region boundary. */
 const PRESENCE_EPSILON = 1e-9;

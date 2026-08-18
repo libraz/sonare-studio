@@ -14,145 +14,29 @@
  *     returned ChordData interval set.
  *   - libcantus -> editor keeps the exact ordinal when one exists, otherwise
  *     degrades to a base ordinal plus an `extensions` list capturing the color
- *     tones (see {@link LIBCANTUS_QUALITY_TO_EDITOR}). The reverse is
- *     information-lossy by construction; the round-trip test only pins that the
- *     15 exact ordinals survive edit -> libcantus -> edit unchanged.
+ *     tones. The reverse is information-lossy by construction; the round-trip
+ *     test only pins that the 15 exact ordinals survive edit -> libcantus ->
+ *     edit unchanged.
+ *
+ * The mapping tables themselves live in src/compose/chord-quality.ts, which
+ * also names chords from them; this module owns only the ChordData/ChordSpan
+ * shape. The bridge accessors are re-exported here for existing callers.
  *
  * Pure module; no exceptions are thrown for unknown ordinals (they fall back to
  * major), so callers never need to guard estimator output.
  */
 
-import { type ChordData, type ChordQuality, type ChordSpan, makeChord } from '@libraz/libcantus';
-import { type EditorChordSymbol, normalizedChordExtensions } from '@/project/chords';
+import { type ChordData, type ChordSpan, makeChord } from '@libraz/libcantus';
+import {
+  audioQualityToLibcantus,
+  type EditorQuality,
+  editorExtensionQuality,
+  libcantusQualityToEditor,
+  normalizedChordExtensions,
+} from '@/compose/chord-quality';
+import type { EditorChordSymbol } from '@/project/chords';
 
-/**
- * Audio-domain quality ordinal -> libcantus quality. Every ordinal maps to an
- * exact libcantus quality.
- */
-const AUDIO_QUALITY_TO_LIBCANTUS: Readonly<Record<number, ChordQuality>> = {
-  0: 'maj',
-  1: 'min',
-  2: 'dim',
-  3: 'aug',
-  4: 'dom7',
-  5: 'maj7',
-  6: 'min7',
-  7: 'sus2',
-  8: 'sus4',
-  10: 'add9',
-  11: 'minAdd9',
-  12: 'dim7',
-  13: 'm7b5',
-  14: 'maj9',
-  15: 'dom9',
-};
-
-/** Known editor base-quality + normalized-extension combinations. */
-const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
-  '0:5': 'add11',
-  '0:6': 'majb5',
-  '0:9': '6',
-  '0:2,9': '6/9',
-  '1:9': 'min6',
-  '1:11': 'minMaj7',
-  '1:2,11': 'minMaj9',
-  '1:2,5,11': 'minMaj11',
-  '1:2,9,11': 'minMaj13',
-  '1:2,9': 'min6/9',
-  '3:10': 'aug7',
-  '3:11': 'augMaj7',
-  '4:1': '7b9',
-  '4:3': '7#9',
-  '4:5': '11',
-  '4:6': '7#11',
-  '4:8': '7b13',
-  '4:9': '13',
-  '4:1,9': '13b9',
-  '4:3,8': '7alt',
-  '5:6': 'maj7#11',
-  '6:2': 'min9',
-  '6:2,5': 'min11',
-  '6:2,9': 'min13',
-  '8:10': '7sus4',
-  '14:9': 'maj13',
-};
-
-/** Editor-side ordinal plus optional color-tone extensions (semitone offsets). */
-export interface EditorQuality {
-  quality: number;
-  extensions?: number[];
-}
-
-/**
- * libcantus quality -> editor ordinal (+ extensions). Qualities the editor
- * cannot name directly degrade to a base ordinal carrying the extra chord tones
- * as `extensions` semitone offsets (9 = 2, 11 = 5, 13 = 9, b9 = 1, #9 = 3,
- * #11 = 6, b13 = 8, maj7-over-triad = 11, dom7-over-aug = 10).
- */
-const LIBCANTUS_QUALITY_TO_EDITOR: Readonly<Record<ChordQuality, EditorQuality>> = {
-  maj: { quality: 0 },
-  min: { quality: 1 },
-  dim: { quality: 2 },
-  aug: { quality: 3 },
-  dom7: { quality: 4 },
-  maj7: { quality: 5 },
-  min7: { quality: 6 },
-  sus2: { quality: 7 },
-  sus4: { quality: 8 },
-  add9: { quality: 10 },
-  dim7: { quality: 12 },
-  m7b5: { quality: 13 },
-  maj9: { quality: 14 },
-  dom9: { quality: 15 },
-  minAdd9: { quality: 11 },
-  minMaj7: { quality: 1, extensions: [11] },
-  minMaj9: { quality: 1, extensions: [11, 2] },
-  minMaj11: { quality: 1, extensions: [11, 2, 5] },
-  minMaj13: { quality: 1, extensions: [11, 2, 9] },
-  aug7: { quality: 3, extensions: [10] },
-  augMaj7: { quality: 3, extensions: [11] },
-  majb5: { quality: 0, extensions: [6] },
-  '6': { quality: 0, extensions: [9] },
-  min6: { quality: 1, extensions: [9] },
-  '6/9': { quality: 0, extensions: [9, 2] },
-  'min6/9': { quality: 1, extensions: [9, 2] },
-  add11: { quality: 0, extensions: [5] },
-  min9: { quality: 6, extensions: [2] },
-  min11: { quality: 6, extensions: [2, 5] },
-  min13: { quality: 6, extensions: [2, 9] },
-  '7b9': { quality: 4, extensions: [1] },
-  '7#9': { quality: 4, extensions: [3] },
-  '7#11': { quality: 4, extensions: [6] },
-  '7b13': { quality: 4, extensions: [8] },
-  '7sus4': { quality: 8, extensions: [10] },
-  // A lowered fifth has no editor ordinal; it degrades to the same #11/b5
-  // pitch class the editor already uses for majb5.
-  '7b5': { quality: 4, extensions: [6] },
-  '7alt': { quality: 4, extensions: [3, 8] },
-  '11': { quality: 4, extensions: [5] },
-  '13': { quality: 4, extensions: [9] },
-  '13b9': { quality: 4, extensions: [9, 1] },
-  maj13: { quality: 14, extensions: [9] },
-  'maj7#11': { quality: 5, extensions: [6] },
-  '5': { quality: 0 }, // power chord: no third to name, nearest is a bare major
-};
-
-/** Maps an editor quality ordinal to the nearest libcantus quality (default major). */
-export function audioQualityToLibcantus(quality: number): ChordQuality {
-  return AUDIO_QUALITY_TO_LIBCANTUS[quality] ?? 'maj';
-}
-
-/** Maps a libcantus quality to the editor ordinal (+ any degraded extensions). */
-export function libcantusQualityToEditor(quality: ChordQuality): EditorQuality {
-  return LIBCANTUS_QUALITY_TO_EDITOR[quality] ?? { quality: 0 };
-}
-
-/** Exact libcantus quality for a known base-plus-extension combination. */
-function extensionQuality(symbol: EditorChordSymbol): ChordQuality | undefined {
-  const extensions = normalizedChordExtensions(symbol);
-  if (extensions.length === 0) return undefined;
-  return EDITOR_EXTENSIONS_TO_LIBCANTUS[`${symbol.quality}:${extensions.join(',')}`];
-}
+export { audioQualityToLibcantus, type EditorQuality, libcantusQualityToEditor };
 
 /** Conventional compound interval for a free extension pitch class. */
 function compoundExtensionInterval(pc: number): number {
@@ -180,7 +64,7 @@ function appendExtensionIntervals(
  */
 export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
   const rootPc = ((symbol.rootPc % 12) + 12) % 12;
-  const exactExtensionQuality = extensionQuality(symbol);
+  const exactExtensionQuality = editorExtensionQuality(symbol.quality, symbol.extensions);
   const quality = exactExtensionQuality ?? audioQualityToLibcantus(symbol.quality);
   const bassPc =
     symbol.bassPc === undefined || symbol.bassPc === rootPc
@@ -188,7 +72,7 @@ export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
       : ((symbol.bassPc % 12) + 12) % 12;
   const chord = makeChord(rootPc, quality, bassPc);
   if (exactExtensionQuality !== undefined) return chord;
-  const extensions = normalizedChordExtensions(symbol);
+  const extensions = normalizedChordExtensions(symbol.quality, symbol.extensions);
   chord.intervals = appendExtensionIntervals(chord.intervals, extensions);
   return chord;
 }
@@ -198,7 +82,9 @@ export function editorChordToChordSpan(symbol: EditorChordSymbol, startBeat: num
   const rootPc = ((symbol.rootPc % 12) + 12) % 12;
   const span: ChordSpan = {
     rootPc,
-    quality: extensionQuality(symbol) ?? audioQualityToLibcantus(symbol.quality),
+    quality:
+      editorExtensionQuality(symbol.quality, symbol.extensions) ??
+      audioQualityToLibcantus(symbol.quality),
     startBeat,
   };
   if (symbol.bassPc !== undefined && symbol.bassPc !== rootPc) {
