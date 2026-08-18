@@ -1838,6 +1838,52 @@ describe('serializeMusicXml percussion', () => {
     ]);
   });
 
+  /**
+   * The roll mark is a guess about a figure, read off nothing but four short
+   * hits in a row. A hand-written technique on any of them says what the figure
+   * is, so the guess has nothing left to add and would contradict it: a run of
+   * ghost notes is not a roll.
+   */
+  it('drops the roll guess from a figure whose technique is written', () => {
+    const sixteenth: NoteValue = { base: '16th', dots: 0 };
+    const score: NotatedScore = {
+      parts: [
+        {
+          id: 'P1',
+          name: 'Kit',
+          clef: 'treble',
+          measures: [
+            {
+              index: 0,
+              startPpq: 0,
+              lengthPpq: 1,
+              timeSig: { beats: 1, beatUnit: 4 },
+              voices: [
+                {
+                  voice: 1,
+                  events: [
+                    { ...note([38], 1, 0, 0.25, sixteenth, {}, [1]), midiChannels: [9] },
+                    { ...note([38], 1, 0.25, 0.25, sixteenth, {}, [2]), midiChannels: [9] },
+                    { ...note([38], 1, 0.5, 0.25, sixteenth, {}, [3]), midiChannels: [9] },
+                    { ...note([38], 1, 0.75, 0.25, sixteenth, {}, [4]), midiChannels: [9] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      keyFifths: 0,
+      divisions: 960,
+      noteAnnotations: { 2: { articulation: 'ghost' } },
+    };
+
+    const doc = parse(serializeMusicXml(score));
+    expect(qa(doc, 'ornaments > tremolo')).toHaveLength(0);
+    expect(qa(doc, 'articulations > other-articulation')).toHaveLength(1);
+    expect(qa(doc, 'articulations > other-articulation')[0].textContent).toBe('ghost');
+  });
+
   it('hides lower drum-voice rests while preserving their durations', () => {
     const eighth: NoteValue = { base: 'eighth', dots: 0 };
     const score: NotatedScore = {

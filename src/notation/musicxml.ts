@@ -2031,7 +2031,7 @@ function notationsXml(
   if (percussion && midi !== undefined) {
     const technical = percussionTechnicalXml(midi);
     if (technical !== '') inner += technical;
-    if (measure !== undefined && isPercussionRoll(event, measure, midi)) {
+    if (measure !== undefined && isPercussionRoll(event, measure, midi, annotations)) {
       inner += '<ornaments><tremolo type="single">3</tremolo></ornaments>';
     }
   }
@@ -2087,8 +2087,20 @@ function percussionTechnicalXml(midi: number): string {
   }
 }
 
-/** Returns true when repeated short drum notes should carry a roll/tremolo mark. */
-function isPercussionRoll(event: NotatedEvent, measure: NotatedMeasure, midi: number): boolean {
+/**
+ * Returns true when repeated short drum notes should carry a roll/tremolo mark.
+ *
+ * The reading is of the figure, not of one note: four sixteenths on the snare
+ * inside a beat read as a roll only together. So a technique written on any of
+ * them stands the guess down for all of them — the figure has been described,
+ * and a run of ghost notes marked as a roll would contradict what it says.
+ */
+function isPercussionRoll(
+  event: NotatedEvent,
+  measure: NotatedMeasure,
+  midi: number,
+  annotations: AnnotationIndex,
+): boolean {
   if (!isRollCandidate(midi) || event.durationPpq > 0.25 + PPQ_EPSILON) return false;
   const groupLen = beatGroupPpq(measure.timeSig);
   const groupIndex = Math.floor((event.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON);
@@ -2106,7 +2118,9 @@ function isPercussionRoll(event: NotatedEvent, measure: NotatedMeasure, midi: nu
       const candidateGroup = Math.floor(
         (candidate.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON,
       );
-      if (candidateGroup === groupIndex) count++;
+      if (candidateGroup !== groupIndex) continue;
+      if (annotations.articulations.has(candidate)) return false;
+      count++;
     }
   }
   return count >= 3;
