@@ -167,6 +167,27 @@ describe('instrumentCacheSegment', () => {
       'sf2=font-a:-1:-1:-1:-1',
     );
   });
+
+  it('separates the modelled-instrument preference so a cached bounce is not reused', () => {
+    const sampled = instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a', program: 40 });
+    const modelled = instrumentCacheSegment({
+      kind: 'sf2',
+      fontId: 'font-a',
+      program: 40,
+      preferModelForModeledFamilies: true,
+    });
+
+    expect(modelled).not.toBe(sampled);
+    // An explicit false is the engine default and must key the same as absent.
+    expect(
+      instrumentCacheSegment({
+        kind: 'sf2',
+        fontId: 'font-a',
+        program: 40,
+        preferModelForModeledFamilies: false,
+      }),
+    ).toBe(sampled);
+  });
 });
 
 describe('midiClipCacheKey with instruments', () => {
@@ -392,6 +413,33 @@ describe('instrument helpers', () => {
       gain: 0.8,
       polyphony: 16,
     });
+  });
+
+  it('sf2PlaybackConfig forwards the modelled-instrument preference only when set', () => {
+    expect(
+      sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', preferModelForModeledFamilies: true }),
+    ).toEqual({ preferModelForModeledFamilies: true });
+    // False is the engine default; omitting it keeps the config minimal.
+    expect(
+      sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', preferModelForModeledFamilies: false }),
+    ).toEqual({});
+  });
+
+  it('validateTrackInstrument rejects a non-boolean modelled-instrument preference', () => {
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        preferModelForModeledFamilies: true,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        preferModelForModeledFamilies: 1 as unknown as boolean,
+      }),
+    ).toThrow(RangeError);
   });
 });
 

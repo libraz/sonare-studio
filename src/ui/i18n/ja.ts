@@ -784,6 +784,9 @@ export const ja = {
         'このプロジェクトは{count}個のSoundFontを使っていますが、再生とエクスポートは1つのグローバルSF2スロットを共有します。最後のSF2トラックが優先されます: {font}。',
       gain: 'ゲイン',
       polyphony: '同時発音数',
+      preferModel: 'モデリング音源を優先',
+      preferModelHint:
+        'エンジンが物理モデルを持つ旋律系 GM 音色を、SoundFont のサンプルではなくモデルで鳴らします。ドラムは SoundFont のままです。鳴る音が変わる設定なので、楽器と一緒に保存されます。',
       loadSf2: '.sf2を読み込み...',
       useSoundFont: 'SoundFontを使用',
       multiTimbral: 'マルチティンバー',

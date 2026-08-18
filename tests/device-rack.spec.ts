@@ -386,6 +386,26 @@ describe('DeviceRack.vue', () => {
     });
   });
 
+  it('commits the modelled-instrument preference from the picker', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[0].trigger('click');
+    await wrapper.find('.sf2-prefer-model').setValue(true);
+    await wrapper.find('.use-sf2').trigger('click');
+
+    // It rides on the instrument, not on an app preference, so the choice
+    // travels with the project and keys the prerender cache.
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'sf2',
+      fontId: 'fontaaaa00000001',
+      preferModelForModeledFamilies: true,
+    });
+  });
+
   it('imports a .sf2 file into the font store and selects it', async () => {
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');

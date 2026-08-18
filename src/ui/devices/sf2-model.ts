@@ -45,6 +45,11 @@ export interface Sf2Selection {
    * channel the phrase uses).
    */
   channelMap: Sf2ChannelProgram[];
+  /**
+   * Render melodic GM programs the engine models physically through those
+   * models rather than the SoundFont's samples. Drums stay SF2-first.
+   */
+  preferModel: boolean;
 }
 
 /** GM percussion channel (0-based); channel 10 in 1-based MIDI terms. */
@@ -116,6 +121,7 @@ export function createSf2Selection(instrument?: TrackInstrument | null): Sf2Sele
       gain: clampGain(instrument.gain ?? SF2_DEFAULT_GAIN),
       polyphony: clampPolyphony(instrument.polyphony ?? SF2_DEFAULT_POLYPHONY),
       channelMap: normalizeChannelMap(instrument.channelMap ?? []),
+      preferModel: instrument.preferModelForModeledFamilies === true,
     };
   }
   return {
@@ -125,13 +131,15 @@ export function createSf2Selection(instrument?: TrackInstrument | null): Sf2Sele
     gain: SF2_DEFAULT_GAIN,
     polyphony: SF2_DEFAULT_POLYPHONY,
     channelMap: [],
+    preferModel: false,
   };
 }
 
 /**
- * Builds the 'sf2' instrument a selection describes. Bank, program, gain and
- * polyphony are omitted at their engine defaults, keeping default selections
- * minimal in project documents and preserving the engine's own fallbacks.
+ * Builds the 'sf2' instrument a selection describes. Bank, program, gain,
+ * polyphony and the model preference are omitted at their engine defaults,
+ * keeping default selections minimal in project documents and preserving the
+ * engine's own fallbacks.
  *
  * @param selection Current selection.
  * @returns The instrument, or null when no font is selected.
@@ -151,5 +159,6 @@ export function buildSf2Instrument(selection: Sf2Selection): Sf2Instrument | nul
   if (polyphony !== SF2_DEFAULT_POLYPHONY) instrument.polyphony = polyphony;
   const channelMap = normalizeChannelMap(selection.channelMap);
   if (channelMap.length > 0) instrument.channelMap = channelMap;
+  if (selection.preferModel) instrument.preferModelForModeledFamilies = true;
   return instrument;
 }

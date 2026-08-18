@@ -423,6 +423,11 @@ function onPolyphonyInput(event: Event): void {
   sf2Selection.value = { ...sf2Selection.value, polyphony: clampPolyphony(raw) };
 }
 
+function onPreferModelInput(event: Event): void {
+  const checked = (event.target as HTMLInputElement).checked;
+  sf2Selection.value = { ...sf2Selection.value, preferModel: checked };
+}
+
 function useSf2(): void {
   const track = activeTrack.value;
   const next = buildSf2Instrument(sf2Selection.value);
@@ -1146,7 +1151,17 @@ const instrumentSourceCaption = computed(() => {
                   @input="onPolyphonyInput"
                 />
               </label>
+              <label class="sf2-field sf2-field-check">
+                <input
+                  class="sf2-prefer-model"
+                  type="checkbox"
+                  :checked="sf2Selection.preferModel"
+                  @change="onPreferModelInput"
+                />
+                <span>{{ t.shell.devicesPanel.preferModel }}</span>
+              </label>
             </div>
+            <p class="sf2-prefer-model-hint">{{ t.shell.devicesPanel.preferModelHint }}</p>
             <div class="sf2-program-browser">
               <p v-if="soundFontSlotWarning" class="sf2-slot-warning" role="alert">
                 {{ soundFontSlotWarning }}

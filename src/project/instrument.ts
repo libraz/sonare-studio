@@ -66,6 +66,17 @@ export interface Sf2Instrument {
    * (GM2 uses bank MSB 120 with the kit in the LSB).
    */
   channelMap?: Sf2ChannelProgram[];
+  /**
+   * Render melodic GM programs the engine models physically through those
+   * models instead of the SoundFont's samples; drums stay SF2-first either
+   * way. Omitted = the engine default (SoundFont everywhere).
+   *
+   * This belongs to the instrument rather than to an app preference: it
+   * changes rendered audio, so the same project has to make the same choice
+   * on another machine, and the freeze/prerender cache keys off the
+   * instrument (see {@link instrumentCacheSegment}).
+   */
+  preferModelForModeledFamilies?: boolean;
 }
 
 /**
@@ -263,6 +274,12 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       ) {
         throw new RangeError(`SF2 polyphony must be an integer in [1, 64], got ${polyphony}`);
       }
+      if (
+        instrument.preferModelForModeledFamilies !== undefined &&
+        typeof instrument.preferModelForModeledFamilies !== 'boolean'
+      ) {
+        throw new RangeError('SF2 preferModelForModeledFamilies must be a boolean when present');
+      }
       return;
     }
     case 'external-midi': {
@@ -315,14 +332,22 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
 export function sf2PlaybackConfig(instrument: Sf2Instrument): {
   gain?: number;
   polyphony?: number;
+  preferModelForModeledFamilies?: boolean;
 } {
-  const config: { gain?: number; polyphony?: number } = {};
+  const config: {
+    gain?: number;
+    polyphony?: number;
+    preferModelForModeledFamilies?: boolean;
+  } = {};
   // The native player reserves exact 0 as “use default 0.5”. Preserve the
   // model/UI meaning of zero (mute) with a float32-representable floor.
   if (instrument.gain !== undefined) {
     config.gain = instrument.gain === 0 ? 1e-6 : instrument.gain;
   }
   if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
+  if (instrument.preferModelForModeledFamilies === true) {
+    config.preferModelForModeledFamilies = true;
+  }
   return config;
 }
 
@@ -365,9 +390,12 @@ export function instrumentCacheSegment(instrument: TrackInstrument): string {
               .sort()
               .join(',')}`
           : '';
+      // The model preference changes the rendered timbre, so a cached bounce
+      // taken with the other setting must not be reused.
+      const model = instrument.preferModelForModeledFamilies === true ? ':model=1' : '';
       return `sf2=${encodeURIComponent(instrument.fontId)}:${instrument.bank ?? -1}:${
         instrument.program ?? -1
-      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}${channelMap}`;
+      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}${channelMap}${model}`;
     }
     case 'external-midi':
       // External-MIDI tracks are not bounced; this segment exists only to keep

@@ -787,6 +787,9 @@ export const en = {
         'This project uses {count} SoundFonts, but playback and export share one global SF2 slot. The last SF2 track wins: {font}.',
       gain: 'Gain',
       polyphony: 'Voices',
+      preferModel: 'Prefer modelled instruments',
+      preferModelHint:
+        'Render the melodic GM programs the engine models physically through those models instead of the SoundFont samples. Drums stay on the SoundFont. This changes the rendered audio, so it is saved with the instrument.',
       loadSf2: 'Load .sf2…',
       useSoundFont: 'Use SoundFont',
       multiTimbral: 'Multi-timbral',

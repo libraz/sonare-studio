@@ -23,6 +23,7 @@ const EMPTY = {
   gain: SF2_DEFAULT_GAIN,
   polyphony: SF2_DEFAULT_POLYPHONY,
   channelMap: [],
+  preferModel: false,
 };
 
 describe('clampBank / clampProgram', () => {
@@ -80,6 +81,7 @@ describe('createSf2Selection', () => {
       gain: 1.5,
       polyphony: 24,
       channelMap: [],
+      preferModel: false,
     });
   });
 
@@ -91,7 +93,16 @@ describe('createSf2Selection', () => {
       gain: SF2_DEFAULT_GAIN,
       polyphony: SF2_DEFAULT_POLYPHONY,
       channelMap: [],
+      preferModel: false,
     });
+  });
+
+  it('restores the modelled-instrument preference', () => {
+    expect(
+      createSf2Selection({ kind: 'sf2', fontId: 'abc', preferModelForModeledFamilies: true })
+        .preferModel,
+    ).toBe(true);
+    expect(createSf2Selection({ kind: 'sf2', fontId: 'abc' }).preferModel).toBe(false);
   });
 
   it('restores and normalizes a multi-timbral channel map', () => {
@@ -119,6 +130,18 @@ describe('buildSf2Instrument', () => {
 
   it('omits bank/program/gain/polyphony at their engine defaults', () => {
     expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc' })).toEqual({
+      kind: 'sf2',
+      fontId: 'abc',
+    });
+  });
+
+  it('carries the modelled-instrument preference only when it is on', () => {
+    expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', preferModel: true })).toEqual({
+      kind: 'sf2',
+      fontId: 'abc',
+      preferModelForModeledFamilies: true,
+    });
+    expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', preferModel: false })).toEqual({
       kind: 'sf2',
       fontId: 'abc',
     });

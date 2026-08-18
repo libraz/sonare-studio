@@ -326,6 +326,18 @@
   padding: var(--sp-1) var(--sp-2);
 }
 
+/* A checkbox is not a number entry: keep it at its own intrinsic width. */
+.sf2-field-check input {
+  width: auto;
+  box-shadow: none;
+}
+
+.sf2-prefer-model-hint {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+
 .sf2-actions {
   display: flex;
   align-items: center;
