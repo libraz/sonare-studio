@@ -18,7 +18,8 @@
  */
 
 import { type ChordDetectionRange, detectChordRegions } from '@/compose/chord-detection';
-import { libcantusQualityToEditor, QUALITY_SUFFIX } from '@/compose/chord-quality';
+import { chordSpanToEditorChord } from '@/compose/chord-io';
+import { chordSuffix } from '@/compose/chord-quality';
 import { editorNotesToNoteEvents } from '@/compose/notes-io';
 import { ensureWasm } from '@/lib/wasm';
 import type { NotatedChordSymbol } from '@/notation/model';
@@ -180,12 +181,17 @@ export function estimateChordSymbols(
 
   const out: EstimatedChordSymbol[] = [];
   for (const region of regions) {
-    const rootPc = ((region.span.rootPc % 12) + 12) % 12;
-    const mapped = libcantusQualityToEditor(region.span.quality);
+    // Both the tone set and the name come from the shared bridge, so the score
+    // view and the chord track cannot describe a detected chord differently.
+    // Naming from the span's quality alone would part from the tone set exactly
+    // where a quality is only the nearest name for it. The slash bass below is
+    // the score's own, read from the notes rather than from the span.
+    const mapped = chordSpanToEditorChord(region.span, region.startPpq, region.endPpq);
+    const rootPc = mapped.rootPc;
     const symbol: EstimatedChordSymbol = {
       ppq: region.startPpq,
       endPpq: region.endPpq,
-      text: `${pitchClassName(rootPc, keyFifths)}${QUALITY_SUFFIX[region.span.quality]}`,
+      text: `${pitchClassName(rootPc, keyFifths)}${chordSuffix(mapped.quality, mapped.extensions, mapped.omissions)}`,
       rootPc,
       quality: mapped.quality,
     };

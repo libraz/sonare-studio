@@ -6,6 +6,7 @@ import {
   type EstimatedChordSymbol,
   estimateChordSymbols,
 } from '@/notation/chords';
+import { chordTonePitchClasses } from '@/project/chords';
 import type { EditorNote, EditorTrack } from '@/project/types';
 
 /** Shared mock state for the fake wasm Project used by canonicalize tests. */
@@ -37,6 +38,18 @@ let nextId = 1;
 
 function note(pitch: number, startPpq: number, durationPpq: number): EditorNote {
   return { id: nextId++, pitch, velocity: 96, startPpq, durationPpq, channel: 0 };
+}
+
+/** The pitch classes an estimated symbol asks to sound. */
+function soundedPitchClasses(symbol: EstimatedChordSymbol): number[] {
+  return chordTonePitchClasses({
+    startPpq: symbol.ppq,
+    endPpq: symbol.endPpq,
+    rootPc: symbol.rootPc ?? 0,
+    quality: symbol.quality ?? 0,
+    ...(symbol.extensions === undefined ? {} : { extensions: [...symbol.extensions] }),
+    ...(symbol.omissions === undefined ? {} : { omissions: [...symbol.omissions] }),
+  });
 }
 
 const OPTIONS: ChordEstimateOptions = {
@@ -138,6 +151,30 @@ describe('estimateChordSymbols', () => {
     expect(shell(64, 70)).toMatchObject({ ppq: 0, text: 'C7', rootPc: 0, quality: 4 });
     expect(shell(64, 71)).toMatchObject({ ppq: 0, text: 'Cmaj7', rootPc: 0, quality: 5 });
     expect(shell(63, 70)).toMatchObject({ ppq: 0, text: 'Cm7', rootPc: 0, quality: 6 });
+  });
+
+  // An augmented sixth is named after the nearest quality the analysis has, a
+  // dominant seventh, while the chord sounds no fifth. The displayed symbol has
+  // to say so, or the score would state a tone the passage never sounds.
+  it('keeps the tones of an augmented sixth its quality only approximates', () => {
+    const symbols = estimateChordSymbols(
+      [
+        note(60, 0, 4),
+        note(64, 0, 4),
+        note(67, 0, 4),
+        // Ab, C, F# -- an Italian sixth.
+        note(56, 4, 4),
+        note(60, 4, 4),
+        note(66, 4, 4),
+      ],
+      OPTIONS,
+    );
+    expect(symbols[1]).toMatchObject({ ppq: 4, rootPc: 8, quality: 4, omissions: [7] });
+    // Exactly Ab, C and F#: reading the chord as Ab7 would add an Eb nothing plays.
+    expect(soundedPitchClasses(symbols[1])).toEqual([0, 6, 8]);
+    // The printed name says the same thing the tone set does, and says it the
+    // way the chord track does.
+    expect(symbols[1].text).toBe('Ab7(omit5)');
   });
 
   it('keeps an omitted fifth from re-reading a dominant as another chord', () => {

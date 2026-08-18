@@ -16,7 +16,8 @@
  *     expresses the quality as a base ordinal plus the `extensions` that colour
  *     it and the `omissions` it does not sound. Naming is asymmetric, but the
  *     tone set is not: every quality in the union comes back sounding exactly
- *     the pitch classes libcantus gives it.
+ *     the pitch classes libcantus gives it, and a span carrying its own
+ *     `intervals` comes back sounding those instead of its quality's.
  *
  * The mapping tables themselves live in src/compose/chord-quality.ts, which
  * also names chords from them; this module owns only the ChordData/ChordSpan
@@ -26,7 +27,7 @@
  * major), so callers never need to guard estimator output.
  */
 
-import { type ChordData, type ChordSpan, makeChord } from '@libraz/libcantus';
+import { type ChordData, type ChordSpan, makeChord, spanFromChord } from '@libraz/libcantus';
 import {
   audioQualityToLibcantus,
   type EditorQuality,
@@ -93,33 +94,57 @@ export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
   return chord;
 }
 
-/** Places an editor symbol on a beat as a libcantus {@link ChordSpan}. */
+/**
+ * Places an editor symbol on a beat as a libcantus {@link ChordSpan}.
+ *
+ * The span is derived from the chord {@link editorChordToChord} builds so the
+ * two exports of one symbol cannot describe different chords: a free extension
+ * or omission combination has no exact quality, and its tone set would be lost
+ * if the span carried only the nearest quality name.
+ */
 export function editorChordToChordSpan(symbol: EditorChordSymbol, startBeat: number): ChordSpan {
-  const rootPc = ((symbol.rootPc % 12) + 12) % 12;
-  const span: ChordSpan = {
-    rootPc,
-    quality:
-      editorExtensionQuality(symbol.quality, symbol.extensions, symbol.omissions) ??
-      audioQualityToLibcantus(symbol.quality),
-    startBeat,
+  return spanFromChord(editorChordToChord(symbol), startBeat);
+}
+
+/**
+ * The editor base quality plus the extensions and omissions that turn its
+ * intrinsic tone set into `intervals`, all in pitch-class space. Added tones
+ * are the sounded pitch classes the base quality does not carry; omitted ones
+ * are the tones it carries that this chord leaves silent.
+ */
+function toneSetToEditorQuality(quality: number, intervals: ReadonlyArray<number>): EditorQuality {
+  const sounded = new Set(
+    intervals
+      .filter((interval) => Number.isInteger(interval))
+      .map((interval) => ((interval % 12) + 12) % 12),
+  );
+  const silent = Array.from({ length: 12 }, (_, pc) => pc).filter((pc) => !sounded.has(pc));
+  return {
+    quality,
+    extensions: normalizedChordExtensions(quality, [...sounded]),
+    omissions: normalizedChordOmissions(quality, silent),
   };
-  if (symbol.bassPc !== undefined && symbol.bassPc !== rootPc) {
-    span.bassPc = ((symbol.bassPc % 12) + 12) % 12;
-  }
-  return span;
 }
 
 /**
  * Converts a libcantus chord span back to an editor symbol over a PPQ region.
  * Quality is expressed per {@link libcantusQualityToEditor}; the span's beat is
  * not used for the region (callers supply absolute PPQ bounds).
+ *
+ * A span carrying an explicit tone set is read from that set rather than from
+ * its quality, because a quality is only the nearest name for such a chord and
+ * naming it would add or drop tones the analysis did not find.
  */
 export function chordSpanToEditorChord(
   span: ChordSpan,
   startPpq: number,
   endPpq: number,
 ): EditorChordSymbol {
-  const mapped = libcantusQualityToEditor(span.quality);
+  const named = libcantusQualityToEditor(span.quality);
+  const mapped =
+    span.intervals === undefined || span.intervals.length === 0
+      ? named
+      : toneSetToEditorQuality(named.quality, span.intervals);
   const rootPc = ((span.rootPc % 12) + 12) % 12;
   const symbol: EditorChordSymbol = {
     startPpq,

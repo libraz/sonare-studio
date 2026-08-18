@@ -15,7 +15,13 @@
  * Pure module; PPQ maps to beats with coefficient 1 (see chord-at-tick.ts).
  */
 
-import type { ChordSpan, KeyScale, NoteEvent, TimeSignature } from '@libraz/libcantus';
+import {
+  type ChordSpan,
+  type KeyScale,
+  type NoteEvent,
+  spanFromChord,
+  type TimeSignature,
+} from '@libraz/libcantus';
 import { inferChordTimelineFromNotes } from './chord-at-tick';
 import { DEFAULT_KEY_SCALE } from './key';
 
@@ -103,14 +109,13 @@ export function detectChordRegions(
     });
     resolvedKey = options.key ?? result.prevailingKey;
     result.timeline.segments.forEach((segment, index) => {
-      const span: ChordSpan = {
-        rootPc: segment.chord.rootPc,
-        quality: segment.chord.quality,
-        startBeat: segment.startBeat + range.startPpq,
-      };
-      if (segment.chord.bassPc !== undefined) span.bassPc = segment.chord.bassPc;
       regions.push({
-        span,
+        // A detected quality is the nearest name for the tones, not always an
+        // exact one: an augmented sixth comes back as a dominant seventh that
+        // sounds no fifth. spanFromChord records the tone set whenever it
+        // departs from the one the quality names, so the chord the analysis
+        // actually found survives to the surfaces that sound it.
+        span: spanFromChord(segment.chord, segment.startBeat + range.startPpq),
         startPpq: segment.startBeat + range.startPpq,
         endPpq: segment.endBeat + range.startPpq,
         confidence: result.segmentConfidence[index] ?? 0,

@@ -1,16 +1,25 @@
-import { chordPitchClasses, MAJOR_MASK } from '@libraz/libcantus';
+import {
+  type ChordData,
+  type ChordQuality,
+  type ChordSpan,
+  chordFromSpan,
+  chordPitchClasses,
+  MAJOR_MASK,
+} from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import {
   buildChordTimeline,
   chordSymbolAtPpq,
   inferChordTimelineFromNotes,
 } from '@/compose/chord-at-tick';
+import { detectChordRegions } from '@/compose/chord-detection';
 import {
   audioQualityToLibcantus,
   chordSpanToEditorChord,
   editorChordToChord,
   editorChordToChordSpan,
 } from '@/compose/chord-io';
+import { libcantusQualityToEditor, QUALITY_SUFFIX } from '@/compose/chord-quality';
 import {
   assertMaskConventionParity,
   DEFAULT_KEY_SCALE,
@@ -27,7 +36,11 @@ import {
   noteEventToNewEditorNote,
 } from '@/compose/notes-io';
 import { harmonicTracksOnly, isDrumTrack, isMelodyTrack, topVoiceOnly } from '@/compose/tracks';
-import type { EditorChordSymbol } from '@/project/chords';
+import {
+  CHORD_QUALITY_CHOICES,
+  chordTonePitchClasses,
+  type EditorChordSymbol,
+} from '@/project/chords';
 import type { EditorNote, EditorTrack, ScaleHighlightConfig } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -60,6 +73,11 @@ function track(partial: Partial<EditorTrack>): EditorTrack {
 
 function chordSymbol(partial: Partial<EditorChordSymbol>): EditorChordSymbol {
   return { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, ...partial };
+}
+
+/** The pitch classes a libcantus chord sounds, deduplicated and ascending. */
+function soundedPitchClasses(chord: ChordData): number[] {
+  return [...new Set(chordPitchClasses(chord))].sort((a, b) => a - b);
 }
 
 describe('key adapter', () => {
@@ -184,11 +202,97 @@ describe('chord-io adapter', () => {
     expect(editorChordToChordSpan(sharpEleven, 0).quality).toBe('7#11');
   });
 
+  // A libcantus quality is only the nearest name for a chord the union cannot
+  // spell exactly, so a span may carry the tone set outright. Reading it from
+  // the quality instead would sound tones the chord does not have.
+  it('reads a span from its own tone set rather than from its quality', () => {
+    // An augmented sixth: the dominant-seventh shape with no fifth.
+    const span: ChordSpan = { rootPc: 8, quality: 'dom7', startBeat: 0, intervals: [0, 4, 10] };
+    const editor = chordSpanToEditorChord(span, 0, 4);
+    expect(editor).toMatchObject({ rootPc: 8, quality: 4, omissions: [7] });
+    expect(editor.extensions).toBeUndefined();
+    expect(soundedPitchClasses(editorChordToChord(editor))).toEqual(
+      soundedPitchClasses(chordFromSpan(span)),
+    );
+  });
+
+  it('expresses a tone set the base quality lacks as extensions', () => {
+    // A dominant with a lowered ninth and a raised eleventh over an intact triad.
+    const span: ChordSpan = {
+      rootPc: 0,
+      quality: 'dom7',
+      startBeat: 0,
+      intervals: [0, 4, 7, 10, 13, 18],
+    };
+    const editor = chordSpanToEditorChord(span, 0, 4);
+    expect(editor).toMatchObject({ quality: 4, extensions: [1, 6] });
+    expect(editor.omissions).toBeUndefined();
+    expect(soundedPitchClasses(editorChordToChord(editor))).toEqual(
+      soundedPitchClasses(chordFromSpan(span)),
+    );
+  });
+
+  it('reads a span with no tone set from its quality alone', () => {
+    for (const quality of Object.keys(QUALITY_SUFFIX) as ChordQuality[]) {
+      const mapped = libcantusQualityToEditor(quality);
+      const editor = chordSpanToEditorChord({ rootPc: 0, quality, startBeat: 0 }, 0, 4);
+      expect(editor.quality).toBe(mapped.quality);
+      expect(editor.extensions).toEqual(mapped.extensions);
+      expect(editor.omissions).toEqual(mapped.omissions);
+    }
+  });
+
+  // The editor offers combinations libcantus has no quality string for, so the
+  // span has to carry their tones; naming them with the nearest quality would
+  // drop the very tones that make them those chords.
+  it.each(CHORD_QUALITY_CHOICES)('sounds the tones $label declares as a span', (choice) => {
+    const symbol = chordSymbol({
+      quality: choice.quality,
+      ...(choice.extensions === undefined ? {} : { extensions: [...choice.extensions] }),
+      ...(choice.omissions === undefined ? {} : { omissions: [...choice.omissions] }),
+    });
+    expect(soundedPitchClasses(chordFromSpan(editorChordToChordSpan(symbol, 0)))).toEqual(
+      chordTonePitchClasses(symbol),
+    );
+  });
+
   it('preserves a slash bass when it differs from the root', () => {
     const span = editorChordToChordSpan(chordSymbol({ rootPc: 0, quality: 0, bassPc: 7 }), 0);
     expect(span.bassPc).toBe(7);
     const back = chordSpanToEditorChord(span, 0, 4);
     expect(back.bassPc).toBe(7);
+  });
+});
+
+describe('chord detection', () => {
+  // The detector names an augmented sixth after the nearest quality it has, a
+  // dominant seventh, while the chord sounds no fifth. The region has to carry
+  // that tone set through to the editor symbol, or the chord track would ask
+  // for a pitch class the passage never sounds.
+  it('carries the tones of an augmented sixth through to the editor symbol', () => {
+    const events = editorNotesToNoteEvents([
+      note({ id: 1, pitch: 60, startPpq: 0, durationPpq: 2 }),
+      note({ id: 2, pitch: 64, startPpq: 0, durationPpq: 2 }),
+      note({ id: 3, pitch: 67, startPpq: 0, durationPpq: 2 }),
+      note({ id: 4, pitch: 65, startPpq: 2, durationPpq: 2 }),
+      note({ id: 5, pitch: 69, startPpq: 2, durationPpq: 2 }),
+      note({ id: 6, pitch: 72, startPpq: 2, durationPpq: 2 }),
+      // Ab, C, F# -- an Italian sixth resolving onto the dominant.
+      note({ id: 7, pitch: 56, startPpq: 4, durationPpq: 2 }),
+      note({ id: 8, pitch: 60, startPpq: 4, durationPpq: 2 }),
+      note({ id: 9, pitch: 66, startPpq: 4, durationPpq: 2 }),
+      note({ id: 10, pitch: 55, startPpq: 6, durationPpq: 2 }),
+      note({ id: 11, pitch: 59, startPpq: 6, durationPpq: 2 }),
+      note({ id: 12, pitch: 62, startPpq: 6, durationPpq: 2 }),
+    ]);
+    const { regions } = detectChordRegions(events, [{ startPpq: 0, endPpq: 8, slotLengthPpq: 2 }]);
+
+    const sixth = regions.find((region) => region.startPpq === 4);
+    expect(sixth?.span).toMatchObject({ rootPc: 8, quality: 'dom7', intervals: [0, 4, 10] });
+    const symbol = chordSpanToEditorChord(sixth!.span, sixth!.startPpq, sixth!.endPpq);
+    // Exactly Ab, C and F#: naming the chord Ab7 would add an Eb nothing plays.
+    expect(soundedPitchClasses(editorChordToChord(symbol))).toEqual([0, 6, 8]);
+    expect(chordTonePitchClasses(symbol)).toEqual([0, 6, 8]);
   });
 });
 
