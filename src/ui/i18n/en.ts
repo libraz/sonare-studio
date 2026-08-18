@@ -2094,6 +2094,8 @@ export const en = {
       },
     },
     arrangementAnalysis: {
+      tooLongForPhrases:
+        'This arrangement holds more notes than the phrase reading can compare, so it has no phrases or cadences here. Everything else on this run still stands.',
       title: 'Analysis',
       analyze: 'Analyze',
       runPrompt: 'Run analysis to check the arrangement for harmonic conflicts.',
@@ -2221,6 +2223,23 @@ export const en = {
     },
     applied: {
       label: 'Applied dominant {roman}',
+    },
+    modulation: {
+      label: 'Modulation',
+      relation: {
+        same: 'to the same key',
+        enharmonic: 'to the enharmonic key',
+        relative: 'to the relative key',
+        parallel: 'to the parallel key',
+        dominant: 'to the dominant',
+        subdominant: 'to the subdominant',
+        relativeOfDominant: 'to the relative of the dominant',
+        relativeOfSubdominant: 'to the relative of the subdominant',
+      },
+      unnamedRelation: 'to a key it stands in no named relation to',
+      pivot: 'Turns on {roman}, which reads in both keys.',
+      direct: 'No chord reads in both keys, so the move is direct.',
+      alternatives: 'Could also have turned on {romans}.',
     },
   },
   dialogs: {

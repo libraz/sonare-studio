@@ -25,6 +25,7 @@ import {
   type KeyRelation,
   type KeyScale,
   type PivotChord,
+  pivotChords,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
 import { buildChordTimeline } from './chord-at-tick';
@@ -91,6 +92,13 @@ export interface KeySpan {
   modulation?: KeyRelation;
   /** The chord the modulation turned on, when one reads in both keys. */
   pivot?: PivotChord;
+  /**
+   * Every chord that reads in both keys, in degree order — the moves the piece
+   * could have turned on, including the one it did. Empty when the two keys
+   * share no triad, which is what a direct modulation is. Present only
+   * alongside {@link modulation}, since without a move there is nothing to turn.
+   */
+  sharedChords?: PivotChord[];
 }
 
 /** The full read-only analysis of one chord track. */
@@ -179,6 +187,9 @@ function keySpansOf(timeline: ChordTimeline, key: KeyScale): KeySpan[] {
     if (index > 1 || (index === 1 && sameKey(regions[0].key, key))) {
       if (region.modulation !== undefined) span.modulation = region.modulation;
       if (region.pivot !== undefined) span.pivot = region.pivot;
+      // Read against the same pair of keys the fields above describe, so the
+      // alternatives are alternatives to the move that was actually made.
+      span.sharedChords = tryEval(() => pivotChords(regions[index - 1].key, region.key)) ?? [];
     }
     return span;
   });

@@ -215,7 +215,10 @@ describe('analyzeHarmony', () => {
     );
     expect(analysis.keySpans).toEqual([
       { startPpq: 0, endPpq: 16, key: C_MAJOR },
-      { startPpq: 16, endPpq: 32, key: E_FLAT_MAJOR },
+      // C major and E flat major share no diatonic triad, so there was nothing
+      // to turn the move on: an empty list is the reading "this move is direct",
+      // not a reading that failed.
+      { startPpq: 16, endPpq: 32, key: E_FLAT_MAJOR, sharedChords: [] },
     ]);
     // Ebmaj7 is the tonic of the second span: it is what the authentic cadence
     // there resolves onto, and it carries none of the annotations it would as
@@ -282,5 +285,18 @@ describe('analyzeHarmony', () => {
     expect(analysis.keySpans[1]?.pivot?.romanFrom).toBe('I');
     expect(analysis.keySpans[1]?.pivot?.romanTo).toBe('IV');
     expect(analysis.keySpans[0]?.modulation).toBeUndefined();
+
+    // Every chord that reads in both keys, so the move the piece made can be
+    // held against the ones it could have made. The chord it did turn on is one
+    // of them, since it reads in both keys by definition.
+    const shared = analysis.keySpans[1]?.sharedChords ?? [];
+    expect(shared.map((pivot) => `${pivot.romanFrom}=${pivot.romanTo}`)).toEqual([
+      'I=IV',
+      'iii=vi',
+      'V=I',
+      'vi=ii',
+    ]);
+    // The opening span was not moved into, so it has nothing to compare.
+    expect(analysis.keySpans[0]?.sharedChords).toBeUndefined();
   });
 });

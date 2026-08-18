@@ -2091,6 +2091,8 @@ export const ja = {
       },
     },
     arrangementAnalysis: {
+      tooLongForPhrases:
+        'この編曲はフレーズ解析が比較できる音数を超えているため、フレーズとカデンツは出ていません。それ以外の結果はこのままです。',
       title: '解析',
       analyze: '解析を実行',
       runPrompt: '「解析を実行」を押すと、アレンジ全体のハーモニーの衝突をチェックします。',
@@ -2216,6 +2218,23 @@ export const ja = {
     },
     applied: {
       label: '副属和音 {roman}',
+    },
+    modulation: {
+      label: '転調',
+      relation: {
+        same: '同じ調へ',
+        enharmonic: '異名同音調へ',
+        relative: '平行調へ',
+        parallel: '同主調へ',
+        dominant: '属調へ',
+        subdominant: '下属調へ',
+        relativeOfDominant: '属調の平行調へ',
+        relativeOfSubdominant: '下属調の平行調へ',
+      },
+      unnamedRelation: '名前のある関係にない調へ',
+      pivot: '両方の調で読める {roman} で転回しています。',
+      direct: '両方の調で読めるコードが無いため、直接転調です。',
+      alternatives: '{romans} でも転回できました。',
     },
   },
   dialogs: {

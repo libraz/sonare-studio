@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { type KeyScale, spelledKeyOf } from '@libraz/libcantus';
+import { type KeyScale, type PivotChord, spelledKeyOf } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { matchModeChoiceId } from '@/components/lists/key-modes';
 import { useNoteNames } from '@/composables/useNoteNames';
-import { analyzeHarmony, type BorrowedKind, type CadenceType } from '@/compose/harmonic-analysis';
+import {
+  analyzeHarmony,
+  type BorrowedKind,
+  type CadenceType,
+  type KeySpan,
+} from '@/compose/harmonic-analysis';
 import { keyFifthsToSpelledKey } from '@/compose/key';
 import type { EditorChordSymbol } from '@/project/chords';
 import { formatChordName } from '@/project/chords';
@@ -32,9 +37,10 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  * The functional reading of the progression rides along as display-only
  * annotation: an applied-dominant numeral or a borrowing mark beside the chord
  * name, a rule where a cadence lands, and — only on a track that modulates — a
- * named band per key the track passes through. Every marker is inert
- * (`pointer-events: none`), so seeking and the chord-list shortcut behave the
- * same with or without an analysis.
+ * named band per key the track passes through, saying how the key moved and,
+ * on hover, which chord the move turned on. The markers are inert
+ * (`pointer-events: none`) apart from that one label, so seeking and the
+ * chord-list shortcut behave the same with or without an analysis.
  */
 
 const props = defineProps<{
@@ -122,6 +128,10 @@ interface KeySpanBand {
   widthPx: number;
   /** Whether the visible span is wide enough for the written name. */
   showLabel: boolean;
+  /** How the key moved to get here, e.g. "to the dominant"; '' on the first span. */
+  move: string;
+  /** The move in words, with the chord it turned on and the ones it could have. */
+  moveTitle: string;
 }
 
 /** One positioned, culled cadence marker. */
@@ -222,6 +232,43 @@ function keyName(key: KeyScale): string {
   return `${formatNoteName(spelledKeyOf(key).tonic)} ${mode}`;
 }
 
+/**
+ * How the key moved into this span, in a few words, or '' for the opening span
+ * and for a span the detection places without naming a relation between the two
+ * keys. A move with no name still shows in the tooltip, since the key band
+ * itself is already saying that the key changed.
+ */
+function moveLabel(span: KeySpan): string {
+  if (span.modulation === undefined) return '';
+  return t.value.harmony.modulation.relation[span.modulation];
+}
+
+/**
+ * The move in words: which relation it is, the chord it turned on, and the
+ * other chords that read in both keys. A modulation between keys that share no
+ * chord says so, because "direct" is a reading and not a missing answer.
+ */
+function moveTitle(span: KeySpan): string {
+  if (span.sharedChords === undefined) return '';
+  const strings = t.value.harmony.modulation;
+  const relation =
+    span.modulation === undefined ? strings.unnamedRelation : strings.relation[span.modulation];
+  const parts = [`${strings.label} ${relation}`];
+  const roman = (pivot: PivotChord): string => `${pivot.romanFrom} = ${pivot.romanTo}`;
+  if (span.pivot !== undefined) {
+    parts.push(formatMessage(strings.pivot, { roman: roman(span.pivot) }));
+  } else if (span.sharedChords.length === 0) {
+    parts.push(strings.direct);
+  }
+  const others = span.sharedChords.filter(
+    (candidate) => span.pivot === undefined || roman(candidate) !== roman(span.pivot),
+  );
+  if (others.length > 0) {
+    parts.push(formatMessage(strings.alternatives, { romans: others.map(roman).join(', ') }));
+  }
+  return parts.join(' ');
+}
+
 const keySpanBands = computed<KeySpanBand[]>(() => {
   void props.revision;
   const origin = props.originPpq ?? 0;
@@ -237,6 +284,8 @@ const keySpanBands = computed<KeySpanBand[]>(() => {
       leftPx: x0,
       widthPx: Math.max(2, x1 - x0),
       showLabel: visibleWidthPx >= KEY_LABEL_MIN_ROOM_PX,
+      move: moveLabel(span),
+      moveTitle: moveTitle(span),
     });
   }
   return out;
@@ -362,7 +411,14 @@ onBeforeUnmount(() => {
       class="key-span"
       :style="{ left: `${span.leftPx}px`, width: `${span.widthPx}px` }"
     >
-      <span v-if="span.showLabel" class="key-span-label">{{ span.name }}</span>
+      <span
+        v-if="span.showLabel"
+        class="key-span-label"
+        :class="{ 'key-span-moved': span.moveTitle !== '' }"
+        v-tooltip="span.moveTitle"
+      >
+        {{ span.name }}<span v-if="span.move !== ''" class="key-span-move"> · {{ span.move }}</span>
+      </span>
     </div>
     <div
       v-for="marker in cadenceMarkers"
@@ -444,14 +500,16 @@ onBeforeUnmount(() => {
  * changes; the name is written into the span's tail, the strip the chord-name
  * tiler already keeps clear (see LABEL_TAIL_GUARD_PX).
  */
+/* The band is rounded, so the accent is carried by a full hairline and a tint
+ * rather than a straight edge marker that would cut across the corner. */
 .key-span {
   position: absolute;
   top: 2px;
   bottom: 2px;
   box-sizing: border-box;
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  box-shadow: inset 2px 0 0 0 color-mix(in srgb, var(--accent) 65%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   overflow: hidden;
   pointer-events: none;
 }
@@ -466,6 +524,17 @@ onBeforeUnmount(() => {
   font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
   color: var(--accent);
   white-space: nowrap;
+}
+
+/* Only a band that has a modulation to explain takes the pointer back from the
+ * lane, so the chord bands underneath stay clickable everywhere else. */
+.key-span-moved {
+  pointer-events: auto;
+  cursor: help;
+}
+
+.key-span-move {
+  color: var(--text-3);
 }
 
 .cadence-mark {
