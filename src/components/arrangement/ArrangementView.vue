@@ -25,6 +25,7 @@ import {
   cutActiveClip,
   deleteClip,
   deleteTime,
+  detectSectionsFromArrangement,
   detectSectionsFromAudioClip,
   duplicateClip,
   extractMelodyFromAudioClip,
@@ -182,6 +183,21 @@ const detectableAudioClip = computed(() => {
 const hasContent = computed(() =>
   store.clips.some((clip) => clip.notes.length > 0 || isAudioClip(clip)),
 );
+
+/** Whether any clip carries written notes the form could be read from. */
+const hasWrittenNotes = computed(() => store.clips.some((clip) => clip.notes.length > 0));
+
+/**
+ * Reads the song form from the written notes across the whole arrangement and
+ * replaces the section lane with it. Unlike {@link detectSections} this needs no
+ * audio and asserts only which spans restate which, labelling them A, B, C.
+ */
+function sectionsFromNotes(): void {
+  if (!hasWrittenNotes.value) return;
+  error.value = '';
+  const summary = detectSectionsFromArrangement();
+  if (summary.count === 0) error.value = t.value.shell.arrangement.noSectionsFromNotes;
+}
 
 /**
  * Detects song sections from the active audio clip and merges them into the
@@ -1224,6 +1240,15 @@ onBeforeUnmount(() => {
           @click="detectSections"
         >
           {{ t.shell.arrangement.detectSections }}
+        </button>
+        <button
+          type="button"
+          class="section-detect"
+          :disabled="!hasWrittenNotes"
+          v-tooltip="t.shell.arrangement.sectionsFromNotesTitle"
+          @click="sectionsFromNotes"
+        >
+          {{ t.shell.arrangement.sectionsFromNotes }}
         </button>
         <button
           type="button"

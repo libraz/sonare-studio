@@ -245,9 +245,10 @@ export {
   setNoteAnnotation,
 } from './command/score-annotations';
 export { splitAudioClipToStems } from './command/stems';
-export type { SectionInput } from './command/timeline';
+export type { DetectedSectionSummary, SectionInput } from './command/timeline';
 export {
   deleteTime,
+  detectSectionsFromArrangement,
   detectSectionsFromAudioClip,
   duplicateTime,
   insertTime,

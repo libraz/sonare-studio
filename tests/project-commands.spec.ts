@@ -30,6 +30,7 @@ import {
   deleteClip,
   deleteTime,
   detectChordsForClip,
+  detectSectionsFromArrangement,
   duplicateClip,
   duplicateSelection,
   duplicateTime,
@@ -92,6 +93,7 @@ import {
   setTrackMidiFx,
   setTrackMute,
   setTrackPan,
+  setTrackPercussion,
   setTrackSelection,
   setTrackSolo,
   setTracksColor,
@@ -2017,6 +2019,78 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
       expect(() => setSections([{ name: 'Bad', startPpq: 4, endPpq: 4 }])).toThrow(RangeError);
       expect(() => setSections([{ name: 'Bad', startPpq: -1, endPpq: 4 }])).toThrow(RangeError);
+    });
+
+    describe('detectSectionsFromArrangement', () => {
+      /** Writes one bar of four quarter notes per shape into a fresh clip. */
+      function writeBars(shapes: ReadonlyArray<ReadonlyArray<number>>): void {
+        const clipId = addMidiClip({
+          trackId: store.tracks[0].id,
+          startPpq: 0,
+          lengthPpq: shapes.length * 4,
+        });
+        setActiveClip(clipId);
+        shapes.forEach((shape, index) => {
+          shape.forEach((pitch, beat) => {
+            addNote({ pitch, startPpq: index * 4 + beat, durationPpq: 1 });
+          });
+        });
+      }
+
+      it('leaves the section list alone when there is nothing to read', () => {
+        setSections([{ name: 'Verse', startPpq: 0, endPpq: 16 }]);
+        const summary = detectSectionsFromArrangement();
+
+        expect(summary).toEqual({ count: 0, excludedTrackNames: [] });
+        expect(store.sections.map((section) => section.name)).toEqual(['Verse']);
+      });
+
+      it('writes lettered sections covering the piece as one undoable edit', () => {
+        const a = [60, 64, 67, 64];
+        const b = [65, 69, 72, 69];
+        writeBars([a, a, a, a, b, b, b, b]);
+
+        const summary = detectSectionsFromArrangement(2);
+        expect(summary.count).toBe(store.sections.length);
+        expect(store.sections.length).toBeGreaterThan(0);
+        expect(store.sections[0].name).toBe('A');
+        expect(store.sections[0].startPpq).toBe(0);
+        for (const [index, section] of store.sections.entries()) {
+          expect(section.endPpq).toBeGreaterThan(section.startPpq);
+          const previous = store.sections[index - 1];
+          if (previous !== undefined) expect(section.startPpq).toBe(previous.endPpq);
+        }
+
+        undo();
+        expect(store.sections).toEqual([]);
+      });
+
+      // Restatements share a colour so the form reads off the band without
+      // comparing letters.
+      it('gives every restatement of one idea the same colour', () => {
+        const a = [60, 64, 67, 64];
+        const b = [65, 69, 72, 69];
+        writeBars([a, a, b, b, a, a, b, b]);
+        detectSectionsFromArrangement(2);
+
+        const colorByName = new Map<string, string>();
+        for (const section of store.sections) {
+          const seen = colorByName.get(section.name);
+          if (seen === undefined) colorByName.set(section.name, section.color);
+          else expect(section.color).toBe(seen);
+        }
+        // Distinct letters must not collide on one colour.
+        expect(new Set(colorByName.values()).size).toBe(colorByName.size);
+      });
+
+      it('excludes percussion tracks and names them', () => {
+        const a = [60, 64, 67, 64];
+        writeBars([a, a, a, a]);
+        const drumTrackId = addTrack({ name: 'Drums' });
+        setTrackPercussion(drumTrackId, true);
+
+        expect(detectSectionsFromArrangement(2).excludedTrackNames).toEqual(['Drums']);
+      });
     });
   });
 

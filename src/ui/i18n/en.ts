@@ -1860,6 +1860,10 @@ export const en = {
       detectSections: 'Detect',
       detectSectionsTitle: 'Detect song sections from the active audio clip',
       noSectionsDetected: 'No sections detected in the active clip.',
+      sectionsFromNotes: 'From notes',
+      sectionsFromNotesTitle:
+        'Read the song form from the written notes and label repeated spans A, B, C',
+      noSectionsFromNotes: 'The written notes do not divide into repeated spans.',
       duplicateSection: 'Duplicate section',
       extractMelody: 'To MIDI',
       extractMelodyTitle: 'Transcribe the active audio clip melody to a new MIDI clip',

@@ -1,3 +1,4 @@
+import { sectionsFromArrangement } from '@/compose/sections';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
@@ -5,6 +6,7 @@ import { remapClipScoreAnnotations } from '../annotations';
 import { type AudioSectionAnalyzer, analyzeAudioClipSections } from '../audio-sections';
 import type { AutomationLaneState } from '../automation';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
+import { projectMidiNoteOccurrences } from '../midi-projection';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -29,6 +31,7 @@ import {
   type EditorClip,
   type TempoSegment,
   type TimeSignatureSegment,
+  TRACK_COLOR_PALETTE,
 } from '../types';
 import { installProjectClipWarp } from '../warp';
 import {
@@ -397,6 +400,57 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
       sectionAnalysisOperations.invalidate();
     }
   }
+}
+
+/** The outcome of an arrangement-wide form analysis. */
+export interface DetectedSectionSummary {
+  /** Number of sections written to the section list. */
+  count: number;
+  /** Names of the percussion tracks excluded from the analysis. */
+  excludedTrackNames: string[];
+}
+
+/**
+ * Recovers the song form from the written notes of every harmonic track and
+ * replaces the section list with it (one undoable edit).
+ *
+ * This is the symbolic counterpart of {@link detectSectionsFromAudioClip}: that
+ * one hears an audio clip and names what it hears (intro, verse, chorus), this
+ * one reads the notes across the whole arrangement and reports only which spans
+ * restate which, as letters. Sections are therefore named A, B, A' and so on --
+ * nothing about a span's function is inferred.
+ *
+ * The whole list is replaced rather than merged, because the form is a reading
+ * of the entire piece and a partial one would contradict itself. Nothing is
+ * committed when no section is recovered, so running it on an empty project
+ * leaves any hand-authored sections intact.
+ *
+ * @param unitBars Comparison unit in bars; the inferred hyperbar when omitted.
+ * @returns The written section count and the tracks excluded as percussion.
+ */
+export function detectSectionsFromArrangement(unitBars?: number): DetectedSectionSummary {
+  const store = useProjectStore();
+  const tracks = store.tracks.map((track) => ({
+    track,
+    notes: (store.clipsByTrack.get(track.id) ?? []).flatMap(projectMidiNoteOccurrences),
+  }));
+  const report = sectionsFromArrangement(tracks, store.timeSignatures, unitBars);
+  if (report.sections.length === 0) {
+    return { count: 0, excludedTrackNames: report.excludedTrackNames };
+  }
+  setSections(
+    report.sections.map((section) => ({
+      name: section.label,
+      // Restatements of the same material share a color, so the form reads off
+      // the section band without comparing letters.
+      color: TRACK_COLOR_PALETTE[section.firstOccurrence % TRACK_COLOR_PALETTE.length],
+      // A piece opening with a pickup starts before bar one; the section list
+      // has no room for negative time, so the opening section starts at zero.
+      startPpq: Math.max(0, section.startPpq),
+      endPpq: section.endPpq,
+    })),
+  );
+  return { count: report.sections.length, excludedTrackNames: report.excludedTrackNames };
 }
 
 /**
