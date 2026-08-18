@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const harmonize = vi.hoisted(() => vi.fn());
 
-vi.mock('@libraz/libcantus', () => ({ harmonizeMelody: harmonize }));
+// Only the harmonizer is stubbed; the rest of the library stays real, so
+// modules that read a constant off it at import time still load.
+vi.mock('@libraz/libcantus', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@libraz/libcantus')>()),
+  harmonizeMelody: harmonize,
+}));
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
   return { ensureWasm: async () => createFakeWasmModule() };

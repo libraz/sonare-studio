@@ -27,6 +27,7 @@ import {
 } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
@@ -150,6 +151,7 @@ export function buildMotifPlan(
     notes: fresh.map(materializeNote),
     lengthPpq,
     preset: MOTIF_PRESET,
+    provenance: trackProvenance('motif', params.seed ?? 0),
   };
 }
 
@@ -235,6 +237,7 @@ export function generateMotifCommand(params: GenerateMotifParams = {}): number {
         startPpq: 0,
         lengthPpq: plan.lengthPpq,
         preset: plan.preset,
+        provenance: plan.provenance,
       },
       edit,
     ),

@@ -13,6 +13,7 @@
 
 import { type DrumsOptions, generateDrums } from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { isFourFourBarRange } from '../time-signature';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
@@ -91,7 +92,13 @@ export function buildDrumsPlan(
     materializeNote,
   );
   if (notes.length === 0) return null;
-  return { name: 'Drums', notes, lengthPpq: bars * BEATS_PER_BAR, preset: DRUMS_PRESET };
+  return {
+    name: 'Drums',
+    notes,
+    lengthPpq: bars * BEATS_PER_BAR,
+    preset: DRUMS_PRESET,
+    provenance: trackProvenance('drums', params.seed ?? 0),
+  };
 }
 
 /**
@@ -115,6 +122,7 @@ export function generateDrumsCommand(params: GenerateDrumsParams = {}): number {
         startPpq: 0,
         lengthPpq: plan.lengthPpq,
         preset: plan.preset,
+        provenance: plan.provenance,
       },
       edit,
     ),

@@ -204,6 +204,32 @@ describe('project serialization', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
+  it('round-trips a track generation record', async () => {
+    buildSampleProject(store);
+    store.tracks[0] = {
+      ...store.tracks[0],
+      generated: { part: 'bass', seed: 12, algorithmVersion: 1 },
+    };
+    const doc = serializeProject();
+    expect(doc.tracks[0].generated).toEqual({ part: 'bass', seed: 12, algorithmVersion: 1 });
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.tracks[0].generated).toEqual({ part: 'bass', seed: 12, algorithmVersion: 1 });
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  // A half-read record would claim a reproducibility it cannot deliver, so it
+  // is dropped and the track falls back to being classified by its name.
+  it('drops a malformed generation record during load', async () => {
+    buildSampleProject(store);
+    const doc = serializeProject();
+    doc.tracks[0].generated = { part: 'lead', seed: 1, algorithmVersion: 1 } as never;
+
+    await loadProjectDocument(doc);
+
+    expect(store.tracks[0].generated).toBeUndefined();
+  });
+
   it('sanitizes malformed track and clip playback numbers during load', async () => {
     buildSampleProject(store);
     const doc = serializeProject();

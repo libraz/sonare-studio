@@ -19,6 +19,7 @@ import {
   voiceProgression,
 } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
+import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
 import { addGeneratedTrack, type TrackPlan } from './generate-track';
@@ -96,7 +97,15 @@ export function buildBackingPlan(
   if (notes.length === 0) return null;
 
   const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);
-  return { name: 'Backing', notes, lengthPpq, preset: BACKING_PRESET };
+  // The backing voicing is deterministic, so its record carries no seed of
+  // its own; the part and the algorithm version are what reproduce it.
+  return {
+    name: 'Backing',
+    notes,
+    lengthPpq,
+    preset: BACKING_PRESET,
+    provenance: trackProvenance('backing', 0),
+  };
 }
 
 /**
@@ -120,6 +129,7 @@ export function generateBackingCommand(params: GenerateBackingParams = {}): numb
         startPpq: 0,
         lengthPpq: plan.lengthPpq,
         preset: plan.preset,
+        provenance: plan.provenance,
       },
       edit,
     ),

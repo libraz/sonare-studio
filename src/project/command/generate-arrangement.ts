@@ -21,6 +21,7 @@ import { chordSpanToEditorChord, editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
+import { type TrackProvenance, trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { getProject, useProjectStore } from '../store';
 import { isFourFourBarRange } from '../time-signature';
@@ -67,6 +68,7 @@ interface TrackPlan {
   notes: RawNote[];
   lengthPpq: number;
   preset: string;
+  provenance: TrackProvenance;
 }
 
 function clampPitch(pitch: number): number {
@@ -141,7 +143,13 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
       materializeNote,
     );
     if (notes.length > 0) {
-      plans.push({ name: 'Drums', notes, lengthPpq: barsLength, preset: PART_PRESET.drums });
+      plans.push({
+        name: 'Drums',
+        notes,
+        lengthPpq: barsLength,
+        preset: PART_PRESET.drums,
+        provenance: trackProvenance('drums', seed),
+      });
     }
   }
 
@@ -158,7 +166,15 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
     });
     const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
     const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);
-    if (notes.length > 0) plans.push({ name: 'Bass', notes, lengthPpq, preset: PART_PRESET.bass });
+    if (notes.length > 0) {
+      plans.push({
+        name: 'Bass',
+        notes,
+        lengthPpq,
+        preset: PART_PRESET.bass,
+        provenance: trackProvenance('bass', seed),
+      });
+    }
   }
 
   if (params.backing !== false && regions.length > 0) {
@@ -179,7 +195,13 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
     });
     const lengthPpq = regions.reduce((max, region) => Math.max(max, region.endPpq), 0);
     if (notes.length > 0) {
-      plans.push({ name: 'Backing', notes, lengthPpq, preset: PART_PRESET.backing });
+      plans.push({
+        name: 'Backing',
+        notes,
+        lengthPpq,
+        preset: PART_PRESET.backing,
+        provenance: trackProvenance('backing', 0),
+      });
     }
   }
 
@@ -204,6 +226,7 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
           startPpq: 0,
           lengthPpq: plan.lengthPpq,
           preset: plan.preset,
+          provenance: plan.provenance,
         },
         edit,
       );

@@ -42,6 +42,7 @@ import {
 } from './control-surface';
 import { sanitizeExpressionMap } from './expression-map';
 import { isExternalStemRole } from './external-stems';
+import { sanitizeProvenance } from './generation';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
@@ -709,6 +710,8 @@ export const useProjectStore = defineStore('project', () => {
         }
         if (track.soloSafe === true) mirrorEntry.soloSafe = true;
         if (typeof track.percussion === 'boolean') mirrorEntry.percussion = track.percussion;
+        const generated = sanitizeProvenance(track.generated);
+        if (generated !== undefined) mirrorEntry.generated = generated;
         if (track.chordFollow === 'chordTones' || track.chordFollow === 'root') {
           mirrorEntry.chordFollow = track.chordFollow;
         }

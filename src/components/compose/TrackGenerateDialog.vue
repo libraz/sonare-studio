@@ -5,9 +5,9 @@ import {
   type BatchPartSpec,
   type BatchTarget,
   generateTracksBatchCommand,
-  partForTrackName,
   type TrackPart,
 } from '@/project/commands';
+import { partForTrack } from '@/project/generation';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
@@ -306,10 +306,10 @@ function decodeTarget(value: string): BatchTarget {
   return { kind: 'new' };
 }
 
-/** Replacement candidates for a part: existing tracks whose name matches it. */
+/** Replacement candidates for a part: tracks recorded as (or named after) it. */
 function replaceCandidates(part: TrackPart): { value: string; label: string }[] {
   return store.tracks
-    .filter((track) => track.frozen === undefined && partForTrackName(track.name) === part)
+    .filter((track) => track.frozen === undefined && partForTrack(track) === part)
     .map((track) => ({
       value: `replace:${track.id}`,
       label: formatMessage(g.value.targetReplace, { name: track.name }),

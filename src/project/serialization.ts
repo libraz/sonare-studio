@@ -40,6 +40,7 @@ import { clearHistory } from './commands';
 import { type ControlSurfaceSettings, controlSurfaceSettingsAreDefault } from './control-surface';
 import type { TrackExpressionMap } from './expression-map';
 import type { ExternalStemRole } from './external-stems';
+import type { TrackProvenance } from './generation';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -309,6 +310,8 @@ export interface DocumentTrack {
    * `true` (force percussion) and `false` (force harmonic).
    */
   percussion?: boolean;
+  /** How the track was generated; absent = no recorded generation origin. */
+  generated?: TrackProvenance;
   /** Id of the VCA control group this track belongs to; absent = unassigned. */
   vcaId?: string;
   /** Chord-track follow mode; absent = the track ignores the chord track. */
@@ -838,6 +841,9 @@ export function serializeProject(): ProjectDocument {
       // Persist both true and false: false is a meaningful "not percussion"
       // override, distinct from an absent flag (fall back to the heuristic).
       if (track.percussion !== undefined) out.percussion = track.percussion;
+      // The generation record says where the track came from, so it survives
+      // renames and edits; it is dropped only when there was never one.
+      if (track.generated !== undefined) out.generated = { ...track.generated };
       if (track.chordFollow !== undefined) out.chordFollow = track.chordFollow;
       if (track.expressionMap !== undefined) out.expressionMap = track.expressionMap;
       // VCA group ids are app-level strings, stable within a document, so they

@@ -27,7 +27,6 @@ import {
   copyTrackChannelPreset,
   flattenClipMidiComp,
   hasCopiedTrackChannelPreset,
-  partForTrackName,
   pasteTrackChannelPreset,
   removeTrack,
   removeTracks,
@@ -55,6 +54,7 @@ import {
 import { flattenTrackComps } from '@/project/comp-flatten';
 import { EXPRESSION_MAP_PRESETS, matchingExpressionMapPreset } from '@/project/expression-map';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
+import { partForTrack } from '@/project/generation';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
@@ -920,7 +920,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       });
     }
   }
-  const generatedPart = partForTrackName(track.name);
+  const generatedPart = partForTrack(track);
   if (generatedPart !== null) {
     items.push(
       { id: 'sep-regenerate', separator: true },

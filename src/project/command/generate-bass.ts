@@ -14,6 +14,7 @@ import { type BassLineOptions, type BassSegment, generateBassLine } from '@libra
 import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
 import { executeAtomic } from './history';
@@ -60,7 +61,13 @@ export function buildBassPlan(
 
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
   if (notes.length === 0) return null;
-  return { name: 'Bass', notes, lengthPpq, preset: BASS_PRESET };
+  return {
+    name: 'Bass',
+    notes,
+    lengthPpq,
+    preset: BASS_PRESET,
+    provenance: trackProvenance('bass', params.seed ?? 0),
+  };
 }
 
 /**
@@ -83,6 +90,7 @@ export function generateBassLineCommand(params: GenerateBassParams = {}): number
         startPpq: 0,
         lengthPpq: plan.lengthPpq,
         preset: plan.preset,
+        provenance: plan.provenance,
       },
       edit,
     ),

@@ -15,6 +15,7 @@ import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { topVoiceOnly } from '@/compose/tracks';
+import { trackProvenance } from '../generation';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
@@ -78,7 +79,13 @@ export function buildCounterPlan(
 
   const notes = noteEventsToNewEditorNotes(events, { channel: 0 }).map(materializeNote);
   if (notes.length === 0) return null;
-  return { name: 'Counter melody', notes, lengthPpq: melodyEndBeat, preset: COUNTER_PRESET };
+  return {
+    name: 'Counter melody',
+    notes,
+    lengthPpq: melodyEndBeat,
+    preset: COUNTER_PRESET,
+    provenance: trackProvenance('counter', params.seed ?? 0),
+  };
 }
 
 /**
@@ -102,6 +109,7 @@ export function generateCounterMelodyCommand(params: GenerateCounterMelodyParams
         startPpq: 0,
         lengthPpq: plan.lengthPpq,
         preset: plan.preset,
+        provenance: plan.provenance,
       },
       edit,
     ),

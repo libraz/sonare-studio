@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cloneScoreAnnotations } from '@/project/annotations';
 import { setProjectChords } from '@/project/command/chords';
 import { setTrackFrozen } from '@/project/command/clips-state';
-import { generateTracksBatchCommand, partForTrackName } from '@/project/command/generate-batch';
+import { generateTracksBatchCommand } from '@/project/command/generate-batch';
 import { clearHistory, redo, undo } from '@/project/command/history';
-import { addNote, setNoteAnnotation } from '@/project/commands';
+import { addNote, renameTrack, setNoteAnnotation } from '@/project/commands';
+import { CURRENT_ALGORITHM_VERSION, partForTrack, sanitizeProvenance } from '@/project/generation';
 import { createDefaultStrip } from '@/project/mixer';
 import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -263,10 +264,92 @@ describe('generateTracksBatchCommand', () => {
     expect(store.tracks.length).toBe(baseTracks);
   });
 
-  it('classifies generated track names', () => {
-    expect(partForTrackName('Drums')).toBe('drums');
-    expect(partForTrackName('bass')).toBe('bass');
-    expect(partForTrackName('Counter melody')).toBe('counter');
-    expect(partForTrackName('Lead synth')).toBeNull();
+  // A generated track is recognised by what wrote it, so renaming it keeps it a
+  // regeneration target where the old name match would have lost it.
+  it('records which part wrote each generated track', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([
+      { part: 'drums', params: { bars: 4 }, target: { kind: 'new' } },
+      { part: 'bass', params: {}, target: { kind: 'new' } },
+    ]);
+
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    const bass = store.tracks.find((track) => track.name === 'Bass');
+    expect(drums?.generated).toEqual({
+      part: 'drums',
+      seed: 0,
+      algorithmVersion: CURRENT_ALGORITHM_VERSION,
+    });
+    expect(bass?.generated?.part).toBe('bass');
+
+    renameTrack(drums?.id ?? -1, 'Kit A');
+    expect(partForTrack(store.tracks.find((track) => track.id === drums?.id) ?? { name: '' })).toBe(
+      'drums',
+    );
+  });
+
+  it('records the seed the part was generated from', () => {
+    generateTracksBatchCommand([
+      { part: 'drums', params: { bars: 4, seed: 9 }, target: { kind: 'new' } },
+    ]);
+    expect(store.tracks.find((track) => track.name === 'Drums')?.generated?.seed).toBe(9);
+  });
+
+  // Replacing keeps the track id and its name, so the record is the only thing
+  // that can say the track now carries a different part.
+  it('rewrites the record when one part replaces another on a track', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const trackId = store.tracks.find((track) => track.name === 'Drums')?.id ?? -1;
+
+    generateTracksBatchCommand([
+      { part: 'bass', params: {}, target: { kind: 'replaceTrack', trackId } },
+    ]);
+
+    const track = store.tracks.find((entry) => entry.id === trackId);
+    expect(track?.generated?.part).toBe('bass');
+  });
+});
+
+describe('partForTrack', () => {
+  it('reads the part off the record, whatever the track is called', () => {
+    const record = { part: 'counter' as const, seed: 3, algorithmVersion: 1 };
+    expect(partForTrack({ name: 'Anything at all', generated: record })).toBe('counter');
+    // The record outranks a name that says otherwise.
+    expect(partForTrack({ name: 'Drums', generated: record })).toBe('counter');
+  });
+
+  // Tracks generated before the record existed have only their name to go on.
+  it('falls back to the canonical part name when there is no record', () => {
+    expect(partForTrack({ name: 'Drums' })).toBe('drums');
+    expect(partForTrack({ name: '  bass ' })).toBe('bass');
+    expect(partForTrack({ name: 'Counter melody' })).toBe('counter');
+    expect(partForTrack({ name: 'Lead synth' })).toBeNull();
+  });
+});
+
+describe('sanitizeProvenance', () => {
+  it('accepts a whole record', () => {
+    expect(sanitizeProvenance({ part: 'motif', seed: 0, algorithmVersion: 1 })).toEqual({
+      part: 'motif',
+      seed: 0,
+      algorithmVersion: 1,
+    });
+  });
+
+  it('drops anything it cannot read as a whole record', () => {
+    for (const value of [
+      undefined,
+      null,
+      42,
+      {},
+      { part: 'lead', seed: 1, algorithmVersion: 1 },
+      { part: 'motif', seed: 1.5, algorithmVersion: 1 },
+      { part: 'motif', seed: -1, algorithmVersion: 1 },
+      { part: 'motif', seed: 1 },
+      { part: 'motif', seed: 1, algorithmVersion: 0 },
+    ]) {
+      expect(sanitizeProvenance(value)).toBeUndefined();
+    }
   });
 });

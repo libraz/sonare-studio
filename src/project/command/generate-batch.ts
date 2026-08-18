@@ -14,6 +14,7 @@
  * whole batch (never nesting the single-shot commands' own boundaries).
  */
 
+import type { TrackPart } from '../generation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { buildBackingPlan, type GenerateBackingParams } from './generate-backing';
 import { buildBassPlan, type GenerateBassParams } from './generate-bass';
@@ -25,31 +26,7 @@ import { type AtomicProjectEdit, executeAtomic } from './history';
 import { pruneClipScoreAnnotations } from './tracks';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
-/** The five instrumental parts the batch command can generate. */
-export type TrackPart = 'motif' | 'drums' | 'bass' | 'counter' | 'backing';
-
-/** Canonical generated-track name per part, used by the name heuristic. */
-const PART_TRACK_NAMES: Record<TrackPart, string> = {
-  motif: 'Motif',
-  drums: 'Drums',
-  bass: 'Bass',
-  counter: 'Counter melody',
-  backing: 'Backing',
-};
-
-/**
- * Classifies an existing track as a replacement candidate for a part by its
- * name (the degraded provenance heuristic — no persisted generation origin).
- *
- * @returns The matching part, or null when the name matches none.
- */
-export function partForTrackName(name: string): TrackPart | null {
-  const normalized = name.trim().toLowerCase();
-  for (const part of Object.keys(PART_TRACK_NAMES) as TrackPart[]) {
-    if (PART_TRACK_NAMES[part].toLowerCase() === normalized) return part;
-  }
-  return null;
-}
+export type { TrackPart };
 
 /** Where a generated part is written. */
 export type BatchTarget =
@@ -126,6 +103,14 @@ function replaceTrack(
   store.clips = store.clips.map((clip) =>
     clip.id === clipId ? { ...clip, name: track.name } : clip,
   );
+  // The track keeps its id and its name, so the record is the only thing that
+  // says which part now sounds on it.
+  if (plan.provenance !== undefined) {
+    const provenance = plan.provenance;
+    store.tracks = store.tracks.map((entry) =>
+      entry.id === trackId ? { ...entry, generated: { ...provenance } } : entry,
+    );
+  }
 }
 
 /**
@@ -184,6 +169,7 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
                 startPpq: 0,
                 lengthPpq: plan.lengthPpq,
                 preset: plan.preset,
+                provenance: plan.provenance,
               },
               edit,
             );
@@ -203,6 +189,7 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
             startPpq: 0,
             lengthPpq: plan.lengthPpq,
             preset: plan.preset,
+            provenance: plan.provenance,
           },
           edit,
         ),

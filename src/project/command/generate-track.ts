@@ -12,6 +12,7 @@
  * partial failure then rolls back exactly the calls that completed.
  */
 
+import type { TrackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { getProject, notesToProjectEvents, type useProjectStore } from '../store';
 import { type NewEditorNote, TRACK_COLOR_PALETTE } from '../types';
@@ -56,6 +57,8 @@ export interface TrackPlan {
   lengthPpq: number;
   /** NativeSynth preset name for the new track; omitted = the default preset. */
   preset?: string;
+  /** How the part was generated, recorded on whichever track receives it. */
+  provenance?: TrackProvenance;
 }
 
 /** Inputs for {@link addGeneratedTrack}. */
@@ -70,6 +73,8 @@ export interface GeneratedTrack {
   lengthPpq: number;
   /** NativeSynth preset name for the new track; omitted = the default preset. */
   preset?: string;
+  /** How the part was generated; recorded on the new track when given. */
+  provenance?: TrackProvenance;
 }
 
 /**
@@ -107,6 +112,7 @@ export function addGeneratedTrack(
       ...(track.preset !== undefined
         ? { instrument: { kind: 'synth-preset' as const, preset: track.preset } }
         : {}),
+      ...(track.provenance !== undefined ? { generated: { ...track.provenance } } : {}),
     },
   ];
   const clipId = edit(2, () =>

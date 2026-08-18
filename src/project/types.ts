@@ -2,6 +2,7 @@ import type { MidiNote } from '@/engine/instruments';
 import type { ChordFollowMode } from './chord-follow';
 import type { TrackExpressionMap } from './expression-map';
 import type { ExternalStemRole } from './external-stems';
+import type { TrackProvenance } from './generation';
 import type { TrackInstrument } from './instrument';
 import type { MidiFxConfig } from './midi-fx';
 import type { MixerStrip } from './mixer';
@@ -137,6 +138,14 @@ export interface EditorTrack {
    * heuristic is only its seed.
    */
   percussion?: boolean;
+  /**
+   * How this track was generated (app-level): the part, seed and algorithm
+   * version behind its notes. Absent = not written by a generator, or written
+   * before the record existed; see {@link partForTrack}. Editing the notes does
+   * not clear it, so the record says where the track came from rather than what
+   * it currently contains.
+   */
+  generated?: TrackProvenance;
   /**
    * VCA control-group membership (app-level): id of the {@link VcaGroup} whose
    * fader offsets this track's gain. Absent = unassigned. The VCA fader makes
