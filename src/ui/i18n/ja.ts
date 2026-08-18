@@ -2070,6 +2070,8 @@ export const ja = {
       dissonant: '不協和',
       excluded: '解析対象外（パーカッション）',
       tension: 'テンション',
+      phraseCount: 'フレーズ {count} 個',
+      hyperbar: '{bars} 小節のまとまり',
     },
     settingsButton: {
       label: '設定',

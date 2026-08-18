@@ -2,7 +2,14 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ArrangementAnalysisPanel from '@/components/arrangement/ArrangementAnalysisPanel.vue';
-import { addMidiClip, addNote, addTrack, clearHistory, setActiveClip } from '@/project/commands';
+import {
+  addMidiClip,
+  addNote,
+  addTrack,
+  clearHistory,
+  setActiveClip,
+  setProjectChords,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -71,5 +78,63 @@ describe('ArrangementAnalysisPanel', () => {
     }
     expect(wrapper.find('.ap-prompt').exists()).toBe(false);
     expect(wrapper.find('.ap-spark').exists()).toBe(true);
+  });
+
+  /**
+   * Four four-bar units of a I-IV-V-I turn, each closing on a held tonic, with
+   * the progression written to the chord track so the phrasing reads the stated
+   * harmony rather than an inferred one.
+   */
+  function seedPeriodicPiece(): void {
+    const clipId = addMidiClip({ trackId: store.tracks[0].id, startPpq: 0, lengthPpq: 64 });
+    setActiveClip(clipId);
+    const chords = [];
+    for (let unit = 0; unit < 4; unit += 1) {
+      const at = unit * 16;
+      addNote({ pitch: 60, startPpq: at, durationPpq: 1 });
+      addNote({ pitch: 64, startPpq: at + 1, durationPpq: 1 });
+      addNote({ pitch: 67, startPpq: at + 2, durationPpq: 1 });
+      addNote({ pitch: 72, startPpq: at + 3, durationPpq: 1 });
+      addNote({ pitch: 65, startPpq: at + 4, durationPpq: 1 });
+      addNote({ pitch: 69, startPpq: at + 5, durationPpq: 1 });
+      addNote({ pitch: 72, startPpq: at + 6, durationPpq: 1 });
+      addNote({ pitch: 69, startPpq: at + 7, durationPpq: 1 });
+      addNote({ pitch: 67, startPpq: at + 8, durationPpq: 1 });
+      addNote({ pitch: 71, startPpq: at + 9, durationPpq: 1 });
+      addNote({ pitch: 74, startPpq: at + 10, durationPpq: 1 });
+      addNote({ pitch: 71, startPpq: at + 11, durationPpq: 1 });
+      addNote({ pitch: 60, startPpq: at + 12, durationPpq: 4 });
+      chords.push(
+        { startPpq: at, endPpq: at + 4, rootPc: 0, quality: 0 },
+        { startPpq: at + 4, endPpq: at + 8, rootPc: 5, quality: 0 },
+        { startPpq: at + 8, endPpq: at + 12, rootPc: 7, quality: 4 },
+        { startPpq: at + 12, endPpq: at + 16, rootPc: 0, quality: 0 },
+      );
+    }
+    setProjectChords(chords);
+  }
+
+  it('reports the phrase structure alongside the conflicts', async () => {
+    seedPeriodicPiece();
+    wrapper = mount(ArrangementAnalysisPanel);
+    await wrapper.find('.ap-toggle').trigger('click');
+    await wrapper.find('.ap-analyze').trigger('click');
+
+    const summary = wrapper.find('.ap-structure');
+    expect(summary.exists()).toBe(true);
+    // Phrase count and hyperbar length both appear, as digits.
+    expect(summary.text()).toMatch(/\d/);
+  });
+
+  it('jumps to a cadence when its row is clicked', async () => {
+    seedPeriodicPiece();
+    wrapper = mount(ArrangementAnalysisPanel);
+    await wrapper.find('.ap-toggle').trigger('click');
+    await wrapper.find('.ap-analyze').trigger('click');
+
+    const rows = wrapper.findAll('.ap-cadence-row');
+    expect(rows.length).toBeGreaterThan(0);
+    await rows[0].trigger('click');
+    expect(wrapper.emitted('jump')?.length).toBeGreaterThan(0);
   });
 });

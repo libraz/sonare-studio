@@ -5,6 +5,7 @@ import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { ArrangementConflict } from '@/compose/arrangement';
+import type { RankedCadence } from '@/compose/phrases';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
@@ -17,11 +18,16 @@ import { useI18n } from '@/ui/i18n';
  * the bar, so the header never grows and never pushes the arrangement's track
  * lanes out of view.
  *
+ * The same run also reads the piece's structure — where it breathes into
+ * phrases, which cadences carry the most weight, and how the bars group above
+ * the bar line. That is shown as a summary line plus a ranked cadence list,
+ * because a phrase list of its own would repeat what the cadences already say.
+ *
  * The analysis sweeps every track, so it is expensive; it runs only from the
  * Analyze button — never as a live watcher — and the button is disabled while
- * the transport is playing. Clicking a conflict row activates the clip under
- * the conflict (best effort) and asks the host to move the playhead there;
- * the popover stays open so multiple conflicts can be visited in sequence.
+ * the transport is playing. Clicking a conflict or a cadence activates the clip
+ * under it (best effort) and asks the host to move the playhead there; the
+ * popover stays open so several can be visited in sequence.
  */
 
 const props = defineProps<{
@@ -37,7 +43,8 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 const { formatPitch } = useNoteNames();
-const { conflicts, tension, excludedTrackNames, analyzed, analyze } = useArrangementAnalysis();
+const { conflicts, tension, phrases, cadences, hypermeter, excludedTrackNames, analyzed, analyze } =
+  useArrangementAnalysis();
 
 /** Popover open state; the header bar itself never resizes. */
 const open = ref(false);
@@ -135,6 +142,27 @@ function jumpTo(conflict: ArrangementConflict): void {
   }
   emit('jump', conflict.ppq);
 }
+
+/** One-line reading of the structure: phrase count and how bars group. */
+const structureSummary = computed<string>(() => {
+  const grouping = hypermeter.value;
+  if (phrases.value.length === 0 || grouping === null) return '';
+  const strings = t.value.shell.arrangementAnalysis;
+  return `${strings.phraseCount.replace('{count}', String(phrases.value.length))} / ${strings.hyperbar.replace('{bars}', String(grouping.groupBars))}`;
+});
+
+/**
+ * Localized name of a cadence type, taken from the shared harmony vocabulary so
+ * a cadence reads the same here as it does on the chord lane.
+ */
+function cadenceLabel(type: RankedCadence['type']): string {
+  return t.value.harmony.cadence[type];
+}
+
+/** Cadence weight as a whole-percent string, so the ranking is legible. */
+function weightLabel(weight: number): string {
+  return `${Math.round(weight * 100)}%`;
+}
 </script>
 
 <template>
@@ -180,6 +208,19 @@ function jumpTo(conflict: ArrangementConflict): void {
               <polyline :points="sparklinePoints" fill="none" stroke="currentColor" stroke-width="1" />
             </svg>
           </div>
+
+          <p v-if="structureSummary !== ''" class="ap-structure">{{ structureSummary }}</p>
+
+          <ul v-if="cadences.length > 0" class="ap-cadences">
+            <li v-for="cadence in cadences" :key="cadence.phraseIndex">
+              <button type="button" class="ap-cadence-row" @click="emit('jump', cadence.atPpq)">
+                <span class="ap-pos">{{ positionLabel(cadence.atPpq) }}</span>
+                <span class="ap-cadence-type">{{ cadenceLabel(cadence.type) }}</span>
+                <span class="ap-weight">{{ weightLabel(cadence.weight) }}</span>
+                <span class="ap-rationale">{{ cadence.rationale }}</span>
+              </button>
+            </li>
+          </ul>
 
           <p v-if="conflicts.length === 0" class="ap-clear">
             {{ t.shell.arrangementAnalysis.noConflicts }}
@@ -325,10 +366,42 @@ function jumpTo(conflict: ArrangementConflict): void {
   border-radius: var(--radius-xs);
 }
 
-.ap-conflicts {
+.ap-structure {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.ap-conflicts,
+.ap-cadences {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.ap-cadence-row {
+  display: grid;
+  grid-template-columns: 2.75rem 5.5rem 2.5rem 1fr;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  font: var(--fs-xs)/1.4 var(--font-sans);
+  text-align: left;
+  color: var(--text-2);
+  background: none;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.ap-cadence-row:hover {
+  background: var(--surface-4);
+}
+
+.ap-weight {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
 }
 
 .ap-row {

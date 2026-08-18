@@ -53,6 +53,25 @@ describe('useArrangementAnalysis', () => {
     }
   });
 
+  it('reads the piece structure in the same run', () => {
+    for (let bar = 0; bar < 4; bar += 1) {
+      for (const [beat, pitch] of [60, 64, 67, 72].entries()) {
+        addNote({ pitch, startPpq: bar * 4 + beat, durationPpq: 1 });
+      }
+    }
+
+    const analysis = useArrangementAnalysis();
+    analysis.analyze();
+
+    expect(analysis.phrases.value.length).toBeGreaterThan(0);
+    expect(analysis.phrases.value[0]?.startPpq).toBe(0);
+    expect(analysis.hypermeter.value?.groupBars).toBeGreaterThan(0);
+    // Every ranked cadence points at a phrase the same run produced.
+    for (const cadence of analysis.cadences.value) {
+      expect(analysis.phrases.value[cadence.phraseIndex]).toBeDefined();
+    }
+  });
+
   it('reset clears the cached results', () => {
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     const analysis = useArrangementAnalysis();
@@ -62,5 +81,8 @@ describe('useArrangementAnalysis', () => {
     expect(analysis.analyzed.value).toBe(false);
     expect(analysis.conflicts.value).toEqual([]);
     expect(analysis.tension.value).toEqual([]);
+    expect(analysis.phrases.value).toEqual([]);
+    expect(analysis.cadences.value).toEqual([]);
+    expect(analysis.hypermeter.value).toBeNull();
   });
 });

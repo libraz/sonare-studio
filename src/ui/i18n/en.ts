@@ -2073,6 +2073,8 @@ export const en = {
       dissonant: 'Dissonant',
       excluded: 'Excluded (percussion)',
       tension: 'Tension',
+      phraseCount: '{count} phrases',
+      hyperbar: '{bars}-bar groups',
     },
     settingsButton: {
       label: 'Settings',

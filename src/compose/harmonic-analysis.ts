@@ -199,8 +199,12 @@ function isDisplayedCadence(type: LibraryCadenceType): type is CadenceType {
   return DISPLAYED_CADENCE_TYPES.some((displayed) => displayed === type);
 }
 
-/** How a detected cadence reads on the lane, or undefined when it has no label. */
-function displayedCadence(cadence: CadenceResult): CadenceType | undefined {
+/**
+ * How a detected cadence reads on the lane, or undefined when it has no label.
+ * Exported so every surface that shows a cadence agrees on which types it can
+ * name and how the unnamed ones are folded in.
+ */
+export function displayedCadence(cadence: CadenceResult): CadenceType | undefined {
   if (cadence.type === null) return undefined;
   const reading = CADENCE_READING[cadence.type];
   // `'modal'` (the bVII-to-I arrival) has no label of its own, so it goes unmarked.

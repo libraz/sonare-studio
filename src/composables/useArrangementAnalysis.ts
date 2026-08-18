@@ -1,7 +1,7 @@
 /**
  * Cross-track arrangement analysis for the arrangement view: conflicts (notes
- * clashing with the sounding harmony) and a coarse tension curve, derived from
- * the whole project.
+ * clashing with the sounding harmony), a coarse tension curve, and the piece's
+ * phrase structure, derived from the whole project.
  *
  * The analysis walks every track and pools their notes, so it is comparatively
  * expensive; unlike the piano-roll guidance it does NOT run as a live computed.
@@ -19,6 +19,12 @@ import {
   arrangementTensionCurve,
 } from '@/compose/arrangement';
 import { effectiveKeyScale } from '@/compose/key';
+import {
+  analyzePhrases,
+  type DetectedPhrase,
+  type HypermeterReading,
+  type RankedCadence,
+} from '@/compose/phrases';
 import type { TrackWithNotes } from '@/compose/tracks';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
@@ -37,6 +43,12 @@ export interface ArrangementAnalysis {
   conflicts: Ref<ArrangementConflict[]>;
   /** Harmonic-tension samples across the piece. */
   tension: Ref<TensionSample[]>;
+  /** Phrases in time order; they abut and cover the piece. */
+  phrases: Ref<DetectedPhrase[]>;
+  /** The cadences closing those phrases, heaviest first. */
+  cadences: Ref<RankedCadence[]>;
+  /** How the piece's bars group above the bar line, or null when unread. */
+  hypermeter: Ref<HypermeterReading | null>;
   /** Names of percussion tracks dropped from analysis (shown so exclusion is visible). */
   excludedTrackNames: Ref<string[]>;
   /** True once {@link analyze} has run at least once since the last reset. */
@@ -66,6 +78,9 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
   const store = useProjectStore();
   const conflicts = ref<ArrangementConflict[]>([]);
   const tension = ref<TensionSample[]>([]);
+  const phrases = ref<DetectedPhrase[]>([]);
+  const cadences = ref<RankedCadence[]>([]);
+  const hypermeter = ref<HypermeterReading | null>(null);
   const excludedTrackNames = ref<string[]>([]);
   const analyzed = ref(false);
 
@@ -78,15 +93,34 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     tension.value = arrangementTensionCurve(tracks, tensionStep, key, store.timeSignatures).map(
       (point) => ({ ppq: point.beat, tension: point.tension }),
     );
+    // Phrasing follows the written chord track when there is one, so it reads
+    // the harmony the composer stated rather than a re-reading of it.
+    const structure = analyzePhrases(tracks, store.chords, store.timeSignatures);
+    phrases.value = structure.phrases;
+    cadences.value = structure.cadences;
+    hypermeter.value = structure.hypermeter;
     analyzed.value = true;
   }
 
   function reset(): void {
     conflicts.value = [];
     tension.value = [];
+    phrases.value = [];
+    cadences.value = [];
+    hypermeter.value = null;
     excludedTrackNames.value = [];
     analyzed.value = false;
   }
 
-  return { conflicts, tension, excludedTrackNames, analyzed, analyze, reset };
+  return {
+    conflicts,
+    tension,
+    phrases,
+    cadences,
+    hypermeter,
+    excludedTrackNames,
+    analyzed,
+    analyze,
+    reset,
+  };
 }
