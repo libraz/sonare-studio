@@ -2652,8 +2652,7 @@ export const en = {
       octatonicWholeHalf: 'Octatonic (whole-half)',
       chromatic: 'Chromatic',
     },
-    estimatedKey: ' (estimated key)',
-    inferredCadence: ' (inferred)',
+    inferred: 'inferred',
     levelName: {
       beginner: 'Beginner',
       normal: 'Normal',

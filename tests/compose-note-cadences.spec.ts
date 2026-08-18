@@ -153,7 +153,7 @@ describe('cadences from a chord track', () => {
     const arrival = notes.find((item) => item.startPpq === 12);
     const line = cadenceLine(byNoteId.get(arrival?.id ?? -1) as NoteAnalysis);
     expect(line?.text).toBe('Authentic cadence — the phrase closes here');
-    expect(line?.text).not.toContain(MESSAGES.en.theory.inferredCadence.trim());
+    expect(line?.badge).toBeUndefined();
 
     // The note a beat before the arrival, and the one starting the piece, carry
     // no cadence: the line belongs to the arrival, not to the chord over it.
@@ -194,7 +194,8 @@ describe('cadences inferred from the notes', () => {
     const arrival = notes.find((item) => item.startPpq === 12);
     const line = cadenceLine(byNoteId.get(arrival?.id ?? -1) as NoteAnalysis);
 
-    expect(line?.text).toBe('Authentic cadence — the phrase closes here (inferred)');
+    expect(line?.text).toBe('Authentic cadence — the phrase closes here');
+    expect(line?.badge).toBe(MESSAGES.en.theory.inferred);
   });
 
   it('pools every sounding voice rather than the clip being edited', () => {

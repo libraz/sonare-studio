@@ -979,10 +979,17 @@ describe('buildTheoryCard', () => {
       { pitch: 64, keySet: true, keyEstimated: true },
       labels,
     );
-    expect(set.lines.find((line) => line.label === 'Scale')?.text).toBe('Degree 3');
-    expect(estimated.lines.find((line) => line.label === 'Scale')?.text).toBe(
-      'Degree 3 (estimated key)',
-    );
+    // The hedge qualifies the whole line rather than continuing its sentence,
+    // so it travels beside the wording instead of inside it.
+    expect(set.lines.find((line) => line.label === 'Scale')).toEqual({
+      label: 'Scale',
+      text: 'Degree 3',
+    });
+    expect(estimated.lines.find((line) => line.label === 'Scale')).toEqual({
+      label: 'Scale',
+      text: 'Degree 3',
+      badge: 'inferred',
+    });
   });
 
   it('switches wording between explanation levels for the same note', () => {

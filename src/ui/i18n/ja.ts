@@ -2653,8 +2653,7 @@ export const ja = {
       octatonicWholeHalf: 'ディミニッシュ',
       chromatic: '半音階',
     },
-    estimatedKey: '（キーは推定）',
-    inferredCadence: '（推定）',
+    inferred: '推定',
     levelName: {
       beginner: '初心者',
       normal: '通常',

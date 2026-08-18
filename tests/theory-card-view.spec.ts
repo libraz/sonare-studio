@@ -34,6 +34,28 @@ describe('TheoryCardView', () => {
     expect(buttons[0]?.attributes('aria-expanded')).toBe('false');
   });
 
+  it('sets the provenance marker apart from the wording it qualifies', () => {
+    const wrapper = mount(TheoryCardView, {
+      props: {
+        card: makeCard({
+          lines: [
+            { label: 'Scale', text: 'Degree 1', badge: 'inferred' },
+            { label: 'Role', text: 'Chord tone' },
+          ],
+        }),
+      },
+    });
+
+    const badges = wrapper.findAll('.theory-card-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.text()).toBe('inferred');
+    // Inside the text span, so it wraps with the reading rather than being
+    // pinned to the right of a line that has grown to two.
+    const text = wrapper.findAll('.theory-card-text')[0];
+    expect(text?.find('.theory-card-badge').exists()).toBe(true);
+    expect(text?.text()).toBe('Degree 1inferred');
+  });
+
   it('expands and collapses the definition in place', async () => {
     const wrapper = mount(TheoryCardView, { props: { card: makeCard() } });
     const info = wrapper.get('.theory-card-info');

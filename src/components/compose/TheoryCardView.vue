@@ -63,7 +63,10 @@ watch(
     <template v-for="(line, index) in card.lines" :key="index">
       <div class="theory-card-line">
         <span class="theory-card-label">{{ line.label }}</span>
-        <span class="theory-card-text">{{ line.text }}</span>
+        <span class="theory-card-text"
+          >{{ line.text
+          }}<span v-if="line.badge" class="theory-card-badge">{{ line.badge }}</span></span
+        >
         <button
           v-if="line.term"
           type="button"
@@ -119,6 +122,29 @@ watch(
 .theory-card-text {
   flex: 1;
   min-width: 0;
+}
+
+/* Provenance marker: it qualifies the reading rather than continuing it, so it
+   is set apart instead of trailing the sentence in brackets. Kept to a fill and
+   a muted colour with no border and no accent — it says where a reading came
+   from, which is not something to draw the eye to, and this card is already at
+   the smallest type in the app, so the quiet has to come from colour rather
+   than from size. Inline, so it flows with the text it qualifies and rides
+   along when the line wraps.
+
+   The fill is a veil of the text colour rather than the inset surface: an inset
+   well is darker than the card in the dark theme, where it reads as a hole
+   punched in the card and leaves the word looking like plain muted text. A
+   veil of the foreground lifts on a dark card and settles on a light one, so
+   the chip keeps the same weight either way. */
+.theory-card-badge {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text-3) 14%, transparent);
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 /* The ⓘ affordance: a borderless ghost glyph that only gains weight when its

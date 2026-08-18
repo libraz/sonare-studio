@@ -28,6 +28,13 @@ export interface TheoryCardLine {
   label: string;
   text: string;
   /**
+   * Short provenance marker for the line, set when its reading rests on
+   * something the app worked out rather than on something the composer stated.
+   * It qualifies the whole line rather than continuing it, which is why it does
+   * not travel inside `text`.
+   */
+  badge?: string;
+  /**
    * The jargon term this line refers to, when one applies. Surfaces the ⓘ
    * glossary affordance so a reader can expand its definition in place.
    */
@@ -78,14 +85,17 @@ export interface TheoryLabels {
   intervalNames: Readonly<Record<string, string>>;
   /** Scale display names keyed by libcantus scale name (e.g. 'dorian'). */
   scaleNames: Readonly<Record<string, string>>;
-  /** Suffix marking a scale line whose key was estimated rather than set. */
-  estimatedKey: string;
+  /**
+   * Marks a line whose reading rests on something the app worked out rather
+   * than on something the composer stated: a key estimated from the notes, a
+   * cadence read out of them. Shown apart from the wording rather than
+   * appended to it, so the sentence stays a sentence.
+   */
+  inferred: string;
   /** Cadence line label and type names (see {@link CadenceLabels}). */
   cadence: CadenceLabels;
   /** Cadence-arrival line template, with a `{cadence}` placeholder. */
   cadenceArrival: string;
-  /** Suffix marking a cadence read from the notes rather than from a chord track. */
-  inferredCadence: string;
   /** Scale-degree line template, with a `{degree}` placeholder. */
   scaleDegree: string;
   /** Suffix appended to the scale line for a non-scale tone. */
@@ -184,8 +194,7 @@ export interface LocalizedTheory {
   lines: TheoryLabels['lines'];
   intervalNames: TheoryLabels['intervalNames'];
   scaleNames: TheoryLabels['scaleNames'];
-  estimatedKey: TheoryLabels['estimatedKey'];
-  inferredCadence: TheoryLabels['inferredCadence'];
+  inferred: TheoryLabels['inferred'];
   levels: Readonly<Record<string, TheoryLevelLabels>>;
   glossary: TheoryLabels['glossary'];
 }
@@ -212,10 +221,9 @@ export function theoryLabelsFor(
     lines: theory.lines,
     intervalNames: theory.intervalNames,
     scaleNames: theory.scaleNames,
-    estimatedKey: theory.estimatedKey,
+    inferred: theory.inferred,
     cadence,
     cadenceArrival: levelLabels.cadenceArrival,
-    inferredCadence: theory.inferredCadence,
     lock: levelLabels.lock,
     safety: levelLabels.safety,
     labels: levelLabels.labels,
@@ -580,10 +588,10 @@ export function buildTheoryCard(
     // A cadence read out of the notes is a reading the app arrived at on its
     // own, so it says so, the way an estimated key does. One stated by a chord
     // track is the composer's own progression and is reported plainly.
-    const text = labels.cadenceArrival.replace('{cadence}', labels.cadence[analysis.cadence.type]);
     lines.push({
       label: labels.cadence.label,
-      text: analysis.cadence.inferred ? text + labels.inferredCadence : text,
+      text: labels.cadenceArrival.replace('{cadence}', labels.cadence[analysis.cadence.type]),
+      ...(analysis.cadence.inferred ? { badge: labels.inferred } : {}),
     });
   }
   if (ctx.keySet) {
@@ -596,7 +604,8 @@ export function buildTheoryCard(
     // has to be admitted here rather than left for the reader to discover.
     lines.push({
       label: labels.lines.scale,
-      text: ctx.keyEstimated === true ? text + labels.estimatedKey : text,
+      text,
+      ...(ctx.keyEstimated === true ? { badge: labels.inferred } : {}),
     });
   }
   const colorTones = chordScaleText(analysis, labels, ctx.keyFifths, ctx.noteNameSystem);
