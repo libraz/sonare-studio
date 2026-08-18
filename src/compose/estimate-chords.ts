@@ -14,7 +14,7 @@
  * Pure module (no Vue/Pinia); callers flatten clips to absolute PPQ.
  */
 
-import type { ChordData, ChordSpan, KeyScale, TimeSignature } from '@libraz/libcantus';
+import { type KeyScale, spanFromChord, type TimeSignature } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
 import { measureRangeAt, meterBarLengthPpq, timeSignatureRanges } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
@@ -52,13 +52,6 @@ export interface EstimatedChords {
 }
 
 type EstimatedChordsCore = Omit<EstimatedChords, 'excludedTrackNames'>;
-
-/** Places an inferred chord on a beat as a libcantus {@link ChordSpan}. */
-function chordToSpan(chord: ChordData): ChordSpan {
-  const span: ChordSpan = { rootPc: chord.rootPc, quality: chord.quality, startBeat: 0 };
-  if (chord.bassPc !== undefined) span.bassPc = chord.bassPc;
-  return span;
-}
 
 /**
  * Estimates from tracks that have already passed {@link harmonicTracksOnly}.
@@ -106,7 +99,7 @@ function estimateChordsFromHarmonicTracks(
   }
   const result = inferChordTimelineFromNotes(notes, options);
   const symbols = result.timeline.segments.map((segment) =>
-    chordSpanToEditorChord(chordToSpan(segment.chord), segment.startBeat, segment.endBeat),
+    chordSpanToEditorChord(spanFromChord(segment.chord, 0), segment.startBeat, segment.endBeat),
   );
   return { symbols, key: result.prevailingKey, confidence: result.segmentConfidence };
 }
