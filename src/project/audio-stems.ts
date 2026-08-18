@@ -60,7 +60,12 @@ export interface AudioStemEnhancers {
     nFft?: number,
     hopLength?: number,
   ) => Float32Array;
-  /** Matrix NMF seam kept for capability plumbing; not applied without inverse reconstruction. */
+  /**
+   * Matrix NMF seam. Its two component activations are read as a same-length
+   * bleed gate between the harmonic and percussive bands; nothing here is
+   * reconstructed from a mask, so a gated band is still the separator's own.
+   * Preferred in its `decomposeWithInit` form, which seeds deterministically.
+   */
   decompose?: (
     s: Float32Array,
     nFeatures: number,

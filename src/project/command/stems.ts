@@ -85,9 +85,10 @@ function isStemSourceCurrent(
  *
  * The clip's played source window is separated with libsonare's
  * `hpssWithResidual` (delegated; see {@link separateAudioClipStems}); newer
- * builds can also provide phase-vocoder length repair. Matrix-only
- * `decompose` / `nnFilter` seams are plumbed as capabilities but are not
- * applied to waveform stems until an inverse-mask path exists. Each band is
+ * builds can also provide phase-vocoder length repair, an NN filter that
+ * refines a band in place, and matrix NMF read as a bleed gate between the
+ * harmonic and percussive bands. None of the three reconstructs a waveform, so
+ * the bands laid down here are always the separator's own. Each band is
  * stored as a new audio asset and placed as a clip at the source clip's start
  * with its length and gain. The async work (separation and asset stores) runs
  * first; the tracks, asset sources and clips are then created inside a single

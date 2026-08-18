@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAudioAssetCache, listAssets, loadAsset, saveAsset } from '@/persistence/assets';
+import { STEM_KINDS } from '@/project/audio-stems';
 import {
   addAudioClip,
   addAudioTrack,
@@ -24,6 +25,12 @@ import {
   trimClip,
   undo,
 } from '@/project/commands';
+import { isExternalStemRole } from '@/project/external-stems';
+import {
+  loadProjectDocument,
+  type ProjectDocument,
+  serializeProject,
+} from '@/project/serialization';
 import { getProject, useProjectStore } from '@/project/store';
 import { warpSourceSecondsAt } from '@/project/warp';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
@@ -81,6 +88,54 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 
 async function flushPromises(times = 5): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
+}
+
+/** Reads the metadata strings the Project stores for a clip's audio source. */
+function sourceMetadata(clipId: number): { contentHash: string; externalStemRole: string } {
+  const sourceId = readDoc().clips.find((clip) => clip.id === clipId)?.source_id ?? 0;
+  const source = (
+    getProject() as unknown as {
+      sourceByIndex(index: number): { contentHash: string; externalStemRole: string };
+    }
+  ).sourceByIndex(sourceId - 1);
+  return { contentHash: source.contentHash, externalStemRole: source.externalStemRole };
+}
+
+/** The name each band is laid down under: the source clip name plus the band. */
+function bandNames(baseName: string): string[] {
+  return STEM_KINDS.map((kind) => `${baseName} ${kind}`);
+}
+
+/**
+ * Lays down an audio clip over a four-frame asset and installs a separator that
+ * scales each band differently, so the split stores three distinct assets.
+ *
+ * @param name Source clip name the stem names are derived from.
+ * @returns Id of the audio clip to split (starts at 4 PPQ, gain 0.75).
+ */
+async function layDownStemSource(name: string): Promise<number> {
+  installMockOpfs();
+  await saveAsset({ id: 'stem-source', name: 'Stem Source', sampleRate: 4 }, [
+    new Float32Array([1, 2, 3, 4]),
+  ]);
+  const trackId = addAudioTrack({ name: 'Audio' });
+  const clipId = await addAudioClip({
+    trackId,
+    assetId: 'stem-source',
+    startPpq: 4,
+    lengthPpq: 2,
+    gain: 0.75,
+    name,
+  });
+  Object.assign(wasmModule.current ?? {}, {
+    hpssWithResidual: (samples: Float32Array, sampleRate?: number) => ({
+      harmonic: samples.map((value) => value * 2),
+      percussive: samples.map((value) => value * 3),
+      residual: samples.map((value) => value * 4),
+      sampleRate: sampleRate ?? 4,
+    }),
+  });
+  return clipId;
 }
 
 describe('audio track and clip commands', () => {
@@ -638,6 +693,144 @@ describe('audio track and clip commands', () => {
     await expect(consolidateAudioClips([comped, tail], { tempoBpm: 120 })).rejects.toThrow(
       /warped take-comp/,
     );
+  });
+
+  it('lays down one track and clip per band, in band order, under the source clip', async () => {
+    const clipId = await layDownStemSource('Loop');
+    const tracksBefore = store.tracks.length;
+    const clipsBefore = store.clips.length;
+
+    const stemClipIds = await splitAudioClipToStems(clipId);
+
+    expect(stemClipIds).toHaveLength(3);
+    expect(store.tracks).toHaveLength(tracksBefore + 3);
+    expect(store.clips).toHaveLength(clipsBefore + 3);
+    const stemClips = stemClipIds.map((id) => store.clips.find((clip) => clip.id === id));
+    // The band is carried by the name the clip, its track and its asset share.
+    expect(stemClips.map((clip) => clip?.name)).toEqual(bandNames('Loop'));
+    const stemTracks = stemClips.map((clip) =>
+      store.tracks.find((track) => track.id === clip?.trackId),
+    );
+    expect(stemTracks.map((track) => track?.name)).toEqual(bandNames('Loop'));
+    expect(stemTracks.map((track) => track?.kind)).toEqual(['audio', 'audio', 'audio']);
+    // Each band gets its own track, its own clip and its own asset.
+    expect(new Set(stemTracks.map((track) => track?.id)).size).toBe(3);
+    expect(new Set(stemClips.map((clip) => clip?.assetId)).size).toBe(3);
+    for (const clip of stemClips) {
+      expect(clip).toMatchObject({
+        kind: 'audio',
+        startPpq: 4,
+        lengthPpq: 2,
+        sourceOffsetPpq: 0,
+        gain: 0.75,
+        loopEnabled: false,
+        notes: [],
+      });
+    }
+    expect(
+      (await listAssets()).map((asset) => asset.name).filter((name) => name.startsWith('Loop ')),
+    ).toEqual([...bandNames('Loop')].sort());
+
+    // The native project carries the same placement and one source per band.
+    const doc = readDoc();
+    expect(doc.tracks.filter((track) => track.name.startsWith('Loop ')).map((t) => t.name)).toEqual(
+      bandNames('Loop'),
+    );
+    const docStemClips = stemClipIds.map((id) => doc.clips.find((clip) => clip.id === id));
+    for (const clip of docStemClips) {
+      expect(clip).toMatchObject({ start_ppq: 4, length_ppq: 2, gain: 0.75 });
+    }
+    expect(new Set(docStemClips.map((clip) => clip?.source_id)).size).toBe(3);
+  });
+
+  it('leaves imported-stem provenance off the bands it separates itself', async () => {
+    const clipId = await layDownStemSource('Loop');
+
+    const stemClipIds = await splitAudioClipToStems(clipId);
+
+    expect(stemClipIds).toHaveLength(3);
+    // externalStemRole (src/project/external-stems.ts) records that a clip came
+    // from an outside separator, and its vocabulary is deliberately disjoint
+    // from the StemKind bands of src/project/audio-stems.ts. A band separated
+    // here has no external provenance, so the role stays absent on the clip and
+    // on the audio source the Project keeps it in.
+    expect(STEM_KINDS.some((kind) => isExternalStemRole(kind))).toBe(false);
+    for (const id of stemClipIds) {
+      const clip = store.clips.find((entry) => entry.id === id);
+      expect(clip?.externalStemRole).toBeUndefined();
+      expect(sourceMetadata(id).externalStemRole).toBe('');
+    }
+    expect(store.clips.filter((clip) => clip.externalStemRole !== undefined)).toEqual([]);
+  });
+
+  it('round-trips split stems through a document with the band left in the name', async () => {
+    const clipId = await layDownStemSource('Loop');
+    const stemClipIds = await splitAudioClipToStems(clipId);
+    expect(stemClipIds).toHaveLength(3);
+
+    const doc = serializeProject();
+    const stemDocClips = doc.tracks
+      .flatMap((track) => track.clips)
+      .filter((clip) => clip.name.startsWith('Loop '));
+    expect(stemDocClips).toHaveLength(3);
+    expect(stemDocClips.map((clip) => clip.name)).toEqual(bandNames('Loop'));
+    expect(
+      doc.tracks.map((track) => track.name).filter((name) => name.startsWith('Loop ')),
+    ).toEqual(bandNames('Loop'));
+    // A StemKind is not a persisted field: the document carries no provenance
+    // role for these bands, only the names.
+    expect(stemDocClips.map((clip) => clip.externalStemRole)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(JSON.stringify(doc)).not.toContain('externalStemRole');
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    const reloaded = store.clips.filter((clip) => clip.name.startsWith('Loop '));
+    expect(reloaded).toHaveLength(3);
+    expect(reloaded.map((clip) => clip.name)).toEqual(bandNames('Loop'));
+    expect(
+      reloaded.map((clip) => store.tracks.find((track) => track.id === clip.trackId)?.name),
+    ).toEqual(bandNames('Loop'));
+    expect(reloaded.map((clip) => clip.externalStemRole)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    for (const clip of reloaded) expect(sourceMetadata(clip.id).externalStemRole).toBe('');
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  it('undoes a stem split as one edit, tracks and clips together', async () => {
+    const clipId = await layDownStemSource('Loop');
+    clearHistory();
+    const tracksBefore = store.tracks.length;
+    const clipsBefore = store.clips.length;
+    const docTracksBefore = readDoc().tracks.length;
+    const docClipsBefore = readDoc().clips.length;
+    const sourcesBefore = getProject().sourceCount();
+
+    const stemClipIds = await splitAudioClipToStems(clipId);
+    expect(stemClipIds).toHaveLength(3);
+
+    expect(undo()).toBe(true);
+    expect(store.tracks).toHaveLength(tracksBefore);
+    expect(store.clips).toHaveLength(clipsBefore);
+    expect(store.clips.some((clip) => stemClipIds.includes(clip.id))).toBe(false);
+    expect(store.tracks.some((track) => track.name.startsWith('Loop '))).toBe(false);
+    expect(readDoc().tracks).toHaveLength(docTracksBefore);
+    expect(readDoc().clips).toHaveLength(docClipsBefore);
+    expect(getProject().sourceCount()).toBe(sourcesBefore);
+    expect(undo()).toBe(false);
+
+    expect(redo()).toBe(true);
+    expect(
+      store.clips.filter((clip) => stemClipIds.includes(clip.id)).map((clip) => clip.name),
+    ).toEqual(bandNames('Loop'));
+    expect(readDoc().tracks).toHaveLength(docTracksBefore + 3);
+    expect(readDoc().clips).toHaveLength(docClipsBefore + 3);
   });
 
   it('skips stem clip creation when the source clip changes during separation', async () => {
