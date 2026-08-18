@@ -34,6 +34,12 @@ export interface TrackExpressionMap {
 /** Velocity used for key switches: audible to the sampler, silent musically. */
 export const KEY_SWITCH_VELOCITY = 1;
 
+/** Lowest key switch of the preset bank (C1), below any playable range. */
+const FIRST_KEY_SWITCH = 24;
+
+/** Controller the second preset selects articulations on. */
+const ARTICULATION_SELECT_CONTROLLER = 32;
+
 /** True when a map would send nothing at all. */
 export function isExpressionMapEmpty(map: TrackExpressionMap | undefined): boolean {
   return (
@@ -97,30 +103,29 @@ export interface ExpressionMapPreset {
 /**
  * Ready-made maps for the two conventions sample libraries actually use: a
  * bank of key switches below the playable range, and one articulation-select
- * controller. Both cover the four articulations the score can mark; a project
- * file can carry any other combination the model allows.
+ * controller. Both cover every articulation the score can mark, in the order
+ * {@link NOTE_ARTICULATIONS} declares, so a mark added to the vocabulary is
+ * audible without hand-editing a map; a project file can carry any other
+ * combination the model allows.
  */
 export const EXPRESSION_MAP_PRESETS: ReadonlyArray<ExpressionMapPreset> = [
   {
     id: 'keySwitchesC1',
     map: {
-      entries: [
-        { articulation: 'staccato', keySwitch: 24 },
-        { articulation: 'accent', keySwitch: 25 },
-        { articulation: 'tenuto', keySwitch: 26 },
-        { articulation: 'marcato', keySwitch: 27 },
-      ],
+      entries: NOTE_ARTICULATIONS.map((articulation, index) => ({
+        articulation,
+        keySwitch: FIRST_KEY_SWITCH + index,
+      })),
     },
   },
   {
     id: 'controller32',
     map: {
-      entries: [
-        { articulation: 'staccato', controller: 32, value: 1 },
-        { articulation: 'accent', controller: 32, value: 2 },
-        { articulation: 'tenuto', controller: 32, value: 3 },
-        { articulation: 'marcato', controller: 32, value: 4 },
-      ],
+      entries: NOTE_ARTICULATIONS.map((articulation, index) => ({
+        articulation,
+        controller: ARTICULATION_SELECT_CONTROLLER,
+        value: index + 1,
+      })),
     },
   },
 ];

@@ -1,3 +1,5 @@
+import { timeSignatureAtPpq } from '@/compose/meter';
+import { type OrnamentMark, planOrnaments } from '@/compose/ornaments';
 import {
   DISPLAY_TRANSPOSE_MAX,
   DISPLAY_TRANSPOSE_MIN,
@@ -243,6 +245,67 @@ export function setNoteAnnotation(
     store.scoreAnnotations = all;
     store.refresh();
   });
+}
+
+/** Options for {@link ornamentClipNotes}. */
+export interface OrnamentClipOptions {
+  /** Which decoration to write. */
+  mark: OrnamentMark;
+  /** How much of the eligible material is decorated, in [0, 1]. */
+  amount: number;
+  /** Tempo, which the difficulty ceiling needs to reject what is too fast. */
+  bpm?: number;
+  /** Hardest the result may be to play, 1..5; omitted means no ceiling. */
+  difficulty?: number;
+  /** Fixes which notes are decorated; the same seed writes the same marks. */
+  seed?: number;
+}
+
+/**
+ * Marks a clip's notes with an articulation as one undoable edit.
+ *
+ * Which notes are eligible follows from the mark and the meter, so this writes
+ * a reading of the passage rather than a blanket setting. Notes already marked
+ * by hand keep the mark they have, and no note, onset or duration is changed:
+ * the pass only annotates. Use {@link planOrnaments} to show what it would do
+ * before calling this.
+ *
+ * @param clipId Id of the clip to decorate.
+ * @param options The decoration, its amount, and the context that limits it.
+ * @returns How many notes were marked (0 when the pass found nothing eligible).
+ * @throws RangeError when the clip is unknown.
+ */
+export function ornamentClipNotes(clipId: number, options: OrnamentClipOptions): number {
+  const store = useProjectStore();
+  const clip = requireClip(store, clipId);
+  const existing = store.scoreAnnotations[clipId] ?? {};
+  const keep = new Set(
+    Object.entries(existing)
+      .filter(([, annotation]) => annotation.articulation !== undefined)
+      .map(([noteId]) => Number(noteId)),
+  );
+  const { marks } = planOrnaments(clip.notes, {
+    mark: options.mark,
+    amount: options.amount,
+    ts: timeSignatureAtPpq(store.timeSignatures, clip.startPpq),
+    ...(options.bpm !== undefined ? { bpm: options.bpm } : {}),
+    ...(options.difficulty !== undefined ? { difficulty: options.difficulty } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    keep,
+  });
+  if (marks.length === 0) return 0;
+  execute(0, () => {
+    const clipAnnotations = { ...existing };
+    for (const mark of marks) {
+      clipAnnotations[mark.noteId] = {
+        ...(clipAnnotations[mark.noteId] ?? {}),
+        articulation: mark.articulation,
+      };
+    }
+    store.scoreAnnotations = { ...store.scoreAnnotations, [clipId]: clipAnnotations };
+    store.refresh();
+  });
+  return marks.length;
 }
 
 /**

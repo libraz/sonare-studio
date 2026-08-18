@@ -9,14 +9,16 @@ import { EDITOR_TOOL_DEFS } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
 import GuidanceLegend from './GuidanceLegend.vue';
 import MidiFxPanel from './MidiFxPanel.vue';
+import OrnamentPanel from './OrnamentPanel.vue';
 import { ZOOM_BUTTON_STEP } from './use-piano-roll-zoom';
 
 /**
  * Toolbar above the piano-roll grid: the multi-track ghost overlay toggle, a
  * track-color legend that focuses a track on click, the horizontal/vertical
- * zoom buttons and the MIDI-FX transform popover toggle. The overlay flag and
- * the transform popover open state are two-way bound to the editor; the legend
- * reads the project store directly.
+ * zoom buttons and the MIDI-FX transform and decoration popover toggles. The
+ * overlay flag and the transform popover open state are two-way bound to the
+ * editor; the legend reads the project store directly. The two popovers share
+ * the same corner, so opening one closes the other.
  */
 
 const overlayEnabled = defineModel<boolean>('overlayEnabled', { required: true });
@@ -77,10 +79,22 @@ const noteColorModeOptions = computed(() => [
 /** Whether the composition-guidance legend popover is open. */
 const legendOpen = ref(false);
 
+/** Whether the decoration popover is open. */
+const ornamentOpen = ref(false);
+
 /** Toggles the transform popover (closing it when no MIDI clip is active). */
 function toggleFxPanel(): void {
   if (!props.canTransform) return;
   fxPanelOpen.value = !fxPanelOpen.value;
+  // The two popovers occupy the same corner, so one opening closes the other.
+  if (fxPanelOpen.value) ornamentOpen.value = false;
+}
+
+/** Toggles the decoration popover (closing it when no MIDI clip is active). */
+function toggleOrnamentPanel(): void {
+  if (!props.canTransform) return;
+  ornamentOpen.value = !ornamentOpen.value;
+  if (ornamentOpen.value) fxPanelOpen.value = false;
 }
 
 /** Legend chip click: focuses the track (activates its first clip, if any). */
@@ -288,6 +302,17 @@ function onLegendClick(trackId: number): void {
     <button
       type="button"
       class="fx-toggle"
+      :class="{ 'fx-toggle-active': ornamentOpen }"
+      :disabled="!canTransform"
+      :aria-expanded="ornamentOpen"
+      v-tooltip="t.shell.pianoRoll.ornamentTitle"
+      @click="toggleOrnamentPanel"
+    >
+      {{ t.shell.pianoRoll.ornamentToggle }}
+    </button>
+    <button
+      type="button"
+      class="fx-toggle"
       :class="{ 'fx-toggle-active': legendOpen }"
       :aria-expanded="legendOpen"
       v-tooltip="t.shell.pianoRoll.guideTitle"
@@ -301,6 +326,11 @@ function onLegendClick(trackId: number): void {
       :clip-id="clipId"
       :note-count="noteCount"
       @close="fxPanelOpen = false"
+    />
+    <OrnamentPanel
+      v-if="ornamentOpen && canTransform"
+      :clip-id="clipId"
+      @close="ornamentOpen = false"
     />
   </div>
 </template>

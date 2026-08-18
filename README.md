@@ -27,7 +27,9 @@ A digital audio workstation that runs entirely in the browser, built on the
   available. MPE is not supported: expression lanes use MIDI 1.0 channels, and
   polyphonic pressure is stored per pitch rather than per individual note.
 - Display-only score annotations (dynamics, articulations, slurs) and an
-  engraving-only transpose, applied from the score panel's Annotate palette
+  engraving-only transpose, applied from the score panel's Annotate palette, or
+  read onto a whole clip at once from the piano roll's Decorate panel, which
+  places ghosts, flams, drags, slides and accents where the meter admits them
 - A unified menu bar (including Window and Options menus) with a header
   light/dark theme toggle
 - Remappable keyboard shortcuts with a `?` cheatsheet overlay, an application

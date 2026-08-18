@@ -11,7 +11,12 @@
  * (drum meter support is a library concern), which the dialog surfaces.
  */
 
-import { type DrumsOptions, generateDrums } from '@libraz/libcantus';
+import {
+  type DrumsOptions,
+  generateDrums,
+  MAX_DIFFICULTY,
+  MIN_DIFFICULTY,
+} from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
@@ -48,9 +53,24 @@ export interface GenerateDrumsParams {
   role?: DrumsOptions['role'];
   /** Euclidean kick override, replacing the style/section kick pattern. */
   euclideanKick?: DrumsOptions['euclideanKick'];
+  /**
+   * Hardest the groove may be to play, from {@link MIN_DRUM_DIFFICULTY} to
+   * {@link MAX_DRUM_DIFFICULTY}; omitted leaves the groove unconstrained.
+   *
+   * A ceiling rather than an intensity: it rejects strokes the density asked
+   * for and the tempo makes too fast to sustain, so the same setting thins the
+   * groove more at a quick tempo than at a slow one.
+   */
+  difficulty?: number;
   /** Deterministic seed (default 0). */
   seed?: number;
 }
+
+/** Lowest playing-difficulty ceiling: what a beginner sustains. */
+export const MIN_DRUM_DIFFICULTY: number = MIN_DIFFICULTY;
+
+/** Highest playing-difficulty ceiling: at the limit of the instrument. */
+export const MAX_DRUM_DIFFICULTY: number = MAX_DIFFICULTY;
 
 /**
  * Builds the drum-track plan for a new track without writing to the Project, so
@@ -84,7 +104,10 @@ export function buildDrumsPlan(
     ctx: {
       seed: params.seed ?? 0,
       bpm: store.tempoBpm,
-      complexity: { rhythmic: params.density ?? 0.6 },
+      complexity: {
+        rhythmic: params.density ?? 0.6,
+        ...(params.difficulty !== undefined ? { difficulty: params.difficulty } : {}),
+      },
     },
   });
 

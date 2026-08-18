@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildMidiClipSchedules } from '@/engine/midi-sync';
-import { clipArticulations } from '@/project/annotations';
+import { clipArticulations, NOTE_ARTICULATIONS } from '@/project/annotations';
 import {
   addMidiClip,
   addNote,
@@ -68,6 +68,21 @@ describe('expression map model', () => {
     });
     expect(sanitizeExpressionMap({ entries: [] })).toBeUndefined();
     expect(sanitizeExpressionMap(null)).toBeUndefined();
+  });
+
+  /**
+   * A marking the score can write but no preset covers would be silent on every
+   * ready-made map, so a mark added to the vocabulary has to reach both presets
+   * or it is display-only by accident rather than by decision.
+   */
+  it('covers every articulation the score can mark in both presets', () => {
+    for (const preset of EXPRESSION_MAP_PRESETS) {
+      const covered = preset.map.entries.map((entry) => entry.articulation);
+      expect([...covered].sort()).toEqual([...NOTE_ARTICULATIONS].sort());
+      // Each mark has to be distinguishable at the far end.
+      const sent = preset.map.entries.map((entry) => `${entry.keySwitch}/${entry.value}`);
+      expect(new Set(sent).size).toBe(sent.length);
+    }
   });
 
   it('recognizes its own presets and reports empty maps', () => {

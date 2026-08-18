@@ -9,6 +9,7 @@ import {
   deleteNotes,
   duplicateClip,
   glueMidiClips,
+  ornamentClipNotes,
   redo,
   setActiveClip,
   setClipLoop,
@@ -207,6 +208,59 @@ describe('score annotation commands', () => {
     expect(undo()).toBe(true);
     expect(store.notes.some((n) => n.id === noteId)).toBe(true);
     expect(store.scoreAnnotations[store.clipId]?.[noteId]).toEqual({ dynamics: 'p' });
+  });
+
+  /**
+   * The decoration pass writes a reading of the passage: many notes, one edit,
+   * and nothing but annotations, so the notes it marks play back exactly as
+   * before until a track carries an expression map.
+   */
+  it('ornamentClipNotes marks a run of notes as one undoable edit', () => {
+    const ids: number[] = [];
+    for (let index = 0; index < 16; index += 1) {
+      ids.push(addNote({ pitch: 48 + (index % 4), startPpq: index * 0.5, durationPpq: 0.5 }));
+    }
+    const before = store.notes.map((note) => ({ ...note }));
+
+    const marked = ornamentClipNotes(store.clipId, { mark: 'ghost', amount: 1 });
+    expect(marked).toBeGreaterThan(0);
+    const entries = store.scoreAnnotations[store.clipId] ?? {};
+    expect(Object.keys(entries)).toHaveLength(marked);
+    for (const [noteId, annotation] of Object.entries(entries)) {
+      expect(annotation).toEqual({ articulation: 'ghost' });
+      expect(ids).toContain(Number(noteId));
+    }
+    // Notes, onsets and durations are untouched: only the reading was added.
+    expect(store.notes.map((note) => ({ ...note }))).toEqual(before);
+
+    expect(undo()).toBe(true);
+    expect(store.scoreAnnotations).toEqual({});
+    expect(redo()).toBe(true);
+    expect(Object.keys(store.scoreAnnotations[store.clipId] ?? {})).toHaveLength(marked);
+  });
+
+  it('ornamentClipNotes keeps a mark made by hand and reports when it writes none', () => {
+    const ids: number[] = [];
+    for (let index = 0; index < 16; index += 1) {
+      ids.push(addNote({ pitch: 48 + (index % 4), startPpq: index * 0.5, durationPpq: 0.5 }));
+    }
+    const written = ornamentClipNotes(store.clipId, { mark: 'ghost', amount: 1 });
+    const first = Number(Object.keys(store.scoreAnnotations[store.clipId] ?? {})[0]);
+    setNoteAnnotation(store.clipId, first, { articulation: 'marcato' });
+
+    // Re-running the same pass finds every eligible note already marked.
+    expect(ornamentClipNotes(store.clipId, { mark: 'ghost', amount: 1 })).toBe(0);
+    expect(store.scoreAnnotations[store.clipId]?.[first]).toEqual({ articulation: 'marcato' });
+    expect(Object.keys(store.scoreAnnotations[store.clipId] ?? {})).toHaveLength(written);
+  });
+
+  it('ornamentClipNotes reports nothing when the technique has no position to sit on', () => {
+    for (let index = 0; index < 4; index += 1) {
+      addNote({ pitch: 60, startPpq: index * 4, durationPpq: 4 });
+    }
+    expect(ornamentClipNotes(store.clipId, { mark: 'ghost', amount: 1 })).toBe(0);
+    expect(store.scoreAnnotations).toEqual({});
+    expect(() => ornamentClipNotes(-1, { mark: 'ghost', amount: 1 })).toThrow(RangeError);
   });
 
   it('setDisplayTranspose validates, applies and undoes', () => {

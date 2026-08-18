@@ -162,6 +162,45 @@ describe('TrackGenerateDialog', () => {
     expect(drumsRow?.querySelector('.bars-caption')?.textContent).toContain('4');
   });
 
+  /**
+   * The ceiling is a second dial on the same part, so it has to be reachable
+   * and it has to mean something different from density: raising density asks
+   * for more, lowering the ceiling refuses what the tempo puts out of reach.
+   */
+  it('thins the generated groove when a difficulty ceiling is chosen', async () => {
+    setProjectChords(FOUR_CHORDS);
+    store.tempoBpm = 200;
+
+    const drumNotes = async (level: string): Promise<number> => {
+      await open();
+      const drumsRow = [...document.body.querySelectorAll<HTMLElement>('.part-row')][1];
+      drumsRow?.querySelector<HTMLButtonElement>('.part-expand')?.click();
+      await nextTick();
+      const ceiling = drumsRow?.querySelector<HTMLSelectElement>('.difficulty-field select');
+      expect(ceiling).not.toBeNull();
+      if (ceiling !== null && ceiling !== undefined) {
+        ceiling.value = level;
+        ceiling.dispatchEvent(new Event('change'));
+        await nextTick();
+        expect(ceiling.value).toBe(level);
+      }
+      checkPart(1);
+      await nextTick();
+      confirm()?.click();
+      await nextTick();
+      const track = store.tracks.find((entry) => entry.name === 'Drums');
+      const count = store.clips.find((clip) => clip.trackId === track?.id)?.notes.length ?? 0;
+      undo();
+      wrapper?.unmount();
+      return count;
+    };
+
+    const unconstrained = await drumNotes('0');
+    const easiest = await drumNotes('1');
+    expect(easiest).toBeGreaterThan(0);
+    expect(easiest).toBeLessThan(unconstrained);
+  });
+
   it('generates the checked parts in one undoable batch', async () => {
     setProjectChords(FOUR_CHORDS);
     await open();

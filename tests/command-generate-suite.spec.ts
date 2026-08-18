@@ -5,7 +5,11 @@ import { moveClip, trimClip } from '@/project/command/clips-editing';
 import { setClipLoop, setTrackFrozen } from '@/project/command/clips-state';
 import { generateBassLineCommand } from '@/project/command/generate-bass';
 import { generateCounterMelodyCommand } from '@/project/command/generate-counter-melody';
-import { generateDrumsCommand } from '@/project/command/generate-drums';
+import {
+  generateDrumsCommand,
+  MAX_DRUM_DIFFICULTY,
+  MIN_DRUM_DIFFICULTY,
+} from '@/project/command/generate-drums';
 import { harmonizeFromMelodyCommand } from '@/project/command/generate-harmonize';
 import { generateMotifCommand } from '@/project/command/generate-motif';
 import { clearHistory, redo, undo } from '@/project/command/history';
@@ -219,6 +223,39 @@ describe('generation command suite', () => {
     it('reports the unsupported meter instead of writing a 4/4 drum grid', () => {
       store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
       expect(() => generateDrumsCommand({ bars: 2 })).toThrow(/supports 4\/4 bars only/);
+    });
+
+    /**
+     * The ceiling rejects what the density asked for rather than scaling it, and
+     * it reads the tempo: what a beginner sustains at a walking tempo is not
+     * what they sustain twice as fast. A ceiling that ignored the tempo would
+     * make the two dials the same dial under different names.
+     */
+    it('thins a busy groove to what the difficulty ceiling sustains at the tempo', () => {
+      const hits = (difficulty: number | undefined) => {
+        const params = {
+          bars: 2,
+          style: 'funk' as const,
+          section: 'chorus' as const,
+          density: 0.9,
+          seed: 3,
+          ...(difficulty === undefined ? {} : { difficulty }),
+        };
+        const count = generateDrumsCommand(params);
+        expect(undo()).toBe(true);
+        return count;
+      };
+
+      store.tempoBpm = 200;
+      const easy = hits(MIN_DRUM_DIFFICULTY);
+      const hard = hits(MAX_DRUM_DIFFICULTY);
+      expect(easy).toBeLessThan(hard);
+      // No ceiling asked for leaves the groove as the density wrote it.
+      expect(hits(undefined)).toBe(hard);
+
+      // The same ceiling holds back less when there is more time between strokes.
+      store.tempoBpm = 80;
+      expect(hits(MIN_DRUM_DIFFICULTY)).toBeGreaterThan(easy);
     });
   });
 

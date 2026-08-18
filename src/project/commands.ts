@@ -80,7 +80,11 @@ export { generateTracksBatchCommand } from './command/generate-batch';
 export type { GenerateCounterMelodyParams } from './command/generate-counter-melody';
 export { generateCounterMelodyCommand } from './command/generate-counter-melody';
 export type { GenerateDrumsParams } from './command/generate-drums';
-export { generateDrumsCommand } from './command/generate-drums';
+export {
+  generateDrumsCommand,
+  MAX_DRUM_DIFFICULTY,
+  MIN_DRUM_DIFFICULTY,
+} from './command/generate-drums';
 export type {
   HarmonizeFromMelodyParams,
   ReharmonizeStrength,
@@ -235,9 +239,10 @@ export {
   applyReharmonizationProposal,
   proposeReharmonizationForActiveClip,
 } from './command/reharmonize-reactive';
-export type { NoteAnnotationUpdate } from './command/score-annotations';
+export type { NoteAnnotationUpdate, OrnamentClipOptions } from './command/score-annotations';
 export {
   clearNoteAnnotation,
+  ornamentClipNotes,
   setDisplayTranspose,
   setNoteAnnotation,
 } from './command/score-annotations';

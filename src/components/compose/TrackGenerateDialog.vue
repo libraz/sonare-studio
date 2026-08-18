@@ -5,6 +5,8 @@ import {
   type BatchPartSpec,
   type BatchTarget,
   generateTracksBatchCommand,
+  MAX_DRUM_DIFFICULTY,
+  MIN_DRUM_DIFFICULTY,
   type TrackPart,
 } from '@/project/commands';
 import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/generation';
@@ -220,6 +222,16 @@ const drumBars = ref(4);
 const drumBarsDirty = ref(false);
 const drumDensity = ref(0.6);
 const drumFills = ref(true);
+/**
+ * Playing-difficulty ceiling for the groove; 0 means none. It rejects strokes
+ * the density asked for and the tempo makes too fast to sustain, so it thins a
+ * fast groove more than a slow one, and the two dials are not interchangeable.
+ */
+const drumDifficulty = ref(0);
+const DRUM_DIFFICULTIES: ReadonlyArray<number> = Array.from(
+  { length: MAX_DRUM_DIFFICULTY - MIN_DRUM_DIFFICULTY + 1 },
+  (_unused, index) => MIN_DRUM_DIFFICULTY + index,
+);
 
 type BassStyle = 'root' | 'rootFifth' | 'pop' | 'walking' | 'arpeggio';
 const BASS_STYLES: ReadonlyArray<{
@@ -425,6 +437,7 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
         section: drumSection.value,
         density: Math.min(1, Math.max(0, drumDensity.value)),
         fills: drumFills.value,
+        ...(drumDifficulty.value > 0 ? { difficulty: drumDifficulty.value } : {}),
         seed: seedFor('drums'),
       };
     case 'bass':
@@ -599,6 +612,15 @@ function toggleExpanded(part: TrackPart): void {
                   <select v-model="drumSection">
                     <option v-for="option in SECTIONS" :key="option.id" :value="option.id">
                       {{ g[option.labelKey] }}
+                    </option>
+                  </select>
+                </label>
+                <label class="number-field difficulty-field">
+                  <span class="field-label">{{ g.difficulty }}</span>
+                  <select v-model.number="drumDifficulty" v-tooltip="g.difficultyTitle">
+                    <option :value="0">{{ g.difficultyNone }}</option>
+                    <option v-for="level in DRUM_DIFFICULTIES" :key="level" :value="level">
+                      {{ level }}
                     </option>
                   </select>
                 </label>

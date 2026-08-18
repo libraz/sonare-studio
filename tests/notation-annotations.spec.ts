@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { NotatedEvent, NotatedScore } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { type QuantizeOptions, quantizeToScore } from '@/notation/quantize';
-import type { ScoreNoteAnnotation } from '@/project/annotations';
+import {
+  NOTE_ARTICULATIONS,
+  type NoteArticulation,
+  type ScoreNoteAnnotation,
+} from '@/project/annotations';
 import type { EditorNote } from '@/project/types';
 
 /** Builds an EditorNote fixture with editor defaults. */
@@ -191,18 +195,28 @@ describe('serializeMusicXml dynamics', () => {
 
 describe('serializeMusicXml articulations', () => {
   it('maps each marking to its MusicXML articulation element', () => {
-    const expected = {
+    // A technique the format does not enumerate is written as an
+    // other-articulation carrying its name, which stays valid for a reader that
+    // has never heard of it.
+    const expected: Readonly<Record<NoteArticulation, string>> = {
       staccato: '<articulations><staccato placement="above"/></articulations>',
       accent: '<articulations><accent placement="above"/></articulations>',
       tenuto: '<articulations><tenuto placement="above"/></articulations>',
       marcato: '<articulations><strong-accent placement="above"/></articulations>',
-    } as const;
-    for (const [articulation, fragment] of Object.entries(expected)) {
-      const xml = engrave([makeNote(1, 72, 0, 1)], {
-        1: { articulation: articulation as keyof typeof expected },
-      });
+      ghost:
+        '<articulations><other-articulation placement="above">ghost</other-articulation></articulations>',
+      flam: '<articulations><other-articulation placement="above">flam</other-articulation></articulations>',
+      drag: '<articulations><other-articulation placement="above">drag</other-articulation></articulations>',
+      slide:
+        '<articulations><other-articulation placement="above">slide</other-articulation></articulations>',
+    };
+    // Every marking the palette offers has to engrave, or the score silently
+    // loses one the editor can still write.
+    expect(Object.keys(expected).sort()).toEqual([...NOTE_ARTICULATIONS].sort());
+    for (const articulation of NOTE_ARTICULATIONS) {
+      const xml = engrave([makeNote(1, 72, 0, 1)], { 1: { articulation } });
       parse(xml);
-      expect(xml).toContain(`<notations>${fragment}</notations>`);
+      expect(xml).toContain(`<notations>${expected[articulation]}</notations>`);
     }
   });
 

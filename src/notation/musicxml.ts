@@ -103,8 +103,15 @@ const CHORD_QUALITY_KIND: ReadonlyMap<number, string> = new Map([
   [15, 'dominant-ninth'],
 ]);
 
-/** MusicXML articulation element name per annotation marking. */
-const ARTICULATION_ELEMENT: Readonly<Record<NoteArticulation, string>> = {
+/**
+ * MusicXML articulation element name per annotation marking.
+ *
+ * A marking absent from this table has no element of its own in the format and
+ * is written as `<other-articulation>` carrying its name, which is what the
+ * schema provides for a technique it does not enumerate; a reader that knows
+ * the name gets the intent, and one that does not still parses the file.
+ */
+const ARTICULATION_ELEMENT: Readonly<Partial<Record<NoteArticulation, string>>> = {
   staccato: 'staccato',
   accent: 'accent',
   tenuto: 'tenuto',
@@ -2112,7 +2119,11 @@ function isRollCandidate(midi: number): boolean {
 
 /** Builds a voice-aware articulation element. */
 function articulationXml(articulation: NoteArticulation, event: NotatedEvent): string {
-  return `<${ARTICULATION_ELEMENT[articulation]} placement="${slurPlacement(event)}"/>`;
+  const placement = slurPlacement(event);
+  const element = ARTICULATION_ELEMENT[articulation];
+  return element === undefined
+    ? `<other-articulation placement="${placement}">${escapeXml(articulation)}</other-articulation>`
+    : `<${element} placement="${placement}"/>`;
 }
 
 /** Builds a MusicXML ornament or expression notation. */

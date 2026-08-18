@@ -21,8 +21,26 @@ export type NoteDynamics = 'pp' | 'p' | 'mp' | 'mf' | 'f' | 'ff';
 /** All dynamics markings, softest first. */
 export const NOTE_DYNAMICS: ReadonlyArray<NoteDynamics> = ['pp', 'p', 'mp', 'mf', 'f', 'ff'];
 
-/** Articulation marking attached to a note. */
-export type NoteArticulation = 'staccato' | 'accent' | 'tenuto' | 'marcato';
+/**
+ * Articulation marking attached to a note.
+ *
+ * The first four are the engraved marks of common practice. The rest name a
+ * way of striking or leaving a note that a score writes in words or symbols
+ * rather than with a standard element, and that a sampler answers with a key
+ * switch: a ghost is a stroke felt more than heard, a flam and a drag are
+ * grace strokes ahead of the beat, a slide is a note reached by sliding into
+ * it. They are the marks the decoration pass can write, so the vocabulary and
+ * what can produce it stay in step.
+ */
+export type NoteArticulation =
+  | 'staccato'
+  | 'accent'
+  | 'tenuto'
+  | 'marcato'
+  | 'ghost'
+  | 'flam'
+  | 'drag'
+  | 'slide';
 
 /** All articulation markings. */
 export const NOTE_ARTICULATIONS: ReadonlyArray<NoteArticulation> = [
@@ -30,6 +48,10 @@ export const NOTE_ARTICULATIONS: ReadonlyArray<NoteArticulation> = [
   'accent',
   'tenuto',
   'marcato',
+  'ghost',
+  'flam',
+  'drag',
+  'slide',
 ];
 
 /** Ornament or expressive mark attached to a note. */
