@@ -122,7 +122,7 @@ describe('buildGuidance', () => {
       { pitch: 71, keySet: true },
       theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
-    expect(card.lines.find((line) => line.label === 'Scale')?.text).toBe('Scale degree 7');
+    expect(card.lines.find((line) => line.label === 'Scale')?.text).toBe('Degree 7');
   });
 
   it('flags a note a semitone above a chord tone as not safe', () => {
@@ -767,7 +767,7 @@ describe('buildTheoryCard', () => {
     );
     expect(card.title).toBe('E4 — 3rd');
     const scaleLine = card.lines.find((line) => line.label === 'Scale');
-    expect(scaleLine?.text).toBe('Scale degree 3');
+    expect(scaleLine?.text).toBe('Degree 3');
     const chordLine = card.lines.find((line) => line.label === 'Chord');
     expect(chordLine?.text).toBe('I — Tonic');
     expect(card.lines.length).toBeGreaterThan(0);
@@ -894,7 +894,7 @@ describe('buildTheoryCard', () => {
     );
     expect(card.title).toBe('E4 — 第3音');
     const scaleLine = card.lines.find((line) => line.label === 'スケール');
-    expect(scaleLine?.text).toBe('スケール度数 3');
+    expect(scaleLine?.text).toBe('度数 3');
     const chordLine = card.lines.find((line) => line.label === 'コード');
     expect(chordLine?.text).toBe('I — トニック');
   });
@@ -979,9 +979,9 @@ describe('buildTheoryCard', () => {
       { pitch: 64, keySet: true, keyEstimated: true },
       labels,
     );
-    expect(set.lines.find((line) => line.label === 'Scale')?.text).toBe('Scale degree 3');
+    expect(set.lines.find((line) => line.label === 'Scale')?.text).toBe('Degree 3');
     expect(estimated.lines.find((line) => line.label === 'Scale')?.text).toBe(
-      'Scale degree 3 (key estimated from the notes)',
+      'Degree 3 (estimated key)',
     );
   });
 

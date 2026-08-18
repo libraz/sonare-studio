@@ -194,7 +194,7 @@ describe('cadences inferred from the notes', () => {
     const arrival = notes.find((item) => item.startPpq === 12);
     const line = cadenceLine(byNoteId.get(arrival?.id ?? -1) as NoteAnalysis);
 
-    expect(line?.text).toBe('Authentic cadence — the phrase closes here (read from the notes)');
+    expect(line?.text).toBe('Authentic cadence — the phrase closes here (inferred)');
   });
 
   it('pools every sounding voice rather than the clip being edited', () => {
