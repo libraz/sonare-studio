@@ -190,6 +190,10 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
   executeAtomic((edit) => {
     if (sanitizedChords !== null) {
       edit(1, () => project.annotateChords(toProjectChordSymbols(sanitizedChords)));
+      // Adding each track below refreshes, and that read-back seeds itself from
+      // the chord mirror. Move the mirror onto the chords just written, so the
+      // seed is the new progression rather than the one it replaced.
+      store.chords = sanitizedChords;
     }
     for (const plan of plans) {
       addGeneratedTrack(

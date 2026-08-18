@@ -45,10 +45,13 @@ export function setProjectChords(symbols: ReadonlyArray<EditorChordSymbol>): voi
   const project = getProject();
   const before = store.chords.map((chord) => ({ ...chord }));
   const followEdits = planChordFollowEdits(store, before, sanitized);
+  // The annotation encoding has no field for omitted tones, so the symbols just
+  // written are handed to the read-back as hints; without them a chord that
+  // omits a tone would come back sounding it.
   if (followEdits.length === 0) {
     execute(1, () => {
       project.annotateChords(toProjectChordSymbols(sanitized));
-      store.refresh();
+      store.refresh(undefined, sanitized);
     });
     return;
   }
@@ -59,7 +62,10 @@ export function setProjectChords(symbols: ReadonlyArray<EditorChordSymbol>): voi
     }
     // Re-voiced notes keep their editor ids, so selection and score
     // annotations survive the chord change.
-    store.refresh(new Map(followEdits.map((clipEdit) => [clipEdit.clipId, clipEdit.notes])));
+    store.refresh(
+      new Map(followEdits.map((clipEdit) => [clipEdit.clipId, clipEdit.notes])),
+      sanitized,
+    );
   });
 }
 

@@ -13,10 +13,10 @@
  *     exact quality strings and otherwise carries the extensions in the
  *     returned ChordData interval set.
  *   - libcantus -> editor keeps the exact ordinal when one exists, otherwise
- *     degrades to a base ordinal plus an `extensions` list capturing the color
- *     tones. The reverse is information-lossy by construction; the round-trip
- *     test only pins that the 15 exact ordinals survive edit -> libcantus ->
- *     edit unchanged.
+ *     expresses the quality as a base ordinal plus the `extensions` that colour
+ *     it and the `omissions` it does not sound. Naming is asymmetric, but the
+ *     tone set is not: every quality in the union comes back sounding exactly
+ *     the pitch classes libcantus gives it.
  *
  * The mapping tables themselves live in src/compose/chord-quality.ts, which
  * also names chords from them; this module owns only the ChordData/ChordSpan
@@ -33,6 +33,7 @@ import {
   editorExtensionQuality,
   libcantusQualityToEditor,
   normalizedChordExtensions,
+  normalizedChordOmissions,
 } from '@/compose/chord-quality';
 import type { EditorChordSymbol } from '@/project/chords';
 
@@ -58,22 +59,37 @@ function appendExtensionIntervals(
   return out;
 }
 
+/** Drops the intervals whose pitch class the symbol declares silent. */
+function removeOmittedIntervals(
+  intervals: ReadonlyArray<number>,
+  omissions: ReadonlyArray<number>,
+): number[] {
+  if (omissions.length === 0) return [...intervals];
+  const silent = new Set(omissions);
+  return intervals.filter((interval) => !silent.has(((interval % 12) + 12) % 12));
+}
+
 /**
- * Builds a libcantus chord from an editor symbol. Known extension combinations
- * use their exact quality; free combinations retain an explicit interval set.
+ * Builds a libcantus chord from an editor symbol. Known extension and omission
+ * combinations use their exact quality; free combinations retain an explicit
+ * interval set with the omitted tones removed.
  */
 export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
   const rootPc = ((symbol.rootPc % 12) + 12) % 12;
-  const exactExtensionQuality = editorExtensionQuality(symbol.quality, symbol.extensions);
-  const quality = exactExtensionQuality ?? audioQualityToLibcantus(symbol.quality);
+  const exactQuality = editorExtensionQuality(symbol.quality, symbol.extensions, symbol.omissions);
+  const quality = exactQuality ?? audioQualityToLibcantus(symbol.quality);
   const bassPc =
     symbol.bassPc === undefined || symbol.bassPc === rootPc
       ? undefined
       : ((symbol.bassPc % 12) + 12) % 12;
   const chord = makeChord(rootPc, quality, bassPc);
-  if (exactExtensionQuality !== undefined) return chord;
+  if (exactQuality !== undefined) return chord;
   const extensions = normalizedChordExtensions(symbol.quality, symbol.extensions);
-  chord.intervals = appendExtensionIntervals(chord.intervals, extensions);
+  const omissions = normalizedChordOmissions(symbol.quality, symbol.omissions);
+  chord.intervals = appendExtensionIntervals(
+    removeOmittedIntervals(chord.intervals, omissions),
+    extensions,
+  );
   return chord;
 }
 
@@ -83,7 +99,7 @@ export function editorChordToChordSpan(symbol: EditorChordSymbol, startBeat: num
   const span: ChordSpan = {
     rootPc,
     quality:
-      editorExtensionQuality(symbol.quality, symbol.extensions) ??
+      editorExtensionQuality(symbol.quality, symbol.extensions, symbol.omissions) ??
       audioQualityToLibcantus(symbol.quality),
     startBeat,
   };
@@ -95,8 +111,8 @@ export function editorChordToChordSpan(symbol: EditorChordSymbol, startBeat: num
 
 /**
  * Converts a libcantus chord span back to an editor symbol over a PPQ region.
- * Quality degrades per {@link libcantusQualityToEditor}; the span's beat is not
- * used for the region (callers supply absolute PPQ bounds).
+ * Quality is expressed per {@link libcantusQualityToEditor}; the span's beat is
+ * not used for the region (callers supply absolute PPQ bounds).
  */
 export function chordSpanToEditorChord(
   span: ChordSpan,
@@ -116,6 +132,9 @@ export function chordSpanToEditorChord(
   }
   if (mapped.extensions !== undefined && mapped.extensions.length > 0) {
     symbol.extensions = [...mapped.extensions];
+  }
+  if (mapped.omissions !== undefined && mapped.omissions.length > 0) {
+    symbol.omissions = [...mapped.omissions];
   }
   return symbol;
 }

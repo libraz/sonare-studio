@@ -123,17 +123,27 @@ describe('chord-io adapter', () => {
     ['m(add9)', chordSymbol({ quality: 11 }), 'minAdd9', [0, 2, 3, 7]],
     ['min9', chordSymbol({ quality: 6, extensions: [14] }), 'min9', [0, 2, 3, 7, 10]],
     ['7b9', chordSymbol({ quality: 4, extensions: [13] }), '7b9', [0, 1, 4, 7, 10]],
-    ['13', chordSymbol({ quality: 4, extensions: [21] }), '13', [0, 2, 4, 7, 9, 10]],
+    ['13', chordSymbol({ quality: 4, extensions: [14, 21] }), '13', [0, 2, 4, 7, 9, 10]],
   ])('preserves %s in compose conversion', (_label, symbol, quality, pitchClasses) => {
     const chord = editorChordToChord(symbol);
     expect(chord.quality).toBe(quality);
     expect(chordPitchClasses(chord)).toEqual(pitchClasses);
   });
 
+  // libcantus's `13` sounds a ninth. A dominant carrying only the thirteenth is
+  // still named C13, but it is not that quality, so the conversion must leave it
+  // a dom7 with the thirteenth attached rather than adding a tone nobody asked
+  // for.
+  it('does not promote a thirteenth without a ninth to the 13 quality', () => {
+    const symbol = chordSymbol({ quality: 4, extensions: [9] });
+    expect(editorChordToChordSpan(symbol, 0).quality).toBe('dom7');
+    expect(chordPitchClasses(editorChordToChord(symbol))).toEqual([0, 4, 7, 9, 10]);
+  });
+
   it.each([
     [chordSymbol({ quality: 6, extensions: [2] }), 'min9'],
     [chordSymbol({ quality: 4, extensions: [1] }), '7b9'],
-    [chordSymbol({ quality: 4, extensions: [9] }), '13'],
+    [chordSymbol({ quality: 4, extensions: [2, 9] }), '13'],
   ])('promotes known extensions in ChordSpan conversion', (symbol, quality) => {
     expect(editorChordToChordSpan(symbol, 0).quality).toBe(quality);
   });
@@ -150,17 +160,28 @@ describe('chord-io adapter', () => {
     ['minMaj9'],
     ['minMaj11'],
     ['minMaj13'],
-  ] as const)('round-trips the degraded %s quality through the editor', (quality) => {
+    // These four have no ordinal because they omit an intrinsic tone, which the
+    // editor can now say outright rather than approximating.
+    ['5'],
+    ['11'],
+    ['majb5'],
+    ['7b5'],
+  ] as const)('round-trips the %s quality the editor has no ordinal for', (quality) => {
     const editor = chordSpanToEditorChord({ rootPc: 0, quality, startBeat: 0 }, 0, 4);
     expect(editorChordToChordSpan(editor, 0).quality).toBe(quality);
   });
 
-  it('degrades a lowered fifth to the pitch class the editor spells as #11', () => {
-    // The editor has no ordinal for an altered fifth, so 7b5 and 7#11 share the
-    // same extension pitch class and the round trip settles on 7#11.
-    const editor = chordSpanToEditorChord({ rootPc: 0, quality: '7b5', startBeat: 0 }, 0, 4);
-    expect(editor).toMatchObject({ quality: 4, extensions: [6] });
-    expect(editorChordToChordSpan(editor, 0).quality).toBe('7#11');
+  // A lowered fifth and a raised eleventh are the same pitch class, so the only
+  // thing telling them apart is whether the perfect fifth is still sounding.
+  it('tells a lowered fifth from a raised eleventh by the fifth it omits', () => {
+    const flatFive = chordSpanToEditorChord({ rootPc: 0, quality: '7b5', startBeat: 0 }, 0, 4);
+    expect(flatFive).toMatchObject({ quality: 4, extensions: [6], omissions: [7] });
+    expect(editorChordToChordSpan(flatFive, 0).quality).toBe('7b5');
+
+    const sharpEleven = chordSpanToEditorChord({ rootPc: 0, quality: '7#11', startBeat: 0 }, 0, 4);
+    expect(sharpEleven).toMatchObject({ quality: 4, extensions: [6] });
+    expect(sharpEleven.omissions).toBeUndefined();
+    expect(editorChordToChordSpan(sharpEleven, 0).quality).toBe('7#11');
   });
 
   it('preserves a slash bass when it differs from the root', () => {

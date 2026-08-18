@@ -122,7 +122,8 @@ describe('estimateChordSymbols', () => {
     expect(symbols).toMatchObject([
       { ppq: 0, text: 'C6', rootPc: 0, quality: 0, extensions: [9] },
       { ppq: 4, text: 'G7sus4', rootPc: 7, quality: 8, extensions: [10] },
-      { ppq: 8, text: 'C13', rootPc: 0, quality: 4, extensions: [9] },
+      // The notes sound the ninth, and so does the quality that names them.
+      { ppq: 8, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
     ]);
   });
 

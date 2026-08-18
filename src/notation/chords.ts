@@ -192,6 +192,9 @@ export function estimateChordSymbols(
     if (mapped.extensions !== undefined && mapped.extensions.length > 0) {
       symbol.extensions = [...mapped.extensions];
     }
+    if (mapped.omissions !== undefined && mapped.omissions.length > 0) {
+      symbol.omissions = [...mapped.omissions];
+    }
     const bassPc = regionBassPc(harmonic, region.startPpq, region.endPpq);
     if (bassPc !== null && bassPc !== rootPc) {
       symbol.text = `${symbol.text}/${pitchClassName(bassPc, keyFifths)}`;
@@ -222,8 +225,9 @@ const KEY_PPQ_SCALE = 1e6;
  *
  * The Project encoding shifts quality ordinals by one (0 = unknown,
  * 1 = major, ...) and uses 255 as the "no pitch class" sentinel; this
- * function applies both conversions in each direction. Display text is not
- * stored by the Project, so it is re-associated by start position.
+ * function applies both conversions in each direction. Display text and omitted
+ * tones are not stored by the Project, so both are re-associated by start
+ * position from the symbols handed in.
  *
  * The scratch Project is always released; any wasm failure rejects and the
  * caller is expected to degrade by rendering without chord symbols.
@@ -271,6 +275,12 @@ export async function canonicalizeChordSymbols(
       if (raw.slash_bass_pc >= 0 && raw.slash_bass_pc <= 11) symbol.bassPc = raw.slash_bass_pc;
       if (Array.isArray(raw.extensions) && raw.extensions.length > 0) {
         symbol.extensions = raw.extensions.filter((extension) => Number.isInteger(extension));
+      }
+      // The Project encoding has no field for omitted tones, so the round trip
+      // cannot return them. The symbol that went in is still in hand, so the
+      // read-back is seeded from it rather than losing the chord's shape.
+      if (original.omissions !== undefined && original.omissions.length > 0) {
+        symbol.omissions = [...original.omissions];
       }
       if (raw.roman_numeral) symbol.romanNumeral = raw.roman_numeral;
       out.push(symbol);

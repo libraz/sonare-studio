@@ -211,7 +211,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   if (shift === 0) {
     execute(1, () => {
       project.annotateChords(toProjectChordSymbols(sanitized));
-      store.refresh();
+      store.refresh(undefined, sanitized);
     });
     return generated.length;
   }
@@ -226,7 +226,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   execute(2, () => {
     project.setMidiEvents(clip.id, notesToProjectEvents(shifted));
     project.annotateChords(toProjectChordSymbols(sanitized));
-    store.refresh();
+    store.refresh(undefined, sanitized);
   });
   return generated.length;
 }

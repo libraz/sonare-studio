@@ -1284,6 +1284,37 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.chords).toHaveLength(2);
     });
 
+    // A chord that omits an intrinsic tone cannot be expressed in the Project's
+    // annotation encoding, so undo and redo have to carry it themselves.
+    it('setProjectChords keeps omitted tones across undo and redo', () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] }]);
+      setProjectChords([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4, extensions: [6], omissions: [7] },
+      ]);
+
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+      ]);
+
+      expect(redo()).toBe(true);
+      expect(store.chords).toEqual([
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4, extensions: [6], omissions: [7] },
+      ]);
+    });
+
+    // Undoing back to a chord that sounded every tone must not leave the
+    // omission behind from the state being undone.
+    it('setProjectChords undoes an added omission', () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] }]);
+
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+    });
+
     it('setProjectChords drops invalid roots and empty regions', () => {
       setProjectChords([
         { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },

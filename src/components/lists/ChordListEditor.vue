@@ -38,9 +38,19 @@ const QUALITY_OPTIONS = CHORD_QUALITY_CHOICES.map((choice) => ({
   label: choice.label,
 }));
 
-/** Stable select-menu key for a quality and its optional color tones. */
-function qualityChoiceKey(choice: { quality: number; extensions?: ReadonlyArray<number> }): string {
-  return `${choice.quality}:${choice.extensions?.join(',') ?? ''}`;
+/**
+ * Stable select-menu key for a quality with its color tones and the intrinsic
+ * tones it leaves silent. The omissions belong in the key: a power chord and a
+ * plain major share an ordinal and differ only by the third one of them drops.
+ */
+function qualityChoiceKey(choice: {
+  quality: number;
+  extensions?: ReadonlyArray<number>;
+  omissions?: ReadonlyArray<number>;
+}): string {
+  const base = `${choice.quality}:${choice.extensions?.join(',') ?? ''}`;
+  const omissions = choice.omissions ?? [];
+  return omissions.length === 0 ? base : `${base}/${omissions.join(',')}`;
 }
 
 /**
@@ -169,6 +179,8 @@ function onQualityChange(index: number, chord: EditorChordSymbol, value: string)
   const next: EditorChordSymbol = { ...chord, quality: choice.quality };
   if (choice.extensions === undefined || choice.extensions.length === 0) delete next.extensions;
   else next.extensions = [...choice.extensions];
+  if (choice.omissions === undefined || choice.omissions.length === 0) delete next.omissions;
+  else next.omissions = [...choice.omissions];
   commitAt(index, next);
 }
 

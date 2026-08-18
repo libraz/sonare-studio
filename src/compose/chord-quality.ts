@@ -2,12 +2,19 @@
  * Single source of truth for chord-quality identity and display naming.
  *
  * Three key spaces describe the same chord: the editor's audio-domain quality
- * ordinal (Major = 0) plus a free list of extension semitone offsets, the
- * `"ordinal:ext,ext"` combination key those two form, and libcantus's
+ * ordinal (Major = 0) plus free lists of added and omitted semitone offsets,
+ * the `"ordinal:ext,ext/omit,omit"` combination key those form, and libcantus's
  * {@link ChordQuality} string union. Only the libcantus union carries a display
  * suffix ({@link QUALITY_SUFFIX}); every editor-side name is resolved by
- * bridging the ordinal + extensions to a libcantus quality, so the score view,
- * the chord track and MusicXML `<kind text>` cannot disagree about a chord.
+ * bridging the ordinal + extensions + omissions to a libcantus quality, so the
+ * score view, the chord track and MusicXML `<kind text>` cannot disagree about
+ * a chord.
+ *
+ * Omissions exist because an ordinal names a fixed tone set and some chords are
+ * that set minus a tone: a power chord is a major triad with no third, and a
+ * lowered fifth stands in place of the perfect fifth rather than beside it.
+ * They cannot be expressed by adding tones, so without them those chords could
+ * only be stored as the nearest chord that does sound every intrinsic tone.
  *
  * Leaf module: it imports nothing but libcantus, so both the editor model
  * (src/project/chords.ts) and the libcantus interchange (src/compose/chord-io.ts)
@@ -117,9 +124,42 @@ export function normalizedChordExtensions(
   return [...out].sort((a, b) => a - b);
 }
 
-/** Combination key for an editor quality plus its normalized extensions. */
-function combinationKey(quality: number, normalized: ReadonlyArray<number>): string {
-  return `${quality}:${normalized.join(',')}`;
+/**
+ * Returns the sorted intrinsic tones the symbol declares silent. Only a tone
+ * the quality actually carries can be omitted, and the root never can, so an
+ * offset naming neither is dropped. Offsets are reduced to pitch-class space
+ * like extensions are.
+ *
+ * @param quality Audio-domain ChordQuality ordinal (Major = 0), if known.
+ * @param omissions Raw omitted semitone offsets, if any.
+ * @returns Ascending omitted intrinsic pitch classes.
+ */
+export function normalizedChordOmissions(
+  quality: number | undefined,
+  omissions?: ReadonlyArray<number>,
+): number[] {
+  const intrinsic = new Set(quality === undefined ? [0] : (TONE_PCS_BY_QUALITY[quality] ?? [0]));
+  const out = new Set<number>();
+  for (const value of omissions ?? []) {
+    if (!Number.isInteger(value)) continue;
+    const pc = extensionPitchClass(value);
+    if (pc !== 0 && intrinsic.has(pc)) out.add(pc);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * Combination key for an editor quality plus its normalized extensions and
+ * omissions. A chord that omits nothing keys exactly as it did before omissions
+ * existed, so the two cases never collide.
+ */
+function combinationKey(
+  quality: number,
+  normalized: ReadonlyArray<number>,
+  omitted: ReadonlyArray<number> = [],
+): string {
+  const base = `${quality}:${normalized.join(',')}`;
+  return omitted.length === 0 ? base : `${base}/${omitted.join(',')}`;
 }
 
 /**
@@ -144,12 +184,17 @@ const AUDIO_QUALITY_TO_LIBCANTUS: Readonly<Record<number, ChordQuality>> = {
   15: 'dom9',
 };
 
-/** Known editor base-quality + normalized-extension combinations. */
+/**
+ * Known editor base-quality + normalized-extension (+ omission) combinations.
+ * Every entry sounds exactly the tones its libcantus quality does, so a name
+ * taken from this table never describes a different chord than the one keyed.
+ */
 const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
   '0:5': 'add11',
-  '0:6': 'majb5',
   '0:9': '6',
   '0:2,9': '6/9',
+  '0:/4': '5',
+  '0:6/7': 'majb5',
   '1:2': 'minAdd9',
   '1:9': 'min6',
   '1:11': 'minMaj7',
@@ -161,13 +206,13 @@ const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
   '3:11': 'augMaj7',
   '4:1': '7b9',
   '4:3': '7#9',
-  '4:5': '11',
   '4:6': '7#11',
   '4:8': '7b13',
-  '4:9': '13',
   '4:1,9': '13b9',
   '4:2,9': '13',
-  '4:3,8': '7alt',
+  '4:2,5/4': '11',
+  '4:6/7': '7b5',
+  '4:3,8/7': '7alt',
   '5:6': 'maj7#11',
   '6:2': 'min9',
   '6:2,5': 'min11',
@@ -179,31 +224,39 @@ const EDITOR_EXTENSIONS_TO_LIBCANTUS: Readonly<Record<string, ChordQuality>> = {
 /**
  * Suffixes for editor combinations named directly rather than through the
  * bridge, either because libcantus has no quality string for them or because
- * the quality that would name them does not sound the same tones the editor
- * combination does. Only combinations whose conventional name differs from the
- * generic `base(ext,ext)` fallback belong here.
+ * the quality that would name them sounds a tone this combination does not.
+ * A name may be borrowed from such a quality; the chord may not, which is why
+ * these live apart from {@link EDITOR_EXTENSIONS_TO_LIBCANTUS}. Only
+ * combinations whose conventional name differs from the generic
+ * `base(ext,ext)` fallback belong here.
  */
 const DIRECTLY_NAMED_COMBINATION_SUFFIX: Readonly<Record<string, string>> = {
   // A sus4 triad with a ninth and a minor seventh: libcantus has 7sus4 but no
   // 9sus4 quality, and the fallback would print sus4(add9,addb7).
   '8:2,10': '9sus4',
-  // A dominant seventh carrying both the ninth and the eleventh. libcantus's
-  // `11` omits the third, which the editor combination sounds, so bridging it
-  // would silently drop a chord tone; only the name is taken from it.
-  '4:2,5': '11',
+  // A thirteenth chord voiced without its ninth is still a thirteenth chord --
+  // the ninth is discretionary. libcantus's `13` sounds it, so the name is
+  // taken from that quality without the chord being built from it.
+  '4:9': '13',
 };
 
-/** Editor-side ordinal plus optional color-tone extensions (semitone offsets). */
+/**
+ * Editor-side ordinal plus optional color-tone extensions and omitted intrinsic
+ * tones, all as root-relative semitone offsets.
+ */
 export interface EditorQuality {
   quality: number;
   extensions?: number[];
+  omissions?: number[];
 }
 
 /**
- * libcantus quality -> editor ordinal (+ extensions). Qualities the editor
- * cannot name directly degrade to a base ordinal carrying the extra chord tones
- * as `extensions` semitone offsets (9 = 2, 11 = 5, 13 = 9, b9 = 1, #9 = 3,
- * #11 = 6, b13 = 8, maj7-over-triad = 11, dom7-over-aug = 10).
+ * libcantus quality -> editor ordinal (+ extensions, + omissions). Qualities
+ * the editor has no ordinal for are expressed as a base ordinal carrying the
+ * extra chord tones as `extensions` semitone offsets (9 = 2, 11 = 5, 13 = 9,
+ * b9 = 1, #9 = 3, #11 = 6, b13 = 8, maj7-over-triad = 11, dom7-over-aug = 10)
+ * and the tones the quality does not sound as `omissions`. Every entry names
+ * exactly the pitch classes libcantus gives the quality.
  */
 const LIBCANTUS_QUALITY_TO_EDITOR: Readonly<Record<ChordQuality, EditorQuality>> = {
   maj: { quality: 0 },
@@ -227,7 +280,7 @@ const LIBCANTUS_QUALITY_TO_EDITOR: Readonly<Record<ChordQuality, EditorQuality>>
   minMaj13: { quality: 1, extensions: [11, 2, 9] },
   aug7: { quality: 3, extensions: [10] },
   augMaj7: { quality: 3, extensions: [11] },
-  majb5: { quality: 0, extensions: [6] },
+  majb5: { quality: 0, extensions: [6], omissions: [7] },
   '6': { quality: 0, extensions: [9] },
   min6: { quality: 1, extensions: [9] },
   '6/9': { quality: 0, extensions: [9, 2] },
@@ -241,16 +294,17 @@ const LIBCANTUS_QUALITY_TO_EDITOR: Readonly<Record<ChordQuality, EditorQuality>>
   '7#11': { quality: 4, extensions: [6] },
   '7b13': { quality: 4, extensions: [8] },
   '7sus4': { quality: 8, extensions: [10] },
-  // A lowered fifth has no editor ordinal; it degrades to the same #11/b5
-  // pitch class the editor already uses for majb5.
-  '7b5': { quality: 4, extensions: [6] },
-  '7alt': { quality: 4, extensions: [3, 8] },
-  '11': { quality: 4, extensions: [5] },
-  '13': { quality: 4, extensions: [9] },
+  // A lowered fifth is the raised-eleventh pitch class standing in place of the
+  // perfect fifth rather than beside it, so the fifth is omitted.
+  '7b5': { quality: 4, extensions: [6], omissions: [7] },
+  '7alt': { quality: 4, extensions: [3, 8], omissions: [7] },
+  // The eleventh clashes with the third, which this quality does not sound.
+  '11': { quality: 4, extensions: [2, 5], omissions: [4] },
+  '13': { quality: 4, extensions: [2, 9] },
   '13b9': { quality: 4, extensions: [9, 1] },
   maj13: { quality: 14, extensions: [9] },
   'maj7#11': { quality: 5, extensions: [6] },
-  '5': { quality: 0 }, // power chord: no third to name, nearest is a bare major
+  '5': { quality: 0, omissions: [4] }, // power chord: a major triad with no third
 };
 
 /** Maps an editor quality ordinal to the nearest libcantus quality (default major). */
@@ -264,18 +318,20 @@ export function libcantusQualityToEditor(quality: ChordQuality): EditorQuality {
 }
 
 /**
- * Exact libcantus quality for an editor base quality plus extensions, or
- * undefined when the combination has no exact quality. Extensions are
- * normalized first; a combination that normalizes to nothing has no exact
- * quality (the base ordinal already names it).
+ * Exact libcantus quality for an editor base quality plus extensions and
+ * omissions, or undefined when the combination has no exact quality. Both lists
+ * are normalized first; a combination that normalizes to nothing on both counts
+ * has no exact quality (the base ordinal already names it).
  */
 export function editorExtensionQuality(
   quality: number,
   extensions?: ReadonlyArray<number>,
+  omissions?: ReadonlyArray<number>,
 ): ChordQuality | undefined {
   const normalized = normalizedChordExtensions(quality, extensions);
-  if (normalized.length === 0) return undefined;
-  return EDITOR_EXTENSIONS_TO_LIBCANTUS[combinationKey(quality, normalized)];
+  const omitted = normalizedChordOmissions(quality, omissions);
+  if (normalized.length === 0 && omitted.length === 0) return undefined;
+  return EDITOR_EXTENSIONS_TO_LIBCANTUS[combinationKey(quality, normalized, omitted)];
 }
 
 /** Generic readable label for an extension without a named quality mapping. */
@@ -300,25 +356,56 @@ function extensionLabel(pc: number): string {
 }
 
 /**
- * Visible chord suffix for an editor quality plus extensions, e.g. 'm7',
- * '13b9', 'sus4(add3)'.
+ * Generic label for an omitted intrinsic tone, named by the scale degree the
+ * interval occupies rather than by the interval itself, so a minor and a major
+ * third both read `omit3`.
+ */
+function omissionLabel(pc: number): string {
+  return (
+    (
+      {
+        2: 'omit2',
+        3: 'omit3',
+        4: 'omit3',
+        5: 'omit4',
+        6: 'omit5',
+        7: 'omit5',
+        8: 'omit5',
+        9: 'omit6',
+        10: 'omit7',
+        11: 'omit7',
+      } as Readonly<Record<number, string>>
+    )[pc] ?? `omit${pc}`
+  );
+}
+
+/**
+ * Visible chord suffix for an editor quality plus extensions and omissions,
+ * e.g. 'm7', '13b9', 'sus4(add3)', '7(omit5)'.
  *
  * The combination is bridged to its exact libcantus quality where one exists
  * and named from {@link QUALITY_SUFFIX}; otherwise the base quality's suffix
- * carries the remaining extensions as a parenthesized list.
+ * carries the remaining extensions and omissions as a parenthesized list.
  *
  * @param quality Audio-domain ChordQuality ordinal (Major = 0).
  * @param extensions Raw extension semitone offsets, if any.
+ * @param omissions Raw omitted intrinsic semitone offsets, if any.
  * @returns The suffix to append after the chord root (empty for plain major).
  */
-export function chordSuffix(quality: number, extensions?: ReadonlyArray<number>): string {
+export function chordSuffix(
+  quality: number,
+  extensions?: ReadonlyArray<number>,
+  omissions?: ReadonlyArray<number>,
+): string {
   const normalized = normalizedChordExtensions(quality, extensions);
+  const omitted = normalizedChordOmissions(quality, omissions);
   const base = QUALITY_SUFFIX[audioQualityToLibcantus(quality)];
-  if (normalized.length === 0) return base;
-  const key = combinationKey(quality, normalized);
+  if (normalized.length === 0 && omitted.length === 0) return base;
+  const key = combinationKey(quality, normalized, omitted);
   const direct = DIRECTLY_NAMED_COMBINATION_SUFFIX[key];
   if (direct !== undefined) return direct;
   const exact = EDITOR_EXTENSIONS_TO_LIBCANTUS[key];
   if (exact !== undefined) return QUALITY_SUFFIX[exact];
-  return `${base}(${normalized.map(extensionLabel).join(',')})`;
+  const parts = [...normalized.map(extensionLabel), ...omitted.map(omissionLabel)];
+  return `${base}(${parts.join(',')})`;
 }

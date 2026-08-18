@@ -290,6 +290,8 @@ export interface NotatedChordSymbol {
   bassPc?: number;
   /** Non-intrinsic root-relative chord tones (0-11), such as 9, 11 and 13. */
   extensions?: number[];
+  /** Intrinsic tones of `quality` (0-11) the chord does not sound. */
+  omissions?: number[];
   /** Optional roman-numeral label (e.g. "V") from functional analysis. */
   romanNumeral?: string;
 }

@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { linearToDb } from '@/lib/db';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
-import { formatChordName } from '@/project/chords';
+import { chordTonePitchClasses, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import {
   addMasteringProcessor,
   addMidiClip,
@@ -411,6 +411,55 @@ describe('project serialization', () => {
       'G7b9',
       'F13',
     ]);
+  });
+
+  // The annotation stream the Project stores has no field for omitted tones, so
+  // a chord that leaves one out only survives because the document records it
+  // and the read-back is seeded from what was written.
+  it('round-trips chords that omit an intrinsic tone', async () => {
+    setProjectChords([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+      { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4, extensions: [6], omissions: [7] },
+      { startPpq: 8, endPpq: 12, rootPc: 5, quality: 4, extensions: [2, 5], omissions: [4] },
+    ]);
+
+    // Written, then read straight back out of the live Project.
+    expect(store.chords.map((chord) => formatChordName(chord))).toEqual(['C5', 'G7b5', 'F11']);
+
+    const doc = serializeProject();
+    expect(doc.chords).toEqual([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+      { startPpq: 4, endPpq: 8, rootPc: 7, quality: 4, extensions: [6], omissions: [7] },
+      { startPpq: 8, endPpq: 12, rootPc: 5, quality: 4, extensions: [2, 5], omissions: [4] },
+    ]);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(serializeProject()).toEqual(doc);
+    expect(store.chords).toEqual(doc.chords);
+    expect(store.chords.map((chord) => formatChordName(chord))).toEqual(['C5', 'G7b5', 'F11']);
+  });
+
+  // A document written before omissions existed says nothing about them, and
+  // must keep sounding every tone of its ordinal.
+  it('reads a document with no omissions as sounding every intrinsic tone', async () => {
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+    const doc = serializeProject();
+    expect(doc.chords?.[0]).not.toHaveProperty('omissions');
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.chords[0]?.omissions).toBeUndefined();
+    expect(chordTonePitchClasses(store.chords[0] as EditorChordSymbol)).toEqual([0, 4, 7]);
+  });
+
+  // Seeding the read-back must not resurrect an omission the user just removed:
+  // the seed only applies where the chord is otherwise unchanged.
+  it('drops an omission when the chord at that position is rewritten without it', () => {
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] }]);
+    expect(store.chords[0]?.omissions).toEqual([4]);
+
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+    expect(store.chords[0]?.omissions).toBeUndefined();
+    expect(formatChordName(store.chords[0] as EditorChordSymbol)).toBe('C');
   });
 
   it('omits the chord track from the document when empty', () => {

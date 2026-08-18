@@ -449,9 +449,16 @@ export const useProjectStore = defineStore('project', () => {
    * hints fall back to their current mirror notes. Notes with no match
    * receive fresh ids; the selection is pruned to surviving ids.
    *
+   * The Project keeps a chord's quality ordinal but not the intrinsic tones the
+   * app-level symbol declares silent, so the chord read-back is seeded the same
+   * way: pass the chords expected in the Project and their omissions survive.
+   * Without a hint the current mirror is used, which is what every caller that
+   * is not itself rewriting the chord track wants.
+   *
    * @param idHints Id-annotated notes expected to match the Project content.
+   * @param chordHints Chord symbols expected to match the Project content.
    */
-  function refresh(idHints?: NoteIdHints): void {
+  function refresh(idHints?: NoteIdHints, chordHints?: ReadonlyArray<EditorChordSymbol>): void {
     if (!project) return;
     const doc = JSON.parse(project.toJson()) as SerializedProjectDoc;
 
@@ -462,8 +469,9 @@ export const useProjectStore = defineStore('project', () => {
     timeSignatures.value = tempoMeter.timeSignatures;
 
     // Chord-track mirror: read back the Project's annotation stream (the chord
-    // commands write it through annotateChords, so it round-trips here).
-    chords.value = chordsFromAnnotation(doc.annotation);
+    // commands write it through annotateChords, so it round-trips here), seeded
+    // with the omitted tones the annotation encoding cannot carry.
+    chords.value = chordsFromAnnotation(doc.annotation, chordHints ?? chords.value);
 
     // Track mirror: structure from the Project, app fields + order from the
     // current mirror; tracks first seen in the Project are appended.
@@ -1105,7 +1113,10 @@ export const useProjectStore = defineStore('project', () => {
         ...(segment.grouping !== undefined ? { grouping: [...segment.grouping] } : {}),
       }));
       initialized.value = true;
-      refresh();
+      // The document, not the annotation stream, records which chord tones are
+      // silent, so the chord read-back is seeded from what was loaded rather
+      // than from the outgoing session's mirror.
+      refresh(undefined, documentChords);
       // Loading establishes a new document baseline; the replay edits used to
       // hydrate the native Project must not consume user undo depth.
       created.clearHistory();

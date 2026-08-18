@@ -10,7 +10,11 @@
  * on any particular whitespace beyond well-formedness.
  */
 
-import { chordSuffix, normalizedChordExtensions } from '@/compose/chord-quality';
+import {
+  chordSuffix,
+  normalizedChordExtensions,
+  normalizedChordOmissions,
+} from '@/compose/chord-quality';
 import type {
   GlissandoLineType,
   NoteArticulation,
@@ -2171,38 +2175,82 @@ function chordKindXml(symbol: NotatedChordSymbol): string {
   if (kindName === undefined) {
     return `<kind text="${escapeXml(symbol.text)}">other</kind>`;
   }
-  const text = quality === undefined ? undefined : chordKindText(quality, symbol.extensions);
+  const text =
+    quality === undefined ? undefined : chordKindText(quality, symbol.extensions, symbol.omissions);
   const textXml = text === undefined ? '' : ` text="${escapeXml(text)}"`;
   return `<kind${textXml}>${kindName}</kind>`;
 }
 
 /**
- * Visible `<kind text>` suffix for a base quality plus extensions, taken from
- * the shared chord naming so the exported text matches the score view and the
- * chord track. A plain major carries no text attribute.
+ * Visible `<kind text>` suffix for a base quality plus its added and omitted
+ * tones, taken from the shared chord naming so the exported text matches the
+ * score view and the chord track. A plain major carries no text attribute.
  */
 function chordKindText(
   quality: number,
   extensions: ReadonlyArray<number> | undefined,
+  omissions?: ReadonlyArray<number>,
 ): string | undefined {
-  const suffix = chordSuffix(quality, extensions);
+  const suffix = chordSuffix(quality, extensions, omissions);
   return suffix === '' ? undefined : suffix;
 }
 
-/** Adds explicit MusicXML degree data for non-intrinsic chord tones. */
+/** One MusicXML `<degree>` element. */
+function chordDegreeElement(value: number, alter: number, type: 'add' | 'subtract'): string {
+  return `<degree><degree-value>${value}</degree-value><degree-alter>${alter}</degree-alter><degree-type>${type}</degree-type></degree>`;
+}
+
+/**
+ * Adds explicit MusicXML degree data for the tones the printed kind does not
+ * already imply: `add` for non-intrinsic chord tones, `subtract` for intrinsic
+ * ones the chord leaves out.
+ */
 function chordDegreeXml(symbol: NotatedChordSymbol): string {
   const extensions = new Set(normalizedChordExtensions(symbol.quality, symbol.extensions));
   // add9 and minAdd9 export as a plain major/minor kind, so their ninth is
   // intrinsic to the editor quality but still needs an explicit degree.
   if (symbol.quality === 10 || symbol.quality === 11) extensions.add(2);
-  return [...extensions]
+  const added = [...extensions]
     .map((extension) => chordDegreeForExtension(extension, symbol.quality))
     .filter((degree): degree is { value: number; alter: number } => degree !== undefined)
-    .map(
-      ({ value, alter }) =>
-        `<degree><degree-value>${value}</degree-value><degree-alter>${alter}</degree-alter><degree-type>add</degree-type></degree>`,
-    )
-    .join('');
+    .map(({ value, alter }) => chordDegreeElement(value, alter, 'add'));
+  const subtracted = normalizedChordOmissions(symbol.quality, symbol.omissions)
+    .map((omission) => chordDegreeForOmission(omission))
+    .filter((degree): degree is { value: number; alter: number } => degree !== undefined)
+    .map(({ value, alter }) => chordDegreeElement(value, alter, 'subtract'));
+  return [...added, ...subtracted].join('');
+}
+
+/**
+ * Maps an omitted intrinsic pitch class to the chord degree it occupies. The
+ * degree names the position, so a minor and a major third both subtract the
+ * third; the alteration follows the interval that was there.
+ */
+function chordDegreeForOmission(omission: number): { value: number; alter: number } | undefined {
+  switch (omission) {
+    case 2:
+      return { value: 2, alter: 0 };
+    case 3:
+      return { value: 3, alter: -1 };
+    case 4:
+      return { value: 3, alter: 0 };
+    case 5:
+      return { value: 4, alter: 0 };
+    case 6:
+      return { value: 5, alter: -1 };
+    case 7:
+      return { value: 5, alter: 0 };
+    case 8:
+      return { value: 5, alter: 1 };
+    case 9:
+      return { value: 6, alter: 0 };
+    case 10:
+      return { value: 7, alter: -1 };
+    case 11:
+      return { value: 7, alter: 0 };
+    default:
+      return undefined;
+  }
 }
 
 /** Maps a root-relative extension pitch class to a conventional chord degree. */

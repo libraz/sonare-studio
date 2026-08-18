@@ -1,6 +1,7 @@
 import type { MidiCcBinding } from '@/ui/midi/midi-learn';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
+import type { EditorChordSymbol } from '../chords';
 import { cloneInstrument, type ExternalMidiInstrument } from '../instrument';
 import { cloneCcLanes } from '../midi-cc';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
@@ -51,6 +52,8 @@ interface MirrorSnapshot {
   scoreAnnotations: ScoreAnnotations;
   /** App-only additive grouping metadata for the WASM-owned meter map. */
   timeSignatures: TimeSignatureSegment[];
+  /** Chord track, for the omitted tones the annotation encoding cannot carry. */
+  chords: EditorChordSymbol[];
   displayTransposeSemitones: number;
   activeTrackId: number;
   activeClipId: number;
@@ -203,6 +206,7 @@ function shareSnapshot(previous: MirrorSnapshot | null, next: MirrorSnapshot): M
   if (deepEqual(previous.timeSignatures, next.timeSignatures)) {
     next.timeSignatures = previous.timeSignatures;
   }
+  if (deepEqual(previous.chords, next.chords)) next.chords = previous.chords;
   for (const key of [
     'midiCcBindings',
     'projectExternalMidi',
@@ -412,6 +416,11 @@ function captureSnapshot(
       ...segment,
       ...(segment.grouping !== undefined ? { grouping: [...segment.grouping] } : {}),
     })),
+    chords: store.chords.map((chord) => ({
+      ...chord,
+      ...(chord.extensions !== undefined ? { extensions: [...chord.extensions] } : {}),
+      ...(chord.omissions !== undefined ? { omissions: [...chord.omissions] } : {}),
+    })),
     displayTransposeSemitones: store.displayTransposeSemitones,
     activeTrackId: store.activeTrackId,
     activeClipId: store.clipId,
@@ -498,7 +507,11 @@ function restoreSnapshot(
   store.activeTrackId = trackExists ? view.activeTrackId : snapshot.activeTrackId;
   store.clipId = clipExists ? view.activeClipId : snapshot.activeClipId;
   const hints = new Map(snapshot.clips.map((clip) => [clip.id, clip.notes]));
-  store.refresh(hints);
+  // Same reasoning as the meter groups above: the Project keeps a chord's
+  // quality but not the intrinsic tones the symbol declares silent, so the
+  // chord read-back is seeded from the snapshot rather than from the mirror the
+  // undo is leaving behind.
+  store.refresh(hints, snapshot.chords);
   const alive = new Set(store.notes.map((note) => note.id));
   store.selection = new Set(snapshot.selection.filter((id) => alive.has(id)));
 }

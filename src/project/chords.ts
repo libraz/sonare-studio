@@ -18,6 +18,7 @@ import type { NoteNameSystem } from '@libraz/libcantus';
 import {
   chordSuffix,
   normalizedChordExtensions,
+  normalizedChordOmissions,
   TONE_PCS_BY_QUALITY,
 } from '@/compose/chord-quality';
 import { PITCH_CLASS_NAMES } from '@/lib/pitch';
@@ -39,6 +40,8 @@ export interface ChordQualityChoice {
   label: string;
   /** Non-intrinsic root-relative tones selected with this quality. */
   extensions?: ReadonlyArray<number>;
+  /** Intrinsic tones of the ordinal this chord does not sound. */
+  omissions?: ReadonlyArray<number>;
 }
 
 /** A dropdown entry before its suffix is resolved from the shared naming table. */
@@ -46,6 +49,7 @@ interface ChordQualityChoiceSpec {
   quality: number;
   label: string;
   extensions?: ReadonlyArray<number>;
+  omissions?: ReadonlyArray<number>;
 }
 
 /** Chord qualities offered in the editor, in dropdown order. */
@@ -63,14 +67,21 @@ const CHORD_QUALITY_CHOICE_SPECS: ReadonlyArray<ChordQualityChoiceSpec> = [
   { quality: 1, label: 'Minor 6', extensions: [9] },
   { quality: 8, label: 'Dominant 7 sus4', extensions: [10] },
   { quality: 8, label: 'Dominant 9 sus4', extensions: [2, 10] },
-  { quality: 4, label: 'Dominant 11', extensions: [2, 5] },
+  // An eleventh a semitone above the major third replaces it rather than
+  // sounding against it, which is what the name C11 has always meant.
+  { quality: 4, label: 'Dominant 11', extensions: [2, 5], omissions: [4] },
   { quality: 4, label: 'Dominant 13', extensions: [2, 9] },
   { quality: 4, label: 'Dominant 7 b9 #11', extensions: [1, 6] },
-  { quality: 4, label: 'Dominant 7 #9 b13', extensions: [3, 8] },
+  // The flat thirteenth is the raised fifth, standing in place of the perfect
+  // fifth rather than grinding against it.
+  { quality: 4, label: 'Dominant 7 #9 b13', extensions: [3, 8], omissions: [7] },
   { quality: 2, label: 'Diminished' },
   { quality: 3, label: 'Augmented' },
   { quality: 8, label: 'Sus4' },
   { quality: 7, label: 'Sus2' },
+  // A root and a fifth with the third left silent, which no combination of
+  // added tones can describe.
+  { quality: 0, label: 'Power chord', omissions: [4] },
   { quality: 12, label: 'Diminished 7' },
   { quality: 13, label: 'Half-diminished' },
 ];
@@ -83,7 +94,7 @@ const CHORD_QUALITY_CHOICE_SPECS: ReadonlyArray<ChordQualityChoiceSpec> = [
 export const CHORD_QUALITY_CHOICES: ReadonlyArray<ChordQualityChoice> =
   CHORD_QUALITY_CHOICE_SPECS.map((spec) => ({
     ...spec,
-    suffix: chordSuffix(spec.quality, spec.extensions),
+    suffix: chordSuffix(spec.quality, spec.extensions, spec.omissions),
   }));
 
 /** A chord symbol on the project chord track (absolute PPQ region). */
@@ -100,6 +111,13 @@ export interface EditorChordSymbol {
   bassPc?: number;
   /** Extension semitone offsets, if any. */
   extensions?: number[];
+  /**
+   * Intrinsic tones of `quality` this chord does not sound, as root-relative
+   * semitone offsets. An ordinal names a fixed tone set, so a chord that is
+   * that set minus a tone (a power chord, a lowered fifth standing in for the
+   * perfect fifth) can only be described by naming what is absent.
+   */
+  omissions?: number[];
   /** Optional roman-numeral label. */
   romanNumeral?: string;
 }
@@ -109,13 +127,19 @@ function symbolExtensions(symbol: EditorChordSymbol): number[] {
   return normalizedChordExtensions(symbol.quality, symbol.extensions);
 }
 
+/** Intrinsic pitch classes the symbol declares silent, ascending. */
+function symbolOmissions(symbol: EditorChordSymbol): number[] {
+  return normalizedChordOmissions(symbol.quality, symbol.omissions);
+}
+
 /**
  * Absolute pitch classes a chord symbol asks for: its quality's intrinsic
- * tones plus any extensions, transposed to the symbol's root, with the
- * slash bass added when the symbol has one.
+ * tones, less any it omits, plus any extensions, transposed to the symbol's
+ * root, with the slash bass added when the symbol has one.
  */
 export function chordTonePitchClasses(symbol: EditorChordSymbol): number[] {
   const rootRelative = new Set<number>(TONE_PCS_BY_QUALITY[symbol.quality] ?? [0]);
+  for (const omission of symbolOmissions(symbol)) rootRelative.delete(omission);
   for (const extension of symbolExtensions(symbol)) rootRelative.add(extension);
   const absolute = new Set<number>();
   for (const offset of rootRelative) absolute.add((symbol.rootPc + offset) % 12);
@@ -123,9 +147,15 @@ export function chordTonePitchClasses(symbol: EditorChordSymbol): number[] {
   return [...absolute].sort((a, b) => a - b);
 }
 
-/** Stable semantic identity for a symbol's non-intrinsic extensions. */
+/**
+ * Stable semantic identity for the tones a symbol adds to and removes from its
+ * ordinal. Two chords sharing a root, quality and bass are the same chord only
+ * when this agrees, so an omitted fifth is not identified with a sounded one.
+ */
 export function chordExtensionSignature(symbol: EditorChordSymbol): string {
-  return symbolExtensions(symbol).join(',');
+  const omissions = symbolOmissions(symbol);
+  const extensions = symbolExtensions(symbol).join(',');
+  return omissions.length === 0 ? extensions : `${extensions}/${omissions.join(',')}`;
 }
 
 /**
@@ -187,7 +217,7 @@ export function formatChordName(
   system: NoteNameSystem = 'english',
 ): string {
   const root = chordPitchClassName(symbol.rootPc, keyFifths, system);
-  const suffix = chordSuffix(symbol.quality, symbol.extensions);
+  const suffix = chordSuffix(symbol.quality, symbol.extensions, symbol.omissions);
   const name = `${root}${suffix}`;
   if (symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc) return name;
   const bass = chordPitchClassName(symbol.bassPc, keyFifths, system);
@@ -221,6 +251,8 @@ export function sanitizeChordSymbols(
     if (bassPc !== null && bassPc !== rootPc) next.bassPc = bassPc;
     const extensions = symbolExtensions(symbol);
     if (extensions.length > 0) next.extensions = extensions;
+    const omissions = symbolOmissions(symbol);
+    if (omissions.length > 0) next.omissions = omissions;
     if (typeof symbol.romanNumeral === 'string' && symbol.romanNumeral.length > 0) {
       next.romanNumeral = symbol.romanNumeral;
     }
@@ -234,6 +266,11 @@ export function sanitizeChordSymbols(
  * Converts an editor chord symbol into the `Project.annotateChords` encoding
  * (quality shifted by one; the slash bass replaced with the 255 sentinel when
  * absent or equal to the root).
+ *
+ * The Project encoding has no field for omitted tones, so `omissions` does not
+ * survive the round trip through `toJson()`. The document, not the annotation
+ * stream, is the record of a chord's structure; the read-back is seeded with
+ * what the app already holds (see {@link chordsFromAnnotation}).
  */
 export function toProjectChordSymbol(symbol: EditorChordSymbol): ProjectChordSymbolInput {
   const input: ProjectChordSymbolInput = {
@@ -259,18 +296,49 @@ export function toProjectChordSymbols(
   return symbols.map(toProjectChordSymbol);
 }
 
+/** PPQ hint keys are rounded at micro-PPQ resolution to absorb float drift. */
+const HINT_PPQ_SCALE = 1e6;
+
+/** Whether a read-back symbol is the hinted chord with its omissions dropped. */
+function isSameChordBeforeOmissions(read: EditorChordSymbol, hint: EditorChordSymbol): boolean {
+  return (
+    read.rootPc === hint.rootPc &&
+    read.quality === hint.quality &&
+    (read.bassPc ?? -1) === (hint.bassPc ?? -1) &&
+    normalizedChordExtensions(read.quality, read.extensions).join(',') ===
+      normalizedChordExtensions(hint.quality, hint.extensions).join(',')
+  );
+}
+
 /**
  * Reads the chord-symbol stream back from a parsed `Project.toJson()` document
  * (the `annotation.chords` array), converting the Project encoding to editor
  * symbols. Malformed entries are skipped; the result is sanitized and sorted.
  *
+ * The Project encoding has no field for omitted tones, so a chord that omits
+ * one would come back sounding it. `hints` seeds the read-back with the chords
+ * the app already holds: where a symbol at the same position is the hint with
+ * its omissions dropped, the omissions are restored. Any other difference means
+ * the chord changed inside the Project, and that reading wins -- the seed
+ * retains app-level structure, it does not override the engine.
+ *
  * @param annotation The document's `annotation` object (or undefined).
+ * @param hints Chords expected at these positions, if the caller has them.
  * @returns Editor chord symbols, sorted by start position.
  */
-export function chordsFromAnnotation(annotation: unknown): EditorChordSymbol[] {
+export function chordsFromAnnotation(
+  annotation: unknown,
+  hints?: ReadonlyArray<EditorChordSymbol>,
+): EditorChordSymbol[] {
   if (typeof annotation !== 'object' || annotation === null) return [];
   const chords = (annotation as { chords?: unknown }).chords;
   if (!Array.isArray(chords)) return [];
+  const hintByStart = new Map<number, EditorChordSymbol>();
+  for (const hint of hints ?? []) {
+    if (hint.omissions !== undefined && hint.omissions.length > 0) {
+      hintByStart.set(Math.round(hint.startPpq * HINT_PPQ_SCALE), hint);
+    }
+  }
   const out: EditorChordSymbol[] = [];
   for (const raw of chords as SerializedAnnotationChord[]) {
     if (typeof raw.root_pc !== 'number' || raw.root_pc < 0 || raw.root_pc > 11) continue;
@@ -288,6 +356,10 @@ export function chordsFromAnnotation(annotation: unknown): EditorChordSymbol[] {
     }
     if (typeof raw.roman_numeral === 'string' && raw.roman_numeral.length > 0) {
       symbol.romanNumeral = raw.roman_numeral;
+    }
+    const hint = hintByStart.get(Math.round(symbol.startPpq * HINT_PPQ_SCALE));
+    if (hint !== undefined && isSameChordBeforeOmissions(symbol, hint)) {
+      symbol.omissions = [...(hint.omissions ?? [])];
     }
     out.push(symbol);
   }

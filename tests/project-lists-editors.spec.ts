@@ -384,6 +384,24 @@ describe('project list editors', () => {
       wrapper.unmount();
     });
 
+    // A power chord shares the major ordinal and differs only by the third it
+    // drops, so picking it has to carry the omission all the way through the
+    // command and back out of the Project read-back.
+    it('offers chords that leave an intrinsic tone out', async () => {
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      const wrapper = mount(ChordListEditor);
+      const qualityTrigger = wrapper
+        .findAll('tbody tr')[0]
+        .findAll('.cell-select .select-trigger')[1];
+      await qualityTrigger.trigger('click');
+      await flushPromises();
+      await chooseOption('Power chord');
+      expect(store.chords[0]).toMatchObject({ quality: 0, omissions: [4] });
+      expect(store.chords[0].extensions).toBeUndefined();
+      expect(wrapper.find('.cell-name').text()).toBe('C5');
+      wrapper.unmount();
+    });
+
     it('detects chords from the active MIDI clip', async () => {
       addNote({ pitch: 60, startPpq: 0, durationPpq: 4 });
       addNote({ pitch: 64, startPpq: 0, durationPpq: 4 });
