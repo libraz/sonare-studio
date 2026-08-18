@@ -104,6 +104,8 @@ export interface CounterpointLabels {
   consonance: Readonly<Record<'perfect' | 'imperfect' | 'dissonant', string>>;
   /** Suspension verdict, with a `{target}` pitch placeholder. */
   suspension: string;
+  /** Suspension verdict for when the resolution pitch is not known. */
+  suspensionNoTarget: string;
   /** Parallel perfect (fifths/octaves) verdict. */
   parallelPerfect: string;
   /** Hidden/direct parallel verdict. */
@@ -330,8 +332,11 @@ function pitchName(midi: number, keyFifths?: number, system: NoteNameSystem = 'e
  * and its consonance, plus the single most salient counterpoint verdict carried
  * on the safety reasons bitfield (suspension, then parallel/hidden perfects,
  * then voice crossing). These are chord-independent, so they describe polyphony
- * that has no chord progression. Vertical dissonance is deliberately not
- * surfaced as its own verdict — the interval line already says "dissonant".
+ * that has no chord progression — but the pitch a suspension resolves to is
+ * read off the sounding chord, so a chord-free suspension arrives without one
+ * and takes the wording that states the resolution without naming a pitch.
+ * Vertical dissonance is deliberately not surfaced as its own verdict — the
+ * interval line already says "dissonant".
  * Returns an empty array when the note sounds alone or against no other voice.
  */
 function counterpointLines(
@@ -360,10 +365,10 @@ function counterpointLines(
   if (reasons & ReasonFlag.Suspension) {
     const target = analysis.safety?.resolveTo;
     verdict = {
-      text: cp.suspension.replace(
-        '{target}',
-        target !== undefined ? pitchName(target, keyFifths, system) : '',
-      ),
+      text:
+        target !== undefined
+          ? cp.suspension.replace('{target}', pitchName(target, keyFifths, system))
+          : cp.suspensionNoTarget,
       term: labels.glossary.suspension,
     };
   } else if (reasons & ReasonFlag.ParallelPerfect) {

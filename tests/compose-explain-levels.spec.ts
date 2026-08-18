@@ -1,6 +1,12 @@
-import { NAMED_SCALES } from '@libraz/libcantus';
+import { NAMED_SCALES, ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
-import { GLOSSARY_KEY_FOR_KIND, theoryLabelsFor } from '@/compose/explain';
+import {
+  buildTheoryCard,
+  GLOSSARY_KEY_FOR_KIND,
+  type TheoryCardLine,
+  theoryLabelsFor,
+} from '@/compose/explain';
+import type { NoteAnalysis } from '@/compose/guidance';
 import { MESSAGES } from '@/ui/i18n';
 
 /**
@@ -69,6 +75,89 @@ describe('explanation-level wording', () => {
         expect(glossary[key].definition.length).toBeGreaterThan(0);
       }
     });
+  }
+
+  /** Label of the counterpoint line, per locale. */
+  const COUNTERPOINT_LABEL: Readonly<Record<(typeof LOCALES)[number], string>> = {
+    en: 'Counterpoint',
+    ja: '対位法',
+  };
+
+  /** The counterpoint verdict expected for a suspension with no known target. */
+  const WITHOUT_TARGET: Readonly<
+    Record<(typeof LOCALES)[number], Record<(typeof LEVELS)[number], string>>
+  > = {
+    en: {
+      beginner: 'Holds over and clashes, then steps down to settle',
+      normal: 'Suspension — resolves by step',
+      theory: 'Suspension — resolves stepwise down',
+    },
+    ja: {
+      beginner: '前の音を保ってぶつかり、一歩下がって収まります',
+      normal: '掛留 — 順次解決',
+      theory: '掛留（サスペンション）— 順次下行',
+    },
+  };
+
+  /** The same verdict once a resolution pitch (B4) is known. */
+  const WITH_TARGET: Readonly<
+    Record<(typeof LOCALES)[number], Record<(typeof LEVELS)[number], string>>
+  > = {
+    en: {
+      beginner: 'Holds over and clashes, then steps down to B4 to settle',
+      normal: 'Suspension — resolves by step to B4',
+      theory: 'Suspension — resolves stepwise down to B4',
+    },
+    ja: {
+      beginner: '前の音を保ってぶつかり、B4 へ下がって収まります',
+      normal: '掛留 — B4 へ順次解決',
+      theory: '掛留（サスペンション）— B4 へ順次下行',
+    },
+  };
+
+  function suspensionVerdict(
+    locale: (typeof LOCALES)[number],
+    level: (typeof LEVELS)[number],
+    resolveTo?: number,
+  ): TheoryCardLine | undefined {
+    const analysis = {
+      degree: 1,
+      isScaleTone: true,
+      chordSounding: false,
+      safety: {
+        reasons: ReasonFlag.Suspension,
+        ...(resolveTo !== undefined ? { resolveTo } : {}),
+      },
+    } as NoteAnalysis;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 72, keySet: true },
+      theoryLabelsFor(MESSAGES[locale].theory, level),
+    );
+    return card.lines.find((line) => line.label === COUNTERPOINT_LABEL[locale]);
+  }
+
+  for (const locale of LOCALES) {
+    for (const level of LEVELS) {
+      it(`${locale}/${level} states a suspension's resolution without naming an unknown pitch`, () => {
+        // A suspension found in the voices alone carries no resolution target,
+        // so substituting one into the templated wording would leave the
+        // sentence hanging on a preposition (or, in Japanese, a particle).
+        const line = suspensionVerdict(locale, level);
+        const text = line?.text ?? '';
+        expect(text).toBe(WITHOUT_TARGET[locale][level]);
+        expect(text).not.toContain('{target}');
+        expect(text).not.toMatch(/(?:\bto|へ|に)\s*$/);
+        expect(text).not.toMatch(/\s{2,}/);
+        expect(line?.term).toBe(MESSAGES[locale].theory.glossary.suspension);
+      });
+
+      it(`${locale}/${level} names the resolution pitch when the analysis carries one`, () => {
+        const line = suspensionVerdict(locale, level, 71);
+        expect(line?.text).toBe(WITH_TARGET[locale][level]);
+        expect(line?.term).toBe(MESSAGES[locale].theory.glossary.suspension);
+      });
+    }
   }
 
   it('falls back to the normal level for an unknown level key', () => {

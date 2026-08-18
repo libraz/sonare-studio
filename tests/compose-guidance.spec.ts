@@ -407,6 +407,11 @@ describe('resolutionTargetOf', () => {
     const counterpoint = card.lines.filter((line) => line.label === 'Counterpoint');
     expect(counterpoint.some((line) => line.text.startsWith('Suspension'))).toBe(true);
     expect(card.lines.some((line) => line.label === 'Safety')).toBe(false);
+
+    // The resolution pitch is read off the sounding chord, so this suspension
+    // arrives without one and the verdict must still read as a whole sentence.
+    expect(held.safety?.resolveTo).toBeUndefined();
+    expect(counterpoint.map((line) => line.text)).toContain('Suspension — resolves by step');
   });
 
   it('returns undefined for a plain chord tone with no resolution obligation', () => {
