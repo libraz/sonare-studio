@@ -83,6 +83,48 @@ function computePeaksPure(
   });
 }
 
+/**
+ * Reduces one bucket run onto exactly `outCount` buckets, proportionally.
+ *
+ * Both the wasm delegate and a previously computed zoom level hand back a
+ * bucket grid that is finer than the one being asked for but rarely a whole
+ * multiple of it. Each output bucket therefore takes the min/max across the
+ * input buckets its span covers, which keeps every sample of the source in the
+ * envelope. Taking a prefix instead would drop the tail of the asset and
+ * stretch everything before it across the full clip width.
+ *
+ * @param min Source minima (channel-major).
+ * @param max Source maxima (channel-major).
+ * @param offset Index of this channel's first bucket.
+ * @param inCount Buckets per channel in the source (must be >= outCount).
+ * @param outCount Buckets to produce.
+ */
+function reduceBuckets(
+  min: Float32Array,
+  max: Float32Array,
+  offset: number,
+  inCount: number,
+  outCount: number,
+): ChannelPeaks {
+  const outMin = new Float32Array(outCount);
+  const outMax = new Float32Array(outCount);
+  for (let b = 0; b < outCount; b++) {
+    const start = Math.floor((b * inCount) / outCount);
+    const end = Math.max(start + 1, Math.floor(((b + 1) * inCount) / outCount));
+    let lo = min[offset + start];
+    let hi = max[offset + start];
+    for (let i = start + 1; i < end; i++) {
+      const v = min[offset + i];
+      const w = max[offset + i];
+      if (v < lo) lo = v;
+      if (w > hi) hi = w;
+    }
+    outMin[b] = lo;
+    outMax[b] = hi;
+  }
+  return { min: outMin, max: outMax };
+}
+
 /** Wasm-delegated bucket scan; returns null when unusable (then fall back). */
 function computePeaksWasm(
   channels: ReadonlyArray<Float32Array>,
@@ -112,19 +154,14 @@ function computePeaksWasm(
   ) {
     return null;
   }
-  // The delegate derives its own bucket count from samplesPerBucket; pad or
-  // trim each channel-major slice to exactly bucketCount buckets. A shorter
-  // report would leave the right edge blank, so use the pure path instead.
+  // The delegate derives its own bucket count from an integer samplesPerBucket
+  // and so overshoots the request; reduce each channel-major slice onto exactly
+  // bucketCount buckets. A shorter report would leave the right edge blank, so
+  // use the pure path instead.
   if (report.bucketCount < bucketCount) return null;
-  const copied = bucketCount;
-  return channels.map((_, c) => {
-    const min = new Float32Array(bucketCount);
-    const max = new Float32Array(bucketCount);
-    const offset = c * report.bucketCount;
-    min.set(report.min.subarray(offset, offset + copied));
-    max.set(report.max.subarray(offset, offset + copied));
-    return { min, max };
-  });
+  return channels.map((_, c) =>
+    reduceBuckets(report.min, report.max, c * report.bucketCount, report.bucketCount, bucketCount),
+  );
 }
 
 /**
@@ -185,10 +222,21 @@ export function mergePeaks(peaks: ReadonlyArray<ChannelPeaks>): ChannelPeaks {
  */
 export class WaveformPeaksCache {
   private readonly cache = new Map<string, ChannelPeaks[]>();
+  /** Bucket counts held per asset, so a coarser level can reuse a finer one. */
+  private readonly levels = new Map<string, Set<number>>();
   private readonly options: ComputePeaksOptions;
 
   constructor(options: ComputePeaksOptions = {}) {
     this.options = options;
+  }
+
+  /** Finest cached level of an asset that can be reduced onto `bucketCount`. */
+  private finerLevel(assetId: string, bucketCount: number): number | null {
+    let best: number | null = null;
+    for (const level of this.levels.get(assetId) ?? []) {
+      if (level > bucketCount && (best === null || level < best)) best = level;
+    }
+    return best;
   }
 
   /**
@@ -203,8 +251,19 @@ export class WaveformPeaksCache {
     const key = `${assetId}|${bucketCount}`;
     const cached = this.cache.get(key);
     if (cached) return cached;
-    const computed = computePeaks(channels, bucketCount, this.options);
+    // Zooming out asks for a coarser envelope of audio already scanned once.
+    // Reducing the finer level costs one pass over its buckets instead of
+    // another pass over every sample of the asset.
+    const finer = this.finerLevel(assetId, bucketCount);
+    const source = finer === null ? null : this.cache.get(`${assetId}|${finer}`);
+    const computed =
+      source && finer !== null
+        ? source.map((channel) => reduceBuckets(channel.min, channel.max, 0, finer, bucketCount))
+        : computePeaks(channels, bucketCount, this.options);
     this.cache.set(key, computed);
+    (this.levels.get(assetId) ?? this.levels.set(assetId, new Set()).get(assetId)!).add(
+      bucketCount,
+    );
     return computed;
   }
 
@@ -231,11 +290,13 @@ export class WaveformPeaksCache {
     for (const key of [...this.cache.keys()]) {
       if (key.startsWith(prefix)) this.cache.delete(key);
     }
+    this.levels.delete(assetId);
   }
 
   /** Drops the whole cache. */
   clear(): void {
     this.cache.clear();
+    this.levels.clear();
   }
 }
 

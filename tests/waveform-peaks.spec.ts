@@ -95,6 +95,43 @@ describe('computePeaks (wasm delegation)', () => {
     expect(waveformPeaks).not.toHaveBeenCalled();
   });
 
+  it('keeps the tail of the asset when the delegate overshoots the request', () => {
+    // The real delegate derives bucketCount = ceil(frames / samplesPerBucket)
+    // from an integer bucket width, so it reports more buckets than asked for
+    // whenever the width does not divide the frame count. Only the last bucket
+    // is loud here: taking a prefix of the report would render the end of the
+    // asset as silence and stretch everything before it.
+    const frames = 100;
+    const channel = new Float32Array(frames);
+    channel[frames - 1] = 1;
+    const realistic: WaveformPeaksModule = {
+      waveformPeaks: (samples, channels, options) => {
+        const width = options?.samplesPerBucket ?? 1;
+        const buckets = Math.ceil(samples.length / channels / width);
+        const min = new Float32Array(buckets);
+        const max = new Float32Array(buckets);
+        for (let b = 0; b < buckets; b++) {
+          let lo = Number.POSITIVE_INFINITY;
+          let hi = Number.NEGATIVE_INFINITY;
+          for (let i = b * width; i < Math.min(samples.length / channels, (b + 1) * width); i++) {
+            lo = Math.min(lo, samples[i * channels]);
+            hi = Math.max(hi, samples[i * channels]);
+          }
+          min[b] = Number.isFinite(lo) ? lo : 0;
+          max[b] = Number.isFinite(hi) ? hi : 0;
+        }
+        return { min, max, channels, bucketCount: buckets, samplesPerBucket: width };
+      },
+    };
+
+    // 100 frames over 30 buckets: width floors to 3, so the delegate reports
+    // 34 buckets and the loud one is past a 30-bucket prefix.
+    const result = computePeaks([channel], 30, { wasm: realistic });
+    expect(result[0].max).toHaveLength(30);
+    expect(result[0].max[29]).toBe(1);
+    expect(Array.from(result[0].max.subarray(0, 29))).toEqual(Array(29).fill(0));
+  });
+
   it('falls back to the pure path when the delegate throws or is absent', () => {
     const throwing: WaveformPeaksModule = {
       waveformPeaks: () => {
@@ -136,6 +173,50 @@ describe('WaveformPeaksCache', () => {
     const merged = cache.getMerged('asset-a', channels, 1);
     expect(merged).toEqual(peaks([-2], [2]));
     expect(cache.getMerged('asset-a', channels, 1)).toBe(merged);
+  });
+
+  it('reduces a coarser zoom level from a cached finer one', () => {
+    const scan = vi.fn();
+    const counting: WaveformPeaksModule = {
+      waveformPeaks: (samples, channels, options) => {
+        scan();
+        const width = options?.samplesPerBucket ?? 1;
+        const frames = samples.length / channels;
+        const buckets = Math.ceil(frames / width);
+        const min = new Float32Array(buckets);
+        const max = new Float32Array(buckets);
+        for (let b = 0; b < buckets; b++) {
+          let lo = Number.POSITIVE_INFINITY;
+          let hi = Number.NEGATIVE_INFINITY;
+          for (let i = b * width; i < Math.min(frames, (b + 1) * width); i++) {
+            lo = Math.min(lo, samples[i * channels]);
+            hi = Math.max(hi, samples[i * channels]);
+          }
+          min[b] = Number.isFinite(lo) ? lo : 0;
+          max[b] = Number.isFinite(hi) ? hi : 0;
+        }
+        return { min, max, channels, bucketCount: buckets, samplesPerBucket: width };
+      },
+    };
+    const cache = createWaveformPeaksCache({ wasm: counting });
+    const frames = 256;
+    const channel = new Float32Array(frames);
+    for (let i = 0; i < frames; i++) channel[i] = i % 2 === 0 ? i / frames : -i / frames;
+
+    const fine = cache.get('asset-a', [channel], 64);
+    expect(scan).toHaveBeenCalledTimes(1);
+
+    // Zooming out reuses the scan already paid for instead of walking every
+    // sample again; the envelope still covers the whole asset.
+    const coarse = cache.get('asset-a', [channel], 16);
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(coarse[0].max).toHaveLength(16);
+    expect(coarse[0].max[15]).toBeCloseTo(fine[0].max[63], 5);
+    expect(coarse[0].min[15]).toBeCloseTo(Math.min(...fine[0].min.subarray(60, 64)), 5);
+
+    // A finer level than anything cached still has to scan.
+    cache.get('asset-a', [channel], 128);
+    expect(scan).toHaveBeenCalledTimes(2);
   });
 
   it('invalidate drops only the given asset', () => {
