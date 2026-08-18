@@ -36,6 +36,8 @@ import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/p
 import { buildChordTimeline } from './chord-at-tick';
 import { effectiveKeyScale } from './key';
 import { strongBeatAt } from './meter';
+import { cadenceArrivals, cadencesByNote, type NoteCadence } from './note-cadences';
+import { editorNotesToNoteEvents } from './notes-io';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
 
 /** Representative octave anchor: pitch class pc is evaluated as MIDI 60 + pc. */
@@ -152,6 +154,13 @@ export interface NoteAnalysis {
    * without any chord present.
    */
   vertical?: VerticalInfo;
+  /**
+   * The cadence this note arrives on, when it is one of the notes sounding the
+   * arrival. Present only at the arrival itself, never across the resolving
+   * chord's span, and only where the harmony is trustworthy enough to name one
+   * — see {@link cadenceArrivals}.
+   */
+  cadence?: NoteCadence;
 }
 
 export interface GuidanceResult {
@@ -373,6 +382,28 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     });
   }
 
+  // Cadences are a property of the whole texture, not of the part being edited,
+  // so the harmony is read over every sounding voice: the active clip's notes on
+  // the shared timeline plus the other (non-percussion, non-duplicated) lines
+  // already gathered for the counterpoint context. Reading them costs nothing
+  // when a chord track states the progression, so the notes are only pooled when
+  // there is none to state it.
+  const cadenceNotes =
+    input.chordSymbols.length > 0
+      ? []
+      : [
+          ...editorNotesToNoteEvents(input.notes, input.clipStartPpq),
+          ...otherVoiceLines.flatMap((line) => editorNotesToNoteEvents(line)),
+        ].sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch);
+  const cadences = cadenceArrivals(input.chordSymbols, cadenceNotes, key, input.timeSignatures);
+  const cadenceByNoteId = cadencesByNote(
+    input.notes,
+    (note) => input.clipStartPpq + note.startPpq,
+    cadences.arrivals,
+    cadences.inferred,
+    input.timeSignatures,
+  );
+
   // Per-note analysis, in time order so prevPitch reflects the preceding
   // onset group (cluster members never count each other as "previous").
   const byNoteId = new Map<number, NoteAnalysis>();
@@ -430,6 +461,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     const others = othersAt(absBeat, prevAbs);
     const vertical = verticalAt(note.pitch, others);
     if (vertical !== undefined) analysis.vertical = vertical;
+    const cadence = cadenceByNoteId.get(note.id);
+    if (cadence !== undefined) analysis.cadence = cadence;
     const prevPitch = prevGroupPitch;
     const safety = tryEval(() =>
       evaluateSafety({

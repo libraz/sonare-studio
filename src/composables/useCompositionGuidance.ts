@@ -65,10 +65,12 @@ export function useCompositionGuidance(): CompositionGuidance {
   /**
    * Card string bundle for the active explanation level: the shared role /
    * function / line labels plus the selected level's wording and the glossary.
+   * The cadence names come from the harmony block the chord lane writes with,
+   * so both surfaces name a cadence the same way.
    * Recomputes when the language or the level preference changes.
    */
   const cardLabels = computed<TheoryLabels>(() =>
-    theoryLabelsFor(t.value.theory, appSettings.settings.explainLevel),
+    theoryLabelsFor(t.value.theory, appSettings.settings.explainLevel, t.value.harmony.cadence),
   );
 
   /** The active source window is all editor guidance needs; loops are rendered by playback. */

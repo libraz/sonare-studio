@@ -2654,6 +2654,7 @@ export const ja = {
       chromatic: '半音階',
     },
     estimatedKey: '（キーはノートからの推定）',
+    inferredCadence: '（終止形はノートからの推定）',
     levelName: {
       beginner: '初心者',
       normal: '通常',
@@ -2686,6 +2687,7 @@ export const ja = {
         scaleDegree: 'スケールの{degree}番目の音',
         nonScaleSuffix: '（スケール外）',
         nonScaleTone: 'スケールの外の音',
+        cadenceArrival: '{cadence}。ここで音楽がひと区切りつきます',
         chordScale: {
           tensions: '重ねられる彩りの音:',
           passing: '通り過ぎるだけにする音:',
@@ -2732,6 +2734,7 @@ export const ja = {
         scaleDegree: 'スケール度数 {degree}',
         nonScaleSuffix: '（スケール外）',
         nonScaleTone: 'スケール外の音',
+        cadenceArrival: '{cadence} — ここでフレーズが終止',
         chordScale: {
           tensions: 'テンション',
           passing: '経過',
@@ -2778,6 +2781,7 @@ export const ja = {
         scaleDegree: 'スケール度数 {degree}',
         nonScaleSuffix: '（ノンダイアトニック）',
         nonScaleTone: 'ノンダイアトニック音',
+        cadenceArrival: '{cadence} — フレーズの終止点',
         chordScale: {
           tensions: '使用可能テンション',
           passing: '経過音',

@@ -233,7 +233,7 @@ describe('the English default reproduces the previous output', () => {
 
   it('titles the theory card in English unless a system is named', () => {
     const analysis = { degree: 0, isScaleTone: false } as unknown as NoteAnalysis;
-    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal');
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence);
     expect(buildTheoryCard(analysis, { pitch: 61, keySet: false }, labels).title).toBe('C#4');
     expect(
       buildTheoryCard(analysis, { pitch: 61, keySet: false, noteNameSystem: 'japanese' }, labels)

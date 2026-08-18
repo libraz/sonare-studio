@@ -2653,6 +2653,7 @@ export const en = {
       chromatic: 'Chromatic',
     },
     estimatedKey: ' (key estimated from the notes)',
+    inferredCadence: ' (read from the notes)',
     levelName: {
       beginner: 'Beginner',
       normal: 'Normal',
@@ -2685,6 +2686,7 @@ export const en = {
         scaleDegree: 'Note {degree} of the scale',
         nonScaleSuffix: ' — outside the scale',
         nonScaleTone: 'Outside the current scale',
+        cadenceArrival: '{cadence} — the music comes to rest here',
         chordScale: {
           tensions: 'Colour notes you can add:',
           passing: 'Notes to pass through only:',
@@ -2731,6 +2733,7 @@ export const en = {
         scaleDegree: 'Scale degree {degree}',
         nonScaleSuffix: ' (non-scale)',
         nonScaleTone: 'Non-scale tone',
+        cadenceArrival: '{cadence} — the phrase closes here',
         chordScale: {
           tensions: 'tensions',
           passing: 'passing',
@@ -2777,6 +2780,7 @@ export const en = {
         scaleDegree: 'Scale degree {degree}',
         nonScaleSuffix: ' (non-diatonic)',
         nonScaleTone: 'Non-diatonic tone',
+        cadenceArrival: '{cadence} — phrase arrival',
         chordScale: {
           tensions: 'available tensions',
           passing: 'passing tones',

@@ -15,6 +15,7 @@ import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { formatSpelledPitch, pitchClassNames } from '@/lib/pitch';
 import { spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
+import type { CadenceType } from './harmonic-analysis';
 
 /** A glossary term: a short display name and its plain-language definition. */
 export interface GlossaryEntry {
@@ -79,6 +80,12 @@ export interface TheoryLabels {
   scaleNames: Readonly<Record<string, string>>;
   /** Suffix marking a scale line whose key was estimated rather than set. */
   estimatedKey: string;
+  /** Cadence line label and type names (see {@link CadenceLabels}). */
+  cadence: CadenceLabels;
+  /** Cadence-arrival line template, with a `{cadence}` placeholder. */
+  cadenceArrival: string;
+  /** Suffix marking a cadence read from the notes rather than from a chord track. */
+  inferredCadence: string;
   /** Scale-degree line template, with a `{degree}` placeholder. */
   scaleDegree: string;
   /** Suffix appended to the scale line for a non-scale tone. */
@@ -94,6 +101,17 @@ export interface TheoryLabels {
   counterpoint: CounterpointLabels;
   /** Glossary of jargon terms, keyed by term id (see {@link GLOSSARY_KEY_FOR_KIND}). */
   glossary: Readonly<Record<string, GlossaryEntry>>;
+}
+
+/**
+ * The cadence vocabulary, taken from the app's `harmony.cadence` block — the
+ * same names the chord lane writes on the progression, so one concept is not
+ * named twice. The card supplies its own wording around them (see
+ * {@link TheoryLabels.cadenceArrival}), which is what varies by level.
+ */
+export interface CadenceLabels extends Readonly<Record<CadenceType, string>> {
+  /** Line label ("Cadence"). */
+  label: string;
 }
 
 /** Wording for the voice-relative (counterpoint) card line. */
@@ -126,6 +144,7 @@ export interface TheoryLevelLabels {
   scaleDegree: string;
   nonScaleSuffix: string;
   nonScaleTone: string;
+  cadenceArrival: string;
   chordScale: TheoryLabels['chordScale'];
   counterpoint: CounterpointLabels;
 }
@@ -142,6 +161,7 @@ export interface LocalizedTheory {
   intervalNames: TheoryLabels['intervalNames'];
   scaleNames: TheoryLabels['scaleNames'];
   estimatedKey: TheoryLabels['estimatedKey'];
+  inferredCadence: TheoryLabels['inferredCadence'];
   levels: Readonly<Record<string, TheoryLevelLabels>>;
   glossary: TheoryLabels['glossary'];
 }
@@ -149,12 +169,18 @@ export interface LocalizedTheory {
 /**
  * Resolves the card's string bundle for one explanation level: the shared role
  * / function / line labels merged with the selected level's wording and the
- * glossary. Pure — the same {@link LocalizedTheory} yields the same bundle.
+ * glossary. Pure — the same inputs yield the same bundle.
  *
  * @param theory The localized theory message block.
  * @param level The explanation level whose wording to use.
+ * @param cadence The cadence names, from the app's `harmony.cadence` block, so
+ *   the card and the chord lane name a cadence the same way.
  */
-export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryLabels {
+export function theoryLabelsFor(
+  theory: LocalizedTheory,
+  level: string,
+  cadence: CadenceLabels,
+): TheoryLabels {
   const levelLabels = theory.levels[level] ?? theory.levels.normal;
   return {
     roles: theory.roles,
@@ -163,6 +189,9 @@ export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryL
     intervalNames: theory.intervalNames,
     scaleNames: theory.scaleNames,
     estimatedKey: theory.estimatedKey,
+    cadence,
+    cadenceArrival: levelLabels.cadenceArrival,
+    inferredCadence: theory.inferredCadence,
     lock: levelLabels.lock,
     safety: levelLabels.safety,
     labels: levelLabels.labels,
@@ -440,6 +469,16 @@ export function buildTheoryCard(
       label: labels.lines.chord,
       text: parts.join(' — '),
       ...(functionTerm !== undefined ? { term: functionTerm } : {}),
+    });
+  }
+  if (analysis.cadence !== undefined) {
+    // A cadence read out of the notes is a reading the app arrived at on its
+    // own, so it says so, the way an estimated key does. One stated by a chord
+    // track is the composer's own progression and is reported plainly.
+    const text = labels.cadenceArrival.replace('{cadence}', labels.cadence[analysis.cadence.type]);
+    lines.push({
+      label: labels.cadence.label,
+      text: analysis.cadence.inferred ? text + labels.inferredCadence : text,
     });
   }
   if (ctx.keySet) {

@@ -248,6 +248,25 @@ function cadenceMarks(
 }
 
 /**
+ * The cadences one chord track states, without the per-symbol annotations.
+ *
+ * Split out of {@link analyzeHarmony} so a surface that only asks where the
+ * harmony arrives — the note hover card — reads the same cadences the chord
+ * lane draws instead of detecting a second set of its own.
+ *
+ * @param symbols The project chord track (absolute PPQ regions).
+ * @param key The key the progression is declared in.
+ */
+export function chordTrackCadences(
+  symbols: ReadonlyArray<EditorChordSymbol>,
+  key: KeyScale,
+): CadenceMark[] {
+  const timeline = tryEval(() => buildChordTimeline(symbols));
+  if (timeline === undefined) return [];
+  return cadenceMarks(timeline, keySpansOf(timeline, key), key);
+}
+
+/**
  * Analyzes a chord track for display.
  *
  * @param symbols The project chord track (absolute PPQ regions).

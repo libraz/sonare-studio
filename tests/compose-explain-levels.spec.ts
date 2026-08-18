@@ -44,7 +44,11 @@ describe('explanation-level wording', () => {
   for (const locale of LOCALES) {
     for (const level of LEVELS) {
       it(`${locale}/${level} carries non-empty wording for the whole vocabulary`, () => {
-        const labels = theoryLabelsFor(MESSAGES[locale].theory, level);
+        const labels = theoryLabelsFor(
+          MESSAGES[locale].theory,
+          level,
+          MESSAGES[locale].harmony.cadence,
+        );
 
         for (const value of Object.values(labels.lock)) expect(value.length).toBeGreaterThan(0);
         for (const value of Object.values(labels.safety)) expect(value.length).toBeGreaterThan(0);
@@ -52,6 +56,7 @@ describe('explanation-level wording', () => {
           expect(labels.labels[kind]?.length ?? 0).toBeGreaterThan(0);
         }
         expect(labels.scaleDegree).toContain('{degree}');
+        expect(labels.cadenceArrival).toContain('{cadence}');
         expect(labels.nonScaleTone.length).toBeGreaterThan(0);
         expect(labels.chordScale.tensions.length).toBeGreaterThan(0);
         expect(labels.chordScale.passing.length).toBeGreaterThan(0);
@@ -132,7 +137,7 @@ describe('explanation-level wording', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 72, keySet: true },
-      theoryLabelsFor(MESSAGES[locale].theory, level),
+      theoryLabelsFor(MESSAGES[locale].theory, level, MESSAGES[locale].harmony.cadence),
     );
     return card.lines.find((line) => line.label === COUNTERPOINT_LABEL[locale]);
   }
@@ -161,8 +166,12 @@ describe('explanation-level wording', () => {
   }
 
   it('falls back to the normal level for an unknown level key', () => {
-    const fallback = theoryLabelsFor(MESSAGES.en.theory, 'nonexistent');
-    const normal = theoryLabelsFor(MESSAGES.en.theory, 'normal');
+    const fallback = theoryLabelsFor(
+      MESSAGES.en.theory,
+      'nonexistent',
+      MESSAGES.en.harmony.cadence,
+    );
+    const normal = theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence);
     expect(fallback.safety).toEqual(normal.safety);
   });
 });

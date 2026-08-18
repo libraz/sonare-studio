@@ -103,7 +103,7 @@ describe('buildGuidance', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 71, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     expect(card.lines.find((line) => line.label === 'Scale')?.text).toBe('Scale degree 7');
   });
@@ -329,7 +329,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 62, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     const cpLine = card.lines.find((line) => line.label === 'Counterpoint');
     expect(cpLine?.text).toBe('perfect 5th above the bass (perfect consonance)');
@@ -402,7 +402,7 @@ describe('resolutionTargetOf', () => {
     const card = buildTheoryCard(
       held,
       { pitch: 72, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     const counterpoint = card.lines.filter((line) => line.label === 'Counterpoint');
     expect(counterpoint.some((line) => line.text.startsWith('Suspension'))).toBe(true);
@@ -438,7 +438,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 70, keySet: true, keyFifths: -3 },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     expect(card.title).toMatch(/^Bb4/);
   });
@@ -453,7 +453,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 72, keySet: true, keyFifths: -3 },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
 
     expect(card.lines.some((line) => line.text.includes('Bb4'))).toBe(true);
@@ -469,7 +469,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 66, keySet: true },
-      theoryLabelsFor(MESSAGES.ja.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.ja.theory, 'normal', MESSAGES.ja.harmony.cadence),
     );
 
     expect(card.lines.some((line) => line.text.includes('三全音'))).toBe(true);
@@ -488,7 +488,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 64, keySet: true, chordRoman: 'I', chordFunction: 'tonic' },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     expect(card.title).toBe('E4 — 3rd');
     const scaleLine = card.lines.find((line) => line.label === 'Scale');
@@ -514,7 +514,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 60, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     expect(colorLine).toBeDefined();
@@ -550,7 +550,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 60, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     // Freest first: tensions, then passing, then avoid.
@@ -566,7 +566,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 62, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     expect(colorLine?.text).toBe('D Dorian');
@@ -581,7 +581,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 70, keySet: true, keyFifths: -2 },
-      theoryLabelsFor(MESSAGES.ja.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.ja.theory, 'normal', MESSAGES.ja.harmony.cadence),
     );
     const colorLine = card.lines.find((line) => line.label === 'カラー');
     expect(colorLine?.text).toBe('Bb 旋律的短音階');
@@ -596,7 +596,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 60, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     const colorLine = card.lines.find((line) => line.label === 'Color');
     expect(colorLine?.text).toBe('C bebopDominant');
@@ -615,7 +615,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 64, keySet: true, chordRoman: 'I', chordFunction: 'tonic' },
-      theoryLabelsFor(MESSAGES.ja.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.ja.theory, 'normal', MESSAGES.ja.harmony.cadence),
     );
     expect(card.title).toBe('E4 — 第3音');
     const scaleLine = card.lines.find((line) => line.label === 'スケール');
@@ -629,7 +629,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 64, keySet: true, chordFunction: 'tonic' },
-      theoryLabelsFor(MESSAGES.en.theory, 'beginner'),
+      theoryLabelsFor(MESSAGES.en.theory, 'beginner', MESSAGES.en.harmony.cadence),
     );
     const chordLine = card.lines.find((line) => line.label === 'Chord');
     expect(chordLine?.term?.term).toBe('Tonic');
@@ -645,7 +645,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 71, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'theory'),
+      theoryLabelsFor(MESSAGES.en.theory, 'theory', MESSAGES.en.harmony.cadence),
     );
     const noteLine = card.lines.find((line) => line.label === 'Note');
     expect(noteLine?.term?.term).toBe('Leading tone');
@@ -667,7 +667,7 @@ describe('buildTheoryCard', () => {
     const card = buildTheoryCard(
       analysis,
       { pitch: 62, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     expect(card.lines.some((line) => line.label === 'Safety')).toBe(false);
   });
@@ -688,7 +688,7 @@ describe('buildTheoryCard', () => {
     expect(covered?.chordSounding).toBe(true);
     expect(inGap?.chordSounding).toBe(false);
     if (covered === undefined || inGap === undefined) return;
-    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal');
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence);
     const coveredCard = buildTheoryCard(covered, { pitch: 64, keySet: true }, labels);
     const gapCard = buildTheoryCard(inGap, { pitch: 64, keySet: true }, labels);
     expect(coveredCard.lines.find((line) => line.label === 'Safety')?.text).toBe('Fits here');
@@ -697,7 +697,7 @@ describe('buildTheoryCard', () => {
 
   it('marks the scale line when the key was estimated rather than set', () => {
     const analysis = { degree: 3, isScaleTone: true, chordSounding: false } as NoteAnalysis;
-    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal');
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence);
     const set = buildTheoryCard(analysis, { pitch: 64, keySet: true }, labels);
     const estimated = buildTheoryCard(
       analysis,
@@ -719,12 +719,12 @@ describe('buildTheoryCard', () => {
     const beginner = buildTheoryCard(
       analysis,
       { pitch: 71, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'beginner'),
+      theoryLabelsFor(MESSAGES.en.theory, 'beginner', MESSAGES.en.harmony.cadence),
     );
     const theory = buildTheoryCard(
       analysis,
       { pitch: 71, keySet: true },
-      theoryLabelsFor(MESSAGES.en.theory, 'theory'),
+      theoryLabelsFor(MESSAGES.en.theory, 'theory', MESSAGES.en.harmony.cadence),
     );
     const beginnerNote = beginner.lines.find((line) => line.label === 'Note')?.text;
     const theoryNote = theory.lines.find((line) => line.label === 'Note')?.text;
