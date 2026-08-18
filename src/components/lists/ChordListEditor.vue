@@ -8,6 +8,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { editorChordToChord } from '@/compose/chord-io';
+import { chordCombinationKey } from '@/compose/chord-quality';
 import { effectiveKeyScale } from '@/compose/key';
 import { detectProgressionGroups, type PatternGroup } from '@/compose/progression-groups';
 import { reharmCandidatesFor } from '@/compose/reharm';
@@ -33,25 +34,34 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, fractionalBarsBetween, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 
-/** Chord-quality options. */
-const QUALITY_OPTIONS = CHORD_QUALITY_CHOICES.map((choice) => ({
+/** One entry of the quality picker: its combination key and its visible label. */
+interface QualityOption {
+  value: string;
+  label: string;
+}
+
+/** Chord-quality options offered on every row. */
+const QUALITY_OPTIONS: ReadonlyArray<QualityOption> = CHORD_QUALITY_CHOICES.map((choice) => ({
   value: qualityChoiceKey(choice),
   label: choice.label,
 }));
+
+/** The combination keys the curated option list can express. */
+const QUALITY_OPTION_KEYS = new Set(QUALITY_OPTIONS.map((option) => option.value));
 
 /**
  * Stable select-menu key for a quality with its color tones and the intrinsic
  * tones it leaves silent. The omissions belong in the key: a power chord and a
  * plain major share an ordinal and differ only by the third one of them drops.
+ * Both lists are normalized, so a chord that reaches the editor unsanitized keys
+ * the same as the option that would produce it.
  */
 function qualityChoiceKey(choice: {
   quality: number;
   extensions?: ReadonlyArray<number>;
   omissions?: ReadonlyArray<number>;
 }): string {
-  const base = `${choice.quality}:${choice.extensions?.join(',') ?? ''}`;
-  const omissions = choice.omissions ?? [];
-  return omissions.length === 0 ? base : `${base}/${omissions.join(',')}`;
+  return chordCombinationKey(choice.quality, choice.extensions, choice.omissions);
 }
 
 /**
@@ -221,6 +231,22 @@ const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHigh
 function chordName(chord: EditorChordSymbol): string {
   return formatChordName(chord, chordKeyFifths.value, noteNameSystem.value);
 }
+
+/**
+ * Quality options per chord row. The curated list is a deliberate subset of a
+ * chord's unbounded quality space, so a detected or imported chord often matches
+ * no entry; such a row leads with a one-off entry naming its own chord, so the
+ * picker reads the chord the row holds rather than looking unset, and choosing
+ * that entry is a no-op. Rows whose chord is in the list share the curated
+ * array, so their menus see the same options across edits.
+ */
+const qualityOptionsByIndex = computed<ReadonlyArray<ReadonlyArray<QualityOption>>>(() =>
+  store.chords.map((chord) => {
+    const key = qualityChoiceKeyFor(chord);
+    if (QUALITY_OPTION_KEYS.has(key)) return QUALITY_OPTIONS;
+    return [{ value: key, label: chordName(chord) }, ...QUALITY_OPTIONS];
+  }),
+);
 
 /**
  * Roman-numeral degree label for a chord in the prevailing key, or blank when no
@@ -622,7 +648,7 @@ function clearAll(): void {
               :model-value="qualityChoiceKeyFor(item.chord)"
               class="cell-input cell-select"
               size="sm"
-              :options="QUALITY_OPTIONS"
+              :options="qualityOptionsByIndex[item.index] ?? QUALITY_OPTIONS"
               :aria-label="formatMessage(t.shell.lists.chords.qualityOf, { row: item.index + 1 })"
               @change="onQualityChange(item.index, item.chord, $event)"
             />

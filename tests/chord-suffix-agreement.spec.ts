@@ -1,10 +1,11 @@
 import { type ChordQuality, chordPitchClasses, makeChord } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { editorChordToChord } from '@/compose/chord-io';
-import { chordSuffix, libcantusQualityToEditor, QUALITY_SUFFIX } from '@/compose/chord-quality';
+import { chordSuffix, QUALITY_SUFFIX } from '@/compose/chord-quality';
 import type { NotatedChordSymbol, NotatedScore } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { CHORD_QUALITY_CHOICES, chordTonePitchClasses, formatChordName } from '@/project/chords';
+import { editorSymbolForQuality, LIBCANTUS_QUALITIES } from './helpers/chord-qualities';
 
 /**
  * The three chord-naming surfaces (score view, chord track, MusicXML
@@ -13,19 +14,9 @@ import { CHORD_QUALITY_CHOICES, chordTonePitchClasses, formatChordName } from '@
  * libcantus quality union and the whole editor dropdown.
  */
 
-const LIBCANTUS_QUALITIES = Object.keys(QUALITY_SUFFIX) as ChordQuality[];
-
 /** The editor symbol a libcantus quality maps to, rooted on C. */
 function editorSymbol(quality: ChordQuality) {
-  const mapped = libcantusQualityToEditor(quality);
-  return {
-    startPpq: 0,
-    endPpq: 4,
-    rootPc: 0,
-    quality: mapped.quality,
-    ...(mapped.extensions === undefined ? {} : { extensions: [...mapped.extensions] }),
-    ...(mapped.omissions === undefined ? {} : { omissions: [...mapped.omissions] }),
-  };
+  return editorSymbolForQuality(quality);
 }
 
 /** The chord track's name for a libcantus quality, rooted on C. */

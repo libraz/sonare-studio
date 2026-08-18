@@ -27,6 +27,27 @@ describe('sameChord', () => {
     expect(sameChord(base, { ...base, bassPc: undefined })).toBe(true);
     expect(sameChord({ ...base, bassPc: 0 }, base)).toBe(false);
   });
+
+  it('distinguishes chords by the tones they add', () => {
+    expect(sameChord(base, { ...base, extensions: [2] })).toBe(false);
+    expect(sameChord({ ...base, extensions: [2] }, { ...base, extensions: [9] })).toBe(false);
+    expect(sameChord({ ...base, extensions: [2, 9] }, { ...base, extensions: [9, 2] })).toBe(true);
+    // A compound extension is the same tone as its simple interval, and a tone
+    // the quality already sounds adds nothing.
+    expect(sameChord({ ...base, extensions: [2] }, { ...base, extensions: [14] })).toBe(true);
+    expect(sameChord(base, { ...base, extensions: [7, 10] })).toBe(true);
+  });
+
+  it('distinguishes a sounded intrinsic tone from an omitted one', () => {
+    const powerChord: EditorChordSymbol = { ...base, quality: 0, omissions: [4] };
+    expect(sameChord(powerChord, { ...base, quality: 0 })).toBe(false);
+    expect(sameChord(powerChord, { ...powerChord, omissions: [16] })).toBe(true);
+    // Only a tone the quality carries can be omitted, so an offset naming
+    // neither an intrinsic tone nor the root leaves the chord unchanged.
+    expect(sameChord({ ...base, quality: 0 }, { ...base, quality: 0, omissions: [6, 0] })).toBe(
+      true,
+    );
+  });
 });
 
 describe('formatChordName', () => {

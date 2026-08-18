@@ -163,6 +163,30 @@ function combinationKey(
 }
 
 /**
+ * Combination key for an editor quality plus raw extension and omission
+ * offsets, normalized first so a compound, duplicated, unsorted, root-valued or
+ * intrinsic-valued entry keys the same as the chord it describes. Callers
+ * matching a chord against a fixed set of quality combinations (the chord-track
+ * quality picker) key on this, so an unsanitized chord still finds its entry.
+ *
+ * @param quality Audio-domain ChordQuality ordinal (Major = 0).
+ * @param extensions Raw extension semitone offsets, if any.
+ * @param omissions Raw omitted intrinsic semitone offsets, if any.
+ * @returns The `"ordinal:ext,ext/omit,omit"` key for the combination.
+ */
+export function chordCombinationKey(
+  quality: number,
+  extensions?: ReadonlyArray<number>,
+  omissions?: ReadonlyArray<number>,
+): string {
+  return combinationKey(
+    quality,
+    normalizedChordExtensions(quality, extensions),
+    normalizedChordOmissions(quality, omissions),
+  );
+}
+
+/**
  * Audio-domain quality ordinal -> libcantus quality. Every ordinal maps to an
  * exact libcantus quality.
  */
