@@ -358,6 +358,57 @@ describe('resolutionTargetOf', () => {
     expect(resolutionTargetOf(analysis)).toBe(72);
   });
 
+  it('reads the voice-relative verdict when no chord-based label applies', () => {
+    // A suspension heard in the voices alone carries no analyzer label, so its
+    // target can only come from the safety verdict. Withholding the verdict for
+    // a chordless note would silently drop the resolution arrow with it.
+    const analysis = {
+      degree: 1,
+      isScaleTone: true,
+      chordSounding: false,
+      analyzed: { noteId: 1, labels: [] },
+      safety: { reasons: ReasonFlag.Suspension, resolveTo: 71 },
+    } as NoteAnalysis;
+    expect(resolutionTargetOf(analysis)).toBe(71);
+  });
+
+  it('still analyzes a chordless suspension so its counterpoint reading survives', () => {
+    // The upper voice holds C5 while the bass steps C4 -> D4: a suspension with
+    // no chord anywhere. The verdict is what carries it, and the card's
+    // counterpoint line reads it, so it must be computed even though the
+    // safety line is withheld for want of a chord.
+    const lower = {
+      track: track({ id: 2, name: 'Bass' }),
+      notes: [
+        note({ id: 240, pitch: 60, startPpq: 1, durationPpq: 1 }),
+        note({ id: 241, pitch: 62, startPpq: 2, durationPpq: 1 }),
+      ],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 95, pitch: 72, startPpq: 1, durationPpq: 1 }),
+          note({ id: 96, pitch: 72, startPpq: 2, durationPpq: 1 }),
+        ],
+        otherTracks: [lower],
+      }),
+    );
+    const held = result.byNoteId.get(96);
+    expect(held).toBeDefined();
+    if (held === undefined) return;
+    expect(held.chordSounding).toBe(false);
+    expect(held.safety).toBeDefined();
+    expect((held.safety?.reasons ?? 0) & ReasonFlag.Suspension).toBeTruthy();
+    const card = buildTheoryCard(
+      held,
+      { pitch: 72, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    const counterpoint = card.lines.filter((line) => line.label === 'Counterpoint');
+    expect(counterpoint.some((line) => line.text.startsWith('Suspension'))).toBe(true);
+    expect(card.lines.some((line) => line.label === 'Safety')).toBe(false);
+  });
+
   it('returns undefined for a plain chord tone with no resolution obligation', () => {
     const result = buildGuidance(
       guidanceInput({
@@ -594,6 +645,64 @@ describe('buildTheoryCard', () => {
     const noteLine = card.lines.find((line) => line.label === 'Note');
     expect(noteLine?.term?.term).toBe('Leading tone');
     expect(noteLine?.term?.definition.length).toBeGreaterThan(0);
+  });
+
+  it('drops the safety line for a note no chord covers', () => {
+    // Without a chord libcantus has nothing to weigh the note against and never
+    // answers Safe, so a rendered verdict would tell the composer their note
+    // clashes with a chord the piece does not contain.
+    const result = buildGuidance(
+      guidanceInput({ notes: [note({ id: 63, pitch: 62, startPpq: 0, durationPpq: 1 })] }),
+    );
+    const analysis = result.byNoteId.get(63);
+    expect(analysis?.chordSounding).toBe(false);
+    // The verdict itself is still analyzed; only its line is withheld.
+    expect(analysis?.safety).toBeDefined();
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 62, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal'),
+    );
+    expect(card.lines.some((line) => line.label === 'Safety')).toBe(false);
+  });
+
+  it('keeps the safety line for a note a chord does cover', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 64, pitch: 64, startPpq: 0, durationPpq: 1 }),
+          // The progression stops at beat 2, leaving this note in a gap.
+          note({ id: 65, pitch: 64, startPpq: 3, durationPpq: 1 }),
+        ],
+        chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 2, rootPc: 0, quality: 0 })],
+      }),
+    );
+    const covered = result.byNoteId.get(64);
+    const inGap = result.byNoteId.get(65);
+    expect(covered?.chordSounding).toBe(true);
+    expect(inGap?.chordSounding).toBe(false);
+    if (covered === undefined || inGap === undefined) return;
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal');
+    const coveredCard = buildTheoryCard(covered, { pitch: 64, keySet: true }, labels);
+    const gapCard = buildTheoryCard(inGap, { pitch: 64, keySet: true }, labels);
+    expect(coveredCard.lines.find((line) => line.label === 'Safety')?.text).toBe('Fits here');
+    expect(gapCard.lines.some((line) => line.label === 'Safety')).toBe(false);
+  });
+
+  it('marks the scale line when the key was estimated rather than set', () => {
+    const analysis = { degree: 3, isScaleTone: true, chordSounding: false } as NoteAnalysis;
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal');
+    const set = buildTheoryCard(analysis, { pitch: 64, keySet: true }, labels);
+    const estimated = buildTheoryCard(
+      analysis,
+      { pitch: 64, keySet: true, keyEstimated: true },
+      labels,
+    );
+    expect(set.lines.find((line) => line.label === 'Scale')?.text).toBe('Scale degree 3');
+    expect(estimated.lines.find((line) => line.label === 'Scale')?.text).toBe(
+      'Scale degree 3 (key estimated from the notes)',
+    );
   });
 
   it('switches wording between explanation levels for the same note', () => {

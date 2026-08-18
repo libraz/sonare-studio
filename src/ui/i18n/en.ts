@@ -2652,6 +2652,7 @@ export const en = {
       octatonicWholeHalf: 'Octatonic (whole-half)',
       chromatic: 'Chromatic',
     },
+    estimatedKey: ' (key estimated from the notes)',
     levelName: {
       beginner: 'Beginner',
       normal: 'Normal',

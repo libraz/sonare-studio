@@ -77,6 +77,8 @@ export interface TheoryLabels {
   intervalNames: Readonly<Record<string, string>>;
   /** Scale display names keyed by libcantus scale name (e.g. 'dorian'). */
   scaleNames: Readonly<Record<string, string>>;
+  /** Suffix marking a scale line whose key was estimated rather than set. */
+  estimatedKey: string;
   /** Scale-degree line template, with a `{degree}` placeholder. */
   scaleDegree: string;
   /** Suffix appended to the scale line for a non-scale tone. */
@@ -137,6 +139,7 @@ export interface LocalizedTheory {
   lines: TheoryLabels['lines'];
   intervalNames: TheoryLabels['intervalNames'];
   scaleNames: TheoryLabels['scaleNames'];
+  estimatedKey: TheoryLabels['estimatedKey'];
   levels: Readonly<Record<string, TheoryLevelLabels>>;
   glossary: TheoryLabels['glossary'];
 }
@@ -157,6 +160,7 @@ export function theoryLabelsFor(theory: LocalizedTheory, level: string): TheoryL
     lines: theory.lines,
     intervalNames: theory.intervalNames,
     scaleNames: theory.scaleNames,
+    estimatedKey: theory.estimatedKey,
     lock: levelLabels.lock,
     safety: levelLabels.safety,
     labels: levelLabels.labels,
@@ -384,8 +388,9 @@ function counterpointLines(
  *
  * @param analysis The note's theory analysis.
  * @param ctx Display context: the note's MIDI pitch, its velocity (folded into
- *   the title so the card subsumes the canvas hover HUD), whether a key is set,
- *   and the sounding chord's Roman numeral / harmonic function when known.
+ *   the title so the card subsumes the canvas hover HUD), whether a key is set
+ *   and whether it was estimated, and the sounding chord's Roman numeral /
+ *   harmonic function when known.
  * @param labels Localized string bundle (the app's i18n `theory` block).
  */
 export function buildTheoryCard(
@@ -394,6 +399,12 @@ export function buildTheoryCard(
     pitch: number;
     velocity?: number;
     keySet: boolean;
+    /**
+     * Whether the key was estimated from the notes rather than chosen. The
+     * scale line hedges when it was, so a reading the app arrived at on its own
+     * is not presented as one the composer settled.
+     */
+    keyEstimated?: boolean;
     /** MusicXML key fifths used for enharmonic spelling in the card. */
     keyFifths?: number;
     /** Note-name system the pitch names are written in; English by default. */
@@ -432,7 +443,12 @@ export function buildTheoryCard(
         ? labels.scaleDegree.replace('{degree}', String(analysis.degree)) +
           (analysis.isScaleTone ? '' : labels.nonScaleSuffix)
         : labels.nonScaleTone;
-    lines.push({ label: labels.lines.scale, text });
+    // Every word on this line is measured from the key, so a key nobody chose
+    // has to be admitted here rather than left for the reader to discover.
+    lines.push({
+      label: labels.lines.scale,
+      text: ctx.keyEstimated === true ? text + labels.estimatedKey : text,
+    });
   }
   const colorTones = chordScaleText(analysis, labels, ctx.keyFifths, ctx.noteNameSystem);
   if (colorTones !== undefined) {
@@ -452,7 +468,12 @@ export function buildTheoryCard(
       ...(nct.term !== undefined ? { term: nct.term } : {}),
     });
   }
-  if (analysis.safety !== undefined) {
+  // The safety verdict measures the note against the sounding chord, so it is
+  // shown only where one sounds: with no chord under the note every reading
+  // comes back Warning or Dissonant, and the wording would name a clash with a
+  // chord the piece does not have. The verdict is still analyzed — its
+  // counterpoint reasons carry the lines above.
+  if (analysis.safety !== undefined && analysis.chordSounding) {
     // The localized verdict text is primary; the analyzer's raw rationale is
     // English-only, so it is not shown in the card.
     lines.push({

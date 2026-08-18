@@ -131,6 +131,17 @@ export interface NoteAnalysis {
   /** Scale degree of the note in the key, counted from 1 (-1 off the scale). */
   degree: number;
   isScaleTone: boolean;
+  /**
+   * Whether a chord of the progression sounds at the note's onset.
+   *
+   * Harmonic safety is only meaningful against a chord: with none, libcantus
+   * never answers Safe (a scale tone comes back Warning, anything else
+   * Dissonant), so the verdict would report a clash with a chord that is not
+   * there. The card gates its safety line on this. The verdict itself is still
+   * computed, because what it carries besides the severity — the counterpoint
+   * reasons and the `resolveTo` target — is chord-independent.
+   */
+  chordSounding: boolean;
   /** Best-fit scale and its color/avoid tones for the sounding chord, if any. */
   chordScale?: ChordScaleInfo;
   /**
@@ -150,7 +161,12 @@ export interface GuidanceResult {
   byNoteId: Map<number, NoteAnalysis>;
   /** Whether a key was set (highlight enabled). */
   keySet: boolean;
-  /** Whether any chord covered the clip (progression present or inferable). */
+  /**
+   * Whether any chord covered the clip window, which is what decides how the
+   * background tint is emitted. A progression can leave gaps, so per-note
+   * questions ("does a chord sound under this note?") read
+   * {@link NoteAnalysis.chordSounding} instead.
+   */
   chordPresent: boolean;
 }
 
@@ -403,6 +419,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     const analysis: NoteAnalysis = {
       degree: pitchToScaleDegree(note.pitch, key),
       isScaleTone: isScaleTone(note.pitch, key),
+      chordSounding: chord !== null,
     };
     if (chord !== null) {
       const role = tryEval(() => roleOf(note.pitch, chord));

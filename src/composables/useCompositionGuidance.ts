@@ -139,6 +139,7 @@ export function useCompositionGuidance(): CompositionGuidance {
       pitch: occurrence.note.pitch,
       velocity: occurrence.note.velocity,
       keySet: result.keySet,
+      keyEstimated: store.scaleHighlightEstimated,
       noteNameSystem: noteNames.system.value,
       ...(result.keySet ? { keyFifths: keyFifthsForScaleHighlight(store.scaleHighlight) } : {}),
     };
