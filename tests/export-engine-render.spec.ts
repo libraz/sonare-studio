@@ -2059,7 +2059,10 @@ describe('renderProjectWithEngine', () => {
       { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
     ]);
     expect(result.report.limitations).toEqual([
-      { kind: 'mastering-automation-at-render-start' },
+      {
+        kind: 'mastering-automation-at-render-start',
+        params: ['maximizer.truePeakLimiter.ceilingDb'],
+      },
       { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
     ]);
     expect(engine.named('setSynthInstrument')).toEqual([
@@ -2821,6 +2824,78 @@ describe('renderProjectWithEngine', () => {
     expect(engine.named('setParameter')).toContainEqual(['setParameter', 0x4d58ff01, -6]);
   });
 
+  it('drives a time-varying mastering parameter through its own engine pass', async () => {
+    const doc = makeDoc();
+    doc.mixer = {
+      ...doc.mixer,
+      masteringChain: {
+        processors: [
+          { processor: 'saturation.tape', params: { driveDb: 3 }, enabled: true },
+          { processor: 'eq.tilt', params: { tiltDb: 0 }, enabled: true },
+          { processor: 'repair.declick', params: {}, enabled: true },
+        ],
+      },
+    };
+    doc.masterAutomation = [
+      {
+        param: masteringAutomationParam(1, 'tiltDb'),
+        enabled: true,
+        points: [
+          { ppq: 0, value: 0 },
+          { ppq: 8, value: 6 },
+        ],
+      },
+    ];
+    const processStereo = vi.fn((_name: string, left: Float32Array, right: Float32Array) => ({
+      left,
+      right,
+    }));
+    const engines: FakeEngine[] = [];
+
+    const result = await renderProjectWithEngine(doc, {
+      deps: { mastering: { processStereo }, metering: null },
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      masteringCapability: (processor) =>
+        processor === 'eq.tilt'
+          ? {
+              realtimeInsertable: true,
+              latencySamples: 0,
+              automatableParams: new Set(['tiltDb']),
+            }
+          : undefined,
+    });
+
+    // The automated stage left the whole-buffer path; the stages around it did
+    // not, and they still run in declared order.
+    expect(processStereo.mock.calls.map((call) => call[0])).toEqual([
+      'saturation.tape',
+      'repair.declick',
+    ]);
+    expect(result.report.limitations).toBeUndefined();
+    // The pass is a second engine whose strip is the automated processor alone.
+    expect(engines).toHaveLength(2);
+    const [[, , json]] = engines[1].named('setTrackStripJson') as Array<[string, number, string]>;
+    expect(JSON.parse(json).strips[0].inserts).toEqual([
+      { slot: 'pre', processor: 'eq.tilt', params: JSON.stringify({ tiltDb: 0 }) },
+    ]);
+    expect(engines[1].named('setAutomationLane')).toEqual([
+      [
+        'setAutomationLane',
+        0xe0010000,
+        [
+          { ppq: 0, value: 0, curveToNext: 0 },
+          { ppq: 8, value: 6, curveToNext: 0 },
+        ],
+      ],
+    ]);
+    expect(engines[1].destroyed).toBe(true);
+  });
+
   it('applies static mastering processor automation to offline mastering params', async () => {
     const doc = makeDoc();
     doc.mixer = {
@@ -2859,7 +2934,12 @@ describe('renderProjectWithEngine', () => {
       48000,
       { ceilingDb: -6 },
     );
-    expect(result.report.limitations).toEqual([{ kind: 'mastering-automation-at-render-start' }]);
+    expect(result.report.limitations).toEqual([
+      {
+        kind: 'mastering-automation-at-render-start',
+        params: ['maximizer.truePeakLimiter.ceilingDb'],
+      },
+    ]);
     expect(engine.named('resolveMasterInsertAutomationId')).toEqual([]);
   });
 

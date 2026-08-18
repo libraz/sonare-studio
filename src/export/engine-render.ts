@@ -50,6 +50,14 @@ import { resolvePresetName } from '@/engine/instruments';
 import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
+import {
+  hasTimeVaryingPoints,
+  type MasteringCapabilityLookup,
+  type MasteringCatalogEntry,
+  masteringCapabilityFromCatalog,
+  planMasteringStages,
+  runMasteringEnginePass,
+} from '@/export/mastering-automation';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
   type ExportLimitation,
@@ -68,10 +76,7 @@ import {
   parseMasteringAutomationParam,
   sanitizeAutomationPoints,
 } from '@/project/automation';
-import {
-  insertIndexForAutomationRef,
-  masteringIndexForAutomationRef,
-} from '@/project/automation-insert';
+import { insertIndexForAutomationRef } from '@/project/automation-insert';
 import { loadFont } from '@/project/fonts';
 import {
   createInsertPdcPlan,
@@ -95,7 +100,7 @@ import {
   vcaOffsetDb,
 } from '@/project/mixer';
 import { expandedSoloStates } from '@/project/scheduling';
-import type { DocumentAutomationLane, ProjectDocument } from '@/project/serialization';
+import type { ProjectDocument } from '@/project/serialization';
 import {
   collectActiveSoundFontUsage,
   hasSoundFontSlotConflict,
@@ -131,28 +136,6 @@ import {
 
 export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-types';
 
-function masteringParamsAtRenderStart(
-  chain: NonNullable<ProjectDocument['mixer']>['masteringChain'],
-  lanes: NonNullable<ProjectDocument['masterAutomation']>,
-  ppq: number,
-): Map<number, Record<string, number>> {
-  const automated = new Map<number, Record<string, number>>();
-  if (!chain) return automated;
-  for (const lane of lanes) {
-    if (!lane.enabled || lane.points.length === 0) continue;
-    const ref = parseMasteringAutomationParam(lane.param);
-    if (!ref) continue;
-    const processorIndex = masteringIndexForAutomationRef(chain, ref);
-    if (processorIndex === undefined) continue;
-    const points = sanitizeAutomationPoints(lane.param, lane.points);
-    if (points.length === 0) continue;
-    const params = automated.get(processorIndex) ?? {};
-    params[ref.paramName] = evaluateAutomationValue(points, ppq);
-    automated.set(processorIndex, params);
-  }
-  return automated;
-}
-
 function instrumentPatchAtRenderStart(
   track: ProjectDocument['tracks'][number],
   ppq: number,
@@ -170,24 +153,32 @@ function instrumentPatchAtRenderStart(
   return patch;
 }
 
-function hasTimeVaryingPoints(points: DocumentAutomationLane['points']): boolean {
-  if (points.length < 2) return false;
-  const first = points[0];
-  // A repeated breakpoint with the same value is observationally constant;
-  // its PPQ alone must not produce a misleading “frozen automation” warning.
-  // Conversely, same-PPQ values can differ in valid stored lanes, so compare
-  // the value independently of position.
-  return points.some((point) => point.value !== first.value);
-}
-
-export function offlineAutomationLimitations(doc: ProjectDocument): ExportLimitation[] {
+/**
+ * Limitations to record on a render's report.
+ *
+ * @param doc The rendered document.
+ * @param masteringFrozenParams Mastering parameters this render could not make
+ *   time-varying, from {@link planMasteringStages}. Omitted (the preflight
+ *   case, where no engine capability is known yet) assumes every time-varying
+ *   mastering lane stays frozen.
+ * @returns The limitations, in report order.
+ */
+export function offlineAutomationLimitations(
+  doc: ProjectDocument,
+  masteringFrozenParams?: ReadonlyArray<string>,
+): ExportLimitation[] {
   const limitations: ExportLimitation[] = [];
-  const hasMasteringTimeVarying = (doc.masterAutomation ?? []).some((lane) => {
-    if (!lane.enabled || !parseMasteringAutomationParam(lane.param)) return false;
-    return hasTimeVaryingPoints(sanitizeAutomationPoints(lane.param, lane.points));
-  });
-  if (hasMasteringTimeVarying) {
-    limitations.push({ kind: 'mastering-automation-at-render-start' });
+  if (masteringFrozenParams === undefined) {
+    const anyTimeVarying = (doc.masterAutomation ?? []).some((lane) => {
+      if (!lane.enabled || !parseMasteringAutomationParam(lane.param)) return false;
+      return hasTimeVaryingPoints(sanitizeAutomationPoints(lane.param, lane.points));
+    });
+    if (anyTimeVarying) limitations.push({ kind: 'mastering-automation-at-render-start' });
+  } else if (masteringFrozenParams.length > 0) {
+    limitations.push({
+      kind: 'mastering-automation-at-render-start',
+      params: [...masteringFrozenParams],
+    });
   }
   const instrumentTrackNames = doc.tracks
     .filter((track) => track.instrument?.kind === 'synth-patch')
@@ -244,17 +235,26 @@ export async function renderProjectWithEngine(
   let createEngine = options.createEngine;
   let deps = options.deps;
   let resampleAudio = options.resampleAudio;
+  // Without catalog metadata nothing is known to be engine-drivable, so the
+  // mastering rack stays entirely on its whole-buffer path.
+  let masteringCapability: MasteringCapabilityLookup =
+    options.masteringCapability ?? (() => undefined);
   if (!createEngine || deps === undefined) {
     const wasm = await ensureWasm();
     resampleAudio ??= wasm.resample;
     if (!options.resolvePreset) {
       resolvePreset = (preset: string) => resolvePresetName(wasm, preset);
     }
+    const catalog = (
+      wasm as unknown as {
+        masteringProcessorCatalog?: () => Array<InsertLatencyCatalogEntry & MasteringCatalogEntry>;
+      }
+    ).masteringProcessorCatalog?.();
     if (!options.insertLatency) {
-      const catalog = (
-        wasm as unknown as { masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[] }
-      ).masteringProcessorCatalog?.();
       resolveInsertLatency = insertLatencyResolverFromCatalog(catalog, { sampleRate });
+    }
+    if (!options.masteringCapability) {
+      masteringCapability = masteringCapabilityFromCatalog(catalog);
     }
     if (!createEngine) {
       createEngine = (rate, blockSize) =>
@@ -1307,13 +1307,19 @@ export async function renderProjectWithEngine(
     });
   }
 
-  // Mastering chain: export-only stage on the bounced stereo, as before.
+  // Mastering chain: export-only stage on the bounced stereo. Stages run in
+  // declared order; an automated stage the engine can drive runs as a strip
+  // insert in its own pass so its lanes are actually time-varying, everything
+  // else keeps the whole-buffer call it has always used.
+  let masteringFrozenParams: string[] | undefined;
   if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
-    const automatedParams = masteringParamsAtRenderStart(
+    const plan = planMasteringStages(
       chain,
       doc.masterAutomation ?? [],
       range.startPpq,
+      masteringCapability,
     );
+    masteringFrozenParams = plan.frozenParams;
     if (chain.preset !== undefined && mastering.applyPreset) {
       checkCancel();
       options.onProgress?.(0.92, `mastering.preset:${chain.preset}`);
@@ -1327,13 +1333,25 @@ export async function renderProjectWithEngine(
       mixL = out.left;
       mixR = out.right;
     }
-    for (let processorIndex = 0; processorIndex < chain.processors.length; processorIndex += 1) {
-      const slot = chain.processors[processorIndex];
-      if (!slot.enabled) continue;
+    for (const stage of plan.stages) {
       checkCancel();
-      options.onProgress?.(0.94, `mastering.${slot.processor}`);
-      const params = { ...slot.params, ...(automatedParams.get(processorIndex) ?? {}) };
-      const out = mastering.processStereo(slot.processor, mixL, mixR, sampleRate, params);
+      if (stage.kind === 'whole-buffer') {
+        options.onProgress?.(0.94, `mastering.${stage.processor}`);
+        const out = mastering.processStereo(stage.processor, mixL, mixR, sampleRate, stage.params);
+        mixL = out.left;
+        mixR = out.right;
+        continue;
+      }
+      options.onProgress?.(0.94, `mastering.automated:${stage.slots[0].processor}`);
+      const out = await runMasteringEnginePass(stage, mixL, mixR, {
+        createEngine,
+        sampleRate,
+        startSample,
+        startPpq: range.startPpq,
+        tempoSegments,
+        checkCancel,
+        yieldBetweenBlocks: options.yieldBetweenBlocks,
+      });
       mixL = out.left;
       mixR = out.right;
     }
@@ -1349,7 +1367,7 @@ export async function renderProjectWithEngine(
     totalFrames,
     deps?.metering ?? null,
   );
-  const limitations = offlineAutomationLimitations(doc);
+  const limitations = offlineAutomationLimitations(doc, masteringFrozenParams);
   if (limitations.length > 0) report.limitations = limitations;
   if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
 

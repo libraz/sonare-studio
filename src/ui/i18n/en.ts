@@ -2471,6 +2471,8 @@ export const en = {
         },
         limitation: {
           masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
+          masteringAutomationAtStartParams:
+            'These mastering parameters were evaluated at render start: {params}',
           instrumentAutomationAtStart:
             'Instrument automation was evaluated at render start for: {tracks}',
           streamingMeteringUnavailable:

@@ -2472,6 +2472,8 @@ export const ja = {
         limitation: {
           masteringAutomationAtStart:
             'マスタリングオートメーションはレンダー開始時点で評価されました',
+          masteringAutomationAtStartParams:
+            '次のマスタリングパラメータはレンダー開始時点で評価されました: {params}',
           instrumentAutomationAtStart:
             '次のトラックの音源オートメーションはレンダー開始時点で評価されました: {tracks}',
           streamingMeteringUnavailable:

@@ -201,7 +201,15 @@ export interface ExportMediaIssue {
  * (the strings are assembled by the export issue formatter, not stored here).
  */
 export type ExportLimitation =
-  | { kind: 'mastering-automation-at-render-start' }
+  | {
+      kind: 'mastering-automation-at-render-start';
+      /**
+       * The "<processor>.<paramName>" pairs that stayed frozen. Absent means
+       * the whole mastering rack did, which is what a preflight reports
+       * before it knows which processors the engine can drive.
+       */
+      params?: string[];
+    }
   | { kind: 'instrument-automation-at-render-start'; tracks: string[] }
   /** Streaming callbacks cannot retain the full waveform for post-render metering. */
   | {

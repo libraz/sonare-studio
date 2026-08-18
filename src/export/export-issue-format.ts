@@ -31,6 +31,8 @@ export interface ExportIssueStrings {
   };
   limitation: {
     masteringAutomationAtStart: string;
+    /** Variant naming the parameters; falls back to the whole-rack wording. */
+    masteringAutomationAtStartParams?: string;
     instrumentAutomationAtStart: string;
     streamingMeteringUnavailable?: string;
   };
@@ -96,8 +98,15 @@ export function formatExportLimitation(
   strings: ExportIssueStrings,
 ): string {
   switch (limitation.kind) {
-    case 'mastering-automation-at-render-start':
-      return strings.limitation.masteringAutomationAtStart;
+    case 'mastering-automation-at-render-start': {
+      const params = limitation.params;
+      const named = strings.limitation.masteringAutomationAtStartParams;
+      // Naming the frozen parameters only helps once the render knows which
+      // stages it did drive; a whole-rack limitation keeps the plain wording.
+      return params !== undefined && params.length > 0 && named !== undefined
+        ? named.replace('{params}', params.join(', '))
+        : strings.limitation.masteringAutomationAtStart;
+    }
     case 'instrument-automation-at-render-start':
       return strings.limitation.instrumentAutomationAtStart.replace(
         '{tracks}',

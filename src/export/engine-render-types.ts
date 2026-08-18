@@ -4,6 +4,7 @@
  * parameter namespace mirrors the facade encoding the live sync layers use.
  */
 
+import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { InsertLatencyResolver } from '@/project/insert-latency';
@@ -176,6 +177,12 @@ export interface EngineRenderOptions {
   resampleAudio?: (samples: Float32Array, sourceRate: number, targetRate: number) => Float32Array;
   /** Optional processor-latency resolver used for automatic track PDC. */
   insertLatency?: InsertLatencyResolver;
+  /**
+   * Mastering processor capability lookup deciding which automated rack stages
+   * can run as engine strip inserts. Defaults to the wasm processor catalog;
+   * a lookup that knows nothing keeps the whole rack on its whole-buffer path.
+   */
+  masteringCapability?: MasteringCapabilityLookup;
   /** Progress callback: fraction in [0, 1] plus the stage being entered. */
   onProgress?: (progress: number, stage: string) => void;
   /** Cancellation flag, checked between render checkpoints. */
