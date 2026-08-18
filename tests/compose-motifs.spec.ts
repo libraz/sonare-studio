@@ -76,7 +76,6 @@ describe('analyzeMotifs', () => {
     expect(first.noteCount).toBeGreaterThanOrEqual(3);
     expect(first.statements.length).toBeGreaterThanOrEqual(2);
     expect(first.statements[0].startPpq).toBe(0);
-    expect(first.rationale.length).toBeGreaterThan(0);
     for (const statement of first.statements) {
       expect(statement.endPpq).toBeGreaterThan(statement.startPpq);
     }
@@ -125,8 +124,33 @@ describe('analyzeMotifs', () => {
       expect(relation.toIndex).toBeGreaterThan(relation.fromIndex);
       expect(tracks[0].motifs[relation.fromIndex]).toBeDefined();
       expect(tracks[0].motifs[relation.toIndex]).toBeDefined();
-      expect(relation.rationale.length).toBeGreaterThan(0);
     }
+  });
+
+  /**
+   * The library states its reading in English prose, which an editor that runs
+   * in more than one language cannot show. The reading is reported as the facts
+   * the prose recites instead, so the display can write them in its own words.
+   */
+  it('reports the shape a figure traces and whether its statements move', () => {
+    const shapes = ['arch', 'ascending', 'descending', 'wave', 'static'];
+    const rising = analyzeMotifs([track('Lead', risingSequence())], C_MAJOR).tracks[0];
+
+    for (const motif of rising.motifs) expect(shapes).toContain(motif.shape);
+    // A sequence restates its cell at a new pitch every time.
+    expect(rising.motifs[0].transposed).toBe(true);
+    expect(rising.motifs[0].statements.some((statement) => statement.transpose !== 0)).toBe(true);
+  });
+
+  it('reads a figure restated at one pitch as untransposed', () => {
+    const repeated: EditorNote[] = [];
+    for (const at of [0, 4, 8]) {
+      repeated.push(note(60, at), note(64, at + 1), note(67, at + 2), note(64, at + 3));
+    }
+    const { tracks } = analyzeMotifs([track('Lead', repeated)], C_MAJOR);
+
+    expect(tracks[0].motifs[0].transposed).toBe(false);
+    expect(tracks[0].motifs[0].shape).toBe('arch');
   });
 
   // A cell of drum hits is a groove, not a figure.

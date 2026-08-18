@@ -12,6 +12,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import { MESSAGES } from '@/ui/i18n';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -33,6 +34,20 @@ function seedProject(): void {
   setActiveClip(leadClipId);
   addNote({ pitch: 61, startPpq: 0, durationPpq: 4 });
   addTrack({ name: 'Drums' });
+}
+
+/**
+ * Every phrase the panel can write for one field, across all locales.
+ *
+ * The analyzer states its readings in English prose. Pinning each row's text to
+ * the message trees is what catches that prose being rendered straight into a
+ * localized UI: the library's wording is not in any tree, so it fails here
+ * rather than reaching a reader.
+ */
+function localizedTexts(field: 'conflictReason' | 'motifShape' | 'motifRelation'): string[] {
+  return Object.values(MESSAGES).flatMap((tree) =>
+    Object.values(tree.shell.arrangementAnalysis[field]),
+  );
 }
 
 let wrapper: VueWrapper | null = null;
@@ -150,6 +165,83 @@ describe('ArrangementAnalysisPanel', () => {
     expect(summary.exists()).toBe(true);
     // Phrase count and hyperbar length both appear, as digits.
     expect(summary.text()).toMatch(/\d/);
+  });
+
+  it('writes every conflict reason from the message tree, never the analyzer prose', async () => {
+    seedProject();
+    wrapper = mount(ArrangementAnalysisPanel);
+    await wrapper.find('.ap-toggle').trigger('click');
+    await wrapper.find('.ap-analyze').trigger('click');
+
+    const reasons = localizedTexts('conflictReason');
+    const written = wrapper
+      .findAll('.ap-row')
+      .map((row) => row.find('.ap-rationale'))
+      .filter((cell) => cell.exists());
+    expect(written.length).toBeGreaterThan(0);
+    for (const cell of written) expect(reasons).toContain(cell.text());
+  });
+
+  it('writes a figure as its shape and a relation as its name', async () => {
+    const leadTrackId = addTrack({ name: 'Lead' });
+    const leadClipId = addMidiClip({ trackId: leadTrackId, startPpq: 0, lengthPpq: 32 });
+    setActiveClip(leadClipId);
+    for (let statement = 0; statement < 3; statement += 1) {
+      [0, 2, 4, 2].forEach((degree, index) => {
+        addNote({
+          pitch: 60 + statement * 2 + degree,
+          startPpq: statement * 4 + index,
+          durationPpq: 1,
+        });
+      });
+    }
+    wrapper = mount(ArrangementAnalysisPanel);
+    await wrapper.find('.ap-toggle').trigger('click');
+    await wrapper.find('.ap-analyze').trigger('click');
+
+    // A row reads "<shape>" or "<shape> · <moved in pitch>"; both halves are
+    // message-tree text, so a raw rationale cannot pass either check.
+    const shapes = localizedTexts('motifShape');
+    const moved = Object.values(MESSAGES).map(
+      (tree) => tree.shell.arrangementAnalysis.motifTransposed,
+    );
+    const rows = wrapper.findAll('.ap-motif-row');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const [shape, qualifier] = row.find('.ap-rationale').text().split(' · ');
+      expect(shapes).toContain(shape);
+      if (qualifier !== undefined) expect(moved).toContain(qualifier);
+    }
+
+    const kinds = localizedTexts('motifRelation');
+    const sequences = Object.values(MESSAGES).map(
+      (tree) => tree.shell.arrangementAnalysis.motifSequence,
+    );
+    for (const relation of wrapper.findAll('.ap-relation')) {
+      const [kind, qualifier] = relation.text().split(' · ');
+      expect(kinds).toContain(kind);
+      if (qualifier !== undefined) expect(sequences).toContain(qualifier);
+    }
+  });
+
+  it('writes a cadence confidence from the message tree template', async () => {
+    seedPeriodicPiece();
+    wrapper = mount(ArrangementAnalysisPanel);
+    await wrapper.find('.ap-toggle').trigger('click');
+    await wrapper.find('.ap-analyze').trigger('click');
+
+    const patterns = Object.values(MESSAGES).map(
+      (tree) =>
+        new RegExp(
+          `^${tree.shell.arrangementAnalysis.cadenceConfidence.replace('{percent}', '\\d+')}$`,
+        ),
+    );
+    const rows = wrapper.findAll('.ap-cadence-row');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      const text = row.find('.ap-rationale').text();
+      expect(patterns.some((pattern) => pattern.test(text))).toBe(true);
+    }
   });
 
   it('jumps to a cadence when its row is clicked', async () => {

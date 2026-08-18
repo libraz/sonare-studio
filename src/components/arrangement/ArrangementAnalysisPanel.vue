@@ -4,12 +4,12 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
 import { useNoteNames } from '@/composables/useNoteNames';
-import type { ArrangementConflict } from '@/compose/arrangement';
-import type { TrackMotifs } from '@/compose/motifs';
+import { type ArrangementConflict, conflictReason } from '@/compose/arrangement';
+import type { MotifRelationship, TrackMotifs } from '@/compose/motifs';
 import type { RankedCadence } from '@/compose/phrases';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
  * Cross-track analysis header for the arrangement view: a slim, always-visible
@@ -140,6 +140,16 @@ function severityLabel(conflict: ArrangementConflict): string {
 }
 
 /**
+ * Localized reason a note was flagged, or '' when the bitmask names none. The
+ * analyzer's own prose is English-only, so the row is written from the reason
+ * the bitmask carries instead.
+ */
+function reasonLabel(conflict: ArrangementConflict): string {
+  const reason = conflictReason(conflict.reasons);
+  return reason === undefined ? '' : t.value.shell.arrangementAnalysis.conflictReason[reason];
+}
+
+/**
  * Best-effort jump to a conflict: activates the clip covering the conflict on
  * its track when one resolves, and always asks the host to move the playhead.
  */
@@ -175,11 +185,36 @@ function weightLabel(weight: number): string {
   return `${Math.round(weight * 100)}%`;
 }
 
+/**
+ * How well evidenced the phrase a cadence closes is. The weight column already
+ * ranks the cadences against one another; this says how sure the reading is
+ * that a phrase closes there at all.
+ */
+function confidenceLabel(cadence: RankedCadence): string {
+  return formatMessage(t.value.shell.arrangementAnalysis.cadenceConfidence, {
+    percent: Math.round(cadence.confidence * 100),
+  });
+}
+
 /** How often a figure is stated, and how long it is. */
 function motifLabel(motif: TrackMotifs['motifs'][number]): string {
   const strings = t.value.shell.arrangementAnalysis;
   const times = strings.motifStatements.replace('{count}', String(motif.statements.length));
   return `${times} / ${strings.motifNotes.replace('{count}', String(motif.noteCount))}`;
+}
+
+/** The shape a figure traces, and whether its statements move in pitch. */
+function motifShapeLabel(motif: TrackMotifs['motifs'][number]): string {
+  const strings = t.value.shell.arrangementAnalysis;
+  const shape = strings.motifShape[motif.shape];
+  return motif.transposed ? `${shape} · ${strings.motifTransposed}` : shape;
+}
+
+/** The named transformation between two figures, and whether it is a sequence. */
+function relationLabel(relation: MotifRelationship): string {
+  const strings = t.value.shell.arrangementAnalysis;
+  const kind = strings.motifRelation[relation.kind];
+  return relation.sequence ? `${kind} · ${strings.motifSequence}` : kind;
 }
 </script>
 
@@ -238,7 +273,7 @@ function motifLabel(motif: TrackMotifs['motifs'][number]): string {
                 <span class="ap-pos">{{ positionLabel(cadence.atPpq) }}</span>
                 <span class="ap-cadence-type">{{ cadenceLabel(cadence.type) }}</span>
                 <span class="ap-weight">{{ weightLabel(cadence.weight) }}</span>
-                <span class="ap-rationale">{{ cadence.rationale }}</span>
+                <span class="ap-rationale">{{ confidenceLabel(cadence) }}</span>
               </button>
             </li>
           </ul>
@@ -257,12 +292,12 @@ function motifLabel(motif: TrackMotifs['motifs'][number]): string {
                   >
                     <span class="ap-pos">{{ positionLabel(motif.statements[0].startPpq) }}</span>
                     <span class="ap-motif-count">{{ motifLabel(motif) }}</span>
-                    <span class="ap-rationale">{{ motif.rationale }}</span>
+                    <span class="ap-rationale">{{ motifShapeLabel(motif) }}</span>
                   </button>
                 </li>
               </ul>
               <p v-for="(relation, index) in entry.relations" :key="`r${index}`" class="ap-relation">
-                {{ relation.rationale }}
+                {{ relationLabel(relation) }}
               </p>
             </li>
           </ul>
@@ -282,7 +317,7 @@ function motifLabel(motif: TrackMotifs['motifs'][number]): string {
                 <span class="ap-pos">{{ positionLabel(conflict.ppq) }}</span>
                 <span class="ap-track">{{ conflict.trackName }}</span>
                 <span class="ap-pitch">{{ pitchLabel(conflict.pitch) }}</span>
-                <span v-if="conflict.rationale" class="ap-rationale">{{ conflict.rationale }}</span>
+                <span v-if="reasonLabel(conflict)" class="ap-rationale">{{ reasonLabel(conflict) }}</span>
               </button>
             </li>
           </ul>

@@ -17,6 +17,10 @@
  *  - the project meter map is handed over whole, so bar lines, hypermetric
  *    downbeats and the expected phrase length all follow the signature in force
  *    rather than the one the piece opened in;
+ *  - the library's prose rationale is not carried across. It is English-only, so
+ *    a cadence is reported as the two numbers that prose recites — how much of
+ *    the piece it closes and how well evidenced its phrase is — and the display
+ *    writes those in its own language;
  *  - beats map to PPQ with coefficient 1 (1 PPQ = one quarter note).
  *
  * Read-only analysis: nothing here writes to the project. Callers must flatten
@@ -73,8 +77,8 @@ export interface RankedCadence {
   type: CadenceType;
   /** Structural weight in [0, 1], heaviest first in the report. */
   weight: number;
-  /** Why it weighs what it does. */
-  rationale: string;
+  /** How well evidenced the phrase it closes is, in [0, 1]. */
+  confidence: number;
 }
 
 /** How the piece's bars group above the bar line. */
@@ -85,8 +89,6 @@ export interface HypermeterReading {
   downbeatPpqs: number[];
   /** How much the music supports the grouping, in [0, 1]. */
   confidence: number;
-  /** Why this grouping was chosen. */
-  rationale: string;
 }
 
 /** The phrase analysis shaped for the editor. */
@@ -204,7 +206,11 @@ export function analyzePhrases(
               endPpq: cadence.endBeat,
               type,
               weight: cadence.weight,
-              rationale: cadence.rationale,
+              // The weight says how much of the piece the cadence closes; the
+              // confidence says how well evidenced the phrase closing there is.
+              // Both come from the phrase, and the ranking only carries the
+              // first, so the second is read back off the phrase it indexes.
+              confidence: phrases[cadence.phraseIndex]?.confidence ?? 0,
             },
           ];
     }),
@@ -212,7 +218,6 @@ export function analyzePhrases(
       groupBars: grouping.groupBars,
       downbeatPpqs: [...grouping.downbeats],
       confidence: grouping.confidence,
-      rationale: grouping.rationale,
     },
     excludedTrackNames,
     tooLongForPhrases: false,

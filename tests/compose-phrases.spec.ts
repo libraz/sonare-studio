@@ -104,7 +104,10 @@ describe('analyzePhrases', () => {
     for (const [index, cadence] of cadences.entries()) {
       expect(phrases[cadence.phraseIndex]).toBeDefined();
       expect(cadence.endPpq).toBe(phrases[cadence.phraseIndex]?.endPpq);
-      expect(cadence.rationale.length).toBeGreaterThan(0);
+      // The prose the library ranks with is English-only, so the ranking is
+      // reported as the two numbers it recites: the weight, and how well
+      // evidenced the phrase the cadence closes is.
+      expect(cadence.confidence).toBe(phrases[cadence.phraseIndex]?.confidence);
       const previous = cadences[index - 1];
       if (previous !== undefined) expect(cadence.weight).toBeLessThanOrEqual(previous.weight);
     }
@@ -121,7 +124,6 @@ describe('analyzePhrases', () => {
     expect(hypermeter?.groupBars).toBeGreaterThan(0);
     expect(hypermeter?.confidence).toBeGreaterThanOrEqual(0);
     expect(hypermeter?.confidence).toBeLessThanOrEqual(1);
-    expect(hypermeter?.rationale.length).toBeGreaterThan(0);
     for (const [index, downbeat] of (hypermeter?.downbeatPpqs ?? []).entries()) {
       expect(downbeat).toBeGreaterThanOrEqual(0);
       const previous = hypermeter?.downbeatPpqs[index - 1];

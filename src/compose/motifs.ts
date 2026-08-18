@@ -15,6 +15,10 @@
  *    recurs, so one four-note figure also comes back as the window starting one
  *    note later, and the one after that. Keeping the strongest of an overlapping
  *    family is what turns four rows saying the same thing into one row;
+ *  - the library's prose rationale is not carried across. It is English-only, so
+ *    a reading is reported as the facts it rests on — the shape traced, how many
+ *    statements, whether they move in pitch — and the display writes those in
+ *    its own language;
  *  - beats map to PPQ with coefficient 1 (1 PPQ = one quarter note).
  *
  * Read-only analysis: nothing here writes to the project. Callers must flatten
@@ -24,8 +28,10 @@
 import {
   extractMotifs,
   type KeyScale,
+  type MelodicContourShape,
   type MotifData,
   type MotifRelationKind,
+  melodicContour,
   relateMotifs,
 } from '@libraz/libcantus';
 import { editorNotesToNoteEvents } from './notes-io';
@@ -47,8 +53,10 @@ export interface DetectedMotif {
   noteCount: number;
   /** Every statement, in time order; at least two. */
   statements: MotifStatement[];
-  /** Why the cell counts as a figure. */
-  rationale: string;
+  /** The shape the cell traces, so a row can name the figure rather than count it. */
+  shape: MelodicContourShape;
+  /** True when the statements do not all sit at the same pitch. */
+  transposed: boolean;
 }
 
 /** How one reported figure stands to another. */
@@ -62,8 +70,6 @@ export interface MotifRelationship {
   sequence: boolean;
   /** Semitones from the first figure's first note to the second's. */
   semitones: number;
-  /** Why the pair was given that name. */
-  rationale: string;
 }
 
 /** One track's motivic reading. */
@@ -138,7 +144,6 @@ function relationsBetween(
         kind: relation.kind,
         sequence: relation.sequence,
         semitones: relation.semitones,
-        rationale: relation.rationale,
       });
     }
   }
@@ -170,7 +175,8 @@ export function analyzeMotifs(tracks: ReadonlyArray<TrackWithNotes>, key?: KeySc
           endPpq: occurrence.endBeat,
           transpose: occurrence.transpose,
         })),
-        rationale: motif.rationale,
+        shape: melodicContour(motif).shape,
+        transposed: motif.occurrences.some((occurrence) => occurrence.transpose !== 0),
       })),
       relations: relationsBetween(motifs, key),
     });

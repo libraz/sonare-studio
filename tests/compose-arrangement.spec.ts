@@ -1,8 +1,10 @@
+import { ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeArrangementTracks,
   analyzeArrangementWithTension,
   arrangementTensionCurve,
+  conflictReason,
 } from '@/compose/arrangement';
 import type { TrackWithNotes } from '@/compose/tracks';
 import type { EditorNote, EditorTrack } from '@/project/types';
@@ -300,5 +302,42 @@ describe('analyzeArrangementWithTension', () => {
     expect(combined.conflicts).toEqual([]);
     expect(combined.tension).toEqual([]);
     expect(combined.excludedTrackNames).toEqual(['Drums']);
+  });
+});
+
+/**
+ * The library states why a note was flagged in English prose, which an editor
+ * running in more than one language cannot show. The same reasoning is in the
+ * bitmask, so the reason is read from there and named in the display's own
+ * language. These pin the reading, not the wording.
+ */
+describe('conflictReason', () => {
+  it('names nothing when no flag explains the verdict', () => {
+    expect(conflictReason(0)).toBeUndefined();
+    // A chord tone is never the reason a chord tone was flagged.
+    expect(conflictReason(ReasonFlag.ChordTone)).toBeUndefined();
+  });
+
+  it('lets a vertical clash outrank the intervals that make it up', () => {
+    const clash = ReasonFlag.VerticalDissonance | ReasonFlag.NonScale | ReasonFlag.Tritone;
+    expect(conflictReason(clash)).toBe('verticalDissonance');
+    expect(conflictReason(clash | ReasonFlag.VoiceCrossing)).toBe('verticalDissonance');
+  });
+
+  it('lets a counterpoint fault outrank the plain scale reading of the same note', () => {
+    expect(conflictReason(ReasonFlag.ScaleTone | ReasonFlag.VoiceCrossing)).toBe('voiceCrossing');
+    expect(conflictReason(ReasonFlag.ChordTone | ReasonFlag.LargeLeap)).toBe('largeLeap');
+    // Nothing sharper applies: in the scale, out of the chord.
+    expect(conflictReason(ReasonFlag.ScaleTone)).toBe('nonChordTone');
+    expect(conflictReason(ReasonFlag.NonScale)).toBe('outOfKey');
+  });
+
+  // A flag with no reading would show a conflict with no explanation at all.
+  it('names every flag that can explain a conflict', () => {
+    const unexplaining = new Set([ReasonFlag.ChordTone, ReasonFlag.Tension]);
+    for (const value of Object.values(ReasonFlag)) {
+      if (typeof value !== 'number' || unexplaining.has(value)) continue;
+      expect(conflictReason(value)).toBeDefined();
+    }
   });
 });

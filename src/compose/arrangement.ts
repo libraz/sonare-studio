@@ -26,6 +26,7 @@ import {
   analyzeArrangement,
   type KeyScale,
   type NoteSafety,
+  ReasonFlag,
   type TensionPoint,
   tensionCurveFrom,
 } from '@libraz/libcantus';
@@ -55,9 +56,77 @@ export interface ArrangementConflict {
   trackName: string;
   pitch: number;
   safety: NoteSafety;
-  /** SafetyResult reasons bitmask. */
+  /** SafetyResult reasons bitmask; {@link conflictReason} reads it. */
   reasons: number;
-  rationale?: string;
+}
+
+/**
+ * The one thing a conflict row says about why a note was flagged.
+ *
+ * A clash usually raises several flags at once — a note can be outside the key,
+ * a tritone, and dissonant against a sounding voice all at the same time — so
+ * one is chosen to name the clash. The analyzer's own prose is not used: it is
+ * English-only, and the same reasoning is already carried by the bitmask.
+ */
+export type ConflictReason =
+  | 'verticalDissonance'
+  | 'parallelPerfect'
+  | 'hiddenParallel'
+  | 'voiceCrossing'
+  | 'suspension'
+  | 'needsResolution'
+  | 'melodicTritone'
+  | 'largeLeap'
+  | 'outOfRange'
+  | 'outOfKey'
+  | 'avoidNote'
+  | 'tritone'
+  | 'minorSecond'
+  | 'majorSeventh'
+  | 'nonChordTone';
+
+/**
+ * Reason flags in the order they are reported, most specific first.
+ *
+ * The ordering is the editor's, not the library's: a vertical clash outranks the
+ * intervals that make it up, a counterpoint fault outranks the plain scale
+ * reading of the same note, and `ScaleTone` comes last because "in the scale but
+ * not in the chord" is what is left once nothing sharper applies.
+ *
+ * `ChordTone` and `Tension` are absent. Neither is a fault — a note is not
+ * flagged for being a chord tone, and an upper extension is the sound being
+ * asked for — so a conflict carrying only those is left to its severity alone
+ * rather than given a reason that reads as an accusation.
+ */
+const CONFLICT_REASONS: ReadonlyArray<readonly [ReasonFlag, ConflictReason]> = [
+  [ReasonFlag.VerticalDissonance, 'verticalDissonance'],
+  [ReasonFlag.ParallelPerfect, 'parallelPerfect'],
+  [ReasonFlag.HiddenParallel, 'hiddenParallel'],
+  [ReasonFlag.VoiceCrossing, 'voiceCrossing'],
+  [ReasonFlag.Suspension, 'suspension'],
+  [ReasonFlag.NeedsResolution, 'needsResolution'],
+  [ReasonFlag.MelodicTritone, 'melodicTritone'],
+  [ReasonFlag.LargeLeap, 'largeLeap'],
+  [ReasonFlag.OutOfRange, 'outOfRange'],
+  [ReasonFlag.NonScale, 'outOfKey'],
+  [ReasonFlag.AvoidNote, 'avoidNote'],
+  [ReasonFlag.Tritone, 'tritone'],
+  [ReasonFlag.MinorSecond, 'minorSecond'],
+  [ReasonFlag.MajorSeventh, 'majorSeventh'],
+  [ReasonFlag.ScaleTone, 'nonChordTone'],
+];
+
+/**
+ * Names why a conflict was flagged, or undefined when nothing in the bitmask
+ * explains it (the severity alone stands, as it does for a bare chord tone).
+ *
+ * @param reasons The conflict's {@link ArrangementConflict.reasons} bitmask.
+ */
+export function conflictReason(reasons: number): ConflictReason | undefined {
+  for (const [flag, reason] of CONFLICT_REASONS) {
+    if ((reasons & flag) !== 0) return reason;
+  }
+  return undefined;
 }
 
 /** The arrangement analysis shaped for the editor. */
@@ -193,7 +262,6 @@ function sweepArrangement(
         pitch: conflict.pitch,
         safety: conflict.safety,
         reasons: conflict.reasons,
-        ...(conflict.rationale !== undefined ? { rationale: conflict.rationale } : {}),
       })),
     );
     if (tensionStep !== null) {
