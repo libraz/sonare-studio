@@ -3740,6 +3740,62 @@ describe('renderProjectWithEngine loudness metering', () => {
     expect(mono[0]).toBeCloseTo(0.25, 5);
     expect(result.report.lufs).toBe(-12.7);
   });
+
+  it('sums the clipping census over both channels and keeps the earliest run', async () => {
+    const detectClipping = vi
+      .fn()
+      .mockReturnValueOnce({
+        clippedSamples: 3,
+        maxClippedPeak: 1.5,
+        regions: [{ startSample: 96, length: 3 }],
+      })
+      .mockReturnValueOnce({
+        clippedSamples: 1,
+        maxClippedPeak: 1.1,
+        regions: [{ startSample: 48, length: 1 }],
+      });
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: null, metering: { detectClipping } },
+    });
+
+    expect(detectClipping).toHaveBeenCalledTimes(2);
+    expect(result.report.clipping).toEqual({
+      clippedSamples: 4,
+      clippingRatio: 4 / (result.totalFrames * 2),
+      maxClippedPeak: 1.5,
+      regionCount: 2,
+      firstRegionStartSample: 48,
+    });
+  });
+
+  it('records no clipping summary when neither channel clipped', async () => {
+    const detectClipping = vi.fn(() => ({
+      clippedSamples: 0,
+      maxClippedPeak: 0,
+      regions: [],
+    }));
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: null, metering: { detectClipping } },
+    });
+
+    // Absence is the signal, so an all-zero summary must not be recorded.
+    expect(result.report.clipping).toBeUndefined();
+  });
+
+  it('keeps the report intact when clipping detection throws', async () => {
+    const detectClipping = vi.fn(() => {
+      throw new Error('detector unavailable');
+    });
+    const result = await renderProjectWithEngine(makeDoc(), {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: null, metering: { detectClipping, integratedLufs: () => -11 } },
+    });
+
+    expect(result.report.clipping).toBeUndefined();
+    expect(result.report.lufs).toBe(-11);
+  });
 });
 
 /** Fake baked freeze asset: half a second of stereo at the render rate. */

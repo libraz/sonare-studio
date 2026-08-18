@@ -34,6 +34,36 @@ function applyLoudness(report: MixdownReport, measurement: LoudnessMeasurement):
   if (Number.isFinite(measurement.loudnessRange)) report.loudnessRange = measurement.loudnessRange;
 }
 
+/** One channel's clipping census as the metering seam reports it. */
+type ChannelClipping = ReturnType<
+  NonNullable<NonNullable<MixdownDeps['metering']>['detectClipping']>
+>;
+
+/**
+ * Folds the two per-channel censuses into the deliverable's summary. Counts
+ * add up across channels (a sample clipped in both is two clipped samples, and
+ * the ratio is measured against all samples in the file), while the first
+ * region is the earliest either channel reports.
+ *
+ * @returns The summary, or null when neither channel clipped.
+ */
+function mergeClipping(
+  left: ChannelClipping,
+  right: ChannelClipping,
+  totalFrames: number,
+): MixdownReport['clipping'] {
+  const clippedSamples = left.clippedSamples + right.clippedSamples;
+  if (!(clippedSamples > 0)) return undefined;
+  const starts = [...left.regions, ...right.regions].map((region) => region.startSample);
+  return {
+    clippedSamples,
+    clippingRatio: clippedSamples / (totalFrames * 2),
+    maxClippedPeak: Math.max(left.maxClippedPeak, right.maxClippedPeak),
+    regionCount: left.regions.length + right.regions.length,
+    firstRegionStartSample: starts.length > 0 ? Math.min(...starts) : 0,
+  };
+}
+
 function stereoMonoDownmix(
   mixL: Float32Array,
   mixR: Float32Array,
@@ -101,6 +131,19 @@ export function buildReport(
       }
     } catch {
       // Loudness stays absent when the metering call fails.
+    }
+  }
+  if (totalFrames > 0 && metering?.detectClipping) {
+    try {
+      const clipping = mergeClipping(
+        metering.detectClipping(mixL, sampleRate),
+        metering.detectClipping(mixR, sampleRate),
+        totalFrames,
+      );
+      // Absence means "did not clip", so an all-zero summary is not recorded.
+      if (clipping) report.clipping = clipping;
+    } catch {
+      // Clipping stays absent when the metering call fails.
     }
   }
   if (totalFrames > 0 && metering?.dynamicRangeDb) {

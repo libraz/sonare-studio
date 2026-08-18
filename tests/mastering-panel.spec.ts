@@ -411,6 +411,54 @@ describe('MasteringPanel.vue', () => {
     expect(wrapper.find('.preview-stale').exists()).toBe(false);
   });
 
+  it('reports how much the previewed chain clipped, not only that it might', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+
+    await wrapper.find('.preview-button').trigger('click');
+    const processed = makeResult(0.5);
+    fake.calls[0].resolve({
+      ...processed,
+      report: {
+        ...processed.report,
+        clipping: {
+          clippedSamples: 2048,
+          clippingRatio: 0.02,
+          maxClippedPeak: 1.3,
+          regionCount: 12,
+          firstRegionStartSample: 24000,
+        },
+      },
+    });
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    const census = wrapper.find('.clip-census');
+    expect(census.exists()).toBe(true);
+    expect(census.text()).toContain('2,048');
+    expect(census.text()).toContain('2.00%');
+    expect(census.text()).toContain('12');
+    // 24000 frames at the preview's 48 kHz.
+    expect(census.text()).toContain('0.50 s');
+  });
+
+  it('shows no clipping census when the previewed chain stayed clean', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    expect(wrapper.find('.clip-warning').exists()).toBe(true);
+    expect(wrapper.find('.clip-census').exists()).toBe(false);
+  });
+
   it('compares a processed preview with a decoded reference track', async () => {
     const fake = makeFakeRender();
     const decodeReference = vi.fn(async () => ({

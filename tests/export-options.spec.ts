@@ -236,6 +236,32 @@ describe('normalizeMixdownLoudness', () => {
     });
   });
 
+  it('drops the clipping census once a gain is applied', () => {
+    const clipping = {
+      clippedSamples: 12,
+      clippingRatio: 0.5,
+      maxClippedPeak: 1.4,
+      regionCount: 2,
+      firstRegionStartSample: 4,
+    };
+
+    const attenuated = normalizeMixdownLoudness(
+      [new Float32Array([0.9]), new Float32Array([0.9])],
+      { peakDb: 0.5, truePeakDb: 1, lufs: -6, clipping },
+      -14,
+    );
+    // The counts describe samples crossing a fixed threshold, so they cannot
+    // be rescaled — and the ceiling puts the normalized file below it anyway.
+    expect(attenuated.clipping).toBeUndefined();
+
+    const unchanged = normalizeMixdownLoudness(
+      [new Float32Array([0.9]), new Float32Array([0.9])],
+      { peakDb: -1, truePeakDb: -1, lufs: Number.NaN, clipping },
+      Number.NaN,
+    );
+    expect(unchanged.clipping).toEqual(clipping);
+  });
+
   it('reaches the loudness target when there is enough true-peak headroom', () => {
     const channels: [Float32Array, Float32Array] = [
       new Float32Array([0.1]),

@@ -411,6 +411,53 @@ describe('ExportDialog', () => {
     expect(q('.report-clipping')).not.toBeNull();
   });
 
+  it('puts the clipping census in the confirmation and the report', async () => {
+    const control = makeRender();
+    const { download } = mountDialog(control);
+
+    await clickExport();
+    control.resolve(
+      makeResult({
+        report: {
+          peakDb: 1.5,
+          truePeakDb: 1.8,
+          clipping: {
+            clippedSamples: 1024,
+            clippingRatio: 0.0125,
+            maxClippedPeak: 1.4,
+            regionCount: 7,
+            firstRegionStartSample: 96000,
+          },
+        },
+      }),
+    );
+    await flushPromises();
+
+    // Deciding whether to continue needs the extent, not only the peak.
+    expect(dialogQueue[0]?.message).toContain('1,024 samples');
+    expect(dialogQueue[0]?.message).toContain('7 run(s)');
+    expect(dialogQueue[0]?.message).toContain('2.00 s');
+    resolveDialog(dialogQueue[0].id, true);
+    await flushPromises();
+
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(q('.report-clipping-census')?.textContent).toContain('1.25%');
+  });
+
+  it('shows no census when the render reported no clipped samples', async () => {
+    const control = makeRender();
+    mountDialog(control);
+
+    await clickExport();
+    control.resolve(makeResult({ report: { peakDb: 1.5, truePeakDb: 1.8 } }));
+    await flushPromises();
+    resolveDialog(dialogQueue[0].id, true);
+    await flushPromises();
+
+    expect(q('.report-clipping')).not.toBeNull();
+    expect(q('.report-clipping-census')).toBeNull();
+  });
+
   it('renders nothing while closed', () => {
     track(
       mount(ExportDialog, {

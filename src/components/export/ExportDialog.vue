@@ -13,6 +13,7 @@ import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs
 import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
 import { offlineAutomationLimitations } from '@/export/engine-render';
 import {
+  formatClippingCensus,
   formatExportLimitation,
   formatPreflightBlocker,
   formatPreflightWarning,
@@ -145,6 +146,16 @@ const reportLimitations = computed(() => {
 });
 const reportClipping = computed(
   () => Math.max(report.value?.peakDb ?? -Infinity, report.value?.truePeakDb ?? -Infinity) > 0,
+);
+/** Sample rate the shown report was measured at, for the clipping positions. */
+const reportSampleRate = ref(0);
+/** How much of the deliverable clipped and where it starts; empty when clean. */
+const reportClippingCensus = computed(() =>
+  formatClippingCensus(
+    report.value?.clipping,
+    reportSampleRate.value,
+    t.value.dialogs.exportAudio.clippingCensus,
+  ),
 );
 let cancelRender: (() => void) | null = null;
 
@@ -596,12 +607,20 @@ async function onExport(): Promise<void> {
       targets.some((target) => isIntegerPcmExport(target.encoder.id, exportModel)) &&
       clippingPeak > 0
     ) {
+      const peakMessage = t.value.dialogs.exportAudio.clippingWarningMessage.replace(
+        '{peak}',
+        formatLevel(clippingPeak),
+      );
+      // The census is what makes the choice answerable: continuing past one
+      // stray overshoot is not the same decision as continuing past a passage.
+      const census = formatClippingCensus(
+        normalizedReport.clipping,
+        result.sampleRate,
+        t.value.dialogs.exportAudio.clippingCensus,
+      );
       const proceed = await confirmDialog({
         title: t.value.dialogs.exportAudio.clippingWarningTitle,
-        message: t.value.dialogs.exportAudio.clippingWarningMessage.replace(
-          '{peak}',
-          formatLevel(clippingPeak),
-        ),
+        message: census ? `${peakMessage}\n${census}` : peakMessage,
         confirmLabel: t.value.dialogs.exportAudio.clippingWarningContinue,
       });
       if (!proceed) {
@@ -691,6 +710,7 @@ async function onExport(): Promise<void> {
       }
     }
     report.value = normalizedReport;
+    reportSampleRate.value = result.sampleRate;
     for (const filename of filenames) emit('exported', { filename, report: normalizedReport });
   } catch (error) {
     wavStream?.abort();
@@ -1051,9 +1071,14 @@ function onKeydown(event: KeyboardEvent): void {
             </li>
           </ul>
         </div>
-        <p v-if="reportClipping" class="report-clipping" role="alert">
-          {{ t.dialogs.exportAudio.clippingReport }}
-        </p>
+        <div v-if="reportClipping || reportClippingCensus" role="alert">
+          <p v-if="reportClipping" class="report-clipping">
+            {{ t.dialogs.exportAudio.clippingReport }}
+          </p>
+          <p v-if="reportClippingCensus" class="report-clipping-census">
+            {{ reportClippingCensus }}
+          </p>
+        </div>
       </div>
 
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>

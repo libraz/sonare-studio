@@ -79,6 +79,13 @@
   color: var(--warning);
 }
 
+/* Measured clipping, not a risk of it: the stronger colour is the point. */
+.clip-census {
+  margin: 3px 0 0;
+  font: var(--fs-2xs)/1.35 var(--font-sans);
+  color: var(--danger);
+}
+
 @media (max-width: 760px) {
   .loudness-head,
   .loudness-row {

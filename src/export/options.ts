@@ -167,8 +167,13 @@ export function normalizeMixdownLoudness(
   for (const channel of channels) {
     for (let i = 0; i < channel.length; i += 1) channel[i] *= gain;
   }
+  // A clipped-sample census cannot be rescaled: the counts come from samples
+  // crossing a fixed threshold. It is also moot here, because the gain is
+  // capped at the peak ceiling and so the normalized deliverable sits below
+  // the clipping threshold by construction.
+  const { clipping: _preNormalizationClipping, ...carried } = report;
   return {
-    ...report,
+    ...carried,
     peakDb: report.peakDb + gainDb,
     ...(report.truePeakDb !== undefined ? { truePeakDb: report.truePeakDb + gainDb } : {}),
     ...(Number.isFinite(report.lufs) ? { lufs: (report.lufs as number) + gainDb } : {}),

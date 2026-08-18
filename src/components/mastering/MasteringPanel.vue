@@ -6,6 +6,7 @@ import PreviewPane from '@/components/mastering/PreviewPane.vue';
 import ProcessorRack from '@/components/mastering/ProcessorRack.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { renderMixdownInWorker } from '@/export/client';
+import { formatClippingCensus } from '@/export/export-issue-format';
 import type { MixdownResult } from '@/export/mixdown';
 import { ensureWasm } from '@/lib/wasm';
 import {
@@ -727,6 +728,20 @@ const clipWarning = computed(() =>
   isClippingRisk(previewState.value?.processed?.report.truePeakDb),
 );
 
+/**
+ * Extent of the clipping the processed preview actually produced. The
+ * true-peak warning above flags the risk of clipping downstream; this reports
+ * samples the chain already drove past full scale, and how many.
+ */
+const clipCensus = computed(() => {
+  const processed = previewState.value?.processed;
+  return formatClippingCensus(
+    processed?.report.clipping,
+    processed?.sampleRate ?? 0,
+    t.value.shell.mastering.loudness.clipCensus,
+  );
+});
+
 // --- Reference comparison -------------------------------------------------------
 
 const referenceAudio = shallowRef<MasteringReferenceAudio | null>(null);
@@ -979,6 +994,7 @@ onBeforeUnmount(() => {
           :streaming-platforms="streamingPlatforms"
           :loudness-rows="loudnessRows"
           :clip-warning="clipWarning"
+          :clip-census="clipCensus"
           :mono-compatibility="monoCompatibility"
           :streaming-targets="streamingTargets"
           @preview="onPreview"

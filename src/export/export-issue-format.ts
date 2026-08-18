@@ -9,7 +9,7 @@
  */
 
 import type { AudioAssetLabel, AudioExportBlocker, AudioExportWarning } from './audio-preflight';
-import type { ExportLimitation } from './mixdown';
+import type { ClippingSummary, ExportLimitation } from './mixdown';
 
 /** Localized templates for the structured export issues. */
 export interface ExportIssueStrings {
@@ -109,4 +109,41 @@ export function formatExportLimitation(
         'Streaming export could not measure: {measurements}'
       ).replace('{measurements}', limitation.measurements.join(', '));
   }
+}
+
+/**
+ * Formats a clipping census into a localized sentence.
+ *
+ * Shared by the export dialog and the mastering preview because both answer
+ * the same question about the same measurement: a peak reading says how far
+ * over the render went, this says whether that was one stray sample or a
+ * passage. Each surface passes its own template so the wording stays with the
+ * screen it appears on.
+ *
+ * @param clipping Census from the mixdown report, or undefined when clean.
+ * @param sampleRate Rate the report was measured at; 0 falls back to frames.
+ * @param template Localized template with {samples} {percent} {regions} {time}.
+ * @returns The sentence, or an empty string when nothing clipped.
+ */
+export function formatClippingCensus(
+  clipping: ClippingSummary | undefined,
+  sampleRate: number,
+  template: string,
+): string {
+  if (!clipping) return '';
+  const percent = clipping.clippingRatio * 100;
+  return (
+    template
+      .replace('{samples}', clipping.clippedSamples.toLocaleString('en-US'))
+      // Rounding a handful of clipped samples in a long render to "0.00%" would
+      // read as "nothing happened" next to a non-zero sample count.
+      .replace('{percent}', percent > 0 && percent < 0.01 ? '<0.01' : percent.toFixed(2))
+      .replace('{regions}', String(clipping.regionCount))
+      .replace(
+        '{time}',
+        sampleRate > 0
+          ? `${(clipping.firstRegionStartSample / sampleRate).toFixed(2)} s`
+          : `${clipping.firstRegionStartSample}`,
+      )
+  );
 }

@@ -10,6 +10,8 @@ import {
 defineProps<{
   rows: ReadonlyArray<LoudnessRow>;
   clipWarning: boolean;
+  /** Extent of the clipping the processed chain produced; empty when clean. */
+  clipCensus: string;
 }>();
 
 const { t } = useI18n();
@@ -47,9 +49,12 @@ const { t } = useI18n();
         <span class="loudness-value">{{ formatLevel(row.b) }} {{ row.unit }}</span>
       </span>
     </div>
-    <p v-if="clipWarning" class="clip-warning" role="alert">
-      {{ t.shell.mastering.loudness.clipWarning }}
-    </p>
+    <div v-if="clipWarning || clipCensus" role="alert">
+      <p v-if="clipWarning" class="clip-warning">
+        {{ t.shell.mastering.loudness.clipWarning }}
+      </p>
+      <p v-if="clipCensus" class="clip-census">{{ clipCensus }}</p>
+    </div>
   </div>
 </template>
 

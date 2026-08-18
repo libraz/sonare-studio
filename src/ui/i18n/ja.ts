@@ -1568,6 +1568,8 @@ export const ja = {
         dynamicRange: 'DR',
         clipWarning:
           'トゥルーピークが -0.3 dBTP を超えています。非可逆エンコードでクリップする可能性があります',
+        clipCensus:
+          'チェーンで {samples} サンプル（{percent}%）が {regions} 箇所クリップしました。最初は {time}。',
       },
       monoCompatibility: {
         title: 'モノ互換',
@@ -2427,6 +2429,8 @@ export const ja = {
         'ピークは {peak} dBFS です。整数エンコードではハードクリップされます。続行しますか？',
       clippingWarningContinue: 'クリップした音声を書き出す',
       clippingReport: '整数エンコード中にクリップが発生しました。',
+      clippingCensus:
+        '{samples} サンプル（{percent}%）が {regions} 箇所でクリップ。最初は {time}。',
       preflightBlocked: '次のメディア問題を解消するまで書き出しを開始できません:',
       loudnessReport: 'ラウドネスレポート',
       peak: 'ピーク',

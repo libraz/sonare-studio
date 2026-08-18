@@ -1571,6 +1571,8 @@ export const en = {
         lra: 'LRA',
         dynamicRange: 'DR',
         clipWarning: 'True peak above -0.3 dBTP - risk of clipping on lossy encodes',
+        clipCensus:
+          'The chain clipped {samples} samples ({percent}%) in {regions} run(s), first at {time}.',
       },
       monoCompatibility: {
         title: 'Mono compatibility',
@@ -2429,6 +2431,8 @@ export const en = {
       clippingWarningMessage: 'Peak is {peak} dBFS. Integer encoding will hard-clip it. Continue?',
       clippingWarningContinue: 'Export clipped audio',
       clippingReport: 'Clipping occurred during integer encoding.',
+      clippingCensus:
+        '{samples} samples ({percent}%) clipped in {regions} run(s), first at {time}.',
       preflightBlocked: 'Audio export cannot start until these media problems are fixed:',
       loudnessReport: 'Loudness report',
       peak: 'Peak',

@@ -96,6 +96,19 @@ export interface MeteringDeps {
       };
   /** Dynamic range of a mono downmix in dB. */
   dynamicRangeDb?(samples: Float32Array, sampleRate: number): number;
+  /**
+   * Clipped-sample census of one channel. The engine owns the definition of
+   * "clipped" (threshold and minimum run length), so the export warning and
+   * the engine agree instead of the app carrying its own rule.
+   */
+  detectClipping?(
+    samples: Float32Array,
+    sampleRate: number,
+  ): {
+    clippedSamples: number;
+    maxClippedPeak: number;
+    regions: ReadonlyArray<{ startSample: number; length: number }>;
+  };
 }
 
 /** All injectable wasm seams of an offline render. */
@@ -124,6 +137,26 @@ export interface MixdownStem {
   report?: MixdownReport;
 }
 
+/**
+ * Clipping census of a rendered deliverable.
+ *
+ * A summary rather than the engine's region list: a hard-limited master can
+ * report thousands of regions, and they would cross the export-worker boundary
+ * on every render to say what the counts already say.
+ */
+export interface ClippingSummary {
+  /** Clipped samples across both channels. */
+  clippedSamples: number;
+  /** Clipped samples as a fraction of all samples in the deliverable. */
+  clippingRatio: number;
+  /** Largest absolute sample value inside a clipped run (linear). */
+  maxClippedPeak: number;
+  /** Contiguous clipped runs across both channels. */
+  regionCount: number;
+  /** Frame index where clipping first appears, for a jump-to-position. */
+  firstRegionStartSample: number;
+}
+
 /** Loudness/peak measurements of the rendered mix. */
 export interface MixdownReport {
   /** Sample peak in dBFS (-Infinity for silence). Always present. */
@@ -140,6 +173,16 @@ export interface MixdownReport {
   loudnessRange?: number;
   /** Dynamic range in dB; absent without a dynamic-range metering seam. */
   dynamicRangeDb?: number;
+  /**
+   * Clipping census of the deliverable, summed over both channels. Absent when
+   * nothing clipped or the metering seam does not detect clipping — its
+   * presence alone means the render clipped.
+   *
+   * A peak reading answers "how far over", this answers "how much and where":
+   * one stray inter-sample overshoot and a squared-off chorus both read as
+   * peak > 0 dBFS.
+   */
+  clipping?: ClippingSummary;
   /** Non-fatal renderer limitations that affected this bounce. */
   limitations?: ExportLimitation[];
   /** Non-fatal media omissions that made the rendered deliverable incomplete. */
@@ -204,6 +247,14 @@ interface MixdownWasmSurface {
     sampleRate?: number,
   ) => { integratedLufs: number };
   meteringDynamicRange?: (samples: Float32Array, sampleRate?: number) => { dynamicRangeDb: number };
+  meteringDetectClipping?: (
+    samples: Float32Array,
+    sampleRate?: number,
+  ) => {
+    clippedSamples: number;
+    maxClippedPeak: number;
+    regions: ReadonlyArray<{ startSample: number; length: number }>;
+  };
 }
 
 /**
@@ -249,13 +300,18 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
     metering.dynamicRangeDb = (samples, sampleRate) =>
       dynamicRange(samples, sampleRate).dynamicRangeDb;
   }
+  const detectClipping = wasm.meteringDetectClipping;
+  if (typeof detectClipping === 'function') {
+    metering.detectClipping = (samples, sampleRate) => detectClipping(samples, sampleRate);
+  }
   return {
     mastering,
     metering:
       metering.truePeakDb ||
       metering.integratedLufs ||
       metering.interleavedLufs ||
-      metering.dynamicRangeDb
+      metering.dynamicRangeDb ||
+      metering.detectClipping
         ? metering
         : null,
   };
