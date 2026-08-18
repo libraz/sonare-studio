@@ -132,6 +132,8 @@ export interface CounterpointLabels {
   battuta: string;
   /** Voice-crossing verdict. */
   voiceCrossing: string;
+  /** Wide-spacing verdict, against the adjacent voice at that instant. */
+  wideSpacing: string;
   /** Forbidden melodic leap verdict, measured against the previous note. */
   forbiddenLeap: string;
   /** Leading-tone resolution — the one observation here that is not a fault. */
@@ -150,6 +152,7 @@ export type CounterpointVerdict =
   | 'hiddenParallel'
   | 'battuta'
   | 'voiceCrossing'
+  | 'wideSpacing'
   | 'forbiddenLeap'
   | 'leadingToneResolution';
 
@@ -356,6 +359,7 @@ export const GLOSSARY_KEY_FOR_VERDICT: Readonly<Record<CounterpointVerdict, stri
   hiddenParallel: 'hiddenParallel',
   battuta: 'battuta',
   voiceCrossing: 'voiceCrossing',
+  wideSpacing: 'wideSpacing',
   forbiddenLeap: 'forbiddenLeap',
   leadingToneResolution: 'leadingToneResolution',
 };
@@ -439,9 +443,13 @@ function pitchName(
  *    the motion the battuta is about — so ordering between them rarely bites.
  * 3. Voice crossing, a standing fact about the register rather than about a
  *    motion into it.
- * 4. Forbidden leap last: it is by far the commonest of the readings and the
- *    only one visible in the line the composer is already looking at, so
- *    putting it first would mask the rarer verdicts that need pointing out.
+ * 4. Forbidden leap, then wide spacing: the two commonest readings by a wide
+ *    margin, so putting either first would mask the rarer verdicts that need
+ *    pointing out. The leap is at least an event, and one visible in the line
+ *    the composer is already looking at; the spacing holds for as long as the
+ *    registers do — over the demo toccata a spacing reading runs two notes at
+ *    a time and up to seventeen, against the leap's one and a half — which
+ *    makes it the least newsworthy thing the card can say about any one note.
  *
  * A leading-tone resolution takes a line of its own instead of a place in that
  * chain. It is the only positive reading here, and a chain can only rank
@@ -500,6 +508,8 @@ function counterpointLines(
     push('voiceCrossing', cp.voiceCrossing);
   } else if (found?.forbiddenLeap === true) {
     push('forbiddenLeap', cp.forbiddenLeap);
+  } else if (found?.wideSpacing === true) {
+    push('wideSpacing', cp.wideSpacing);
   }
   if (found?.leadingToneResolution === true) {
     push('leadingToneResolution', cp.leadingToneResolution);

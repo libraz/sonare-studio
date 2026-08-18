@@ -2707,6 +2707,7 @@ export const ja = {
           hiddenParallel: '同じ向きに動いて完全な響きへ入っています',
           battuta: '相手の声部が上がってくるところへ、跳び下りてオクターヴに入っています',
           voiceCrossing: '下の音と上下が入れ替わっています',
+          wideSpacing: '隣の声部から1オクターヴ以上離れています',
           forbiddenLeap: '前の音から歌いにくい形で跳んでいます',
           leadingToneResolution: '前の音が引き上がって、この音で収まりました',
         },
@@ -2757,6 +2758,7 @@ export const ja = {
           hiddenParallel: '隠伏完全音程',
           battuta: 'バットゥータ — 反行でオクターヴに入り、上声が下行跳躍',
           voiceCrossing: '声部交差',
+          wideSpacing: '声部間隔が広い — 隣の声部まで1オクターヴ超',
           forbiddenLeap: '前の音からの禁則跳躍',
           leadingToneResolution: '導音がここで主音へ解決',
         },
@@ -2807,6 +2809,7 @@ export const ja = {
           hiddenParallel: '隠伏（直行）完全音程',
           battuta: 'オッターヴァ・バットゥータ — 反行で完全8度／1度に到達、上声は下行跳躍',
           voiceCrossing: '声部交差',
+          wideSpacing: '声部間隔 — 隣り合う上声部で8度超',
           forbiddenLeap: '禁則跳躍 — 7度・増減音程・オクターヴ超',
           leadingToneResolution: '導音が主音へ上行解決',
         },
@@ -2878,6 +2881,11 @@ export const ja = {
       voiceCrossing: {
         term: '声部交差',
         definition: '本来上にあるべき声部が下の声部より低くなること。声部の聞き分けが難しくなる。',
+      },
+      wideSpacing: {
+        term: '声部間隔',
+        definition:
+          '隣り合う声部の開き。上声部どうしは1オクターヴ以内に収めるのが慣例で、そうすることで響きがまとまる。低音はこの制限の外で、上の声部からどれだけ離れていてもよい。',
       },
       forbiddenLeap: {
         term: '禁則跳躍',

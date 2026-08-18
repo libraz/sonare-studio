@@ -113,8 +113,12 @@ describe('BWV 565 counterpoint verdicts', () => {
     // into a perfect interval together.
     expect(counts.notes).toBe(3795);
     expect(counts.parallelPerfect).toBe(11);
+    // Of the 83 direct fifths and octaves the library reads here, 24 are
+    // between the outer voices of the texture sounding at that instant; the
+    // rest are buried between inner parts, where four-part writing accepts
+    // them, or measured across a rest longer than the bar in force.
+    expect(counts.hiddenParallel).toBe(24);
     // Everything else is the library's answer untouched.
-    expect(counts.hiddenParallel).toBe(83);
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);
     expect(counts.verticalDissonance).toBe(107);
@@ -137,6 +141,7 @@ describe('BWV 565 counterpoint verdicts', () => {
       forbiddenLeap: 0,
       leadingToneResolution: 0,
       battuta: 0,
+      wideSpacing: 0,
       parallelPerfect: 0,
       hiddenParallel: 0,
       voiceCrossing: 0,
@@ -170,6 +175,7 @@ describe('BWV 565 counterpoint verdicts', () => {
           counts.leadingToneResolution++;
         }
         if (analysis.counterpoint?.battuta === true) counts.battuta++;
+        if (analysis.counterpoint?.wideSpacing === true) counts.wideSpacing++;
       }
     }
 
@@ -182,10 +188,15 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.forbiddenLeap).toBe(310);
     expect(counts.leadingToneResolution).toBe(76);
     expect(counts.battuta).toBe(39);
+    // Spacing is the one reading of a single instant rather than of a step, and
+    // an organ toccata spends much of its time with the manuals far apart. None
+    // of it lands on the pedal, which the exempt bottom pair keeps out of the
+    // count entirely.
+    expect(counts.wideSpacing).toBe(356);
     // Reading them changes nothing the safety verdict already answered: the same
     // four counts the key-free pass above pins, under an estimated key.
     expect(counts.parallelPerfect).toBe(11);
-    expect(counts.hiddenParallel).toBe(83);
+    expect(counts.hiddenParallel).toBe(24);
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);
     expect(counts.verticalDissonance).toBe(107);

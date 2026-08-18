@@ -20,8 +20,10 @@ import {
   chordScaleReport,
   classifyInterval,
   createsBattuta,
+  createsHiddenParallelPerfect,
   createsParallelPerfect,
   evaluateSafety,
+  exceedsSpacing,
   isForbiddenMelodicLeap,
   isLeadingToneResolution,
   isScaleTone,
@@ -175,6 +177,18 @@ export interface CounterpointFindings {
    * voices leaping down onto it.
    */
   battuta?: boolean;
+  /**
+   * More than an octave separates this note from the voice next to it in the
+   * texture. Alone in this set it is a standing fact about one instant rather
+   * than a reading of the step into the note, so it needs neither a previous
+   * note nor a spelling.
+   *
+   * The pair it reports is adjacent by sounding pitch, and never the bottom
+   * one: an octave-and-a-half between the bass and everything above it is how
+   * most music is scored, so measuring it reports the instrumentation instead
+   * of the writing.
+   */
+  wideSpacing?: boolean;
 }
 
 /** Per-note theory analysis (keyed by EditorNote.id in the result map). */
@@ -412,6 +426,43 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
           : 'dissonant';
     return { toBass: semitones, consonance };
   };
+  /**
+   * The texture at `absBeat` ordered low to high: the candidate note and every
+   * other voice sounding with it, the same reduction the readings above take.
+   *
+   * Two of the counterpoint rules are about *which* pair of voices is being
+   * asked about rather than about what a pair does, and neither question can be
+   * answered from a pair alone — the outer voices and the voice next to you are
+   * both facts about everything else sounding. The library provides the
+   * predicates and leaves the choice of pair to the caller, which is this.
+   */
+  const soundingWith = (pitch: number, absBeat: number): number[] => {
+    const out = [pitch];
+    for (const pitchIndex of otherVoicePitchIndexes) {
+      const other = pitchIndex.get(absBeat);
+      if (other !== undefined) out.push(other);
+    }
+    return out.sort((a, b) => a - b);
+  };
+  /**
+   * Whether more than an octave separates the candidate from the voice next to
+   * it in the texture.
+   *
+   * Only adjacent pairs are asked, and never the bottom one: bass-to-tenor
+   * spacing is conventionally exempt, and a melody carried an eleventh above a
+   * bass line — which is most homophony — otherwise reports a fault on every
+   * note it has. With two voices sounding, the only pair is that exempt one.
+   */
+  const wideSpacingAt = (pitch: number, absBeat: number): boolean => {
+    const sounding = soundingWith(pitch, absBeat);
+    for (let index = 1; index + 1 < sounding.length; index++) {
+      const lower = sounding[index];
+      const upper = sounding[index + 1];
+      if (lower !== pitch && upper !== pitch) continue;
+      if (exceedsSpacing(upper, lower)) return true;
+    }
+    return false;
+  };
 
   // The active clip read as one voice on the same slot grid, so its line can be
   // followed against another voice's the way the others are followed against
@@ -568,6 +619,52 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       if (isActiveVoice && slot !== undefined && doublingRuns[voice][slot] >= DOUBLING_RUN_SLOTS) {
         dismissed += 1;
       }
+    }
+    return pairs === 0 || dismissed < pairs;
+  };
+  /**
+   * Whether the library's hidden-parallel verdict on a candidate describes a
+   * voice-leading event the composer can act on.
+   *
+   * The library already applies the traditional step exception, so every
+   * verdict here is a perfect interval entered by similar motion with the upper
+   * voice leaping. What it cannot apply is the other half of the rule: a direct
+   * fifth or octave is a fault *between the outer voices*, and the same motion
+   * buried between two inner parts is what four-part writing accepts. Selecting
+   * that pair needs the whole texture, which only the caller has — and asking
+   * every pair of a four-voice texture instead reports faults in writing that
+   * has none: a plain chorale with textbook spacing comes back with three.
+   *
+   * Reconstruction and dismissal follow the parallel reading above: the pairs
+   * that earned the bit are found with the library's own predicate, the verdict
+   * stands unless every one of them is dismissed, and a pair that cannot be
+   * accounted for keeps it. The bar bound is the same too, and for the same
+   * reason — across a longer gap than that, the two events are not heard as one
+   * voice moving.
+   */
+  const hiddenParallelIsReal = (
+    pitch: number,
+    prevPitch: number | undefined,
+    absBeat: number,
+    prevAbs: number | undefined,
+  ): boolean => {
+    if (prevPitch === undefined || prevAbs === undefined) return true;
+    const bar = meterBarLengthPpq(timeSignatureAt(input.timeSignatures, absBeat));
+    if (absBeat - prevAbs > bar) return false;
+    const sounding = soundingWith(pitch, absBeat);
+    const lowest = sounding[0];
+    const highest = sounding[sounding.length - 1];
+    let pairs = 0;
+    let dismissed = 0;
+    for (const pitchIndex of otherVoicePitchIndexes) {
+      const other = pitchIndex.get(absBeat);
+      const otherPrev = pitchIndex.get(prevAbs);
+      if (other === undefined || otherPrev === undefined) continue;
+      if (!createsHiddenParallelPerfect(prevPitch, pitch, otherPrev, other)) continue;
+      pairs += 1;
+      const isOuter =
+        (pitch === highest && other === lowest) || (pitch === lowest && other === highest);
+      if (!isOuter) dismissed += 1;
     }
     return pairs === 0 || dismissed < pairs;
   };
@@ -766,34 +863,48 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         strongBeat: strongBeatAt(input.timeSignatures, absBeat),
       }),
     );
-    // The parallel is dismissed here rather than where the card is written: the
-    // verdict is the analysis every surface reads, so a reason that does not
-    // describe the music has no business travelling on it. Only that one bit is
-    // cleared — the vertical dissonance, suspension, hidden-parallel and
-    // voice-crossing readings, and the `resolveTo` target the resolution arrows
-    // follow, are the library's answers untouched. The severity stays as scored
-    // too: it is the worst of every reason weighed together, which cannot be
-    // re-derived from outside, and it is only ever shown against a chord.
+    // The two motion-into-a-perfect-interval reasons are dismissed here rather
+    // than where the card is written: the verdict is the analysis every surface
+    // reads, so a reason that does not describe the music has no business
+    // travelling on it. Only those bits are cleared — the vertical dissonance,
+    // suspension and voice-crossing readings, and the `resolveTo` target the
+    // resolution arrows follow, are the library's answers untouched. The
+    // severity stays as scored too: it is the worst of every reason weighed
+    // together, which cannot be re-derived from outside, and it is only ever
+    // shown against a chord.
     if (safety !== undefined) {
-      const dismissed =
+      let cleared = 0;
+      if (
         (safety.reasons & ReasonFlag.ParallelPerfect) !== 0 &&
-        !parallelPerfectIsReal(note.pitch, prevPitch, absBeat, prevAbs);
-      analysis.safety = dismissed
-        ? { ...safety, reasons: safety.reasons & ~ReasonFlag.ParallelPerfect }
-        : safety;
+        !parallelPerfectIsReal(note.pitch, prevPitch, absBeat, prevAbs)
+      ) {
+        cleared |= ReasonFlag.ParallelPerfect;
+      }
+      if (
+        (safety.reasons & ReasonFlag.HiddenParallel) !== 0 &&
+        !hiddenParallelIsReal(note.pitch, prevPitch, absBeat, prevAbs)
+      ) {
+        cleared |= ReasonFlag.HiddenParallel;
+      }
+      analysis.safety = cleared === 0 ? safety : { ...safety, reasons: safety.reasons & ~cleared };
     }
     // The readings the verdict's four reason bits do not carry. They are
     // measured across the same step of the voice the verdict is measured across
     // — this note and the previous onset group, unbounded, exactly as
     // evaluateSafety is handed it above — so the card never reports a motion
     // the two halves of the analysis disagreed about. The bar-length bound
-    // belongs to the parallel *dismissal* rather than to the step itself, which
-    // is why it is not repeated here.
+    // belongs to the *dismissals* above rather than to the step itself, which is
+    // why it is not repeated here.
     const nextPitch = nextGroupPitchByOnset.get(note.startPpq);
     const spelled = spell(note.pitch, {
       ...(prevPitch !== undefined ? { previous: prevPitch } : {}),
       ...(nextPitch !== undefined ? { next: nextPitch } : {}),
     });
+    const findings: CounterpointFindings = {};
+    // Spacing stands outside the guard below: it reads one instant rather than
+    // a step between two, so it holds for the clip's first note as well, and
+    // the pitches it compares are sounding ones that need no spelling.
+    if (wideSpacingAt(note.pitch, absBeat)) findings.wideSpacing = true;
     if (
       spelled !== undefined &&
       prevGroupSpelled !== undefined &&
@@ -801,7 +912,6 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       prevAbs !== undefined
     ) {
       const previous = prevGroupSpelled;
-      const findings: CounterpointFindings = {};
       if (tryEval(() => isForbiddenMelodicLeap(previous, spelled)) === true) {
         findings.forbiddenLeap = true;
       }
@@ -815,8 +925,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       if (battutaWithOthers(spelled, previous, note.pitch, prevPitch, absBeat, prevAbs)) {
         findings.battuta = true;
       }
-      if (Object.keys(findings).length > 0) analysis.counterpoint = findings;
     }
+    if (Object.keys(findings).length > 0) analysis.counterpoint = findings;
     byNoteId.set(note.id, analysis);
     lastPitch = note.pitch;
     lastSpelled = spelled;

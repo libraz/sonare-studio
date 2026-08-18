@@ -2706,6 +2706,7 @@ export const en = {
           hiddenParallel: 'Moves the same way into an open, perfect sound',
           battuta: 'Drops onto an octave while the other voice climbs to meet it',
           voiceCrossing: 'Dips below the voice beneath it',
+          wideSpacing: 'Sits over an octave away from the voice next to it',
           forbiddenLeap: 'Jumps here from the note before by a step that is hard to sing',
           leadingToneResolution: 'The note before pulled up into this one and came home',
         },
@@ -2756,6 +2757,7 @@ export const en = {
           hiddenParallel: 'Hidden perfect interval',
           battuta: 'Battuta — octave by contrary motion, upper voice leaping down',
           voiceCrossing: 'Voice crossing',
+          wideSpacing: 'Wide spacing — over an octave to the neighbouring voice',
           forbiddenLeap: 'Forbidden melodic leap from the previous note',
           leadingToneResolution: 'Leading tone resolved up to the tonic here',
         },
@@ -2806,6 +2808,7 @@ export const en = {
           hiddenParallel: 'Hidden (direct) perfect interval',
           battuta: 'Ottava battuta — perfect 8ve/unison by contrary motion, upper voice leaping ↓',
           voiceCrossing: 'Voice crossing',
+          wideSpacing: 'Spacing — over an 8ve between adjacent upper voices',
           forbiddenLeap: 'Forbidden melodic leap — 7th, augmented/diminished, or over an 8ve',
           leadingToneResolution: 'Leading tone resolved ↑ to the tonic',
         },
@@ -2884,6 +2887,11 @@ export const en = {
         term: 'Voice crossing',
         definition:
           'When a voice dips below the one beneath it (or rises above the one atop it), making the parts harder to follow.',
+      },
+      wideSpacing: {
+        term: 'Spacing',
+        definition:
+          'How far apart neighbouring voices sit. Upper voices are conventionally kept within an octave of each other so the sound holds together; the bass is exempt and may stand any distance below the voice above it.',
       },
       forbiddenLeap: {
         term: 'Forbidden melodic leap',

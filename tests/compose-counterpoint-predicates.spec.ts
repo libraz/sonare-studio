@@ -259,6 +259,30 @@ describe('counterpoint card lines', () => {
       text: 'Leading tone resolved up to the tonic here',
       term: MESSAGES.en.theory.glossary.leadingToneResolution,
     });
+    expect(cardFor({ wideSpacing: true })[0]).toEqual({
+      label: 'Counterpoint',
+      text: 'Wide spacing — over an octave to the neighbouring voice',
+      term: MESSAGES.en.theory.glossary.wideSpacing,
+    });
+  });
+
+  it('puts the spacing under the leap, being the standing condition of the two', () => {
+    // Spacing holds for as long as the registers do and the leap is an event,
+    // so on a note carrying both the card reports the event.
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence);
+    const cardFor = (counterpoint: NoteAnalysis['counterpoint']) =>
+      buildTheoryCard(
+        { degree: 1, isScaleTone: true, chordSounding: false, counterpoint } as NoteAnalysis,
+        { pitch: 72, keySet: true },
+        labels,
+      ).lines.filter((line) => line.label === 'Counterpoint');
+
+    expect(cardFor({ forbiddenLeap: true, wideSpacing: true }).map((line) => line.text)).toEqual([
+      'Forbidden melodic leap from the previous note',
+    ]);
+    expect(cardFor({ wideSpacing: true }).map((line) => line.text)).toEqual([
+      'Wide spacing — over an octave to the neighbouring voice',
+    ]);
   });
 
   it('writes the new verdicts in Japanese too', () => {
