@@ -13,11 +13,7 @@
  */
 
 import { type Ref, ref } from 'vue';
-import {
-  type ArrangementConflict,
-  analyzeArrangementTracks,
-  arrangementTensionCurve,
-} from '@/compose/arrangement';
+import { type ArrangementConflict, analyzeArrangementWithTension } from '@/compose/arrangement';
 import { effectiveKeyScale } from '@/compose/key';
 import {
   analyzePhrases,
@@ -87,12 +83,12 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
   function analyze(tensionStep = 1): void {
     const tracks = collectTracks(store);
     const key = store.scaleHighlight.enabled ? effectiveKeyScale(store.scaleHighlight) : undefined;
-    const report = analyzeArrangementTracks(tracks, key, store.timeSignatures);
+    // Conflicts and tension are read off one sweep; the analysis behind them is
+    // the expensive part and asking for it twice doubled the cost of a run.
+    const report = analyzeArrangementWithTension(tracks, tensionStep, key, store.timeSignatures);
     conflicts.value = report.conflicts;
     excludedTrackNames.value = report.excludedTrackNames;
-    tension.value = arrangementTensionCurve(tracks, tensionStep, key, store.timeSignatures).map(
-      (point) => ({ ppq: point.beat, tension: point.tension }),
-    );
+    tension.value = report.tension.map((point) => ({ ppq: point.beat, tension: point.tension }));
     // Phrasing follows the written chord track when there is one, so it reads
     // the harmony the composer stated rather than a re-reading of it.
     const structure = analyzePhrases(tracks, store.chords, store.timeSignatures);

@@ -138,6 +138,78 @@ function analysisRanges(
   return [{ startPpq: start, endPpq: end, numerator: 4, denominator: 4 }];
 }
 
+/** An arrangement report with the tension curve read off the same analysis. */
+export interface ArrangementReportWithTension extends ArrangementReport {
+  /** One tension sample per step, in beat order. */
+  tension: TensionPoint[];
+}
+
+/**
+ * Walks the piece once per meter range, reading the conflicts and — when a
+ * sample step is given — the tension curve off the same analysis.
+ *
+ * Both readings come from one {@link analyzeArrangement} call per range because
+ * that call is the expensive part: a 512-bar four-track piece costs about 75 ms,
+ * so asking for it twice is the difference between one sweep and two.
+ *
+ * Each range's reading seeds the next, so a piece that modulates is not judged
+ * against the key it opened in. Seeding from a caller-pinned key is a no-op:
+ * that key is held across the whole arrangement by definition, so it is also
+ * the one held longest, which is what comes back.
+ *
+ * @param tensionStep Sample spacing in beats, or null to skip the curve.
+ */
+function sweepArrangement(
+  tracks: ReadonlyArray<TrackWithNotes>,
+  key: KeyScale | undefined,
+  timeSignatures: ReadonlyArray<TimeSignatureSegment> | undefined,
+  tensionStep: number | null,
+): ArrangementReportWithTension {
+  const { harmonic, excluded } = harmonicTracksOnly(tracks);
+  const excludedTrackNames = excluded.map((item) => item.track.name);
+  if (harmonic.length === 0) {
+    // No harmonic material to infer from: fall back to a valid key (C major)
+    // rather than an empty scale mask, which downstream scale math reads as a
+    // scale with no degrees.
+    return { key: key ?? DEFAULT_KEY_SCALE, conflicts: [], tension: [], excludedTrackNames };
+  }
+  let resolvedKey: KeyScale | undefined = key;
+  const conflicts: ArrangementConflict[] = [];
+  const tension: TensionPoint[] = [];
+  for (const range of analysisRanges(harmonic, timeSignatures)) {
+    const local = tracksInMeterRange(harmonic, range.startPpq, range.endPpq);
+    if (local.every((track) => track.notes.length === 0)) continue;
+    const ts = { numerator: range.numerator, denominator: range.denominator };
+    const arrangementTracks = toArrangementTracks(local);
+    const analysis = analyzeArrangement(arrangementTracks, {
+      ...optionsFor(resolvedKey, undefined),
+      ts,
+    });
+    resolvedKey = analysis.prevailingKey;
+    conflicts.push(
+      ...analysis.conflicts.map<ArrangementConflict>((conflict) => ({
+        ppq: conflict.beat + range.startPpq,
+        trackName: conflict.trackName,
+        pitch: conflict.pitch,
+        safety: conflict.safety,
+        reasons: conflict.reasons,
+        ...(conflict.rationale !== undefined ? { rationale: conflict.rationale } : {}),
+      })),
+    );
+    if (tensionStep !== null) {
+      tension.push(
+        ...tensionCurveFrom(arrangementTracks, analysis, { ts, step: tensionStep }).map(
+          (point) => ({
+            ...point,
+            beat: point.beat + range.startPpq,
+          }),
+        ),
+      );
+    }
+  }
+  return { key: resolvedKey ?? DEFAULT_KEY_SCALE, conflicts, tension, excludedTrackNames };
+}
+
 /**
  * Analyzes an arrangement, returning the clashing notes and the tracks that
  * were excluded as percussion.
@@ -151,36 +223,8 @@ export function analyzeArrangementTracks(
   key?: KeyScale,
   timeSignatures?: ReadonlyArray<TimeSignatureSegment>,
 ): ArrangementReport {
-  const { harmonic, excluded } = harmonicTracksOnly(tracks);
-  const excludedTrackNames = excluded.map((item) => item.track.name);
-  if (harmonic.length === 0) {
-    // No harmonic material to infer from: fall back to a valid key (C major)
-    // rather than an empty scale mask, which downstream scale math reads as a
-    // scale with no degrees.
-    return { key: key ?? DEFAULT_KEY_SCALE, conflicts: [], excludedTrackNames };
-  }
-  let resolvedKey: KeyScale | undefined = key;
-  const conflicts: ArrangementConflict[] = [];
-  for (const range of analysisRanges(harmonic, timeSignatures)) {
-    const local = tracksInMeterRange(harmonic, range.startPpq, range.endPpq);
-    if (local.every((track) => track.notes.length === 0)) continue;
-    const analysis = analyzeArrangement(toArrangementTracks(local), {
-      ...optionsFor(resolvedKey, undefined),
-      ts: { numerator: range.numerator, denominator: range.denominator },
-    });
-    resolvedKey = analysis.prevailingKey;
-    conflicts.push(
-      ...analysis.conflicts.map<ArrangementConflict>((conflict) => ({
-        ppq: conflict.beat + range.startPpq,
-        trackName: conflict.trackName,
-        pitch: conflict.pitch,
-        safety: conflict.safety,
-        reasons: conflict.reasons,
-        ...(conflict.rationale !== undefined ? { rationale: conflict.rationale } : {}),
-      })),
-    );
-  }
-  return { key: resolvedKey ?? DEFAULT_KEY_SCALE, conflicts, excludedTrackNames };
+  const { tension: _tension, ...report } = sweepArrangement(tracks, key, timeSignatures, null);
+  return report;
 }
 
 /**
@@ -199,25 +243,25 @@ export function arrangementTensionCurve(
   key?: KeyScale,
   timeSignatures?: ReadonlyArray<TimeSignatureSegment>,
 ): TensionPoint[] {
-  const { harmonic } = harmonicTracksOnly(tracks);
-  if (harmonic.length === 0) return [];
-  let resolvedKey = key;
-  const points: TensionPoint[] = [];
-  for (const range of analysisRanges(harmonic, timeSignatures)) {
-    const local = tracksInMeterRange(harmonic, range.startPpq, range.endPpq);
-    if (local.every((track) => track.notes.length === 0)) continue;
-    const arrangementTracks = toArrangementTracks(local);
-    const analysis = analyzeArrangement(arrangementTracks, {
-      ...optionsFor(resolvedKey, undefined),
-      ts: { numerator: range.numerator, denominator: range.denominator },
-    });
-    if (key === undefined) resolvedKey = analysis.prevailingKey;
-    points.push(
-      ...tensionCurveFrom(arrangementTracks, analysis, {
-        ts: { numerator: range.numerator, denominator: range.denominator },
-        step,
-      }).map((point) => ({ ...point, beat: point.beat + range.startPpq })),
-    );
-  }
-  return points;
+  return sweepArrangement(tracks, key, timeSignatures, step).tension;
+}
+
+/**
+ * Analyzes an arrangement and samples its tension, for a caller that wants
+ * both. The answer is exactly what {@link analyzeArrangementTracks} and
+ * {@link arrangementTensionCurve} return in turn, at half the cost.
+ *
+ *
+ * @param tracks Tracks with absolute-timeline notes.
+ * @param step Sample spacing in beats (default 1).
+ * @param key Optional key context.
+ * @param timeSignatures Optional project meter map.
+ */
+export function analyzeArrangementWithTension(
+  tracks: ReadonlyArray<TrackWithNotes>,
+  step = 1,
+  key?: KeyScale,
+  timeSignatures?: ReadonlyArray<TimeSignatureSegment>,
+): ArrangementReportWithTension {
+  return sweepArrangement(tracks, key, timeSignatures, step);
 }

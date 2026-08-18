@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeArrangementTracks, arrangementTensionCurve } from '@/compose/arrangement';
+import {
+  analyzeArrangementTracks,
+  analyzeArrangementWithTension,
+  arrangementTensionCurve,
+} from '@/compose/arrangement';
 import type { TrackWithNotes } from '@/compose/tracks';
 import type { EditorNote, EditorTrack } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -196,5 +200,105 @@ describe('arrangementTensionCurve', () => {
       notes: [note({ id: 1, pitch: 36, startPpq: 0, durationPpq: 1, channel: 9 })],
     };
     expect(arrangementTensionCurve([drums])).toEqual([]);
+  });
+});
+
+/**
+ * The Analyze action wants both readings, and the analysis behind them is the
+ * expensive part, so they are read off one sweep. These pin that the combined
+ * entry point never says anything the two separate calls would not.
+ */
+describe('analyzeArrangementWithTension', () => {
+  /** A melody plus a clashing line, so there is something in both readings. */
+  function pieceWithAClash(): TrackWithNotes[] {
+    return [
+      { track: track({ id: 1, name: 'Melody' }), notes: cMajorMelody() },
+      {
+        track: track({ id: 2, name: 'Lead' }),
+        notes: [
+          note({ id: 10, pitch: 61, startPpq: 0, durationPpq: 1 }),
+          note({ id: 11, pitch: 66, startPpq: 4, durationPpq: 1 }),
+        ],
+      },
+      {
+        track: track({ id: 3, name: 'Drums' }),
+        notes: [note({ id: 20, pitch: 36, startPpq: 0, durationPpq: 1, channel: 9 })],
+      },
+    ];
+  }
+
+  it.each([
+    ['no key, one meter', undefined, undefined],
+    ['a pinned key, one meter', C_MAJOR, [{ startPpq: 0, numerator: 4, denominator: 4 }]],
+    [
+      'no key, a meter change',
+      undefined,
+      [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ],
+    ],
+    [
+      'a pinned key and a meter change',
+      C_MAJOR,
+      [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 4, numerator: 3, denominator: 4 },
+      ],
+    ],
+  ])('agrees with the separate calls given %s', (_label, key, timeSignatures) => {
+    const tracks = pieceWithAClash();
+    const combined = analyzeArrangementWithTension(tracks, 1, key, timeSignatures);
+    const report = analyzeArrangementTracks(tracks, key, timeSignatures);
+    const tension = arrangementTensionCurve(tracks, 1, key, timeSignatures);
+
+    expect(combined.conflicts).toEqual(report.conflicts);
+    expect(combined.key).toEqual(report.key);
+    expect(combined.excludedTrackNames).toEqual(report.excludedTrackNames);
+    expect(combined.tension).toEqual(tension);
+  });
+
+  // Sharing one sweep rests on a pinned key being held across the whole
+  // arrangement, so that seeding each meter range from the previous range's
+  // reading cannot drift away from it. If the library ever stops holding it,
+  // this is where that shows up.
+  it('holds a pinned key across a modulating piece and a meter change', () => {
+    const notes: EditorNote[] = [];
+    let id = 100;
+    // Four bars of emphatic F-sharp major, then four of C major.
+    for (let bar = 0; bar < 4; bar += 1) {
+      for (const [beat, pitch] of [66, 70, 73, 78].entries()) {
+        notes.push(note({ id: id++, pitch, startPpq: bar * 4 + beat, durationPpq: 1 }));
+      }
+    }
+    for (let bar = 0; bar < 4; bar += 1) {
+      for (const [beat, pitch] of [60, 64, 67, 72].entries()) {
+        notes.push(note({ id: id++, pitch, startPpq: 16 + bar * 3 + (beat % 3), durationPpq: 1 }));
+      }
+    }
+    const tracks: TrackWithNotes[] = [{ track: track({ id: 1, name: 'Melody' }), notes }];
+    const meters = [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 16, numerator: 3, denominator: 4 },
+    ];
+
+    // Left to itself the piece reads as F-sharp major; pinned, it stays C.
+    expect(analyzeArrangementTracks(tracks, undefined, meters).key.rootPc).toBe(6);
+    expect(analyzeArrangementTracks(tracks, C_MAJOR, meters).key).toEqual(C_MAJOR);
+
+    const combined = analyzeArrangementWithTension(tracks, 1, C_MAJOR, meters);
+    expect(combined.conflicts).toEqual(analyzeArrangementTracks(tracks, C_MAJOR, meters).conflicts);
+    expect(combined.tension).toEqual(arrangementTensionCurve(tracks, 1, C_MAJOR, meters));
+  });
+
+  it('is empty in both readings without harmonic tracks', () => {
+    const drums: TrackWithNotes = {
+      track: track({ id: 1, name: 'Drums' }),
+      notes: [note({ id: 1, pitch: 36, startPpq: 0, durationPpq: 1, channel: 9 })],
+    };
+    const combined = analyzeArrangementWithTension([drums]);
+    expect(combined.conflicts).toEqual([]);
+    expect(combined.tension).toEqual([]);
+    expect(combined.excludedTrackNames).toEqual(['Drums']);
   });
 });
