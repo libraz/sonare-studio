@@ -61,6 +61,7 @@ describe('analyzePhrases', () => {
       cadences: [],
       hypermeter: null,
       excludedTrackNames: [],
+      tooLongForPhrases: false,
     });
   });
 
@@ -137,6 +138,34 @@ describe('analyzePhrases', () => {
     expect(report.phrases.length).toBeGreaterThan(0);
   });
 
+  /**
+   * Finding repeated material means comparing the piece against itself, which
+   * grows faster than the piece does, so past a few thousand notes the library
+   * refuses rather than running unbounded. An arrangement long enough to hit
+   * that is a normal arrangement, so the refusal has to come back as an answer:
+   * the run says which reading it could not give and keeps going.
+   */
+  it('reports a piece too long to read phrases for instead of throwing', () => {
+    const long: EditorNote[] = [];
+    for (let index = 0; index < 4000; index += 1) {
+      long.push(note(60 + (index % 12), index * 0.5, 0.5));
+    }
+    const report = analyzePhrases([track('Piano', long)]);
+
+    expect(report.tooLongForPhrases).toBe(true);
+    expect(report.phrases).toEqual([]);
+    expect(report.cadences).toEqual([]);
+  });
+
+  // The same arrangement inside the limit answers normally, so the flag marks a
+  // size boundary rather than a permanently broken reading.
+  it('reads a piece inside the limit without reporting it as too long', () => {
+    const report = analyzePhrases([track('Piano', periodicMelody())], turnaround(), METER);
+
+    expect(report.tooLongForPhrases).toBe(false);
+    expect(report.phrases.length).toBeGreaterThan(0);
+  });
+
   it('reads nothing when every track is percussion', () => {
     const drums = track('Drums', [note(36, 0), note(38, 1)], { percussion: true });
     expect(analyzePhrases([drums])).toEqual({
@@ -144,6 +173,7 @@ describe('analyzePhrases', () => {
       cadences: [],
       hypermeter: null,
       excludedTrackNames: ['Drums'],
+      tooLongForPhrases: false,
     });
   });
 

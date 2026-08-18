@@ -51,6 +51,7 @@ const {
   cadences,
   hypermeter,
   motifs,
+  tooLongForPhrases,
   excludedTrackNames,
   analyzed,
   analyze,
@@ -227,6 +228,9 @@ function motifLabel(motif: TrackMotifs['motifs'][number]): string {
           </div>
 
           <p v-if="structureSummary !== ''" class="ap-structure">{{ structureSummary }}</p>
+          <p v-if="tooLongForPhrases" class="ap-structure ap-unread">
+            {{ t.shell.arrangementAnalysis.tooLongForPhrases }}
+          </p>
 
           <ul v-if="cadences.length > 0" class="ap-cadences">
             <li v-for="cadence in cadences" :key="cadence.phraseIndex">
@@ -411,6 +415,15 @@ function motifLabel(motif: TrackMotifs['motifs'][number]): string {
   margin: 0;
   font-size: var(--fs-xs);
   color: var(--text-3);
+}
+
+/* A reading the run could not give, stated rather than left as a blank list. */
+.ap-unread {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-2);
 }
 
 .ap-conflicts,

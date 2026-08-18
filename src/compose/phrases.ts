@@ -27,7 +27,9 @@ import {
   type ChordTimelineOptions,
   chordTimelineFromNotes,
   hypermeter,
+  isLibcantusError,
   type MeterMap,
+  type Phrase,
   type PhraseOptions,
   type PhraseSignal,
   phrasesFromTimeline,
@@ -97,6 +99,17 @@ export interface PhraseReport {
   hypermeter: HypermeterReading | null;
   /** Names of the percussion tracks excluded from the analysis. */
   excludedTrackNames: string[];
+  /**
+   * True when the piece holds more notes than the phrase reading can compare.
+   *
+   * Repetition is one of the three kinds of evidence the reading weighs, and
+   * finding it means comparing the piece against itself, which grows faster
+   * than the piece does; past a few thousand notes the library refuses rather
+   * than running unbounded. The rest of the analysis is unaffected, so this is
+   * reported instead of thrown: a long arrangement still gets its conflicts,
+   * its tension curve and its figures, and is told which reading it did not get.
+   */
+  tooLongForPhrases: boolean;
 }
 
 /** Maps the project meter map to libcantus's, using PPQ as the beat. */
@@ -108,8 +121,13 @@ function toMeterMap(timeSignatures: ReadonlyArray<TimeSignatureSegment>): MeterM
 }
 
 /** An empty report carrying only what was excluded. */
-function emptyReport(excludedTrackNames: string[]): PhraseReport {
-  return { phrases: [], cadences: [], hypermeter: null, excludedTrackNames };
+function emptyReport(excludedTrackNames: string[], tooLongForPhrases = false): PhraseReport {
+  return { phrases: [], cadences: [], hypermeter: null, excludedTrackNames, tooLongForPhrases };
+}
+
+/** True for the library's own "this input is larger than I will search" refusal. */
+function isBudgetRefusal(error: unknown): boolean {
+  return isLibcantusError(error) && error.code === 'BUDGET_EXCEEDED';
 }
 
 /**
@@ -147,7 +165,15 @@ export function analyzePhrases(
       ? buildChordTimeline(chords)
       : chordTimelineFromNotes(notes, timelineOpts).timeline;
 
-  const phrases = phrasesFromTimeline(timeline, notes, opts);
+  let phrases: Phrase[];
+  try {
+    phrases = phrasesFromTimeline(timeline, notes, opts);
+  } catch (error) {
+    // Only the library's size refusal is an answer; anything else is a fault
+    // and stays a fault.
+    if (!isBudgetRefusal(error)) throw error;
+    return emptyReport(excludedTrackNames, true);
+  }
   const ranked = structuralCadences(phrases);
   const grouping = hypermeter(notes, meters, {});
 
@@ -189,5 +215,6 @@ export function analyzePhrases(
       rationale: grouping.rationale,
     },
     excludedTrackNames,
+    tooLongForPhrases: false,
   };
 }

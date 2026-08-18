@@ -48,6 +48,11 @@ export interface ArrangementAnalysis {
   hypermeter: Ref<HypermeterReading | null>;
   /** The figures each part restates, one entry per track that states one. */
   motifs: Ref<TrackMotifs[]>;
+  /**
+   * True when the piece holds more notes than the phrase reading can compare,
+   * so it has no phrases or cadences while the rest of the run still stands.
+   */
+  tooLongForPhrases: Ref<boolean>;
   /** Names of percussion tracks dropped from analysis (shown so exclusion is visible). */
   excludedTrackNames: Ref<string[]>;
   /** True once {@link analyze} has run at least once since the last reset. */
@@ -81,6 +86,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
   const cadences = ref<RankedCadence[]>([]);
   const hypermeter = ref<HypermeterReading | null>(null);
   const motifs = ref<TrackMotifs[]>([]);
+  const tooLongForPhrases = ref(false);
   const excludedTrackNames = ref<string[]>([]);
   const analyzed = ref(false);
 
@@ -99,6 +105,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     phrases.value = structure.phrases;
     cadences.value = structure.cadences;
     hypermeter.value = structure.hypermeter;
+    tooLongForPhrases.value = structure.tooLongForPhrases;
     // Motifs are read per track: a figure lives in one part, and pooling the
     // parts would report a cell nobody plays.
     motifs.value = analyzeMotifs(tracks, key).tracks;
@@ -112,6 +119,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     cadences.value = [];
     hypermeter.value = null;
     motifs.value = [];
+    tooLongForPhrases.value = false;
     excludedTrackNames.value = [];
     analyzed.value = false;
   }
@@ -123,6 +131,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     cadences,
     hypermeter,
     motifs,
+    tooLongForPhrases,
     excludedTrackNames,
     analyzed,
     analyze,
