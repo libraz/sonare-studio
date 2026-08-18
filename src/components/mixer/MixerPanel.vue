@@ -370,14 +370,14 @@ onBeforeUnmount(() => {
 }
 
 .mixer-title {
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   letter-spacing: 0.08em;
   color: var(--text-4);
   user-select: none;
 }
 
 .mixer-hidden-note {
-  font: 9px var(--font-sans);
+  font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-4);
 }
 
@@ -432,7 +432,7 @@ onBeforeUnmount(() => {
 }
 
 .view-menu-section {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-4);

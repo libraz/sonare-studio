@@ -11,7 +11,13 @@ import {
   meterFraction,
   resetMeterClip,
 } from '@/ui/mixer/meter-model';
-import { colorWithAlpha, METER_ZONE_ALPHA, TOKENS } from '@/ui/theme/tokens';
+import {
+  CANVAS_FONT_SIZE_PX,
+  canvasFont,
+  colorWithAlpha,
+  METER_ZONE_ALPHA,
+  TOKENS,
+} from '@/ui/theme/tokens';
 
 const props = withDefaults(
   defineProps<{
@@ -176,7 +182,7 @@ function draw(ts: number): void {
   // dB scale ticks + labels. Every tick gets a mark, but a label is skipped
   // when it would collide with the previous one so compact meters (e.g. the
   // 36px-tall master meter) stay legible instead of stacking numbers.
-  ctx.font = '8px system-ui, sans-serif';
+  ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.chromeMd);
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
   const labelGap = 9;

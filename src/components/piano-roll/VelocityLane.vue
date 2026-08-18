@@ -6,6 +6,7 @@ import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
+import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import {
   barsInSpan,
   formatLaneValue,
@@ -159,7 +160,7 @@ function draw(): void {
 
   if (dragValue !== null) {
     ctx.fillStyle = COLORS.laneValueText;
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
     ctx.fillText(formatLaneValue(param, dragValue), 6, 12);
   }
 }

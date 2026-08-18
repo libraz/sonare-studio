@@ -676,7 +676,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
 }
 
 .eq-title {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--text-4);
 }
@@ -704,7 +704,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
 }
 
 .eq-match {
-  font-size: 9px;
+  font-size: var(--fs-chrome-lg);
 }
 
 .eq-add:hover,
@@ -756,7 +756,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
 }
 
 .eq-band-label {
-  font: var(--fw-semibold) 7px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-sm) var(--font-sans);
   color: var(--text-4);
   user-select: none;
   border: none;

@@ -99,7 +99,7 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
 }
 
 .snapshots-label {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--text-4);
   user-select: none;

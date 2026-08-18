@@ -181,7 +181,7 @@ watch(
 }
 
 .mm-label {
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--text-4);
   text-transform: uppercase;
@@ -195,7 +195,7 @@ watch(
 
 .mm-unit {
   text-align: center;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--text-4);
 }
@@ -230,7 +230,7 @@ watch(
 }
 
 .mm-unit-inline {
-  font: 7px var(--font-sans);
+  font: var(--fs-chrome-sm) var(--font-sans);
   color: var(--text-4);
 }
 

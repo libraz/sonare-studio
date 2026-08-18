@@ -18,6 +18,7 @@ import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import { type GhostNote, hitTestGhost } from './overlay';
 import {
   DEFAULT_NOTE_COLOR,
@@ -534,7 +535,7 @@ function drawNotes(): void {
 
     if (range.rowHeight >= LABEL_MIN_ROW_HEIGHT && noteW >= LABEL_MIN_NOTE_WIDTH) {
       ctx.fillStyle = COLORS.noteText;
-      ctx.font = '10px system-ui, sans-serif';
+      ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
       ctx.textBaseline = 'middle';
       ctx.fillText(formatPitch(note.pitch), x + 5, y + range.rowHeight / 2, noteW - 8);
     }
@@ -615,7 +616,7 @@ function drawOverlay(): void {
 
   const readout = props.interactions.gestureReadout?.value ?? null;
   if (readout) {
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
     const paddingX = 7;
     const paddingY = 4;
     const metrics = ctx.measureText(readout.text);
@@ -640,7 +641,7 @@ function drawOverlay(): void {
     ctx.lineWidth = 1.5;
     strokeRoundRect(ctx, x + 0.5, y + 1.5, ghostW - 1, noteH - 1, 2);
     const text = `${ghost.trackName} · ${formatPitch(ghost.pitch)}`;
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
     const boxW = ctx.measureText(text).width + 14;
     const boxH = 20;
     const labelX = Math.min(Math.max(4, x + 8), w - boxW - 4);
@@ -661,7 +662,7 @@ function drawOverlay(): void {
     const x = props.range.ppqToX(hoverNote.startPpq);
     const y = props.range.pitchToY(hoverNote.pitch);
     const text = `${formatPitch(hoverNote.pitch)} · vel ${hoverNote.velocity}`;
-    ctx.font = '11px system-ui, sans-serif';
+    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
     const boxW = ctx.measureText(text).width + 14;
     const boxH = 20;
     const labelX = Math.min(Math.max(4, x + 8), w - boxW - 4);

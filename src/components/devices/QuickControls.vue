@@ -585,7 +585,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;

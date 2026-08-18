@@ -303,7 +303,7 @@ function onMidiForgetMastering(index: number, control: MasteringControl): void {
 .chain-param-label {
   margin-right: 3px;
   color: var(--text-4);
-  font: 8px var(--font-sans);
+  font: var(--fs-chrome-md) var(--font-sans);
   text-transform: uppercase;
 }
 

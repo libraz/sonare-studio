@@ -75,7 +75,7 @@
 }
 
 .preview-stale {
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   color: var(--warning);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -159,7 +159,7 @@
 
 .progress-stage {
   flex: none;
-  font: 9px var(--font-sans);
+  font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-4);
   min-width: 80px;
 }
@@ -195,7 +195,7 @@
 
 .mono-title,
 .mono-status {
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -217,7 +217,7 @@
 }
 
 .mono-grid dt {
-  font: 9px var(--font-sans);
+  font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-4);
 }
 

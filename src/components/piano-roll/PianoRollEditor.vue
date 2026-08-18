@@ -1481,7 +1481,7 @@ onBeforeUnmount(() => {
   padding: 0 var(--sp-2);
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
-  font: var(--fw-semibold) 8px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--text-4);
   overflow: hidden;

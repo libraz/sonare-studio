@@ -330,7 +330,7 @@ onBeforeUnmount(() => {
   padding: 0;
   color: var(--text-3);
   background: var(--surface-3);
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   line-height: 1;
   cursor: pointer;
   box-shadow: var(--control-lift);
@@ -348,7 +348,7 @@ onBeforeUnmount(() => {
   border: none;
   background: var(--surface-3);
   color: var(--text-4);
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   cursor: pointer;
   box-shadow: var(--control-lift);
   transition:
@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
 }
 
 .bus-tag {
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--accent);
   background: var(--accent-muted);
@@ -417,7 +417,7 @@ onBeforeUnmount(() => {
 }
 
 .bus-readout {
-  font: var(--fw-medium) 9px var(--font-mono);
+  font: var(--fw-medium) var(--fs-chrome-lg) var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }

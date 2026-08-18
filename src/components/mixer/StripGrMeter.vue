@@ -83,7 +83,7 @@ onBeforeUnmount(() => {
 }
 
 .strip-gr-label {
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--text-4);
   text-transform: uppercase;
@@ -108,7 +108,7 @@ onBeforeUnmount(() => {
 }
 
 .strip-gr-value {
-  font: 9px var(--font-mono);
+  font: var(--fs-chrome-lg) var(--font-mono);
   color: var(--text-2);
 }
 </style>

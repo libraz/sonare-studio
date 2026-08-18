@@ -132,7 +132,7 @@
 
 .instrument-kind {
   flex: none;
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--surface-0);
@@ -247,7 +247,7 @@
 .preset-group-title {
   margin: 0;
   color: var(--text-4);
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -293,7 +293,7 @@
 
 .preset-source {
   color: var(--text-4);
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -334,7 +334,7 @@
 
 .sf2-prefer-model-hint {
   margin: 0;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -374,14 +374,14 @@
 }
 
 .sf2-multitimbral-label {
-  font-size: 0.82rem;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
 
 .sf2-multitimbral-hint {
   grid-column: 2;
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -616,7 +616,7 @@
 
 .chain-title {
   margin: 0;
-  font-size: 9px;
+  font-size: var(--fs-chrome-lg);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -691,7 +691,7 @@
   box-shadow: none;
   color: var(--text-4);
   cursor: pointer;
-  font-size: 9px;
+  font-size: var(--fs-chrome-lg);
 }
 
 .insert-power.on {
@@ -716,7 +716,7 @@
 }
 
 .insert-cat {
-  font: 9px var(--font-sans);
+  font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-4);
   text-transform: uppercase;
   letter-spacing: 0.04em;

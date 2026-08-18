@@ -44,6 +44,7 @@ import {
 } from '@/ui/arrangement/clip-content';
 import type { ClipInteractions } from '@/ui/arrangement/use-clip-interactions';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 
 type ArrangementColors = typeof ARRANGEMENT_COLORS;
 
@@ -285,7 +286,7 @@ export function drawClip(
   }
   if (hasNameStrip) {
     ctx.fillStyle = colors.clipName;
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(source.name, Math.max(x, 0) + 5, y + 10);

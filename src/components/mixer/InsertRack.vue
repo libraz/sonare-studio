@@ -571,7 +571,7 @@ onBeforeUnmount(() => {
 .insert-drag {
   flex: none;
   color: var(--text-4);
-  font-size: 9px;
+  font-size: var(--fs-chrome-lg);
   line-height: 1;
   letter-spacing: -1px;
   cursor: grab;
@@ -605,7 +605,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 9px var(--font-sans);
+  font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-2);
   background: transparent;
   border: none;
@@ -676,7 +676,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-4);
-  font: 8px var(--font-sans);
+  font: var(--fs-chrome-md) var(--font-sans);
   text-transform: uppercase;
 }
 
@@ -698,7 +698,7 @@ onBeforeUnmount(() => {
   border-radius: 2px;
   color: var(--text-4);
   background: var(--surface-3);
-  font: 7px var(--font-sans);
+  font: var(--fs-chrome-sm) var(--font-sans);
   line-height: 1;
   padding: 0 3px;
   cursor: pointer;
@@ -725,7 +725,7 @@ onBeforeUnmount(() => {
 
 .insert-add {
   width: 100%;
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-3);
   background: transparent;
   box-shadow: none;
@@ -756,7 +756,7 @@ onBeforeUnmount(() => {
 }
 
 .catalog-category {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-4);
@@ -786,7 +786,7 @@ onBeforeUnmount(() => {
 
 .catalog-item-tag {
   flex: none;
-  font: 8px var(--font-sans);
+  font: var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-3);
@@ -797,7 +797,7 @@ onBeforeUnmount(() => {
 
 .insert-error {
   margin: 0;
-  font: 9px/1.3 var(--font-sans);
+  font: var(--fs-chrome-lg)/1.3 var(--font-sans);
   color: var(--danger-text);
 }
 .insert-sidechain {
@@ -808,7 +808,7 @@ onBeforeUnmount(() => {
 }
 
 .insert-sidechain-label {
-  font-size: 9px;
+  font-size: var(--fs-chrome-lg);
   color: var(--text-3);
   text-transform: uppercase;
 }

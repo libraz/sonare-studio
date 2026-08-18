@@ -1394,7 +1394,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--sp-2);
   padding: 0 var(--sp-4);
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   letter-spacing: 0.08em;
   color: var(--text-4);
   background: var(--surface-2);
@@ -1439,7 +1439,7 @@ onBeforeUnmount(() => {
 .section-detect {
   flex: none;
   padding: 1px var(--sp-2);
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--text-2);
   background: var(--surface-3);

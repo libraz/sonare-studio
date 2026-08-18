@@ -198,13 +198,13 @@ function channelLabel(channel: number): string {
 }
 
 .sf2-channel-map-title {
-  font-size: 0.8rem;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 
 .sf2-channel-map-hint {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -250,13 +250,13 @@ function channelLabel(channel: number): string {
 }
 
 .sf2-channel-name {
-  font-size: 0.78rem;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   color: var(--text-1);
 }
 
 .sf2-channel-tag {
-  font-size: 0.66rem;
+  font-size: var(--fs-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-3);
@@ -287,7 +287,7 @@ function channelLabel(channel: number): string {
 }
 
 .sf2-channel-program-name {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -295,7 +295,7 @@ function channelLabel(channel: number): string {
 }
 
 .sf2-channel-inherit {
-  font-size: 0.72rem;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

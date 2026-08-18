@@ -11,6 +11,7 @@ import { type ARRANGEMENT_COLORS, RULER_HEIGHT_PX } from '@/components/arrangeme
 import type { EditorMarker, EditorTrack, TimeSignatureSegment } from '@/project/types';
 import type { RulerTick } from '@/ui/arrangement/ruler';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 
 type ArrangementColors = typeof ARRANGEMENT_COLORS;
 
@@ -153,7 +154,7 @@ export function drawRuler(
   }
 
   const list = ticks(timeSignatures, range.startPpq, range.endPpq, range.pxPerPpq);
-  ctx.font = '10px system-ui, sans-serif';
+  ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   for (const tick of list) {

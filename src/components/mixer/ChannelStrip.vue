@@ -581,7 +581,7 @@ onBeforeUnmount(() => {
 
 .strip-group-tag {
   flex: none;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--surface-0);
   background: #a78bfa;
@@ -604,7 +604,7 @@ onBeforeUnmount(() => {
   max-width: 4rem;
   overflow: hidden;
   text-overflow: ellipsis;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--surface-0);
   background: var(--warning);
@@ -624,7 +624,7 @@ onBeforeUnmount(() => {
 }
 
 .strip-output-label {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--text-4);
   user-select: none;
@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
 .toggle {
   width: 16px;
   height: 14px;
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -694,7 +694,7 @@ onBeforeUnmount(() => {
 .track-state-midi-forget {
   flex: none;
   height: 14px;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);

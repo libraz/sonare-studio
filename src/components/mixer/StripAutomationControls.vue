@@ -84,7 +84,7 @@ const autoMode = computed(() => automationStripMode(props.target));
 .toggle {
   width: 16px;
   height: 14px;
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);

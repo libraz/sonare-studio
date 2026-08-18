@@ -5,6 +5,7 @@ import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 const props = defineProps<{
@@ -82,7 +83,7 @@ function draw(): void {
   ctx.fillStyle = COLORS.rulerBackground;
   ctx.fillRect(0, 0, widthPx, heightPx);
 
-  ctx.font = '10px system-ui, sans-serif';
+  ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
   ctx.textBaseline = 'middle';
 
   for (const tick of rulerTicks(

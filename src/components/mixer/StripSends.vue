@@ -285,7 +285,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 }
 
 .sends-title {
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--text-4);
   user-select: none;
@@ -306,7 +306,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 
 .send-latency-warning {
   color: var(--warning, #fbbf24);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1;
 }
 
@@ -331,7 +331,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: 9px var(--font-sans);
+  font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-2);
   background: transparent;
   border: none;
@@ -351,7 +351,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 
 .send-timing {
   flex: none;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--text-4);
   background: transparent;
@@ -371,7 +371,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 .send-midi-forget {
   flex: none;
   height: 14px;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);

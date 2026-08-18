@@ -295,7 +295,7 @@ function onMidiForget(): void {
 }
 
 .knob-label {
-  font: var(--fw-normal) 8px var(--font-sans);
+  font: var(--fw-normal) var(--fs-chrome-md) var(--font-sans);
   color: var(--text-4);
   text-transform: uppercase;
   letter-spacing: 0.04em;

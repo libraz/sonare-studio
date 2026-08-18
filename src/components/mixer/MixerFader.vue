@@ -218,7 +218,7 @@ function tickTopPx(db: number): number {
   position: absolute;
   right: 0;
   transform: translateY(-50%);
-  font: 7px var(--font-sans);
+  font: var(--fs-chrome-sm) var(--font-sans);
   color: var(--text-4);
 }
 

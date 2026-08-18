@@ -136,12 +136,21 @@
   /* Display grotesque — reserved for the brand wordmark, not body chrome. */
   --font-display: "Bricolage Grotesque Variable", "SF Pro Display",
     system-ui, sans-serif;
-  --fs-2xs: 10px; /* sanctioned floor for dense meta text (tags, ticks, readouts) */
+  --fs-2xs: 10px; /* floor for dense body meta text (tags, ticks, readouts) */
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-lg: 14px;
   --fs-xl: 16px;
+  --fs-2xl: 22px; /* display numerals (the transport time readout) */
+  /* Instrument chrome below the body-text floor: meter scales, knob captions,
+   * strip badges. These are glyph-recognition targets on dense hardware-style
+   * surfaces, not text read in runs, which is why they sit under --fs-2xs.
+   * They do not follow the compact density either — they are already at the
+   * legibility limit. Anything a user reads as a sentence uses --fs-2xs or up. */
+  --fs-chrome-lg: 9px;
+  --fs-chrome-md: 8px;
+  --fs-chrome-sm: 7px;
   --fw-normal: 400;
   --fw-medium: 500;
   --fw-semibold: 600;

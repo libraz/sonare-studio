@@ -257,7 +257,7 @@ async function onRename(): Promise<void> {
 }
 
 .vca-tag {
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.06em;
   color: var(--surface-0);
   background: var(--warning);
@@ -331,7 +331,7 @@ async function onRename(): Promise<void> {
 .vca-midi-forget {
   flex: none;
   height: 14px;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -374,13 +374,13 @@ async function onRename(): Promise<void> {
 }
 
 .vca-readout {
-  font: var(--fw-medium) 9px var(--font-mono);
+  font: var(--fw-medium) var(--fs-chrome-lg) var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
 }
 
 .vca-members {
-  font: var(--fw-medium) 8px var(--font-sans);
+  font: var(--fw-medium) var(--fs-chrome-md) var(--font-sans);
   color: var(--text-4);
 }
 </style>

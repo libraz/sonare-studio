@@ -56,6 +56,48 @@ export const TOKENS = {
  */
 export const METER_ZONE_ALPHA = 0.12;
 
+/**
+ * Typeface the canvas editors label with, mirroring `--font-sans`.
+ *
+ * Canvas 2D takes a font shorthand string, not a CSS variable, so the stack is
+ * duplicated here for the same reason the palette is. Without it the canvas
+ * resolves a different family than the shell around it: the CSS stack asks for
+ * the SF text face by name first, which is the intentional Apple-native choice
+ * documented in tokens.css, and a bare `system-ui` does not.
+ */
+export const CANVAS_FONT_STACK =
+  '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif';
+
+/**
+ * Canvas label sizes in px, mirroring the CSS scale steps the editors use.
+ *
+ * These track the root values only. A canvas draw loop does not observe the
+ * compact-density attribute, so `xs` stays at its root 11px even where the
+ * shell around it tightens to 10px; the chrome steps have no density override
+ * to miss.
+ */
+export const CANVAS_FONT_SIZE_PX = {
+  /** Meter scale numerals — `--fs-chrome-md`. */
+  chromeMd: 8,
+  /** Dense ruler ticks and clip captions — `--fs-2xs`. */
+  meta: 10,
+  /** Note labels inside the grid — `--fs-xs`. */
+  label: 11,
+} as const;
+
+/**
+ * Builds a canvas 2D `font` shorthand from the shared stack.
+ *
+ * @param sizePx Size in CSS pixels.
+ * @param weight Optional numeric weight; omitted draws at the default weight.
+ * @returns The `font` string to assign to a 2D context.
+ */
+export function canvasFont(sizePx: number, weight?: number): string {
+  return weight === undefined
+    ? `${sizePx}px ${CANVAS_FONT_STACK}`
+    : `${weight} ${sizePx}px ${CANVAS_FONT_STACK}`;
+}
+
 /** Token key set, for the sync test. */
 export type TokenName = keyof typeof TOKENS;
 

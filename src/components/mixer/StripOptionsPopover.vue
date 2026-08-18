@@ -651,7 +651,7 @@ onBeforeUnmount(() => {
 }
 
 .strip-options-label {
-  font: var(--fw-semibold) 8px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.04em;
   color: var(--text-3);
 }
@@ -678,7 +678,7 @@ onBeforeUnmount(() => {
 }
 
 .strip-options-unit {
-  font: 8px var(--font-sans);
+  font: var(--fs-chrome-md) var(--font-sans);
   color: var(--text-4);
 }
 
@@ -686,7 +686,7 @@ onBeforeUnmount(() => {
 .strip-midi-forget {
   flex: none;
   height: 14px;
-  font: var(--fw-bold) 7px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -715,7 +715,7 @@ onBeforeUnmount(() => {
 .toggle {
   width: 16px;
   height: 14px;
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);

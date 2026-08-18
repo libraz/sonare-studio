@@ -265,7 +265,7 @@
 .toggle {
   width: 16px;
   height: 14px;
-  font: var(--fw-bold) 9px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -322,7 +322,7 @@
 
 .track-bounce {
   height: 14px;
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -342,12 +342,12 @@
 .track-record-input-select {
   width: 58px;
   flex: none;
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
 }
 
 .takes-flatten {
   height: 14px;
-  font: var(--fw-bold) 8px var(--font-sans);
+  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   line-height: 1;
   color: var(--text-3);
   background: var(--surface-3);
@@ -377,7 +377,7 @@
   align-items: center;
   box-sizing: border-box;
   padding: 0 var(--sp-3) 0 15px;
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
   border-bottom: 1px solid var(--border-subtle);
@@ -414,7 +414,7 @@
 
 .automation-label {
   flex: none;
-  font: var(--fw-semibold) 8px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.08em;
   color: var(--text-4);
 }
@@ -509,5 +509,5 @@
   flex: 1;
   min-width: 0;
   max-width: 64px;
-  font: var(--fw-semibold) 9px var(--font-sans);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
 }

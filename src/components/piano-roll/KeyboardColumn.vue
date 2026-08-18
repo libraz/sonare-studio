@@ -5,6 +5,7 @@ import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
+import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import { getCanvasContext, isBlackKey, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 /**
@@ -90,7 +91,7 @@ function draw(): void {
     }
     if (pc === 0 && range.rowHeight >= MIN_LABEL_ROW_HEIGHT) {
       ctx.fillStyle = COLORS.keyLabel;
-      ctx.font = `${Math.min(10, range.rowHeight - 2)}px system-ui, sans-serif`;
+      ctx.font = canvasFont(Math.min(CANVAS_FONT_SIZE_PX.meta, range.rowHeight - 2));
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       ctx.fillText(octaveLabel(pitch), widthPx - 4, y + range.rowHeight / 2);
