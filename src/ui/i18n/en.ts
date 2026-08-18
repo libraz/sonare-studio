@@ -2083,6 +2083,9 @@ export const en = {
       tension: 'Tension',
       phraseCount: '{count} phrases',
       hyperbar: '{bars}-bar groups',
+      motifs: 'Figures',
+      motifStatements: '{count}x',
+      motifNotes: '{count} notes',
     },
     settingsButton: {
       label: 'Settings',

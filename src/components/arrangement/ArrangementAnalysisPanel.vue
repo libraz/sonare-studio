@@ -5,6 +5,7 @@ import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { ArrangementConflict } from '@/compose/arrangement';
+import type { TrackMotifs } from '@/compose/motifs';
 import type { RankedCadence } from '@/compose/phrases';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
@@ -43,8 +44,17 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 const { formatPitch } = useNoteNames();
-const { conflicts, tension, phrases, cadences, hypermeter, excludedTrackNames, analyzed, analyze } =
-  useArrangementAnalysis();
+const {
+  conflicts,
+  tension,
+  phrases,
+  cadences,
+  hypermeter,
+  motifs,
+  excludedTrackNames,
+  analyzed,
+  analyze,
+} = useArrangementAnalysis();
 
 /** Popover open state; the header bar itself never resizes. */
 const open = ref(false);
@@ -163,6 +173,13 @@ function cadenceLabel(type: RankedCadence['type']): string {
 function weightLabel(weight: number): string {
   return `${Math.round(weight * 100)}%`;
 }
+
+/** How often a figure is stated, and how long it is. */
+function motifLabel(motif: TrackMotifs['motifs'][number]): string {
+  const strings = t.value.shell.arrangementAnalysis;
+  const times = strings.motifStatements.replace('{count}', String(motif.statements.length));
+  return `${times} / ${strings.motifNotes.replace('{count}', String(motif.noteCount))}`;
+}
 </script>
 
 <template>
@@ -219,6 +236,30 @@ function weightLabel(weight: number): string {
                 <span class="ap-weight">{{ weightLabel(cadence.weight) }}</span>
                 <span class="ap-rationale">{{ cadence.rationale }}</span>
               </button>
+            </li>
+          </ul>
+
+          <ul v-if="motifs.length > 0" class="ap-motifs">
+            <li v-for="entry in motifs" :key="entry.trackName">
+              <p class="ap-motif-track">
+                {{ t.shell.arrangementAnalysis.motifs }}: {{ entry.trackName }}
+              </p>
+              <ul class="ap-motif-list">
+                <li v-for="(motif, index) in entry.motifs" :key="index">
+                  <button
+                    type="button"
+                    class="ap-motif-row"
+                    @click="emit('jump', motif.statements[0].startPpq)"
+                  >
+                    <span class="ap-pos">{{ positionLabel(motif.statements[0].startPpq) }}</span>
+                    <span class="ap-motif-count">{{ motifLabel(motif) }}</span>
+                    <span class="ap-rationale">{{ motif.rationale }}</span>
+                  </button>
+                </li>
+              </ul>
+              <p v-for="(relation, index) in entry.relations" :key="`r${index}`" class="ap-relation">
+                {{ relation.rationale }}
+              </p>
             </li>
           </ul>
 
@@ -397,6 +438,60 @@ function weightLabel(weight: number): string {
 
 .ap-cadence-row:hover {
   background: var(--surface-4);
+}
+
+/* Figures a part restates: one group per track, each row jumping to the first
+ * statement, with the named transformations between them beneath. */
+.ap-motifs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-motif-track {
+  margin: 0 0 var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.ap-motif-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-motif-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ap-motif-row:hover {
+  background: var(--surface-inset);
+  color: var(--text-1);
+}
+
+.ap-motif-count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-relation {
+  margin: 0;
+  padding: 0 var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
 }
 
 .ap-weight {

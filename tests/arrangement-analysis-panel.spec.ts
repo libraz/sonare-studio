@@ -54,6 +54,32 @@ describe('ArrangementAnalysisPanel', () => {
     store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
   });
 
+  // A restated figure is the one reading the panel can offer that a list of
+  // conflicts cannot: it says the piece has a shape, not just clashes.
+  it('lists a restated figure and jumps to its first statement', async () => {
+    const leadTrackId = addTrack({ name: 'Lead' });
+    const leadClipId = addMidiClip({ trackId: leadTrackId, startPpq: 0, lengthPpq: 32 });
+    setActiveClip(leadClipId);
+    for (let statement = 0; statement < 3; statement += 1) {
+      [0, 2, 4, 2].forEach((degree, index) => {
+        addNote({
+          pitch: 60 + statement * 2 + degree,
+          startPpq: statement * 4 + index,
+          durationPpq: 1,
+        });
+      });
+    }
+    wrapper = mount(ArrangementAnalysisPanel);
+    await wrapper.find('.ap-toggle').trigger('click');
+    await wrapper.find('.ap-analyze').trigger('click');
+
+    const rows = wrapper.findAll('.ap-motif-row');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(wrapper.find('.ap-motif-track').text()).toContain('Lead');
+    await rows[0].trigger('click');
+    expect(wrapper.emitted('jump')?.[0]).toEqual([0]);
+  });
+
   it('starts collapsed and shows the run prompt before the first analysis', async () => {
     wrapper = mount(ArrangementAnalysisPanel);
     expect(wrapper.find('.ap-popover').exists()).toBe(false);

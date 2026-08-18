@@ -2080,6 +2080,9 @@ export const ja = {
       tension: 'テンション',
       phraseCount: 'フレーズ {count} 個',
       hyperbar: '{bars} 小節のまとまり',
+      motifs: '動機',
+      motifStatements: '{count} 回',
+      motifNotes: '{count} 音',
     },
     settingsButton: {
       label: '設定',

@@ -15,6 +15,7 @@
 import { type Ref, ref } from 'vue';
 import { type ArrangementConflict, analyzeArrangementWithTension } from '@/compose/arrangement';
 import { effectiveKeyScale } from '@/compose/key';
+import { analyzeMotifs, type TrackMotifs } from '@/compose/motifs';
 import {
   analyzePhrases,
   type DetectedPhrase,
@@ -45,6 +46,8 @@ export interface ArrangementAnalysis {
   cadences: Ref<RankedCadence[]>;
   /** How the piece's bars group above the bar line, or null when unread. */
   hypermeter: Ref<HypermeterReading | null>;
+  /** The figures each part restates, one entry per track that states one. */
+  motifs: Ref<TrackMotifs[]>;
   /** Names of percussion tracks dropped from analysis (shown so exclusion is visible). */
   excludedTrackNames: Ref<string[]>;
   /** True once {@link analyze} has run at least once since the last reset. */
@@ -77,6 +80,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
   const phrases = ref<DetectedPhrase[]>([]);
   const cadences = ref<RankedCadence[]>([]);
   const hypermeter = ref<HypermeterReading | null>(null);
+  const motifs = ref<TrackMotifs[]>([]);
   const excludedTrackNames = ref<string[]>([]);
   const analyzed = ref(false);
 
@@ -95,6 +99,9 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     phrases.value = structure.phrases;
     cadences.value = structure.cadences;
     hypermeter.value = structure.hypermeter;
+    // Motifs are read per track: a figure lives in one part, and pooling the
+    // parts would report a cell nobody plays.
+    motifs.value = analyzeMotifs(tracks, key).tracks;
     analyzed.value = true;
   }
 
@@ -104,6 +111,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     phrases.value = [];
     cadences.value = [];
     hypermeter.value = null;
+    motifs.value = [];
     excludedTrackNames.value = [];
     analyzed.value = false;
   }
@@ -114,6 +122,7 @@ export function useArrangementAnalysis(): ArrangementAnalysis {
     phrases,
     cadences,
     hypermeter,
+    motifs,
     excludedTrackNames,
     analyzed,
     analyze,
