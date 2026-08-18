@@ -2704,7 +2704,10 @@ export const en = {
           suspensionNoTarget: 'Holds over and clashes, then steps down to settle',
           parallelPerfect: 'Runs parallel with the lower voice in the same open interval',
           hiddenParallel: 'Moves the same way into an open, perfect sound',
+          battuta: 'Drops onto an octave while the other voice climbs to meet it',
           voiceCrossing: 'Dips below the voice beneath it',
+          forbiddenLeap: 'Jumps here from the note before by a step that is hard to sing',
+          leadingToneResolution: 'The note before pulled up into this one and came home',
         },
       },
       normal: {
@@ -2751,7 +2754,10 @@ export const en = {
           suspensionNoTarget: 'Suspension — resolves by step',
           parallelPerfect: 'Parallel perfect interval',
           hiddenParallel: 'Hidden perfect interval',
+          battuta: 'Battuta — octave by contrary motion, upper voice leaping down',
           voiceCrossing: 'Voice crossing',
+          forbiddenLeap: 'Forbidden melodic leap from the previous note',
+          leadingToneResolution: 'Leading tone resolved up to the tonic here',
         },
       },
       theory: {
@@ -2798,7 +2804,10 @@ export const en = {
           suspensionNoTarget: 'Suspension — resolves stepwise down',
           parallelPerfect: 'Parallel perfect 5th/8ve',
           hiddenParallel: 'Hidden (direct) perfect interval',
+          battuta: 'Ottava battuta — perfect 8ve/unison by contrary motion, upper voice leaping ↓',
           voiceCrossing: 'Voice crossing',
+          forbiddenLeap: 'Forbidden melodic leap — 7th, augmented/diminished, or over an 8ve',
+          leadingToneResolution: 'Leading tone resolved ↑ to the tonic',
         },
       },
     },
@@ -2866,10 +2875,25 @@ export const en = {
         definition:
           'Two voices moving in the same direction into a perfect 5th or octave (a direct fifth/octave); disliked especially between the outer voices.',
       },
+      battuta: {
+        term: 'Ottava battuta',
+        definition:
+          'An octave or unison arrived at by contrary motion with the upper voice leaping down onto it. The two parts collapse onto the same open sound from opposite sides, which sixteenth-century writing avoids; the same octave reached by step, or with the upper voice rising, is fine.',
+      },
       voiceCrossing: {
         term: 'Voice crossing',
         definition:
           'When a voice dips below the one beneath it (or rises above the one atop it), making the parts harder to follow.',
+      },
+      forbiddenLeap: {
+        term: 'Forbidden melodic leap',
+        definition:
+          'A melodic leap strict counterpoint rules out as unsingable: a seventh, any augmented or diminished interval — the augmented second of the harmonic minor among them — or a leap wider than an octave.',
+      },
+      leadingToneResolution: {
+        term: 'Leading-tone resolution',
+        definition:
+          'The seventh degree stepping up to the tonic it pulls towards. This is what the leading tone is named for, so it is an observation rather than a fault.',
       },
       tonic: {
         term: 'Tonic',

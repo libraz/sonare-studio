@@ -10,6 +10,7 @@
 import { ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildGuidance } from '@/compose/guidance';
+import { detectScaleHighlightFromTracks } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import type { EditorNote, EditorTrack, ScaleHighlightConfig } from '@/project/types';
@@ -106,6 +107,77 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.notes).toBe(3795);
     expect(counts.parallelPerfect).toBe(11);
     // Everything else is the library's answer untouched.
+    expect(counts.hiddenParallel).toBe(83);
+    expect(counts.voiceCrossing).toBe(12);
+    expect(counts.suspension).toBe(10);
+    expect(counts.verticalDissonance).toBe(107);
+  });
+
+  it('reads the predicate suite over the whole piece without disturbing the verdicts', async () => {
+    const { voices, document } = await demoVoices();
+    // The store estimates a key for a document that names none, and the editing
+    // surfaces analyse against that estimate; the melodic readings are spelled
+    // from it, so the pass has to be run the way the app runs it. D natural
+    // minor is what the notes come back as.
+    const key = detectScaleHighlightFromTracks(
+      voices.map((voice) => ({ track: voice.track, notes: voice.notes })),
+    );
+    expect(key).toEqual({ enabled: true, rootPc: 2, modeMask: 1453 });
+    if (key === null) return;
+
+    const counts = {
+      notes: 0,
+      forbiddenLeap: 0,
+      leadingToneResolution: 0,
+      battuta: 0,
+      parallelPerfect: 0,
+      hiddenParallel: 0,
+      voiceCrossing: 0,
+      suspension: 0,
+      verticalDissonance: 0,
+    };
+    for (const voice of voices) {
+      const otherTracks: TrackWithNotes[] = voices
+        .filter((other) => other !== voice)
+        .map((other) => ({ track: other.track, notes: other.notes }));
+      const result = buildGuidance({
+        notes: voice.notes,
+        clipStartPpq: 0,
+        clipLengthPpq: voice.lengthPpq,
+        sourceOffsetPpq: 0,
+        chordSymbols: [],
+        key,
+        timeSignatures: document.timeSignatures,
+        otherTracks,
+      });
+      counts.notes += voice.notes.length;
+      for (const analysis of result.byNoteId.values()) {
+        const reasons = analysis.safety?.reasons ?? 0;
+        if (reasons & ReasonFlag.ParallelPerfect) counts.parallelPerfect++;
+        if (reasons & ReasonFlag.HiddenParallel) counts.hiddenParallel++;
+        if (reasons & ReasonFlag.VoiceCrossing) counts.voiceCrossing++;
+        if (reasons & ReasonFlag.Suspension) counts.suspension++;
+        if (reasons & ReasonFlag.VerticalDissonance) counts.verticalDissonance++;
+        if (analysis.counterpoint?.forbiddenLeap === true) counts.forbiddenLeap++;
+        if (analysis.counterpoint?.leadingToneResolution === true) {
+          counts.leadingToneResolution++;
+        }
+        if (analysis.counterpoint?.battuta === true) counts.battuta++;
+      }
+    }
+
+    // The toccata's line is full of tritones, sevenths and — once the piece is
+    // committed to Bb rather than A# — augmented seconds, so the melodic
+    // reading fires on roughly one note in twelve, spread over all four voices.
+    // The other two are rare by nature: the leading tone only resolves where the
+    // music actually cadences, and the battuta names one specific approach.
+    expect(counts.notes).toBe(3795);
+    expect(counts.forbiddenLeap).toBe(310);
+    expect(counts.leadingToneResolution).toBe(76);
+    expect(counts.battuta).toBe(39);
+    // Reading them changes nothing the safety verdict already answered: the same
+    // four counts the key-free pass above pins, under an estimated key.
+    expect(counts.parallelPerfect).toBe(11);
     expect(counts.hiddenParallel).toBe(83);
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);

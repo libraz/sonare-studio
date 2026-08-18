@@ -19,15 +19,22 @@ import {
   ConsonanceClass,
   chordScaleReport,
   classifyInterval,
+  createsBattuta,
   createsParallelPerfect,
   evaluateSafety,
+  isForbiddenMelodicLeap,
+  isLeadingToneResolution,
   isScaleTone,
+  type NoteData,
   NoteSafety,
   pitchToScaleDegree,
   ReasonFlag,
   roleOf,
   type SafetyProfile,
   type SafetyResult,
+  type SpellingContext,
+  spelledKeyOf,
+  spellPitch,
   type VoicedRole,
   type VoiceNote,
   type VoiceSnapshot,
@@ -139,6 +146,36 @@ export interface VerticalInfo {
   consonance: 'perfect' | 'imperfect' | 'dissonant';
 }
 
+/**
+ * Counterpoint readings taken from libcantus's predicate suite rather than from
+ * the safety verdict's reason bitfield, which names only four events
+ * (suspension, parallel perfect, hidden parallel, voice crossing).
+ *
+ * All three are measured across one step of the active voice — this note and
+ * the voice's previous onset — so each describes the motion *into* the note the
+ * card is on, which is the note the reader is pointing at. Absent fields mean
+ * the reading did not fire, so a note carrying none of them carries no object.
+ */
+export interface CounterpointFindings {
+  /**
+   * The step into this note is a leap strict counterpoint forbids: a seventh,
+   * an augmented or diminished interval, or a leap wider than an octave.
+   */
+  forbiddenLeap?: boolean;
+  /**
+   * The previous note was the leading tone and this note is the tonic it
+   * resolved up to. The one positive reading in the set; every other
+   * counterpoint verdict the card can show names a fault.
+   */
+  leadingToneResolution?: boolean;
+  /**
+   * This note completes an *ottava battuta* against another voice: a perfect
+   * octave or unison reached by contrary motion with the upper of the two
+   * voices leaping down onto it.
+   */
+  battuta?: boolean;
+}
+
 /** Per-note theory analysis (keyed by EditorNote.id in the result map). */
 export interface NoteAnalysis {
   safety?: SafetyResult;
@@ -168,6 +205,12 @@ export interface NoteAnalysis {
    * without any chord present.
    */
   vertical?: VerticalInfo;
+  /**
+   * Counterpoint readings the safety verdict does not carry, present only when
+   * at least one of them fired. Chord-independent like the verdict's own
+   * reasons, so they describe polyphony that carries no progression.
+   */
+  counterpoint?: CounterpointFindings;
   /**
    * The cadence this note arrives on, when it is one of the notes sounding the
    * arrival. Present only at the arrival itself, never across the resolving
@@ -387,6 +430,48 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     return runs;
   });
   /**
+   * The counterpoint predicates read spelled notes: an augmented second and a
+   * minor third span the same three semitones, and a diminished fourth sounds
+   * like a major third, so a bare MIDI pair cannot state the question they ask.
+   * Given integers they silently fall back to the sounding reading and let
+   * every augmented interval through.
+   *
+   * The spelling is decided from the project key — the same key the hover card
+   * spells its pitch names from, since the card's `keyFifths` is derived from
+   * this very scale-highlight config — so the card cannot name a note against
+   * one key and analyse it against another. That choice is a real one and not a
+   * detail: reading D minor commits the piece to Bb rather than A#, and it is
+   * exactly that commitment which makes the step up to C# an augmented second.
+   *
+   * What the analysis does not borrow is the *engraving* rule the card's title
+   * spells with, which puts a chromatic tone on the side of the key signature
+   * so a lower neighbour of C stays written as B. That is right for a staff and
+   * wrong for an interval: it spells D minor's C# as Db, and then the same D
+   * minor line reads full of diminished fourths that nobody wrote. The
+   * interval spelling counted from the tonic is what these predicates are
+   * asking about, so it is what they are given.
+   */
+  const spelledTonic = tryEval(() => spelledKeyOf(key).tonic);
+  const spell = (pitch: number, context?: SpellingContext): NoteData | undefined =>
+    spelledTonic === undefined
+      ? undefined
+      : tryEval(() => spellPitch(pitch, spelledTonic, key, context));
+  /**
+   * Key-only spelling, memoized per pitch. Used for the other voices, whose
+   * notes are only ever compared by perfect class — a comparison no spelling
+   * changes — so they need a valid spelling rather than the best one, and MIDI's
+   * 128 pitches make the cache bounded.
+   */
+  const keySpellings = new Map<number, NoteData | undefined>();
+  const spellFromKey = (pitch: number): NoteData | undefined => {
+    let spelled = keySpellings.get(pitch);
+    if (spelled === undefined && !keySpellings.has(pitch)) {
+      spelled = spell(pitch);
+      keySpellings.set(pitch, spelled);
+    }
+    return spelled;
+  };
+  /**
    * Whether the library's parallel-perfect verdict on a candidate describes a
    * voice-leading event the composer can act on.
    *
@@ -439,6 +524,43 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       }
     }
     return pairs === 0 || dismissed < pairs;
+  };
+  /**
+   * Whether the candidate completes an *ottava battuta* against any other
+   * voice: a perfect octave or unison reached by contrary motion with the upper
+   * of the two voices leaping down onto it.
+   *
+   * It reuses the pair machinery above and the same two instants, but none of
+   * the parallel suppression: that reading dismisses contrary-motion pairs
+   * because contrary motion is not parallel motion, and contrary motion is
+   * precisely what this rule is about. The two rules name different events and
+   * are therefore gated separately.
+   */
+  const battutaWithOthers = (
+    spelled: NoteData,
+    prevSpelled: NoteData,
+    pitch: number,
+    prevPitch: number,
+    absBeat: number,
+    prevAbs: number,
+  ): boolean => {
+    for (const pitchIndex of otherVoicePitchIndexes) {
+      const other = pitchIndex.get(absBeat);
+      const otherPrev = pitchIndex.get(prevAbs);
+      if (other === undefined || otherPrev === undefined) continue;
+      const otherSpelled = spellFromKey(other);
+      const otherPrevSpelled = spellFromKey(otherPrev);
+      if (otherSpelled === undefined || otherPrevSpelled === undefined) continue;
+      // Which voice is the upper one is decided where the pair arrives, since
+      // that is the interval the rule is about. On a unison arrival the two land
+      // on the same pitch and say nothing, so the step they took decides.
+      const candidateIsUpper = pitch === other ? prevPitch > otherPrev : pitch > other;
+      const fired = candidateIsUpper
+        ? tryEval(() => createsBattuta(prevSpelled, spelled, otherPrevSpelled, otherSpelled))
+        : tryEval(() => createsBattuta(otherPrevSpelled, otherSpelled, prevSpelled, spelled));
+      if (fired === true) return true;
+    }
+    return false;
   };
 
   // Without a chord, keep the one window segment the UI uses for its grid but
@@ -532,14 +654,34 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     chordScaleCache.set(identity, info);
     return info;
   };
+  /**
+   * The onset group following each onset, by its representative (highest)
+   * pitch. A chromatic note is spelled by where it goes as well as by where it
+   * came from — the C# rising to D is a leading tone, the Db falling to C an
+   * inflection — so the melodic reading needs one note of lookahead, which the
+   * time-ordered walk below does not otherwise have.
+   */
+  const groupPitchByOnset = new Map<number, number>();
+  for (const note of sorted) groupPitchByOnset.set(note.startPpq, note.pitch);
+  const onsets = [...groupPitchByOnset.keys()];
+  const nextGroupPitchByOnset = new Map<number, number>();
+  for (let index = 0; index + 1 < onsets.length; index++) {
+    const next = groupPitchByOnset.get(onsets[index + 1]);
+    if (next !== undefined) nextGroupPitchByOnset.set(onsets[index], next);
+  }
   let prevGroupPitch: number | undefined;
+  let prevGroupSpelled: NoteData | undefined;
   let prevGroupOnset: number | undefined;
   let lastPitch: number | undefined;
+  let lastSpelled: NoteData | undefined;
   let groupOnset = Number.NaN;
   for (const note of sorted) {
     if (note.startPpq !== groupOnset) {
       if (!Number.isNaN(groupOnset)) prevGroupOnset = groupOnset;
-      prevGroupPitch = lastPitch ?? prevGroupPitch;
+      if (lastPitch !== undefined) {
+        prevGroupPitch = lastPitch;
+        prevGroupSpelled = lastSpelled;
+      }
       groupOnset = note.startPpq;
     }
     const absBeat = input.clipStartPpq + note.startPpq;
@@ -592,8 +734,44 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         ? { ...safety, reasons: safety.reasons & ~ReasonFlag.ParallelPerfect }
         : safety;
     }
+    // The readings the verdict's four reason bits do not carry. They are
+    // measured across the same step of the voice the verdict is measured across
+    // — this note and the previous onset group, unbounded, exactly as
+    // evaluateSafety is handed it above — so the card never reports a motion
+    // the two halves of the analysis disagreed about. The bar-length bound
+    // belongs to the parallel *dismissal* rather than to the step itself, which
+    // is why it is not repeated here.
+    const nextPitch = nextGroupPitchByOnset.get(note.startPpq);
+    const spelled = spell(note.pitch, {
+      ...(prevPitch !== undefined ? { previous: prevPitch } : {}),
+      ...(nextPitch !== undefined ? { next: nextPitch } : {}),
+    });
+    if (
+      spelled !== undefined &&
+      prevGroupSpelled !== undefined &&
+      prevPitch !== undefined &&
+      prevAbs !== undefined
+    ) {
+      const previous = prevGroupSpelled;
+      const findings: CounterpointFindings = {};
+      if (tryEval(() => isForbiddenMelodicLeap(previous, spelled)) === true) {
+        findings.forbiddenLeap = true;
+      }
+      // Alone among the three this one is a claim about the key rather than
+      // about the voices, so it is only made where a key was actually set: with
+      // none, the analysis falls back to C major and would announce a
+      // resolution in a key nobody chose.
+      if (keySet && tryEval(() => isLeadingToneResolution(previous, spelled, key)) === true) {
+        findings.leadingToneResolution = true;
+      }
+      if (battutaWithOthers(spelled, previous, note.pitch, prevPitch, absBeat, prevAbs)) {
+        findings.battuta = true;
+      }
+      if (Object.keys(findings).length > 0) analysis.counterpoint = findings;
+    }
     byNoteId.set(note.id, analysis);
     lastPitch = note.pitch;
+    lastSpelled = spelled;
   }
 
   // Melodic labels: one analyzeVoice pass over the clip's notes as a single

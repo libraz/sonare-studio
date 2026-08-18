@@ -128,9 +128,30 @@ export interface CounterpointLabels {
   parallelPerfect: string;
   /** Hidden/direct parallel verdict. */
   hiddenParallel: string;
+  /** Ottava battuta verdict. */
+  battuta: string;
   /** Voice-crossing verdict. */
   voiceCrossing: string;
+  /** Forbidden melodic leap verdict, measured against the previous note. */
+  forbiddenLeap: string;
+  /** Leading-tone resolution — the one observation here that is not a fault. */
+  leadingToneResolution: string;
 }
+
+/**
+ * The counterpoint readings the card can name, in no particular order (the
+ * priority the card renders them by lives in {@link counterpointLines}). Each
+ * has wording of its own in {@link CounterpointLabels} and a glossary entry
+ * through {@link GLOSSARY_KEY_FOR_VERDICT}.
+ */
+export type CounterpointVerdict =
+  | 'suspension'
+  | 'parallelPerfect'
+  | 'hiddenParallel'
+  | 'battuta'
+  | 'voiceCrossing'
+  | 'forbiddenLeap'
+  | 'leadingToneResolution';
 
 /**
  * The per-level wording of the localized theory block: the explanatory strings
@@ -324,6 +345,22 @@ export const GLOSSARY_KEY_FOR_KIND: Readonly<Record<TheoryLabel['kind'], string 
 };
 
 /**
+ * Glossary key for each counterpoint verdict. Every one of them names a term a
+ * reader may not know, so unlike {@link GLOSSARY_KEY_FOR_KIND} there is no
+ * "needs no definition" case; the total map over {@link CounterpointVerdict} is
+ * what fails the build when a verdict is added without a definition to expand.
+ */
+export const GLOSSARY_KEY_FOR_VERDICT: Readonly<Record<CounterpointVerdict, string>> = {
+  suspension: 'suspension',
+  parallelPerfect: 'parallelPerfect',
+  hiddenParallel: 'hiddenParallel',
+  battuta: 'battuta',
+  voiceCrossing: 'voiceCrossing',
+  forbiddenLeap: 'forbiddenLeap',
+  leadingToneResolution: 'leadingToneResolution',
+};
+
+/**
  * The NCT/resolution line, from the localized label table, paired with the
  * glossary term it refers to (for the ⓘ affordance). Returns the first label
  * that maps to localized text; chord tones and notes the analyzer left
@@ -358,15 +395,38 @@ function pitchName(midi: number, keyFifths?: number, system: NoteNameSystem = 'e
 
 /**
  * The voice-relative (counterpoint) lines for a note: its interval to the bass
- * and its consonance, plus the single most salient counterpoint verdict carried
- * on the safety reasons bitfield (suspension, then parallel/hidden perfects,
- * then voice crossing). These are chord-independent, so they describe polyphony
- * that has no chord progression — but the pitch a suspension resolves to is
- * read off the sounding chord, so a chord-free suspension arrives without one
- * and takes the wording that states the resolution without naming a pitch.
- * Vertical dissonance is deliberately not surfaced as its own verdict — the
- * interval line already says "dissonant".
+ * and its consonance, then the single most salient fault, then the one
+ * observation in the set that is not a fault. These are chord-independent, so
+ * they describe polyphony that has no chord progression — but the pitch a
+ * suspension resolves to is read off the sounding chord, so a chord-free
+ * suspension arrives without one and takes the wording that states the
+ * resolution without naming a pitch. Vertical dissonance is deliberately not
+ * surfaced as its own verdict — the interval line already says "dissonant".
  * Returns an empty array when the note sounds alone or against no other voice.
+ *
+ * Only one fault is named, because the readings overlap and a stack of them
+ * describes one event several times over rather than several events. The chain
+ * runs from what the two voices do together down to what the active line does
+ * alone:
+ *
+ * 1. Suspension, because it explains the dissonance the interval line has just
+ *    reported and carries the resolution the arrows draw.
+ * 2. Parallel, then hidden, then battuta: the three ways of arriving at a
+ *    perfect interval, commonest first. They are near-complementary in practice
+ *    — the parallel reading dismisses contrary-motion pairs, which is exactly
+ *    the motion the battuta is about — so ordering between them rarely bites.
+ * 3. Voice crossing, a standing fact about the register rather than about a
+ *    motion into it.
+ * 4. Forbidden leap last: it is by far the commonest of the readings and the
+ *    only one visible in the line the composer is already looking at, so
+ *    putting it first would mask the rarer verdicts that need pointing out.
+ *
+ * A leading-tone resolution takes a line of its own instead of a place in that
+ * chain. It is the only positive reading here, and a chain can only rank
+ * comparable things: letting a correct resolution outrank a parallel octave
+ * would hide a fault behind praise, and letting the parallel outrank it would
+ * make the card silent about the resolution for no reason. They are answers to
+ * different questions, so they are shown on different lines.
  */
 function counterpointLines(
   analysis: NoteAnalysis,
@@ -389,30 +449,38 @@ function counterpointLines(
     });
   }
   const reasons = analysis.safety?.reasons ?? 0;
+  const found = analysis.counterpoint;
   const cp = labels.counterpoint;
-  let verdict: { text: string; term?: GlossaryEntry } | undefined;
-  if (reasons & ReasonFlag.Suspension) {
-    const target = analysis.safety?.resolveTo;
-    verdict = {
-      text:
-        target !== undefined
-          ? cp.suspension.replace('{target}', pitchName(target, keyFifths, system))
-          : cp.suspensionNoTarget,
-      term: labels.glossary.suspension,
-    };
-  } else if (reasons & ReasonFlag.ParallelPerfect) {
-    verdict = { text: cp.parallelPerfect, term: labels.glossary.parallelPerfect };
-  } else if (reasons & ReasonFlag.HiddenParallel) {
-    verdict = { text: cp.hiddenParallel, term: labels.glossary.hiddenParallel };
-  } else if (reasons & ReasonFlag.VoiceCrossing) {
-    verdict = { text: cp.voiceCrossing, term: labels.glossary.voiceCrossing };
-  }
-  if (verdict !== undefined) {
+  /** One verdict line, with the glossary term its name refers to. */
+  const push = (kind: CounterpointVerdict, text: string): void => {
+    const term = labels.glossary[GLOSSARY_KEY_FOR_VERDICT[kind]];
     out.push({
       label: labels.lines.counterpoint,
-      text: verdict.text,
-      ...(verdict.term !== undefined ? { term: verdict.term } : {}),
+      text,
+      ...(term !== undefined ? { term } : {}),
     });
+  };
+  if (reasons & ReasonFlag.Suspension) {
+    const target = analysis.safety?.resolveTo;
+    push(
+      'suspension',
+      target !== undefined
+        ? cp.suspension.replace('{target}', pitchName(target, keyFifths, system))
+        : cp.suspensionNoTarget,
+    );
+  } else if (reasons & ReasonFlag.ParallelPerfect) {
+    push('parallelPerfect', cp.parallelPerfect);
+  } else if (reasons & ReasonFlag.HiddenParallel) {
+    push('hiddenParallel', cp.hiddenParallel);
+  } else if (found?.battuta === true) {
+    push('battuta', cp.battuta);
+  } else if (reasons & ReasonFlag.VoiceCrossing) {
+    push('voiceCrossing', cp.voiceCrossing);
+  } else if (found?.forbiddenLeap === true) {
+    push('forbiddenLeap', cp.forbiddenLeap);
+  }
+  if (found?.leadingToneResolution === true) {
+    push('leadingToneResolution', cp.leadingToneResolution);
   }
   return out;
 }

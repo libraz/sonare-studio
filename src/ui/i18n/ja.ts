@@ -2705,7 +2705,10 @@ export const ja = {
           suspensionNoTarget: '前の音を保ってぶつかり、一歩下がって収まります',
           parallelPerfect: '下の音と平行に動き、同じ完全な響きが続いています',
           hiddenParallel: '同じ向きに動いて完全な響きへ入っています',
+          battuta: '相手の声部が上がってくるところへ、跳び下りてオクターヴに入っています',
           voiceCrossing: '下の音と上下が入れ替わっています',
+          forbiddenLeap: '前の音から歌いにくい形で跳んでいます',
+          leadingToneResolution: '前の音が引き上がって、この音で収まりました',
         },
       },
       normal: {
@@ -2752,7 +2755,10 @@ export const ja = {
           suspensionNoTarget: '掛留 — 順次解決',
           parallelPerfect: '並行完全音程',
           hiddenParallel: '隠伏完全音程',
+          battuta: 'バットゥータ — 反行でオクターヴに入り、上声が下行跳躍',
           voiceCrossing: '声部交差',
+          forbiddenLeap: '前の音からの禁則跳躍',
+          leadingToneResolution: '導音がここで主音へ解決',
         },
       },
       theory: {
@@ -2799,7 +2805,10 @@ export const ja = {
           suspensionNoTarget: '掛留（サスペンション）— 順次下行',
           parallelPerfect: '並行完全5度／8度',
           hiddenParallel: '隠伏（直行）完全音程',
+          battuta: 'オッターヴァ・バットゥータ — 反行で完全8度／1度に到達、上声は下行跳躍',
           voiceCrossing: '声部交差',
+          forbiddenLeap: '禁則跳躍 — 7度・増減音程・オクターヴ超',
+          leadingToneResolution: '導音が主音へ上行解決',
         },
       },
     },
@@ -2861,9 +2870,24 @@ export const ja = {
         definition:
           '2つの声部が同じ方向へ動いて完全5度・完全8度に達すること（直行）。とくに外声で嫌われる。',
       },
+      battuta: {
+        term: 'オッターヴァ・バットゥータ',
+        definition:
+          '2つの声部が反行して完全8度（または1度）に達し、そのとき上声が下行跳躍している進行。両声部が反対側から同じ開いた響きへ落ち合うため16世紀の書法では避ける。順次で到達する場合や上声が上行する場合は問題ない。',
+      },
       voiceCrossing: {
         term: '声部交差',
         definition: '本来上にあるべき声部が下の声部より低くなること。声部の聞き分けが難しくなる。',
+      },
+      forbiddenLeap: {
+        term: '禁則跳躍',
+        definition:
+          '厳格対位法が歌いにくいものとして避ける旋律跳躍。7度、増音程・減音程（和声的短音階の増2度を含む）、オクターヴを超える跳躍がこれにあたる。',
+      },
+      leadingToneResolution: {
+        term: '導音の解決',
+        definition:
+          '第7音が半音上の主音へ上行して収まること。導音が本来向かう先であり、誤りではなく観察として示す。',
       },
       tonic: {
         term: 'トニック',
