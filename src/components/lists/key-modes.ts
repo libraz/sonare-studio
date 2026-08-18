@@ -117,9 +117,10 @@ export function modeOrdinalForChoice(id: string): number {
 }
 
 /**
- * Converts a configured diatonic scale to the MusicXML key-signature fifths
- * used by score and chord-symbol spelling. Disabled or custom scales have no
- * unambiguous signature, so they retain the neutral C-major spelling.
+ * Converts a configured scale to the MusicXML key-signature fifths used by
+ * score and chord-symbol spelling. Switching highlighting off says there is no
+ * key to sign, which keeps the neutral C-major spelling; any scale that is on
+ * signs from its own tonic, harmonic and melodic minor included.
  */
 export function keyFifthsForScaleHighlight(config: ScaleHighlightConfig): number {
   if (!config.enabled) return 0;

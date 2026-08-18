@@ -13,7 +13,13 @@
  * Pure module (no Vue/Pinia); the store-reading helpers live in the callers.
  */
 
-import { type KeyScale, MAJOR_MASK, type NoteData } from '@libraz/libcantus';
+import {
+  type KeyScale,
+  keySignatureFifths,
+  MAJOR_MASK,
+  type NoteData,
+  spelledKeyOf,
+} from '@libraz/libcantus';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
 
 /** Default key used when the project has no key set: C major. */
@@ -48,53 +54,23 @@ export function effectiveKeyScale(config: ScaleHighlightConfig): KeyScale {
   return config.enabled ? scaleHighlightToKeyScale(config) : DEFAULT_KEY_SCALE;
 }
 
-/** Rotates a mode mask so the selected scale degree becomes its root. */
-function rotateScaleMask(mask: number, semitoneOffset: number): number {
-  const shift = ((semitoneOffset % 12) + 12) % 12;
-  let rotated = 0;
-  for (let interval = 0; interval < 12; interval += 1) {
-    if (mask & (1 << ((interval + shift) % 12))) rotated |= 1 << interval;
-  }
-  return rotated;
-}
-
-/**
- * Key-signature fifths offset of each diatonic mode's interval mask relative
- * to the major key with the same tonic. The interval mask is the source of
- * truth here: a custom scale (including harmonic/melodic minor) has no single
- * MusicXML key signature and deliberately falls back to neutral spelling.
- *
- * The values match libsonare's audio-mode spelling convention. Keeping this
- * table in the KeyScale adapter means preset labels, chord rows and score
- * display all make the same spelling decision without importing UI mode code.
- */
-const DIATONIC_MODE_FIFTHS_BY_MASK: ReadonlyMap<number, number> = new Map([
-  [MAJOR_MODE_MASK, 0],
-  [rotateScaleMask(MAJOR_MODE_MASK, 9), -3], // natural minor
-  [rotateScaleMask(MAJOR_MODE_MASK, 2), -2], // dorian
-  [rotateScaleMask(MAJOR_MODE_MASK, 4), -4], // phrygian
-  [rotateScaleMask(MAJOR_MODE_MASK, 5), 1], // lydian
-  [rotateScaleMask(MAJOR_MODE_MASK, 7), -1], // mixolydian
-  [rotateScaleMask(MAJOR_MODE_MASK, 11), -5], // locrian
-]);
-
-/** Normalizes fifths to the canonical -5..6 enharmonic range. */
-function normalizeKeyFifths(fifths: number): number {
-  const mod = ((fifths % 12) + 12) % 12;
-  return mod > 6 ? mod - 12 : mod;
-}
-
 /**
  * Derives MusicXML key-signature fifths from a libcantus {@link KeyScale}.
  *
- * Only the seven diatonic masks have an unambiguous signature. Unknown/custom
- * masks return 0 so callers never invent a misleading key signature.
+ * The scale is spelled first ({@link spelledKeyOf} names the conventional
+ * tonic), and the signature is counted off that spelling. Every 12-bit mask is
+ * answered, so a scale that has a conventional signature gets it: C harmonic
+ * minor signs as three flats and writes its raised seventh as an accidental,
+ * which is how it is written. A mask with no convention behind it still gets
+ * the signature its tonic implies, which is a better ground for the accidentals
+ * around it than C major would be.
  */
 export function keyScaleToKeyFifths(key: KeyScale): number {
-  const modeOffset = DIATONIC_MODE_FIFTHS_BY_MASK.get(key.modeMask12);
-  if (modeOffset === undefined) return 0;
-  const rootPc = ((key.rootPc % 12) + 12) % 12;
-  return normalizeKeyFifths(rootPc * 7 + modeOffset);
+  const normalized: KeyScale = {
+    rootPc: ((key.rootPc % 12) + 12) % 12,
+    modeMask12: key.modeMask12,
+  };
+  return keySignatureFifths(spelledKeyOf(normalized).tonic, normalized);
 }
 
 /**

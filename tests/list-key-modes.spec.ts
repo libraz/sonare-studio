@@ -94,9 +94,14 @@ describe('keyFifthsForScaleHighlight', () => {
     ).toBe(1);
   });
 
-  it('uses neutral spelling for disabled and custom scale highlights', () => {
+  it('uses neutral spelling when highlighting is switched off', () => {
     expect(keyFifthsForScaleHighlight({ enabled: false, rootPc: 10, modeMask: 0 })).toBe(0);
-    expect(keyFifthsForScaleHighlight({ enabled: true, rootPc: 10, modeMask: 1 })).toBe(0);
+  });
+
+  // A custom scale still has a tonic, and the accidentals around it read better
+  // against that tonic's signature than against C major's.
+  it('signs a custom scale from its tonic', () => {
+    expect(keyFifthsForScaleHighlight({ enabled: true, rootPc: 10, modeMask: 1 })).toBe(-2);
   });
 });
 
@@ -105,8 +110,23 @@ describe('keyScaleToKeyFifths', () => {
     expect(keyScaleToKeyFifths({ rootPc: 4, modeMask12: MAJOR_MODE_MASK })).toBe(4);
   });
 
-  it('uses neutral spelling for a custom KeyScale mask', () => {
-    expect(keyScaleToKeyFifths({ rootPc: 4, modeMask12: 1 })).toBe(0);
+  /**
+   * The raised seventh of a harmonic minor is an accidental, not part of the
+   * signature, so the scale signs as its natural minor does. Reading it as C
+   * major instead put every accidental in the piece against the wrong ground.
+   */
+  it('signs harmonic and melodic minor as the minor key they are', () => {
+    expect(keyScaleToKeyFifths({ rootPc: 0, modeMask12: modeMaskForChoice('harmonicMinor') })).toBe(
+      -3,
+    );
+    expect(keyScaleToKeyFifths({ rootPc: 0, modeMask12: modeMaskForChoice('melodicMinor') })).toBe(
+      -3,
+    );
+    expect(keyScaleToKeyFifths({ rootPc: 0, modeMask12: modeMaskForChoice('minor') })).toBe(-3);
+  });
+
+  it('signs a custom KeyScale mask from its tonic', () => {
+    expect(keyScaleToKeyFifths({ rootPc: 4, modeMask12: 1 })).toBe(4);
   });
 });
 

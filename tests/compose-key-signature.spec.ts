@@ -78,10 +78,11 @@ describe('keyFifthsToSpelledKey', () => {
 
   it('round-trips through keyScaleToKeyFifths, collapsing enharmonic signatures', () => {
     // keyScaleToKeyFifths reads a pitch class, which cannot tell Cb major from
-    // B major, so it normalizes to the canonical -5..6 range.
+    // B major, so it answers with the conventional spelling of that pitch
+    // class: the tritone key comes back as six flats (Gb), not six sharps.
     const roundTripped = ALL_FIFTHS.map((fifths) =>
       keyScaleToKeyFifths(keyFifthsToSpelledKey(fifths).key),
     );
-    expect(roundTripped).toEqual([5, 6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, -5]);
+    expect(roundTripped).toEqual([5, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, -6, -5]);
   });
 });
