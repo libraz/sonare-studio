@@ -2394,6 +2394,7 @@ export const ja = {
       title: 'オーディオを書き出し',
       format: '形式',
       additionalFormats: '同時に書き出す形式',
+      formatOptions: 'フォーマット設定',
       bitDepth: 'ビット深度',
       dither: 'ディザー',
       bitrate: 'ビットレート',

@@ -307,11 +307,11 @@ async function downloadedBytes(download: ReturnType<typeof vi.fn>): Promise<Uint
 }
 
 /** Selects a radio input and notifies the v-model binding. */
+/** Selects one option of a segmented radio group by clicking its segment. */
 async function checkRadio(selector: string): Promise<void> {
-  const input = q<HTMLInputElement>(selector);
-  if (!input) throw new Error(`radio not found: ${selector}`);
-  input.checked = true;
-  input.dispatchEvent(new Event('change', { bubbles: true }));
+  const segment = q<HTMLButtonElement>(selector);
+  if (!segment) throw new Error(`radio not found: ${selector}`);
+  segment.click();
   await nextTick();
 }
 
@@ -512,6 +512,33 @@ describe('ExportDialog', () => {
     expect(q('.compressed-bitrate')).toBeNull();
   });
 
+  it('keeps the format-dependent controls in a row of their own', async () => {
+    mountDialog(makeRender());
+
+    // Switching format swaps one option group for another inside the reserved
+    // row, so no row appears or disappears and the dialog cannot slide under
+    // the pointer between the two states.
+    const row = q('.format-option-rows');
+    expect(row).not.toBeNull();
+    expect(row?.contains(q('.wav-bit-depth'))).toBe(true);
+    await selectOption('.format-select', 'MP3 (CBR)');
+    expect(q('.format-option-rows')).not.toBeNull();
+    expect(q('.format-option-rows')?.contains(q('.mp3-bitrate'))).toBe(true);
+    // The encoder notice is not a form row either; it belongs to the band.
+    expect(q('.field')?.contains(q('.encoder-notice'))).toBe(false);
+  });
+
+  it('exposes the range and mode choices as one radio group each', () => {
+    mountDialog(makeRender());
+
+    const range = q('.range-project');
+    expect(range?.getAttribute('role')).toBe('radio');
+    expect(range?.getAttribute('aria-checked')).toBe('true');
+    expect(q('.range-loop')?.getAttribute('aria-checked')).toBe('false');
+    expect(q('.mode-mixdown')?.closest('[role="radiogroup"]')).not.toBeNull();
+    expect(q('.mode-stems')?.getAttribute('aria-checked')).toBe('false');
+  });
+
   it('shows browser compressed bitrate options for Opus/AAC encoders', async () => {
     mountDialog(makeRender(), {
       encoders: [
@@ -578,13 +605,13 @@ describe('ExportDialog', () => {
 
   it('disables the loop range without a loop region', () => {
     mountDialog(makeRender());
-    expect(q<HTMLInputElement>('.range-loop')?.disabled).toBe(true);
+    expect(q<HTMLButtonElement>('.range-loop')?.disabled).toBe(true);
     document.body.innerHTML = '';
     mountDialog(makeRender(), {
       hasLoop: true,
       loopRegion: { startPpq: 0, endPpq: 8 },
     });
-    expect(q<HTMLInputElement>('.range-loop')?.disabled).toBe(false);
+    expect(q<HTMLButtonElement>('.range-loop')?.disabled).toBe(false);
   });
 
   it('shows a validation error and disables Export for MP3 at 96 kHz', async () => {

@@ -792,6 +792,10 @@ function onKeydown(event: KeyboardEvent): void {
               {{ encoder.label }}
             </label>
           </div>
+        </div>
+
+        <span class="field-label">{{ t.dialogs.exportAudio.formatOptions }}</span>
+        <div class="field format-option-rows">
           <div
             v-if="selectedEncoderIds.includes(WAV_ENCODER_ID)"
             class="format-options wav-options"
@@ -858,13 +862,6 @@ function onKeydown(event: KeyboardEvent): void {
               :aria-label="t.dialogs.exportAudio.bitrate"
             />
           </div>
-          <p
-            v-if="selectedEncoders.some((encoder) => encoder.deterministic === false)"
-            class="encoder-notice"
-            role="note"
-          >
-            {{ t.dialogs.exportAudio.browserEncoderNotice }}
-          </p>
         </div>
 
         <label class="field-label" for="export-sample-rate">
@@ -894,55 +891,65 @@ function onKeydown(event: KeyboardEvent): void {
         </div>
 
         <span class="field-label">{{ t.dialogs.exportAudio.range }}</span>
-        <div class="field radio-row" role="radiogroup" :aria-label="t.dialogs.exportAudio.range">
-          <label class="check-label">
-            <input
-              v-model="model.range"
-              type="radio"
-              name="export-range"
-              value="project"
-              class="range-project"
-              :disabled="busy"
-            />
+        <div
+          class="field segmented"
+          role="radiogroup"
+          v-radiogroup
+          :aria-label="t.dialogs.exportAudio.range"
+        >
+          <button
+            type="button"
+            class="segment range-project"
+            :class="{ active: model.range === 'project' }"
+            role="radio"
+            :aria-checked="model.range === 'project'"
+            :disabled="busy"
+            @click="model.range = 'project'"
+          >
             {{ t.dialogs.exportAudio.wholeProject }}
-          </label>
-          <label class="check-label" :class="{ disabled: !props.hasLoop }">
-            <input
-              v-model="model.range"
-              type="radio"
-              name="export-range"
-              value="loop"
-              class="range-loop"
-              :disabled="busy || !props.hasLoop"
-            />
+          </button>
+          <button
+            type="button"
+            class="segment range-loop"
+            :class="{ active: model.range === 'loop' }"
+            role="radio"
+            :aria-checked="model.range === 'loop'"
+            :disabled="busy || !props.hasLoop"
+            @click="model.range = 'loop'"
+          >
             {{ t.dialogs.exportAudio.loopRegion }}
-          </label>
+          </button>
         </div>
 
         <span class="field-label">{{ t.dialogs.exportAudio.mode }}</span>
-        <div class="field radio-row" role="radiogroup" :aria-label="t.dialogs.exportAudio.mode">
-          <label class="check-label">
-            <input
-              v-model="model.mode"
-              type="radio"
-              name="export-mode"
-              value="mixdown"
-              class="mode-mixdown"
-              :disabled="busy"
-            />
+        <div
+          class="field segmented"
+          role="radiogroup"
+          v-radiogroup
+          :aria-label="t.dialogs.exportAudio.mode"
+        >
+          <button
+            type="button"
+            class="segment mode-mixdown"
+            :class="{ active: model.mode === 'mixdown' }"
+            role="radio"
+            :aria-checked="model.mode === 'mixdown'"
+            :disabled="busy"
+            @click="model.mode = 'mixdown'"
+          >
             {{ t.dialogs.exportAudio.mixdown }}
-          </label>
-          <label class="check-label">
-            <input
-              v-model="model.mode"
-              type="radio"
-              name="export-mode"
-              value="stems"
-              class="mode-stems"
-              :disabled="busy"
-            />
+          </button>
+          <button
+            type="button"
+            class="segment mode-stems"
+            :class="{ active: model.mode === 'stems' }"
+            role="radio"
+            :aria-checked="model.mode === 'stems'"
+            :disabled="busy"
+            @click="model.mode = 'stems'"
+          >
             {{ t.dialogs.exportAudio.stems }}
-          </label>
+          </button>
         </div>
 
         <span class="field-label">{{ t.dialogs.exportAudio.masterChain }}</span>
@@ -1022,6 +1029,16 @@ function onKeydown(event: KeyboardEvent): void {
           />
           <span class="filename-preview">{{ filenamePreview }}</span>
         </div>
+      </div>
+
+      <div class="dialog-notices">
+        <p
+          v-if="selectedEncoders.some((encoder) => encoder.deterministic === false)"
+          class="encoder-notice"
+          role="note"
+        >
+          {{ t.dialogs.exportAudio.browserEncoderNotice }}
+        </p>
       </div>
 
       <ul v-if="errors.length > 0" class="dialog-errors" role="alert">
@@ -1150,8 +1167,24 @@ function onKeydown(event: KeyboardEvent): void {
   font-size: var(--fs-xs);
 }
 
-.radio-row {
-  gap: var(--sp-6);
+/* Format-dependent controls live in their own row and reserve one control's
+ * worth of height. Switching format swaps one option group for another, and
+ * the rest of the dialog must not slide under the pointer while it does. */
+.format-option-rows {
+  min-height: 1.75rem;
+  align-items: center;
+}
+
+/* Notices come and go with the selected encoders. Keeping them in the band
+ * below the form means only this strip changes height, never a form row. */
+.dialog-notices:empty {
+  display: none;
+}
+
+/* The .field grid cell is a flex row; a segmented control has to stretch
+ * across it rather than sit at its intrinsic width like a checkbox does. */
+.field.segmented {
+  display: flex;
 }
 
 .check-label {

@@ -2397,6 +2397,7 @@ export const en = {
       title: 'Export audio',
       format: 'Format',
       additionalFormats: 'Also export',
+      formatOptions: 'Format options',
       bitDepth: 'Bit depth',
       dither: 'Dither',
       bitrate: 'Bitrate',
