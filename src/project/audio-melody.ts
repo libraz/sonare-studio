@@ -12,7 +12,7 @@
  * creation lives in command/melody.
  */
 
-import { nearestStep } from '@libraz/libcantus';
+import { nearestStep, noteToPitchClass, tryParseNote } from '@libraz/libcantus';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
@@ -82,30 +82,6 @@ interface MelodyScale {
 
 const NATURAL_MINOR_MODE_MASK = 0b010110101101;
 
-const KEY_ROOTS = new Map<string, number>([
-  ['c', 0],
-  ['b#', 0],
-  ['c#', 1],
-  ['db', 1],
-  ['d', 2],
-  ['d#', 3],
-  ['eb', 3],
-  ['e', 4],
-  ['fb', 4],
-  ['e#', 5],
-  ['f', 5],
-  ['f#', 6],
-  ['gb', 6],
-  ['g', 7],
-  ['g#', 8],
-  ['ab', 8],
-  ['a', 9],
-  ['a#', 10],
-  ['bb', 10],
-  ['b', 11],
-  ['cb', 11],
-]);
-
 /** True when a frame is voiced and its pitch lands in the MIDI range. */
 function pitchOf(point: DetectedMelodyPoint): number | null {
   if (!(point.frequency > 0)) return null;
@@ -124,8 +100,12 @@ function parseDetectedScale(
   const label = (key?.shortName || key?.name || '').trim();
   const match = label.match(/^([A-Ga-g])([#b]?)(?:\s*(major|minor|maj|min|m))?/);
   if (!match) return null;
-  const root = KEY_ROOTS.get(`${match[1].toLowerCase()}${match[2].toLowerCase()}`);
-  if (root === undefined) return null;
+  // The label comes from the audio analyzer's own shorthand ("C#m", "Amaj"),
+  // so only the tonic is handed to the note parser; the mode word below is read
+  // leniently because that shorthand is not a key name any parser would accept.
+  const tonic = tryParseNote(`${match[1].toUpperCase()}${match[2].toLowerCase()}`);
+  if (!tonic.ok) return null;
+  const root = noteToPitchClass(tonic.value);
   const modeToken = match[3]?.toLowerCase();
   const isMinor =
     modeToken === 'minor' ||

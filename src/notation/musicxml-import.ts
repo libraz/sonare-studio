@@ -16,6 +16,7 @@
  */
 
 import { SaxesParser } from 'saxes';
+import { keyMarkerName } from '@/compose/key-name';
 import { preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
   type DocumentClip,
@@ -109,44 +110,6 @@ const BEAT_UNIT_QUARTERS: Readonly<Record<string, number>> = {
   '32nd': 0.125,
   '64th': 0.0625,
 };
-
-/** Major-key tonic per `<fifths>` value, index `fifths + 7`. */
-const MAJOR_TONICS: readonly string[] = [
-  'Cb',
-  'Gb',
-  'Db',
-  'Ab',
-  'Eb',
-  'Bb',
-  'F',
-  'C',
-  'G',
-  'D',
-  'A',
-  'E',
-  'B',
-  'F#',
-  'C#',
-];
-
-/** Minor-key tonic per `<fifths>` value, index `fifths + 7`. */
-const MINOR_TONICS: readonly string[] = [
-  'Ab',
-  'Eb',
-  'Bb',
-  'F',
-  'C',
-  'G',
-  'D',
-  'A',
-  'E',
-  'B',
-  'F#',
-  'C#',
-  'G#',
-  'D#',
-  'A#',
-];
 
 /** Raised when a MusicXML document cannot be parsed or is not a supported score. */
 export class MusicXmlImportError extends Error {
@@ -517,13 +480,6 @@ function collectLossReport(root: XmlElement, tempoConflictCount = 0): MusicXmlIm
     issues.push({ feature: 'tempo-conflicts', count: tempoConflictCount });
   }
   return { issues };
-}
-
-/** Key-signature marker name (e.g. "Key: C major") for the SMF marker model. */
-function keyMarkerName(fifths: number, minor: boolean): string {
-  const table = minor ? MINOR_TONICS : MAJOR_TONICS;
-  const tonic = table[fifths + 7] ?? 'C';
-  return `Key: ${tonic} ${minor ? 'minor' : 'major'}`;
 }
 
 /** Global tempo / time-signature / key-signature events shared by all parts. */

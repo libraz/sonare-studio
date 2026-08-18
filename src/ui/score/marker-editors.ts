@@ -1,3 +1,4 @@
+import { KEY_MARKER_PREFIX } from '@/compose/key-name';
 import type { NotatedLyricSyllabic } from '@/notation/model';
 
 export type ScoreKeyMode = 'major' | 'minor';
@@ -88,5 +89,5 @@ export function scoreLyricMarkerName(text: string, options: ScoreLyricMarkerOpti
 export function scoreKeyMarkerName(root: ScoreKeyRoot, mode: ScoreKeyMode): string {
   if (!SCORE_KEY_ROOTS.includes(root)) throw new RangeError(`Unsupported key root: ${root}`);
   if (!SCORE_KEY_MODES.includes(mode)) throw new RangeError(`Unsupported key mode: ${mode}`);
-  return `Key: ${root} ${mode}`;
+  return `${KEY_MARKER_PREFIX}${root} ${mode}`;
 }

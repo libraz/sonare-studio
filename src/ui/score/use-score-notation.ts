@@ -15,6 +15,7 @@
  */
 
 import { type Ref, ref, type ShallowRef } from 'vue';
+import { keySignatureFromMarker } from '@/compose/key-name';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { projectFilename } from '@/lib/filename';
 import {
@@ -1408,50 +1409,8 @@ function measurePositionForPpq(
 }
 
 function keySignaturePayload(name: string): { fifths: number } | null {
-  const match = name.trim().match(/^Key:\s*([A-G](?:b|#)?)\s+(major|minor)$/i);
-  if (!match) return null;
-  const tonic = `${match[1][0].toUpperCase()}${match[1].slice(1)}`;
-  const mode = match[2].toLowerCase();
-  const major = new Map([
-    ['Cb', -7],
-    ['Gb', -6],
-    ['Db', -5],
-    ['Ab', -4],
-    ['Eb', -3],
-    ['Bb', -2],
-    ['F', -1],
-    ['C', 0],
-    ['G', 1],
-    ['D', 2],
-    ['A', 3],
-    ['E', 4],
-    ['B', 5],
-    ['F#', 6],
-    ['C#', 7],
-  ]);
-  const minor = new Map([
-    // Db minor needs eight flats, outside MusicXML's conventional -7..7
-    // fifths range. The key editor still permits it, so emit its enharmonic
-    // C# minor signature rather than silently dropping the marker.
-    ['Db', 4],
-    ['Ab', -7],
-    ['Eb', -6],
-    ['Bb', -5],
-    ['F', -4],
-    ['C', -3],
-    ['G', -2],
-    ['D', -1],
-    ['A', 0],
-    ['E', 1],
-    ['B', 2],
-    ['F#', 3],
-    ['C#', 4],
-    ['G#', 5],
-    ['D#', 6],
-    ['A#', 7],
-  ]);
-  const fifths = mode === 'major' ? major.get(tonic) : minor.get(tonic);
-  return fifths === undefined ? null : { fifths };
+  const key = keySignatureFromMarker(name);
+  return key === null ? null : { fifths: key.fifths };
 }
 
 function lyricPayload(name: string): Omit<NotatedLyric, 'ppq' | 'partId'> | null {

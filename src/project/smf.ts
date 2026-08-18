@@ -1,3 +1,4 @@
+import { keyMarkerName, keySignatureFromName } from '@/compose/key-name';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
@@ -377,77 +378,6 @@ function gmProgramForPreset(preset: string): number {
   }
 }
 
-function keySignatureLabel(fifths: number, minor: boolean): string {
-  const major = ['Cb', 'Gb', 'Db', 'Ab', 'Eb', 'Bb', 'F', 'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#'];
-  const minorKeys = [
-    'Ab',
-    'Eb',
-    'Bb',
-    'F',
-    'C',
-    'G',
-    'D',
-    'A',
-    'E',
-    'B',
-    'F#',
-    'C#',
-    'G#',
-    'D#',
-    'A#',
-  ];
-  const index = fifths + 7;
-  const tonic = minor ? minorKeys[index] : major[index];
-  return `${tonic ?? 'C'} ${minor ? 'minor' : 'major'}`;
-}
-
-function keySignaturePayload(label: string): { fifths: number; minor: boolean } | null {
-  const match = label.trim().match(/^([A-G](?:b|#)?)\s+(major|minor)$/i);
-  if (!match) return null;
-  const tonic = `${match[1][0].toUpperCase()}${match[1].slice(1)}`;
-  const mode = match[2].toLowerCase();
-  const major = new Map([
-    ['Cb', -7],
-    ['Gb', -6],
-    ['Db', -5],
-    ['Ab', -4],
-    ['Eb', -3],
-    ['Bb', -2],
-    ['F', -1],
-    ['C', 0],
-    ['G', 1],
-    ['D', 2],
-    ['A', 3],
-    ['E', 4],
-    ['B', 5],
-    ['F#', 6],
-    ['C#', 7],
-  ]);
-  const minor = new Map([
-    // Db minor needs eight flats, outside the -7..7 key-signature range, so it
-    // has no canonical label. Markers holding it stay readable and export the
-    // C# minor signature instead of losing the key change.
-    ['Db', 4],
-    ['Ab', -7],
-    ['Eb', -6],
-    ['Bb', -5],
-    ['F', -4],
-    ['C', -3],
-    ['G', -2],
-    ['D', -1],
-    ['A', 0],
-    ['E', 1],
-    ['B', 2],
-    ['F#', 3],
-    ['C#', 4],
-    ['G#', 5],
-    ['D#', 6],
-    ['A#', 7],
-  ]);
-  const fifths = mode === 'major' ? major.get(tonic) : minor.get(tonic);
-  return fifths === undefined ? null : { fifths, minor: mode === 'minor' };
-}
-
 function extractEvents(raw: unknown): SerializedMidiEvent[] {
   return (Array.isArray(raw) ? raw : [])
     .map((event) => event as Partial<SerializedMidiEvent>)
@@ -620,7 +550,7 @@ function markerName(marker: SerializedMarker): string {
   if (marker.kind === MARKER_KIND_LYRIC) return `Lyric: ${marker.name}`;
   if (marker.kind === MARKER_KIND_CUE_POINT) return `Cue: ${marker.name}`;
   if (marker.kind === MARKER_KIND_KEY_SIGNATURE) {
-    return `Key: ${keySignatureLabel(marker.key_fifths ?? 0, marker.key_minor === true)}`;
+    return keyMarkerName(marker.key_fifths ?? 0, marker.key_minor === true);
   }
   return marker.name;
 }
@@ -636,7 +566,7 @@ function markerKind(marker: DocumentMarker): {
   if (name.startsWith('Lyric: ')) return { kind: MARKER_KIND_LYRIC, name: name.slice(7) };
   if (name.startsWith('Cue: ')) return { kind: MARKER_KIND_CUE_POINT, name: name.slice(5) };
   if (name.startsWith('Key: ')) {
-    const key = keySignaturePayload(name.slice(5));
+    const key = keySignatureFromName(name.slice(5));
     if (key)
       return {
         kind: MARKER_KIND_KEY_SIGNATURE,
