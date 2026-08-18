@@ -919,6 +919,73 @@ export async function loadAsset(
 }
 
 /**
+ * Reads a frame range of a stored asset's PCM without decoding the rest of it.
+ *
+ * The payload layout is raw interleaved little-endian float32 with no header,
+ * so a byte range maps straight onto a frame range. This is the read an offline
+ * render uses to page a long clip through the engine instead of holding its
+ * whole PCM; it deliberately bypasses the decoded-audio LRU, which exists for
+ * repeated whole-asset use.
+ *
+ * @param id Asset id.
+ * @param startFrame First frame to read (>= 0).
+ * @param frameCount Frames to read (>= 1).
+ * @param numChannels Channel count of the stored payload.
+ * @returns One planar buffer per channel, `frameCount` frames long.
+ * @throws AssetNotFoundError when no payload is stored.
+ * @throws InvalidAssetError when the range runs past the stored payload.
+ */
+export async function readAssetFrames(
+  id: string,
+  startFrame: number,
+  frameCount: number,
+  numChannels: number,
+): Promise<Float32Array[]> {
+  validateAssetId(id);
+  if (!Number.isInteger(startFrame) || startFrame < 0) {
+    throw new InvalidAssetError(`Asset "${id}": start frame must be a non-negative integer`);
+  }
+  if (!Number.isInteger(frameCount) || frameCount < 1) {
+    throw new InvalidAssetError(`Asset "${id}": frame count must be a positive integer`);
+  }
+  if (!Number.isInteger(numChannels) || numChannels < 1 || numChannels > MAX_AUDIO_CHANNELS) {
+    throw new InvalidAssetError(`Asset "${id}": invalid channel count ${numChannels}`);
+  }
+  const dir = await assetsDirectory();
+  let file: File;
+  try {
+    const handle = await dir.getFileHandle(id + PCM_EXTENSION);
+    file = await handle.getFile();
+  } catch (error) {
+    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
+    throw error;
+  }
+  const frameBytes = numChannels * BYTES_PER_SAMPLE;
+  const from = startFrame * frameBytes;
+  const to = from + frameCount * frameBytes;
+  if (to > file.size) {
+    throw new InvalidAssetError(
+      `Asset "${id}": frames ${startFrame}..${startFrame + frameCount} run past the stored payload`,
+    );
+  }
+  const bytes =
+    typeof file.slice === 'function'
+      ? new Uint8Array(await file.slice(from, to).arrayBuffer())
+      : // Minimal OPFS mocks and a few legacy File implementations omit slice.
+        new Uint8Array(await file.arrayBuffer()).subarray(from, to);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const channels: Float32Array[] = [];
+  for (let channel = 0; channel < numChannels; channel += 1) {
+    const out = new Float32Array(frameCount);
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      out[frame] = view.getFloat32((frame * numChannels + channel) * BYTES_PER_SAMPLE, true);
+    }
+    channels.push(out);
+  }
+  return channels;
+}
+
+/**
  * Lists the stored assets (their metadata sidecars), sorted by name then id.
  * Files with malformed sidecars are skipped.
  */

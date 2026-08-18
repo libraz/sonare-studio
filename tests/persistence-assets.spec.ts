@@ -16,6 +16,7 @@ import {
   listAssets,
   loadAsset,
   loadAssetMeta,
+  readAssetFrames,
   saveAsset,
   validateAssetPayload,
 } from '@/persistence/assets';
@@ -417,6 +418,61 @@ describe('audio asset store', () => {
     await expect(loadAsset('x')).rejects.toThrow(OpfsUnavailableError);
     await expect(listAssets()).rejects.toThrow(OpfsUnavailableError);
     await expect(deleteAsset('x')).rejects.toThrow(OpfsUnavailableError);
+  });
+});
+
+describe('readAssetFrames', () => {
+  beforeEach(() => {
+    installMockOpfs();
+    clearAudioAssetCache();
+  });
+  afterEach(() => uninstallMockOpfs());
+
+  /** Eight frames of stereo whose values identify their frame and channel. */
+  function ramp(): Float32Array[] {
+    const left = new Float32Array(8);
+    const right = new Float32Array(8);
+    for (let frame = 0; frame < 8; frame += 1) {
+      left[frame] = frame / 8;
+      right[frame] = -frame / 8;
+    }
+    return [left, right];
+  }
+
+  it('reads a frame range without decoding the whole payload', async () => {
+    const channels = ramp();
+    await saveAsset({ name: 'r.wav', sampleRate: 48000, id: 'ramp' }, channels);
+    const window = await readAssetFrames('ramp', 3, 4, 2);
+    expect(Array.from(window[0])).toEqual(Array.from(channels[0].subarray(3, 7)));
+    expect(Array.from(window[1])).toEqual(Array.from(channels[1].subarray(3, 7)));
+  });
+
+  it('reads the whole payload and its last frame', async () => {
+    const channels = ramp();
+    await saveAsset({ name: 'r.wav', sampleRate: 48000, id: 'ramp' }, channels);
+    expect(await readAssetFrames('ramp', 0, 8, 2)).toEqual(channels);
+    expect(Array.from((await readAssetFrames('ramp', 7, 1, 2))[0])).toEqual([7 / 8]);
+  });
+
+  it('never reads past the stored payload', async () => {
+    await saveAsset({ name: 'r.wav', sampleRate: 48000, id: 'ramp' }, ramp());
+    await expect(readAssetFrames('ramp', 6, 4, 2)).rejects.toThrow(InvalidAssetError);
+    await expect(readAssetFrames('ramp', 0, 8, 4)).rejects.toThrow(InvalidAssetError);
+  });
+
+  it('rejects an unknown asset and malformed ranges', async () => {
+    await expect(readAssetFrames('missing', 0, 1, 2)).rejects.toThrow(AssetNotFoundError);
+    await saveAsset({ name: 'r.wav', sampleRate: 48000, id: 'ramp' }, ramp());
+    await expect(readAssetFrames('ramp', -1, 1, 2)).rejects.toThrow(InvalidAssetError);
+    await expect(readAssetFrames('ramp', 0, 0, 2)).rejects.toThrow(InvalidAssetError);
+    await expect(readAssetFrames('ramp', 0, 1, 0)).rejects.toThrow(InvalidAssetError);
+  });
+
+  it('does not populate the decoded-audio cache', async () => {
+    await saveAsset({ name: 'r.wav', sampleRate: 48000, id: 'ramp' }, ramp());
+    clearAudioAssetCache();
+    await readAssetFrames('ramp', 0, 4, 2);
+    expect(audioAssetCacheStats().entries).toBe(0);
   });
 });
 
