@@ -19,10 +19,12 @@ import {
   ConsonanceClass,
   chordScaleReport,
   classifyInterval,
+  createsParallelPerfect,
   evaluateSafety,
   isScaleTone,
   NoteSafety,
   pitchToScaleDegree,
+  ReasonFlag,
   roleOf,
   type SafetyProfile,
   type SafetyResult,
@@ -31,7 +33,7 @@ import {
   type VoiceSnapshot,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
-import { timeSignatureAt } from '@/project/time-signature';
+import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
 import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { buildChordTimeline } from './chord-at-tick';
 import { effectiveKeyScale } from './key';
@@ -48,6 +50,18 @@ const CENTER_C = 60;
  * offered as runners-up. Few enough that the card stays readable.
  */
 const CHORD_SCALES_REPORTED = 3;
+
+/**
+ * Consecutive slots of unbroken constant perfect separation at which two voices
+ * read as one doubled line rather than as two lines falling into a parallel.
+ *
+ * The two populations are far apart: over the demo organ toccata every flagged
+ * note sits either in a run of at most two slots or in one of seven or more,
+ * with nothing in between, so every value from three to seven splits them the
+ * same way. The constant therefore names where the gap between the two already
+ * lies rather than trading one kind of miss against the other.
+ */
+const DOUBLING_RUN_SLOTS = 4;
 
 export interface GuidanceInput {
   /** Active clip notes (clip-relative PPQ). */
@@ -256,7 +270,9 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // Per-note analysis is time ordered. Its unique onsets are also the only
   // instants at which counterpoint context is queried, so index other voices
   // against that small, relevant time domain instead of rescanning every
-  // project note for every active note.
+  // project note for every active note. That same grid of slots carries the
+  // history a parallel has to be read against (see {@link DOUBLING_RUN_SLOTS}),
+  // which is why the indexes below are built once for the whole pass.
   const sorted = [...input.notes].sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
   const voiceQueryBeats = [
     ...new Set(sorted.map((note) => input.clipStartPpq + note.startPpq)),
@@ -338,6 +354,91 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
           ? 'imperfect'
           : 'dissonant';
     return { toBass: semitones, consonance };
+  };
+
+  // The active clip read as one voice on the same slot grid, so its line can be
+  // followed against another voice's the way the others are followed against
+  // it: same top-of-the-texture reduction, same instants.
+  const activePitchIndex = voicePitchIndex(
+    input.notes.map((note) => ({ ...note, startPpq: input.clipStartPpq + note.startPpq })),
+  );
+  const slotOfBeat = new Map(voiceQueryBeats.map((beat, slot) => [beat, slot]));
+  /**
+   * Per other voice, the length of the unbroken run of slots holding one
+   * constant separation from the active voice that each slot belongs to. A
+   * separation neither voice defines (one of them silent) breaks the run, which
+   * is what the NaN comparison below does. Computed in one sweep per voice so
+   * reading a note's run is a lookup.
+   */
+  const doublingRuns = otherVoicePitchIndexes.map((pitchIndex) => {
+    const runs = new Int32Array(voiceQueryBeats.length);
+    let runStart = 0;
+    let held = Number.NaN;
+    for (let slot = 0; slot <= voiceQueryBeats.length; slot++) {
+      const beat = voiceQueryBeats[slot];
+      const top = beat !== undefined ? activePitchIndex.get(beat) : undefined;
+      const other = beat !== undefined ? pitchIndex.get(beat) : undefined;
+      const separation = top !== undefined && other !== undefined ? top - other : Number.NaN;
+      if (separation === held) continue;
+      for (let filled = runStart; filled < slot; filled++) runs[filled] = slot - runStart;
+      runStart = slot;
+      held = separation;
+    }
+    return runs;
+  });
+  /**
+   * Whether the library's parallel-perfect verdict on a candidate describes a
+   * voice-leading event the composer can act on.
+   *
+   * `evaluateSafety` reports one bit for the whole note, so the pairs that
+   * earned it are reconstructed here with the library's own predicate — the
+   * verdict stands unless every one of them is dismissed, and a pair the
+   * reconstruction cannot account for keeps it.
+   */
+  const parallelPerfectIsReal = (
+    pitch: number,
+    prevPitch: number | undefined,
+    absBeat: number,
+    prevAbs: number | undefined,
+  ): boolean => {
+    if (prevPitch === undefined || prevAbs === undefined) return true;
+    // A parallel is motion measured across one step of the voice, and the step
+    // is whatever this part last played — after a rest that can be bars back.
+    // Past the bar in force the two events are no longer heard as consecutive,
+    // so the interval they share is a coincidence rather than a progression.
+    const bar = meterBarLengthPpq(timeSignatureAt(input.timeSignatures, absBeat));
+    if (absBeat - prevAbs > bar) return false;
+    const slot = slotOfBeat.get(absBeat);
+    // A run describes the voice pair, so it may only answer for the note that
+    // is the active voice at that instant — a cluster's inner note is not it.
+    const isActiveVoice = activePitchIndex.get(absBeat) === pitch;
+    let pairs = 0;
+    let dismissed = 0;
+    for (let voice = 0; voice < otherVoicePitchIndexes.length; voice++) {
+      const other = otherVoicePitchIndexes[voice].get(absBeat);
+      const otherPrev = otherVoicePitchIndexes[voice].get(prevAbs);
+      if (other === undefined || otherPrev === undefined) continue;
+      if (!createsParallelPerfect(prevPitch, pitch, otherPrev, other)) continue;
+      pairs += 1;
+      // Both voices are known to have moved (the predicate requires it), so the
+      // direction each took is simply whether it ended higher. The library
+      // matches octave classes, so voices leaping from a double octave into a
+      // single one in opposite directions satisfy its test — and contrary
+      // motion is not parallel motion under any reading of the rule.
+      const candidateRises = pitch > prevPitch;
+      const otherRises = other > otherPrev;
+      if (candidateRises !== otherRises) {
+        dismissed += 1;
+        continue;
+      }
+      // Held long enough, a constant perfect separation is the texture: one
+      // line reinforced at the octave or the fifth. Naming that a fault
+      // reports the arrangement, not a mistake in it.
+      if (isActiveVoice && slot !== undefined && doublingRuns[voice][slot] >= DOUBLING_RUN_SLOTS) {
+        dismissed += 1;
+      }
+    }
+    return pairs === 0 || dismissed < pairs;
   };
 
   // Without a chord, keep the one window segment the UI uses for its grid but
@@ -475,7 +576,22 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         strongBeat: strongBeatAt(input.timeSignatures, absBeat),
       }),
     );
-    if (safety !== undefined) analysis.safety = safety;
+    // The parallel is dismissed here rather than where the card is written: the
+    // verdict is the analysis every surface reads, so a reason that does not
+    // describe the music has no business travelling on it. Only that one bit is
+    // cleared — the vertical dissonance, suspension, hidden-parallel and
+    // voice-crossing readings, and the `resolveTo` target the resolution arrows
+    // follow, are the library's answers untouched. The severity stays as scored
+    // too: it is the worst of every reason weighed together, which cannot be
+    // re-derived from outside, and it is only ever shown against a chord.
+    if (safety !== undefined) {
+      const dismissed =
+        (safety.reasons & ReasonFlag.ParallelPerfect) !== 0 &&
+        !parallelPerfectIsReal(note.pitch, prevPitch, absBeat, prevAbs);
+      analysis.safety = dismissed
+        ? { ...safety, reasons: safety.reasons & ~ReasonFlag.ParallelPerfect }
+        : safety;
+    }
     byNoteId.set(note.id, analysis);
     lastPitch = note.pitch;
   }

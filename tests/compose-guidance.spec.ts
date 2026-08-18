@@ -290,6 +290,210 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBeTruthy();
   });
 
+  it('keeps quiet about a line doubled at the octave', () => {
+    // Two voices an octave apart for five slots running: this is one line
+    // reinforced, the texture of an organ or a horn section, and calling every
+    // note of it a parallel octave says nothing the composer can act on.
+    const lower = {
+      track: track({ id: 2, name: 'Tenor' }),
+      notes: [60, 62, 64, 62, 60].map((pitch, index) =>
+        note({ id: 300 + index, pitch, startPpq: index, durationPpq: 1 }),
+      ),
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 8,
+        notes: [72, 74, 76, 74, 72].map((pitch, index) =>
+          note({ id: 100 + index, pitch, startPpq: index, durationPpq: 1 }),
+        ),
+        otherTracks: [lower],
+      }),
+    );
+    for (let index = 0; index < 5; index++) {
+      const analysis = result.byNoteId.get(100 + index);
+      expect(analysis?.safety).toBeDefined();
+      expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBe(0);
+    }
+  });
+
+  it('still flags two voices that only meet at an octave for one step', () => {
+    // The same octave, held for a single step before the voices part company:
+    // two independent lines falling into a parallel, which is the finding.
+    const lower = {
+      track: track({ id: 2, name: 'Tenor' }),
+      notes: [60, 62, 67].map((pitch, index) =>
+        note({ id: 310 + index, pitch, startPpq: index, durationPpq: 1 }),
+      ),
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [72, 74, 77].map((pitch, index) =>
+          note({ id: 110 + index, pitch, startPpq: index, durationPpq: 1 }),
+        ),
+        otherTracks: [lower],
+      }),
+    );
+    expect(
+      (result.byNoteId.get(111)?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect,
+    ).toBeTruthy();
+  });
+
+  it('still flags parallel fifths between two voices that are not doubling', () => {
+    // E4 -> D4 over A3 -> G3: a perfect fifth carried by similar motion between
+    // voices that hold no fixed separation on either side of it.
+    const lower = {
+      track: track({ id: 2, name: 'Tenor' }),
+      notes: [
+        note({ id: 320, pitch: 57, startPpq: 0, durationPpq: 1 }),
+        note({ id: 321, pitch: 55, startPpq: 1, durationPpq: 1 }),
+        note({ id: 322, pitch: 59, startPpq: 2, durationPpq: 1 }),
+      ],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 120, pitch: 64, startPpq: 0, durationPpq: 1 }),
+          note({ id: 121, pitch: 62, startPpq: 1, durationPpq: 1 }),
+          note({ id: 122, pitch: 67, startPpq: 2, durationPpq: 1 }),
+        ],
+        otherTracks: [lower],
+      }),
+    );
+    expect(
+      (result.byNoteId.get(121)?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect,
+    ).toBeTruthy();
+  });
+
+  it('does not call contrary motion between two octaves a parallel', () => {
+    // A5 -> Bb4 against A3 -> Bb3: the octave classes match on both sides, but
+    // the voices move in opposite directions, so nothing runs parallel.
+    const lower = {
+      track: track({ id: 2, name: 'Tenor' }),
+      notes: [
+        note({ id: 330, pitch: 57, startPpq: 0, durationPpq: 1 }),
+        note({ id: 331, pitch: 58, startPpq: 1, durationPpq: 1 }),
+      ],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 130, pitch: 81, startPpq: 0, durationPpq: 1 }),
+          note({ id: 131, pitch: 70, startPpq: 1, durationPpq: 1 }),
+        ],
+        otherTracks: [lower],
+      }),
+    );
+    const analysis = result.byNoteId.get(131);
+    expect(analysis?.safety).toBeDefined();
+    expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBe(0);
+  });
+
+  it('does not measure a parallel across a rest longer than the bar', () => {
+    // The voice's previous note is what a parallel is measured against, and
+    // after a long rest that note is bars away: the same fifths one bar apart
+    // are a progression, six beats apart they are a coincidence.
+    const lower = (endBeat: number) => ({
+      track: track({ id: 2, name: 'Tenor' }),
+      notes: [
+        note({ id: 340, pitch: 53, startPpq: 0, durationPpq: 1 }),
+        note({ id: 341, pitch: 55, startPpq: endBeat, durationPpq: 1 }),
+      ],
+    });
+    const withinBar = buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 16,
+        notes: [
+          note({ id: 140, pitch: 60, startPpq: 0, durationPpq: 1 }),
+          note({ id: 141, pitch: 62, startPpq: 4, durationPpq: 1 }),
+        ],
+        otherTracks: [lower(4)],
+      }),
+    );
+    const acrossBars = buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 16,
+        notes: [
+          note({ id: 150, pitch: 60, startPpq: 0, durationPpq: 1 }),
+          note({ id: 151, pitch: 62, startPpq: 6, durationPpq: 1 }),
+        ],
+        otherTracks: [lower(6)],
+      }),
+    );
+    expect(
+      (withinBar.byNoteId.get(141)?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect,
+    ).toBeTruthy();
+    expect((acrossBars.byNoteId.get(151)?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBe(
+      0,
+    );
+  });
+
+  it('leaves the other counterpoint verdicts to the library', () => {
+    // Only the parallel-perfect bit is ever cleared. Each of the remaining
+    // voice-relative readings is fired here from its own fixture, so a
+    // suppression that reached past its own flag would fail one of them.
+    const hidden = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 160, pitch: 62, startPpq: 0, durationPpq: 1 }),
+          note({ id: 161, pitch: 72, startPpq: 1, durationPpq: 1 }),
+        ],
+        otherTracks: [
+          {
+            track: track({ id: 2, name: 'Bass' }),
+            notes: [
+              note({ id: 350, pitch: 55, startPpq: 0, durationPpq: 1 }),
+              note({ id: 351, pitch: 60, startPpq: 1, durationPpq: 1 }),
+            ],
+          },
+        ],
+      }),
+    );
+    const crossing = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 170, pitch: 62, startPpq: 0, durationPpq: 1 }),
+          note({ id: 171, pitch: 58, startPpq: 1, durationPpq: 1 }),
+        ],
+        otherTracks: [
+          {
+            track: track({ id: 2, name: 'Alto' }),
+            // Held across both slots, so the voice the candidate crosses is
+            // still sounding when it lands under it.
+            notes: [note({ id: 360, pitch: 60, startPpq: 0, durationPpq: 2 })],
+          },
+        ],
+      }),
+    );
+    // The upper voice holds C5 while the bass steps C4 -> D4 onto beat 2: a
+    // dissonant seventh on a strong beat, prepared as a consonance.
+    const suspension = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 180, pitch: 72, startPpq: 1, durationPpq: 1 }),
+          note({ id: 181, pitch: 72, startPpq: 2, durationPpq: 1 }),
+        ],
+        otherTracks: [
+          {
+            track: track({ id: 2, name: 'Bass' }),
+            notes: [
+              note({ id: 370, pitch: 60, startPpq: 1, durationPpq: 1 }),
+              note({ id: 371, pitch: 62, startPpq: 2, durationPpq: 1 }),
+            ],
+          },
+        ],
+      }),
+    );
+    expect(
+      (hidden.byNoteId.get(161)?.safety?.reasons ?? 0) & ReasonFlag.HiddenParallel,
+    ).toBeTruthy();
+    expect(
+      (crossing.byNoteId.get(171)?.safety?.reasons ?? 0) & ReasonFlag.VoiceCrossing,
+    ).toBeTruthy();
+    const held = suspension.byNoteId.get(181)?.safety?.reasons ?? 0;
+    expect(held & ReasonFlag.Suspension).toBeTruthy();
+    expect(held & ReasonFlag.VerticalDissonance).toBeTruthy();
+  });
+
   it('flags a suspension held over a moving bass with no chord', () => {
     // The upper voice holds C5 while the bass steps C4->D4, turning a consonant
     // octave into a dissonant seventh on the downbeat: a textbook suspension,
