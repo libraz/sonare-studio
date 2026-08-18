@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
+import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import type { OfflineRenderEngine } from '@/export/engine-render';
 import { offlineAutomationLimitations, renderProjectWithEngine } from '@/export/engine-render';
 import { buildMidiSchedules } from '@/export/engine-render-context';
@@ -233,9 +234,10 @@ class AudibilityEngine extends FakeEngine {
   private laneDelayByTrack = new Map<number, number>();
   private masterGain = 1;
   private masterGainAutomation: Array<{ sample: number; value: number }> = [];
-  private audioClips: Array<{
+  protected audioClips: Array<{
     trackId: number;
     channels: Float32Array[];
+    pageProvider?: unknown;
     startSample: number;
     lengthSamples: number;
     gain: number;
@@ -331,6 +333,7 @@ class AudibilityEngine extends FakeEngine {
     clips: Array<{
       trackId: number;
       channels?: Float32Array[];
+      pageProvider?: unknown;
       startPpq: number;
       lengthSamples: number;
       gain?: number;
@@ -340,10 +343,24 @@ class AudibilityEngine extends FakeEngine {
     this.audioClips = clips.map((clip) => ({
       trackId: clip.trackId,
       channels: clip.channels ?? [],
+      ...(clip.pageProvider !== undefined ? { pageProvider: clip.pageProvider } : {}),
       startSample: this.ppqToSample(clip.startPpq),
       lengthSamples: clip.lengthSamples,
       gain: clip.gain ?? 1,
     }));
+  }
+
+  /**
+   * One clip sample. A clip scheduled without channels stands for a source the
+   * fake does not model and reads as unity; a page-backed clip overrides this.
+   */
+  protected clipSample(
+    clip: (typeof AudibilityEngine.prototype.audioClips)[number],
+    channelIndex: number,
+    clipFrame: number,
+    fallback: number,
+  ): number {
+    return (clip.channels[channelIndex] ?? clip.channels[0])?.[clipFrame] ?? fallback;
   }
 
   setMidiClips(
@@ -487,8 +504,8 @@ class AudibilityEngine extends FakeEngine {
         ) {
           const clipFrame = sourceFrame - clip.startSample;
           const laneGain = laneGainForTrack(clip.trackId, sourceFrame);
-          const left = clip.channels[0]?.[clipFrame] ?? 1;
-          const right = (clip.channels[1] ?? clip.channels[0])?.[clipFrame] ?? left;
+          const left = this.clipSample(clip, 0, clipFrame, 1);
+          const right = this.clipSample(clip, 1, clipFrame, left);
           const panned = stereoForTrack(
             clip.trackId,
             left * clip.gain * laneGain,
@@ -5071,5 +5088,224 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setAutomationLane').some(([, id]) => id === MASTER_FADER_PARAM_ID)).toBe(
       false,
     );
+  });
+});
+
+/**
+ * Audible fake that also serves clips from page providers, so a streamed
+ * render can be compared sample for sample against a decoded one.
+ */
+class PagingAudibilityEngine extends AudibilityEngine {
+  readonly providers: Array<{
+    id: number;
+    numChannels: number;
+    numSamples: number;
+    pageFrames: number;
+    pages: Map<number, Float32Array[]>;
+    destroyed: boolean;
+  }> = [];
+  /** Highest page count any single provider held at once. */
+  peakResidentPages = 0;
+
+  createClipPageProvider(numChannels: number, numSamples: number, pageFrames: number) {
+    const entry = {
+      id: this.providers.length + 1,
+      numChannels,
+      numSamples,
+      pageFrames,
+      pages: new Map<number, Float32Array[]>(),
+      destroyed: false,
+    };
+    this.providers.push(entry);
+    const track = () => {
+      this.peakResidentPages = Math.max(this.peakResidentPages, entry.pages.size);
+    };
+    return {
+      id: entry.id,
+      supply: (pageIndex: number, channels: Float32Array[]) => {
+        entry.pages.set(pageIndex, channels);
+        track();
+      },
+      clear: (pageIndex: number) => {
+        entry.pages.delete(pageIndex);
+      },
+      destroy: () => {
+        entry.destroyed = true;
+        entry.pages.clear();
+      },
+    };
+  }
+
+  protected clipSample(
+    clip: { channels: Float32Array[]; pageProvider?: unknown },
+    channelIndex: number,
+    clipFrame: number,
+    fallback: number,
+  ): number {
+    const providerId = (clip.pageProvider as { id?: number } | undefined)?.id;
+    if (providerId === undefined) {
+      return super.clipSample(
+        clip as Parameters<AudibilityEngine['clipSample']>[0],
+        channelIndex,
+        clipFrame,
+        fallback,
+      );
+    }
+    const entry = this.providers.find((candidate) => candidate.id === providerId);
+    if (!entry) return 0;
+    const page = entry.pages.get(Math.floor(clipFrame / entry.pageFrames));
+    // A page the render failed to keep resident reads as silence, which is
+    // exactly the corruption the streamed path must never produce.
+    if (!page) return 0;
+    const channels = page[channelIndex] ?? page[0];
+    return channels?.[clipFrame % entry.pageFrames] ?? 0;
+  }
+}
+
+describe('renderProjectWithEngine paged audio clips', () => {
+  // Past the streaming length floor, so the planner has something to page.
+  const SOURCE_FRAMES = 48000 * 20;
+  const RATE = 48000;
+
+  /** Deterministic per-frame ramp so a misplaced page is audible. */
+  function sourceChannels(): Float32Array[] {
+    const left = new Float32Array(SOURCE_FRAMES);
+    const right = new Float32Array(SOURCE_FRAMES);
+    for (let i = 0; i < SOURCE_FRAMES; i += 1) {
+      left[i] = ((i % 1000) / 1000) * 0.5;
+      right[i] = 0.5 - left[i];
+    }
+    return [left, right];
+  }
+
+  const assetMeta = {
+    id: 'long-1',
+    name: 'long.wav',
+    sampleRate: RATE,
+    numChannels: 2,
+    numFrames: SOURCE_FRAMES,
+  };
+
+  function pagedDoc(): ProjectDocument {
+    return {
+      schemaVersion: 3,
+      name: 'paged',
+      sampleRate: RATE,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [],
+      markers: [],
+      sections: [],
+      tracks: [
+        {
+          name: 'Audio',
+          color: '#fff',
+          kind: 'audio',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'long take',
+              kind: 'audio',
+              assetId: 'long-1',
+              startPpq: 2,
+              // 20 quarter notes = 10 s, from 0.5 s into the source.
+              lengthPpq: 20,
+              sourceOffsetPpq: 1,
+              gain: 0.75,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              notes: [],
+            },
+          ],
+        },
+      ],
+    } as unknown as ProjectDocument;
+  }
+
+  function options(engine: FakeEngine, extra: Record<string, unknown> = {}) {
+    const channels = sourceChannels();
+    return {
+      deps: null,
+      createEngine: () => engine,
+      loadAudioAsset: async () => ({ meta: assetMeta, channels }),
+      loadAudioAssetMeta: async () => assetMeta,
+      ...extra,
+    };
+  }
+
+  /** Page provider factory reading straight out of the source buffers. */
+  function pageStream() {
+    const channels = sourceChannels();
+    const reads: Array<{ startFrame: number; frameCount: number }> = [];
+    const factory = createAssetClipPageBindingFactory(async (_assetId, startFrame, frameCount) => {
+      reads.push({ startFrame, frameCount });
+      return channels.map((channel) => channel.slice(startFrame, startFrame + frameCount));
+    });
+    return { factory, reads };
+  }
+
+  it('renders a paged clip sample for sample like a decoded one', async () => {
+    const decodedEngine = new PagingAudibilityEngine();
+    const decoded = await renderProjectWithEngine(pagedDoc(), options(decodedEngine));
+
+    const stream = pageStream();
+    const pagedEngine = new PagingAudibilityEngine();
+    const loadAudioAsset = vi.fn(async () => ({ meta: assetMeta, channels: sourceChannels() }));
+    const paged = await renderProjectWithEngine(
+      pagedDoc(),
+      options(pagedEngine, {
+        loadAudioAsset,
+        createClipPageStream: stream.factory,
+        // Small enough that the clip spans several pages.
+        clipStreamResidentBudgetBytes: 3 * 256 * 1024,
+      }),
+    );
+
+    expect(paged.totalFrames).toBe(decoded.totalFrames);
+    expect(Array.from(paged.channels[0])).toEqual(Array.from(decoded.channels[0]));
+    expect(Array.from(paged.channels[1])).toEqual(Array.from(decoded.channels[1]));
+    // Nothing decoded the asset, and the resident window stayed bounded.
+    expect(loadAudioAsset).not.toHaveBeenCalled();
+    expect(pagedEngine.peakResidentPages).toBeLessThanOrEqual(3);
+    expect(stream.reads.length).toBeGreaterThan(3);
+    // Reads start at the clip's own window, not the head of the asset.
+    expect(stream.reads[0].startFrame).toBe(24000);
+    expect(pagedEngine.providers.every((provider) => provider.destroyed)).toBe(true);
+  });
+
+  it('is not louder or quieter than the decoded path', async () => {
+    const decodedEngine = new PagingAudibilityEngine();
+    const decoded = await renderProjectWithEngine(pagedDoc(), options(decodedEngine));
+    const stream = pageStream();
+    const paged = await renderProjectWithEngine(
+      pagedDoc(),
+      options(new PagingAudibilityEngine(), { createClipPageStream: stream.factory }),
+    );
+    const peak = (channel: Float32Array): number =>
+      channel.reduce((max, value) => Math.max(max, Math.abs(value)), 0);
+    expect(peak(paged.channels[0])).toBeGreaterThan(0);
+    expect(peak(paged.channels[0])).toBe(peak(decoded.channels[0]));
+  });
+
+  it('fails the render instead of writing silence when a page cannot be read', async () => {
+    const factory = createAssetClipPageBindingFactory(async (_assetId, startFrame) => {
+      throw new Error(`unreadable page at ${startFrame}`);
+    });
+    await expect(
+      renderProjectWithEngine(
+        pagedDoc(),
+        options(new PagingAudibilityEngine(), { createClipPageStream: factory }),
+      ),
+    ).rejects.toThrow('unreadable page');
+  });
+
+  it('decodes as before when no page stream is supplied', async () => {
+    const engine = new PagingAudibilityEngine();
+    const loadAudioAsset = vi.fn(async () => ({ meta: assetMeta, channels: sourceChannels() }));
+    await renderProjectWithEngine(pagedDoc(), options(engine, { loadAudioAsset }));
+    expect(loadAudioAsset).toHaveBeenCalled();
+    expect(engine.providers).toEqual([]);
   });
 });

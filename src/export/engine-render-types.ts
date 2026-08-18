@@ -4,6 +4,7 @@
  * parameter namespace mirrors the facade encoding the live sync layers use.
  */
 
+import type { ClipPageBindingFactory } from '@/export/clip-page-stream';
 import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
@@ -165,6 +166,15 @@ export interface EngineRenderOptions {
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Metadata-only loader used for allocation-free memory preflight. */
   loadAudioAssetMeta?: (assetId: string) => Promise<AudioAssetMeta>;
+  /**
+   * Page-provider factory. Supplying one lets clips whose stored asset already
+   * holds exactly the frames they play be read page by page instead of decoded,
+   * so the render's peak payload stops growing with the project's total PCM.
+   * Omitted (the default), every clip is decoded as before.
+   */
+  createClipPageStream?: ClipPageBindingFactory;
+  /** PCM the paged clips may keep resident across the whole render. */
+  clipStreamResidentBudgetBytes?: number;
   /** SoundFont loader for 'sf2' instruments (defaults to the OPFS font store). */
   loadFont?: (fontId: string) => Promise<Uint8Array>;
   /** Synth preset name resolver (defaults to identity). */

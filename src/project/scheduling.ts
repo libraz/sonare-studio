@@ -178,7 +178,39 @@ export function sliceAudioClipWindow(
   tempo: AudioClipSliceTempo,
   timelineOriginPpq = 0,
 ): Float32Array[] {
-  const frames = channels[0]?.length ?? 0;
+  const { start, end } = audioClipWindowFrames(
+    channels[0]?.length ?? 0,
+    sampleRate,
+    sourceOffsetPpq,
+    lengthPpq,
+    tempo,
+    timelineOriginPpq,
+  );
+  return channels.map((channel) => channel.slice(start, end));
+}
+
+/**
+ * Frame range of an audio clip's source window, as {@link sliceAudioClipWindow}
+ * would cut it. Reading a clip's audio straight out of its stored asset (rather
+ * than slicing a decoded copy) needs the same range, and a second derivation
+ * would be free to drift from the one playback uses.
+ *
+ * @param sourceFrames Frames available in the source asset.
+ * @param sampleRate Asset sample rate in Hz.
+ * @param sourceOffsetPpq Offset of the clip window into the source, in PPQ.
+ * @param lengthPpq Clip window length in PPQ.
+ * @param tempo Tempo used to convert PPQ to source frames.
+ * @param timelineOriginPpq Project PPQ the source window's origin sits at.
+ * @returns Half-open `[start, end)` clamped into the available frames.
+ */
+export function audioClipWindowFrames(
+  sourceFrames: number,
+  sampleRate: number,
+  sourceOffsetPpq: number,
+  lengthPpq: number,
+  tempo: AudioClipSliceTempo,
+  timelineOriginPpq = 0,
+): { start: number; end: number } {
   const startFrame =
     typeof tempo === 'number'
       ? Math.round(ppqSpanToSeconds(sourceOffsetPpq, tempo) * sampleRate)
@@ -189,9 +221,8 @@ export function sliceAudioClipWindow(
       ? startFrame + Math.round(ppqSpanToSeconds(lengthPpq, tempo) * sampleRate)
       : ppqToSamples(tempo, timelineOriginPpq + sourceOffsetPpq + lengthPpq, sampleRate) -
         ppqToSamples(tempo, timelineOriginPpq, sampleRate);
-  const start = Math.min(frames, Math.max(0, startFrame));
-  const end = Math.min(frames, Math.max(start, endFrame));
-  return channels.map((channel) => channel.slice(start, end));
+  const start = Math.min(sourceFrames, Math.max(0, startFrame));
+  return { start, end: Math.min(sourceFrames, Math.max(start, endFrame)) };
 }
 
 /**

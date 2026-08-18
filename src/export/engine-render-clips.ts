@@ -11,6 +11,7 @@ import { audioClipSegments } from '@/project/comping';
 import { renderAudioClipSegment } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqDurationSamples } from '@/project/tempo-map';
+import { audioClipSegmentKey, frozenTrackStreamKey } from './clip-page-plan';
 import type { EngineClipSpec } from './engine-render-types';
 import type { ExportMediaIssue } from './mixdown';
 
@@ -38,6 +39,11 @@ export interface AudioClipBuildContext {
   range?: { startPpq: number; endPpq: number | null };
   /** Track indices that can contribute to this render. Omit to include all. */
   audibleTrackIndices?: ReadonlySet<number>;
+  /**
+   * Segment keys (see {@link audioClipSegmentKey}) whose audio the render
+   * pages straight out of its asset. Those segments are not decoded here.
+   */
+  streamedKeys?: ReadonlySet<string>;
 }
 
 export interface AudioClipMemoryPreflight {
@@ -73,13 +79,17 @@ export async function preflightAudioClipMemory(
   doc: ProjectDocument,
   context: Pick<
     AudioClipBuildContext,
-    'sampleRate' | 'tempoMap' | 'checkCancel' | 'range' | 'audibleTrackIndices'
+    'sampleRate' | 'tempoMap' | 'checkCancel' | 'range' | 'audibleTrackIndices' | 'streamedKeys'
   > & { loadAudioMeta: (assetId: string) => Promise<AudioAssetMeta> },
 ): Promise<AudioClipMemoryPreflight> {
   const metas = new Map<string, AudioAssetMeta | null>();
-  let sourceAudioBytes = 0;
   let preparedClipBytes = 0;
   const audioWindowClips: AudioClipMemoryPreflight['audioWindowClips'] = [];
+  // A paged segment decodes nothing, but an asset shared with a segment that
+  // still decodes is loaded whole all the same; only the assets no segment
+  // decodes drop out of the source total.
+  const decodedAssetIds = new Set<string>();
+  const isStreamed = (key: string): boolean => context.streamedKeys?.has(key) === true;
   const getMeta = async (assetId: string): Promise<AudioAssetMeta | null> => {
     if (metas.has(assetId)) return metas.get(assetId) ?? null;
     context.checkCancel();
@@ -87,10 +97,6 @@ export async function preflightAudioClipMemory(
       const meta = await context.loadAudioMeta(assetId);
       context.checkCancel();
       metas.set(assetId, meta);
-      sourceAudioBytes = safeAddBytes(
-        sourceAudioBytes,
-        meta.numFrames * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
-      );
       return meta;
     } catch {
       context.checkCancel();
@@ -108,19 +114,25 @@ export async function preflightAudioClipMemory(
       const meta = await getMeta(track.frozen.assetId);
       if (!meta) continue;
       const lengthSamples = Math.round((meta.numFrames / meta.sampleRate) * context.sampleRate);
-      preparedClipBytes = safeAddBytes(
-        preparedClipBytes,
-        lengthSamples * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
-      );
+      if (!isStreamed(frozenTrackStreamKey(trackIndex))) {
+        decodedAssetIds.add(track.frozen.assetId);
+        preparedClipBytes = safeAddBytes(
+          preparedClipBytes,
+          lengthSamples * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
+        );
+      }
       audioWindowClips.push({ startPpq: 0, lengthSamples });
       continue;
     }
-    for (const clip of track.clips) {
+    for (let clipIndex = 0; clipIndex < track.clips.length; clipIndex += 1) {
+      const clip = track.clips[clipIndex];
       if ((clip.kind ?? 'midi') !== 'audio' || clip.gain <= 0) continue;
-      for (const segment of audioClipSegments(clip, {
+      const segments = audioClipSegments(clip, {
         tempoMap: context.tempoMap,
         clipStartPpq: clip.startPpq,
-      })) {
+      });
+      for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+        const segment = segments[segmentIndex];
         const startPpq = clip.startPpq + segment.offsetPpq;
         if (!segmentIntersectsRange(startPpq, segment.lengthPpq, context.range)) continue;
         const meta = await getMeta(segment.assetId);
@@ -131,13 +143,25 @@ export async function preflightAudioClipMemory(
           segment.lengthPpq,
           context.sampleRate,
         );
-        preparedClipBytes = safeAddBytes(
-          preparedClipBytes,
-          lengthSamples * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
-        );
+        if (!isStreamed(audioClipSegmentKey(trackIndex, clipIndex, segmentIndex))) {
+          decodedAssetIds.add(segment.assetId);
+          preparedClipBytes = safeAddBytes(
+            preparedClipBytes,
+            lengthSamples * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
+          );
+        }
         audioWindowClips.push({ startPpq, lengthSamples });
       }
     }
+  }
+  let sourceAudioBytes = 0;
+  for (const assetId of decodedAssetIds) {
+    const meta = metas.get(assetId);
+    if (!meta) continue;
+    sourceAudioBytes = safeAddBytes(
+      sourceAudioBytes,
+      meta.numFrames * meta.numChannels * Float32Array.BYTES_PER_ELEMENT,
+    );
   }
   return { sourceAudioBytes, preparedClipBytes, audioWindowClips };
 }
@@ -164,16 +188,25 @@ export async function buildAudioClips(
     if (sourceRate === sampleRate) return channels;
     return Promise.all(channels.map((channel) => resampleAudio(channel, sourceRate, sampleRate)));
   };
-  const renderAudioClip = async (clip: DocumentClip, trackId: number): Promise<void> => {
+  const isStreamed = (key: string): boolean => context.streamedKeys?.has(key) === true;
+  const renderAudioClip = async (
+    clip: DocumentClip,
+    trackId: number,
+    trackIndex: number,
+    clipIndex: number,
+  ): Promise<void> => {
     if (clip.gain <= 0) return;
     // A clip expands to one engine clip per comp segment (one segment for
     // clips without takes), matching live scheduling exactly.
-    for (const segment of audioClipSegments(clip, {
+    const segments = audioClipSegments(clip, {
       tempoMap,
       clipStartPpq: clip.startPpq,
-    })) {
+    });
+    for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+      const segment = segments[segmentIndex];
       const segmentStartPpq = clip.startPpq + segment.offsetPpq;
       if (!segmentIntersectsRange(segmentStartPpq, segment.lengthPpq, context.range)) continue;
+      if (isStreamed(audioClipSegmentKey(trackIndex, clipIndex, segmentIndex))) continue;
       checkCancel();
       let asset: LoadedAudioAsset;
       try {
@@ -211,6 +244,7 @@ export async function buildAudioClips(
     // Frozen tracks play their baked pre-fader render from the timeline
     // start instead of their own clips.
     if (track.frozen !== undefined) {
+      if (isStreamed(frozenTrackStreamKey(index))) continue;
       try {
         checkCancel();
         const asset = await loadAudio(track.frozen.assetId);
@@ -242,10 +276,11 @@ export async function buildAudioClips(
       }
       continue;
     }
-    for (const clip of track.clips) {
+    for (let clipIndex = 0; clipIndex < track.clips.length; clipIndex += 1) {
+      const clip = track.clips[clipIndex];
       if ((clip.kind ?? 'midi') !== 'audio') continue;
       checkCancel();
-      await renderAudioClip(clip, trackIds[index]);
+      await renderAudioClip(clip, trackIds[index], index, clipIndex);
     }
   }
   return audioClips;

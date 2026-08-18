@@ -50,6 +50,8 @@ import { resolvePresetName } from '@/engine/instruments';
 import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
+import { planAudioClipStreams } from '@/export/clip-page-plan';
+import { AudioClipStreamSession, type PagedClipSpec } from '@/export/clip-page-stream';
 import {
   hasTimeVaryingPoints,
   type MasteringCapabilityLookup,
@@ -409,6 +411,24 @@ export async function renderProjectWithEngine(
     conflictingSf2TrackIndices.size === 0 &&
     !hasFullBufferMastering;
 
+  // Clips whose stored asset already holds exactly the frames they play are
+  // paged through the engine instead of being decoded, so the render's peak
+  // payload stops growing with the project's total PCM. Planning reads only
+  // sidecars, and it must run before the preflight so those clips drop out of
+  // the estimate they no longer contribute to.
+  const clipStreamPlans =
+    loadAudioMeta && options.createClipPageStream
+      ? await planAudioClipStreams(doc, {
+          trackIds,
+          tempoMap,
+          sampleRate,
+          loadAudioMeta,
+          checkCancel,
+          range: contributionRange,
+          audibleTrackIndices,
+        })
+      : [];
+  const streamedKeys = new Set(clipStreamPlans.map((plan) => plan.key));
   const audioMemory = loadAudioMeta
     ? await preflightAudioClipMemory(doc, {
         sampleRate,
@@ -417,6 +437,7 @@ export async function renderProjectWithEngine(
         checkCancel,
         range: contributionRange,
         audibleTrackIndices,
+        streamedKeys,
       })
     : { sourceAudioBytes: 0, preparedClipBytes: 0, audioWindowClips: [] };
   const preflightWindow = resolveRenderWindow(
@@ -498,16 +519,24 @@ export async function renderProjectWithEngine(
     mediaIssues,
     range: contributionRange,
     audibleTrackIndices,
+    streamedKeys,
   });
 
-  // Resolve the render window in frames.
+  // Resolve the render window in frames. Paged clips carry no buffer, so the
+  // window has to hear about them through their planned length.
   const { startSample, totalFrames } = resolveRenderWindow(
     doc,
     tempoMap,
     range,
     sampleRate,
     options.releaseTailSeconds,
-    sourceAudioClips,
+    [
+      ...sourceAudioClips,
+      ...clipStreamPlans.map((plan) => ({
+        startPpq: plan.startPpq,
+        lengthSamples: plan.frameCount,
+      })),
+    ],
     audibleTrackIndices,
     options.appendReleaseTailForExplicitRange,
   );
@@ -550,7 +579,11 @@ export async function renderProjectWithEngine(
   let renderAudioClips: EngineClipSpec[] = sourceAudioClips;
 
   /** Replays the pre-built program onto a fresh engine (synchronous). */
-  const configureEngine = (engine: OfflineRenderEngine, pass: RenderPass): void => {
+  const configureEngine = (
+    engine: OfflineRenderEngine,
+    pass: RenderPass,
+    pagedClips: ReadonlyArray<PagedClipSpec> = [],
+  ): void => {
     const supportsBusEq = typeof engine.setBusStripEqBandJson === 'function';
     const supportsBusInsertBypass = typeof engine.setBusStripInsertBypassed === 'function';
     // The engine validates sends against already-declared buses, so the bus
@@ -948,7 +981,11 @@ export async function renderProjectWithEngine(
       );
     });
     if (passMidiSchedules.length > 0) engine.setMidiClips(passMidiSchedules);
-    if (renderAudioClips.length > 0) engine.setClips(renderAudioClips);
+    // A paged clip carries a provider where a decoded clip carries channels;
+    // the engine accepts either form in the same schedule.
+    const passClips: Array<EngineClipSpec | PagedClipSpec> =
+      pagedClips.length > 0 ? [...renderAudioClips, ...pagedClips] : renderAudioClips;
+    if (passClips.length > 0) engine.setClips(passClips as EngineClipSpec[]);
   };
 
   /**
@@ -970,6 +1007,7 @@ export async function renderProjectWithEngine(
       channels: readonly [Float32Array, Float32Array],
       offsetFrames: number,
     ) => Promise<void> | void,
+    streams?: AudioClipStreamSession,
   ): Promise<[Float32Array, Float32Array]> => {
     // Roll (and discard) a pre-roll up to the window start so stateful DSP
     // and the content before the window (sustained clips, sidechain keys)
@@ -979,13 +1017,17 @@ export async function renderProjectWithEngine(
     const captureOffset = capturePreroll ? prerollFrames : 0;
     const left = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     const right = onChunk ? null : new Float32Array(totalFrames + captureOffset);
-    engine.seekSample(startSample - prerollFrames);
+    const windowStart = startSample - prerollFrames;
+    engine.seekSample(windowStart);
+    // The priming block runs stopped, so no clip audio is read yet; the pages
+    // only have to be in place before the first block that plays.
     engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
     engine.settleParameters();
     engine.play();
     let prerollDone = 0;
     while (prerollDone < prerollFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, prerollFrames - prerollDone);
+      await streams?.advance(windowStart + prerollDone, blockFrames);
       const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
       if (capturePreroll && left && right) {
         left.set(out[0].subarray(0, blockFrames), prerollDone);
@@ -997,6 +1039,7 @@ export async function renderProjectWithEngine(
     let blocksSinceCheckpoint = 0;
     while (framesDone < totalFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, totalFrames - framesDone);
+      await streams?.advance(startSample + framesDone, blockFrames);
       const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
       if (onChunk) {
         // process() may reuse its output storage on the next block; each
@@ -1040,8 +1083,21 @@ export async function renderProjectWithEngine(
       sampleRate,
       RENDER_BLOCK_FRAMES,
     );
+    // Page providers belong to the engine that reads them, so every pass opens
+    // (and releases) its own set.
+    let streams: AudioClipStreamSession | undefined;
     try {
-      configureEngine(engine, pass);
+      if (clipStreamPlans.length > 0 && options.createClipPageStream) {
+        streams = await AudioClipStreamSession.open(
+          engine,
+          clipStreamPlans,
+          options.createClipPageStream,
+          options.clipStreamResidentBudgetBytes !== undefined
+            ? { residentBudgetBytes: options.clipStreamResidentBudgetBytes }
+            : {},
+        );
+      }
+      configureEngine(engine, pass, streams?.clipSpecs());
       return await renderWindow(
         engine,
         stage,
@@ -1049,8 +1105,10 @@ export async function renderProjectWithEngine(
         progressSpan,
         capturePreroll,
         onChunk,
+        streams,
       );
     } finally {
+      streams?.close();
       engine.destroy();
     }
   };

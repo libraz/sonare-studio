@@ -15,6 +15,7 @@
  * its terminal `render` / `cancelled` / `error` response.
  */
 
+import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import { renderProjectWithEngine } from '@/export/engine-render';
 import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import {
@@ -23,6 +24,7 @@ import {
   type MixdownRangePpq,
   type MixdownReport,
 } from '@/export/mixdown';
+import { readAssetFrames } from '@/persistence/assets';
 import type { ProjectDocument } from '@/project/serialization';
 
 /** Structured-clone-safe subset of the render options (no functions). */
@@ -117,6 +119,9 @@ const mixdownWaiters = new Map<
   { offsetFrames: number; resolve: (consumed: boolean) => void }
 >();
 
+/** Page provider backed by the OPFS asset store (worker scope reaches it). */
+const assetClipPageStream = createAssetClipPageBindingFactory(readAssetFrames);
+
 function post(message: ExportResponse, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
 }
@@ -147,6 +152,10 @@ async function handleRender(
     const result = await renderProjectWithEngine(doc, {
       ...options,
       memoryBudgetBytes: options.memoryBudgetBytes ?? DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
+      // Long clips that need no baked transform are read page by page from
+      // their stored asset, so a project's total PCM stops bounding what can
+      // be exported.
+      createClipPageStream: assetClipPageStream,
       onProgress: (progress, stage) => post({ id, type: 'progress', progress, stage }),
       shouldCancel: () => cancelled.has(id),
       yieldBetweenBlocks: yieldToMessages,
