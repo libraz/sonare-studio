@@ -126,15 +126,45 @@ describe('estimateChordSymbols', () => {
     ]);
   });
 
-  // Known to fail against the current libcantus: a dominant seventh voiced
-  // without its fifth loses the seventh instead. C-E-Bb reads as C major,
-  // C-E-Bb-D-A as C6/9, and C-E-Bb-Eb as C minor 7 — in each case the answer
-  // states a perfect fifth that was not played and drops the tritone that was.
-  // Minor and major sevenths voiced the same way are read correctly, so it is
-  // the dominant alone. Marked `fails` rather than skipped so this turns red
-  // again, and can be deleted, once the library reads the voicing.
-  it.fails('detects a dominant seventh voiced without its fifth', () => {
-    const symbols = estimateChordSymbols([note(60, 0, 4), note(64, 0, 4), note(70, 0, 4)], OPTIONS);
+  // A shell voicing states its quality with the third and the seventh and
+  // leaves the fifth out. Reading it as the triad the key prefers would assert
+  // a fifth nobody played and drop the tritone that carries the chord, so these
+  // pin the seventh surviving across the qualities that share the voicing.
+  it('detects a seventh chord voiced without its fifth', () => {
+    const shell = (third: number, seventh: number) =>
+      estimateChordSymbols([note(60, 0, 4), note(third, 0, 4), note(seventh, 0, 4)], OPTIONS)[0];
+
+    expect(shell(64, 70)).toMatchObject({ ppq: 0, text: 'C7', rootPc: 0, quality: 4 });
+    expect(shell(64, 71)).toMatchObject({ ppq: 0, text: 'Cmaj7', rootPc: 0, quality: 5 });
+    expect(shell(63, 70)).toMatchObject({ ppq: 0, text: 'Cm7', rootPc: 0, quality: 6 });
+  });
+
+  it('keeps an omitted fifth from re-reading a dominant as another chord', () => {
+    const withNinth = estimateChordSymbols(
+      [note(60, 0, 4), note(64, 0, 4), note(70, 0, 4), note(62, 0, 4)],
+      OPTIONS,
+    );
+    expect(withNinth[0]).toMatchObject({ ppq: 0, text: 'C9', rootPc: 0, quality: 15 });
+
+    const withSharpNinth = estimateChordSymbols(
+      [note(60, 0, 4), note(64, 0, 4), note(70, 0, 4), note(63, 0, 4)],
+      OPTIONS,
+    );
+    expect(withSharpNinth[0]).toMatchObject({ ppq: 0, text: 'C7#9', rootPc: 0, quality: 4 });
+  });
+
+  // The window's root is read from the bass rather than from whichever pitch
+  // class was struck hardest, so a shell voicing whose seventh carries the
+  // velocity is not re-rooted onto that seventh.
+  it('roots a shell voicing on its bass, not on its loudest tone', () => {
+    const symbols = estimateChordSymbols(
+      [
+        { ...note(60, 0, 4), velocity: 40 },
+        { ...note(64, 0, 4), velocity: 40 },
+        { ...note(70, 0, 4), velocity: 127 },
+      ],
+      OPTIONS,
+    );
     expect(symbols[0]).toMatchObject({ ppq: 0, text: 'C7', rootPc: 0, quality: 4 });
   });
 
