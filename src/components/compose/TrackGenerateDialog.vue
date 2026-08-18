@@ -7,7 +7,7 @@ import {
   generateTracksBatchCommand,
   type TrackPart,
 } from '@/project/commands';
-import { partForTrack } from '@/project/generation';
+import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/generation';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
@@ -79,15 +79,42 @@ interface PartState {
   expanded: boolean;
   /** Encoded target: 'new', `replace:<id>`, 'clip:append', 'clip:replace'. */
   target: string;
+  /**
+   * How many times this part has been rerolled under the project seed. Bumping
+   * it gives the part unrelated material and leaves the other parts alone.
+   */
+  reroll: number;
+}
+
+function newPartState(): PartState {
+  return { checked: false, expanded: false, target: 'new', reroll: 0 };
 }
 
 const parts = reactive<Record<TrackPart, PartState>>({
-  motif: { checked: false, expanded: false, target: 'new' },
-  drums: { checked: false, expanded: false, target: 'new' },
-  bass: { checked: false, expanded: false, target: 'new' },
-  counter: { checked: false, expanded: false, target: 'new' },
-  backing: { checked: false, expanded: false, target: 'new' },
+  motif: newPartState(),
+  drums: newPartState(),
+  bass: newPartState(),
+  counter: newPartState(),
+  backing: newPartState(),
 });
+
+/** The project seed, bound to the store so it is saved with the project. */
+const projectSeed = computed({
+  get: () => store.generationSeed,
+  set: (value: number) => {
+    store.generationSeed = normalizeGenerationSeed(value);
+  },
+});
+
+/** Draws the seed for a part from the project seed and the part's reroll count. */
+function seedFor(part: TrackPart): number {
+  return partSeed(store.generationSeed, part, parts[part].reroll);
+}
+
+/** Rerolls one part, leaving every other part on the seed it already had. */
+function reroll(part: TrackPart): void {
+  parts[part].reroll += 1;
+}
 
 const error = ref<string | null>(null);
 const generating = ref(false);
@@ -135,7 +162,6 @@ const motifBars = ref(2);
 const motifBarsDirty = ref(false);
 const motifContour = ref<MotifContour>('arch');
 const motifDevelop = ref(true);
-const motifSeed = ref(0);
 
 type GrooveId =
   | 'standard'
@@ -194,7 +220,6 @@ const drumBars = ref(4);
 const drumBarsDirty = ref(false);
 const drumDensity = ref(0.6);
 const drumFills = ref(true);
-const drumSeed = ref(0);
 
 type BassStyle = 'root' | 'rootFifth' | 'pop' | 'walking' | 'arpeggio';
 const BASS_STYLES: ReadonlyArray<{
@@ -208,11 +233,9 @@ const BASS_STYLES: ReadonlyArray<{
   { id: 'arpeggio', labelKey: 'bassArpeggio' },
 ];
 const bassStyle = ref<BassStyle>('root');
-const bassSeed = ref(0);
 
 const counterRegister = ref<'above' | 'below'>('below');
 const counterRhythm = ref<'complement' | 'follow'>('complement');
-const counterSeed = ref(0);
 
 type BackingStyleId = 'smooth' | 'close' | 'drop2' | 'drop3' | 'shell' | 'rootless';
 const BACKING_STYLES: ReadonlyArray<{
@@ -393,7 +416,7 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
         bars: Math.round(motifBars.value),
         contour: motifContour.value,
         develop: motifDevelop.value,
-        seed: Math.round(motifSeed.value) || 0,
+        seed: seedFor('motif'),
       };
     case 'drums':
       return {
@@ -402,15 +425,15 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
         section: drumSection.value,
         density: Math.min(1, Math.max(0, drumDensity.value)),
         fills: drumFills.value,
-        seed: Math.round(drumSeed.value) || 0,
+        seed: seedFor('drums'),
       };
     case 'bass':
-      return { style: bassStyle.value, seed: Math.round(bassSeed.value) || 0 };
+      return { style: bassStyle.value, seed: seedFor('bass') };
     case 'counter':
       return {
         register: counterRegister.value,
         rhythm: counterRhythm.value,
-        seed: Math.round(counterSeed.value) || 0,
+        seed: seedFor('counter'),
       };
     case 'backing':
       return { style: backingStyle.value };
@@ -469,6 +492,14 @@ function toggleExpanded(part: TrackPart): void {
         <button type="button" class="edit-chords" @click="emit('openChords')">
           {{ g.editChords }}
         </button>
+      </div>
+
+      <div class="seed-row">
+        <label class="number-field">
+          <span class="field-label">{{ g.projectSeed }}</span>
+          <input v-model.number="projectSeed" type="number" min="0" step="1" />
+        </label>
+        <span class="seed-caption">{{ g.projectSeedCaption }}</span>
       </div>
 
       <div class="preset-row">
@@ -539,10 +570,13 @@ function toggleExpanded(part: TrackPart): void {
                     formatMessage(g.barsCaption, { count: chordProgressionBars })
                   }}</span>
                 </label>
-                <label class="number-field">
-                  <span class="field-label">{{ g.seed }}</span>
-                  <input v-model.number="motifSeed" type="number" step="1" />
-                </label>
+                <div class="reroll-field">
+                  <span class="field-label">{{ g.variation }}</span>
+                  <button type="button" class="reroll-button" @click="reroll('motif')">
+                    {{ g.reroll }}
+                  </button>
+                  <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.motif.reroll + 1 }) }}</span>
+                </div>
               </div>
               <label class="check-label">
                 <input v-model="motifDevelop" type="checkbox" />
@@ -581,10 +615,13 @@ function toggleExpanded(part: TrackPart): void {
                   <span class="field-label">{{ g.density }}</span>
                   <input v-model.number="drumDensity" type="number" min="0" max="1" step="0.1" />
                 </label>
-                <label class="number-field">
-                  <span class="field-label">{{ g.seed }}</span>
-                  <input v-model.number="drumSeed" type="number" step="1" />
-                </label>
+                <div class="reroll-field">
+                  <span class="field-label">{{ g.variation }}</span>
+                  <button type="button" class="reroll-button" @click="reroll('drums')">
+                    {{ g.reroll }}
+                  </button>
+                  <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.drums.reroll + 1 }) }}</span>
+                </div>
               </div>
               <label class="check-label">
                 <input v-model="drumFills" type="checkbox" />
@@ -608,10 +645,13 @@ function toggleExpanded(part: TrackPart): void {
                   {{ g[option.labelKey] }}
                 </button>
               </div>
-              <label class="number-field">
-                <span class="field-label">{{ g.seed }}</span>
-                <input v-model.number="bassSeed" type="number" step="1" />
-              </label>
+              <div class="reroll-field">
+                <span class="field-label">{{ g.variation }}</span>
+                <button type="button" class="reroll-button" @click="reroll('bass')">
+                  {{ g.reroll }}
+                </button>
+                <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.bass.reroll + 1 }) }}</span>
+              </div>
             </template>
 
             <template v-else-if="part === 'counter'">
@@ -661,10 +701,13 @@ function toggleExpanded(part: TrackPart): void {
                   {{ g.rhythmFollow }}
                 </button>
               </div>
-              <label class="number-field">
-                <span class="field-label">{{ g.seed }}</span>
-                <input v-model.number="counterSeed" type="number" step="1" />
-              </label>
+              <div class="reroll-field">
+                <span class="field-label">{{ g.variation }}</span>
+                <button type="button" class="reroll-button" @click="reroll('counter')">
+                  {{ g.reroll }}
+                </button>
+                <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.counter.reroll + 1 }) }}</span>
+              </div>
             </template>
 
             <template v-else-if="part === 'backing'">
@@ -759,6 +802,54 @@ function toggleExpanded(part: TrackPart): void {
 
 .edit-chords:hover {
   text-decoration: underline;
+}
+
+/* The one number the whole arrangement is drawn from, above the part list so
+ * it reads as a project setting rather than a per-part dial. */
+.seed-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+}
+
+.seed-row .number-field {
+  flex: 0 0 10rem;
+}
+
+.seed-caption {
+  padding-bottom: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+/* A part is rerolled rather than given a seed of its own: the button bumps a
+ * counter beneath the project seed, so the other parts keep what they had. */
+.reroll-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 0;
+}
+
+.reroll-button {
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.reroll-button:hover {
+  border-color: var(--border-strong);
+  color: var(--text-1);
+}
+
+.reroll-count {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .preset-row {

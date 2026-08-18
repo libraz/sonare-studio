@@ -42,7 +42,7 @@ import {
 } from './control-surface';
 import { sanitizeExpressionMap } from './expression-map';
 import { isExternalStemRole } from './external-stems';
-import { sanitizeProvenance } from './generation';
+import { normalizeGenerationSeed, sanitizeProvenance } from './generation';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
@@ -352,6 +352,7 @@ export const useProjectStore = defineStore('project', () => {
   const timeSignatures = ref<TimeSignatureSegment[]>([]);
   /** Opening pickup/anacrusis length in PPQ (0 = no pickup). */
   const pickupLengthPpq = ref(0);
+  const generationSeed = ref(0);
   /** Snap grid divisions per whole note (16 = sixteenth-note grid). */
   const snapDivision = ref(DEFAULT_SNAP_DIVISION);
   /** Whether snapping targets complete meter-aware bars instead of note divisions. */
@@ -583,6 +584,7 @@ export const useProjectStore = defineStore('project', () => {
     clipLengthPpq.value = DEFAULT_CLIP_LENGTH_PPQ;
     tempoBpm.value = DEFAULT_TEMPO_BPM;
     pickupLengthPpq.value = 0;
+    generationSeed.value = 0;
     notes.value = [];
     selection.value = new Set();
     scoreAnnotations.value = {};
@@ -941,6 +943,7 @@ export const useProjectStore = defineStore('project', () => {
         tempoSegments: tempoSegments.value,
         timeSignatures: timeSignatures.value,
         pickupLengthPpq: pickupLengthPpq.value,
+        generationSeed: generationSeed.value,
         snapDivision: snapDivision.value,
         snapBar: snapBar.value,
         quantizeStrength: quantizeStrength.value,
@@ -979,6 +982,7 @@ export const useProjectStore = defineStore('project', () => {
         tempoSegments.value = previousState.tempoSegments;
         timeSignatures.value = previousState.timeSignatures;
         pickupLengthPpq.value = previousState.pickupLengthPpq;
+        generationSeed.value = previousState.generationSeed;
         snapDivision.value = previousState.snapDivision;
         snapBar.value = previousState.snapBar;
         quantizeStrength.value = previousState.quantizeStrength;
@@ -1143,6 +1147,7 @@ export const useProjectStore = defineStore('project', () => {
         doc.pickupLengthPpq > 0
           ? doc.pickupLengthPpq
           : 0;
+      generationSeed.value = normalizeGenerationSeed(doc.generationSeed);
       const scale = doc.scaleHighlight;
       scaleHighlight.value =
         scale !== undefined &&
@@ -1210,6 +1215,7 @@ export const useProjectStore = defineStore('project', () => {
     tempoSegments.value = [];
     timeSignatures.value = [];
     pickupLengthPpq.value = 0;
+    generationSeed.value = 0;
     snapDivision.value = DEFAULT_SNAP_DIVISION;
     snapBar.value = false;
     quantizeStrength.value = 1;
@@ -1246,6 +1252,7 @@ export const useProjectStore = defineStore('project', () => {
     tempoSegments,
     timeSignatures,
     pickupLengthPpq,
+    generationSeed,
     snapDivision,
     snapBar,
     quantizeStrength,

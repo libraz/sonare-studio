@@ -6,7 +6,14 @@ import { setTrackFrozen } from '@/project/command/clips-state';
 import { generateTracksBatchCommand } from '@/project/command/generate-batch';
 import { clearHistory, redo, undo } from '@/project/command/history';
 import { addNote, renameTrack, setNoteAnnotation } from '@/project/commands';
-import { CURRENT_ALGORITHM_VERSION, partForTrack, sanitizeProvenance } from '@/project/generation';
+import {
+  CURRENT_ALGORITHM_VERSION,
+  MAX_GENERATION_SEED,
+  normalizeGenerationSeed,
+  partForTrack,
+  partSeed,
+  sanitizeProvenance,
+} from '@/project/generation';
 import { createDefaultStrip } from '@/project/mixer';
 import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -351,5 +358,49 @@ describe('sanitizeProvenance', () => {
     ]) {
       expect(sanitizeProvenance(value)).toBeUndefined();
     }
+  });
+});
+
+describe('partSeed', () => {
+  it('gives the same part the same seed for the same project seed', () => {
+    expect(partSeed(1234, 'drums', 0)).toBe(partSeed(1234, 'drums', 0));
+  });
+
+  // Each part addresses its own path, so one project seed still separates them.
+  it('separates the parts under one project seed', () => {
+    const seeds = ['motif', 'drums', 'bass', 'counter', 'backing'].map((part) =>
+      partSeed(1234, part, 0),
+    );
+    expect(new Set(seeds).size).toBe(seeds.length);
+  });
+
+  // This is the whole point of rerolling by path rather than by picking a new
+  // number: the parts nobody touched keep sounding as they did.
+  it('leaves every other part untouched when one is rerolled', () => {
+    const before = partSeed(1234, 'bass', 0);
+    expect(partSeed(1234, 'drums', 1)).not.toBe(partSeed(1234, 'drums', 0));
+    expect(partSeed(1234, 'bass', 0)).toBe(before);
+  });
+
+  it('changes every part when the project seed changes', () => {
+    expect(partSeed(1234, 'drums', 0)).not.toBe(partSeed(1235, 'drums', 0));
+  });
+});
+
+describe('normalizeGenerationSeed', () => {
+  it('keeps a whole seed inside the 32-bit range', () => {
+    expect(normalizeGenerationSeed(0)).toBe(0);
+    expect(normalizeGenerationSeed(7)).toBe(7);
+    expect(normalizeGenerationSeed(MAX_GENERATION_SEED)).toBe(MAX_GENERATION_SEED);
+  });
+
+  // A seed is a name for a piece, not a measurement, so an unusable value reads
+  // as the default rather than stopping the generator.
+  it('reads anything unusable as the default seed', () => {
+    for (const value of [-1, Number.NaN, Number.POSITIVE_INFINITY, '5', null, undefined]) {
+      expect(normalizeGenerationSeed(value)).toBe(0);
+    }
+    expect(normalizeGenerationSeed(MAX_GENERATION_SEED + 10)).toBe(MAX_GENERATION_SEED);
+    expect(normalizeGenerationSeed(3.6)).toBe(4);
   });
 });

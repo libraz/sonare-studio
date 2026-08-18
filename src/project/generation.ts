@@ -19,7 +19,7 @@
  * Pure module: no store access, no wasm.
  */
 
-import { ALGORITHM_VERSION } from '@libraz/libcantus';
+import { ALGORITHM_VERSION, deriveSeed } from '@libraz/libcantus';
 
 /** The five instrumental parts the generation commands can write. */
 export type TrackPart = 'motif' | 'drums' | 'bass' | 'counter' | 'backing';
@@ -84,6 +84,36 @@ export function sanitizeProvenance(value: unknown): TrackProvenance | undefined 
   const algorithmVersion = raw.algorithmVersion as number;
   if (seed < 0 || algorithmVersion < 1) return undefined;
   return { part: raw.part, seed, algorithmVersion };
+}
+
+/** Largest project seed; seeds are 32-bit unsigned integers. */
+export const MAX_GENERATION_SEED = 0xffffffff;
+
+/**
+ * Coerces a project seed to the 32-bit unsigned integer the derivation needs.
+ * Anything unreadable becomes 0, which is a valid seed rather than an error.
+ */
+export function normalizeGenerationSeed(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  const rounded = Math.round(value);
+  if (rounded <= 0) return 0;
+  return Math.min(rounded, MAX_GENERATION_SEED);
+}
+
+/**
+ * The seed a part generates from, addressed by name under the project seed.
+ *
+ * One number for the project is what makes a piece reproducible; addressing
+ * each part beneath it is what makes a part rerollable on its own. Bumping the
+ * trailing counter gives that part unrelated material and leaves every other
+ * part on the seed it already had, because their paths did not change.
+ *
+ * @param projectSeed The project seed (coerced by {@link normalizeGenerationSeed}).
+ * @param path Where the part sits, e.g. the part name then its reroll counter.
+ * @returns A 32-bit seed for that path.
+ */
+export function partSeed(projectSeed: number, ...path: ReadonlyArray<string | number>): number {
+  return deriveSeed(normalizeGenerationSeed(projectSeed), ...path);
 }
 
 /** The track fields {@link partForTrack} classifies from. */

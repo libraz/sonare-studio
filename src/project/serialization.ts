@@ -140,6 +140,12 @@ import {
  *   replayed onto their audio source on load. Both are omitted for every other
  *   clip, so documents written before them load unchanged and loaders that
  *   predate them simply ignore the fields.
+ *   Additionally (still version 3, additive): the document may carry an
+ *   optional `generationSeed` and tracks an optional `generated` record (see
+ *   src/project/generation.ts), together saying which part wrote a track and
+ *   from what. Both are omitted when there is nothing to say, so documents
+ *   written before them load as "nothing was generated here" and loaders that
+ *   predate them simply ignore the fields.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -422,6 +428,11 @@ export interface ProjectDocument {
   timeSignatures: DocumentTimeSignature[];
   /** Length of an opening anacrusis/pickup measure in PPQ; absent = full first bar. */
   pickupLengthPpq?: number;
+  /**
+   * The project seed every generated part is addressed under; absent = 0.
+   * Persisted so a saved project regenerates the parts it was written with.
+   */
+  generationSeed?: number;
   /** Project key/scale highlight; absent means the C-major default. */
   scaleHighlight?: { enabled: boolean; rootPc: number; modeMask: number };
   /** Tracks in display order, each with its clips and notes. */
@@ -882,6 +893,7 @@ export function serializeProject(): ProjectDocument {
     })),
   };
   if (store.pickupLengthPpq > 0) doc.pickupLengthPpq = store.pickupLengthPpq;
+  if (store.generationSeed > 0) doc.generationSeed = store.generationSeed;
   if (
     !store.scaleHighlight.enabled ||
     store.scaleHighlight.rootPc !== 0 ||

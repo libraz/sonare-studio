@@ -27,6 +27,7 @@ import {
   reharmonizeChord,
   setProjectChords,
 } from '@/project/commands';
+import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, fractionalBarsBetween, parseBarBeat } from './bar-beat';
@@ -386,7 +387,9 @@ function applyToSelection(): void {
     style: rangeStyle.value,
     presetId: rangePreset.value || undefined,
     bars: Math.max(1, Math.round(rangeBars.value)),
-    seed: 0,
+    // Addressed by where the range starts, so regenerating one range does not
+    // hand it the material another range already got.
+    seed: partSeed(store.generationSeed, 'progression', 'range', range.startPpq),
     mode: 'range',
     startPpq: range.startPpq,
   });

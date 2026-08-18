@@ -7,6 +7,7 @@ import TrackGenerateDialog from '@/components/compose/TrackGenerateDialog.vue';
 import { setProjectChords } from '@/project/command/chords';
 import { setTrackFrozen } from '@/project/command/clips-state';
 import { clearHistory, undo } from '@/project/command/history';
+import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -35,6 +36,17 @@ function partCheckboxes(): HTMLInputElement[] {
   return [
     ...document.body.querySelectorAll<HTMLInputElement>('.part-check input[type="checkbox"]'),
   ];
+}
+
+/** Expands one part's parameter panel by its row index. */
+function expandPart(index: number): void {
+  [...document.body.querySelectorAll<HTMLButtonElement>('.part-expand')][index]?.click();
+}
+
+/** The reroll button inside one part's expanded parameter panel. */
+function rerollButton(index: number): HTMLButtonElement | null {
+  const row = [...document.body.querySelectorAll('.part-row')][index];
+  return row?.querySelector<HTMLButtonElement>('.reroll-button') ?? null;
 }
 
 /** Checks a part checkbox by its row index (motif, drums, bass, counter, backing). */
@@ -166,6 +178,48 @@ describe('TrackGenerateDialog', () => {
     // One undo removes both generated tracks.
     expect(undo()).toBe(true);
     expect(store.tracks.length).toBe(trackCount);
+  });
+
+  // One project seed reproduces the whole arrangement; a reroll moves one part
+  // off it and leaves the others exactly where they were.
+  it('draws every part from the project seed and rerolls one at a time', async () => {
+    setProjectChords(FOUR_CHORDS);
+    store.generationSeed = 4242;
+    await open();
+    checkPart(1);
+    await nextTick();
+    confirm()?.click();
+    await nextTick();
+
+    const first = store.tracks.find((track) => track.name === 'Drums')?.generated?.seed;
+    expect(first).toBe(partSeed(4242, 'drums', 0));
+    expect(first).not.toBe(partSeed(4242, 'bass', 0));
+
+    undo();
+    wrapper?.unmount();
+    await open();
+    checkPart(1);
+    expandPart(1);
+    await nextTick();
+    rerollButton(1)?.click();
+    await nextTick();
+    confirm()?.click();
+    await nextTick();
+
+    const second = store.tracks.find((track) => track.name === 'Drums')?.generated?.seed;
+    expect(second).toBe(partSeed(4242, 'drums', 1));
+    expect(second).not.toBe(first);
+  });
+
+  it('writes the project seed into the document', async () => {
+    setProjectChords(FOUR_CHORDS);
+    await open();
+    const input = document.body.querySelector<HTMLInputElement>('.seed-row input');
+    if (!input) throw new Error('missing project seed input');
+    input.value = '77';
+    input.dispatchEvent(new Event('input'));
+    await nextTick();
+    expect(store.generationSeed).toBe(77);
   });
 
   it('disables generate with nothing selected', async () => {

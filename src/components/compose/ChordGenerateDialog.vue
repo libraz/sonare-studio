@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { type ProgStyle, progressionsByStyle } from '@libraz/libcantus';
-import { computed, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import ProgressionPresetPicker from '@/components/compose/ProgressionPresetPicker.vue';
 import { keyLabel, matchModeChoiceId } from '@/components/lists/key-modes';
 import AppModal from '@/components/shell/AppModal.vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { effectiveKeyScale } from '@/compose/key';
 import { generateProgressionCommand, harmonizeFromMelodyCommand } from '@/project/commands';
+import { normalizeGenerationSeed, partSeed } from '@/project/generation';
 import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
@@ -82,7 +83,6 @@ const hasChords = computed(() => store.chords.length > 0);
 // Progression options.
 const progStyle = ref<ProgStyle>('idol');
 const progBars = ref(4);
-const progSeed = ref(0);
 const progReharmonize = ref(false);
 const progMode = ref<'replace' | 'append'>('replace');
 
@@ -155,7 +155,6 @@ const STRENGTHS: ReadonlyArray<{
 ];
 const harmStrength = ref<HarmonizeStrength>('diatonic');
 const harmTranspose = ref(false);
-const harmSeed = ref(0);
 
 /** True when the harmonize form has no melody to work from. */
 const harmonizeBlocked = computed(() => mode.value === 'harmonize' && !hasMelody.value);
@@ -174,8 +173,20 @@ function validBars(value: number): number | null {
   return barCount;
 }
 
-function seedOf(value: number): number {
-  return Math.round(value) || 0;
+/** The project seed, bound to the store so it is saved with the project. */
+const projectSeed = computed({
+  get: () => store.generationSeed,
+  set: (value: number) => {
+    store.generationSeed = normalizeGenerationSeed(value);
+  },
+});
+
+/** How many times each generator has been rerolled under the project seed. */
+const rerolls = reactive({ progression: 0, harmonize: 0 });
+
+/** Rerolls one generator, leaving the other on the seed it already had. */
+function reroll(which: 'progression' | 'harmonize'): void {
+  rerolls[which] += 1;
 }
 
 function runGenerator(): number | null {
@@ -186,7 +197,7 @@ function runGenerator(): number | null {
       style: progStyle.value,
       bars: barCount,
       presetId: progPreset.value || undefined,
-      seed: seedOf(progSeed.value),
+      seed: partSeed(store.generationSeed, 'progression', rerolls.progression),
       reharmonize: progReharmonize.value,
       mode: hasChords.value ? progMode.value : 'replace',
     });
@@ -194,7 +205,7 @@ function runGenerator(): number | null {
   return harmonizeFromMelodyCommand({
     reharmonize: harmStrength.value,
     transpose: harmTranspose.value,
-    seed: seedOf(harmSeed.value),
+    seed: partSeed(store.generationSeed, 'harmonize', rerolls.harmonize),
   });
 }
 
@@ -254,6 +265,14 @@ function onKeydown(event: KeyboardEvent): void {
         </button>
       </div>
 
+      <div class="seed-row">
+        <label class="number-field">
+          <span class="field-label">{{ g.projectSeed }}</span>
+          <input v-model.number="projectSeed" type="number" min="0" step="1" />
+        </label>
+        <span class="seed-caption">{{ g.projectSeedCaption }}</span>
+      </div>
+
       <div class="mode-body">
         <template v-if="mode === 'progression'">
           <p class="key-context">
@@ -281,10 +300,15 @@ function onKeydown(event: KeyboardEvent): void {
                 class="bars-input"
               />
             </label>
-            <label class="number-field">
-              <span class="field-label">{{ g.seed }}</span>
-              <input v-model.number="progSeed" type="number" step="1" class="seed-input" />
-            </label>
+            <div class="reroll-field">
+              <span class="field-label">{{ g.variation }}</span>
+              <button type="button" class="reroll-button" @click="reroll('progression')">
+                {{ g.reroll }}
+              </button>
+              <span class="reroll-count">{{
+                formatMessage(g.variationIndex, { index: rerolls.progression + 1 })
+              }}</span>
+            </div>
           </div>
 
           <p v-if="progDurationLabel" class="bars-detail">
@@ -365,10 +389,15 @@ function onKeydown(event: KeyboardEvent): void {
             </label>
 
             <div class="number-row">
-              <label class="number-field">
-                <span class="field-label">{{ g.seed }}</span>
-                <input v-model.number="harmSeed" type="number" step="1" class="seed-input" />
-              </label>
+              <div class="reroll-field">
+                <span class="field-label">{{ g.variation }}</span>
+                <button type="button" class="reroll-button" @click="reroll('harmonize')">
+                  {{ g.reroll }}
+                </button>
+                <span class="reroll-count">{{
+                  formatMessage(g.variationIndex, { index: rerolls.harmonize + 1 })
+                }}</span>
+              </div>
             </div>
           </template>
         </template>
@@ -526,6 +555,53 @@ function onKeydown(event: KeyboardEvent): void {
   flex-direction: column;
   gap: var(--sp-2);
   flex: 1 1 0;
+}
+
+/* A generator is rerolled rather than given a seed of its own: the button bumps
+ * a counter beneath the project seed, so the other one keeps what it had. */
+/* The one number every generated part is drawn from. */
+.seed-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-3);
+}
+
+.seed-row .number-field {
+  flex: 0 0 10rem;
+}
+
+.seed-caption {
+  padding-bottom: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.reroll-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 0;
+}
+
+.reroll-button {
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--surface-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.reroll-button:hover {
+  border-color: var(--border-strong);
+  color: var(--text-1);
+}
+
+.reroll-count {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .number-field input {

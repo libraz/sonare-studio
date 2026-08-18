@@ -204,6 +204,28 @@ describe('project serialization', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
+  it('round-trips the project generation seed', async () => {
+    buildSampleProject(store);
+    store.generationSeed = 4242;
+    const doc = serializeProject();
+    expect(doc.generationSeed).toBe(4242);
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.generationSeed).toBe(4242);
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  it('reads a malformed project generation seed as the default', async () => {
+    buildSampleProject(store);
+    const doc = serializeProject();
+    doc.generationSeed = Number.NaN;
+
+    await loadProjectDocument(doc);
+
+    expect(store.generationSeed).toBe(0);
+    expect(serializeProject().generationSeed).toBeUndefined();
+  });
+
   it('round-trips a track generation record', async () => {
     buildSampleProject(store);
     store.tracks[0] = {
