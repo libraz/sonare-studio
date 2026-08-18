@@ -1,3 +1,4 @@
+import { deriveSeed } from '@libraz/libcantus';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -330,14 +331,23 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(second).toBe(first);
   });
 
-  it('advances the random seed after jitter so repeated jitter uses a fresh stream', async () => {
+  /**
+   * A cell's deviation depends on the seed and the cell alone, so pressing
+   * jitter twice without moving the seed would give the same answer twice. The
+   * seed is derived forward instead, which keeps the run reproducible from the
+   * seed first entered.
+   */
+  it('advances the random seed after jitter so a repeat gives a fresh result', async () => {
     const wrapper = await mountSequencer();
     const vm = wrapper.vm as unknown as SequencerVm;
     const initialSeed = vm.pattern.seed;
-    const draws = vm.pattern.rows.reduce((count, row) => count + row.steps.length, 0);
 
     await wrapper.find('[data-test="jitter"]').trigger('click');
+    const afterFirst = vm.pattern.seed;
+    expect(afterFirst).toBe(deriveSeed(initialSeed, 'jitter'));
 
-    expect(vm.pattern.seed).toBe((initialSeed + Math.imul(draws, 0x6d2b79f5)) >>> 0);
+    await wrapper.find('[data-test="jitter"]').trigger('click');
+    expect(vm.pattern.seed).toBe(deriveSeed(afterFirst, 'jitter'));
+    expect(vm.pattern.seed).not.toBe(afterFirst);
   });
 });

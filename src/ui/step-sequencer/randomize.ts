@@ -1,12 +1,24 @@
 /**
- * Seeded pattern randomization. Every operation consumes the PRNG stream in
- * a fixed row-major order over all cells (active or not), so the same seed
- * always produces the same result for a given grid size regardless of which
- * steps happen to be active.
+ * Seeded pattern randomization.
+ *
+ * Every draw is addressed by the cell it belongs to rather than taken in call
+ * order, so a cell's value depends on the seed and its own row and step and
+ * nothing else. That is what makes a result independent of the grid's size and
+ * of which steps happen to be active: growing the pattern, or activating a step
+ * elsewhere, cannot shift the draws of the cells around it.
+ *
+ * Each operation draws under its own name, so one seed gives jitter and fill
+ * independent randomness rather than two readings of one stream.
  */
 
+import { createPositionalRng, deriveSeed } from '@libraz/libcantus';
 import { clampVelocity, clonePattern, DEFAULT_STEP_VELOCITY, type StepPattern } from './pattern';
-import { mulberry32 } from './prng';
+
+/** A cell-addressed random source for one operation, from the pattern's seed. */
+function cellRng(seed: number, operation: string): (row: number, step: number) => number {
+  const rng = createPositionalRng(deriveSeed(Math.trunc(seed) >>> 0, operation));
+  return (row, step) => rng.at(row, step);
+}
 
 /** Options for {@link jitterVelocities}. */
 export interface VelocityJitterOptions {
@@ -26,15 +38,15 @@ export function jitterVelocities(
   options: VelocityJitterOptions,
 ): StepPattern {
   const amount = Math.min(64, Math.max(0, options.amount));
-  const random = mulberry32(options.seed);
+  const random = cellRng(options.seed, 'jitter');
   const next = clonePattern(pattern);
-  for (const row of next.rows) {
-    for (const step of row.steps) {
-      // Consume one sample per cell to keep the stream position stable.
-      const delta = Math.round((random() * 2 - 1) * amount);
-      if (step.active) step.velocity = clampVelocity(step.velocity + delta);
-    }
-  }
+  next.rows.forEach((row, rowIndex) => {
+    row.steps.forEach((step, stepIndex) => {
+      if (!step.active) return;
+      const delta = Math.round((random(rowIndex, stepIndex) * 2 - 1) * amount);
+      step.velocity = clampVelocity(step.velocity + delta);
+    });
+  });
   return next;
 }
 
@@ -59,14 +71,14 @@ export interface SparseFillOptions {
 export function sparseFill(pattern: StepPattern, options: SparseFillOptions): StepPattern {
   const density = Math.min(1, Math.max(0, options.density));
   const resetVelocity = options.resetVelocity ?? true;
-  const random = mulberry32(options.seed);
+  const random = cellRng(options.seed, 'fill');
   const next = clonePattern(pattern);
-  for (const row of next.rows) {
-    for (const step of row.steps) {
+  next.rows.forEach((row, rowIndex) => {
+    row.steps.forEach((step, stepIndex) => {
       const wasActive = step.active;
-      step.active = random() < density;
+      step.active = random(rowIndex, stepIndex) < density;
       if (step.active && !wasActive && resetVelocity) step.velocity = DEFAULT_STEP_VELOCITY;
-    }
-  }
+    });
+  });
   return next;
 }

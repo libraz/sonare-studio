@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { deriveSeed } from '@libraz/libcantus';
 import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
@@ -300,11 +301,10 @@ function applyJitter(): void {
     seed: current.seed,
     amount: clampInt(jitterAmount.value, 0, 64, 12),
   });
-  // jitterVelocities consumes exactly one mulberry32 value per grid cell.
-  // Continue from that point so repeated clicks produce fresh deviations while
-  // remaining deterministic from the seed input.
-  const draws = current.rows.reduce((count, row) => count + row.steps.length, 0);
-  next.seed = (Math.trunc(current.seed) + Math.imul(draws, 0x6d2b79f5)) >>> 0;
+  // A cell's deviation depends only on the seed and the cell, so a repeated
+  // click needs a new seed to give a fresh result. Deriving it from the current
+  // one keeps the whole run of clicks reproducible from the seed first entered.
+  next.seed = deriveSeed(Math.trunc(current.seed) >>> 0, 'jitter');
   setPattern(next);
 }
 

@@ -1,26 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createDrumPattern, DEFAULT_STEP_VELOCITY, withStep } from '@/ui/step-sequencer/pattern';
-import { mulberry32 } from '@/ui/step-sequencer/prng';
 import { jitterVelocities, sparseFill } from '@/ui/step-sequencer/randomize';
-
-describe('mulberry32', () => {
-  it('is deterministic for a seed and yields values in [0, 1)', () => {
-    const a = mulberry32(42);
-    const b = mulberry32(42);
-    for (let i = 0; i < 100; i++) {
-      const value = a();
-      expect(value).toBe(b());
-      expect(value).toBeGreaterThanOrEqual(0);
-      expect(value).toBeLessThan(1);
-    }
-  });
-
-  it('produces different streams for different seeds', () => {
-    const a = Array.from({ length: 8 }, mulberry32(1));
-    const b = Array.from({ length: 8 }, mulberry32(2));
-    expect(a).not.toEqual(b);
-  });
-});
 
 describe('jitterVelocities', () => {
   function activePattern() {
@@ -67,6 +47,36 @@ describe('jitterVelocities', () => {
     const fromDense = jitterVelocities(dense, { seed: 11, amount: 30 });
     expect(fromDense.rows[0].steps[0].velocity).toBe(fromSparse.rows[0].steps[0].velocity);
     expect(fromDense.rows[5].steps[2].velocity).toBe(fromSparse.rows[5].steps[2].velocity);
+  });
+
+  /**
+   * A draw belongs to its cell, not to a position in a stream, so lengthening
+   * the pattern cannot redraw the steps already in it. Taking the draws in call
+   * order made every cell's value depend on how many cells came before it.
+   */
+  it('leaves the existing steps alone when the grid grows', () => {
+    const short = withStep(createDrumPattern(8), 0, 0, { active: true, velocity: 96 });
+    const long = withStep(createDrumPattern(16), 0, 0, { active: true, velocity: 96 });
+
+    expect(jitterVelocities(long, { seed: 13, amount: 30 }).rows[0].steps[0].velocity).toBe(
+      jitterVelocities(short, { seed: 13, amount: 30 }).rows[0].steps[0].velocity,
+    );
+  });
+
+  // One seed feeds both operations, so they must not read the same draws.
+  it('draws jitter and fill independently from one seed', () => {
+    const grid = createDrumPattern(8);
+    const filled = sparseFill(grid, { seed: 21, density: 0.5 });
+    const jittered = jitterVelocities(sparseFill(grid, { seed: 21, density: 1 }), {
+      seed: 21,
+      amount: 40,
+    });
+    const fillDraws = filled.rows.map((row) => row.steps.map((step) => step.active));
+    const jitterUp = jittered.rows.map((row) =>
+      row.steps.map((step) => step.velocity > DEFAULT_STEP_VELOCITY),
+    );
+
+    expect(jitterUp).not.toEqual(fillDraws);
   });
 
   it('amount 0 leaves the pattern untouched', () => {
