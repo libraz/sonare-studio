@@ -13,7 +13,7 @@
 import type { HarmonyRole, LockLevel, NoteNameSystem, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { formatSpelledPitch, pitchClassNames } from '@/lib/pitch';
-import { spellPitchInKeySignature } from '@/notation/pitch-spelling';
+import { type SpelledPitch, spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 import type { CadenceType } from './harmonic-analysis';
 
@@ -382,15 +382,37 @@ function nctLine(
   return undefined;
 }
 
-/** Sharp-spelled pitch name with octave, e.g. 63 -> "D#4". */
-function pitchName(midi: number, keyFifths?: number, system: NoteNameSystem = 'english'): string {
+/**
+ * Writes a spelled pitch in the reader's note-name system. English is spelled
+ * out here rather than deferred, because it is the system the score and the
+ * MusicXML export write and its accidentals are the step/alter pair itself.
+ */
+function formatPitch(pitch: SpelledPitch, system: NoteNameSystem): string {
+  if (system !== 'english') return formatSpelledPitch(pitch, system);
+  return `${pitch.step}${pitch.alter === 0 ? '' : pitch.alter === 1 ? '#' : 'b'}${pitch.octave}`;
+}
+
+/**
+ * Pitch name with octave, e.g. 63 -> "D#4".
+ *
+ * A spelling read off the analysis wins, since that is the letter the score
+ * engraves the note with and the card must not rename a notehead the reader can
+ * see. Without one the key signature alone decides, which is all a pitch the
+ * analysis does not cover — a suspension's resolution target, a chord-scale
+ * tone — offers; with no key at all the bare pitch class is named.
+ */
+function pitchName(
+  midi: number,
+  keyFifths?: number,
+  system: NoteNameSystem = 'english',
+  spelled?: SpelledPitch,
+): string {
+  if (spelled !== undefined) return formatPitch(spelled, system);
   if (keyFifths === undefined) {
     const pc = ((midi % 12) + 12) % 12;
     return `${pitchClassNames(system)[pc]}${Math.floor(midi / 12) - 1}`;
   }
-  const pitch = spellPitchInKeySignature(midi, keyFifths);
-  if (system !== 'english') return formatSpelledPitch(pitch, system);
-  return `${pitch.step}${pitch.alter === 0 ? '' : pitch.alter === 1 ? '#' : 'b'}${pitch.octave}`;
+  return formatPitch(spellPitchInKeySignature(midi, keyFifths), system);
 }
 
 /**
@@ -507,7 +529,12 @@ export function buildTheoryCard(
      * is not presented as one the composer settled.
      */
     keyEstimated?: boolean;
-    /** MusicXML key fifths used for enharmonic spelling in the card. */
+    /**
+     * MusicXML key fifths for the pitches the card names on its own: the
+     * chord-scale tones and a resolution target. It has to be the signature the
+     * analysis was built under, since the hovered note's own name comes off the
+     * analysis and a second key here would spell one card two ways.
+     */
     keyFifths?: number;
     /** Note-name system the pitch names are written in; English by default. */
     noteNameSystem?: NoteNameSystem;
@@ -516,7 +543,7 @@ export function buildTheoryCard(
   },
   labels: TheoryLabels,
 ): TheoryCard {
-  let title = pitchName(ctx.pitch, ctx.keyFifths, ctx.noteNameSystem);
+  let title = pitchName(ctx.pitch, ctx.keyFifths, ctx.noteNameSystem, analysis.engraved);
   if (ctx.velocity !== undefined) title += ` · vel ${ctx.velocity}`;
   if (analysis.role !== undefined) title += ` — ${labels.roles[analysis.role.role]}`;
 

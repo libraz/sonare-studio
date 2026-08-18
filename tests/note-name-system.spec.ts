@@ -10,7 +10,7 @@ import { keyLabel } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
-import type { NoteAnalysis } from '@/compose/guidance';
+import { buildGuidance, type NoteAnalysis } from '@/compose/guidance';
 import {
   formatPitch,
   formatSpelledPitch,
@@ -52,6 +52,25 @@ function withSystem<T>(system: NoteNameSystem, run: () => T): T {
 
 afterEach(() => {
   appSettings.set('noteNameSystem', 'english');
+});
+
+/**
+ * A D-minor cadential step A3 - C#4 - D4, analyzed. The raised leading tone is
+ * chromatic in the key, so its letter is decided by the line rather than by the
+ * key signature, and the card's title is whatever that reading names.
+ */
+const D_MINOR_LEADING_TONE = buildGuidance({
+  notes: [
+    { id: 1, pitch: 57, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 },
+    { id: 2, pitch: 61, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0 },
+    { id: 3, pitch: 62, velocity: 96, startPpq: 2, durationPpq: 1, channel: 0 },
+  ],
+  clipStartPpq: 0,
+  clipLengthPpq: 4,
+  chordSymbols: [],
+  // Natural minor {0,2,3,5,7,8,10} on D.
+  key: { enabled: true, rootPc: 2, modeMask: 0b010110101101 },
+  timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
 });
 
 /** Chord symbols carrying a root, a bass and an accidental in their text. */
@@ -209,6 +228,23 @@ describe('pitch names in each system', () => {
     expect(formatChordName(CHORD_SYMBOLS[0], 0, 'japanese')).toBe('変ニmaj7');
     expect(formatChordName(CHORD_SYMBOLS[1], 0, 'japanese')).toBe('イm7/ホ');
     expect(formatChordName(CHORD_SYMBOLS[1], 0, 'german')).toBe('am7/e');
+  });
+
+  it.each(SYSTEMS)('titles the theory card from the engraved spelling in %s', (system) => {
+    // The title carries the spelling the score engraves the note with, which
+    // reaches the reader through two different paths — English is joined from
+    // the step and the alteration, every other system goes through the
+    // localized formatter — so both are checked against the same spelled pitch.
+    const analysis = D_MINOR_LEADING_TONE.byNoteId.get(2);
+    expect(analysis?.engraved).toEqual({ step: 'C', alter: 1, octave: 4 });
+    if (analysis === undefined) return;
+    const labels = theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence);
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 61, keySet: true, keyFifths: -1, noteNameSystem: system },
+      labels,
+    );
+    expect(card.title).toBe(formatSpelledPitch({ step: 'C', alter: 1, octave: 4 }, system));
   });
 });
 

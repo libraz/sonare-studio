@@ -39,6 +39,23 @@ function chordSymbol(partial: Partial<EditorChordSymbol>): EditorChordSymbol {
 }
 
 const C_MAJOR_KEY: ScaleHighlightConfig = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+const E_FLAT_MAJOR_KEY: ScaleHighlightConfig = {
+  enabled: true,
+  rootPc: 3,
+  modeMask: MAJOR_MODE_MASK,
+};
+const A_FLAT_MAJOR_KEY: ScaleHighlightConfig = {
+  enabled: true,
+  rootPc: 8,
+  modeMask: MAJOR_MODE_MASK,
+};
+/** Natural minor {0,2,3,5,7,8,10}, the mask a detected minor key comes back as. */
+const NATURAL_MINOR_MODE_MASK = 0b010110101101;
+const D_MINOR_KEY: ScaleHighlightConfig = {
+  enabled: true,
+  rootPc: 2,
+  modeMask: NATURAL_MINOR_MODE_MASK,
+};
 const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
 function guidanceInput(partial: Partial<GuidanceInput>): GuidanceInput {
@@ -634,7 +651,9 @@ describe('resolutionTargetOf', () => {
 
 describe('buildTheoryCard', () => {
   it('spells hover pitches with the active key signature', () => {
-    const result = buildGuidance(guidanceInput({ notes: [note({ id: 59, pitch: 70 })] }));
+    const result = buildGuidance(
+      guidanceInput({ notes: [note({ id: 59, pitch: 70 })], key: E_FLAT_MAJOR_KEY }),
+    );
     const analysis = result.byNoteId.get(59);
     expect(analysis).toBeDefined();
     if (analysis === undefined) return;
@@ -645,6 +664,58 @@ describe('buildTheoryCard', () => {
       theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
     );
     expect(card.title).toMatch(/^Bb4/);
+  });
+
+  it('titles a raised leading tone the way the staff writes it', () => {
+    // C# is chromatic in D minor, so the key signature on its own puts it on the
+    // flat side and the card titled it Db4 — contradicting both the C#4 on the
+    // staff and the card's own reading of the note as a leading tone. Spelling
+    // the line settles it: the note steps up to a natural D, so it takes the
+    // letter below that D.
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 1, pitch: 57, startPpq: 0, durationPpq: 1 }),
+          note({ id: 2, pitch: 61, startPpq: 1, durationPpq: 1 }),
+          note({ id: 3, pitch: 62, startPpq: 2, durationPpq: 1 }),
+        ],
+        key: D_MINOR_KEY,
+      }),
+    );
+    const analysis = result.byNoteId.get(2);
+    expect(analysis?.engraved).toEqual({ step: 'C', alter: 1, octave: 4 });
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 61, keySet: true, keyFifths: -1 },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
+    );
+    expect(card.title).toBe('C#4');
+  });
+
+  it('keeps the flat spelling in a key whose signature names it', () => {
+    // Ab major spells Db itself, so the same pitch that reads C# in D minor has
+    // to stay Db here: the reading follows the key and the line, not a blanket
+    // preference for sharps.
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 1, pitch: 63, startPpq: 0, durationPpq: 1 }),
+          note({ id: 2, pitch: 61, startPpq: 1, durationPpq: 1 }),
+          note({ id: 3, pitch: 60, startPpq: 2, durationPpq: 1 }),
+        ],
+        key: A_FLAT_MAJOR_KEY,
+      }),
+    );
+    const analysis = result.byNoteId.get(2);
+    expect(analysis?.engraved).toEqual({ step: 'D', alter: -1, octave: 4 });
+    if (analysis === undefined) return;
+    const card = buildTheoryCard(
+      analysis,
+      { pitch: 61, keySet: true, keyFifths: -4 },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
+    );
+    expect(card.title).toBe('Db4');
   });
 
   it('spells suspension resolution targets with the active key signature', () => {

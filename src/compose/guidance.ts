@@ -39,11 +39,12 @@ import {
   type VoiceNote,
   type VoiceSnapshot,
 } from '@libraz/libcantus';
+import { type SpelledPitch, spellLineInKeySignature } from '@/notation/pitch-spelling';
 import type { EditorChordSymbol } from '@/project/chords';
 import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
 import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { buildChordTimeline } from './chord-at-tick';
-import { effectiveKeyScale } from './key';
+import { effectiveKeyScale, keyScaleToKeyFifths } from './key';
 import { strongBeatAt } from './meter';
 import { cadenceArrivals, cadencesByNote, type NoteCadence } from './note-cadences';
 import { editorNotesToNoteEvents } from './notes-io';
@@ -218,6 +219,19 @@ export interface NoteAnalysis {
    * — see {@link cadenceArrivals}.
    */
   cadence?: NoteCadence;
+  /**
+   * How the note is written on a staff: the same reading the score and the
+   * MusicXML export engrave it with, so a surface naming the note to a reader
+   * (the hover card's title) cannot contradict the notehead the reader is
+   * looking at. Absent when no key is set, since the spelling is a claim about
+   * a key and the surfaces name pitch classes plainly without one.
+   *
+   * Deliberately not the spelling the counterpoint findings above are measured
+   * from: those count intervals from the tonic, which is a different question
+   * and gives a different letter for the same pitch (see the spelling note in
+   * {@link buildGuidance}). This one is never handed to a predicate.
+   */
+  engraved?: SpelledPitch;
 }
 
 export interface GuidanceResult {
@@ -472,6 +486,38 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     return spelled;
   };
   /**
+   * The staff reading of the clip's own notes, solved as one line: the spelling
+   * the score and the MusicXML export engrave with, carried on the analysis so
+   * the hover card names a note the way its notehead is written.
+   *
+   * A line can only be spelled whole — which letter a chromatic tone takes is
+   * decided by the notes around it — so this is computed once per pass rather
+   * than per hover, where re-solving the entire clip on every mouse move would
+   * buy nothing: the answer cannot change between two hovers of the same clip.
+   *
+   * The clip goes over as a single line, the same reduction the melodic label
+   * pass below makes of it. The notation layer splits a part into notated
+   * voices before spelling it, but a clip is one editable part and carries no
+   * such split, so there is nothing here to split it by.
+   *
+   * The signature is the project key's own, which is how the surfaces reach it
+   * too, so the card's title and the staff answer from one key signature.
+   */
+  const engravedByNoteId = new Map<number, SpelledPitch>();
+  if (keySet) {
+    const engraved = spellLineInKeySignature(
+      sorted.map((note) => ({
+        midi: note.pitch,
+        startBeat: input.clipStartPpq + note.startPpq,
+        durationBeat: note.durationPpq,
+      })),
+      keyScaleToKeyFifths(key),
+    );
+    sorted.forEach((note, index) => {
+      engravedByNoteId.set(note.id, engraved[index]);
+    });
+  }
+  /**
    * Whether the library's parallel-perfect verdict on a candidate describes a
    * voice-leading event the composer can act on.
    *
@@ -695,6 +741,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       isScaleTone: isScaleTone(note.pitch, key),
       chordSounding: chord !== null,
     };
+    const engraved = engravedByNoteId.get(note.id);
+    if (engraved !== undefined) analysis.engraved = engraved;
     if (chord !== null) {
       const role = tryEval(() => roleOf(note.pitch, chord));
       if (role !== undefined) analysis.role = role;

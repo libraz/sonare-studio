@@ -9,12 +9,19 @@
 
 import { ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
+import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { buildGuidance } from '@/compose/guidance';
 import { detectScaleHighlightFromTracks } from '@/compose/key';
 import type { TrackWithNotes } from '@/compose/tracks';
+import { type SpelledPitch, spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import type { EditorNote, EditorTrack, ScaleHighlightConfig } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
+
+/** Octave-less name of a spelled pitch, for a readable rewrite tally. */
+function name(pitch: SpelledPitch): string {
+  return `${pitch.step}${pitch.alter === 0 ? '' : pitch.alter > 0 ? '#' : 'b'}`;
+}
 
 /** The demo carries no key of its own; the counterpoint reasons are key-free. */
 const NO_KEY: ScaleHighlightConfig = { enabled: false, rootPc: 0, modeMask: MAJOR_MODE_MASK };
@@ -182,5 +189,73 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);
     expect(counts.verticalDissonance).toBe(107);
+  });
+
+  it('engraves the chromatic notes off the line rather than off the signature', async () => {
+    const { voices, document } = await demoVoices();
+    const key = detectScaleHighlightFromTracks(
+      voices.map((voice) => ({ track: voice.track, notes: voice.notes })),
+    );
+    if (key === null) return;
+    // One flat: every chromatic tone the piece writes falls to the flat side
+    // when the key signature is asked about it on its own.
+    const keyFifths = keyFifthsForScaleHighlight(key);
+    expect(keyFifths).toBe(-1);
+
+    let notes = 0;
+    let engraved = 0;
+    let leadingToneResolution = 0;
+    let forbiddenLeap = 0;
+    const rewritten = new Map<string, number>();
+    for (const voice of voices) {
+      const otherTracks: TrackWithNotes[] = voices
+        .filter((other) => other !== voice)
+        .map((other) => ({ track: other.track, notes: other.notes }));
+      const result = buildGuidance({
+        notes: voice.notes,
+        clipStartPpq: 0,
+        clipLengthPpq: voice.lengthPpq,
+        sourceOffsetPpq: 0,
+        chordSymbols: [],
+        key,
+        timeSignatures: document.timeSignatures,
+        otherTracks,
+      });
+      const pitchByNoteId = new Map(voice.notes.map((note) => [note.id, note.pitch]));
+      for (const [noteId, analysis] of result.byNoteId) {
+        notes++;
+        if (analysis.counterpoint?.leadingToneResolution === true) leadingToneResolution++;
+        if (analysis.counterpoint?.forbiddenLeap === true) forbiddenLeap++;
+        const pitch = pitchByNoteId.get(noteId);
+        if (analysis.engraved === undefined || pitch === undefined) continue;
+        engraved++;
+        const signature = spellPitchInKeySignature(pitch, keyFifths);
+        if (
+          signature.step === analysis.engraved.step &&
+          signature.alter === analysis.engraved.alter
+        ) {
+          continue;
+        }
+        const change = `${name(signature)}->${name(analysis.engraved)}`;
+        rewritten.set(change, (rewritten.get(change) ?? 0) + 1);
+      }
+    }
+
+    // Every note carries a staff reading, and the line rewrites one in twenty-five
+    // of them: the raised leading tone above all, which the signature alone spells
+    // Db against the C# the score writes and the analysis reads.
+    expect(notes).toBe(3795);
+    expect(engraved).toBe(3795);
+    expect([...rewritten.values()].reduce((total, count) => total + count, 0)).toBe(152);
+    expect(Object.fromEntries(rewritten)).toEqual({
+      'Db->C#': 121,
+      'Gb->F#': 28,
+      'Ab->G#': 2,
+      'Eb->D#': 1,
+    });
+    // Naming the notes off the line leaves the counterpoint readings, which are
+    // spelled from the tonic instead, exactly as the pass above pins them.
+    expect(leadingToneResolution).toBe(76);
+    expect(forbiddenLeap).toBe(310);
   });
 });
