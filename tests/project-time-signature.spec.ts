@@ -5,10 +5,13 @@ import {
   DEFAULT_TIME_SIGNATURE,
   isFourFourBarRange,
   measureGrid,
+  measureRangeAt,
+  normalizeTimeSignatureMap,
   snapPpqToMeterGrid,
   snapPpqToSwingMeterGrid,
   timeSignatureAt,
   timeSignatureRanges,
+  toMeterMap,
 } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 
@@ -76,6 +79,147 @@ describe('variable-meter measure grid', () => {
     expect(advanceBarsPpq(meter, 3, 3)).toBe(11);
     expect(isFourFourBarRange(meter, 0, 1)).toBe(false);
     expect(isFourFourBarRange([], 0, 4)).toBe(true);
+  });
+});
+
+describe('measureRangeAt across a mid-bar meter change', () => {
+  const cutShort: TimeSignatureSegment[] = [
+    { startPpq: 0, numerator: 4, denominator: 4 },
+    { startPpq: 9, numerator: 3, denominator: 4 },
+  ];
+  const twoChanges: TimeSignatureSegment[] = [
+    { startPpq: 0, numerator: 4, denominator: 4 },
+    { startPpq: 6, numerator: 7, denominator: 8 },
+    { startPpq: 13.5, numerator: 3, denominator: 4 },
+  ];
+
+  it('truncates the bar the change lands in and starts a full one at the change', () => {
+    // The third 4/4 bar would run 8..12, but the change at 9 ends it there.
+    expect(measureRangeAt(cutShort, 8.5)).toEqual({
+      startPpq: 8,
+      lengthPpq: 1,
+      numerator: 4,
+      denominator: 4,
+      index: 2,
+    });
+    expect(measureRangeAt(cutShort, 9)).toEqual({
+      startPpq: 9,
+      lengthPpq: 3,
+      numerator: 3,
+      denominator: 4,
+      index: 3,
+    });
+  });
+
+  it('truncates at each of two changes', () => {
+    expect(measureRangeAt(twoChanges, 5)).toEqual({
+      startPpq: 4,
+      lengthPpq: 2,
+      numerator: 4,
+      denominator: 4,
+      index: 1,
+    });
+    expect(measureRangeAt(twoChanges, 6)).toEqual({
+      startPpq: 6,
+      lengthPpq: 3.5,
+      numerator: 7,
+      denominator: 8,
+      index: 2,
+    });
+    // 6 + 3.5 + 3.5 = 13, so the third 7/8 bar has half a beat before 13.5.
+    expect(measureRangeAt(twoChanges, 13.4)).toEqual({
+      startPpq: 13,
+      lengthPpq: 0.5,
+      numerator: 7,
+      denominator: 8,
+      index: 4,
+    });
+    expect(measureRangeAt(twoChanges, 13.5)).toEqual({
+      startPpq: 13.5,
+      lengthPpq: 3,
+      numerator: 3,
+      denominator: 4,
+      index: 5,
+    });
+  });
+
+  it('numbers bars consecutively across a change, with no gap and no repeat', () => {
+    const indices: number[] = [];
+    let cursor = 0;
+    for (let bar = 0; bar < 8; bar += 1) {
+      const range = measureRangeAt(twoChanges, cursor);
+      indices.push(range.index);
+      cursor = range.startPpq + range.lengthPpq;
+    }
+    expect(indices).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('clamps a position at or before zero to the first bar', () => {
+    const first = { startPpq: 0, lengthPpq: 4, numerator: 4, denominator: 4, index: 0 };
+    expect(measureRangeAt(cutShort, 0)).toEqual(first);
+    expect(measureRangeAt(cutShort, -0.5)).toEqual(first);
+    expect(measureRangeAt(cutShort, -1000)).toEqual(first);
+  });
+
+  it('counts bars from zero when the map starts late, rather than as a pickup', () => {
+    const late: TimeSignatureSegment[] = [{ startPpq: 8, numerator: 3, denominator: 4 }];
+    expect(measureRangeAt(late, 0)).toEqual({
+      startPpq: 0,
+      lengthPpq: 4,
+      numerator: 4,
+      denominator: 4,
+      index: 0,
+    });
+    expect(measureRangeAt(late, 9)).toEqual({
+      startPpq: 8,
+      lengthPpq: 3,
+      numerator: 3,
+      denominator: 4,
+      index: 2,
+    });
+  });
+});
+
+describe('normalizeTimeSignatureMap and toMeterMap', () => {
+  it('keeps an additive grouping the meter arithmetic can read', () => {
+    expect(
+      normalizeTimeSignatureMap([
+        { startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]),
+    ).toEqual([{ startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] }]);
+    // A compound numerator also accepts its groups counted in main pulses.
+    expect(
+      normalizeTimeSignatureMap([
+        { startPpq: 0, numerator: 9, denominator: 8, grouping: [1, 1, 1] },
+      ]),
+    ).toEqual([{ startPpq: 0, numerator: 9, denominator: 8, grouping: [1, 1, 1] }]);
+  });
+
+  it.each([
+    ['sums to neither units nor pulses', [2, 2, 2]],
+    ['holds a zero group', [2, 0, 5]],
+    ['holds a fractional group', [3.5, 3.5]],
+    ['is empty', []],
+  ])('drops a grouping that %s', (_label, grouping) => {
+    expect(
+      normalizeTimeSignatureMap([{ startPpq: 0, numerator: 7, denominator: 8, grouping }]),
+    ).toEqual([{ startPpq: 0, numerator: 7, denominator: 8 }]);
+  });
+
+  it('sorts, deduplicates and covers PPQ zero', () => {
+    expect(
+      toMeterMap([
+        { startPpq: 6, numerator: 3, denominator: 4 },
+        { startPpq: 6, numerator: 5, denominator: 8 },
+        { startPpq: -1, numerator: 2, denominator: 4 },
+        { startPpq: 4, numerator: 0, denominator: 4 },
+        { startPpq: 2, numerator: 7, denominator: 8, grouping: [2, 2, 3] },
+      ]),
+    ).toEqual([
+      { startBeat: 0, ts: { numerator: 4, denominator: 4 } },
+      { startBeat: 2, ts: { numerator: 7, denominator: 8, grouping: [2, 2, 3] } },
+      { startBeat: 6, ts: { numerator: 5, denominator: 8 } },
+    ]);
   });
 });
 

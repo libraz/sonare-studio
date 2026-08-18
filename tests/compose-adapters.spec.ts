@@ -19,7 +19,7 @@ import {
   scaleHighlightToKeyScale,
   tonicPcFromKeyFifths,
 } from '@/compose/key';
-import { segmentAtPpq, strongBeatAt, timeSignatureAtPpq } from '@/compose/meter';
+import { strongBeatAt, timeSignatureAtPpq } from '@/compose/meter';
 import {
   editorNotesToNoteEvents,
   editorNoteToNoteEvent,
@@ -237,18 +237,23 @@ describe('meter adapter', () => {
     { startPpq: 16, numerator: 3, denominator: 4 },
   ];
 
-  it('selects the governing segment at a position', () => {
-    expect(segmentAtPpq(segments, 0).numerator).toBe(4);
-    expect(segmentAtPpq(segments, 15).numerator).toBe(4);
-    expect(segmentAtPpq(segments, 16).numerator).toBe(3);
-    expect(segmentAtPpq(segments, 100).numerator).toBe(3);
+  it('selects the governing meter at a position', () => {
+    expect(timeSignatureAtPpq(segments, 0).numerator).toBe(4);
+    expect(timeSignatureAtPpq(segments, 15).numerator).toBe(4);
+    expect(timeSignatureAtPpq(segments, 16).numerator).toBe(3);
+    expect(timeSignatureAtPpq(segments, 100).numerator).toBe(3);
   });
 
   it('falls back to 4/4 for an empty map', () => {
     expect(timeSignatureAtPpq([], 0)).toEqual({ numerator: 4, denominator: 4 });
   });
 
-  it('measures strong beats from each segment start, tolerating unsorted maps', () => {
+  it('keeps an additive grouping on the resolved signature', () => {
+    const additive = [{ startPpq: 0, numerator: 7, denominator: 8, grouping: [2, 2, 3] }];
+    expect(timeSignatureAtPpq(additive, 3).grouping).toEqual([2, 2, 3]);
+  });
+
+  it('starts a bar at every meter change, tolerating unsorted maps', () => {
     // Downbeats of both segments are strong; the second bar of the 3/4 segment
     // starts at beat 16 + 3 = 19. Passing the map out of order exercises the
     // shared helper's internal sort so both callers see the same verdict.

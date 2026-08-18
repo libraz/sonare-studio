@@ -2,8 +2,23 @@
  * Time-signature map helpers shared across surfaces (score notation, recording,
  * count-in) so they all read the project's meter map the same way instead of
  * assuming 4/4.
+ *
+ * Bar arithmetic is libcantus's: {@link toMeterMap} is the one place a project
+ * meter map crosses over, and the positional helpers answer from the library so
+ * a bar line here and a bar line in a generated part cannot drift apart. What
+ * stays local is what the library reads differently on purpose — bars are
+ * counted from PPQ zero rather than from a pickup, and a bar cut short by a
+ * meter change reports the length it actually occupies.
  */
 
+import {
+  barIndexAt,
+  barStartBeat,
+  beatsPerBarAt,
+  type MeterMap,
+  meterAt,
+  toMeterData,
+} from '@libraz/libcantus';
 import type { TimeSignatureSegment } from './types';
 
 /** Default meter assumed when a project models no time-signature map. */
@@ -43,7 +58,48 @@ export function meterBeatLengthPpq(meter: Pick<TimeSignatureSegment, 'denominato
   return 4 / meter.denominator;
 }
 
-/** Validates, sorts and guarantees meter coverage from PPQ zero. */
+/**
+ * Position libcantus's meter arithmetic is asked about: bars are counted from
+ * PPQ zero on every surface here, so anything earlier reads as the first bar
+ * rather than as a pickup, and a non-finite position — which the library
+ * rejects outright — reads as the timeline origin instead of failing a paint.
+ */
+function meterQueryPpq(ppq: number): number {
+  return Number.isFinite(ppq) ? Math.max(0, ppq) : 0;
+}
+
+/**
+ * Drops an additive grouping libcantus will not read, keeping the plain meter.
+ *
+ * Which groupings are legal is the library's rule — the sum is counted in main
+ * pulses or in denominator units, and a compound numerator accepts both — so it
+ * is asked rather than restated here. A grouping it rejects would otherwise
+ * fail every accent query made against the segment.
+ */
+function withReadableGrouping(segment: TimeSignatureSegment): TimeSignatureSegment {
+  if (segment.grouping === undefined) return segment;
+  try {
+    toMeterData({
+      numerator: segment.numerator,
+      denominator: segment.denominator,
+      grouping: segment.grouping,
+    });
+    return segment;
+  } catch {
+    return {
+      startPpq: segment.startPpq,
+      numerator: segment.numerator,
+      denominator: segment.denominator,
+    };
+  }
+}
+
+/**
+ * Validates, sorts and guarantees meter coverage from PPQ zero.
+ *
+ * The result is always a map libcantus accepts, so every caller can hand it
+ * over without guarding against a rejection.
+ */
 export function normalizeTimeSignatureMap(
   segments: readonly TimeSignatureSegment[],
 ): TimeSignatureSegment[] {
@@ -57,7 +113,7 @@ export function normalizeTimeSignatureMap(
         Number.isInteger(segment.denominator) &&
         segment.denominator >= 1,
     )
-    .map((segment) => ({ ...segment }))
+    .map((segment) => withReadableGrouping({ ...segment }))
     .sort((a, b) => a.startPpq - b.startPpq)
     .filter(
       (segment, index, sorted) =>
@@ -67,6 +123,28 @@ export function normalizeTimeSignatureMap(
     valid.unshift({ startPpq: 0, ...DEFAULT_TIME_SIGNATURE });
   }
   return valid;
+}
+
+/**
+ * Converts a project meter map into the libcantus map every meter-aware call
+ * reads.
+ *
+ * The single crossing point, and it normalizes on the way through: a raw map
+ * whose first entry starts after zero would otherwise be read as a pickup in
+ * that entry's signature rather than as 4/4 up to it.
+ *
+ * @param segments Time-signature segments in any order.
+ * @returns The equivalent libcantus meter map, always valid input.
+ */
+export function toMeterMap(segments: readonly TimeSignatureSegment[]): MeterMap {
+  return normalizeTimeSignatureMap(segments).map((segment) => ({
+    startBeat: segment.startPpq,
+    ts: {
+      numerator: segment.numerator,
+      denominator: segment.denominator,
+      ...(segment.grouping !== undefined ? { grouping: segment.grouping } : {}),
+    },
+  }));
 }
 
 /**
@@ -82,8 +160,8 @@ export function timeSignatureAt(
   segments: readonly TimeSignatureSegment[],
   ppq: number,
 ): { numerator: number; denominator: number } {
-  const segment = timeSignatureSegmentAt(segments, ppq);
-  return { numerator: segment.numerator, denominator: segment.denominator };
+  const meter = meterAt(meterQueryPpq(ppq), toMeterMap(segments));
+  return { numerator: meter.numerator, denominator: meter.denominator };
 }
 
 /** Resolves the complete meter-map segment governing an absolute PPQ position. */
@@ -186,39 +264,35 @@ export function timeSignatureRanges(
   return ranges;
 }
 
+/**
+ * Returns the bar containing a position on an already-built meter map.
+ *
+ * Every libcantus entry point revalidates the map it is given, so the walkers
+ * below build one map and reuse it rather than paying that per bar.
+ */
+function measureRangeOnMeterMap(meters: MeterMap, ppq: number): MeasureRange {
+  const position = meterQueryPpq(ppq);
+  const startPpq = barStartBeat(position, meters);
+  const meter = meterAt(position, meters);
+  // A meter change starts a new bar, so the bar it lands inside stops there
+  // instead of running to its nominal length.
+  const nextChangeStart =
+    meters.find((change) => change.startBeat > startPpq)?.startBeat ?? Number.POSITIVE_INFINITY;
+  return {
+    startPpq,
+    lengthPpq: Math.min(beatsPerBarAt(position, meters), nextChangeStart - startPpq),
+    numerator: meter.numerator,
+    denominator: meter.denominator,
+    index: barIndexAt(position, meters),
+  };
+}
+
 /** Returns the variable-meter bar containing an absolute PPQ position. */
 export function measureRangeAt(
   segments: readonly TimeSignatureSegment[],
   ppq: number,
 ): MeasureRange {
-  const normalized = normalizeTimeSignatureMap(segments);
-  const position = Math.max(0, ppq);
-  let segmentIndex = 0;
-  let measuresBefore = 0;
-  while (
-    segmentIndex + 1 < normalized.length &&
-    normalized[segmentIndex + 1].startPpq <= position
-  ) {
-    const current = normalized[segmentIndex];
-    const next = normalized[segmentIndex + 1];
-    measuresBefore += Math.max(
-      1,
-      Math.ceil((next.startPpq - current.startPpq) / meterBarLengthPpq(current) - PPQ_EPSILON),
-    );
-    segmentIndex += 1;
-  }
-  const segment = normalized[segmentIndex];
-  const segmentEnd = normalized[segmentIndex + 1]?.startPpq ?? Number.POSITIVE_INFINITY;
-  const barLength = meterBarLengthPpq(segment);
-  const localIndex = Math.floor((position - segment.startPpq) / barLength + PPQ_EPSILON);
-  const startPpq = segment.startPpq + localIndex * barLength;
-  return {
-    startPpq,
-    lengthPpq: Math.min(barLength, segmentEnd - startPpq),
-    numerator: segment.numerator,
-    denominator: segment.denominator,
-    index: measuresBefore + localIndex,
-  };
+  return measureRangeOnMeterMap(toMeterMap(segments), ppq);
 }
 
 /** Builds the shared score/compose grid, truncating a bar at a mid-bar meter change. */
@@ -228,10 +302,11 @@ export function measureGrid(
   endPpq: number,
 ): MeasureRange[] {
   if (!Number.isFinite(startPpq) || !Number.isFinite(endPpq) || endPpq <= startPpq) return [];
+  const meters = toMeterMap(segments);
   const ranges: MeasureRange[] = [];
   let cursor = startPpq;
   while (cursor < endPpq - PPQ_EPSILON) {
-    const containing = measureRangeAt(segments, cursor);
+    const containing = measureRangeOnMeterMap(meters, cursor);
     const naturalEnd = containing.startPpq + containing.lengthPpq;
     const rangeEnd = Math.min(endPpq, Math.max(cursor + PPQ_EPSILON, naturalEnd));
     ranges.push({
@@ -251,10 +326,11 @@ export function countInStartPpq(
   punchInPpq: number,
   bars: number,
 ): number {
+  const meters = toMeterMap(segments);
   let cursor = Math.max(0, punchInPpq);
   const count = Math.max(0, Math.floor(bars));
   for (let index = 0; index < count && cursor > 0; index += 1) {
-    const previous = measureRangeAt(segments, Math.max(0, cursor - 1e-6));
+    const previous = measureRangeOnMeterMap(meters, Math.max(0, cursor - 1e-6));
     cursor = Math.max(0, previous.startPpq);
   }
   return cursor;
@@ -266,10 +342,11 @@ export function advanceBarsPpq(
   startPpq: number,
   bars: number,
 ): number {
+  const meters = toMeterMap(segments);
   let cursor = Math.max(0, startPpq);
   const count = Math.max(0, Math.floor(bars));
   for (let index = 0; index < count; index += 1) {
-    const range = measureRangeAt(segments, cursor);
+    const range = measureRangeOnMeterMap(meters, cursor);
     const rangeEnd = range.startPpq + range.lengthPpq;
     cursor = rangeEnd > cursor + PPQ_EPSILON ? rangeEnd : cursor + range.lengthPpq;
   }

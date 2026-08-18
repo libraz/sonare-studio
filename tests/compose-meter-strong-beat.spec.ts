@@ -71,14 +71,35 @@ describe('strongBeatAt grid', () => {
   });
 
   it.each([
-    ['sum matches neither units nor pulses', meter(7, 8, [2, 2, 2]), 10.5],
-    ['a group length is zero', meter(5, 4, [2, 0, 3]), 15],
-    ['a group length is fractional', meter(5, 4, [2.5, 2.5]), 15],
-    ['the grouping is empty', meter(4, 4, []), 12],
-  ])('reports no strong beat at all when %s', (_label, segments, endPpq) => {
-    expect(pattern(segments, endPpq, SIXTEENTH_PPQ)).toBe(
-      '.'.repeat(Math.round(endPpq / SIXTEENTH_PPQ)),
-    );
+    [
+      'sum matches neither units nor pulses',
+      meter(7, 8, [2, 2, 2]),
+      10.5,
+      'S.............S.............S.............',
+    ],
+    [
+      'a group length is zero',
+      meter(5, 4, [2, 0, 3]),
+      15,
+      'S...................S...................S...................',
+    ],
+    [
+      'a group length is fractional',
+      meter(5, 4, [2.5, 2.5]),
+      15,
+      'S...................S...................S...................',
+    ],
+    [
+      'the grouping is empty',
+      meter(4, 4, []),
+      12,
+      'S.......S.......S.......S.......S.......S.......',
+    ],
+  ])('falls back to the bare meter when %s', (_label, segments, endPpq, expected) => {
+    // An unreadable grouping is dropped where the map is normalized, so the
+    // segment still accents its downbeat (and 4/4 its midpoint) instead of
+    // losing every accent it has.
+    expect(pattern(segments, endPpq, SIXTEENTH_PPQ)).toBe(expected);
   });
 
   it('rebases the grid at every meter change', () => {
