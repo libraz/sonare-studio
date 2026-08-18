@@ -6,7 +6,6 @@ import {
   matchModeChoiceId,
   modeMaskForChoice,
   modeOrdinalForChoice,
-  rotateModeMask,
 } from '@/components/lists/key-modes';
 import { keyScaleToKeyFifths } from '@/compose/key';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -16,26 +15,25 @@ function maskOf(intervals: number[]): number {
   return intervals.reduce((mask, interval) => mask | (1 << interval), 0);
 }
 
-describe('rotateModeMask', () => {
-  it('returns the input for a zero offset', () => {
-    expect(rotateModeMask(MAJOR_MODE_MASK, 0)).toBe(MAJOR_MODE_MASK);
-  });
-
-  it('derives the natural minor mask from the major mask', () => {
-    expect(rotateModeMask(MAJOR_MODE_MASK, 9)).toBe(maskOf([0, 2, 3, 5, 7, 8, 10]));
-  });
-
-  it('derives the dorian mask from the major mask', () => {
-    expect(rotateModeMask(MAJOR_MODE_MASK, 2)).toBe(maskOf([0, 2, 3, 5, 7, 9, 10]));
+/**
+ * Each offered mode is a name into the shared scale vocabulary, so what these
+ * pin is that the editor points at the right scale — not how the mask is
+ * derived, which is no longer the editor's arithmetic to do.
+ */
+describe('modeMaskForChoice', () => {
+  it('gives each offered mode the intervals that name it', () => {
+    expect(modeMaskForChoice('major')).toBe(MAJOR_MODE_MASK);
+    expect(modeMaskForChoice('minor')).toBe(maskOf([0, 2, 3, 5, 7, 8, 10]));
+    expect(modeMaskForChoice('dorian')).toBe(maskOf([0, 2, 3, 5, 7, 9, 10]));
+    expect(modeMaskForChoice('phrygian')).toBe(maskOf([0, 1, 3, 5, 7, 8, 10]));
+    expect(modeMaskForChoice('lydian')).toBe(maskOf([0, 2, 4, 6, 7, 9, 11]));
+    expect(modeMaskForChoice('mixolydian')).toBe(maskOf([0, 2, 4, 5, 7, 9, 10]));
+    expect(modeMaskForChoice('locrian')).toBe(maskOf([0, 1, 3, 5, 6, 8, 10]));
   });
 
   it('provides harmonic and melodic minor masks with a raised leading tone', () => {
     expect(modeMaskForChoice('harmonicMinor')).toBe(maskOf([0, 2, 3, 5, 7, 8, 11]));
     expect(modeMaskForChoice('melodicMinor')).toBe(maskOf([0, 2, 3, 5, 7, 9, 11]));
-  });
-
-  it('normalizes negative offsets', () => {
-    expect(rotateModeMask(MAJOR_MODE_MASK, -3)).toBe(rotateModeMask(MAJOR_MODE_MASK, 9));
   });
 });
 

@@ -8,22 +8,22 @@
  * provide the root/mode option lists the picker renders.
  */
 
-import type { NoteNameSystem } from '@libraz/libcantus';
+import { type NoteNameSystem, namedScaleMask, type ScaleName } from '@libraz/libcantus';
 import { pitchClassNames } from './note-names';
 
 /**
- * Diatonic modes in libsonare's `Mode` ordinal order, each with its semitone
- * intervals from the root. Major's mask is `0b101010110101`, matching the
- * `ScaleQuantizer` default.
+ * Diatonic modes in libsonare's `Mode` ordinal order, each addressed by its
+ * name in the shared scale vocabulary rather than by intervals written out
+ * here, so this picker and the key editor cannot drift on what a mode is.
  */
-const MODES: ReadonlyArray<{ name: string; intervals: ReadonlyArray<number> }> = [
-  { name: 'Major', intervals: [0, 2, 4, 5, 7, 9, 11] },
-  { name: 'Minor', intervals: [0, 2, 3, 5, 7, 8, 10] },
-  { name: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
-  { name: 'Phrygian', intervals: [0, 1, 3, 5, 7, 8, 10] },
-  { name: 'Lydian', intervals: [0, 2, 4, 6, 7, 9, 11] },
-  { name: 'Mixolydian', intervals: [0, 2, 4, 5, 7, 9, 10] },
-  { name: 'Locrian', intervals: [0, 1, 3, 5, 6, 8, 10] },
+const MODES: ReadonlyArray<{ name: string; scale: ScaleName }> = [
+  { name: 'Major', scale: 'major' },
+  { name: 'Minor', scale: 'naturalMinor' },
+  { name: 'Dorian', scale: 'dorian' },
+  { name: 'Phrygian', scale: 'phrygian' },
+  { name: 'Lydian', scale: 'lydian' },
+  { name: 'Mixolydian', scale: 'mixolydian' },
+  { name: 'Locrian', scale: 'locrian' },
 ];
 
 /**
@@ -34,9 +34,8 @@ const MODES: ReadonlyArray<{ name: string; intervals: ReadonlyArray<number> }> =
  * @returns The 12-bit mask consumed by `scaleQuantizeMidi`.
  */
 export function modeMaskFor(mode: number): number {
-  const intervals = (MODES[mode] ?? MODES[0]).intervals;
-  let mask = 0;
-  for (const interval of intervals) mask |= 1 << interval;
+  const mask = namedScaleMask((MODES[mode] ?? MODES[0]).scale);
+  if (mask === undefined) throw new RangeError(`Unknown scale for mode ordinal ${mode}`);
   return mask;
 }
 
