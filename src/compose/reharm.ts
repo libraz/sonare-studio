@@ -16,15 +16,20 @@
 
 import {
   chordPitchClasses,
+  classifyMelodyTones,
   type HarmonicFunction,
   type KeyScale,
   modalInterchangePalette,
   negativeHarmonyMirror,
   type SubstitutionType,
   substituteChord,
+  type TimeSignature,
 } from '@libraz/libcantus';
 import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
+
+/** Meter assumed when the caller names none, matching the library's own default. */
+const DEFAULT_MELODY_METER: TimeSignature = { numerator: 4, denominator: 4 };
 
 /** Where a reharmonization candidate comes from. */
 export type ReharmKind = SubstitutionType | 'borrowed' | 'negative';
@@ -38,24 +43,47 @@ export interface RegionNote {
 
 /** Options for selecting the structural melody tones that constrain a palette. */
 export interface MelodyPitchClassOptions {
-  /** Returns whether a note onset is metrically strong in the project timeline. */
-  isStrongBeat?: (ppq: number) => boolean;
+  /** Meter governing the region, used to weight metric accents; 4/4 by default. */
+  ts?: TimeSignature;
+}
+
+/** The top voice of an arrangement: the highest note at each distinct onset. */
+function topVoiceLine(
+  notes: ReadonlyArray<RegionNote>,
+  epsilon: number,
+): Array<RegionNote & { pc: number }> {
+  const sorted = [...notes].sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch);
+  const line: Array<RegionNote & { pc: number }> = [];
+  let groupStart = Number.NEGATIVE_INFINITY;
+  for (const note of sorted) {
+    if (note.startPpq - groupStart <= epsilon) continue;
+    line.push({ ...note, pc: ((note.pitch % 12) + 12) % 12 });
+    groupStart = note.startPpq;
+  }
+  return line;
 }
 
 /**
  * Structural pitch classes of the melody (top voice) sounding within a chord
- * region, for melody-preserving reharmonization. A note sustained into the
- * region and notes beginning on strong beats are structural; if no meter is
- * available, or neither is present, the one or two longest top-voice notes are
- * used. This deliberately excludes weak, short passing tones from the hard
- * chord-tone constraint.
+ * region, for melody-preserving reharmonization.
+ *
+ * Which notes are structural is read rather than guessed at: the whole top
+ * voice is classified into its melodic figures — suspensions, passing and
+ * neighbour tones, anticipations, appoggiaturas, escapes — and the ornamental
+ * ones are dropped, so a weak short passing tone never becomes a hard chord-tone
+ * constraint. The line is classified whole and then cut to the region, because a
+ * figure is recognized from the notes framing it: classifying the region alone
+ * would read its first and last notes as structural whatever they are.
+ *
+ * A note sustained into the region from before it is always structural — it is
+ * sounding when the chord arrives, whatever its role in the line.
  *
  * @param notes Arrangement notes at absolute timeline PPQ (percussion excluded
  *   by the caller).
  * @param startPpq Region start (inclusive).
  * @param endPpq Region end (exclusive).
  * @param epsilon Onset-grouping tolerance in PPQ (default 1e-6).
- * @param options Meter-aware structural-note selection.
+ * @param options Meter governing the region.
  */
 export function melodyPitchClassesInRegion(
   notes: ReadonlyArray<RegionNote>,
@@ -64,34 +92,43 @@ export function melodyPitchClassesInRegion(
   epsilon = 1e-6,
   options: MelodyPitchClassOptions = {},
 ): number[] {
-  const overlapping = notes
-    .filter((note) => note.startPpq < endPpq && note.startPpq + note.durationPpq > startPpq)
-    .sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch);
-  const melodyNotes: Array<{ pc: number; startPpq: number; overlapPpq: number }> = [];
-  let groupStart = Number.NEGATIVE_INFINITY;
-  for (const note of overlapping) {
-    if (note.startPpq - groupStart > epsilon) {
-      melodyNotes.push({
-        pc: ((note.pitch % 12) + 12) % 12,
-        startPpq: note.startPpq,
-        overlapPpq:
-          Math.min(note.startPpq + note.durationPpq, endPpq) - Math.max(note.startPpq, startPpq),
-      });
-      groupStart = note.startPpq;
-    }
-  }
-  const structural = melodyNotes.filter(
-    (note) =>
-      note.startPpq < startPpq ||
-      options.isStrongBeat?.(Math.max(startPpq, note.startPpq)) === true,
+  const line = topVoiceLine(notes, epsilon);
+  if (line.length === 0) return [];
+  const roles = classifyMelodyTones(
+    line.map((note) => ({
+      pitch: note.pitch,
+      startBeat: note.startPpq,
+      durationBeat: note.durationPpq,
+    })),
+    options.ts ?? DEFAULT_MELODY_METER,
   );
+  const inRegion = line.flatMap((note, index) =>
+    note.startPpq < endPpq && note.startPpq + note.durationPpq > startPpq
+      ? [{ note, ornamental: roles[index]?.ornamental === true }]
+      : [],
+  );
+  if (inRegion.length === 0) return [];
+  const structural = inRegion.filter(
+    (entry) => entry.note.startPpq < startPpq || !entry.ornamental,
+  );
+  // A region made entirely of ornament still has to constrain something; the
+  // longest note in it is the one the ear holds on to.
   const selected =
     structural.length > 0
       ? structural
-      : [...melodyNotes]
-          .sort((a, b) => b.overlapPpq - a.overlapPpq || a.startPpq - b.startPpq)
+      : [...inRegion]
+          .sort(
+            (a, b) =>
+              overlapPpq(b.note, startPpq, endPpq) - overlapPpq(a.note, startPpq, endPpq) ||
+              a.note.startPpq - b.note.startPpq,
+          )
           .slice(0, 2);
-  return [...new Set(selected.map((note) => note.pc))].sort((a, b) => a - b);
+  return [...new Set(selected.map((entry) => entry.note.pc))].sort((a, b) => a - b);
+}
+
+/** How much of a note sounds inside a region. */
+function overlapPpq(note: RegionNote, startPpq: number, endPpq: number): number {
+  return Math.min(note.startPpq + note.durationPpq, endPpq) - Math.max(note.startPpq, startPpq);
 }
 
 /** One reharmonization candidate placed over a chord region. */

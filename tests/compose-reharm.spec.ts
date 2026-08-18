@@ -73,13 +73,22 @@ describe('melodyPitchClassesInRegion', () => {
     expect(melodyPitchClassesInRegion(notes, 0, 4)).toEqual([0]);
   });
 
-  it('uses strong-beat melody notes rather than weak passing tones as constraints', () => {
-    // E–F–G–A over one 4/4 chord: F and A are weak-beat passing tones, while
-    // the downbeat E and beat-three G are the structural melody.
-    const notes = [note(64, 0, 1), note(65, 1, 1), note(67, 2, 1), note(69, 3, 1)];
-    expect(
-      melodyPitchClassesInRegion(notes, 0, 4, 1e-6, { isStrongBeat: (ppq) => ppq % 2 === 0 }),
-    ).toEqual([4, 7]);
+  /**
+   * A figure is recognized from the notes framing it, so the line is read whole
+   * and then cut to the region. The melody here runs on past the chord, as a
+   * melody does: E-F-G-A-B, where F and A step through on weak beats between
+   * the notes that carry the line.
+   */
+  it('drops weak passing tones rather than constraining the harmony to them', () => {
+    const notes = [note(64, 0, 1), note(65, 1, 1), note(67, 2, 1), note(69, 3, 1), note(71, 4, 4)];
+    expect(melodyPitchClassesInRegion(notes, 0, 4)).toEqual([4, 7]);
+  });
+
+  // A chord region that holds nothing but ornament still has to constrain
+  // something, so the note the ear holds longest stands in.
+  it('falls back to the longest note when the region is all ornament', () => {
+    const notes = [note(60, 0, 4), note(62, 4, 3), note(63, 7, 1), note(64, 8, 4)];
+    expect(melodyPitchClassesInRegion(notes, 4, 8)).toEqual([2]);
   });
 });
 

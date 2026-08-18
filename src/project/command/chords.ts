@@ -1,6 +1,6 @@
 import { estimateChordsFromTracks } from '@/compose/estimate-chords';
 import { effectiveKeyScale } from '@/compose/key';
-import { strongBeatAt } from '@/compose/meter';
+import { timeSignatureAtPpq } from '@/compose/meter';
 import { melodyPitchClassesInRegion } from '@/compose/reharm';
 import {
   harmonicTracksOnly,
@@ -166,7 +166,7 @@ export function arrangementMelodyPitchClasses(startPpq: number, endPpq: number):
         ? projectMidiNoteOccurrences(active)
         : [];
   return melodyPitchClassesInRegion(notes, startPpq, endPpq, 1e-6, {
-    isStrongBeat: (ppq) => strongBeatAt(store.timeSignatures, ppq),
+    ts: timeSignatureAtPpq(store.timeSignatures, startPpq),
   });
 }
 
