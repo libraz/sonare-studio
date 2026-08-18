@@ -120,6 +120,48 @@ function pack(
   );
 }
 
+/**
+ * Per-event PPQ shift for a MIDI-FX bake's humanize and quantize stages.
+ *
+ * Timing is decided per note, not per event: the real engine moves a note as a
+ * unit, so its note-off inherits the note-on's shift and the duration survives.
+ * Shifting the two ends independently would let a quantize collapse a short
+ * note to zero length and silently drop it. Note-ons are paired with note-offs
+ * FIFO per (channel, pitch), matching the editor's own pairing.
+ */
+function midiFxTimeShifts(
+  events: ReadonlyArray<FakeEvent>,
+  humanizePpq: number,
+  quantizePpq: number,
+  quantizeStrength: number,
+): number[] {
+  const shifts = new Array<number>(events.length).fill(0);
+  if (humanizePpq <= 0 && !(quantizePpq > 0 && quantizeStrength > 0)) return shifts;
+  const pending = new Map<string, number[]>();
+  events.forEach((event, index) => {
+    const w = event.data0 >>> 0;
+    const status = (w >>> 20) & 0xf;
+    if (status !== 0x8 && status !== 0x9) return;
+    const key = `${(w >>> 16) & 0xf}:${(w >>> 8) & 0x7f}`;
+    if (status === 0x8) {
+      const onIndex = pending.get(key)?.shift();
+      if (onIndex !== undefined) shifts[index] = shifts[onIndex];
+      return;
+    }
+    let ppq = event.ppq;
+    if (humanizePpq > 0) ppq += ((index % 3) - 1) * humanizePpq * 0.5;
+    if (quantizePpq > 0 && quantizeStrength > 0) {
+      const target = Math.round(ppq / quantizePpq) * quantizePpq;
+      ppq += (target - ppq) * quantizeStrength;
+    }
+    shifts[index] = ppq - event.ppq;
+    const queue = pending.get(key) ?? [];
+    queue.push(index);
+    pending.set(key, queue);
+  });
+  return shifts;
+}
+
 function trackKindOrdinal(kind: unknown): number {
   if (kind === 'audio' || kind === 0) return 0;
   if (kind === 'aux' || kind === 2) return 2;
@@ -642,9 +684,23 @@ export class FakeProject {
    * engine's verified flat-config semantics (transpose, grid quantize, velocity
    * scale/offset/gamma, bounded humanize, chord harmonize) as one undoable
    * edit. Humanize uses a deterministic index-based jitter so tests stay stable.
+   *
+   * Both call forms of the real binding are accepted. The request form with
+   * `withSourceIndex` answers with per-output-event provenance in the input
+   * event's index space, as measured against the real engine: every event a
+   * chord fan-out produces reports the same origin, and the transform's own
+   * reordering is reflected in the order of the returned array.
    */
-  bakeMidiFx(clipId: number, configJson: string): void {
-    const cfg = JSON.parse(configJson) as Record<string, number | number[]>;
+  bakeMidiFx(
+    clipIdOrRequest: number | { clipId: number; configJson: string; withSourceIndex?: boolean },
+    configJsonArg?: string,
+  ): { sourceIndex?: Int32Array } {
+    const request =
+      typeof clipIdOrRequest === 'number'
+        ? { clipId: clipIdOrRequest, configJson: configJsonArg ?? '{}', withSourceIndex: false }
+        : clipIdOrRequest;
+    const clipId = request.clipId;
+    const cfg = JSON.parse(request.configJson) as Record<string, number | number[]>;
     const transpose = typeof cfg.transpose_semitones === 'number' ? cfg.transpose_semitones : 0;
     const qPpq = typeof cfg.quantize_ppq === 'number' ? cfg.quantize_ppq : 0;
     const qStr = typeof cfg.quantize_strength === 'number' ? cfg.quantize_strength : 0;
@@ -655,10 +711,11 @@ export class FakeProject {
     const hVel = typeof cfg.humanize_velocity === 'number' ? cfg.humanize_velocity : 0;
     const chord = Array.isArray(cfg.chord_intervals) ? cfg.chord_intervals : null;
     const clampU7 = (v: number) => Math.min(127, Math.max(0, Math.round(v)));
+    const out: Array<{ event: FakeEvent; source: number }> = [];
     this.edit(() => {
       this.requireClip(clipId);
       const source = this.state.midi.get(clipId) ?? [];
-      const out: FakeEvent[] = [];
+      const timeShift = midiFxTimeShifts(source, hPpq, qPpq, qStr);
       source.forEach((event, index) => {
         const w = event.data0 >>> 0;
         const group = (w >>> 24) & 0xf;
@@ -668,7 +725,7 @@ export class FakeProject {
         let value = w & 0x7f;
         const isNoteOn = status === 0x9;
         const isNoteOff = status === 0x8;
-        let ppq = event.ppq;
+        const ppq = event.ppq + (timeShift[index] ?? 0);
         if ((isNoteOn || isNoteOff) && transpose !== 0) note = clampU7(note + transpose);
         if (isNoteOn) {
           if (vScale !== 1) value = clampU7(value * vScale);
@@ -676,20 +733,40 @@ export class FakeProject {
           if (vGamma !== 1) value = clampU7(127 * (value / 127) ** vGamma);
           if (hVel > 0) value = clampU7(value + ((index % 3) - 1) * hVel);
         }
-        if ((isNoteOn || isNoteOff) && hPpq > 0) ppq += ((index % 3) - 1) * hPpq * 0.5;
-        if ((isNoteOn || isNoteOff) && qPpq > 0 && qStr > 0) {
-          const target = Math.round(ppq / qPpq) * qPpq;
-          ppq += (target - ppq) * qStr;
-        }
         const intervals = (isNoteOn || isNoteOff) && chord && chord.length > 0 ? chord : [0];
         for (const interval of intervals) {
           const n = isNoteOn || isNoteOff ? clampU7(note + interval) : note;
-          out.push({ ppq, data0: pack(group, status, channel, n, value), data1: event.data1 });
+          out.push({
+            event: { ppq, data0: pack(group, status, channel, n, value), data1: event.data1 },
+            source: index,
+          });
         }
       });
-      out.sort((a, b) => a.ppq - b.ppq);
-      this.state.midi.set(clipId, out);
+      out.sort((a, b) => a.event.ppq - b.event.ppq);
+      this.state.midi.set(
+        clipId,
+        out.map((entry) => entry.event),
+      );
     });
+    return request.withSourceIndex === true
+      ? { sourceIndex: Int32Array.from(out.map((entry) => entry.source)) }
+      : {};
+  }
+
+  /**
+   * Counts the events {@link bakeMidiFx} would produce without mutating the
+   * project, by running the same fan-out arithmetic the bake uses.
+   */
+  previewMidiFxCount(request: { clipId: number; configJson: string }): number {
+    const cfg = JSON.parse(request.configJson) as Record<string, number | number[]>;
+    const chord = Array.isArray(cfg.chord_intervals) ? cfg.chord_intervals : null;
+    const voices = chord && chord.length > 0 ? chord.length : 1;
+    const source = this.state.midi.get(request.clipId) ?? [];
+    return source.reduce((total, event) => {
+      const status = ((event.data0 >>> 0) >>> 20) & 0xf;
+      const isNote = status === 0x8 || status === 0x9;
+      return total + (isNote ? voices : 1);
+    }, 0);
   }
 
   setMarker(markerId: number, ppq: number, name: string): number {
@@ -1265,6 +1342,53 @@ export function fakeMeteringTruePeakDb(
 }
 
 /**
+ * Mirrors meteringDetectClipping: contiguous runs of samples at or above the
+ * threshold, with the same defaults as the real detector (0.999 linear, runs
+ * of one sample and up) as measured against the shipped wasm.
+ */
+export function fakeMeteringDetectClipping(
+  samples: Float32Array,
+  _sampleRate = 48000,
+  options: { threshold?: number; minRegionSamples?: number } = {},
+): {
+  clippedSamples: number;
+  clippingRatio: number;
+  maxClippedPeak: number;
+  regions: Array<{ startSample: number; endSample: number; length: number; peak: number }>;
+} {
+  const threshold = options.threshold ?? 0.999;
+  const minRegionSamples = options.minRegionSamples ?? 1;
+  const regions: Array<{ startSample: number; endSample: number; length: number; peak: number }> =
+    [];
+  let start = -1;
+  let peak = 0;
+  const close = (end: number): void => {
+    if (start >= 0 && end - start >= minRegionSamples) {
+      regions.push({ startSample: start, endSample: end, length: end - start, peak });
+    }
+    start = -1;
+    peak = 0;
+  };
+  for (let i = 0; i < samples.length; i += 1) {
+    const magnitude = Math.abs(samples[i]);
+    if (magnitude >= threshold) {
+      if (start < 0) start = i;
+      if (magnitude > peak) peak = magnitude;
+    } else {
+      close(i);
+    }
+  }
+  close(samples.length);
+  const clippedSamples = regions.reduce((total, region) => total + region.length, 0);
+  return {
+    clippedSamples,
+    clippingRatio: samples.length > 0 ? clippedSamples / samples.length : 0,
+    maxClippedPeak: regions.reduce((max, region) => Math.max(max, region.peak), 0),
+    regions,
+  };
+}
+
+/**
  * Mirrors the lufs() result shape with a deterministic energy-based estimate
  * (no K-weighting/gating; integratedLufs = -0.691 + 10*log10(mean square)).
  */
@@ -1441,6 +1565,7 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     masterAudioStereo: fakeMasterAudioStereo,
     meteringPeakDb: fakeMeteringPeakDb,
     meteringTruePeakDb: fakeMeteringTruePeakDb,
+    meteringDetectClipping: fakeMeteringDetectClipping,
     lufs: fakeLufs,
     lufsInterleaved: fakeLufsInterleaved,
   } as unknown as typeof import('@/wasm/index.js');

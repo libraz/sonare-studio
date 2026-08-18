@@ -70,6 +70,7 @@ import {
   buildClipMirror,
   buildTrackMirror,
   type NoteIdHints,
+  type NoteProvenanceHints,
   refreshTempoMeter,
   type SerializedProjectDoc,
 } from './store-refresh';
@@ -286,7 +287,7 @@ export function notesToProjectEvents(notes: ReadonlyArray<RawNote>): ProjectMidi
 }
 
 /** Per-clip note id hints accepted by {@link useProjectStore refresh}. */
-export type { NoteIdHints };
+export type { NoteIdHints, NoteProvenanceHints };
 
 /**
  * Pinia store mirroring the wasm Project for the arrangement and the
@@ -509,6 +510,10 @@ export const useProjectStore = defineStore('project', () => {
    * path), or a Map keyed by clip id for multi-clip restores. Clips without
    * hints fall back to their current mirror notes. Notes with no match
    * receive fresh ids; the selection is pruned to surviving ids.
+   *
+   * A transform that rewrites content defeats content matching, so a clip the
+   * engine baked passes {@link NoteProvenanceHints} instead and the ids follow
+   * the engine's own per-event origins.
    *
    * The Project keeps a chord's quality ordinal but not the intrinsic tones the
    * app-level symbol declares silent, so the chord read-back is seeded the same

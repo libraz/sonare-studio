@@ -2,6 +2,7 @@ import { cloneCcLanes } from './midi-cc';
 import {
   noteKey,
   pairEventsIntoNotes,
+  pairEventsIntoNotesIndexed,
   type RawNote,
   type SerializedMidiEvent,
 } from './midi-events';
@@ -131,10 +132,63 @@ function assignNoteIds(
   });
 }
 
+/**
+ * Id hints for a clip the engine rewrote destructively, expressed as the
+ * engine's own event provenance instead of note content.
+ *
+ * Content keys cannot carry an id across a transform that changes the content —
+ * that is exactly what a MIDI-FX bake does. The engine answers with, per output
+ * event, the input event it derives from, so the mapping is authoritative even
+ * when the transform reorders notes (quantize) or fans one input out into
+ * several outputs (harmonize, arpeggiator).
+ */
+export interface NoteProvenanceHints {
+  /** Clip the transform rewrote; other clips fall back to content hints. */
+  clipId: number;
+  /** Per output event, the index of the input event it derives from (-1 = none). */
+  sourceIndex: ArrayLike<number>;
+  /** Editor note id per input note-on event index. */
+  idByOnEventIndex: ReadonlyMap<number, number>;
+}
+
+/**
+ * Assigns editor ids from engine provenance: the output note opened by the
+ * first output event claiming an input event is that input's note and keeps
+ * its id; the remaining fan-out outputs are new notes with fresh ids.
+ *
+ * @param events Serialized events of the rewritten clip.
+ * @param hints Provenance reported by the transform.
+ * @param allocateNoteId Allocates a fresh editor note id for new notes.
+ */
+function assignNoteIdsByProvenance(
+  events: ReadonlyArray<SerializedMidiEvent>,
+  hints: NoteProvenanceHints,
+  allocateNoteId: () => number,
+): EditorNote[] {
+  const recovered = pairEventsIntoNotesIndexed(events);
+  // "First output" is defined in event order, which is not the note order the
+  // pairing returns, so the claims are resolved in a separate ordered pass.
+  const inherited = new Map<number, number>();
+  const claimed = new Set<number>();
+  for (const { onEventIndex } of [...recovered].sort((a, b) => a.onEventIndex - b.onEventIndex)) {
+    const source = hints.sourceIndex[onEventIndex] ?? -1;
+    if (source < 0 || claimed.has(source)) continue;
+    const id = hints.idByOnEventIndex.get(source);
+    if (id === undefined) continue;
+    claimed.add(source);
+    inherited.set(onEventIndex, id);
+  }
+  return recovered.map(({ note, onEventIndex }) => ({
+    id: inherited.get(onEventIndex) ?? allocateNoteId(),
+    ...note,
+  }));
+}
+
 /** Per-clip note id hints accepted by {@link refresh}. */
 export type NoteIdHints =
   | ReadonlyArray<EditorNote>
-  | ReadonlyMap<number, ReadonlyArray<EditorNote>>;
+  | ReadonlyMap<number, ReadonlyArray<EditorNote>>
+  | NoteProvenanceHints;
 
 /** Tempo and meter mirror values parsed from the Project document. */
 export interface TempoMeterMirror {
@@ -230,7 +284,8 @@ export function buildTrackMirror(
  * @param previousClips Current clip mirror (carries forward app metadata).
  * @param trackOrder Track display order from {@link buildTrackMirror}.
  * @param activeClipId Id of the active clip, for the array-hint path.
- * @param idHints Id-annotated notes expected to match the Project content.
+ * @param idHints Id-annotated notes expected to match the Project content, or
+ *   {@link NoteProvenanceHints} for a clip an engine transform rewrote.
  * @param allocateNoteId Allocates fresh editor note ids for unmatched notes.
  */
 export function buildClipMirror(
@@ -243,6 +298,8 @@ export function buildClipMirror(
 ): EditorClip[] {
   const hintMap = idHints instanceof Map ? idHints : null;
   const activeHints = Array.isArray(idHints) ? idHints : null;
+  const provenance =
+    idHints !== undefined && !hintMap && !activeHints ? (idHints as NoteProvenanceHints) : null;
   const previousClipById = new Map(previousClips.map((clip) => [clip.id, clip]));
   const docClips = Array.isArray(doc.clips) ? doc.clips : [];
   const nextClips: EditorClip[] = docClips
@@ -266,7 +323,10 @@ export function buildClipMirror(
         gain: serialized.gain ?? 1,
         loopEnabled: serialized.loop_mode === 1,
         loopLengthPpq: serialized.loop_length_ppq ?? 0,
-        notes: assignNoteIds(pairEventsIntoNotes(events), hints, allocateNoteId),
+        notes:
+          provenance?.clipId === serialized.id
+            ? assignNoteIdsByProvenance(events, provenance, allocateNoteId)
+            : assignNoteIds(pairEventsIntoNotes(events), hints, allocateNoteId),
       };
       // Clip kind and asset reference are app-level mirror metadata (the
       // Project document does not expose them); fade lengths prefer the

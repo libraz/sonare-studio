@@ -1,3 +1,5 @@
+import type { Project } from '@/wasm/index.js';
+import { pairEventsIntoNotesIndexed, type SerializedMidiEvent } from '../midi-events';
 import {
   isMidiFxNoop,
   type MidiFxConfig,
@@ -5,9 +7,37 @@ import {
   sanitizeMidiFxConfig,
 } from '../midi-fx';
 import { getProject, useProjectStore } from '../store';
-import type { EditorTrack } from '../types';
+import type { NoteProvenanceHints, SerializedProjectDoc } from '../store-refresh';
+import type { EditorNote, EditorTrack } from '../types';
 import { execute } from './history';
 import { requireEditableClip, requireEditableTrack } from './utils';
+
+/**
+ * Maps each of a clip's stored note-on events to the editor id the mirror
+ * currently gives that note, so the ids can be carried across a bake.
+ *
+ * The index space is the Project's own event array: it holds non-note events
+ * too and is in storage rather than sorted order, so it has to be read back
+ * from the document rather than rebuilt from the mirror. Returns null when the
+ * clip's events and its mirror notes disagree, which leaves the caller on the
+ * content-key path instead of guessing a correspondence.
+ */
+function captureNoteProvenance(
+  project: Project,
+  clipId: number,
+  notes: ReadonlyArray<EditorNote>,
+): Map<number, number> | null {
+  const doc = JSON.parse(project.toJson()) as SerializedProjectDoc;
+  const stored = doc.midi_content?.[String(clipId)];
+  const events = Array.isArray(stored) ? (stored as SerializedMidiEvent[]) : [];
+  const recovered = pairEventsIntoNotesIndexed(events);
+  if (recovered.length !== notes.length) return null;
+  const byOnEventIndex = new Map<number, number>();
+  recovered.forEach((entry, index) => {
+    byOnEventIndex.set(entry.onEventIndex, notes[index].id);
+  });
+  return byOnEventIndex;
+}
 
 /**
  * Bakes a MIDI-FX transform into a clip's stored notes as one undoable edit.
@@ -15,6 +45,11 @@ import { requireEditableClip, requireEditableTrack } from './utils';
  * timing/velocity humanize and chord harmonize destructively; the result is
  * read back into the mirror so it plays back (and bounces) like any edit. A
  * no-op transform (every field at its identity value) is skipped silently.
+ *
+ * The bake is asked for per-event provenance so a note keeps its editor id —
+ * and with it the piano-roll selection — across the rewrite. Harmonize and
+ * arpeggiator fan-out give every generated voice the same origin, so only the
+ * first output of each input stays the original note; the rest are new.
  *
  * @param clipId Target MIDI clip id.
  * @param config The transform to apply (sanitized internally).
@@ -30,9 +65,17 @@ export function bakeClipMidiFx(clipId: number, config: MidiFxConfig): boolean {
   const json = midiFxConfigJson(sanitizeMidiFxConfig(config));
   if (json === null) return false;
   const project = getProject();
+  const idByOnEventIndex = captureNoteProvenance(project, clipId, clip.notes);
   execute(1, () => {
-    project.bakeMidiFx(clipId, json);
-    store.refresh();
+    const result = project.bakeMidiFx({
+      clipId,
+      configJson: json,
+      withSourceIndex: idByOnEventIndex !== null,
+    });
+    const sourceIndex = result?.sourceIndex;
+    const hints: NoteProvenanceHints | undefined =
+      idByOnEventIndex && sourceIndex ? { clipId, sourceIndex, idByOnEventIndex } : undefined;
+    store.refresh(hints);
   });
   return true;
 }

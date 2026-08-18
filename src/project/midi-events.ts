@@ -36,6 +36,18 @@ export interface NoteBoundaryEvent {
 export type RawNote = Omit<EditorNote, 'id'>;
 
 /**
+ * A recovered note tagged with the position of the event that opened it in the
+ * source event array. The engine's MIDI-FX provenance is expressed in that
+ * index space, so carrying it is what lets a note keep its editor id across a
+ * destructive bake.
+ */
+export interface IndexedRawNote {
+  note: RawNote;
+  /** Index of the note-on event within the array the note was recovered from. */
+  onEventIndex: number;
+}
+
+/**
  * Decodes a packed UMP MIDI 1.0 channel-voice word into a note boundary.
  *
  * @param ppq Event position in PPQ.
@@ -76,12 +88,29 @@ function decodeNoteEvent(ppq: number, data0: number): NoteBoundaryEvent | null {
  * @returns Recovered notes sorted by start position.
  */
 export function pairEventsIntoNotes(events: ReadonlyArray<SerializedMidiEvent>): RawNote[] {
-  const decoded: NoteBoundaryEvent[] = [];
-  for (const event of events) {
+  return pairEventsIntoNotesIndexed(events).map((entry) => entry.note);
+}
+
+/**
+ * {@link pairEventsIntoNotes} keeping each note's note-on event index.
+ *
+ * Non-note events (program change, CC, ...) occupy positions in the event
+ * array too, and the array is in the Project's own storage order rather than a
+ * sorted one, so the index must come from the array itself — it cannot be
+ * reconstructed from the recovered notes.
+ *
+ * @param events Serialized events from the Project JSON document.
+ * @returns Recovered notes with their opening event index, sorted by start.
+ */
+export function pairEventsIntoNotesIndexed(
+  events: ReadonlyArray<SerializedMidiEvent>,
+): IndexedRawNote[] {
+  const decoded: IndexedBoundary[] = [];
+  events.forEach((event, index) => {
     const note = decodeNoteEvent(event.ppq, event.data0);
-    if (note) decoded.push(note);
-  }
-  return pairNoteBoundariesIntoNotes(decoded);
+    if (note) decoded.push({ ...note, index });
+  });
+  return pairIndexedBoundaries(decoded);
 }
 
 /**
@@ -98,6 +127,21 @@ export function pairEventsIntoNotes(events: ReadonlyArray<SerializedMidiEvent>):
 export function pairNoteBoundariesIntoNotes(
   boundaries: ReadonlyArray<NoteBoundaryEvent>,
 ): RawNote[] {
+  return pairIndexedBoundaries(boundaries.map((boundary, index) => ({ ...boundary, index }))).map(
+    (entry) => entry.note,
+  );
+}
+
+/** A note boundary tagged with its position in the array it came from. */
+interface IndexedBoundary extends NoteBoundaryEvent {
+  index: number;
+}
+
+/**
+ * Pairing core shared by the serialized-event and live-capture entry points.
+ * Each recovered note carries the index of the boundary that opened it.
+ */
+function pairIndexedBoundaries(boundaries: ReadonlyArray<IndexedBoundary>): IndexedRawNote[] {
   const decoded = boundaries.slice();
   decoded.sort(
     (a, b) =>
@@ -106,13 +150,13 @@ export function pairNoteBoundariesIntoNotes(
       a.pitch - b.pitch ||
       a.channel - b.channel,
   );
-  const pending = new Map<string, Array<{ startPpq: number; velocity: number }>>();
-  const out: RawNote[] = [];
+  const pending = new Map<string, Array<{ startPpq: number; velocity: number; index: number }>>();
+  const out: IndexedRawNote[] = [];
   for (const event of decoded) {
     const key = `${event.channel}:${event.pitch}`;
     if (event.kind === 'on') {
       const queue = pending.get(key) ?? [];
-      queue.push({ startPpq: event.ppq, velocity: event.velocity });
+      queue.push({ startPpq: event.ppq, velocity: event.velocity, index: event.index });
       pending.set(key, queue);
       continue;
     }
@@ -126,9 +170,14 @@ export function pairNoteBoundariesIntoNotes(
       channel: event.channel,
     };
     if (event.velocity > 0) note.offVelocity = event.velocity;
-    out.push(note);
+    out.push({ note, onEventIndex: on.index });
   }
-  out.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
+  out.sort(
+    (a, b) =>
+      a.note.startPpq - b.note.startPpq ||
+      a.note.pitch - b.note.pitch ||
+      a.note.channel - b.note.channel,
+  );
   return out;
 }
 
