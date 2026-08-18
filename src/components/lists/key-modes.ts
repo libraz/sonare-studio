@@ -4,8 +4,9 @@
  * the root is in the scale). Pure module (no DOM, no framework imports).
  */
 
+import type { NoteNameSystem } from '@libraz/libcantus';
 import { keyScaleToKeyFifths, scaleHighlightToKeyScale } from '@/compose/key';
-import { PITCH_CLASS_NAMES } from '@/lib/pitch';
+import { PITCH_CLASS_NAMES, pitchClassNames } from '@/lib/pitch';
 import type { ScaleHighlightConfig } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -128,16 +129,22 @@ export function keyFifthsForScaleHighlight(config: ScaleHighlightConfig): number
 /**
  * Builds a display label such as "C Major (Ionian)" or "A Minor (Aeolian)".
  *
+ * The mode word stays in the UI language while the tonic follows the
+ * note-name system, since the two are separate preferences.
+ *
  * @param rootPc Root pitch class (0-11, C = 0).
  * @param modeId Mode id, or null for a non-diatonic (custom) mask.
+ * @param labels Localized mode names and the custom-scale fallback.
+ * @param system Note-name system for the tonic; English by default.
  * @returns The label string.
  */
 export function keyLabel(
   rootPc: number,
   modeId: string | null,
   labels: Readonly<{ modes: Readonly<Record<string, string>>; customScale: string }>,
+  system: NoteNameSystem = 'english',
 ): string {
-  const root = PITCH_CLASS_NAMES[((rootPc % 12) + 12) % 12];
+  const root = pitchClassNames(system)[((rootPc % 12) + 12) % 12];
   const mode = KEY_MODE_CHOICES.find((c) => c.id === modeId);
   return `${root} ${mode ? (labels.modes[mode.id] ?? mode.id) : labels.customScale}`;
 }

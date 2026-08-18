@@ -8,7 +8,8 @@
  * provide the root/mode option lists the picker renders.
  */
 
-import { PITCH_CLASS_NAMES } from './note-names';
+import type { NoteNameSystem } from '@libraz/libcantus';
+import { pitchClassNames } from './note-names';
 
 /**
  * Diatonic modes in libsonare's `Mode` ordinal order, each with its semitone
@@ -39,18 +40,33 @@ export function modeMaskFor(mode: number): number {
   return mask;
 }
 
-/** Root-note options (`C` … `B`) keyed by pitch class for the scale picker. */
-export const ROOT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = PITCH_CLASS_NAMES.map(
-  (name, pc) => ({ value: String(pc), label: name }),
-);
+/**
+ * Root-note options (`C` … `B`) keyed by pitch class for the scale picker.
+ *
+ * A function rather than a constant so the picker can be rebuilt when the
+ * note-name system changes.
+ *
+ * @param system - Note-name system; English by default.
+ */
+export function rootOptions(
+  system: NoteNameSystem = 'english',
+): ReadonlyArray<{ value: string; label: string }> {
+  return pitchClassNames(system).map((name, pc) => ({ value: String(pc), label: name }));
+}
 
 /** Mode options keyed by `Mode` ordinal for the scale picker. */
 export const MODE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = MODES.map(
   (mode, ordinal) => ({ value: String(ordinal), label: mode.name }),
 );
 
-/** Display name of a scale, e.g. `C Major`, `A Minor`. */
-export function scaleName(root: number, mode: number): string {
+/**
+ * Display name of a scale, e.g. `C Major`, `A Minor`.
+ *
+ * @param root - Root pitch class.
+ * @param mode - `Mode` ordinal.
+ * @param system - Note-name system for the root; English by default.
+ */
+export function scaleName(root: number, mode: number, system: NoteNameSystem = 'english'): string {
   const pc = ((root % 12) + 12) % 12;
-  return `${PITCH_CLASS_NAMES[pc]} ${(MODES[mode] ?? MODES[0]).name}`;
+  return `${pitchClassNames(system)[pc]} ${(MODES[mode] ?? MODES[0]).name}`;
 }

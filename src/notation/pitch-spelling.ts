@@ -15,8 +15,15 @@
  * because the reading of one chromatic tone depends on the notes around it.
  */
 
-import { isLibcantusError, isScaleTone, spellLine, spellPitchClass } from '@libraz/libcantus';
+import {
+  isLibcantusError,
+  isScaleTone,
+  type NoteNameSystem,
+  spellLine,
+  spellPitchClass,
+} from '@libraz/libcantus';
 import { keyFifthsToSpelledKey } from '@/compose/key';
+import { formatSpelledPitch } from '@/lib/pitch';
 import type { Key, Mode } from '@/wasm/index.js';
 
 /** Diatonic step letter (MusicXML `<step>`). */
@@ -360,9 +367,24 @@ export function spellChordPitchClass(
   return (degree === 6 ? SHARP_SPELLINGS : FLAT_SPELLINGS)[normalized];
 }
 
-/** Formats a chord pitch class as a display token such as `Bb` or `F#`. */
-export function chordPitchClassName(pitchClass: number, keyFifths: number): string {
+/**
+ * Formats a chord pitch class as a display token such as `Bb` or `F#`.
+ *
+ * The default English naming is what the score, MusicXML export and every
+ * other chord-symbol text use; a caller naming another system is displaying
+ * the root to a reader, not writing a document.
+ *
+ * @param pitchClass Pitch class 0..11 (C = 0).
+ * @param keyFifths MusicXML key-signature fifths the spelling follows.
+ * @param system Note-name system; English by default.
+ */
+export function chordPitchClassName(
+  pitchClass: number,
+  keyFifths: number,
+  system: NoteNameSystem = 'english',
+): string {
   const spelled = spellChordPitchClass(pitchClass, keyFifths);
+  if (system !== 'english') return formatSpelledPitch(spelled, system);
   const accidental = spelled.alter === 0 ? '' : spelled.alter > 0 ? '#' : 'b';
   return `${spelled.step}${accidental}`;
 }

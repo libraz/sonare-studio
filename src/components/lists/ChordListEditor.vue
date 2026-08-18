@@ -6,6 +6,7 @@ import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { detectProgressionGroups, type PatternGroup } from '@/compose/progression-groups';
@@ -14,12 +15,7 @@ import {
   canTonicizeWithSecondaryDominant,
   secondaryDominantLabel,
 } from '@/compose/secondary-dominant';
-import {
-  CHORD_PITCH_CLASS_NAMES,
-  CHORD_QUALITY_CHOICES,
-  type EditorChordSymbol,
-  formatChordName,
-} from '@/project/chords';
+import { CHORD_QUALITY_CHOICES, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import {
   arrangementMelodyPitchClasses,
   clearProjectChords,
@@ -35,15 +31,6 @@ import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, fractionalBarsBetween, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
-
-/** Pitch-class options for the root / slash-bass pickers (value = pitch class). */
-const PITCH_CLASS_OPTIONS = CHORD_PITCH_CLASS_NAMES.map((name, pc) => ({
-  value: pc,
-  label: name,
-}));
-
-/** Slash-bass options: "no bass" sentinel (-1) plus the pitch classes. */
-const BASS_OPTIONS = [{ value: -1, label: '—' }, ...PITCH_CLASS_OPTIONS];
 
 /** Chord-quality options. */
 const QUALITY_OPTIONS = CHORD_QUALITY_CHOICES.map((choice) => ({
@@ -80,6 +67,16 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { pitchClassNames, system: noteNameSystem } = useNoteNames();
+
+/** Pitch-class options for the root / slash-bass pickers (value = pitch class). */
+const PITCH_CLASS_OPTIONS = computed(() =>
+  pitchClassNames.value.map((name, pc) => ({ value: pc, label: name })),
+);
+
+/** Slash-bass options: "no bass" sentinel (-1) plus the pitch classes. */
+const BASS_OPTIONS = computed(() => [{ value: -1, label: '—' }, ...PITCH_CLASS_OPTIONS.value]);
+
 const errorMessage = ref('');
 /** True while an audio-clip detection is awaiting the engine. */
 const isDetecting = ref(false);
@@ -209,7 +206,7 @@ const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHigh
 
 /** Formats symbols with the same accidental convention as the score. */
 function chordName(chord: EditorChordSymbol): string {
-  return formatChordName(chord, chordKeyFifths.value);
+  return formatChordName(chord, chordKeyFifths.value, noteNameSystem.value);
 }
 
 /**

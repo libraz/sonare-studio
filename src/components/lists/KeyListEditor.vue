@@ -2,15 +2,10 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
-import {
-  KEY_MODE_CHOICES,
-  keyLabel,
-  matchModeChoiceId,
-  modeMaskForChoice,
-  PITCH_CLASS_NAMES,
-} from './key-modes';
+import { KEY_MODE_CHOICES, keyLabel, matchModeChoiceId, modeMaskForChoice } from './key-modes';
 
 /**
  * Key editor over the project's single global key.
@@ -26,6 +21,7 @@ import {
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { pitchClassNames, system: noteNameSystem } = useNoteNames();
 
 /** Sentinel select value shown when the mask matches no diatonic mode. */
 const CUSTOM_MODE = 'custom';
@@ -57,12 +53,13 @@ const currentLabel = computed(() =>
     rootPc.value,
     modeId.value === CUSTOM_MODE ? null : modeId.value,
     t.value.shell.lists.key,
+    noteNameSystem.value,
   ),
 );
 
 /** Root pitch-class choices, numeric to match the stored root pitch class. */
 const rootOptions = computed(() =>
-  PITCH_CLASS_NAMES.map((name, pc) => ({ value: pc, label: name })),
+  pitchClassNames.value.map((name, pc) => ({ value: pc, label: name })),
 );
 
 /**

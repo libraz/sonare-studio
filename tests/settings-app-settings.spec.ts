@@ -44,6 +44,7 @@ describe('sanitizeAppSettings', () => {
     expect(out).toEqual({
       theme: 'light',
       language: 'ja',
+      noteNameSystem: 'english',
       editorDensity: 'compact',
       snapDefault: false,
       countInBars: 2,

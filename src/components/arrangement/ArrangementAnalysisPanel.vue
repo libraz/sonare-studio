@@ -3,8 +3,8 @@ import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
+import { useNoteNames } from '@/composables/useNoteNames';
 import type { ArrangementConflict } from '@/compose/arrangement';
-import { formatPitch } from '@/lib/pitch';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
@@ -36,6 +36,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { formatPitch } = useNoteNames();
 const { conflicts, tension, excludedTrackNames, analyzed, analyze } = useArrangementAnalysis();
 
 /** Popover open state; the header bar itself never resizes. */

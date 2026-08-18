@@ -14,6 +14,7 @@
  * at the wasm boundary. Canvas-free and side-effect-free.
  */
 
+import type { NoteNameSystem } from '@libraz/libcantus';
 import {
   chordSuffix,
   normalizedChordExtensions,
@@ -175,13 +176,21 @@ function clampPitchClass(value: number): number | null {
  *
  * `keyFifths` uses the MusicXML convention. Borrowed chord degrees use the
  * conventional flat spelling while #I/#IV use sharps, matching score export.
+ *
+ * Only the root and bass follow `system`; the quality suffix is an
+ * international convention and stays ASCII in every system, so a Japanese
+ * reading of Cmaj7 is "ハmaj7".
  */
-export function formatChordName(symbol: EditorChordSymbol, keyFifths = 0): string {
-  const root = chordPitchClassName(symbol.rootPc, keyFifths);
+export function formatChordName(
+  symbol: EditorChordSymbol,
+  keyFifths = 0,
+  system: NoteNameSystem = 'english',
+): string {
+  const root = chordPitchClassName(symbol.rootPc, keyFifths, system);
   const suffix = chordSuffix(symbol.quality, symbol.extensions);
   const name = `${root}${suffix}`;
   if (symbol.bassPc === undefined || symbol.bassPc === symbol.rootPc) return name;
-  const bass = chordPitchClassName(symbol.bassPc, keyFifths);
+  const bass = chordPitchClassName(symbol.bassPc, keyFifths, system);
   return `${name}/${bass}`;
 }
 

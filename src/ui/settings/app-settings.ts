@@ -7,6 +7,7 @@
  * boot.
  */
 
+import type { NoteNameSystem } from '@libraz/libcantus';
 import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
@@ -28,6 +29,20 @@ export type AppLanguage = 'system' | 'en' | 'ja';
 
 /** Resolved UI language applied to the document. */
 export type ResolvedAppLanguage = 'en' | 'ja';
+
+/**
+ * Note-name systems offered for pitch and key names, in picker order.
+ *
+ * Independent of the UI language: reading 音名 and reading a Japanese UI are
+ * separate preferences, so this list is the same in every locale.
+ */
+export const NOTE_NAME_SYSTEMS = [
+  'english',
+  'german',
+  'japanese',
+  'italian',
+  'fixedDo',
+] as const satisfies ReadonlyArray<NoteNameSystem>;
 
 /** UI density of the editor panels. */
 export type EditorDensity = 'comfortable' | 'compact';
@@ -57,6 +72,12 @@ export interface AppSettings {
   theme: AppTheme;
   /** UI language; 'system' follows the browser language list. */
   language: AppLanguage;
+  /**
+   * System pitch and key names are displayed in. Only display follows it:
+   * chord-symbol suffixes, exported documents and any name parsed back stay
+   * ASCII English.
+   */
+  noteNameSystem: NoteNameSystem;
   /** Editor panel density. */
   editorDensity: EditorDensity;
   /** Whether grid snap starts enabled in a new session. */
@@ -127,6 +148,9 @@ export const LOUDNESS_TARGET_MAX_LUFS = -5;
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: 'system',
   language: 'system',
+  // English names in every locale; reading 音名 is an explicit choice rather
+  // than a consequence of the UI language.
+  noteNameSystem: 'english',
   editorDensity: 'comfortable',
   snapDefault: true,
   countInBars: 0,
@@ -184,6 +208,10 @@ function asTheme(value: unknown, fallback: AppTheme): AppTheme {
 
 function asLanguage(value: unknown, fallback: AppLanguage): AppLanguage {
   return value === 'system' || value === 'en' || value === 'ja' ? value : fallback;
+}
+
+function asNoteNameSystem(value: unknown, fallback: NoteNameSystem): NoteNameSystem {
+  return NOTE_NAME_SYSTEMS.includes(value as NoteNameSystem) ? (value as NoteNameSystem) : fallback;
 }
 
 function asPianoRollGhostMode(value: unknown, fallback: PianoRollGhostMode): PianoRollGhostMode {
@@ -258,6 +286,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
   return {
     theme: asTheme(source.theme, defaults.theme),
     language: asLanguage(source.language, defaults.language),
+    noteNameSystem: asNoteNameSystem(source.noteNameSystem, defaults.noteNameSystem),
     editorDensity:
       source.editorDensity === 'compact' || source.editorDensity === 'comfortable'
         ? source.editorDensity

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { NoteNameSystem } from '@libraz/libcantus';
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
@@ -51,6 +52,20 @@ const LANGUAGE_OPTIONS = computed<ReadonlyArray<{ value: AppLanguage; label: str
   { value: 'ja', label: t.value.settings.general.languageJapanese },
 ]);
 
+/**
+ * Note-name choices. Independent of the language picker above: a Japanese UI
+ * may still read C D E, and an English one ハ ニ ホ.
+ */
+const NOTE_NAME_SYSTEM_OPTIONS = computed<ReadonlyArray<{ value: NoteNameSystem; label: string }>>(
+  () => [
+    { value: 'english', label: t.value.settings.general.noteNameSystemEnglish },
+    { value: 'german', label: t.value.settings.general.noteNameSystemGerman },
+    { value: 'japanese', label: t.value.settings.general.noteNameSystemJapanese },
+    { value: 'italian', label: t.value.settings.general.noteNameSystemItalian },
+    { value: 'fixedDo', label: t.value.settings.general.noteNameSystemFixedDo },
+  ],
+);
+
 const RECORDING_SOURCE_OPTIONS = computed<
   ReadonlyArray<{ value: RecordingCaptureSource; label: string }>
 >(() => [
@@ -92,6 +107,10 @@ function onThemeChange(value: AppTheme): void {
 
 function onLanguageChange(value: AppLanguage): void {
   appSettings.set('language', value);
+}
+
+function onNoteNameSystemChange(value: NoteNameSystem): void {
+  appSettings.set('noteNameSystem', value);
 }
 
 function onRecordingSourceChange(value: RecordingCaptureSource): void {
@@ -151,6 +170,19 @@ function onLoudnessTargetInput(event: Event): void {
               :aria-label="t.settings.general.language"
               size="sm"
               @change="onLanguageChange"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.noteNameSystem }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.noteNameSystem"
+              :options="NOTE_NAME_SYSTEM_OPTIONS"
+              :aria-label="t.settings.general.noteNameSystem"
+              size="sm"
+              @change="onNoteNameSystemChange"
             />
           </div>
         </div>

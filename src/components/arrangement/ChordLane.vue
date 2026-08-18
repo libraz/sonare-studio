@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { formatNote, type KeyScale, spelledKeyOf } from '@libraz/libcantus';
+import { type KeyScale, spelledKeyOf } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { matchModeChoiceId } from '@/components/lists/key-modes';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { analyzeHarmony, type BorrowedKind, type CadenceType } from '@/compose/harmonic-analysis';
 import { keyFifthsToSpelledKey } from '@/compose/key';
 import type { EditorChordSymbol } from '@/project/chords';
@@ -68,6 +69,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { formatNoteName, system: noteNameSystem } = useNoteNames();
 
 /** Min px between repeated chord-name labels inside one long chord's band. */
 const LABEL_MIN_SPACING_PX = DEFAULT_MIN_BAR_LABEL_SPACING_PX;
@@ -196,7 +198,7 @@ const bands = computed<ChordBand[]>(() => {
     if (x1 <= 0 || x0 >= props.range.widthPx) continue;
     out.push({
       key: chord.startPpq,
-      name: formatChordName(chord, props.keyFifths ?? 0),
+      name: formatChordName(chord, props.keyFifths ?? 0, noteNameSystem.value),
       startPpq: chord.startPpq,
       leftPx: x0,
       widthPx: Math.max(2, x1 - x0),
@@ -217,7 +219,7 @@ function keyName(key: KeyScale): string {
   const modes: Readonly<Record<string, string>> = labels.modes;
   const modeId = matchModeChoiceId(key.modeMask12);
   const mode = (modeId === null ? undefined : modes[modeId]) ?? labels.customScale;
-  return `${formatNote(spelledKeyOf(key).tonic)} ${mode}`;
+  return `${formatNoteName(spelledKeyOf(key).tonic)} ${mode}`;
 }
 
 const keySpanBands = computed<KeySpanBand[]>(() => {

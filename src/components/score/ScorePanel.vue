@@ -12,8 +12,8 @@ import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
+import { useNoteNames } from '@/composables/useNoteNames';
 import type { TheoryCard } from '@/compose/explain';
-import { formatPitch } from '@/lib/pitch';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
 import {
@@ -85,6 +85,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { formatPitch } = useNoteNames();
 const appSettings = useAppSettings();
 
 /** Delay after the last note edit before the score is re-transcribed. */

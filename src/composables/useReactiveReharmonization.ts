@@ -15,6 +15,7 @@
 import { type ComputedRef, computed, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useNoteNames } from '@/composables/useNoteNames';
 import type { LockedRegion } from '@/compose/reharmonize-reactive';
 import {
   changedNotesSpan,
@@ -82,6 +83,7 @@ export interface ReactiveReharmonization {
 export function useReactiveReharmonization(): ReactiveReharmonization {
   const store = useProjectStore();
   const appSettings = useAppSettings();
+  const noteNames = useNoteNames();
 
   const autoReharmonize = computed<boolean>({
     get: () => appSettings.settings.pianoRollAutoReharmonize,
@@ -243,8 +245,16 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
         ? [
             {
               index,
-              from: formatChordName(from, keyFifthsForScaleHighlight(store.scaleHighlight)),
-              to: formatChordName(to, keyFifthsForScaleHighlight(store.scaleHighlight)),
+              from: formatChordName(
+                from,
+                keyFifthsForScaleHighlight(store.scaleHighlight),
+                noteNames.system.value,
+              ),
+              to: formatChordName(
+                to,
+                keyFifthsForScaleHighlight(store.scaleHighlight),
+                noteNames.system.value,
+              ),
             },
           ]
         : [];

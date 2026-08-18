@@ -405,7 +405,12 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
 
     expect(serializeProject()).toEqual(doc);
-    expect(store.chords.map(formatChordName)).toEqual(['Cm(add9)', 'Dm9', 'G7b9', 'F13']);
+    expect(store.chords.map((chord) => formatChordName(chord))).toEqual([
+      'Cm(add9)',
+      'Dm9',
+      'G7b9',
+      'F13',
+    ]);
   });
 
   it('omits the chord track from the document when empty', () => {

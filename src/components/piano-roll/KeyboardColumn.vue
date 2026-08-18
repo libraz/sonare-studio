@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -26,6 +27,7 @@ const props = defineProps<{
 const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
 const { t } = useI18n();
+const { pitchClassNames, system: noteNameSystem } = useNoteNames();
 
 /** Unique painter layer suffix so several editors can share one painter. */
 const layerId = Math.random().toString(36).slice(2, 8);
@@ -56,7 +58,7 @@ function schedule(): void {
 
 /** Returns the octave label for a C pitch (MIDI 60 = C4). */
 function octaveLabel(pitch: number): string {
-  return `C${Math.floor(pitch / 12) - 1}`;
+  return `${pitchClassNames.value[0]}${Math.floor(pitch / 12) - 1}`;
 }
 
 function draw(): void {
@@ -135,6 +137,9 @@ watch(
   () => props.revision,
   () => schedule(),
 );
+
+// The key labels are painted, so a renamed system has to repaint the column.
+watch(noteNameSystem, () => schedule());
 </script>
 
 <template>

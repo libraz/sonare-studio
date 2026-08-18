@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useNoteNames } from '@/composables/useNoteNames';
 import type { LockedRegion } from '@/compose/reharmonize-reactive';
 import { isRegionLocked } from '@/compose/reharmonize-session';
 import type { EditorChordSymbol } from '@/project/chords';
@@ -36,6 +37,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { system: noteNameSystem } = useNoteNames();
 
 /** Narrower than this on screen a segment is unclickable noise; skip it. */
 const MIN_SEGMENT_PX = 8;
@@ -63,7 +65,7 @@ const segments = computed<StripSegment[]>(() => {
     const region: LockedRegion = { startPpq: chord.startPpq, endPpq: chord.endPpq };
     out.push({
       key: chord.startPpq,
-      name: formatChordName(chord, props.keyFifths ?? 0),
+      name: formatChordName(chord, props.keyFifths ?? 0, noteNameSystem.value),
       region,
       locked: isRegionLocked(props.locks, region),
       leftPx,

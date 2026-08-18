@@ -14,6 +14,7 @@ import { chordToRoman, functionOf } from '@libraz/libcantus';
 import { type ComputedRef, computed } from 'vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { buildChordTimeline } from '@/compose/chord-at-tick';
 import {
   buildTheoryCard,
@@ -59,6 +60,7 @@ export function useCompositionGuidance(): CompositionGuidance {
   const store = useProjectStore();
   const { t } = useI18n();
   const appSettings = useAppSettings();
+  const noteNames = useNoteNames();
 
   /**
    * Card string bundle for the active explanation level: the shared role /
@@ -137,6 +139,7 @@ export function useCompositionGuidance(): CompositionGuidance {
       pitch: occurrence.note.pitch,
       velocity: occurrence.note.velocity,
       keySet: result.keySet,
+      noteNameSystem: noteNames.system.value,
       ...(result.keySet ? { keyFifths: keyFifthsForScaleHighlight(store.scaleHighlight) } : {}),
     };
     const chord = chordTimeline.value.at(occurrence.timelineStartPpq);

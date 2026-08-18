@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MODE_OPTIONS, modeMaskFor, ROOT_OPTIONS, scaleName } from '@/ui/sample-editor/scales';
+import { MODE_OPTIONS, modeMaskFor, rootOptions, scaleName } from '@/ui/sample-editor/scales';
 
 describe('modeMaskFor', () => {
   it('builds the major mask matching libsonare ScaleQuantizer default', () => {
@@ -34,9 +34,10 @@ describe('scaleName', () => {
 
 describe('picker options', () => {
   it('offers twelve roots and seven modes keyed by ordinal', () => {
-    expect(ROOT_OPTIONS).toHaveLength(12);
-    expect(ROOT_OPTIONS[0]).toEqual({ value: '0', label: 'C' });
-    expect(ROOT_OPTIONS[9]).toEqual({ value: '9', label: 'A' });
+    expect(rootOptions()).toHaveLength(12);
+    expect(rootOptions()[0]).toEqual({ value: '0', label: 'C' });
+    expect(rootOptions()[9]).toEqual({ value: '9', label: 'A' });
+    expect(rootOptions('japanese')[9]).toEqual({ value: '9', label: 'イ' });
     expect(MODE_OPTIONS).toHaveLength(7);
     expect(MODE_OPTIONS[0]).toEqual({ value: '0', label: 'Major' });
     expect(MODE_OPTIONS[1]).toEqual({ value: '1', label: 'Minor' });

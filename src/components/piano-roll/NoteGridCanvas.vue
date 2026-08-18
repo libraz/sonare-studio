@@ -3,9 +3,9 @@ import { NoteSafety } from '@libraz/libcantus';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import type { ResolutionArrow } from '@/composables/useCompositionGuidance';
+import { useNoteNames } from '@/composables/useNoteNames';
 import type { TheoryCard } from '@/compose/explain';
 import type { GuidanceSegment } from '@/compose/guidance';
-import { formatPitch } from '@/lib/pitch';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import type {
   AccessibleObjectAdjustment,
@@ -83,6 +83,7 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+const { formatPitch, system: noteNameSystem } = useNoteNames();
 
 const emit = defineEmits<{
   /** Fired after the grid viewport was resized and the range re-clamped. */
@@ -764,6 +765,13 @@ watch(
   () => props.resolutionArrows,
   () => scheduleOverlay(),
 );
+
+// Note and overlay labels carry pitch names, which the canvas layers cache in
+// their painted output; a renamed system has to repaint them.
+watch(noteNameSystem, () => {
+  scheduleNotes();
+  scheduleOverlay();
+});
 
 watch(
   () => props.selection,

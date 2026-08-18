@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { formatPitch, parsePitch } from '@/lib/pitch';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
@@ -20,6 +20,7 @@ const MIN_DURATION_PPQ = 0.001;
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { formatPitch, parsePitch } = useNoteNames();
 
 /** The anchor note: the most recently selected id drives the displayed values. */
 const anchorNote = computed<EditorNote | null>(() => {

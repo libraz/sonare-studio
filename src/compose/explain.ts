@@ -10,9 +10,9 @@
  * Pure module.
  */
 
-import type { HarmonyRole, LockLevel, TheoryLabel } from '@libraz/libcantus';
+import type { HarmonyRole, LockLevel, NoteNameSystem, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
-import { PITCH_CLASS_NAMES } from '@/lib/pitch';
+import { formatSpelledPitch, pitchClassNames } from '@/lib/pitch';
 import { spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 
@@ -176,14 +176,23 @@ const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>>
   [NoteSafety.Dissonant]: 'dissonant',
 };
 
-/** Octave-less name of a pitch class, spelled for the key (e.g. "Eb"). */
-function pitchClassName(pc: number, keyFifths?: number): string {
-  return pitchName(60 + (((pc % 12) + 12) % 12), keyFifths).replace(/-?\d+$/, '');
+/**
+ * Octave-less name of a pitch class, spelled for the key (e.g. "Eb").
+ *
+ * Every system writes the octave as trailing digits, so dropping them leaves
+ * the bare name whichever system named it.
+ */
+function pitchClassName(pc: number, keyFifths?: number, system?: NoteNameSystem): string {
+  return pitchName(60 + (((pc % 12) + 12) % 12), keyFifths, system).replace(/-?\d+$/, '');
 }
 
 /** Joins pitch classes into a name list (e.g. "D, A"). */
-function pitchClassList(pitchClasses: ReadonlyArray<number>, keyFifths?: number): string {
-  return pitchClasses.map((pc) => pitchClassName(pc, keyFifths)).join(', ');
+function pitchClassList(
+  pitchClasses: ReadonlyArray<number>,
+  keyFifths?: number,
+  system?: NoteNameSystem,
+): string {
+  return pitchClasses.map((pc) => pitchClassName(pc, keyFifths, system)).join(', ');
 }
 
 /** Localized scale name, falling back to the library's raw name when unmapped. */
@@ -204,20 +213,25 @@ function chordScaleText(
   analysis: NoteAnalysis,
   labels: TheoryLabels,
   keyFifths?: number,
+  system?: NoteNameSystem,
 ): string | undefined {
   const chordScale = analysis.chordScale;
   if (chordScale === undefined) return undefined;
   const parts: string[] = [
-    `${pitchClassName(chordScale.rootPc, keyFifths)} ${scaleDisplayName(chordScale.scaleName, labels)}`,
+    `${pitchClassName(chordScale.rootPc, keyFifths, system)} ${scaleDisplayName(chordScale.scaleName, labels)}`,
   ];
   if (chordScale.tensions.length > 0) {
-    parts.push(`${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions, keyFifths)}`);
+    parts.push(
+      `${labels.chordScale.tensions} ${pitchClassList(chordScale.tensions, keyFifths, system)}`,
+    );
   }
   if (chordScale.passing.length > 0) {
-    parts.push(`${labels.chordScale.passing} ${pitchClassList(chordScale.passing, keyFifths)}`);
+    parts.push(
+      `${labels.chordScale.passing} ${pitchClassList(chordScale.passing, keyFifths, system)}`,
+    );
   }
   if (chordScale.avoid.length > 0) {
-    parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid, keyFifths)}`);
+    parts.push(`${labels.chordScale.avoid} ${pitchClassList(chordScale.avoid, keyFifths, system)}`);
   }
   const alternates = chordScale.alternates ?? [];
   if (alternates.length > 0) {
@@ -297,12 +311,13 @@ function nctLine(
 }
 
 /** Sharp-spelled pitch name with octave, e.g. 63 -> "D#4". */
-function pitchName(midi: number, keyFifths?: number): string {
+function pitchName(midi: number, keyFifths?: number, system: NoteNameSystem = 'english'): string {
   if (keyFifths === undefined) {
     const pc = ((midi % 12) + 12) % 12;
-    return `${PITCH_CLASS_NAMES[pc]}${Math.floor(midi / 12) - 1}`;
+    return `${pitchClassNames(system)[pc]}${Math.floor(midi / 12) - 1}`;
   }
   const pitch = spellPitchInKeySignature(midi, keyFifths);
+  if (system !== 'english') return formatSpelledPitch(pitch, system);
   return `${pitch.step}${pitch.alter === 0 ? '' : pitch.alter === 1 ? '#' : 'b'}${pitch.octave}`;
 }
 
@@ -319,6 +334,7 @@ function counterpointLines(
   analysis: NoteAnalysis,
   labels: TheoryLabels,
   keyFifths: number | undefined,
+  system?: NoteNameSystem,
 ): TheoryCardLine[] {
   const out: TheoryCardLine[] = [];
   const vertical: VerticalInfo | undefined = analysis.vertical;
@@ -342,7 +358,7 @@ function counterpointLines(
     verdict = {
       text: cp.suspension.replace(
         '{target}',
-        target !== undefined ? pitchName(target, keyFifths) : '',
+        target !== undefined ? pitchName(target, keyFifths, system) : '',
       ),
       term: labels.glossary.suspension,
     };
@@ -380,12 +396,14 @@ export function buildTheoryCard(
     keySet: boolean;
     /** MusicXML key fifths used for enharmonic spelling in the card. */
     keyFifths?: number;
+    /** Note-name system the pitch names are written in; English by default. */
+    noteNameSystem?: NoteNameSystem;
     chordRoman?: string;
     chordFunction?: string;
   },
   labels: TheoryLabels,
 ): TheoryCard {
-  let title = pitchName(ctx.pitch, ctx.keyFifths);
+  let title = pitchName(ctx.pitch, ctx.keyFifths, ctx.noteNameSystem);
   if (ctx.velocity !== undefined) title += ` · vel ${ctx.velocity}`;
   if (analysis.role !== undefined) title += ` — ${labels.roles[analysis.role.role]}`;
 
@@ -416,7 +434,7 @@ export function buildTheoryCard(
         : labels.nonScaleTone;
     lines.push({ label: labels.lines.scale, text });
   }
-  const colorTones = chordScaleText(analysis, labels, ctx.keyFifths);
+  const colorTones = chordScaleText(analysis, labels, ctx.keyFifths, ctx.noteNameSystem);
   if (colorTones !== undefined) {
     const term = labels.glossary.chordScale;
     lines.push({
@@ -425,7 +443,7 @@ export function buildTheoryCard(
       ...(term !== undefined ? { term } : {}),
     });
   }
-  lines.push(...counterpointLines(analysis, labels, ctx.keyFifths));
+  lines.push(...counterpointLines(analysis, labels, ctx.keyFifths, ctx.noteNameSystem));
   const nct = nctLine(analysis, labels);
   if (nct !== undefined) {
     lines.push({

@@ -6,8 +6,8 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useEditorTool } from '@/composables/useEditorTool';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { useReactiveReharmonization } from '@/composables/useReactiveReharmonization';
-import { formatPitch } from '@/lib/pitch';
 import {
   addNote,
   addNotes,
@@ -127,6 +127,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { formatPitch } = useNoteNames();
 const appSettings = useAppSettings();
 const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
 

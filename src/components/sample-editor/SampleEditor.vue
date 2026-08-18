@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vu
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
@@ -13,7 +14,7 @@ import {
   selectVersion,
   type VersionHistoryState,
 } from '@/ui/sample-editor/history';
-import { MODE_OPTIONS, ROOT_OPTIONS } from '@/ui/sample-editor/scales';
+import { MODE_OPTIONS, rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
 import {
@@ -61,6 +62,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const { system: noteNameSystem } = useNoteNames();
+
+/** Scale-root choices in the selected note-name system. */
+const ROOT_OPTIONS = computed(() => rootOptions(noteNameSystem.value));
 const project = useProjectStore();
 
 const asset = shallowRef<LoadedAudioAsset | null>(null);

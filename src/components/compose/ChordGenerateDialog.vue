@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue';
 import ProgressionPresetPicker from '@/components/compose/ProgressionPresetPicker.vue';
 import { keyLabel, matchModeChoiceId } from '@/components/lists/key-modes';
 import AppModal from '@/components/shell/AppModal.vue';
+import { useNoteNames } from '@/composables/useNoteNames';
 import { effectiveKeyScale } from '@/compose/key';
 import { generateProgressionCommand, harmonizeFromMelodyCommand } from '@/project/commands';
 import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
@@ -34,6 +35,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const { system: noteNameSystem } = useNoteNames();
 
 const g = computed(() => t.value.shell.generate.chord);
 
@@ -64,6 +66,7 @@ const keyReadout = computed(() =>
     store.scaleHighlight.rootPc,
     matchModeChoiceId(store.scaleHighlight.modeMask),
     t.value.shell.lists.key,
+    noteNameSystem.value,
   ),
 );
 

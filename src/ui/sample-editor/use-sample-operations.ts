@@ -11,6 +11,7 @@
  */
 
 import { computed, type Ref, ref, watch } from 'vue';
+import { useNoteNames } from '@/composables/useNoteNames';
 import {
   type OperationToken as GenerationToken,
   OperationGeneration,
@@ -167,6 +168,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   } = options;
 
   const { t } = useI18n();
+  const noteNames = useNoteNames();
   const project = useProjectStore();
   const operations = new OperationGeneration();
 
@@ -549,13 +551,15 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onPitchCorrect(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    const targetMidi = parseMidiNote(tuneNoteInput.value);
+    const targetMidi = parseMidiNote(tuneNoteInput.value, noteNames.system.value);
     if (targetMidi === null) {
       error.value = t.value.shell.sampleEditor.errors.tune;
       return;
     }
     await runOp(
-      formatMessage(t.value.shell.sampleEditor.ops.tune, { note: formatMidiNote(targetMidi) }),
+      formatMessage(t.value.shell.sampleEditor.ops.tune, {
+        note: formatMidiNote(targetMidi, noteNames.system.value),
+      }),
       (channels, range) => pitchCorrectRange(ops, channels, sampleRate(), targetMidi, range),
     );
   }
@@ -563,14 +567,14 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onPitchCorrectTimevarying(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    const targetMidi = parseMidiNote(tuneNoteInput.value);
+    const targetMidi = parseMidiNote(tuneNoteInput.value, noteNames.system.value);
     if (targetMidi === null) {
       error.value = t.value.shell.sampleEditor.errors.tune;
       return;
     }
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.tuneContour, {
-        note: formatMidiNote(targetMidi),
+        note: formatMidiNote(targetMidi, noteNames.system.value),
       }),
       (channels, range) =>
         pitchCorrectTimevaryingRange(ops, channels, sampleRate(), targetMidi, range),
@@ -591,7 +595,9 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const root = Number(scaleRootInput.value);
     const mode = Number(scaleModeInput.value);
     await runOp(
-      formatMessage(t.value.shell.sampleEditor.ops.tuneScale, { scale: scaleName(root, mode) }),
+      formatMessage(t.value.shell.sampleEditor.ops.tuneScale, {
+        scale: scaleName(root, mode, noteNames.system.value),
+      }),
       (channels, range) =>
         scaleCorrectRange(ops, channels, sampleRate(), root, modeMaskFor(mode), range),
     );
