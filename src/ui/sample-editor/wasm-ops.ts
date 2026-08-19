@@ -16,7 +16,12 @@ import {
   parseReferenceLoudness,
   parseTonalBalance,
 } from './match-eq-analysis';
-import { downmixToMono, onsetSecondsToFrames, silenceSplitMarkers } from './onsets';
+import {
+  type DetectedNote,
+  downmixToMono,
+  onsetSecondsToFrames,
+  silenceSplitMarkers,
+} from './onsets';
 import { resolveRange, type SampleRange, spliceRange } from './ops';
 
 /** The subset of the libsonare module consumed by the sample editor. */
@@ -56,7 +61,15 @@ export interface SampleEditorWasmOps {
     threshold?: number,
     fillNa?: boolean,
   ) => { f0?: Float32Array; voicedProb?: Float32Array; voicedFlag?: boolean[]; medianF0: number };
-  /** Contour-following pitch correction to a target MIDI note. */
+  /**
+   * Contour-following pitch correction to a target MIDI note.
+   *
+   * The trailing `voicedProb` parameter the module accepts is deliberately not
+   * part of this facade: it weights how much of the correction each frame
+   * receives, and a tracker's confidence is not that weight (see
+   * {@link pitchCorrectTimevaryingRange}). Omitting it lets the module derive
+   * the weight from `voiced`, which is the full correction on voiced frames.
+   */
   pitchCorrectToMidiTimevarying?: (
     samples: Float32Array,
     f0Hz: Float32Array,
@@ -64,7 +77,6 @@ export interface SampleEditorWasmOps {
     sampleRate?: number,
     hopLength?: number,
     voiced?: Int32Array,
-    voicedProb?: Float32Array,
   ) => Float32Array;
   /**
    * Global tuning estimate: the deviation from A440 as a
@@ -129,6 +141,34 @@ export interface SampleEditorWasmOps {
    * silence threshold below the signal peak.
    */
   splitSilence?: (samples: Float32Array, topDb?: number) => ArrayLike<number>;
+  /**
+   * Segments a caller-supplied monophonic F0 track into stable note regions.
+   * Request-shaped because the module exposes no positional form.
+   */
+  noteSegments?: (request: {
+    f0Hz: Float32Array;
+    voicedProb: Float32Array;
+    frameRate: number;
+    segmentationThresholdCents?: number;
+    minNoteMs?: number;
+    referenceHz?: number;
+  }) => ReadonlyArray<{
+    frameStart: number;
+    frameEnd: number;
+    startSeconds: number;
+    endSeconds: number;
+    /** Median pitch of the region, in cents relative to `referenceHz` (A440). */
+    medianCents: number;
+  }>;
+  /**
+   * Note move: shifts the region [onsetSample, offsetSample) so it starts at
+   * `targetOnsetSample`, keeping its duration. Operates on the whole buffer.
+   */
+  noteMove?: (
+    samples: Float32Array,
+    sampleRate?: number,
+    options?: { onsetSample?: number; offsetSample?: number; targetOnsetSample?: number },
+  ) => Float32Array;
   /**
    * Acoustic room simulation: convolves the mono signal with a synthesized
    * room impulse response and returns a latency-compensated, tail-extended
@@ -250,6 +290,8 @@ export interface WasmOpAvailability {
   percussive: boolean;
   timeStretch: boolean;
   noteStretch: boolean;
+  noteMove: boolean;
+  detectNotes: boolean;
   declick: boolean;
   denoise: boolean;
   declip: boolean;
@@ -299,6 +341,10 @@ export function wasmOpAvailability(
     percussive: typeof ops?.percussive === 'function',
     timeStretch: typeof ops?.timeStretch === 'function',
     noteStretch: typeof ops?.noteStretch === 'function',
+    noteMove: typeof ops?.noteMove === 'function',
+    detectNotes:
+      typeof ops?.noteSegments === 'function' &&
+      (typeof ops?.pitchPyin === 'function' || typeof ops?.pitchYin === 'function'),
     declick: typeof ops?.masteringRepairDeclick === 'function',
     denoise: typeof ops?.masteringRepairDenoiseClassical === 'function',
     declip: typeof ops?.masteringRepairDeclip === 'function',
@@ -411,6 +457,11 @@ export function pitchCorrectRange(
  * same contour drives every channel so stereo phase relationships remain
  * coherent.
  *
+ * Only the voiced flags are forwarded. The tracker's `voicedProb` is a relative
+ * confidence, not the per-frame correction weight the corrector reads it as: a
+ * clean tone peaks around 0.44 there, so forwarding it applies well under half
+ * the requested correction and the note lands short of the target.
+ *
  * @throws Error when the required contour or correction functions are missing.
  * @throws RangeError when targetMidi/range are invalid.
  */
@@ -454,7 +505,7 @@ export function pitchCorrectTimevaryingRange(
       ? Int32Array.from(contour.voicedFlag, (flag) => (flag ? 1 : 0))
       : undefined;
   const corrected = segments.map((segment) =>
-    correct(segment, f0, targetMidi, sampleRate, hopLength, voiced, contour.voicedProb),
+    correct(segment, f0, targetMidi, sampleRate, hopLength, voiced),
   );
   const minFrames = Math.min(...corrected.map((segment) => segment.length));
   const planar = corrected.map((segment) =>
@@ -780,6 +831,60 @@ export function noteStretchRange(
 }
 
 /**
+ * Moves the note in the range earlier or later by `shiftFrames`, keeping its
+ * duration. As with {@link noteStretchRange} the whole buffer is passed with the
+ * range as the region bounds, so the moved note blends into the surrounding
+ * audio. Intended for a selection holding a single note: nudging one note off
+ * the grid, or onto it.
+ *
+ * The buffer keeps its length: the note's original position is silenced and the
+ * note is added at its target, so a move onto neighbouring audio sums with it
+ * rather than replacing it. The shift is clamped to keep the note inside the
+ * buffer, since a target past the end would silence the note instead of moving
+ * it.
+ *
+ * @param shiftFrames Frames to move by (negative = earlier).
+ * @throws Error when the module does not provide noteMove.
+ * @throws RangeError when shiftFrames is not finite or the range is empty.
+ */
+export function noteMoveRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  shiftFrames: number,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.noteMove;
+  if (typeof fn !== 'function') {
+    throw new Error('Note move is unavailable in this libsonare build');
+  }
+  if (!Number.isFinite(shiftFrames)) {
+    throw new RangeError(`shiftFrames must be finite, got ${shiftFrames}`);
+  }
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  const totalFrames = channels[0]?.length ?? 0;
+  const noteFrames = resolved.endFrame - resolved.startFrame;
+  const targetOnsetSample = Math.min(
+    Math.max(0, resolved.startFrame + Math.round(shiftFrames)),
+    Math.max(0, totalFrames - noteFrames),
+  );
+  const moved = channels.map((channel) =>
+    fn(channel, sampleRate, {
+      onsetSample: resolved.startFrame,
+      offsetSample: resolved.endFrame,
+      targetOnsetSample,
+    }),
+  );
+  const minFrames = Math.min(...moved.map((segment) => segment.length));
+  return moved.map((segment) =>
+    segment.length === minFrames ? segment : segment.slice(0, minFrames),
+  );
+}
+
+/**
  * Repairs clicks/pops inside the range.
  *
  * @throws Error when the module does not provide masteringRepairDeclick.
@@ -930,6 +1035,85 @@ export function splitSilenceFrames(
   }
   const mono = downmixToMono(channels);
   return silenceSplitMarkers(fn(mono, topDb), mono.length);
+}
+
+/** F0 hop for note detection, matching the pitch-correction contour. */
+const NOTE_DETECT_HOP = 512;
+/** F0 analysis window, matching the pitch-correction contour. */
+const NOTE_DETECT_FRAME = 2048;
+/**
+ * Pitch step that starts a new note, in cents. A semitone is 100, so the
+ * threshold has to sit below that to separate adjacent semitones — and above
+ * the depth of a vibrato, or every cycle of one becomes its own note. Measured
+ * on held tones, 70-90 holds a +/-60 cent vibrato as one note while still
+ * splitting a semitone step; 100 merges the semitones, 50 (the library default)
+ * breaks a +/-50 cent vibrato into a note per cycle. A vibrato wider than a
+ * semitone cannot be held together at any threshold.
+ */
+const NOTE_DETECT_THRESHOLD_CENTS = 80;
+
+/**
+ * Detects the note regions of a monophonic recording: their bounds and pitch.
+ *
+ * The channels are downmixed to mono for the pitch tracker, which measures an
+ * F0 contour that the segmenter then cuts into stable regions. Unlike the
+ * transient detector this follows pitch, so it finds the boundary of a legato
+ * note that arrives without an attack, and it reports where each note *ends* —
+ * which the transient detector cannot, since a note followed by a rest has no
+ * transient at its release. The two are complementary: pitch segmentation
+ * cannot split a note repeated at the same pitch, which is exactly what a
+ * transient marks. The audio is not modified.
+ *
+ * The tracker's per-frame confidence is not the segmenter's voicing
+ * probability: it peaks around 0.44 on a clean tone, well under the 0.5 the
+ * segmenter treats as voiced, so every frame would be discarded. The tracker's
+ * own voiced decision carries voicing instead.
+ *
+ * @throws Error when the module provides no pitch tracker or segmenter.
+ * @throws RangeError when sampleRate is not > 0.
+ */
+export function detectNoteRegions(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+): DetectedNote[] {
+  const segment = ops.noteSegments;
+  const detect = ops.pitchPyin ?? ops.pitchYin;
+  if (typeof segment !== 'function' || typeof detect !== 'function') {
+    throw new Error('Note detection is unavailable in this libsonare build');
+  }
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
+  }
+  const mono = downmixToMono(channels);
+  const contour = detect(
+    mono,
+    sampleRate,
+    NOTE_DETECT_FRAME,
+    NOTE_DETECT_HOP,
+    undefined,
+    undefined,
+    undefined,
+    true,
+  );
+  const f0 = contour.f0;
+  const flags = contour.voicedFlag;
+  if (!f0 || f0.length === 0 || !flags || flags.length !== f0.length) return [];
+  const regions = segment({
+    f0Hz: f0,
+    voicedProb: Float32Array.from(flags, (flag) => (flag ? 1 : 0)),
+    frameRate: sampleRate / NOTE_DETECT_HOP,
+    segmentationThresholdCents: NOTE_DETECT_THRESHOLD_CENTS,
+  });
+  const notes: DetectedNote[] = [];
+  for (const region of regions) {
+    const startFrame = Math.max(0, Math.round(region.startSeconds * sampleRate));
+    const endFrame = Math.min(mono.length, Math.round(region.endSeconds * sampleRate));
+    if (endFrame <= startFrame) continue;
+    // The segmenter reports pitch in cents from its A440 reference.
+    notes.push({ startFrame, endFrame, midi: 69 + region.medianCents / 100 });
+  }
+  return notes;
 }
 
 /** Pair processor id that EQ-matches a source to a reference's tonal balance. */

@@ -61,6 +61,8 @@ describe('useSampleViewport', () => {
           asset,
           selection,
           onsetFrames: ref([]),
+          noteRegions: ref([]),
+          formatNote: (midi: number) => String(Math.round(midi)),
           selRange: () => null,
         });
         viewport.syncViewportToFrames(40);
@@ -121,6 +123,8 @@ describe('useSampleViewport', () => {
           asset: ref(null),
           selection,
           onsetFrames: ref([]),
+          noteRegions: ref([]),
+          formatNote: (midi: number) => String(Math.round(midi)),
           selRange: () => null,
         });
         return () =>

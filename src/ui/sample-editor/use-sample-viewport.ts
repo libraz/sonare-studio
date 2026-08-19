@@ -11,8 +11,9 @@
 import { markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
 import { setupCanvas } from '@/components/piano-roll/theme';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
+import { CANVAS_FONT_SIZE_PX, canvasFont, colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 import { type ChannelPeaks, computePeaks } from '@/ui/waveform/peaks';
+import type { DetectedNote } from './onsets';
 import { snapFrameToOnsets } from './onsets';
 import type { SampleRange } from './ops';
 import type { SelectionDraft } from './selection';
@@ -59,7 +60,11 @@ const COLORS = {
   selectionFill: colorWithAlpha(TOKENS.accent, 0.16),
   selectionEdge: colorWithAlpha(TOKENS.accent, 0.85),
   onsetMarker: colorWithAlpha(TOKENS.warning, 0.7),
+  noteLabel: colorWithAlpha(TOKENS.warning, 0.95),
 } as const;
+
+/** Gap a note label needs from the previous one before it is drawn, in CSS px. */
+const NOTE_LABEL_MIN_GAP_PX = 26;
 
 /** Options for {@link useSampleViewport}. */
 export interface UseSampleViewportOptions {
@@ -69,6 +74,10 @@ export interface UseSampleViewportOptions {
   selection: Ref<SelectionDraft | null>;
   /** Detected onset marker frames ref. */
   onsetFrames: Ref<number[]>;
+  /** Detected note regions ref; each is labelled with its pitch. */
+  noteRegions: Ref<ReadonlyArray<DetectedNote>>;
+  /** Formats a (fractional) MIDI number for a note label. */
+  formatNote: (midi: number) => string;
   /** Normalized selection range getter (drives the selection fill/edges). */
   selRange: () => SampleRange | null;
 }
@@ -100,7 +109,7 @@ export class VisiblePeaksCache {
 
 /** Viewport rendering/navigation surface returned by {@link useSampleViewport}. */
 export function useSampleViewport(options: UseSampleViewportOptions) {
-  const { asset, selection, onsetFrames, selRange } = options;
+  const { asset, selection, onsetFrames, noteRegions, formatNote, selRange } = options;
 
   const wrapRef = ref<HTMLDivElement | null>(null);
   const canvasRef = ref<HTMLCanvasElement | null>(null);
@@ -177,6 +186,22 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
       }
     }
 
+    // A detected note carries its pitch, so name it at its start. Labels are
+    // skipped rather than overlapped when the notes are too close to read.
+    if (noteRegions.value.length > 0) {
+      ctx.fillStyle = COLORS.noteLabel;
+      ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
+      ctx.textBaseline = 'top';
+      let lastLabelX = Number.NEGATIVE_INFINITY;
+      for (const note of noteRegions.value) {
+        const x = view.frameToX(note.startFrame);
+        if (x < 0 || x > widthPx) continue;
+        if (x - lastLabelX < NOTE_LABEL_MIN_GAP_PX) continue;
+        lastLabelX = x;
+        ctx.fillText(formatNote(note.midi), Math.floor(x) + 2, 2);
+      }
+    }
+
     const range = selRange();
     if (range) {
       const x0 = Math.max(0, view.frameToX(range.startFrame));
@@ -191,7 +216,7 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     }
   }
 
-  watch([selection, asset, onsetFrames], scheduleDraw);
+  watch([selection, asset, onsetFrames, noteRegions], scheduleDraw);
   watch(asset, () => visiblePeaks.clear());
 
   /** Current viewport instance (null before the first load). */

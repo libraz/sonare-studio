@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   downmixToMono,
+  noteRegionMarkers,
   onsetSecondsToFrames,
   silenceSplitMarkers,
   sliceRangeAt,
@@ -93,5 +94,34 @@ describe('silenceSplitMarkers', () => {
   it('returns an empty list for no interior cuts', () => {
     expect(silenceSplitMarkers([0, 2000], 2000)).toEqual([]);
     expect(silenceSplitMarkers([], 2000)).toEqual([]);
+  });
+});
+
+describe('noteRegionMarkers', () => {
+  const note = (startFrame: number, endFrame: number) => ({ startFrame, endFrame, midi: 60 });
+
+  it('cuts at both ends of every note', () => {
+    // A note with a rest after it needs its release marked: nothing else does.
+    expect(noteRegionMarkers([note(100, 400), note(900, 1200)], 2000)).toEqual([
+      100, 400, 900, 1200,
+    ]);
+  });
+
+  it('collapses the shared edge of two legato notes into one cut', () => {
+    expect(noteRegionMarkers([note(100, 500), note(500, 900)], 2000)).toEqual([100, 500, 900]);
+  });
+
+  it('drops the whole-file bounds, out-of-range and non-finite edges', () => {
+    expect(
+      noteRegionMarkers(
+        [note(0, 500), note(1500, 2000), note(Number.NaN, 2500), note(-10, 600)],
+        2000,
+      ),
+    ).toEqual([500, 600, 1500]);
+  });
+
+  it('rounds fractional edges and returns them ascending', () => {
+    expect(noteRegionMarkers([note(20.6, 10.4)], 2000)).toEqual([10, 21]);
+    expect(noteRegionMarkers([], 2000)).toEqual([]);
   });
 });

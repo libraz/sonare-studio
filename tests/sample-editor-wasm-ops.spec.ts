@@ -9,11 +9,13 @@ import {
   denoiseRange,
   dereverbRange,
   detectAcousticRange,
+  detectNoteRegions,
   detectOnsetFrames,
   estimateRoomRange,
   harmonicRange,
   loadSampleEditorWasm,
   matchEqToReference,
+  noteMoveRange,
   noteStretchRange,
   percussiveRange,
   pitchCorrectRange,
@@ -64,6 +66,8 @@ describe('wasmOpAvailability', () => {
       percussive: false,
       timeStretch: false,
       noteStretch: false,
+      noteMove: false,
+      detectNotes: false,
       declick: false,
       denoise: false,
       declip: false,
@@ -135,6 +139,8 @@ describe('wasmOpAvailability', () => {
       percussive: false,
       timeStretch: false,
       noteStretch: false,
+      noteMove: false,
+      detectNotes: false,
       declick: true,
       denoise: false,
       declip: true,
@@ -406,6 +412,193 @@ describe('detectOnsetFrames', () => {
   });
 });
 
+describe('detectNoteRegions', () => {
+  /** A contour whose flags say voiced everywhere but whose prob never reaches 0.5. */
+  const contour = {
+    f0: new Float32Array([220, 220, 262, 262]),
+    voicedProb: new Float32Array([0.44, 0.42, 0.43, 0.41]),
+    voicedFlag: [true, true, true, false],
+    medianF0: 240,
+  };
+
+  it('tracks the mono downmix and cuts it into notes at the measured settings', () => {
+    const pitchPyin = vi.fn(
+      (
+        samples: Float32Array,
+        sampleRate?: number,
+        frameLength?: number,
+        hopLength?: number,
+        fmin?: number,
+        fmax?: number,
+        threshold?: number,
+        fillNa?: boolean,
+      ) => {
+        expect([...samples]).toEqual([0.5, 0.5]);
+        expect(sampleRate).toBe(48000);
+        expect(frameLength).toBe(2048);
+        expect(hopLength).toBe(512);
+        // The frequency range is left to the library: clamping it mistracks the
+        // octave of anything outside the clamp.
+        expect([fmin, fmax, threshold]).toEqual([undefined, undefined, undefined]);
+        expect(fillNa).toBe(true);
+        return contour;
+      },
+    );
+    const noteSegments = vi.fn((request: { frameRate: number; voicedProb: Float32Array }) => {
+      expect(request.frameRate).toBeCloseTo(48000 / 512, 6);
+      // Voicing comes from the tracker's own decision. Its confidence peaks
+      // below the 0.5 the segmenter treats as voiced, so forwarding it would
+      // discard every frame.
+      expect([...request.voicedProb]).toEqual([1, 1, 1, 0]);
+      return [
+        { frameStart: 0, frameEnd: 2, startSeconds: 0, endSeconds: 0.5, medianCents: -900 },
+        { frameStart: 2, frameEnd: 4, startSeconds: 0.5, endSeconds: 1, medianCents: -600 },
+      ];
+    });
+
+    const notes = detectNoteRegions({ pitchPyin, noteSegments }, ch([1, 0], [0, 1]), 48000);
+
+    // Cents are relative to the segmenter's A440 reference: -900 is C4, -600 Eb4.
+    // The second region starts past this 2-frame buffer, so it drops out.
+    expect(notes).toEqual([{ startFrame: 0, endFrame: 2, midi: 60 }]);
+    expect(noteSegments.mock.calls[0]?.[0]).toMatchObject({ segmentationThresholdCents: 80 });
+  });
+
+  it('converts the median pitch of each region from cents to a MIDI number', () => {
+    const pitchPyin = () => contour;
+    const noteSegments = () => [
+      { frameStart: 0, frameEnd: 1, startSeconds: 0, endSeconds: 1, medianCents: -900 },
+      { frameStart: 1, frameEnd: 2, startSeconds: 1, endSeconds: 2, medianCents: 0 },
+      { frameStart: 2, frameEnd: 3, startSeconds: 2, endSeconds: 3, medianCents: 350 },
+    ];
+    expect(
+      detectNoteRegions({ pitchPyin, noteSegments }, ch(new Array(3).fill(0)), 1).map(
+        (note) => note.midi,
+      ),
+    ).toEqual([60, 69, 72.5]);
+  });
+
+  it('clamps a region to the buffer and drops one that ends up empty', () => {
+    const pitchPyin = () => contour;
+    const noteSegments = () => [
+      { frameStart: 0, frameEnd: 1, startSeconds: -1, endSeconds: 0.5, medianCents: 0 },
+      { frameStart: 1, frameEnd: 2, startSeconds: 8, endSeconds: 9, medianCents: 0 },
+    ];
+    // 4 frames at 8 Hz is 0.5 s of audio, so the first note clamps to [0, 4)
+    // and the second starts past the end.
+    expect(detectNoteRegions({ pitchPyin, noteSegments }, ch([0, 0, 0, 0]), 8)).toEqual([
+      { startFrame: 0, endFrame: 4, midi: 69 },
+    ]);
+  });
+
+  it('falls back to pitchYin and reports an unusable contour as no notes', () => {
+    const noteSegments = vi.fn(() => []);
+    const pitchYin = vi.fn(() => contour);
+    expect(detectNoteRegions({ pitchYin, noteSegments }, ch([1, 1]), 48000)).toEqual([]);
+    expect(pitchYin).toHaveBeenCalledTimes(1);
+
+    const short = { f0: new Float32Array([220]), voicedFlag: [true, true], medianF0: 220 };
+    expect(detectNoteRegions({ pitchYin: () => short, noteSegments }, ch([1, 1]), 48000)).toEqual(
+      [],
+    );
+    expect(
+      detectNoteRegions(
+        { pitchYin: () => ({ f0: new Float32Array(), voicedFlag: [], medianF0: 0 }), noteSegments },
+        ch([1, 1]),
+        48000,
+      ),
+    ).toEqual([]);
+    // Nothing reached the segmenter for either unusable contour.
+    expect(noteSegments).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws without a tracker, without a segmenter, or on a bad sample rate', () => {
+    const contourOnly: SampleEditorWasmOps = { pitchPyin: () => contour };
+    expect(() => detectNoteRegions(contourOnly, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => detectNoteRegions({ noteSegments: () => [] }, ch([1]), 48000)).toThrow(
+      /unavailable/,
+    );
+    expect(() =>
+      detectNoteRegions({ pitchPyin: () => contour, noteSegments: () => [] }, ch([1]), 0),
+    ).toThrow(RangeError);
+  });
+});
+
+describe('noteMoveRange', () => {
+  it('moves the selected region to the shifted onset on every channel', () => {
+    const noteMove = vi.fn(
+      (
+        samples: Float32Array,
+        sampleRate?: number,
+        options?: { onsetSample?: number; offsetSample?: number; targetOnsetSample?: number },
+      ) => {
+        expect(sampleRate).toBe(48000);
+        expect(options).toEqual({ onsetSample: 2, offsetSample: 4, targetOnsetSample: 3 });
+        return samples.map((value) => value + 1) as Float32Array;
+      },
+    );
+    const out = noteMoveRange(
+      { noteMove },
+      ch([1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]),
+      48000,
+      1,
+      {
+        startFrame: 2,
+        endFrame: 4,
+      },
+    );
+    expect(plain(out)).toEqual([
+      [2, 3, 4, 5, 6, 7],
+      [8, 9, 10, 11, 12, 13],
+    ]);
+    expect(noteMove).toHaveBeenCalledTimes(2);
+  });
+
+  it('clamps the target so the note stays inside the buffer', () => {
+    const targets: number[] = [];
+    const noteMove = vi.fn(
+      (samples: Float32Array, _sr?: number, options?: { targetOnsetSample?: number }) => {
+        targets.push(options?.targetOnsetSample ?? -1);
+        return samples;
+      },
+    );
+    const channels = ch([1, 2, 3, 4, 5, 6]);
+    // A 2-frame note in a 6-frame buffer can start no later than frame 4.
+    noteMoveRange({ noteMove }, channels, 48000, 100, { startFrame: 2, endFrame: 4 });
+    noteMoveRange({ noteMove }, channels, 48000, -100, { startFrame: 2, endFrame: 4 });
+    expect(targets).toEqual([4, 0]);
+  });
+
+  it('rounds a fractional shift and defaults to the whole file', () => {
+    const noteMove = vi.fn((samples: Float32Array) => samples);
+    noteMoveRange({ noteMove }, ch([1, 2, 3, 4]), 48000, 0.6);
+    expect(noteMove).toHaveBeenCalledWith(expect.any(Float32Array), 48000, {
+      onsetSample: 0,
+      offsetSample: 4,
+      targetOnsetSample: 0,
+    });
+  });
+
+  it('throws when noteMove is unavailable, the shift is not finite, or the range is empty', () => {
+    expect(() => noteMoveRange({}, ch([1]), 48000, 1)).toThrow(/unavailable/);
+    const mod: SampleEditorWasmOps = { noteMove: (samples) => samples };
+    expect(() => noteMoveRange(mod, ch([1]), 48000, Number.NaN)).toThrow(RangeError);
+    expect(() => noteMoveRange(mod, ch([1, 2]), 48000, 1, { startFrame: 1, endFrame: 1 })).toThrow(
+      RangeError,
+    );
+  });
+
+  it('trims to the shortest result so the channels stay planar', () => {
+    let call = 0;
+    const noteMove = (samples: Float32Array) =>
+      (call++ === 0 ? samples : samples.slice(0, 2)) as Float32Array;
+    expect(plain(noteMoveRange({ noteMove }, ch([1, 2, 3], [4, 5, 6]), 48000, 1))).toEqual([
+      [1, 2],
+      [4, 5],
+    ]);
+  });
+});
+
 describe('splitSilenceFrames', () => {
   it('downmixes to mono and returns the interior cut frames', () => {
     const splitSilence = vi.fn((samples: Float32Array, topDb?: number) => {
@@ -547,15 +740,17 @@ describe('pitchCorrectTimevaryingRange', () => {
         sampleRate?: number,
         hopLength?: number,
         voiced?: Int32Array,
-        voicedProb?: Float32Array,
+        ...rest: unknown[]
       ) => {
         expect([...f0]).toEqual([220, 224]);
         expect(targetMidi).toBe(69);
         expect(sampleRate).toBe(48000);
         expect(hopLength).toBe(512);
         expect(voiced ? [...voiced] : []).toEqual([1, 0]);
-        expect(voicedProb?.[0]).toBeCloseTo(0.9, 6);
-        expect(voicedProb?.[1]).toBeCloseTo(0.8, 6);
+        // The tracker's confidence must not reach the corrector: it reads the
+        // argument as the per-frame correction weight, so forwarding it
+        // silently applies a fraction of the requested correction.
+        expect(rest).toEqual([]);
         return samples.map((value) => value + 10) as Float32Array;
       },
     );

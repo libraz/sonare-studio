@@ -58,6 +58,40 @@ export function silenceSplitMarkers(boundaries: ArrayLike<number>, totalFrames: 
   return [...frames].sort((a, b) => a - b);
 }
 
+/** One detected note region: where it sounds, and at what pitch. */
+export interface DetectedNote {
+  /** First frame of the note. */
+  startFrame: number;
+  /** One past the note's last frame. */
+  endFrame: number;
+  /** Detected pitch as a (fractional) MIDI note number. */
+  midi: number;
+}
+
+/**
+ * Turns detected note regions into overlay cut markers: both edges of every
+ * note, so a click picks the note itself rather than the note plus whatever
+ * follows it. Legato notes share an edge, and the whole-file bounds need no
+ * cut, so the result is deduplicated and restricted to (0, totalFrames).
+ *
+ * @param notes Detected note regions in ascending order.
+ * @param totalFrames Total frames; only cuts inside (0, totalFrames) are kept.
+ * @returns Cut positions in ascending order.
+ */
+export function noteRegionMarkers(
+  notes: ReadonlyArray<DetectedNote>,
+  totalFrames: number,
+): number[] {
+  const frames = new Set<number>();
+  for (const note of notes) {
+    for (const edge of [note.startFrame, note.endFrame]) {
+      if (!Number.isFinite(edge) || edge <= 0 || edge >= totalFrames) continue;
+      frames.add(Math.round(edge));
+    }
+  }
+  return [...frames].sort((a, b) => a - b);
+}
+
 /**
  * Snaps a frame to the nearest onset within `tolerance` frames, returning the
  * frame unchanged when none is close enough. On a tie the earlier onset wins.

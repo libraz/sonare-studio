@@ -506,6 +506,10 @@ export const en = {
       stretchTitle: 'Time stretch (0.5 = double duration, 2 = half)',
       noteStretch: 'Note',
       noteStretchTitle: 'Stretch the selected note by the ratio, preserving its attack transient',
+      noteShift: 'Move',
+      noteMove: 'Nudge',
+      noteMoveTitle:
+        'Move the selected note by the offset, keeping its length (negative moves it earlier)',
       declickTitle: 'Repair clicks and pops',
       declick: 'Declick',
       denoiseTitle: 'Reduce broadband noise',
@@ -558,8 +562,11 @@ export const en = {
       detectTransients: 'Transients',
       detectTransientsTitle:
         'Detect transient onsets; markers snap selection edges and clicks select slices',
+      detectNotes: 'Notes',
+      detectNotesTitle:
+        'Detect pitched notes; markers cut at both ends of each note and label its pitch',
       clearTransients: 'Clear ({count})',
-      clearTransientsTitle: 'Remove the transient markers',
+      clearTransientsTitle: 'Remove the detected markers',
       silenceThreshold: 'Silence',
       splitSilence: 'Split',
       splitSilenceTitle: 'Split on silence; markers cut at the gaps so clicks select slices',
@@ -614,6 +621,7 @@ export const en = {
         tune: 'Enter a note name (A4, C#3) or MIDI number (0–127)',
         voice: 'Enter a finite pitch and a formant factor > 0',
         stretch: 'Enter a stretch rate > 0',
+        noteShift: 'Enter a non-zero offset in milliseconds',
         spectralEdit: 'Enter finite spectral edit frequency and gain values',
       },
       ops: {
@@ -633,6 +641,7 @@ export const en = {
         voice: 'Voice {sign}{semitones} st, formant x{formant}',
         stretch: 'Stretch x{rate}',
         noteStretch: 'Note stretch x{rate}',
+        noteMove: 'Note move {ms} ms',
         declick: 'Declick',
         denoise: 'Denoise',
         declip: 'Declip',

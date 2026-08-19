@@ -58,6 +58,7 @@ import {
   estimateRoomRange,
   harmonicRange,
   matchEqToReference,
+  noteMoveRange,
   noteStretchRange,
   percussiveRange,
   pitchCorrectRange,
@@ -262,6 +263,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const voicePitchInput = ref('0');
   const voiceFormantInput = ref('1');
   const stretchInput = ref('1');
+  /** Note-move nudge in milliseconds (negative moves the note earlier). */
+  const noteShiftMsInput = ref('0');
   /** Silence-split threshold in dB below the peak. */
   const silenceThresholdInput = ref('40');
   /** Rectangular spectral edit controls: frequency band, gain and edit mode. */
@@ -651,6 +654,21 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
+  async function onNoteMove(): Promise<void> {
+    const ops = wasmOps.value;
+    const shiftMs = parseNumber(noteShiftMsInput.value);
+    if (!ops) return;
+    if (shiftMs === null || shiftMs === 0) {
+      error.value = t.value.shell.sampleEditor.errors.noteShift;
+      return;
+    }
+    const shiftFrames = Math.round((shiftMs / 1000) * sampleRate());
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.noteMove, { ms: shiftMs }),
+      (channels, range) => noteMoveRange(ops, channels, sampleRate(), shiftFrames, range),
+    );
+  }
+
   async function onDeclick(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
@@ -960,6 +978,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     voicePitchInput,
     voiceFormantInput,
     stretchInput,
+    noteShiftMsInput,
     silenceThresholdInput,
     spectralLowHzInput,
     spectralHighHzInput,
@@ -997,6 +1016,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onVoiceChange,
     onTimeStretch,
     onNoteStretch,
+    onNoteMove,
     onDeclick,
     onDenoise,
     onDeclip,

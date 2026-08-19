@@ -14,6 +14,7 @@ import {
   selectVersion,
   type VersionHistoryState,
 } from '@/ui/sample-editor/history';
+import { formatMidiNote } from '@/ui/sample-editor/note-names';
 import { MODE_OPTIONS, rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
@@ -89,6 +90,7 @@ const markers = useSampleMarkers({
   wasmOps: () => wasmOps.value,
   asset: () => asset.value,
   silenceThresholdInput: () => operations.silenceThresholdInput.value,
+  busy,
   setError: (message) => {
     error.value = message;
   },
@@ -96,7 +98,7 @@ const markers = useSampleMarkers({
     error.value = null;
   },
 });
-const { onsetFrames } = markers;
+const { onsetFrames, noteRegions } = markers;
 
 const selectionControls = useSampleSelection({
   asset,
@@ -120,11 +122,13 @@ const viewportControls = useSampleViewport({
   asset,
   selection,
   onsetFrames,
+  noteRegions,
+  formatNote: (midi) => formatMidiNote(midi, noteNameSystem.value),
   selRange: () => selRange.value,
 });
 const { wrapRef, canvasRef, scheduleDraw, zoomToFit, onWheel } = viewportControls;
 
-const { onDetectTransients, onSplitSilence, onClearTransients } = markers;
+const { onDetectTransients, onDetectNotes, onSplitSilence, onClearTransients } = markers;
 
 const operations = useSampleOperations({
   asset,
@@ -153,6 +157,7 @@ const {
   voicePitchInput,
   voiceFormantInput,
   stretchInput,
+  noteShiftMsInput,
   silenceThresholdInput,
   spectralLowHzInput,
   spectralHighHzInput,
@@ -188,6 +193,7 @@ const {
   onVoiceChange,
   onTimeStretch,
   onNoteStretch,
+  onNoteMove,
   onDeclick,
   onDenoise,
   onDeclip,
@@ -256,6 +262,7 @@ async function loadCurrent(assetId: string): Promise<void> {
     asset.value = loaded;
     // Markers belong to the previous buffer; a new version invalidates them.
     onsetFrames.value = [];
+    noteRegions.value = [];
     viewportControls.syncViewportToFrames(loaded.meta.numFrames);
     selectionControls.clampSelectionTo(loaded.meta.numFrames);
   } catch (err) {
@@ -652,6 +659,22 @@ onBeforeUnmount(() => {
       >
         {{ t.shell.sampleEditor.noteStretch }}
       </button>
+      <label>
+        {{ t.shell.sampleEditor.noteShift }}
+        <input v-model="noteShiftMsInput" class="num" type="number" step="5" /> ms
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.noteMove"
+        v-tooltip="
+          wasmAvail.noteMove
+            ? t.shell.sampleEditor.noteMoveTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onNoteMove"
+      >
+        {{ t.shell.sampleEditor.noteMove }}
+      </button>
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.declick"
@@ -870,6 +893,18 @@ onBeforeUnmount(() => {
         @click="onDetectTransients"
       >
         {{ t.shell.sampleEditor.detectTransients }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.detectNotes"
+        v-tooltip="
+          wasmAvail.detectNotes
+            ? t.shell.sampleEditor.detectNotesTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onDetectNotes"
+      >
+        {{ t.shell.sampleEditor.detectNotes }}
       </button>
       <label>
         {{ t.shell.sampleEditor.silenceThreshold }}
