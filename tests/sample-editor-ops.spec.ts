@@ -3,7 +3,10 @@ import {
   applyGainDb,
   applyGainDbInPlace,
   clampRange,
+  cutCrossfadeFrames,
   dbToGain,
+  deleteRange,
+  duplicateRange,
   fadeInLinear,
   fadeInLinearInPlace,
   fadeOutLinear,
@@ -306,5 +309,80 @@ describe('spliceRange', () => {
         new Float32Array(3),
       ]),
     ).toThrow(RangeError);
+  });
+});
+
+describe('cutCrossfadeFrames', () => {
+  it('resolves the 2 ms join fade against the sample rate', () => {
+    expect(cutCrossfadeFrames(48000)).toBe(96);
+    expect(cutCrossfadeFrames(44100)).toBe(88);
+    expect(cutCrossfadeFrames(0)).toBe(0);
+    expect(cutCrossfadeFrames(Number.NaN)).toBe(0);
+  });
+});
+
+describe('deleteRange', () => {
+  it('removes the range and closes the gap on every channel', () => {
+    const input = ch([1, 2, 3, 4, 5], [6, 7, 8, 9, 10]);
+    expect(plain(deleteRange(input, { startFrame: 1, endFrame: 3 }))).toEqual([
+      [1, 4, 5],
+      [6, 9, 10],
+    ]);
+    // The input is untouched: callers hand in shared asset audio.
+    expect(plain(input)).toEqual([
+      [1, 2, 3, 4, 5],
+      [6, 7, 8, 9, 10],
+    ]);
+  });
+
+  it('crossfades the join, which shortens the result by the fade', () => {
+    const input = ch([1, 1, 1, 0, 0, 0, 0, 0]);
+    // Deleting [3, 6) with a 2-frame fade overlaps frames 1..2 of the head with
+    // frames 0..1 of the tail at 1/3 and 2/3.
+    const out = deleteRange(input, { startFrame: 3, endFrame: 6 }, 2)[0];
+    expect(out).toHaveLength(3);
+    expect([...out].map((v) => Number(v.toFixed(4)))).toEqual([1, 0.6667, 0.3333]);
+  });
+
+  it('clamps the fade to the shorter side of the join', () => {
+    // A 1-frame head cannot give up 4 frames to the overlap.
+    const out = deleteRange(ch([1, 9, 9, 2, 3]), { startFrame: 1, endFrame: 3 }, 4)[0];
+    expect(out).toHaveLength(2);
+  });
+
+  it('deletes a range that touches either end', () => {
+    expect(plain(deleteRange(ch([1, 2, 3, 4]), { startFrame: 0, endFrame: 2 }))).toEqual([[3, 4]]);
+    expect(plain(deleteRange(ch([1, 2, 3, 4]), { startFrame: 2, endFrame: 9 }))).toEqual([[1, 2]]);
+  });
+
+  it('refuses an empty range and refuses to delete everything', () => {
+    expect(() => deleteRange(ch([1, 2]), { startFrame: 1, endFrame: 1 })).toThrow(RangeError);
+    expect(() => deleteRange(ch([1, 2]), { startFrame: 0, endFrame: 2 })).toThrow(RangeError);
+    expect(() => deleteRange(ch([1, 2]), { startFrame: -5, endFrame: 99 })).toThrow(RangeError);
+  });
+});
+
+describe('duplicateRange', () => {
+  it('repeats the range directly after itself', () => {
+    expect(
+      plain(duplicateRange(ch([1, 2, 3, 4], [5, 6, 7, 8]), { startFrame: 1, endFrame: 3 })),
+    ).toEqual([
+      [1, 2, 3, 2, 3, 4],
+      [5, 6, 7, 6, 7, 8],
+    ]);
+  });
+
+  it('doubles the whole file when nothing is selected', () => {
+    expect(plain(duplicateRange(ch([1, 2])))).toEqual([[1, 2, 1, 2]]);
+  });
+
+  it('crossfades both joins, shortening the result by each fade', () => {
+    const out = duplicateRange(ch([0, 0, 0, 0, 0, 0]), { startFrame: 2, endFrame: 4 }, 1)[0];
+    // 6 original + 2 copied - 1 fade at each of the two joins.
+    expect(out).toHaveLength(6);
+  });
+
+  it('refuses an empty range', () => {
+    expect(() => duplicateRange(ch([1, 2]), { startFrame: 1, endFrame: 1 })).toThrow(RangeError);
   });
 });

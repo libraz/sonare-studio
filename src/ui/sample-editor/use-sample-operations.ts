@@ -33,6 +33,9 @@ import { formatMidiNote, parseMidiNote } from './note-names';
 import { downmixToMono } from './onsets';
 import {
   applyGainDb,
+  cutCrossfadeFrames,
+  deleteRange,
+  duplicateRange,
   fadeInLinear,
   fadeOutLinear,
   normalizeToDb,
@@ -534,6 +537,32 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     }
   }
 
+  async function onDelete(): Promise<void> {
+    const range = selRange();
+    if (!range) return;
+    const fadeFrames = cutCrossfadeFrames(sampleRate());
+    if (
+      await runOp(
+        t.value.shell.sampleEditor.ops.delete,
+        runBuiltinOp({ type: 'delete', fadeFrames }, (channels) =>
+          deleteRange(channels, range, fadeFrames),
+        ),
+      )
+    ) {
+      clearSelection();
+    }
+  }
+
+  async function onDuplicate(): Promise<void> {
+    const fadeFrames = cutCrossfadeFrames(sampleRate());
+    await runOp(
+      t.value.shell.sampleEditor.ops.duplicate,
+      runBuiltinOp({ type: 'duplicate', fadeFrames }, (channels, range) =>
+        duplicateRange(channels, range, fadeFrames),
+      ),
+    );
+  }
+
   async function onPitchShift(): Promise<void> {
     const ops = wasmOps.value;
     const semitones = parseNumber(pitchInput.value);
@@ -1008,6 +1037,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onReverse,
     onSilence,
     onTrim,
+    onDelete,
+    onDuplicate,
     onPitchShift,
     onPitchCorrect,
     onPitchCorrectTimevarying,

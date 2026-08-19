@@ -3,6 +3,8 @@
 import {
   applyGainDb,
   applyGainDbInPlace,
+  deleteRange,
+  duplicateRange,
   fadeInLinear,
   fadeInLinearInPlace,
   fadeOutLinear,
@@ -31,7 +33,21 @@ export type SampleOperationRequest =
   | { type: 'fade-out'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
   | { type: 'reverse'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
   | { type: 'silence'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
-  | { type: 'trim'; channels: Float32Array[]; range: SampleRange; owned?: boolean };
+  | { type: 'trim'; channels: Float32Array[]; range: SampleRange; owned?: boolean }
+  | {
+      type: 'delete';
+      channels: Float32Array[];
+      range: SampleRange;
+      fadeFrames: number;
+      owned?: boolean;
+    }
+  | {
+      type: 'duplicate';
+      channels: Float32Array[];
+      range: SampleRange;
+      fadeFrames: number;
+      owned?: boolean;
+    };
 
 export type SampleOperationResponse =
   | { type: 'done'; channels: Float32Array[] }
@@ -59,6 +75,12 @@ function perform(request: SampleOperationRequest): Float32Array[] {
       return owned ? silenceInPlace(channels, range) : silence(channels, range);
     case 'trim':
       return owned ? trimToRangeInPlace(channels, range) : trimToRange(channels, range);
+    // Both change the length, so they always build fresh buffers: there is no
+    // in-place form to prefer when the worker owns the input.
+    case 'delete':
+      return deleteRange(channels, range, request.fadeFrames);
+    case 'duplicate':
+      return duplicateRange(channels, range, request.fadeFrames);
   }
 }
 

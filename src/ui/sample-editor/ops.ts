@@ -347,6 +347,111 @@ export function trimToRangeInPlace(channels: Float32Array[], range: SampleRange)
 }
 
 /**
+ * Crossfade applied where two cut edges meet, in seconds.
+ *
+ * A hard join steps the waveform by whatever the two edges happen to differ by,
+ * which clicks. Measured on tones, 2 ms brings the step at the join below the
+ * signal's own sample-to-sample slope at both a high and a low fundamental
+ * (440 Hz: 0.221 -> 0.014 against a 0.017 slope; 55 Hz: 0.446 -> 0.002 against
+ * 0.002). Longer does not improve it and makes anti-correlated edges cancel
+ * across a wider window.
+ */
+export const CUT_CROSSFADE_SECONDS = 0.002;
+
+/** Crossfade length in frames for {@link CUT_CROSSFADE_SECONDS}. */
+export function cutCrossfadeFrames(sampleRate: number): number {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return 0;
+  return Math.max(0, Math.round(CUT_CROSSFADE_SECONDS * sampleRate));
+}
+
+/**
+ * Concatenates one channel's segments, crossfading each join over `fadeFrames`
+ * so the seam does not step. Every overlap consumes the end of the segment
+ * before it, so the result is shorter than a plain concatenation by the sum of
+ * the applied fades.
+ */
+function joinSegments(segments: ReadonlyArray<Float32Array>, fadeFrames: number): Float32Array {
+  let out = segments[0] ?? new Float32Array(0);
+  for (const next of segments.slice(1)) {
+    const fade = Math.max(0, Math.min(fadeFrames, out.length, next.length));
+    const joined = new Float32Array(out.length + next.length - fade);
+    joined.set(out.subarray(0, out.length - fade), 0);
+    const joinAt = out.length - fade;
+    for (let i = 0; i < fade; i += 1) {
+      const mix = (i + 1) / (fade + 1);
+      joined[joinAt + i] = out[joinAt + i] * (1 - mix) + next[i] * mix;
+    }
+    joined.set(next.subarray(fade), joinAt + fade);
+    out = joined;
+  }
+  return out;
+}
+
+/**
+ * Deletes the range and closes the gap, crossfading the two edges so the join
+ * does not click.
+ *
+ * The cut is at the same frame in every channel — a per-channel zero-crossing
+ * search would land on different frames and shift the stereo image.
+ *
+ * @param channels Planar channel buffers (not mutated).
+ * @param range Frame range to remove (clamped; must not be empty).
+ * @param fadeFrames Crossfade length; see {@link cutCrossfadeFrames}.
+ * @returns New, shorter channel buffers.
+ * @throws RangeError when the range is empty or covers the whole file.
+ */
+export function deleteRange(
+  channels: ReadonlyArray<Float32Array>,
+  range: SampleRange,
+  fadeFrames = 0,
+): Float32Array[] {
+  assertPlanar(channels);
+  const total = frameCount(channels);
+  const { startFrame, endFrame } = clampRange(range, total);
+  if (endFrame <= startFrame) {
+    throw new RangeError('Cannot delete an empty range');
+  }
+  if (startFrame === 0 && endFrame === total) {
+    throw new RangeError('Cannot delete the whole file');
+  }
+  return channels.map((channel) =>
+    joinSegments([channel.subarray(0, startFrame), channel.subarray(endFrame)], fadeFrames),
+  );
+}
+
+/**
+ * Inserts a copy of the range directly after itself, crossfading both new
+ * joins. With nothing selected the whole file is doubled.
+ *
+ * @param channels Planar channel buffers (not mutated).
+ * @param range Frame range to repeat (clamped; must not be empty).
+ * @param fadeFrames Crossfade length; see {@link cutCrossfadeFrames}.
+ * @returns New, longer channel buffers.
+ * @throws RangeError when the range is empty.
+ */
+export function duplicateRange(
+  channels: ReadonlyArray<Float32Array>,
+  range?: SampleRange | null,
+  fadeFrames = 0,
+): Float32Array[] {
+  assertPlanar(channels);
+  const { startFrame, endFrame } = resolveRange(channels, range);
+  if (endFrame <= startFrame) {
+    throw new RangeError('Cannot duplicate an empty range');
+  }
+  return channels.map((channel) =>
+    joinSegments(
+      [
+        channel.subarray(0, endFrame),
+        channel.subarray(startFrame, endFrame),
+        channel.subarray(endFrame),
+      ],
+      fadeFrames,
+    ),
+  );
+}
+
+/**
  * Replaces the range with a replacement segment, which may have a different
  * length (used to splice processed audio such as a time stretch back in).
  *

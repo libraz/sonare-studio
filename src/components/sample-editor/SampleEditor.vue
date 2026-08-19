@@ -185,6 +185,8 @@ const {
   onReverse,
   onSilence,
   onTrim,
+  onDelete,
+  onDuplicate,
   onPitchShift,
   onPitchCorrect,
   onPitchCorrectTimevarying,
@@ -531,6 +533,22 @@ onBeforeUnmount(() => {
           <circle cx="4" cy="11" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
         </svg>
         {{ t.shell.sampleEditor.trim }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !selRange"
+        v-tooltip="t.shell.sampleEditor.deleteTitle"
+        @click="onDelete"
+      >
+        {{ t.shell.sampleEditor.delete }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled"
+        v-tooltip="t.shell.sampleEditor.duplicateTitle"
+        @click="onDuplicate"
+      >
+        {{ t.shell.sampleEditor.duplicate }}
       </button>
       <span class="sep" />
       <label>
