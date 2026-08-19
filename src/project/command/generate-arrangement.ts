@@ -178,7 +178,12 @@ export function generateArrangementCommand(params: GenerateArrangementParams = {
   }
 
   if (params.backing !== false && regions.length > 0) {
-    const voicings = voiceProgression(regions.map(editorChordToChord));
+    // The same key that shaped the progression and the bass line: without it
+    // the voicer works from chord structure and motion alone, leaving leading
+    // tones doubled or unresolved.
+    const voicings = voiceProgression(regions.map(editorChordToChord), {
+      key: effectiveKeyScale(store.scaleHighlight),
+    });
     const notes: RawNote[] = [];
     regions.forEach((region, index) => {
       const duration = region.endPpq - region.startPpq;

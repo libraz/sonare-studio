@@ -77,6 +77,49 @@ describe('generateBackingCommand', () => {
     expect(generateBackingCommand()).toBe(0);
     expect(store.tracks.length).toBe(trackCount);
   });
+
+  it('voices the smooth mode against the project key', () => {
+    // I-vi-ii-V-I: told the key, the voicer resolves the final chord instead of
+    // leaving the leading tone to jump, which changes the last voicing.
+    const progression = [0, 9, 2, 7, 0].map((rootPc, index) => ({
+      startPpq: index * 4,
+      endPpq: index * 4 + 4,
+      rootPc,
+      quality: rootPc === 9 || rootPc === 2 ? 1 : 0,
+    }));
+    setProjectChords(progression);
+
+    const inKey = buildBackingPlan(store, { style: 'smooth' });
+    store.scaleHighlight = { enabled: false, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+    // Highlighting off means no key context, and the C-major fallback its
+    // resolver returns is the same key here, so the two must still agree.
+    const disabled = buildBackingPlan(store, { style: 'smooth' });
+    expect(disabled?.notes).toEqual(inKey?.notes);
+
+    const lastStart = progression[progression.length - 1].startPpq;
+    const finalChord = (plan: typeof inKey) =>
+      (plan?.notes ?? [])
+        .filter((note) => note.startPpq === lastStart)
+        .map((note) => note.pitch)
+        .sort((a, b) => a - b);
+    // Told the key, the voicer closes on the tonic in the top voice; without it
+    // the same progression ends on the fifth.
+    const top = finalChord(inKey).at(-1) ?? Number.NaN;
+    expect(((top % 12) + 12) % 12).toBe(0);
+
+    // A key the music does not bear out is not a hazard: its rules only fire on
+    // its own leading tone, so the voicing falls back to the keyless one.
+    store.scaleHighlight = { enabled: true, rootPc: 6, modeMask: MAJOR_MODE_MASK };
+    const wrongKey = buildBackingPlan(store, { style: 'smooth' });
+    expect(wrongKey?.notes.length).toBe(inKey?.notes.length);
+  });
+
+  it('leaves a styled voicing untouched by the key, being a per-chord stack', () => {
+    setProjectChords(TWO_CHORDS);
+    const inC = buildBackingPlan(store, { style: 'drop2' });
+    store.scaleHighlight = { enabled: true, rootPc: 6, modeMask: MAJOR_MODE_MASK };
+    expect(buildBackingPlan(store, { style: 'drop2' })?.notes).toEqual(inC?.notes);
+  });
 });
 
 describe('generateArrangementCommand', () => {

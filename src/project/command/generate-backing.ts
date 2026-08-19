@@ -14,11 +14,13 @@
 
 import {
   type ChordData,
+  type KeyScale,
   type VoicingStyle,
   voiceChordStyled,
   voiceProgression,
 } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
+import { effectiveKeyScale } from '@/compose/key';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
@@ -50,12 +52,22 @@ function clampPitch(pitch: number): number {
 /**
  * Builds the per-chord voicings for the chord regions.
  *
+ * The smooth mode is given the project's key: without it the voicer works from
+ * chord structure and motion alone, leaving leading tones doubled or
+ * unresolved. A key the music does not bear out costs nothing — its rules only
+ * fire on that key's own leading tone and sevenths, so the result falls back to
+ * the keyless one. Styled voicings are per-chord stacks and take no key.
+ *
  * @throws When a chord admits no voicing in the requested ranges (libcantus
  *   `voiceProgression`/`voiceChordStyled` throw); callers surface it.
  */
-function voicingsFor(chords: ChordData[], params: GenerateBackingParams): number[][] {
+function voicingsFor(
+  chords: ChordData[],
+  params: GenerateBackingParams,
+  key: KeyScale,
+): number[][] {
   const style = params.style ?? 'smooth';
-  if (style === 'smooth') return voiceProgression(chords);
+  if (style === 'smooth') return voiceProgression(chords, { key });
   return chords.map((chord) =>
     voiceChordStyled(chord, {
       style,
@@ -78,7 +90,7 @@ export function buildBackingPlan(
 
   const regions = [...store.chords].sort((a, b) => a.startPpq - b.startPpq);
   const chords = regions.map(editorChordToChord);
-  const voicings = voicingsFor(chords, params);
+  const voicings = voicingsFor(chords, params, effectiveKeyScale(store.scaleHighlight));
 
   const notes: RawNote[] = [];
   regions.forEach((region, index) => {
