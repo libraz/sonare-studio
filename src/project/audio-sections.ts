@@ -6,17 +6,28 @@
  * Like {@link analyzeAudioClipChords}, the analyzed buffer is cut with the same
  * fixed-tempo slice as playback and detection times (seconds, relative to the
  * window start) are mapped back to absolute PPQ with that same constant tempo.
- * Each detected section is labeled from its `SectionType` ordinal and colored
- * by type so repeats share a color; names are plain editable strings (sections
- * are app-level metadata, not localized keys). Side-effect-free and
+ * Each detected section is labeled from its `SectionType` ordinal and numbered
+ * by occurrence. Color comes from a chroma comparison of the sections
+ * themselves rather than from the type ordinal, which the detector reuses
+ * across parts that share nothing musically. Names are plain editable strings
+ * (sections are app-level metadata, not localized keys). Side-effect-free and
  * dependency-injected for testing; the merge/commit lives in command/timeline.
  */
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
+import {
+  type ChromaAnalyzer,
+  groupSectionRepeats,
+  SECTION_CHROMA_FFT,
+  SECTION_CHROMA_HOP,
+  sectionChromaVector,
+} from './section-repeats';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import { type TempoSegment, TRACK_COLOR_PALETTE } from './types';
+
+export type { ChromaAnalyzer, ChromaFeatures } from './section-repeats';
 
 /**
  * Section labels indexed by libsonare `SectionType` ordinal
@@ -63,14 +74,23 @@ export interface AudioSectionDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
   /** The audio section analyzer. */
   analyzeSections: AudioSectionAnalyzer;
+  /**
+   * Chroma extractor used to tell repeats apart. Omit to color by detected
+   * type, which cannot distinguish two different parts the detector gave the
+   * same type ordinal.
+   */
+  chroma?: ChromaAnalyzer;
 }
 
-/** Maps a SectionType ordinal to a stable label and palette color. */
-function labelAndColor(type: number): { name: string; color: string } {
+/** Maps a SectionType ordinal to its stable label. */
+function sectionLabel(type: number): string {
   const index = Number.isInteger(type) && type >= 0 ? type : SECTION_TYPE_NAMES.length - 1;
-  const name = SECTION_TYPE_NAMES[index] ?? SECTION_TYPE_NAMES[SECTION_TYPE_NAMES.length - 1];
-  const color = TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length];
-  return { name, color };
+  return SECTION_TYPE_NAMES[index] ?? SECTION_TYPE_NAMES[SECTION_TYPE_NAMES.length - 1];
+}
+
+/** Palette entry for a repeat group (or, without chroma, for a type). */
+function groupColor(group: number): string {
+  return TRACK_COLOR_PALETTE[Math.max(0, group) % TRACK_COLOR_PALETTE.length];
 }
 
 /**
@@ -113,12 +133,43 @@ export async function analyzeAudioClipSections(
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
   const secondsToTimelinePpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));
-  const out: DetectedSectionInput[] = [];
+  const placed: Array<{ section: DetectedAudioSection; startPpq: number; endPpq: number }> = [];
   for (const section of sections ?? []) {
     const startPpq = secondsToTimelinePpq(section.start);
     const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(section.end));
     if (!(endPpq > startPpq)) continue;
-    out.push({ ...labelAndColor(section.type), startPpq, endPpq });
+    placed.push({ section, startPpq, endPpq });
   }
-  return out;
+
+  // The detector's type ordinal repeats across genuinely different parts, so
+  // coloring by it claims two parts are the same when they are not. Compare the
+  // audio instead and color by what actually recurs.
+  const chroma = deps.chroma?.(mono, asset.meta.sampleRate, SECTION_CHROMA_FFT, SECTION_CHROMA_HOP);
+  const framesPerSecond = chroma ? asset.meta.sampleRate / SECTION_CHROMA_HOP : 0;
+  const groups = chroma
+    ? groupSectionRepeats(
+        placed.map(({ section }) =>
+          sectionChromaVector(
+            chroma,
+            Math.floor(section.start * framesPerSecond),
+            Math.ceil(section.end * framesPerSecond),
+          ),
+        ),
+      )
+    : placed.map(({ section }) => (Number.isInteger(section.type) ? section.type : 0));
+
+  // Number each label's occurrences so repeats read in order; the color says
+  // which of them are the same music.
+  const seenPerLabel = new Map<string, number>();
+  return placed.map(({ section, startPpq, endPpq }, index) => {
+    const label = sectionLabel(section.type);
+    const occurrence = (seenPerLabel.get(label) ?? 0) + 1;
+    seenPerLabel.set(label, occurrence);
+    return {
+      name: chroma ? `${label} ${occurrence}` : label,
+      color: groupColor(groups[index] ?? 0),
+      startPpq,
+      endPpq,
+    };
+  });
 }

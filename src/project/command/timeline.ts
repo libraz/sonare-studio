@@ -3,7 +3,11 @@ import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { remapClipScoreAnnotations } from '../annotations';
-import { type AudioSectionAnalyzer, analyzeAudioClipSections } from '../audio-sections';
+import {
+  type AudioSectionAnalyzer,
+  analyzeAudioClipSections,
+  type ChromaAnalyzer,
+} from '../audio-sections';
 import type { AutomationLaneState } from '../automation';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { projectMidiNoteOccurrences } from '../midi-projection';
@@ -373,7 +377,10 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
       sectionSourceRevision(store, clipId),
     );
   try {
-    const wasm = (await ensureWasm()) as unknown as { analyzeSections?: AudioSectionAnalyzer };
+    const wasm = (await ensureWasm()) as unknown as {
+      analyzeSections?: AudioSectionAnalyzer;
+      chroma?: ChromaAnalyzer;
+    };
     assertCurrent();
     if (typeof wasm.analyzeSections !== 'function') return 0;
     const detected = await analyzeAudioClipSections(
@@ -382,6 +389,7 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
       {
         loadAudioAsset: loadAsset,
         analyzeSections: wasm.analyzeSections,
+        chroma: typeof wasm.chroma === 'function' ? wasm.chroma : undefined,
       },
       store.tempoSegments,
     );
