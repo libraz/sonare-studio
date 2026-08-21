@@ -5,6 +5,7 @@ import type { RecorderOptions } from '@/engine/recorder';
 import {
   createRecorder,
   defaultRecordOffsetSamples,
+  ENGINE_CAPTURE_TRACK_ID,
   INPUT_METER_TARGET_ID,
   inputLatencySamples,
   MICROPHONE_CONSTRAINTS,
@@ -459,7 +460,7 @@ describe('createRecorder state machine', () => {
     resetGate.resolve();
 
     await expect(starting).rejects.toBeInstanceOf(RecorderStateError);
-    expect(armRecord).not.toHaveBeenCalledWith(1, true);
+    expect(armRecord).not.toHaveBeenCalledWith(expect.anything(), true);
     expect(recorder.isRecording()).toBe(false);
   });
 
@@ -526,7 +527,7 @@ describe('createRecorder state machine', () => {
       recordOffsetSamples: 0,
       inputMonitor: { enabled: false, gain: 1 },
     });
-    expect(armRecord).toHaveBeenLastCalledWith(7, true);
+    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, true);
     expect(punch).toHaveBeenLastCalledWith(2, 4);
 
     setStatus({ capturedFrames: 3, source: 'output' });
@@ -552,7 +553,11 @@ describe('createRecorder capture', () => {
     expect(configureCapture).toHaveBeenLastCalledWith(
       expect.objectContaining({ bufferFrames: 3000, channels: 2, source: 'input' }),
     );
-    expect(armRecord).toHaveBeenCalledWith(7, true);
+    // Capture is engine-global: the armed track is the host's own bookkeeping
+    // and the engine rejects any id but its own. Arming track 7 therefore still
+    // arms capture 0, and passing 7 through is what stopped recording working.
+    expect(armRecord).toHaveBeenCalledWith(ENGINE_CAPTURE_TRACK_ID, true);
+    expect(recorder.armedTrackId()).toBe(7);
     // Punch-out = startPpq + maxDuration in PPQ (30 s at 120 BPM = 60 PPQ).
     expect(punch).toHaveBeenCalledWith(8, 68);
     const order = [
@@ -564,7 +569,7 @@ describe('createRecorder capture', () => {
     expect(order).toEqual([...order].sort((a, b) => a - b));
 
     await recorder.stop();
-    expect(armRecord).toHaveBeenLastCalledWith(7, false);
+    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
   });
 
   it('sizes the buffer and punch window with the 300 s default duration', async () => {
@@ -770,7 +775,7 @@ describe('createRecorder capture', () => {
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 10 }); // nothing beyond the trimmed head
     expect(await recorder.stop()).toBeNull();
-    expect(armRecord).toHaveBeenLastCalledWith(1, false);
+    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
     // The engine capture is still reset and the idle config restored.
     expect(resetCapture).toHaveBeenCalledTimes(2);
     expect(configureCapture).toHaveBeenLastCalledWith(
@@ -974,7 +979,7 @@ describe('createRecorder teardown', () => {
 
     recorder.dispose();
     expect(recorder.isRecording()).toBe(false);
-    expect(armRecord).toHaveBeenLastCalledWith(4, false);
+    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
     expect(resetCapture).toHaveBeenCalledTimes(2); // start + dispose
   });
 
@@ -1031,7 +1036,7 @@ describe('createRecorder device loss', () => {
     endTrack();
 
     expect(recorder.isRecording()).toBe(false);
-    expect(armRecord).toHaveBeenLastCalledWith(2, false);
+    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
     expect(resetCapture).toHaveBeenCalled();
     // The discarded take cannot be stopped (there is none in progress).
     await expect(recorder.stop()).rejects.toBeInstanceOf(RecorderStateError);

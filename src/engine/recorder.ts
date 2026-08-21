@@ -120,6 +120,16 @@ const DEFAULT_LEVEL_INTERVAL_MS = 50;
  */
 const DEFAULT_CAPTURE_CHANNEL_LIMIT = 2;
 
+/**
+ * The only track id `armRecord` accepts.
+ *
+ * Input capture is engine-global — there is one capture path, not one per
+ * track — and the engine keeps the parameter for source compatibility while
+ * rejecting anything but zero. Which track a take belongs to is the host's own
+ * bookkeeping ({@link ActiveTake.trackId}) and never reaches the engine.
+ */
+export const ENGINE_CAPTURE_TRACK_ID = 0;
+
 /** A finished take handed back by {@link Recorder.stop}. */
 export interface RecordingResult {
   /** Planar capture buffers (one per channel) at `sampleRate`. */
@@ -553,9 +563,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     detachTrackListeners?.();
     detachTrackListeners = null;
     if (take) {
-      const active = take;
       take = null;
-      handle.engine.armRecord(active.trackId, false);
+      handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
       void handle.engine.resetCapture().catch(() => {
         // The device is gone; a failed reset is harmless.
       });
@@ -943,7 +952,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       if (disposed || generation !== operationGeneration) {
         throw new RecorderStateError('Recorder startup was cancelled');
       }
-      handle.engine.armRecord(trackId, true);
+      handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, true);
       engineArmed = true;
       // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
       // earlier as needed. The half-open window keeps any count-in pre-roll out
@@ -952,7 +961,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       take = { trackId, startPpq, offsetSamples, sampleRate };
       phase = 'recording';
     } catch (error) {
-      if (engineArmed) handle.engine.armRecord(trackId, false);
+      if (engineArmed) handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
       await handle.engine.resetCapture().catch(() => undefined);
       if (!disposed && generation === operationGeneration) phase = 'idle';
       throw error;
@@ -966,7 +975,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     const generation = operationGeneration;
     phase = 'stopping';
-    handle.engine.armRecord(active.trackId, false);
+    handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
     let status: Awaited<ReturnType<EngineHandle['engine']['captureStatus']>>;
     let captured: Float32Array[];
     try {
@@ -1024,9 +1033,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     detachTrackListeners?.();
     detachTrackListeners = null;
     if (take) {
-      const active = take;
       take = null;
-      handle.engine.armRecord(active.trackId, false);
+      handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
       void handle.engine.resetCapture().catch(() => {
         // The engine may already be tearing down; a failed reset is harmless.
       });
