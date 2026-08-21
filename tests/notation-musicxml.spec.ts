@@ -6,12 +6,8 @@ import type {
   NotatedVoiceNumber,
   NoteValue,
 } from '@/notation/model';
-import {
-  escapeXml,
-  extractPartScore,
-  extractPartsScore,
-  serializeMusicXml,
-} from '@/notation/musicxml';
+import { extractPartScore, extractPartsScore, serializeMusicXml } from '@/notation/musicxml';
+import { escapeXml } from '@/notation/musicxml-xml';
 import { quantizeToScore } from '@/notation/quantize';
 
 /** Builds a note/chord event with sensible defaults. */
