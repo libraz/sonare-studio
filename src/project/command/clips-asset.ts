@@ -10,7 +10,7 @@ import { normalizeTempoMap } from '../tempo-map';
 import { isAudioClip } from '../types';
 import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
 import { executeAtomic } from './history';
-import { requireEditableClip } from './utils';
+import { parkClipForReplacement, requireEditableClip } from './utils';
 
 /**
  * Replaces one audio clip's asset as a single failure-atomic command. The new
@@ -38,6 +38,11 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
   const compSegments = clip.compSegments?.map((segment) => ({ ...segment }));
 
   return executeAtomic((edit) => {
+    // The replacement occupies the original's range, and a track holds no two
+    // overlapping clips, so the original steps aside until it is dropped below.
+    parkClipForReplacement(store, clip, (startPpq) =>
+      edit(1, () => project.moveClip(clipId, startPpq)),
+    );
     const newClipId = edit(2, () =>
       project.addClip({
         trackId: clip.trackId,

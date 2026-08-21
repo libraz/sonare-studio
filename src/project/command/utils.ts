@@ -63,6 +63,36 @@ export function requireEditableClip(
 }
 
 /**
+ * Moves a clip clear of its own range so a replacement can be built there.
+ *
+ * A track carries one lane of clips that may abut but never overlap, and the
+ * Project rejects an addClip that breaks that. Replacing a clip by building
+ * the new one first — so nothing destructive happens until the replacement is
+ * known good — therefore has to make room: the original is parked past the end
+ * of everything on its track for the moment the two coexist, and removed from
+ * there. Both edits belong to the same atomic transaction, so the park is
+ * never observable and is reversed with the rest if a later step fails.
+ *
+ * @param store Project store holding the clip mirror.
+ * @param clip The clip about to be replaced.
+ * @param move Applies the move through the caller's transaction.
+ */
+export function parkClipForReplacement(
+  store: ReturnType<typeof useProjectStore>,
+  clip: EditorClip,
+  move: (startPpq: number) => void,
+): void {
+  const trackEnd = store.clips.reduce(
+    (end, entry) =>
+      entry.trackId === clip.trackId ? Math.max(end, entry.startPpq + entry.lengthPpq) : end,
+    0,
+  );
+  // Past every clip on the lane, including the replacement that is about to
+  // occupy this clip's own range.
+  move(trackEnd + clip.lengthPpq);
+}
+
+/**
  * Copies app-level audio metadata (kind, asset reference) from a source clip
  * onto a derived clip mirror entry (duplicate/split results). Fades are not
  * copied: the Project owns them for clips it derives.

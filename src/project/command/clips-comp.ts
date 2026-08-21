@@ -10,7 +10,7 @@ import {
 import type { ClipCompSegment, ClipTake, EditorClip } from '../types';
 import { clearProjectClipWarp } from '../warp';
 import { execute, executeAtomic } from './history';
-import { requireEditableClip } from './utils';
+import { parkClipForReplacement, requireEditableClip } from './utils';
 
 // ---------------------------------------------------------------------------
 // Clip comp / take commands
@@ -190,6 +190,11 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
       const known = getAudioSourceId(bakedAssetId);
       const sourceId =
         known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+      // The rebased clip occupies the original's range, and a track holds no
+      // two overlapping clips, so the original steps aside until it is dropped.
+      parkClipForReplacement(store, clip, (startPpq) =>
+        edit(1, () => project.moveClip(input.clipId, startPpq)),
+      );
       const newClipId = edit(2, () =>
         project.addClip({
           trackId: clip.trackId,
