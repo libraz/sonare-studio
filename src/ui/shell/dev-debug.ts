@@ -115,10 +115,24 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     clipCount: () => store.clips.length,
     clipKinds: () => store.clips.map((clip) => clipKind(clip)),
     audioClipCount: () => store.clips.filter((clip) => isAudioClip(clip)).length,
+    // Placement, not just counts: the engine refuses two clips that overlap on
+    // one track, so a placement that fails says nothing without the geometry.
+    clipRanges: () =>
+      store.clips.map((clip) => ({
+        id: clip.id,
+        trackId: clip.trackId,
+        kind: clipKind(clip),
+        startPpq: clip.startPpq,
+        lengthPpq: clip.lengthPpq,
+      })),
     armedTrackId: () => recording.armedTrackId.value,
     recordingState: () => recording.state.value,
     isRecording: () => recording.isRecording.value,
     inputLevel: () => recording.inputLevel.value,
+    // The recorder's own failure channel. It is separate from `lastError`,
+    // which carries the shell's: a record attempt that declines never reaches
+    // the shell, so without this a refusal looks like nothing happening.
+    recordingError: () => recording.error.value,
     setInputMonitor: (enabled: boolean) => recording.setMonitor(enabled),
     projectName: () => store.projectName,
     activeTrackId: () => store.activeTrackId,
