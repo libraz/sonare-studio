@@ -1,9 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef, watch } from 'vue';
 import { detectScaleHighlightFromTracks } from '@/compose/key';
-import { linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
-import { audioAssetUri } from '@/persistence/assets';
 import {
   type MidiCcBinding,
   midiLearnTargetScope,
@@ -11,7 +9,6 @@ import {
   sanitizeMidiCcBindings,
   withMidiLearnTargetScope,
 } from '@/ui/midi/midi-learn';
-import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
 import {
   createDefaultScoreDisplaySettings,
   DISPLAY_TRANSPOSE_MAX,
@@ -29,30 +26,19 @@ import {
   migrateAutomationLanesToProcessorIds,
   pruneInsertLanesAgainstStrips,
 } from './automation-insert';
-import {
-  chordsFromAnnotation,
-  type EditorChordSymbol,
-  sanitizeChordSymbols,
-  toProjectChordSymbols,
-} from './chords';
+import { chordsFromAnnotation, type EditorChordSymbol } from './chords';
 import {
   type ControlSurfaceSettings,
   clampBankOffset,
   defaultControlSurfaceSettings,
   sanitizeControlSurfaceSettings,
 } from './control-surface';
-import { sanitizeExpressionMap } from './expression-map';
-import { isExternalStemRole } from './external-stems';
-import { normalizeGenerationSeed, sanitizeProvenance } from './generation';
+import { normalizeGenerationSeed } from './generation';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
-import { notesToProjectMidiEvents, type RawNote } from './midi-events';
-import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
 import {
   cloneMixerState,
-  cloneStrip,
   createDefaultMixerState,
-  createDefaultStrip,
   engineBusCount,
   ensureMixerProcessorIds,
   ensureProcessorIds,
@@ -61,11 +47,40 @@ import {
   type ProjectMixerState,
 } from './mixer';
 import {
-  type DocumentClip,
-  PROJECT_DOCUMENT_SCHEMA_VERSION,
-  type ProjectDocument,
-} from './serialization';
-import { applyDocumentClipMetadata, restoreDocumentScoreAnnotations } from './store-load';
+  adoptProject,
+  allocateMarkerId,
+  allocateNoteId,
+  allocateSectionId,
+  currentAudioSourceIds,
+  currentProject,
+  currentWasmModule,
+  DEFAULT_CLIP_LENGTH_PPQ,
+  DEFAULT_PROJECT_NAME,
+  DEFAULT_SAMPLE_RATE,
+  DEFAULT_SNAP_DIVISION,
+  DEFAULT_TEMPO_BPM,
+  DEFAULT_TRACK_NAME,
+  getAudioSourceId,
+  getProject,
+  getWasmModule,
+  idCounters,
+  notesToProjectEvents,
+  PROJECT_MAX_UNDO_DEPTH,
+  placeholderSourceAudio,
+  resetProjectRuntime,
+  restoreIdCounters,
+  restoreProject,
+  runHistoryReset,
+  setAudioSourceId,
+  setHistoryResetHook,
+  setWasmModule,
+} from './runtime';
+import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from './serialization';
+import {
+  applyDocumentClipMetadata,
+  hydrateProjectFromDocument,
+  restoreDocumentScoreAnnotations,
+} from './store-load';
 import {
   buildClipMirror,
   buildTrackMirror,
@@ -74,7 +89,6 @@ import {
   refreshTempoMeter,
   type SerializedProjectDoc,
 } from './store-refresh';
-import { normalizeTempoMap } from './tempo-map';
 import {
   DEFAULT_SECTION_COLOR,
   type EditorClip,
@@ -88,20 +102,11 @@ import {
   type TimeSignatureSegment,
   TRACK_COLOR_PALETTE,
 } from './types';
-import { installProjectClipWarp, sanitizeClipWarp } from './warp';
-
-type WasmModule = typeof import('@/wasm/index.js');
 
 type InsertWithDocumentSidechainIndex = {
   sidechainSourceIndex?: number;
   sidechainSourceTrackId?: number;
 };
-
-/** Default project tempo in BPM. */
-const DEFAULT_TEMPO_BPM = 120;
-
-/** Default clip length: eight 4/4 bars expressed in quarter-note PPQ. */
-const DEFAULT_CLIP_LENGTH_PPQ = 32;
 
 function isDocumentMarker(value: unknown): value is { ppq: number; name: string } {
   if (typeof value !== 'object' || value === null) return false;
@@ -131,16 +136,6 @@ function isDocumentSection(
   );
 }
 
-/**
- * Mirrors libsonare's bounded Project history rather than relying on its
- * engine default. The command layer accounts for every native edit represented
- * by local history and evicts whole entries before this limit is exceeded.
- */
-export const PROJECT_MAX_UNDO_DEPTH = 512;
-
-/** Default snap grid: divisions per whole note (16 = sixteenth-note grid). */
-const DEFAULT_SNAP_DIVISION = 16;
-
 function resolveStripSidechainSourceIds(
   inserts: InsertWithDocumentSidechainIndex[] | undefined,
   trackMirror: EditorTrack[],
@@ -159,135 +154,23 @@ function resolveStripSidechainSourceIds(
   }
 }
 
-/** Default project sample rate used until an AudioContext provides the real one. */
-const DEFAULT_SAMPLE_RATE = 48000;
-
-/** Keeps malformed persisted numeric fields from reaching the wasm ABI. */
-function finiteAtLeast(value: unknown, minimum: number, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= minimum ? value : fallback;
-}
-
-/** Default name of the track created by init(). */
-const DEFAULT_TRACK_NAME = 'Piano';
-
-/** Default project display name. */
-const DEFAULT_PROJECT_NAME = 'Untitled';
-
-// The wasm Project is the single source of truth for arrangement content and
-// lives outside Vue reactivity on purpose (module scope, not store state):
-// wrapping an embind handle in a reactive proxy would intercept its internal
-// slots and add per-call overhead. The Pinia store below is a read-model
-// mirror that is refreshed from the Project after every mutating command.
-let wasmModule: WasmModule | null = null;
-let project: Project | null = null;
-let nextNoteId = 1;
-let nextMarkerId = 1;
-let nextSectionId = 1;
-// Audio sources are registered on the wasm Project once per asset; this map
-// remembers the Project-side source id per asset id for the current Project
-// instance (reset whenever the Project is replaced). It is advisory: callers
-// must re-validate entries against project.sourceCount() because undo can
-// roll source registrations back (see addAudioClip in src/project/commands.ts).
-let audioSourceIds = new Map<string, number>();
-
-// Optional hook the command layer registers so disposing the store also drops
-// the undo/redo history; without it, history snapshots would dangle against a
-// deleted Project. Kept as a hook to avoid a store -> command-layer import.
-// `history.ts` can register while this module is still evaluating through a
-// command-module import cycle. `var` is deliberately used here so that early
-// registration observes `undefined` rather than the temporal dead zone, and
-// the later declaration does not overwrite the registered callback.
-// biome-ignore lint/suspicious/noVar: this module-cycle boundary requires a hoisted binding.
-var historyResetHook: (() => void) | null | undefined;
-
-/**
- * Registers a callback invoked by {@link dispose} to clear the command-layer
- * undo/redo history, keeping the two in lockstep. Called once by the history
- * module at import time.
- */
-export function setHistoryResetHook(hook: (() => void) | null): void {
-  historyResetHook = hook;
-}
-
-/**
- * Returns the live wasm Project handle.
- *
- * @throws Error when the project store has not been initialized yet.
- */
-export function getProject(): Project {
-  if (!project) throw new Error('Project store is not initialized; call init() first');
-  return project;
-}
-
-/**
- * Returns the initialized libsonare wasm module.
- *
- * @throws Error when the project store has not been initialized yet.
- */
-export function getWasmModule(): WasmModule {
-  if (!wasmModule) throw new Error('Project store is not initialized; call init() first');
-  return wasmModule;
-}
-
-/** Allocates a fresh editor note id (monotonic, never reused in a session). */
-export function allocateNoteId(): number {
-  return nextNoteId++;
-}
-
-/** Allocates a fresh editor marker id (monotonic, never reused in a session). */
-export function allocateMarkerId(): number {
-  return nextMarkerId++;
-}
-
-/** Allocates a fresh editor section id (monotonic, never reused in a session). */
-export function allocateSectionId(): number {
-  return nextSectionId++;
-}
-
-/**
- * Returns the wasm Project source id previously registered for an asset, or
- * undefined. Entries can be stale after undo; validate against
- * project.sourceCount() before reuse.
- */
-export function getAudioSourceId(assetId: string): number | undefined {
-  return audioSourceIds.get(assetId);
-}
-
-/** Records the wasm Project source id registered for an asset. */
-export function setAudioSourceId(assetId: string, sourceId: number): void {
-  audioSourceIds.set(assetId, sourceId);
-}
-
-/**
- * Placeholder inline PCM attached when registering an audio clip source.
- *
- * The binding rejects non-MIDI clips without non-empty audio data, while the
- * app streams the real PCM from the asset store at schedule time
- * (src/project/scheduling.ts) — sources are by-reference via their
- * "asset:<id>" URI. One silent frame keeps the wasm-side copy minimal.
- */
-export function placeholderSourceAudio(): {
-  audio: Float32Array;
-  audioChannels: number;
-  audioSampleRate: number;
-} {
-  return { audio: new Float32Array(1), audioChannels: 1, audioSampleRate: DEFAULT_SAMPLE_RATE };
-}
-
-/**
- * Expands editor notes into a sorted flat event list for setMidiEvents.
- * Note-offs sort before note-ons at the same PPQ so a repeated pitch releases
- * before it retriggers.
- *
- * @param notes Notes to expand (editor ids, when present, are ignored).
- * @returns Packed events accepted by Project.setMidiEvents.
- */
-export function notesToProjectEvents(notes: ReadonlyArray<RawNote>): ProjectMidiEvent[] {
-  return notesToProjectMidiEvents(notes, getWasmModule());
-}
-
 /** Per-clip note id hints accepted by {@link useProjectStore refresh}. */
 export type { NoteIdHints, NoteProvenanceHints };
+// The wasm handle and its counters live in ./runtime; `./store` stays the
+// import point for them so a caller reaches for one module, not two.
+export {
+  allocateMarkerId,
+  allocateNoteId,
+  allocateSectionId,
+  getAudioSourceId,
+  getProject,
+  getWasmModule,
+  notesToProjectEvents,
+  PROJECT_MAX_UNDO_DEPTH,
+  placeholderSourceAudio,
+  setAudioSourceId,
+  setHistoryResetHook,
+};
 
 /**
  * Pinia store mirroring the wasm Project for the arrangement and the
@@ -298,6 +181,11 @@ export type { NoteIdHints, NoteProvenanceHints };
  * Track/clip structure, names (tracks), timing, gain and loop state come from
  * the Project; app-only fields (track color/mute/solo/volume/pan/order, clip
  * names, markers, sections) live in this mirror and are merged in by id.
+ *
+ * Two neighbours carry the rest of the job. `./runtime` owns the wasm handle
+ * and the counters that hang off it, which outlive any one store instance;
+ * `./store-load` turns a serialized document into a filled Project, which this
+ * store then adopts. What is left here is the mirror and the readings over it.
  */
 export const useProjectStore = defineStore('project', () => {
   /** Project display name (app-level metadata, used by persistence). */
@@ -408,7 +296,7 @@ export const useProjectStore = defineStore('project', () => {
    * uninitialized or highlighting is disabled.
    */
   const highlightedPitchClasses = computed<boolean[]>(() => {
-    const mod = wasmModule;
+    const mod = currentWasmModule();
     const config = scaleHighlight.value;
     if (!initialized.value || !mod || !config.enabled) {
       return Array.from({ length: 12 }, () => false);
@@ -525,8 +413,9 @@ export const useProjectStore = defineStore('project', () => {
    * @param chordHints Chord symbols expected to match the Project content.
    */
   function refresh(idHints?: NoteIdHints, chordHints?: ReadonlyArray<EditorChordSymbol>): void {
-    if (!project) return;
-    const doc = JSON.parse(project.toJson()) as SerializedProjectDoc;
+    const live = currentProject();
+    if (!live) return;
+    const doc = JSON.parse(live.toJson()) as SerializedProjectDoc;
 
     // Tempo and meter mirrors.
     const tempoMeter = refreshTempoMeter(doc, timeSignatures.value);
@@ -591,7 +480,7 @@ export const useProjectStore = defineStore('project', () => {
    * @param options Optional overrides (sampleRate defaults to 48000 Hz).
    */
   function applySampleRateIfProvided(options: { sampleRate?: number }): boolean {
-    const current = project;
+    const current = currentProject();
     if (!current) return false;
     if (options.sampleRate !== undefined && options.sampleRate > 0) {
       current.setSampleRate(options.sampleRate);
@@ -605,7 +494,7 @@ export const useProjectStore = defineStore('project', () => {
     // Another init() call may have won the race while awaiting; still apply
     // the caller's concrete hardware rate when provided.
     if (applySampleRateIfProvided(options)) return;
-    wasmModule = mod;
+    setWasmModule(mod);
     const created = new mod.Project();
     created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
     created.setSampleRate(options.sampleRate ?? DEFAULT_SAMPLE_RATE);
@@ -617,8 +506,7 @@ export const useProjectStore = defineStore('project', () => {
       startPpq: 0,
       lengthPpq: DEFAULT_CLIP_LENGTH_PPQ,
     });
-    project = created;
-    audioSourceIds = new Map();
+    adoptProject(created, new Map());
     projectName.value = DEFAULT_PROJECT_NAME;
     mixer.value = createDefaultMixerState();
     projectExternalMidi.value = null;
@@ -686,305 +574,21 @@ export const useProjectStore = defineStore('project', () => {
     if (engineBusTotal > MAX_MIXER_BUSES) {
       throw new RangeError(`Mixer bus limit exceeded (${engineBusTotal}/${MAX_MIXER_BUSES})`);
     }
-    const previousWasmModuleAtEntry = wasmModule;
+    const previousWasmModuleAtEntry = currentWasmModule();
     const mod = await ensureWasm();
     let restorePreviousState: (() => void) | null = null;
-    wasmModule = mod;
+    setWasmModule(mod);
     const created = new mod.Project();
     try {
-      created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
-      created.setSampleRate(doc.sampleRate > 0 ? doc.sampleRate : DEFAULT_SAMPLE_RATE);
-      const tempo =
-        doc.tempoSegments.length > 0
-          ? doc.tempoSegments
-          : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
-      const normalizedTempo = normalizeTempoMap(tempo, DEFAULT_TEMPO_BPM);
-      created.setTempoSegments(
-        tempo.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
-      );
-      if (doc.timeSignatures.length > 0) {
-        created.setTimeSignatures(doc.timeSignatures.map((s) => ({ ...s })));
-      }
-      const trackMirror: EditorTrack[] = [];
-      const laneMirror: AutomationLaneState[] = [];
-      const clipMeta = new Map<number, DocumentClip>();
-      const loadedSourceIds = new Map<string, number>();
-      let firstClipId = -1;
-      doc.tracks.forEach((track, index) => {
-        // Group tracks are an app-level concept; the wasm Project stores them
-        // as aux tracks.
-        const projectKind = track.kind === 'group' ? 'aux' : track.kind;
-        const trackId = created.addTrack({ kind: projectKind, name: track.name });
-        const documentPan =
-          Number.isFinite(track.pan) && track.pan >= -1 && track.pan <= 1 ? track.pan : 0;
-        const importedStrip = track.mixer !== undefined ? cloneStrip(track.mixer) : undefined;
-        // Schema-v3 files written before the audible-pan migration may only
-        // carry DocumentTrack.pan. Promote it into MixerStrip.pan on load.
-        // Group buses have no pan DSP, so reject their persisted no-op value
-        // by centering both the strip and compatibility mirror.
-        if (importedStrip !== undefined) {
-          importedStrip.pan =
-            track.kind !== 'group' &&
-            Number.isFinite(importedStrip.pan) &&
-            importedStrip.pan >= -1 &&
-            importedStrip.pan <= 1
-              ? importedStrip.pan
-              : track.kind === 'group'
-                ? 0
-                : documentPan;
-        }
-        const audiblePan = track.kind === 'group' ? 0 : (importedStrip?.pan ?? documentPan);
-        let migratedStrip =
-          importedStrip ??
-          (track.kind !== 'group' && audiblePan !== 0
-            ? { ...createDefaultStrip(), pan: audiblePan }
-            : undefined);
-        // `volume` was the pre-v4 linear fader field. Keep accepting it from
-        // old documents, but fold it into the canonical dB strip gain before
-        // exposing the mirror so a later fader edit cannot double-count it.
-        const legacyVolume = finiteAtLeast(track.volume, 0, 1);
-        if (legacyVolume !== 1) {
-          migratedStrip = cloneStrip(migratedStrip ?? createDefaultStrip());
-          migratedStrip.gainDb += linearToDb(legacyVolume);
-        }
-        const mirrorEntry: EditorTrack = {
-          id: trackId,
-          name: track.name,
-          color: track.color || TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
-          kind: track.kind,
-          mute: track.mute,
-          solo: track.solo,
-          // Retained only as a v3 document compatibility mirror. New runtime
-          // state and all subsequent saves keep it at unity.
-          volume: 1,
-          pan: audiblePan,
-          order: index,
-        };
-        if (typeof track.musicXmlPartId === 'string' && track.musicXmlPartId.length > 0) {
-          mirrorEntry.musicXmlPartId = track.musicXmlPartId;
-        }
-        // Instrument and mixer strip are app metadata introduced by schema
-        // version 3; older documents simply have neither (defaults apply).
-        if (track.instrument !== undefined)
-          mirrorEntry.instrument = cloneInstrument(track.instrument);
-        if (track.externalMidiMode === 'project') mirrorEntry.externalMidiMode = 'project';
-        // Restore the live MIDI-FX transform; drop a no-op so an identity entry
-        // never lingers in the mirror or re-serializes.
-        if (track.midiFx !== undefined) {
-          const midiFx = sanitizeMidiFxConfig(track.midiFx);
-          if (!isMidiFxNoop(midiFx)) mirrorEntry.midiFx = midiFx;
-        }
-        if (track.soloSafe === true) mirrorEntry.soloSafe = true;
-        if (typeof track.percussion === 'boolean') mirrorEntry.percussion = track.percussion;
-        const generated = sanitizeProvenance(track.generated);
-        if (generated !== undefined) mirrorEntry.generated = generated;
-        if (track.chordFollow === 'chordTones' || track.chordFollow === 'root') {
-          mirrorEntry.chordFollow = track.chordFollow;
-        }
-        const expressionMap = sanitizeExpressionMap(track.expressionMap);
-        if (expressionMap !== undefined) mirrorEntry.expressionMap = expressionMap;
-        // Restore the VCA assignment only when the referenced group survives in
-        // the document mixer, so dangling ids never leak into the session.
-        if (
-          typeof track.vcaId === 'string' &&
-          (doc.mixer?.vcaGroups ?? []).some((group) => group.id === track.vcaId)
-        ) {
-          mirrorEntry.vcaId = track.vcaId;
-        }
-        if (
-          track.frozen !== undefined &&
-          typeof track.frozen.assetId === 'string' &&
-          track.frozen.assetId.length > 0
-        ) {
-          mirrorEntry.frozen = { assetId: track.frozen.assetId };
-        }
-        if (
-          track.kind === 'audio' &&
-          Number.isInteger(track.recordInputChannel) &&
-          (track.recordInputChannel as number) >= 0
-        ) {
-          mirrorEntry.recordInputChannel = track.recordInputChannel as number;
-        }
-        if (
-          track.kind === 'audio' &&
-          typeof track.recordInputDeviceId === 'string' &&
-          track.recordInputDeviceId.length > 0
-        ) {
-          mirrorEntry.recordInputDeviceId = track.recordInputDeviceId;
-        }
-        if (migratedStrip !== undefined) {
-          mirrorEntry.mixer = migratedStrip;
-          // Insert sidechain sources are stored positionally; rebind them to
-          // the freshly assigned track ids after every track exists (below).
-        }
-        // Track automation rides the track entry; rebind it to the freshly
-        // assigned track id (malformed entries are dropped).
-        if (track.automation !== undefined) {
-          laneMirror.push(
-            ...sanitizeAutomationEntries(track.automation, trackId).filter(
-              (lane) => !(track.kind === 'group' && lane.param === 'pan'),
-            ),
-          );
-        }
-        trackMirror.push(mirrorEntry);
-        for (const clip of track.clips) {
-          const startPpq = finiteAtLeast(clip.startPpq, 0, 0);
-          const lengthPpq = finiteAtLeast(clip.lengthPpq, Number.EPSILON, 1);
-          const sourceOffsetPpq = finiteAtLeast(clip.sourceOffsetPpq, 0, 0);
-          const gain = finiteAtLeast(clip.gain, 0, 1);
-          const safeClip: DocumentClip = {
-            ...clip,
-            startPpq,
-            lengthPpq,
-            sourceOffsetPpq,
-            gain,
-          };
-          const isAudio = clip.kind === 'audio' && typeof clip.assetId === 'string';
-          let newClipId: number;
-          if (isAudio) {
-            const assetId = clip.assetId as string;
-            const existingSource = loadedSourceIds.get(assetId);
-            if (existingSource === undefined) {
-              // First clip of this asset registers the by-reference source
-              // (with the placeholder PCM the binding insists on).
-              newClipId = created.addClip({
-                trackId,
-                isMidi: false,
-                startPpq,
-                lengthPpq,
-                sourceOffsetPpq,
-                gain,
-                ...placeholderSourceAudio(),
-                sourceUri: audioAssetUri(assetId),
-              });
-              loadedSourceIds.set(assetId, created.sourceCount());
-              // External-stem provenance rides the source, so replay it once
-              // per asset, on the clip that registered the source.
-              if (isExternalStemRole(clip.externalStemRole)) {
-                created.setAudioSourceMetadata(
-                  created.sourceCount(),
-                  typeof clip.contentHash === 'string' ? clip.contentHash : '',
-                  clip.externalStemRole,
-                );
-              }
-            } else {
-              // Later clips register a throwaway placeholder source and are
-              // rebound to the asset's shared source right after.
-              newClipId = created.addClip({
-                trackId,
-                isMidi: false,
-                startPpq,
-                lengthPpq,
-                sourceOffsetPpq,
-                gain,
-                ...placeholderSourceAudio(),
-              });
-              created.setClipSource(newClipId, existingSource);
-            }
-            if ((clip.fadeInPpq ?? 0) > 0 || (clip.fadeOutPpq ?? 0) > 0) {
-              created.setClipFade(
-                newClipId,
-                { lengthPpq: clip.fadeInPpq ?? 0 },
-                { lengthPpq: clip.fadeOutPpq ?? 0 },
-              );
-            }
-          } else {
-            newClipId = created.addClip({
-              trackId,
-              isMidi: true,
-              startPpq,
-              lengthPpq,
-              sourceOffsetPpq,
-              gain,
-            });
-            if (clip.notes.length > 0) {
-              // notesToProjectEvents reads the module-scope wasm handle, which
-              // is already set above.
-              created.setMidiEvents(newClipId, notesToProjectEvents(clip.notes));
-            }
-          }
-          if (clip.loopEnabled) {
-            created.setClipLoop(
-              newClipId,
-              'loop',
-              finiteAtLeast(clip.loopLengthPpq, Number.EPSILON, lengthPpq),
-            );
-          }
-          if (
-            isAudio &&
-            clip.warp !== undefined &&
-            typeof clip.warp.enabled === 'boolean' &&
-            Number.isFinite(clip.warp.sourceBpm) &&
-            clip.warp.sourceBpm > 0
-          ) {
-            installProjectClipWarp(
-              created,
-              {
-                id: newClipId,
-                startPpq,
-                lengthPpq,
-                sourceOffsetPpq,
-                warp: sanitizeClipWarp(clip.warp, lengthPpq),
-              },
-              normalizedTempo,
-            );
-          }
-          clipMeta.set(newClipId, safeClip);
-          if (firstClipId < 0) firstClipId = newClipId;
-        }
-      });
-
-      // Resolve positional group membership and insert sidechain sources onto
-      // the freshly assigned track ids (out-of-range or self references drop).
-      doc.tracks.forEach((track, index) => {
-        const entry = trackMirror[index];
-        if (!entry) return;
-        if (
-          track.groupIndex !== undefined &&
-          Number.isInteger(track.groupIndex) &&
-          track.groupIndex >= 0 &&
-          track.groupIndex < trackMirror.length &&
-          track.groupIndex !== index &&
-          trackMirror[track.groupIndex].kind === 'group'
-        ) {
-          entry.groupId = trackMirror[track.groupIndex].id;
-        }
-        const inserts = track.mixer?.inserts ?? [];
-        inserts.forEach((slot, slotIndex) => {
-          const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
-          if (
-            entry.kind === 'group' ||
-            sourceIndex === undefined ||
-            !Number.isInteger(sourceIndex) ||
-            sourceIndex < 0 ||
-            sourceIndex >= trackMirror.length ||
-            sourceIndex === index
-          ) {
-            return;
-          }
-          const target = entry.mixer?.inserts[slotIndex];
-          if (target) target.sidechainSourceTrackId = trackMirror[sourceIndex].id;
-        });
-        // The positional document field must not survive in the mirror (it
-        // would re-serialize stale after track reorders).
-        for (const slot of entry.mixer?.inserts ?? []) {
-          delete (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
-        }
-      });
-
-      // Replay the chord-track annotation stream onto the rebuilt Project so it
-      // round-trips through refresh() below (chords are read back from toJson).
-      const documentChords = sanitizeChordSymbols(doc.chords ?? []);
-      if (documentChords.length > 0) {
-        created.annotateChords(toProjectChordSymbols(documentChords));
-      }
+      const { trackMirror, laneMirror, clipMeta, loadedSourceIds, firstClipId, documentChords } =
+        hydrateProjectFromDocument(created, doc);
 
       // Keep the previous Project and complete mirror snapshot alive until the
       // new Project plus every app-only field has hydrated successfully.
       // refresh() reads the module-scope Project, so a temporary publish is
       // necessary; the rollback closure makes that publish transactional.
-      const previousProject = project;
-      const previousAudioSourceIds = audioSourceIds;
+      const previousProject = currentProject();
+      const previousAudioSourceIds = currentAudioSourceIds();
       const previousMidiCcBindings = new Map(midiCcBindings.value);
       const previousState = {
         projectName: projectName.value,
@@ -1019,14 +623,10 @@ export const useProjectStore = defineStore('project', () => {
         displayTransposeSemitones: displayTransposeSemitones.value,
         scoreDisplaySettings: scoreDisplaySettings.value,
         initialized: initialized.value,
-        nextNoteId,
-        nextMarkerId,
-        nextSectionId,
+        counters: idCounters(),
       };
       restorePreviousState = () => {
-        project = previousProject;
-        wasmModule = previousWasmModuleAtEntry;
-        audioSourceIds = previousAudioSourceIds;
+        restoreProject(previousProject, previousWasmModuleAtEntry, previousAudioSourceIds);
         projectName.value = previousState.projectName;
         tracks.value = previousState.tracks;
         clips.value = previousState.clips;
@@ -1059,16 +659,13 @@ export const useProjectStore = defineStore('project', () => {
         displayTransposeSemitones.value = previousState.displayTransposeSemitones;
         scoreDisplaySettings.value = previousState.scoreDisplaySettings;
         initialized.value = previousState.initialized;
-        nextNoteId = previousState.nextNoteId;
-        nextMarkerId = previousState.nextMarkerId;
-        nextSectionId = previousState.nextSectionId;
+        restoreIdCounters(previousState.counters);
         midiCcBindings.value.clear();
         for (const [target, binding] of previousMidiCcBindings) {
           midiCcBindings.value.set(target, binding);
         }
       };
-      project = created;
-      audioSourceIds = loadedSourceIds;
+      adoptProject(created, loadedSourceIds);
       projectName.value = doc.name || DEFAULT_PROJECT_NAME;
       mixer.value = doc.mixer
         ? cloneMixerState({
@@ -1100,14 +697,14 @@ export const useProjectStore = defineStore('project', () => {
       tracks.value = trackMirror;
       clips.value = [];
       markers.value = doc.markers.filter(isDocumentMarker).map((marker) => ({
-        id: nextMarkerId++,
+        id: allocateMarkerId(),
         ppq: marker.ppq,
         name: marker.name,
       }));
       sections.value = doc.sections
         .filter(isDocumentSection)
         .map((section) => ({
-          id: nextSectionId++,
+          id: allocateSectionId(),
           name: section.name,
           color: section.color || DEFAULT_SECTION_COLOR,
           startPpq: section.startPpq,
@@ -1274,15 +871,9 @@ export const useProjectStore = defineStore('project', () => {
    */
   function dispose(): void {
     documentGeneration.value += 1;
-    historyResetHook?.();
-    if (project) {
-      project.delete();
-      project = null;
-    }
-    audioSourceIds = new Map();
-    nextNoteId = 1;
-    nextMarkerId = 1;
-    nextSectionId = 1;
+    runHistoryReset();
+    currentProject()?.delete();
+    resetProjectRuntime();
     initialized.value = false;
     projectName.value = DEFAULT_PROJECT_NAME;
     tracks.value = [];
