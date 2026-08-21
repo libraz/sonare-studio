@@ -309,6 +309,9 @@ describe('smfToProjectDocument', () => {
     ]);
   });
 
+  // Deliberately huge input: the point is that nothing spreads it into an
+  // argument list, not that it finishes quickly. It runs a few seconds even
+  // idle, so the default timeout leaves no headroom on a loaded machine.
   it('imports 140,000 CC events without an argument-spread limit', async () => {
     const count = 140_000;
     const events: number[] = [];
@@ -321,7 +324,7 @@ describe('smfToProjectDocument', () => {
     const clip = doc.tracks[0].clips[0];
     expect(clip.ccLanes?.[0].points).toHaveLength(count);
     expect(clip.lengthPpq).toBeGreaterThanOrEqual(count / 480);
-  });
+  }, 30_000);
 
   it('keeps an imported MIDI track with an empty clip', async () => {
     const bytes = smf(1, 480, [

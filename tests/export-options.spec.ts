@@ -429,6 +429,9 @@ describe('createStemsZipWriter', () => {
     expect(entries['02 B.wav']).toEqual(new Uint8Array([3, 4]));
   });
 
+  // A hundred real zip entries: the point is that the writer keeps no table
+  // of them, not that it finishes quickly. Compression dominates the runtime,
+  // so the default timeout leaves no headroom on a loaded machine.
   it('handles a 100-stem archive without retaining an input entry table', async () => {
     const writer = createStemsZipWriter();
     for (let index = 0; index < 100; index++) {
@@ -440,7 +443,7 @@ describe('createStemsZipWriter', () => {
     const entries = unzipSync(new Uint8Array(await (await writer.close()).arrayBuffer()));
     expect(Object.keys(entries)).toHaveLength(100);
     expect(entries['099 Stem.wav']).toEqual(new Uint8Array([99]));
-  });
+  }, 30_000);
 
   it('rejects work after its abort signal is cancelled', async () => {
     const controller = new AbortController();
