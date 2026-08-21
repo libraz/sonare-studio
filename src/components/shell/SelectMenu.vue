@@ -288,6 +288,7 @@ onBeforeUnmount(() => {
           role="option"
           :aria-selected="option.value === props.modelValue"
           :aria-disabled="option.disabled"
+          :data-value="option.value"
           @click="choose(option)"
           @mousemove="activeIndex = index"
         >
