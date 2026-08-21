@@ -4,13 +4,27 @@ export const name = 'export-dialog';
 export async function run(ctx) {
   const { page, fail } = ctx;
 
+  // Export the loop region rather than the whole project. The demo runs eight
+  // minutes, so the default range renders an 84 MB file every time — minutes of
+  // work to prove something two seconds of audio proves just as well, and the
+  // range control goes untested either way. Setting a loop needs the engine,
+  // which only exists once something has played, so a run that starts here
+  // falls back to the whole project rather than failing on the range control.
+  const looped = await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, true));
+
   await page.click('.app-menubar__trigger:has-text("File")');
   await page
     .locator('.menu-panel [role="menuitem"]')
     .filter({ hasText: /^Export Audio\.\.\.$/ })
     .click();
   await page.waitForSelector('.modal-card .export-button:not([disabled])', { timeout: 10000 });
-  // Defaults are WAV / 16-bit / 48 kHz / whole project / master chain on.
+  // Otherwise the defaults stand: WAV / 16-bit / 48 kHz / master chain on.
+  if (looped) {
+    await page.click('.modal-card .range-loop');
+    await page.waitForSelector('.modal-card .range-loop[aria-checked="true"]', { timeout: 5000 });
+  } else {
+    console.info('no engine yet: exporting the whole project instead of a loop region');
+  }
   await page.click('.modal-card .export-button');
   try {
     await page.waitForSelector('.modal-card .export-report', { timeout: 120000 });
@@ -95,4 +109,5 @@ export async function run(ctx) {
     );
   }
   await page.click('.modal-card .close-button');
+  if (looped) await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, false));
 }
