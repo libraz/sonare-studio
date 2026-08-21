@@ -114,6 +114,41 @@ describe('analyzeArrangementTracks', () => {
     }
   });
 
+  /**
+   * The piece goes to the library whole rather than cut into one-signature
+   * pieces, so a melodic relation that spans a signature change is still a
+   * relation. Read range by range, the lead's two notes fall in different calls
+   * and nothing relates them.
+   */
+  it('sees a leap that spans a meter change', () => {
+    // A C major triad held right through the change, so the harmony itself goes
+    // nowhere; the lead alone moves, and only across the change. Both its notes
+    // are chord tones in the key, so the leap is the one thing left to flag.
+    const harmony: TrackWithNotes = {
+      track: track({ id: 1, name: 'Piano' }),
+      notes: [48, 52, 55].map((pitch, index) =>
+        note({ id: index + 1, pitch, startPpq: 0, durationPpq: 7 }),
+      ),
+    };
+    const lead: TrackWithNotes = {
+      track: track({ id: 2, name: 'Lead' }),
+      notes: [
+        note({ id: 10, pitch: 60, startPpq: 3, durationPpq: 1 }),
+        note({ id: 11, pitch: 84, startPpq: 4, durationPpq: 1 }),
+      ],
+    };
+    const report = analyzeArrangementTracks([harmony, lead], undefined, [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 4, numerator: 3, denominator: 4 },
+    ]);
+
+    const leap = report.conflicts.find((conflict) => conflict.trackName === 'Lead');
+    expect(leap).toBeDefined();
+    expect(leap?.ppq).toBe(4);
+    expect(leap?.pitch).toBe(84);
+    expect(conflictReason(leap?.reasons ?? 0)).toBe('largeLeap');
+  });
+
   it('returns an empty report when only percussion tracks are present', () => {
     const drums: TrackWithNotes = {
       track: track({ id: 1, name: 'Drums' }),
@@ -150,16 +185,16 @@ describe('arrangementTensionCurve', () => {
     expect(curve[0]?.beat).toBe(0);
   });
 
-  it('carries the first inferred key across a meter change', () => {
+  it('hears the music before a meter change as context for the music after it', () => {
     const melody: TrackWithNotes = {
       track: track({ id: 1, name: 'Lead' }),
       notes: [
-        // The first range establishes C major.
+        // The opening establishes C major.
         note({ id: 1, pitch: 60, startPpq: 0, durationPpq: 2 }),
         note({ id: 2, pitch: 64, startPpq: 0, durationPpq: 2 }),
         note({ id: 3, pitch: 67, startPpq: 0, durationPpq: 2 }),
-        // D minor alone would infer D minor; with the first range's key it is
-        // heard as ii in C major and therefore has the higher tension value.
+        // D minor alone would infer D minor; heard after the opening it is ii
+        // in C major, and therefore has the higher tension value.
         note({ id: 4, pitch: 62, startPpq: 4, durationPpq: 1 }),
         note({ id: 5, pitch: 65, startPpq: 4, durationPpq: 1 }),
         note({ id: 6, pitch: 69, startPpq: 4, durationPpq: 1 }),
@@ -194,6 +229,31 @@ describe('arrangementTensionCurve', () => {
     expect(aloneLater).toBeDefined();
     expect(inferredLater).toEqual({ beat: 4, tension: explicitLater?.tension });
     expect(inferredLater?.tension).toBeGreaterThan(aloneLater?.tension ?? -1);
+  });
+
+  // Sampled range by range, the curve restarted at each signature change and
+  // stopped at the last note of the range before it, leaving a hole over the
+  // rest that the reader would draw straight through.
+  it('samples straight through a meter change without a hole', () => {
+    const melody: TrackWithNotes = {
+      track: track({ id: 1, name: 'Lead' }),
+      notes: [
+        note({ id: 1, pitch: 60, startPpq: 0, durationPpq: 2 }),
+        note({ id: 2, pitch: 64, startPpq: 0, durationPpq: 2 }),
+        note({ id: 3, pitch: 67, startPpq: 0, durationPpq: 2 }),
+        // Nothing sounds over beats 2 and 3, which is where the hole opened.
+        note({ id: 4, pitch: 62, startPpq: 4, durationPpq: 1 }),
+        note({ id: 5, pitch: 65, startPpq: 4, durationPpq: 1 }),
+        note({ id: 6, pitch: 69, startPpq: 4, durationPpq: 1 }),
+      ],
+    };
+    const curve = arrangementTensionCurve([melody], 1, undefined, [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 4, numerator: 3, denominator: 4 },
+    ]);
+
+    const beats = curve.map((point) => point.beat);
+    expect(beats.slice(0, 5)).toEqual([0, 1, 2, 3, 4]);
   });
 
   it('is empty without harmonic tracks', () => {
@@ -260,10 +320,9 @@ describe('analyzeArrangementWithTension', () => {
     expect(combined.tension).toEqual(tension);
   });
 
-  // Sharing one sweep rests on a pinned key being held across the whole
-  // arrangement, so that seeding each meter range from the previous range's
-  // reading cannot drift away from it. If the library ever stops holding it,
-  // this is where that shows up.
+  // A pinned key is held across the whole arrangement, so a modulation cannot
+  // pull the reading away from it. If the library ever stops holding it, this
+  // is where that shows up.
   it('holds a pinned key across a modulating piece and a meter change', () => {
     const notes: EditorNote[] = [];
     let id = 100;

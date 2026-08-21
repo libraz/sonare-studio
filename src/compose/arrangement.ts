@@ -30,10 +30,9 @@ import {
   type TensionPoint,
   tensionCurveFrom,
 } from '@libraz/libcantus';
-import { measureRangeAt, timeSignatureRanges } from '@/project/time-signature';
+import { toMeterMap } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { DEFAULT_KEY_SCALE } from './key';
-import { timeSignatureAtPpq } from './meter';
 import { editorNotesToNoteEvents } from './notes-io';
 import { harmonicTracksOnly, isMelodyTrack, type TrackWithNotes } from './tracks';
 
@@ -152,14 +151,14 @@ function inferRole(track: TrackWithNotes): 'melody' | 'harmony' | 'bass' | 'othe
   return 'other';
 }
 
-/** Builds the libcantus options (key context, governing meter at the start). */
+/** Builds the libcantus options (key context, the project meter map). */
 function optionsFor(
   key: KeyScale | undefined,
   timeSignatures: ReadonlyArray<TimeSignatureSegment> | undefined,
 ): ArrangementOptions {
   const opts: ArrangementOptions = {};
   if (key !== undefined) opts.key = key;
-  if (timeSignatures !== undefined) opts.ts = timeSignatureAtPpq(timeSignatures, 0);
+  if (timeSignatures !== undefined) opts.meters = toMeterMap(timeSignatures);
   return opts;
 }
 
@@ -172,41 +171,6 @@ function toArrangementTracks(harmonic: ReadonlyArray<TrackWithNotes>) {
   }));
 }
 
-/** Clips tracks to a meter range and re-bases them for libcantus's local meter. */
-function tracksInMeterRange(
-  tracks: ReadonlyArray<TrackWithNotes>,
-  startPpq: number,
-  endPpq: number,
-): TrackWithNotes[] {
-  return tracks.map((item) => ({
-    track: item.track,
-    notes: item.notes.flatMap((note) => {
-      const start = Math.max(note.startPpq, startPpq);
-      const end = Math.min(note.startPpq + note.durationPpq, endPpq);
-      return end > start ? [{ ...note, startPpq: start - startPpq, durationPpq: end - start }] : [];
-    }),
-  }));
-}
-
-function analysisRanges(
-  harmonic: ReadonlyArray<TrackWithNotes>,
-  timeSignatures: ReadonlyArray<TimeSignatureSegment> | undefined,
-) {
-  const notes = harmonic.flatMap((item) => item.notes);
-  const start = Math.min(...notes.map((note) => note.startPpq));
-  const end = Math.max(...notes.map((note) => note.startPpq + note.durationPpq));
-  if (timeSignatures !== undefined) {
-    const firstMeasure = measureRangeAt(timeSignatures, start);
-    const lastMeasure = measureRangeAt(timeSignatures, Math.max(start, end - 1e-6));
-    return timeSignatureRanges(
-      timeSignatures,
-      firstMeasure.startPpq,
-      lastMeasure.startPpq + lastMeasure.lengthPpq,
-    );
-  }
-  return [{ startPpq: start, endPpq: end, numerator: 4, denominator: 4 }];
-}
-
 /** An arrangement report with the tension curve read off the same analysis. */
 export interface ArrangementReportWithTension extends ArrangementReport {
   /** One tension sample per step, in beat order. */
@@ -214,17 +178,20 @@ export interface ArrangementReportWithTension extends ArrangementReport {
 }
 
 /**
- * Walks the piece once per meter range, reading the conflicts and — when a
- * sample step is given — the tension curve off the same analysis.
+ * Reads the whole piece in one pass: the conflicts and — when a sample step is
+ * given — the tension curve, both off the same analysis.
  *
- * Both readings come from one {@link analyzeArrangement} call per range because
- * that call is the expensive part: a 512-bar four-track piece costs about 75 ms,
- * so asking for it twice is the difference between one sweep and two.
+ * Both readings come from one {@link analyzeArrangement} call because that call
+ * is the expensive part: a 512-bar four-track piece costs about 75 ms, so asking
+ * for it twice is the difference between one sweep and two.
  *
- * Each range's reading seeds the next, so a piece that modulates is not judged
- * against the key it opened in. Seeding from a caller-pinned key is a no-op:
- * that key is held across the whole arrangement by definition, so it is also
- * the one held longest, which is what comes back.
+ * The piece is handed over whole, meter map and all, rather than cut into
+ * one-signature pieces and analysed range by range. Splitting it forfeits every
+ * reading that spans a signature change — a leap across the change is not seen
+ * as a leap, and the key has to be carried over by hand, which pins the music
+ * after the change to the key that prevailed before it. Given the map, the
+ * library reads the key per region instead, so a piece that modulates is judged
+ * against the key actually in force wherever the change happens to fall.
  *
  * @param tensionStep Sample spacing in beats, or null to skip the curve.
  */
@@ -236,46 +203,27 @@ function sweepArrangement(
 ): ArrangementReportWithTension {
   const { harmonic, excluded } = harmonicTracksOnly(tracks);
   const excludedTrackNames = excluded.map((item) => item.track.name);
-  if (harmonic.length === 0) {
-    // No harmonic material to infer from: fall back to a valid key (C major)
-    // rather than an empty scale mask, which downstream scale math reads as a
-    // scale with no degrees.
+  if (harmonic.every((item) => item.notes.length === 0)) {
+    // Nothing to infer from: fall back to a valid key (C major) rather than an
+    // empty scale mask, which downstream scale math reads as a scale with no
+    // degrees.
     return { key: key ?? DEFAULT_KEY_SCALE, conflicts: [], tension: [], excludedTrackNames };
   }
-  let resolvedKey: KeyScale | undefined = key;
-  const conflicts: ArrangementConflict[] = [];
-  const tension: TensionPoint[] = [];
-  for (const range of analysisRanges(harmonic, timeSignatures)) {
-    const local = tracksInMeterRange(harmonic, range.startPpq, range.endPpq);
-    if (local.every((track) => track.notes.length === 0)) continue;
-    const ts = { numerator: range.numerator, denominator: range.denominator };
-    const arrangementTracks = toArrangementTracks(local);
-    const analysis = analyzeArrangement(arrangementTracks, {
-      ...optionsFor(resolvedKey, undefined),
-      ts,
-    });
-    resolvedKey = analysis.prevailingKey;
-    conflicts.push(
-      ...analysis.conflicts.map<ArrangementConflict>((conflict) => ({
-        ppq: conflict.beat + range.startPpq,
-        trackName: conflict.trackName,
-        pitch: conflict.pitch,
-        safety: conflict.safety,
-        reasons: conflict.reasons,
-      })),
-    );
-    if (tensionStep !== null) {
-      tension.push(
-        ...tensionCurveFrom(arrangementTracks, analysis, { ts, step: tensionStep }).map(
-          (point) => ({
-            ...point,
-            beat: point.beat + range.startPpq,
-          }),
-        ),
-      );
-    }
-  }
-  return { key: resolvedKey ?? DEFAULT_KEY_SCALE, conflicts, tension, excludedTrackNames };
+  const options = optionsFor(key, timeSignatures);
+  const arrangementTracks = toArrangementTracks(harmonic);
+  const analysis = analyzeArrangement(arrangementTracks, options);
+  const conflicts = analysis.conflicts.map<ArrangementConflict>((conflict) => ({
+    ppq: conflict.beat,
+    trackName: conflict.trackName,
+    pitch: conflict.pitch,
+    safety: conflict.safety,
+    reasons: conflict.reasons,
+  }));
+  const tension: TensionPoint[] =
+    tensionStep === null
+      ? []
+      : tensionCurveFrom(arrangementTracks, analysis, { ...options, step: tensionStep });
+  return { key: analysis.prevailingKey, conflicts, tension, excludedTrackNames };
 }
 
 /**
@@ -284,7 +232,7 @@ function sweepArrangement(
  *
  * @param tracks Tracks with absolute-timeline notes (percussion dropped inside).
  * @param key Optional key context; inferred from the notes when omitted.
- * @param timeSignatures Optional project meter map (the start segment is used).
+ * @param timeSignatures Optional project meter map; 4/4 throughout when omitted.
  */
 export function analyzeArrangementTracks(
   tracks: ReadonlyArray<TrackWithNotes>,
