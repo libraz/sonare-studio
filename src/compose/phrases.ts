@@ -32,7 +32,6 @@ import {
   chordTimelineFromNotes,
   hypermeter,
   isLibcantusError,
-  type MeterMap,
   type Phrase,
   type PhraseOptions,
   type PhraseSignal,
@@ -40,6 +39,7 @@ import {
   structuralCadences,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
+import { toMeterMap } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { buildChordTimeline } from './chord-at-tick';
 import { type CadenceType, displayedCadence } from './harmonic-analysis';
@@ -112,14 +112,6 @@ export interface PhraseReport {
    * its tension curve and its figures, and is told which reading it did not get.
    */
   tooLongForPhrases: boolean;
-}
-
-/** Maps the project meter map to libcantus's, using PPQ as the beat. */
-function toMeterMap(timeSignatures: ReadonlyArray<TimeSignatureSegment>): MeterMap {
-  return timeSignatures.map((segment) => ({
-    startBeat: segment.startPpq,
-    ts: { numerator: segment.numerator, denominator: segment.denominator },
-  }));
 }
 
 /** An empty report carrying only what was excluded. */

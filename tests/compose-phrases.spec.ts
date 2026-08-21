@@ -179,6 +179,25 @@ describe('analyzePhrases', () => {
     });
   });
 
+  /**
+   * A meter list whose first entry is not at bar one leaves the opening
+   * unstated, and 4/4 is what an unstated meter is. Handed over as written, the
+   * entry's own signature would instead be read as running from the beginning,
+   * moving every bar line before it.
+   */
+  it('reads a meter list that starts after bar one as 4/4 up to it', () => {
+    const melody = periodicMelody();
+    const late = analyzePhrases([track('Piano', melody)], turnaround(), [
+      { startPpq: 32, numerator: 3, denominator: 4 },
+    ]);
+    const spelled = analyzePhrases([track('Piano', melody)], turnaround(), [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 32, numerator: 3, denominator: 4 },
+    ]);
+
+    expect(late).toEqual(spelled);
+  });
+
   // Without a chord track the harmony has to be inferred, which is a different
   // reading of the same piece rather than a failure.
   it('reads phrases with no chord track by inferring the harmony', () => {

@@ -36,13 +36,17 @@ import {
   chordTimelineFromNotes,
   detectCadences,
   type KeyScale,
-  type MeterMap,
   type NoteEvent,
   phrasesFromTimeline,
   structuralCadences,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
-import { meterBarLengthPpq, meterBeatLengthPpq, timeSignatureAt } from '@/project/time-signature';
+import {
+  meterBarLengthPpq,
+  meterBeatLengthPpq,
+  timeSignatureAt,
+  toMeterMap,
+} from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { type CadenceType, chordTrackCadences, displayedCadence } from './harmonic-analysis';
 
@@ -133,14 +137,6 @@ function tryEval<T>(fn: () => T): T | undefined {
   }
 }
 
-/** Maps the project meter map to libcantus's, using PPQ as the beat. */
-function toMeterMap(timeSignatures: ReadonlyArray<TimeSignatureSegment>): MeterMap {
-  return timeSignatures.map((segment) => ({
-    startBeat: segment.startPpq,
-    ts: { numerator: segment.numerator, denominator: segment.denominator },
-  }));
-}
-
 /**
  * The chord length the inference is expected to find: the opening bar, which is
  * what {@link chordTimelineFromNotes} itself defaults its `harmonicRhythm` to.
@@ -212,8 +208,14 @@ function timelineIdentity(
   notes: ReadonlyArray<NoteEvent>,
   timeSignatures: ReadonlyArray<TimeSignatureSegment>,
 ): string {
+  // The beat grouping is part of the meter the timeline is read against — two
+  // maps that differ only in how the bar is felt are different inputs.
   const meters = timeSignatures
-    .map((segment) => `${segment.startPpq}/${segment.numerator}/${segment.denominator}`)
+    .map(
+      (segment) =>
+        `${segment.startPpq}/${segment.numerator}/${segment.denominator}` +
+        `/${segment.grouping?.join('+') ?? ''}`,
+    )
     .join(',');
   const events = notes
     .map((note) => `${note.pitch},${note.startBeat},${note.durationBeat},${note.velocity ?? ''}`)

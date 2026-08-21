@@ -25,7 +25,8 @@
  * passing notes here. Pure module.
  */
 
-import { type FormSectionOptions, type MeterMap, sectionsFromNotes } from '@libraz/libcantus';
+import { type FormSectionOptions, sectionsFromNotes } from '@libraz/libcantus';
+import { toMeterMap } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { editorNotesToNoteEvents } from './notes-io';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
@@ -56,14 +57,6 @@ export interface SectionReport {
   sections: DetectedSection[];
   /** Names of the percussion tracks excluded from the analysis. */
   excludedTrackNames: string[];
-}
-
-/** Maps the project meter map to libcantus's, using PPQ as the beat. */
-function toMeterMap(timeSignatures: ReadonlyArray<TimeSignatureSegment>): MeterMap {
-  return timeSignatures.map((segment) => ({
-    startBeat: segment.startPpq,
-    ts: { numerator: segment.numerator, denominator: segment.denominator },
-  }));
 }
 
 /**
