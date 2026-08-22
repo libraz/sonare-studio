@@ -6,6 +6,7 @@ import {
   canRegisterServiceWorker,
   dismissPwaUpdateNotice,
   installPwaReloadPreparation,
+  observeMissingChunks,
   pwaUpdateFailure,
   pwaUpdateNotice,
   registerServiceWorker,
@@ -244,6 +245,23 @@ describe('PWA registration', () => {
     expect(registration.unregister).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
   });
+
+  it('offers the reload affordance when a chunk of this build is no longer served', async () => {
+    const target = new EventTarget();
+    const stop = observeMissingChunks(target);
+
+    const event = new Event('vite:preloadError', { cancelable: true });
+    target.dispatchEvent(event);
+
+    expect(pwaUpdateNotice.value).toBe('missing-asset');
+    // Vite rethrows the import rejection unless the event is cancelled.
+    expect(event.defaultPrevented).toBe(true);
+
+    stop();
+    dismissPwaUpdateNotice();
+    target.dispatchEvent(new Event('vite:preloadError', { cancelable: true }));
+    expect(pwaUpdateNotice.value).toBeNull();
+  });
 });
 
 describe('PWA assets', () => {
@@ -323,26 +341,51 @@ describe('PWA assets', () => {
   });
 });
 
+class SwHeaders {
+  constructor(private readonly entries: Record<string, string> = {}) {}
+
+  get(name: string): string | null {
+    return this.entries[name.toLowerCase()] ?? null;
+  }
+}
+
 class SwResponse {
   readonly ok: boolean;
   readonly status: number;
   readonly type = 'basic';
+  readonly headers: SwHeaders;
 
   constructor(
     readonly body: string,
     status = 200,
+    private readonly headerEntries: Record<string, string> = {},
   ) {
     this.status = status;
     this.ok = status >= 200 && status < 300;
+    this.headers = new SwHeaders(headerEntries);
   }
 
   clone(): SwResponse {
-    return new SwResponse(this.body, this.status);
+    return new SwResponse(this.body, this.status, this.headerEntries);
   }
 
   async json(): Promise<unknown> {
     return JSON.parse(this.body);
   }
+}
+
+/** The `Response` constructor the worker synthesizes its own answers with. */
+class SwSynthesizedResponse extends SwResponse {
+  constructor(body: string, init: { status?: number; headers?: Record<string, string> } = {}) {
+    super(body, init.status ?? 200, init.headers ?? {});
+  }
+}
+
+/** The app document answering under an asset URL, as a stale path does on the host. */
+function shellFallbackResponse(): SwResponse {
+  return new SwResponse('<!doctype html><html></html>', 200, {
+    'content-type': 'text/html; charset=utf-8',
+  });
 }
 
 class SwRequest {
@@ -433,9 +476,10 @@ function evaluateServiceWorker(
     'caches',
     'fetch',
     'Request',
+    'Response',
     'URL',
     source,
-  )(self, cacheStorage, fetcher, SwRequest, URL);
+  )(self, cacheStorage, fetcher, SwRequest, SwSynthesizedResponse, URL);
   const lifecycle = async (type: 'install' | 'activate'): Promise<void> => {
     let pending: Promise<unknown> | undefined;
     listeners.get(type)?.({ waitUntil: (value: Promise<unknown>) => (pending = value) } as never);
@@ -615,5 +659,108 @@ describe('Service Worker release isolation', () => {
       body: 'release-a:/assets/late-a.js',
     });
     expect(cache!.entries.has('/assets/late-a.js')).toBe(true);
+  });
+
+  it('refuses to install a release whose assets answer with the app shell', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifestA = releaseManifest('a');
+    const manifestB = releaseManifest('b');
+    let activeManifest = manifestA;
+    // An edge that has not caught up with the deploy rewrites the asset onto
+    // the document instead of serving it — a 200, not a 404.
+    let staleEdge = false;
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(activeManifest));
+      if (staleEdge && path === '/assets/app-b.js') return shellFallbackResponse();
+      return new SwResponse(`release-${activeManifest === manifestB ? 'b' : 'a'}:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const workerA = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifestA.cacheVersion),
+      caches,
+      fetcher,
+    );
+    await workerA.install();
+    await workerA.activate();
+
+    activeManifest = manifestB;
+    staleEdge = true;
+    const workerB = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifestB.cacheVersion),
+      caches,
+      fetcher,
+    );
+    await expect(workerB.install()).rejects.toThrow('answered with the app shell');
+    // The half-deployed release leaves no cache behind, so the running one keeps
+    // serving until an install actually succeeds.
+    expect(await caches.keys()).toEqual([manifestA.cacheVersion]);
+
+    staleEdge = false;
+    await workerB.install();
+    await workerB.activate();
+    expect(
+      caches.stores.get(manifestB.cacheVersion)?.entries.get('/assets/app-b.js'),
+    ).toMatchObject({ body: 'release-b:/assets/app-b.js' });
+  });
+
+  it('answers a stale asset with 404 rather than caching the app shell under its URL', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('a');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      if (path.startsWith('/assets/gone-')) return shellFallbackResponse();
+      return new SwResponse(`release-a:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+    await worker.install();
+    await worker.activate();
+
+    await expect(worker.fetch('/assets/gone-a.js')).resolves.toMatchObject({ status: 404 });
+    expect(caches.stores.get(manifest.cacheVersion)?.entries.has('/assets/gone-a.js')).toBe(false);
+    // A repeat load must fail the same way instead of finding a cached document.
+    await expect(worker.fetch('/assets/gone-a.js')).resolves.toMatchObject({ status: 404 });
+    // The document itself is still the app shell and must stay servable.
+    await expect(worker.fetch('/anything', 'navigate')).resolves.toMatchObject({
+      body: 'release-a:/index.html',
+    });
+  });
+
+  it('answers with a recovery document instead of failing the navigation outright', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('a');
+    let online = true;
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      if (!online) throw new Error('offline');
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      return new SwResponse(`release-a:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+    await worker.install();
+    await worker.activate();
+
+    caches.stores.delete(manifest.cacheVersion);
+    online = false;
+
+    const response = await worker.fetch('/anything', 'navigate');
+    expect(response?.status).toBe(503);
+    expect(response?.body).toContain('id="retry"');
+    expect(response?.body).toContain("key.indexOf('sonare-studio-') === 0");
+
+    // An uncacheable request must resolve too: an undefined response would fail
+    // at the browser level rather than as one the app can report.
+    await expect(worker.fetch('/somewhere/else.txt')).resolves.toMatchObject({ status: 504 });
   });
 });

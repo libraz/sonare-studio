@@ -19,7 +19,7 @@ export function markAppShellLoaded(): void {
   }
 }
 
-export type PwaUpdateReason = 'update' | 'engine-version';
+export type PwaUpdateReason = 'update' | 'engine-version' | 'missing-asset';
 export type PwaUpdateFailure = 'autosave';
 
 const updateNoticeState = ref<PwaUpdateReason | null>(null);
@@ -59,6 +59,33 @@ function publishUpdate(registration: ServiceWorkerRegistration, reason: PwaUpdat
 export function requestPwaEngineRecovery(): void {
   updateNoticeState.value = 'engine-version';
   updateFailureState.value = null;
+}
+
+/**
+ * Requests the same reload affordance when a chunk this build has not loaded
+ * yet turns out to be gone. A deployed release replaces the hashed assets of
+ * its predecessor, so the first lazy import after a deploy can fail with no
+ * interaction to blame it on; without this the feature the user reached for
+ * would simply never open.
+ */
+export function requestPwaAssetRecovery(): void {
+  updateNoticeState.value = 'missing-asset';
+  updateFailureState.value = null;
+}
+
+/**
+ * Routes Vite's failed dynamic-import signal into the recovery affordance.
+ * Returns an idempotent cleanup for test and app lifecycles.
+ */
+export function observeMissingChunks(target: EventTarget = window): () => void {
+  const handler = (event: Event): void => {
+    // Vite rethrows the import rejection unless the event is cancelled; the
+    // banner is a better answer than an unhandled rejection.
+    event.preventDefault();
+    requestPwaAssetRecovery();
+  };
+  target.addEventListener('vite:preloadError', handler);
+  return () => target.removeEventListener('vite:preloadError', handler);
 }
 
 export function dismissPwaUpdateNotice(): void {

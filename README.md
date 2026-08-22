@@ -179,6 +179,15 @@ The app is a static site, but it must be served cross-origin isolated:
   `index.html`.
 - Because of `require-corp`, **all assets must be same-origin** — no CDN
   scripts or cross-origin fonts.
+- That catch-all rewrite means a path the current deploy no longer serves
+  answers `200 text/html` rather than `404`. The Service Worker treats a
+  document under a non-document URL as a stale asset: it refuses to precache
+  one, never admits one to a release cache, and answers `404` for it so the
+  app can offer a reload instead of failing on an unparseable script.
+- `_headers` also pins the caching contract the release model depends on:
+  `/assets/*` is immutable, while `sw.js`, `precache-manifest.json`,
+  `worklet-manifest.json` and `index.html` are revalidated on every request so
+  a worker is never paired with another release's manifest or document.
 - Keep every deployed file under 25 MiB (the Cloudflare Pages per-file
   limit); the largest artifact today is the bundled Verovio engraving worker
   at roughly 8 MiB (`sonare.wasm` is currently about 3.72 MiB).

@@ -5,3 +5,25 @@
 
 /*.wasm
   Content-Type: application/wasm
+
+# Everything under /assets is content-addressed, so its bytes never change under
+# a given name.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# The worker, the release manifest it validates itself against and the document
+# that names this release's assets must never be answered from a stale cache: a
+# worker paired with another release's manifest cannot install at all, and one
+# paired with another release's document boots an app whose assets it does not
+# hold.
+/sw.js
+  Cache-Control: no-cache
+
+/precache-manifest.json
+  Cache-Control: no-cache
+
+/worklet-manifest.json
+  Cache-Control: no-cache
+
+/index.html
+  Cache-Control: no-cache

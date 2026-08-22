@@ -9,6 +9,7 @@ export const shellFrame = {
   pwaUpdate: {
     available: 'A new Sonare Studio version is ready.',
     engineVersion: 'The audio engine and app are from different versions. Reload to recover.',
+    missingAsset: 'Part of this version is no longer available. Reload to get the current one.',
     autosaveFailed: 'The project could not be saved. Save it manually, then try the update again.',
     reload: 'Reload and update',
     applying: 'Updating...',

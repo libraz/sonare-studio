@@ -9,6 +9,7 @@ export const shellFrame = {
   pwaUpdate: {
     available: '新しいSonare Studioを利用できます。',
     engineVersion: 'オーディオエンジンとアプリの版が一致しません。再読み込みして復旧します。',
+    missingAsset: 'この版の一部が配信されていません。再読み込みして最新版を取得します。',
     autosaveFailed:
       'プロジェクトを保存できませんでした。手動で保存してから、もう一度更新してください。',
     reload: '更新して再読み込み',

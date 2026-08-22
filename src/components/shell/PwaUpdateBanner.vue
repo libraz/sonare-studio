@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import {
   applyPwaUpdateAndReload,
   dismissPwaUpdateNotice,
+  type PwaUpdateReason,
   pwaUpdateFailure,
   pwaUpdateNotice,
 } from '@/pwa';
 import { useI18n } from '@/ui/i18n';
 
+const NOTICE_KEY: Record<PwaUpdateReason, 'available' | 'engineVersion' | 'missingAsset'> = {
+  update: 'available',
+  'engine-version': 'engineVersion',
+  'missing-asset': 'missingAsset',
+};
+
 const { t } = useI18n();
 const applying = ref(false);
+const message = computed(() =>
+  pwaUpdateNotice.value ? t.value.shell.pwaUpdate[NOTICE_KEY[pwaUpdateNotice.value]] : '',
+);
 
 async function reload(): Promise<void> {
   if (applying.value) return;
@@ -25,13 +35,7 @@ async function reload(): Promise<void> {
 <template>
   <aside v-if="pwaUpdateNotice" class="pwa-update" role="status" aria-live="polite">
     <div class="pwa-update-message">
-      <span>
-        {{
-          pwaUpdateNotice === 'engine-version'
-            ? t.shell.pwaUpdate.engineVersion
-            : t.shell.pwaUpdate.available
-        }}
-      </span>
+      <span>{{ message }}</span>
       <span v-if="pwaUpdateFailure" class="pwa-update-error" role="alert">
         {{ t.shell.pwaUpdate.autosaveFailed }}
       </span>
