@@ -47,7 +47,6 @@ import {
   type NoteValue,
   ppqToDivisions,
   ppqToNoteValue,
-  type ScoreMetadata,
   timeSigLengthPpq,
 } from './model';
 import {
@@ -79,14 +78,7 @@ import {
   appendScoreHeader,
   escapeXml,
 } from './musicxml-xml';
-import {
-  type SpelledPitch,
-  type Step,
-  spellChordPitchClass,
-  spellLineInKeySignature,
-  spellPitchInKeySignature,
-  spellPitchWithContext,
-} from './pitch-spelling';
+import { type Step, spellChordPitchClass, spellPitchInKeySignature } from './pitch-spelling';
 import { staffForMeanPitch } from './quantize';
 import { scoreNoteXmlId } from './source-identity';
 
