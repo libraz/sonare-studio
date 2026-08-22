@@ -25,5 +25,12 @@
 /worklet-manifest.json
   Cache-Control: no-cache
 
+# A rule matches the requested path, not the file the host resolves it to, so
+# the document needs both names: the Service Worker asks for `/index.html`
+# explicitly, while every navigation — the manifest's start URL and its file
+# handler included — asks for `/`.
+/
+  Cache-Control: no-cache
+
 /index.html
   Cache-Control: no-cache

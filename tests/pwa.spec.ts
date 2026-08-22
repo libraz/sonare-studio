@@ -339,6 +339,40 @@ describe('PWA assets', () => {
     expect(engine).toContain("typeof __SONARE_WORKLET_MODULE_URL__ === 'string'");
     expect(engine).not.toContain("WORKLET_MODULE_URL = '/sonare-engine-worklet.js'");
   });
+
+  it('serves content-addressed assets immutably and the release contract revalidated', async () => {
+    const headers = await readFile(resolve(process.cwd(), 'public/_headers'), 'utf8');
+    const rules = new Map<string, Record<string, string>>();
+    let path = '';
+    for (const line of headers.split('\n')) {
+      if (line.startsWith('#') || line.trim() === '') continue;
+      if (!line.startsWith(' ')) {
+        path = line.trim();
+        if (!rules.has(path)) rules.set(path, {});
+        continue;
+      }
+      const separator = line.indexOf(':');
+      const rule = rules.get(path);
+      if (rule) rule[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+    }
+
+    expect(rules.get('/assets/*')?.['Cache-Control']).toBe('public, max-age=31536000, immutable');
+    // A rule matches the requested path rather than the file the host resolves
+    // it to, so the document needs an entry under every name it is asked for:
+    // the Service Worker fetches `/index.html`, navigations ask for `/`.
+    for (const revalidated of [
+      '/sw.js',
+      '/precache-manifest.json',
+      '/worklet-manifest.json',
+      '/',
+      '/index.html',
+    ]) {
+      expect(rules.get(revalidated)?.['Cache-Control']).toBe('no-cache');
+    }
+    // Cloudflare Pages applies every matching rule, so a Cache-Control on the
+    // catch-all would combine with the immutable one rather than lose to it.
+    expect(rules.get('/*')?.['Cache-Control']).toBeUndefined();
+  });
 });
 
 class SwHeaders {
