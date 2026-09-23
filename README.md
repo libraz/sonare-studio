@@ -70,7 +70,14 @@ reproducible. Reharmonization works diatonically or through secondary and
 borrowed chords, and can run reactively as you edit. A guidance card reads the
 note under the cursor against the current chord and key: scale degree, chord
 tone or tension, cadence arrival, modulation pivot and counterpoint against the
-voice below, in beginner, normal or theory wording.
+voice below, in beginner, normal or theory wording. Before you place a note,
+the piano roll's placement guide shades each pitch of the target column as
+safe, caution or avoid against every other part, under a counterpoint or pop
+profile; drum notes never count. Set an accompaniment track to Follow melody
+and it thins the non-root notes that clash with the melody, then restores them
+once the clash clears, in the same undo step as your edit. Detect key changes
+proposes modulation points from the notes and adds the ones you keep as Key:
+markers, and a track's pitch range can be set to a voice or instrument preset.
 
 **Record and analyse audio.** Microphone recording with monitoring, count-in,
 metronome, punch and cycle recording into takes, then comping across them.
