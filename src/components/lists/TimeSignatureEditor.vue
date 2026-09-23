@@ -2,7 +2,11 @@
 import { computed, ref, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { detectActiveAudioClipTimeSignatures } from '@/project/audio-tempo';
+import {
+  detectActiveAudioClipTimeSignatures,
+  estimateActiveAudioClipMeter,
+  ODD_METER_CANDIDATES,
+} from '@/project/audio-tempo';
 import { setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip, type TimeSignatureSegment } from '@/project/types';
@@ -52,6 +56,8 @@ const dirty = ref(false);
 const errors = ref<string[]>([]);
 /** True while a meter detection is awaiting the engine. */
 const isDetecting = ref(false);
+/** Reads one meter for the whole clip, odd meters included, instead of per-bar changes. */
+const detectOddMeters = ref(false);
 let detectGeneration = 0;
 
 /** The active clip when it is an audio clip carrying an asset, else null. */
@@ -143,9 +149,11 @@ async function detectFromClip(): Promise<void> {
   const isCurrent = () =>
     generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
   try {
-    const segments = await detectActiveAudioClipTimeSignatures(clip.id, {
-      maxNumerator: MAX_TIME_SIGNATURE_NUMERATOR,
-    });
+    const segments = detectOddMeters.value
+      ? await estimateActiveAudioClipMeter(clip.id, ODD_METER_CANDIDATES)
+      : await detectActiveAudioClipTimeSignatures(clip.id, {
+          maxNumerator: MAX_TIME_SIGNATURE_NUMERATOR,
+        });
     if (!isCurrent()) return;
     if (segments.length === 0) {
       errors.value = [t.value.shell.lists.meter.noneDetected];
@@ -156,7 +164,7 @@ async function detectFromClip(): Promise<void> {
       position: formatBarBeat(segment.startPpq, store.timeSignatures),
       numerator: String(segment.numerator),
       denominator: String(segment.denominator),
-      grouping: '',
+      grouping: segment.grouping?.join('+') ?? '',
     }));
     dirty.value = true;
   } catch (err) {
@@ -316,6 +324,10 @@ function apply(): void {
       >
         {{ t.shell.lists.meter.detectFromClip }}
       </button>
+      <label v-tooltip="t.shell.lists.meter.oddMetersTitle">
+        <input v-model="detectOddMeters" type="checkbox" :disabled="isDetecting" />
+        {{ t.shell.lists.meter.oddMeters }}
+      </label>
       <span class="list-spacer" />
       <button type="button" :disabled="!dirty" @click="revert">
         {{ t.shell.lists.common.revert }}

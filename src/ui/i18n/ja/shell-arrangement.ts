@@ -234,6 +234,9 @@ export const shellArrangement = {
       detectFromClip: 'クリップから検出',
       detectFromClipTitle: 'アクティブクリップのダウンビートを解析して拍子マップを生成',
       noneDetected: 'アクティブクリップから拍子を検出できませんでした。',
+      oddMeters: '変拍子',
+      oddMetersTitle:
+        'ビートのアクセントからクリップ全体の拍子を 1 つ推定します。5 拍子・7 拍子と小節内のグルーピングも読み取りますが、拍子の変化は追いません',
     },
     key: {
       customScale: 'カスタムスケール',

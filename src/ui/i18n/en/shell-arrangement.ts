@@ -236,6 +236,9 @@ export const shellArrangement = {
       detectFromClip: 'Detect from clip',
       detectFromClipTitle: 'Track downbeats in the active audio clip and build a meter map',
       noneDetected: 'Could not detect a meter from the active clip.',
+      oddMeters: 'Odd meters',
+      oddMetersTitle:
+        'Read one meter for the whole clip from its beat accents, including 5 and 7 and how the bar divides; meter changes are not followed',
     },
     key: {
       customScale: 'Custom scale',

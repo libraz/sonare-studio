@@ -380,3 +380,96 @@ export async function detectActiveAudioClipTimeSignatures(
     options,
   );
 }
+
+/** Candidate numerators when odd meters are allowed (the library default is 3, 4, 6). */
+export const ODD_METER_CANDIDATES: readonly number[] = [2, 3, 4, 5, 6, 7];
+
+/** Injectable dependencies for {@link estimateAudioClipMeter}. */
+export interface AudioMeterEstimateDeps {
+  loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
+  /** Full analysis, read for its beats and their onset-strength accents. */
+  analyze: (
+    samples: Float32Array,
+    sampleRate: number,
+  ) => { beats: ReadonlyArray<{ time: number }>; beatObservations: { onsetStrength: number[] } };
+  estimateMeter: (request: {
+    beatTimes: number[];
+    beatStrengths: number[];
+    candidateNumerators?: number[];
+  }) => {
+    timeSignature: { numerator: number; denominator: number };
+    grouping: number[];
+    searched: boolean;
+  };
+}
+
+/**
+ * Reads one meter for a whole audio clip from its beat accents, including how
+ * the bar divides (a seven as 3+2+2). Unlike {@link detectAudioClipTimeSignatures}
+ * it does not follow meter changes; it is the path that can answer an odd
+ * meter. Empty when the clip is too short to score a meter.
+ *
+ * @param candidates Numerators to consider; omitted keeps the library default.
+ */
+export async function estimateAudioClipMeter(
+  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
+  tempoBpm: number,
+  deps: AudioMeterEstimateDeps,
+  candidates?: readonly number[],
+): Promise<TimeSignatureSegment[]> {
+  if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
+  const asset = await deps.loadAudioAsset(clip.assetId);
+  const mono = mixdownToMono(
+    sliceAudioClipWindow(
+      asset.channels,
+      asset.meta.sampleRate,
+      clip.sourceOffsetPpq,
+      clip.lengthPpq,
+      tempoBpm,
+    ),
+  );
+  if (mono.length === 0) return [];
+  const analysis = deps.analyze(mono, asset.meta.sampleRate);
+  const beatTimes = analysis.beats.map((beat) => beat.time);
+  const beatStrengths = analysis.beatObservations.onsetStrength;
+  if (beatStrengths.length !== beatTimes.length) return [];
+  const estimate = deps.estimateMeter({
+    beatTimes,
+    beatStrengths,
+    ...(candidates ? { candidateNumerators: [...candidates] } : {}),
+  });
+  if (!estimate.searched) return [];
+  const { numerator, denominator } = estimate.timeSignature;
+  return [
+    {
+      startPpq: 0,
+      numerator,
+      denominator,
+      ...(estimate.grouping.length > 1 ? { grouping: [...estimate.grouping] } : {}),
+    },
+  ];
+}
+
+/**
+ * Resolves the wasm analysis and meter estimator and reads one meter for the
+ * active audio clip (see {@link estimateAudioClipMeter}).
+ */
+export async function estimateActiveAudioClipMeter(
+  clipId: number,
+  candidates?: readonly number[],
+): Promise<TimeSignatureSegment[]> {
+  const store = useProjectStore();
+  const clip = store.clips.find((c) => c.id === clipId);
+  if (!clip || !isAudioClip(clip) || clip.assetId === undefined) return [];
+  const wasm = await ensureWasm();
+  return estimateAudioClipMeter(
+    clip,
+    store.tempoBpm,
+    {
+      loadAudioAsset: loadAsset,
+      analyze: (samples, sampleRate) => wasm.analyze(samples, sampleRate),
+      estimateMeter: (request) => wasm.estimateMeter(request),
+    },
+    candidates,
+  );
+}

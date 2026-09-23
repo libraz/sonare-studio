@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   type AudioTempoDetector,
@@ -7,6 +7,8 @@ import {
   detectAudioClipTempo,
   detectAudioClipTempoMap,
   detectAudioClipTimeSignatures,
+  estimateAudioClipMeter,
+  ODD_METER_CANDIDATES,
 } from '@/project/audio-tempo';
 
 /** A minimal audio-clip window with neutral defaults. */
@@ -203,6 +205,45 @@ describe('detectAudioClipTimeSignatures', () => {
         ...deps,
         loadAudioAsset: async () => asset(0),
       }),
+    ).toEqual([]);
+  });
+});
+
+describe('estimateAudioClipMeter', () => {
+  const beats = Array.from({ length: 14 }, (_, index) => ({ time: index * 0.5 }));
+  const analysis = { beats, beatObservations: { onsetStrength: beats.map(() => 1) } };
+
+  it('reads one meter with its grouping over the clip, from the requested candidates', async () => {
+    const estimateMeter = vi.fn(() => ({
+      timeSignature: { numerator: 7, denominator: 4 },
+      grouping: [3, 2, 2],
+      searched: true,
+    }));
+    const segments = await estimateAudioClipMeter(
+      clipWindow(),
+      120,
+      { loadAudioAsset: async () => asset(48000 * 8), analyze: () => analysis, estimateMeter },
+      ODD_METER_CANDIDATES,
+    );
+    expect(segments).toEqual([{ startPpq: 0, numerator: 7, denominator: 4, grouping: [3, 2, 2] }]);
+    expect(estimateMeter).toHaveBeenCalledWith(
+      expect.objectContaining({ candidateNumerators: [2, 3, 4, 5, 6, 7] }),
+    );
+  });
+
+  it('reports nothing when the series was too short to search or the accents do not line up', async () => {
+    const unsearched = () => ({
+      timeSignature: { numerator: 4, denominator: 4 },
+      grouping: [4],
+      searched: false,
+    });
+    const deps = { loadAudioAsset: async () => asset(48000 * 8), estimateMeter: unsearched };
+    expect(
+      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: () => analysis }),
+    ).toEqual([]);
+    const misaligned = { beats, beatObservations: { onsetStrength: [1] } };
+    expect(
+      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: () => misaligned }),
     ).toEqual([]);
   });
 });
