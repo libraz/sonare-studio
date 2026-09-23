@@ -131,6 +131,7 @@ function makeLifecycleHandle(): {
       busAutomationParamId: vi.fn((busId: number) => 3000 + busId),
       setAutomationLane,
       setBusGain,
+      getTransportState: vi.fn(async () => ({})),
     },
     capabilities: {},
     dispose: vi.fn(async () => undefined),
