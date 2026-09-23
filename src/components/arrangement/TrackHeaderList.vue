@@ -5,6 +5,7 @@ import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAut
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { promptDialog } from '@/composables/useDialogs';
+import { isDrumTrack } from '@/compose/tracks';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { isOpfsAvailable } from '@/persistence/opfs';
 import {
@@ -39,8 +40,10 @@ import {
   setTrackColor,
   setTrackExpressionMap,
   setTrackGroup,
+  setTrackLeadFollow,
   setTrackMute,
   setTrackPercussion,
+  setTrackPitchRange,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSelection,
@@ -56,6 +59,11 @@ import { EXPRESSION_MAP_PRESETS, matchingExpressionMapPreset } from '@/project/e
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { partForTrack } from '@/project/generation';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
+import {
+  PITCH_RANGE_PRESET_IDS,
+  PITCH_RANGE_PRESETS,
+  type PitchRangePresetId,
+} from '@/project/pitch-range';
 import { catalogParamInfo } from '@/project/processor-controls';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
@@ -574,6 +582,38 @@ function trackHasClips(track: EditorTrack): boolean {
   return store.clips.some((clip) => clip.trackId === track.id);
 }
 
+/** A track's notes across all of its clips, for {@link isDrumTrack}. */
+function notesOfTrack(track: EditorTrack) {
+  return (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes);
+}
+
+/** True when the track's saved pitch range matches this preset exactly. */
+function matchesPitchRangePreset(track: EditorTrack, id: PitchRangePresetId): boolean {
+  const range = track.pitchRange;
+  const preset = PITCH_RANGE_PRESETS[id];
+  return range !== undefined && range.low === preset.low && range.high === preset.high;
+}
+
+/**
+ * True when `track` cannot take part in lead following at all: percussion
+ * tracks neither follow nor lead, and a track already followed by another
+ * would form a chain if it started following something itself.
+ */
+function leadFollowUnavailable(track: EditorTrack): boolean {
+  if (isDrumTrack(track, notesOfTrack(track))) return true;
+  return store.tracks.some((entry) => entry.leadFollow?.leadTrackId === track.id);
+}
+
+/** Tracks `track` may follow: not itself, not percussion, not already following another. */
+function leadFollowCandidates(track: EditorTrack): EditorTrack[] {
+  return store.tracks.filter(
+    (entry) =>
+      entry.id !== track.id &&
+      entry.leadFollow === undefined &&
+      !isDrumTrack(entry, notesOfTrack(entry)),
+  );
+}
+
 /**
  * PPQ range a bounce covers: the transport loop region when enabled and
  * valid, otherwise the track's full clip span (null when the track has no
@@ -799,6 +839,44 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
         label: `${header.chordFollow}: ${header.chordFollowRoot}`,
         checked: track.chordFollow === 'root',
         run: () => setTrackChordFollow(track.id, 'root'),
+      },
+      { id: 'sep-pitch-lead-follow', separator: true },
+      {
+        id: 'pitch-range',
+        label: header.pitchRange,
+        children: [
+          {
+            id: 'pitch-range-off',
+            label: header.pitchRangeOff,
+            checked: track.pitchRange === undefined,
+            run: () => setTrackPitchRange(track.id, null),
+          },
+          ...PITCH_RANGE_PRESET_IDS.map((id) => ({
+            id: `pitch-range-${id}`,
+            label: header.pitchRangePresets[id],
+            checked: matchesPitchRangePreset(track, id),
+            run: () => setTrackPitchRange(track.id, PITCH_RANGE_PRESETS[id]),
+          })),
+        ],
+      },
+      {
+        id: 'lead-follow',
+        label: header.leadFollow,
+        disabled: leadFollowUnavailable(track),
+        children: [
+          {
+            id: 'lead-follow-off',
+            label: header.leadFollowOff,
+            checked: track.leadFollow === undefined,
+            run: () => setTrackLeadFollow(track.id, null),
+          },
+          ...leadFollowCandidates(track).map((candidate) => ({
+            id: `lead-follow-${candidate.id}`,
+            label: candidate.name,
+            checked: track.leadFollow?.leadTrackId === candidate.id,
+            run: () => setTrackLeadFollow(track.id, candidate.id),
+          })),
+        ],
       },
     );
   }
