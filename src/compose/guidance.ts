@@ -34,9 +34,6 @@ import {
   roleOf,
   type SafetyProfile,
   type SafetyResult,
-  type SpellingContext,
-  spelledKeyOf,
-  spellPitch,
   type VoicedRole,
   type VoiceNote,
   type VoiceSnapshot,
@@ -51,6 +48,7 @@ import { strongBeatAt } from './meter';
 import { cadenceArrivals, cadencesByNote, type NoteCadence } from './note-cadences';
 import { editorNotesToNoteEvents } from './notes-io';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
+import { buildVoiceContext, keySpeller, motionFindings, type OuterVoice } from './voice-context';
 
 /** Representative octave anchor: pitch class pc is evaluated as MIDI 60 + pc. */
 const CENTER_C = 60;
@@ -60,18 +58,6 @@ const CENTER_C = 60;
  * offered as runners-up. Few enough that the card stays readable.
  */
 const CHORD_SCALES_REPORTED = 3;
-
-/**
- * Consecutive slots of unbroken constant perfect separation at which two voices
- * read as one doubled line rather than as two lines falling into a parallel.
- *
- * The two populations are far apart: over the demo organ toccata every flagged
- * note sits either in a run of at most two slots or in one of seven or more,
- * with nothing in between, so every value from three to seven splits them the
- * same way. The constant therefore names where the gap between the two already
- * lies rather than trading one kind of miss against the other.
- */
-const DOUBLING_RUN_SLOTS = 4;
 
 export interface GuidanceInput {
   /** Active clip notes (clip-relative PPQ). */
@@ -357,57 +343,42 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       if (line.length > 0) otherVoiceLines.push(line);
     }
   }
+  // A line's position stands in for its track id so two inputs sharing an id
+  // stay two voices.
+  const otherVoices = buildVoiceContext(
+    otherVoiceLines.map((notes, index) => ({ trackId: index, role: 'melodic', notes })),
+    voiceQueryBeats,
+    input.timeSignatures,
+  );
   /**
-   * Highest pitch per requested beat, built in one start/end sweep. MIDI pitch
-   * has a fixed 128-value domain, making the top-voice lookup bounded even
-   * when a project contains many overlapping sustained notes.
+   * Each other line's top voice at `absBeat`, carrying its top at `prevBeat`
+   * when given. Unlike `outerVoicesAt` with a previous beat, the pitch there is
+   * not bar-bounded: evaluateSafety measures the step unbounded, and the bar
+   * bound belongs to the dismissals below.
    */
-  const voicePitchIndex = (line: EditorNote[]): Map<number, number> => {
-    const starts = [...line].sort((a, b) => a.startPpq - b.startPpq);
-    const ends = [...line].sort(
-      (a, b) => a.startPpq + a.durationPpq - (b.startPpq + b.durationPpq),
+  const topVoicesAt = (absBeat: number, prevBeat?: number): OuterVoice[] => {
+    const tops = otherVoices.outerVoicesAt(absBeat, undefined).filter((v) => v.edge === 'top');
+    if (prevBeat === undefined) return tops;
+    const prevTops = new Map(
+      otherVoices
+        .outerVoicesAt(prevBeat, undefined)
+        .filter((v) => v.edge === 'top')
+        .map((v) => [v.trackId, v.pitch]),
     );
-    const counts = new Uint32Array(128);
-    const result = new Map<number, number>();
-    let startIndex = 0;
-    let endIndex = 0;
-    for (const beat of voiceQueryBeats) {
-      while (startIndex < starts.length && starts[startIndex].startPpq <= beat) {
-        const pitch = starts[startIndex++].pitch;
-        if (pitch >= 0 && pitch < 128) counts[pitch] += 1;
-      }
-      while (
-        endIndex < ends.length &&
-        ends[endIndex].startPpq + ends[endIndex].durationPpq <= beat
-      ) {
-        const pitch = ends[endIndex++].pitch;
-        if (pitch >= 0 && pitch < 128 && counts[pitch] > 0) counts[pitch] -= 1;
-      }
-      for (let pitch = 127; pitch >= 0; pitch--) {
-        if (counts[pitch] > 0) {
-          result.set(beat, pitch);
-          break;
-        }
-      }
-    }
-    return result;
+    return tops.map((voice) => {
+      const prevPitch = prevTops.get(voice.trackId);
+      return prevPitch !== undefined ? { ...voice, prevPitch } : voice;
+    });
   };
-  const otherVoicePitchIndexes = otherVoiceLines.map((line) => voicePitchIndex(line));
   /**
    * Snapshot of every voice sounding at `absBeat`, each carrying its pitch at
    * `prevBeat` when given so evaluateSafety can measure motion between the two
    * events. Voices silent at `absBeat` are omitted.
    */
-  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] => {
-    const out: VoiceSnapshot[] = [];
-    for (const pitchIndex of otherVoicePitchIndexes) {
-      const pitch = pitchIndex.get(absBeat);
-      if (pitch === undefined) continue;
-      const prevPitch = prevBeat !== undefined ? pitchIndex.get(prevBeat) : undefined;
-      out.push(prevPitch !== undefined ? { pitch, prevPitch } : { pitch });
-    }
-    return out;
-  };
+  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] =>
+    topVoicesAt(absBeat, prevBeat).map(({ pitch, prevPitch }) =>
+      prevPitch !== undefined ? { pitch, prevPitch } : { pitch },
+    );
   /** Interval to the bass (lowest concurrent voice) for the card, if audible. */
   const verticalAt = (pitch: number, others: VoiceSnapshot[]): VerticalInfo | undefined => {
     let bass: number | undefined;
@@ -436,14 +407,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
    * both facts about everything else sounding. The library provides the
    * predicates and leaves the choice of pair to the caller, which is this.
    */
-  const soundingWith = (pitch: number, absBeat: number): number[] => {
-    const out = [pitch];
-    for (const pitchIndex of otherVoicePitchIndexes) {
-      const other = pitchIndex.get(absBeat);
-      if (other !== undefined) out.push(other);
-    }
-    return out.sort((a, b) => a - b);
-  };
+  const soundingWith = (pitch: number, absBeat: number): number[] =>
+    [pitch, ...topVoicesAt(absBeat).map((voice) => voice.pitch)].sort((a, b) => a - b);
   /**
    * Whether more than an octave separates the candidate from the voice next to
    * it in the texture.
@@ -467,9 +432,22 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // The active clip read as one voice on the same slot grid, so its line can be
   // followed against another voice's the way the others are followed against
   // it: same top-of-the-texture reduction, same instants.
-  const activePitchIndex = voicePitchIndex(
-    input.notes.map((note) => ({ ...note, startPpq: input.clipStartPpq + note.startPpq })),
+  const activeVoice = buildVoiceContext(
+    [
+      {
+        trackId: 0,
+        role: 'melodic',
+        notes: input.notes.map((note) => ({
+          ...note,
+          startPpq: input.clipStartPpq + note.startPpq,
+        })),
+      },
+    ],
+    voiceQueryBeats,
+    input.timeSignatures,
   );
+  const activeTopAt = (beat: number): number | undefined =>
+    activeVoice.outerVoicesAt(beat, undefined)[0]?.pitch;
   const slotOfBeat = new Map(voiceQueryBeats.map((beat, slot) => [beat, slot]));
   /**
    * Per other voice, the length of the unbroken run of slots holding one
@@ -478,14 +456,17 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
    * is what the NaN comparison below does. Computed in one sweep per voice so
    * reading a note's run is a lookup.
    */
-  const doublingRuns = otherVoicePitchIndexes.map((pitchIndex) => {
+  const otherTopsBySlot = voiceQueryBeats.map(
+    (beat) => new Map(topVoicesAt(beat).map((voice) => [voice.trackId, voice.pitch])),
+  );
+  const doublingRuns = otherVoiceLines.map((_, voice) => {
     const runs = new Int32Array(voiceQueryBeats.length);
     let runStart = 0;
     let held = Number.NaN;
     for (let slot = 0; slot <= voiceQueryBeats.length; slot++) {
       const beat = voiceQueryBeats[slot];
-      const top = beat !== undefined ? activePitchIndex.get(beat) : undefined;
-      const other = beat !== undefined ? pitchIndex.get(beat) : undefined;
+      const top = beat !== undefined ? activeTopAt(beat) : undefined;
+      const other = beat !== undefined ? otherTopsBySlot[slot].get(voice) : undefined;
       const separation = top !== undefined && other !== undefined ? top - other : Number.NaN;
       if (separation === held) continue;
       for (let filled = runStart; filled < slot; filled++) runs[filled] = slot - runStart;
@@ -516,11 +497,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
    * interval spelling counted from the tonic is what these predicates are
    * asking about, so it is what they are given.
    */
-  const spelledTonic = tryEval(() => spelledKeyOf(key).tonic);
-  const spell = (pitch: number, context?: SpellingContext): NoteData | undefined =>
-    spelledTonic === undefined
-      ? undefined
-      : tryEval(() => spellPitch(pitch, spelledTonic, key, context));
+  const spell = keySpeller(key);
   /**
    * Key-only spelling, memoized per pitch. Used for the other voices, whose
    * notes are only ever compared by perfect class — a comparison no spelling
@@ -593,34 +570,20 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     const slot = slotOfBeat.get(absBeat);
     // A run describes the voice pair, so it may only answer for the note that
     // is the active voice at that instant — a cluster's inner note is not it.
-    const isActiveVoice = activePitchIndex.get(absBeat) === pitch;
-    let pairs = 0;
-    let dismissed = 0;
-    for (let voice = 0; voice < otherVoicePitchIndexes.length; voice++) {
-      const other = otherVoicePitchIndexes[voice].get(absBeat);
-      const otherPrev = otherVoicePitchIndexes[voice].get(prevAbs);
-      if (other === undefined || otherPrev === undefined) continue;
-      if (!createsParallelPerfect(prevPitch, pitch, otherPrev, other)) continue;
-      pairs += 1;
-      // Both voices are known to have moved (the predicate requires it), so the
-      // direction each took is simply whether it ended higher. The library
-      // matches octave classes, so voices leaping from a double octave into a
-      // single one in opposite directions satisfy its test — and contrary
-      // motion is not parallel motion under any reading of the rule.
-      const candidateRises = pitch > prevPitch;
-      const otherRises = other > otherPrev;
-      if (candidateRises !== otherRises) {
-        dismissed += 1;
-        continue;
-      }
-      // Held long enough, a constant perfect separation is the texture: one
-      // line reinforced at the octave or the fifth. Naming that a fault
-      // reports the arrangement, not a mistake in it.
-      if (isActiveVoice && slot !== undefined && doublingRuns[voice][slot] >= DOUBLING_RUN_SLOTS) {
-        dismissed += 1;
-      }
-    }
-    return pairs === 0 || dismissed < pairs;
+    const isActiveVoice = activeTopAt(absBeat) === pitch;
+    const others = topVoicesAt(absBeat, prevAbs);
+    const fired = others.some(
+      (other) =>
+        other.prevPitch !== undefined &&
+        createsParallelPerfect(prevPitch, pitch, other.prevPitch, other.pitch),
+    );
+    if (!fired) return true;
+    // The runs here span the whole slot run, so the earlier slots are the run
+    // minus the candidate's own.
+    const { parallelPerfect } = motionFindings(pitch, prevPitch, others, (other) =>
+      isActiveVoice && slot !== undefined ? doublingRuns[other.trackId][slot] - 1 : 0,
+    );
+    return parallelPerfect.length > 0;
   };
   /**
    * Whether the library's hidden-parallel verdict on a candidate describes a
@@ -651,22 +614,13 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     if (prevPitch === undefined || prevAbs === undefined) return true;
     const bar = meterBarLengthPpq(timeSignatureAt(input.timeSignatures, absBeat));
     if (absBeat - prevAbs > bar) return false;
-    const sounding = soundingWith(pitch, absBeat);
-    const lowest = sounding[0];
-    const highest = sounding[sounding.length - 1];
-    let pairs = 0;
-    let dismissed = 0;
-    for (const pitchIndex of otherVoicePitchIndexes) {
-      const other = pitchIndex.get(absBeat);
-      const otherPrev = pitchIndex.get(prevAbs);
-      if (other === undefined || otherPrev === undefined) continue;
-      if (!createsHiddenParallelPerfect(prevPitch, pitch, otherPrev, other)) continue;
-      pairs += 1;
-      const isOuter =
-        (pitch === highest && other === lowest) || (pitch === lowest && other === highest);
-      if (!isOuter) dismissed += 1;
-    }
-    return pairs === 0 || dismissed < pairs;
+    const others = topVoicesAt(absBeat, prevAbs);
+    const fired = others.some(
+      (other) =>
+        other.prevPitch !== undefined &&
+        createsHiddenParallelPerfect(prevPitch, pitch, other.prevPitch, other.pitch),
+    );
+    return !fired || motionFindings(pitch, prevPitch, others, () => 0).hiddenOuter;
   };
   /**
    * Whether the candidate completes an *ottava battuta* against any other
@@ -687,10 +641,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     absBeat: number,
     prevAbs: number,
   ): boolean => {
-    for (const pitchIndex of otherVoicePitchIndexes) {
-      const other = pitchIndex.get(absBeat);
-      const otherPrev = pitchIndex.get(prevAbs);
-      if (other === undefined || otherPrev === undefined) continue;
+    for (const { pitch: other, prevPitch: otherPrev } of topVoicesAt(absBeat, prevAbs)) {
+      if (otherPrev === undefined) continue;
       const otherSpelled = spellFromKey(other);
       const otherPrevSpelled = spellFromKey(otherPrev);
       if (otherSpelled === undefined || otherPrevSpelled === undefined) continue;
