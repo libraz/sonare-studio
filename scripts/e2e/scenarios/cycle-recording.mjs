@@ -82,6 +82,8 @@ export async function run(ctx) {
       );
     }
 
+    // A comp boundary carries a 10 ms crossfade centred on it (0.01 ppq either
+    // side at 120 bpm), so each window stops short of the fade.
     await page.evaluate(
       (clipId) =>
         window.__sonareDebug.setClipCompSegments(clipId, [
@@ -90,8 +92,8 @@ export async function run(ctx) {
         ]),
       recInfo.clipId,
     );
-    const compHead = (await probeWindow(0, 2)).peakDb;
-    const compTail = (await probeWindow(2, 4)).peakDb;
+    const compHead = (await probeWindow(0, 1.95)).peakDb;
+    const compTail = (await probeWindow(2.05, 4)).peakDb;
     if (!(compHead - compTail > 10 && compHead - compTail < 14)) {
       fail(
         `comp segments not audible in export: head ${compHead.toFixed(1)} dB, ` +
@@ -103,8 +105,8 @@ export async function run(ctx) {
     const flatInfo = (
       await page.evaluate((id) => window.__sonareDebug.clipTakesInfo(id), recTrackId)
     )[0];
-    const flatHead = (await probeWindow(0, 2)).peakDb;
-    const flatTail = (await probeWindow(2, 4)).peakDb;
+    const flatHead = (await probeWindow(0, 1.95)).peakDb;
+    const flatTail = (await probeWindow(2.05, 4)).peakDb;
     if (
       flatInfo.takeCount !== 0 ||
       Math.abs(flatHead - compHead) > 1 ||

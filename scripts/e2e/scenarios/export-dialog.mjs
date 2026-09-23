@@ -1,3 +1,5 @@
+import { untilDoneAcceptingConfirms } from '../harness.mjs';
+
 /** Export dialog: WAV 16-bit mixdown download. */
 export const name = 'export-dialog';
 
@@ -27,7 +29,11 @@ export async function run(ctx) {
   }
   await page.click('.modal-card .export-button');
   try {
-    await page.waitForSelector('.modal-card .export-report', { timeout: 120000 });
+    await untilDoneAcceptingConfirms(
+      page,
+      async () => (await page.locator('.modal-card .export-report').count()) > 0,
+      120000,
+    );
   } catch {
     // The dialog reports a refusal in its own alert rows; a bare timeout here
     // cannot tell "still rendering" from "declined before it started".

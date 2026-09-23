@@ -1,4 +1,4 @@
-import { unzipSync } from '../harness.mjs';
+import { untilDoneAcceptingConfirms, unzipSync } from '../harness.mjs';
 
 /** DAWproject export: zip magic + project.xml entry. */
 export const name = 'export-dawproject';
@@ -11,10 +11,13 @@ export async function run(ctx) {
     .locator('.menu-panel [role="menuitem"]')
     .filter({ hasText: /^Export DAWproject$/ })
     .click();
-  await page.waitForFunction(
-    () => window.__sonareDebug.lastDownload()?.filename.endsWith('.dawproject') === true,
-    null,
-    { timeout: 60000 },
+  await untilDoneAcceptingConfirms(
+    page,
+    () =>
+      page.evaluate(
+        () => window.__sonareDebug.lastDownload()?.filename.endsWith('.dawproject') === true,
+      ),
+    60000,
   );
   const dawDownload = await page.evaluate(async () => {
     const download = window.__sonareDebug.lastDownload();

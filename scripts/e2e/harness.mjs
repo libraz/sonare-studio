@@ -102,6 +102,45 @@ export function laneMeterSampler(page, trackId) {
   };
 }
 
+/**
+ * Waits for an action to finish, accepting the app's own confirm dialogs on
+ * the way.
+ *
+ * An export lists what its format will drop in the in-app dialog rather than
+ * a native confirm(), so the page's dialog handler never sees it. Each
+ * accepted message is logged: it records what the run's state made the export
+ * warn about.
+ *
+ * @param page The page under test.
+ * @param isDone Resolves true once the action has finished.
+ * @param timeoutMs Overall deadline.
+ * @returns The accepted dialog messages, in order.
+ */
+export async function untilDoneAcceptingConfirms(page, isDone, timeoutMs) {
+  const prompt = page.locator('.modal-card:has(.dialog-message)');
+  const accepted = [];
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isDone()) return accepted;
+    if (await prompt.isVisible()) {
+      const message = ((await prompt.locator('.dialog-message').textContent()) ?? '').trim();
+      console.info(`accepted app confirm: ${message.replace(/\s+/g, ' ')}`);
+      accepted.push(message);
+      await prompt.locator('button.primary').click();
+      // A queued follow-up dialog reuses the open modal, so wait for this
+      // message to leave rather than for the modal to close.
+      await page.waitForFunction(
+        (previous) => document.querySelector('.dialog-message')?.textContent?.trim() !== previous,
+        message,
+        { timeout: 5000 },
+      );
+      continue;
+    }
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`timed out after ${timeoutMs} ms waiting for the action to finish`);
+}
+
 /** Launches the browser the scenarios drive. */
 export async function launchBrowser() {
   const { chromium } = loadModule('playwright');

@@ -34,8 +34,10 @@ export async function run(ctx) {
     await page.evaluate((clipId) => window.__sonareDebug.setClipWarp(clipId, null), warp.clipId);
     const unwarped = (await probe(1.98, 2.2)).peakDb;
     // Unwarped at 90 bpm, the clicks land at source seconds 0/0.5/1/1.5 =
-    // ppq 0/0.75/1.5/2.25 — outside the probed on-beat window.
-    if (!(onBeat > -20) || !(offBeat < -50) || !(unwarped < -50)) {
+    // ppq 0/0.75/1.5/2.25 — outside the probed on-beat window. The empty
+    // windows are judged against the click rather than an absolute floor: a
+    // synth track's output reaches the mix past its lowered fader.
+    if (!(onBeat > -20) || !(onBeat - offBeat > 30) || !(onBeat - unwarped > 30)) {
       fail(
         `tempo follow not rendered: on-beat ${onBeat.toFixed(1)} dB, off-beat ` +
           `${offBeat.toFixed(1)} dB, unwarped on-beat ${unwarped.toFixed(1)} dB`,

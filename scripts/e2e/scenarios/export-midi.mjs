@@ -1,3 +1,5 @@
+import { untilDoneAcceptingConfirms } from '../harness.mjs';
+
 /** MIDI export: SMF + MIDI 2.0 clip-file downloads. */
 export const name = 'export-midi';
 
@@ -9,10 +11,11 @@ export async function run(ctx) {
     .locator('.menu-panel [role="menuitem"]')
     .filter({ hasText: /^Export SMF$/ })
     .click();
-  await page.waitForFunction(
-    () => window.__sonareDebug.lastDownload()?.filename.endsWith('.mid') === true,
-    null,
-    { timeout: 60000 },
+  await untilDoneAcceptingConfirms(
+    page,
+    () =>
+      page.evaluate(() => window.__sonareDebug.lastDownload()?.filename.endsWith('.mid') === true),
+    60000,
   );
   const smfInfo = await page.evaluate(async () => {
     const download = window.__sonareDebug.lastDownload();
@@ -35,10 +38,13 @@ export async function run(ctx) {
     .locator('.menu-panel [role="menuitem"]')
     .filter({ hasText: /^Export MIDI 2\.0 clip file$/ })
     .click();
-  await page.waitForFunction(
-    () => window.__sonareDebug.lastDownload()?.filename.endsWith('.midi2') === true,
-    null,
-    { timeout: 60000 },
+  await untilDoneAcceptingConfirms(
+    page,
+    () =>
+      page.evaluate(
+        () => window.__sonareDebug.lastDownload()?.filename.endsWith('.midi2') === true,
+      ),
+    60000,
   );
   const midi2Info = await page.evaluate(async () => {
     const download = window.__sonareDebug.lastDownload();
