@@ -1327,6 +1327,9 @@ onMounted(installLaunchQueueConsumer);
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
             :visible="dockTab === 'mixer'"
+            :loop-enabled="loopEnabled"
+            :loop-start-ppq="loopStartPpq"
+            :loop-end-ppq="loopEndPpq"
           />
         </section>
         <section

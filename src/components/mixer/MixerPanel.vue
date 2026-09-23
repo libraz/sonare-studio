@@ -26,6 +26,7 @@ import {
 import BusStrip from './BusStrip.vue';
 import ChannelStrip from './ChannelStrip.vue';
 import MixerSnapshots from './MixerSnapshots.vue';
+import MixSuggestDialog from './MixSuggestDialog.vue';
 import VcaStrip from './VcaStrip.vue';
 
 /**
@@ -66,6 +67,10 @@ const props = withDefaults(
     isPlaying?: boolean;
     /** Whether this v-show-backed dock panel is currently visible. */
     visible?: boolean;
+    /** Transport loop, the range a mix suggestion is measured over when active. */
+    loopEnabled?: boolean;
+    loopStartPpq?: number;
+    loopEndPpq?: number;
     /** Optional realtime automation scheduler for write-mode strip drags. */
     scheduleAutomationWrite?: (
       target: AutomationTarget,
@@ -166,6 +171,14 @@ function toggleSceneMenu(): void {
   sceneMenuOpen.value = !sceneMenuOpen.value;
 }
 
+/** Whether the mix-suggestion dialog is open. */
+const suggestMixOpen = ref(false);
+
+function openSuggestMix(): void {
+  sceneMenuOpen.value = false;
+  suggestMixOpen.value = true;
+}
+
 function onApplyScenePreset(preset: string): void {
   try {
     applyMixerSceneJson(loadMixerScenePresetJson(preset));
@@ -248,6 +261,10 @@ onBeforeUnmount(() => {
             @click="onApplyScenePreset(preset)"
           >
             {{ humanizeMixerScenePreset(preset) }}
+          </button>
+          <div class="view-menu-separator" role="separator" />
+          <button type="button" role="menuitem" class="view-menu-action" @click="openSuggestMix">
+            {{ t.shell.mixer.scenes.suggest }}
           </button>
         </div>
       </div>
@@ -345,6 +362,13 @@ onBeforeUnmount(() => {
         :schedule-automation-write="props.scheduleAutomationWrite"
       />
     </div>
+    <MixSuggestDialog
+      :open="suggestMixOpen"
+      :loop-enabled="props.loopEnabled ?? false"
+      :loop-start-ppq="props.loopStartPpq ?? 0"
+      :loop-end-ppq="props.loopEndPpq ?? 0"
+      @close="suggestMixOpen = false"
+    />
   </div>
 </template>
 
@@ -429,6 +453,12 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-pop);
   padding: 2px 0;
+}
+
+.view-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
 }
 
 .view-menu-section {
