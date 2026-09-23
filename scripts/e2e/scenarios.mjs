@@ -26,6 +26,7 @@ import * as mastering_chain from './scenarios/mastering-chain.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
 import * as opfs_restore from './scenarios/opfs-restore.mjs';
 import * as piano_roll from './scenarios/piano-roll.mjs';
+import * as placement_guide from './scenarios/placement-guide.mjs';
 import * as rack_inserts from './scenarios/rack-inserts.mjs';
 import * as rack_instrument from './scenarios/rack-instrument.mjs';
 import * as realtime_midi from './scenarios/realtime-midi.mjs';
@@ -44,6 +45,10 @@ import * as warp from './scenarios/warp.mjs';
 export const scenarios = [
   boot,
   piano_roll,
+  // Before track_and_clip: once the header list overflows and scrolls, the
+  // arrangement canvas rows do not follow, so clicks aimed from a header row
+  // land on the wrong lane.
+  placement_guide,
   score,
   score_annotations,
   shortcut_help,

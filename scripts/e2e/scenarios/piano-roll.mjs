@@ -5,7 +5,9 @@ export async function run(ctx) {
   const { page, fail } = ctx;
   const { seededCount } = ctx.state;
 
-  // The note grid renders two stacked canvases; assert nonzero size.
+  // The note grid renders three stacked canvases (background, notes, overlay);
+  // assert nonzero size. `placement-guide` later reads the overlay canvas
+  // this locator resolves to, so its layer order stays load-bearing here too.
   // The restored workspace may reopen on any editor tab. Select the target
   // explicitly so the canvas visibility assertion describes the actual user
   // journey rather than relying on a default-tab implementation detail.
