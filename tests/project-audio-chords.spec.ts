@@ -262,6 +262,18 @@ describe('detectedChordQuality', () => {
     ).toEqual(['C6', 'Cm6', 'Cm(maj7)', 'C7sus4', 'C11', 'C13', 'C7b9', 'C7#9']);
   });
 
+  it('detects chords on the pitch grid of an off-pitch recording', async () => {
+    const detectChords = vi.fn(() => ({
+      chords: [{ root: 0, bass: 0, quality: 0, start: 0, end: 1 }],
+    }));
+    await analyzeAudioClipChords(audioClip(), 120, {
+      loadAudioAsset: async () => asset(48000 * 8),
+      detectChords,
+      estimateTuning: () => 0.25,
+    });
+    expect(detectChords).toHaveBeenCalledWith(expect.any(Float32Array), 48000, { tuning: 0.25 });
+  });
+
   it('carries the mapped quality into the detected symbols', async () => {
     const det = detector([
       { root: 2, bass: 2, quality: ChordQuality.Dominant7Flat9, start: 0, end: 1 },

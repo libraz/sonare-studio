@@ -145,9 +145,19 @@ describe('ingestAudioBuffer', () => {
       complexity: 0.47,
       form: 'verse-chorus',
     });
-    expect(analyze).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
+    expect(analyze).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100, undefined);
     clearAudioAssetCache();
     expect((await loadAsset(meta.id)).meta.tags).toEqual(meta.tags);
+  });
+
+  it('reads an off-pitch recording on its own pitch grid', () => {
+    const analyze = vi.fn(() => ({}));
+    analyzeAudioTags(stereo(), 44100, { analyze, estimateTuning: () => -0.38 });
+    expect(analyze).toHaveBeenLastCalledWith(expect.any(Float32Array), 44100, { tuning: -0.38 });
+
+    // An estimate outside the analyzer's accepted range is not forwarded.
+    analyzeAudioTags(stereo(), 44100, { analyze, estimateTuning: () => 0.5 });
+    expect(analyze).toHaveBeenLastCalledWith(expect.any(Float32Array), 44100, undefined);
   });
 
   it('lets dedicated dynamics and timbre analyzers refine unified analysis tags', () => {

@@ -12,7 +12,7 @@ import {
 import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
 import { loadAsset } from '@/persistence/assets';
-import { type AudioChordDetector, analyzeAudioClipChords } from '../audio-chords';
+import { analyzeAudioClipChords } from '../audio-chords';
 import { chordFollowUpdates } from '../chord-follow';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
 import {
@@ -307,14 +307,14 @@ export async function detectChordsFromAudioClip(clipId: number): Promise<number>
   if (clipKind(clip) !== 'audio') {
     throw new RangeError(`Clip ${clipId} is not an audio clip`);
   }
-  const wasm = (await ensureWasm()) as unknown as { detectChords?: AudioChordDetector };
-  if (typeof wasm.detectChords !== 'function') return 0;
+  const wasm = await ensureWasm();
   const detected = await analyzeAudioClipChords(
     clip,
     store.tempoBpm,
     {
       loadAudioAsset: loadAsset,
       detectChords: wasm.detectChords,
+      estimateTuning: (samples, sampleRate) => wasm.estimateTuning(samples, sampleRate),
     },
     store.tempoSegments,
   );

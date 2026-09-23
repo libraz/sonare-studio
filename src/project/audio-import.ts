@@ -27,6 +27,7 @@ export interface AudioAnalysisFunctions {
   analyze?: (
     samples: Float32Array,
     sampleRate?: number,
+    options?: { tuning?: number },
   ) => {
     bpm?: number;
     bpmConfidence?: number;
@@ -60,6 +61,8 @@ export interface AudioAnalysisFunctions {
   analyzeBpm?: (samples: Float32Array, sampleRate?: number) => { bpm: number; confidence?: number };
   /** Returns the detected tempo in BPM (mono samples + sample rate). */
   detectBpm?: (samples: Float32Array, sampleRate?: number) => number;
+  /** Tuning offset from concert pitch, in fractions of a semitone. */
+  estimateTuning?: (samples: Float32Array, sampleRate?: number) => number;
   /** Returns the detected key (mono samples + sample rate). */
   detectKey?: (
     samples: Float32Array,
@@ -203,6 +206,25 @@ export async function resolveAudioAnalysis(): Promise<AudioAnalysisFunctions | n
 }
 
 /**
+ * A recording's offset from concert A440 in fractions of a semitone, the unit
+ * the key and chord analyses shift their chroma by, or undefined when the
+ * estimator is absent, fails or answers outside [-0.5, 0.5).
+ */
+export function estimateRecordingTuning(
+  estimate: ((samples: Float32Array, sampleRate?: number) => number) | undefined,
+  samples: Float32Array,
+  sampleRate: number,
+): number | undefined {
+  if (typeof estimate !== 'function') return undefined;
+  try {
+    const tuning = estimate(samples, sampleRate);
+    return Number.isFinite(tuning) && tuning >= -0.5 && tuning < 0.5 ? tuning : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Runs tempo/key/loudness analysis over a mono mixdown and returns the tags.
  * Every analysis step is best-effort: detector errors or unusable results
  * yield no tag rather than failing the import.
@@ -284,7 +306,13 @@ export function analyzeAudioTags(
   };
   if (typeof analysis.analyze === 'function') {
     try {
-      const result = analysis.analyze(mono, sampleRate);
+      // An off-pitch recording reads its key on its own pitch grid.
+      const tuning = estimateRecordingTuning(analysis.estimateTuning, mono, sampleRate);
+      const result = analysis.analyze(
+        mono,
+        sampleRate,
+        tuning === undefined ? undefined : { tuning },
+      );
       const bpm = result?.bpm;
       const bpmConfidence = result?.bpmConfidence;
       const keyConfidence = result?.key?.confidence;
