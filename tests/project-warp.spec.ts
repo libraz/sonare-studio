@@ -312,10 +312,12 @@ describe('bakeWarpedClip', () => {
 
     expect(baked[0]).toHaveLength(20);
     expect(wasmStretchFns.noteStretch).toHaveBeenCalledTimes(1);
+    // 40 source samples fill 20 target samples: noteStretch takes that as a
+    // duration factor of 0.5, not as the speed-up rate 2.
     expect(wasmStretchFns.noteStretch).toHaveBeenCalledWith(new Float32Array(ramp(40)), 10, {
       onsetSample: 0,
       offsetSample: 40,
-      stretchRatio: 2,
+      stretchRatio: 0.5,
     });
     expect(wasmStretchFns.timeStretch).not.toHaveBeenCalled();
   });
@@ -336,7 +338,7 @@ describe('bakeWarpedClip', () => {
       {
         onsetSample: 0,
         offsetSample: 30,
-        stretchRatio: 3,
+        stretchRatio: 1 / 3,
       },
     );
     expect(wasmStretchFns.timeStretch).not.toHaveBeenCalled();

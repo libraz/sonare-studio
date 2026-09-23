@@ -979,10 +979,11 @@ describe('noteStretchRange', () => {
     // The detector sees the entire buffer, not just the selected region.
     expect([...noteStretch.mock.calls[0][0]]).toEqual([1, 2, 3, 4, 5]);
     expect(noteStretch.mock.calls[0][1]).toBe(48000);
+    // Rate 2 halves the note, which noteStretch spells as a duration factor.
     expect(noteStretch.mock.calls[0][2]).toEqual({
       onsetSample: 1,
       offsetSample: 4,
-      stretchRatio: 2,
+      stretchRatio: 0.5,
     });
     expect(plain(out)).toEqual([[1, 2, 3, 4, 5]]);
   });
@@ -1002,7 +1003,7 @@ describe('noteStretchRange', () => {
     ]);
   });
 
-  it('throws when noteStretch is unavailable, the ratio is invalid, or the range is empty', () => {
+  it('throws when noteStretch is unavailable, the rate is invalid, or the range is empty', () => {
     expect(() => noteStretchRange({}, ch([1]), 48000, 2)).toThrow(/unavailable/);
     const mod: SampleEditorWasmOps = { noteStretch: (samples) => samples };
     expect(() => noteStretchRange(mod, ch([1]), 48000, 0)).toThrow(RangeError);

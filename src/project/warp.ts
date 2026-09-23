@@ -341,7 +341,10 @@ export function clearWarpBakeCache(): void {
   bakeCacheBytes = 0;
 }
 
-/** Default stretch seam: prefer transient-preserving noteStretch, then timeStretch. */
+/**
+ * Default stretch seam: prefer transient-preserving noteStretch, then timeStretch.
+ * noteStretch takes a duration factor, the inverse of the seam's speed `rate`.
+ */
 async function wasmStretch(): Promise<StretchFn> {
   const wasm = (await ensureWasm()) as unknown as {
     noteStretch?: (
@@ -356,7 +359,7 @@ async function wasmStretch(): Promise<StretchFn> {
       wasm.noteStretch?.(samples, sampleRate, {
         onsetSample: 0,
         offsetSample: samples.length,
-        stretchRatio: rate,
+        stretchRatio: 1 / rate,
       }) ?? wasm.timeStretch(samples, sampleRate, rate);
   }
   return (samples, sampleRate, rate) => wasm.timeStretch(samples, sampleRate, rate);

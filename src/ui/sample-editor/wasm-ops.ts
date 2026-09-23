@@ -106,7 +106,7 @@ export interface SampleEditorWasmOps {
   timeStretch?: (samples: Float32Array, sampleRate: number, rate: number) => Float32Array;
   /**
    * Note stretch: time-stretches just the region [onsetSample, offsetSample) by
-   * `stretchRatio` (0.5 = double duration, 2.0 = half) while preserving the
+   * `stretchRatio` (0.5 = half duration, 2.0 = double) while preserving the
    * note's attack transient. Operates on the whole buffer (the rest is left
    * untouched) so the stretched region blends at its edges.
    */
@@ -787,31 +787,32 @@ export function timeStretchRange(
 }
 
 /**
- * Note-stretches the range by a ratio (0.5 = double duration, 2.0 = half),
- * preserving the note's attack transient. Unlike {@link timeStretchRange} the
- * whole buffer is passed with the range as the region bounds, so the stretched
- * note blends into the surrounding audio at its edges; the total length changes
- * with the ratio. Intended for a selection holding a single note. Each channel
- * is processed with the same region and ratio (kept planar by trimming to the
- * shortest result).
+ * Note-stretches the range by a rate (0.5 = double duration, 2.0 = half),
+ * preserving the note's attack transient. The rate reads the same way as
+ * {@link timeStretchRange}'s; noteStretch itself takes the inverse, a duration
+ * factor. Unlike timeStretchRange the whole buffer is passed with the range as
+ * the region bounds, so the stretched note blends into the surrounding audio at
+ * its edges; the total length changes with the rate. Intended for a selection
+ * holding a single note. Each channel is processed with the same region and
+ * rate (kept planar by trimming to the shortest result).
  *
- * @param stretchRatio Stretch ratio (> 0; 0.5 doubles, 2.0 halves duration).
+ * @param rate Playback rate (> 0; 0.5 doubles, 2.0 halves duration).
  * @throws Error when the module does not provide noteStretch.
- * @throws RangeError when stretchRatio is not > 0 or the range is empty.
+ * @throws RangeError when rate is not > 0 or the range is empty.
  */
 export function noteStretchRange(
   ops: SampleEditorWasmOps,
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
-  stretchRatio: number,
+  rate: number,
   range?: SampleRange | null,
 ): Float32Array[] {
   const fn = ops.noteStretch;
   if (typeof fn !== 'function') {
     throw new Error('Note stretch is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(stretchRatio) || stretchRatio <= 0) {
-    throw new RangeError(`stretchRatio must be > 0, got ${stretchRatio}`);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw new RangeError(`rate must be > 0, got ${rate}`);
   }
   const resolved = resolveRange(channels, range);
   if (resolved.endFrame <= resolved.startFrame) {
@@ -821,7 +822,7 @@ export function noteStretchRange(
     fn(channel, sampleRate, {
       onsetSample: resolved.startFrame,
       offsetSample: resolved.endFrame,
-      stretchRatio,
+      stretchRatio: 1 / rate,
     }),
   );
   const minFrames = Math.min(...stretched.map((segment) => segment.length));
