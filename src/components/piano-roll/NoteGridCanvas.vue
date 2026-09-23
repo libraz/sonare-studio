@@ -86,6 +86,8 @@ const props = defineProps<{
   resolutionArrows?: ResolutionArrow[];
   /** Pencil placement verdicts (indexed by MIDI pitch) for one cell; null or omitted draws none. */
   placementColumn?: PlacementColumn | null;
+  /** Notes whose expected resolution did not follow; they carry the warning band. */
+  unresolvedNoteIds?: ReadonlySet<number>;
 }>();
 
 const { t } = useI18n();
@@ -531,7 +533,8 @@ function drawNotes(): void {
     const offScale = scaleMaskActive && !props.highlightedPitchClasses[pitchClass];
     const tooShort = note.durationPpq <= SHORT_NOTE_WARNING_PPQ;
     const overlap = overlapIds.has(note.id);
-    if (overlap || offScale || tooShort) {
+    const unresolved = props.unresolvedNoteIds?.has(note.id) === true;
+    if (overlap || offScale || tooShort || unresolved) {
       ctx.fillStyle = overlap ? COLORS.noteError : COLORS.noteWarning;
       ctx.fillRect(x + 2, y + 2, Math.max(2, Math.min(noteW - 4, 18)), 2);
     }
@@ -891,7 +894,13 @@ watch(
 );
 
 watch(
-  () => [props.notes, props.ghostNotes, props.noteColor, props.interactions.previewNotes.value],
+  () => [
+    props.notes,
+    props.ghostNotes,
+    props.noteColor,
+    props.unresolvedNoteIds,
+    props.interactions.previewNotes.value,
+  ],
   () => {
     scheduleNotes();
     scheduleOverlay();

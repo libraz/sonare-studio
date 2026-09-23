@@ -413,6 +413,27 @@ describe('NoteGridCanvas placement column', () => {
     expect(crosshair).toBeGreaterThan(hatch);
   });
 
+  /** Runs the most recently scheduled note-layer paint against the fake context. */
+  function paintNotes(): void {
+    const calls = vi
+      .mocked(painter.schedule)
+      .mock.calls.filter(([layer]) => layer.startsWith('note-grid-notes-'));
+    calls[calls.length - 1]?.[1]();
+  }
+
+  it('bands a note left unresolved with the warning stripe', async () => {
+    wrapper = mountColumn(column({}), 10);
+    await wrapper.setProps({ notes: [makeNote({ id: 7 })], unresolvedNoteIds: new Set<number>() });
+    fake.fills.length = 0;
+    paintNotes();
+    expect(fake.fills).not.toContain(PIANO_ROLL_COLORS.noteWarning);
+
+    await wrapper.setProps({ unresolvedNoteIds: new Set([7]) });
+    fake.fills.length = 0;
+    paintNotes();
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.noteWarning);
+  });
+
   it('repaints only the overlay when the column changes', async () => {
     wrapper = mountColumn(column({}), 10);
     vi.mocked(painter.schedule).mockClear();

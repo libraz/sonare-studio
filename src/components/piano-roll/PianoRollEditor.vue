@@ -345,7 +345,8 @@ const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR
 const contentReadOnly = computed(() => store.activeTrack?.frozen !== undefined);
 
 /** Composition-guidance tint segments and hover theory-card resolver. */
-const { guidanceSegments, noteCard, resolutionArrows } = useCompositionGuidance();
+const { guidanceSegments, noteCard, resolutionArrows, unresolvedNoteIds } =
+  useCompositionGuidance();
 
 /**
  * Reactive melody-first reharmonization: an opt-in auto-suggest that proposes
@@ -1282,6 +1283,7 @@ onBeforeUnmount(() => {
           :note-card="noteCard"
           :resolution-arrows="resolutionArrows"
           :placement-column="placementColumn"
+          :unresolved-note-ids="unresolvedNoteIds"
           @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"

@@ -1120,3 +1120,117 @@ describe('buildGuidance voice context, key map and profile', () => {
     expect(result.byNoteId.get(1)?.safety?.safety).toBe(NoteSafety.Safe);
   });
 });
+
+describe('buildGuidance resolution tracking', () => {
+  const F_THEN_C = [
+    chordSymbol({ startPpq: 0, endPpq: 2, rootPc: 5, quality: 0 }),
+    chordSymbol({ startPpq: 2, endPpq: 8, rootPc: 0, quality: 0 }),
+  ];
+  const bass: VoiceLine = {
+    trackId: 5,
+    role: 'bass',
+    notes: [
+      note({ id: -1, pitch: 53, startPpq: 0, durationPpq: 2 }),
+      note({ id: -2, pitch: 48, startPpq: 2, durationPpq: 6 }),
+    ],
+  };
+  /** F4 prepared over F, tied into C as a 4-3 suspension (id 2), then `next`. */
+  const suspension = (next?: number) =>
+    buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 8,
+        chordSymbols: F_THEN_C,
+        lines: [bass],
+        notes: [
+          note({ id: 1, pitch: 65, startPpq: 0, durationPpq: 2 }),
+          note({ id: 2, pitch: 65, startPpq: 2, durationPpq: 1 }),
+          ...(next !== undefined
+            ? [note({ id: 3, pitch: next, startPpq: 3, durationPpq: 1 })]
+            : []),
+        ],
+      }),
+    );
+
+  it('marks a suspension that steps down to its expected pitch as resolved', () => {
+    const pending = suspension(64).byNoteId.get(2)?.pendingResolution;
+    expect(pending).toMatchObject({ kind: 'suspension', next: 64, resolved: true });
+    expect(pending?.expected).toContain(64);
+  });
+
+  it('marks a suspension that moves elsewhere as unresolved', () => {
+    const pending = suspension(67).byNoteId.get(2)?.pendingResolution;
+    expect(pending).toMatchObject({ kind: 'suspension', next: 67, resolved: false });
+  });
+
+  it('leaves the verdict open while no note follows', () => {
+    const pending = suspension().byNoteId.get(2)?.pendingResolution;
+    expect(pending?.kind).toBe('suspension');
+    expect(pending?.resolved).toBeUndefined();
+  });
+
+  it('takes the pitch of the next onset nearest the note as its continuation', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 8,
+        chordSymbols: F_THEN_C,
+        lines: [bass],
+        notes: [
+          note({ id: 1, pitch: 65, startPpq: 0, durationPpq: 2 }),
+          note({ id: 2, pitch: 65, startPpq: 2, durationPpq: 1 }),
+          note({ id: 3, pitch: 64, startPpq: 3, durationPpq: 1 }),
+          note({ id: 4, pitch: 76, startPpq: 3, durationPpq: 1 }),
+        ],
+      }),
+    );
+    expect(result.byNoteId.get(2)?.pendingResolution?.resolved).toBe(true);
+  });
+
+  it('tracks a stepped non-chord tone against its onward step and its origin', () => {
+    const passing = (next: number) =>
+      buildGuidance(
+        guidanceInput({
+          chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 })],
+          notes: [
+            note({ id: 1, pitch: 64, startPpq: 0, durationPpq: 1 }),
+            note({ id: 2, pitch: 65, startPpq: 1, durationPpq: 1 }),
+            note({ id: 3, pitch: next, startPpq: 2, durationPpq: 1 }),
+          ],
+        }),
+      ).byNoteId.get(2)?.pendingResolution;
+    expect(passing(67)).toMatchObject({ kind: 'nonChordTone', resolved: true });
+    expect(passing(64)).toMatchObject({ kind: 'nonChordTone', resolved: true });
+    expect(passing(62)).toMatchObject({ kind: 'nonChordTone', resolved: false });
+  });
+
+  it('carries no resolution obligation for a chord tone', () => {
+    expect(suspension(64).byNoteId.get(3)?.pendingResolution).toBeUndefined();
+  });
+
+  it('names the accompaniment note a following part parked for the note', () => {
+    const backing: VoiceLine = {
+      trackId: 2,
+      role: 'accompaniment',
+      notes: [60, 67].map((pitch, index) =>
+        note({ id: -1 - index, pitch, startPpq: 4, durationPpq: 4 }),
+      ),
+    };
+    const parked: VoiceLine = {
+      trackId: 2,
+      role: 'accompaniment',
+      notes: [note({ id: -3, pitch: 64, startPpq: 4, durationPpq: 4 })],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        clipLengthPpq: 8,
+        chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 })],
+        notes: [note({ id: 1, pitch: 65, startPpq: 4, durationPpq: 1 })],
+        lines: [backing],
+        parkedLines: [parked],
+        followerTrackIds: new Set([2]),
+      }),
+    );
+    const analysis = result.byNoteId.get(1);
+    expect(analysis?.thinnedAccompaniment).toEqual([{ trackId: 2, pitch: 64 }]);
+    expect(analysis?.pendingResolution).toBeUndefined();
+  });
+});

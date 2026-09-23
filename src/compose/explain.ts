@@ -148,6 +148,12 @@ export interface CounterpointLabels {
   forbiddenLeap: string;
   /** Leading-tone resolution — the one observation here that is not a fault. */
   leadingToneResolution: string;
+  /** A suspension the next note did not resolve, with an `{expected}` pitch list. */
+  unresolvedSuspension: string;
+  /** A stepped non-chord tone the next note did not resolve, with `{expected}`. */
+  unresolvedNonChordTone: string;
+  /** Accompaniment notes thinned for this note, with `{track}` and `{pitch}`. */
+  accompanimentThinned: string;
 }
 
 /**
@@ -526,6 +532,52 @@ function counterpointLines(
 }
 
 /**
+ * The note's standing with the part it was placed against: a resolution the
+ * next note failed to make, and the accompaniment notes thinned to fit it.
+ */
+function placementLines(
+  analysis: NoteAnalysis,
+  labels: TheoryLabels,
+  keyFifths: number | undefined,
+  system: NoteNameSystem | undefined,
+  trackName: ((trackId: number) => string | undefined) | undefined,
+): TheoryCardLine[] {
+  const out: TheoryCardLine[] = [];
+  const cp = labels.counterpoint;
+  const pending = analysis.pendingResolution;
+  if (pending?.resolved === false) {
+    const suspension = pending.kind === 'suspension';
+    const expected = pending.expected
+      .map((pitch) => pitchName(pitch, keyFifths, system))
+      .join(' / ');
+    const term = labels.glossary[suspension ? 'suspension' : 'needsResolution'];
+    out.push({
+      label: labels.lines.counterpoint,
+      text: (suspension ? cp.unresolvedSuspension : cp.unresolvedNonChordTone).replace(
+        '{expected}',
+        expected,
+      ),
+      ...(term !== undefined ? { term } : {}),
+    });
+  }
+  const pitchesByTrack = new Map<string, string[]>();
+  for (const thinned of analysis.thinnedAccompaniment ?? []) {
+    const name = trackName?.(thinned.trackId);
+    if (name === undefined) continue;
+    const pitches = pitchesByTrack.get(name) ?? [];
+    pitches.push(pitchName(thinned.pitch, keyFifths, system));
+    pitchesByTrack.set(name, pitches);
+  }
+  for (const [name, pitches] of pitchesByTrack) {
+    out.push({
+      label: labels.lines.counterpoint,
+      text: cp.accompanimentThinned.replace('{track}', name).replace('{pitch}', pitches.join(', ')),
+    });
+  }
+  return out;
+}
+
+/**
  * Builds the hover card for one analyzed note.
  *
  * @param analysis The note's theory analysis.
@@ -558,6 +610,8 @@ export function buildTheoryCard(
     noteNameSystem?: NoteNameSystem;
     chordRoman?: string;
     chordFunction?: string;
+    /** Display name of a track, for the accompaniment a note thinned. */
+    trackName?: (trackId: number) => string | undefined;
   },
   labels: TheoryLabels,
 ): TheoryCard {
@@ -618,6 +672,7 @@ export function buildTheoryCard(
     });
   }
   lines.push(...counterpointLines(analysis, labels, ctx.keyFifths, ctx.noteNameSystem));
+  lines.push(...placementLines(analysis, labels, ctx.keyFifths, ctx.noteNameSystem, ctx.trackName));
   const nct = nctLine(analysis, labels);
   if (nct !== undefined) {
     lines.push({

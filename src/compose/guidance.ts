@@ -59,6 +59,7 @@ import { buildKeyMap, type KeyMap } from './key-map';
 import { strongBeatAt } from './meter';
 import { cadenceArrivals, cadencesByNote, type NoteCadence } from './note-cadences';
 import { editorNotesToNoteEvents } from './notes-io';
+import { evaluatePlacementColumn } from './placement';
 import { harmonicNotes } from './tracks';
 import {
   buildVoiceContext,
@@ -108,6 +109,28 @@ export interface GuidanceInput {
   track?: EditorTrack;
   /** Other tracks as voice lines on the absolute timeline (see `buildVoiceLines`). */
   lines?: ReadonlyArray<VoiceLine>;
+  /**
+   * Notes following accompaniments parked for this clip's lead, as voice lines.
+   * Only the placement readings hear them, so a thinned note reads as it did
+   * when it was placed.
+   */
+  parkedLines?: ReadonlyArray<VoiceLine>;
+  /** Accompaniment tracks following the active clip's track. */
+  followerTrackIds?: ReadonlySet<number>;
+}
+
+/**
+ * The step a suspension or stepped non-chord tone owes (placement rules r4,
+ * r5, r8), judged against the pitch of the next onset nearest the note.
+ */
+export interface PendingResolution {
+  kind: 'suspension' | 'nonChordTone';
+  /** Pitches that resolve the note. */
+  expected: number[];
+  /** The continuation; absent while no onset follows. */
+  next?: number;
+  /** Whether `next` is expected; absent while no onset follows. */
+  resolved?: boolean;
 }
 
 /** Per chord segment: safety of each pitch class, for background row tint. */
@@ -253,6 +276,10 @@ export interface NoteAnalysis {
    * {@link buildGuidance}). This one is never handed to a predicate.
    */
   engraved?: SpelledPitch;
+  /** Resolution the note owes, when its placement reading is r4, r5 or r8. */
+  pendingResolution?: PendingResolution;
+  /** Accompaniment notes a following part parked so this note fits (rule r1). */
+  thinnedAccompaniment?: Array<{ trackId: number; pitch: number }>;
 }
 
 export interface GuidanceResult {
@@ -321,6 +348,36 @@ function safetyRow(
     row[pc] = result?.safety ?? NoteSafety.Safe;
   }
   return row;
+}
+
+/** The pitch of `pitches` nearest `target`, the lower on a tie. */
+function nearestPitch(pitches: ReadonlyArray<number>, target: number): number | undefined {
+  let best: number | undefined;
+  for (const pitch of pitches) {
+    const distance = Math.abs(pitch - target);
+    const bestDistance = best === undefined ? Number.POSITIVE_INFINITY : Math.abs(best - target);
+    if (
+      distance < bestDistance ||
+      (distance === bestDistance && best !== undefined && pitch < best)
+    ) {
+      best = pitch;
+    }
+  }
+  return best;
+}
+
+/** `lines` with each parked line's notes added to the line of the same track. */
+function withParkedNotes(
+  lines: ReadonlyArray<VoiceLine>,
+  parked: ReadonlyArray<VoiceLine>,
+): VoiceLine[] {
+  const out = lines.map((line) => ({ ...line, notes: [...line.notes] }));
+  for (const extra of parked) {
+    const line = out.find((entry) => entry.trackId === extra.trackId);
+    if (line !== undefined) line.notes.push(...extra.notes);
+    else out.push({ ...extra, notes: [...extra.notes] });
+  }
+  return out;
 }
 
 /** Stands in for an active clip whose track is not given: no percussion override. */
@@ -859,6 +916,67 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     byNoteId.set(note.id, analysis);
     lastPitch = note.pitch;
     lastSpelled = spelled;
+  }
+
+  // Placement readings of each note as if placed into the rest of its clip.
+  const placementVoices =
+    (input.parkedLines ?? []).length > 0
+      ? buildVoiceContext(
+          withParkedNotes(lines, input.parkedLines ?? []),
+          voiceQueryBeats,
+          input.timeSignatures,
+        )
+      : voices;
+  const followerTrackIds = input.followerTrackIds ?? new Set<number>();
+  const onsetGroups = new Map<number, number[]>();
+  for (const note of activeLine) {
+    const group = onsetGroups.get(note.startPpq);
+    if (group === undefined) onsetGroups.set(note.startPpq, [note.pitch]);
+    else group.push(note.pitch);
+  }
+  const groupOnsets = [...onsetGroups.keys()];
+  for (const note of activeLine) {
+    const analysis = byNoteId.get(note.id);
+    if (analysis === undefined) continue;
+    const [verdict] = evaluatePlacementColumn(
+      {
+        startPpq: note.startPpq,
+        lengthPpq: note.durationPpq,
+        activeNotes: activeLine.filter((other) => other !== note),
+        voices: placementVoices,
+        chords: timeline,
+        keyMap,
+        timeSignatures: input.timeSignatures,
+        profile: input.profile ?? DEFAULT_GUIDANCE_PROFILE,
+        followerTrackIds,
+      },
+      note.pitch,
+      note.pitch,
+    );
+    if (verdict === undefined) continue;
+    if (verdict.reasons.includes('accompanimentThinned')) {
+      analysis.thinnedAccompaniment = verdict.partners.flatMap((partner) =>
+        partner.thinned && partner.trackId !== null
+          ? [{ trackId: partner.trackId, pitch: partner.pitch }]
+          : [],
+      );
+    }
+    const kind = verdict.reasons.includes('preparedSuspension')
+      ? 'suspension'
+      : verdict.reasons.includes('steppedNonChordTone')
+        ? 'nonChordTone'
+        : undefined;
+    const expected = verdict.resolveTo ?? [];
+    if (kind === undefined || expected.length === 0) continue;
+    const nextOnset = groupOnsets.find((onset) => onset > note.startPpq);
+    const next =
+      nextOnset !== undefined
+        ? nearestPitch(onsetGroups.get(nextOnset) ?? [], note.pitch)
+        : undefined;
+    analysis.pendingResolution =
+      next !== undefined
+        ? { kind, expected, next, resolved: expected.includes(next) }
+        : { kind, expected };
   }
 
   // Melodic labels: one analyzeVoice pass over the clip's notes as a single

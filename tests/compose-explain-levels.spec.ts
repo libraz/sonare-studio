@@ -165,6 +165,74 @@ describe('explanation-level wording', () => {
     }
   }
 
+  /** Card lines for a note carrying the resolution and thinning readings. */
+  function trackingLines(
+    locale: (typeof LOCALES)[number],
+    level: (typeof LEVELS)[number],
+    extra: Partial<NoteAnalysis>,
+  ): TheoryCardLine[] {
+    const analysis = { degree: 4, isScaleTone: true, chordSounding: false, ...extra };
+    return buildTheoryCard(
+      analysis,
+      { pitch: 65, keySet: true, trackName: (id) => (id === 2 ? 'Backing' : undefined) },
+      theoryLabelsFor(MESSAGES[locale].theory, level, MESSAGES[locale].harmony.cadence),
+    ).lines;
+  }
+
+  const UNRESOLVED_SUSPENSION = {
+    pendingResolution: { kind: 'suspension', expected: [64], next: 67, resolved: false },
+  } as const satisfies Partial<NoteAnalysis>;
+  const UNRESOLVED_PASSING = {
+    pendingResolution: { kind: 'nonChordTone', expected: [67, 64], next: 62, resolved: false },
+  } as const satisfies Partial<NoteAnalysis>;
+  const THINNED = {
+    thinnedAccompaniment: [{ trackId: 2, pitch: 64 }],
+  } as const satisfies Partial<NoteAnalysis>;
+
+  it('words an unresolved suspension and a thinned accompaniment note as the design states', () => {
+    const texts = (extra: Partial<NoteAnalysis>) =>
+      trackingLines('ja', 'normal', extra).map((line) => line.text);
+    expect(texts(UNRESOLVED_SUSPENSION)).toContain('未解決の掛留（期待: E4）');
+    expect(texts(THINNED)).toContain('Backing の E4 を間引いて成立');
+  });
+
+  for (const locale of LOCALES) {
+    for (const level of LEVELS) {
+      it(`${locale}/${level} names the expected pitches of an unresolved note`, () => {
+        const suspension = trackingLines(locale, level, UNRESOLVED_SUSPENSION).find((line) =>
+          line.text.includes('E4'),
+        );
+        expect(suspension?.label).toBe(COUNTERPOINT_LABEL[locale]);
+        expect(suspension?.text).not.toMatch(/\{\w+\}/);
+        expect(suspension?.term).toBe(MESSAGES[locale].theory.glossary.suspension);
+
+        const passing = trackingLines(locale, level, UNRESOLVED_PASSING).find(
+          (line) => line.text.includes('G4') && line.text.includes('E4'),
+        );
+        expect(passing?.label).toBe(COUNTERPOINT_LABEL[locale]);
+        expect(passing?.text).not.toMatch(/\{\w+\}/);
+        expect(passing?.term).toBe(MESSAGES[locale].theory.glossary.needsResolution);
+      });
+
+      it(`${locale}/${level} names the track and pitch an accompaniment thinned`, () => {
+        const thinned = trackingLines(locale, level, THINNED).find((line) =>
+          line.text.includes('Backing'),
+        );
+        expect(thinned?.text).toContain('E4');
+        expect(thinned?.text).not.toMatch(/\{\w+\}/);
+      });
+    }
+  }
+
+  it('says nothing about resolution once the note resolved or while it waits', () => {
+    for (const resolved of [true, undefined]) {
+      const lines = trackingLines('en', 'normal', {
+        pendingResolution: { kind: 'suspension', expected: [64], resolved },
+      });
+      expect(lines.some((line) => line.text.includes('E4'))).toBe(false);
+    }
+  });
+
   it('falls back to the normal level for an unknown level key', () => {
     const fallback = theoryLabelsFor(
       MESSAGES.en.theory,

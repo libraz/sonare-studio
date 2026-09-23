@@ -888,6 +888,43 @@ describe('evaluatePlacementColumn — measured fixtures', () => {
     expect(verdict.reasons).toContain('wideSpacing');
   });
 
+  it('names the voice a parallel fifth is made with', () => {
+    expect(verdictAt(parallelFifths('counterpoint'), p('G4')).motionPartners).toEqual([
+      { trackId: MELODIC, pitch: p('C4'), kind: 'parallel' },
+    ]);
+  });
+
+  it('names the voice a crossing swaps with', () => {
+    const scene: Scene = {
+      startPpq: 1,
+      lines: [line(MELODIC, 'melodic', [n(p('E4'), 0, 1), n(p('G4'), 1, 1)])],
+      active: [n(p('G4'), 0, 1)],
+    };
+    expect(verdictAt(scene, p('E4')).motionPartners).toEqual([
+      { trackId: MELODIC, pitch: p('G4'), kind: 'crossing' },
+    ]);
+  });
+
+  it('names the opposite outer voice of a hidden fifth', () => {
+    const scene: Scene = {
+      startPpq: 1,
+      lines: [line(BASS, 'bass', [n(p('C3'), 0, 1), n(p('G3'), 1, 1)])],
+      active: [n(p('E4'), 0, 1)],
+    };
+    const verdict = verdictAt(scene, p('D5'));
+    expect(verdict.reasons).toContain('hiddenParallel');
+    expect(verdict.motionPartners).toEqual([{ trackId: BASS, pitch: p('G3'), kind: 'hidden' }]);
+  });
+
+  it('carries no motion partners when no motion rule fires', () => {
+    const scene: Scene = {
+      startPpq: 1,
+      lines: [line(MELODIC, 'melodic', [n(p('C4'), 0, 2)])],
+      active: [n(p('E4'), 0, 1)],
+    };
+    expect(verdictAt(scene, p('G4')).motionPartners).toBeUndefined();
+  });
+
   it('F4 to G#4 in A minor is a forbidden leap under counterpoint', () => {
     const scene: Scene = { startPpq: 1, keyMap: A_MINOR_KEY, active: [n(p('F4'), 0, 1)] };
     const verdict = verdictAt(scene, p('G#4'));

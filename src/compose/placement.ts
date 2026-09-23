@@ -38,6 +38,7 @@ import { strongBeatAt } from './meter';
 import {
   DOUBLING_RUN_SLOTS,
   doublingRunOf,
+  type MotionFindings,
   motionFindings,
   type OuterVoice,
   type SoundingPitch,
@@ -103,11 +104,20 @@ export interface ClashPartner {
   following: boolean;
 }
 
+/** A voice a motion rule (parallel, hidden, crossing) was read against. */
+export interface MotionPartner {
+  trackId: number;
+  pitch: number;
+  kind: 'parallel' | 'hidden' | 'crossing';
+}
+
 export interface PlacementVerdict {
   level: PlacementLevel;
   /** Every rule that fired, heaviest first. */
   reasons: PlacementReason[];
   partners: ClashPartner[];
+  /** Voices behind the motion rules; absent when none fired. */
+  motionPartners?: MotionPartner[];
   resolveTo?: number[];
 }
 
@@ -555,10 +565,11 @@ export function evaluatePlacementColumn(
     }
 
     // (D) motion, spacing, leaps and range.
+    const outers = outersFrom(prev?.beat);
     const motion = motionFindings(
       pitch,
       prev?.pitch,
-      outersFrom(prev?.beat),
+      outers,
       doublingRunOf(chain, input.voices, pitch, start),
     );
     if (motion.parallelPerfect.length > 0) hit(byProfile('ng', 'warn'), 'parallelPerfect');
@@ -574,9 +585,44 @@ export function evaluatePlacementColumn(
       hit('ng', 'outOfRange');
     }
 
-    verdicts.push(verdictOf(hits, partners, resolveTo));
+    const verdict = verdictOf(hits, partners, resolveTo);
+    const motionPartners = motionPartnersOf(pitch, prev?.pitch, outers, motion);
+    if (motionPartners.length > 0) verdict.motionPartners = motionPartners;
+    verdicts.push(verdict);
   }
   return verdicts;
+}
+
+/**
+ * The voices behind `motion`. A hidden fifth names the opposite outer voice,
+ * found by asking `motionFindings` of each extreme voice alone.
+ */
+function motionPartnersOf(
+  pitch: number,
+  prevPitch: number | undefined,
+  outers: ReadonlyArray<OuterVoice>,
+  motion: MotionFindings,
+): MotionPartner[] {
+  const out: MotionPartner[] = [];
+  for (const voice of motion.parallelPerfect) {
+    out.push({ trackId: voice.trackId, pitch: voice.pitch, kind: 'parallel' });
+  }
+  if (motion.hiddenOuter) {
+    const pitches = [pitch, ...outers.map((voice) => voice.pitch)];
+    const lowest = Math.min(...pitches);
+    const highest = Math.max(...pitches);
+    const opposite = pitch === highest ? lowest : highest;
+    for (const voice of outers) {
+      if (voice.pitch !== opposite) continue;
+      if (motionFindings(pitch, prevPitch, [voice], () => 0).hiddenOuter) {
+        out.push({ trackId: voice.trackId, pitch: voice.pitch, kind: 'hidden' });
+      }
+    }
+  }
+  for (const voice of motion.crossing) {
+    out.push({ trackId: voice.trackId, pitch: voice.pitch, kind: 'crossing' });
+  }
+  return out;
 }
 
 /** Whether the candidate sits more than an octave from an adjacent voice, bottom pair exempt. */

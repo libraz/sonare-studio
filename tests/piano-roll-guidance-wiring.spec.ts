@@ -35,6 +35,21 @@ describe('piano-roll placement guidance wiring', () => {
     expect(editor).toMatch(/class="cell-status" aria-live="polite"/);
   });
 
+  it('bands the unresolved notes the composition guidance reports', () => {
+    expect(editor).toMatch(/\bunresolvedNoteIds\b[^\n]*=\s*useCompositionGuidance\(\)/);
+    expect(elementTag(editor, 'NoteGridCanvas')).toContain(
+      ':unresolved-note-ids="unresolvedNoteIds"',
+    );
+    const canvas = source('src/components/piano-roll/NoteGridCanvas.vue');
+    expect(canvas).toMatch(/\bunresolvedNoteIds\?: ReadonlySet<number>;/);
+  });
+
+  it('leaves the motion partners to the one status formatter', () => {
+    const cell = source('src/components/piano-roll/use-placement-cell.ts');
+    expect(cell).toContain('verdict.motionPartners');
+    expect(editor).not.toContain('motionPartners');
+  });
+
   it('passes the project key map to the piano-roll chord lane', () => {
     const lane = elementTag(editor, 'ChordLane');
     expect(editor).toContain('buildKeyMap(store.scaleHighlight, store.markers)');

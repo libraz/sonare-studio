@@ -6,7 +6,7 @@
  */
 
 import { type ComputedRef, computed, type Ref } from 'vue';
-import type { PlacementReason, PlacementVerdict } from '@/compose/placement';
+import type { MotionPartner, PlacementReason, PlacementVerdict } from '@/compose/placement';
 import type { EditorNote } from '@/project/types';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { formatMessage, type Messages } from '@/ui/i18n';
@@ -52,11 +52,19 @@ const CLASH_REASONS: ReadonlySet<PlacementReason> = new Set([
   'accompanimentRootClash',
 ]);
 
+/** The motion partner kind behind each motion reason. */
+const MOTION_KIND_OF_REASON: Partial<Record<PlacementReason, MotionPartner['kind']>> = {
+  parallelPerfect: 'parallel',
+  hiddenParallel: 'hidden',
+  voiceCrossing: 'crossing',
+};
+
 type PlacementMessages = Messages['shell']['pianoRoll']['placement'];
 
 /**
  * One row's verdict as status text: the level, its heaviest reason, and the
- * clashing notes when that reason is a clash.
+ * clashing notes when that reason is a clash or the tracks a motion reason was
+ * read against.
  *
  * @param trackName Display name of a partner's track; null is the edited clip.
  */
@@ -85,6 +93,18 @@ export function describePlacementVerdict(
     return `${level}: ${formatMessage(strings.thins, { partners: partnerList(thinned) })}`;
   }
   const text = strings.reason[reason];
+  const motionKind = MOTION_KIND_OF_REASON[reason];
+  if (motionKind !== undefined) {
+    const tracks = [
+      ...new Set(
+        (verdict.motionPartners ?? [])
+          .filter((partner) => partner.kind === motionKind)
+          .map((partner) => trackName(partner.trackId)),
+      ),
+    ];
+    if (tracks.length === 0) return `${level}: ${text}`;
+    return `${level}: ${formatMessage(strings.withPartners, { text, partners: tracks.join(', ') })}`;
+  }
   if (!CLASH_REASONS.has(reason) || verdict.partners.length === 0) return `${level}: ${text}`;
   return `${level}: ${formatMessage(strings.withPartners, {
     text,

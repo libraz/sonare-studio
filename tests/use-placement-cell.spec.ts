@@ -133,6 +133,20 @@ describe('describePlacementVerdict', () => {
     );
   });
 
+  it('names the track a motion reason was read against', () => {
+    const v = verdict({
+      level: 'ng',
+      reasons: ['parallelPerfect', 'voiceCrossing'],
+      motionPartners: [
+        { trackId: 3, pitch: 48, kind: 'parallel' },
+        { trackId: 2, pitch: 64, kind: 'crossing' },
+      ],
+    });
+    expect(
+      describePlacementVerdict(v, MESSAGES.ja.shell.pianoRoll.placement, pitchName, trackName),
+    ).toBe('NG: 並行 5 度・8 度（Bass）');
+  });
+
   it('reads a plain safe row as the level alone', () => {
     const en = MESSAGES.en.shell.pianoRoll.placement;
     expect(describePlacementVerdict(verdict({}), en, pitchName, trackName)).toBe(en.level.safe);

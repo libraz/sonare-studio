@@ -56,6 +56,8 @@ export interface CompositionGuidance {
   noteCard: ComputedRef<((noteId: number) => TheoryCard | null) | undefined>;
   /** Resolution arrows for the active clip's notes; undefined without an active clip. */
   resolutionArrows: ComputedRef<ResolutionArrow[] | undefined>;
+  /** Active-clip notes whose expected resolution did not follow. */
+  unresolvedNoteIds: ComputedRef<ReadonlySet<number>>;
 }
 
 /** Builds the reactive composition-guidance surface for the active clip. */
@@ -101,6 +103,21 @@ export function useCompositionGuidance(): CompositionGuidance {
     const clip = store.activeClip;
     if (!clip) return null;
     const track = store.tracks.find((entry) => entry.id === clip.trackId);
+    const followers = store.tracks.filter(
+      (entry) => entry.leadFollow?.leadTrackId === clip.trackId,
+    );
+    // Each follower's parked notes, as clips of that track holding only them.
+    const parkedClips = new Map(
+      followers.map((follower) => [
+        follower.id,
+        (store.clipsByTrack.get(follower.id) ?? []).flatMap((entry) => {
+          const parked = (follower.leadFollow?.stash ?? []).filter((s) => s.clipId === entry.id);
+          return parked.length > 0
+            ? [{ ...entry, notes: parked.map((s, index) => ({ ...s.note, id: -1 - index })) }]
+            : [];
+        }),
+      ]),
+    );
     return buildGuidance({
       notes: activeNotes.value,
       clipStartPpq: clip.startPpq,
@@ -114,6 +131,8 @@ export function useCompositionGuidance(): CompositionGuidance {
       ...(track !== undefined ? { track } : {}),
       // Every other track, loops expanded, as it actually sounds.
       lines: buildVoiceLines(store.tracks, store.clipsByTrack, clip.trackId),
+      parkedLines: buildVoiceLines(followers, parkedClips, clip.trackId),
+      followerTrackIds: new Set(followers.map((follower) => follower.id)),
     });
   });
 
@@ -137,6 +156,7 @@ export function useCompositionGuidance(): CompositionGuidance {
       keySet,
       keyEstimated: store.scaleHighlightEstimated,
       noteNameSystem: noteNames.system.value,
+      trackName: (trackId) => store.tracks.find((track) => track.id === trackId)?.name,
       ...(keySet ? { keyFifths: keyMap.value.keyFifthsAt(at) } : {}),
     };
     const chord = chordTimeline.value.at(at);
@@ -189,5 +209,13 @@ export function useCompositionGuidance(): CompositionGuidance {
     return arrows;
   });
 
-  return { guidanceSegments, noteCard, resolutionArrows };
+  const unresolvedNoteIds = computed<ReadonlySet<number>>(() => {
+    const ids = new Set<number>();
+    for (const [id, analysis] of guidance.value?.byNoteId ?? []) {
+      if (analysis.pendingResolution?.resolved === false) ids.add(id);
+    }
+    return ids;
+  });
+
+  return { guidanceSegments, noteCard, resolutionArrows, unresolvedNoteIds };
 }
