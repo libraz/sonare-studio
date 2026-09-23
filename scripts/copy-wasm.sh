@@ -10,10 +10,8 @@ DEST_DIR="src/wasm"
 # AudioWorklet entry. index.js / worklet.js import ./sonare.js dynamically.
 RUNTIME_FILES=("sonare.wasm" "sonare.js" "index.js" "worklet.js")
 
-# dist/sonare.d.ts re-exports '../src/sonare.js', which does not exist once
-# vendored; the hand-written module declaration it points at is copied in its
-# place so the declaration tree resolves inside src/wasm alone.
-MODULE_DECL_SRC="$WASM_PKG_DIR/src/sonare.js.d.ts"
+# The analysis-only module is not vendored, so neither is its declaration.
+SKIP_DECLS=("sonare-analysis.d.ts")
 
 # Files kept in DEST_DIR that the sync must not delete.
 KEEP_FILES=("meta.json")
@@ -27,10 +25,9 @@ if [ ! -d "$DIST_DIR" ]; then
 fi
 
 missing=()
-for file in "${RUNTIME_FILES[@]}" "index.d.ts" "worklet.d.ts"; do
+for file in "${RUNTIME_FILES[@]}" "index.d.ts" "worklet.d.ts" "sonare.d.ts"; do
   [ -f "$DIST_DIR/$file" ] || missing+=("$file")
 done
-[ -f "$MODULE_DECL_SRC" ] || missing+=("${MODULE_DECL_SRC#"$WASM_PKG_DIR/"}")
 if [ ${#missing[@]} -gt 0 ]; then
   echo "❌ Error: missing in libsonare:"
   printf '   - %s\n' "${missing[@]}"
@@ -53,13 +50,10 @@ for file in "${RUNTIME_FILES[@]}"; do
 done
 mkdir -p "$STAGE_DIR/worklet"
 for decl in "$DIST_DIR"/*.d.ts; do
-  # Shims into libsonare's own src/ cannot resolve here; sonare.d.ts is
-  # replaced below and the analysis-only module is not vendored.
-  grep -q "from '\.\./src/" "$decl" && continue
+  [[ " ${SKIP_DECLS[*]} " == *" $(basename "$decl") "* ]] && continue
   cp "$decl" "$STAGE_DIR/"
 done
 cp "$DIST_DIR"/worklet/*.d.ts "$STAGE_DIR/worklet/"
-cp "$MODULE_DECL_SRC" "$STAGE_DIR/sonare.d.ts"
 
 # Source maps are not vendored.
 find "$STAGE_DIR" \( -name '*.js' -o -name '*.d.ts' \) -print0 |
