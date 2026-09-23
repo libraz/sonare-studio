@@ -88,7 +88,11 @@
 .headers-viewport {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* clip, not hidden: rows are positioned entirely by the shared scrollY
+     transform below, and overflow: hidden still lets the browser's own
+     scrollIntoView-on-focus adjust scrollTop, desyncing this column from
+     the canvas. clip forbids programmatic scrolling outright. */
+  overflow: clip;
 }
 
 .track-header {

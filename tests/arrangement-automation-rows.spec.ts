@@ -9,6 +9,7 @@ import {
   automationYToValue,
   buildRowLayout,
   reorderRowIndexForDelta,
+  revealRowScrollY,
   TAKE_LANE_HEIGHT_PX,
   trackActiveTakeIndex,
   trackTakeRowCount,
@@ -115,6 +116,35 @@ describe('arrangement automation rows', () => {
       expect(reorderRowIndexForDelta(layout, 0, 50)).toBe(0);
       expect(reorderRowIndexForDelta(layout, 0, 100)).toBe(1);
       expect(reorderRowIndexForDelta(layout, 2, -200)).toBe(0);
+    });
+  });
+
+  describe('revealRowScrollY', () => {
+    it('returns null when the row already sits fully within the viewport', () => {
+      const layout = buildRowLayout([false, false, false], 40);
+      expect(revealRowScrollY(layout, 1, 0, 120)).toBeNull();
+    });
+
+    it('scrolls up to the row top when the row sits above the viewport', () => {
+      const layout = buildRowLayout([false, false, false, false], 40);
+      expect(revealRowScrollY(layout, 0, 80, 80)).toBe(0);
+      expect(revealRowScrollY(layout, 1, 80, 80)).toBe(40);
+    });
+
+    it('scrolls down to the row bottom when the row sits below the viewport', () => {
+      const layout = buildRowLayout([false, false, false, false], 40);
+      // Row 3 spans [120, 160); an 80px viewport at scrollY 0 shows [0, 80).
+      expect(revealRowScrollY(layout, 3, 0, 80)).toBe(80);
+    });
+
+    it('floors the bottom-aligned result at 0', () => {
+      const layout = buildRowLayout([false], 40);
+      expect(revealRowScrollY(layout, 0, -100, 50)).toBe(0);
+    });
+
+    it('is a no-op with a zero or negative viewport', () => {
+      const layout = buildRowLayout([false, false], 40);
+      expect(revealRowScrollY(layout, 1, 0, 0)).toBeNull();
     });
   });
 

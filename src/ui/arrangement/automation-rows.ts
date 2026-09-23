@@ -195,6 +195,25 @@ export function reorderRowIndexForDelta(
   return layout.hitTest(y)?.index ?? fromIndex;
 }
 
+/**
+ * Returns the scrollY that brings row `index` fully inside a viewport of
+ * `viewportHeight` px (nearest-edge only, like `scrollIntoView({ block:
+ * 'nearest' })`), or null when the row is already fully visible.
+ */
+export function revealRowScrollY(
+  layout: ArrangementRowLayout,
+  index: number,
+  scrollY: number,
+  viewportHeight: number,
+): number | null {
+  if (viewportHeight <= 0) return null;
+  const top = layout.rowTop(index);
+  const bottom = top + layout.rowHeight(index);
+  if (top < scrollY) return top;
+  if (bottom > scrollY + viewportHeight) return Math.max(0, bottom - viewportHeight);
+  return null;
+}
+
 /** Drawing/editing value domain of an automated parameter. */
 export interface AutomationValueDomain {
   /** Value mapped to the sublane bottom. */

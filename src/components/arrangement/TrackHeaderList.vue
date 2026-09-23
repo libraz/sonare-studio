@@ -109,6 +109,10 @@ import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-sc
  * the track. Row heights then match the canvas row geometry: lane height plus
  * TAKE_LANE_HEIGHT_PX per take row plus AUTOMATION_LANE_HEIGHT_PX for expanded
  * rows, so stacked headers follow the same prefix sums as automation-rows.ts.
+ * The `scrollY` prop is the single vertical-scroll source of truth, shared
+ * with the canvas; this column never scrolls on its own, so a row that must
+ * become visible (rename focus, a newly added track) is requested from the
+ * container via the `revealTrack` emit rather than scrolled locally.
  *
  * The snowflake toggle freezes a non-group track (bakes its pre-fader render
  * and silences its own clips/DSP); frozen headers carry the .track-frozen
@@ -166,6 +170,11 @@ const emit = defineEmits<{
   regenerateTrack: [trackId: number, part: TrackPart];
   /** Request to toggle visibility of one group track's member rows. */
   toggleGroupCollapse: [trackId: number, collapsed: boolean];
+  /**
+   * Request to scroll the shared vertical offset so this track's row is
+   * fully visible (rename focus landing off-screen, a newly added track).
+   */
+  revealTrack: [trackId: number];
 }>();
 
 const store = useProjectStore();
@@ -216,13 +225,17 @@ function startRename(track: EditorTrack): void {
   }
   editingTrackId.value = track.id;
   editName.value = track.name;
+  emit('revealTrack', track.id);
   if (renameFocusFrame !== null) cancelAnimationFrame(renameFocusFrame);
-  // Focus once the input exists in the DOM.
+  // Focus once the input exists in the DOM. preventScroll: the shared
+  // scrollY above is the single source of truth for the row's position;
+  // the browser's own scrollIntoView-on-focus would otherwise scroll the
+  // (overflow-clipped) header list independently of it.
   renameFocusFrame = requestAnimationFrame(() => {
     renameFocusFrame = null;
     const el = nameInput.value;
     const input = Array.isArray(el) ? el[0] : el;
-    input?.focus();
+    input?.focus({ preventScroll: true });
     input?.select();
   });
 }
@@ -728,6 +741,7 @@ function onAddTrack(kind: 'midi' | 'audio' | 'group'): void {
   const trackId =
     kind === 'audio' ? addAudioTrack() : kind === 'group' ? addGroupTrack() : addTrack();
   setActiveTrack(trackId);
+  emit('revealTrack', trackId);
 }
 
 // --- Drag reordering -------------------------------------------------------

@@ -69,6 +69,7 @@ import {
   AUTOMATION_LANE_HEIGHT_PX,
   automationLaneDomain,
   buildRowLayout,
+  revealRowScrollY,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 import { visibleGroupRows } from '@/ui/arrangement/group-rows';
@@ -411,6 +412,21 @@ const rowLayout = computed(() => {
     ),
   );
 });
+
+/**
+ * Scrolls the shared vertical offset so `trackId`'s row is fully visible.
+ * The header column has no scroll state of its own (see TrackHeaderList's
+ * `revealTrack` emit), so this is the only place a row is brought into view.
+ */
+function onRevealTrack(trackId: number): void {
+  const index = visibleTracks.value.findIndex((track) => track.id === trackId);
+  if (index < 0) return;
+  const viewport = Math.max(0, range.heightPx - RULER_HEIGHT_PX);
+  const next = revealRowScrollY(rowLayout.value, index, scrollY.value, viewport);
+  if (next === null) return;
+  scrollY.value = clampScrollY(next);
+  bump();
+}
 
 function onToggleGroupCollapse(trackId: number, collapsed: boolean): void {
   const ids = collapsedGroupIds.value.filter((id) => id !== trackId);
@@ -1412,6 +1428,7 @@ onBeforeUnmount(() => {
         @automation-param="onAutomationParamChange"
         @toggle-takes="onToggleTakes"
         @toggle-group-collapse="onToggleGroupCollapse"
+        @reveal-track="onRevealTrack"
       />
       <div ref="canvasCell" class="cell-canvas" @wheel.prevent="onWheel">
         <ArrangementCanvas

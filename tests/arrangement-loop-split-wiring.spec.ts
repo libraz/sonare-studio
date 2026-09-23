@@ -52,6 +52,17 @@ describe('arrangement loop split entry-point wiring', () => {
     expect(arrangementView).toContain('event.altKey');
   });
 
+  it('reveals a track header row through the shared scrollY instead of native scroll', () => {
+    expect(arrangementView).toContain(
+      "import {\n  AUTOMATION_LANE_HEIGHT_PX,\n  automationLaneDomain,\n  buildRowLayout,\n  revealRowScrollY,\n  trackTakeRowCount,\n} from '@/ui/arrangement/automation-rows';",
+    );
+    expect(arrangementView).toContain('function onRevealTrack(trackId: number): void {');
+    expect(arrangementView).toContain(
+      'const next = revealRowScrollY(rowLayout.value, index, scrollY.value, viewport);',
+    );
+    expect(arrangementView).toContain('@reveal-track="onRevealTrack"');
+  });
+
   it('exposes ripple insert and delete from the ruler context menu', () => {
     expect(arrangementView).toContain("id: 'insert-time'");
     expect(arrangementView).toContain("id: 'delete-time'");
