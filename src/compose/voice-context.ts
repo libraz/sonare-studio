@@ -248,9 +248,16 @@ export function voiceChain(
   depth: number,
   timeSignatures: ReadonlyArray<TimeSignatureSegment>,
 ): VoiceChainEntry[] {
+  // Each step spans at most one bar, so nothing earlier than `depth` of the
+  // longest bar in force can be reached.
+  const longestBar = timeSignatures.reduce(
+    (longest, segment) => Math.max(longest, meterBarLengthPpq(segment)),
+    meterBarLengthPpq(timeSignatureAt(timeSignatures, beat)),
+  );
+  const earliest = beat - depth * longestBar;
   const groups = new Map<number, EditorNote[]>();
   for (const note of activeNotes) {
-    if (note.startPpq >= beat) continue;
+    if (note.startPpq >= beat || note.startPpq < earliest) continue;
     const group = groups.get(note.startPpq);
     if (group === undefined) groups.set(note.startPpq, [note]);
     else group.push(note);
