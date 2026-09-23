@@ -21,7 +21,7 @@
  * can depend on it without a cycle.
  */
 
-import type { ChordQuality } from '@libraz/libcantus';
+import { type ChordQuality, chordPitchClasses, makeChord } from '@libraz/libcantus';
 
 /**
  * Chord-symbol suffix per libcantus quality. Exhaustive over the union so a
@@ -73,25 +73,6 @@ export const QUALITY_SUFFIX: Readonly<Record<ChordQuality, string>> = {
   min13: 'm13',
   minAdd9: 'm(add9)',
   'min6/9': 'm6/9',
-};
-
-/** Intrinsic pitch classes for each editor quality, used to discard redundant extensions. */
-export const TONE_PCS_BY_QUALITY: Readonly<Record<number, ReadonlyArray<number>>> = {
-  0: [0, 4, 7],
-  1: [0, 3, 7],
-  2: [0, 3, 6],
-  3: [0, 4, 8],
-  4: [0, 4, 7, 10],
-  5: [0, 4, 7, 11],
-  6: [0, 3, 7, 10],
-  7: [0, 2, 7],
-  8: [0, 5, 7],
-  10: [0, 2, 4, 7],
-  11: [0, 2, 3, 7],
-  12: [0, 3, 6, 9],
-  13: [0, 3, 6, 10],
-  14: [0, 2, 4, 7, 11],
-  15: [0, 2, 4, 7, 10],
 };
 
 /** Reduces an integer semitone offset to pitch-class space. */
@@ -207,6 +188,15 @@ const AUDIO_QUALITY_TO_LIBCANTUS: Readonly<Record<number, ChordQuality>> = {
   14: 'maj9',
   15: 'dom9',
 };
+
+/** Intrinsic pitch classes for each editor quality, derived from libcantus. */
+export const TONE_PCS_BY_QUALITY: Readonly<Record<number, ReadonlyArray<number>>> =
+  Object.fromEntries(
+    Object.entries(AUDIO_QUALITY_TO_LIBCANTUS).map(([quality, q]) => [
+      Number(quality),
+      chordPitchClasses(makeChord(0, q), { includeBass: false }),
+    ]),
+  );
 
 /**
  * Known editor base-quality + normalized-extension (+ omission) combinations.

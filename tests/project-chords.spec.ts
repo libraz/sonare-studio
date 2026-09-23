@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { TONE_PCS_BY_QUALITY } from '@/compose/chord-quality';
 import {
   chordsFromAnnotation,
   type EditorChordSymbol,
@@ -227,5 +230,33 @@ describe('chordsFromAnnotation', () => {
       chords: [{ start_ppq: 0, end_ppq: 4, root_pc: 255, quality: 0, slash_bass_pc: 255 }],
     });
     expect(symbols).toEqual([]);
+  });
+});
+
+describe('TONE_PCS_BY_QUALITY', () => {
+  it('all 15 qualities have the expected pitch classes', () => {
+    expect(TONE_PCS_BY_QUALITY[0]).toEqual([0, 4, 7]);
+    expect(TONE_PCS_BY_QUALITY[1]).toEqual([0, 3, 7]);
+    expect(TONE_PCS_BY_QUALITY[2]).toEqual([0, 3, 6]);
+    expect(TONE_PCS_BY_QUALITY[3]).toEqual([0, 4, 8]);
+    expect(TONE_PCS_BY_QUALITY[4]).toEqual([0, 4, 7, 10]);
+    expect(TONE_PCS_BY_QUALITY[5]).toEqual([0, 4, 7, 11]);
+    expect(TONE_PCS_BY_QUALITY[6]).toEqual([0, 3, 7, 10]);
+    expect(TONE_PCS_BY_QUALITY[7]).toEqual([0, 2, 7]);
+    expect(TONE_PCS_BY_QUALITY[8]).toEqual([0, 5, 7]);
+    expect(TONE_PCS_BY_QUALITY[10]).toEqual([0, 2, 4, 7]);
+    expect(TONE_PCS_BY_QUALITY[11]).toEqual([0, 2, 3, 7]);
+    expect(TONE_PCS_BY_QUALITY[12]).toEqual([0, 3, 6, 9]);
+    expect(TONE_PCS_BY_QUALITY[13]).toEqual([0, 3, 6, 10]);
+    expect(TONE_PCS_BY_QUALITY[14]).toEqual([0, 2, 4, 7, 11]);
+    expect(TONE_PCS_BY_QUALITY[15]).toEqual([0, 2, 4, 7, 10]);
+  });
+
+  it('chord-quality.ts source does not contain a hand-written pitch class table', () => {
+    const sourceFile = resolve(__dirname, '../src/compose/chord-quality.ts');
+    const source = readFileSync(sourceFile, 'utf-8');
+    // Pattern matches: TONE_PCS_BY_QUALITY = { 0: [ (the hand-written table start)
+    const handWrittenTablePattern = /TONE_PCS_BY_QUALITY[^=]*=\s*\{\s*0:\s*\[/;
+    expect(source).not.toMatch(handWrittenTablePattern);
   });
 });
