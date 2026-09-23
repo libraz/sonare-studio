@@ -69,8 +69,6 @@ export type {
   ImportExternalStemsOptions,
 } from './command/external-stems';
 export { importExternalStems } from './command/external-stems';
-export type { GenerateArrangementParams } from './command/generate-arrangement';
-export { generateArrangementCommand } from './command/generate-arrangement';
 export type { BackingStyle, GenerateBackingParams } from './command/generate-backing';
 export { generateBackingCommand } from './command/generate-backing';
 export type { GenerateBassParams } from './command/generate-bass';
