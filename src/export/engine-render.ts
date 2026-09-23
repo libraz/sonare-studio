@@ -1348,6 +1348,7 @@ export async function renderProjectWithEngine(
   // insert in its own pass so its lanes are actually time-varying, everything
   // else keeps the whole-buffer call it has always used.
   let masteringFrozenParams: string[] | undefined;
+  let presetLoudnessLimit: ExportLimitation | undefined;
   if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
     const plan = planMasteringStages(
       chain,
@@ -1368,6 +1369,12 @@ export async function renderProjectWithEngine(
       );
       mixL = out.left;
       mixR = out.right;
+      if (out.loudnessTargetLimited === true && Number.isFinite(out.outputLufs)) {
+        presetLoudnessLimit = {
+          kind: 'mastering-loudness-target-limited',
+          outputLufs: out.outputLufs as number,
+        };
+      }
     }
     for (const stage of plan.stages) {
       checkCancel();
@@ -1404,6 +1411,7 @@ export async function renderProjectWithEngine(
     deps?.metering ?? null,
   );
   const limitations = offlineAutomationLimitations(doc, masteringFrozenParams);
+  if (presetLoudnessLimit) limitations.push(presetLoudnessLimit);
   if (limitations.length > 0) report.limitations = limitations;
   if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
 

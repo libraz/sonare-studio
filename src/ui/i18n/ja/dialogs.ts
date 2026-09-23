@@ -198,6 +198,8 @@ export const dialogs = {
           '次のマスタリングパラメータはレンダー開始時点で評価されました: {params}',
         streamingMeteringUnavailable:
           'ストリーミング書き出しでは次のメーターを測定できませんでした: {measurements}。レポートにはサンプルピークのみ表示されます。',
+        masteringLoudnessTargetLimited:
+          'マスタリングプリセットがラウドネス目標に届きませんでした（プリセット段の出力は {lufs} LUFS）',
       },
     },
     close: '閉じる',

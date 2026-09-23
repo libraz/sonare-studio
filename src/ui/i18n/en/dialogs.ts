@@ -192,6 +192,8 @@ export const dialogs = {
           'These mastering parameters were evaluated at render start: {params}',
         streamingMeteringUnavailable:
           'Streaming export could not measure: {measurements}. The report contains sample peak only.',
+        masteringLoudnessTargetLimited:
+          'The mastering preset stopped short of its loudness target: its stage reached {lufs} LUFS',
       },
     },
     close: 'Close',

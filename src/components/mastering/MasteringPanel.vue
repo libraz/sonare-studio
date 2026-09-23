@@ -22,7 +22,7 @@ import {
 import { createDefaultMasteringChain, type MasteringChainState } from '@/project/mixer';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type MasteringSuggestion,
   parseMasteringSuggestion,
@@ -171,6 +171,8 @@ const KNOWN_PRESET_OVERRIDE_KEYS = [
   'loudness.ceilingDb',
   'loudness.truePeakOversample',
   'loudness.releaseMs',
+  'loudness.maxLimiterGainReductionDb',
+  'repair.reductionDb',
 ] as const;
 const presetOverrideKeyIsKnown = computed(() =>
   KNOWN_PRESET_OVERRIDE_KEYS.includes(
@@ -742,6 +744,17 @@ const clipCensus = computed(() => {
   );
 });
 
+/** The processed preview's note when the preset stopped short of its loudness target. */
+const targetLimited = computed(() => {
+  const limit = previewState.value?.processed?.report.limitations?.find(
+    (entry) => entry.kind === 'mastering-loudness-target-limited',
+  );
+  if (limit?.kind !== 'mastering-loudness-target-limited') return '';
+  return formatMessage(t.value.shell.mastering.loudness.targetLimited, {
+    lufs: limit.outputLufs.toFixed(1),
+  });
+});
+
 // --- Reference comparison -------------------------------------------------------
 
 const referenceAudio = shallowRef<MasteringReferenceAudio | null>(null);
@@ -995,6 +1008,7 @@ onBeforeUnmount(() => {
           :loudness-rows="loudnessRows"
           :clip-warning="clipWarning"
           :clip-census="clipCensus"
+          :target-limited="targetLimited"
           :mono-compatibility="monoCompatibility"
           :streaming-targets="streamingTargets"
           @preview="onPreview"

@@ -34,6 +34,7 @@ export interface ExportIssueStrings {
     /** Variant naming the parameters; falls back to the whole-rack wording. */
     masteringAutomationAtStartParams?: string;
     streamingMeteringUnavailable?: string;
+    masteringLoudnessTargetLimited: string;
   };
 }
 
@@ -106,6 +107,11 @@ export function formatExportLimitation(
         ? named.replace('{params}', params.join(', '))
         : strings.limitation.masteringAutomationAtStart;
     }
+    case 'mastering-loudness-target-limited':
+      return strings.limitation.masteringLoudnessTargetLimited.replace(
+        '{lufs}',
+        limitation.outputLufs.toFixed(1),
+      );
     case 'streaming-metering-unavailable':
       return (
         strings.limitation.streamingMeteringUnavailable ??

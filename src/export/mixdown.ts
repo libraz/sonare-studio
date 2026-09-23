@@ -57,7 +57,14 @@ export interface MasteringDeps {
     right: Float32Array,
     sampleRate: number,
     overrides?: Record<string, number | boolean>,
-  ): { left: Float32Array; right: Float32Array };
+  ): {
+    left: Float32Array;
+    right: Float32Array;
+    /** True when the preset's loudness stage stopped short of its target. */
+    loudnessTargetLimited?: boolean;
+    /** Integrated loudness the preset stage produced, in LUFS. */
+    outputLufs?: number;
+  };
 }
 
 /** Metering seam used for the post-render loudness/peak report. */
@@ -210,6 +217,8 @@ export type ExportLimitation =
        */
       params?: string[];
     }
+  /** The mastering preset's loudness stage finished below its target. */
+  | { kind: 'mastering-loudness-target-limited'; outputLufs: number }
   /** Streaming callbacks cannot retain the full waveform for post-render metering. */
   | {
       kind: 'streaming-metering-unavailable';
@@ -231,38 +240,18 @@ export interface MixdownResult {
 }
 
 /** Narrow runtime view of the wasm module used to build the default seams. */
-interface MixdownWasmSurface {
-  masteringProcessStereo?: (
-    name: never,
-    left: Float32Array,
-    right: Float32Array,
-    sampleRate?: number,
-    params?: Record<string, number | boolean>,
-  ) => { left: Float32Array; right: Float32Array };
-  masterAudioStereo?: (
-    left: Float32Array,
-    right: Float32Array,
-    sampleRate?: number,
-    presetName?: never,
-    overrides?: Record<string, number | boolean>,
-  ) => { left: Float32Array; right: Float32Array };
-  meteringTruePeakDb?: (samples: Float32Array, sampleRate?: number) => number;
-  lufs?: (samples: Float32Array, sampleRate?: number) => { integratedLufs: number };
-  lufsInterleaved?: (
-    samples: Float32Array,
-    channels: number,
-    sampleRate?: number,
-  ) => { integratedLufs: number };
-  meteringDynamicRange?: (samples: Float32Array, sampleRate?: number) => { dynamicRangeDb: number };
-  meteringDetectClipping?: (
-    samples: Float32Array,
-    sampleRate?: number,
-  ) => {
-    clippedSamples: number;
-    maxClippedPeak: number;
-    regions: ReadonlyArray<{ startSample: number; length: number }>;
-  };
-}
+type MixdownWasmSurface = Partial<
+  Pick<
+    typeof import('@/wasm/index.js'),
+    | 'masteringProcessStereo'
+    | 'masterAudioStereo'
+    | 'meteringTruePeakDb'
+    | 'lufs'
+    | 'lufsInterleaved'
+    | 'meteringDynamicRange'
+    | 'meteringDetectClipping'
+  >
+>;
 
 /**
  * Builds the default render seams from the loaded wasm module, degrading
@@ -270,7 +259,7 @@ interface MixdownWasmSurface {
  * mock) does not expose the underlying function.
  */
 export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
-  const wasm = (await ensureWasm()) as unknown as MixdownWasmSurface;
+  const wasm: MixdownWasmSurface = await ensureWasm();
   const processStereo = wasm.masteringProcessStereo;
   let mastering: MasteringDeps | null = null;
   if (typeof processStereo === 'function') {
@@ -284,7 +273,12 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
     if (typeof masterAudioStereo === 'function') {
       mastering.applyPreset = (preset, left, right, sampleRate, overrides) => {
         const out = masterAudioStereo(left, right, sampleRate, preset as never, overrides);
-        return { left: out.left, right: out.right };
+        return {
+          left: out.left,
+          right: out.right,
+          loudnessTargetLimited: out.loudnessTargetLimited,
+          outputLufs: out.outputLufs,
+        };
       };
     }
   }

@@ -448,6 +448,8 @@ export const shellMixing = {
       clipWarning: 'True peak above -0.3 dBTP - risk of clipping on lossy encodes',
       clipCensus:
         'The chain clipped {samples} samples ({percent}%) in {regions} run(s), first at {time}.',
+      targetLimited:
+        'The preset stopped short of its loudness target: its stage reached {lufs} LUFS. The input has too little headroom to limit further.',
     },
     monoCompatibility: {
       title: 'Mono compatibility',

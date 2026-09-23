@@ -46,6 +46,8 @@ defineProps<{
   clipWarning: boolean;
   /** Extent of the clipping in the processed preview; empty when clean. */
   clipCensus: string;
+  /** Why the preset missed its loudness target; empty when it reached it. */
+  targetLimited: string;
   /** Processed-render mono compatibility analysis, or null until unavailable/not measured. */
   monoCompatibility: MonoCompatibilityReport | null;
   /** Per-platform streaming targets, or null until checked. */
@@ -209,6 +211,7 @@ const { t } = useI18n();
       :rows="loudnessRows"
       :clip-warning="clipWarning"
       :clip-census="clipCensus"
+      :target-limited="targetLimited"
     />
     <section
       v-if="monoCompatibility"

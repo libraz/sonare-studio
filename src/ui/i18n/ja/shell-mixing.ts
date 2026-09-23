@@ -450,6 +450,8 @@ export const shellMixing = {
         'トゥルーピークが -0.3 dBTP を超えています。非可逆エンコードでクリップする可能性があります',
       clipCensus:
         'チェーンで {samples} サンプル（{percent}%）が {regions} 箇所クリップしました。最初は {time}。',
+      targetLimited:
+        'プリセットがラウドネス目標に届きませんでした（プリセット段の出力は {lufs} LUFS）。入力のヘッドルームが足りず、これ以上リミットできません。',
     },
     monoCompatibility: {
       title: 'モノ互換',

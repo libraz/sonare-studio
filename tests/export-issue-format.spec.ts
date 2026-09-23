@@ -28,6 +28,7 @@ const STRINGS: ExportIssueStrings = {
   },
   limitation: {
     masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
+    masteringLoudnessTargetLimited: 'Preset stopped short: {lufs} LUFS',
   },
 };
 
@@ -85,5 +86,11 @@ describe('export issue formatter', () => {
     expect(formatExportLimitation(mastering, STRINGS)).toBe(
       'Mastering automation was evaluated at render start',
     );
+    expect(
+      formatExportLimitation(
+        { kind: 'mastering-loudness-target-limited', outputLufs: -10.26 },
+        STRINGS,
+      ),
+    ).toBe('Preset stopped short: -10.3 LUFS');
   });
 });

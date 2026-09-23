@@ -12,6 +12,8 @@ defineProps<{
   clipWarning: boolean;
   /** Extent of the clipping the processed chain produced; empty when clean. */
   clipCensus: string;
+  /** Why the preset missed its loudness target; empty when it reached it. */
+  targetLimited: string;
 }>();
 
 const { t } = useI18n();
@@ -55,6 +57,7 @@ const { t } = useI18n();
       </p>
       <p v-if="clipCensus" class="clip-census">{{ clipCensus }}</p>
     </div>
+    <p v-if="targetLimited" class="clip-warning" role="status">{{ targetLimited }}</p>
   </div>
 </template>
 

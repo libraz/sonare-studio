@@ -2809,6 +2809,26 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.peakDb).toBeCloseTo(20 * Math.log10(0.0625), 5);
   });
 
+  it('reports a mastering preset that stopped short of its loudness target', async () => {
+    const doc = makeDoc();
+    doc.mixer = { ...doc.mixer, masteringChain: { preset: 'kpop', processors: [] } };
+    const applyPreset = vi.fn((_preset, left: Float32Array, right: Float32Array) => ({
+      left,
+      right,
+      loudnessTargetLimited: true,
+      outputLufs: -10.26,
+    }));
+
+    const result = await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      deps: { mastering: { applyPreset, processStereo: vi.fn() }, metering: null },
+    });
+
+    expect(result.report.limitations).toEqual([
+      { kind: 'mastering-loudness-target-limited', outputLufs: -10.26 },
+    ]);
+  });
+
   it('applies every mastering processor offline in declared rack order', async () => {
     const doc = makeDoc();
     doc.mixer = {
