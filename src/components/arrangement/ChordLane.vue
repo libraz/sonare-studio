@@ -9,7 +9,8 @@ import {
   type CadenceType,
   type KeySpan,
 } from '@/compose/harmonic-analysis';
-import { keyFifthsToSpelledKey } from '@/compose/key';
+import { keyFifthsToSpelledKey, keyScaleToScaleHighlight } from '@/compose/key';
+import { buildKeyMap, type KeyMap } from '@/compose/key-map';
 import type { EditorChordSymbol } from '@/project/chords';
 import { formatChordName } from '@/project/chords';
 import {
@@ -41,6 +42,11 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  * on hover, which chord the move turned on. The markers are inert
  * (`pointer-events: none`) apart from that one label, so seeking and the
  * chord-list shortcut behave the same with or without an analysis.
+ *
+ * When the host passes `keyMap`, the progression is read region by region of
+ * the project's key map instead of in one fixed key, and each chord's root
+ * and slash-bass are spelled with that region's own key-signature fifths; the
+ * `keyScale`/`keyFifths` inputs are then unused.
  */
 
 const props = defineProps<{
@@ -56,9 +62,17 @@ const props = defineProps<{
   keyFifths?: number;
   /**
    * Key the progression is analyzed in. Defaults to the major key `keyFifths`
-   * implies, which is all a key signature alone can name.
+   * implies, which is all a key signature alone can name. Unused when `keyMap`
+   * is supplied.
    */
   keyScale?: KeyScale;
+  /**
+   * The project's key map. When supplied, the progression is read region by
+   * region against it (see {@link buildKeyMap}) instead of in the single
+   * `keyScale`/`keyFifths` reading, and each chord's spelling uses the
+   * region's own key-signature fifths.
+   */
+  keyMap?: KeyMap;
   /** Absolute PPQ the lane's local frame is shifted by (default 0). */
   originPpq?: number;
   /** Whether any track carries audible content (arrangement only; drives the tracks-empty hint). */
@@ -175,13 +189,27 @@ function labelsFor(
   return labels;
 }
 
-/** The key the progression is read in (see the `keyScale` prop). */
+/** The key the progression is read in when no `keyMap` is supplied. */
 const analysisKey = computed<KeyScale>(
   () => props.keyScale ?? keyFifthsToSpelledKey(props.keyFifths ?? 0).key,
 );
 
+/**
+ * The key map the analysis reads against: the `keyMap` prop as-is, or a
+ * single-region map built from `analysisKey` when none is supplied, so the
+ * region-by-region analysis has one input shape either way.
+ */
+const effectiveKeyMap = computed<KeyMap>(
+  () => props.keyMap ?? buildKeyMap(keyScaleToScaleHighlight(analysisKey.value), []),
+);
+
 /** Display-only functional reading of the whole chord track. */
-const analysis = computed(() => analyzeHarmony(props.chords, analysisKey.value));
+const analysis = computed(() => analyzeHarmony(props.chords, effectiveKeyMap.value));
+
+/** Key-signature fifths a chord at `startPpq` is spelled with. */
+function spellingFifthsAt(startPpq: number): number {
+  return props.keyMap !== undefined ? props.keyMap.keyFifthsAt(startPpq) : (props.keyFifths ?? 0);
+}
 
 /** Cadence type by the absolute PPQ of the chord it resolves onto. */
 const cadenceByPpq = computed(
@@ -208,7 +236,7 @@ const bands = computed<ChordBand[]>(() => {
     if (x1 <= 0 || x0 >= props.range.widthPx) continue;
     out.push({
       key: chord.startPpq,
-      name: formatChordName(chord, props.keyFifths ?? 0, noteNameSystem.value),
+      name: formatChordName(chord, spellingFifthsAt(chord.startPpq), noteNameSystem.value),
       startPpq: chord.startPpq,
       leftPx: x0,
       widthPx: Math.max(2, x1 - x0),

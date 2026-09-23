@@ -1,7 +1,11 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import ChordLane from '@/components/arrangement/ChordLane.vue';
+import { keyScaleToScaleHighlight } from '@/compose/key';
+import { buildKeyMap } from '@/compose/key-map';
+import { keyMarkerName } from '@/compose/key-name';
 import type { EditorChordSymbol } from '@/project/chords';
+import { type EditorMarker, MAJOR_MODE_MASK } from '@/project/types';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { MESSAGES } from '@/ui/i18n';
 import { vTooltip } from '@/ui/tooltip';
@@ -46,6 +50,10 @@ function chord(startPpq: number, endPpq: number, rootPc = 0, quality = MAJOR): E
 function laneWith(chords: EditorChordSymbol[]) {
   const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
   return mount(ChordLane, { props: { range, revision: 0, chords, timeSignatures: METER } });
+}
+
+function marker(partial: Partial<EditorMarker>): EditorMarker {
+  return { id: 1, ppq: 0, name: 'Marker', ...partial };
 }
 
 describe('ChordLane harmonic annotation', () => {
@@ -215,5 +223,76 @@ describe('ChordLane harmonic annotation', () => {
       },
     });
     expect(wrapper.get('.cadence-mark').attributes('style')).toContain('left: 40px');
+  });
+
+  describe('keyMap prop', () => {
+    it("reads chords past a Key marker in the marker's key", () => {
+      const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
+      const keyMap = buildKeyMap(
+        keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
+        [marker({ id: 1, ppq: 16, name: keyMarkerName(-3, false) })], // Eb major
+      );
+      const wrapper = mount(ChordLane, {
+        props: {
+          range,
+          revision: 0,
+          // The same F-minor chord: borrowed before the marker (C major), a
+          // plain diatonic ii after it (Eb major).
+          chords: [chord(0, 4, 5, MINOR), chord(16, 20, 5, MINOR)],
+          timeSignatures: METER,
+          keyMap,
+        },
+      });
+      const marks = wrapper.findAll('.chord-band').map((band) => band.find('.chord-mark'));
+      expect(marks[0].exists()).toBe(true);
+      expect(marks[0].text()).toBe('♭');
+      expect(marks[1].exists()).toBe(false);
+    });
+
+    it('shows an applied numeral only in the key its own region declares', () => {
+      const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
+      const keyMap = buildKeyMap(
+        keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
+        [marker({ id: 1, ppq: 16, name: keyMarkerName(1, false) })], // G major
+      );
+      const wrapper = mount(ChordLane, {
+        props: {
+          range,
+          revision: 0,
+          chords: [
+            chord(0, 4, 2, DOM7), // D7, applied V7/V of the C-major region
+            chord(4, 8, 7),
+            chord(16, 20, 2, DOM7), // same D7, G major's own diatonic V7
+            chord(20, 24, 7),
+          ],
+          timeSignatures: METER,
+          keyMap,
+        },
+      });
+      const marks = wrapper.findAll('.chord-band').map((band) => band.find('.chord-mark'));
+      expect(marks[0].text()).toBe('V7/V');
+      expect(marks[2].exists()).toBe(false);
+    });
+
+    it('ignores the keyScale prop once keyMap is supplied', () => {
+      const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
+      const keyMap = buildKeyMap(
+        keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
+        [],
+      );
+      const wrapper = mount(ChordLane, {
+        props: {
+          range,
+          revision: 0,
+          chords: [chord(0, 4, 5, MAJOR)],
+          timeSignatures: METER,
+          // C natural minor would read this major IV as borrowed (♮); keyMap
+          // (C major, diatonic IV) wins instead.
+          keyScale: { rootPc: 0, modeMask12: 0b0101_1010_1101 },
+          keyMap,
+        },
+      });
+      expect(wrapper.find('.chord-mark').exists()).toBe(false);
+    });
   });
 });

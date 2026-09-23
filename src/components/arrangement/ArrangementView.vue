@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
+import { buildKeyMap } from '@/compose/key-map';
 import type { AutomationParam } from '@/project/automation';
 import {
   type CrossfadeBlockReason,
@@ -159,7 +159,8 @@ const snapChoice = computed<number | 'bar'>({
   },
 });
 const { downloadBlobFile } = useFileDownloads();
-const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
+/** The project's key timeline, read by the chord lane's harmonic analysis. */
+const arrangementKeyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
 
 /** Initialization/runtime error surfaced above the view. */
 const error = ref('');
@@ -1287,7 +1288,7 @@ onBeforeUnmount(() => {
         :revision="revision"
         :chords="store.chords"
         :time-signatures="store.timeSignatures"
-        :key-fifths="chordKeyFifths"
+        :key-map="arrangementKeyMap"
         :has-content="hasContent"
         show-hints
         @seek="onSeek"

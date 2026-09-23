@@ -1,8 +1,11 @@
 import type { KeyScale } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { analyzeHarmony } from '@/compose/harmonic-analysis';
+import { DEFAULT_KEY_SCALE, keyScaleToScaleHighlight } from '@/compose/key';
+import { buildKeyMap, type KeyMap } from '@/compose/key-map';
+import { keyMarkerName } from '@/compose/key-name';
 import type { EditorChordSymbol } from '@/project/chords';
-import { MAJOR_MODE_MASK } from '@/project/types';
+import { type EditorMarker, MAJOR_MODE_MASK } from '@/project/types';
 
 /** Editor quality ordinals used by the progressions below. */
 const MAJOR = 0;
@@ -18,16 +21,40 @@ const C_MAJOR: KeyScale = { rootPc: 0, modeMask12: MAJOR_MODE_MASK };
 /** C natural minor: the parallel mode of C major. */
 const C_MINOR: KeyScale = { rootPc: 0, modeMask12: MINOR_MODE_MASK };
 const A_MINOR: KeyScale = { rootPc: 9, modeMask12: MINOR_MODE_MASK };
+const G_MAJOR: KeyScale = { rootPc: 7, modeMask12: MAJOR_MODE_MASK };
 const E_FLAT_MAJOR: KeyScale = { rootPc: 3, modeMask12: MAJOR_MODE_MASK };
 
-/** One chord symbol per bar, in order, each four PPQ long. */
-function progression(chords: ReadonlyArray<[number, number]>): EditorChordSymbol[] {
+/** One chord symbol per bar (4 PPQ each), starting at `offsetPpq`. */
+function progression(chords: ReadonlyArray<[number, number]>, offsetPpq = 0): EditorChordSymbol[] {
   return chords.map(([rootPc, quality], index) => ({
-    startPpq: index * 4,
-    endPpq: index * 4 + 4,
+    startPpq: offsetPpq + index * 4,
+    endPpq: offsetPpq + index * 4 + 4,
     rootPc,
     quality,
   }));
+}
+
+/** A key map with a single declared region spanning the whole track. */
+function singleKeyMap(key: KeyScale): KeyMap {
+  return buildKeyMap(keyScaleToScaleHighlight(key), []);
+}
+
+/**
+ * A single-region key map built directly from a key, bypassing
+ * {@link buildKeyMap}'s fifths computation — needed for a malformed key,
+ * which that computation cannot spell.
+ */
+function literalKeyMap(key: KeyScale | null): KeyMap {
+  return {
+    regions: [{ startPpq: 0, endPpq: Infinity, key, source: 'declared' }],
+    at: () => key,
+    keySetAt: () => key !== null,
+    keyFifthsAt: () => 0,
+  };
+}
+
+function marker(partial: Partial<EditorMarker>): EditorMarker {
+  return { id: 1, ppq: 0, name: 'Marker', ...partial };
 }
 
 describe('analyzeHarmony', () => {
@@ -37,7 +64,7 @@ describe('analyzeHarmony', () => {
         [7, MAJOR],
         [0, MAJOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.cadences).toEqual([{ atPpq: 4, type: 'authentic' }]);
   });
@@ -48,7 +75,7 @@ describe('analyzeHarmony', () => {
         [5, MAJOR],
         [0, MAJOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.cadences).toEqual([{ atPpq: 4, type: 'plagal' }]);
   });
@@ -59,7 +86,7 @@ describe('analyzeHarmony', () => {
         [0, MAJOR],
         [7, MAJOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.cadences).toEqual([{ atPpq: 4, type: 'half' }]);
   });
@@ -70,23 +97,23 @@ describe('analyzeHarmony', () => {
         [7, MAJOR],
         [9, MINOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.cadences).toEqual([{ atPpq: 4, type: 'deceptive' }]);
   });
 
   it('reports the borrowing source of a parallel-minor chord', () => {
-    const analysis = analyzeHarmony(progression([[5, MINOR]]), C_MAJOR);
+    const analysis = analyzeHarmony(progression([[5, MINOR]]), singleKeyMap(C_MAJOR));
     expect(analysis.byStartPpq.get(0)?.borrowed).toBe('parallelMinor');
   });
 
   it('reports the borrowing source of a parallel-major chord in a minor key', () => {
-    const analysis = analyzeHarmony(progression([[5, MAJOR]]), C_MINOR);
+    const analysis = analyzeHarmony(progression([[5, MAJOR]]), singleKeyMap(C_MINOR));
     expect(analysis.byStartPpq.get(0)?.borrowed).toBe('parallelMajor');
   });
 
   it('reports the Neapolitan as its own source', () => {
-    const analysis = analyzeHarmony(progression([[1, MAJOR]]), C_MAJOR);
+    const analysis = analyzeHarmony(progression([[1, MAJOR]]), singleKeyMap(C_MAJOR));
     expect(analysis.byStartPpq.get(0)?.borrowed).toBe('neapolitan');
   });
 
@@ -96,7 +123,7 @@ describe('analyzeHarmony', () => {
         [2, DOM7],
         [7, MAJOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.byStartPpq.get(0)?.appliedRoman).toBe('V7/V');
     expect(analysis.byStartPpq.get(0)?.borrowed).toBeUndefined();
@@ -109,7 +136,7 @@ describe('analyzeHarmony', () => {
         [0, MAJOR],
         [5, MINOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.byStartPpq.get(0)).toEqual(analysis.byStartPpq.get(8));
   });
@@ -121,7 +148,7 @@ describe('analyzeHarmony', () => {
         [9, MINOR],
         [2, MINOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.byStartPpq.size).toBe(0);
     expect(analysis.cadences).toEqual([]);
@@ -132,7 +159,7 @@ describe('analyzeHarmony', () => {
       { startPpq: 0, endPpq: 4, rootPc: Number.NaN, quality: MAJOR },
       { startPpq: 4, endPpq: 8, rootPc: 5, quality: MINOR },
     ];
-    const analysis = analyzeHarmony(symbols, C_MAJOR);
+    const analysis = analyzeHarmony(symbols, singleKeyMap(C_MAJOR));
     expect(analysis.byStartPpq.has(0)).toBe(false);
     expect(analysis.byStartPpq.get(4)?.borrowed).toBe('parallelMinor');
   });
@@ -143,14 +170,14 @@ describe('analyzeHarmony', () => {
         [7, MAJOR],
         [0, MAJOR],
       ]),
-      { rootPc: Number.NaN, modeMask12: Number.NaN },
+      literalKeyMap({ rootPc: Number.NaN, modeMask12: Number.NaN }),
     );
     expect(analysis.byStartPpq.size).toBe(0);
     expect(analysis.cadences).toEqual([]);
   });
 
   it('returns an empty analysis for an empty chord track', () => {
-    const analysis = analyzeHarmony([], C_MAJOR);
+    const analysis = analyzeHarmony([], singleKeyMap(C_MAJOR));
     expect(analysis.byStartPpq.size).toBe(0);
     expect(analysis.cadences).toEqual([]);
     expect(analysis.keySpans).toEqual([]);
@@ -165,7 +192,7 @@ describe('analyzeHarmony', () => {
         [7, MAJOR],
         [0, MAJOR],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.keySpans).toEqual([]);
     expect([...analysis.byStartPpq]).toEqual([
@@ -192,7 +219,7 @@ describe('analyzeHarmony', () => {
       [7, MAJOR],
       [4, MAJOR],
     ]);
-    const analysis = analyzeHarmony(aeolian, A_MINOR);
+    const analysis = analyzeHarmony(aeolian, singleKeyMap(A_MINOR));
     expect(analysis.keySpans).toEqual([]);
     expect(analysis.byStartPpq.size).toBe(0);
     expect(analysis.cadences).toContainEqual({ atPpq: 16, type: 'authentic' });
@@ -211,7 +238,7 @@ describe('analyzeHarmony', () => {
         [3, MAJ7],
         [3, MAJ7],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.keySpans).toEqual([
       { startPpq: 0, endPpq: 16, key: C_MAJOR },
@@ -238,7 +265,7 @@ describe('analyzeHarmony', () => {
         [3, MAJ7],
         [3, MAJ7],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(inC.byStartPpq.get(8)?.borrowed).toBe('parallelMinor');
     expect(inC.cadences).toEqual([]);
@@ -259,7 +286,7 @@ describe('analyzeHarmony', () => {
         [10, DOM7],
         [3, MAJ7],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.keySpans.map((span) => span.key)).toEqual([C_MAJOR, E_FLAT_MAJOR]);
     expect(analysis.byStartPpq.get(4)?.borrowed).toBe('parallelMinor');
@@ -279,7 +306,7 @@ describe('analyzeHarmony', () => {
         [7, MAJ7],
         [7, MAJ7],
       ]),
-      C_MAJOR,
+      singleKeyMap(C_MAJOR),
     );
     expect(analysis.keySpans[1]?.modulation).toBe('dominant');
     expect(analysis.keySpans[1]?.pivot?.romanFrom).toBe('I');
@@ -298,5 +325,92 @@ describe('analyzeHarmony', () => {
     ]);
     // The opening span was not moved into, so it has nothing to compare.
     expect(analysis.keySpans[0]?.sharedChords).toBeUndefined();
+  });
+
+  describe('key-map regions', () => {
+    it('reads each region against its own declared key', () => {
+      const keyMap = buildKeyMap(keyScaleToScaleHighlight(C_MAJOR), [
+        marker({ id: 1, ppq: 16, name: keyMarkerName(-3, false) }), // Eb major
+      ]);
+      // The same F-minor chord: borrowed in C major (before the marker), a
+      // plain diatonic ii in Eb major (after it).
+      const symbols: EditorChordSymbol[] = [
+        { startPpq: 0, endPpq: 4, rootPc: 5, quality: MINOR },
+        { startPpq: 16, endPpq: 20, rootPc: 5, quality: MINOR },
+      ];
+      const analysis = analyzeHarmony(symbols, keyMap);
+      expect(analysis.byStartPpq.get(0)?.borrowed).toBe('parallelMinor');
+      expect(analysis.byStartPpq.get(16)).toBeUndefined();
+    });
+
+    it('reads a region with no key set against the default key', () => {
+      const keyMap = buildKeyMap(keyScaleToScaleHighlight(C_MAJOR, false), []);
+      expect(keyMap.at(0)).toBeNull();
+      const withDefault = analyzeHarmony(progression([[5, MINOR]]), keyMap);
+      const withCMajor = analyzeHarmony(progression([[5, MINOR]]), singleKeyMap(DEFAULT_KEY_SCALE));
+      expect(withDefault.byStartPpq).toEqual(withCMajor.byStartPpq);
+    });
+
+    it('carries the boundary relation on a region that does not itself modulate', () => {
+      const keyMap = buildKeyMap(keyScaleToScaleHighlight(C_MAJOR), [
+        marker({ id: 1, ppq: 16, name: keyMarkerName(1, false) }), // G major
+      ]);
+      const analysis = analyzeHarmony(progression([[7, MAJOR]], 16), keyMap);
+      expect(analysis.keySpans).toEqual([
+        { startPpq: 16, endPpq: Infinity, key: G_MAJOR, modulation: 'dominant' },
+      ]);
+    });
+
+    it('omits the modulation field when the boundary keys share no named relation', () => {
+      const keyMap = buildKeyMap(keyScaleToScaleHighlight(C_MAJOR), [
+        marker({ id: 1, ppq: 16, name: keyMarkerName(-3, false) }), // Eb major
+      ]);
+      const analysis = analyzeHarmony(progression([[3, MAJOR]], 16), keyMap);
+      expect(analysis.keySpans).toEqual([{ startPpq: 16, endPpq: Infinity, key: E_FLAT_MAJOR }]);
+    });
+
+    it('overrides only the first span of a region that also modulates internally', () => {
+      const keyMap = buildKeyMap(keyScaleToScaleHighlight(A_MINOR), [
+        marker({ id: 1, ppq: 100, name: keyMarkerName(0, false) }), // C major
+      ]);
+      // ii-V-I in C, then ii-V-I in G, starting after the marker.
+      const analysis = analyzeHarmony(
+        progression(
+          [
+            [2, MIN7],
+            [7, DOM7],
+            [0, MAJ7],
+            [0, MAJ7],
+            [9, MIN7],
+            [2, DOM7],
+            [7, MAJ7],
+            [7, MAJ7],
+          ],
+          100,
+        ),
+        keyMap,
+      );
+      // A minor to C major is the marker's own move: the declared key hands
+      // this to the region's first span. The second span's own detected move
+      // (C to G) is untouched, pivot and shared chords included.
+      expect(analysis.keySpans[0]).toEqual({
+        startPpq: 100,
+        endPpq: 116,
+        key: C_MAJOR,
+        modulation: 'relative',
+      });
+      expect(analysis.keySpans[1]?.key).toEqual(G_MAJOR);
+      expect(analysis.keySpans[1]?.modulation).toBe('dominant');
+      expect(analysis.keySpans[1]?.pivot?.romanFrom).toBe('I');
+      expect((analysis.keySpans[1]?.sharedChords ?? []).length).toBeGreaterThan(0);
+    });
+
+    it('does not synthesize a boundary span for a marker region with no chords', () => {
+      const keyMap = buildKeyMap(keyScaleToScaleHighlight(C_MAJOR), [
+        marker({ id: 1, ppq: 16, name: keyMarkerName(1, false) }), // G major
+      ]);
+      const analysis = analyzeHarmony(progression([[0, MAJOR]]), keyMap);
+      expect(analysis.keySpans).toEqual([]);
+    });
   });
 });

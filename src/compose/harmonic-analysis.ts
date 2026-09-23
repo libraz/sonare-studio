@@ -24,12 +24,16 @@ import {
   detectModulations,
   type KeyRelation,
   type KeyScale,
+  keyRelationBetween,
   type PivotChord,
   pivotChords,
+  spelledKeyOf,
 } from '@libraz/libcantus';
 import type { EditorChordSymbol } from '@/project/chords';
 import { buildChordTimeline } from './chord-at-tick';
 import { editorChordToChord } from './chord-io';
+import { DEFAULT_KEY_SCALE } from './key';
+import type { KeyMap } from './key-map';
 
 /** A cadence type as libcantus names it (the null case is "no cadence"). */
 type LibraryCadenceType = NonNullable<CadenceResult['type']>;
@@ -267,39 +271,86 @@ export function chordTrackCadences(
 }
 
 /**
- * Analyzes a chord track for display.
+ * Analyzes a chord track for display, one key-map region at a time.
+ *
+ * Each region reads only its own symbols, with the region's key as the
+ * "declared" key {@link keySpansOf} detects modulations against — the same
+ * per-track analysis {@link analyzeHarmony} always did, just scoped to the
+ * stretch between two `Key:` markers instead of the whole track. A region
+ * that opens at a marker carries the move from the previous region's key as
+ * its first span's modulation (`keyRelationBetween`); that move is declared,
+ * not detected, so it carries no pivot or shared chords.
  *
  * @param symbols The project chord track (absolute PPQ regions).
- * @param key The key the progression is declared in; see {@link keySpansOf} for
- *   how a modulation is read against it.
+ * @param keyMap The project's key map (see {@link buildKeyMap}); a region with
+ *   no key set reads as {@link DEFAULT_KEY_SCALE}.
  * @returns Per-symbol annotations, the cadences found between symbols, and the
  *   keys the track passes through.
  */
 export function analyzeHarmony(
   symbols: ReadonlyArray<EditorChordSymbol>,
-  key: KeyScale,
+  keyMap: KeyMap,
 ): HarmonicAnalysis {
-  const timeline = tryEval(() => buildChordTimeline(symbols));
-  const keySpans = timeline === undefined ? [] : keySpansOf(timeline, key);
   const byStartPpq = new Map<number, ChordAnnotation>();
-  // A progression repeats its chords; the reading depends only on the chord and
-  // the key it is read in, so memoize it by that pair across the track.
+  const cadences: CadenceMark[] = [];
+  const keySpans: KeySpan[] = [];
+  // A progression repeats its chords; the reading depends only on the chord
+  // and the key it is read in, so memoize it by that pair across the track.
   const cache = new Map<string, ChordAnnotation | undefined>();
-  for (const symbol of symbols) {
-    const chord = tryEval(() => editorChordToChord(symbol));
-    if (chord === undefined) continue;
-    const localKey = keyAtPpq(keySpans, key, symbol.startPpq);
-    const identity = readingIdentity(chord, localKey);
-    let annotation = cache.get(identity);
-    if (!cache.has(identity)) {
-      annotation = annotationFor(chord, localKey);
-      cache.set(identity, annotation);
+  let previousKey: KeyScale | null = null;
+
+  for (const region of keyMap.regions) {
+    const regionSymbols = symbols.filter(
+      (symbol) => symbol.startPpq >= region.startPpq && symbol.startPpq < region.endPpq,
+    );
+    const declaredKey = region.key ?? DEFAULT_KEY_SCALE;
+    const timeline = tryEval(() => buildChordTimeline(regionSymbols));
+    const localSpans = timeline === undefined ? [] : keySpansOf(timeline, declaredKey);
+
+    for (const symbol of regionSymbols) {
+      const chord = tryEval(() => editorChordToChord(symbol));
+      if (chord === undefined) continue;
+      const localKey = keyAtPpq(localSpans, declaredKey, symbol.startPpq);
+      const identity = readingIdentity(chord, localKey);
+      let annotation = cache.get(identity);
+      if (!cache.has(identity)) {
+        annotation = annotationFor(chord, localKey);
+        cache.set(identity, annotation);
+      }
+      if (annotation !== undefined) byStartPpq.set(symbol.startPpq, annotation);
     }
-    if (annotation !== undefined) byStartPpq.set(symbol.startPpq, annotation);
+
+    if (timeline !== undefined) cadences.push(...cadenceMarks(timeline, localSpans, declaredKey));
+
+    if (region.source === 'marker' && previousKey !== null) {
+      const fromKey = previousKey;
+      const modulation =
+        tryEval(() => keyRelationBetween(spelledKeyOf(fromKey), spelledKeyOf(declaredKey))) ??
+        undefined;
+      const [first, ...rest] = localSpans;
+      if (first !== undefined) {
+        const boundary: KeySpan = {
+          startPpq: first.startPpq,
+          endPpq: first.endPpq,
+          key: first.key,
+        };
+        if (modulation !== undefined) boundary.modulation = modulation;
+        keySpans.push(boundary, ...rest);
+      } else if (regionSymbols.length > 0) {
+        const boundary: KeySpan = {
+          startPpq: regionSymbols[0].startPpq,
+          endPpq: region.endPpq,
+          key: declaredKey,
+        };
+        if (modulation !== undefined) boundary.modulation = modulation;
+        keySpans.push(boundary);
+      }
+    } else {
+      keySpans.push(...localSpans);
+    }
+
+    previousKey = declaredKey;
   }
-  return {
-    byStartPpq,
-    cadences: timeline === undefined ? [] : cadenceMarks(timeline, keySpans, key),
-    keySpans,
-  };
+
+  return { byStartPpq, cadences, keySpans };
 }

@@ -2,13 +2,21 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ChordLane from '@/components/arrangement/ChordLane.vue';
+import { keyScaleToScaleHighlight } from '@/compose/key';
+import { buildKeyMap } from '@/compose/key-map';
+import { keyMarkerName } from '@/compose/key-name';
 import type { EditorChordSymbol } from '@/project/chords';
+import { type EditorMarker, MAJOR_MODE_MASK } from '@/project/types';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 
 const METER = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
 function chord(startPpq: number, endPpq: number, rootPc = 0, quality = 0): EditorChordSymbol {
   return { startPpq, endPpq, rootPc, quality };
+}
+
+function marker(partial: Partial<EditorMarker>): EditorMarker {
+  return { id: 1, ppq: 0, name: 'Marker', ...partial };
 }
 
 afterEach(() => {
@@ -127,5 +135,29 @@ describe('ChordLane', () => {
     vi.advanceTimersByTime(1200);
     await nextTick();
     expect(wrapper.get('.chord-band').classes()).not.toContain('chord-band-flash');
+  });
+
+  it('spells a chord with the key-fifths of its own keyMap region', () => {
+    const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
+    const keyMap = buildKeyMap(
+      keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
+      [
+        marker({ id: 1, ppq: 16, name: keyMarkerName(-3, false) }), // Eb major (3 flats)
+      ],
+    );
+    const wrapper = mount(ChordLane, {
+      props: {
+        range,
+        revision: 0,
+        // F#/Gb (pitch class 6) in each region: sharp side before the marker
+        // (0 fifths), flat side after it (-3 fifths).
+        chords: [chord(0, 4, 6), chord(16, 20, 6)],
+        timeSignatures: METER,
+        keyFifths: 99, // ignored once keyMap is supplied
+        keyMap,
+      },
+    });
+    const names = wrapper.findAll('.chord-name').map((label) => label.text().replace(/\s.*/, ''));
+    expect(names[0]).not.toBe(names[1]);
   });
 });
