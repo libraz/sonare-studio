@@ -10,7 +10,7 @@
 
 import { stepOf } from '@libraz/libcantus';
 import { ensureWasm } from '@/lib/wasm';
-import type { RirDiagnostic } from '@/wasm/index.js';
+import type { MasteringPreset, RirDiagnostic } from '@/wasm/index.js';
 import {
   type MatchEqAnalysis,
   parseMatchEqCurve,
@@ -60,6 +60,14 @@ export type SampleEditorWasmOps = Partial<
     | 'spectralEdit'
     | 'masteringPairProcess'
     | 'masteringPairAnalyze'
+    | 'masterAudio'
+    | 'masterAudioStereo'
+    | 'masteringRepairDeclickStereo'
+    | 'masteringRepairDenoiseClassicalStereo'
+    | 'masteringRepairDeclipStereo'
+    | 'masteringRepairDecrackleStereo'
+    | 'masteringRepairDehumStereo'
+    | 'masteringRepairDereverbClassicalStereo'
   >
 >;
 
@@ -79,6 +87,7 @@ export interface WasmOpAvailability {
   detectNotes: boolean;
   declick: boolean;
   denoise: boolean;
+  restore: boolean;
   declip: boolean;
   decrackle: boolean;
   dehum: boolean;
@@ -132,6 +141,7 @@ export function wasmOpAvailability(
       (typeof ops?.pitchPyin === 'function' || typeof ops?.pitchYin === 'function'),
     declick: typeof ops?.masteringRepairDeclick === 'function',
     denoise: typeof ops?.masteringRepairDenoiseClassical === 'function',
+    restore: typeof ops?.masterAudio === 'function' && typeof ops?.masterAudioStereo === 'function',
     declip: typeof ops?.masteringRepairDeclip === 'function',
     decrackle: typeof ops?.masteringRepairDecrackle === 'function',
     dehum: typeof ops?.masteringRepairDehum === 'function',
@@ -186,6 +196,30 @@ function applyToRange(
     segment.length === minFrames ? segment : segment.slice(0, minFrames),
   );
   return spliceRange(channels, resolved, planar);
+}
+
+/**
+ * Runs a repair over the range. A stereo pair goes through the linked stereo
+ * form when the module has one, so both channels take the same repair
+ * decisions; otherwise each channel is repaired on its own.
+ */
+function applyRepairToRange(
+  channels: ReadonlyArray<Float32Array>,
+  range: SampleRange | null | undefined,
+  mono: (segment: Float32Array) => Float32Array,
+  stereo?: (left: Float32Array, right: Float32Array) => { left: Float32Array; right: Float32Array },
+): Float32Array[] {
+  if (channels.length !== 2 || stereo === undefined) return applyToRange(channels, range, mono);
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  const out = stereo(
+    channels[0].slice(resolved.startFrame, resolved.endFrame),
+    channels[1].slice(resolved.startFrame, resolved.endFrame),
+  );
+  const frames = Math.min(out.left.length, out.right.length);
+  return spliceRange(channels, resolved, [out.left.slice(0, frames), out.right.slice(0, frames)]);
 }
 
 /**
@@ -684,11 +718,45 @@ export function declickRange(
   if (typeof fn !== 'function') {
     throw new Error('Declick is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  const stereo = ops.masteringRepairDeclickStereo;
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => fn(segment, sampleRate),
+    stereo && ((left, right) => stereo(left, right, sampleRate)),
+  );
 }
 
 /**
- * Denoises the range (classical spectral denoiser).
+ * Runs a restoration preset over the range. A stereo pair is repaired as one
+ * linked pair so both channels take the same decisions; other layouts are
+ * repaired channel by channel. The presets repair only and leave level alone.
+ *
+ * @throws Error when the module does not provide masterAudio/masterAudioStereo.
+ */
+export function restoreRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  preset: MasteringPreset,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const mono = ops.masterAudio;
+  const stereo = ops.masterAudioStereo;
+  if (typeof mono !== 'function' || typeof stereo !== 'function') {
+    throw new Error('Restoration is unavailable in this libsonare build');
+  }
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => mono(segment, sampleRate, preset).samples,
+    (left, right) => stereo(left, right, sampleRate, preset),
+  );
+}
+
+/**
+ * Denoises the range (classical spectral denoiser). `reductionDb` is the
+ * deepest attenuation the mask may apply; omitted keeps the library default.
  *
  * @throws Error when the module does not provide
  *   masteringRepairDenoiseClassical.
@@ -698,12 +766,20 @@ export function denoiseRange(
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
   range?: SampleRange | null,
+  reductionDb?: number,
 ): Float32Array[] {
   const fn = ops.masteringRepairDenoiseClassical;
   if (typeof fn !== 'function') {
     throw new Error('Denoise is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  const stereo = ops.masteringRepairDenoiseClassicalStereo;
+  const options = reductionDb === undefined ? undefined : { reductionDb };
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => fn(segment, sampleRate, options),
+    stereo && ((left, right) => stereo(left, right, sampleRate, options)),
+  );
 }
 
 export function declipRange(
@@ -716,7 +792,13 @@ export function declipRange(
   if (typeof fn !== 'function') {
     throw new Error('Declip is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  const stereo = ops.masteringRepairDeclipStereo;
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => fn(segment, sampleRate),
+    stereo && ((left, right) => stereo(left, right, sampleRate)),
+  );
 }
 
 export function decrackleRange(
@@ -729,7 +811,13 @@ export function decrackleRange(
   if (typeof fn !== 'function') {
     throw new Error('Decrackle is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  const stereo = ops.masteringRepairDecrackleStereo;
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => fn(segment, sampleRate),
+    stereo && ((left, right) => stereo(left, right, sampleRate)),
+  );
 }
 
 export function dehumRange(
@@ -742,7 +830,13 @@ export function dehumRange(
   if (typeof fn !== 'function') {
     throw new Error('Dehum is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  const stereo = ops.masteringRepairDehumStereo;
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => fn(segment, sampleRate),
+    stereo && ((left, right) => stereo(left, right, sampleRate)),
+  );
 }
 
 export function dereverbRange(
@@ -755,7 +849,13 @@ export function dereverbRange(
   if (typeof fn !== 'function') {
     throw new Error('Dereverb is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  const stereo = ops.masteringRepairDereverbClassicalStereo;
+  return applyRepairToRange(
+    channels,
+    range,
+    (segment) => fn(segment, sampleRate),
+    stereo && ((left, right) => stereo(left, right, sampleRate)),
+  );
 }
 
 export function trimSilenceRange(

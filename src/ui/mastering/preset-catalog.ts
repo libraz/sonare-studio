@@ -55,6 +55,11 @@ const PRESET_KINDS: Readonly<Record<MasteringPreset, MasteringPresetKind>> = {
 /** Preset list used when the wasm catalog is unavailable (tests, early boot). */
 export const FALLBACK_MASTERING_PRESETS: readonly string[] = Object.keys(PRESET_KINDS);
 
+/** The restoration presets, in catalog order. */
+export const RESTORATION_PRESETS: readonly MasteringPreset[] = (
+  Object.keys(PRESET_KINDS) as MasteringPreset[]
+).filter((preset) => PRESET_KINDS[preset] === 'restoration');
+
 /** True for a restoration preset (repair only, no loudness target). */
 export function isRestorationPreset(id: string): boolean {
   return PRESET_KINDS[id as MasteringPreset] === 'restoration';

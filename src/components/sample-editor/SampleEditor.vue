@@ -166,6 +166,9 @@ const {
   spectralGainDbInput,
   spectralModeInput,
   roomPresetId,
+  restorePresetId,
+  restorePresetOptions,
+  selectRestorePreset,
   roomWetInput,
   referenceAssetId,
   matchEqAmountInput,
@@ -200,6 +203,8 @@ const {
   onNoteMove,
   onDeclick,
   onDenoise,
+  denoiseDepthInput,
+  onRestore,
   onDeclip,
   onDecrackle,
   onDehum,
@@ -714,6 +719,28 @@ onBeforeUnmount(() => {
         @click="onDenoise"
       >
         {{ t.shell.sampleEditor.denoise }}
+      </button>
+      <label v-tooltip="t.shell.sampleEditor.denoiseDepthTitle">
+        {{ t.shell.sampleEditor.denoiseDepth }}
+        <input v-model="denoiseDepthInput" class="num" type="number" min="0" step="1" /> dB
+      </label>
+      <SelectMenu
+        :model-value="restorePresetId"
+        size="sm"
+        :options="restorePresetOptions"
+        :disabled="opsDisabled || !wasmAvail.restore"
+        :aria-label="t.shell.sampleEditor.restorePreset"
+        @change="selectRestorePreset"
+      />
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.restore"
+        v-tooltip="
+          wasmAvail.restore ? t.shell.sampleEditor.restoreTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onRestore"
+      >
+        {{ t.shell.sampleEditor.restore }}
       </button>
       <button
         type="button"

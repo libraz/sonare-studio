@@ -21,6 +21,7 @@ import {
   pitchCorrectRange,
   pitchCorrectTimevaryingRange,
   pitchShiftRange,
+  restoreRange,
   roomEstimateHasGeometry,
   roomEstimateToPreset,
   roomMorphChannels,
@@ -72,6 +73,7 @@ describe('wasmOpAvailability', () => {
       detectNotes: false,
       declick: false,
       denoise: false,
+      restore: false,
       declip: false,
       decrackle: false,
       dehum: false,
@@ -145,6 +147,7 @@ describe('wasmOpAvailability', () => {
       detectNotes: false,
       declick: true,
       denoise: false,
+      restore: false,
       declip: true,
       decrackle: false,
       dehum: true,
@@ -1530,5 +1533,96 @@ describe('acoustic analysis helpers', () => {
     expect(() =>
       detectAcousticRange(mod, ch([1, 2]), 48000, { startFrame: 1, endFrame: 1 }),
     ).toThrow(RangeError);
+  });
+});
+
+describe('restoreRange', () => {
+  it('repairs a stereo pair as one linked pair inside the range', () => {
+    const masterAudioStereo = vi.fn((left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, (value) => value * 10),
+      right: Float32Array.from(right, (value) => value * 100),
+    }));
+    const masterAudio = vi.fn();
+    const out = restoreRange(
+      { masterAudio, masterAudioStereo } as unknown as SampleEditorWasmOps,
+      ch([1, 2, 3], [4, 5, 6]),
+      48000,
+      'vinyl',
+      { startFrame: 1, endFrame: 3 },
+    );
+    expect(plain(out)).toEqual([
+      [1, 20, 30],
+      [4, 500, 600],
+    ]);
+    expect(masterAudioStereo).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      expect.any(Float32Array),
+      48000,
+      'vinyl',
+    );
+    expect(masterAudio).not.toHaveBeenCalled();
+  });
+
+  it('repairs other layouts channel by channel', () => {
+    const masterAudio = vi.fn((samples: Float32Array) => ({
+      samples: Float32Array.from(samples, (value) => -value),
+    }));
+    const out = restoreRange(
+      { masterAudio, masterAudioStereo: vi.fn() } as unknown as SampleEditorWasmOps,
+      ch([1, 2]),
+      44100,
+      'shellac78',
+    );
+    expect(plain(out)).toEqual([[-1, -2]]);
+    expect(masterAudio).toHaveBeenCalledWith(expect.any(Float32Array), 44100, 'shellac78');
+  });
+
+  it('throws when the module cannot run a preset', () => {
+    expect(() => restoreRange({}, ch([1]), 48000, 'vinyl')).toThrow(/unavailable/);
+  });
+});
+
+describe('stereo-linked repairs', () => {
+  it('repairs a stereo pair through the linked form when the module has one', () => {
+    const mono = vi.fn((samples: Float32Array) => samples);
+    const stereo = vi.fn((left: Float32Array, right: Float32Array) => ({
+      left: Float32Array.from(left, () => 7),
+      right: Float32Array.from(right, () => 8),
+      report: {},
+    }));
+    const out = declickRange(
+      {
+        masteringRepairDeclick: mono,
+        masteringRepairDeclickStereo: stereo,
+      } as unknown as SampleEditorWasmOps,
+      ch([1, 2, 3], [4, 5, 6]),
+      48000,
+      { startFrame: 0, endFrame: 2 },
+    );
+    expect(plain(out)).toEqual([
+      [7, 7, 3],
+      [8, 8, 6],
+    ]);
+    expect(mono).not.toHaveBeenCalled();
+    expect(stereo).toHaveBeenCalledWith(expect.any(Float32Array), expect.any(Float32Array), 48000);
+  });
+
+  it('forwards the denoise depth to both the linked and the per-channel form', () => {
+    const mono = vi.fn((samples: Float32Array) => samples);
+    const stereo = vi.fn((left: Float32Array, right: Float32Array) => ({
+      left,
+      right,
+      report: {},
+    }));
+    const ops = {
+      masteringRepairDenoiseClassical: mono,
+      masteringRepairDenoiseClassicalStereo: stereo,
+    } as unknown as SampleEditorWasmOps;
+    denoiseRange(ops, ch([1], [2]), 48000, null, 18);
+    expect(stereo).toHaveBeenCalledWith(expect.any(Float32Array), expect.any(Float32Array), 48000, {
+      reductionDb: 18,
+    });
+    denoiseRange(ops, ch([1]), 48000, null, 12);
+    expect(mono).toHaveBeenCalledWith(expect.any(Float32Array), 48000, { reductionDb: 12 });
   });
 });

@@ -27,7 +27,8 @@ import {
 } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { RirDiagnostic } from '@/wasm/index.js';
+import { humanizePresetName, RESTORATION_PRESETS } from '@/ui/mastering/preset-catalog';
+import type { MasteringPreset, RirDiagnostic } from '@/wasm/index.js';
 import { editedAssetName, pushVersion, type VersionHistoryState } from './history';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { formatMidiNote, parseMidiNote } from './note-names';
@@ -70,6 +71,7 @@ import {
   pitchShiftRange,
   type RoomEstimateSummary,
   type RoomMorphPreset,
+  restoreRange,
   roomEstimateHasGeometry,
   roomEstimateToPreset,
   roomMorphChannels,
@@ -272,6 +274,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const stretchInput = ref('1');
   /** Note-move nudge in milliseconds (negative moves the note earlier). */
   const noteShiftMsInput = ref('0');
+  /** Denoise depth in dB, starting at the library's own default. */
+  const denoiseDepthInput = ref('26');
   /** Silence-split threshold in dB below the peak. */
   const silenceThresholdInput = ref('40');
   /** Rectangular spectral edit controls: frequency band, gain and edit mode. */
@@ -282,6 +286,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
 
   /** Selected room shape id (see {@link ROOM_PRESETS}). */
   const roomPresetId = ref(ROOM_PRESETS[0].id);
+  const restorePresetId = ref<MasteringPreset>(RESTORATION_PRESETS[0]);
   /** Room reverb wet/dry mix as a percentage string (0 = dry, 100 = fully wet). */
   const roomWetInput = ref('35');
 
@@ -715,10 +720,37 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onDenoise(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    await runOp(t.value.shell.sampleEditor.ops.denoise, (channels, range) =>
-      denoiseRange(ops, channels, sampleRate(), range),
+    const depth = parseNumber(denoiseDepthInput.value);
+    if (depth === null || depth < 0) {
+      error.value = t.value.shell.sampleEditor.errors.denoiseDepth;
+      return;
+    }
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.denoise, { db: depth }),
+      (channels, range) => denoiseRange(ops, channels, sampleRate(), range, depth),
     );
   }
+
+  async function onRestore(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    const preset = restorePresetId.value;
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.restore, { preset: humanizePresetName(preset) }),
+      (channels, range) => restoreRange(ops, channels, sampleRate(), preset, range),
+    );
+  }
+
+  /** Selects a restoration preset from the picker. */
+  function selectRestorePreset(value: string): void {
+    const preset = RESTORATION_PRESETS.find((entry) => entry === value);
+    if (preset) restorePresetId.value = preset;
+  }
+
+  /** Restoration preset picker options, in catalog order. */
+  const restorePresetOptions = computed(() =>
+    RESTORATION_PRESETS.map((preset) => ({ value: preset, label: humanizePresetName(preset) })),
+  );
 
   async function onDeclip(): Promise<void> {
     const ops = wasmOps.value;
@@ -1048,12 +1080,16 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     voiceFormantInput,
     stretchInput,
     noteShiftMsInput,
+    denoiseDepthInput,
     silenceThresholdInput,
     spectralLowHzInput,
     spectralHighHzInput,
     spectralGainDbInput,
     spectralModeInput,
     roomPresetId,
+    restorePresetId,
+    restorePresetOptions,
+    selectRestorePreset,
     roomWetInput,
     referenceAssets,
     referenceAssetId,
@@ -1090,6 +1126,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onNoteMove,
     onDeclick,
     onDenoise,
+    onRestore,
     onDeclip,
     onDecrackle,
     onDehum,
