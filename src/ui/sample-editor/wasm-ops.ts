@@ -242,10 +242,9 @@ export function pitchCorrectRange(
  * same contour drives every channel so stereo phase relationships remain
  * coherent.
  *
- * Only the voiced flags are forwarded. The tracker's `voicedProb` is a relative
- * confidence, not the per-frame correction weight the corrector reads it as: a
- * clean tone peaks around 0.44 there, so forwarding it applies well under half
- * the requested correction and the note lands short of the target.
+ * Only the voiced flags are forwarded: the tracker's own voiced decision is
+ * what marks a frame for correction, and `voicedProb` is a relative confidence
+ * that falls with the fundamental rather than a voicing probability.
  *
  * @throws Error when the required contour or correction functions are missing.
  * @throws RangeError when targetMidi/range are invalid.

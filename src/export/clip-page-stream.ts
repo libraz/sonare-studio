@@ -157,9 +157,8 @@ interface StreamState {
  * along with the render position.
  *
  * An offline render is sequential and has no deadline, so the window is driven
- * from the position the render is about to read rather than from the engine's
- * page-miss reports: a miss is only raised once the audio thread has already
- * read the gap, which in a render would bake silence into the output.
+ * from the position the render is about to read: every page is resident before
+ * its block renders, and the engine's look-ahead requests have nothing to add.
  */
 export class AudioClipStreamSession {
   private readonly streams: StreamState[];
