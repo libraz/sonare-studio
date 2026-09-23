@@ -71,6 +71,11 @@ export interface UseTakeInteractionsOptions {
   canEditTrack?(trackId: number): boolean;
   /** Mutation commands invoked when gestures commit. */
   commands: TakeInteractionCommands;
+  /**
+   * Snaps a clip-relative comp edge (for example into a silence every take
+   * shares); absent leaves edges where the pointer put them.
+   */
+  snapEdge?(clipId: number, ppq: number): number;
 }
 
 /** In-flight comp range drag, for rendering only. */
@@ -148,6 +153,15 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
     return Math.min(clip.lengthPpq, Math.max(0, view.xToPpq(x) - clip.startPpq));
   }
 
+  /** The dragged range with both edges snapped. */
+  function dragRange(g: DragGesture, x: number): { start: number; end: number } {
+    const current = clipRelativePpq(g.clip, x);
+    const snap = (ppq: number): number => options.snapEdge?.(g.clip.id, ppq) ?? ppq;
+    const a = snap(g.downPpq);
+    const b = snap(current);
+    return { start: Math.min(a, b), end: Math.max(a, b) };
+  }
+
   function onPointerDown(point: ClipPoint): boolean {
     const hit = view.takeRowAt(point);
     if (!hit) return false;
@@ -167,12 +181,12 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
 
   function onPointerMove(point: ClipPoint): boolean {
     if (drag) {
-      const current = clipRelativePpq(drag.clip, point.x);
+      const { start, end } = dragRange(drag, point.x);
       preview.value = {
         clipId: drag.clip.id,
         takeIndex: drag.takeIndex,
-        startPpq: Math.min(drag.downPpq, current),
-        endPpq: Math.max(drag.downPpq, current),
+        startPpq: start,
+        endPpq: end,
       };
       return true;
     }
@@ -198,9 +212,7 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
     drag = null;
     preview.value = null;
     if (!g) return wasPressed;
-    const current = clipRelativePpq(g.clip, point.x);
-    const start = Math.min(g.downPpq, current);
-    const end = Math.max(g.downPpq, current);
+    const { start, end } = dragRange(g, point.x);
     if (g.clip.midiTakes !== undefined) {
       if (end - start < MIN_COMP_DRAG_PPQ) commands.setActiveMidiTake?.(g.clip.id, g.takeIndex);
       else {

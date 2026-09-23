@@ -6,6 +6,8 @@ import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import { buildKeyMap } from '@/compose/key-map';
+import { ensureWasm } from '@/lib/wasm';
+import { loadAsset } from '@/persistence/assets';
 import { TuneToMidiRefusedError } from '@/project/audio-tune-to-midi';
 import type { AutomationParam } from '@/project/automation';
 import {
@@ -81,6 +83,7 @@ import {
   type ClipInteractionsView,
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
+import { useCommonTakeSilence } from '@/ui/arrangement/use-common-take-silence';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -602,6 +605,20 @@ const automation = useAutomationInteractions({
   },
 });
 
+/** Silence every take of an open comped clip shares, for drawing and edge snapping. */
+const takeSilence = useCommonTakeSilence({
+  clips: () => store.clips,
+  expandedTrackIds: () => takesExpandedIds.value,
+  tempo: () => normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+  deps: async () => {
+    const wasm = await ensureWasm();
+    return {
+      loadAudioAsset: loadAsset,
+      splitSilenceCommon: (signals) => wasm.splitSilenceCommon({ signals }),
+    };
+  },
+});
+
 const takes = useTakeInteractions({
   view: {
     ppqToX: (ppq) => range.ppqToX(ppq),
@@ -622,6 +639,7 @@ const takes = useTakeInteractions({
     setActiveMidiTake: setClipMidiActiveTake,
     setMidiCompSegments: setClipMidiCompSegments,
   },
+  snapEdge: takeSilence.snapEdge,
 });
 
 const canvasCell = ref<HTMLDivElement | null>(null);
@@ -1424,6 +1442,7 @@ onBeforeUnmount(() => {
           :takes-expanded-ids="takesExpandedIds"
           :row-layout="rowLayout"
           :takes="takes"
+          :take-silence="takeSilence.byClip.value"
           :position-ppq="props.positionPpq"
           :anchored-local-x="followAnchorLocalX"
           @view-resize="onCanvasResize"

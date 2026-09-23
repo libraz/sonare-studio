@@ -16,6 +16,7 @@ import {
 } from '@/components/arrangement/theme';
 import { fillRoundRect, strokeRoundRect } from '@/components/piano-roll/theme';
 import { sanitizeCompSegments } from '@/project/comping';
+import type { PpqSpan } from '@/project/take-silence';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import { TAKE_LANE_HEIGHT_PX, trackTakeRowCount } from '@/ui/arrangement/automation-rows';
 import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
@@ -38,6 +39,8 @@ export interface TakeLanesContext {
   takesExpandedIds: readonly number[];
   /** Take sub-row gesture state (drag preview source). */
   takes: TakeInteractions;
+  /** Clip-relative spans where every take of a clip is silent, by clip id. */
+  takeSilence?: ReadonlyMap<number, ReadonlyArray<PpqSpan>>;
   /** Vertical scroll offset of the lane area in px. */
   scrollY: number;
   /** Resolves the content-px top of a row's first take sub-row. */
@@ -134,6 +137,7 @@ export function drawClipTakeBlocks(
           clip.lengthPpq,
         );
   const preview = takes.preview.value;
+  const silence = context.takeSilence?.get(clip.id) ?? [];
   for (let k = 0; k < clipTakes.length; k++) {
     const y = top + k * TAKE_LANE_HEIGHT_PX + TAKE_BLOCK_PAD_PX;
     const hPx = TAKE_LANE_HEIGHT_PX - 2 * TAKE_BLOCK_PAD_PX;
@@ -158,6 +162,12 @@ export function drawClipTakeBlocks(
       const px = range.ppqToX(clip.startPpq + preview.startPpq);
       const pw = Math.max(1, (preview.endPpq - preview.startPpq) * range.pxPerPpq);
       ctx.fillRect(px, y, pw, hPx);
+    }
+    ctx.fillStyle = colors.takeSilence;
+    for (const span of silence) {
+      const gx = range.ppqToX(clip.startPpq + span.startPpq);
+      const gw = (span.endPpq - span.startPpq) * range.pxPerPpq;
+      if (gw >= 1) ctx.fillRect(gx, y, gw, hPx);
     }
     ctx.lineWidth = 1;
     ctx.strokeStyle = colors.clipBorder;

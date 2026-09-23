@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import { getCanvasContext, setupCanvas } from '@/components/piano-roll/theme';
 import type { AutomationLaneState, AutomationParam } from '@/project/automation';
+import type { PpqSpan } from '@/project/take-silence';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import type {
   EditorClip,
@@ -99,6 +100,8 @@ const props = defineProps<{
   takesExpandedIds: readonly number[];
   /** Take sub-row (comping) gesture state machine shared with the container. */
   takes: TakeInteractions;
+  /** Clip-relative spans where every take of a clip is silent, by clip id. */
+  takeSilence?: ReadonlyMap<number, ReadonlyArray<PpqSpan>>;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
   /** Fixed local column to pin the playhead to while following, else null. */
@@ -320,6 +323,7 @@ function drawBase(): void {
     clips: props.clips,
     takesExpandedIds: props.takesExpandedIds,
     takes: props.takes,
+    takeSilence: props.takeSilence,
     scrollY: props.scrollY,
     takeTop: props.rowLayout.takeTop,
     colors: COLORS,
@@ -408,6 +412,7 @@ watch(
     props.revision,
     props.tracks,
     props.clips,
+    props.takeSilence,
     props.markers,
     props.activeTrackId,
     props.activeClipId,

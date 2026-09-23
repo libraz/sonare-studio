@@ -59,6 +59,8 @@ export const ARRANGEMENT_COLORS = {
   playhead: TOKENS.playhead,
   /** Shade darkening the take sub-rows below their track lane. */
   takeLane: 'rgba(0, 0, 0, 0.25)',
+  /** Band over take sub-rows where every take is silent at once (a safe cut). */
+  takeSilence: 'rgba(255, 255, 255, 0.09)',
   /** Shade darkening an automation sublane below its track lane. */
   automationLane: 'rgba(0, 0, 0, 0.3)',
   /** Mid-value reference line across an automation sublane. */

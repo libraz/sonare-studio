@@ -30,8 +30,9 @@ describe('useTakeInteractions', () => {
   let activeMidiTakeCalls: Array<{ clipId: number; takeIndex: number }>;
   let segmentCalls: Array<{ clipId: number; segments: ClipCompSegment[] }>;
 
-  function create() {
+  function create(snapEdge?: (clipId: number, ppq: number) => number) {
     return useTakeInteractions({
+      snapEdge,
       view: {
         ppqToX: (ppq) => ppq * PX_PER_PPQ,
         xToPpq: (x) => x / PX_PER_PPQ,
@@ -129,6 +130,20 @@ describe('useTakeInteractions', () => {
           { startPpq: 8, takeIndex: 0 },
         ],
       },
+    ]);
+  });
+
+  it('snaps both comp edges through the injected edge snap', () => {
+    // A shared silence at clip-relative [3, 5) pulls an edge inside it to 4.
+    const takes = create((_clipId, ppq) => (ppq >= 3 && ppq < 5 ? 4 : ppq));
+    takes.onPointerDown(at(8 + 3.2, 1));
+    takes.onPointerMove(at(8 + 10, 1));
+    expect(takes.preview.value).toMatchObject({ startPpq: 4, endPpq: 10 });
+    takes.onPointerUp(at(8 + 10, 1));
+    expect(segmentCalls[0].segments).toEqual([
+      { startPpq: 0, takeIndex: 0 },
+      { startPpq: 4, takeIndex: 1 },
+      { startPpq: 10, takeIndex: 0 },
     ]);
   });
 
