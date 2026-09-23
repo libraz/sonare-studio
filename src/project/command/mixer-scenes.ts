@@ -274,6 +274,12 @@ function sceneId(strip: SceneStrip): string | null {
   return typeof strip.id === 'string' && strip.id.length > 0 ? strip.id : null;
 }
 
+/** Track id a scene strip names through the `track-<id>` spelling the engine sync writes. */
+function sceneStripTrackId(strip: SceneStrip): number | undefined {
+  const match = /^track-(\d+)$/.exec(sceneId(strip) ?? '');
+  return match ? Number(match[1]) : undefined;
+}
+
 function buildScenePlan(
   scene: MixerScene,
   tracks: ReadonlyArray<EditorTrack>,
@@ -281,6 +287,10 @@ function buildScenePlan(
 ): {
   mixer: ProjectMixerState;
   tracks: EditorTrack[];
+  /** Tracks whose strips the scene replaced. */
+  replacedTrackIds: Set<number>;
+  /** Whether the scene carries a master strip of its own. */
+  replacesMaster: boolean;
   result: ApplyMixerSceneResult;
 } {
   const stripsById = new Map<string, SceneStrip>();
@@ -316,11 +326,22 @@ function buildScenePlan(
     const id = sceneId(strip);
     return id !== null && !returnStripIds.has(id);
   });
+  // A scene written for this project names its strips by track id; a template
+  // does not, and its strips map onto the tracks in order.
+  const trackIds = new Set(tracks.map((track) => track.id));
+  const byTrackId =
+    trackSceneStrips.length > 0 &&
+    trackSceneStrips.every((strip) => trackIds.has(sceneStripTrackId(strip) ?? -1));
+  const stripForTrack = (track: EditorTrack, index: number): SceneStrip | undefined =>
+    byTrackId
+      ? trackSceneStrips.find((strip) => sceneStripTrackId(strip) === track.id)
+      : trackSceneStrips[index];
   const sidechainBySceneId = new Map<string, number>();
-  for (let i = 0; i < Math.min(tracks.length, trackSceneStrips.length); i += 1) {
-    const id = sceneId(trackSceneStrips[i]);
-    if (id) sidechainBySceneId.set(id, tracks[i].id);
-  }
+  tracks.forEach((track, index) => {
+    const strip = stripForTrack(track, index);
+    const id = strip ? sceneId(strip) : null;
+    if (id) sidechainBySceneId.set(id, track.id);
+  });
 
   const mixerBuses: MixerBus[] = busEntries.map((bus) => {
     const busId = bus.id as string;
@@ -358,9 +379,11 @@ function buildScenePlan(
     }
   }
 
+  const replacedTrackIds = new Set<number>();
   const nextTracks = tracks.map((track, index) => {
-    const sceneStrip = trackSceneStrips[index];
+    const sceneStrip = stripForTrack(track, index);
     if (!sceneStrip) return track;
+    replacedTrackIds.add(track.id);
     const id = sceneId(sceneStrip);
     const outputBusId = id && track.kind !== 'group' ? outputBusByStrip.get(id) : undefined;
     const mixer = sceneStripToMixerStrip(
@@ -398,8 +421,10 @@ function buildScenePlan(
       ...(vcaGroups.length > 0 ? { vcaGroups } : {}),
     },
     tracks: nextTracks,
+    replacedTrackIds,
+    replacesMaster: masterBus !== undefined,
     result: {
-      trackCount: Math.min(tracks.length, trackSceneStrips.length),
+      trackCount: replacedTrackIds.size,
       busCount: mixerBuses.length,
       vcaCount: vcaGroups.length,
     },
@@ -408,21 +433,22 @@ function buildScenePlan(
 
 /**
  * Applies a libsonare mixer-scene JSON template to the current project as one
- * undoable edit. Existing tracks are kept; scene strips are mapped onto them in
- * order, while scene buses/sends/VCA groups replace the project mixer template.
+ * undoable edit. Existing tracks are kept; scene strips named `track-<id>` map
+ * onto those tracks, other scene strips map onto the tracks in order. Scene
+ * buses/sends/VCA groups replace the project mixer template, and a scene with
+ * a master strip replaces the master's inserts.
  */
 export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
   const scene = parseSceneJson(sceneJson);
   const store = useProjectStore();
   const plan = buildScenePlan(scene, store.tracks, loadRealtimeInsertCatalog());
-  const replacedTrackIds = new Set(
-    store.tracks.slice(0, plan.result.trackCount).map((track) => track.id),
-  );
+  const { replacedTrackIds, replacesMaster } = plan;
   return executeApp(() => {
     // Scene templates replace routing and strip state, not project-wide
     // monitoring/mastering preferences that the scene format cannot express.
     store.mixer = {
       ...plan.mixer,
+      master: replacesMaster ? plan.mixer.master : store.mixer.master,
       ...(store.mixer.soloMode !== undefined ? { soloMode: store.mixer.soloMode } : {}),
       ...(store.mixer.masteringChain !== undefined
         ? { masteringChain: store.mixer.masteringChain }
@@ -436,7 +462,7 @@ export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
       // numeric index; executeApp keeps them in the undo snapshot.
       if (isBusAutomationTarget(lane.target)) return false;
       if (lane.target === 'master') {
-        return parseInsertAutomationParam(lane.param) === undefined;
+        return !replacesMaster || parseInsertAutomationParam(lane.param) === undefined;
       }
       if (replacedTrackIds.has(lane.target)) {
         return parseInsertAutomationParam(lane.param) === undefined;

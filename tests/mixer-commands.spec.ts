@@ -1154,6 +1154,32 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer).toBeUndefined();
     });
 
+    it('maps scene strips named track-<id> onto those tracks instead of by order', () => {
+      const secondId = addTrack({ name: 'Second' });
+      const scene = JSON.stringify({
+        version: 1,
+        strips: [{ id: `track-${secondId}`, faderDb: -7 }],
+        buses: [],
+        connections: [],
+      });
+      const result = applyMixerSceneJson(scene);
+      expect(result.trackCount).toBe(1);
+      expect(store.tracks.find((track) => track.id === secondId)?.mixer?.gainDb).toBe(-7);
+      expect(store.tracks[0].mixer).toBeUndefined();
+    });
+
+    it('keeps the master strip when the scene carries none', () => {
+      addInsert('master', 'eq.tilt', { tiltDb: 1 });
+      const scene = JSON.stringify({
+        version: 1,
+        strips: [{ id: `track-${trackId}`, faderDb: -2 }],
+        buses: [],
+        connections: [],
+      });
+      applyMixerSceneJson(scene);
+      expect(store.mixer.master.inserts.map((slot) => slot.processor)).toEqual(['eq.tilt']);
+    });
+
     it('clamps out-of-range width and channel delay from an imported scene', () => {
       const scene = JSON.stringify({
         version: 1,
