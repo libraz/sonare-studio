@@ -21,6 +21,7 @@ import {
   pitchCorrectRange,
   pitchCorrectTimevaryingRange,
   pitchShiftRange,
+  roomEstimateHasGeometry,
   roomEstimateToPreset,
   roomMorphChannels,
   type SampleEditorWasmOps,
@@ -35,6 +36,7 @@ import {
   voiceChangeRange,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
+import type { RirDiagnostic } from '@/wasm/index.js';
 
 const { ensureWasmMock } = vi.hoisted(() => ({ ensureWasmMock: vi.fn() }));
 vi.mock('@/lib/wasm', () => ({ ensureWasm: ensureWasmMock }));
@@ -1225,6 +1227,11 @@ describe('repair operations', () => {
 
 describe('roomMorphChannels', () => {
   const preset = { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 2 };
+  const morphed = (audio: Float32Array, diagnostics: RirDiagnostic[] = []) => ({
+    audio,
+    sampleRate: 48000,
+    diagnostics,
+  });
 
   it('processes whole channels, forwards the room options, and tail-extends', () => {
     const roomMorph = vi.fn(
@@ -1237,16 +1244,28 @@ describe('roomMorphChannels', () => {
           wet: 0.5,
         });
         // Echo the input then append a two-sample "tail" so the result is longer.
-        return new Float32Array([...samples, 0, 0]);
+        return morphed(new Float32Array([...samples, 0, 0]));
       },
     );
     const out = roomMorphChannels({ roomMorph }, ch([1, 2], [3, 4]), 48000, preset, 0.5);
-    expect(plain(out)).toEqual([
+    expect(plain(out.channels)).toEqual([
       [1, 2, 0, 0],
       [3, 4, 0, 0],
     ]);
+    expect(out.diagnostics).toEqual([]);
     expect(roomMorph).toHaveBeenCalledTimes(2);
     expect(roomMorph.mock.calls[0][1]).toBe(48000);
+  });
+
+  it('reports the room synthesis diagnostics once for all channels', () => {
+    const diagnostic: RirDiagnostic = {
+      code: 'acoustic.rir_tail_truncated',
+      message: 'tail truncated',
+      severity: 'warning',
+    };
+    const roomMorph = vi.fn((samples: Float32Array) => morphed(samples, [diagnostic]));
+    const out = roomMorphChannels({ roomMorph }, ch([1], [2]), 48000, preset, 0.5);
+    expect(out.diagnostics).toEqual([diagnostic]);
   });
 
   it('trims channels to the shortest result to stay planar', () => {
@@ -1254,10 +1273,12 @@ describe('roomMorphChannels', () => {
     const roomMorph = vi.fn((samples: Float32Array) => {
       call += 1;
       // Second channel comes back one sample shorter.
-      return call === 1 ? new Float32Array([...samples, 0, 0]) : new Float32Array([...samples, 0]);
+      return morphed(
+        call === 1 ? new Float32Array([...samples, 0, 0]) : new Float32Array([...samples, 0]),
+      );
     });
     const out = roomMorphChannels({ roomMorph }, ch([1, 2], [3, 4]), 48000, preset, 0.3);
-    expect(out.every((channel) => channel.length === 3)).toBe(true);
+    expect(out.channels.every((channel) => channel.length === 3)).toBe(true);
   });
 
   it('clamps the wet mix to [0, 1] and falls back to 0.35 for non-finite values', () => {
@@ -1265,7 +1286,7 @@ describe('roomMorphChannels', () => {
     const roomMorph = vi.fn(
       (samples: Float32Array, _sr: number, options?: Record<string, number | boolean>) => {
         seen.push(options?.wet as number);
-        return samples;
+        return morphed(samples);
       },
     );
     roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, 2);
@@ -1276,7 +1297,7 @@ describe('roomMorphChannels', () => {
 
   it('throws when unavailable, the sample rate is invalid, or there are no channels', () => {
     expect(() => roomMorphChannels({}, ch([1]), 48000, preset, 0.5)).toThrow(/unavailable/);
-    const mod: SampleEditorWasmOps = { roomMorph: (samples) => samples };
+    const mod: SampleEditorWasmOps = { roomMorph: (samples) => morphed(samples) };
     expect(() => roomMorphChannels(mod, ch([1]), 0, preset, 0.5)).toThrow(RangeError);
     expect(() => roomMorphChannels(mod, [], 48000, preset, 0.5)).toThrow(RangeError);
   });
@@ -1284,8 +1305,19 @@ describe('roomMorphChannels', () => {
 
 describe('synthesizeRirChannels', () => {
   const preset = { lengthM: 6, widthM: 4, heightM: 3, materialPreset: 2 };
+  const rirResult = (rir: Float32Array, hasError: boolean, diagnostics: RirDiagnostic[] = []) => ({
+    rir,
+    sampleRate: 48000,
+    hasError,
+    diagnostics,
+  });
 
   it('synthesizes a mono RIR from the selected room preset', () => {
+    const diagnostic: RirDiagnostic = {
+      code: 'acoustic.ism_order_clamped',
+      message: 'order clamped',
+      severity: 'warning',
+    };
     const synthesizeRir = vi.fn((options?: Record<string, unknown>) => {
       expect(options).toEqual({
         sampleRate: 48000,
@@ -1294,28 +1326,26 @@ describe('synthesizeRirChannels', () => {
         heightM: 3,
         materialPreset: 2,
       });
-      return { rir: new Float32Array([1, 0.5, 0.25]), sampleRate: 48000, hasError: false };
+      return rirResult(new Float32Array([1, 0.5, 0.25]), false, [diagnostic]);
     });
 
-    expect(plain(synthesizeRirChannels({ synthesizeRir }, 48000, preset))).toEqual([
-      [1, 0.5, 0.25],
-    ]);
+    const out = synthesizeRirChannels({ synthesizeRir }, 48000, preset);
+    expect(plain(out.channels)).toEqual([[1, 0.5, 0.25]]);
+    expect(out.diagnostics).toEqual([diagnostic]);
   });
 
   it('validates availability, sample rate and synth errors', () => {
     expect(() => synthesizeRirChannels({}, 48000, preset)).toThrow(/unavailable/);
     expect(() =>
       synthesizeRirChannels(
-        {
-          synthesizeRir: () => ({ rir: new Float32Array([1]), sampleRate: 48000, hasError: false }),
-        },
+        { synthesizeRir: () => rirResult(new Float32Array([1]), false) },
         0,
         preset,
       ),
     ).toThrow(RangeError);
     expect(() =>
       synthesizeRirChannels(
-        { synthesizeRir: () => ({ rir: new Float32Array(), sampleRate: 48000, hasError: true }) },
+        { synthesizeRir: () => rirResult(new Float32Array(), true) },
         48000,
         preset,
       ),
@@ -1407,6 +1437,22 @@ describe('estimateRoomRange', () => {
     expect(() => roomEstimateToPreset({ ...base, length: 0, absorptionMean: Number.NaN })).toThrow(
       RangeError,
     );
+  });
+
+  it('treats an estimate without a measurable decay as having no room shape', () => {
+    const unmeasured = {
+      volume: Number.NaN,
+      length: Number.NaN,
+      width: Number.NaN,
+      height: Number.NaN,
+      drrDb: -8,
+      confidence: 0,
+      rt60Mid: Number.NaN,
+      absorptionMean: Number.NaN,
+    };
+    expect(roomEstimateHasGeometry(unmeasured)).toBe(false);
+    expect(roomEstimateHasGeometry({ ...unmeasured, length: 6, width: 4, height: 2 })).toBe(true);
+    expect(() => roomEstimateToPreset(unmeasured)).toThrow(RangeError);
   });
 });
 

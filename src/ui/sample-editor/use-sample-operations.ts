@@ -27,6 +27,7 @@ import {
 } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import type { RirDiagnostic } from '@/wasm/index.js';
 import { editedAssetName, pushVersion, type VersionHistoryState } from './history';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { formatMidiNote, parseMidiNote } from './note-names';
@@ -69,6 +70,7 @@ import {
   pitchShiftRange,
   type RoomEstimateSummary,
   type RoomMorphPreset,
+  roomEstimateHasGeometry,
   roomEstimateToPreset,
   roomMorphChannels,
   type SampleEditorWasmOps,
@@ -175,6 +177,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const noteNames = useNoteNames();
   const project = useProjectStore();
   const operations = new OperationGeneration();
+  /** Non-fatal notes about the last committed operation's result. */
+  const notices = ref<string[]>([]);
 
   interface SampleOperationToken {
     operation: GenerationToken;
@@ -314,9 +318,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
 
   /** Room-shape picker options labelled from the localized preset names. */
   const roomPresetOptions = computed(() => {
-    const estimated = roomEstimate.value
-      ? [{ value: ESTIMATED_ROOM_PRESET_ID, label: t.value.shell.sampleEditor.estimatedRoom }]
-      : [];
+    const estimated =
+      roomEstimate.value && roomEstimateHasGeometry(roomEstimate.value)
+        ? [{ value: ESTIMATED_ROOM_PRESET_ID, label: t.value.shell.sampleEditor.estimatedRoom }]
+        : [];
     return [
       ...estimated,
       ...ROOM_PRESETS.map((entry) => ({
@@ -419,6 +424,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     let committed = false;
     busy.value = true;
     error.value = null;
+    notices.value = [];
     try {
       const range = resolveRange(loaded.channels, token.range);
       // Synchronous fallbacks copy shared asset channels. Worker operations
@@ -812,10 +818,16 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] wet mix.
     const wetPercent = parseNumber(roomWetInput.value) ?? 35;
     const wet = Math.min(Math.max(wetPercent, 0), 100) / 100;
-    await runOp(
+    let diagnostics: RirDiagnostic[] = [];
+    const committed = await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.placeInRoom, { room: entry.label }),
-      (channels) => roomMorphChannels(ops, channels, sampleRate(), entry.preset, wet),
+      (channels) => {
+        const rendered = roomMorphChannels(ops, channels, sampleRate(), entry.preset, wet);
+        diagnostics = rendered.diagnostics;
+        return rendered.channels;
+      },
     );
+    if (committed) notices.value = diagnostics.map(roomNoticeText);
   }
 
   async function onSynthesizeRir(): Promise<void> {
@@ -823,10 +835,35 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     if (!ops) return;
     const entry = selectedRoomPreset();
     if (!entry) return;
-    await runOp(
+    let diagnostics: RirDiagnostic[] = [];
+    const committed = await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.synthesizeRir, { room: entry.label }),
-      () => synthesizeRirChannels(ops, sampleRate(), entry.preset),
+      () => {
+        const rendered = synthesizeRirChannels(ops, sampleRate(), entry.preset);
+        diagnostics = rendered.diagnostics;
+        return rendered.channels;
+      },
     );
+    if (committed) notices.value = diagnostics.map(roomNoticeText);
+  }
+
+  /** Localizes a room-synthesis diagnostic, falling back to the library text. */
+  function roomNoticeText(diagnostic: RirDiagnostic): string {
+    const text = t.value.shell.sampleEditor.roomNotices;
+    switch (diagnostic.code) {
+      case 'acoustic.ism_order_clamped':
+        return text.ismOrderClamped;
+      case 'acoustic.rir_length_clamped':
+        return text.rirLengthClamped;
+      case 'acoustic.rir_length_floored':
+        return text.rirLengthFloored;
+      case 'acoustic.rir_tail_truncated':
+        return text.rirTailTruncated;
+      case 'acoustic.no_late_tail':
+        return text.noLateTail;
+      default:
+        return diagnostic.message;
+    }
   }
 
   /** Re-lists the stored assets offered as Match EQ references. */
@@ -944,7 +981,9 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
         loaded.meta.sampleRate,
         selRange(),
       );
-      roomPresetId.value = ESTIMATED_ROOM_PRESET_ID;
+      if (roomEstimateHasGeometry(roomEstimate.value)) {
+        roomPresetId.value = ESTIMATED_ROOM_PRESET_ID;
+      }
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
@@ -998,6 +1037,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     dispose: () => {
       operations.dispose();
     },
+    notices,
     gainDbInput,
     normalizeTargetInput,
     pitchInput,

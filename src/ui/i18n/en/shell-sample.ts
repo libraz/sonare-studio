@@ -159,6 +159,14 @@ export const shellSample = {
     sourceSeconds: 'Source s',
     removeAnchorTitle: 'Remove this warp anchor',
     remove: 'Remove',
+    roomNotices: {
+      ismOrderClamped: 'Early reflections were simplified to stay within the reflection limit',
+      rirLengthClamped: 'The reverb tail was cut at the maximum length',
+      rirLengthFloored: 'The impulse response was lengthened to reach the direct sound',
+      rirTailTruncated:
+        'The reverb tail ends before it fully decays, cutting the longest bands short',
+      noLateTail: 'This room produced no diffuse reverb tail',
+    },
     errors: {
       gain: 'Enter a finite gain in dB',
       pitch: 'Enter a finite pitch offset in semitones',

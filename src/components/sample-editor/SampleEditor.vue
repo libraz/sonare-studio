@@ -29,6 +29,7 @@ import { useSampleViewport } from '@/ui/sample-editor/use-sample-viewport';
 import { useSampleWarp } from '@/ui/sample-editor/use-sample-warp';
 import {
   loadSampleEditorWasm,
+  roomEstimateHasGeometry,
   type SampleEditorWasmOps,
   type SpectralEditMode,
   wasmOpAvailability,
@@ -148,6 +149,7 @@ const operations = useSampleOperations({
   getProjectGeneration: () => project.documentGeneration,
 });
 const {
+  notices,
   gainDbInput,
   normalizeTargetInput,
   pitchInput,
@@ -1032,6 +1034,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
+    <p v-for="notice in notices" :key="notice" class="notice" role="status">{{ notice }}</p>
     <div v-if="matchEqAnalysis" class="match-eq-analysis">
       <div class="match-eq-head">
         <span class="match-eq-title">{{ t.shell.sampleEditor.matchEqAnalysisTitle }}</span>
@@ -1083,12 +1086,15 @@ onBeforeUnmount(() => {
       </div>
       <dl class="room-estimate-grid">
         <dt>{{ t.shell.sampleEditor.roomEstimateSize }}</dt>
-        <dd>
+        <dd v-if="roomEstimateHasGeometry(roomEstimate)">
           {{ roomEstimate.length.toFixed(1) }} × {{ roomEstimate.width.toFixed(1) }} ×
           {{ roomEstimate.height.toFixed(1) }} m
         </dd>
+        <dd v-else>—</dd>
         <dt>{{ t.shell.sampleEditor.roomEstimateVolume }}</dt>
-        <dd>{{ roomEstimate.volume.toFixed(0) }} m³</dd>
+        <dd>
+          {{ Number.isFinite(roomEstimate.volume) ? roomEstimate.volume.toFixed(0) : '—' }} m³
+        </dd>
         <dt>{{ t.shell.sampleEditor.roomEstimateRt60 }}</dt>
         <dd>
           {{ Number.isFinite(roomEstimate.rt60Mid) ? roomEstimate.rt60Mid.toFixed(2) : '—' }} s
@@ -1375,6 +1381,11 @@ onBeforeUnmount(() => {
 .error {
   margin: 0;
   color: var(--danger);
+}
+
+.notice {
+  margin: 0;
+  color: var(--warning);
 }
 
 .match-eq-analysis {

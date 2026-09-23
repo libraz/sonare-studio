@@ -8,6 +8,7 @@ import type { SampleRange } from '@/ui/sample-editor/ops';
 import { SAMPLE_OPERATION_TIMEOUT_MS } from '@/ui/sample-editor/ops-client';
 import { useSampleOperations } from '@/ui/sample-editor/use-sample-operations';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
+import type { RirDiagnostic } from '@/wasm/index.js';
 
 const assetStore = vi.hoisted(() => {
   const deleteAsset = vi.fn<(id: string) => Promise<void>>(async () => undefined);
@@ -63,7 +64,7 @@ class UnresponsiveWorker {
   }
 }
 
-function setupOperation(target = loadedAsset('asset-a')) {
+function setupOperation(target = loadedAsset('asset-a'), wasmOps: SampleEditorWasmOps = {}) {
   const asset = ref<LoadedAudioAsset | null>(target);
   const currentAssetId = ref(target.meta.id);
   const historyState = ref(createHistory({ assetId: target.meta.id, label: 'Original' }));
@@ -80,7 +81,7 @@ function setupOperation(target = loadedAsset('asset-a')) {
     busy,
     loading: ref(false),
     error,
-    wasmOps: ref({} as SampleEditorWasmOps),
+    wasmOps: ref(wasmOps),
     selRange: () => selection.value,
     loadCurrent,
     emitAssetCreated,
@@ -202,5 +203,28 @@ describe('sample editor operation ownership', () => {
     expect(context.error.value).toMatch(/timed out/i);
     expect(workers).toHaveLength(1);
     expect(workers[0].terminated).toBe(true);
+  });
+
+  it('reports room-synthesis diagnostics as notices after the edit commits', async () => {
+    assetStore.saveAsset.mockResolvedValue(meta('asset-b'));
+    const roomMorph = vi.fn((samples: Float32Array) => ({
+      audio: samples,
+      sampleRate: 48000,
+      diagnostics: [
+        { code: 'acoustic.rir_tail_truncated', message: 'raw tail text', severity: 'warning' },
+        { code: 'acoustic.future_code', message: 'raw future text', severity: 'warning' },
+      ] as RirDiagnostic[],
+    }));
+    const context = setupOperation(loadedAsset('asset-a'), { roomMorph });
+
+    await context.operations.onPlaceInRoom();
+
+    const notices = context.operations.notices.value;
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).not.toBe('raw tail text');
+    expect(notices[1]).toBe('raw future text');
+
+    await context.operations.onGain();
+    expect(context.operations.notices.value).toEqual([]);
   });
 });

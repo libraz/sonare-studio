@@ -155,6 +155,13 @@ export const shellSample = {
     sourceSeconds: 'ソース秒',
     removeAnchorTitle: 'このワープアンカーを削除',
     remove: '削除',
+    roomNotices: {
+      ismOrderClamped: '反射の次数を上限に合わせて減らしました',
+      rirLengthClamped: '残響の尾を最大長で切りました',
+      rirLengthFloored: '直接音が届くまでインパルス応答を延ばしました',
+      rirTailTruncated: '残響が減衰しきる前に終わるため、長い帯域の尾が切れています',
+      noLateTail: 'この部屋では拡散残響の尾が生成されませんでした',
+    },
     errors: {
       gain: '有限のゲイン値（dB）を入力してください',
       pitch: '有限のピッチオフセット（半音）を入力してください',

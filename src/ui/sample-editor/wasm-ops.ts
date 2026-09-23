@@ -10,6 +10,7 @@
 
 import { stepOf } from '@libraz/libcantus';
 import { ensureWasm } from '@/lib/wasm';
+import type { RirDiagnostic } from '@/wasm/index.js';
 import {
   type MatchEqAnalysis,
   parseMatchEqCurve,
@@ -25,258 +26,42 @@ import {
 import { resolveRange, type SampleRange, spliceRange } from './ops';
 
 /** The subset of the libsonare module consumed by the sample editor. */
-export interface SampleEditorWasmOps {
-  /** Pitch shift by semitones, duration preserved. */
-  pitchShift?: (samples: Float32Array, sampleRate: number, semitones: number) => Float32Array;
-  /**
-   * Monophonic pitch correction to a target MIDI note. With `currentMidi`
-   * omitted the source pitch is auto-detected, so the whole segment is retuned
-   * to `targetMidi`; duration is preserved.
-   */
-  pitchCorrectToMidi?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    currentMidi?: number,
-    targetMidi?: number,
-  ) => Float32Array;
-  /** Monophonic pitch tracker. */
-  pitchYin?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    frameLength?: number,
-    hopLength?: number,
-    fmin?: number,
-    fmax?: number,
-    threshold?: number,
-    fillNa?: boolean,
-  ) => { f0?: Float32Array; voicedProb?: Float32Array; voicedFlag?: boolean[]; medianF0: number };
-  /** Probabilistic pitch tracker. */
-  pitchPyin?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    frameLength?: number,
-    hopLength?: number,
-    fmin?: number,
-    fmax?: number,
-    threshold?: number,
-    fillNa?: boolean,
-  ) => { f0?: Float32Array; voicedProb?: Float32Array; voicedFlag?: boolean[]; medianF0: number };
-  /**
-   * Contour-following pitch correction to a target MIDI note.
-   *
-   * The trailing `voicedProb` parameter the module accepts is deliberately not
-   * part of this facade: it weights how much of the correction each frame
-   * receives, and a tracker's confidence is not that weight (see
-   * {@link pitchCorrectTimevaryingRange}). Omitting it lets the module derive
-   * the weight from `voiced`, which is the full correction on voiced frames.
-   */
-  pitchCorrectToMidiTimevarying?: (
-    samples: Float32Array,
-    f0Hz: Float32Array,
-    targetMidi: number,
-    sampleRate?: number,
-    hopLength?: number,
-    voiced?: Int32Array,
-  ) => Float32Array;
-  /**
-   * Global tuning estimate: the deviation from A440 as a
-   * fraction of a semitone in (-0.5, 0.5] (positive = sharp).
-   */
-  estimateTuning?: (samples: Float32Array, sampleRate?: number) => number;
-  /**
-   * Snaps a (float) MIDI note to the nearest enabled scale degree, where
-   * `modeMask` is a 12-bit mask of intervals relative to `root`.
-   */
-  scaleQuantizeMidi?: (
-    root: number,
-    modeMask: number,
-    midi: number,
-    referenceMidi?: number,
-  ) => number;
-  /**
-   * Voice change: shifts pitch and formants independently in one pass.
-   * `pitchSemitones` transposes; `formantFactor` > 1 brightens, < 1 darkens.
-   */
-  voiceChange?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    options?: { pitchSemitones?: number; formantFactor?: number },
-  ) => Float32Array;
-  /** Time stretch by rate (0.5 = double duration, 2.0 = half duration). */
-  timeStretch?: (samples: Float32Array, sampleRate: number, rate: number) => Float32Array;
-  /**
-   * Note stretch: time-stretches just the region [onsetSample, offsetSample) by
-   * `stretchRatio` (0.5 = half duration, 2.0 = double) while preserving the
-   * note's attack transient. Operates on the whole buffer (the rest is left
-   * untouched) so the stretched region blends at its edges.
-   */
-  noteStretch?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    options?: { onsetSample?: number; offsetSample?: number; stretchRatio?: number },
-  ) => Float32Array;
-  /** Harmonic component (HPSS), isolating sustained/tonal content. */
-  harmonic?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Percussive component (HPSS), isolating transient/noisy content. */
-  percussive?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Click/pop repair. */
-  masteringRepairDeclick?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Classical (non-ML) broadband denoise. */
-  masteringRepairDenoiseClassical?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Clipped-peak reconstruction. */
-  masteringRepairDeclip?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Fine crackle suppression. */
-  masteringRepairDecrackle?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Mains hum removal. */
-  masteringRepairDehum?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Classical dereverberation. */
-  masteringRepairDereverbClassical?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Silence trimming; may shorten the processed range. */
-  masteringRepairTrimSilence?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /** Transient onset detection; returns onset times in seconds. */
-  detectOnsets?: (samples: Float32Array, sampleRate: number) => Float32Array;
-  /**
-   * Silence-based splitter. Returns a flat list of sample positions bounding
-   * the non-silent regions ([start0, end0, start1, end1, …]); `topDb` is the
-   * silence threshold below the signal peak.
-   */
-  splitSilence?: (samples: Float32Array, topDb?: number) => ArrayLike<number>;
-  /**
-   * Segments a caller-supplied monophonic F0 track into stable note regions.
-   * Request-shaped because the module exposes no positional form.
-   */
-  noteSegments?: (request: {
-    f0Hz: Float32Array;
-    voicedProb: Float32Array;
-    frameRate: number;
-    segmentationThresholdCents?: number;
-    minNoteMs?: number;
-    referenceHz?: number;
-  }) => ReadonlyArray<{
-    frameStart: number;
-    frameEnd: number;
-    startSeconds: number;
-    endSeconds: number;
-    /** Median pitch of the region, in cents relative to `referenceHz` (A440). */
-    medianCents: number;
-  }>;
-  /**
-   * Note move: shifts the region [onsetSample, offsetSample) so it starts at
-   * `targetOnsetSample`, keeping its duration. Operates on the whole buffer.
-   */
-  noteMove?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    options?: { onsetSample?: number; offsetSample?: number; targetOnsetSample?: number },
-  ) => Float32Array;
-  /**
-   * Acoustic room simulation: convolves the mono signal with a synthesized
-   * room impulse response and returns a latency-compensated, tail-extended
-   * buffer (longer than the input). Only present when libsonare was built with
-   * acoustic-simulation support.
-   */
-  roomMorph?: (
-    samples: Float32Array,
-    sampleRate: number,
-    options?: Record<string, number | boolean>,
-  ) => Float32Array;
-  /** Synthesizes a mono room impulse response from room geometry. */
-  synthesizeRir?: (options?: {
-    sampleRate?: number;
-    lengthM?: number;
-    widthM?: number;
-    heightM?: number;
-    materialPreset?: number;
-    maxSeconds?: number;
-  }) => { rir: Float32Array; sampleRate: number; hasError: boolean };
-  /** Blind/IR room estimation over mono audio. */
-  estimateRoom?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    options?: {
-      aspectHintLw?: number;
-      aspectHintLh?: number;
-      referenceAbsorption?: number;
-      preferEyring?: boolean;
-      nOctaveBands?: number;
-      mode?: number;
-      minDecayDb?: number;
-      noiseFloorMarginDb?: number;
-    },
-  ) => {
-    volume: number;
-    length: number;
-    width: number;
-    height: number;
-    drrDb: number;
-    confidence: number;
-    absorptionBands: Float32Array;
-    rt60Bands: Float32Array;
-  };
-  /** Acoustic metrics from an impulse response. */
-  analyzeImpulseResponse?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    nOctaveBands?: number,
-  ) => AcousticAnalysisResult;
-  /** Blind acoustic metrics from program material or a room response. */
-  detectAcoustic?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    options?: {
-      nOctaveBands?: number;
-      nThirdOctaveSubbands?: number;
-      minDecayDb?: number;
-      noiseFloorMarginDb?: number;
-    },
-  ) => AcousticAnalysisResult;
-  /**
-   * STFT-domain rectangular edits. The sample editor uses it for selection-
-   * scoped spectral cleanup presets until a full spectrogram selection UI is
-   * introduced.
-   */
-  spectralEdit?: (
-    samples: Float32Array,
-    sampleRate: number,
-    ops?: Array<{
-      startSample?: number;
-      endSample?: number;
-      lowHz?: number;
-      highHz?: number;
-      gainDb?: number;
-      mode?: 'gain' | 'attenuate' | 'mute' | 'heal';
-    }>,
-    options?: {
-      nFft?: number;
-      hopLength?: number;
-      window?: 'hann' | 'hamming' | 'blackman' | 'rectangular';
-      healRadiusFrames?: number;
-    },
-  ) => Float32Array;
-  /**
-   * Reference-pair processor. For 'match.applyMatchEq' it EQ-matches `source`
-   * to `reference`'s tonal balance and returns the processed mono samples.
-   */
-  masteringPairProcess?: (
-    processorName: string,
-    source: Float32Array,
-    reference: Float32Array,
-    sampleRate?: number,
-    params?: Record<string, number | boolean>,
-  ) => { samples: Float32Array; sampleRate: number };
-  /**
-   * Reference-pair analysis. For 'match.matchEqCurve' / 'match.tonalBalance' /
-   * 'match.referenceLoudness' it compares `source` to `reference` and returns a
-   * JSON string (parsed by the match-eq-analysis module).
-   */
-  masteringPairAnalyze?: (
-    analysisName: string,
-    source: Float32Array,
-    reference: Float32Array,
-    sampleRate?: number,
-    params?: Record<string, number | boolean>,
-  ) => string;
-}
+export type SampleEditorWasmOps = Partial<
+  Pick<
+    typeof import('@/wasm/index.js'),
+    | 'pitchShift'
+    | 'pitchCorrectToMidi'
+    | 'pitchYin'
+    | 'pitchPyin'
+    | 'pitchCorrectToMidiTimevarying'
+    | 'estimateTuning'
+    | 'scaleQuantizeMidi'
+    | 'voiceChange'
+    | 'timeStretch'
+    | 'noteStretch'
+    | 'harmonic'
+    | 'percussive'
+    | 'masteringRepairDeclick'
+    | 'masteringRepairDenoiseClassical'
+    | 'masteringRepairDeclip'
+    | 'masteringRepairDecrackle'
+    | 'masteringRepairDehum'
+    | 'masteringRepairDereverbClassical'
+    | 'masteringRepairTrimSilence'
+    | 'detectOnsets'
+    | 'splitSilence'
+    | 'noteSegments'
+    | 'noteMove'
+    | 'roomMorph'
+    | 'synthesizeRir'
+    | 'estimateRoom'
+    | 'analyzeImpulseResponse'
+    | 'detectAcoustic'
+    | 'spectralEdit'
+    | 'masteringPairProcess'
+    | 'masteringPairAnalyze'
+  >
+>;
 
 /** Which wasm-delegated operations the given module actually provides. */
 export interface WasmOpAvailability {
@@ -372,7 +157,7 @@ export function wasmOpAvailability(
  */
 export async function loadSampleEditorWasm(): Promise<SampleEditorWasmOps | null> {
   try {
-    return (await ensureWasm()) as unknown as SampleEditorWasmOps;
+    return await ensureWasm();
   } catch {
     return null;
   }
@@ -1269,6 +1054,16 @@ export function analyzeMatchEqToReference(
   };
 }
 
+/** Audio rendered through a synthesized room, with what the synthesis changed. */
+export interface RoomRenderResult {
+  channels: Float32Array[];
+  /**
+   * Diagnostics from the room synthesis, each naming a way the rendered room
+   * differs from the requested one.
+   */
+  diagnostics: RirDiagnostic[];
+}
+
 /**
  * A room shape for {@link roomMorphChannels}: shoebox dimensions in metres plus
  * a libsonare wall-material preset (1 concrete, 2 wood, 3 curtain, 4 carpet,
@@ -1304,7 +1099,7 @@ export function roomMorphChannels(
   sampleRate: number,
   preset: RoomMorphPreset,
   wet: number,
-): Float32Array[] {
+): RoomRenderResult {
   const fn = ops.roomMorph;
   if (typeof fn !== 'function') {
     throw new Error('Room reverb is unavailable in this libsonare build');
@@ -1323,10 +1118,14 @@ export function roomMorphChannels(
     wet: Number.isFinite(wet) ? Math.min(Math.max(wet, 0), 1) : 0.35,
   };
   const processed = channels.map((channel) => fn(channel, sampleRate, options));
-  const minFrames = Math.min(...processed.map((segment) => segment.length));
-  return processed.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  const minFrames = Math.min(...processed.map((result) => result.audio.length));
+  return {
+    channels: processed.map(({ audio }) =>
+      audio.length === minFrames ? audio : audio.slice(0, minFrames),
+    ),
+    // Every channel goes through the same room, so the first one speaks for all.
+    diagnostics: processed[0].diagnostics,
+  };
 }
 
 /**
@@ -1342,7 +1141,7 @@ export function synthesizeRirChannels(
   ops: SampleEditorWasmOps,
   sampleRate: number,
   preset: RoomMorphPreset,
-): Float32Array[] {
+): RoomRenderResult {
   const fn = ops.synthesizeRir;
   if (typeof fn !== 'function') {
     throw new Error('RIR synthesis is unavailable in this libsonare build');
@@ -1360,7 +1159,7 @@ export function synthesizeRirChannels(
   if (result.hasError || result.rir.length === 0) {
     throw new Error('RIR synthesis failed for the selected room');
   }
-  return [result.rir];
+  return { channels: [result.rir], diagnostics: result.diagnostics };
 }
 
 /** Display-oriented subset of libsonare's room estimation result. */
@@ -1449,12 +1248,24 @@ function acousticSummary(
   };
 }
 
+/**
+ * True when the estimate measured a room shape. The estimator reports NaN
+ * dimensions when no decay is measurable.
+ */
+export function roomEstimateHasGeometry(estimate: RoomEstimateSummary): boolean {
+  return (
+    finitePositive(estimate.length) &&
+    finitePositive(estimate.width) &&
+    finitePositive(estimate.height)
+  );
+}
+
 /** Converts blind room-estimation output into a preset usable by RIR and roomMorph. */
 export function roomEstimateToPreset(estimate: RoomEstimateSummary): RoomMorphPreset {
-  const { length, width, height } = estimate;
-  if (!finitePositive(length) || !finitePositive(width) || !finitePositive(height)) {
+  if (!roomEstimateHasGeometry(estimate)) {
     throw new RangeError('Room estimate has invalid dimensions');
   }
+  const { length, width, height } = estimate;
   const absorption = estimate.absorptionMean;
   let materialPreset = 2;
   if (Number.isFinite(absorption)) {
