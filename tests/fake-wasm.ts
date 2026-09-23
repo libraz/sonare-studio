@@ -1113,10 +1113,12 @@ export const FAKE_INSERT_PARAM_INFO: Record<
   string,
   Array<{
     name: string;
-    id: number;
+    id: number | null;
     rtSafe: boolean;
     type: 'number' | 'boolean' | 'enum';
     unit?: string;
+    default?: number | boolean;
+    choices?: Array<{ name: string; value: number }>;
   }>
 > = {
   'dynamics.compressor': [
@@ -1126,9 +1128,62 @@ export const FAKE_INSERT_PARAM_INFO: Record<
     { name: 'releaseMs', id: 3, rtSafe: true, type: 'number', unit: 'ms' },
     { name: 'kneeDb', id: 4, rtSafe: true, type: 'number', unit: 'dB' },
     { name: 'makeupGainDb', id: 5, rtSafe: true, type: 'number', unit: 'dB' },
-    { name: 'autoMakeup', id: 6, rtSafe: true, type: 'number' },
-    { name: 'detector', id: 7, rtSafe: true, type: 'number' },
+    { name: 'autoMakeup', id: 6, rtSafe: true, type: 'boolean', default: false },
+    {
+      name: 'detector',
+      id: 7,
+      rtSafe: true,
+      type: 'enum',
+      default: 1,
+      choices: [
+        { name: 'peak', value: 0 },
+        { name: 'rms', value: 1 },
+        { name: 'logRms', value: 2 },
+      ],
+    },
     { name: 'sidechainHpfEnabled', id: 8, rtSafe: true, type: 'boolean' },
+  ],
+  'eq.parametric': [
+    { name: 'band0.enabled', id: null, rtSafe: false, type: 'boolean', default: true },
+    {
+      name: 'band0.type',
+      id: null,
+      rtSafe: false,
+      type: 'enum',
+      default: 0,
+      choices: [
+        { name: 'peak', value: 0 },
+        { name: 'lowShelf', value: 1 },
+        { name: 'highShelf', value: 2 },
+        { name: 'lowPass', value: 3 },
+        { name: 'highPass', value: 4 },
+        { name: 'bandPass', value: 5 },
+        { name: 'notch', value: 6 },
+        { name: 'allPass', value: 9 },
+      ],
+    },
+  ],
+  'dynamics.limiter': [
+    { name: 'thresholdDb', id: 0, rtSafe: true, type: 'number', unit: 'dB' },
+    { name: 'releaseMs', id: 1, rtSafe: true, type: 'number', unit: 'ms' },
+    { name: 'lookaheadMs', id: null, rtSafe: false, type: 'number', unit: 'ms' },
+  ],
+  'saturation.softClipper': [
+    { name: 'driveDb', id: 0, rtSafe: true, type: 'number', unit: 'dB' },
+    { name: 'mix', id: 1, rtSafe: true, type: 'number' },
+    { name: 'ceiling', id: null, rtSafe: false, type: 'number' },
+    {
+      name: 'aliasing',
+      id: null,
+      rtSafe: false,
+      type: 'enum',
+      default: 0,
+      choices: [
+        { name: 'none', value: 0 },
+        { name: 'adaa1', value: 1 },
+        { name: 'oversample4x', value: 3 },
+      ],
+    },
   ],
 };
 
@@ -1529,7 +1584,20 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
         realtimeInsertable: true,
         stereoOnly: id === 'modulation.rotary' || id === 'stereo.imager',
         latencySamples: 0,
+        params: FAKE_INSERT_PARAM_INFO[id] ?? [],
       })),
+    // A lookahead is the only build-time latency the fake inserts report.
+    masteringInsertTiming: (
+      _name: string,
+      params: Record<string, number | boolean>,
+      sampleRate: number,
+    ) => ({
+      latencySamples:
+        typeof params.lookaheadMs === 'number'
+          ? Math.round((params.lookaheadMs * sampleRate) / 1000)
+          : 0,
+      tailSamples: 0,
+    }),
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
     masteringInsertParamInfo: (name: string) => FAKE_INSERT_PARAM_INFO[name] ?? [],
     masteringPresetNames: fakeMasteringPresetNames,

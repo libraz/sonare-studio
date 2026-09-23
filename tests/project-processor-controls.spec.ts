@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { InsertSlot } from '@/project/mixer';
 import {
+  choiceLabel,
   insertAutomationDomain,
   type ProcessorParamInfo,
   processorControlSpec,
@@ -80,6 +81,69 @@ describe('processorControlSpec', () => {
         info({ name: 'bypass', type: 'boolean', default: null }),
       ),
     ).toEqual({ kind: 'boolean', defaultValue: false });
+  });
+
+  it('builds a menu from the catalog choices, defaulting to the declared value', () => {
+    expect(
+      processorControlSpec(
+        'saturation.softClipper',
+        'aliasing',
+        info({
+          name: 'aliasing',
+          type: 'enum',
+          default: 3,
+          choices: [
+            { name: 'none', value: 0 },
+            { name: 'oversample4x', value: 3 },
+          ],
+        }),
+      ),
+    ).toEqual({
+      kind: 'enum',
+      options: [
+        { value: 0, label: 'None' },
+        { value: 3, label: '4x Oversampling' },
+      ],
+      defaultValue: 3,
+    });
+  });
+
+  it('offers a numeric setting with gaps as a menu of its accepted values', () => {
+    const spec = processorControlSpec(
+      'saturation.tape',
+      'oversampleFactor',
+      info({
+        name: 'oversampleFactor',
+        default: 1,
+        choices: [
+          { name: '1', value: 1 },
+          { name: '4', value: 4 },
+        ],
+      }),
+    );
+    expect(spec).toMatchObject({ kind: 'enum', defaultValue: 1 });
+  });
+
+  it('gives no control to an embedded string or array setting', () => {
+    expect(
+      processorControlSpec(
+        'effects.reverb.convolution',
+        'ir',
+        info({ name: 'ir', type: 'string' }),
+      ),
+    ).toBeNull();
+    expect(
+      processorControlSpec('eq.dynamic', 'bands', info({ name: 'bands', type: 'array' })),
+    ).toBeNull();
+  });
+});
+
+describe('choiceLabel', () => {
+  it('reads slopes, acronyms and camelCase names', () => {
+    expect(choiceLabel('db24PerOct')).toBe('24 dB/oct');
+    expect(choiceLabel('lr4')).toBe('LR4');
+    expect(choiceLabel('lowShelf')).toBe('Low Shelf');
+    expect(choiceLabel('veryHigh')).toBe('Very High');
   });
 });
 

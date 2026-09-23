@@ -2,11 +2,11 @@
  * Shared processor-control descriptors and catalog helpers.
  *
  * The project mirror stores processor parameters as ABI values, but the UI
- * needs to know how each value is edited.  In particular, an omitted boolean
- * must not be mistaken for a numeric amount with a zero default.  The small
- * explicit catalog below is therefore authoritative for the non-numeric
- * processor keys; names alone remain numeric only for the legacy/custom
- * processor fallback.
+ * needs to know how each value is edited. The engine's insert catalog
+ * (masteringInsertParamInfo) is authoritative for that: its type, choices and
+ * default decide whether a key is a toggle, a menu or a knob, and a key with no
+ * automation id is read only when the insert is built. Names alone decide only
+ * for a key the catalog does not describe.
  */
 
 import { formatControlValue } from '@/ui/devices/knob-math';
@@ -78,11 +78,11 @@ export type ProcessorControl =
 export type ProcessorParamInfo = Pick<
   MasteringInsertParamInfo,
   'name' | 'type' | 'unit' | 'min' | 'max' | 'default'
->;
+> &
+  Partial<Pick<MasteringInsertParamInfo, 'id' | 'choices'>>;
 
 interface NumberControlSpec {
   kind: 'number';
-  name?: string;
   min: number;
   max: number;
   scale?: 'linear' | 'log';
@@ -92,422 +92,44 @@ interface NumberControlSpec {
 
 interface BooleanControlSpec {
   kind: 'boolean';
-  name?: string;
   defaultValue: boolean;
 }
 
 interface EnumControlSpec {
   kind: 'enum';
-  name?: string;
   options: ReadonlyArray<ProcessorEnumOption>;
   defaultValue: string | number;
 }
 
 type ProcessorControlSpec = NumberControlSpec | BooleanControlSpec | EnumControlSpec;
 
-const EQ_BAND_TYPE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: 'Peak' },
-  { value: 1, label: 'Low Shelf' },
-  { value: 2, label: 'High Shelf' },
-  { value: 3, label: 'Low Pass' },
-  { value: 4, label: 'High Pass' },
-  { value: 5, label: 'Band Pass' },
-  { value: 6, label: 'Notch' },
-  { value: 7, label: 'Tilt Shelf' },
-  { value: 8, label: 'Flat Tilt' },
-];
-const EQ_COEFF_MODE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: 'RBJ' },
-  { value: 1, label: 'Vicanek' },
-];
-const EQ_PLACEMENT_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: 'Stereo' },
-  { value: 1, label: 'Left' },
-  { value: 2, label: 'Right' },
-  { value: 3, label: 'Mid' },
-  { value: 4, label: 'Side' },
-];
-const EQ_PHASE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: 'Inherit' },
-  { value: 1, label: 'Zero Latency' },
-  { value: 2, label: 'Natural Phase' },
-  { value: 3, label: 'Linear Phase' },
-];
-const EQ_GLOBAL_PHASE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = EQ_PHASE_OPTIONS.filter(
-  (option) => option.value !== 0,
-);
-const EQ_CUT_SLOPE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: '12 dB/oct' },
-  { value: 1, label: '24 dB/oct' },
-  { value: 2, label: '6 dB/oct' },
-  { value: 3, label: '18 dB/oct' },
-  { value: 4, label: '30 dB/oct' },
-  { value: 5, label: '36 dB/oct' },
-  { value: 6, label: '42 dB/oct' },
-  { value: 7, label: '48 dB/oct' },
-  { value: 8, label: '54 dB/oct' },
-  { value: 9, label: '60 dB/oct' },
-  { value: 10, label: '66 dB/oct' },
-  { value: 11, label: '72 dB/oct' },
-  { value: 12, label: '78 dB/oct' },
-  { value: 13, label: '84 dB/oct' },
-  { value: 14, label: '90 dB/oct' },
-  { value: 15, label: '96 dB/oct' },
-  { value: 16, label: 'Brickwall' },
-];
-const MULTIBAND_SLOPE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: 'LR2' },
-  { value: 1, label: 'LR4' },
-  { value: 2, label: 'LR8' },
-];
-const MULTIBAND_MODE_OPTIONS: ReadonlyArray<ProcessorEnumOption> = [
-  { value: 0, label: 'Linkwitz-Riley' },
-  { value: 1, label: 'Butterworth' },
-  { value: 2, label: 'Bessel' },
-  { value: 3, label: 'FIR Linear Phase' },
-];
-
-const EQ_BAND_TYPE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: EQ_BAND_TYPE_OPTIONS,
-  defaultValue: 0,
-};
-const EQ_COEFF_MODE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: EQ_COEFF_MODE_OPTIONS,
-  defaultValue: 0,
-};
-const EQ_PLACEMENT_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: EQ_PLACEMENT_OPTIONS,
-  defaultValue: 0,
-};
-const EQ_PHASE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: EQ_PHASE_OPTIONS,
-  defaultValue: 0,
-};
-const EQ_GLOBAL_PHASE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: EQ_GLOBAL_PHASE_OPTIONS,
-  defaultValue: 1,
-};
-const EQ_CUT_SLOPE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: EQ_CUT_SLOPE_OPTIONS,
-  defaultValue: 0,
-};
-const MULTIBAND_SLOPE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: MULTIBAND_SLOPE_OPTIONS,
-  defaultValue: 1,
-};
-const MULTIBAND_MODE_SPEC: EnumControlSpec = {
-  kind: 'enum',
-  options: MULTIBAND_MODE_OPTIONS,
-  defaultValue: 0,
+/** Menu labels for catalog choice names whose camelCase split reads poorly. */
+const CHOICE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
+  rbj: 'RBJ',
+  lr2: 'LR2',
+  lr4: 'LR4',
+  lr8: 'LR8',
+  rms: 'RMS',
+  logRms: 'Log RMS',
+  rpdf: 'RPDF',
+  tpdf: 'TPDF',
+  adaa1: 'ADAA 1',
+  adaa2: 'ADAA 2',
+  oversample4x: '4x Oversampling',
+  firLinearPhase: 'FIR Linear Phase',
+  eqp1aWdf: 'EQP-1A (WDF)',
+  guitar4x12: 'Guitar 4x12',
+  bass8x10: 'Bass 8x10',
 };
 
-/** One explicit non-numeric ABI entry. */
-export interface ProcessorCatalogEntry {
-  processor: string;
-  param: string;
-  kind: 'boolean' | 'enum';
-}
-
-/** A processor-specific catalog of exposed non-numeric ABI parameters. */
-const EXPLICIT_PROCESSOR_CONTROLS: Readonly<
-  Record<string, Readonly<Record<string, ProcessorControlSpec>>>
-> = {
-  'dynamics.compressor': {
-    autoMakeup: {
-      kind: 'boolean',
-      name: 'Auto Makeup',
-      defaultValue: false,
-    },
-    detector: {
-      kind: 'enum',
-      name: 'Detector',
-      options: [
-        { value: 0, label: 'Peak' },
-        { value: 1, label: 'RMS' },
-        { value: 2, label: 'Log RMS' },
-      ],
-      defaultValue: 1,
-    },
-    sidechainHpfEnabled: {
-      kind: 'boolean',
-      name: 'Sidechain HPF',
-      defaultValue: false,
-    },
-  },
-  'dynamics.parallelComp': {
-    linkedDetection: {
-      kind: 'boolean',
-      name: 'Linked Detection',
-      defaultValue: true,
-    },
-    outputLimiter: {
-      kind: 'boolean',
-      name: 'Output Limiter',
-      defaultValue: true,
-    },
-  },
-  'dynamics.sidechainRouter': {
-    sidechainHpfEnabled: {
-      kind: 'boolean',
-      name: 'Sidechain HPF',
-      defaultValue: false,
-    },
-    monoSumming: {
-      kind: 'boolean',
-      name: 'Mono Summing',
-      defaultValue: false,
-    },
-    keyListen: {
-      kind: 'boolean',
-      name: 'Key Listen',
-      defaultValue: false,
-    },
-  },
-  'dynamics.vocalRider': {
-    linkedDetection: {
-      kind: 'boolean',
-      name: 'Linked Detection',
-      defaultValue: true,
-    },
-  },
-  'eq.equalizer': {
-    autoGain: {
-      kind: 'boolean',
-      name: 'Auto Gain',
-      defaultValue: false,
-    },
-    phaseMode: { ...EQ_GLOBAL_PHASE_SPEC, name: 'Phase Mode' },
-  },
-  'eq.linearPhase': {
-    resolution: {
-      kind: 'enum',
-      name: 'Resolution',
-      options: [
-        { value: 0, label: 'Custom' },
-        { value: 1, label: 'Low' },
-        { value: 2, label: 'Medium' },
-        { value: 3, label: 'High' },
-        { value: 4, label: 'Very High' },
-        { value: 5, label: 'Maximum' },
-      ],
-      defaultValue: 0,
-    },
-    usePartitionedConvolution: {
-      kind: 'boolean',
-      name: 'Partitioned Convolution',
-      defaultValue: true,
-    },
-  },
-  'eq.pultec': {
-    componentModel: {
-      kind: 'enum',
-      name: 'Component Model',
-      options: [
-        { value: 0, label: 'Curve Only' },
-        { value: 1, label: 'EQP1A WDF' },
-      ],
-      defaultValue: 0,
-    },
-  },
-  'eq.cutFilter': {
-    highPassSlope: { ...EQ_CUT_SLOPE_SPEC, name: 'High-Pass Slope' },
-    highPassEnabled: { kind: 'boolean', name: 'High-Pass Enabled', defaultValue: false },
-    lowPassSlope: { ...EQ_CUT_SLOPE_SPEC, name: 'Low-Pass Slope' },
-    lowPassEnabled: { kind: 'boolean', name: 'Low-Pass Enabled', defaultValue: false },
-  },
-  'eq.bandPass': {
-    bandPassEnabled: { kind: 'boolean', name: 'Band-Pass Enabled', defaultValue: true },
-    notchEnabled: { kind: 'boolean', name: 'Notch Enabled', defaultValue: false },
-  },
-  'eq.shelving': {
-    lowEnabled: { kind: 'boolean', name: 'Low Shelf Enabled', defaultValue: true },
-    highEnabled: { kind: 'boolean', name: 'High Shelf Enabled', defaultValue: true },
-  },
-  'multiband.compressor': {
-    slope: { ...MULTIBAND_SLOPE_SPEC, name: 'Crossover Slope' },
-    mode: { ...MULTIBAND_MODE_SPEC, name: 'Crossover Mode' },
-  },
-  'multiband.expander': {
-    slope: { ...MULTIBAND_SLOPE_SPEC, name: 'Crossover Slope' },
-    mode: { ...MULTIBAND_MODE_SPEC, name: 'Crossover Mode' },
-  },
-  'multiband.limiter': {
-    slope: { ...MULTIBAND_SLOPE_SPEC, name: 'Crossover Slope' },
-    mode: { ...MULTIBAND_MODE_SPEC, name: 'Crossover Mode' },
-  },
-  'multiband.imager': {
-    slope: { ...MULTIBAND_SLOPE_SPEC, name: 'Crossover Slope' },
-    mode: { ...MULTIBAND_MODE_SPEC, name: 'Crossover Mode' },
-  },
-  'multiband.saturation': {
-    slope: { ...MULTIBAND_SLOPE_SPEC, name: 'Crossover Slope' },
-    mode: { ...MULTIBAND_MODE_SPEC, name: 'Crossover Mode' },
-  },
-  'multiband.dynamicEq': {
-    slope: { ...MULTIBAND_SLOPE_SPEC, name: 'Crossover Slope' },
-    mode: { ...MULTIBAND_MODE_SPEC, name: 'Crossover Mode' },
-  },
-  'saturation.ampSim': {
-    cab: {
-      kind: 'boolean',
-      name: 'Cabinet',
-      defaultValue: true,
-    },
-    cabModel: {
-      kind: 'enum',
-      name: 'Cabinet Model',
-      options: [
-        { value: 0, label: 'Guitar 4x12' },
-        { value: 1, label: 'Bass 8x10' },
-      ],
-      defaultValue: 0,
-    },
-    ampModel: {
-      kind: 'enum',
-      name: 'Amp Model',
-      options: [
-        { value: 0, label: 'Classic Crunch' },
-        { value: 1, label: 'Fender Clean' },
-        { value: 2, label: 'Modern Hi-Gain' },
-        { value: 3, label: 'Vintage Tweed' },
-        { value: 4, label: 'Vox Chime' },
-        { value: 5, label: 'Modern Rectifier' },
-      ],
-      defaultValue: 0,
-    },
-  },
-  'saturation.bitcrusher': {
-    ditherType: {
-      kind: 'enum',
-      name: 'Dither Type',
-      options: [
-        { value: 0, label: 'None' },
-        { value: 1, label: 'RPDF' },
-        { value: 2, label: 'TPDF' },
-        { value: 3, label: 'Noise Shaped' },
-      ],
-      defaultValue: 0,
-    },
-  },
-  'saturation.waveshaper': {
-    curve: {
-      kind: 'enum',
-      name: 'Curve',
-      options: [
-        { value: 0, label: 'Tanh' },
-        { value: 1, label: 'Arctan' },
-        { value: 2, label: 'Asymmetric' },
-      ],
-      defaultValue: 0,
-    },
-  },
-  'stereo.haasEnhancer': {
-    delayRight: {
-      kind: 'boolean',
-      name: 'Delay Right',
-      defaultValue: true,
-    },
-  },
-  'stereo.imager': {
-    preserveEnergy: {
-      kind: 'boolean',
-      name: 'Preserve Energy',
-      defaultValue: true,
-    },
-  },
-  'stereo.phaseAlign': {
-    delayRight: {
-      kind: 'boolean',
-      name: 'Delay Right',
-      defaultValue: true,
-    },
-  },
-  'stereo.stereoBalance': {
-    constantPower: {
-      kind: 'boolean',
-      name: 'Constant Power',
-      defaultValue: true,
-    },
-  },
-  'maximizer.truePeakLimiter': {
-    applyGainAtInputRate: {
-      kind: 'boolean',
-      name: 'Apply Gain at Input Rate',
-      defaultValue: false,
-    },
-  },
-  'effects.reverb.velvet': {
-    enableShelf: {
-      kind: 'boolean',
-      name: 'Enable Shelf',
-      defaultValue: true,
-    },
-  },
-};
-
-const EQ_BAND_PROCESSORS = new Set([
-  'eq.parametric',
-  'eq.minimumPhase',
-  'eq.linearPhase',
-  'eq.dynamic',
-  'eq.equalizer',
-  'eq.midSide',
-]);
-
-/** Returns explicit nonnumeric catalog entries for inspection and tests. */
-export function processorCatalogEntries(): ProcessorCatalogEntry[] {
-  return Object.entries(EXPLICIT_PROCESSOR_CONTROLS).flatMap(([processor, params]) =>
-    Object.entries(params).map(([param, spec]) => ({
-      processor,
-      param,
-      kind: spec.kind as 'boolean' | 'enum',
-    })),
-  );
-}
-
-/** Returns the explicit spec for a known processor parameter, when present. */
-export function explicitProcessorControlSpec(
-  processor: string,
-  param: string,
-): ProcessorControlSpec | undefined {
-  const direct = EXPLICIT_PROCESSOR_CONTROLS[processor]?.[param];
-  if (direct) return direct;
-
-  // EQ processors share the same construction-time band schema. The engine
-  // expands it into band0..band23 (and mid/side variants), so resolve those
-  // indexed keys from this explicit schema instead of treating an unset bool or
-  // enum as the generic [0, 1] numeric fallback.
-  if (
-    EQ_BAND_PROCESSORS.has(processor) &&
-    /^(?:band|midBand|sideBand)\d+\.(?:type|coeffMode|placement|phase|enabled|soloed|bypassed|proportionalQ|dynamic|autoThreshold)$/u.test(
-      param,
-    )
-  ) {
-    const field = param.slice(param.indexOf('.') + 1);
-    if (field === 'type') return EQ_BAND_TYPE_SPEC;
-    if (field === 'coeffMode') return EQ_COEFF_MODE_SPEC;
-    if (field === 'placement') return EQ_PLACEMENT_SPEC;
-    if (field === 'phase') return EQ_PHASE_SPEC;
-    if (field === 'enabled') return { kind: 'boolean', defaultValue: true };
-    return { kind: 'boolean', defaultValue: false };
-  }
-
-  // Multiband processors use indexed crossover-band keys. Their nonnumeric
-  // per-band fields are the same enum/toggle shapes as their scalar siblings.
-  if (processor === 'multiband.imager' && /^band\d+\.(?:enabled|preserveEnergy)$/u.test(param)) {
-    return { kind: 'boolean', defaultValue: true };
-  }
-  if (processor === 'multiband.dynamicEq' && /^band\d+\.dyn\d+\.(?:type|enabled)$/u.test(param)) {
-    return param.endsWith('.type') ? EQ_BAND_TYPE_SPEC : { kind: 'boolean', defaultValue: true };
-  }
-  return undefined;
+/** Display label of a catalog choice name ('db24PerOct' -> '24 dB/oct'). */
+export function choiceLabel(name: string): string {
+  const override = CHOICE_LABEL_OVERRIDES[name];
+  if (override !== undefined) return override;
+  const slope = /^db(\d+)PerOct$/u.exec(name);
+  if (slope) return `${slope[1]} dB/oct`;
+  const spaced = name.replace(/([a-z])([A-Z0-9])/g, '$1 $2');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 /** Camel-case to compact title-case control label. */
@@ -547,6 +169,9 @@ const DEFAULT_PARAM_RANGE: NumberControlSpec = {
 /** Parameter catalogs per loaded module; a build's catalog never changes. */
 const catalogCache = new WeakMap<object, Map<string, MasteringInsertParamInfo[]>>();
 
+/** Construction-only key names per cached catalog entry list. */
+const constructionOnlyCache = new WeakMap<object, ReadonlySet<string>>();
+
 /**
  * The loaded module's catalog metadata for one processor, or [] before the
  * module is initialized.
@@ -574,6 +199,20 @@ export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] 
     byProcessor.set(processor, entries);
   }
   return entries;
+}
+
+/**
+ * True when the engine reads a key only while it builds the insert: the
+ * catalog gives it no automation id, so a change has to rebuild the insert.
+ */
+export function isConstructionOnlyParam(processor: string, param: string): boolean {
+  const entries = catalogParamInfo(processor);
+  let names = constructionOnlyCache.get(entries);
+  if (!names) {
+    names = new Set(entries.filter((entry) => entry.id === null).map((entry) => entry.name));
+    constructionOnlyCache.set(entries, names);
+  }
+  return names.has(param);
 }
 
 /**
@@ -652,11 +291,10 @@ export function processorNumberSpec(
 
 /**
  * Returns the names in one stable order for every rack: engine/catalog order,
- * then parameter-info-only names, then explicit app-catalog names, then saved
- * extras. Duplicate names retain their first occurrence.
+ * then parameter-info-only names, then saved extras. Duplicate names retain
+ * their first occurrence.
  */
 export function processorControlNames(
-  processor: string,
   catalogNames: ReadonlyArray<string>,
   paramInfo: ReadonlyArray<ProcessorParamInfo>,
   params: Readonly<Record<string, unknown>>,
@@ -670,22 +308,28 @@ export function processorControlNames(
   };
   for (const name of catalogNames) append(name);
   for (const info of paramInfo) append(info.name);
-  // The explicit app catalog is authoritative for nonnumeric ABI keys. Append
-  // those entries even when an older/injected name-only resolver omits them so
-  // an unset boolean is never silently downgraded to a numeric control.
-  for (const name of Object.keys(EXPLICIT_PROCESSOR_CONTROLS[processor] ?? {})) append(name);
   for (const name of Object.keys(params)) append(name);
   return names;
 }
 
-/** Resolves one processor parameter's editing spec. */
+/**
+ * Resolves one processor parameter's editing spec, or null for a key no rack
+ * control can edit (an embedded string or array).
+ */
 export function processorControlSpec(
   processor: string,
   param: string,
   info?: ProcessorParamInfo,
-): ProcessorControlSpec {
-  const explicit = explicitProcessorControlSpec(processor, param);
-  if (explicit) return explicit;
+): ProcessorControlSpec | null {
+  if (info?.type === 'string' || info?.type === 'array') return null;
+  if (info?.choices && info.choices.length > 0) {
+    const options = info.choices.map((choice) => ({
+      value: choice.value,
+      label: choiceLabel(choice.name),
+    }));
+    const declared = options.find((option) => option.value === info.default);
+    return { kind: 'enum', options, defaultValue: (declared ?? options[0]).value };
+  }
   if (info?.type === 'boolean') {
     return { kind: 'boolean', defaultValue: info.default === true };
   }
@@ -700,7 +344,8 @@ export function processorControl(
   info?: ProcessorParamInfo,
 ): ProcessorControl | null {
   const spec = processorControlSpec(processor, param, info);
-  const name = spec.name ?? humanizeProcessorControlName(param);
+  if (!spec) return null;
+  const name = humanizeProcessorControlName(param);
   if (spec.kind === 'boolean') {
     const value =
       typeof rawValue === 'boolean'
@@ -745,7 +390,7 @@ export function processorControls(
   paramInfo: ReadonlyArray<ProcessorParamInfo> = [],
 ): ProcessorControl[] {
   const infoByName = new Map(paramInfo.map((info) => [info.name, info]));
-  return processorControlNames(processor, catalogNames, paramInfo, params)
+  return processorControlNames(catalogNames, paramInfo, params)
     .map((name) => processorControl(processor, name, params[name], infoByName.get(name)))
     .filter((control): control is ProcessorControl => control !== null);
 }

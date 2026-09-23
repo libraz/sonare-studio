@@ -40,6 +40,7 @@ import {
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
+import { isConstructionOnlyParam } from '@/project/processor-controls';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
@@ -153,23 +154,29 @@ export function stripSceneJson(
   return JSON.stringify({ version: 1, strips: [sceneStrip], buses: [], connections: [] });
 }
 
-/** Insert params that affect scene structure; numeric values can be patched in place. */
-function insertParamStructure(
-  params: InsertSlot['params'],
-): Record<string, number | boolean | null> {
+/** True for a numeric insert param the engine can patch without rebuilding the insert. */
+function isPatchableParam(slot: InsertSlot, key: string, value: unknown): value is number {
+  return typeof value === 'number' && !isConstructionOnlyParam(slot.processor, key);
+}
+
+/**
+ * Insert params that affect scene structure: every value the engine reads only
+ * while building the insert. Patchable numeric values are masked out.
+ */
+function insertParamStructure(slot: InsertSlot): Record<string, number | boolean | null> {
   return Object.fromEntries(
-    Object.entries(params)
+    Object.entries(slot.params)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => [key, typeof value === 'number' ? null : value]),
+      .map(([key, value]) => [key, isPatchableParam(slot, key, value) ? null : value]),
   );
 }
 
-/** Numeric insert params last seen by the engine, keyed by insert index. */
+/** Patchable numeric insert params last seen by the engine, keyed by insert index. */
 function insertNumericParams(inserts: ReadonlyArray<InsertSlot>): Array<Record<string, number>> {
   return inserts.map((slot) =>
     Object.fromEntries(
       Object.entries(slot.params)
-        .filter((entry): entry is [string, number] => typeof entry[1] === 'number')
+        .filter((entry): entry is [string, number] => isPatchableParam(slot, entry[0], entry[1]))
         .sort(([a], [b]) => a.localeCompare(b)),
     ),
   );
@@ -200,7 +207,7 @@ function busStripDspKey(strip: MixerStrip | undefined, includeEnabled: boolean):
   return JSON.stringify({
     inserts: (strip?.inserts ?? []).map((slot) => ({
       processor: slot.processor,
-      params: insertParamStructure(slot.params),
+      params: insertParamStructure(slot),
       ...(includeEnabled ? { enabled: slot.enabled } : {}),
     })),
     inputTrimDb: strip?.inputTrimDb ?? 0,
@@ -338,7 +345,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       polarityInvertRight: strip?.polarityInvertRight === true,
       inserts: inserts.map((slot) => ({
         processor: slot.processor,
-        params: insertParamStructure(slot.params),
+        params: insertParamStructure(slot),
       })),
     });
     // Individual band enabled/bypassed flags are forwarded as-is inside the

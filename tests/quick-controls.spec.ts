@@ -188,7 +188,7 @@ describe('quick controls', () => {
       });
     });
 
-    it('uses the explicit catalog for indexed EQ booleans and enums', () => {
+    it('types indexed EQ booleans and enums from the catalog', () => {
       addInsert(trackId, 'eq.parametric', {
         'band0.enabled': true,
         'band0.type': 5,

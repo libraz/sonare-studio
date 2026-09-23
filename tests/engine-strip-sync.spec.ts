@@ -18,6 +18,13 @@ import {
 import type { EditorTrack } from '@/project/types';
 import type { EqBand } from '@/wasm/index.js';
 
+// The soft clipper's ceiling is read only when the insert is built.
+vi.mock('@/project/processor-controls', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/project/processor-controls')>()),
+  isConstructionOnlyParam: (processor: string, param: string) =>
+    processor === 'saturation.softClipper' && param === 'ceiling',
+}));
+
 /** Builds a track mirror entry, optionally with a mixer strip. */
 function makeTrack(id: number, mixer?: MixerStrip): EditorTrack {
   return {
@@ -279,6 +286,30 @@ describe('createStripSync', () => {
     expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'thresholdDb', -12);
     expect(engine.setStripInsertBypassed).not.toHaveBeenCalled();
     expect(engine.setStripEq).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds the insert when a construction-only numeric param changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (ceiling: number, driveDb: number): MixerStrip =>
+      makeStrip({
+        inserts: [
+          { processor: 'saturation.softClipper', params: { ceiling, driveDb }, enabled: true },
+        ],
+      });
+
+    sync.sync([makeTrack(1, stripFor(0.9, 3))], makeMixer());
+    clearCalls(engine);
+
+    sync.sync([makeTrack(1, stripFor(0.9, 6))], makeMixer());
+    expect(engine.setTrackStripJson).not.toHaveBeenCalled();
+    expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'driveDb', 6);
+    clearCalls(engine);
+
+    const next = stripFor(0.7, 6);
+    sync.sync([makeTrack(1, next)], makeMixer());
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, next));
+    expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
   });
 
   it('re-sends strip JSON when a non-numeric insert param changes', () => {
