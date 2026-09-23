@@ -329,6 +329,21 @@ export const shellArrangement = {
     splitStemsTitle:
       'アクティブなオーディオクリップをハーモニック/パーカッシブ/残差ステムに分離し新規トラックへ配置',
     noStemsSeparated: 'アクティブクリップのステム分離は利用できません。',
+    tuneToMidi: 'MIDI に合わせる',
+    tuneToMidiTitle:
+      'アクティブなオーディオクリップの音程を、時間が重なる MIDI トラックのノートに合わせます',
+    tuneToMidiPolicy: {
+      leave: '一致しないノートはそのまま',
+      mute: '一致しないノートはミュート',
+      nearest: '一致しないノートは最寄りに合わせる',
+    },
+    tunedToMidi: '{total} ノート中 {assigned} ノートを {track} に合わせました。',
+    tuneToMidiRefused: {
+      warped: 'MIDI に合わせる前に、クリップのワープをオフにしてください。',
+      looped: 'MIDI に合わせる前に、クリップのループをオフにしてください。',
+      comped: 'MIDI に合わせる前に、クリップのテイクを統合してください。',
+      'no-notes': '{track} にはこのクリップと重なるノートがありません。',
+    },
     splitHere: 'ここで分割',
     loopSplitUnavailable: 'このクリップを分割する前にループをオフにしてください。',
     timeline: 'アレンジメントタイムライン',

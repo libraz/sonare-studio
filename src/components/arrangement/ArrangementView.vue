@@ -6,6 +6,7 @@ import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import { buildKeyMap } from '@/compose/key-map';
+import { TuneToMidiRefusedError } from '@/project/audio-tune-to-midi';
 import type { AutomationParam } from '@/project/automation';
 import {
   type CrossfadeBlockReason,
@@ -50,6 +51,7 @@ import {
   splitClip,
   type TrackPart,
   trimClip,
+  tuneAudioClipToMidiTrack,
 } from '@/project/commands';
 import { exportClipSmf } from '@/project/export';
 import { unfreezeTrack } from '@/project/freeze';
@@ -82,9 +84,10 @@ import {
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';
+import type { NoteTargetUnmatchedPolicy } from '@/wasm/index.js';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import ChordLane from './ChordLane.vue';
@@ -174,6 +177,12 @@ const isExtractingMelody = ref(false);
 /** True while a stem separation is awaiting the engine. */
 const isSplittingStems = ref(false);
 
+/** True while a clip is being tuned to a MIDI track. */
+const isTuningToMidi = ref(false);
+
+/** Result line of the last tuning, shown until the next action. */
+const notice = ref('');
+
 /** The active clip when it is an audio clip carrying an asset, else null. */
 const detectableAudioClip = computed(() => {
   const clip = store.activeClip;
@@ -262,6 +271,63 @@ function splitToStems(): void {
       error.value = err instanceof Error ? err.message : String(err);
     } finally {
       isSplittingStems.value = false;
+    }
+  })();
+}
+
+/** MIDI tracks a clip can be tuned to. */
+const midiTracks = computed(() => store.tracks.filter((track) => track.kind === 'midi'));
+
+/** Unmatched-note policies offered per reference track, safest first. */
+const TUNE_POLICIES: ReadonlyArray<NoteTargetUnmatchedPolicy> = ['leave', 'mute', 'nearest'];
+
+/** Opens the reference-track menu for tuning the active audio clip to MIDI. */
+function openTuneToMidiMenu(event: MouseEvent): void {
+  const clip = detectableAudioClip.value;
+  if (!clip || isTuningToMidi.value) return;
+  const items: ContextMenuItem[] = midiTracks.value.map((track) => ({
+    id: `tune-${track.id}`,
+    label: track.name,
+    children: TUNE_POLICIES.map((policy) => ({
+      id: `tune-${track.id}-${policy}`,
+      label: t.value.shell.arrangement.tuneToMidiPolicy[policy],
+      run: () => tuneToMidi(clip.id, track.id, track.name, policy),
+    })),
+  }));
+  openContextMenu(event.clientX, event.clientY, items);
+}
+
+/** Tunes one audio clip to a MIDI track and reports how many notes matched. */
+function tuneToMidi(
+  clipId: number,
+  trackId: number,
+  trackName: string,
+  policy: NoteTargetUnmatchedPolicy,
+): void {
+  error.value = '';
+  notice.value = '';
+  isTuningToMidi.value = true;
+  void (async () => {
+    try {
+      const outcome = await tuneAudioClipToMidiTrack(clipId, trackId, policy);
+      if (!outcome) return;
+      setActiveClip(outcome.clipId);
+      notice.value = formatMessage(t.value.shell.arrangement.tunedToMidi, {
+        assigned: outcome.assignedCount,
+        total: outcome.noteCount,
+        track: trackName,
+      });
+    } catch (err) {
+      error.value =
+        err instanceof TuneToMidiRefusedError
+          ? formatMessage(t.value.shell.arrangement.tuneToMidiRefused[err.reason], {
+              track: trackName,
+            })
+          : err instanceof Error
+            ? err.message
+            : String(err);
+    } finally {
+      isTuningToMidi.value = false;
     }
   })();
 }
@@ -1197,6 +1263,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="arrangement-view">
     <p v-if="error" class="arrangement-error" role="alert">{{ error }}</p>
+    <p v-else-if="notice" class="arrangement-notice" role="status">{{ notice }}</p>
     <div
       class="arrangement-grid"
       :style="{
@@ -1268,6 +1335,15 @@ onBeforeUnmount(() => {
           @click="splitToStems"
         >
           {{ t.shell.arrangement.splitStems }}
+        </button>
+        <button
+          type="button"
+          class="section-detect"
+          :disabled="detectableAudioClip === null || midiTracks.length === 0 || isTuningToMidi"
+          v-tooltip="t.shell.arrangement.tuneToMidiTitle"
+          @click="openTuneToMidiMenu"
+        >
+          {{ t.shell.arrangement.tuneToMidi }}
         </button>
       </div>
       <SectionLane class="cell-sections" :range="range" :revision="revision" @seek="onSeek" />
@@ -1381,6 +1457,14 @@ onBeforeUnmount(() => {
   padding: 0.5rem 0.75rem;
   background: var(--danger-surface);
   color: var(--danger-text);
+  font: var(--fs-sm)/1.4 var(--font-sans);
+}
+
+.arrangement-notice {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface-2);
+  color: var(--text-2);
   font: var(--fs-sm)/1.4 var(--font-sans);
 }
 

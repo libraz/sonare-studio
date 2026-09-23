@@ -294,4 +294,5 @@ export {
   setTracksGroup,
   setTrackVolume,
 } from './command/tracks';
+export { type TuneToMidiOutcome, tuneAudioClipToMidiTrack } from './command/tune';
 export type { TrackChannelPreset } from './track-preset';

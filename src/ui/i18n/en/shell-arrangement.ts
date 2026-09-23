@@ -332,6 +332,20 @@ export const shellArrangement = {
     splitStemsTitle:
       'Split the active audio clip into harmonic, percussive and residual stems on new tracks',
     noStemsSeparated: 'Stem separation is unavailable for the active clip.',
+    tuneToMidi: 'Tune to MIDI',
+    tuneToMidiTitle: "Tune the active audio clip's notes to the notes of a MIDI track they overlap",
+    tuneToMidiPolicy: {
+      leave: 'Leave unmatched notes',
+      mute: 'Mute unmatched notes',
+      nearest: 'Tune unmatched notes to the nearest',
+    },
+    tunedToMidi: 'Tuned {assigned} of {total} notes to {track}.',
+    tuneToMidiRefused: {
+      warped: 'Turn warp off on the clip before tuning it to MIDI.',
+      looped: 'Turn looping off on the clip before tuning it to MIDI.',
+      comped: "Flatten the clip's takes before tuning it to MIDI.",
+      'no-notes': '{track} has no notes over this clip.',
+    },
     splitHere: 'Split here',
     loopSplitUnavailable: 'Turn Loop off before splitting this clip.',
     timeline: 'Arrangement timeline',

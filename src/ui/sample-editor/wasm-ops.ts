@@ -923,9 +923,9 @@ export function splitSilenceFrames(
 }
 
 /** F0 hop for note detection, matching the pitch-correction contour. */
-const NOTE_DETECT_HOP = 512;
+export const NOTE_DETECT_HOP = 512;
 /** F0 analysis window, matching the pitch-correction contour. */
-const NOTE_DETECT_FRAME = 2048;
+export const NOTE_DETECT_FRAME = 2048;
 /**
  * Pitch step that starts a new note, in cents. A semitone is 100, so the
  * threshold has to sit below that to separate adjacent semitones — and above
@@ -935,7 +935,7 @@ const NOTE_DETECT_FRAME = 2048;
  * breaks a +/-50 cent vibrato into a note per cycle. A vibrato wider than a
  * semitone cannot be held together at any threshold.
  */
-const NOTE_DETECT_THRESHOLD_CENTS = 80;
+export const NOTE_DETECT_THRESHOLD_CENTS = 80;
 
 /**
  * Detects the note regions of a monophonic recording: their bounds and pitch.
