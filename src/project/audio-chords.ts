@@ -7,12 +7,15 @@
  * (`sliceAudioClipWindow`), so what the detector hears matches what the clip
  * sounds like; detection times (seconds, relative to the window start) are then
  * mapped back to absolute PPQ with that same constant tempo. The detector's
- * `quality` ordinal already matches {@link EditorChordSymbol} (Major = 0), so
- * no remap is needed. The app-side merge and undoable commit live in
+ * `quality` ordinals 0-15 are the editor's own (Major = 0); the qualities past
+ * them are carried as a base ordinal plus extensions and omissions. The
+ * app-side merge and undoable commit live in
  * command/chords.ts; this module is side-effect-free and dependency-injected
  * for testing.
  */
 
+import type { ChordQuality } from '@libraz/libcantus';
+import { type EditorQuality, libcantusQualityToEditor } from '@/compose/chord-quality';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { mixdownToMono } from './audio-import';
 import { chordExtensionSignature, type EditorChordSymbol } from './chords';
@@ -23,6 +26,33 @@ import type { EditorClip, TempoSegment } from './types';
 /** Identity of a chord for adjacency comparison (root/quality/bass). */
 function chordIdentity(symbol: EditorChordSymbol): string {
   return `${symbol.rootPc}:${symbol.quality}:${chordExtensionSignature(symbol)}:${symbol.bassPc ?? -1}`;
+}
+
+/** Highest detector ordinal the editor shares one-for-one (Dominant9). */
+const LAST_SHARED_QUALITY = 15;
+
+/** Detector ordinals past the shared range, by the libcantus quality naming the same tones. */
+const DETECTED_QUALITY_BEYOND_EDITOR: Readonly<Record<number, ChordQuality>> = {
+  17: '6',
+  18: 'min6',
+  19: 'minMaj7',
+  20: '7sus4',
+  21: '11',
+  22: '13',
+  23: '7b9',
+  24: '7#9',
+};
+
+/** Sus2Add4 (16): a sus2 triad with the fourth added, which no libcantus quality names. */
+const SUS2_ADD4: EditorQuality = { quality: 7, extensions: [5] };
+
+/** Maps a detector quality ordinal onto the editor's ordinal plus extensions and omissions. */
+export function detectedChordQuality(ordinal: number): EditorQuality {
+  if (ordinal <= LAST_SHARED_QUALITY) return { quality: ordinal };
+  if (ordinal === 16) return SUS2_ADD4;
+  const named = DETECTED_QUALITY_BEYOND_EDITOR[ordinal];
+  if (named === undefined) throw new RangeError(`Unmapped detector chord quality ${ordinal}`);
+  return libcantusQualityToEditor(named);
 }
 
 /** Onset tolerance (in PPQ) for treating two regions as contiguous. */
@@ -159,12 +189,10 @@ export async function analyzeAudioClipChords(
     const startPpq = secondsToTimelinePpq(chord.start);
     const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(chord.end));
     if (!(endPpq > startPpq)) continue;
-    const symbol: EditorChordSymbol = {
-      startPpq,
-      endPpq,
-      rootPc: chord.root,
-      quality: chord.quality,
-    };
+    const { quality, extensions, omissions } = detectedChordQuality(chord.quality);
+    const symbol: EditorChordSymbol = { startPpq, endPpq, rootPc: chord.root, quality };
+    if (extensions) symbol.extensions = [...extensions];
+    if (omissions) symbol.omissions = [...omissions];
     if (chord.bass !== chord.root) symbol.bassPc = chord.bass;
     symbols.push(symbol);
   }

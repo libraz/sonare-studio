@@ -3,10 +3,12 @@ import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   analyzeAudioClipChords,
   type DetectedAudioChord,
+  detectedChordQuality,
   smoothDetectedChordSymbols,
 } from '@/project/audio-chords';
-import type { EditorChordSymbol } from '@/project/chords';
+import { chordTonePitchClasses, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import type { EditorClip } from '@/project/types';
+import { ChordQuality } from '@/wasm/index.js';
 
 /** A minimal audio clip; fields not relevant to detection use neutral values. */
 function audioClip(overrides: Partial<EditorClip> = {}): EditorClip {
@@ -207,5 +209,67 @@ describe('smoothDetectedChordSymbols', () => {
   it('sorts by onset before smoothing', () => {
     const smoothed = smoothDetectedChordSymbols([chord(2, 4, 0), chord(0, 2, 0)]);
     expect(smoothed).toEqual([chord(0, 4, 0)]);
+  });
+});
+
+describe('detectedChordQuality', () => {
+  /** Root-relative pitch classes each detector template sounds (13 adds its fifth back). */
+  const DETECTOR_TONES: Record<number, number[]> = {
+    [ChordQuality.Sus2Add4]: [0, 2, 5, 7],
+    [ChordQuality.Major6]: [0, 4, 7, 9],
+    [ChordQuality.Minor6]: [0, 3, 7, 9],
+    [ChordQuality.MinorMajor7]: [0, 3, 7, 11],
+    [ChordQuality.Dominant7Sus4]: [0, 5, 7, 10],
+    [ChordQuality.Dominant11]: [0, 2, 5, 7, 10],
+    [ChordQuality.Dominant13]: [0, 2, 4, 7, 9, 10],
+    [ChordQuality.Dominant7Flat9]: [0, 1, 4, 7, 10],
+    [ChordQuality.Dominant7Sharp9]: [0, 3, 4, 7, 10],
+  };
+
+  it('maps every detector quality the module publishes', () => {
+    for (const ordinal of Object.values(ChordQuality)) {
+      expect(() => detectedChordQuality(ordinal)).not.toThrow();
+    }
+  });
+
+  it('keeps the shared ordinals and spells the rest with extensions', () => {
+    expect(detectedChordQuality(ChordQuality.Dominant9)).toEqual({ quality: 15 });
+    for (const [ordinal, tones] of Object.entries(DETECTOR_TONES)) {
+      const symbol = {
+        startPpq: 0,
+        endPpq: 1,
+        rootPc: 0,
+        ...detectedChordQuality(Number(ordinal)),
+      };
+      expect(chordTonePitchClasses(symbol)).toEqual(tones);
+    }
+  });
+
+  it('names the added qualities conventionally', () => {
+    const name = (ordinal: number) =>
+      formatChordName({ startPpq: 0, endPpq: 1, rootPc: 0, ...detectedChordQuality(ordinal) });
+    expect(
+      [
+        ChordQuality.Major6,
+        ChordQuality.Minor6,
+        ChordQuality.MinorMajor7,
+        ChordQuality.Dominant7Sus4,
+        ChordQuality.Dominant11,
+        ChordQuality.Dominant13,
+        ChordQuality.Dominant7Flat9,
+        ChordQuality.Dominant7Sharp9,
+      ].map(name),
+    ).toEqual(['C6', 'Cm6', 'Cm(maj7)', 'C7sus4', 'C11', 'C13', 'C7b9', 'C7#9']);
+  });
+
+  it('carries the mapped quality into the detected symbols', async () => {
+    const det = detector([
+      { root: 2, bass: 2, quality: ChordQuality.Dominant7Flat9, start: 0, end: 1 },
+    ]);
+    const symbols = await analyzeAudioClipChords(audioClip(), 120, {
+      loadAudioAsset: async () => asset(48000 * 8),
+      detectChords: det.fn,
+    });
+    expect(symbols[0]).toMatchObject({ rootPc: 2, quality: 4, extensions: [1] });
   });
 });
