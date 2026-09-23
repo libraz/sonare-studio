@@ -115,6 +115,7 @@ export const shellMixing = {
       output: '出力',
       engine: 'エンジン',
       body: 'ボディ',
+      retrigger: 'ボイスの乱数',
     },
     toggles: {
       useGmPrograms: 'GM プログラム',

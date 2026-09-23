@@ -14,7 +14,11 @@ import {
   patchFieldsForSection,
   sanitizePatchDraft,
 } from '@/ui/devices/patch-draft';
-import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
+import {
+  FALLBACK_SYNTH_ENUMS,
+  resolveSynthEnums,
+  SYNTH_RETRIGGER_OPTIONS,
+} from '@/ui/devices/synth-enums';
 import {
   ARTICULATIONS,
   CONTROLLER_AXES,
@@ -28,6 +32,7 @@ import {
   SYNTH_MOD_DESTINATIONS,
   SYNTH_MOD_SOURCES,
   SYNTH_OSC_WAVEFORMS,
+  SYNTH_RETRIGGERS,
   type SynthPatch,
 } from '@/wasm/index.js';
 
@@ -192,6 +197,11 @@ describe('createPatchDraft', () => {
 });
 
 describe('sanitizePatchDraft', () => {
+  it('keeps a chosen voice seed mode and drops the keep-base spelling', () => {
+    expect(sanitizePatchDraft({ retrigger: 'note' })).toEqual({ retrigger: 'note' });
+    expect(sanitizePatchDraft({ retrigger: 'default' })).toEqual({});
+  });
+
   it('clamps numerics and drops the keep-base enum spelling', () => {
     const patch = sanitizePatchDraft({
       preset: 'saw-lead',
@@ -325,6 +335,10 @@ describe('resolveSynthEnums', () => {
       mpeDimensions: [...MPE_DIMENSIONS],
       noteTrackings: [...NOTE_TRACKINGS],
     });
+  });
+
+  it('mirrors the published voice seed modes', () => {
+    expect(SYNTH_RETRIGGER_OPTIONS).toEqual([...SYNTH_RETRIGGERS]);
   });
 
   it('overrides only the non-empty runtime tables', () => {

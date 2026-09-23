@@ -91,6 +91,13 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
 };
 
 /**
+ * Voice seed modes mirroring the published SYNTH_RETRIGGERS: 'note' restarts
+ * each voice's randomness from the note, so a repeated note renders the same
+ * samples; 'free' keeps it running.
+ */
+export const SYNTH_RETRIGGER_OPTIONS: readonly string[] = ['default', 'free', 'note'];
+
+/**
  * Merges runtime enum tables over the fallbacks. Empty or missing table
  * entries keep the fallback so a partial (or absent) catalog never produces
  * empty selects.

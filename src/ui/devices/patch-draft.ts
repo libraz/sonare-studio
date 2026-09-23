@@ -49,7 +49,13 @@ export type NumericPatchField =
   | 'bitDepth';
 
 /** Enum (string-valued) StoredSynthPatch fields the editor exposes. */
-export type EnumPatchField = 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
+export type EnumPatchField =
+  | 'engineMode'
+  | 'waveform'
+  | 'filterModel'
+  | 'filterOutput'
+  | 'body'
+  | 'retrigger';
 
 /** Spec of one numeric patch field (range, step, section placement). */
 export interface PatchFieldSpec {
@@ -477,6 +483,7 @@ const ENUM_PATCH_FIELDS: ReadonlyArray<EnumPatchField> = [
   'filterModel',
   'filterOutput',
   'body',
+  'retrigger',
 ];
 
 /** Copies the editable fields of a source patch onto a target draft. */

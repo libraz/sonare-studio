@@ -115,6 +115,7 @@ export const shellMixing = {
       output: 'Output',
       engine: 'Engine',
       body: 'Body',
+      retrigger: 'Voice seed',
     },
     toggles: {
       useGmPrograms: 'GM programs',

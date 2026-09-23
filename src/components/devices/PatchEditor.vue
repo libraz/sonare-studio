@@ -11,6 +11,7 @@ import {
   clampPatchField,
   createModMatrixRow,
   createPatchDraft,
+  type EnumPatchField,
   MAX_MOD_ROUTINGS,
   MOD_DEPTH_MAX,
   MOD_DEPTH_MIN,
@@ -22,7 +23,7 @@ import {
   patchFieldsForSection,
   sanitizePatchDraft,
 } from '@/ui/devices/patch-draft';
-import { resolveSynthEnums } from '@/ui/devices/synth-enums';
+import { resolveSynthEnums, SYNTH_RETRIGGER_OPTIONS } from '@/ui/devices/synth-enums';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
@@ -154,7 +155,7 @@ function onFieldInput(spec: PatchFieldSpec, event: Event): void {
 
 /** Enum fields rendered as selects: id, label and the table they pick from. */
 interface EnumFieldView {
-  id: 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
+  id: EnumPatchField;
   labelKey: keyof typeof t.value.shell.patchEditor.enumLabels;
   options: () => string[];
 }
@@ -169,6 +170,7 @@ const FILTER_ENUM_FIELDS: EnumFieldView[] = [
 const GLOBAL_ENUM_FIELDS: EnumFieldView[] = [
   { id: 'engineMode', labelKey: 'engine', options: () => enums.value.engineModes },
   { id: 'body', labelKey: 'body', options: () => enums.value.bodyTypes },
+  { id: 'retrigger', labelKey: 'retrigger', options: () => [...SYNTH_RETRIGGER_OPTIONS] },
 ];
 
 function enumValue(field: EnumFieldView): string {
