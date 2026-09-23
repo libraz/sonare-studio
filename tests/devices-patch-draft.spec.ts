@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { AUTOMATABLE_SYNTH_PARAMS } from '@/project/instrument';
 import {
   adsrEnvelopePoints,
   clampPatchField,
@@ -58,7 +59,17 @@ describe('patchFieldsForSection', () => {
       'gain',
       'polyphony',
       'busDrive',
+      'sampleHoldHz',
+      'bitDepth',
     ]);
+    expect(patchFieldsForSection('osc').map((spec) => spec.id)).toContain('pitchOffsetCents');
+    expect(patchFieldsForSection('filter').map((spec) => spec.id)).toContain('hpCutoffHz');
+  });
+
+  it('gives every automatable synth parameter an editor range', () => {
+    for (const param of AUTOMATABLE_SYNTH_PARAMS) {
+      expect(patchFieldSpec(param), param).not.toBeNull();
+    }
   });
 
   it('keeps a stable i18n key for every numeric field', () => {

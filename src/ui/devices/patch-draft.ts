@@ -42,7 +42,11 @@ export type NumericPatchField =
   | 'bodyMix'
   | 'gain'
   | 'polyphony'
-  | 'busDrive';
+  | 'busDrive'
+  | 'pitchOffsetCents'
+  | 'hpCutoffHz'
+  | 'sampleHoldHz'
+  | 'bitDepth';
 
 /** Enum (string-valued) StoredSynthPatch fields the editor exposes. */
 export type EnumPatchField = 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
@@ -113,6 +117,16 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     step: 0.01,
   },
   {
+    id: 'pitchOffsetCents',
+    labelKey: 'pitchOffsetCents',
+    label: 'Pitch Offset',
+    section: 'osc',
+    min: -1200,
+    max: 1200,
+    step: 1,
+    unit: 'ct',
+  },
+  {
     id: 'cutoffHz',
     labelKey: 'cutoffHz',
     label: 'Cutoff',
@@ -130,6 +144,16 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     min: 0.1,
     max: 20,
     step: 0.1,
+  },
+  {
+    id: 'hpCutoffHz',
+    labelKey: 'hpCutoffHz',
+    label: 'High-pass',
+    section: 'filter',
+    min: 0,
+    max: 20000,
+    step: 1,
+    unit: 'Hz',
   },
   {
     id: 'keyTrack',
@@ -306,6 +330,26 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     min: 0,
     max: 1,
     step: 0.01,
+  },
+  {
+    id: 'sampleHoldHz',
+    labelKey: 'sampleHoldHz',
+    label: 'Sample Rate',
+    section: 'global',
+    min: 0,
+    max: 48000,
+    step: 1,
+    unit: 'Hz',
+  },
+  {
+    id: 'bitDepth',
+    labelKey: 'bitDepth',
+    label: 'Bit Depth',
+    section: 'global',
+    min: 0,
+    max: 24,
+    step: 0.1,
+    unit: 'bit',
   },
 ];
 
