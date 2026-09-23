@@ -102,6 +102,27 @@ export function canTrackContainClip(trackKind: TrackKind, kind: ClipKind): boole
 }
 
 /**
+ * Accompaniment-follow relationship: an accompaniment track thins its notes
+ * against the melody of `leadTrackId`, parking the ones it removes in
+ * `stash` so they can come back once they stop clashing (see
+ * src/project/lead-follow.ts).
+ */
+export interface LeadFollow {
+  /** Id of the melody track this accompaniment track follows. */
+  leadTrackId: number;
+  /** Notes pulled out of their clip by thinning, restorable once they stop clashing. */
+  stash: LeadFollowStashEntry[];
+}
+
+/** One note parked outside its clip by {@link LeadFollow} thinning. */
+export interface LeadFollowStashEntry {
+  /** Id of the clip the note was removed from. */
+  clipId: number;
+  /** The removed note, in the clip's source-relative coordinates. */
+  note: Omit<EditorNote, 'id'>;
+}
+
+/**
  * One track in the arrangement mirror.
  *
  * `id`, `name` and `kind` are owned by the wasm Project (write through the
@@ -215,6 +236,17 @@ export interface EditorTrack {
    * clips and percussion tracks are never followed.
    */
   chordFollow?: ChordFollowMode;
+  /**
+   * Accompaniment follow relationship (app-level metadata); absent = this
+   * track does not follow another. See {@link LeadFollow}.
+   */
+  leadFollow?: LeadFollow;
+  /**
+   * Playable pitch range (app-level metadata, inclusive MIDI pitch); absent =
+   * unbounded. Placement guidance flags pitches outside this range (see
+   * src/project/pitch-range.ts for the standard SATB/instrument presets).
+   */
+  pitchRange?: { low: number; high: number };
   /**
    * Live, non-destructive MIDI-FX transform applied to the track's MIDI before
    * synthesis (app-level metadata; absent = no transform). Unlike a clip bake

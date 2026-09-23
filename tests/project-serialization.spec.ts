@@ -353,6 +353,129 @@ describe('project serialization', () => {
     expect(store.tracks[0].generated).toBeUndefined();
   });
 
+  it('captures a track pitch range in the document, sanitizing a malformed one', () => {
+    buildSampleProject(store);
+    const bassTrackId = store.tracks[1].id;
+    store.tracks = store.tracks.map((track) =>
+      track.id === bassTrackId ? { ...track, pitchRange: { low: 28, high: 67 } } : track,
+    );
+
+    expect(serializeProject().tracks[1].pitchRange).toEqual({ low: 28, high: 67 });
+
+    store.tracks = store.tracks.map((track) =>
+      track.id === bassTrackId ? { ...track, pitchRange: { low: 80, high: 60 } } : track,
+    );
+
+    expect(serializeProject().tracks[1].pitchRange).toBeUndefined();
+  });
+
+  it('captures a lead-follow relationship and its stash, addressed positionally', () => {
+    buildSampleProject(store);
+    const pianoTrackId = store.tracks[0].id;
+    const bassTrackId = store.tracks[1].id;
+    const bassClipId = store.clips.find((clip) => clip.trackId === bassTrackId)?.id as number;
+    const stashedNote = { pitch: 43, velocity: 90, startPpq: 2, durationPpq: 1, channel: 0 };
+    store.tracks = store.tracks.map((track) =>
+      track.id === bassTrackId
+        ? {
+            ...track,
+            leadFollow: {
+              leadTrackId: pianoTrackId,
+              stash: [{ clipId: bassClipId, note: stashedNote }],
+            },
+          }
+        : track,
+    );
+
+    expect(serializeProject().tracks[1].leadFollow).toEqual({
+      leadTrackIndex: 0,
+      stash: [{ clipIndex: 0, note: stashedNote }],
+    });
+  });
+
+  it('drops a lead-follow relationship with a dangling lead track, and a stash entry with a dangling clip', () => {
+    buildSampleProject(store);
+    const bassTrackId = store.tracks[1].id;
+    const bassClipId = store.clips.find((clip) => clip.trackId === bassTrackId)?.id as number;
+    const note = { pitch: 43, velocity: 90, startPpq: 0, durationPpq: 1, channel: 0 };
+    store.tracks = store.tracks.map((track) =>
+      track.id === bassTrackId
+        ? { ...track, leadFollow: { leadTrackId: -1, stash: [{ clipId: bassClipId, note }] } }
+        : track,
+    );
+    expect(serializeProject().tracks[1].leadFollow).toBeUndefined();
+
+    store.tracks = store.tracks.map((track) =>
+      track.id === bassTrackId
+        ? {
+            ...track,
+            leadFollow: { leadTrackId: store.tracks[0].id, stash: [{ clipId: -999, note }] },
+          }
+        : track,
+    );
+    expect(serializeProject().tracks[1].leadFollow).toEqual({ leadTrackIndex: 0, stash: [] });
+  });
+
+  it('round-trips a track pitch range and a lead-follow relationship with its stash', async () => {
+    buildSampleProject(store);
+    const pianoTrackId = store.tracks[0].id;
+    const bassTrackId = store.tracks[1].id;
+    const bassClipId = store.clips.find((clip) => clip.trackId === bassTrackId)?.id as number;
+    const stashedNote = { pitch: 43, velocity: 90, startPpq: 2, durationPpq: 1, channel: 0 };
+    store.tracks = store.tracks.map((track) => {
+      if (track.id === pianoTrackId) return { ...track, pitchRange: { low: 60, high: 79 } };
+      if (track.id === bassTrackId) {
+        return {
+          ...track,
+          pitchRange: { low: 28, high: 67 },
+          leadFollow: {
+            leadTrackId: pianoTrackId,
+            stash: [{ clipId: bassClipId, note: stashedNote }],
+          },
+        };
+      }
+      return track;
+    });
+    const doc = serializeProject();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    const reloadedPiano = store.tracks.find((track) => track.name === 'Piano');
+    const reloadedBass = store.tracks.find((track) => track.name === 'Bass');
+    expect(reloadedPiano?.pitchRange).toEqual({ low: 60, high: 79 });
+    expect(reloadedBass?.pitchRange).toEqual({ low: 28, high: 67 });
+    const reloadedBassClipId = store.clips.find((clip) => clip.trackId === reloadedBass?.id)?.id;
+    expect(reloadedBass?.leadFollow).toEqual({
+      leadTrackId: reloadedPiano?.id,
+      stash: [{ clipId: reloadedBassClipId, note: stashedNote }],
+    });
+    // Re-assigned ids differ from the original session, but the document
+    // shape (positional indices, sanitized values) must be identical.
+    expect(serializeProject()).toEqual(doc);
+  });
+
+  it('drops a lead-follow relationship during load when the lead track no longer resolves', async () => {
+    buildSampleProject(store);
+    const bassTrackId = store.tracks[1].id;
+    const doc = serializeProject();
+    const bassIndex = doc.tracks.findIndex((track) => track.name === 'Bass');
+    doc.tracks[bassIndex].leadFollow = {
+      leadTrackIndex: 99,
+      stash: [
+        {
+          clipIndex: 0,
+          note: { pitch: 43, velocity: 90, startPpq: 0, durationPpq: 1, channel: 0 },
+        },
+      ],
+    };
+
+    await loadProjectDocument(doc);
+
+    expect(
+      store.tracks.find((track) => track.id === bassTrackId || track.name === 'Bass')?.leadFollow,
+    ).toBeUndefined();
+  });
+
   it('sanitizes malformed track and clip playback numbers during load', async () => {
     buildSampleProject(store);
     const doc = serializeProject();

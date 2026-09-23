@@ -18,6 +18,7 @@ import {
 } from './midi-cc';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
 import { cloneStrip, createDefaultStrip } from './mixer';
+import { isValidPitchRange } from './pitch-range';
 import {
   DEFAULT_SAMPLE_RATE,
   DEFAULT_TEMPO_BPM,
@@ -26,7 +27,7 @@ import {
   PROJECT_MAX_UNDO_DEPTH,
   placeholderSourceAudio,
 } from './runtime';
-import type { DocumentClip, ProjectDocument } from './serialization';
+import type { DocumentClip, DocumentNote, ProjectDocument } from './serialization';
 import { normalizeTempoMap } from './tempo-map';
 import type {
   ClipCcLane,
@@ -37,6 +38,7 @@ import type {
   ClipProgramChangeLane,
   EditorClip,
   EditorTrack,
+  LeadFollowStashEntry,
   MidiClipTake,
   SmfSysExPacket,
 } from './types';
@@ -390,6 +392,46 @@ export interface HydratedDocument {
 }
 
 /**
+ * Sanitizes a stashed lead-follow note (already id-less, source-relative),
+ * the same way a MIDI-take note is validated; a malformed note drops the
+ * whole stash entry.
+ */
+function sanitizeStashNote(note: DocumentNote): LeadFollowStashEntry['note'] | undefined {
+  const pitch = Math.round(Number(note.pitch));
+  const velocity = Math.round(Number(note.velocity));
+  const startPpq = Number(note.startPpq);
+  const durationPpq = Number(note.durationPpq);
+  const channel = Math.round(Number(note.channel));
+  const offVelocity =
+    note.offVelocity !== undefined ? Math.round(Number(note.offVelocity)) : undefined;
+  if (
+    !Number.isInteger(pitch) ||
+    pitch < 0 ||
+    pitch > 127 ||
+    !Number.isInteger(velocity) ||
+    velocity < 1 ||
+    velocity > 127 ||
+    !Number.isFinite(startPpq) ||
+    startPpq < 0 ||
+    !Number.isFinite(durationPpq) ||
+    durationPpq <= 0 ||
+    !isValidChannel(channel) ||
+    (offVelocity !== undefined &&
+      (!Number.isInteger(offVelocity) || offVelocity < 1 || offVelocity > 127))
+  ) {
+    return undefined;
+  }
+  return {
+    pitch,
+    velocity,
+    startPpq,
+    durationPpq,
+    channel,
+    ...(offVelocity !== undefined ? { offVelocity } : {}),
+  };
+}
+
+/**
  * Fills a freshly created wasm Project from a serialized document.
  *
  * This is the half of loading that only reads the document and writes the
@@ -421,6 +463,10 @@ export function hydrateProjectFromDocument(
   const laneMirror: AutomationLaneState[] = [];
   const clipMeta = new Map<number, DocumentClip>();
   const loadedSourceIds = new Map<string, number>();
+  // Clip ids the Project allocated, in each track's document clip order, so a
+  // lead-follow stash's positional clipIndex can be resolved once every clip
+  // exists (below).
+  const clipIdsByTrackIndex: number[][] = [];
   let firstClipId = -1;
   doc.tracks.forEach((track, index) => {
     // Group tracks are an app-level concept; the wasm Project stores them
@@ -492,6 +538,9 @@ export function hydrateProjectFromDocument(
     if (track.chordFollow === 'chordTones' || track.chordFollow === 'root') {
       mirrorEntry.chordFollow = track.chordFollow;
     }
+    if (track.pitchRange !== undefined && isValidPitchRange(track.pitchRange)) {
+      mirrorEntry.pitchRange = { low: track.pitchRange.low, high: track.pitchRange.high };
+    }
     const expressionMap = sanitizeExpressionMap(track.expressionMap);
     if (expressionMap !== undefined) mirrorEntry.expressionMap = expressionMap;
     // Restore the VCA assignment only when the referenced group survives in
@@ -538,6 +587,8 @@ export function hydrateProjectFromDocument(
       );
     }
     trackMirror.push(mirrorEntry);
+    const clipIdsForTrack: number[] = [];
+    clipIdsByTrackIndex.push(clipIdsForTrack);
     for (const clip of track.clips) {
       const startPpq = finiteAtLeast(clip.startPpq, 0, 0);
       const lengthPpq = finiteAtLeast(clip.lengthPpq, Number.EPSILON, 1);
@@ -642,6 +693,7 @@ export function hydrateProjectFromDocument(
       }
       clipMeta.set(newClipId, safeClip);
       if (firstClipId < 0) firstClipId = newClipId;
+      clipIdsForTrack.push(newClipId);
     }
   });
 
@@ -659,6 +711,33 @@ export function hydrateProjectFromDocument(
       trackMirror[track.groupIndex].kind === 'group'
     ) {
       entry.groupId = trackMirror[track.groupIndex].id;
+    }
+    if (
+      track.leadFollow !== undefined &&
+      Number.isInteger(track.leadFollow.leadTrackIndex) &&
+      track.leadFollow.leadTrackIndex >= 0 &&
+      track.leadFollow.leadTrackIndex < trackMirror.length &&
+      track.leadFollow.leadTrackIndex !== index
+    ) {
+      // A stash entry's clipIndex addresses this track's own clips, in the
+      // same order they were just created (see clipIdsByTrackIndex above); a
+      // dangling clip drops only that entry, not the whole relationship.
+      const clipIds = clipIdsByTrackIndex[index] ?? [];
+      const stash: LeadFollowStashEntry[] = [];
+      for (const stashed of track.leadFollow.stash ?? []) {
+        if (
+          !stashed ||
+          !Number.isInteger(stashed.clipIndex) ||
+          stashed.clipIndex < 0 ||
+          stashed.clipIndex >= clipIds.length
+        ) {
+          continue;
+        }
+        const note = sanitizeStashNote(stashed.note);
+        if (note === undefined) continue;
+        stash.push({ clipId: clipIds[stashed.clipIndex], note });
+      }
+      entry.leadFollow = { leadTrackId: trackMirror[track.leadFollow.leadTrackIndex].id, stash };
     }
     const inserts = track.mixer?.inserts ?? [];
     inserts.forEach((slot, slotIndex) => {

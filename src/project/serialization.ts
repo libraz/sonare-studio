@@ -58,6 +58,7 @@ import {
   type MixerStrip,
   type ProjectMixerState,
 } from './mixer';
+import { isValidPitchRange } from './pitch-range';
 import { getProject, useProjectStore } from './store';
 import { normalizeProcessorMidiLearnTarget } from './target-reference-registry';
 import {
@@ -146,6 +147,12 @@ import {
  *   from what. Both are omitted when there is nothing to say, so documents
  *   written before them load as "nothing was generated here" and loaders that
  *   predate them simply ignore the fields.
+ *   Additionally (still version 3, additive): tracks may carry an optional
+ *   `pitchRange` (inclusive MIDI pitch, see src/project/pitch-range.ts for the
+ *   standard SATB/instrument presets) and an optional `leadFollow`
+ *   accompaniment-follow relationship, addressing the followed track by
+ *   positional index (see `groupIndex`) and carrying its stashed notes. Both
+ *   are omitted when absent, so documents written before them load unchanged.
  *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
@@ -330,6 +337,25 @@ export interface DocumentTrack {
   recordInputChannel?: number;
   /** Preferred audioinput device id for multi-device audio recording. */
   recordInputDeviceId?: string;
+  /** Playable pitch range (inclusive MIDI pitch); absent = unbounded. */
+  pitchRange?: { low: number; high: number };
+  /** Accompaniment follow relationship; absent = the track follows nothing. */
+  leadFollow?: DocumentLeadFollow;
+}
+
+/**
+ * Accompaniment follow relationship persisted in a document (see
+ * `EditorTrack.leadFollow` in src/project/types.ts). The followed track is
+ * addressed by positional index, like {@link DocumentTrack.groupIndex}, since
+ * track ids are session-scoped; a stashed note's origin clip has no id of its
+ * own in the document either, so it is addressed by its index within this
+ * track's `clips` array.
+ */
+export interface DocumentLeadFollow {
+  /** Positional index of the melody track this accompaniment track follows. */
+  leadTrackIndex: number;
+  /** Notes parked outside their clip by thinning, in source-relative PPQ. */
+  stash: Array<{ clipIndex: number; note: DocumentNote }>;
 }
 
 /** One timeline marker of the document. */
@@ -784,6 +810,19 @@ function toDocumentNote(note: EditorNote): DocumentNote {
   return out;
 }
 
+/** Deep-copies a stashed lead-follow note (already id-less, source-relative). */
+function toDocumentStashNote(note: DocumentNote): DocumentNote {
+  const out: DocumentNote = {
+    pitch: note.pitch,
+    velocity: note.velocity,
+    startPpq: note.startPpq,
+    durationPpq: note.durationPpq,
+    channel: note.channel,
+  };
+  if (note.offVelocity !== undefined) out.offVelocity = note.offVelocity;
+  return out;
+}
+
 /**
  * Serializes the current project (store mirror + Project sample rate) into a
  * plain {@link ProjectDocument}. The result contains no session ids and is
@@ -875,6 +914,30 @@ export function serializeProject(): ProjectDocument {
         track.recordInputDeviceId.length > 0
       ) {
         out.recordInputDeviceId = track.recordInputDeviceId;
+      }
+      // A malformed range never reaches the store through setTrackPitchRange,
+      // but a directly mutated mirror is still sanitized before it is written.
+      if (track.pitchRange !== undefined && isValidPitchRange(track.pitchRange)) {
+        out.pitchRange = { ...track.pitchRange };
+      }
+      if (track.leadFollow !== undefined) {
+        // The followed track and a stash entry's origin clip are session ids
+        // with no place in the document; store them positionally like
+        // groupIndex (a dangling track reference drops the whole
+        // relationship, a dangling clip reference drops just that entry).
+        const leadTrackIndex = store.tracks.findIndex(
+          (entry) => entry.id === track.leadFollow?.leadTrackId,
+        );
+        if (leadTrackIndex >= 0) {
+          const trackClips = store.clips.filter((clip) => clip.trackId === track.id);
+          out.leadFollow = {
+            leadTrackIndex,
+            stash: track.leadFollow.stash.flatMap((entry) => {
+              const clipIndex = trackClips.findIndex((clip) => clip.id === entry.clipId);
+              return clipIndex < 0 ? [] : [{ clipIndex, note: toDocumentStashNote(entry.note) }];
+            }),
+          };
+        }
       }
       // Track automation rides the track entry (track ids are session-scoped,
       // so a document never stores lane targets); omitted when there is none.

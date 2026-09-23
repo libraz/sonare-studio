@@ -2,6 +2,7 @@ import { linearToDb } from '@/lib/db';
 import type { ChordFollowMode } from '../chord-follow';
 import { sanitizeExpressionMap, type TrackExpressionMap } from '../expression-map';
 import { assertCanAddEngineBus, createDefaultStrip } from '../mixer';
+import { isValidPitchRange, type PitchRange } from '../pitch-range';
 import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '../types';
@@ -422,6 +423,40 @@ export function setTrackPercussion(trackId: number, percussion: boolean | null):
       const next = { ...t };
       if (percussion === null) delete next.percussion;
       else next.percussion = percussion;
+      return next;
+    });
+    store.refresh();
+  });
+}
+
+/**
+ * Sets or clears a track's playable pitch range as one undoable edit. The
+ * range is app-level metadata (see src/project/pitch-range.ts for the
+ * standard SATB/instrument presets); placement guidance flags pitches
+ * outside it once one is set.
+ *
+ * @param trackId Id of the track.
+ * @param range Inclusive MIDI pitch range, or null to clear it.
+ */
+export function setTrackPitchRange(trackId: number, range: PitchRange | null): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (range !== null && !isValidPitchRange(range)) {
+    throw new RangeError(`Invalid pitch range: ${JSON.stringify(range)}`);
+  }
+  const current = track.pitchRange ?? null;
+  if (
+    (current === null && range === null) ||
+    (current !== null && range !== null && current.low === range.low && current.high === range.high)
+  ) {
+    return;
+  }
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      const next = { ...t };
+      if (range === null) delete next.pitchRange;
+      else next.pitchRange = { low: range.low, high: range.high };
       return next;
     });
     store.refresh();
