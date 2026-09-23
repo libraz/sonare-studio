@@ -28,6 +28,8 @@ export function splitClipWithin(edit: AtomicProjectEdit, clipId: number, splitPp
   }
   const sourceMeta = { ...source };
   const sourceAnnotations = store.scoreAnnotations[clipId];
+  // The engine refuses to split or trim a clip bound to a warp map; each side is reinstalled below.
+  clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
   const rightId = edit(1, () => project.splitClip(clipId, splitPpq));
   store.refresh();
   const splitOffsetPpq = splitPpq - source.startPpq;
@@ -90,6 +92,7 @@ export function trimClipWithin(
     throw new RangeError(`Timeline trim must remain inside clip ${clipId}`);
   }
   const sourceMeta = { ...source };
+  clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
   edit(1, () => project.trimClip(clipId, newStartPpq, newLengthPpq));
   store.refresh();
   store.clips = store.clips.map((clip) =>
