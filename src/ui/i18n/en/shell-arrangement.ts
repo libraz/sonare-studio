@@ -4,6 +4,7 @@ export const shellArrangement = {
     menuLabel: 'Generate menu',
     progression: 'Generate chord progression…',
     tracks: 'Generate tracks…',
+    keyChanges: 'Detect key changes…',
     chord: {
       title: 'Generate chord progression',
       modeProgression: 'Create new',
@@ -149,6 +150,17 @@ export const shellArrangement = {
       generate: 'Generate {count} tracks',
       generateEmpty: 'Generate tracks',
       error: 'Generation failed (no changes were made).',
+    },
+    keyChange: {
+      title: 'Detect key changes',
+      description:
+        'Regions where the notes suggest a different key than what is currently in effect.',
+      empty: 'No key changes were detected.',
+      itemLabel: '{position} → {key}',
+      apply: 'Add {count} markers',
+      applyEmpty: 'Add markers',
+      cancel: 'Cancel',
+      error: 'Could not add the key markers.',
     },
   },
   lists: {

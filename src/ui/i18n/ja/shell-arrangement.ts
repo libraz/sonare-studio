@@ -4,6 +4,7 @@ export const shellArrangement = {
     menuLabel: '生成メニュー',
     progression: 'コード進行を生成…',
     tracks: 'トラックを生成…',
+    keyChanges: '調の変化を検出…',
     chord: {
       title: 'コード進行を生成',
       modeProgression: '新規に作成',
@@ -148,6 +149,16 @@ export const shellArrangement = {
       generate: '{count}トラックを生成',
       generateEmpty: 'トラックを生成',
       error: '生成に失敗しました（変更はありません）。',
+    },
+    keyChange: {
+      title: '調の変化を検出',
+      description: '今の調と異なる調を示している区間です。',
+      empty: '調の変化は見つかりませんでした。',
+      itemLabel: '{position} → {key}',
+      apply: '{count}件のマーカーを追加',
+      applyEmpty: 'マーカーを追加',
+      cancel: 'キャンセル',
+      error: 'マーカーを追加できませんでした。',
     },
   },
   lists: {

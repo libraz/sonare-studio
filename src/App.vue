@@ -12,6 +12,7 @@ import {
 import ArrangementView from '@/components/arrangement/ArrangementView.vue';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
+import KeyChangeDialog from '@/components/compose/KeyChangeDialog.vue';
 import TrackGenerateDialog, {
   type TrackGenerateOpenWith,
 } from '@/components/compose/TrackGenerateDialog.vue';
@@ -303,6 +304,7 @@ const commandPaletteOpen = ref(false);
 const chordGenerateDialogOpen = ref(false);
 const trackGenerateDialogOpen = ref(false);
 const trackGenerateOpenWith = ref<TrackGenerateOpenWith | null>(null);
+const keyChangeDialogOpen = ref(false);
 
 /** Opens Flow B (track generation), optionally pre-focused on one part. */
 function openTrackGenerateDialog(openWith: TrackGenerateOpenWith | null = null): void {
@@ -315,6 +317,13 @@ function openTrackGenerateDialog(openWith: TrackGenerateOpenWith | null = null):
 function openChordGenerateDialog(): void {
   trackGenerateDialogOpen.value = false;
   chordGenerateDialogOpen.value = true;
+}
+
+/** Opens the key-change detection dialog from the Generate menu. */
+function openKeyChangeDialog(): void {
+  trackGenerateDialogOpen.value = false;
+  chordGenerateDialogOpen.value = false;
+  keyChangeDialogOpen.value = true;
 }
 
 /** Track-header "regenerate": opens Flow B pre-focused on replacing this track. */
@@ -819,6 +828,7 @@ const {
   openExportDialog,
   openChordGenerateDialog,
   openTrackGenerateDialog: () => openTrackGenerateDialog(),
+  openKeyChangeDialog,
   openNewDialog,
   openOpenDialog,
   openRevisionsDialog,
@@ -1478,6 +1488,8 @@ onMounted(installLaunchQueueConsumer);
       @close="trackGenerateDialogOpen = false"
       @open-chords="openChordGenerateDialog"
     />
+
+    <KeyChangeDialog :open="keyChangeDialogOpen" @close="keyChangeDialogOpen = false" />
 
     <ExportDialog
       :open="exportDialogOpen"

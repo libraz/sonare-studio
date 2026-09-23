@@ -98,6 +98,7 @@ export interface AppShortcutsMenuOptions {
   openExportDialog: () => void;
   openChordGenerateDialog: () => void;
   openTrackGenerateDialog: () => void;
+  openKeyChangeDialog: () => void;
   openNewDialog: () => void;
   openOpenDialog: () => void;
   openRevisionsDialog: () => void;
@@ -609,6 +610,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         disabled: noProject,
       }),
       commandItem('generate.tracks', g.tracks, options.openTrackGenerateDialog, {
+        disabled: noProject,
+      }),
+      commandItem('generate.keyChanges', g.keyChanges, options.openKeyChangeDialog, {
         disabled: noProject,
       }),
     ];
