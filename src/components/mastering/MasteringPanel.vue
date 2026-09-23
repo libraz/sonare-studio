@@ -11,6 +11,7 @@ import type { MixdownResult } from '@/export/mixdown';
 import { ensureWasm } from '@/lib/wasm';
 import {
   addMasteringProcessor,
+  applyMasteringPresetWithOverrides,
   type CommandGestureOptions,
   removeMasteringProcessor,
   reorderMasteringProcessor,
@@ -27,6 +28,7 @@ import {
   type MasteringSuggestion,
   parseMasteringSuggestion,
   suggestedPreset,
+  suggestedPresetOverrides,
 } from '@/ui/mastering/assistant';
 import {
   clampControlValue,
@@ -71,6 +73,7 @@ import {
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
 import { analyzeMatchEqToReference, type SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
+import type { MasteringPreset } from '@/wasm/index.js';
 
 /**
  * Mastering panel for the editor dock: the project mastering chain as an
@@ -216,6 +219,16 @@ function onClearPresetOverride(key: string): void {
 
 const suggestion = ref<MasteringSuggestion | null>(null);
 const suggesting = ref(false);
+/** Preset values the last suggestion tuned, applied as that preset's overrides. */
+const suggestionTuning = ref<{
+  preset: string;
+  entries: Array<{ key: string; from: number | boolean | undefined; to: number | boolean }>;
+} | null>(null);
+const suggestionAdjustments = computed(() =>
+  suggestionTuning.value && suggestionTuning.value.preset === chain.value.preset
+    ? suggestionTuning.value.entries
+    : [],
+);
 
 /**
  * The rendered channels as a left/right pair, or null when the render is not
@@ -289,7 +302,25 @@ async function onAutoSuggest(): Promise<void> {
     suggestion.value = parsed;
     if (presetCatalog.value.length === 0) presetCatalog.value = loadMasteringPresetCatalog();
     const preset = suggestedPreset(parsed, presetCatalog.value);
-    if (preset) runCommand(() => setMasteringPreset(preset));
+    if (!preset) return;
+    // The tuned chain describes the top candidate, so it only refines that preset.
+    const presetParams =
+      preset === parsed.genreCandidates[0]?.name && parsed.chainParams
+        ? wasm.masteringPresetParams(preset as MasteringPreset)
+        : null;
+    const overrides =
+      presetParams && parsed.chainParams
+        ? suggestedPresetOverrides(parsed.chainParams, presetParams)
+        : {};
+    suggestionTuning.value = {
+      preset,
+      entries: Object.entries(overrides).map(([key, to]) => ({
+        key,
+        from: presetParams?.[key],
+        to,
+      })),
+    };
+    runCommand(() => applyMasteringPresetWithOverrides(preset, overrides));
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -891,6 +922,7 @@ onBeforeUnmount(() => {
           v-if="suggestion"
           :suggestion="suggestion"
           :preset="chain.preset"
+          :adjustments="suggestionAdjustments"
           @select="onSelectPreset"
         />
         <section class="preset-overrides" :class="{ disabled: !chain.preset }">

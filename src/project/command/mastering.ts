@@ -78,6 +78,35 @@ export function setMasteringPreset(preset: string | null, options?: CommandGestu
 }
 
 /**
+ * Selects a mastering preset together with the overrides that tune it, as one
+ * undoable edit: an assistant suggestion is the preset plus its departures, and
+ * undoing it must restore both. The overrides replace any the chain had.
+ *
+ * @param preset Wasm mastering preset name.
+ * @param overrides Flat override map; empty clears the chain's overrides.
+ */
+export function applyMasteringPresetWithOverrides(
+  preset: string,
+  overrides: Readonly<Record<string, number | boolean>>,
+): void {
+  const store = useProjectStore();
+  if (preset.length === 0) throw new RangeError('Mastering preset name must not be empty');
+  for (const [param, value] of Object.entries(overrides)) {
+    if (typeof value === 'number' && !Number.isFinite(value)) {
+      throw new RangeError(`Mastering preset override "${param}" must be finite, got ${value}`);
+    }
+  }
+  const chain = currentMasteringChain(store);
+  executeApp(() => {
+    chain.preset = preset;
+    if (Object.keys(overrides).length === 0) delete chain.presetOverrides;
+    else chain.presetOverrides = { ...overrides };
+    writeMasteringChain(store, chain);
+    store.refresh();
+  });
+}
+
+/**
  * Sets or clears a flat override for the selected mastering preset. Overrides
  * are applied by masterAudioStereo on top of the named preset during export.
  *

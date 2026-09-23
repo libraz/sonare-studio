@@ -5,7 +5,8 @@ import { humanizePresetName } from '@/ui/mastering/preset-catalog';
 
 /**
  * Result block for the mastering assistant: the scored preset chips (apply on
- * click), the assistant's explanation lines and the measured loudness profile.
+ * click), the preset values the suggestion tuned, the assistant's explanation
+ * lines and the measured loudness profile.
  * The analysis and the (undoable) preset apply are owned by the panel; this
  * component only renders the parsed suggestion and emits the chosen preset.
  */
@@ -15,11 +16,24 @@ defineProps<{
   suggestion: MasteringSuggestion;
   /** Currently selected preset id, used to highlight the matching chip. */
   preset: string | undefined;
+  /** Preset values the suggestion tuned, applied as the preset's overrides. */
+  adjustments: ReadonlyArray<{
+    key: string;
+    from: number | boolean | undefined;
+    to: number | boolean;
+  }>;
 }>();
 
 const emit = defineEmits<(event: 'select', preset: string) => void>();
 
 const { t } = useI18n();
+
+/** Compact display of a flat chain value. */
+function formatValue(value: number | boolean | undefined): string {
+  if (value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? 'on' : 'off';
+  return String(Math.round(value * 100) / 100);
+}
 </script>
 
 <template>
@@ -39,6 +53,17 @@ const { t } = useI18n();
           <span class="assist-score">{{ Math.round(candidate.score * 100) }}</span>
         </button>
       </div>
+    </div>
+    <div v-if="adjustments.length" class="assist-section">
+      <div class="assist-heading">{{ t.shell.mastering.assistant.adjusted }}</div>
+      <ul class="assist-adjustments">
+        <li v-for="adjustment in adjustments" :key="adjustment.key">
+          <span class="assist-adjustment-key">{{ adjustment.key }}</span>
+          <span class="assist-adjustment-values">
+            {{ formatValue(adjustment.from) }} → {{ formatValue(adjustment.to) }}
+          </span>
+        </li>
+      </ul>
     </div>
     <div v-if="suggestion.explanation.length" class="assist-section">
       <ul class="assist-explain">

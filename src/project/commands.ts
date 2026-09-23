@@ -109,6 +109,7 @@ export { applyKeyChangeMarkers } from './command/key-changes';
 export { setTrackLeadFollow } from './command/lead-follow';
 export {
   addMasteringProcessor,
+  applyMasteringPresetWithOverrides,
   removeMasteringProcessor,
   reorderMasteringProcessor,
   setMasteringEnabled,

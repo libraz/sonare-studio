@@ -615,6 +615,42 @@ describe('MasteringPanel.vue', () => {
     expect(store.mixer.masteringChain?.preset).toBe('edm');
   });
 
+  it('applies the suggested preset with the values it tuned, undoable as one edit', async () => {
+    const wasm = await masteringWasm();
+    wasm.masteringAssistantSuggestStereo?.mockReturnValueOnce(
+      JSON.stringify({
+        genreCandidates: [{ name: 'edm', score: 1 }],
+        chainConfig: {
+          version: 1,
+          params: { 'loudness.targetLufs': -14, 'loudness.ceilingDb': -1 },
+        },
+      }),
+    );
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    await wrapper.find('.assist-button').trigger('click');
+    await flush();
+
+    expect(store.mixer.masteringChain?.preset).toBe('edm');
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+    const adjustments = wrapper.findAll('.assist-adjustments li');
+    expect(adjustments).toHaveLength(1);
+    expect(adjustments[0].text()).toContain('loudness.targetLufs');
+    expect(adjustments[0].text()).toContain('-12 → -14');
+
+    undo();
+    await nextTick();
+    expect(store.mixer.masteringChain?.preset).toBeUndefined();
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+  });
+
   it('falls back to the mono assistant when the stereo entry point is absent', async () => {
     const wasm = await masteringWasm();
     wasm.masteringAssistantSuggest.mockClear();

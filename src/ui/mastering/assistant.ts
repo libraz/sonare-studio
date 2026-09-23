@@ -6,8 +6,9 @@
  *
  * The assistant's `genreCandidates[].name` values are the camelCase preset
  * identifiers (pop, edm, jpop, …), so the top candidate maps directly onto the
- * project's mastering preset selector. The flat `chainConfig` params are not
- * consumed: the catalogued preset is that genre's voicing.
+ * project's mastering preset selector. Its flat `chainConfig.params` is that
+ * preset's chain tuned to the mix; the keys where it differs from the preset
+ * become the chain's preset overrides.
  */
 
 /** One scored genre/preset candidate from the assistant. */
@@ -41,6 +42,8 @@ export interface MasteringSuggestion {
   explanation: string[];
   /** Measured audio profile, or null when the assistant omitted it. */
   profile: MasteringProfile | null;
+  /** Flat chain params tuned for the top candidate, or null when omitted. */
+  chainParams: Record<string, number | boolean> | null;
 }
 
 /** Profile fields in the order they appear in the assistant JSON. */
@@ -78,10 +81,10 @@ export function parseMasteringSuggestion(json: string): MasteringSuggestion {
   try {
     root = JSON.parse(json);
   } catch {
-    return { genreCandidates: [], explanation: [], profile: null };
+    return { genreCandidates: [], explanation: [], profile: null, chainParams: null };
   }
   if (typeof root !== 'object' || root === null) {
-    return { genreCandidates: [], explanation: [], profile: null };
+    return { genreCandidates: [], explanation: [], profile: null, chainParams: null };
   }
   const record = root as Record<string, unknown>;
 
@@ -106,7 +109,42 @@ export function parseMasteringSuggestion(json: string): MasteringSuggestion {
     for (const key of PROFILE_KEYS) profile[key] = numberField(source, key);
   }
 
-  return { genreCandidates, explanation, profile };
+  let chainParams: Record<string, number | boolean> | null = null;
+  const chainConfig = record.chainConfig as Record<string, unknown> | null | undefined;
+  if (typeof chainConfig?.params === 'object' && chainConfig.params !== null) {
+    chainParams = {};
+    for (const [key, value] of Object.entries(chainConfig.params)) {
+      if (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value))) {
+        chainParams[key] = value;
+      }
+    }
+  }
+
+  return { genreCandidates, explanation, profile, chainParams };
+}
+
+/**
+ * The keys where a suggested chain differs from the preset it was tuned from,
+ * with the suggested values: what to store as that preset's overrides.
+ * Numbers within float rounding of the preset's value count as equal.
+ *
+ * @param chainParams The suggestion's flat chain params.
+ * @param presetParams The preset's own flat params (masteringPresetParams).
+ */
+export function suggestedPresetOverrides(
+  chainParams: Readonly<Record<string, number | boolean>>,
+  presetParams: Readonly<Record<string, number | boolean>>,
+): Record<string, number | boolean> {
+  const overrides: Record<string, number | boolean> = {};
+  for (const [key, value] of Object.entries(chainParams)) {
+    const base = presetParams[key];
+    const same =
+      typeof value === 'number' && typeof base === 'number'
+        ? Math.abs(value - base) <= 1e-6 * Math.max(1, Math.abs(base))
+        : value === base;
+    if (!same) overrides[key] = value;
+  }
+  return overrides;
 }
 
 /**

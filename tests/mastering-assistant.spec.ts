@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseMasteringSuggestion, suggestedPreset } from '@/ui/mastering/assistant';
+import {
+  parseMasteringSuggestion,
+  suggestedPreset,
+  suggestedPresetOverrides,
+} from '@/ui/mastering/assistant';
 
 /** A representative assistant JSON payload (subset of real fields). */
 const SAMPLE = JSON.stringify({
@@ -45,10 +49,11 @@ describe('parseMasteringSuggestion', () => {
       attackDensity: 0.6,
       sustainRatio: 0.4,
     });
+    expect(result.chainParams).toEqual({ limiterCeilingDb: -1 });
   });
 
   it('returns an empty suggestion for unparseable or non-object input', () => {
-    const empty = { genreCandidates: [], explanation: [], profile: null };
+    const empty = { genreCandidates: [], explanation: [], profile: null, chainParams: null };
     expect(parseMasteringSuggestion('not json')).toEqual(empty);
     expect(parseMasteringSuggestion('42')).toEqual(empty);
     expect(parseMasteringSuggestion('null')).toEqual(empty);
@@ -100,8 +105,31 @@ describe('suggestedPreset', () => {
   });
 
   it('returns null when there are no candidates', () => {
-    expect(suggestedPreset({ genreCandidates: [], explanation: [], profile: null }, ['pop'])).toBe(
-      null,
-    );
+    expect(
+      suggestedPreset({ genreCandidates: [], explanation: [], profile: null, chainParams: null }, [
+        'pop',
+      ]),
+    ).toBe(null);
+  });
+});
+
+describe('suggestedPresetOverrides', () => {
+  it('keeps only the keys where the suggestion departs from the preset', () => {
+    expect(
+      suggestedPresetOverrides(
+        {
+          'loudness.targetLufs': -14,
+          'loudness.ceilingDb': -1,
+          'eq.tilt.enabled': true,
+          'dynamics.compressor.ratio': 2.0000001,
+        },
+        {
+          'loudness.targetLufs': -12,
+          'loudness.ceilingDb': -1,
+          'eq.tilt.enabled': false,
+          'dynamics.compressor.ratio': 2,
+        },
+      ),
+    ).toEqual({ 'loudness.targetLufs': -14, 'eq.tilt.enabled': true });
   });
 });

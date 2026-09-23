@@ -500,9 +500,10 @@ export const shellMixing = {
     assistant: {
       suggest: '自動提案',
       analyzing: '解析中…',
-      title: 'ミックスを解析して最適なプリセットを適用',
+      title: 'ミックスを解析し、最適なプリセットをミックスに合わせて調整して適用',
       unavailable: 'この libsonare ビルドではマスタリングアシスタントを利用できません',
       needsPreview: '解析する音声が必要です。先にプレビューをレンダーしてください',
+      adjusted: 'プリセットから調整した値:',
       recommended: '提案:',
       lufs: '{value} LUFS',
       lra: 'LRA {value} LU',

@@ -132,3 +132,34 @@
   border-radius: var(--radius-xs);
   padding: 3px 6px;
 }
+
+.assist-adjustments {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: var(--fs-2xs)/1.45 var(--font-sans);
+}
+
+.assist-adjustments li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.assist-adjustment-key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text-3);
+}
+
+.assist-adjustment-values {
+  flex: none;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}

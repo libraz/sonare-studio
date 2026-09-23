@@ -1602,6 +1602,7 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     masteringInsertParamInfo: (name: string) => FAKE_INSERT_PARAM_INFO[name] ?? [],
     masteringPresetNames: fakeMasteringPresetNames,
     capabilityCatalog: () => ({ masteringPresets: fakeMasteringPresetCatalog() }),
+    masteringPresetParams: () => ({ 'loudness.targetLufs': -12, 'loudness.ceilingDb': -1 }),
     mixingScenePresetNames: fakeMixingScenePresetNames,
     mixingScenePresetJson: fakeMixingScenePresetJson,
     masteringStreamingPreview: (

@@ -498,9 +498,10 @@ export const shellMixing = {
     assistant: {
       suggest: 'Auto-suggest',
       analyzing: 'Analyzing…',
-      title: 'Analyze the mix and apply the best-matching preset',
+      title: 'Analyze the mix and apply the best-matching preset, tuned to it',
       unavailable: 'Mastering assistant is unavailable in this libsonare build',
       needsPreview: 'Render a preview first so the assistant has audio to analyze',
+      adjusted: 'Tuned from the preset:',
       recommended: 'Suggested:',
       lufs: '{value} LUFS',
       lra: 'LRA {value} LU',
