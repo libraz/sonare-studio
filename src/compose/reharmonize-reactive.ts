@@ -274,8 +274,8 @@ export function proposeReactiveReharmonization(
           placement: { transposeSearch: false, octaveSearch: false },
           ctx: { seed: input.seed ?? 0 },
         });
-        segmentKey = configuredKey ?? result.key;
-        if (!input.key.enabled) inferredKey ??= result.key;
+        segmentKey = configuredKey ?? result.key.scale;
+        if (!input.key.enabled) inferredKey ??= result.key.scale;
         const offset = range.startPpq - gridOriginPpq;
         spans.push(
           ...result.chords.map((span) => ({ ...span, startBeat: span.startBeat + offset })),
@@ -294,7 +294,7 @@ export function proposeReactiveReharmonization(
         ctx: { seed: input.seed ?? 0 },
       });
       spans = result.chords;
-      if (!input.key.enabled) inferredKey = result.key;
+      if (!input.key.enabled) inferredKey = result.key.scale;
     }
   } catch {
     return unchanged;

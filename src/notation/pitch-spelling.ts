@@ -321,8 +321,7 @@ export function spellLineInKeySignature(
         durationBeat: note.durationBeat,
       })),
       null,
-      key,
-      { tonic },
+      { ...key, tonic },
     );
     return spelled.map((note, index) => {
       const step = STEPS[((note.letter % 7) + 7) % 7];

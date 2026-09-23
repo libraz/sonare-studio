@@ -163,17 +163,16 @@ describe('ottava battuta', () => {
     expect(findings?.battuta).toBe(undefined);
   });
 
-  it('survives the contrary-motion dismissal the parallel reading applies', () => {
-    // A5 -> A4 over A3 -> A4: octave classes on both sides, so the library
-    // calls it a parallel and the suppression drops it as contrary motion —
-    // correctly, since nothing runs parallel. The battuta is a different rule
-    // about exactly that motion, and it must still be reported.
+  it('leaves an octave the voices were already sitting on to the parallel reading', () => {
+    // A5 -> A4 over A3 -> A4: octave classes on both sides. The library names
+    // that a parallel rather than a battuta, and the parallel reading drops it
+    // as contrary motion, so neither reading reports it.
     const result = buildGuidance(
       guidanceInput({ notes: twoNoteLine(81, 69), lines: [otherVoice([45, 57])] }),
     );
     const analysis = result.byNoteId.get(2);
     expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBe(0);
-    expect(analysis?.counterpoint?.battuta).toBe(true);
+    expect(analysis?.counterpoint?.battuta).toBe(undefined);
   });
 });
 

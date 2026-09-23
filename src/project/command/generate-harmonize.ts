@@ -172,7 +172,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
         placement: { transposeSearch: false, octaveSearch: false },
         ctx: { seed: params.seed ?? 0 },
       });
-      segmentKey = explicitKey ?? result.key;
+      segmentKey = explicitKey ?? result.key.scale;
       symbols.push(
         ...spansToChordSymbols(result, localEnd - localStart, range.startPpq).map((chord) => ({
           ...chord,

@@ -22,6 +22,7 @@ import {
   modalInterchangePalette,
   negativeHarmonyMirror,
   type SubstitutionType,
+  spelledKeyOf,
   substituteChord,
   type TimeSignature,
 } from '@libraz/libcantus';
@@ -157,7 +158,11 @@ export function substitutionsFor(
   melodyPcs?: number[],
 ): ReharmCandidate[] {
   const chord = editorChordToChord(symbol);
-  const subs = substituteChord(chord, key, melodyPcs !== undefined ? { melodyPcs } : undefined);
+  const subs = substituteChord(
+    chord,
+    spelledKeyOf(key),
+    melodyPcs !== undefined ? { melodyPcs } : undefined,
+  );
   return subs.map((sub) => ({
     symbol: chordSpanToEditorChord(
       {
@@ -186,7 +191,7 @@ export function modalInterchangeFor(
   key: KeyScale,
   region: { startPpq: number; endPpq: number },
 ): ReharmCandidate[] {
-  return modalInterchangePalette(key).map((entry) => ({
+  return modalInterchangePalette(spelledKeyOf(key)).map((entry) => ({
     symbol: chordSpanToEditorChord(
       {
         rootPc: entry.chord.rootPc,
@@ -210,7 +215,7 @@ export function modalInterchangeFor(
  * @param key The prevailing key.
  */
 export function negativeHarmonyFor(symbol: EditorChordSymbol, key: KeyScale): ReharmCandidate {
-  const mirror = negativeHarmonyMirror(editorChordToChord(symbol), key);
+  const mirror = negativeHarmonyMirror(editorChordToChord(symbol), spelledKeyOf(key));
   return {
     symbol: chordSpanToEditorChord(
       { rootPc: mirror.rootPc, quality: mirror.quality, startBeat: 0, bassPc: mirror.bassPc },

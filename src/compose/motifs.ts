@@ -33,6 +33,7 @@ import {
   type MotifRelationKind,
   melodicContour,
   relateMotifs,
+  spelledKeyOf,
 } from '@libraz/libcantus';
 import { editorNotesToNoteEvents } from './notes-io';
 import { harmonicTracksOnly, type TrackWithNotes, topVoiceOnly } from './tracks';
@@ -134,7 +135,7 @@ function relationsBetween(
       const relation =
         key === undefined
           ? relateMotifs(motifs[from], motifs[to])
-          : relateMotifs(motifs[from], motifs[to], key);
+          : relateMotifs(motifs[from], motifs[to], spelledKeyOf(key));
       // Two figures that are simply different are not related; the library says
       // so with null rather than naming a transformation that is not there.
       if (relation === null) continue;

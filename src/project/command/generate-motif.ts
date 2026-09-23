@@ -31,7 +31,7 @@ import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { isFourFourBarRange } from '../time-signature';
+import { isFourFourBarRange, timeSignatureAt } from '../time-signature';
 import type { EditorClip } from '../types';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
 import { executeAtomic } from './history';
@@ -120,7 +120,8 @@ export function buildMotifCell(
       at: (beat) => target.chordAt(target.startPpq + beat),
       segments: [],
     };
-    cell = developMotif(cell, targetTimeline, key, bars);
+    const meter = timeSignatureAt(target.timeSignatures, target.startPpq);
+    cell = developMotif(cell, targetTimeline, key, bars, meter);
   }
   return cell;
 }

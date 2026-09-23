@@ -93,7 +93,7 @@ export function buildKeyMap(
     const marker = sortedMarkers[i];
     const keySig = keySignatureFromMarker(marker.name);
     if (keySig === null) continue; // unreachable: filtered into byPosition above
-    let key = keyFromFifths(keySig.fifths, keySig.minor ? 'minor' : 'major').key;
+    let key = keyFromFifths(keySig.fifths, keySig.minor ? 'minor' : 'major').scale;
     if (declaredKey !== null && isMinorKey(declaredKey) && sameKeyName(key, declaredKey)) {
       key = declaredKey;
     }

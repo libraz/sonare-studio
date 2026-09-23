@@ -181,14 +181,14 @@ function keySpansOf(timeline: ChordTimeline, key: KeyScale): KeySpan[] {
     const span: KeySpan = {
       startPpq: region.startBeat,
       endPpq: region.endBeat,
-      key: index === 0 ? key : region.key,
+      key: index === 0 ? key : region.key.scale,
     };
     // Both fields describe the move away from the previous region's *detected*
     // key. That is the key the span before is read in everywhere except across
     // the first boundary, where the declared key may have replaced a different
     // detection, so there they are dropped rather than reported against a key
     // nothing is read in.
-    if (index > 1 || (index === 1 && sameKey(regions[0].key, key))) {
+    if (index > 1 || (index === 1 && sameKey(regions[0].key.scale, key))) {
       if (region.modulation !== undefined) span.modulation = region.modulation;
       if (region.pivot !== undefined) span.pivot = region.pivot;
       // Read against the same pair of keys the fields above describe, so the

@@ -128,11 +128,14 @@ describe('estimateChordsFromTracks', () => {
     expect(result.symbols.some((symbol) => symbol.startPpq >= 3)).toBe(true);
   });
 
-  it('anchors an estimate with an opening rest to the containing measure boundary', () => {
+  it('starts an estimate with an opening rest on its first note and changes on the bar line', () => {
     const tracks: TrackWithNotes[] = [
       {
         track: track(1, 'Piano'),
-        notes: [note(60, 2, 2), note(64, 2, 2), note(67, 2, 2)],
+        notes: [
+          ...[60, 64, 67].map((pitch) => note(pitch, 1, 3)),
+          ...[65, 69, 72].map((pitch) => note(pitch, 4, 4)),
+        ],
       },
     ];
     const result = estimateChordsFromTracks(tracks, {
@@ -140,7 +143,10 @@ describe('estimateChordsFromTracks', () => {
       timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
     });
 
-    expect(result.symbols[0]).toMatchObject({ startPpq: 0, endPpq: 4, rootPc: 0 });
+    expect(result.symbols).toMatchObject([
+      { startPpq: 1, endPpq: 4, rootPc: 0 },
+      { startPpq: 4, endPpq: 8, rootPc: 5 },
+    ]);
   });
 
   it('returns nothing for an empty (or drums-only) arrangement', () => {

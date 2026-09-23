@@ -107,7 +107,7 @@ export function detectChordRegions(
       harmonicRhythm: range.slotLengthPpq,
       totalBeats: range.endPpq - range.startPpq,
     });
-    resolvedKey = options.key ?? result.prevailingKey;
+    resolvedKey = options.key ?? result.prevailingKey.scale;
     result.timeline.segments.forEach((segment, index) => {
       regions.push({
         // A detected quality is the nearest name for the tones, not always an

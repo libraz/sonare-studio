@@ -189,7 +189,7 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.notes).toBe(3795);
     expect(counts.forbiddenLeap).toBe(310);
     expect(counts.leadingToneResolution).toBe(76);
-    expect(counts.battuta).toBe(39);
+    expect(counts.battuta).toBe(36);
     // Spacing is the one reading of a single instant rather than of a step, and
     // an organ toccata spends much of its time with the manuals far apart. None
     // of it lands on the pedal, which the exempt bottom pair keeps out of the

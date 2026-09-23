@@ -1,3 +1,4 @@
+import { spelledKeyOf } from '@libraz/libcantus';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,7 +26,7 @@ const key = { rootPc: 0, modeMask12: MAJOR_MODE_MASK };
 function result(shift: number, resolvedKey = key) {
   return {
     transposeSemitones: shift,
-    key: resolvedKey,
+    key: spelledKeyOf(resolvedKey),
     chords: [{ rootPc: 0, quality: 'maj' as const, startBeat: 0 }],
     melodyRoles: [],
   };

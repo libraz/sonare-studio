@@ -223,7 +223,7 @@ function sweepArrangement(
     tensionStep === null
       ? []
       : tensionCurveFrom(arrangementTracks, analysis, { ...options, step: tensionStep });
-  return { key: analysis.prevailingKey, conflicts, tension, excludedTrackNames };
+  return { key: analysis.prevailingKey.scale, conflicts, tension, excludedTrackNames };
 }
 
 /**

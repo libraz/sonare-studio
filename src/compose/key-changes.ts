@@ -18,7 +18,6 @@ import {
   type KeyScale,
   keyTimelineFromNotes,
   type NoteEvent,
-  spelledKeyOf,
 } from '@libraz/libcantus';
 import { meterBarLengthPpq, timeSignatureAt, toMeterMap } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
@@ -77,12 +76,12 @@ export function proposeKeyChanges(
   const proposals: KeyChangeProposal[] = [];
   regions.forEach((region, index) => {
     const existing = keyMap.at(region.startBeat);
-    if (existing !== null && sameKeyName(existing, region.key)) return;
-    const tonic = spelledKeyOf(region.key).tonic;
-    const mode = isMinorKey(region.key) ? 'minor' : 'major';
+    if (existing !== null && sameKeyName(existing, region.key.scale)) return;
+    const tonic = region.key.tonic;
+    const mode = isMinorKey(region.key.scale) ? 'minor' : 'major';
     proposals.push({
       startPpq: region.startBeat,
-      key: region.key,
+      key: region.key.scale,
       label: formatKeyName({ tonic, mode }),
       selected: index !== 0,
     });

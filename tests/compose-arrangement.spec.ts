@@ -177,12 +177,13 @@ describe('arrangementTensionCurve', () => {
   it('anchors meter-aware analysis to the enclosing bar rather than the first note', () => {
     const upbeat: TrackWithNotes = {
       track: track({ id: 1, name: 'Lead' }),
-      notes: [note({ id: 1, pitch: 60, startPpq: 2, durationPpq: 1 })],
+      notes: [note({ id: 1, pitch: 60, startPpq: 2.5, durationPpq: 1 })],
     };
     const curve = arrangementTensionCurve([upbeat], 1, C_MAJOR, [
       { startPpq: 0, numerator: 4, denominator: 4 },
     ]);
-    expect(curve[0]?.beat).toBe(0);
+    // Sampling opens where the note sounds, then steps on the bar's beat grid.
+    expect(curve.map((point) => point.beat)).toEqual([2.5, 3]);
   });
 
   it('hears the music before a meter change as context for the music after it', () => {
