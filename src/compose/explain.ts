@@ -154,6 +154,8 @@ export interface CounterpointLabels {
   unresolvedNonChordTone: string;
   /** Accompaniment notes thinned for this note, with `{track}` and `{pitch}`. */
   accompanimentThinned: string;
+  /** A pairwise verdict naming the tracks behind it, with `{verdict}` and `{tracks}`. */
+  against: string;
 }
 
 /**
@@ -476,7 +478,8 @@ function counterpointLines(
   analysis: NoteAnalysis,
   labels: TheoryLabels,
   keyFifths: number | undefined,
-  system?: NoteNameSystem,
+  system: NoteNameSystem | undefined,
+  trackName: ((trackId: number) => string | undefined) | undefined,
 ): TheoryCardLine[] {
   const out: TheoryCardLine[] = [];
   const vertical: VerticalInfo | undefined = analysis.vertical;
@@ -495,12 +498,22 @@ function counterpointLines(
   const reasons = analysis.safety?.reasons ?? 0;
   const found = analysis.counterpoint;
   const cp = labels.counterpoint;
-  /** One verdict line, with the glossary term its name refers to. */
-  const push = (kind: CounterpointVerdict, text: string): void => {
+  /**
+   * One verdict line, with the glossary term its name refers to and, for a
+   * pairwise verdict, the tracks whose voices raised `flag`.
+   */
+  const push = (kind: CounterpointVerdict, text: string, flag = 0): void => {
     const term = labels.glossary[GLOSSARY_KEY_FOR_VERDICT[kind]];
+    const tracks = (analysis.partners ?? []).flatMap((partner) => {
+      const name = (partner.reasons & flag) !== 0 ? trackName?.(partner.trackId) : undefined;
+      return name !== undefined ? [name] : [];
+    });
     out.push({
       label: labels.lines.counterpoint,
-      text,
+      text:
+        tracks.length > 0
+          ? cp.against.replace('{verdict}', text).replace('{tracks}', tracks.join(', '))
+          : text,
       ...(term !== undefined ? { term } : {}),
     });
   };
@@ -511,15 +524,16 @@ function counterpointLines(
       target !== undefined
         ? cp.suspension.replace('{target}', pitchName(target, keyFifths, system))
         : cp.suspensionNoTarget,
+      ReasonFlag.Suspension,
     );
   } else if (reasons & ReasonFlag.ParallelPerfect) {
-    push('parallelPerfect', cp.parallelPerfect);
+    push('parallelPerfect', cp.parallelPerfect, ReasonFlag.ParallelPerfect);
   } else if (reasons & ReasonFlag.HiddenParallel) {
-    push('hiddenParallel', cp.hiddenParallel);
+    push('hiddenParallel', cp.hiddenParallel, ReasonFlag.HiddenParallel);
   } else if (found?.battuta === true) {
     push('battuta', cp.battuta);
   } else if (reasons & ReasonFlag.VoiceCrossing) {
-    push('voiceCrossing', cp.voiceCrossing);
+    push('voiceCrossing', cp.voiceCrossing, ReasonFlag.VoiceCrossing);
   } else if (found?.forbiddenLeap === true) {
     push('forbiddenLeap', cp.forbiddenLeap);
   } else if (found?.wideSpacing === true) {
@@ -671,7 +685,9 @@ export function buildTheoryCard(
       ...(term !== undefined ? { term } : {}),
     });
   }
-  lines.push(...counterpointLines(analysis, labels, ctx.keyFifths, ctx.noteNameSystem));
+  lines.push(
+    ...counterpointLines(analysis, labels, ctx.keyFifths, ctx.noteNameSystem, ctx.trackName),
+  );
   lines.push(...placementLines(analysis, labels, ctx.keyFifths, ctx.noteNameSystem, ctx.trackName));
   const nct = nctLine(analysis, labels);
   if (nct !== undefined) {

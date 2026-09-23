@@ -122,6 +122,7 @@ export const theory = {
         unresolvedSuspension: 'Has not settled yet — stepping down to {expected} would settle it',
         unresolvedNonChordTone: 'Has not settled yet — moving on to {expected} would settle it',
         accompanimentThinned: 'Fits because {track} leaves out its {pitch}',
+        against: '{verdict} — against {tracks}',
       },
     },
     normal: {
@@ -176,6 +177,7 @@ export const theory = {
         unresolvedSuspension: 'Unresolved suspension (expected: {expected})',
         unresolvedNonChordTone: 'Unresolved non-chord tone (expected: {expected})',
         accompanimentThinned: 'Fits by thinning {pitch} in {track}',
+        against: '{verdict} — against {tracks}',
       },
     },
     theory: {
@@ -230,6 +232,7 @@ export const theory = {
         unresolvedSuspension: 'Suspension left unresolved (expected {expected})',
         unresolvedNonChordTone: 'Passing or neighbour tone left unresolved (expected {expected})',
         accompanimentThinned: 'Consonant by thinning {pitch} in {track} (lead following)',
+        against: '{verdict} — against {tracks}',
       },
     },
   },

@@ -122,6 +122,7 @@ export const theory = {
         unresolvedSuspension: 'まだ収まっていません。{expected} へ下がると落ち着きます',
         unresolvedNonChordTone: 'まだ収まっていません。{expected} へ進むと落ち着きます',
         accompanimentThinned: '{track} が {pitch} を抜いているので、ぶつかりません',
+        against: '{verdict}（相手: {tracks}）',
       },
     },
     normal: {
@@ -176,6 +177,7 @@ export const theory = {
         unresolvedSuspension: '未解決の掛留（期待: {expected}）',
         unresolvedNonChordTone: '未解決の非和声音（期待: {expected}）',
         accompanimentThinned: '{track} の {pitch} を間引いて成立',
+        against: '{verdict}（相手: {tracks}）',
       },
     },
     theory: {
@@ -230,6 +232,7 @@ export const theory = {
         unresolvedSuspension: '掛留が未解決（期待: {expected}）',
         unresolvedNonChordTone: '経過音・刺繍音が未解決（期待: {expected}）',
         accompanimentThinned: '{track} の {pitch} を間引いて協和（伴奏追従）',
+        against: '{verdict}（相手: {tracks}）',
       },
     },
   },

@@ -214,6 +214,16 @@ describe('explanation-level wording', () => {
         expect(passing?.term).toBe(MESSAGES[locale].theory.glossary.needsResolution);
       });
 
+      it(`${locale}/${level} names the track a parallel was raised against`, () => {
+        const parallel = trackingLines(locale, level, {
+          safety: { safety: 1, reasons: ReasonFlag.ParallelPerfect },
+          partners: [{ trackId: 2, reasons: ReasonFlag.ParallelPerfect }],
+        }).find((line) => line.text.includes('Backing'));
+        expect(parallel?.label).toBe(COUNTERPOINT_LABEL[locale]);
+        expect(parallel?.text).not.toMatch(/\{\w+\}/);
+        expect(parallel?.term).toBe(MESSAGES[locale].theory.glossary.parallelPerfect);
+      });
+
       it(`${locale}/${level} names the track and pitch an accompaniment thinned`, () => {
         const thinned = trackingLines(locale, level, THINNED).find((line) =>
           line.text.includes('Backing'),
