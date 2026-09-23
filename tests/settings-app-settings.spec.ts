@@ -68,6 +68,9 @@ describe('sanitizeAppSettings', () => {
       loudnessTargetLufs: DEFAULT_APP_SETTINGS.loudnessTargetLufs,
       streamingPlatforms: DEFAULT_APP_SETTINGS.streamingPlatforms,
       mixerHiddenTrackIds: [],
+      guidanceProfile: DEFAULT_APP_SETTINGS.guidanceProfile,
+      pianoRollPlacementGuide: DEFAULT_APP_SETTINGS.pianoRollPlacementGuide,
+      pianoRollGuidanceTint: DEFAULT_APP_SETTINGS.pianoRollGuidanceTint,
     });
   });
 
@@ -155,6 +158,36 @@ describe('sanitizeAppSettings', () => {
     );
     expect(sanitizeAppSettings({ recordingInputDeviceId: 42 }).recordingInputDeviceId).toBe(
       DEFAULT_APP_SETTINGS.recordingInputDeviceId,
+    );
+  });
+
+  it('defaults invalid guidance profiles', () => {
+    expect(sanitizeAppSettings({ guidanceProfile: 'counterpoint' }).guidanceProfile).toBe(
+      'counterpoint',
+    );
+    expect(sanitizeAppSettings({ guidanceProfile: 'pop' }).guidanceProfile).toBe('pop');
+    expect(sanitizeAppSettings({ guidanceProfile: 'jazz' }).guidanceProfile).toBe(
+      DEFAULT_APP_SETTINGS.guidanceProfile,
+    );
+  });
+
+  it('keeps piano roll placement guide and tint toggle settings', () => {
+    expect(sanitizeAppSettings({ pianoRollPlacementGuide: true }).pianoRollPlacementGuide).toBe(
+      true,
+    );
+    expect(sanitizeAppSettings({ pianoRollPlacementGuide: false }).pianoRollPlacementGuide).toBe(
+      false,
+    );
+    expect(sanitizeAppSettings({ pianoRollGuidanceTint: true }).pianoRollGuidanceTint).toBe(true);
+    expect(sanitizeAppSettings({ pianoRollGuidanceTint: false }).pianoRollGuidanceTint).toBe(false);
+  });
+
+  it('defaults invalid piano roll guidance toggle values', () => {
+    expect(sanitizeAppSettings({ pianoRollPlacementGuide: 'yes' }).pianoRollPlacementGuide).toBe(
+      DEFAULT_APP_SETTINGS.pianoRollPlacementGuide,
+    );
+    expect(sanitizeAppSettings({ pianoRollGuidanceTint: null }).pianoRollGuidanceTint).toBe(
+      DEFAULT_APP_SETTINGS.pianoRollGuidanceTint,
     );
   });
 });
@@ -271,5 +304,24 @@ describe('useAppSettings', () => {
     expect(document.documentElement.dataset.density).toBe('compact');
     app.update({ editorDensity: 'comfortable' });
     expect(document.documentElement.dataset.density).toBe('comfortable');
+  });
+
+  it('set persists guidance profile', () => {
+    const app = useAppSettings();
+    app.set('guidanceProfile', 'pop');
+    expect(app.settings.guidanceProfile).toBe('pop');
+    const stored = JSON.parse(window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY) ?? '{}');
+    expect(stored.settings.guidanceProfile).toBe('pop');
+  });
+
+  it('set persists piano roll guidance toggles', () => {
+    const app = useAppSettings();
+    app.set('pianoRollPlacementGuide', false);
+    app.set('pianoRollGuidanceTint', false);
+    expect(app.settings.pianoRollPlacementGuide).toBe(false);
+    expect(app.settings.pianoRollGuidanceTint).toBe(false);
+    const stored = JSON.parse(window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY) ?? '{}');
+    expect(stored.settings.pianoRollPlacementGuide).toBe(false);
+    expect(stored.settings.pianoRollGuidanceTint).toBe(false);
   });
 });

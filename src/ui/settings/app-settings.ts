@@ -8,6 +8,7 @@
  */
 
 import type { NoteNameSystem } from '@libraz/libcantus';
+import { DEFAULT_GUIDANCE_PROFILE, type GuidanceProfile } from '@/compose/guidance-profile';
 import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
@@ -127,6 +128,12 @@ export interface AppSettings {
   streamingPlatforms: StreamingPlatformConfig[];
   /** Track ids hidden in the mixer view; empty displays every track. */
   mixerHiddenTrackIds: number[];
+  /** Guidance profile for placement verdicts and harmonic analysis. */
+  guidanceProfile: GuidanceProfile;
+  /** Whether to show placement guide overlay on the piano roll. */
+  pianoRollPlacementGuide: boolean;
+  /** Whether to show background tint guidance on the piano roll. */
+  pianoRollGuidanceTint: boolean;
 }
 
 /** Count-in bounds in bars. */
@@ -177,6 +184,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   loudnessTargetLufs: -14,
   streamingPlatforms: createDefaultStreamingPlatforms(),
   mixerHiddenTrackIds: [],
+  guidanceProfile: DEFAULT_GUIDANCE_PROFILE,
+  pianoRollPlacementGuide: true,
+  pianoRollGuidanceTint: true,
 };
 
 /** Clamps a number to [lo, hi]. */
@@ -256,6 +266,10 @@ function asRecordingCaptureSource(
 
 function asExplainLevel(value: unknown, fallback: ExplainLevel): ExplainLevel {
   return value === 'beginner' || value === 'normal' || value === 'theory' ? value : fallback;
+}
+
+function asGuidanceProfile(value: unknown, fallback: GuidanceProfile): GuidanceProfile {
+  return value === 'counterpoint' || value === 'pop' ? value : fallback;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -359,6 +373,12 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       ? normalizeStreamingPlatforms(source.streamingPlatforms)
       : createDefaultStreamingPlatforms(),
     mixerHiddenTrackIds: asTrackIds(source.mixerHiddenTrackIds),
+    guidanceProfile: asGuidanceProfile(source.guidanceProfile, defaults.guidanceProfile),
+    pianoRollPlacementGuide: asBoolean(
+      source.pianoRollPlacementGuide,
+      defaults.pianoRollPlacementGuide,
+    ),
+    pianoRollGuidanceTint: asBoolean(source.pianoRollGuidanceTint, defaults.pianoRollGuidanceTint),
   };
 }
 
