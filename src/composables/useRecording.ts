@@ -599,9 +599,11 @@ export function useRecording(
   /** Current primary-output PDC, added only to microphone takes. */
   const playbackPdcSamples = async (handle: EngineHandle): Promise<number> => {
     const wasm = await ensureWasm();
-    const resolveLatency = insertLatencyResolverFromCatalog(wasm.masteringProcessorCatalog(), {
-      sampleRate: handle.ctx.sampleRate,
-    });
+    const resolveLatency = insertLatencyResolverFromCatalog(
+      wasm.masteringProcessorCatalog(),
+      handle.ctx.sampleRate,
+      wasm.masteringInsertTiming,
+    );
     return createInsertPdcPlan(store.tracks, store.mixer.buses, resolveLatency).maxLatencySamples;
   };
 

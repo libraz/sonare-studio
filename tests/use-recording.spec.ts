@@ -217,11 +217,11 @@ describe('useRecording', () => {
   it('passes the current insert PDC to microphone recording', async () => {
     const { recording, fake } = setup();
     const trackId = addAudioTrack({ name: 'PDC input' });
-    addInsert(trackId, 'dynamics.limiter', { latencySamples: 64 });
+    addInsert(trackId, 'dynamics.limiter', { lookaheadMs: 2 });
     recording.arm(trackId);
 
     expect(await recording.record()).toBe(true);
-    expect(fake.getLastStart()).toMatchObject({ playbackLatencySamples: 64 });
+    expect(fake.getLastStart()).toMatchObject({ playbackLatencySamples: 96 });
   });
 
   it('arm() accepts audio tracks only and supports disarming', () => {

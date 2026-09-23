@@ -224,7 +224,11 @@ export async function renderProjectWithEngine(
       }
     ).masteringProcessorCatalog?.();
     if (!options.insertLatency) {
-      resolveInsertLatency = insertLatencyResolverFromCatalog(catalog, { sampleRate });
+      resolveInsertLatency = insertLatencyResolverFromCatalog(
+        catalog,
+        sampleRate,
+        wasm.masteringInsertTiming,
+      );
     }
     if (!options.masteringCapability) {
       masteringCapability = masteringCapabilityFromCatalog(catalog);

@@ -51,9 +51,12 @@ const buses = computed(() => store.mixer.buses);
 /** Buses whose enabled inserts can delay a send without a compensating stage. */
 const latencySamplesByBus = computed(() => {
   try {
-    const resolver = insertLatencyResolverFromCatalog(getWasmModule().masteringProcessorCatalog(), {
-      sampleRate: getProject().getSampleRate(),
-    });
+    const wasm = getWasmModule();
+    const resolver = insertLatencyResolverFromCatalog(
+      wasm.masteringProcessorCatalog(),
+      getProject().getSampleRate(),
+      wasm.masteringInsertTiming,
+    );
     return new Map(
       buses.value.map((bus) => [bus.id, stripInsertLatencySamples(bus.strip, resolver)]),
     );

@@ -32,6 +32,7 @@ import {
 } from '@/project/automation-insert';
 import {
   type InsertLatencyCatalogEntry,
+  type InsertTimingQuery,
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
 import { effectiveTrackInstrument } from '@/project/instrument';
@@ -266,6 +267,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         const wasm = (await ensureWasm()) as unknown as {
           masteringInsertNames?: () => string[];
           masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[];
+          masteringInsertTiming?: InsertTimingQuery;
         };
         assertActive();
 
@@ -282,9 +284,11 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             : null;
         const insertLatency =
           typeof wasm.masteringProcessorCatalog === 'function'
-            ? insertLatencyResolverFromCatalog(wasm.masteringProcessorCatalog(), {
-                sampleRate: stagedHandle.ctx.sampleRate,
-              })
+            ? insertLatencyResolverFromCatalog(
+                wasm.masteringProcessorCatalog(),
+                stagedHandle.ctx.sampleRate,
+                wasm.masteringInsertTiming,
+              )
             : undefined;
         const nextMixerSync = createMixerSync(stagedHandle, { insertLatency });
         const nextStripSync = createStripSync(stagedHandle, { insertCatalog });

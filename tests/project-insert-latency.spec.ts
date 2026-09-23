@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createInsertPdcPlan,
   insertChainLatencySamples,
@@ -10,11 +10,14 @@ import { createDefaultStrip } from '@/project/mixer';
 
 describe('insert latency helpers', () => {
   it('sums enabled insert latencies from catalog metadata', () => {
-    const resolve = insertLatencyResolverFromCatalog([
-      { id: 'linear.eq', latencySamples: 128.4 },
-      { id: 'lookahead.limiter', latencySamples: 64 },
-      { id: 'bad', latencySamples: -1 },
-    ]);
+    const resolve = insertLatencyResolverFromCatalog(
+      [
+        { id: 'linear.eq', latencySamples: 128.4 },
+        { id: 'lookahead.limiter', latencySamples: 64 },
+        { id: 'bad', latencySamples: -1 },
+      ],
+      48000,
+    );
 
     expect(
       insertChainLatencySamples(
@@ -29,25 +32,47 @@ describe('insert latency helpers', () => {
     ).toBe(128);
   });
 
-  it('uses the larger of catalog and explicit slot latency hints', () => {
+  it('asks the engine with only the keys read while the insert is built', () => {
+    const timing = vi.fn((_processor: string, params: Record<string, number | boolean>) => ({
+      latencySamples: typeof params.lookaheadMs === 'number' ? params.lookaheadMs * 48 : 48,
+    }));
     const resolve = insertLatencyResolverFromCatalog(
-      [{ id: 'catalog.wins', latencySamples: 256 }, { id: 'param.fallback' }],
-      { sampleRate: 48000 },
+      [
+        {
+          id: 'dynamics.limiter',
+          latencySamples: 48,
+          params: [
+            { name: 'releaseMs', id: 1 },
+            { name: 'lookaheadMs', id: null },
+          ],
+        },
+      ],
+      48000,
+      timing,
     );
 
-    expect(resolve({ processor: 'catalog.wins', params: { lookaheadMs: 10 } })).toBe(480);
-    expect(resolve({ processor: 'catalog.wins', params: { lookaheadMs: 2 } })).toBe(256);
-    expect(resolve({ processor: 'param.fallback', params: { lookaheadMs: 2.5 } })).toBe(120);
-    expect(resolve({ processor: 'unknown.samples', params: { latencySamples: 33.4 } })).toBe(33);
-    expect(resolve({ processor: 'unknown.delay', params: { delaySamples: 12 } })).toBe(12);
-    expect(resolve({ processor: 'unknown.none', params: { lookaheadMs: 2.5 } })).toBe(120);
+    expect(
+      resolve({ processor: 'dynamics.limiter', params: { lookaheadMs: 5, releaseMs: 80 } }),
+    ).toBe(240);
+    expect(timing).toHaveBeenLastCalledWith('dynamics.limiter', { lookaheadMs: 5 }, 48000);
+    // A live-patched key cannot move the latency, so the answer is reused.
+    expect(
+      resolve({ processor: 'dynamics.limiter', params: { lookaheadMs: 5, releaseMs: 200 } }),
+    ).toBe(240);
+    expect(timing).toHaveBeenCalledTimes(1);
+    expect(resolve({ processor: 'unknown', params: { lookaheadMs: 5 } })).toBe(0);
   });
 
-  it('ignores lookaheadMs fallback without a sample rate', () => {
-    const resolve = insertLatencyResolverFromCatalog(undefined);
+  it('falls back to the catalog latency when the engine refuses a configuration', () => {
+    const resolve = insertLatencyResolverFromCatalog(
+      [{ id: 'eq.linearPhase', latencySamples: 256, params: [{ name: 'kernelSize', id: null }] }],
+      48000,
+      () => {
+        throw new Error('refused');
+      },
+    );
 
-    expect(resolve({ processor: 'lookahead', params: { lookaheadMs: 10 } })).toBe(0);
-    expect(resolve({ processor: 'samples', params: { lookaheadSamples: 512 } })).toBe(512);
+    expect(resolve({ processor: 'eq.linearPhase', params: { kernelSize: 2 } })).toBe(256);
   });
 
   it('computes per-track PDC delays while preserving manual channel delay', () => {

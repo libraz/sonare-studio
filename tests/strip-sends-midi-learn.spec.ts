@@ -88,7 +88,7 @@ describe('StripSends MIDI learn', () => {
 
   it('warns when an active send targets a latency-bearing return', async () => {
     const busId = addMixerBus({ name: 'Parallel comp' });
-    addInsert(mixerBusStripTarget(busId), 'dynamics.compressor', { latencySamples: 128 });
+    addInsert(mixerBusStripTarget(busId), 'dynamics.limiter', { lookaheadMs: 5 });
     setSend(trackId, busId, { levelDb: -12 });
 
     const wrapper = mount(StripSends, { props: { target: trackId } });

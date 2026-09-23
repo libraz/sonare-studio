@@ -3,14 +3,18 @@ import type { InsertSlot, MixerStrip } from './mixer';
 /** Minimal catalog shape needed to derive processor latency. */
 export interface InsertLatencyCatalogEntry {
   id: string;
-  /** Reported processing latency in samples at the engine/render sample rate. */
+  /** Latency the processor reports at its default parameters and 48 kHz. */
   latencySamples?: number;
+  /** Parameter keys; a null id marks one the insert reads only while it is built. */
+  params?: ReadonlyArray<{ name: string; id: number | null }>;
 }
 
-export interface InsertLatencyResolverOptions {
-  /** Sample rate used to convert explicit lookaheadMs params into samples. */
-  sampleRate?: number;
-}
+/** Engine query for the latency a configured insert reports (masteringInsertTiming). */
+export type InsertTimingQuery = (
+  processor: string,
+  params: Record<string, number | boolean>,
+  sampleRate: number,
+) => { latencySamples: number };
 
 /** Resolves one insert slot's latency in samples. */
 export type InsertLatencyResolver = (slot: Pick<InsertSlot, 'processor' | 'params'>) => number;
@@ -43,38 +47,55 @@ function sanitizeLatencySamples(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
-function paramsLatencyHintSamples(
-  params: Record<string, number | boolean>,
-  sampleRate: number | undefined,
-): number {
-  const explicit = Math.max(
-    sanitizeLatencySamples(params.latencySamples),
-    sanitizeLatencySamples(params.latency),
-    sanitizeLatencySamples(params.delaySamples),
-    sanitizeLatencySamples(params.lookaheadSamples),
-  );
-  if (explicit > 0) return explicit;
-  const lookaheadMs = typeof params.lookaheadMs === 'number' ? params.lookaheadMs : 0;
-  return Number.isFinite(lookaheadMs) && lookaheadMs > 0 && sampleRate !== undefined
-    ? sanitizeLatencySamples((lookaheadMs * sampleRate) / 1000)
-    : 0;
-}
+/** Answered timing queries per query function; one configuration always reports the same latency. */
+const timingCache = new WeakMap<InsertTimingQuery, Map<string, number>>();
 
-/** Builds a resolver from a structured processor catalog. Missing ids are zero-latency. */
+/**
+ * Builds a resolver that asks the engine what latency each configured insert
+ * reports. Only the keys read while the insert is built reach the query, since
+ * the rest are patched live and cannot move its latency; so a knob drag reuses
+ * a cached answer. Without a query, or when the engine refuses the
+ * configuration, the catalog's default latency stands in. Unknown processors
+ * are zero-latency.
+ */
 export function insertLatencyResolverFromCatalog(
   entries: ReadonlyArray<InsertLatencyCatalogEntry> | null | undefined,
-  options: InsertLatencyResolverOptions = {},
+  sampleRate: number,
+  timing?: InsertTimingQuery,
 ): InsertLatencyResolver {
-  const byProcessor = new Map<string, number>();
-  for (const entry of entries ?? []) {
-    byProcessor.set(entry.id, sanitizeLatencySamples(entry.latencySamples));
+  const byProcessor = new Map((entries ?? []).map((entry) => [entry.id, entry]));
+  let answers = timing ? timingCache.get(timing) : undefined;
+  if (timing && !answers) {
+    answers = new Map();
+    timingCache.set(timing, answers);
   }
   return (slot) => {
-    const catalogLatency = byProcessor.get(slot.processor) ?? 0;
-    // Catalog metadata describes the processor default, while a slot may opt
-    // into a longer lookahead/delay. Compensation must cover the longest of
-    // the two rather than silently discarding the user-selected value.
-    return Math.max(catalogLatency, paramsLatencyHintSamples(slot.params, options.sampleRate));
+    const entry = byProcessor.get(slot.processor);
+    if (!entry) return 0;
+    const fallback = sanitizeLatencySamples(entry.latencySamples);
+    if (!timing || !answers) return fallback;
+    const buildKeys = new Set(
+      (entry.params ?? []).filter((param) => param.id === null).map((param) => param.name),
+    );
+    const buildParams: Record<string, number | boolean> = {};
+    for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
+      if (buildKeys.has(key) && (typeof value === 'number' || typeof value === 'boolean')) {
+        buildParams[key] = value;
+      }
+    }
+    const cacheKey = `${slot.processor}|${sampleRate}|${JSON.stringify(buildParams)}`;
+    let latency = answers.get(cacheKey);
+    if (latency === undefined) {
+      try {
+        latency = sanitizeLatencySamples(
+          timing(slot.processor, buildParams, sampleRate).latencySamples,
+        );
+      } catch {
+        latency = fallback;
+      }
+      answers.set(cacheKey, latency);
+    }
+    return latency;
   };
 }
 
