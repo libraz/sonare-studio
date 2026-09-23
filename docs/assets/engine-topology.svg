@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 480" width="880" height="480" role="img" aria-labelledby="fig-title fig-desc">
+  <title id="fig-title">sonare studio engine topology</title>
+  <desc id="fig-desc">The same libsonare wasm binary is instantiated twice: on the main thread as the project model, and inside an AudioWorklet as the realtime engine. Workers handle offline render and engraving; projects live in the origin-private file system.</desc>
+
+  <style>
+    text {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      fill: #11151c;
+    }
+    .g { font-size: 11px; font-weight: 600; fill: #6b7385; letter-spacing: 0.07em; }
+    .h { font-size: 12.5px; font-weight: 600; }
+    .l { font-size: 11.5px; }
+    .s { font-size: 10.5px; fill: #6b7385; }
+    .a { font-size: 10.5px; font-weight: 600; fill: #0a84ff; }
+    .bg { fill: #eef1f6; }
+    .panel { fill: #ffffff; stroke: #d5dae3; stroke-width: 1; }
+    .core { fill: #e4eefb; stroke: #0a84ff; stroke-width: 1.25; }
+    .group { fill: none; stroke: #b9c1cf; stroke-width: 1; stroke-dasharray: 4 4; }
+    .flow { stroke: #6b7385; stroke-width: 1.25; fill: none; }
+    .flow-a { stroke: #0a84ff; stroke-width: 1.5; fill: none; }
+    .arrowhead { fill: #6b7385; }
+    .arrowhead-a { fill: #0a84ff; }
+
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e2e6ee; }
+      .g, .s { fill: #8b93a3; }
+      .a { fill: #60a5fa; }
+      .bg { fill: #0b0d11; }
+      .panel { fill: #14161b; stroke: #2b303a; }
+      .core { fill: #1d314d; stroke: #60a5fa; }
+      .group { stroke: #3a414e; }
+      .flow { stroke: #8b93a3; }
+      .flow-a { stroke: #60a5fa; }
+      .arrowhead { fill: #8b93a3; }
+      .arrowhead-a { fill: #60a5fa; }
+    }
+  </style>
+
+  <defs>
+    <marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path class="arrowhead" d="M0 0 L8 4 L0 8 z"/>
+    </marker>
+    <marker id="ahr" viewBox="0 0 8 8" refX="1" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path class="arrowhead" d="M8 0 L0 4 L8 8 z"/>
+    </marker>
+    <marker id="aha" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+      <path class="arrowhead-a" d="M0 0 L8 4 L0 8 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="880" height="480"/>
+
+  <!-- Main thread -->
+  <rect class="group" x="24" y="42" width="560" height="200" rx="10"/>
+  <text class="g" x="40" y="36">MAIN THREAD</text>
+
+  <rect class="panel" x="44" y="64" width="180" height="56" rx="7"/>
+  <text class="h" x="58" y="86">Vue 3 + Pinia UI</text>
+  <text class="s" x="58" y="103">canvas-2d layers, rAF batched</text>
+
+  <rect class="panel" x="44" y="140" width="180" height="56" rx="7"/>
+  <text class="h" x="58" y="162">Command layer</text>
+  <text class="s" x="58" y="179">every edit, dual-layer undo</text>
+
+  <rect class="core" x="272" y="64" width="200" height="132" rx="7"/>
+  <text class="h" x="286" y="86">sonare.wasm</text>
+  <text class="a" x="286" y="103">project model</text>
+  <text class="s" x="286" y="126">tracks · clips · notes</text>
+  <text class="s" x="286" y="143">tempo and meter maps</text>
+  <text class="s" x="286" y="160">SMF / MIDI 2.0 codecs</text>
+  <text class="s" x="286" y="177">offline renderer</text>
+
+  <path class="flow" d="M134 120 L134 136" marker-end="url(#ah)"/>
+  <path class="flow" d="M224 168 L268 168" marker-end="url(#ah)"/>
+  <path class="flow" d="M272 96 L228 96" marker-end="url(#ah)"/>
+  <text class="s" x="250" y="86" text-anchor="middle">mirror</text>
+
+  <!-- Workers -->
+  <rect class="group" x="600" y="42" width="256" height="200" rx="10"/>
+  <text class="g" x="616" y="36">WORKERS</text>
+
+  <rect class="panel" x="616" y="64" width="224" height="40" rx="7"/>
+  <text class="l" x="630" y="81">export.worker</text>
+  <text class="s" x="630" y="96">mixdown, stems, loudness</text>
+
+  <rect class="panel" x="616" y="112" width="224" height="40" rx="7"/>
+  <text class="l" x="630" y="129">verovio.worker</text>
+  <text class="s" x="630" y="144">engraves the score to SVG</text>
+
+  <rect class="panel" x="616" y="160" width="224" height="40" rx="7"/>
+  <text class="l" x="630" y="177">musicxml-import.worker</text>
+  <text class="s" x="630" y="192">parses imported notation</text>
+
+  <text class="s" x="616" y="222">also sample-ops and audio-encode</text>
+
+  <path class="flow" d="M476 108 L612 108" marker-end="url(#ah)"/>
+
+  <!-- AudioWorklet -->
+  <rect class="group" x="24" y="320" width="560" height="140" rx="10"/>
+  <text class="g" x="40" y="314">AUDIOWORKLET</text>
+
+  <rect class="core" x="44" y="342" width="250" height="100" rx="7"/>
+  <text class="h" x="58" y="364">sonare.wasm</text>
+  <text class="a" x="58" y="381">realtime engine</text>
+  <text class="s" x="58" y="404">plays PCM against the transport</text>
+  <text class="s" x="58" y="421">strips, inserts, mastering chain</text>
+
+  <rect class="panel" x="330" y="364" width="180" height="56" rx="7"/>
+  <text class="h" x="344" y="386">Audio output</text>
+  <text class="s" x="344" y="403">and Web MIDI out</text>
+  <path class="flow" d="M294 392 L326 392" marker-end="url(#ah)"/>
+
+  <!-- Cross-thread -->
+  <path class="flow-a" d="M160 246 L160 316" marker-end="url(#aha)"/>
+  <text class="a" x="174" y="266">prerendered clip PCM</text>
+  <text class="s" x="174" y="284">MIDI bounced offline</text>
+  <text class="s" x="174" y="300">per clip, content-keyed</text>
+
+  <path class="flow-a" d="M400 316 L400 246" marker-end="url(#aha)"/>
+  <text class="a" x="414" y="266">meters and telemetry</text>
+  <text class="s" x="414" y="284">over SharedArrayBuffer,</text>
+  <text class="s" x="414" y="300">postMessage otherwise</text>
+
+  <!-- Storage -->
+  <rect class="group" x="600" y="320" width="256" height="140" rx="10"/>
+  <text class="g" x="616" y="314">BROWSER STORAGE</text>
+
+  <rect class="panel" x="616" y="342" width="224" height="100" rx="7"/>
+  <text class="h" x="630" y="364">Origin-private FS</text>
+  <text class="s" x="630" y="386">projects/&lt;name&gt;.szd</text>
+  <text class="s" x="630" y="403">content-addressed assets and fonts</text>
+  <text class="s" x="630" y="420">autosave, revisions, backups</text>
+
+  <path class="flow" d="M556 246 L556 278 L790 278 L790 316" marker-start="url(#ahr)" marker-end="url(#ah)"/>
+  <text class="s" x="673" y="272" text-anchor="middle">save / load</text>
+</svg>

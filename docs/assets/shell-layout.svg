@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 404" width="880" height="404" role="img" aria-labelledby="fig-title fig-desc">
+  <title id="fig-title">sonare studio shell regions</title>
+  <desc id="fig-desc">Schematic of the application shell: the menu bar across the top, the arrangement above a tabbed editor dock, the device rack beside them, and the transport bar along the bottom.</desc>
+
+  <style>
+    text {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      fill: #11151c;
+    }
+    .h { font-size: 12.5px; font-weight: 600; }
+    .s { font-size: 10.5px; fill: #6b7385; }
+    .bg { fill: #eef1f6; }
+    .panel { fill: #ffffff; stroke: #d5dae3; stroke-width: 1; }
+    .split { stroke: #b9c1cf; stroke-width: 1; stroke-dasharray: 3 3; }
+
+    @media (prefers-color-scheme: dark) {
+      text { fill: #e2e6ee; }
+      .s { fill: #8b93a3; }
+      .bg { fill: #0b0d11; }
+      .panel { fill: #14161b; stroke: #2b303a; }
+      .split { stroke: #3a414e; }
+    }
+  </style>
+
+  <rect class="bg" width="880" height="404"/>
+
+  <!-- Menu bar -->
+  <rect class="panel" x="24" y="40" width="832" height="58" rx="8"/>
+  <text class="h" x="42" y="62">Menu bar</text>
+  <text class="s" x="42" y="80">File · Edit · View · Transport · Generate · Window · Options · Help</text>
+  <text class="s" x="42" y="95">layout picker, undo and redo, theme toggle, settings</text>
+
+  <!-- Arrangement -->
+  <rect class="panel" x="24" y="110" width="596" height="92" rx="8"/>
+  <text class="h" x="42" y="134">Arrangement</text>
+  <text class="s" x="42" y="154">tracks, clips, sections, markers, chord lane</text>
+  <text class="s" x="42" y="171">automation lanes, take rows, clip inspector</text>
+
+  <line class="split" x1="24" y1="208" x2="620" y2="208"/>
+
+  <!-- Editor dock -->
+  <rect class="panel" x="24" y="214" width="596" height="96" rx="8"/>
+  <text class="h" x="42" y="238">Editor dock</text>
+  <text class="s" x="42" y="258">Piano roll · Mixer · Mastering · Steps · Lists · Media · Sample</text>
+  <text class="s" x="42" y="275">one tab at a time, sharing the pane with the tool palette</text>
+  <text class="s" x="42" y="292">the score panel docks beneath the piano roll</text>
+
+  <!-- Device rack -->
+  <rect class="panel" x="632" y="110" width="224" height="200" rx="8"/>
+  <text class="h" x="650" y="134">Device rack</text>
+  <text class="s" x="650" y="154">opens beside the workspace</text>
+  <text class="s" x="650" y="184">instrument</text>
+  <text class="s" x="650" y="201">insert chain</text>
+  <text class="s" x="650" y="218">quick controls</text>
+  <text class="s" x="650" y="235">patch editor</text>
+  <text class="s" x="650" y="265">follows the selected track</text>
+
+  <!-- Transport bar -->
+  <rect class="panel" x="24" y="322" width="832" height="58" rx="8"/>
+  <text class="h" x="42" y="346">Transport bar</text>
+  <text class="s" x="42" y="366">play, stop, record, cycle, tempo, locators, count-in, metronome, position</text>
+</svg>
