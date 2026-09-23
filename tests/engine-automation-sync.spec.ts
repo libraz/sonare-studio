@@ -133,51 +133,16 @@ describe('createAutomationSync', () => {
     expect(restoreParam).toHaveBeenCalledWith('master', 'faderDb');
   });
 
-  it('re-pushes the manual value once the lane clear has been delivered', async () => {
+  it('pushes the manual value once when a lane is cleared', () => {
     const { handle } = makeHandle();
     const restoreParam = vi.fn();
-    let deliver: () => void = () => {};
-    const sync = createAutomationSync(handle, {
-      knownTrackIds: () => [3],
-      restoreParam,
-      laneMessagesApplied: () =>
-        new Promise<void>((resolve) => {
-          deliver = resolve;
-        }),
-    });
+    const sync = createAutomationSync(handle, { knownTrackIds: () => [3], restoreParam });
 
     sync.sync([makeLane(3, [{ ppq: 0, value: -60 }])]);
     sync.sync([]);
-    // Pushed immediately, where it can still lose to the not-yet-cleared lane…
-    expect(restoreParam).toHaveBeenCalledTimes(1);
-    deliver();
-    await Promise.resolve();
-    await Promise.resolve();
-    // …and again once the clear has reached the engine.
-    expect(restoreParam).toHaveBeenCalledTimes(2);
-    expect(restoreParam).toHaveBeenLastCalledWith(3, 'faderDb');
-  });
 
-  it('skips the delivered re-push when the lane has been installed again', async () => {
-    const { handle } = makeHandle();
-    const restoreParam = vi.fn();
-    let deliver: () => void = () => {};
-    const sync = createAutomationSync(handle, {
-      knownTrackIds: () => [3],
-      restoreParam,
-      laneMessagesApplied: () =>
-        new Promise<void>((resolve) => {
-          deliver = resolve;
-        }),
-    });
-
-    sync.sync([makeLane(3, [{ ppq: 0, value: -60 }])]);
-    sync.sync([]);
-    sync.sync([makeLane(3, [{ ppq: 0, value: -30 }])]);
-    deliver();
-    await Promise.resolve();
-    await Promise.resolve();
     expect(restoreParam).toHaveBeenCalledTimes(1);
+    expect(restoreParam).toHaveBeenCalledWith(3, 'faderDb');
   });
 
   it('installs a bus fader lane through the bus automation parameter id', () => {

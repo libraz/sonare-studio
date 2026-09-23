@@ -12,12 +12,10 @@
  * - setAutomationLane replaces the whole lane in one call; an empty array
  *   clears it. An installed lane is applied every audio block (playing or
  *   not) and overrides manual setStripGain/setStripPan for that parameter.
- *   Clearing leaves the engine at the last automated value, so
- *   options.restoreParam must re-push the manual strip value afterwards.
- * - Lanes travel over the worklet's message port while strip values take the
- *   command ring, so an immediate re-push can land before the clear and be
- *   overwritten by the lane. It is repeated once options.laneMessagesApplied
- *   confirms the port has delivered the clear.
+ *   Clearing returns the target to the last manual value the engine received,
+ *   whichever of the two reaches the audio thread first; a target that never
+ *   received one keeps the lane's last value, so options.restoreParam pushes
+ *   the manual value on every clear.
  */
 
 import {
@@ -74,8 +72,6 @@ export interface AutomationSyncOptions {
   suppressParam?: (target: AutomationTarget, param: AutomationParam) => boolean;
   /** Re-pushes the manual strip value after a lane has been cleared. */
   restoreParam: (target: AutomationTarget, param: AutomationParam) => void;
-  /** Resolves once every lane message sent so far has reached the realtime engine. */
-  laneMessagesApplied?: () => Promise<unknown>;
 }
 
 /** Mirrors store automation lanes onto a running engine. */
@@ -113,31 +109,12 @@ export function createAutomationSync(
   let lastBusMappingGeneration = options.busMappingGeneration?.() ?? 0;
   let lastSceneGeneration = options.sceneGeneration?.() ?? 0;
 
-  const clearLane = (paramId: number, lane: InstalledLane, cleared: InstalledLane[]): void => {
+  const clearLane = (paramId: number, lane: InstalledLane): void => {
     handle.engine.setAutomationLane(paramId, []);
     options.restoreParam(lane.target, lane.param);
-    cleared.push(lane);
-  };
-
-  const restoreAfterDelivery = (cleared: ReadonlyArray<InstalledLane>): void => {
-    if (cleared.length === 0 || !options.laneMessagesApplied) return;
-    void options
-      .laneMessagesApplied()
-      .then(() => {
-        for (const lane of cleared) {
-          const reinstalled = [...installed.values()].some(
-            (entry) => entry.target === lane.target && entry.param === lane.param,
-          );
-          if (!reinstalled) options.restoreParam(lane.target, lane.param);
-        }
-      })
-      .catch(() => {
-        // A disposed engine has nothing left to restore.
-      });
   };
 
   const sync = (lanes: ReadonlyArray<AutomationLaneState>): void => {
-    const cleared: InstalledLane[] = [];
     const busMappingGeneration = options.busMappingGeneration?.() ?? 0;
     const sceneGeneration = options.sceneGeneration?.() ?? 0;
     if (sceneGeneration !== lastSceneGeneration) {
@@ -145,7 +122,7 @@ export function createAutomationSync(
       // Its automation side channels are cleared with it, so forget and
       // explicitly replace every previously installed lane before publishing
       // the current set below.
-      for (const [paramId, lane] of installed) clearLane(paramId, lane, cleared);
+      for (const [paramId, lane] of installed) clearLane(paramId, lane);
       installed.clear();
       lastSceneGeneration = sceneGeneration;
     }
@@ -155,7 +132,7 @@ export function createAutomationSync(
       // value through the new mapping.
       for (const [paramId, lane] of installed) {
         if (!lane.mappingSensitive) continue;
-        clearLane(paramId, lane, cleared);
+        clearLane(paramId, lane);
         installed.delete(paramId);
       }
       lastBusMappingGeneration = busMappingGeneration;
@@ -177,7 +154,7 @@ export function createAutomationSync(
           previous.param !== lane.param ||
           (previous.mappingSensitive && previous.mappingGeneration !== busMappingGeneration))
       ) {
-        clearLane(paramId, previous, cleared);
+        clearLane(paramId, previous);
         installed.delete(paramId);
       } else if (previous?.json === json) {
         return;
@@ -325,10 +302,9 @@ export function createAutomationSync(
     }
     for (const [paramId, lane] of installed) {
       if (effectiveParamIds.has(paramId)) continue;
-      clearLane(paramId, lane, cleared);
+      clearLane(paramId, lane);
       installed.delete(paramId);
     }
-    restoreAfterDelivery(cleared);
   };
 
   return { sync, installedParamIds: () => [...installed.keys()] };

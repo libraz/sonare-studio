@@ -322,8 +322,6 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         const nextAutomationSync = createAutomationSync(stagedHandle, {
           knownTrackIds: () => nextMixerSync.laneTrackIds(),
           instrumentDestinationFor: (trackId) => nextMidiSync.nativeSynthDestination(trackId),
-          // A transport-state request rides the same port as the lane messages.
-          laneMessagesApplied: () => stagedHandle.engine.getTransportState(),
           busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
           groupBusIdFor: (trackId) => nextStripSync.groupBusIdFor(trackId),
           busMappingGeneration: () => nextStripSync.busMappingGeneration(),
