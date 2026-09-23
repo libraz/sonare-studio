@@ -34,6 +34,7 @@ import {
   parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
 } from '@/project/automation';
+import { isAutomatableSynthParam } from '@/project/instrument';
 import {
   createDefaultStrip,
   type InsertSlot,
@@ -1598,10 +1599,10 @@ function sonareAutomationParameterRef(parameter: string): AutomationParameterRef
   } catch {
     return undefined;
   }
-  if (
-    parseInstrumentAutomationParam(param) === undefined &&
-    parseMasteringAutomationParam(param) === undefined
-  ) {
+  const instrumentRef = parseInstrumentAutomationParam(param);
+  if (instrumentRef !== undefined) {
+    if (!isAutomatableSynthParam(instrumentRef.paramName)) return undefined;
+  } else if (parseMasteringAutomationParam(param) === undefined) {
     return undefined;
   }
   return { param: param as AutomationParam, fromDawValue: (value) => value };

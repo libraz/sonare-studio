@@ -881,76 +881,39 @@ describe('createMidiSync', () => {
     expect(engine.setSynthInstrument.mock.calls[0][1]).toBe(patch);
   });
 
-  it('applies enabled instrument automation to synth patches at the sync PPQ', async () => {
+  it('binds a synth patch as stored, leaving instrument lanes to the automation sync', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
-    const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 400, resonance: 0.1 };
-    const track = makeTrack(1, { instrument: { kind: 'synth-patch', patch } });
-
-    await sync.sync(
-      [track],
-      [],
-      TEMPO_120,
-      undefined,
-      [
-        {
-          target: 1,
-          param: instrumentAutomationParam('cutoffHz'),
-          enabled: true,
-          points: [
-            { ppq: 0, value: 400 },
-            { ppq: 4, value: 1200 },
-          ],
-        },
-        {
-          target: 1,
-          param: instrumentAutomationParam('resonance'),
-          enabled: false,
-          points: [{ ppq: 0, value: 0.8 }],
-        },
-      ],
-      2,
-    );
-
+    const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 400 };
+    await sync.sync([makeTrack(1, { instrument: { kind: 'synth-patch', patch } })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
-    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, {
-      preset: 'saw-lead',
-      cutoffHz: 800,
-      resonance: 0.1,
-    });
-    expect(engine.setSynthInstrument.mock.calls[0][1]).not.toBe(patch);
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, patch);
   });
 
-  it('rebinds synth patches when only instrument automation value changes', async () => {
-    const { handle, engine } = makeHandle();
+  it('reports the destination each NativeSynth track owns after a sync', async () => {
+    const { handle } = makeHandle();
     const sync = createMidiSync(handle);
-    const track = makeTrack(1, {
-      instrument: { kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 400 } },
-    });
-    const lanes = [
-      {
-        target: 1,
-        param: instrumentAutomationParam('cutoffHz'),
-        enabled: true,
-        points: [
-          { ppq: 0, value: 400 },
-          { ppq: 4, value: 1200 },
-        ],
-      },
-    ];
+    expect(sync.nativeSynthDestination(1)).toBeUndefined();
+    await sync.sync(
+      [
+        makeTrack(1, { instrument: { kind: 'synth-patch', patch: { preset: 'saw-lead' } } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'e-piano' } }),
+        makeTrack(3, { instrument: { kind: 'sf2', fontId: 'gm' } }),
+        makeTrack(4, {
+          instrument: { kind: 'synth-preset', preset: 'e-piano' },
+          frozen: { assetId: 'baked' },
+        }),
+      ],
+      [],
+      TEMPO_120,
+    );
+    expect(sync.nativeSynthDestination(1)).toBe(1);
+    expect(sync.nativeSynthDestination(2)).toBe(2);
+    expect(sync.nativeSynthDestination(3)).toBeUndefined();
+    expect(sync.nativeSynthDestination(4)).toBeUndefined();
 
-    await sync.sync([track], [], TEMPO_120, undefined, lanes, 0);
-    await sync.sync([track], [], TEMPO_120, undefined, lanes, 4);
-
-    expect(engine.setSynthInstrument).toHaveBeenCalledTimes(2);
-    expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(1, 1, {
-      preset: 'saw-lead',
-      cutoffHz: 400,
-    });
-    expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(2, 1, {
-      preset: 'saw-lead',
-      cutoffHz: 1200,
-    });
+    await sync.sync([makeTrack(1, { instrument: { kind: 'sf2', fontId: 'gm' } })], [], TEMPO_120);
+    expect(sync.nativeSynthDestination(1)).toBeUndefined();
   });
 
   it('installs, dedupes and clears live MIDI-FX per track', async () => {

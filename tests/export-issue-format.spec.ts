@@ -28,8 +28,6 @@ const STRINGS: ExportIssueStrings = {
   },
   limitation: {
     masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
-    instrumentAutomationAtStart:
-      'Instrument automation was evaluated at render start for: {tracks}',
   },
 };
 
@@ -82,18 +80,10 @@ describe('export issue formatter', () => {
     );
   });
 
-  it('formats render limitations, joining instrument track names', () => {
+  it('formats render limitations', () => {
     const mastering: ExportLimitation = { kind: 'mastering-automation-at-render-start' };
     expect(formatExportLimitation(mastering, STRINGS)).toBe(
       'Mastering automation was evaluated at render start',
-    );
-
-    const instrument: ExportLimitation = {
-      kind: 'instrument-automation-at-render-start',
-      tracks: ['Keys', 'Pad'],
-    };
-    expect(formatExportLimitation(instrument, STRINGS)).toBe(
-      'Instrument automation was evaluated at render start for: Keys, Pad',
     );
   });
 });

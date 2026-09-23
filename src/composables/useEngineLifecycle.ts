@@ -22,6 +22,7 @@ import {
   busIdFromAutomationTarget,
   isBusAutomationTarget,
   parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
 } from '@/project/automation';
 import {
@@ -33,6 +34,7 @@ import {
   type InsertLatencyCatalogEntry,
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
+import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   clampPan,
   effectiveTrackMute,
@@ -41,6 +43,7 @@ import {
   returnSoloRouting,
   vcaOffsetDb,
 } from '@/project/mixer';
+import { nativeSynthFieldValue } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 
@@ -313,8 +316,12 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           const strip = stripForAutomationTarget(target, insertLaneContext());
           return strip ? insertIndexForAutomationRef(strip.inserts, { processorId }) : undefined;
         };
+        const nextMidiSync = createMidiSync(stagedHandle, {
+          resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
+        });
         const nextAutomationSync = createAutomationSync(stagedHandle, {
           knownTrackIds: () => nextMixerSync.laneTrackIds(),
+          instrumentDestinationFor: (trackId) => nextMidiSync.nativeSynthDestination(trackId),
           // A transport-state request rides the same port as the lane messages.
           laneMessagesApplied: () => stagedHandle.engine.getTransportState(),
           busIdFor: (storeBusId) => nextStripSync.busIdFor(storeBusId),
@@ -374,6 +381,27 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             );
           },
           restoreParam: (target, param) => {
+            const instrumentRef = parseInstrumentAutomationParam(param);
+            if (instrumentRef) {
+              // Clearing an instrument lane leaves the parameter at its last
+              // automated value; re-push the value the patch plays it at.
+              if (typeof target !== 'number') return;
+              const destinationId = nextMidiSync.nativeSynthDestination(target);
+              const track = store.tracks.find((entry) => entry.id === target);
+              if (destinationId === undefined || !track) return;
+              const value = nativeSynthFieldValue(
+                effectiveTrackInstrument(track, store.projectExternalMidi),
+                instrumentRef.paramName,
+              );
+              const paramId = stagedHandle.engine.resolveInstrumentAutomationId(
+                destinationId,
+                instrumentRef.paramName,
+              );
+              if (value !== null && paramId >= 0) {
+                stagedHandle.engine.setParam('instrument', paramId, value);
+              }
+              return;
+            }
             const masteringRef = parseMasteringAutomationParam(param);
             if (masteringRef) {
               if (target !== 'master') return;
@@ -545,9 +573,6 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               stagedHandle.engine.setStripPan(target, clampPan(track.mixer?.pan ?? 0));
             }
           },
-        });
-        const nextMidiSync = createMidiSync(stagedHandle, {
-          resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
         });
         const nextTransportSync = createTransportSync(stagedHandle);
         // External-MIDI delivery: subscribes to the engine's drained MIDI output

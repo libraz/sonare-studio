@@ -12,6 +12,7 @@ import {
   sanitizeAutomationPoints,
 } from '../automation';
 import { insertIndexForAutomationRef, masteringIndexForAutomationRef } from '../automation-insert';
+import { isAutomatableSynthParam, isNativeSynthInstrument, trackInstrument } from '../instrument';
 import type { MixerStrip } from '../mixer';
 import { useProjectStore } from '../store';
 import { execute } from './history';
@@ -71,8 +72,11 @@ function validateAutomationTarget(
     if (track.kind !== 'midi') {
       throw new RangeError('Instrument automation requires a MIDI track');
     }
-    if (track.instrument?.kind !== 'synth-patch') {
-      throw new RangeError('Instrument automation requires a synth-patch instrument');
+    if (!isNativeSynthInstrument(trackInstrument(track))) {
+      throw new RangeError('Instrument automation requires a synth instrument');
+    }
+    if (!isAutomatableSynthParam(instrumentRef.paramName)) {
+      throw new RangeError(`Synth parameter is not automatable: ${instrumentRef.paramName}`);
     }
     return;
   }

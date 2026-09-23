@@ -1,7 +1,8 @@
 /**
  * Realtime automation synchronisation: mirrors the store's automation lanes
- * (fader dB / pan on a track or the master strip) onto the engine's reserved
- * mixer automation parameters, transmitting only what changed.
+ * (fader dB / pan, insert and mastering parameters, and a MIDI track's
+ * NativeSynth parameters) onto the engine's reserved automation parameters,
+ * transmitting only what changed.
  *
  * Engine contract (libsonare):
  * - automationParamId resolves the reserved parameter id of a strip
@@ -26,6 +27,7 @@ import {
   busIdFromAutomationTarget,
   isBusAutomationTarget,
   parseInsertAutomationParam,
+  parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
 } from '@/project/automation';
 import type { EngineHandle } from './engine';
@@ -59,6 +61,11 @@ export interface AutomationSyncOptions {
   masteringProcessorIndexFor?: (processorId: string) => number | undefined;
   /** Current store insert index for a stable processor identity on a lane target. */
   insertStoreIndexFor?: (target: AutomationTarget, processorId: string) => number | undefined;
+  /**
+   * Engine MIDI destination hosting a track's NativeSynth, or undefined while
+   * the track hosts none; instrument lanes resolve against it.
+   */
+  instrumentDestinationFor?: (trackId: number) => number | undefined;
   /** Current VCA fader offset for a numeric target, in dB. */
   vcaOffsetFor?: (trackId: number) => number;
   /** Effective track/VCA mute for a numeric fader target. */
@@ -187,6 +194,21 @@ export function createAutomationSync(
     for (const lane of lanes) {
       if (!lane.enabled) continue;
       if (options.suppressParam?.(lane.target, lane.param)) continue;
+      const instrumentRef = parseInstrumentAutomationParam(lane.param);
+      if (instrumentRef) {
+        if (typeof lane.target !== 'number') continue;
+        const destinationId = options.instrumentDestinationFor?.(lane.target);
+        if (destinationId === undefined) continue;
+        const instrumentId = handle.engine.resolveInstrumentAutomationId(
+          destinationId,
+          instrumentRef.paramName,
+        );
+        if (!Number.isFinite(instrumentId) || instrumentId < 0) continue;
+        const points = engineAutomationPoints(lane.points);
+        if (points.length === 0) continue;
+        publishLane(instrumentId, lane, points, false);
+        continue;
+      }
       let paramId: number | undefined;
       let mappingSensitive = false;
       const masteringRef = parseMasteringAutomationParam(lane.param);

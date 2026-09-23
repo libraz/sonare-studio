@@ -190,8 +190,6 @@ export const dialogs = {
         masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
         masteringAutomationAtStartParams:
           'These mastering parameters were evaluated at render start: {params}',
-        instrumentAutomationAtStart:
-          'Instrument automation was evaluated at render start for: {tracks}',
         streamingMeteringUnavailable:
           'Streaming export could not measure: {measurements}. The report contains sample peak only.',
       },

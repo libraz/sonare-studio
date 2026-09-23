@@ -341,7 +341,7 @@ describe('ExportDialog', () => {
     await flushPromises();
   });
 
-  it('requires confirmation before rendering time-varying unsupported automation', async () => {
+  it('renders time-varying instrument automation without a confirmation', async () => {
     const control = makeRender();
     const doc = makeDocument();
     doc.tracks.push({
@@ -369,10 +369,39 @@ describe('ExportDialog', () => {
 
     await clickExport();
     await flushPromises();
+    expect(dialogQueue).toHaveLength(0);
+    expect(control.render).toHaveBeenCalledTimes(1);
+    control.resolve(makeResult());
+    await flushPromises();
+  });
+
+  it('requires confirmation before rendering time-varying unsupported automation', async () => {
+    const control = makeRender();
+    const doc = makeDocument();
+    doc.mixer = {
+      master: { gainDb: 0, pan: 0, inserts: [] },
+      masteringChain: {
+        processors: [
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+        ],
+      },
+    } as ProjectDocument['mixer'];
+    doc.masterAutomation = [
+      {
+        param: 'mastering:0:ceilingDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -1 },
+          { ppq: 4, value: -3 },
+        ],
+      },
+    ];
+    mountDialog(control, { getDocument: () => doc });
+
+    await clickExport();
+    await flushPromises();
     expect(control.render).not.toHaveBeenCalled();
-    expect(dialogQueue[0]?.message).toContain(
-      'Instrument automation was evaluated at render start',
-    );
+    expect(dialogQueue[0]?.message).toContain('Mastering automation was evaluated at render start');
 
     resolveDialog(dialogQueue[0].id, true);
     await flushPromises();
@@ -594,7 +623,7 @@ describe('ExportDialog', () => {
         peakDb: -6.0,
         truePeakDb: -5.8,
         lufs: -14.2,
-        limitations: [{ kind: 'instrument-automation-at-render-start', tracks: ['Keys'] }],
+        limitations: [{ kind: 'mastering-automation-at-render-start' }],
       },
     });
     control.resolve(result);
@@ -650,7 +679,7 @@ describe('ExportDialog', () => {
         peakDb: -6.0,
         truePeakDb: -5.8,
         lufs: -14.2,
-        limitations: [{ kind: 'instrument-automation-at-render-start', tracks: ['Keys'] }],
+        limitations: [{ kind: 'mastering-automation-at-render-start' }],
       },
     });
     control.resolve(result);
@@ -668,7 +697,7 @@ describe('ExportDialog', () => {
     expect(q('.report-lufs')?.textContent).toBe('-14.2 LUFS');
     expect(q('.report-limitations')?.textContent).toContain('Limitations');
     expect(q('.report-limitations')?.textContent).toContain(
-      'Instrument automation was evaluated at render start for: Keys',
+      'Mastering automation was evaluated at render start',
     );
 
     const emitted = wrapper.emitted('exported') as Array<
@@ -677,7 +706,7 @@ describe('ExportDialog', () => {
     expect(emitted).toHaveLength(1);
     expect(emitted[0][0].filename).toBe('My Song.wav');
     expect(emitted[0][0].report.limitations).toEqual([
-      { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
+      { kind: 'mastering-automation-at-render-start' },
     ]);
   });
 

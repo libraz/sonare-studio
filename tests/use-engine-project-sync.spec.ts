@@ -332,7 +332,7 @@ describe('useEngineProjectSync', () => {
     vi.useRealTimers();
   });
 
-  it('passes instrument automation lanes and the current PPQ to MIDI sync', async () => {
+  it('hands instrument lanes to the automation sync once MIDI sync has bound instruments', async () => {
     const store = useProjectStore();
     store.dispose();
     await store.init();
@@ -347,12 +347,23 @@ describe('useEngineProjectSync', () => {
       },
     ];
 
+    const order: string[] = [];
     const midiSync: MidiSync = {
-      sync: vi.fn(async () => undefined),
+      sync: vi.fn(async () => {
+        order.push('midi');
+      }),
       scheduledClipCount: () => 1,
+      nativeSynthDestination: () => 1,
+    };
+    const automationSync = {
+      sync: vi.fn(() => {
+        order.push('automation');
+      }),
+      installedParamIds: () => [],
     };
     const transport = {
       positionPpq: ref(3),
+      isPlaying: ref(false),
       setTempoMap: vi.fn(),
       setTempo: vi.fn(),
     };
@@ -371,7 +382,7 @@ describe('useEngineProjectSync', () => {
     projectSync.setEngineSyncHandles({
       mixerSync: null,
       stripSync: null,
-      automationSync: null,
+      automationSync,
       midiSync,
       transportSync: null,
       webMidiOutput: null,
@@ -384,31 +395,21 @@ describe('useEngineProjectSync', () => {
       store.clips,
       [{ startPpq: 0, bpm: store.tempoBpm }],
       store.projectExternalMidi,
-      store.automationLanes,
-      3,
       // Score articulations reach MIDI sync so expression maps can inject.
       new Map(),
     );
+    // Instrument automation ids resolve only after the instrument is bound.
+    expect(order.slice(-2)).toEqual(['midi', 'automation']);
 
+    // The engine follows the lane itself, so a playhead move re-syncs nothing.
     vi.mocked(midiSync.sync).mockClear();
-    transport.positionPpq.value = 4;
-    await nextTick();
-    expect(midiSync.sync).not.toHaveBeenCalled();
+    automationSync.sync.mockClear();
     transport.positionPpq.value = 5;
     await nextTick();
-    await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
-    expect(midiSync.sync).toHaveBeenLastCalledWith(
-      store.tracks,
-      store.clips,
-      [{ startPpq: 0, bpm: store.tempoBpm }],
-      store.projectExternalMidi,
-      store.automationLanes,
-      5,
-      // Score articulations reach MIDI sync so expression maps can inject.
-      new Map(),
-    );
+    expect(midiSync.sync).not.toHaveBeenCalled();
+    expect(automationSync.sync).not.toHaveBeenCalled();
 
-    vi.mocked(midiSync.sync).mockClear();
+    // Editing an instrument lane reaches the automation sync, not a MIDI re-sync.
     store.automationLanes = [
       {
         target: 1,
@@ -418,81 +419,8 @@ describe('useEngineProjectSync', () => {
       },
     ];
     await nextTick();
-    await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
-    scope.stop();
-  });
-
-  it('does not resync instrument automation on playhead moves during playback', async () => {
-    const store = useProjectStore();
-    store.dispose();
-    await store.init();
-    store.tracks = [track(1)];
-    store.clips = [clip(1)];
-    store.automationLanes = [
-      {
-        target: 1,
-        param: instrumentAutomationParam('cutoffHz'),
-        enabled: true,
-        points: [{ ppq: 0, value: 900 }],
-      },
-    ];
-
-    const midiSync: MidiSync = {
-      sync: vi.fn(async () => undefined),
-      scheduledClipCount: () => 1,
-    };
-    // Rolling transport: the engine defers instrument syncs during playback, so
-    // re-evaluating per frame would only flood that deferred queue and stall the
-    // main thread. The playhead watcher must stay quiet while playing.
-    const transport = {
-      positionPpq: ref(3),
-      isPlaying: ref(true),
-      setTempoMap: vi.fn(),
-      setTempo: vi.fn(),
-    };
-    const scope = effectScope();
-    const projectSync = scope.run(() =>
-      useEngineProjectSync({
-        bridge: shallowRef(null),
-        scope: shallowRef(null),
-        errorMessage: ref(''),
-        handle: shallowRef(null),
-        transport: transport as never,
-      }),
-    );
-    if (!projectSync) throw new Error('effect scope did not run');
-
-    projectSync.setEngineSyncHandles({
-      mixerSync: null,
-      stripSync: null,
-      automationSync: null,
-      midiSync,
-      transportSync: null,
-      webMidiOutput: null,
-    });
-
-    await projectSync.syncMidiState();
-    vi.mocked(midiSync.sync).mockClear();
-
-    transport.positionPpq.value = 4;
-    await nextTick();
+    await vi.waitFor(() => expect(automationSync.sync).toHaveBeenCalled());
     expect(midiSync.sync).not.toHaveBeenCalled();
-
-    // Once parked again, a seek re-bakes the start-position value.
-    transport.isPlaying.value = false;
-    transport.positionPpq.value = 5;
-    await nextTick();
-    await vi.waitFor(() => expect(midiSync.sync).toHaveBeenCalledTimes(1));
-    expect(midiSync.sync).toHaveBeenLastCalledWith(
-      store.tracks,
-      store.clips,
-      [{ startPpq: 0, bpm: store.tempoBpm }],
-      store.projectExternalMidi,
-      store.automationLanes,
-      5,
-      // Score articulations reach MIDI sync so expression maps can inject.
-      new Map(),
-    );
     scope.stop();
   });
 

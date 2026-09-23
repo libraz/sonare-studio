@@ -18,7 +18,6 @@ import type { TransportSync } from '@/engine/transport-sync';
 import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
 import { describeError } from '@/lib/errors';
 import { clipArticulations } from '@/project/annotations';
-import { parseInstrumentAutomationParam } from '@/project/automation';
 import {
   createMediaCompletenessReport,
   formatMediaCompletenessReport,
@@ -96,23 +95,6 @@ function clipScheduleKey(clip: EditorClip): string {
   return JSON.stringify(rest);
 }
 
-function instrumentAutomationSyncKey(
-  lanes: ReturnType<typeof useProjectStore>['automationLanes'],
-): string {
-  return JSON.stringify(
-    lanes.filter(
-      (lane) => typeof lane.target === 'number' && parseInstrumentAutomationParam(lane.param),
-    ),
-  );
-}
-
-function hasInstrumentAutomation(lanes: ReturnType<typeof useProjectStore>['automationLanes']) {
-  return lanes.some(
-    (lane) =>
-      lane.enabled && typeof lane.target === 'number' && parseInstrumentAutomationParam(lane.param),
-  );
-}
-
 export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   const { bridge, scope, errorMessage, handle, transport } = options;
   const store = useProjectStore();
@@ -128,7 +110,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let applyController: AbortController | null = null;
   let applyTimer: ReturnType<typeof setTimeout> | null = null;
   let midiSyncTimer: ReturnType<typeof setTimeout> | null = null;
-  let instrumentScrubTimer: ReturnType<typeof setTimeout> | null = null;
   let engineRebuildHandler: (() => void | Promise<void>) | null = null;
   let midiSyncQueue: Promise<void> = Promise.resolve();
   let audioMediaIssues: MediaCompletenessIssue[] = [];
@@ -138,9 +119,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   const applyPending = ref(false);
   const engineRebuildRequired = ref(false);
   const mediaReport = ref<MediaCompletenessReport>(createMediaCompletenessReport());
-
-  /** Collapses parked pointer scrubs to one instrument-automation re-bake. */
-  const INSTRUMENT_SCRUB_DEBOUNCE_MS = 100;
 
   function publishMediaReport(): void {
     mediaReport.value = createMediaCompletenessReport([...audioMediaIssues, ...midiMediaIssues]);
@@ -229,14 +207,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       applyTimer = null;
       void applyToEngine();
     }, APPLY_DEBOUNCE_MS);
-  }
-
-  function scheduleInstrumentScrubSync(): void {
-    if (instrumentScrubTimer !== null) clearTimeout(instrumentScrubTimer);
-    instrumentScrubTimer = setTimeout(() => {
-      instrumentScrubTimer = null;
-      void syncMidiState();
-    }, INSTRUMENT_SCRUB_DEBOUNCE_MS);
   }
 
   /** Collapses a burst of MIDI content edits into one full engine sync. */
@@ -370,10 +340,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.clips,
         effectiveTempoSegments(),
         store.projectExternalMidi,
-        store.automationLanes,
-        transport.positionPpq?.value ?? 0,
         clipArticulations(store.scoreAnnotations),
       );
+      // Instrument automation ids resolve only once an instrument is bound.
+      syncAutomationState();
       midiMediaIssues = (m.mediaIssues?.() ?? []).map((issue) => ({
         ...issue,
         projectName: store.projectName,
@@ -429,10 +399,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       clearTimeout(applyTimer);
       applyTimer = null;
     }
-    if (instrumentScrubTimer !== null) {
-      clearTimeout(instrumentScrubTimer);
-      instrumentScrubTimer = null;
-    }
     scheduledClips = [];
     scheduledCount.value = 0;
     mixerSync = null;
@@ -469,32 +435,10 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
           .map(clipScheduleKey)
           .join('\n'),
         store.tracks.map(trackMidiSyncKey).join('\n'),
-        instrumentAutomationSyncKey(store.automationLanes),
         JSON.stringify(effectiveTempoSegments()),
       ].join('\0'),
     (next, prev) => {
       if (next !== prev) scheduleMidiSync();
-    },
-    { flush: 'sync' },
-  );
-  watch(
-    () => transport.positionPpq?.value ?? 0,
-    (next, prev) => {
-      // Synth-patch instrument automation resolves to a single start-position
-      // value: the engine defers instrument syncs during playback and bursts
-      // them on stop (the offline render likewise bakes the value at the range
-      // start). Re-evaluating on every playback frame therefore never sounds
-      // live and only floods that deferred queue while re-running a full MIDI
-      // sync + JSON.stringify each frame. Re-bake only while parked, when a seek
-      // moves the playhead, so the next playback starts from the correct value
-      // without per-frame churn.
-      if (
-        next !== prev &&
-        transport.isPlaying?.value !== true &&
-        hasInstrumentAutomation(store.automationLanes)
-      ) {
-        scheduleInstrumentScrubSync();
-      }
     },
     { flush: 'sync' },
   );

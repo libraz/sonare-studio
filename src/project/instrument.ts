@@ -139,6 +139,78 @@ export function effectiveTrackInstrument(
 }
 
 /**
+ * Continuous NativeSynth patch fields the engine drives from an automation
+ * lane at audio-block precision. Structural fields (engine mode, waveform,
+ * unison, polyphony, body, routings) swap DSP topology and are not
+ * automatable.
+ */
+export const AUTOMATABLE_SYNTH_PARAMS = [
+  'gain',
+  'busDrive',
+  'cutoffHz',
+  'resonanceQ',
+  'drive',
+  'keyTrack',
+  'envToCutoffCents',
+  'velToCutoffCents',
+  'ampAttackMs',
+  'ampDecayMs',
+  'ampSustain',
+  'ampReleaseMs',
+  'filterAttackMs',
+  'filterDecayMs',
+  'filterSustain',
+  'filterReleaseMs',
+  'lfoRateHz',
+  'lfoToPitchCents',
+  'lfo2RateHz',
+  'glideMs',
+  'bodyMix',
+  'stereoSpread',
+  'detuneCents',
+  'driftCents',
+  'pitchOffsetCents',
+  'hpCutoffHz',
+  'sampleHoldHz',
+  'bitDepth',
+] as const;
+
+/** One continuous NativeSynth patch field an automation lane can drive. */
+export type AutomatableSynthParam = (typeof AUTOMATABLE_SYNTH_PARAMS)[number];
+
+/**
+ * Automatable fields that reach voices already sounding. The rest are read
+ * into each voice at note-on, so a lane moving them takes effect from the next
+ * note.
+ */
+const SOUNDING_VOICE_SYNTH_PARAMS: ReadonlySet<string> = new Set([
+  'gain',
+  'busDrive',
+  'cutoffHz',
+  'resonanceQ',
+  'envToCutoffCents',
+  'lfoToPitchCents',
+  'pitchOffsetCents',
+]);
+
+/** True for a NativeSynth patch field an automation lane can drive. */
+export function isAutomatableSynthParam(name: string): name is AutomatableSynthParam {
+  return (AUTOMATABLE_SYNTH_PARAMS as readonly string[]).includes(name);
+}
+
+/** True when a lane on this field moves voices that are already sounding. */
+export function synthParamReachesSoundingVoices(name: string): boolean {
+  return SOUNDING_VOICE_SYNTH_PARAMS.has(name);
+}
+
+/** True for an instrument the engine hosts as a NativeSynth (preset or patch). */
+export function isNativeSynthInstrument(
+  instrument: TrackInstrument,
+): instrument is SynthPresetInstrument | SynthPatchInstrument {
+  return instrument.kind === 'synth-preset' || instrument.kind === 'synth-patch';
+}
+
+/**
  * A stable key identifying an instrument for destination de-duplication: two
  * tracks whose instruments produce the same key can share one engine playback
  * destination. Used by the MIDI sync (to pack tracks onto the limited internal

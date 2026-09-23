@@ -66,6 +66,7 @@ export type OfflineRenderEngine = Pick<
   | 'resolveTrackInsertAutomationId'
   | 'resolveMasterInsertAutomationId'
   | 'resolveBusInsertAutomationId'
+  | 'resolveInstrumentAutomationId'
   | 'setAutomationLane'
   | 'setTempoSegments'
   | 'setClips'

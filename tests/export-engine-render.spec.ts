@@ -137,6 +137,10 @@ class FakeEngine implements OfflineRenderEngine {
     this.record('resolveBusInsertAutomationId', busId, insertIndex, paramName);
     return paramName === 'unknown' ? -1 : (0xe1fe0000 | (busId << 8) | insertIndex) >>> 0;
   }
+  resolveInstrumentAutomationId(destinationId: number, paramName: string): number {
+    this.record('resolveInstrumentAutomationId', destinationId, paramName);
+    return paramName === 'unknown' ? -1 : (0xc0000000 | (destinationId << 8)) >>> 0;
+  }
   setTempoSegments(segments: unknown): void {
     this.record('setTempoSegments', segments);
   }
@@ -1989,7 +1993,7 @@ describe('renderProjectWithEngine', () => {
     expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
   });
 
-  it('applies static synth-patch instrument automation before offline MIDI playback', async () => {
+  it('drives synth-patch instrument lanes on the bound instrument during offline playback', async () => {
     const doc = makeDoc();
     doc.tracks[1].mute = true;
     doc.tracks[0].instrument = {
@@ -2016,35 +2020,35 @@ describe('renderProjectWithEngine', () => {
     const result = await renderProjectWithEngine(doc, renderOptions(engine));
 
     expect(engine.named('setSynthInstrument')).toEqual([
-      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200, drive: 0.2 }, 1],
+      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 800, drive: 0.2 }, 1],
     ]);
-    expect(result.report.limitations).toEqual([
-      { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
+    // Resolved against the instrument just bound; the disabled lane is never resolved.
+    expect(engine.named('resolveInstrumentAutomationId')).toEqual([
+      ['resolveInstrumentAutomationId', 1, 'cutoffHz'],
     ]);
+    const bindIndex = engine.calls.findIndex(([name]) => name === 'setSynthInstrument');
+    const resolveIndex = engine.calls.findIndex(
+      ([name]) => name === 'resolveInstrumentAutomationId',
+    );
+    expect(resolveIndex).toBeGreaterThan(bindIndex);
+    const instrumentLaneId = (0xc0000000 | (1 << 8)) >>> 0;
+    const lane = engine
+      .named('setAutomationLane')
+      .find(([, paramId]) => paramId === instrumentLaneId);
+    expect(lane?.[2]).toEqual([
+      expect.objectContaining({ ppq: 0, value: 1200 }),
+      expect.objectContaining({ ppq: 8, value: 2400 }),
+    ]);
+    expect(result.report.limitations).toBeUndefined();
   });
 
   it('reports same-PPQ value changes as a start-value limitation while rendering the first value', async () => {
-    const instrumentPoints = [
-      { ppq: 0, value: 1200 },
-      { ppq: 0, value: 2400 },
-    ];
     const masteringPoints = [
       { ppq: 0, value: -6 },
       { ppq: 0, value: -3 },
     ];
     const doc = makeDoc();
     doc.tracks[1].mute = true;
-    doc.tracks[0].instrument = {
-      kind: 'synth-patch',
-      patch: { preset: 'saw-lead', cutoffHz: 800 },
-    };
-    doc.tracks[0].automation = [
-      {
-        param: instrumentAutomationParam('cutoffHz'),
-        enabled: true,
-        points: instrumentPoints,
-      },
-    ];
     doc.mixer = {
       ...doc.mixer,
       masteringChain: {
@@ -2073,17 +2077,12 @@ describe('renderProjectWithEngine', () => {
 
     expect(offlineAutomationLimitations(doc)).toEqual([
       { kind: 'mastering-automation-at-render-start' },
-      { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
     ]);
     expect(result.report.limitations).toEqual([
       {
         kind: 'mastering-automation-at-render-start',
         params: ['maximizer.truePeakLimiter.ceilingDb'],
       },
-      { kind: 'instrument-automation-at-render-start', tracks: ['Keys'] },
-    ]);
-    expect(engine.named('setSynthInstrument')).toEqual([
-      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 1],
     ]);
     expect(processStereo).toHaveBeenCalledWith(
       'maximizer.truePeakLimiter',

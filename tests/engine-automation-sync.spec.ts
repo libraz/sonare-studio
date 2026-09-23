@@ -7,6 +7,7 @@ import {
   type AutomationTarget,
   busAutomationTarget,
   insertAutomationParam,
+  instrumentAutomationParam,
   masteringAutomationParam,
 } from '@/project/automation';
 
@@ -26,6 +27,7 @@ function makeHandle(): {
     resolveTrackInsertAutomationId: ReturnType<typeof vi.fn>;
     resolveMasterInsertAutomationId: ReturnType<typeof vi.fn>;
     resolveBusInsertAutomationId: ReturnType<typeof vi.fn>;
+    resolveInstrumentAutomationId: ReturnType<typeof vi.fn>;
   };
 } {
   // Insert resolvers hand out a deterministic id; an 'unknown' param name
@@ -43,6 +45,9 @@ function makeHandle(): {
     resolveBusInsertAutomationId: vi.fn((busId: number, _insert: number, name: string) =>
       name === 'unknown' ? -1 : 7000 + busId,
     ),
+    resolveInstrumentAutomationId: vi.fn((destinationId: number, name: string) =>
+      name === 'unknown' ? -1 : 8000 + destinationId,
+    ),
   };
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
@@ -58,6 +63,51 @@ function makeLane(
 }
 
 describe('createAutomationSync', () => {
+  it('drives a NativeSynth parameter lane on the destination the track is bound to', () => {
+    const { handle, engine } = makeHandle();
+    const restoreParam = vi.fn();
+    let destination: number | undefined;
+    const lane = makeLane(1, [{ ppq: 0, value: 400 }], {
+      param: instrumentAutomationParam('cutoffHz'),
+    });
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [1],
+      instrumentDestinationFor: () => destination,
+      restoreParam,
+    });
+
+    // Nothing is bound yet, so nothing resolves or installs.
+    sync.sync([lane]);
+    expect(engine.resolveInstrumentAutomationId).not.toHaveBeenCalled();
+    expect(engine.setAutomationLane).not.toHaveBeenCalled();
+
+    destination = 1;
+    sync.sync([lane]);
+    expect(engine.resolveInstrumentAutomationId).toHaveBeenCalledWith(1, 'cutoffHz');
+    expect(engine.setAutomationLane.mock.calls).toEqual([
+      [8001, [expect.objectContaining({ ppq: 0, value: 400 })]],
+    ]);
+
+    // Removing the lane clears it and restores the patch value.
+    sync.sync([]);
+    expect(engine.setAutomationLane).toHaveBeenLastCalledWith(8001, []);
+    expect(restoreParam).toHaveBeenCalledWith(1, instrumentAutomationParam('cutoffHz'));
+  });
+
+  it('skips an instrument lane the engine cannot resolve', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createAutomationSync(handle, {
+      knownTrackIds: () => [1],
+      instrumentDestinationFor: () => 1,
+      restoreParam: vi.fn(),
+    });
+    sync.sync([
+      makeLane(1, [{ ppq: 0, value: 1 }], { param: instrumentAutomationParam('unknown') }),
+      makeLane('master', [{ ppq: 0, value: 1 }], { param: instrumentAutomationParam('gain') }),
+    ]);
+    expect(engine.setAutomationLane).not.toHaveBeenCalled();
+  });
+
   it('reinstalls lanes after a structural strip-scene generation changes', () => {
     const { handle, engine } = makeHandle();
     const restoreParam = vi.fn();

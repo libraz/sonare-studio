@@ -72,7 +72,6 @@ import { peakDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import {
-  evaluateAutomationValue,
   parseInsertAutomationParam,
   parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
@@ -86,7 +85,11 @@ import {
   type InsertLatencyResolver,
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
-import { effectiveTrackInstrument, sf2PlaybackConfig } from '@/project/instrument';
+import {
+  effectiveTrackInstrument,
+  isNativeSynthInstrument,
+  sf2PlaybackConfig,
+} from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import {
   clampPan,
@@ -138,23 +141,6 @@ import {
 
 export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-types';
 
-function instrumentPatchAtRenderStart(
-  track: ProjectDocument['tracks'][number],
-  ppq: number,
-): Record<string, unknown> | null {
-  if (track.instrument?.kind !== 'synth-patch') return null;
-  const patch: Record<string, unknown> = { ...track.instrument.patch };
-  for (const lane of track.automation ?? []) {
-    if (!lane.enabled || lane.points.length === 0) continue;
-    const ref = parseInstrumentAutomationParam(lane.param);
-    if (!ref) continue;
-    const points = sanitizeAutomationPoints(lane.param, lane.points);
-    if (points.length === 0) continue;
-    patch[ref.paramName] = evaluateAutomationValue(points, ppq);
-  }
-  return patch;
-}
-
 /**
  * Limitations to record on a render's report.
  *
@@ -180,21 +166,6 @@ export function offlineAutomationLimitations(
     limitations.push({
       kind: 'mastering-automation-at-render-start',
       params: [...masteringFrozenParams],
-    });
-  }
-  const instrumentTrackNames = doc.tracks
-    .filter((track) => track.instrument?.kind === 'synth-patch')
-    .filter((track) =>
-      (track.automation ?? []).some((lane) => {
-        if (!lane.enabled || !parseInstrumentAutomationParam(lane.param)) return false;
-        return hasTimeVaryingPoints(sanitizeAutomationPoints(lane.param, lane.points));
-      }),
-    )
-    .map((track) => track.name);
-  if (instrumentTrackNames.length > 0) {
-    limitations.push({
-      kind: 'instrument-automation-at-render-start',
-      tracks: instrumentTrackNames,
     });
   }
   return limitations;
@@ -939,10 +910,7 @@ export async function renderProjectWithEngine(
       if (instrument?.kind === 'synth-preset') {
         engine.setSynthInstrument(resolvePreset(instrument.preset), destinationId);
       } else if (instrument?.kind === 'synth-patch') {
-        engine.setSynthInstrument(
-          instrumentPatchAtRenderStart(track, range.startPpq) ?? instrument.patch,
-          destinationId,
-        );
+        engine.setSynthInstrument(instrument.patch, destinationId);
       } else if (instrument?.kind === 'sf2') {
         if (pass.sf2TrackIndices !== null && !pass.sf2TrackIndices.has(index)) continue;
         const bytes = fontBytesById.get(instrument.fontId);
@@ -951,6 +919,16 @@ export async function renderProjectWithEngine(
           loadedFontId = instrument.fontId;
         }
         engine.setSf2Instrument(sf2PlaybackConfig(instrument), destinationId);
+      }
+      // Instrument lanes resolve against the instrument just bound, as live.
+      if (instrument !== undefined && isNativeSynthInstrument(instrument)) {
+        for (const lane of track.automation ?? []) {
+          const ref = lane.enabled ? parseInstrumentAutomationParam(lane.param) : undefined;
+          if (!ref) continue;
+          const points = engineAutomationPoints(lane.points);
+          const id = engine.resolveInstrumentAutomationId(destinationId, ref.paramName);
+          if (points.length > 0 && id >= 0) engine.setAutomationLane(id, points);
+        }
       }
       // External-MIDI tracks have no internal instrument and no external device
       // during an offline render, so they bind nothing here and stay silent.

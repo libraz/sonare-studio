@@ -91,19 +91,18 @@ describe('insert automation command validation', () => {
     ).toThrow(/Unknown mastering processor/);
   });
 
-  it('accepts instrument automation only on synth-patch MIDI tracks', () => {
+  it('accepts instrument automation only on NativeSynth MIDI tracks and automatable fields', () => {
+    const lane =
+      (param = instrumentAutomationParam('cutoffHz')) =>
+      () =>
+        setAutomationLanePoints(trackId, param, [{ ppq: 0, value: 1200 }]);
     setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead' } });
-    expect(() =>
-      setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
-        { ppq: 0, value: 1200 },
-      ]),
-    ).not.toThrow();
+    expect(lane()).not.toThrow();
     setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'saw-lead' });
-    expect(() =>
-      setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
-        { ppq: 0, value: 1200 },
-      ]),
-    ).toThrow(/synth-patch/);
+    expect(lane()).not.toThrow();
+    expect(lane(instrumentAutomationParam('unison'))).toThrow(/not automatable/);
+    setTrackInstrument(trackId, { kind: 'sf2', fontId: 'gm' });
+    expect(lane()).toThrow(/synth instrument/);
     expect(() =>
       setAutomationLanePoints('master', instrumentAutomationParam('cutoffHz'), [
         { ppq: 0, value: 1200 },

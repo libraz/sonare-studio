@@ -22,7 +22,12 @@ import {
   setTrackInstrument,
 } from './commands';
 import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-domains';
-import { type StoredSynthPatch, trackInstrument } from './instrument';
+import {
+  isNativeSynthInstrument,
+  type StoredSynthPatch,
+  type TrackInstrument,
+  trackInstrument,
+} from './instrument';
 import type { InsertSlot, MixerStrip } from './mixer';
 import {
   catalogParamInfo,
@@ -299,6 +304,23 @@ function requireInsertSlot(target: { trackId: MixerStripTarget; index: number })
     throw new RangeError(`Unknown insert index: ${target.index}`);
   }
   return slot;
+}
+
+/**
+ * The value a NativeSynth instrument plays a patch field at when no lane drives
+ * it: the track patch's own value, else its base preset's, or null when
+ * neither sets it (a patch with no preset, or a non-NativeSynth instrument).
+ */
+export function nativeSynthFieldValue(
+  instrument: TrackInstrument,
+  id: string,
+  resolvePreset: (preset: string) => StoredSynthPatch | null = defaultResolvePresetPatch,
+): number | null {
+  if (!isNativeSynthInstrument(instrument)) return null;
+  const patch = instrument.kind === 'synth-patch' ? instrument.patch : null;
+  const presetName = instrument.kind === 'synth-preset' ? instrument.preset : patch?.preset;
+  const basePatch = presetName !== undefined ? resolvePreset(presetName) : null;
+  return patchValue(patch, id) ?? patchValue(basePatch, id);
 }
 
 /**

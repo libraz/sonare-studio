@@ -33,7 +33,6 @@ export interface ExportIssueStrings {
     masteringAutomationAtStart: string;
     /** Variant naming the parameters; falls back to the whole-rack wording. */
     masteringAutomationAtStartParams?: string;
-    instrumentAutomationAtStart: string;
     streamingMeteringUnavailable?: string;
   };
 }
@@ -107,11 +106,6 @@ export function formatExportLimitation(
         ? named.replace('{params}', params.join(', '))
         : strings.limitation.masteringAutomationAtStart;
     }
-    case 'instrument-automation-at-render-start':
-      return strings.limitation.instrumentAutomationAtStart.replace(
-        '{tracks}',
-        limitation.tracks.join(', '),
-      );
     case 'streaming-metering-unavailable':
       return (
         strings.limitation.streamingMeteringUnavailable ??

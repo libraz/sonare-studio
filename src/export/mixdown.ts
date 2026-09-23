@@ -210,7 +210,6 @@ export type ExportLimitation =
        */
       params?: string[];
     }
-  | { kind: 'instrument-automation-at-render-start'; tracks: string[] }
   /** Streaming callbacks cannot retain the full waveform for post-render metering. */
   | {
       kind: 'streaming-metering-unavailable';

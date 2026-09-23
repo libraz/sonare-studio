@@ -27,12 +27,6 @@
 
 import type { NoteArticulation } from '@/project/annotations';
 import {
-  type AutomationLaneState,
-  evaluateAutomationValue,
-  parseInstrumentAutomationParam,
-  sanitizeAutomationPoints,
-} from '@/project/automation';
-import {
   expressionMapEntryFor,
   isExpressionMapEmpty,
   KEY_SWITCH_VELOCITY,
@@ -43,6 +37,7 @@ import {
   type ExternalMidiInstrument,
   effectiveTrackInstrument,
   instrumentDedupeKey,
+  isNativeSynthInstrument,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -590,10 +585,14 @@ export interface MidiSync {
     clips: ReadonlyArray<EditorClip>,
     tempoSegments: ReadonlyArray<TempoSegment>,
     projectExternalMidi?: ExternalMidiInstrument | null,
-    automationLanes?: ReadonlyArray<AutomationLaneState>,
-    automationPpq?: number,
     articulations?: ClipArticulations,
   ): Promise<void>;
+  /**
+   * The engine destination a track's NativeSynth instrument is bound to after
+   * the latest sync, or undefined when the track hosts no NativeSynth of its
+   * own (another instrument kind, frozen, or sharing a destination).
+   */
+  nativeSynthDestination(trackId: number): number | undefined;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
   /** Replays the current bank/program/expression state after a seek or parked play. */
@@ -623,6 +622,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let lastClockEnabled: boolean | undefined;
   let clipCount = 0;
   let currentMediaIssues: MediaCompletenessIssue[] = [];
+  let nativeSynthDestinations = new Map<number, number>();
   let lastStateSource:
     | {
         tracks: ReadonlyArray<EditorTrack>;
@@ -714,34 +714,11 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     }
   }
 
-  function instrumentWithAutomation(
-    track: EditorTrack,
-    instrument: TrackInstrument,
-    automationLanes?: ReadonlyArray<AutomationLaneState>,
-    automationPpq = 0,
-  ): TrackInstrument {
-    if (instrument.kind !== 'synth-patch' || automationLanes === undefined) return instrument;
-    const ppq = Number.isFinite(automationPpq) ? Math.max(0, automationPpq) : 0;
-    let patch: Record<string, unknown> | undefined;
-    for (const lane of automationLanes) {
-      if (lane.target !== track.id || !lane.enabled) continue;
-      const ref = parseInstrumentAutomationParam(lane.param);
-      if (!ref) continue;
-      const points = sanitizeAutomationPoints(lane.param, lane.points);
-      if (points.length === 0) continue;
-      patch ??= { ...instrument.patch };
-      patch[ref.paramName] = evaluateAutomationValue(points, ppq);
-    }
-    return patch === undefined ? instrument : { kind: 'synth-patch', patch };
-  }
-
   const sync = async (
     tracks: ReadonlyArray<EditorTrack>,
     clips: ReadonlyArray<EditorClip>,
     tempoSegments: ReadonlyArray<TempoSegment>,
     projectExternalMidi?: ExternalMidiInstrument | null,
-    automationLanes?: ReadonlyArray<AutomationLaneState>,
-    automationPpq?: number,
     articulations?: ClipArticulations,
   ): Promise<void> => {
     const sampleRate = handle.ctx.sampleRate;
@@ -795,23 +772,22 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       }
     }
 
+    const nextNativeSynthDestinations = new Map<number, number>();
     for (const track of tracks) {
       if (track.kind !== 'midi') continue;
       // A frozen track plays from its baked asset; loading its instrument (and,
       // for SF2, the global SoundFont) would thrash the single font slot.
       if (track.frozen !== undefined) continue;
-      const instrument = instrumentWithAutomation(
-        track,
-        effectiveTrackInstrument(track, projectExternalMidi),
-        automationLanes,
-        automationPpq,
-      );
+      const instrument = effectiveTrackInstrument(track, projectExternalMidi);
       const instrumentKey = JSON.stringify({
         mode: track.externalMidiMode ?? 'track',
         instrument,
         ...(instrument.kind === 'sf2' ? { soundFontReady } : {}),
       });
       const destinationId = destinationByTrack.get(track.id) ?? track.id;
+      if (destinationId === track.id && isNativeSynthInstrument(instrument)) {
+        nextNativeSynthDestinations.set(track.id, destinationId);
+      }
       // When several imported tracks share a destination, bind that destination
       // only once to the first track's instrument.
       if (lastInstrumentKeyByDestination.get(destinationId) === instrumentKey) continue;
@@ -821,6 +797,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       // track's MIDI to the external output queue (drained by useWebMidiOutput).
       lastInstrumentKeyByDestination.set(destinationId, instrumentKey);
     }
+    nativeSynthDestinations = nextNativeSynthDestinations;
 
     // Mirror each track's live, non-destructive MIDI-FX insert. The engine
     // transforms the destination's MIDI before synthesis, so a change installs
@@ -894,5 +871,6 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         handle.engine.pushMidiUmp(event.destinationId, event.word0, renderFrame);
     },
     mediaIssues: () => currentMediaIssues.map((issue) => ({ ...issue })),
+    nativeSynthDestination: (trackId) => nativeSynthDestinations.get(trackId),
   };
 }
