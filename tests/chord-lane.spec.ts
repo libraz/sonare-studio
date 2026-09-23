@@ -11,6 +11,12 @@ import { TimelineRange } from '@/ui/canvas/timeline-range';
 
 const METER = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
+/** The single-region C-major map the lane reads when the project declares no other key. */
+const C_MAJOR = buildKeyMap(
+  keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
+  [],
+);
+
 function chord(startPpq: number, endPpq: number, rootPc = 0, quality = 0): EditorChordSymbol {
   return { startPpq, endPpq, rootPc, quality };
 }
@@ -32,6 +38,7 @@ describe('ChordLane', () => {
         revision: 0,
         chords: [chord(0, 4), chord(1000, 1004)],
         timeSignatures: METER,
+        keyMap: C_MAJOR,
       },
     });
     expect(wrapper.findAll('.chord-band')).toHaveLength(1);
@@ -45,6 +52,7 @@ describe('ChordLane', () => {
         revision: 0,
         chords: [chord(100, 104)],
         timeSignatures: METER,
+        keyMap: C_MAJOR,
         originPpq: 100,
       },
     });
@@ -54,7 +62,7 @@ describe('ChordLane', () => {
   it('emits seek with the chord absolute startPpq on click', async () => {
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords: [chord(4, 8)], timeSignatures: METER },
+      props: { range, revision: 0, chords: [chord(4, 8)], timeSignatures: METER, keyMap: C_MAJOR },
     });
     await wrapper.get('.chord-band').trigger('click');
     expect(wrapper.emitted('seek')).toEqual([[4]]);
@@ -63,7 +71,7 @@ describe('ChordLane', () => {
   it('opens the chord list on double-click anywhere in the lane', async () => {
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords: [], timeSignatures: METER },
+      props: { range, revision: 0, chords: [], timeSignatures: METER, keyMap: C_MAJOR },
     });
     await wrapper.get('.chord-lane').trigger('dblclick');
     expect(wrapper.emitted('openChords')).toHaveLength(1);
@@ -74,7 +82,13 @@ describe('ChordLane', () => {
     const wrapper = mount(ChordLane, {
       // 80 bars (320 ppq) at 4/4, comfortably wider than the 44px label
       // spacing guard, so more than the sticky first label should appear.
-      props: { range, revision: 0, chords: [chord(0, 320)], timeSignatures: METER },
+      props: {
+        range,
+        revision: 0,
+        chords: [chord(0, 320)],
+        timeSignatures: METER,
+        keyMap: C_MAJOR,
+      },
     });
     expect(wrapper.findAll('.chord-name').length).toBeGreaterThan(1);
   });
@@ -82,12 +96,19 @@ describe('ChordLane', () => {
   it('shows the empty hint only when the host opts in with showHints', () => {
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const arrangementHost = mount(ChordLane, {
-      props: { range, revision: 0, chords: [], timeSignatures: METER, showHints: true },
+      props: {
+        range,
+        revision: 0,
+        chords: [],
+        timeSignatures: METER,
+        keyMap: C_MAJOR,
+        showHints: true,
+      },
     });
     expect(arrangementHost.find('.chord-hint').exists()).toBe(true);
 
     const pianoRollHost = mount(ChordLane, {
-      props: { range, revision: 0, chords: [], timeSignatures: METER },
+      props: { range, revision: 0, chords: [], timeSignatures: METER, keyMap: C_MAJOR },
     });
     expect(pianoRollHost.find('.chord-hint').exists()).toBe(false);
   });
@@ -100,6 +121,7 @@ describe('ChordLane', () => {
         revision: 0,
         chords: [chord(0, 4)],
         timeSignatures: METER,
+        keyMap: C_MAJOR,
         hasContent: false,
         showHints: true,
       },
@@ -115,6 +137,7 @@ describe('ChordLane', () => {
         revision: 0,
         chords: [chord(0, 4)],
         timeSignatures: METER,
+        keyMap: C_MAJOR,
         hasContent: true,
         showHints: true,
       },
@@ -126,7 +149,7 @@ describe('ChordLane', () => {
     vi.useFakeTimers();
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords: [], timeSignatures: METER },
+      props: { range, revision: 0, chords: [], timeSignatures: METER, keyMap: C_MAJOR },
     });
 
     await wrapper.setProps({ chords: [chord(0, 4)] });
@@ -153,7 +176,6 @@ describe('ChordLane', () => {
         // (0 fifths), flat side after it (-3 fifths).
         chords: [chord(0, 4, 6), chord(16, 20, 6)],
         timeSignatures: METER,
-        keyFifths: 99, // ignored once keyMap is supplied
         keyMap,
       },
     });

@@ -150,6 +150,11 @@ export interface NoteInteractions {
   /** Returns the topmost note id under a point, or null when none is hit. */
   hitNoteAt(point: InteractionPoint): number | null;
   /**
+   * The cell a draw-tool click at `ppq` would write: the start snapped the way
+   * a draw starts (ignoring Cmd) and the minimum draw length.
+   */
+  drawCellAt(ppq: number): { startPpq: number; lengthPpq: number };
+  /**
    * Handles a key press (`event.key` value).
    *
    * @returns True when the key was consumed (caller should preventDefault).
@@ -381,18 +386,30 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   /** Resolves the grid-snapped start cell of a draw at the pointer x. */
   function drawStartPpq(point: InteractionPoint, modifiers: InteractionModifiers): number {
+    return drawStartAt(view.xToPpq(point.x), modifiers.meta === true);
+  }
+
+  /** Snaps a draw start at `ppq` into the editable window, keeping one cell of room. */
+  function drawStartAt(ppq: number, bypassSnap: boolean): number {
     const step = options.getGridPpq();
-    const ppq = view.xToPpq(point.x);
-    const minLen = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
+    const minLen = drawMinLength();
     const snapped =
-      modifiers.meta === true || !(step > 0)
-        ? ppq
-        : (options.snapPpq?.(ppq) ?? Math.floor(ppq / step) * step);
+      bypassSnap || !(step > 0) ? ppq : (options.snapPpq?.(ppq) ?? Math.floor(ppq / step) * step);
     const rawMin = options.getMinPpq?.();
     const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
     const rawMax = options.getMaxPpq?.();
     const max = rawMax !== undefined && Number.isFinite(rawMax) ? rawMax : Number.POSITIVE_INFINITY;
     return Math.max(min, Math.min(max - minLen, snapped));
+  }
+
+  /** Shortest draw: one grid cell, or the minimum duration with snapping off. */
+  function drawMinLength(): number {
+    const step = options.getGridPpq();
+    return step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
+  }
+
+  function drawCellAt(ppq: number): { startPpq: number; lengthPpq: number } {
+    return { startPpq: drawStartAt(ppq, false), lengthPpq: drawMinLength() };
   }
 
   /** Resolves the snapped length of an in-flight draw, kept at >= one grid cell. */
@@ -402,7 +419,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     modifiers: InteractionModifiers,
   ): number {
     const step = options.getGridPpq();
-    const minLen = step > 0 ? step : DEFAULT_MIN_DURATION_PPQ;
+    const minLen = drawMinLength();
     const raw = view.xToPpq(point.x);
     const end =
       modifiers.meta === true ? raw : (options.snapPpq?.(raw) ?? snapPpqToStep(raw, step));
@@ -960,6 +977,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     onPointerUp,
     onDoubleClick,
     hitNoteAt,
+    drawCellAt,
     onKeyDown,
     cancel,
   };

@@ -32,6 +32,8 @@ const noteColorMode = defineModel<'track' | 'velocity' | 'channel'>('noteColorMo
 });
 const auditionDrag = defineModel<boolean>('auditionDrag', { required: true });
 const autoReharmonize = defineModel<boolean>('autoReharmonize', { required: true });
+const placementGuide = defineModel<boolean>('placementGuide', { required: true });
+const guidanceTint = defineModel<boolean>('guidanceTint', { required: true });
 
 const props = defineProps<{
   /** True while the active track is frozen and content mutations are blocked. */
@@ -149,6 +151,18 @@ function onLegendClick(trackId: number): void {
       :label="t.shell.pianoRoll.reharmonize.toggle"
       :title="t.shell.pianoRoll.reharmonize.toggleTitle"
       :disabled="props.readOnly === true"
+      size="sm"
+    />
+    <ToggleButton
+      v-model="placementGuide"
+      :label="t.shell.pianoRoll.placementGuideToggle"
+      :title="t.shell.pianoRoll.placementGuideToggleTitle"
+      size="sm"
+    />
+    <ToggleButton
+      v-model="guidanceTint"
+      :label="t.shell.pianoRoll.guidanceTintToggle"
+      :title="t.shell.pianoRoll.guidanceTintToggleTitle"
       size="sm"
     />
     <div class="track-legend">

@@ -12,6 +12,12 @@ import { vTooltip } from '@/ui/tooltip';
 
 const METER = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
+/** The single-region C-major map the lane reads when the project declares no other key. */
+const C_MAJOR = buildKeyMap(
+  keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
+  [],
+);
+
 /** Editor quality ordinals used by the progressions below. */
 const MAJOR = 0;
 const MINOR = 1;
@@ -49,7 +55,9 @@ function chord(startPpq: number, endPpq: number, rootPc = 0, quality = MAJOR): E
 
 function laneWith(chords: EditorChordSymbol[]) {
   const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
-  return mount(ChordLane, { props: { range, revision: 0, chords, timeSignatures: METER } });
+  return mount(ChordLane, {
+    props: { range, revision: 0, chords, timeSignatures: METER, keyMap: C_MAJOR },
+  });
 }
 
 function marker(partial: Partial<EditorMarker>): EditorMarker {
@@ -85,6 +93,7 @@ describe('ChordLane harmonic annotation', () => {
         revision: 0,
         chords: [chord(0, 4, 7), chord(4, 8, 0)],
         timeSignatures: METER,
+        keyMap: C_MAJOR,
       },
     });
     expect(wrapper.find('.cadence-mark').exists()).toBe(true);
@@ -100,7 +109,10 @@ describe('ChordLane harmonic annotation', () => {
         chords: [chord(0, 4, 5, MAJOR)],
         timeSignatures: METER,
         // C natural minor, where a major IV is borrowed from the parallel major.
-        keyScale: { rootPc: 0, modeMask12: 0b0101_1010_1101 },
+        keyMap: buildKeyMap(
+          keyScaleToScaleHighlight({ rootPc: 0, modeMask12: 0b0101_1010_1101 }),
+          [],
+        ),
       },
     });
     expect(wrapper.get('.chord-mark').text()).toContain('♮');
@@ -126,7 +138,7 @@ describe('ChordLane harmonic annotation', () => {
     );
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords, timeSignatures: METER },
+      props: { range, revision: 0, chords, timeSignatures: METER, keyMap: C_MAJOR },
     });
     const spans = wrapper.findAll('.key-span');
     expect(spans.length).toBe(2);
@@ -150,7 +162,7 @@ describe('ChordLane harmonic annotation', () => {
     );
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords, timeSignatures: METER },
+      props: { range, revision: 0, chords, timeSignatures: METER, keyMap: C_MAJOR },
       global: { directives: { tooltip: vTooltip } },
     });
 
@@ -178,7 +190,7 @@ describe('ChordLane harmonic annotation', () => {
     );
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords, timeSignatures: METER },
+      props: { range, revision: 0, chords, timeSignatures: METER, keyMap: C_MAJOR },
       global: { directives: { tooltip: vTooltip } },
     });
 
@@ -194,7 +206,7 @@ describe('ChordLane harmonic annotation', () => {
     );
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 2 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords, timeSignatures: METER },
+      props: { range, revision: 0, chords, timeSignatures: METER, keyMap: C_MAJOR },
     });
     expect(wrapper.findAll('.key-span').length).toBe(2);
     expect(wrapper.findAll('.key-span-label').length).toBe(0);
@@ -206,7 +218,7 @@ describe('ChordLane harmonic annotation', () => {
     );
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {
-      props: { range, revision: 0, chords, timeSignatures: METER, originPpq: 100 },
+      props: { range, revision: 0, chords, timeSignatures: METER, keyMap: C_MAJOR, originPpq: 100 },
     });
     expect(wrapper.findAll('.key-span')[1].attributes('style')).toContain('left: 160px');
   });
@@ -219,6 +231,7 @@ describe('ChordLane harmonic annotation', () => {
         revision: 0,
         chords: [chord(100, 104, 7), chord(104, 108, 0)],
         timeSignatures: METER,
+        keyMap: C_MAJOR,
         originPpq: 100,
       },
     });
@@ -274,7 +287,7 @@ describe('ChordLane harmonic annotation', () => {
       expect(marks[2].exists()).toBe(false);
     });
 
-    it('ignores the keyScale prop once keyMap is supplied', () => {
+    it('reads a major IV as diatonic in a C-major key map', () => {
       const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
       const keyMap = buildKeyMap(
         keyScaleToScaleHighlight({ rootPc: 0, modeMask12: MAJOR_MODE_MASK }),
@@ -286,9 +299,8 @@ describe('ChordLane harmonic annotation', () => {
           revision: 0,
           chords: [chord(0, 4, 5, MAJOR)],
           timeSignatures: METER,
-          // C natural minor would read this major IV as borrowed (♮); keyMap
-          // (C major, diatonic IV) wins instead.
-          keyScale: { rootPc: 0, modeMask12: 0b0101_1010_1101 },
+          // C natural minor would read this major IV as borrowed (♮); the C-major
+          // map reads it as a diatonic IV.
           keyMap,
         },
       });

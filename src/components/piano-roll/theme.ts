@@ -68,12 +68,18 @@ export const PIANO_ROLL_COLORS = {
   hudBackground: 'rgba(8, 10, 14, 0.84)',
   /** Floating gesture readout text. */
   hudText: '#f3f5f9',
-  /** Guidance row tint for safe pitch classes (near-invisible; drawing skips it). */
-  guidanceSafe: 'rgba(74, 222, 128, 0.05)',
+  /** Safe tint: drawn only in the placement column (the row tint skips safe rows). */
+  guidanceSafe: 'rgba(74, 222, 128, 0.10)',
   /** Guidance row tint for warning pitch classes (aligned with noteWarning). */
   guidanceWarning: 'rgba(245, 158, 11, 0.09)',
   /** Guidance row tint for dissonant pitch classes (aligned with noteError). */
   guidanceDissonant: 'rgba(239, 68, 68, 0.12)',
+  /** Diagonal hatch over ng rows of the placement column, so ng never rests on colour alone. */
+  placementHatch: 'rgba(239, 68, 68, 0.5)',
+  /** Dotted underline on a placement row that thins a following accompaniment note. */
+  placementThinned: 'rgba(74, 222, 128, 0.7)',
+  /** 1px left/right edges of the placement column (the gridBar weight). */
+  placementEdge: 'rgba(255, 255, 255, 0.18)',
   /** Resolution-arrow stroke: a note's expected voice-leading target. */
   resolutionArrow: 'rgba(129, 140, 248, 0.85)',
   /** Piano-roll minimap background. */

@@ -5,6 +5,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
+import type { GuidanceProfile } from '@/compose/guidance-profile';
 import { useI18n } from '@/ui/i18n';
 import {
   type AppLanguage,
@@ -81,6 +82,13 @@ const EXPLAIN_LEVEL_OPTIONS = computed<ReadonlyArray<{ value: ExplainLevel; labe
   ],
 );
 
+const GUIDANCE_PROFILE_OPTIONS = computed<ReadonlyArray<{ value: GuidanceProfile; label: string }>>(
+  () => [
+    { value: 'counterpoint', label: t.value.settings.general.guidanceProfileName.counterpoint },
+    { value: 'pop', label: t.value.settings.general.guidanceProfileName.pop },
+  ],
+);
+
 function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
   appSettings.set('editorDensity', value);
 }
@@ -119,6 +127,10 @@ function onRecordingSourceChange(value: RecordingCaptureSource): void {
 
 function onExplainLevelChange(value: ExplainLevel): void {
   appSettings.set('explainLevel', value);
+}
+
+function onGuidanceProfileChange(value: GuidanceProfile): void {
+  appSettings.set('guidanceProfile', value);
 }
 
 const autosaveSeconds = computed<number>(() =>
@@ -272,6 +284,19 @@ function onLoudnessTargetInput(event: Event): void {
               :aria-label="t.settings.general.explainLevel"
               size="sm"
               @change="onExplainLevelChange"
+            />
+          </div>
+        </div>
+        <div class="settings-row">
+          <span class="settings-row__label">{{ t.settings.general.guidanceProfile }}</span>
+          <div class="settings-row__control">
+            <SelectMenu
+              class="row-select"
+              :model-value="appSettings.settings.guidanceProfile"
+              :options="GUIDANCE_PROFILE_OPTIONS"
+              :aria-label="t.settings.general.guidanceProfile"
+              size="sm"
+              @change="onGuidanceProfileChange"
             />
           </div>
         </div>

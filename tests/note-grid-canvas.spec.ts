@@ -2,8 +2,11 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
+import { PIANO_ROLL_COLORS } from '@/components/piano-roll/theme';
 import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
+import type { PlacementColumn } from '@/composables/usePlacementGuidance';
 import type { TheoryCard } from '@/compose/explain';
+import type { PlacementLevel, PlacementVerdict } from '@/compose/placement';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -30,6 +33,7 @@ function makeInteractions(noteId: number | null): NoteInteractions {
     onPointerUp: vi.fn(),
     onDoubleClick: vi.fn(),
     hitNoteAt: vi.fn(() => noteId),
+    drawCellAt: vi.fn(() => ({ startPpq: 0, lengthPpq: 0.25 })),
     onKeyDown: vi.fn(() => false),
     cancel: vi.fn(),
   };
@@ -245,5 +249,176 @@ describe('NoteGridCanvas theory card', () => {
     vi.advanceTimersByTime(1000);
     await nextTick();
     expect(shownCard()).toBeNull();
+  });
+});
+
+describe('NoteGridCanvas placement column', () => {
+  /** Minimal 2d context: records the stroke colour of every stroke() and the dash patterns. */
+  function fakeContext() {
+    const strokes: string[] = [];
+    const dashes: number[][] = [];
+    const fills: string[] = [];
+    const ctx: Record<string, unknown> = { strokeStyle: '', fillStyle: '', lineWidth: 1, font: '' };
+    for (const name of [
+      'setTransform',
+      'clearRect',
+      'strokeRect',
+      'beginPath',
+      'moveTo',
+      'lineTo',
+      'closePath',
+      'fill',
+      'save',
+      'restore',
+      'rect',
+      'clip',
+      'fillText',
+      'roundRect',
+    ]) {
+      ctx[name] = vi.fn();
+    }
+    ctx.fillRect = vi.fn(() => fills.push(String(ctx.fillStyle)));
+    ctx.stroke = vi.fn(() => strokes.push(String(ctx.strokeStyle)));
+    ctx.setLineDash = vi.fn((pattern: number[]) => dashes.push([...pattern]));
+    ctx.measureText = vi.fn(() => ({ width: 10 }));
+    return { ctx, strokes, dashes, fills };
+  }
+
+  function column(
+    levels: Record<number, PlacementLevel>,
+    extra: Partial<PlacementVerdict> = {},
+  ): PlacementColumn {
+    const verdicts: PlacementVerdict[] = Array.from({ length: 128 }, (_, pitch) => ({
+      level: levels[pitch] ?? 'safe',
+      reasons: [],
+      partners: [],
+      ...(levels[pitch] !== undefined ? extra : {}),
+    }));
+    return { startPpq: 1, endPpq: 1.25, verdicts };
+  }
+
+  function mountColumn(placementColumn: PlacementColumn, rowHeight: number) {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1),
+    );
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    return mount(NoteGridCanvas, {
+      props: {
+        range: new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight }),
+        revision: 0,
+        painter,
+        notes: [],
+        selection: new Set(),
+        highlightedPitchClasses: Array.from({ length: 12 }, () => false),
+        gridPpq: 0.25,
+        clipLengthPpq: 16,
+        timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
+        interactions: makeInteractions(null),
+        placementColumn,
+      },
+    });
+  }
+
+  /** Runs the most recently scheduled overlay paint against the fake context. */
+  function paintOverlay(): void {
+    const calls = vi
+      .mocked(painter.schedule)
+      .mock.calls.filter(([layer]) => layer.startsWith('note-grid-overlay-'));
+    calls[calls.length - 1]?.[1]();
+  }
+
+  let fake: ReturnType<typeof fakeContext>;
+  let getContextSpy: { mockRestore(): void } | null = null;
+
+  beforeEach(() => {
+    fake = fakeContext();
+    getContextSpy = vi
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockImplementation(() => fake.ctx as unknown as CanvasRenderingContext2D);
+  });
+
+  afterEach(() => {
+    getContextSpy?.mockRestore();
+    getContextSpy = null;
+  });
+
+  it('hatches an ng row on top of its tint', async () => {
+    wrapper = mountColumn(column({}), 10);
+    await wrapper.setProps({ placementColumn: column({ 60: 'ng' }) });
+    paintOverlay();
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.guidanceDissonant);
+    expect(fake.strokes).toContain(PIANO_ROLL_COLORS.placementHatch);
+  });
+
+  it('skips the hatch when rows are shorter than 5px', async () => {
+    wrapper = mountColumn(column({}), 4);
+    await wrapper.setProps({ placementColumn: column({ 60: 'ng' }) });
+    paintOverlay();
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.guidanceDissonant);
+    expect(fake.strokes).not.toContain(PIANO_ROLL_COLORS.placementHatch);
+  });
+
+  it('draws no hatch on a column without ng rows', async () => {
+    wrapper = mountColumn(column({}), 10);
+    await wrapper.setProps({ placementColumn: column({ 60: 'warn' }) });
+    paintOverlay();
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.guidanceWarning);
+    expect(fake.strokes).not.toContain(PIANO_ROLL_COLORS.placementHatch);
+  });
+
+  it('underlines a row that thins a following accompaniment with a dotted line', async () => {
+    wrapper = mountColumn(column({}), 10);
+    await wrapper.setProps({
+      placementColumn: column({ 60: 'safe' }, { reasons: ['accompanimentThinned'] }),
+    });
+    paintOverlay();
+    expect(fake.strokes).toContain(PIANO_ROLL_COLORS.placementThinned);
+    expect(fake.dashes.some((pattern) => pattern.length > 0)).toBe(true);
+  });
+
+  it('draws a dotted arrow from the hovered warn row to its resolution', async () => {
+    wrapper = mountColumn(column({ 60: 'warn' }, { resolveTo: [59] }), 10);
+    // Pitch 60 sits at y [670, 680) with 10px rows and no scroll.
+    wrapper
+      .get('.note-grid')
+      .element.dispatchEvent(
+        new PointerEvent('pointermove', { bubbles: true, clientX: 120, clientY: 675 }),
+      );
+    await nextTick();
+    paintOverlay();
+    expect(fake.strokes).toContain(PIANO_ROLL_COLORS.resolutionArrow);
+    expect(fake.dashes.some((pattern) => pattern.length > 0)).toBe(true);
+  });
+
+  it('draws the crosshair after the column', async () => {
+    wrapper = mountColumn(column({ 60: 'ng' }), 10);
+    wrapper
+      .get('.note-grid')
+      .element.dispatchEvent(
+        new PointerEvent('pointermove', { bubbles: true, clientX: 120, clientY: 675 }),
+      );
+    await nextTick();
+    paintOverlay();
+    const hatch = fake.strokes.indexOf(PIANO_ROLL_COLORS.placementHatch);
+    const crosshair = fake.strokes.lastIndexOf(PIANO_ROLL_COLORS.rulerBeat);
+    expect(hatch).toBeGreaterThanOrEqual(0);
+    expect(crosshair).toBeGreaterThan(hatch);
+  });
+
+  it('repaints only the overlay when the column changes', async () => {
+    wrapper = mountColumn(column({}), 10);
+    vi.mocked(painter.schedule).mockClear();
+    await wrapper.setProps({ placementColumn: column({ 61: 'warn' }) });
+    const layers = vi.mocked(painter.schedule).mock.calls.map(([layer]) => layer);
+    expect(layers.some((layer) => layer.startsWith('note-grid-overlay-'))).toBe(true);
+    expect(layers.some((layer) => layer.startsWith('note-grid-background-'))).toBe(false);
   });
 });

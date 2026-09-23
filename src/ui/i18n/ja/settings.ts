@@ -37,6 +37,11 @@ export const settings = {
     autosaveInterval: '自動保存間隔（秒）',
     scrollFollowPlayhead: '再生ヘッドを追従して表示',
     explainLevel: 'ガイドの解説レベル',
+    guidanceProfile: 'ガイドの判定プロファイル',
+    guidanceProfileName: {
+      counterpoint: '対位法',
+      pop: 'ポップス',
+    },
     confirmDestructive: '破壊的な操作を確認',
     loudnessTarget: 'ラウドネス目標（LUFS）',
     toggleOn: 'オン',

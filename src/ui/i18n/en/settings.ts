@@ -37,6 +37,11 @@ export const settings = {
     autosaveInterval: 'Autosave interval (seconds)',
     scrollFollowPlayhead: 'Scroll view to follow playhead',
     explainLevel: 'Guidance explanation level',
+    guidanceProfile: 'Guidance profile',
+    guidanceProfileName: {
+      counterpoint: 'Counterpoint',
+      pop: 'Pop',
+    },
     confirmDestructive: 'Confirm destructive actions',
     loudnessTarget: 'Loudness target (LUFS)',
     toggleOn: 'On',

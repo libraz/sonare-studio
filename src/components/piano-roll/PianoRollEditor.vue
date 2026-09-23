@@ -7,7 +7,9 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { usePlacementGuidance } from '@/composables/usePlacementGuidance';
 import { useReactiveReharmonization } from '@/composables/useReactiveReharmonization';
+import { buildKeyMap } from '@/compose/key-map';
 import {
   addNote,
   addNotes,
@@ -86,6 +88,7 @@ import { usePianoRollLanes } from './use-piano-roll-lanes';
 import { usePianoRollScrollbar } from './use-piano-roll-scrollbar';
 import { usePianoRollViewport } from './use-piano-roll-viewport';
 import { usePianoRollZoom } from './use-piano-roll-zoom';
+import { describePlacementVerdict, usePlacementCell } from './use-placement-cell';
 import VelocityLane from './VelocityLane.vue';
 
 /**
@@ -130,6 +133,8 @@ const { t } = useI18n();
 const { formatPitch } = useNoteNames();
 const appSettings = useAppSettings();
 const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
+/** Project key map (declared key plus Key: markers) the chord lane reads chords against. */
+const keyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
 
 /** Whether the MIDI-FX transform popover is open. */
 const fxPanelOpen = ref(false);
@@ -242,6 +247,14 @@ const noteColorMode = computed({
 const auditionDrag = computed({
   get: () => appSettings.settings.pianoRollAuditionDrag,
   set: (value: boolean) => appSettings.set('pianoRollAuditionDrag', value),
+});
+const placementGuide = computed({
+  get: () => appSettings.settings.pianoRollPlacementGuide,
+  set: (value: boolean) => appSettings.set('pianoRollPlacementGuide', value),
+});
+const guidanceTint = computed({
+  get: () => appSettings.settings.pianoRollGuidanceTint,
+  set: (value: boolean) => appSettings.set('pianoRollGuidanceTint', value),
 });
 
 const laneModeOptions = computed(() => [
@@ -953,6 +966,28 @@ const interactions = useNoteInteractions({
   ...(props.audition ? { onAudition: props.audition } : {}),
 });
 
+/** The cell the pencil would write and its per-pitch placement verdicts. */
+const placementCell = usePlacementCell({
+  hoverPpq: computed(() => hoverStatus.value?.ppq ?? null),
+  tool,
+  previewNotes: interactions.previewNotes,
+  drawCellAt: interactions.drawCellAt,
+});
+const placementColumn = usePlacementGuidance(placementCell);
+
+/** Verdict of the hovered row of the placement column, as status text. */
+const placementStatus = computed(() => {
+  const hover = hoverStatus.value;
+  const verdict = hover ? placementColumn.value?.verdicts[hover.pitch] : undefined;
+  if (verdict === undefined) return null;
+  const strings = t.value.shell.pianoRoll.placement;
+  return describePlacementVerdict(verdict, strings, formatPitch, (trackId) =>
+    trackId === null
+      ? strings.thisClip
+      : (store.tracks.find((track) => track.id === trackId)?.name ?? strings.thisClip),
+  );
+});
+
 function onKeyDown(event: KeyboardEvent): void {
   const target = event.target;
   if (
@@ -1042,11 +1077,16 @@ const statusText = computed(() => {
       ? 'Bar'
       : `${Math.round(4 / gridPpq.value)}`
     : 'off';
+  const lead = [
+    store.leadFollowDeferred ? t.value.shell.pianoRoll.placement.leadFollowDeferred : null,
+    placementStatus.value,
+  ].filter((part): part is string => part !== null);
+  const prefix = lead.length > 0 ? `${lead.join(' · ')} · ` : '';
   if (!hover) {
-    return `${selection} selected · Snap ${snap}`;
+    return `${prefix}${selection} selected · Snap ${snap}`;
   }
   const location = pianoRollStatusLocation(localTimeSignatures.value, hover.ppq);
-  return `${formatPitch(hover.pitch)} · ${location.bar}.${location.beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
+  return `${prefix}${formatPitch(hover.pitch)} · ${location.bar}.${location.beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
 });
 
 /** Focuses the editor so keyboard shortcuts work after any click inside it. */
@@ -1160,6 +1200,8 @@ onBeforeUnmount(() => {
       v-model:note-color-mode="noteColorMode"
       v-model:audition-drag="auditionDrag"
       v-model:auto-reharmonize="autoReharmonize"
+      v-model:placement-guide="placementGuide"
+      v-model:guidance-tint="guidanceTint"
       :read-only="contentReadOnly"
       :can-transform="canTransform"
       :clip-id="store.clipId"
@@ -1206,7 +1248,7 @@ onBeforeUnmount(() => {
         :chords="store.chords"
         :time-signatures="localTimeSignatures"
         :origin-ppq="timeSignatureOriginPpq"
-        :key-fifths="chordKeyFifths"
+        :key-map="keyMap"
         @seek="(ppq) => emit('seek', Math.max(0, ppq))"
         @open-chords="emit('openChords')"
       />
@@ -1239,6 +1281,7 @@ onBeforeUnmount(() => {
           :guidance-segments="guidanceSegments"
           :note-card="noteCard"
           :resolution-arrows="resolutionArrows"
+          :placement-column="placementColumn"
           @view-resize="viewport.onGridResize"
           @ghost-activate="onGhostActivate"
           @note-context="onNoteContext"
