@@ -19,6 +19,7 @@ import {
 import { clipSplitBlockReason } from '@/project/clip-split';
 import {
   addMidiClip,
+  alignClipToReference,
   applyGrooveToActiveClip,
   captureGrooveFromActiveClip,
   clearActiveClipSelection,
@@ -62,7 +63,7 @@ import { grooveTemplateIsUsable } from '@/project/groove';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { snapPpqToMeterGrid } from '@/project/time-signature';
-import { canTrackContainClip, clipKind, isAudioClip } from '@/project/types';
+import { canTrackContainClip, clipKind, type EditorClip, isAudioClip } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
 import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
@@ -1027,6 +1028,41 @@ async function consolidateAudioCluster(clipIds: number[]): Promise<void> {
   if (id !== null) setActiveClip(id);
 }
 
+/** Audio clips that cover a clip's whole window, the references it can be aligned to. */
+function alignmentReferences(clip: EditorClip): EditorClip[] {
+  const end = clip.startPpq + clip.lengthPpq;
+  return store.clips.filter(
+    (other) =>
+      other.id !== clip.id &&
+      isAudioClip(other) &&
+      other.startPpq <= clip.startPpq &&
+      other.startPpq + other.lengthPpq >= end,
+  );
+}
+
+/** Warps an audio clip so its timing follows a reference clip. */
+function alignToReference(clip: EditorClip, reference: EditorClip): void {
+  error.value = '';
+  notice.value = '';
+  void (async () => {
+    try {
+      const outcome = await alignClipToReference(clip.id, reference.id);
+      if (outcome.applied) {
+        notice.value = formatMessage(t.value.shell.arrangement.alignedTo, {
+          clip: clip.name,
+          reference: reference.name,
+        });
+      } else {
+        error.value = formatMessage(t.value.shell.arrangement.alignRefused[outcome.reason], {
+          reference: reference.name,
+        });
+      }
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  })();
+}
+
 /** Builds and opens the right-click menu for a clip (or an empty lane). */
 function onClipContext(payload: {
   x: number;
@@ -1105,6 +1141,28 @@ function onClipContext(payload: {
       disabled: frozen || consolidateIds.length < 2,
       run: () => consolidateAudioCluster(consolidateIds),
     },
+    ...(isAudioClip(clip)
+      ? (() => {
+          const references = alignmentReferences(clip);
+          const trackName = (trackId: number): string =>
+            store.tracks.find((track) => track.id === trackId)?.name ?? '';
+          return [
+            {
+              id: 'align-to',
+              label:
+                references.length > 0
+                  ? t.value.shell.arrangement.alignTo
+                  : `${t.value.shell.arrangement.alignTo} — ${t.value.shell.arrangement.alignToNone}`,
+              disabled: frozen || references.length === 0,
+              children: references.map((reference) => ({
+                id: `align-to-${reference.id}`,
+                label: `${trackName(reference.trackId)} · ${reference.name}`,
+                run: () => alignToReference(clip, reference),
+              })),
+            },
+          ];
+        })()
+      : []),
     {
       id: 'slice-transients',
       label: t.value.shell.arrangement.clipActions.sliceTransients,

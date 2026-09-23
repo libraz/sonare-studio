@@ -1,3 +1,8 @@
+export {
+  type AlignClipOutcome,
+  type AlignClipRefusal,
+  alignClipToReference,
+} from './command/align';
 export type { AssistSidecar } from './command/assist';
 export { listAssistSidecars, setAssistSidecar } from './command/assist';
 export type { AddRecordedAudioClipInput } from './command/audio-recording';
