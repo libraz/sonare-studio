@@ -1,258 +1,86 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 LIBSONARE_DIR="../libsonare"
-JS_DIST_DIR="$LIBSONARE_DIR/bindings/wasm/dist"
-WASM_BUILD_DIR="$JS_DIST_DIR"
+WASM_PKG_DIR="$LIBSONARE_DIR/bindings/wasm"
+DIST_DIR="$WASM_PKG_DIR/dist"
 DEST_DIR="src/wasm"
 
-# Required files
-# Emscripten artifacts: main module used by the offline API and realtime
-# AudioWorklet. The obsolete sonare-rt C-ABI runtime is pruned below.
-WASM_FILES=("sonare.wasm" "sonare.js")
-# tsup bundle: index.* is the high-level API, worklet.* is the AudioWorklet
-# entry that index.d.ts re-exports its types from.
-JS_FILES=("index.js" "index.d.ts" "worklet.js" "worklet.d.ts")
-JS_CHUNK_GLOB="chunk-*.js"
+# Runtime artifacts: the Emscripten module, the high-level API, and the
+# AudioWorklet entry. index.js / worklet.js import ./sonare.js dynamically.
+RUNTIME_FILES=("sonare.wasm" "sonare.js" "index.js" "worklet.js")
 
-# Obsolete sub-module files from the previous tsc-based layout — removed after
-# libsonare switched to a tsup bundle. Cleaned up from DEST_DIR if present.
-OBSOLETE_FILES=(
-  "public_types.js" "public_types.d.ts"
-  "stream_types.js" "stream_types.d.ts"
-  "wasm_types.js" "wasm_types.d.ts"
-  "sonare-rt.wasm" "sonare-rt.js" "sonare-rt-module.js"
-)
+# dist/sonare.d.ts re-exports '../src/sonare.js', which does not exist once
+# vendored; the hand-written module declaration it points at is copied in its
+# place so the declaration tree resolves inside src/wasm alone.
+MODULE_DECL_SRC="$WASM_PKG_DIR/src/sonare.js.d.ts"
+
+# Files kept in DEST_DIR that the sync must not delete.
+KEEP_FILES=("meta.json")
 
 echo "📦 Copying WASM files from libsonare..."
 
-# Check if libsonare directory exists
-if [ ! -d "$LIBSONARE_DIR" ]; then
-  echo "❌ Error: libsonare directory not found at $LIBSONARE_DIR"
-  echo "   Please clone libsonare in the parent directory."
+if [ ! -d "$DIST_DIR" ]; then
+  echo "❌ Error: $DIST_DIR not found"
+  echo "   Clone libsonare next to this repo and run 'yarn build' in bindings/wasm."
   exit 1
 fi
 
-# Check WASM build directory
-if [ ! -d "$WASM_BUILD_DIR" ]; then
-  echo "❌ Error: WASM build directory not found at $WASM_BUILD_DIR"
+missing=()
+for file in "${RUNTIME_FILES[@]}" "index.d.ts" "worklet.d.ts"; do
+  [ -f "$DIST_DIR/$file" ] || missing+=("$file")
+done
+[ -f "$MODULE_DECL_SRC" ] || missing+=("${MODULE_DECL_SRC#"$WASM_PKG_DIR/"}")
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "❌ Error: missing in libsonare:"
+  printf '   - %s\n' "${missing[@]}"
   echo "   Run 'yarn build' in libsonare/bindings/wasm first."
   exit 1
 fi
 
-# Check JS dist directory
-if [ ! -d "$JS_DIST_DIR" ]; then
-  echo "❌ Error: JS dist directory not found at $JS_DIST_DIR"
-  echo "   Run 'yarn build:js' in libsonare/bindings/wasm first."
+# The dist must be built from the sources it sits next to.
+if ! (cd "$WASM_PKG_DIR" && node scripts/dist-source-manifest.mjs >/dev/null); then
+  echo "❌ Error: libsonare dist is stale against its sources"
+  echo "   Rebuild with 'yarn build' in libsonare/bindings/wasm."
   exit 1
 fi
 
-# Check WASM files
-missing_wasm=()
-for file in "${WASM_FILES[@]}"; do
-  if [ ! -f "$WASM_BUILD_DIR/$file" ]; then
-    missing_wasm+=("$file")
-  fi
+STAGE_DIR=$(mktemp -d)
+trap 'rm -rf "$STAGE_DIR"' EXIT
+
+for file in "${RUNTIME_FILES[@]}"; do
+  cp "$DIST_DIR/$file" "$STAGE_DIR/"
+done
+mkdir -p "$STAGE_DIR/worklet"
+for decl in "$DIST_DIR"/*.d.ts; do
+  # Shims into libsonare's own src/ cannot resolve here; sonare.d.ts is
+  # replaced below and the analysis-only module is not vendored.
+  grep -q "from '\.\./src/" "$decl" && continue
+  cp "$decl" "$STAGE_DIR/"
+done
+cp "$DIST_DIR"/worklet/*.d.ts "$STAGE_DIR/worklet/"
+cp "$MODULE_DECL_SRC" "$STAGE_DIR/sonare.d.ts"
+
+# Source maps are not vendored.
+find "$STAGE_DIR" \( -name '*.js' -o -name '*.d.ts' \) -print0 |
+  xargs -0 sed -i.bak '/^\/\/# sourceMappingURL=/d'
+find "$STAGE_DIR" -name '*.bak' -delete
+
+RSYNC_ARGS=(-rc --delete)
+for keep in "${KEEP_FILES[@]}"; do
+  RSYNC_ARGS+=(--exclude "/$keep")
 done
 
-if [ ${#missing_wasm[@]} -gt 0 ]; then
-  echo "❌ Error: WASM files missing in $WASM_BUILD_DIR:"
-  for file in "${missing_wasm[@]}"; do
-    echo "   - $file"
-  done
-  echo ""
-  echo "   Run 'yarn build' in libsonare/bindings/wasm first."
-  exit 1
-fi
-
-# Check JS API files
-missing_js=()
-for file in "${JS_FILES[@]}"; do
-  if [ ! -f "$JS_DIST_DIR/$file" ]; then
-    missing_js+=("$file")
-  fi
-done
-
-shopt -s nullglob
-JS_CHUNK_FILES=("$JS_DIST_DIR"/$JS_CHUNK_GLOB)
-shopt -u nullglob
-
-if [ ${#missing_js[@]} -gt 0 ]; then
-  echo "❌ Error: JS API files missing in $JS_DIST_DIR:"
-  for file in "${missing_js[@]}"; do
-    echo "   - $file"
-  done
-  echo ""
-  echo "   Run 'yarn build:js' in libsonare/bindings/wasm first."
-  echo "   (or 'yarn build' to build both JS and WASM)"
-  exit 1
-fi
-
-# Check if WASM has changed by comparing MD5
-SRC_WASM="$WASM_BUILD_DIR/sonare.wasm"
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  NEW_MD5=$(md5 -q "$SRC_WASM")
-else
-  NEW_MD5=$(md5sum "$SRC_WASM" | cut -d' ' -f1)
-fi
-
-OLD_MD5=""
-META_FILE="$DEST_DIR/meta.json"
-if [ -f "$META_FILE" ]; then
-  OLD_MD5=$(grep -o '"md5": *"[^"]*"' "$META_FILE" | cut -d'"' -f4)
-fi
-
-WASM_CHANGED=false
-JS_CHANGED=false
-
-# Compare every Emscripten artifact, not just sonare.wasm.
-for file in "${WASM_FILES[@]}"; do
-  if [ ! -f "$DEST_DIR/$file" ] || ! cmp -s "$WASM_BUILD_DIR/$file" "$DEST_DIR/$file"; then
-    WASM_CHANGED=true
-    break
-  fi
-done
-
-# Check if JS files have changed
-for file in "${JS_FILES[@]}"; do
-  if [ ! -f "$DEST_DIR/$file" ] || ! cmp -s "$JS_DIST_DIR/$file" "$DEST_DIR/$file"; then
-    JS_CHANGED=true
-    break
-  fi
-done
-
-for source_file in "${JS_CHUNK_FILES[@]}"; do
-  file=$(basename "$source_file")
-  if [ ! -f "$DEST_DIR/$file" ] || ! cmp -s "$source_file" "$DEST_DIR/$file"; then
-    JS_CHANGED=true
-    break
-  fi
-done
-
-# Detect leftover obsolete files
-OBSOLETE_PRESENT=false
-for file in "${OBSOLETE_FILES[@]}"; do
-  if [ -f "$DEST_DIR/$file" ]; then
-    OBSOLETE_PRESENT=true
-    break
-  fi
-done
-
-# Detect stale chunks: chunk-*.js in DEST that no longer exist in source.
-# tsup emits content-hashed chunk names, so renamed chunks would otherwise
-# accumulate in DEST_DIR on each copy.
-SOURCE_CHUNK_NAMES=()
-for source_file in "${JS_CHUNK_FILES[@]}"; do
-  SOURCE_CHUNK_NAMES+=("$(basename "$source_file")")
-done
-
-STALE_CHUNKS=()
-shopt -s nullglob
-for dest_file in "$DEST_DIR"/$JS_CHUNK_GLOB; do
-  name=$(basename "$dest_file")
-  found=false
-  for src_name in "${SOURCE_CHUNK_NAMES[@]}"; do
-    if [ "$name" = "$src_name" ]; then
-      found=true
-      break
-    fi
-  done
-  $found || STALE_CHUNKS+=("$name")
-done
-shopt -u nullglob
-
-if ! $WASM_CHANGED && ! $JS_CHANGED && ! $OBSOLETE_PRESENT && [ ${#STALE_CHUNKS[@]} -eq 0 ]; then
-  echo ""
-  echo "✅ No changes detected — all files are identical"
-  echo "   WASM MD5: $NEW_MD5"
+CHANGES=$(rsync "${RSYNC_ARGS[@]}" --dry-run --itemize-changes "$STAGE_DIR/" "$DEST_DIR/")
+if [ -z "$CHANGES" ]; then
+  echo "✅ No changes detected — src/wasm matches libsonare"
   exit 0
 fi
 
-# Copy WASM files if changed
-if $WASM_CHANGED; then
-  echo "   Copying WASM files..."
-  for file in "${WASM_FILES[@]}"; do
-    cp "$WASM_BUILD_DIR/$file" "$DEST_DIR/"
-    echo "   ✓ $file"
-  done
-else
-  echo "   WASM unchanged, skipping (MD5: $NEW_MD5)"
-fi
-
-# Copy JS files if changed
-if $JS_CHANGED; then
-  echo "   Copying JS API files..."
-  for file in "${JS_FILES[@]}"; do
-    cp "$JS_DIST_DIR/$file" "$DEST_DIR/"
-    echo "   ✓ $file"
-  done
-  for source_file in "${JS_CHUNK_FILES[@]}"; do
-    file=$(basename "$source_file")
-    cp "$source_file" "$DEST_DIR/"
-    echo "   ✓ $file"
-  done
-
-  # Remove sourceMappingURL from copied JS/DTS files (not needed in homepage)
-  JS_COPIED_FILES=("${JS_FILES[@]}")
-  for source_file in "${JS_CHUNK_FILES[@]}"; do
-    JS_COPIED_FILES+=("$(basename "$source_file")")
-  done
-  for file in "${JS_COPIED_FILES[@]}"; do
-    target="$DEST_DIR/$file"
-    case "$file" in
-      *.js|*.d.ts)
-        if [ -f "$target" ]; then
-          if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' '/^\/\/# sourceMappingURL=/d' "$target"
-          else
-            sed -i '/^\/\/# sourceMappingURL=/d' "$target"
-          fi
-        fi
-        ;;
-    esac
-  done
-else
-  echo "   JS API unchanged, skipping"
-fi
-
-# Remove obsolete sub-module files left over from the previous layout
-if $OBSOLETE_PRESENT; then
-  echo "   Removing obsolete sub-module files..."
-  for file in "${OBSOLETE_FILES[@]}"; do
-    if [ -f "$DEST_DIR/$file" ]; then
-      rm "$DEST_DIR/$file"
-      echo "   ✗ $file (removed)"
-    fi
-  done
-fi
-
-# Prune stale chunks no longer present in source
-if [ ${#STALE_CHUNKS[@]} -gt 0 ]; then
-  echo "   Pruning stale chunks..."
-  for file in "${STALE_CHUNKS[@]}"; do
-    rm "$DEST_DIR/$file"
-    echo "   ✗ $file (removed)"
-  done
-fi
-
-# Update meta.json whenever copied assets changed. A JS-only libsonare release
-# can still change the package version and asset sizes.
-if $WASM_CHANGED || $JS_CHANGED; then
-  echo ""
-  ./scripts/update-wasm-meta.sh
-fi
+echo "$CHANGES" | sed 's/^/   /'
+rsync "${RSYNC_ARGS[@]}" "$STAGE_DIR/" "$DEST_DIR/"
 
 echo ""
-if $WASM_CHANGED && $JS_CHANGED; then
-  echo "✅ WASM + JS API updated!"
-  [ -n "$OLD_MD5" ] && echo "   Old MD5: $OLD_MD5"
-  echo "   New MD5: $NEW_MD5"
-elif $WASM_CHANGED; then
-  echo "✅ WASM updated! (JS API unchanged)"
-  [ -n "$OLD_MD5" ] && echo "   Old MD5: $OLD_MD5"
-  echo "   New MD5: $NEW_MD5"
-elif $JS_CHANGED; then
-  echo "✅ JS API updated! (WASM unchanged)"
-else
-  echo "✅ Cleaned up obsolete files"
-fi
+./scripts/update-wasm-meta.sh
+echo ""
+echo "✅ src/wasm updated"
