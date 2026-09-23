@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { toSafetyProfile } from '@/compose/guidance-profile';
 import {
   type BatchPartSpec,
   type BatchTarget,
@@ -44,6 +46,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useProjectStore();
+const appSettings = useAppSettings();
 const { t } = useI18n();
 
 const g = computed(() => t.value.shell.generate.track);
@@ -446,6 +449,7 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
       return {
         register: counterRegister.value,
         rhythm: counterRhythm.value,
+        profile: toSafetyProfile(appSettings.settings.guidanceProfile),
         seed: seedFor('counter'),
       };
     case 'backing':

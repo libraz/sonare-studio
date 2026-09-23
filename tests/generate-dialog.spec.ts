@@ -315,4 +315,54 @@ describe('TrackGenerateDialog', () => {
     ).toBe(false);
     expect(document.body.querySelector('.dialog-error')?.textContent).toContain('Unfreeze');
   });
+
+  it('counter melody generation uses strict profile by default (counterpoint)', async () => {
+    setProjectChords(FOUR_CHORDS);
+    // Add a note to the active clip so counter melody can generate
+    const activeClip = store.activeClip;
+    if (activeClip) {
+      store.clips = store.clips.map((clip) =>
+        clip.id === activeClip.id
+          ? { ...clip, notes: [{ pitch: 60, startPpq: 0, durationPpq: 4, channel: 0 }] }
+          : clip,
+      );
+    }
+
+    await open();
+    checkPart(3); // counter melody (index 3)
+    await nextTick();
+    confirm()?.click();
+    await nextTick();
+
+    // With counterpoint (default), counter melody should be generated with strict profile
+    const tracks = store.tracks.filter((track) => track.name === 'Counter melody');
+    expect(tracks.length).toBe(1);
+  });
+
+  it('counter melody generation uses pop profile when configured', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { useAppSettings } = await import('@/composables/useAppSettings');
+    const appSettings = useAppSettings();
+    appSettings.guidanceProfile = 'pop';
+
+    // Add a note to the active clip so counter melody can generate
+    const activeClip = store.activeClip;
+    if (activeClip) {
+      store.clips = store.clips.map((clip) =>
+        clip.id === activeClip.id
+          ? { ...clip, notes: [{ pitch: 60, startPpq: 0, durationPpq: 4, channel: 0 }] }
+          : clip,
+      );
+    }
+
+    await open();
+    checkPart(3); // counter melody (index 3)
+    await nextTick();
+    confirm()?.click();
+    await nextTick();
+
+    // With pop profile, counter melody should be generated with pop profile
+    const tracks = store.tracks.filter((track) => track.name === 'Counter melody');
+    expect(tracks.length).toBe(1);
+  });
 });
