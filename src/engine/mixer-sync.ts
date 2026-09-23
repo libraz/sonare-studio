@@ -3,9 +3,9 @@
  * state onto the engine's per-track lanes (fader, pan, solo/mute) and the
  * master strip, so level changes apply immediately without re-scheduling.
  *
- * The engine accepts a complete lane declaration, so the sync reuses lane
- * indices after track deletion. This prevents deleted tracks from exhausting
- * the fixed meter/parameter lane range during a long editing session.
+ * Engine lanes are append-only for the engine's lifetime: a declaration must
+ * keep every lane already declared, in order. A deleted track therefore keeps
+ * its lane, muted, and takes it back unchanged if the deletion is undone.
  */
 
 import {
@@ -124,6 +124,8 @@ export function pflAuditionStates(
 export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions = {}): MixerSync {
   const laneIds: number[] = [];
   const laneStates = new Map<number, LaneState>();
+  // Lanes of deleted tracks that have already been muted.
+  const retiredMuted = new Set<number>();
   let masterState: { gainDb: number; pan: number } | undefined;
   let sceneGeneration = 0;
   const resolveInsertLatency = options.insertLatency ?? zeroInsertLatency;
@@ -136,21 +138,27 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     soloMode?: MixerSoloMode,
     pdcBuses?: ReadonlyArray<InsertPdcBus>,
   ): void => {
-    const currentIds = new Set(tracks.map((track) => track.id));
-    const nextLaneIds = [
-      ...laneIds.filter((id) => currentIds.has(id)),
-      ...tracks.filter((track) => !laneIds.includes(track.id)).map((track) => track.id),
-    ];
-    if (
-      nextLaneIds.some((id, index) => laneIds[index] !== id) ||
-      laneIds.length !== nextLaneIds.length
-    ) {
-      laneIds.splice(0, laneIds.length, ...nextLaneIds);
-      handle.engine.setTrackLanes([...laneIds]);
+    const appended = tracks.filter((track) => !laneIds.includes(track.id)).map((track) => track.id);
+    if (appended.length > 0) {
+      // Record the lanes only once the engine has accepted them.
+      handle.engine.setTrackLanes([...laneIds, ...appended]);
+      laneIds.push(...appended);
       sceneGeneration += 1;
       // A new lane declaration replaces the engine's lane state, so all live
       // values must be replayed even when the track mirror itself is unchanged.
       laneStates.clear();
+      retiredMuted.clear();
+    }
+    const currentIds = new Set(tracks.map((track) => track.id));
+    for (const id of laneIds) {
+      if (currentIds.has(id)) {
+        retiredMuted.delete(id);
+        continue;
+      }
+      if (retiredMuted.has(id)) continue;
+      handle.engine.setSoloMute(id, false, true);
+      retiredMuted.add(id);
+      laneStates.delete(id);
     }
     // Solo-safe tracks join the solo group whenever any solo is active, and a
     // soloed group track expands to the members whose lanes feed that group.

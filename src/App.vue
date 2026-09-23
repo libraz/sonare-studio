@@ -862,6 +862,7 @@ if (import.meta.env.DEV) {
     midiSync,
     automationSync,
     trackMeterSource,
+    mixerLaneTrackIds,
   });
 }
 

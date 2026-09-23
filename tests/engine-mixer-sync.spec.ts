@@ -34,8 +34,16 @@ function makeHandle(): {
     setTrackStripDualPan: ReturnType<typeof vi.fn>;
   };
 } {
+  // Enforces the engine's append-only lane contract, which a permissive stub
+  // would let a redeclaration break unnoticed.
+  const declared: number[] = [];
   const engine = {
-    setTrackLanes: vi.fn(),
+    setTrackLanes: vi.fn((lanes: number[]) => {
+      if (declared.some((id, index) => lanes[index] !== id)) {
+        throw new Error('Mixer lanes are append-only');
+      }
+      declared.splice(0, declared.length, ...lanes);
+    }),
     setStripGain: vi.fn(),
     setStripPan: vi.fn(),
     setSoloMute: vi.fn(),
@@ -101,24 +109,57 @@ describe('createMixerSync', () => {
     expect(engine.setTrackLanes).toHaveBeenCalledTimes(1);
   });
 
-  it('reclaims a deleted track lane and replays the surviving lane state', () => {
+  it('keeps a deleted track lane declared and mutes it', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
-    // Track 2 is soloed, then removed. The new complete declaration drops its
-    // lane rather than consuming a meter slot forever.
     sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
+    engine.setTrackLanes.mockClear();
     engine.setSoloMute.mockClear();
 
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(sync.laneTrackIds()).toEqual([1]);
-    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([1]);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, false);
-
-    // An unchanged sync does not redeclare or replay the lane.
-    engine.setTrackLanes.mockClear();
-    sync.sync([makeTrack(1)], neutralMaster());
+    expect(sync.laneTrackIds()).toEqual([1, 2]);
     expect(engine.setTrackLanes).not.toHaveBeenCalled();
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+
+    // The retired lane is muted once, not on every sync.
+    engine.setSoloMute.mockClear();
+    sync.sync([makeTrack(1)], neutralMaster());
+    expect(engine.setSoloMute).not.toHaveBeenCalled();
+  });
+
+  it('appends after a retired lane and mutes it again after the redeclaration', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
+    sync.sync([makeTrack(1)], neutralMaster());
+    engine.setSoloMute.mockClear();
+
+    sync.sync([makeTrack(1), makeTrack(3)], neutralMaster());
+    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([1, 2, 3]);
+    expect(sync.laneTrackIds()).toEqual([1, 2, 3]);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+  });
+
+  it('restores an undeleted track on its original lane with its own state', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
+    sync.sync([makeTrack(1)], neutralMaster());
+    engine.setTrackLanes.mockClear();
+    engine.setSoloMute.mockClear();
+
+    sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
+    expect(engine.setTrackLanes).not.toHaveBeenCalled();
+    expect(sync.laneTrackIds()).toEqual([1, 2]);
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+
+    // Deleting it a second time mutes the lane again.
+    engine.setSoloMute.mockClear();
+    sync.sync([makeTrack(1)], neutralMaster());
+    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
   });
 
   it('sends gain, pan and solo/mute per track on the first sync', () => {
@@ -416,23 +457,21 @@ describe('createMixerSync', () => {
     expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
   });
 
-  it('removes a deleted lane and redeclares the surviving mixer lanes', () => {
+  it('sends a deleted lane nothing but its mute', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
 
     sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
-    engine.setTrackLanes.mockClear();
     engine.setStripGain.mockClear();
     engine.setStripPan.mockClear();
     engine.setSoloMute.mockClear();
 
-    sync.sync([makeTrack(1)], neutralMaster());
-    expect(sync.laneTrackIds()).toEqual([1]);
-    expect(engine.setTrackLanes).toHaveBeenCalledWith([1]);
-    // The deleted lane receives no further strip commands.
+    sync.sync([makeTrack(1, { volume: 0.5 })], neutralMaster());
     expect(engine.setStripGain.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setStripPan.mock.calls.map((call) => call[0])).not.toContain(2);
-    expect(engine.setSoloMute.mock.calls.map((call) => call[0])).not.toContain(2);
+    expect(engine.setSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
+      [2, false, true],
+    ]);
   });
 });
 

@@ -65,6 +65,7 @@ export interface DevDebugContext {
   midiSync: () => MidiSync | null;
   automationSync: () => AutomationSync | null;
   trackMeterSource: (trackId: number) => MeterSource | null;
+  mixerLaneTrackIds: () => readonly number[];
 }
 
 function peakOf(channels: Float32Array[]): number {
@@ -125,6 +126,16 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         startPpq: clip.startPpq,
         lengthPpq: clip.lengthPpq,
       })),
+    // Lane order as the mixer sync declared it and as the engine facade holds
+    // it. Meters read the first, automation ids resolve through the second, so
+    // a divergence points one at the other's track.
+    laneOrder: () => ({
+      studio: [...ctx.mixerLaneTrackIds()],
+      engine:
+        (handle.value?.engine as { mixerLanes?: () => { trackId: number }[] } | undefined)
+          ?.mixerLanes?.()
+          .map((lane) => lane.trackId) ?? null,
+    }),
     armedTrackId: () => recording.armedTrackId.value,
     recordingState: () => recording.state.value,
     isRecording: () => recording.isRecording.value,
