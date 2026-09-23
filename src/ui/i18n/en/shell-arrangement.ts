@@ -450,6 +450,7 @@ export const shellArrangement = {
       noVca: 'No VCA',
       volumeDb: 'Volume (dB)',
       pan: 'Pan',
+      synthParamNextNote: '{label} (next note)',
       rename: 'Rename...',
       unmute: 'Unmute',
       mute: 'Mute',

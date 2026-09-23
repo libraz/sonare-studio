@@ -63,6 +63,7 @@ import {
   AUTOMATABLE_SYNTH_PARAMS,
   type AutomatableSynthParam,
   isNativeSynthInstrument,
+  synthParamReachesSoundingVoices,
   trackInstrument,
 } from '@/project/instrument';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
@@ -700,13 +701,19 @@ const SYNTH_SECTION_LABEL_KEYS = {
   global: 'global',
 } as const;
 
-/** "Section · Field" label for a synth parameter lane, e.g. "Amp envelope · Attack". */
+/**
+ * "Section · Field" label for a synth parameter lane, e.g. "Amp envelope ·
+ * Attack", marked when the lane only reaches notes that start after it moves.
+ */
 function synthParamLabel(param: AutomatableSynthParam): string {
   const spec = patchFieldSpec(param);
   if (!spec) return param;
   const editor = t.value.shell.patchEditor;
   const section = editor.sections[SYNTH_SECTION_LABEL_KEYS[spec.section]];
-  return `${section} · ${editor.fields[spec.labelKey] ?? spec.label}`;
+  const label = `${section} · ${editor.fields[spec.labelKey] ?? spec.label}`;
+  return synthParamReachesSoundingVoices(param)
+    ? label
+    : formatMessage(t.value.shell.arrangement.trackHeader.synthParamNextNote, { label });
 }
 
 function onAutomationParamChange(track: EditorTrack, value: string): void {

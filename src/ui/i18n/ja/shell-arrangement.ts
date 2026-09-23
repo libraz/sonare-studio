@@ -447,6 +447,7 @@ export const shellArrangement = {
       noVca: 'VCAなし',
       volumeDb: '音量（dB）',
       pan: 'パン',
+      synthParamNextNote: '{label}（次のノートから）',
       rename: '名前を変更...',
       unmute: 'ミュート解除',
       mute: 'ミュート',

@@ -54,10 +54,17 @@ describe('TrackHeaderList automation lane picker', () => {
 
   it('labels a synth field with its editor section so envelopes stay distinct', () => {
     const labels = new Map(laneOptions().map((option) => [option.value, option.label]));
-    expect(labels.get(instrumentAutomationParam('ampAttackMs'))).toBe('Amp envelope · Attack');
-    expect(labels.get(instrumentAutomationParam('filterAttackMs'))).toBe(
-      'Filter envelope · Attack',
+    expect(labels.get(instrumentAutomationParam('ampAttackMs'))).toBe(
+      'Amp envelope · Attack (next note)',
     );
+    expect(labels.get(instrumentAutomationParam('filterAttackMs'))).toBe(
+      'Filter envelope · Attack (next note)',
+    );
+  });
+
+  it('leaves the next-note mark off fields that reach sounding voices', () => {
+    const labels = new Map(laneOptions().map((option) => [option.value, option.label]));
+    expect(labels.get(instrumentAutomationParam('cutoffHz'))).toBe('Filter · Cutoff');
   });
 
   it('offers no synth fields for an SF2 instrument', () => {
