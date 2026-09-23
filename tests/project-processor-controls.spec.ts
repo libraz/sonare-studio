@@ -5,6 +5,7 @@ import {
   insertAutomationDomain,
   type ProcessorParamInfo,
   processorControlSpec,
+  processorControls,
   processorNumberSpec,
 } from '@/project/processor-controls';
 
@@ -177,5 +178,52 @@ describe('insertAutomationDomain', () => {
       max: 5000,
       unit: 'ms',
     });
+  });
+});
+
+describe('processorControls band slots', () => {
+  const bandNames = (prefix: string, count: number): string[] =>
+    Array.from({ length: count }, (_, index) => [
+      `${prefix}${index}.frequencyHz`,
+      `${prefix}${index}.gainDb`,
+      `${prefix}${index}.q`,
+    ]).flat();
+
+  it('shows the bands in use plus the frequency of the next free band', () => {
+    const controls = processorControls('eq.parametric', bandNames('band', 4), {
+      'band0.frequencyHz': 120,
+      'band2.frequencyHz': 4000,
+    });
+    expect(controls.map((control) => control.id)).toEqual([
+      'band0.frequencyHz',
+      'band0.gainDb',
+      'band0.q',
+      'band1.frequencyHz',
+      'band2.frequencyHz',
+      'band2.gainDb',
+      'band2.q',
+    ]);
+  });
+
+  it('offers a free band per mid/side family', () => {
+    const controls = processorControls(
+      'eq.midSide',
+      [...bandNames('midBand', 2), ...bandNames('sideBand', 2)],
+      { 'midBand0.frequencyHz': 300 },
+    );
+    expect(controls.map((control) => control.id)).toEqual([
+      'midBand0.frequencyHz',
+      'midBand0.gainDb',
+      'midBand0.q',
+      'midBand1.frequencyHz',
+      'sideBand0.frequencyHz',
+    ]);
+  });
+
+  it('keeps every crossover band of a multiband processor', () => {
+    const names = ['band0.thresholdDb', 'band1.thresholdDb', 'band2.thresholdDb'];
+    expect(
+      processorControls('multiband.compressor', names, {}).map((control) => control.id),
+    ).toEqual(names);
   });
 });

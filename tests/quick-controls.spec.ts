@@ -190,15 +190,17 @@ describe('quick controls', () => {
 
     it('types indexed EQ booleans and enums from the catalog', () => {
       addInsert(trackId, 'eq.parametric', {
+        'band0.frequencyHz': 1000,
         'band0.enabled': true,
         'band0.type': 5,
       });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
-        { resolveInsertParams: () => ['band0.enabled', 'band0.type'] },
+        { resolveInsertParams: () => ['band0.frequencyHz', 'band0.enabled', 'band0.type'] },
       );
 
       expect(controls).toEqual([
+        expect.objectContaining({ kind: 'number', id: 'band0.frequencyHz', value: 1000 }),
         expect.objectContaining({ kind: 'boolean', id: 'band0.enabled', value: true }),
         expect.objectContaining({
           kind: 'enum',

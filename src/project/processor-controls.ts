@@ -382,6 +382,52 @@ export function processorControl(
   };
 }
 
+/**
+ * Band-slot keys per EQ insert: a numbered band exists only once its
+ * frequencyHz is set, so its other fields do nothing before that.
+ */
+const BAND_SLOT_KEYS: Readonly<Record<string, RegExp>> = {
+  'eq.parametric': /^(band)\d+\./u,
+  'eq.minimumPhase': /^(band)\d+\./u,
+  'eq.linearPhase': /^(band)\d+\./u,
+  'eq.dynamic': /^(band)\d+\./u,
+  'eq.equalizer': /^(band)\d+\./u,
+  'eq.midSide': /^(midBand|sideBand)\d+\./u,
+  'multiband.dynamicEq': /^(band\d+\.dyn)\d+\./u,
+};
+
+/**
+ * Keeps the band-slot names a rack should show: every field of a band whose
+ * frequency is set, plus the frequency of the first unused band of each family
+ * so another band can be added. Other names pass through.
+ */
+function visibleBandSlotNames(
+  processor: string,
+  names: ReadonlyArray<string>,
+  params: Readonly<Record<string, unknown>>,
+): string[] {
+  const pattern = BAND_SLOT_KEYS[processor];
+  if (!pattern) return [...names];
+  const slotOf = (name: string): { slot: string; family: string } | null => {
+    const match = pattern.exec(name);
+    return match ? { slot: match[0].slice(0, -1), family: match[1] } : null;
+  };
+  const used = new Set<string>();
+  const nextFree = new Map<string, string>();
+  for (const name of names) {
+    const entry = slotOf(name);
+    if (!entry || !name.endsWith('.frequencyHz')) continue;
+    if (typeof params[name] === 'number') used.add(entry.slot);
+    else if (!nextFree.has(entry.family)) nextFree.set(entry.family, entry.slot);
+  }
+  return names.filter((name) => {
+    const entry = slotOf(name);
+    if (!entry) return true;
+    if (used.has(entry.slot)) return true;
+    return nextFree.get(entry.family) === entry.slot && name.endsWith('.frequencyHz');
+  });
+}
+
 /** Builds all descriptors for one processor in the shared order. */
 export function processorControls(
   processor: string,
@@ -390,7 +436,11 @@ export function processorControls(
   paramInfo: ReadonlyArray<ProcessorParamInfo> = [],
 ): ProcessorControl[] {
   const infoByName = new Map(paramInfo.map((info) => [info.name, info]));
-  return processorControlNames(catalogNames, paramInfo, params)
+  return visibleBandSlotNames(
+    processor,
+    processorControlNames(catalogNames, paramInfo, params),
+    params,
+  )
     .map((name) => processorControl(processor, name, params[name], infoByName.get(name)))
     .filter((control): control is ProcessorControl => control !== null);
 }
