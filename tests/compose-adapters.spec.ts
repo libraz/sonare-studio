@@ -35,7 +35,13 @@ import {
   noteEventsToNewEditorNotes,
   noteEventToNewEditorNote,
 } from '@/compose/notes-io';
-import { harmonicTracksOnly, isDrumTrack, isMelodyTrack, topVoiceOnly } from '@/compose/tracks';
+import {
+  harmonicNotes,
+  harmonicTracksOnly,
+  isDrumTrack,
+  isMelodyTrack,
+  topVoiceOnly,
+} from '@/compose/tracks';
 import {
   CHORD_QUALITY_CHOICES,
   chordTonePitchClasses,
@@ -450,6 +456,37 @@ describe('track hygiene', () => {
     expect(isDrumTrack(track({ name: 'Piano', percussion: true }))).toBe(true);
   });
 
+  it('recognizes generated drum tracks by generated.part', () => {
+    // generated.part === 'drums' marks it as drums even with a harmonic name and channel 0.
+    expect(
+      isDrumTrack(track({ name: 'FX Loop 1', generated: { part: 'drums' } }), [
+        note({ channel: 0 }),
+      ]),
+    ).toBe(true);
+  });
+
+  it('excludes channel 9 notes from harmonic tracks', () => {
+    const allNotes = [
+      note({ id: 1, pitch: 60, channel: 0 }),
+      note({ id: 2, pitch: 64, channel: 9 }),
+      note({ id: 3, pitch: 67, channel: 0 }),
+    ];
+    // Non-percussion track: channel 9 notes are excluded.
+    const filtered = harmonicNotes(track({ name: 'Piano' }), allNotes);
+    expect(filtered.map((n) => n.id)).toEqual([1, 3]);
+  });
+
+  it('keeps all notes for percussion === false tracks', () => {
+    const allNotes = [
+      note({ id: 1, pitch: 60, channel: 0 }),
+      note({ id: 2, pitch: 64, channel: 9 }),
+      note({ id: 3, pitch: 67, channel: 0 }),
+    ];
+    // Explicitly non-percussion: all notes are kept.
+    const filtered = harmonicNotes(track({ name: 'Piano', percussion: false }), allNotes);
+    expect(filtered.map((n) => n.id)).toEqual([1, 2, 3]);
+  });
+
   it('splits harmonic from percussion tracks', () => {
     const items = [
       { track: track({ id: 1, name: 'Piano' }), notes: [note({})] },
@@ -457,6 +494,26 @@ describe('track hygiene', () => {
     ];
     const { harmonic, excluded } = harmonicTracksOnly(items);
     expect(harmonic.map((h) => h.track.id)).toEqual([1]);
+    expect(excluded.map((e) => e.track.id)).toEqual([2]);
+  });
+
+  it('applies harmonicNotes to harmonic items in harmonicTracksOnly', () => {
+    const items = [
+      {
+        track: track({ id: 1, name: 'Piano' }),
+        notes: [
+          note({ id: 10, pitch: 60, channel: 0 }),
+          note({ id: 20, pitch: 64, channel: 9 }),
+          note({ id: 30, pitch: 67, channel: 0 }),
+        ],
+      },
+      { track: track({ id: 2, name: 'Drums' }), notes: [note({ channel: 9 })] },
+    ];
+    const { harmonic, excluded } = harmonicTracksOnly(items);
+    expect(harmonic).toHaveLength(1);
+    expect(harmonic[0].track.id).toBe(1);
+    // Channel 9 notes are removed from the harmonic item.
+    expect(harmonic[0].notes.map((n) => n.id)).toEqual([10, 30]);
     expect(excluded.map((e) => e.track.id)).toEqual([2]);
   });
 

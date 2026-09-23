@@ -48,10 +48,11 @@ export interface TrackWithNotes {
 
 /**
  * Whether a track should be treated as percussion and excluded from harmonic
- * analysis. The explicit {@link EditorTrack.percussion} override wins when set;
- * otherwise the heuristic flags the track when either:
- *  - its name matches a drum/percussion convention; or
- *  - the majority of its notes sit on the GM percussion channel (10).
+ * analysis. Judgment order:
+ *  1. The explicit {@link EditorTrack.percussion} override, if set.
+ *  2. Generated drum tracks ({@link EditorTrack.generated?.part} === 'drums').
+ *  3. Name heuristic matching drum/percussion conventions.
+ *  4. Majority of notes sitting on the GM percussion channel (10).
  *
  * @param track Track to classify.
  * @param notes The track's notes (optional; the channel test is skipped when
@@ -59,6 +60,7 @@ export interface TrackWithNotes {
  */
 export function isDrumTrack(track: EditorTrack, notes?: ReadonlyArray<EditorNote>): boolean {
   if (track.percussion !== undefined) return track.percussion;
+  if (track.generated?.part === 'drums') return true;
   if (DRUM_NAME_PATTERN.test(track.name)) return true;
   if (notes && notes.length > 0) {
     let onPercussion = 0;
@@ -76,9 +78,25 @@ export function isMelodyTrack(track: EditorTrack): boolean {
 }
 
 /**
+ * Drops notes on the GM percussion channel (0-based 9), unless the track is
+ * explicitly marked non-percussion ({@link EditorTrack.percussion} === false).
+ *
+ * @param track Track providing the percussion classification.
+ * @param notes Notes to filter.
+ */
+export function harmonicNotes(
+  track: EditorTrack,
+  notes: ReadonlyArray<EditorNote>,
+): ReadonlyArray<EditorNote> {
+  if (track.percussion === false) return notes;
+  return notes.filter((note) => note.channel !== GM_PERCUSSION_CHANNEL);
+}
+
+/**
  * Keeps only the harmonic (non-percussion) tracks from a set of track/notes
- * pairs (see {@link isDrumTrack}). The dropped tracks are returned separately so
- * the UI can show what was excluded.
+ * pairs (see {@link isDrumTrack}). For harmonic tracks, notes are filtered
+ * through {@link harmonicNotes} to exclude channel 9 events. The dropped tracks
+ * are returned separately so the UI can show what was excluded.
  */
 export function harmonicTracksOnly<T extends TrackWithNotes>(
   items: ReadonlyArray<T>,
@@ -86,8 +104,12 @@ export function harmonicTracksOnly<T extends TrackWithNotes>(
   const harmonic: T[] = [];
   const excluded: T[] = [];
   for (const item of items) {
-    if (isDrumTrack(item.track, item.notes)) excluded.push(item);
-    else harmonic.push(item);
+    if (isDrumTrack(item.track, item.notes)) {
+      excluded.push(item);
+    } else {
+      const filtered = harmonicNotes(item.track, item.notes);
+      harmonic.push({ ...item, notes: filtered } as T);
+    }
   }
   return { harmonic, excluded };
 }
