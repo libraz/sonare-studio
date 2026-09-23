@@ -3,8 +3,12 @@ import { computed, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
-import { useI18n } from '@/ui/i18n';
-import { humanizePresetName, isRestorationPreset } from '@/ui/mastering/preset-catalog';
+import { formatMessage, useI18n } from '@/ui/i18n';
+import {
+  humanizePresetName,
+  isRestorationPreset,
+  masteringPresetInfo,
+} from '@/ui/mastering/preset-catalog';
 
 /**
  * Searchable mastering preset dropdown. Purely presentational: the menu's
@@ -41,6 +45,18 @@ const masteringPresets = computed(() =>
   props.filteredPresets.filter((item) => !isRestorationPreset(item)),
 );
 const restorationPresets = computed(() => props.filteredPresets.filter(isRestorationPreset));
+
+/** Loudness target and ceiling of a mastering preset, when the catalog has them. */
+function presetTargets(id: string): { lufs: string; title: string } | null {
+  const info = masteringPresetInfo(id);
+  if (info?.targetLufs == null || info.truePeakCeilingDb == null) return null;
+  const lufs = String(Math.round(info.targetLufs * 10) / 10);
+  const ceiling = String(Math.round(info.truePeakCeilingDb * 10) / 10);
+  return {
+    lufs,
+    title: formatMessage(t.value.shell.mastering.presetTargetTitle, { lufs, ceiling }),
+  };
+}
 
 defineExpose({ root });
 </script>
@@ -79,9 +95,13 @@ defineExpose({ root });
         role="menuitem"
         class="preset-item"
         :class="{ active: item === preset }"
+        v-tooltip="presetTargets(item)?.title"
         @click="emit('select', item)"
       >
-        {{ humanizePresetName(item) }}
+        <span class="preset-item-name">{{ humanizePresetName(item) }}</span>
+        <span v-if="presetTargets(item)" class="preset-item-target">
+          {{ presetTargets(item)?.lufs }} LUFS
+        </span>
       </button>
       <template v-if="restorationPresets.length > 0">
         <div class="preset-heading" role="presentation">

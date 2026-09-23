@@ -423,6 +423,7 @@ export const shellMixing = {
     presetTitle: 'マスタリングプリセット',
     noPreset: 'プリセットなし',
     restorationPresets: '修復',
+    presetTargetTitle: '{lufs} LUFS を目標に、トゥルーピークを {ceiling} dBTP 以下に収めます',
     restorationPresetsTitle: '傷んだ素材を修復します。音量は変えません',
     searchPresets: 'プリセットを検索...',
     noMatches: '一致なし',

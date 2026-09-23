@@ -129,12 +129,16 @@ describe('MasteringPanel.vue', () => {
     await wrapper.find('.preset-button').trigger('click');
     // The fake wasm catalog feeds the menu.
     const items = wrapper.findAll('.preset-item:not(.none)');
-    expect(items.length).toBe(5);
+    expect(items.length).toBe(6);
+    // Mastering presets show their loudness target; the restoration one does not.
+    expect(wrapper.find('.preset-heading').exists()).toBe(true);
+    expect(items[items.length - 1].find('.preset-item-target').exists()).toBe(false);
 
     await wrapper.find('.preset-search input').setValue('hip');
     const filtered = wrapper.findAll('.preset-item:not(.none)');
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].text()).toBe('Hip Hop');
+    expect(filtered[0].find('.preset-item-name').text()).toBe('Hip Hop');
+    expect(filtered[0].find('.preset-item-target').text()).toBe('-14 LUFS');
 
     await filtered[0].trigger('click');
     expect(store.mixer.masteringChain?.preset).toBe('hipHop');

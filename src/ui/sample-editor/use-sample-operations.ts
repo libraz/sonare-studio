@@ -27,7 +27,7 @@ import {
 } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { humanizePresetName, RESTORATION_PRESETS } from '@/ui/mastering/preset-catalog';
+import { humanizePresetName, restorationPresets } from '@/ui/mastering/preset-catalog';
 import type { MasteringPreset, RirDiagnostic } from '@/wasm/index.js';
 import { editedAssetName, pushVersion, type VersionHistoryState } from './history';
 import type { MatchEqAnalysis } from './match-eq-analysis';
@@ -286,7 +286,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
 
   /** Selected room shape id (see {@link ROOM_PRESETS}). */
   const roomPresetId = ref(ROOM_PRESETS[0].id);
-  const restorePresetId = ref<MasteringPreset>(RESTORATION_PRESETS[0]);
+  const restorePresetId = ref<string>(restorationPresets()[0] ?? '');
   /** Room reverb wet/dry mix as a percentage string (0 = dry, 100 = fully wet). */
   const roomWetInput = ref('35');
   const roomAirAbsorption = ref(false);
@@ -735,7 +735,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onRestore(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    const preset = restorePresetId.value;
+    const preset = restorationPresets().find((entry) => entry === restorePresetId.value);
+    if (!preset) return;
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.restore, { preset: humanizePresetName(preset) }),
       (channels, range) => restoreRange(ops, channels, sampleRate(), preset, range),
@@ -744,13 +745,13 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
 
   /** Selects a restoration preset from the picker. */
   function selectRestorePreset(value: string): void {
-    const preset = RESTORATION_PRESETS.find((entry) => entry === value);
+    const preset = restorationPresets().find((entry) => entry === value);
     if (preset) restorePresetId.value = preset;
   }
 
   /** Restoration preset picker options, in catalog order. */
   const restorePresetOptions = computed(() =>
-    RESTORATION_PRESETS.map((preset) => ({ value: preset, label: humanizePresetName(preset) })),
+    restorationPresets().map((preset) => ({ value: preset, label: humanizePresetName(preset) })),
   );
 
   async function onDeclip(): Promise<void> {

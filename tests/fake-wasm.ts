@@ -1133,7 +1133,35 @@ export const FAKE_INSERT_PARAM_INFO: Record<
 };
 
 /** Mastering preset names the fake catalog reports (subset of the real build). */
-export const FAKE_MASTERING_PRESETS = ['pop', 'edm', 'acoustic', 'hipHop', 'speech'] as const;
+export const FAKE_MASTERING_PRESETS = [
+  'pop',
+  'edm',
+  'acoustic',
+  'hipHop',
+  'speech',
+  'vinyl',
+] as const;
+
+/** Mirrors capabilityCatalog().masteringPresets for the fake preset names. */
+export function fakeMasteringPresetCatalog() {
+  return FAKE_MASTERING_PRESETS.map((name) =>
+    name === 'vinyl'
+      ? {
+          name,
+          kind: 'restoration' as const,
+          targetLufs: null,
+          truePeakCeilingDb: null,
+          maxLimiterGainReductionDb: null,
+        }
+      : {
+          name,
+          kind: 'mastering' as const,
+          targetLufs: -14,
+          truePeakCeilingDb: -1,
+          maxLimiterGainReductionDb: 12,
+        },
+  );
+}
 
 /** Mirrors masteringPresetNames for catalog-aware code paths. */
 export function fakeMasteringPresetNames(): string[] {
@@ -1505,6 +1533,7 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
     masteringInsertParamInfo: (name: string) => FAKE_INSERT_PARAM_INFO[name] ?? [],
     masteringPresetNames: fakeMasteringPresetNames,
+    capabilityCatalog: () => ({ masteringPresets: fakeMasteringPresetCatalog() }),
     mixingScenePresetNames: fakeMixingScenePresetNames,
     mixingScenePresetJson: fakeMixingScenePresetJson,
     masteringStreamingPreview: (

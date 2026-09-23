@@ -2,11 +2,12 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useProjectStore } from '@/project/store';
 import {
-  FALLBACK_MASTERING_PRESETS,
   filterPresetCatalog,
   humanizePresetName,
   isRestorationPreset,
   loadMasteringPresetCatalog,
+  masteringPresetInfo,
+  restorationPresets,
 } from '@/ui/mastering/preset-catalog';
 import { FAKE_MASTERING_PRESETS } from './fake-wasm';
 
@@ -30,15 +31,6 @@ describe('humanizePresetName', () => {
     expect(humanizePresetName('gameOst')).toBe('Game OST');
     expect(humanizePresetName('rnb')).toBe('R&B');
     expect(humanizePresetName('shellac78')).toBe('Shellac 78');
-  });
-});
-
-describe('isRestorationPreset', () => {
-  it('separates the repair-only presets from the loudness-targeted ones', () => {
-    const restoration = FALLBACK_MASTERING_PRESETS.filter(isRestorationPreset);
-    expect(restoration).toEqual(['vinyl', 'tapeHiss', 'fieldRecording', 'voiceMemo', 'shellac78']);
-    expect(isRestorationPreset('pop')).toBe(false);
-    expect(isRestorationPreset('custom')).toBe(false);
   });
 });
 
@@ -77,9 +69,15 @@ describe('loadMasteringPresetCatalog', () => {
     expect(loadMasteringPresetCatalog()).toEqual([...FAKE_MASTERING_PRESETS]);
   });
 
-  it('exposes a non-empty curated fallback', () => {
-    expect(FALLBACK_MASTERING_PRESETS.length).toBeGreaterThan(0);
-    expect(FALLBACK_MASTERING_PRESETS).toContain('pop');
-    expect(FALLBACK_MASTERING_PRESETS).toContain('streaming');
+  it('classifies presets and reads their targets from the catalog', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    expect(restorationPresets()).toEqual(['vinyl']);
+    expect(isRestorationPreset('vinyl')).toBe(true);
+    expect(isRestorationPreset('pop')).toBe(false);
+    expect(isRestorationPreset('custom')).toBe(false);
+    expect(masteringPresetInfo('pop')?.targetLufs).toBe(-14);
+    expect(masteringPresetInfo('vinyl')?.targetLufs).toBeNull();
   });
 });

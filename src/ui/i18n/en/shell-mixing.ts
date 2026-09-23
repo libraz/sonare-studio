@@ -422,6 +422,7 @@ export const shellMixing = {
     presetTitle: 'Mastering preset',
     noPreset: 'No preset',
     restorationPresets: 'Restoration',
+    presetTargetTitle: 'Masters to {lufs} LUFS with a {ceiling} dBTP true-peak ceiling',
     restorationPresetsTitle: 'Repairs damaged source material and leaves its level unchanged',
     searchPresets: 'Search presets...',
     noMatches: 'No matches',
