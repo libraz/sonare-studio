@@ -316,6 +316,42 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBeTruthy();
   });
 
+  it('names the voice a kept parallel came from and dismisses a contrary one', () => {
+    // C4->D4 runs in fifths with F3->G3 (track 2) and meets C5->D3 (track 3) at
+    // octaves by contrary motion, which is not heard as a parallel.
+    const fifths: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
+      notes: [
+        note({ id: 220, pitch: 53, startPpq: 0, durationPpq: 1 }),
+        note({ id: 221, pitch: 55, startPpq: 1, durationPpq: 1 }),
+      ],
+    };
+    const contrary: VoiceLine = {
+      trackId: 3,
+      role: 'melodic',
+      notes: [
+        note({ id: 230, pitch: 72, startPpq: 0, durationPpq: 1 }),
+        note({ id: 231, pitch: 50, startPpq: 1, durationPpq: 1 }),
+      ],
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 92, pitch: 60, startPpq: 0, durationPpq: 1 }),
+          note({ id: 93, pitch: 62, startPpq: 1, durationPpq: 1 }),
+        ],
+        lines: [fifths, contrary],
+      }),
+    );
+    const analysis = result.byNoteId.get(93);
+    expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBeTruthy();
+    const parallelTracks = (analysis?.partners ?? [])
+      .filter((partner) => (partner.reasons & ReasonFlag.ParallelPerfect) !== 0)
+      .map((partner) => partner.trackId);
+    expect(parallelTracks).toEqual([2]);
+  });
+
   it('keeps quiet about a line doubled at the octave', () => {
     // Two voices an octave apart for five slots running: this is one line
     // reinforced, the texture of an organ or a horn section, and calling every

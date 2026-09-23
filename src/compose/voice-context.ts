@@ -294,6 +294,23 @@ export function voiceChain(
 }
 
 /**
+ * Whether a parallel fifth or octave the library found against `other` is heard
+ * as one: the two voices move the same way, and the pair is not continuing a
+ * doubling run of at least `DOUBLING_RUN_SLOTS - 1` earlier slots.
+ */
+export function parallelIsHeard(
+  candidate: number,
+  prevPitch: number,
+  other: { pitch: number; prevPitch: number },
+  earlierDoublingSlots: number,
+): boolean {
+  return (
+    candidate > prevPitch === other.pitch > other.prevPitch &&
+    earlierDoublingSlots < DOUBLING_RUN_SLOTS - 1
+  );
+}
+
+/**
  * Reads the candidate's motion from `prevPitch` against each other voice that
  * has a previous pitch.
  *
@@ -324,8 +341,12 @@ export function motionFindings(
     if (otherPrev === undefined) continue;
     if (
       createsParallelPerfect(prevPitch, candidate, otherPrev, other.pitch) &&
-      candidate > prevPitch === other.pitch > otherPrev &&
-      doublingRunOf(other) < DOUBLING_RUN_SLOTS - 1
+      parallelIsHeard(
+        candidate,
+        prevPitch,
+        { pitch: other.pitch, prevPitch: otherPrev },
+        doublingRunOf(other),
+      )
     ) {
       findings.parallelPerfect.push(other);
     }

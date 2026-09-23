@@ -20,8 +20,6 @@ import {
   chordScaleReport,
   classifyInterval,
   createsBattuta,
-  createsHiddenParallelPerfect,
-  createsParallelPerfect,
   evaluateSafety,
   exceedsSpacing,
   isForbiddenMelodicLeap,
@@ -33,6 +31,7 @@ import {
   pitchToScaleDegree,
   ReasonFlag,
   roleOf,
+  type SafetyPartner,
   type SafetyProfile,
   type SafetyResult,
   type VoicedRole,
@@ -64,8 +63,8 @@ import { harmonicNotes } from './tracks';
 import {
   buildVoiceContext,
   keySpeller,
-  motionFindings,
   type OuterVoice,
+  parallelIsHeard,
   type VoiceLine,
 } from './voice-context';
 
@@ -280,6 +279,11 @@ export interface NoteAnalysis {
   pendingResolution?: PendingResolution;
   /** Accompaniment notes a following part parked so this note fits (rule r1). */
   thinnedAccompaniment?: Array<{ trackId: number; pitch: number }>;
+  /**
+   * The other tracks behind the pairwise reasons kept in {@link safety}, one
+   * entry per track; their `reasons` together are exactly those flags.
+   */
+  partners?: Array<{ trackId: number; reasons: number }>;
 }
 
 export interface GuidanceResult {
@@ -445,25 +449,32 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
    * its pitch at `prevBeat` for the motion readings, then every other pitch
    * sounding with it, without a previous pitch, for the vertical ones.
    */
-  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] => {
-    const out: VoiceSnapshot[] = [];
+  const trackedOthersAt = (
+    absBeat: number,
+    prevBeat?: number,
+  ): Array<{ trackId: number; voice: VoiceSnapshot }> => {
+    const out: Array<{ trackId: number; voice: VoiceSnapshot }> = [];
     const seen = new Set<string>();
     for (const top of topVoicesAt(absBeat, prevBeat)) {
       seen.add(`${top.trackId}:${top.pitch}`);
-      out.push(
-        top.prevPitch !== undefined
-          ? { pitch: top.pitch, prevPitch: top.prevPitch }
-          : { pitch: top.pitch },
-      );
+      out.push({
+        trackId: top.trackId,
+        voice:
+          top.prevPitch !== undefined
+            ? { pitch: top.pitch, prevPitch: top.prevPitch }
+            : { pitch: top.pitch },
+      });
     }
     for (const sounding of voices.soundingAt(absBeat)) {
       const id = `${sounding.trackId}:${sounding.pitch}`;
       if (seen.has(id)) continue;
       seen.add(id);
-      out.push({ pitch: sounding.pitch });
+      out.push({ trackId: sounding.trackId, voice: { pitch: sounding.pitch } });
     }
     return out;
   };
+  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] =>
+    trackedOthersAt(absBeat, prevBeat).map((entry) => entry.voice);
   /** Interval to the bass (lowest pitch any other line sounds) for the card, if audible. */
   const verticalAt = (pitch: number, absBeat: number): VerticalInfo | undefined => {
     let bass: number | undefined;
@@ -543,63 +554,58 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     doublingRuns.set(line.trackId, runs);
   }
   /**
-   * Whether the library's parallel-perfect verdict on a candidate describes a
-   * voice-leading event the composer can act on. The pairs that earned the bit
-   * are rebuilt with the library's own predicate; the verdict stands unless
-   * every one of them is dismissed, and a pair the rebuild cannot account for
-   * keeps it.
+   * The library's pairwise verdicts on a note, kept where the composer hears
+   * them. `partners` names the voice behind each flag, so a dismissal applies
+   * to exactly the pair that raised it: a parallel against a voice moving the
+   * other way, or continuing a doubling run, is not heard as one, and no motion
+   * reading survives a step longer than the bar in force.
    */
-  const parallelPerfectIsReal = (
+  const heardPartners = (
     pitch: number,
     prevPitch: number | undefined,
     absBeat: number,
     prevAbs: number | undefined,
-  ): boolean => {
-    if (prevPitch === undefined || prevAbs === undefined) return true;
-    // Past the bar in force the two events are no longer heard as consecutive.
+    others: ReadonlyArray<{ trackId: number; voice: VoiceSnapshot }>,
+    partners: ReadonlyArray<SafetyPartner>,
+  ): Array<{ trackId: number; reasons: number }> => {
+    const motion = ReasonFlag.ParallelPerfect | ReasonFlag.HiddenParallel;
     const bar = meterBarLengthPpq(timeSignatureAt(input.timeSignatures, absBeat));
-    if (absBeat - prevAbs > bar) return false;
+    const stepTooLong = prevAbs !== undefined && absBeat - prevAbs > bar;
     const slot = slotOfBeat.get(absBeat);
     // A run describes the voice pair, so it may only answer for the note that
     // is the active voice at that instant — a cluster's inner note is not it.
     const isActiveVoice = activeTopAt(absBeat) === pitch;
-    const others = topVoicesAt(absBeat, prevAbs);
-    const fired = others.some(
-      (other) =>
-        other.prevPitch !== undefined &&
-        createsParallelPerfect(prevPitch, pitch, other.prevPitch, other.pitch),
-    );
-    if (!fired) return true;
-    // The runs span the whole slot run, so the earlier slots are the run minus
-    // the candidate's own.
-    const { parallelPerfect } = motionFindings(pitch, prevPitch, others, (other) => {
-      const runs = doublingRuns.get(other.trackId);
-      return isActiveVoice && slot !== undefined && runs !== undefined ? runs[slot] - 1 : 0;
-    });
-    return parallelPerfect.length > 0;
-  };
-  /**
-   * Whether the library's hidden-parallel verdict describes a voice-leading
-   * event the composer can act on: a direct fifth or octave is a fault between
-   * the outer voices of the texture and accepted between inner parts. Rebuilt,
-   * dismissed and bar-bounded the way the parallel reading above is.
-   */
-  const hiddenParallelIsReal = (
-    pitch: number,
-    prevPitch: number | undefined,
-    absBeat: number,
-    prevAbs: number | undefined,
-  ): boolean => {
-    if (prevPitch === undefined || prevAbs === undefined) return true;
-    const bar = meterBarLengthPpq(timeSignatureAt(input.timeSignatures, absBeat));
-    if (absBeat - prevAbs > bar) return false;
-    const others = topVoicesAt(absBeat, prevAbs);
-    const fired = others.some(
-      (other) =>
-        other.prevPitch !== undefined &&
-        createsHiddenParallelPerfect(prevPitch, pitch, other.prevPitch, other.pitch),
-    );
-    return !fired || motionFindings(pitch, prevPitch, others, () => 0).hiddenOuter;
+    const byTrack = new Map<number, number>();
+    for (const partner of partners) {
+      const other = others[partner.index];
+      if (other === undefined) continue;
+      let reasons = partner.reasons;
+      if (stepTooLong) reasons &= ~motion;
+      const otherPrev = other.voice.prevPitch;
+      if (
+        (reasons & ReasonFlag.ParallelPerfect) !== 0 &&
+        prevPitch !== undefined &&
+        otherPrev !== undefined
+      ) {
+        const runs = doublingRuns.get(other.trackId);
+        // The runs span the whole slot run, so the earlier slots are the run
+        // minus the candidate's own.
+        const earlier =
+          isActiveVoice && slot !== undefined && runs !== undefined ? runs[slot] - 1 : 0;
+        if (
+          !parallelIsHeard(
+            pitch,
+            prevPitch,
+            { pitch: other.voice.pitch, prevPitch: otherPrev },
+            earlier,
+          )
+        ) {
+          reasons &= ~ReasonFlag.ParallelPerfect;
+        }
+      }
+      if (reasons !== 0) byTrack.set(other.trackId, (byTrack.get(other.trackId) ?? 0) | reasons);
+    }
+    return [...byTrack].map(([trackId, reasons]) => ({ trackId, reasons }));
   };
 
   /**
@@ -849,36 +855,35 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     const cadence = cadenceByNoteId.get(note.id);
     if (cadence !== undefined) analysis.cadence = cadence;
     const prevPitch = prevGroupPitch;
+    const others = trackedOthersAt(absBeat, prevAbs);
     const safety = tryEval(() =>
-      evaluateSafety({
-        profile,
-        candidatePitch: note.pitch,
-        prevPitch,
-        chord,
-        key,
-        otherVoices: othersAt(absBeat, prevAbs),
-        strongBeat: strongBeatAt(input.timeSignatures, absBeat),
-      }),
+      evaluateSafety(
+        {
+          profile,
+          candidatePitch: note.pitch,
+          prevPitch,
+          chord,
+          key,
+          otherVoices: others.map((entry) => entry.voice),
+          strongBeat: strongBeatAt(input.timeSignatures, absBeat),
+        },
+        { partners: true },
+      ),
     );
-    // The two motion-into-a-perfect-interval reasons are dismissed here rather
-    // than where the card is written: the verdict is the analysis every surface
-    // reads. Only those bits are cleared; the other reasons, the severity and
-    // the `resolveTo` target are the library's answers untouched.
+    // Pairwise reasons are dismissed here rather than where the card is written:
+    // the verdict is the analysis every surface reads. They are rebuilt from the
+    // partners that survive; the other reasons, the severity and the `resolveTo`
+    // target are the library's answers untouched.
     if (safety !== undefined) {
-      let cleared = 0;
-      if (
-        (safety.reasons & ReasonFlag.ParallelPerfect) !== 0 &&
-        !parallelPerfectIsReal(note.pitch, prevPitch, absBeat, prevAbs)
-      ) {
-        cleared |= ReasonFlag.ParallelPerfect;
-      }
-      if (
-        (safety.reasons & ReasonFlag.HiddenParallel) !== 0 &&
-        !hiddenParallelIsReal(note.pitch, prevPitch, absBeat, prevAbs)
-      ) {
-        cleared |= ReasonFlag.HiddenParallel;
-      }
-      analysis.safety = cleared === 0 ? safety : { ...safety, reasons: safety.reasons & ~cleared };
+      const { partners: raised, ...verdict } = safety;
+      const heard = heardPartners(note.pitch, prevPitch, absBeat, prevAbs, others, raised ?? []);
+      const pairwise = heard.reduce((bits, partner) => bits | partner.reasons, 0);
+      const raisedBits = (raised ?? []).reduce((bits, partner) => bits | partner.reasons, 0);
+      analysis.safety =
+        pairwise === raisedBits
+          ? verdict
+          : { ...verdict, reasons: (verdict.reasons & ~raisedBits) | pairwise };
+      if (heard.length > 0) analysis.partners = heard;
     }
     // The readings the verdict's reason bits do not carry, measured across the
     // same step of the voice the verdict is measured across.
