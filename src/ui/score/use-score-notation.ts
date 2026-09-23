@@ -16,6 +16,7 @@
 
 import { type Ref, ref, type ShallowRef } from 'vue';
 import { keySignatureFromMarker } from '@/compose/key-name';
+import { harmonicTracksOnly } from '@/compose/tracks';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { projectFilename } from '@/lib/filename';
 import {
@@ -363,13 +364,16 @@ export async function buildProjectScore(
   applyMultiMeasureRests(score);
   if (options.chordsEnabled) {
     try {
-      const estimated: EstimatedChordSymbol[] = estimateChordSymbols(scoreProjection.notes, {
-        clipStartPpq: store.clipStartPpq,
-        clipLengthPpq: options.clipLengthPpq,
-        measureLengthPpq: options.measureLenPpq,
-        measures: score.parts[0]?.measures,
-        keyFifths: displayKeyFifths,
-      });
+      const estimated: EstimatedChordSymbol[] = estimateChordSymbols(
+        chordEstimateNotes(store, scoreProjection),
+        {
+          clipStartPpq: store.clipStartPpq,
+          clipLengthPpq: options.clipLengthPpq,
+          measureLengthPpq: options.measureLenPpq,
+          measures: score.parts[0]?.measures,
+          keyFifths: displayKeyFifths,
+        },
+      );
       const symbols = await canonicalizeChordSymbols(estimated);
       if (symbols.length > 0) {
         score.chordSymbols = transposeChordSymbols(
@@ -878,6 +882,21 @@ function remapAnnotationTargets(
     lineSpanToNoteId,
     ...(lineSpans ? { lineSpans } : {}),
   };
+}
+
+/**
+ * The projected notes chord estimation reads: harmonic tracks only, with the
+ * percussion channel dropped per track as the arrangement-wide estimate does.
+ */
+export function chordEstimateNotes(
+  store: Pick<ProjectStore, 'tracks'>,
+  projection: ScoreProjection,
+): ScoreInputNote[] {
+  const items = store.tracks.flatMap((track) => {
+    const notes = projection.notesByTrack.get(track.id);
+    return notes === undefined ? [] : [{ track, notes }];
+  });
+  return harmonicTracksOnly(items).harmonic.flatMap((item) => item.notes);
 }
 
 /** Builds one identity-preserving projected input shared by active/full score. */

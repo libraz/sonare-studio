@@ -1403,6 +1403,17 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
       expect(store.chords[0]).toMatchObject({ startPpq: 0, rootPc: 0, quality: 0 });
     });
+
+    it('detectChordsForClip reads channel-10 notes on a track marked not percussion', () => {
+      const clipId = store.clipId;
+      const trackId = store.clips.find((clip) => clip.id === clipId)?.trackId ?? -1;
+      setTrackPercussion(trackId, false);
+      addNotes([60, 64, 67].map((pitch) => ({ pitch, startPpq: 0, durationPpq: 4, channel: 9 })));
+
+      detectChordsForClip(clipId);
+
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, rootPc: 0, quality: 0 });
+    });
   });
 
   describe('splitNote', () => {

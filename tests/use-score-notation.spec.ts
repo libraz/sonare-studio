@@ -13,6 +13,8 @@ import {
   applyTempoMarks,
   buildFullScore,
   buildFullScoreProjection,
+  buildScoreProjection,
+  chordEstimateNotes,
   fullScorePartTrackIds,
   transposeChordSymbols,
   transposeKeyFifths,
@@ -156,6 +158,39 @@ function variableMeterScore(): NotatedScore {
     divisions: 960,
   };
 }
+
+describe('chordEstimateNotes', () => {
+  const hit = (id: number, pitch: number, channel: number) => ({
+    id,
+    pitch,
+    velocity: 96,
+    startPpq: 0,
+    durationPpq: 1,
+    channel,
+  });
+  const WINDOW = { startPpq: 0, sourceOffsetPpq: 0, lengthPpq: 4 };
+  const pitchesFor = (tracks: EditorTrack[], clips: EditorClip[]) =>
+    chordEstimateNotes({ tracks }, buildScoreProjection(clips))
+      .map((note) => note.pitch)
+      .sort((a, b) => a - b);
+
+  it('drops percussion tracks and channel-10 hits on melodic tracks', () => {
+    const tracks = [track(1), { ...track(2), name: 'Drums' }];
+    const clips = [
+      midiClip({ ...WINDOW, id: 1, trackId: 1, notes: [hit(1, 60, 0), hit(2, 38, 9)] }),
+      midiClip({ ...WINDOW, id: 2, trackId: 2, notes: [hit(3, 36, 9), hit(4, 42, 9)] }),
+    ];
+    expect(pitchesFor(tracks, clips)).toEqual([60]);
+  });
+
+  it('keeps channel-10 notes on a track marked as not percussion', () => {
+    const tracks = [{ ...track(1), percussion: false }];
+    const clips = [
+      midiClip({ ...WINDOW, id: 1, trackId: 1, notes: [hit(1, 60, 9), hit(2, 64, 9)] }),
+    ];
+    expect(pitchesFor(tracks, clips)).toEqual([60, 64]);
+  });
+});
 
 describe('buildFullScore', () => {
   it('uses one all-part audible projection for Full Score engraving and harmony', () => {

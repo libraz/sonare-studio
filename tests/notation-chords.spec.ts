@@ -318,15 +318,13 @@ describe('estimateChordSymbols', () => {
     expect(symbols[0]).toMatchObject({ ppq: 0, endPpq: 4, text: 'C5', rootPc: 0 });
   });
 
-  it('does not infer chords from GM percussion-channel notes', () => {
+  it('reads every note it is given, percussion channel included', () => {
+    // Dropping percussion is the caller's per-track decision (harmonicTracksOnly).
     const symbols = estimateChordSymbols(
-      [note(36, 0, 4), note(40, 0, 4), note(43, 0, 4)].map((drum) => ({
-        ...drum,
-        channel: 9,
-      })),
+      [note(60, 0, 4), note(64, 0, 4), note(67, 0, 4)].map((tone) => ({ ...tone, channel: 9 })),
       OPTIONS,
     );
-    expect(symbols).toEqual([]);
+    expect(symbols[0]).toMatchObject({ ppq: 0, rootPc: 0 });
   });
 
   it('throws on a non-positive clip window', () => {

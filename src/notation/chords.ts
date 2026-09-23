@@ -28,7 +28,6 @@ import type { EditorNote } from '@/project/types';
 
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
 const PC_NONE = 255;
-const GM_PERCUSSION_CHANNEL = 9;
 
 /** Estimation options for {@link estimateChordSymbols}. */
 export interface ChordEstimateOptions {
@@ -142,9 +141,9 @@ function regionBassPc(notes: ReadonlyArray<EditorNote>, start: number, end: numb
  * Windows follow the score measures when supplied and the fixed measure length
  * otherwise; runs of equal-length windows are handed to {@link detectChordRegions},
  * so the displayed chords are exactly the ones the chord track would infer.
- * Adjacent measures carrying the same chord form one region, measures without
- * notes produce no symbol, and GM percussion notes are dropped before detection
- * because drum-map pitches are not harmonic material.
+ * Adjacent measures carrying the same chord form one region, and measures
+ * without notes produce no symbol. Every note given is read as harmonic
+ * material: callers drop percussion first, per track (`harmonicTracksOnly`).
  *
  * The display text is built studio-side as the key-spelled root plus the
  * quality suffix, so flat keys keep printing flats. The bass is the lowest pitch
@@ -171,11 +170,8 @@ export function estimateChordSymbols(
   ) {
     throw new RangeError('Chord estimation requires a positive clip window and measure length');
   }
-  // GM channel 10 (zero-based channel 9) is percussion; its drum-map pitches
-  // must not reach the histogram, nor become a slash bass.
-  const harmonic = notes.filter((note) => note.channel !== GM_PERCUSSION_CHANNEL);
   const { regions } = detectChordRegions(
-    editorNotesToNoteEvents(harmonic),
+    editorNotesToNoteEvents(notes),
     detectionRanges(chordWindows(options)),
   );
 
@@ -201,7 +197,7 @@ export function estimateChordSymbols(
     if (mapped.omissions !== undefined && mapped.omissions.length > 0) {
       symbol.omissions = [...mapped.omissions];
     }
-    const bassPc = regionBassPc(harmonic, region.startPpq, region.endPpq);
+    const bassPc = regionBassPc(notes, region.startPpq, region.endPpq);
     if (bassPc !== null && bassPc !== rootPc) {
       symbol.text = `${symbol.text}/${pitchClassName(bassPc, keyFifths)}`;
       symbol.bassPc = bassPc;
