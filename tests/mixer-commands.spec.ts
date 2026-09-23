@@ -1168,7 +1168,7 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer).toBeUndefined();
     });
 
-    it('keeps the master strip when the scene carries none', () => {
+    it('keeps the master inserts when the scene names none', () => {
       addInsert('master', 'eq.tilt', { tiltDb: 1 });
       const scene = JSON.stringify({
         version: 1,
@@ -1251,9 +1251,10 @@ describe('mixer commands', () => {
       clearHistory();
 
       applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
-      expect(store.automationLanes).toEqual([before[1], before[3]]);
+      // The preset names no master inserts, so the master chain and its lane stay.
+      expect(store.automationLanes).toEqual([before[1], before[2], before[3]]);
       expect(store.midiCcBindings.has(processorMidiTargets[0])).toBe(false);
-      expect(store.midiCcBindings.has(processorMidiTargets[1])).toBe(false);
+      expect(store.midiCcBindings.has(processorMidiTargets[1])).toBe(true);
       expect(store.midiCcBindings.has(processorMidiTargets[2])).toBe(true);
 
       expect(undo()).toBe(true);

@@ -289,7 +289,7 @@ function buildScenePlan(
   tracks: EditorTrack[];
   /** Tracks whose strips the scene replaced. */
   replacedTrackIds: Set<number>;
-  /** Whether the scene carries a master strip of its own. */
+  /** Whether the scene names master inserts of its own. */
   replacesMaster: boolean;
   result: ApplyMixerSceneResult;
 } {
@@ -422,7 +422,7 @@ function buildScenePlan(
     },
     tracks: nextTracks,
     replacedTrackIds,
-    replacesMaster: masterBus !== undefined,
+    replacesMaster: master.inserts.length > 0,
     result: {
       trackCount: replacedTrackIds.size,
       busCount: mixerBuses.length,
@@ -435,8 +435,9 @@ function buildScenePlan(
  * Applies a libsonare mixer-scene JSON template to the current project as one
  * undoable edit. Existing tracks are kept; scene strips named `track-<id>` map
  * onto those tracks, other scene strips map onto the tracks in order. Scene
- * buses/sends/VCA groups replace the project mixer template, and a scene with
- * a master strip replaces the master's inserts.
+ * buses/sends/VCA groups replace the project mixer template. The master's
+ * inserts are replaced only by a scene that names master inserts: every scene
+ * declares a master bus, and an empty one says nothing about the user's chain.
  */
 export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
   const scene = parseSceneJson(sceneJson);
