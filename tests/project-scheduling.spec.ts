@@ -182,7 +182,7 @@ function makeHandle(): { handle: EngineHandle; addClip: ReturnType<typeof vi.fn>
   const addClip = vi.fn(() => 500);
   const handle = {
     ctx: { sampleRate: 10 },
-    engine: { addClip },
+    engine: { addClip, setWarpVoiceCapacity: vi.fn() },
   } as unknown as EngineHandle;
   return { handle, addClip };
 }
@@ -219,7 +219,7 @@ describe('scheduleProjectClips', () => {
     const [trackId, , startPpq, opts] = addClip.mock.calls[0];
     expect(trackId).toBe(2);
     expect(startPpq).toBe(4);
-    expect(opts).toEqual({ gain: 0.8 });
+    expect(opts).toMatchObject({ gain: 0.8 });
   });
 
   it('skips MIDI clips regardless of mute/solo state', async () => {

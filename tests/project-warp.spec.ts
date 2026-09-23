@@ -1,40 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import type { WarpAnchor } from '@/project/types';
 import {
-  bakeWarpedClip,
-  clearWarpBakeCache,
-  configureWarpBakeCacheByteBudget,
-  DEFAULT_WARP_CACHE_BYTE_BUDGET,
   projectWarpMapDesc,
-  type StretchFn,
   sanitizeWarpAnchors,
   type WarpableClipFields,
-  warpBakeCacheStats,
+  warpedClipSource,
   warpSegments,
 } from '@/project/warp';
-
-const wasmStretchFns = vi.hoisted(() => ({
-  noteStretch: vi.fn(
-    (
-      samples: Float32Array,
-      _sampleRate?: number,
-      options?: { stretchRatio?: number },
-    ): Float32Array => {
-      const rate = options?.stretchRatio ?? 1;
-      const frames = Math.max(1, Math.round(samples.length / rate));
-      return samples.slice(0, frames);
-    },
-  ),
-  timeStretch: vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
-    const frames = Math.max(1, Math.round(samples.length / rate));
-    return samples.slice(0, frames);
-  }),
-}));
-
-vi.mock('@/lib/wasm', () => ({
-  ensureWasm: async () => wasmStretchFns,
-}));
 
 /** Builds a warp-enabled clip with overridable fields. */
 function makeWarpClip(overrides: Partial<WarpableClipFields> = {}): WarpableClipFields {
@@ -46,26 +19,11 @@ function makeWarpClip(overrides: Partial<WarpableClipFields> = {}): WarpableClip
   };
 }
 
-/** Index ramp (channel[i] = i) so positions are observable in baked output. */
+/** Index ramp (channel[i] = i) so source positions are observable. */
 function ramp(frames: number): Float32Array {
   const channel = new Float32Array(frames);
   for (let i = 0; i < frames; i++) channel[i] = i;
   return channel;
-}
-
-/**
- * Deterministic fake stretch: nearest-neighbour decimation/expansion with
- * output length = round(input length / rate), wrapped in a spy.
- */
-function makeFakeStretch(): StretchFn & ReturnType<typeof vi.fn> {
-  return vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
-    const frames = Math.max(1, Math.round(samples.length / rate));
-    const out = new Float32Array(frames);
-    for (let i = 0; i < frames; i++) {
-      out[i] = samples[Math.min(samples.length - 1, Math.round(i * rate))];
-    }
-    return out;
-  }) as StretchFn & ReturnType<typeof vi.fn>;
 }
 
 describe('sanitizeWarpAnchors', () => {
@@ -264,254 +222,84 @@ describe('projectWarpMapDesc', () => {
   });
 });
 
-describe('bakeWarpedClip', () => {
-  beforeEach(() => {
-    clearWarpBakeCache();
-    configureWarpBakeCacheByteBudget(DEFAULT_WARP_CACHE_BYTE_BUDGET);
-    wasmStretchFns.noteStretch.mockClear();
-    wasmStretchFns.timeStretch.mockClear();
-  });
-
-  it('returns [] for disabled/invalid warp and for empty channels', async () => {
-    const stretch = makeFakeStretch();
+describe('warpedClipSource', () => {
+  it('returns null for disabled/invalid warp and for empty channels', () => {
+    expect(warpedClipSource([ramp(40)], 10, makeWarpClip({ warp: undefined }), 120)).toBeNull();
     expect(
-      await bakeWarpedClip([ramp(40)], 10, { lengthPpq: 4, sourceOffsetPpq: 0 }, 120, { stretch }),
-    ).toEqual([]);
-    expect(
-      await bakeWarpedClip(
+      warpedClipSource(
         [ramp(40)],
         10,
         makeWarpClip({ warp: { enabled: false, sourceBpm: 60 } }),
         120,
-        { stretch },
       ),
-    ).toEqual([]);
-    expect(await bakeWarpedClip([], 10, makeWarpClip(), 120, { stretch })).toEqual([]);
-    expect(stretch).not.toHaveBeenCalled();
+    ).toBeNull();
+    expect(warpedClipSource([], 10, makeWarpClip(), 120)).toBeNull();
+    expect(warpedClipSource([new Float32Array(0)], 10, makeWarpClip(), 120)).toBeNull();
   });
 
-  it('outputs exactly the clip window at the target tempo via the stretch', async () => {
-    // 4 PPQ at sourceBpm 60 = 4 s of source = 40 frames at 10 Hz; the same
-    // 4 PPQ at 120 BPM = 2 s = 20 output frames, so the rate is 2.
-    const stretch = makeFakeStretch();
-    const baked = await bakeWarpedClip([ramp(40)], 10, makeWarpClip(), 120, { stretch });
-
-    expect(baked).toHaveLength(1);
-    expect(baked[0].length).toBe((4 * 60 * 10) / 120);
-    expect(stretch).toHaveBeenCalledTimes(1);
-    const [samples, sampleRate, rate] = stretch.mock.calls[0] as [Float32Array, number, number];
-    expect(samples.length).toBe(40);
-    expect(sampleRate).toBe(10);
-    expect(rate).toBeCloseTo(2, 10);
-    // Fake decimation: output frame i reads source frame 2i.
-    expect(Array.from(baked[0])).toEqual(Array.from({ length: 20 }, (_, i) => 2 * i));
+  it('maps the clip window onto its source slice at the target tempo', () => {
+    // 4 PPQ at 60 source BPM = 40 source frames; at 120 BPM the window is 20 frames.
+    const source = warpedClipSource([ramp(40)], 10, makeWarpClip(), 120);
+    expect(source?.lengthFrames).toBe(20);
+    expect(source?.anchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 20, sourceSample: 40 },
+    ]);
+    expect(source?.channels[0]).toEqual(ramp(40));
   });
 
-  it('uses noteStretch as the default warp stretch when available', async () => {
-    const baked = await bakeWarpedClip([ramp(40)], 10, makeWarpClip(), 120);
-
-    expect(baked[0]).toHaveLength(20);
-    expect(wasmStretchFns.noteStretch).toHaveBeenCalledTimes(1);
-    // 40 source samples fill 20 target samples: noteStretch takes that as a
-    // duration factor of 0.5, not as the speed-up rate 2.
-    expect(wasmStretchFns.noteStretch).toHaveBeenCalledWith(new Float32Array(ramp(40)), 10, {
-      onsetSample: 0,
-      offsetSample: 40,
-      stretchRatio: 0.5,
-    });
-    expect(wasmStretchFns.timeStretch).not.toHaveBeenCalled();
-  });
-
-  it('uses noteStretch only for anchored segments that need stretching', async () => {
-    const clip = makeWarpClip({
-      warp: { enabled: true, sourceBpm: 60, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
-    });
-    const baked = await bakeWarpedClip([ramp(40)], 10, clip, 120);
-
-    expect(baked[0]).toHaveLength(20);
-    // First segment is rate 1 and is copied directly; only the second segment
-    // needs transient-preserving stretch.
-    expect(wasmStretchFns.noteStretch).toHaveBeenCalledTimes(1);
-    expect(wasmStretchFns.noteStretch).toHaveBeenCalledWith(
-      new Float32Array(ramp(40).subarray(10, 40)),
-      10,
-      {
-        onsetSample: 0,
-        offsetSample: 30,
-        stretchRatio: 1 / 3,
-      },
-    );
-    expect(wasmStretchFns.timeStretch).not.toHaveBeenCalled();
-    expect(Array.from(baked[0].subarray(0, 10))).toEqual(Array.from({ length: 10 }, (_, i) => i));
-  });
-
-  it('outputs exactly the clip window across tempo-map changes', async () => {
-    const stretch = makeFakeStretch();
-    const tempoMap = normalizeTempoMap([
+  it('follows tempo-map changes on the output axis', () => {
+    const tempo = normalizeTempoMap([
       { startPpq: 0, bpm: 120 },
       { startPpq: 2, bpm: 60 },
     ]);
-    const clip = makeWarpClip({
-      startPpq: 1,
-      lengthPpq: 2,
-      warp: { enabled: true, sourceBpm: 60 },
-    });
-    const baked = await bakeWarpedClip([ramp(20)], 10, clip, tempoMap, { stretch });
-
-    expect(baked).toHaveLength(1);
-    // Timeline 1..3 PPQ is 0.5 s at 120 BPM plus 1 s at 60 BPM.
-    expect(baked[0].length).toBe(15);
-    expect(stretch).toHaveBeenCalledTimes(1);
-    const [samples, sampleRate, rate] = stretch.mock.calls[0] as [Float32Array, number, number];
-    expect(samples.length).toBe(20);
-    expect(sampleRate).toBe(10);
-    expect(rate).toBeCloseTo(20 / 15, 10);
+    // 2 PPQ at 120 BPM (10 frames) plus 2 PPQ at 60 BPM (20 frames).
+    const source = warpedClipSource([ramp(40)], 10, makeWarpClip(), tempo);
+    expect(source?.lengthFrames).toBe(30);
+    expect(source?.anchors.at(-1)).toEqual({ warpSample: 30, sourceSample: 40 });
   });
 
-  it('places segments at their target offsets and bypasses rate-1 segments', async () => {
-    // Anchor at beat 2 -> 1 s: segment A maps 2 PPQ (1 s at 120 BPM) onto
-    // 1 s of source (rate 1, copied), segment B maps 2 PPQ onto 3 s (rate 3).
-    const stretch = makeFakeStretch();
+  it('adds an anchor per user warp anchor', () => {
     const clip = makeWarpClip({
       warp: { enabled: true, sourceBpm: 60, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
     });
-    const baked = await bakeWarpedClip([ramp(40)], 10, clip, 120, { stretch });
+    expect(warpedClipSource([ramp(40)], 10, clip, 120)?.anchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 10, sourceSample: 10 },
+      { warpSample: 20, sourceSample: 40 },
+    ]);
+  });
 
-    expect(baked[0].length).toBe(20);
-    // Only the rate-3 segment hit the stretch.
-    expect(stretch).toHaveBeenCalledTimes(1);
-    const [samples, , rate] = stretch.mock.calls[0] as [Float32Array, number, number];
-    expect(samples.length).toBe(30);
-    expect(rate).toBeCloseTo(3, 10);
-    // Segment A: frames 0..9 copied verbatim from source frames 0..9.
-    expect(Array.from(baked[0].subarray(0, 10))).toEqual(Array.from({ length: 10 }, (_, i) => i));
-    // Segment B: frames 10..19 decimated from source frames 10..39 (10 + 3i).
-    expect(Array.from(baked[0].subarray(10, 20))).toEqual(
-      Array.from({ length: 10 }, (_, i) => 10 + 3 * i),
+  it('slices the trimmed source window and anchors relative to it', () => {
+    const clip = makeWarpClip({ sourceOffsetPpq: 1, lengthPpq: 2 });
+    const source = warpedClipSource([ramp(40)], 10, clip, 120);
+    expect(Array.from(source?.channels[0] ?? [])).toEqual(
+      Array.from({ length: 20 }, (_, i) => 10 + i),
     );
+    expect(source?.anchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 10, sourceSample: 20 },
+    ]);
   });
 
-  it('clamps an over-long source span to the asset end', async () => {
-    // The clip wants 4 s of source (40 frames) but the asset has 15: the
-    // segment clamps and the stretch rate compensates (15 source frames
-    // spread over the 20 target frames).
-    const stretch = makeFakeStretch();
-    const baked = await bakeWarpedClip([ramp(15)], 10, makeWarpClip(), 120, { stretch });
-
-    expect(baked[0].length).toBe(20);
-    expect(stretch).toHaveBeenCalledTimes(1);
-    const [samples, , rate] = stretch.mock.calls[0] as [Float32Array, number, number];
-    expect(samples.length).toBe(15);
-    expect(rate).toBeCloseTo(15 / 20, 10);
+  it('clamps an over-long source span to the asset end', () => {
+    const source = warpedClipSource([ramp(15)], 10, makeWarpClip(), 120);
+    expect(source?.channels[0].length).toBe(15);
+    expect(source?.anchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 20, sourceSample: 15 },
+    ]);
   });
 
-  it('leaves silence (full window length) when the source starts past the asset', async () => {
-    const stretch = makeFakeStretch();
-    const clip = makeWarpClip({ sourceOffsetPpq: 100 }); // 100 s into a 1.5 s asset
-    const baked = await bakeWarpedClip([ramp(15)], 10, clip, 120, { stretch });
-
-    expect(stretch).not.toHaveBeenCalled();
-    expect(baked).toHaveLength(1);
-    expect(baked[0].length).toBe(20);
-    expect(baked[0].every((sample) => sample === 0)).toBe(true);
+  it('returns null when the source starts past the asset', () => {
+    expect(
+      warpedClipSource([ramp(15)], 10, makeWarpClip({ sourceOffsetPpq: 100 }), 120),
+    ).toBeNull();
   });
 
-  it('bakes every channel', async () => {
-    const stretch = makeFakeStretch();
-    const left = ramp(40);
-    const right = ramp(40).map((v) => v + 100);
-    const baked = await bakeWarpedClip([left, right], 10, makeWarpClip(), 120, { stretch });
-
-    expect(baked).toHaveLength(2);
-    expect(baked[0][5]).toBe(10);
-    expect(baked[1][5]).toBe(110);
-  });
-
-  it('caches by content key and hands out fresh copies on a hit', async () => {
-    const stretch = makeFakeStretch();
-    const channels = [ramp(40)];
-    const first = await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
-      cacheKey: 'asset-x',
-      stretch,
-    });
-    // A deep-equal but distinct clip object still hits (content keying), but
-    // the buffers are copies: callers bake fades into them in place, so a
-    // shared instance would compound the fade ramps across passes.
-    const second = await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
-      cacheKey: 'asset-x',
-      stretch,
-    });
-    expect(second).toEqual(first);
-    expect(second[0]).not.toBe(first[0]);
-    second[0].fill(0);
-    const third = await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
-      cacheKey: 'asset-x',
-      stretch,
-    });
-    expect(third).toEqual(first);
-    expect(stretch).toHaveBeenCalledTimes(1);
-
-    // Any key ingredient change misses: tempo here.
-    const otherTempo = await bakeWarpedClip(channels, 10, makeWarpClip(), 60, {
-      cacheKey: 'asset-x',
-      stretch,
-    });
-    expect(otherTempo).not.toBe(first);
-
-    // clearWarpBakeCache invalidates the entry.
-    clearWarpBakeCache();
-    const rebaked = await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
-      cacheKey: 'asset-x',
-      stretch,
-    });
-    expect(rebaked).not.toBe(first);
-    expect(rebaked).toEqual(first);
-  });
-
-  it('does not cache without a cacheKey', async () => {
-    const stretch = makeFakeStretch();
-    const channels = [ramp(40)];
-    const first = await bakeWarpedClip(channels, 10, makeWarpClip(), 120, { stretch });
-    const second = await bakeWarpedClip(channels, 10, makeWarpClip(), 120, { stretch });
-    expect(second).not.toBe(first);
-    expect(second).toEqual(first);
-    expect(stretch).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not retain bakes that exceed the byte budget', async () => {
-    configureWarpBakeCacheByteBudget(0);
-    const stretch = makeFakeStretch();
-    const channels = [ramp(40)];
-
-    await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
-      cacheKey: 'uncached',
-      stretch,
-    });
-    await bakeWarpedClip(channels, 10, makeWarpClip(), 120, {
-      cacheKey: 'uncached',
-      stretch,
-    });
-
-    expect(stretch).toHaveBeenCalledTimes(2);
-    expect(warpBakeCacheStats()).toMatchObject({ entries: 0, bytes: 0 });
-  });
-
-  it('evicts warp bakes in least-recently-used order within the byte budget', async () => {
-    // One mono bake is 20 float samples = 80 bytes.
-    configureWarpBakeCacheByteBudget(160);
-    const stretch = makeFakeStretch();
-    const channels = [ramp(40)];
-    const bake = (cacheKey: string) =>
-      bakeWarpedClip(channels, 10, makeWarpClip(), 120, { cacheKey, stretch });
-
-    await bake('asset-a');
-    await bake('asset-b');
-    await bake('asset-a');
-    await bake('asset-c');
-
-    const keys = warpBakeCacheStats().keys;
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).toContain('asset-a');
-    expect(keys[1]).toContain('asset-c');
+  it('copies the slice so the asset buffer is never shared with the engine', () => {
+    const asset = ramp(40);
+    const source = warpedClipSource([asset], 10, makeWarpClip(), 120);
+    expect(source?.channels[0].buffer).not.toBe(asset.buffer);
   });
 });

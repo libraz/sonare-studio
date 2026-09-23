@@ -14,24 +14,6 @@ import {
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack } from '@/project/types';
-import { clearWarpBakeCache } from '@/project/warp';
-
-// The warp bake resolves its stretch through ensureWasm: provide a
-// deterministic nearest-neighbour fake (output length = input / rate).
-const timeStretch = vi.hoisted(() =>
-  vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
-    const frames = Math.max(1, Math.round(samples.length / rate));
-    const out = new Float32Array(frames);
-    for (let i = 0; i < frames; i++) {
-      out[i] = samples[Math.min(samples.length - 1, Math.round(i * rate))];
-    }
-    return out;
-  }),
-);
-
-vi.mock('@/lib/wasm', () => ({
-  ensureWasm: async () => ({ timeStretch }),
-}));
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -92,7 +74,7 @@ function makeHandle(sampleRate = 10): {
   const removeClip = vi.fn();
   const handle = {
     ctx: { sampleRate },
-    engine: { addClip, removeClip },
+    engine: { addClip, removeClip, setWarpVoiceCapacity: vi.fn() },
   } as unknown as EngineHandle;
   return { handle, addClip, removeClip };
 }
@@ -181,8 +163,6 @@ describe('scheduleProjectClips with audio clips', () => {
     setActivePinia(createPinia());
     store = useProjectStore();
     store.tempoBpm = 120;
-    clearWarpBakeCache();
-    timeStretch.mockClear();
   });
 
   it('loads the asset and schedules the buffer at the clip start with the clip gain', async () => {
@@ -201,7 +181,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(startPpq).toBe(8);
     // No loudness normalization, and track volume is engine lane state:
     // the scheduled gain is exactly the clip gain.
-    expect(opts).toEqual({ gain: 0.8 });
+    expect(opts).toEqual({ gain: 0.8, lengthSamples: 20, fadeInSamples: 0, fadeOutSamples: 0 });
     expect((channels as Float32Array[])[0]).toEqual(makeAsset(20).channels[0]);
   });
 
@@ -405,7 +385,7 @@ describe('scheduleProjectClips with audio clips', () => {
     }
   });
 
-  it('bakes fades into the scheduled buffer edges', async () => {
+  it('passes fades to the engine as clip fades in frames', async () => {
     store.tracks = [makeTrack(1)];
     // Clip 2 PPQ = 1 s = 10 frames at 10 Hz; fades of 0.4 PPQ = 2 frames.
     store.clips = [makeAudioClip(10, 1, { lengthPpq: 2, fadeInPpq: 0.4, fadeOutPpq: 0.4 })];
@@ -416,10 +396,9 @@ describe('scheduleProjectClips with audio clips', () => {
     };
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => asset });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
-    expect(Array.from(channels[0])).toEqual([0, 0.5, 1, 1, 1, 1, 1, 1, 0.5, 0]);
-    // The cached asset buffers stay untouched.
-    expect(asset.channels[0]).toEqual(new Float32Array(10).fill(1));
+    const [, channels, , opts] = addClip.mock.calls[0];
+    expect(opts).toMatchObject({ lengthSamples: 10, fadeInSamples: 2, fadeOutSamples: 2 });
+    expect(Array.from((channels as Float32Array[])[0])).toEqual(new Array(10).fill(1));
   });
 
   it('leaves a rounded one-frame fade unchanged instead of silencing a clip edge', async () => {
@@ -547,7 +526,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(channels[0].length).toBe(10); // no resampling happened
   });
 
-  it('bakes a warp-enabled clip (no takes) into one tempo-length engine clip', async () => {
+  it('schedules a warp-enabled clip (no takes) as one time-stretched engine clip', async () => {
     store.tracks = [makeTrack(1)];
     // sourceBpm 60: the 4 PPQ window covers 4 s of source = 40 frames at
     // 10 Hz; at the 120 BPM schedule tempo the window is 2 s = 20 frames.
@@ -568,19 +547,23 @@ describe('scheduleProjectClips with audio clips', () => {
     const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
     expect(trackId).toBe(1);
     expect(startPpq).toBe(8);
-    expect(opts).toEqual({ gain: 1 });
-    // The channel covers exactly lengthPpq at the schedule tempo.
-    expect((channels as Float32Array[])[0].length).toBe(20);
-    // The wasm stretch ran at rate 2 (40 source frames into 20 frames):
-    // the fake decimation reads every other ramp sample (1, 3, 5, ...).
-    expect(timeStretch).toHaveBeenCalledTimes(1);
-    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(2, 10);
-    expect(Array.from((channels as Float32Array[])[0])).toEqual(
-      Array.from({ length: 20 }, (_, i) => 2 * i + 1),
-    );
+    // The engine stretches the 40-frame source slice over the 20-frame window.
+    expect(opts).toEqual({
+      gain: 1,
+      lengthSamples: 20,
+      fadeInSamples: 0,
+      fadeOutSamples: 0,
+      warpMode: 'time-stretch',
+      warpAnchors: [
+        { warpSample: 0, sourceSample: 0 },
+        { warpSample: 20, sourceSample: 40 },
+      ],
+    });
+    expect((channels as Float32Array[])[0]).toEqual(makeAsset(40).channels[0]);
+    expect(handle.engine.setWarpVoiceCapacity).toHaveBeenCalledWith(8);
   });
 
-  it('bakes a warp-enabled clip to the project tempo-map length', async () => {
+  it('stretches a warp-enabled clip to the project tempo-map length', async () => {
     store.tracks = [makeTrack(1)];
     store.tempoSegments = [
       { startPpq: 0, bpm: 120 },
@@ -596,13 +579,17 @@ describe('scheduleProjectClips with audio clips', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
-    expect(channels[0].length).toBe(15);
-    expect(timeStretch).toHaveBeenCalledTimes(1);
-    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(20 / 15, 10);
+    // 1..2 PPQ at 120 BPM (5 frames) plus 2..3 PPQ at 60 BPM (10 frames).
+    expect(addClip.mock.calls[0][3]).toMatchObject({
+      lengthSamples: 15,
+      warpAnchors: [
+        { warpSample: 0, sourceSample: 0 },
+        { warpSample: 15, sourceSample: 20 },
+      ],
+    });
   });
 
-  it('bakes looped warp occurrences as separate tempo-mapped windows', async () => {
+  it('schedules looped warp occurrences as separate tempo-mapped windows', async () => {
     store.tracks = [makeTrack(1)];
     store.tempoSegments = [
       { startPpq: 0, bpm: 120 },
@@ -626,15 +613,38 @@ describe('scheduleProjectClips with audio clips', () => {
 
     expect(addClip).toHaveBeenCalledTimes(3);
     expect(addClip.mock.calls.map((call) => call[2])).toEqual([0, 2, 4]);
-    const rendered = addClip.mock.calls.map((call) => (call[1] as Float32Array[])[0]);
-    // 0..2 PPQ at 120 BPM, 2..4 at 60 BPM, then a partial 1-PPQ repeat.
-    expect(rendered.map((channel) => channel.length)).toEqual([10, 20, 10]);
-    expect(Array.from(rendered[0])).toEqual([1, 3, 5, 7, 9, 11, 13, 15, 17, 19]);
-    expect(Array.from(rendered[1])).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
-    expect(Array.from(rendered[2])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 4.5, 0]);
-    // The clip-edge fades apply only to the first/last occurrences.
-    expect(rendered[1][0]).toBe(1);
-    expect(rendered[1].at(-1)).toBe(20);
+    // 0..2 PPQ at 120 BPM, 2..4 at 60 BPM, then a partial 1-PPQ repeat; the
+    // clip-edge fades apply only to the first/last occurrences (the one-frame
+    // fade-in rounds away).
+    expect(addClip.mock.calls.map((call) => call[3])).toEqual([
+      expect.objectContaining({
+        lengthSamples: 10,
+        fadeInSamples: 0,
+        fadeOutSamples: 0,
+        warpAnchors: [
+          { warpSample: 0, sourceSample: 0 },
+          { warpSample: 10, sourceSample: 20 },
+        ],
+      }),
+      expect.objectContaining({
+        lengthSamples: 20,
+        fadeInSamples: 0,
+        fadeOutSamples: 0,
+        warpAnchors: [
+          { warpSample: 0, sourceSample: 0 },
+          { warpSample: 20, sourceSample: 20 },
+        ],
+      }),
+      expect.objectContaining({
+        lengthSamples: 10,
+        fadeInSamples: 0,
+        fadeOutSamples: 2,
+        warpAnchors: [
+          { warpSample: 0, sourceSample: 0 },
+          { warpSample: 10, sourceSample: 10 },
+        ],
+      }),
+    ]);
   });
 
   it('keeps the unwarped comp path for a clip with takes and warp', async () => {
@@ -653,7 +663,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const channels = addClip.mock.calls[0][1] as Float32Array[];
     // Fixed-rate slice: the first 20 ramp samples verbatim, never stretched.
     expect(channels[0]).toEqual(makeAsset(40).channels[0].slice(0, 20));
-    expect(timeStretch).not.toHaveBeenCalled();
+    expect(addClip.mock.calls[0][3]).not.toHaveProperty('warpMode');
   });
 
   it('schedules a frozen track from its baked asset and skips its own clips', async () => {
@@ -855,14 +865,23 @@ describe('scheduleProjectClips with audio clips', () => {
     const boundaryPpq = 10;
     const windowStartPpq = boundaryPpq - 0.03;
     const rendered = new Float32Array(60);
-    for (const [, channels, startPpq] of addClip.mock.calls) {
+    for (const [, channels, startPpq, opts] of addClip.mock.calls) {
       const offset = Math.round(
         ppqSpanToSeconds((startPpq as number) - windowStartPpq, 120) * sampleRate,
       );
       const channel = (channels as Float32Array[])[0];
+      // The engine applies the clip fades: frame i of an n-frame ramp scales by i/n.
+      const { fadeInSamples = 0, fadeOutSamples = 0 } = opts as {
+        fadeInSamples?: number;
+        fadeOutSamples?: number;
+      };
       for (let i = 0; i < channel.length; i += 1) {
+        let fade = 1;
+        if (i < fadeInSamples) fade *= i / fadeInSamples;
+        const fromEnd = channel.length - 1 - i;
+        if (fromEnd < fadeOutSamples) fade *= fromEnd / fadeOutSamples;
         const target = offset + i;
-        if (target >= 0 && target < rendered.length) rendered[target] += channel[i];
+        if (target >= 0 && target < rendered.length) rendered[target] += channel[i] * fade;
       }
     }
 

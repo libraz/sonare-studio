@@ -30,7 +30,7 @@ import {
   type AudioClipSliceTempo,
   renderAudibleAudioClipWindow,
 } from './scheduling';
-import type { StretchFn } from './warp';
+import type { WarpRenderFn } from './warp';
 
 /** The three bands `hpssWithResidual` separates a signal into. */
 export type StemKind = 'harmonic' | 'percussive' | 'residual';
@@ -94,8 +94,8 @@ export interface AudioStemsDeps {
   separateStems: AudioStemSeparator;
   /** Optional enhancement/repair functions. */
   enhancers?: AudioStemEnhancers;
-  /** Warp stretch seam override (tests); production shares the playback wasm seam. */
-  stretch?: StretchFn;
+  /** Warped-window render override (tests); production renders through the engine. */
+  renderWarp?: WarpRenderFn;
 }
 
 /** One separated stem ready to be stored as an asset and laid down as a clip. */
@@ -202,13 +202,13 @@ async function renderStemWindow(
   clip: Omit<AudibleAudioClipFields, 'startPpq'> & { startPpq?: number },
   tempo: AudioClipSliceTempo,
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>,
-  stretch: StretchFn | undefined,
+  renderWarp: WarpRenderFn | undefined,
 ): Promise<{ channels: Float32Array[]; sampleRate: number } | null> {
   const rendered = await renderAudibleAudioClipWindow(
     { ...clip, startPpq: clip.startPpq ?? 0 },
     tempo,
     loadAudioAsset,
-    { stretch },
+    { renderWarp },
   );
   if (!rendered) return null;
   const { channels: window, sampleRate } = rendered;
@@ -232,7 +232,7 @@ export async function separateAudioClipStems(
   tempo: AudioClipSliceTempo,
   deps: AudioStemsDeps,
 ): Promise<SeparatedStem[]> {
-  const rendered = await renderStemWindow(clip, tempo, deps.loadAudioAsset, deps.stretch);
+  const rendered = await renderStemWindow(clip, tempo, deps.loadAudioAsset, deps.renderWarp);
   if (!rendered) return [];
   const { channels: window, sampleRate } = rendered;
 
@@ -268,8 +268,8 @@ export async function separateAudioClipStems(
 export interface AudioComponentsDeps {
   /** Loads an audio asset's PCM (defaults to the OPFS asset store). */
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
-  /** Warp stretch seam override (tests); production shares the playback wasm seam. */
-  stretch?: StretchFn;
+  /** Warped-window render override (tests); production renders through the engine. */
+  renderWarp?: WarpRenderFn;
   /** Runs the shared-model NMF factorisation; production runs it off-thread. */
   decompose: (
     channels: Float32Array[],
@@ -296,7 +296,7 @@ export async function separateAudioClipComponents(
   count: number,
   deps: AudioComponentsDeps,
 ): Promise<SeparatedStem[]> {
-  const rendered = await renderStemWindow(clip, tempo, deps.loadAudioAsset, deps.stretch);
+  const rendered = await renderStemWindow(clip, tempo, deps.loadAudioAsset, deps.renderWarp);
   if (!rendered) return [];
   const { channels: window, sampleRate } = rendered;
   const components = await deps.decompose(window, sampleRate, count);

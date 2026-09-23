@@ -35,6 +35,7 @@ export interface ExportIssueStrings {
     masteringAutomationAtStartParams?: string;
     streamingMeteringUnavailable?: string;
     masteringLoudnessTargetLimited: string;
+    warpVoicesExceeded: string;
   };
 }
 
@@ -112,6 +113,8 @@ export function formatExportLimitation(
         '{lufs}',
         limitation.outputLufs.toFixed(1),
       );
+    case 'warp-voices-exceeded':
+      return strings.limitation.warpVoicesExceeded;
     case 'streaming-metering-unavailable':
       return (
         strings.limitation.streamingMeteringUnavailable ??

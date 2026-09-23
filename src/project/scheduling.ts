@@ -35,7 +35,12 @@ import {
 } from './tempo-map';
 import type { ClipTake, ClipWarp, EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
-import { bakeWarpedClip, type StretchFn } from './warp';
+import {
+  renderWarpedClipSource,
+  type WarpAnchorFrames,
+  type WarpRenderFn,
+  warpedClipSource,
+} from './warp';
 
 /** The mute/solo subset of a track relevant to audibility. */
 export type TrackAudibilityState = Pick<EditorTrack, 'mute' | 'solo' | 'soloSafe'>;
@@ -226,34 +231,21 @@ export function audioClipWindowFrames(
 }
 
 /**
- * Applies linear fade-in/fade-out ramps to the buffer edges in place.
- *
- * The engine clip options for fades are not part of the typed API, so fades
- * are baked into the scheduled buffer instead: the first fade-in frame is
- * silent and the ramp reaches unity right after the fade (multiplier i/n for
- * frame i of n); the fade-out mirrors that (the last frame is silent). A
- * rounded one-frame fade is treated as no fade: it cannot form a ramp and
- * would otherwise silence a clip edge. Fades longer than the buffer are
- * clamped to its length.
- *
- * @param channels Planar buffers to modify (typically fresh slices).
- * @param sampleRate Buffer sample rate in Hz.
- * @param tempoBpm Tempo used to convert fade PPQ to time.
- * @param fadeInPpq Fade-in length in PPQ (0 = none).
- * @param fadeOutPpq Fade-out length in PPQ (0 = none).
- * @returns The same channel array, for chaining.
+ * Fade lengths of a clip window, in frames. The ramps are the engine's clip
+ * fades: frame i of an n-frame fade-in is scaled by i/n, and the fade-out
+ * mirrors it so the last frame is silent. A rounded one-frame fade cannot form
+ * a ramp and would silence a clip edge, so it counts as none; fades are
+ * clamped to the window.
  */
-export function applyAudioClipFades(
-  channels: Float32Array[],
+export function audioClipFadeFrames(
+  frames: number,
   sampleRate: number,
   tempo: AudioClipSliceTempo,
   fadeInPpq: number,
   fadeOutPpq: number,
   timelineStartPpq = 0,
   timelineLengthPpq?: number,
-): Float32Array[] {
-  const frames = channels[0]?.length ?? 0;
-  if (frames === 0) return channels;
+): { fadeInFrames: number; fadeOutFrames: number } {
   const inFrames = Math.min(
     frames,
     Math.max(
@@ -277,21 +269,60 @@ export function applyAudioClipFades(
           ),
     ),
   );
-  if (inFrames > 1 || outFrames > 1) {
-    for (const channel of channels) {
-      if (inFrames > 1) {
-        for (let i = 0; i < inFrames; i++) {
-          channel[i] *= i / inFrames;
-        }
-      }
-      if (outFrames > 1) {
-        for (let i = 0; i < outFrames; i++) {
-          channel[frames - 1 - i] *= i / outFrames;
-        }
-      }
+  return {
+    fadeInFrames: inFrames > 1 ? inFrames : 0,
+    fadeOutFrames: outFrames > 1 ? outFrames : 0,
+  };
+}
+
+/** Applies fade ramps of the given frame counts to the buffer edges in place. */
+function applyFadeFrames(
+  channels: Float32Array[],
+  fadeInFrames: number,
+  fadeOutFrames: number,
+): Float32Array[] {
+  const frames = channels[0]?.length ?? 0;
+  for (const channel of channels) {
+    for (let i = 0; i < Math.min(fadeInFrames, frames); i++) channel[i] *= i / fadeInFrames;
+    for (let i = 0; i < Math.min(fadeOutFrames, frames); i++) {
+      channel[frames - 1 - i] *= i / fadeOutFrames;
     }
   }
   return channels;
+}
+
+/**
+ * Applies linear fade-in/fade-out ramps to the buffer edges in place, with the
+ * lengths and ramp shape of {@link audioClipFadeFrames}.
+ *
+ * @param channels Planar buffers to modify (typically fresh slices).
+ * @param sampleRate Buffer sample rate in Hz.
+ * @param tempo Tempo (or map) used to convert fade PPQ to time.
+ * @param fadeInPpq Fade-in length in PPQ (0 = none).
+ * @param fadeOutPpq Fade-out length in PPQ (0 = none).
+ * @returns The same channel array, for chaining.
+ */
+export function applyAudioClipFades(
+  channels: Float32Array[],
+  sampleRate: number,
+  tempo: AudioClipSliceTempo,
+  fadeInPpq: number,
+  fadeOutPpq: number,
+  timelineStartPpq = 0,
+  timelineLengthPpq?: number,
+): Float32Array[] {
+  const frames = channels[0]?.length ?? 0;
+  if (frames === 0) return channels;
+  const { fadeInFrames, fadeOutFrames } = audioClipFadeFrames(
+    frames,
+    sampleRate,
+    tempo,
+    fadeInPpq,
+    fadeOutPpq,
+    timelineStartPpq,
+    timelineLengthPpq,
+  );
+  return applyFadeFrames(channels, fadeInFrames, fadeOutFrames);
 }
 
 /**
@@ -350,12 +381,145 @@ export interface SegmentRenderableAudioClip {
 }
 
 /**
- * Renders one segment from {@link audioClipSegments}. Warp-enabled segments
- * receive a derived clip window whose source and target coordinates describe
- * that occurrence only; this prevents a loop repeat from baking the original
- * full clip and lets every occurrence follow the tempo map at its own
- * timeline position. Whole-clip fades remain attached only to the first/last
- * segment by `audioClipSegments`.
+ * One audio clip segment as the engine plays it. A plain segment carries its
+ * sliced window; a warped one carries the source slice and the anchors the
+ * engine time-stretches it by. Fades are engine clip fades, in output frames.
+ */
+export interface AudioClipSegmentSource {
+  channels: Float32Array[];
+  sampleRate: number;
+  /** Output frames the segment plays for. */
+  lengthFrames: number;
+  fadeInFrames: number;
+  fadeOutFrames: number;
+  /** Present for a warped segment: output frame -> source frame, strictly increasing. */
+  warpAnchors?: WarpAnchorFrames[];
+}
+
+/**
+ * Resolves one segment from {@link audioClipSegments} into what the engine
+ * plays. A warped segment gets a window derived for that occurrence only, so a
+ * loop repeat follows the tempo map at its own timeline position. Whole-clip
+ * fades stay attached only to the first/last segment by `audioClipSegments`.
+ */
+export function audioClipSegmentSource(
+  asset: LoadedAudioAsset,
+  clip: SegmentRenderableAudioClip,
+  segment: AudioClipSegment,
+  tempo: AudioClipSliceTempo,
+  fadeTempo: AudioClipSliceTempo = tempo,
+): AudioClipSegmentSource {
+  const sampleRate = asset.meta.sampleRate;
+  const timelineStartPpq = clip.startPpq + segment.offsetPpq;
+  const warped =
+    clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
+      ? warpedClipSource(
+          asset.channels,
+          sampleRate,
+          {
+            ...(clip.id !== undefined ? { id: clip.id } : {}),
+            startPpq: timelineStartPpq,
+            lengthPpq: segment.lengthPpq,
+            sourceOffsetPpq: segment.sourceOffsetPpq,
+            warp: clip.warp,
+          },
+          tempo,
+        )
+      : undefined;
+  const channels =
+    warped === undefined
+      ? sliceAudioClipWindow(
+          asset.channels,
+          sampleRate,
+          segment.sourceOffsetPpq,
+          segment.lengthPpq,
+          tempo,
+          timelineStartPpq - segment.sourceOffsetPpq,
+        )
+      : (warped?.channels ?? []);
+  const lengthFrames =
+    warped === undefined ? (channels[0]?.length ?? 0) : (warped?.lengthFrames ?? 0);
+  return {
+    channels,
+    sampleRate,
+    lengthFrames,
+    ...audioClipFadeFrames(
+      lengthFrames,
+      sampleRate,
+      fadeTempo,
+      segment.fadeInPpq,
+      segment.fadeOutPpq,
+      timelineStartPpq,
+      segment.lengthPpq,
+    ),
+    ...(warped ? { warpAnchors: warped.anchors } : {}),
+  };
+}
+
+/**
+ * The same segment at another sample rate, given its channels already
+ * resampled to that rate: frame counts and anchors scale with the rate.
+ */
+export function audioClipSegmentSourceAtRate(
+  source: AudioClipSegmentSource,
+  channels: Float32Array[],
+  sampleRate: number,
+): AudioClipSegmentSource {
+  if (sampleRate === source.sampleRate) return { ...source, channels };
+  const ratio = sampleRate / source.sampleRate;
+  const scale = (frames: number): number => Math.round(frames * ratio);
+  const sourceFrames = channels[0]?.length ?? 0;
+  const lengthFrames = source.warpAnchors ? scale(source.lengthFrames) : (channels[0]?.length ?? 0);
+  const scaled: AudioClipSegmentSource = {
+    channels,
+    sampleRate,
+    lengthFrames,
+    fadeInFrames: Math.min(lengthFrames, scale(source.fadeInFrames)),
+    fadeOutFrames: Math.min(lengthFrames, scale(source.fadeOutFrames)),
+  };
+  if (source.warpAnchors) {
+    const anchors: WarpAnchorFrames[] = [];
+    for (const anchor of source.warpAnchors) {
+      const next = {
+        warpSample: Math.min(lengthFrames, scale(anchor.warpSample)),
+        sourceSample: Math.min(sourceFrames, scale(anchor.sourceSample)),
+      };
+      const previous = anchors[anchors.length - 1];
+      if (
+        previous &&
+        (next.warpSample <= previous.warpSample || next.sourceSample <= previous.sourceSample)
+      ) {
+        continue;
+      }
+      anchors.push(next);
+    }
+    scaled.warpAnchors = anchors;
+  }
+  return scaled;
+}
+
+/** Engine clip fields that play a segment source (length, fades and warp). */
+export function engineClipPlayback(source: AudioClipSegmentSource): {
+  lengthSamples: number;
+  fadeInSamples: number;
+  fadeOutSamples: number;
+  warpMode?: 'time-stretch';
+  warpAnchors?: WarpAnchorFrames[];
+} {
+  return {
+    lengthSamples: source.lengthFrames,
+    fadeInSamples: source.fadeInFrames,
+    fadeOutSamples: source.fadeOutFrames,
+    ...(source.warpAnchors && source.warpAnchors.length >= 2
+      ? { warpMode: 'time-stretch' as const, warpAnchors: source.warpAnchors }
+      : {}),
+  };
+}
+
+/**
+ * Renders one segment from {@link audioClipSegments} to PCM with its fades,
+ * for offline consumers; a warped segment renders through the engine's
+ * time-stretch mode so it matches playback.
  */
 export async function renderAudioClipSegment(
   asset: LoadedAudioAsset,
@@ -363,43 +527,21 @@ export async function renderAudioClipSegment(
   segment: AudioClipSegment,
   tempo: AudioClipSliceTempo,
   fadeTempo: AudioClipSliceTempo = tempo,
-  options: { stretch?: StretchFn } = {},
+  options: { renderWarp?: WarpRenderFn } = {},
 ): Promise<Float32Array[]> {
-  const timelineStartPpq = clip.startPpq + segment.offsetPpq;
-  const sourceTimelineOriginPpq = timelineStartPpq - segment.sourceOffsetPpq;
-  let channels =
-    clip.warp?.enabled && (clip.takes?.length ?? 0) === 0
-      ? await bakeWarpedClip(
-          asset.channels,
-          asset.meta.sampleRate,
-          {
-            ...(clip.id !== undefined ? { id: clip.id } : {}),
-            startPpq: clip.startPpq + segment.offsetPpq,
-            lengthPpq: segment.lengthPpq,
-            sourceOffsetPpq: segment.sourceOffsetPpq,
-            warp: clip.warp,
-          },
-          tempo,
-          { cacheKey: segment.assetId, stretch: options.stretch },
-        )
-      : sliceAudioClipWindow(
-          asset.channels,
-          asset.meta.sampleRate,
-          segment.sourceOffsetPpq,
-          segment.lengthPpq,
-          tempo,
-          sourceTimelineOriginPpq,
-        );
-  channels = applyAudioClipFades(
-    channels,
-    asset.meta.sampleRate,
-    fadeTempo,
-    segment.fadeInPpq,
-    segment.fadeOutPpq,
-    timelineStartPpq,
-    segment.lengthPpq,
-  );
-  return channels;
+  const source = audioClipSegmentSource(asset, clip, segment, tempo, fadeTempo);
+  if (source.lengthFrames === 0) return [];
+  const channels = source.warpAnchors
+    ? await (options.renderWarp ?? renderWarpedClipSource)(
+        {
+          channels: source.channels,
+          lengthFrames: source.lengthFrames,
+          anchors: source.warpAnchors,
+        },
+        source.sampleRate,
+      )
+    : source.channels;
+  return applyFadeFrames(channels, source.fadeInFrames, source.fadeOutFrames);
 }
 
 /** Clip fields needed to render the complete audible clip-local window. */
@@ -433,7 +575,7 @@ export async function renderAudibleAudioClipWindow(
   clip: AudibleAudioClipFields,
   tempo: AudioClipSliceTempo,
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>,
-  options: { stretch?: StretchFn } = {},
+  options: { renderWarp?: WarpRenderFn } = {},
 ): Promise<RenderedAudibleAudioClip | null> {
   if (!(clip.lengthPpq > 0) || (typeof tempo === 'number' && !(tempo > 0))) return null;
   const tempoMap =
@@ -576,12 +718,18 @@ export function replaceScheduledProjectClips(
   );
 }
 
+/** The engine's default and largest time-stretch voice pool. */
+export const DEFAULT_WARP_VOICES = 8;
+export const MAX_WARP_VOICES = 64;
+
 interface PreparedProjectClip {
   channels: Float32Array[];
   clipId: number;
   gain: number;
   startPpq: number;
   trackId: number;
+  /** Length, fades and warp the engine plays the channels with; absent = as-is. */
+  playback?: ReturnType<typeof engineClipPlayback>;
 }
 
 function preparedClipBytes(channels: ReadonlyArray<Float32Array>): number {
@@ -807,20 +955,30 @@ export async function scheduleProjectClips(
         }
         signal?.throwIfAborted();
         accountAsset(segment.assetId, asset);
-        let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
-        signal?.throwIfAborted();
-        channels = resampleChannelsLinear(channels, asset.meta.sampleRate, targetRate);
-        if (channels.length === 0 || channels[0].length === 0) continue;
+        const source = audioClipSegmentSource(asset, clip, segment, tempoMap);
+        if (source.lengthFrames === 0 || (source.channels[0]?.length ?? 0) === 0) continue;
+        const atRate = audioClipSegmentSourceAtRate(
+          source,
+          resampleChannelsLinear(source.channels, source.sampleRate, targetRate),
+          targetRate,
+        );
         appendPrepared({
-          channels,
+          channels: atRate.channels,
           clipId: clip.id,
           gain,
           startPpq: clip.startPpq + segment.offsetPpq,
           trackId: track.id,
+          playback: engineClipPlayback(atRate),
         });
       }
     }
   }
+
+  // Every warped clip gets a stretch voice, up to the engine's ceiling.
+  const warpedClips = prepared.filter((clip) => clip.playback?.warpMode !== undefined).length;
+  handle.engine.setWarpVoiceCapacity(
+    Math.min(MAX_WARP_VOICES, Math.max(DEFAULT_WARP_VOICES, warpedClips)),
+  );
 
   const scheduled: ScheduledProjectClip[] = [];
   try {
@@ -828,6 +986,7 @@ export async function scheduleProjectClips(
       signal?.throwIfAborted();
       const engineClipId = handle.engine.addClip(clip.trackId, clip.channels, clip.startPpq, {
         gain: clip.gain,
+        ...clip.playback,
       });
       const scheduledClip: ScheduledProjectClip = {
         engineClipId,

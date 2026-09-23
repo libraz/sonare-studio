@@ -70,6 +70,8 @@ export type OfflineRenderEngine = Pick<
   | 'setAutomationLane'
   | 'setTempoSegments'
   | 'setClips'
+  | 'setWarpVoiceCapacity'
+  | 'warpStretchOverflowCount'
   | 'setMidiClips'
   | 'setSynthInstrument'
   | 'loadSoundFont'

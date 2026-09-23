@@ -33,7 +33,7 @@ import {
   serializeProject,
 } from '@/project/serialization';
 import { getProject, useProjectStore } from '@/project/store';
-import { warpSourceSecondsAt } from '@/project/warp';
+import { type WarpedClipSource, warpSourceSecondsAt } from '@/project/warp';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -617,7 +617,7 @@ describe('audio track and clip commands', () => {
     expect(Array.from(baked.channels[0])).toEqual([1, 1, 2, 2, 9]);
   });
 
-  it('consolidates warped audio clips by baking the warped window', async () => {
+  it('consolidates warped audio clips by rendering the warped window', async () => {
     installMockOpfs();
     await saveAsset({ id: 'warp-source', name: 'Warp', sampleRate: 10 }, [
       new Float32Array(Array.from({ length: 40 }, (_, i) => i)),
@@ -641,21 +641,23 @@ describe('audio track and clip commands', () => {
       lengthPpq: 1,
       name: 'Tail',
     });
-    const stretch = vi.fn((samples: Float32Array, _sampleRate: number, rate: number) => {
-      const frames = Math.max(1, Math.round(samples.length / rate));
-      return new Float32Array(
-        Array.from({ length: frames }, (_, i) => samples[Math.min(samples.length - 1, i * rate)]),
+    // Stand-in for the engine: reads the source at the anchors' linear rate.
+    const renderWarp = vi.fn(async (source: WarpedClipSource) => {
+      const [, end] = source.anchors;
+      const rate = end.sourceSample / end.warpSample;
+      return source.channels.map((channel) =>
+        Float32Array.from({ length: source.lengthFrames }, (_, i) => channel[Math.floor(i * rate)]),
       );
     });
 
     const consolidatedId = await consolidateAudioClips([warped, tail], {
       tempoBpm: 120,
-      warpStretch: stretch,
+      renderWarp,
     });
     const consolidated = store.clips.find((clip) => clip.id === consolidatedId);
     const baked = await loadAsset(consolidated?.assetId ?? '');
 
-    expect(stretch).toHaveBeenCalledTimes(1);
+    expect(renderWarp).toHaveBeenCalledTimes(1);
     expect(consolidated).toMatchObject({ startPpq: 0, lengthPpq: 5, sourceOffsetPpq: 0 });
     expect(consolidated?.warp).toBeUndefined();
     expect(readDoc().warp_maps?.some((map) => map.id === warped)).toBe(false);

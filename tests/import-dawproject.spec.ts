@@ -9,7 +9,7 @@ import {
 import type { InsertSlot } from '@/project/mixer';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap, ppqRangeSeconds } from '@/project/tempo-map';
-import { bakeWarpedClip, warpSegments } from '@/project/warp';
+import { warpedClipSource, warpSegments } from '@/project/warp';
 
 function makeMidiClip(overrides: Partial<DocumentClip> = {}): DocumentClip {
   return {
@@ -998,16 +998,14 @@ describe('importDawproject', () => {
     ]);
 
     const source = Float32Array.from({ length: 50 }, (_, index) => index);
-    const stretch = vi.fn((samples: Float32Array, _sampleRate: number, rate: number) =>
-      new Float32Array(Math.round(samples.length / rate)).fill(samples[0] ?? 0),
-    );
-    const [baked] = await bakeWarpedClip([source], 10, importedClip, 120, { stretch });
-    expect(stretch.mock.calls.map(([samples, , rate]) => [samples.length, rate])).toEqual([
-      [15, 0.75],
-      [25, 1.25],
+    // The engine stretches the 1 s..5 s source slice through both segments.
+    const warped = warpedClipSource([source], 10, importedClip, 120);
+    expect(warped?.channels[0][0]).toBe(10);
+    expect(warped?.anchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 20, sourceSample: 15 },
+      { warpSample: 40, sourceSample: 40 },
     ]);
-    expect([...baked.slice(0, 20)]).toEqual(new Array(20).fill(10));
-    expect([...baked.slice(20, 40)]).toEqual(new Array(20).fill(25));
   });
 
   it('reports unsupported nested Warp units before the document is loaded', async () => {

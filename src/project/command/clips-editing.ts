@@ -47,10 +47,11 @@ import type {
 } from '../types';
 import { canTrackContainClip, clipKind, isAudioClip } from '../types';
 import {
-  bakeWarpedClip,
   clearProjectClipWarp,
   installProjectClipWarp,
-  type StretchFn,
+  renderWarpedClipSource,
+  type WarpRenderFn,
+  warpedClipSource,
 } from '../warp';
 import { moveClipWithin, splitClipWithin, trimClipWithin } from './clips-internal';
 import { execute, executeAtomic } from './history';
@@ -520,8 +521,8 @@ export interface ConsolidateAudioClipsOptions {
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Asset ingester; defaults to ingestAudioBuffer without analysis. */
   ingest?: (channels: Float32Array[], sampleRate: number, name: string) => Promise<{ id: string }>;
-  /** Time-stretch implementation override for tests. */
-  warpStretch?: StretchFn;
+  /** Warped-clip render override for tests; production renders through the engine. */
+  renderWarp?: WarpRenderFn;
 }
 
 function consolidateClipToken(clip: EditorClip): string {
@@ -706,10 +707,10 @@ export async function consolidateAudioClips(
       );
       let channels: Float32Array[];
       if (clip.warp?.enabled) {
-        channels = await bakeWarpedClip(asset.channels, asset.meta.sampleRate, clip, tempoMap, {
-          cacheKey: clip.assetId,
-          stretch: options.warpStretch,
-        });
+        const warped = warpedClipSource(asset.channels, asset.meta.sampleRate, clip, tempoMap);
+        channels = warped
+          ? await (options.renderWarp ?? renderWarpedClipSource)(warped, asset.meta.sampleRate)
+          : [];
         assertCurrent();
         channels = resampleChannelsLinear(channels, asset.meta.sampleRate, sampleRate);
       } else if (clip.loopEnabled && loopWindowPpq > 0 && loopWindowPpq < clip.lengthPpq) {
@@ -967,7 +968,6 @@ export async function sliceAudioClipAtTransients(
  */
 export function splitClip(clipId: number, splitPpq: number): number {
   const store = useProjectStore();
-  const project = getProject();
   const source = requireEditableClip(store, clipId);
   const blocked = clipSplitBlockReason(source, splitPpq);
   if (blocked === 'loop') throw new Error(LOOP_CLIP_SPLIT_ERROR);
@@ -977,49 +977,7 @@ export function splitClip(clipId: number, splitPpq: number): number {
       `Split position ${splitPpq} must lie strictly inside the clip [${source.startPpq}, ${end}]`,
     );
   }
-  const name = source.name;
-  const sourceMeta = { ...source };
-  return executeAtomic((edit) => {
-    const rightId = edit(1, () => project.splitClip(clipId, splitPpq));
-    store.refresh();
-    const splitOffsetPpq = splitPpq - source.startPpq;
-    store.clips = store.clips.map((c) => {
-      if (c.id === clipId) {
-        return withDerivedClipMetadata(c, sourceMeta, {
-          windowStartPpq: 0,
-          windowLengthPpq: c.lengthPpq,
-        });
-      }
-      if (c.id === rightId) {
-        return withDerivedClipMetadata({ ...c, name }, sourceMeta, {
-          windowStartPpq: splitOffsetPpq,
-          windowLengthPpq: c.lengthPpq,
-        });
-      }
-      return c;
-    });
-    const nextAnnotations = { ...store.scoreAnnotations };
-    delete nextAnnotations[clipId];
-    for (const id of [clipId, rightId]) {
-      const derived = store.clips.find((clip) => clip.id === id);
-      if (derived === undefined) continue;
-      const annotations = remapClipScoreAnnotations(
-        store.scoreAnnotations[clipId],
-        source.notes,
-        derived.notes,
-      );
-      if (Object.keys(annotations).length > 0) nextAnnotations[id] = annotations;
-    }
-    store.scoreAnnotations = nextAnnotations;
-    const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
-    for (const id of [clipId, rightId]) {
-      const derived = store.clips.find((clip) => clip.id === id);
-      if (derived?.warp !== undefined) {
-        installProjectClipWarp(project, derived, tempo, (mutation) => edit(1, mutation));
-      }
-    }
-    return rightId;
-  });
+  return executeAtomic((edit) => splitClipWithin(edit, clipId, splitPpq));
 }
 
 /**
@@ -1032,33 +990,10 @@ export function splitClip(clipId: number, splitPpq: number): number {
  */
 export function trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void {
   const store = useProjectStore();
-  const project = getProject();
-  const source = requireEditableClip(store, clipId);
+  requireEditableClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
   if (!Number.isFinite(newLengthPpq) || newLengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${newLengthPpq}`);
   }
-  const sourceMeta = { ...source };
-  executeAtomic((edit) => {
-    edit(1, () => project.trimClip(clipId, newStartPpq, newLengthPpq));
-    store.refresh();
-    const windowStartPpq = newStartPpq - source.startPpq;
-    store.clips = store.clips.map((c) =>
-      c.id === clipId
-        ? withDerivedClipMetadata(c, sourceMeta, {
-            windowStartPpq,
-            windowLengthPpq: c.lengthPpq,
-          })
-        : c,
-    );
-    const trimmed = store.clips.find((clip) => clip.id === clipId);
-    if (trimmed?.warp !== undefined) {
-      installProjectClipWarp(
-        project,
-        trimmed,
-        normalizeTempoMap(store.tempoSegments, store.tempoBpm),
-        (mutation) => edit(1, mutation),
-      );
-    }
-  });
+  executeAtomic((edit) => trimClipWithin(edit, clipId, newStartPpq, newLengthPpq, true));
 }

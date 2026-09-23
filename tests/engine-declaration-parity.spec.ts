@@ -115,6 +115,12 @@ class DeclarationRecorder implements OfflineRenderEngine {
   setClips(clips: unknown): void {
     this.record('setClips', clips);
   }
+  setWarpVoiceCapacity(voices: number): void {
+    this.record('setWarpVoiceCapacity', voices);
+  }
+  warpStretchOverflowCount(): number {
+    return 0;
+  }
   setMidiClips(clips: unknown): void {
     this.record('setMidiClips', clips);
   }

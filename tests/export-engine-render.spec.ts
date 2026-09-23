@@ -14,20 +14,6 @@ import {
 } from '@/project/automation';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
-import { clearWarpBakeCache } from '@/project/warp';
-
-// The warp bake resolves its stretch through ensureWasm: provide a
-// deterministic nearest-neighbour fake (output length = input / rate).
-const timeStretch = vi.hoisted(() =>
-  vi.fn((samples: Float32Array, _sampleRate: number, rate: number): Float32Array => {
-    const frames = Math.max(1, Math.round(samples.length / rate));
-    const out = new Float32Array(frames);
-    for (let i = 0; i < frames; i++) {
-      out[i] = samples[Math.min(samples.length - 1, Math.round(i * rate))];
-    }
-    return out;
-  }),
-);
 
 const resample = vi.hoisted(() =>
   vi.fn((samples: Float32Array, sourceRate: number, targetRate: number): Float32Array => {
@@ -51,12 +37,10 @@ const resample = vi.hoisted(() =>
 );
 
 vi.mock('@/lib/wasm', () => ({
-  ensureWasm: async () => ({ timeStretch, resample }),
+  ensureWasm: async () => ({ resample }),
 }));
 
 beforeEach(() => {
-  clearWarpBakeCache();
-  timeStretch.mockClear();
   resample.mockClear();
 });
 
@@ -146,6 +130,12 @@ class FakeEngine implements OfflineRenderEngine {
   }
   setClips(clips: unknown): void {
     this.record('setClips', clips);
+  }
+  setWarpVoiceCapacity(voices: number): void {
+    this.record('setWarpVoiceCapacity', voices);
+  }
+  warpStretchOverflowCount(): number {
+    return 0;
   }
   setMidiClips(clips: unknown): void {
     this.record('setMidiClips', clips);
@@ -245,6 +235,9 @@ class AudibilityEngine extends FakeEngine {
     startSample: number;
     lengthSamples: number;
     gain: number;
+    fadeInSamples: number;
+    fadeOutSamples: number;
+    warpAnchors?: Array<{ warpSample: number; sourceSample: number }>;
   }> = [];
   private midiNotes: Array<{
     trackId: number;
@@ -341,6 +334,10 @@ class AudibilityEngine extends FakeEngine {
       startPpq: number;
       lengthSamples: number;
       gain?: number;
+      fadeInSamples?: number;
+      fadeOutSamples?: number;
+      warpMode?: string;
+      warpAnchors?: Array<{ warpSample: number; sourceSample: number }>;
     }>,
   ): void {
     super.setClips(clips);
@@ -351,7 +348,41 @@ class AudibilityEngine extends FakeEngine {
       startSample: this.ppqToSample(clip.startPpq),
       lengthSamples: clip.lengthSamples,
       gain: clip.gain ?? 1,
+      fadeInSamples: clip.fadeInSamples ?? 0,
+      fadeOutSamples: clip.fadeOutSamples ?? 0,
+      ...(clip.warpMode === 'time-stretch' && clip.warpAnchors
+        ? { warpAnchors: clip.warpAnchors }
+        : {}),
     }));
+  }
+
+  /** The source frame a clip frame reads: warp anchors interpolated linearly. */
+  private clipSourceFrame(
+    clip: (typeof AudibilityEngine.prototype.audioClips)[number],
+    clipFrame: number,
+  ): number {
+    const anchors = clip.warpAnchors;
+    if (!anchors) return clipFrame;
+    for (let i = 0; i + 1 < anchors.length; i += 1) {
+      const [a, b] = [anchors[i], anchors[i + 1]];
+      if (clipFrame >= a.warpSample && clipFrame < b.warpSample) {
+        const t = (clipFrame - a.warpSample) / (b.warpSample - a.warpSample);
+        return Math.floor(a.sourceSample + t * (b.sourceSample - a.sourceSample));
+      }
+    }
+    return anchors[anchors.length - 1].sourceSample;
+  }
+
+  /** The clip's fade multiplier at a clip frame (engine ramps: i/n). */
+  private clipFade(
+    clip: (typeof AudibilityEngine.prototype.audioClips)[number],
+    clipFrame: number,
+  ): number {
+    let gain = 1;
+    if (clipFrame < clip.fadeInSamples) gain *= clipFrame / clip.fadeInSamples;
+    const fromEnd = clip.lengthSamples - 1 - clipFrame;
+    if (fromEnd < clip.fadeOutSamples) gain *= fromEnd / clip.fadeOutSamples;
+    return gain;
   }
 
   /**
@@ -508,12 +539,14 @@ class AudibilityEngine extends FakeEngine {
         ) {
           const clipFrame = sourceFrame - clip.startSample;
           const laneGain = laneGainForTrack(clip.trackId, sourceFrame);
-          const left = this.clipSample(clip, 0, clipFrame, 1);
-          const right = this.clipSample(clip, 1, clipFrame, left);
+          const readFrame = this.clipSourceFrame(clip, clipFrame);
+          const fade = this.clipFade(clip, clipFrame);
+          const left = this.clipSample(clip, 0, readFrame, 1);
+          const right = this.clipSample(clip, 1, readFrame, left);
           const panned = stereoForTrack(
             clip.trackId,
-            left * clip.gain * laneGain,
-            right * clip.gain * laneGain,
+            left * clip.gain * laneGain * fade,
+            right * clip.gain * laneGain * fade,
           );
           leftSample += panned[0];
           rightSample += panned[1];
@@ -3086,7 +3119,7 @@ describe('renderProjectWithEngine', () => {
     expect(engine.destroyed).toBe(false);
   });
 
-  it('bakes a warp-enabled clip (no takes) into one tempo-length engine clip', async () => {
+  it('schedules a warp-enabled clip (no takes) as one time-stretched engine clip', async () => {
     const doc = makeDoc();
     // sourceBpm 240: the 2 PPQ window covers 0.5 s of source (24000 frames),
     // stretched onto 1 s (48000 frames) at the 120 BPM document tempo.
@@ -3118,6 +3151,8 @@ describe('renderProjectWithEngine', () => {
       startPpq: number;
       lengthSamples: number;
       gain?: number;
+      warpMode?: string;
+      warpAnchors?: Array<{ warpSample: number; sourceSample: number }>;
     }>;
     // One engine clip whose length is exactly lengthPpq at the render tempo.
     expect(clips).toHaveLength(1);
@@ -3125,16 +3160,17 @@ describe('renderProjectWithEngine', () => {
     expect(clips[0].startPpq).toBe(2);
     expect(clips[0].lengthSamples).toBe(48000);
     expect(clips[0].gain).toBeCloseTo(0.8, 5);
-    // The wasm stretch ran at rate 0.5 (24000 source frames over 48000):
-    // the fake expansion reads source frame round(i / 2) at output frame i.
-    expect(timeStretch).toHaveBeenCalledTimes(1);
-    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(0.5, 10);
-    expect(clips[0].channels[0][1000]).toBe(500);
-    // An unwarped slice would read source frame i here (4000, not 2000).
-    expect(clips[0].channels[0][4000]).toBe(2000);
+    // The engine stretches the 24000-frame source slice over 48000 frames.
+    expect(clips[0].warpMode).toBe('time-stretch');
+    expect(clips[0].warpAnchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 48000, sourceSample: 24000 },
+    ]);
+    expect(clips[0].channels[0].length).toBe(24000);
+    expect(clips[0].channels[0][4000]).toBe(4000);
   });
 
-  it('bakes warped audio clips to the document tempo-map length', async () => {
+  it('stretches warped audio clips to the document tempo-map length', async () => {
     const doc = makeDoc();
     doc.tempoSegments = [
       { startPpq: 0, bpm: 120 },
@@ -3164,13 +3200,16 @@ describe('renderProjectWithEngine', () => {
     const clips = engine.named('setClips')[0][1] as Array<{
       channels: Float32Array[];
       lengthSamples: number;
+      warpAnchors?: Array<{ warpSample: number; sourceSample: number }>;
     }>;
     expect(clips).toHaveLength(1);
     // Clip 2..4 PPQ spans 0.5 s at 120 BPM plus 1 s at 60 BPM.
     expect(clips[0].lengthSamples).toBe(72000);
-    expect(clips[0].channels[0].length).toBe(72000);
-    expect(timeStretch).toHaveBeenCalledTimes(1);
-    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(96000 / 72000, 10);
+    expect(clips[0].channels[0].length).toBe(96000);
+    expect(clips[0].warpAnchors).toEqual([
+      { warpSample: 0, sourceSample: 0 },
+      { warpSample: 72000, sourceSample: 96000 },
+    ]);
   });
 
   it('slices unwarped audio clips with the document tempo map', async () => {
@@ -3348,7 +3387,7 @@ describe('renderProjectWithEngine', () => {
     expect(clips.map((clip) => clip.lengthSamples)).toEqual([24000, 24000]);
     // Second segment reads take 2 verbatim from source offset 1 PPQ.
     expect(clips[1].channels[0][0]).toBe(24000);
-    expect(timeStretch).not.toHaveBeenCalled();
+    expect(clips.every((clip) => !('warpMode' in clip))).toBe(true);
   });
 
   it('expands looping audio clips into repeated offline engine clips', async () => {
@@ -3433,12 +3472,17 @@ describe('renderProjectWithEngine', () => {
       channels: Float32Array[];
       startPpq: number;
       lengthSamples: number;
+      warpAnchors?: Array<{ warpSample: number; sourceSample: number }>;
     }>;
     expect(clips).toHaveLength(3);
     expect(clips.map((entry) => entry.startPpq)).toEqual([0, 2, 4]);
     expect(clips.map((entry) => entry.lengthSamples)).toEqual([48_000, 96_000, 48_000]);
-    expect(timeStretch).toHaveBeenCalledTimes(1);
-    expect(timeStretch.mock.calls[0][2]).toBeCloseTo(2, 10);
+    // Each occurrence stretches its own source span onto its tempo-mapped length.
+    expect(clips.map((entry) => entry.warpAnchors?.[1])).toEqual([
+      { warpSample: 48_000, sourceSample: 96_000 },
+      { warpSample: 96_000, sourceSample: 96_000 },
+      { warpSample: 48_000, sourceSample: 48_000 },
+    ]);
   });
 
   it('expands a comped audio clip into one engine clip per segment', async () => {

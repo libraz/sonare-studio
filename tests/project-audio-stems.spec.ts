@@ -272,12 +272,17 @@ describe('separateAudioClipStems', () => {
             Array.from({ length: 16 }, (_, index) => index),
             4,
           ),
-        stretch: (samples, _sampleRate, rate) => {
-          const output = new Float32Array(Math.round(samples.length / rate));
-          for (let index = 0; index < output.length; index += 1) {
-            output[index] = samples[Math.min(samples.length - 1, Math.round(index * rate))];
-          }
-          return output;
+        // Stand-in for the engine: reads the source at the anchors' linear rate.
+        renderWarp: async (source) => {
+          const [, end] = source.anchors;
+          const rate = end.sourceSample / end.warpSample;
+          return source.channels.map((samples) => {
+            const output = new Float32Array(source.lengthFrames);
+            for (let index = 0; index < output.length; index += 1) {
+              output[index] = samples[Math.min(samples.length - 1, Math.round(index * rate))];
+            }
+            return output;
+          });
         },
         separateStems: sumPreservingSeparator((samples) => {
           input = samples;

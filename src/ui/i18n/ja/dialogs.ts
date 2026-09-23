@@ -200,6 +200,8 @@ export const dialogs = {
           'ストリーミング書き出しでは次のメーターを測定できませんでした: {measurements}。レポートにはサンプルピークのみ表示されます。',
         masteringLoudnessTargetLimited:
           'マスタリングプリセットがラウドネス目標に届きませんでした（プリセット段の出力は {lufs} LUFS）',
+        warpVoicesExceeded:
+          'ワープしたクリップが同時に 64 本を超えたため、超えた分は音程ごとテンポに合わせて再生されました',
       },
     },
     close: '閉じる',

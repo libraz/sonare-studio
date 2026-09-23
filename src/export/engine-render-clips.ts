@@ -1,14 +1,19 @@
 /**
  * Audio clip scheduling for the engine-backed offline renderer: loads each
- * clip's asset, expands comp segments, applies the live offline transforms
- * (warp/slice window, baked fades, high-quality resample to the render rate) and
- * emits engine clip specs placed at their timeline PPQ. Frozen tracks play
+ * clip's asset, expands comp segments, resolves each segment the way live
+ * playback does (a sliced window, or a warp source slice with its anchors),
+ * resamples it to the render rate at high quality and emits engine clip specs
+ * with their fades placed at their timeline PPQ. Frozen tracks play
  * their baked pre-fader render from the timeline start instead of their clips.
  */
 
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
-import { renderAudioClipSegment } from '@/project/scheduling';
+import {
+  audioClipSegmentSource,
+  audioClipSegmentSourceAtRate,
+  engineClipPlayback,
+} from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqDurationSamples } from '@/project/tempo-map';
 import { audioClipSegmentKey, frozenTrackStreamKey } from './clip-page-plan';
@@ -224,17 +229,18 @@ export async function buildAudioClips(
         continue;
       }
       checkCancel();
-      let channels = await renderAudioClipSegment(asset, clip, segment, tempoMap);
+      const source = audioClipSegmentSource(asset, clip, segment, tempoMap);
+      if (source.lengthFrames === 0 || (source.channels[0]?.length ?? 0) === 0) continue;
+      const channels = await resampleChannels(source.channels, source.sampleRate);
       checkCancel();
-      channels = await resampleChannels(channels, asset.meta.sampleRate);
-      checkCancel();
-      if (channels.length === 0 || channels[0].length === 0) continue;
+      const atRate = audioClipSegmentSourceAtRate(source, channels, sampleRate);
+      if (atRate.lengthFrames === 0) continue;
       audioClips.push({
         trackId,
         channels,
         startPpq: clip.startPpq + segment.offsetPpq,
-        lengthSamples: channels[0].length,
         gain: clip.gain,
+        ...engineClipPlayback(atRate),
       });
     }
   };

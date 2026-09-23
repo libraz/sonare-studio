@@ -1,25 +1,16 @@
 /**
- * Tempo-following (warp) bake for audio clips: stretches a clip's source
- * audio offline so its beat positions land on the current project tempo,
- * optionally shaped by user warp anchors (clip-relative beats mapped to
- * source seconds). The engine has no realtime time-stretch, so warped clips
- * are baked here and scheduled as plain audio — live playback and the
- * offline export renderer share this module, keeping both identical.
- *
- * Baked buffers are cached by content key; tempo edits re-bake on the next
- * schedule pass (the apply watcher keys include the warp state).
+ * Tempo-following (warp) for audio clips: a clip's source audio follows the
+ * project tempo, optionally shaped by user warp anchors (clip-relative beats
+ * mapped to source seconds). The engine time-stretches warped clips in
+ * realtime from a source slice and sample-domain anchors, so live playback
+ * and export hand it the same {@link WarpedClipSource}; offline consumers that
+ * need PCM render it through the same engine mode.
  */
 
 import { ensureWasm } from '@/lib/wasm';
 import type { Project, ProjectWarpMapDesc } from '@/wasm/index.js';
 import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
-
-/** Maximum cached bakes (whole-clip buffers; ~few MB each). */
-const WARP_CACHE_LIMIT = 16;
-
-/** Default retained PCM budget for warped clip bakes (64 MiB). */
-export const DEFAULT_WARP_CACHE_BYTE_BUDGET = 64 * 1024 * 1024;
 
 /** One stretch segment of a warped clip. */
 export interface WarpSegment {
@@ -33,7 +24,7 @@ export interface WarpSegment {
   sourceLengthSeconds: number;
 }
 
-/** The clip fields the warp bake reads. */
+/** The clip fields a warped window reads. */
 export interface WarpableClipFields {
   id?: number;
   startPpq?: number;
@@ -42,8 +33,8 @@ export interface WarpableClipFields {
   warp?: ClipWarp;
 }
 
-/** Tempo source used when baking warped clip target frames. */
-export type WarpBakeTempo = number | NormalizedTempoMap;
+/** Tempo source a warped clip window follows. */
+export type WarpTempo = number | NormalizedTempoMap;
 
 /** Fields needed to mirror a clip warp into libsonare's first-class warp API. */
 export interface ProjectWarpMapClipFields extends WarpableClipFields {
@@ -287,180 +278,130 @@ export function warpSourceSecondsAt(clip: WarpableClipFields, clipLocalPpq: numb
   return segment.sourceStartSeconds + segment.sourceLengthSeconds * progress;
 }
 
-/** Mono one-shot time stretch: output length = input length / rate. */
-export type StretchFn = (samples: Float32Array, sampleRate: number, rate: number) => Float32Array;
-
-/** Cache of baked warp renders, keyed by content. */
-const bakeCache = new Map<string, Float32Array[]>();
-let bakeCacheByteBudget = DEFAULT_WARP_CACHE_BYTE_BUDGET;
-let bakeCacheBytes = 0;
-
-function bakedBytes(channels: ReadonlyArray<Float32Array>): number {
-  return channels.reduce((sum, channel) => sum + channel.byteLength, 0);
-}
-
-function removeBake(key: string): void {
-  const cached = bakeCache.get(key);
-  if (!cached) return;
-  bakeCache.delete(key);
-  bakeCacheBytes -= bakedBytes(cached);
-}
-
-/** Current warp-bake LRU usage for diagnostics and memory tests. */
-export function warpBakeCacheStats(): {
-  entries: number;
-  bytes: number;
-  budgetBytes: number;
-  /** Least-recently-used to most-recently-used content keys. */
-  keys: string[];
-} {
-  return {
-    entries: bakeCache.size,
-    bytes: bakeCacheBytes,
-    budgetBytes: bakeCacheByteBudget,
-    keys: [...bakeCache.keys()],
-  };
-}
-
-/** Sets the warp-bake byte budget and evicts least-recently-used entries. */
-export function configureWarpBakeCacheByteBudget(bytes: number): void {
-  if (!Number.isFinite(bytes) || bytes < 0) {
-    throw new RangeError(`Warp cache byte budget must be finite and >= 0, got ${bytes}`);
-  }
-  bakeCacheByteBudget = Math.floor(bytes);
-  while (bakeCacheBytes > bakeCacheByteBudget && bakeCache.size > 0) {
-    const oldest = bakeCache.keys().next().value;
-    if (oldest === undefined) break;
-    removeBake(oldest);
-  }
-}
-
-/** Clears the bake cache (tests). */
-export function clearWarpBakeCache(): void {
-  bakeCache.clear();
-  bakeCacheBytes = 0;
+/** Engine warp anchor: an output frame of the clip window and the source frame it plays. */
+export interface WarpAnchorFrames {
+  warpSample: number;
+  sourceSample: number;
 }
 
 /**
- * Default stretch seam: prefer transient-preserving noteStretch, then timeStretch.
- * noteStretch takes a duration factor, the inverse of the seam's speed `rate`.
+ * A warped clip window as the engine plays it: the source slice the warp map
+ * reads, the number of output frames, and the anchors mapping output frames
+ * onto that slice. The engine's time-stretch warp mode synthesizes the output
+ * from these, so tempo edits move anchors instead of re-rendering audio.
  */
-async function wasmStretch(): Promise<StretchFn> {
-  const wasm = (await ensureWasm()) as unknown as {
-    noteStretch?: (
-      samples: Float32Array,
-      sampleRate?: number,
-      options?: { onsetSample?: number; offsetSample?: number; stretchRatio?: number },
-    ) => Float32Array;
-    timeStretch: (samples: Float32Array, sampleRate: number, rate: number) => Float32Array;
-  };
-  if (typeof wasm.noteStretch === 'function') {
-    return (samples, sampleRate, rate) =>
-      wasm.noteStretch?.(samples, sampleRate, {
-        onsetSample: 0,
-        offsetSample: samples.length,
-        stretchRatio: 1 / rate,
-      }) ?? wasm.timeStretch(samples, sampleRate, rate);
-  }
-  return (samples, sampleRate, rate) => wasm.timeStretch(samples, sampleRate, rate);
+export interface WarpedClipSource {
+  channels: Float32Array[];
+  lengthFrames: number;
+  anchors: WarpAnchorFrames[];
 }
 
-function targetSampleAt(tempo: WarpBakeTempo, ppq: number, sampleRate: number): number {
+function targetSampleAt(tempo: WarpTempo, ppq: number, sampleRate: number): number {
   return typeof tempo === 'number'
     ? Math.round(ppq * (60 / tempo) * sampleRate)
     : ppqToSamples(tempo, ppq, sampleRate);
 }
 
-function tempoCacheKey(tempo: WarpBakeTempo): string {
-  return typeof tempo === 'number' ? String(tempo) : JSON.stringify(tempo.segments);
-}
-
 /**
- * Bakes a warped clip's audible window at the given tempo: every stretch
- * segment of the source is time-stretched so its beats land on the project
- * grid, and the segments concatenate into one buffer of exactly the clip
- * window's length. Results are cached by content key.
+ * Resolves a warped clip window into the source slice and anchors the engine
+ * time-stretches. Null when warp is off or the window or source is empty.
  *
  * @param channels Source asset channels (planar PCM).
- * @param sampleRate Source (and output) sample rate in Hz.
+ * @param sampleRate Source sample rate in Hz; frames on both axes use it.
  * @param clip Clip window and warp state.
- * @param tempo Project tempo the bake targets.
- * @param options.cacheKey Cache identity (e.g. the asset id); absent = uncached.
- * @param options.stretch Stretch seam override (tests).
- * @returns Planar channels covering exactly the clip window at the target tempo.
+ * @param tempo Project tempo the window follows.
  */
-export async function bakeWarpedClip(
+export function warpedClipSource(
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
   clip: WarpableClipFields,
-  tempo: WarpBakeTempo,
-  options: { cacheKey?: string; stretch?: StretchFn } = {},
-): Promise<Float32Array[]> {
+  tempo: WarpTempo,
+): WarpedClipSource | null {
   const segments = warpSegments(clip);
-  if (segments.length === 0 || channels.length === 0) return [];
+  const sourceFrames = channels[0]?.length ?? 0;
+  if (segments.length === 0 || sourceFrames === 0) return null;
   const clipStartPpq = Number.isFinite(clip.startPpq) ? (clip.startPpq ?? 0) : 0;
-  const targetOrigin = targetSampleAt(tempo, clipStartPpq, sampleRate);
-  const totalFrames = Math.max(
-    0,
-    targetSampleAt(tempo, clipStartPpq + clip.lengthPpq, sampleRate) - targetOrigin,
+  const origin = targetSampleAt(tempo, clipStartPpq, sampleRate);
+  const lengthFrames = targetSampleAt(tempo, clipStartPpq + clip.lengthPpq, sampleRate) - origin;
+  if (lengthFrames <= 0) return null;
+  const last = segments[segments.length - 1];
+  const points = [
+    ...segments.map((segment) => ({ ppq: segment.ppq, seconds: segment.sourceStartSeconds })),
+    { ppq: last.ppq + last.lengthPpq, seconds: last.sourceStartSeconds + last.sourceLengthSeconds },
+  ];
+  const sliceStart = Math.min(
+    sourceFrames,
+    Math.max(0, Math.round(points[0].seconds * sampleRate)),
   );
-  if (totalFrames === 0) return [];
-  const key =
-    options.cacheKey !== undefined
-      ? `${options.cacheKey}|${sampleRate}|${tempoCacheKey(tempo)}|${clipStartPpq}|${clip.lengthPpq}|${clip.sourceOffsetPpq}|${JSON.stringify(clip.warp)}`
-      : null;
-  if (key) {
-    const cached = bakeCache.get(key);
-    // Callers bake fades into the returned buffers in place, so a cache hit
-    // must hand out copies or the fade ramps would compound across passes.
-    if (cached) {
-      bakeCache.delete(key);
-      bakeCache.set(key, cached);
-      return cached.map((channel) => channel.slice());
-    }
-  }
-  const stretch = options.stretch ?? (await wasmStretch());
-  const baked = channels.map(() => new Float32Array(totalFrames));
-  for (const segment of segments) {
-    const sourceBegin = Math.round(segment.sourceStartSeconds * sampleRate);
-    const sourceEnd = Math.min(
-      channels[0].length,
-      Math.round((segment.sourceStartSeconds + segment.sourceLengthSeconds) * sampleRate),
+  const sliceEnd = Math.min(
+    sourceFrames,
+    Math.max(sliceStart, Math.round(points[points.length - 1].seconds * sampleRate)),
+  );
+  if (sliceEnd <= sliceStart) return null;
+  const anchors: WarpAnchorFrames[] = [];
+  for (const point of points) {
+    const warpSample = Math.min(
+      lengthFrames,
+      targetSampleAt(tempo, clipStartPpq + point.ppq, sampleRate) - origin,
     );
-    if (sourceEnd <= sourceBegin) continue;
-    const targetBegin =
-      targetSampleAt(tempo, clipStartPpq + segment.ppq, sampleRate) - targetOrigin;
-    const targetFrames = Math.min(
-      totalFrames - targetBegin,
-      targetSampleAt(tempo, clipStartPpq + segment.ppq + segment.lengthPpq, sampleRate) -
-        targetOrigin -
-        targetBegin,
-    );
-    if (targetFrames <= 0) continue;
-    const rate = (sourceEnd - sourceBegin) / targetFrames;
-    for (let ch = 0; ch < channels.length; ch++) {
-      const slice = channels[ch].subarray(sourceBegin, sourceEnd);
-      const stretched =
-        Math.abs(rate - 1) < 1e-6 ? slice : stretch(new Float32Array(slice), sampleRate, rate);
-      const frames = Math.min(targetFrames, stretched.length);
-      baked[ch].set(stretched.subarray(0, frames), targetBegin);
+    const sourceSample =
+      Math.min(sliceEnd, Math.max(sliceStart, Math.round(point.seconds * sampleRate))) - sliceStart;
+    const previous = anchors[anchors.length - 1];
+    // The engine needs strictly increasing pairs; rounding can collapse a short segment.
+    if (previous && (warpSample <= previous.warpSample || sourceSample <= previous.sourceSample)) {
+      continue;
     }
+    anchors.push({ warpSample, sourceSample });
   }
-  if (key) {
-    const bytes = bakedBytes(baked);
-    while (
-      bakeCache.size > 0 &&
-      (bakeCache.size >= WARP_CACHE_LIMIT || bakeCacheBytes + bytes > bakeCacheByteBudget)
-    ) {
-      const oldest = bakeCache.keys().next().value;
-      if (oldest === undefined) break;
-      removeBake(oldest);
-    }
-    if (bytes <= bakeCacheByteBudget) {
-      bakeCache.set(key, baked);
-      bakeCacheBytes += bytes;
-    }
-    return baked.map((channel) => channel.slice());
-  }
-  return baked;
+  if (anchors.length < 2) return null;
+  return {
+    channels: channels.map((channel) => channel.slice(sliceStart, sliceEnd)),
+    lengthFrames,
+    anchors,
+  };
 }
+
+/** Renders a warped clip window to PCM (tests inject a stand-in for the engine). */
+export type WarpRenderFn = (
+  source: WarpedClipSource,
+  sampleRate: number,
+) => Promise<Float32Array[]>;
+
+/**
+ * Renders a warped clip window offline through a throwaway realtime engine in
+ * its time-stretch mode, so offline consumers hear exactly what playback and
+ * export play. Channels render in pairs because an engine lane is stereo; a
+ * mono pair keeps one channel.
+ */
+export const renderWarpedClipSource: WarpRenderFn = async (source, sampleRate) => {
+  const wasm = await ensureWasm();
+  const rendered: Float32Array[] = [];
+  for (let first = 0; first < source.channels.length; first += 2) {
+    const pair = source.channels.slice(first, first + 2).map((channel) => channel.slice());
+    const engine = new wasm.RealtimeEngine(sampleRate, 512);
+    try {
+      engine.setTrackLanes([{ trackId: 1 }]);
+      engine.setClips([
+        {
+          id: 1,
+          trackId: 1,
+          startPpq: 0,
+          lengthSamples: source.lengthFrames,
+          channels: pair,
+          warpMode: 'time-stretch',
+          warpAnchors: source.anchors,
+        },
+      ]);
+      engine.settleParameters();
+      engine.play(0);
+      const out = engine.renderOffline([
+        new Float32Array(source.lengthFrames),
+        new Float32Array(source.lengthFrames),
+      ]);
+      rendered.push(...out.slice(0, pair.length));
+    } finally {
+      engine.destroy();
+    }
+  }
+  return rendered;
+};

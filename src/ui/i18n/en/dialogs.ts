@@ -194,6 +194,8 @@ export const dialogs = {
           'Streaming export could not measure: {measurements}. The report contains sample peak only.',
         masteringLoudnessTargetLimited:
           'The mastering preset stopped short of its loudness target: its stage reached {lufs} LUFS',
+        warpVoicesExceeded:
+          'More than 64 warped clips played at once; the extra ones followed the tempo by changing pitch',
       },
     },
     close: 'Close',

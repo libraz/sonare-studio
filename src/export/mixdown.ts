@@ -219,6 +219,8 @@ export type ExportLimitation =
     }
   /** The mastering preset's loudness stage finished below its target. */
   | { kind: 'mastering-loudness-target-limited'; outputLufs: number }
+  /** More warped clips sounded at once than stretch voices; the extras played repitched. */
+  | { kind: 'warp-voices-exceeded'; overflows: number }
   /** Streaming callbacks cannot retain the full waveform for post-render metering. */
   | {
       kind: 'streaming-metering-unavailable';

@@ -104,7 +104,7 @@ import {
   tracksWithVcaSolo,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { expandedSoloStates } from '@/project/scheduling';
+import { DEFAULT_WARP_VOICES, expandedSoloStates, MAX_WARP_VOICES } from '@/project/scheduling';
 import type { ProjectDocument } from '@/project/serialization';
 import {
   collectActiveSoundFontUsage,
@@ -967,6 +967,11 @@ export async function renderProjectWithEngine(
     // the engine accepts either form in the same schedule.
     const passClips: Array<EngineClipSpec | PagedClipSpec> =
       pagedClips.length > 0 ? [...renderAudioClips, ...pagedClips] : renderAudioClips;
+    // Every warped clip gets a stretch voice, up to the engine's ceiling.
+    const warpedClips = renderAudioClips.filter((clip) => clip.warpMode === 'time-stretch').length;
+    engine.setWarpVoiceCapacity(
+      Math.min(MAX_WARP_VOICES, Math.max(DEFAULT_WARP_VOICES, warpedClips)),
+    );
     if (passClips.length > 0) engine.setClips(passClips as EngineClipSpec[]);
   };
 
@@ -1050,6 +1055,8 @@ export async function renderProjectWithEngine(
   };
 
   /** Runs one configured pass on a fresh engine, destroying it afterwards. */
+  /** Most warped clips any pass played repitched for want of a stretch voice. */
+  let warpOverflows = 0;
   const runPass = async (
     pass: RenderPass,
     stage: string,
@@ -1090,6 +1097,7 @@ export async function renderProjectWithEngine(
         streams,
       );
     } finally {
+      warpOverflows = Math.max(warpOverflows, engine.warpStretchOverflowCount());
       streams?.close();
       engine.destroy();
     }
@@ -1186,6 +1194,8 @@ export async function renderProjectWithEngine(
         measurements: ['lufs', 'true-peak'],
       },
     ];
+    if (warpOverflows > 0)
+      limitations.push({ kind: 'warp-voices-exceeded', overflows: warpOverflows });
     if (limitations.length > 0) report.limitations = limitations;
     if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
     options.onProgress?.(1, 'done');
@@ -1416,6 +1426,8 @@ export async function renderProjectWithEngine(
   );
   const limitations = offlineAutomationLimitations(doc, masteringFrozenParams);
   if (presetLoudnessLimit) limitations.push(presetLoudnessLimit);
+  if (warpOverflows > 0)
+    limitations.push({ kind: 'warp-voices-exceeded', overflows: warpOverflows });
   if (limitations.length > 0) report.limitations = limitations;
   if (mediaIssues.length > 0) report.mediaIssues = mediaIssues;
 

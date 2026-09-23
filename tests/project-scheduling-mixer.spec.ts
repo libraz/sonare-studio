@@ -65,7 +65,7 @@ function makeHandle(sampleRate = 10): { handle: EngineHandle; addClip: ReturnTyp
   const addClip = vi.fn(() => 500);
   const handle = {
     ctx: { sampleRate },
-    engine: { addClip },
+    engine: { addClip, setWarpVoiceCapacity: vi.fn() },
   } as unknown as EngineHandle;
   return { handle, addClip };
 }
