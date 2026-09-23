@@ -96,9 +96,10 @@ before you confirm.
 **Live in the app.** Installable as a PWA and usable offline, with `.szd` file
 handling from the OS. English and Japanese UI, five note-name systems, light and
 dark themes, remappable shortcuts with a `?` cheatsheet, a command palette,
-MIDI learn and control-surface bindings, named workspace layouts, a first-run
-tour and a keyboard object navigator for the canvas surfaces. Autosave, named
-revisions and full backups run against browser storage.
+MIDI learn and control-surface bindings, a first-run tour, a keyboard object
+navigator for the canvas surfaces, and named workspace layouts (Compose, Mix, Score, Arrange).
+Autosave and named revisions run against browser storage, and
+browser backup import/export moves the whole store in one file.
 
 Keyboard reference: [docs/shortcuts.md](docs/shortcuts.md).
 
