@@ -345,11 +345,7 @@ export function sf2PlaybackConfig(instrument: Sf2Instrument): {
     polyphony?: number;
     preferModelForModeledFamilies?: boolean;
   } = {};
-  // The native player reserves exact 0 as “use default 0.5”. Preserve the
-  // model/UI meaning of zero (mute) with a float32-representable floor.
-  if (instrument.gain !== undefined) {
-    config.gain = instrument.gain === 0 ? 1e-6 : instrument.gain;
-  }
+  if (instrument.gain !== undefined) config.gain = instrument.gain;
   if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
   if (instrument.preferModelForModeledFamilies === true) {
     config.preferModelForModeledFamilies = true;
