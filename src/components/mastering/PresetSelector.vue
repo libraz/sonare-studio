@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
 import { useI18n } from '@/ui/i18n';
-import { humanizePresetName } from '@/ui/mastering/preset-catalog';
+import { humanizePresetName, isRestorationPreset } from '@/ui/mastering/preset-catalog';
 
 /**
  * Searchable mastering preset dropdown. Purely presentational: the menu's
@@ -14,7 +14,7 @@ import { humanizePresetName } from '@/ui/mastering/preset-catalog';
  * can keep the shared outside-click dismissal.
  */
 
-defineProps<{
+const props = defineProps<{
   /** Currently selected preset id, or undefined when none is set. */
   preset: string | undefined;
   /** Display label for the trigger button. */
@@ -36,6 +36,11 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const root = ref<HTMLDivElement | null>(null);
+
+const masteringPresets = computed(() =>
+  props.filteredPresets.filter((item) => !isRestorationPreset(item)),
+);
+const restorationPresets = computed(() => props.filteredPresets.filter(isRestorationPreset));
 
 defineExpose({ root });
 </script>
@@ -68,7 +73,7 @@ defineExpose({ root });
         {{ t.shell.mastering.noPreset }}
       </button>
       <button
-        v-for="item in filteredPresets"
+        v-for="item in masteringPresets"
         :key="item"
         type="button"
         role="menuitem"
@@ -78,6 +83,23 @@ defineExpose({ root });
       >
         {{ humanizePresetName(item) }}
       </button>
+      <template v-if="restorationPresets.length > 0">
+        <div class="preset-heading" role="presentation">
+          {{ t.shell.mastering.restorationPresets }}
+        </div>
+        <button
+          v-for="item in restorationPresets"
+          :key="item"
+          type="button"
+          role="menuitem"
+          class="preset-item"
+          :class="{ active: item === preset }"
+          v-tooltip="t.shell.mastering.restorationPresetsTitle"
+          @click="emit('select', item)"
+        >
+          {{ humanizePresetName(item) }}
+        </button>
+      </template>
       <EmptyState
         v-if="filteredPresets.length === 0"
         variant="inline"

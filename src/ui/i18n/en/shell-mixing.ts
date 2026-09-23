@@ -382,6 +382,8 @@ export const shellMixing = {
     title: 'MASTERING',
     presetTitle: 'Mastering preset',
     noPreset: 'No preset',
+    restorationPresets: 'Restoration',
+    restorationPresetsTitle: 'Repairs damaged source material and leaves its level unchanged',
     searchPresets: 'Search presets...',
     noMatches: 'No matches',
     dragReorder: 'Drag to reorder',

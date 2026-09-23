@@ -5,6 +5,7 @@ import {
   FALLBACK_MASTERING_PRESETS,
   filterPresetCatalog,
   humanizePresetName,
+  isRestorationPreset,
   loadMasteringPresetCatalog,
 } from '@/ui/mastering/preset-catalog';
 import { FAKE_MASTERING_PRESETS } from './fake-wasm';
@@ -28,6 +29,16 @@ describe('humanizePresetName', () => {
     expect(humanizePresetName('lofi')).toBe('Lo-Fi');
     expect(humanizePresetName('gameOst')).toBe('Game OST');
     expect(humanizePresetName('rnb')).toBe('R&B');
+    expect(humanizePresetName('shellac78')).toBe('Shellac 78');
+  });
+});
+
+describe('isRestorationPreset', () => {
+  it('separates the repair-only presets from the loudness-targeted ones', () => {
+    const restoration = FALLBACK_MASTERING_PRESETS.filter(isRestorationPreset);
+    expect(restoration).toEqual(['vinyl', 'tapeHiss', 'fieldRecording', 'voiceMemo', 'shellac78']);
+    expect(isRestorationPreset('pop')).toBe(false);
+    expect(isRestorationPreset('custom')).toBe(false);
   });
 });
 

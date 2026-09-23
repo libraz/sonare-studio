@@ -53,6 +53,14 @@
   margin-bottom: 3px;
 }
 
+.preset-heading {
+  padding: 6px 6px 2px;
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
 .preset-item {
   display: block;
   width: 100%;

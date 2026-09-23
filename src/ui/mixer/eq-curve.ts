@@ -112,7 +112,8 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a2 = 1 - alpha;
       break;
     default:
-      // TiltShelf / FlatTilt have no single-biquad equivalent: draw flat.
+      // AllPass has unit magnitude; TiltShelf / FlatTilt have no single-biquad
+      // equivalent. All three draw flat.
       return null;
   }
   return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };

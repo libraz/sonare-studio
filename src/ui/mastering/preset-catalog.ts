@@ -8,38 +8,57 @@
  */
 
 import { getWasmModule } from '@/project/store';
+import type { MasteringPreset } from '@/wasm/index.js';
+
+/** Whether a built-in preset masters to a loudness target or only repairs. */
+type MasteringPresetKind = 'mastering' | 'restoration';
 
 /**
- * Curated preset list used when the wasm catalog is unavailable. All entries
- * are members of the typed MasteringPreset union.
+ * Every built-in preset by kind, in catalog order. Restoration presets repair
+ * damaged source material and leave its level alone, so the selector lists
+ * them apart. Keyed by the typed union so a preset added upstream fails to
+ * compile until it is classified here.
  */
-export const FALLBACK_MASTERING_PRESETS: readonly string[] = [
-  'pop',
-  'edm',
-  'acoustic',
-  'hipHop',
-  'aiMusic',
-  'speech',
-  'streaming',
-  'youtube',
-  'broadcast',
-  'podcast',
-  'audiobook',
-  'cinema',
-  'jpop',
-  'ambient',
-  'lofi',
-  'classical',
-  'drumAndBass',
-  'techno',
-  'metal',
-  'trap',
-  'rnb',
-  'jazz',
-  'kpop',
-  'trance',
-  'gameOst',
-];
+const PRESET_KINDS: Readonly<Record<MasteringPreset, MasteringPresetKind>> = {
+  pop: 'mastering',
+  edm: 'mastering',
+  acoustic: 'mastering',
+  hipHop: 'mastering',
+  aiMusic: 'mastering',
+  speech: 'mastering',
+  streaming: 'mastering',
+  youtube: 'mastering',
+  broadcast: 'mastering',
+  podcast: 'mastering',
+  audiobook: 'mastering',
+  cinema: 'mastering',
+  jpop: 'mastering',
+  ambient: 'mastering',
+  lofi: 'mastering',
+  classical: 'mastering',
+  drumAndBass: 'mastering',
+  techno: 'mastering',
+  metal: 'mastering',
+  trap: 'mastering',
+  rnb: 'mastering',
+  jazz: 'mastering',
+  kpop: 'mastering',
+  trance: 'mastering',
+  gameOst: 'mastering',
+  vinyl: 'restoration',
+  tapeHiss: 'restoration',
+  fieldRecording: 'restoration',
+  voiceMemo: 'restoration',
+  shellac78: 'restoration',
+};
+
+/** Preset list used when the wasm catalog is unavailable (tests, early boot). */
+export const FALLBACK_MASTERING_PRESETS: readonly string[] = Object.keys(PRESET_KINDS);
+
+/** True for a restoration preset (repair only, no loudness target). */
+export function isRestorationPreset(id: string): boolean {
+  return PRESET_KINDS[id as MasteringPreset] === 'restoration';
+}
 
 /** Display overrides for ids whose mechanical camelCase split reads poorly. */
 const PRESET_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
@@ -51,6 +70,7 @@ const PRESET_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   lofi: 'Lo-Fi',
   rnb: 'R&B',
   gameOst: 'Game OST',
+  shellac78: 'Shellac 78',
 };
 
 /**

@@ -383,6 +383,8 @@ export const shellMixing = {
     title: 'マスタリング',
     presetTitle: 'マスタリングプリセット',
     noPreset: 'プリセットなし',
+    restorationPresets: '修復',
+    restorationPresetsTitle: '傷んだ素材を修復します。音量は変えません',
     searchPresets: 'プリセットを検索...',
     noMatches: '一致なし',
     dragReorder: 'ドラッグして並べ替え',
