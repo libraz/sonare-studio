@@ -35,7 +35,7 @@ const FALLBACK_SCENE_JSON: Readonly<Record<string, string>> = {
           {
             slot: 'pre',
             processor: 'dynamics.compressor',
-            params: JSON.stringify({ thresholdDb: -18, ratio: 2.5 }),
+            params: { thresholdDb: -18, ratio: 2.5 },
           },
         ],
       },
@@ -51,7 +51,7 @@ const FALLBACK_SCENE_JSON: Readonly<Record<string, string>> = {
           {
             slot: 'post',
             processor: 'stereo.imager',
-            params: JSON.stringify({ width: 1.35 }),
+            params: { width: 1.35 },
           },
         ],
       },
@@ -84,7 +84,7 @@ const FALLBACK_SCENE_JSON: Readonly<Record<string, string>> = {
           {
             slot: 'pre',
             processor: 'dynamics.parallelComp',
-            params: JSON.stringify({ thresholdDb: -20, mix: 0.35 }),
+            params: { thresholdDb: -20, mix: 0.35 },
           },
         ],
       },
@@ -109,7 +109,7 @@ const FALLBACK_SCENE_JSON: Readonly<Record<string, string>> = {
           {
             slot: 'pre',
             processor: 'dynamics.deesser',
-            params: JSON.stringify({ frequencyHz: 6000, thresholdDb: -24 }),
+            params: { frequencyHz: 6000, thresholdDb: -24 },
           },
         ],
       },
@@ -122,7 +122,7 @@ const FALLBACK_SCENE_JSON: Readonly<Record<string, string>> = {
           {
             slot: 'pre',
             processor: 'dynamics.compressor',
-            params: JSON.stringify({ thresholdDb: -22, ratio: 2.5 }),
+            params: { thresholdDb: -22, ratio: 2.5 },
           },
         ],
       },
@@ -136,7 +136,7 @@ const FALLBACK_SCENE_JSON: Readonly<Record<string, string>> = {
             slot: 'post',
             processor: 'dynamics.sidechainRouter',
             sidechainKey: 'host',
-            params: JSON.stringify({ rangeDb: 18 }),
+            params: { rangeDb: 18 },
           },
         ],
       },

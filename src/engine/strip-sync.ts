@@ -82,7 +82,7 @@ export function busSceneJson(
     if (insertCatalog && !insertCatalog.has(slot.processor)) {
       throw new Error(`Unsupported insert processor: ${slot.processor}`);
     }
-    return { slot: 'pre', processor: slot.processor, params: JSON.stringify(slot.params) };
+    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } };
   });
   // The bus carries the same output trim/width/polarity stages a strip exposes;
   // each is emitted only when non-default so an unshaped bus stays byte-identical.
@@ -123,7 +123,7 @@ export function groupBusGainDb(track: EditorTrack, vcaOffset = 0, muted = track.
  * tests). The strip stays neutral apart from its inserts: no faderDb/pan
  * (those live on the engine's mixer lane) and no EQ (the dedicated strip EQ
  * is edited per band via setStripEq after the JSON send). Each insert's
- * "params" value is a stringified JSON object, as the engine expects.
+ * "params" value is embedded as an object, the form the engine writes.
  *
  * @param target Track id, or 'master' for the master strip.
  * @param strip Store strip (undefined = neutral, declares an empty strip).
@@ -140,7 +140,7 @@ export function stripSceneJson(
     if (insertCatalog && !insertCatalog.has(slot.processor)) {
       throw new Error(`Unsupported insert processor: ${slot.processor}`);
     }
-    return { slot: 'pre', processor: slot.processor, params: JSON.stringify(slot.params) };
+    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } };
   });
   const id = target === 'master' ? 'master' : `track-${target}`;
   const sceneStrip: Record<string, unknown> = { id, inserts };

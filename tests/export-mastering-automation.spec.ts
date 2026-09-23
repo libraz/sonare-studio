@@ -450,7 +450,7 @@ describe('runMasteringEnginePass', () => {
     ]);
     const [[, , json]] = engine.named('setTrackStripJson') as Array<[string, number, string]>;
     expect(JSON.parse(json).strips[0].inserts).toEqual([
-      { slot: 'pre', processor: 'eq.tilt', params: JSON.stringify({ tiltDb: 0 }) },
+      { slot: 'pre', processor: 'eq.tilt', params: { tiltDb: 0 } },
     ]);
     expect(engine.destroyed).toBe(true);
   });

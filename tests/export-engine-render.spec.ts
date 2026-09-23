@@ -2898,7 +2898,7 @@ describe('renderProjectWithEngine', () => {
     expect(engines).toHaveLength(2);
     const [[, , json]] = engines[1].named('setTrackStripJson') as Array<[string, number, string]>;
     expect(JSON.parse(json).strips[0].inserts).toEqual([
-      { slot: 'pre', processor: 'eq.tilt', params: JSON.stringify({ tiltDb: 0 }) },
+      { slot: 'pre', processor: 'eq.tilt', params: { tiltDb: 0 } },
     ]);
     expect(engines[1].named('setAutomationLane')).toEqual([
       [
@@ -4501,7 +4501,7 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
           id: 'bus-2',
           role: 'submix',
           inserts: [
-            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
+            { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
           ],
         },
       ],
@@ -4879,7 +4879,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
           id: 'bus-1',
           role: 'submix',
           inserts: [
-            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
+            { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
           ],
         },
       ],

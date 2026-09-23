@@ -119,7 +119,7 @@ function clearCalls(engine: ReturnType<typeof makeHandle>['engine']): void {
 }
 
 describe('stripSceneJson', () => {
-  it('declares all inserts (enabled and disabled) with stringified params', () => {
+  it('declares all inserts (enabled and disabled) with their params embedded', () => {
     const strip = makeStrip({
       inserts: [
         { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
@@ -132,8 +132,8 @@ describe('stripSceneJson', () => {
         {
           id: 'track-7',
           inserts: [
-            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
-            { slot: 'pre', processor: 'saturation.tape', params: '{"drive":0.4}' },
+            { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
+            { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
           ],
         },
       ],
@@ -413,9 +413,7 @@ describe('createStripSync', () => {
     sync.sync([makeTrack(1)], makeMixer({ master }), 1);
     expect(masterEq.get(0)).toEqual(band);
     expect(masterBypassed.get(0)).toBe(true);
-    expect(JSON.parse(masterScene).strips[0].inserts[0].params).toBe(
-      JSON.stringify({ drive: 0.2 }),
-    );
+    expect(JSON.parse(masterScene).strips[0].inserts[0].params).toEqual({ drive: 0.2 });
 
     // Simulate a new lane declaration in the facade. It replaces the master
     // strip from its retained scene, so the dedicated side-channel state is
@@ -432,9 +430,7 @@ describe('createStripSync', () => {
     expect(engine.setStripInsertBypassed).toHaveBeenCalledWith('master', 0, true);
     expect(masterEq.get(0)).toEqual(band);
     expect(masterBypassed.get(0)).toBe(true);
-    expect(JSON.parse(masterScene).strips[0].inserts[0].params).toBe(
-      JSON.stringify({ drive: 0.2 }),
-    );
+    expect(JSON.parse(masterScene).strips[0].inserts[0].params).toEqual({ drive: 0.2 });
   });
 
   it('patches master insert numeric params without replacing the master strip', () => {
@@ -488,9 +484,9 @@ describe('createStripSync', () => {
             {
               slot: 'pre',
               processor: 'dynamics.compressor',
-              params: '{"thresholdDb":-18}',
+              params: { thresholdDb: -18 },
             },
-            { slot: 'pre', processor: 'stereo.imager', params: '{"width":1.2}' },
+            { slot: 'pre', processor: 'stereo.imager', params: { width: 1.2 } },
           ],
         },
       ],
@@ -768,8 +764,8 @@ describe('busSceneJson', () => {
           id: 'bus-3',
           role: 'submix',
           inserts: [
-            { slot: 'pre', processor: 'dynamics.compressor', params: '{"thresholdDb":-20}' },
-            { slot: 'pre', processor: 'saturation.tape', params: '{"drive":0.4}' },
+            { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
+            { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
           ],
         },
       ],

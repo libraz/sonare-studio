@@ -1196,7 +1196,7 @@ export function fakeMixingScenePresetJson(preset: string): string {
             {
               slot: 'pre',
               processor: 'dynamics.deesser',
-              params: JSON.stringify({ thresholdDb: -24 }),
+              params: { thresholdDb: -24 },
             },
           ],
         },
@@ -1213,7 +1213,7 @@ export function fakeMixingScenePresetJson(preset: string): string {
               slot: 'post',
               processor: 'dynamics.sidechainRouter',
               sidechainKey: 'host',
-              params: JSON.stringify({ rangeDb: 18 }),
+              params: { rangeDb: 18 },
             },
           ],
         },
@@ -1246,7 +1246,7 @@ export function fakeMixingScenePresetJson(preset: string): string {
             {
               slot: 'pre',
               processor: 'dynamics.parallelComp',
-              params: JSON.stringify({ mix: 0.35 }),
+              params: { mix: 0.35 },
             },
           ],
         },
@@ -1286,7 +1286,7 @@ export function fakeMixingScenePresetJson(preset: string): string {
             {
               slot: 'post',
               processor: 'stereo.imager',
-              params: JSON.stringify({ width: 1.35 }),
+              params: { width: 1.35 },
             },
           ],
         },
