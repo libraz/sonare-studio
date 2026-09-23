@@ -12,7 +12,7 @@
 
 import { decodePatchFieldValue, type NumericPatchField } from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
-import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
+import type { SynthEnumTables } from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
   isMixerBusStripTarget,
@@ -22,7 +22,7 @@ import {
   setTrackInstrument,
 } from './commands';
 import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-domains';
-import { trackInstrument } from './instrument';
+import { type StoredSynthPatch, trackInstrument } from './instrument';
 import type { InsertSlot, MixerStrip } from './mixer';
 import {
   type ProcessorControl,
@@ -46,7 +46,7 @@ export type QuickControlTarget =
 /** Injectable catalog resolvers (default to the loaded wasm module). */
 export interface QuickControlResolvers {
   /** Resolves a synth preset to its patch values; null when unknown. */
-  resolvePresetPatch?: (preset: string) => SynthPatch | null;
+  resolvePresetPatch?: (preset: string) => StoredSynthPatch | null;
   /** Resolves an insert processor name to its parameter names. */
   resolveInsertParams?: (processor: string) => string[];
   /** Resolves engine-provided parameter metadata, including an optional unit. */
@@ -65,7 +65,7 @@ export interface QuickControlParamInfo {
 
 /** One entry of the NativeSynth quick-control table. */
 interface SynthControlSpec {
-  id: keyof SynthPatch & string;
+  id: keyof StoredSynthPatch & string;
   name: string;
   min: number;
   max: number;
@@ -167,7 +167,7 @@ const WIND_OR_BRASS_PRESET_TOKENS = [
 
 function isPluckedStringPreset(
   presetName: string | undefined,
-  basePatch: SynthPatch | null,
+  basePatch: StoredSynthPatch | null,
 ): boolean {
   const lower = presetName?.toLowerCase() ?? '';
   if (WIND_OR_BRASS_PRESET_TOKENS.some((token) => lower.includes(token))) return false;
@@ -199,7 +199,7 @@ function defaultResolveSynthEnums(): SynthEnumTables {
 
 /** Returns a patch enum value, with numeric ordinals resolved to labels. */
 function patchEnumValue(
-  patch: SynthPatch | null,
+  patch: StoredSynthPatch | null,
   spec: SynthEnumControlSpec,
   options: ReadonlyArray<ProcessorEnumOption>,
 ): string | number | null {
@@ -231,7 +231,10 @@ function synthEnumOptions(
 }
 
 /** Builds the synth enum descriptors after numeric controls. */
-function synthEnumControls(patch: SynthPatch | null, basePatch: SynthPatch | null): QuickControl[] {
+function synthEnumControls(
+  patch: StoredSynthPatch | null,
+  basePatch: StoredSynthPatch | null,
+): QuickControl[] {
   const tables = defaultResolveSynthEnums();
   return SYNTH_ENUM_CONTROLS.flatMap((spec) => {
     const options = synthEnumOptions(spec, tables);
@@ -255,7 +258,7 @@ function synthEnumControls(patch: SynthPatch | null, basePatch: SynthPatch | nul
 }
 
 /** Reads a synth patch field as a set value (omitted = keep base). */
-function patchValue(patch: SynthPatch | null, id: string): number | null {
+function patchValue(patch: StoredSynthPatch | null, id: string): number | null {
   if (!patch) return null;
   const value = (patch as Record<string, unknown>)[id];
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -263,10 +266,10 @@ function patchValue(patch: SynthPatch | null, id: string): number | null {
 }
 
 /** Default preset resolver: the wasm catalog, when the module is loaded. */
-function defaultResolvePresetPatch(preset: string): SynthPatch | null {
+function defaultResolvePresetPatch(preset: string): StoredSynthPatch | null {
   try {
     const wasm = getWasmModule() as unknown as {
-      synthPresetPatch?: (name: string) => SynthPatch;
+      synthPresetPatch?: (name: string) => StoredSynthPatch;
     };
     if (typeof wasm.synthPresetPatch !== 'function') return null;
     return wasm.synthPresetPatch(preset);
@@ -447,9 +450,9 @@ export function setQuickControl(
       };
       validateProcessorControlValue(control, value);
       const clamped = Math.min(numericSpec.max, Math.max(numericSpec.min, value));
-      const basePatch: SynthPatch =
+      const basePatch: StoredSynthPatch =
         instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
-      const nextPatch = { ...basePatch, [id]: clamped } as SynthPatch;
+      const nextPatch = { ...basePatch, [id]: clamped } as StoredSynthPatch;
       setTrackInstrument(target.trackId, { kind: 'synth-patch', patch: nextPatch }, options);
       return;
     }
@@ -469,9 +472,9 @@ export function setQuickControl(
       defaultValue: optionsForEnum[0]?.value ?? 'default',
     };
     validateProcessorControlValue(enumControl, value);
-    const patchBase: SynthPatch =
+    const patchBase: StoredSynthPatch =
       instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
-    const nextPatch = { ...patchBase, [id]: value } as SynthPatch;
+    const nextPatch = { ...patchBase, [id]: value } as StoredSynthPatch;
     setTrackInstrument(target.trackId, { kind: 'synth-patch', patch: nextPatch }, options);
     return;
   }

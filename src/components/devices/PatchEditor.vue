@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { setTrackInstrument } from '@/project/commands';
-import { trackInstrument } from '@/project/instrument';
+import { type StoredSynthPatch, trackInstrument } from '@/project/instrument';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { createPatchAudition, type PatchAudition } from '@/ui/devices/audition';
 import { formatControlValue } from '@/ui/devices/knob-math';
@@ -27,7 +27,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import { TOKENS } from '@/ui/theme/tokens';
-import type { SynthEnumTables, SynthPatch } from '@/wasm/index.js';
+import type { SynthEnumTables } from '@/wasm/index.js';
 
 /**
  * Modal NativeSynth patch editor. The dialog edits a local draft seeded from
@@ -54,7 +54,7 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 
-const draft = ref<SynthPatch>({});
+const draft = ref<StoredSynthPatch>({});
 const modRows = ref<ModMatrixRow[]>([]);
 const enums = ref<SynthEnumTables>(resolveSynthEnums(null));
 const error = ref('');
@@ -67,7 +67,7 @@ function resolvePresetPatch(): PresetPatchResolver {
   return (preset) => {
     try {
       const wasm = getWasmModule() as unknown as {
-        synthPresetPatch?: (name: string) => SynthPatch;
+        synthPresetPatch?: (name: string) => StoredSynthPatch;
       };
       return typeof wasm.synthPresetPatch === 'function' ? wasm.synthPresetPatch(preset) : null;
     } catch {
@@ -306,8 +306,8 @@ watch([draft, modRows], () => {
 // --- Apply / audition ----------------------------------------------------------
 
 /** Builds the sanitized patch the dialog would commit. */
-function buildPatch(): SynthPatch {
-  const merged: SynthPatch = { ...draft.value };
+function buildPatch(): StoredSynthPatch {
+  const merged: StoredSynthPatch = { ...draft.value };
   // The editor owns the whole mod matrix, so it always replaces the base one.
   merged.modRoutings = modRowsToRoutings(modRows.value);
   return sanitizePatchDraft(merged);

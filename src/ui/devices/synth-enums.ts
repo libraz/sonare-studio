@@ -25,6 +25,11 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
     'reed',
     'brass',
     'flute',
+    'plucked-string',
+    'vocal',
+    'free-reed',
+    'harpsichord',
+    'sample',
   ],
   waveforms: ['default', 'sine', 'saw', 'square', 'triangle', 'noise'],
   // Custom built-in waves are discovered from the WASM catalog. There is no
@@ -32,7 +37,7 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
   builtinWaveforms: [],
   filterModels: ['default', 'svf', 'moog-ladder', 'diode-ladder', 'sallen-key'],
   filterOutputs: ['default', 'lowpass', 'bandpass', 'highpass'],
-  bodyTypes: ['default', 'none', 'guitar', 'violin', 'wood-tube', 'brass-bell'],
+  bodyTypes: ['default', 'none', 'guitar', 'violin', 'wood-tube', 'brass-bell', 'vocal'],
   modSources: [
     'none',
     'amp-env',
@@ -43,8 +48,46 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
     'key-track',
     'mod-wheel',
     'random',
+    'breath',
+    'aftertouch',
+    'expression-cc',
+    'pitch-bend',
   ],
-  modDestinations: ['none', 'pitch-cents', 'cutoff-cents', 'amp-gain', 'pan-units'],
+  modDestinations: [
+    'none',
+    'pitch-cents',
+    'cutoff-cents',
+    'amp-gain',
+    'pan-units',
+    'resonance-q',
+    'vibrato-depth-cents',
+    'filter-env-depth',
+    'lfo1-rate-scale',
+    'excitation-force',
+    'excitation-position',
+    'excitation-brightness',
+    'spectrum-morph',
+  ],
+  controllerInputs: [
+    'control-change',
+    'channel-pressure',
+    'poly-pressure',
+    'pitch-bend',
+    'velocity',
+  ],
+  controllerAxes: [
+    'none',
+    'excitation',
+    'position',
+    'brightness',
+    'morph',
+    'loudness',
+    'pitch-cents',
+    'vibrato-depth',
+  ],
+  articulations: ['poly', 'mono-retrigger', 'mono-legato'],
+  mpeDimensions: ['bend', 'pressure', 'timbre'],
+  noteTrackings: ['last', 'lowest', 'highest', 'all'],
 };
 
 /**
@@ -56,16 +99,9 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
  * @returns Complete tables, never empty.
  */
 export function resolveSynthEnums(tables?: Partial<SynthEnumTables> | null): SynthEnumTables {
-  const merged: SynthEnumTables = {
-    engineModes: [...FALLBACK_SYNTH_ENUMS.engineModes],
-    waveforms: [...FALLBACK_SYNTH_ENUMS.waveforms],
-    builtinWaveforms: [...FALLBACK_SYNTH_ENUMS.builtinWaveforms],
-    filterModels: [...FALLBACK_SYNTH_ENUMS.filterModels],
-    filterOutputs: [...FALLBACK_SYNTH_ENUMS.filterOutputs],
-    bodyTypes: [...FALLBACK_SYNTH_ENUMS.bodyTypes],
-    modSources: [...FALLBACK_SYNTH_ENUMS.modSources],
-    modDestinations: [...FALLBACK_SYNTH_ENUMS.modDestinations],
-  };
+  const merged = Object.fromEntries(
+    Object.entries(FALLBACK_SYNTH_ENUMS).map(([key, values]) => [key, [...values]]),
+  ) as unknown as SynthEnumTables;
   if (!tables) return merged;
   for (const key of Object.keys(merged) as Array<keyof SynthEnumTables>) {
     const value = tables[key];

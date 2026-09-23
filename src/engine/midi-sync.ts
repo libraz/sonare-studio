@@ -65,6 +65,14 @@ import { clipKind, type EditorClip, type EditorTrack, type TempoSegment } from '
 import type { EngineMidiClipSchedule, EngineMidiEvent } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 
+/** A compiled MIDI event; studio always places it at an explicit render frame. */
+export type ScheduledMidiEvent = EngineMidiEvent & { renderFrame: number };
+
+/** A compiled MIDI clip schedule whose events all carry a render frame. */
+export type ScheduledMidiClip = Omit<EngineMidiClipSchedule, 'events'> & {
+  events: ScheduledMidiEvent[];
+};
+
 /** MIDI 1.0 channel-voice status nibbles used by the builder. */
 const STATUS_NOTE_ON = 0x9;
 const STATUS_NOTE_OFF = 0x8;
@@ -109,7 +117,7 @@ function voiceEvent(
   channel: number,
   data0: number,
   data1: number,
-): EngineMidiEvent {
+): ScheduledMidiEvent {
   return { renderFrame, word0: channelVoiceWord(status, channel, data0, data1), wordCount: 1 };
 }
 
@@ -166,13 +174,13 @@ export function buildMidiClipSchedules(
   projectExternalMidi?: ExternalMidiInstrument | null,
   midiDestinationForTrack: (track: EditorTrack) => number = (track) => track.id,
   articulations?: ClipArticulations,
-): EngineMidiClipSchedule[] {
+): ScheduledMidiClip[] {
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Sample rate must be finite and > 0, got ${sampleRate}`);
   }
   const tempoMap = normalizeTempoMap(tempoSegments);
   const trackById = new Map(tracks.map((track) => [track.id, track]));
-  const schedules: EngineMidiClipSchedule[] = [];
+  const schedules: ScheduledMidiClip[] = [];
 
   for (const clip of clips) {
     const track = trackById.get(clip.trackId);
@@ -232,7 +240,7 @@ export function buildMidiClipSchedules(
     // inside the clip stay exact.
     const lengthSamples =
       ppqToSamples(tempoMap, clip.startPpq + clip.lengthPpq, sampleRate) - startSample;
-    const events: EngineMidiEvent[] = [];
+    const events: ScheduledMidiEvent[] = [];
 
     const instrument = effectiveTrackInstrument(track, projectExternalMidi);
     const sf2 = instrument?.kind === 'sf2' ? instrument : undefined;

@@ -17,6 +17,12 @@
 import type { SynthPatch } from '@/wasm/index.js';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
+/**
+ * A NativeSynth patch as a project stores it: plain data, without the live
+ * sample-bank handle a sample-engine patch can carry at the wasm boundary.
+ */
+export type StoredSynthPatch = Omit<SynthPatch, 'sampleBank'>;
+
 /** Instrument variant: a NativeSynth catalog preset referenced by name. */
 export interface SynthPresetInstrument {
   kind: 'synth-preset';
@@ -32,7 +38,7 @@ export interface SynthPresetInstrument {
 export interface SynthPatchInstrument {
   kind: 'synth-patch';
   /** NativeSynth patch; numeric 0/omitted fields keep the base preset value. */
-  patch: SynthPatch;
+  patch: StoredSynthPatch;
 }
 
 /** One channel's program in a multi-timbral SF2 (GM/GS module) map. */

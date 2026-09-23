@@ -5,7 +5,7 @@
  * renderer (engine-render.ts) replays their output onto fresh engines.
  */
 
-import { buildMidiClipSchedules } from '@/engine/midi-sync';
+import { buildMidiClipSchedules, type ScheduledMidiClip } from '@/engine/midi-sync';
 import { groupBusGainDb, MAX_ENGINE_BUSES } from '@/engine/strip-sync';
 import { SILENCE_DB } from '@/lib/db';
 import { annotationsFromDocument, type NoteArticulation } from '@/project/annotations';
@@ -22,7 +22,6 @@ import type { ProjectDocument } from '@/project/serialization';
 import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
-import type { EngineMidiClipSchedule } from '@/wasm/index.js';
 import { type EngineClipSpec, RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
 
 /** One engine track lane spec (numeric ids, optional sends/output bus). */
@@ -111,7 +110,7 @@ function midiStatus(word0: number): number {
 
 /** True when one compiled MIDI schedule has a sounding note in a sample window. */
 function midiScheduleHasNoteInRange(
-  schedule: EngineMidiClipSchedule,
+  schedule: ScheduledMidiClip,
   startSample: number,
   endSample: number,
 ): boolean {
@@ -145,7 +144,7 @@ function midiScheduleHasNoteInRange(
 
 /** Track indices with an audible compiled MIDI note inside the render window. */
 export function activeMidiTrackIndicesForRange(
-  schedules: ReadonlyArray<EngineMidiClipSchedule>,
+  schedules: ReadonlyArray<ScheduledMidiClip>,
   trackIds: ReadonlyArray<number>,
   audibleTrackIndices: ReadonlySet<number>,
   startSample: number,
@@ -317,7 +316,7 @@ export function buildMidiSchedules(
   trackIds: number[],
   tempoSegments: ReadonlyArray<TempoSegment>,
   sampleRate: number,
-): EngineMidiClipSchedule[] {
+): ScheduledMidiClip[] {
   const midiTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
     id: trackIds[index],
     name: track.name,

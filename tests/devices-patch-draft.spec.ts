@@ -14,7 +14,21 @@ import {
   sanitizePatchDraft,
 } from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
-import type { SynthPatch } from '@/wasm/index.js';
+import {
+  ARTICULATIONS,
+  CONTROLLER_AXES,
+  CONTROLLER_INPUTS,
+  MPE_DIMENSIONS,
+  NOTE_TRACKINGS,
+  SYNTH_BODY_TYPES,
+  SYNTH_ENGINE_MODES,
+  SYNTH_FILTER_MODELS,
+  SYNTH_FILTER_OUTPUTS,
+  SYNTH_MOD_DESTINATIONS,
+  SYNTH_MOD_SOURCES,
+  SYNTH_OSC_WAVEFORMS,
+  type SynthPatch,
+} from '@/wasm/index.js';
 
 describe('patchFieldsForSection', () => {
   it('partitions every spec into exactly one section', () => {
@@ -282,6 +296,24 @@ describe('resolveSynthEnums', () => {
     expect(enums).toEqual(FALLBACK_SYNTH_ENUMS);
     expect(enums.waveforms).toContain('saw');
     expect(enums.modDestinations).toContain('cutoff-cents');
+  });
+
+  it('mirrors every published constant table', () => {
+    expect(FALLBACK_SYNTH_ENUMS).toEqual({
+      engineModes: [...SYNTH_ENGINE_MODES],
+      waveforms: [...SYNTH_OSC_WAVEFORMS],
+      builtinWaveforms: [],
+      filterModels: [...SYNTH_FILTER_MODELS],
+      filterOutputs: [...SYNTH_FILTER_OUTPUTS],
+      bodyTypes: [...SYNTH_BODY_TYPES],
+      modSources: [...SYNTH_MOD_SOURCES],
+      modDestinations: [...SYNTH_MOD_DESTINATIONS],
+      controllerInputs: [...CONTROLLER_INPUTS],
+      controllerAxes: [...CONTROLLER_AXES],
+      articulations: [...ARTICULATIONS],
+      mpeDimensions: [...MPE_DIMENSIONS],
+      noteTrackings: [...NOTE_TRACKINGS],
+    });
   });
 
   it('overrides only the non-empty runtime tables', () => {

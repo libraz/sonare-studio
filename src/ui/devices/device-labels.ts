@@ -3,8 +3,7 @@
  * processor names.
  */
 
-import type { TrackInstrument } from '@/project/instrument';
-import type { SynthPatch } from '@/wasm/index.js';
+import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { patchEditCount } from './patch-draft';
 
 /** Splits a camelCase identifier into a capitalized display name. */
@@ -30,7 +29,7 @@ export function instrumentKindLabel(instrument: TrackInstrument): string {
 }
 
 /** Base-preset caption of a patch ('init' when patch has no base preset). */
-export function patchBaseLabel(patch: SynthPatch): string {
+export function patchBaseLabel(patch: StoredSynthPatch): string {
   return typeof patch.preset === 'string' && patch.preset.length > 0 ? patch.preset : 'init';
 }
 

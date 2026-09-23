@@ -8,14 +8,14 @@
  * the base mod matrix.
  */
 
-import type { TrackInstrument } from '@/project/instrument';
-import type { SynthModRouting, SynthPatch } from '@/wasm/index.js';
+import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
+import type { SynthModRouting } from '@/wasm/index.js';
 import { FALLBACK_SYNTH_ENUMS } from './synth-enums';
 
 /** Editor section a patch field renders under. */
 export type PatchSection = 'osc' | 'filter' | 'amp' | 'filter-env' | 'lfo' | 'global';
 
-/** Numeric SynthPatch fields the editor exposes. */
+/** Numeric StoredSynthPatch fields the editor exposes. */
 export type NumericPatchField =
   | 'unison'
   | 'detuneCents'
@@ -44,7 +44,7 @@ export type NumericPatchField =
   | 'polyphony'
   | 'busDrive';
 
-/** Enum (string-valued) SynthPatch fields the editor exposes. */
+/** Enum (string-valued) StoredSynthPatch fields the editor exposes. */
 export type EnumPatchField = 'engineMode' | 'waveform' | 'filterModel' | 'filterOutput' | 'body';
 
 /** Spec of one numeric patch field (range, step, section placement). */
@@ -389,7 +389,7 @@ export function createModMatrixRow(): ModMatrixRow {
  * @param patch Patch holding the routings (possibly none).
  * @returns Editable rows (empty when the patch defines none).
  */
-export function modMatrixRows(patch: SynthPatch): ModMatrixRow[] {
+export function modMatrixRows(patch: StoredSynthPatch): ModMatrixRow[] {
   const routings = patch.modRoutings ?? [];
   return routings.map((routing) => ({
     source: modEnumName(routing.source, FALLBACK_SYNTH_ENUMS.modSources),
@@ -404,7 +404,7 @@ export function modMatrixRows(patch: SynthPatch): ModMatrixRow[] {
  * [-1, 1], and the list is capped at {@link MAX_MOD_ROUTINGS}.
  *
  * @param rows Editor rows.
- * @returns Routings ready for SynthPatch.modRoutings.
+ * @returns Routings ready for StoredSynthPatch.modRoutings.
  */
 export function modRowsToRoutings(rows: ReadonlyArray<ModMatrixRow>): SynthModRouting[] {
   const routings: SynthModRouting[] = [];
@@ -424,7 +424,7 @@ export function modRowsToRoutings(rows: ReadonlyArray<ModMatrixRow>): SynthModRo
 // --- Draft construction / sanitizing -----------------------------------------
 
 /** Resolves a preset name to its patch values (null when unknown). */
-export type PresetPatchResolver = (preset: string) => SynthPatch | null;
+export type PresetPatchResolver = (preset: string) => StoredSynthPatch | null;
 
 /** Enum patch fields copied between base patches and drafts. */
 const ENUM_PATCH_FIELDS: ReadonlyArray<EnumPatchField> = [
@@ -436,7 +436,7 @@ const ENUM_PATCH_FIELDS: ReadonlyArray<EnumPatchField> = [
 ];
 
 /** Copies the editable fields of a source patch onto a target draft. */
-function copyPatchFields(target: SynthPatch, source: SynthPatch): void {
+function copyPatchFields(target: StoredSynthPatch, source: StoredSynthPatch): void {
   const record = source as Record<string, unknown>;
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
@@ -471,13 +471,13 @@ function copyPatchFields(target: SynthPatch, source: SynthPatch): void {
 export function createPatchDraft(
   instrument: TrackInstrument | null | undefined,
   resolvePreset?: PresetPatchResolver,
-): SynthPatch {
-  const draft: SynthPatch = {};
+): StoredSynthPatch {
+  const draft: StoredSynthPatch = {};
   if (!instrument || instrument.kind === 'sf2' || instrument.kind === 'external-midi') return draft;
   const presetName =
     instrument.kind === 'synth-preset' ? instrument.preset : instrument.patch.preset;
   if (presetName !== undefined && resolvePreset) {
-    let base: SynthPatch | null = null;
+    let base: StoredSynthPatch | null = null;
     try {
       base = resolvePreset(presetName);
     } catch {
@@ -491,7 +491,7 @@ export function createPatchDraft(
 }
 
 /**
- * Sanitizes a draft into a SynthPatch ready to commit: numeric fields are
+ * Sanitizes a draft into a StoredSynthPatch ready to commit: numeric fields are
  * clamped to their spec ranges (non-finite values are dropped), enum fields are
  * kept as strings, mod routings are filtered/clamped/capped, and
  * binding-internal fields (destinationId) are never emitted.
@@ -499,8 +499,8 @@ export function createPatchDraft(
  * @param draft Editor draft (not mutated).
  * @returns A clean patch.
  */
-export function sanitizePatchDraft(draft: SynthPatch): SynthPatch {
-  const out: SynthPatch = {};
+export function sanitizePatchDraft(draft: StoredSynthPatch): StoredSynthPatch {
+  const out: StoredSynthPatch = {};
   if (typeof draft.preset === 'string' && draft.preset.length > 0) out.preset = draft.preset;
   const record = draft as Record<string, unknown>;
   for (const spec of PATCH_FIELD_SPECS) {
@@ -522,7 +522,7 @@ export function sanitizePatchDraft(draft: SynthPatch): SynthPatch {
 }
 
 /** Counts the explicitly set fields of a patch (preset excluded). */
-export function patchEditCount(patch: SynthPatch): number {
+export function patchEditCount(patch: StoredSynthPatch): number {
   const record = patch as Record<string, unknown>;
   let count = 0;
   for (const spec of PATCH_FIELD_SPECS) {
