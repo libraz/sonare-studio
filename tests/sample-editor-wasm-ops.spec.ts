@@ -1271,6 +1271,20 @@ describe('roomMorphChannels', () => {
     expect(out.diagnostics).toEqual([diagnostic]);
   });
 
+  it('asks for air absorption only when it is switched on', () => {
+    const seen: Array<Record<string, number | boolean> | undefined> = [];
+    const roomMorph = vi.fn(
+      (samples: Float32Array, _sr: number, options?: Record<string, number | boolean>) => {
+        seen.push(options);
+        return morphed(samples);
+      },
+    );
+    roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, 0.5);
+    roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, 0.5, true);
+    expect(seen[0]).not.toHaveProperty('airAbsorptionEnabled');
+    expect(seen[1]).toMatchObject({ airAbsorptionEnabled: true });
+  });
+
   it('trims channels to the shortest result to stay planar', () => {
     let call = 0;
     const roomMorph = vi.fn((samples: Float32Array) => {

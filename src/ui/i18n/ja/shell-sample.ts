@@ -126,6 +126,9 @@ export const shellSample = {
     estimatedRoom: '推定した部屋',
     roomWet: 'ウェット',
     roomWetTitle: 'リバーブのウェット/ドライ比（0%=ドライ、100%=フルウェット）',
+    roomAirAbsorption: '空気吸収',
+    roomAirAbsorptionTitle:
+      '実際の部屋のように空気が高域を吸収します。主に大きな部屋の高域の残響が短くなります',
     placeInRoom: '部屋に配置',
     placeInRoomTitle: 'ファイル全体を選んだ部屋に配置し、リバーブテール分だけ伸長します',
     synthesizeRir: 'RIR作成',

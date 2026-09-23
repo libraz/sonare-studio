@@ -170,6 +170,7 @@ const {
   restorePresetOptions,
   selectRestorePreset,
   roomWetInput,
+  roomAirAbsorption,
   referenceAssetId,
   matchEqAmountInput,
   matchEqAnalysis,
@@ -998,6 +999,14 @@ onBeforeUnmount(() => {
           :disabled="opsDisabled || !wasmAvail.roomMorph"
         />
         %
+      </label>
+      <label v-tooltip="t.shell.sampleEditor.roomAirAbsorptionTitle">
+        <input
+          v-model="roomAirAbsorption"
+          type="checkbox"
+          :disabled="opsDisabled || !wasmAvail.roomMorph"
+        />
+        {{ t.shell.sampleEditor.roomAirAbsorption }}
       </label>
       <button
         type="button"

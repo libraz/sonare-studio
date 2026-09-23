@@ -1189,6 +1189,8 @@ export interface RoomMorphPreset {
  * @param preset Target room shape and wall material.
  * @param wet Wet/dry mix in [0, 1] (0 = dry, 1 = fully wet); non-finite
  *   values fall back to 0.35.
+ * @param airAbsorption Adds atmospheric absorption at the reference climate,
+ *   which shortens the high bands of a large room.
  * @throws Error when the module does not provide roomMorph.
  * @throws RangeError on a non-positive sample rate or no channels.
  */
@@ -1198,6 +1200,7 @@ export function roomMorphChannels(
   sampleRate: number,
   preset: RoomMorphPreset,
   wet: number,
+  airAbsorption = false,
 ): RoomRenderResult {
   const fn = ops.roomMorph;
   if (typeof fn !== 'function') {
@@ -1215,6 +1218,7 @@ export function roomMorphChannels(
     heightM: preset.heightM,
     materialPreset: preset.materialPreset,
     wet: Number.isFinite(wet) ? Math.min(Math.max(wet, 0), 1) : 0.35,
+    ...(airAbsorption ? { airAbsorptionEnabled: true } : {}),
   };
   const processed = channels.map((channel) => fn(channel, sampleRate, options));
   const minFrames = Math.min(...processed.map((result) => result.audio.length));
@@ -1240,6 +1244,7 @@ export function synthesizeRirChannels(
   ops: SampleEditorWasmOps,
   sampleRate: number,
   preset: RoomMorphPreset,
+  airAbsorption = false,
 ): RoomRenderResult {
   const fn = ops.synthesizeRir;
   if (typeof fn !== 'function') {
@@ -1254,6 +1259,7 @@ export function synthesizeRirChannels(
     widthM: preset.widthM,
     heightM: preset.heightM,
     materialPreset: preset.materialPreset,
+    ...(airAbsorption ? { airAbsorptionEnabled: true } : {}),
   });
   if (result.hasError || result.rir.length === 0) {
     throw new Error('RIR synthesis failed for the selected room');

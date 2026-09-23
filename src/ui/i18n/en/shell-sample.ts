@@ -130,6 +130,9 @@ export const shellSample = {
     estimatedRoom: 'Estimated room',
     roomWet: 'Wet',
     roomWetTitle: 'Reverb wet/dry mix (0% dry, 100% fully wet)',
+    roomAirAbsorption: 'Air',
+    roomAirAbsorptionTitle:
+      'Let the air absorb high frequencies as it does in a real room; mostly shortens the top of a large room',
     placeInRoom: 'Place in room',
     placeInRoomTitle: 'Place the whole file in the chosen room, extending it with the reverb tail',
     synthesizeRir: 'Make RIR',

@@ -289,6 +289,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const restorePresetId = ref<MasteringPreset>(RESTORATION_PRESETS[0]);
   /** Room reverb wet/dry mix as a percentage string (0 = dry, 100 = fully wet). */
   const roomWetInput = ref('35');
+  const roomAirAbsorption = ref(false);
 
   /** Stored audio assets offered as the Match EQ reference. */
   const referenceAssets = ref<AudioAssetMeta[]>([]);
@@ -854,7 +855,14 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const committed = await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.placeInRoom, { room: entry.label }),
       (channels) => {
-        const rendered = roomMorphChannels(ops, channels, sampleRate(), entry.preset, wet);
+        const rendered = roomMorphChannels(
+          ops,
+          channels,
+          sampleRate(),
+          entry.preset,
+          wet,
+          roomAirAbsorption.value,
+        );
         diagnostics = rendered.diagnostics;
         return rendered.channels;
       },
@@ -871,7 +879,12 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     const committed = await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.synthesizeRir, { room: entry.label }),
       () => {
-        const rendered = synthesizeRirChannels(ops, sampleRate(), entry.preset);
+        const rendered = synthesizeRirChannels(
+          ops,
+          sampleRate(),
+          entry.preset,
+          roomAirAbsorption.value,
+        );
         diagnostics = rendered.diagnostics;
         return rendered.channels;
       },
@@ -1091,6 +1104,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     restorePresetOptions,
     selectRestorePreset,
     roomWetInput,
+    roomAirAbsorption,
     referenceAssets,
     referenceAssetId,
     matchEqAmountInput,
