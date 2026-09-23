@@ -196,6 +196,14 @@ describe('buildVoiceContext', () => {
     ]);
     expect(ctx.soundingAt(0.5).map((entry) => entry.pitch)).toEqual([60, 67]);
   });
+
+  it('carries the length of the note behind each sounding pitch', () => {
+    const notes = [note({ id: 1, pitch: 60, startPpq: 0, durationPpq: 4 })];
+    const ctx = buildVoiceContext([{ trackId: 1, role: 'melodic', notes }], [2], FOUR_FOUR);
+    expect(ctx.soundingAt(2)).toEqual([
+      { pitch: 60, trackId: 1, role: 'melodic', startPpq: 0, durationPpq: 4 },
+    ]);
+  });
 });
 
 describe('motionFindings', () => {

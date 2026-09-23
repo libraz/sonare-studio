@@ -52,6 +52,8 @@ export interface SoundingPitch {
   role: VoiceRole;
   /** Absolute onset of the note carrying the pitch. */
   startPpq: number;
+  /** Length of the note carrying the pitch. */
+  durationPpq: number;
 }
 
 /** A line's top or bottom voice at a beat, with its pitch at the previous beat. */
@@ -205,6 +207,7 @@ export function buildVoiceContext(
             trackId: line.trackId,
             role: line.role,
             startPpq: note.startPpq,
+            durationPpq: note.durationPpq,
           });
         }
       });
