@@ -123,7 +123,9 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.suspension).toBe(10);
     // Vertical readings hear every pitch of the other parts, so four clashes with
     // a lower note of another part's chord, hidden under its top voice, count too.
-    expect(counts.verticalDissonance).toBe(111);
+    // A perfect fourth counts whenever one of its two notes is the lowest
+    // sounding voice, however many parts sound above it.
+    expect(counts.verticalDissonance).toBe(129);
   });
 
   it('reads the predicate suite over the whole piece without disturbing the verdicts', async () => {
@@ -201,7 +203,7 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.hiddenParallel).toBe(24);
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);
-    expect(counts.verticalDissonance).toBe(111);
+    expect(counts.verticalDissonance).toBe(129);
   });
 
   it('engraves the chromatic notes off the line rather than off the signature', async () => {
