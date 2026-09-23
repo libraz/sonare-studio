@@ -19,7 +19,7 @@ import {
   type AutomationParam,
   evaluateAutomationValue,
 } from '@/project/automation';
-import { insertParamDomainForStrip } from '@/project/insert-param-domains';
+import { insertAutomationDomain } from '@/project/processor-controls';
 import type { EditorTrack } from '@/project/types';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
@@ -108,7 +108,7 @@ export function drawAutomationSublane(
 ): void {
   const { range, automationParams, automationLanes, automation, colors } = context;
   const param = automationParams[track.id] ?? 'faderDb';
-  const insertDomainInfo = insertParamDomainForStrip(track.mixer, param);
+  const insertDomainInfo = insertAutomationDomain(track.mixer, param);
   const insertDomain = insertDomainInfo
     ? { min: insertDomainInfo.min, max: insertDomainInfo.max }
     : undefined;

@@ -1,20 +1,14 @@
 /**
- * Display-only value domains for insert-parameter automation. The wasm
- * `masteringInsertParamInfo` catalog reports each realtime-automatable
- * parameter's name/id but not its value range, so the automation sublane needs
- * a small app-side catalog to scale insert lanes. Entries cover the most
- * commonly automated processors; anything absent falls back to a neutral [0, 1]
- * window, which still lets the lane be drawn and edited.
+ * Display windows for insert parameters. The wasm `masteringInsertParamInfo`
+ * catalog publishes each parameter's hard bounds, which are often open-ended
+ * or far wider than a comfortable control; these entries give the most
+ * commonly edited processors a usable window, which `processorNumberSpec`
+ * narrows to the catalog bounds.
  *
- * Ranges are display windows (the comfortable drawing range of a parameter),
- * not the engine's hard clamp bounds: values outside the window still record,
- * they just pin to the sublane edge. Parameter names are the processor's
+ * Ranges are display windows, not the engine's hard clamp bounds: values
+ * outside the window still record, they just pin to the sublane edge. Parameter names are the processor's
  * JSON-key names (see the libsonare field tables / `masteringInsertParamInfo`).
  */
-
-import { type AutomationParam, parseInsertAutomationParam } from './automation';
-import { insertIndexForAutomationRef } from './automation-insert';
-import type { MixerStrip } from './mixer';
 
 /** Drawing/editing value range and unit of one insert parameter. */
 export interface InsertParamDomain {
@@ -129,28 +123,4 @@ export function insertParamDomainEntries(): InsertParamDomainEntry[] {
  */
 export function insertParamDomain(processor: string, paramName: string): InsertParamDomain {
   return INSERT_PARAM_DOMAINS[processor]?.[paramName] ?? INSERT_PARAM_DOMAIN_FALLBACK;
-}
-
-/**
- * Resolves the display domain for the insert parameter a lane automates on a
- * strip: decodes the insert token, looks up the addressed slot's processor and
- * returns that parameter's catalogued domain.
- *
- * @param strip Strip the lane targets (its `inserts` carry the processor); the
- *   master/track/bus strip the lane lives on.
- * @param param Automated parameter token.
- * @returns The display domain, or undefined when `param` is not an insert
- *   token or the addressed slot is absent (the caller then uses its own
- *   neutral fallback).
- */
-export function insertParamDomainForStrip(
-  strip: Pick<MixerStrip, 'inserts'> | undefined,
-  param: AutomationParam,
-): InsertParamDomain | undefined {
-  const ref = parseInsertAutomationParam(param);
-  if (!ref) return undefined;
-  const index = strip ? insertIndexForAutomationRef(strip.inserts, ref) : undefined;
-  const slot = index === undefined ? undefined : strip?.inserts[index];
-  if (!slot) return undefined;
-  return insertParamDomain(slot.processor, ref.paramName);
 }

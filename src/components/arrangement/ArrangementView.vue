@@ -54,7 +54,7 @@ import {
 import { exportClipSmf } from '@/project/export';
 import { unfreezeTrack } from '@/project/freeze';
 import { grooveTemplateIsUsable } from '@/project/groove';
-import { insertParamDomainForStrip } from '@/project/insert-param-domains';
+import { insertAutomationDomain } from '@/project/processor-controls';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { snapPpqToMeterGrid } from '@/project/time-signature';
@@ -516,7 +516,7 @@ const automation = useAutomationInteractions({
       if (hit?.zone !== 'automation') return null;
       const track = visibleTracks.value[hit.index];
       const param = automationParams.value[track.id] ?? 'faderDb';
-      const insertDomain = insertParamDomainForStrip(track.mixer, param);
+      const insertDomain = insertAutomationDomain(track.mixer, param);
       return {
         trackId: track.id,
         param,

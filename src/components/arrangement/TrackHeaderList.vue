@@ -56,6 +56,7 @@ import { EXPRESSION_MAP_PRESETS, matchingExpressionMapPreset } from '@/project/e
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { partForTrack } from '@/project/generation';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
+import { catalogParamInfo } from '@/project/processor-controls';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
 import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
@@ -606,25 +607,6 @@ async function onBounce(track: EditorTrack): Promise<void> {
   }
 }
 
-/** Realtime-automatable parameter descriptor of an insert processor. */
-interface InsertParamInfo {
-  name: string;
-  rtSafe: boolean;
-}
-
-/** Reads a processor's realtime-automatable params, or [] when unavailable. */
-function insertParamInfo(processor: string): InsertParamInfo[] {
-  try {
-    const wasm = getWasmModule() as unknown as {
-      masteringInsertParamInfo?: (name: string) => InsertParamInfo[];
-    };
-    return wasm.masteringInsertParamInfo?.(processor) ?? [];
-  } catch {
-    // Module not loaded yet.
-    return [];
-  }
-}
-
 /**
  * Parameter choices for a track's automation sublane picker: the fader and pan
  * lanes plus, per insert slot, that processor's realtime-safe parameters as
@@ -640,7 +622,7 @@ function automationParamOptions(
     options.push({ value: 'pan', label: t.value.shell.arrangement.trackHeader.pan });
   }
   (track.mixer?.inserts ?? []).forEach((slot, index) => {
-    for (const param of insertParamInfo(slot.processor)) {
+    for (const param of catalogParamInfo(slot.processor)) {
       if (!param.rtSafe) continue;
       options.push({
         value: insertAutomationParam(slot.id ?? index, param.name),

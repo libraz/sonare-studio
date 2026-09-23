@@ -10,7 +10,16 @@
  */
 
 import { formatControlValue } from '@/ui/devices/knob-math';
-import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-domains';
+import type { MasteringInsertParamInfo } from '@/wasm/index.js';
+import { type AutomationParam, parseInsertAutomationParam } from './automation';
+import { insertIndexForAutomationRef } from './automation-insert';
+import {
+  INSERT_PARAM_DOMAIN_FALLBACK,
+  type InsertParamDomain,
+  insertParamDomain,
+} from './insert-param-domains';
+import type { MixerStrip } from './mixer';
+import { getWasmModule } from './runtime';
 
 /** Values accepted by a processor parameter command. */
 export type ProcessorControlValue = number | boolean | string;
@@ -61,12 +70,15 @@ export type ProcessorControl =
   | BooleanProcessorControl
   | EnumProcessorControl;
 
-/** Runtime metadata returned by masteringInsertParamInfo. */
-export interface ProcessorParamInfo {
-  name: string;
-  unit?: string;
-  type?: 'number' | 'boolean' | 'enum';
-}
+/**
+ * Catalog metadata for one insert parameter (masteringInsertParamInfo). The
+ * bounds are hard limits construction accepts, not a display range; null
+ * means the catalog knows of no limit.
+ */
+export type ProcessorParamInfo = Pick<
+  MasteringInsertParamInfo,
+  'name' | 'type' | 'unit' | 'min' | 'max' | 'default'
+>;
 
 interface NumberControlSpec {
   kind: 'number';
@@ -532,31 +544,109 @@ const DEFAULT_PARAM_RANGE: NumberControlSpec = {
   defaultValue: 0,
 };
 
-/** Resolves a numeric range using the shared domain catalog and heuristics. */
+/** Parameter catalogs per loaded module; a build's catalog never changes. */
+const catalogCache = new WeakMap<object, Map<string, MasteringInsertParamInfo[]>>();
+
+/**
+ * The loaded module's catalog metadata for one processor, or [] before the
+ * module is initialized.
+ */
+export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] {
+  let wasm: ReturnType<typeof getWasmModule>;
+  try {
+    wasm = getWasmModule();
+  } catch {
+    return [];
+  }
+  if (typeof wasm.masteringInsertParamInfo !== 'function') return [];
+  let byProcessor = catalogCache.get(wasm);
+  if (!byProcessor) {
+    byProcessor = new Map();
+    catalogCache.set(wasm, byProcessor);
+  }
+  let entries = byProcessor.get(processor);
+  if (!entries) {
+    try {
+      entries = wasm.masteringInsertParamInfo(processor);
+    } catch {
+      entries = [];
+    }
+    byProcessor.set(processor, entries);
+  }
+  return entries;
+}
+
+/**
+ * Value domain an insert-parameter automation lane is drawn in: the same
+ * range the parameter's rack control uses. Undefined for a fader/pan lane or
+ * a lane whose slot no longer exists.
+ */
+export function insertAutomationDomain(
+  strip: Pick<MixerStrip, 'inserts'> | undefined,
+  param: AutomationParam,
+): InsertParamDomain | undefined {
+  const ref = parseInsertAutomationParam(param);
+  if (!ref || !strip) return undefined;
+  const index = insertIndexForAutomationRef(strip.inserts, ref);
+  const slot = index === undefined ? undefined : strip.inserts[index];
+  if (!slot) return undefined;
+  const info = catalogParamInfo(slot.processor).find((entry) => entry.name === ref.paramName);
+  const spec = processorNumberSpec(slot.processor, ref.paramName, info);
+  return { min: spec.min, max: spec.max, unit: spec.unit ?? '' };
+}
+
+/** Clamps a value into a range whose ends may be absent. */
+function clampToBounds(value: number, min: number | null, max: number | null): number {
+  const floored = min === null ? value : Math.max(min, value);
+  return max === null ? floored : Math.min(max, floored);
+}
+
+/**
+ * Resolves a numeric range: the app's display window (explicit domain, else a
+ * name heuristic) narrowed to the catalog's hard bounds, with the catalog's
+ * default when it publishes one. A parameter nothing in the app describes
+ * takes the catalog bounds whole when both are finite.
+ */
 export function processorNumberSpec(
   processor: string,
   param: string,
-  engineUnit?: string,
+  info?: ProcessorParamInfo,
 ): NumberControlSpec {
-  const heuristic = PARAM_RANGE_RULES.find((rule) => rule.test.test(param)) ?? DEFAULT_PARAM_RANGE;
+  const rule = PARAM_RANGE_RULES.find((candidate) => candidate.test.test(param));
   const domain = insertParamDomain(processor, param);
-  if (domain !== INSERT_PARAM_DOMAIN_FALLBACK) {
-    return {
-      kind: 'number',
-      min: domain.min,
-      max: domain.max,
-      ...(heuristic.scale !== undefined && domain.min > 0 ? { scale: heuristic.scale } : {}),
-      ...(engineUnit || domain.unit ? { unit: engineUnit || domain.unit } : {}),
-      defaultValue: Math.min(domain.max, Math.max(domain.min, heuristic.defaultValue)),
-    };
+  const hasDomain = domain !== INSERT_PARAM_DOMAIN_FALLBACK;
+  const hardMin = info?.min ?? null;
+  const hardMax = info?.max ?? null;
+  let min: number;
+  let max: number;
+  if (hasDomain) {
+    ({ min, max } = domain);
+  } else if (rule) {
+    ({ min, max } = rule);
+  } else if (hardMin !== null && hardMax !== null) {
+    min = hardMin;
+    max = hardMax;
+  } else {
+    ({ min, max } = DEFAULT_PARAM_RANGE);
   }
+  const narrowedMin = clampToBounds(min, hardMin, hardMax);
+  const narrowedMax = clampToBounds(max, hardMin, hardMax);
+  if (narrowedMax > narrowedMin) {
+    min = narrowedMin;
+    max = narrowedMax;
+  }
+  const scale = rule?.scale;
+  const unit = info?.unit || (hasDomain ? domain.unit : undefined) || rule?.unit;
+  const fallbackDefault = rule?.defaultValue ?? DEFAULT_PARAM_RANGE.defaultValue;
+  const catalogDefault =
+    typeof info?.default === 'number' && Number.isFinite(info.default) ? info.default : undefined;
   return {
     kind: 'number',
-    min: heuristic.min,
-    max: heuristic.max,
-    ...(heuristic.scale !== undefined ? { scale: heuristic.scale } : {}),
-    ...(engineUnit || heuristic.unit ? { unit: engineUnit || heuristic.unit } : {}),
-    defaultValue: heuristic.defaultValue,
+    min,
+    max,
+    ...(scale !== undefined && min > 0 ? { scale } : {}),
+    ...(unit ? { unit } : {}),
+    defaultValue: Math.min(max, Math.max(min, catalogDefault ?? fallbackDefault)),
   };
 }
 
@@ -597,15 +687,9 @@ export function processorControlSpec(
   const explicit = explicitProcessorControlSpec(processor, param);
   if (explicit) return explicit;
   if (info?.type === 'boolean') {
-    return { kind: 'boolean', defaultValue: false };
+    return { kind: 'boolean', defaultValue: info.default === true };
   }
-  if (info?.type === 'enum') {
-    // Runtime catalogs currently use numeric enum ordinals. A missing option
-    // list is intentionally not guessed: exposing it as a number would make
-    // an unset enum indistinguishable from an ordinary amount.
-    return { kind: 'enum', options: [], defaultValue: 0 };
-  }
-  return processorNumberSpec(processor, param, info?.unit);
+  return processorNumberSpec(processor, param, info);
 }
 
 /** Builds a descriptor for one parameter using its saved ABI value. */

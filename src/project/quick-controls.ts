@@ -25,12 +25,13 @@ import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-
 import { type StoredSynthPatch, trackInstrument } from './instrument';
 import type { InsertSlot, MixerStrip } from './mixer';
 import {
+  catalogParamInfo,
   type ProcessorControl,
   type ProcessorControlValue,
   type ProcessorEnumOption,
+  type ProcessorParamInfo,
   processorControl,
   processorControls,
-  processorNumberSpec,
   validateProcessorControlValue,
 } from './processor-controls';
 import { getWasmModule, useProjectStore } from './store';
@@ -50,17 +51,7 @@ export interface QuickControlResolvers {
   /** Resolves an insert processor name to its parameter names. */
   resolveInsertParams?: (processor: string) => string[];
   /** Resolves engine-provided parameter metadata, including an optional unit. */
-  resolveInsertParamInfo?: (processor: string) => QuickControlParamInfo[];
-}
-
-/** Minimal engine parameter metadata needed by the quick-control UI. */
-export interface QuickControlParamInfo {
-  /** JSON-key parameter name. */
-  name: string;
-  /** Engine-provided physical unit, when it declares one. */
-  unit?: string;
-  /** Engine-provided value kind, when available. */
-  type?: 'number' | 'boolean' | 'enum';
+  resolveInsertParamInfo?: (processor: string) => ProcessorParamInfo[];
 }
 
 /** One entry of the NativeSynth quick-control table. */
@@ -186,9 +177,7 @@ function isPluckedStringPreset(
 /** Resolves the runtime NativeSynth enum tables, retaining complete fallbacks. */
 function defaultResolveSynthEnums(): SynthEnumTables {
   try {
-    const wasm = getWasmModule() as unknown as {
-      synthEnumTables?: () => Partial<SynthEnumTables>;
-    };
+    const wasm = getWasmModule();
     return resolveSynthEnums(
       typeof wasm.synthEnumTables === 'function' ? wasm.synthEnumTables() : null,
     );
@@ -268,9 +257,7 @@ function patchValue(patch: StoredSynthPatch | null, id: string): number | null {
 /** Default preset resolver: the wasm catalog, when the module is loaded. */
 function defaultResolvePresetPatch(preset: string): StoredSynthPatch | null {
   try {
-    const wasm = getWasmModule() as unknown as {
-      synthPresetPatch?: (name: string) => StoredSynthPatch;
-    };
+    const wasm = getWasmModule();
     if (typeof wasm.synthPresetPatch !== 'function') return null;
     return wasm.synthPresetPatch(preset);
   } catch {
@@ -281,24 +268,9 @@ function defaultResolvePresetPatch(preset: string): StoredSynthPatch | null {
 /** Default insert-param resolver: the wasm catalog, when available. */
 function defaultResolveInsertParams(processor: string): string[] {
   try {
-    const wasm = getWasmModule() as unknown as {
-      masteringInsertParamNames?: (name: string) => string[];
-    };
+    const wasm = getWasmModule();
     if (typeof wasm.masteringInsertParamNames !== 'function') return [];
     return wasm.masteringInsertParamNames(processor);
-  } catch {
-    return [];
-  }
-}
-
-/** Default insert-metadata resolver: uses the loaded engine catalog when available. */
-function defaultResolveInsertParamInfo(processor: string): QuickControlParamInfo[] {
-  try {
-    const wasm = getWasmModule() as unknown as {
-      masteringInsertParamInfo?: (name: string) => QuickControlParamInfo[];
-    };
-    if (typeof wasm.masteringInsertParamInfo !== 'function') return [];
-    return wasm.masteringInsertParamInfo(processor);
   } catch {
     return [];
   }
@@ -390,7 +362,7 @@ export function listQuickControls(
   const slot = requireInsertSlot(target);
   const resolveParams = resolvers.resolveInsertParams ?? defaultResolveInsertParams;
   const catalogNames = resolveParams(slot.processor);
-  const resolveInfo = resolvers.resolveInsertParamInfo ?? defaultResolveInsertParamInfo;
+  const resolveInfo = resolvers.resolveInsertParamInfo ?? catalogParamInfo;
   const paramInfo = resolveInfo(slot.processor);
   return processorControls(slot.processor, catalogNames, slot.params, paramInfo);
 }
@@ -480,24 +452,25 @@ export function setQuickControl(
   }
   const slot = requireInsertSlot(target);
   const raw = slot.params[id];
-  const paramInfo = defaultResolveInsertParamInfo(slot.processor).find((info) => info.name === id);
+  const paramInfo = catalogParamInfo(slot.processor).find((info) => info.name === id);
   const control = processorControl(slot.processor, id, raw, paramInfo);
   if (control) validateProcessorControlValue(control, value);
   else if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new RangeError(`Unknown insert control "${id}" requires a finite number`);
   }
-  const rule = processorNumberSpec(slot.processor, id);
-  // The app-side range catalog is a drawing/interaction convenience, not an
-  // engine contract. Preserve values for an unknown processor parameter so a
-  // harmless LFO rate such as 2 Hz is not silently turned into 20 Hz.
-  const hasExplicitDomain = insertParamDomain(slot.processor, id) !== INSERT_PARAM_DOMAIN_FALLBACK;
   if (control?.kind !== 'number') {
     setInsertParam(target.trackId, target.index, id, value as number | boolean, options);
     return;
   }
-  const next =
-    hasExplicitDomain && typeof value === 'number'
-      ? Math.min(rule.max, Math.max(rule.min, value))
-      : (value as number);
+  // The app-side range catalog is a drawing/interaction convenience, not an
+  // engine contract, so only an explicit domain narrows the value; a harmless
+  // LFO rate such as 2 Hz is not silently turned into 20 Hz. The catalog's
+  // bounds are what construction accepts and always apply.
+  const hasExplicitDomain = insertParamDomain(slot.processor, id) !== INSERT_PARAM_DOMAIN_FALLBACK;
+  const bounded = Math.min(
+    paramInfo?.max ?? Number.POSITIVE_INFINITY,
+    Math.max(paramInfo?.min ?? Number.NEGATIVE_INFINITY, value as number),
+  );
+  const next = hasExplicitDomain ? Math.min(control.max, Math.max(control.min, bounded)) : bounded;
   setInsertParam(target.trackId, target.index, id, next, options);
 }

@@ -10,6 +10,7 @@
 
 import type { InsertSlot } from '@/project/mixer';
 import {
+  catalogParamInfo,
   type ProcessorControl,
   type ProcessorParamInfo,
   processorControls,
@@ -28,23 +29,9 @@ export type MasteringParamInfoResolver = (processor: string) => ProcessorParamIn
 /** Default param resolver: the wasm catalog, when the module is loaded. */
 function defaultResolveParams(processor: string): string[] {
   try {
-    const wasm = getWasmModule() as unknown as {
-      masteringInsertParamNames?: (name: string) => string[];
-    };
+    const wasm = getWasmModule();
     if (typeof wasm.masteringInsertParamNames !== 'function') return [];
     return wasm.masteringInsertParamNames(processor);
-  } catch {
-    return [];
-  }
-}
-
-function defaultResolveParamInfo(processor: string): ProcessorParamInfo[] {
-  try {
-    const wasm = getWasmModule() as unknown as {
-      masteringInsertParamInfo?: (name: string) => ProcessorParamInfo[];
-    };
-    if (typeof wasm.masteringInsertParamInfo !== 'function') return [];
-    return wasm.masteringInsertParamInfo(processor);
   } catch {
     return [];
   }
@@ -63,7 +50,7 @@ function defaultResolveParamInfo(processor: string): ProcessorParamInfo[] {
 export function masteringProcessorControls(
   slot: InsertSlot,
   resolveParams: MasteringParamResolver = defaultResolveParams,
-  resolveParamInfo: MasteringParamInfoResolver = defaultResolveParamInfo,
+  resolveParamInfo: MasteringParamInfoResolver = catalogParamInfo,
 ): MasteringControl[] {
   const catalogNames = resolveParams(slot.processor);
   return processorControls(

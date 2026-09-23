@@ -1,0 +1,117 @@
+import { describe, expect, it } from 'vitest';
+import type { InsertSlot } from '@/project/mixer';
+import {
+  insertAutomationDomain,
+  type ProcessorParamInfo,
+  processorControlSpec,
+  processorNumberSpec,
+} from '@/project/processor-controls';
+
+/** Strip-shaped value carrying a single insert slot. */
+function stripWith(processor: string): { inserts: InsertSlot[] } {
+  return { inserts: [{ processor, params: {}, enabled: true }] };
+}
+
+function info(overrides: Partial<ProcessorParamInfo> & { name: string }): ProcessorParamInfo {
+  return { type: 'number', unit: null, min: null, max: null, default: null, ...overrides };
+}
+
+describe('processorNumberSpec', () => {
+  it('takes the default from the catalog, inside the display window', () => {
+    const spec = processorNumberSpec(
+      'dynamics.compressor',
+      'thresholdDb',
+      info({ name: 'thresholdDb', default: -18, unit: 'dB' }),
+    );
+    expect(spec).toMatchObject({ min: -60, max: 0, defaultValue: -18, unit: 'dB' });
+  });
+
+  it('narrows the display window to the catalog bounds', () => {
+    const spec = processorNumberSpec(
+      'custom.processor',
+      'toneHz',
+      info({ name: 'toneHz', min: 100, max: 8000, default: 440 }),
+    );
+    expect(spec).toMatchObject({ min: 100, max: 8000, scale: 'log', defaultValue: 440 });
+  });
+
+  it('uses the catalog bounds whole for a parameter the app does not describe', () => {
+    const spec = processorNumberSpec(
+      'custom.processor',
+      'amount',
+      info({ name: 'amount', min: -2, max: 2, default: 0.5 }),
+    );
+    expect(spec).toMatchObject({ min: -2, max: 2, defaultValue: 0.5 });
+  });
+
+  it('keeps the heuristic window when the catalog publishes no bounds', () => {
+    const withoutInfo = processorNumberSpec('custom.processor', 'releaseMs');
+    const withNullBounds = processorNumberSpec(
+      'custom.processor',
+      'releaseMs',
+      info({ name: 'releaseMs' }),
+    );
+    expect(withNullBounds).toEqual(withoutInfo);
+  });
+
+  it('keeps the display window when the catalog bounds would empty it', () => {
+    const spec = processorNumberSpec(
+      'custom.processor',
+      'gainDb',
+      info({ name: 'gainDb', min: 30, max: 40 }),
+    );
+    expect(spec).toMatchObject({ min: -24, max: 24 });
+  });
+});
+
+describe('processorControlSpec', () => {
+  it('reads a boolean default from the catalog', () => {
+    expect(
+      processorControlSpec(
+        'custom.processor',
+        'enabled',
+        info({ name: 'enabled', type: 'boolean', default: true }),
+      ),
+    ).toEqual({ kind: 'boolean', defaultValue: true });
+    expect(
+      processorControlSpec(
+        'custom.processor',
+        'bypass',
+        info({ name: 'bypass', type: 'boolean', default: null }),
+      ),
+    ).toEqual({ kind: 'boolean', defaultValue: false });
+  });
+});
+
+describe('insertAutomationDomain', () => {
+  it('resolves the addressed slot processor parameter domain', () => {
+    expect(
+      insertAutomationDomain(stripWith('dynamics.compressor'), 'insert:0:thresholdDb'),
+    ).toEqual({ min: -60, max: 0, unit: 'dB' });
+  });
+
+  it('returns undefined for a fader/pan param', () => {
+    expect(insertAutomationDomain(stripWith('dynamics.compressor'), 'faderDb')).toBeUndefined();
+    expect(insertAutomationDomain(stripWith('dynamics.compressor'), 'pan')).toBeUndefined();
+  });
+
+  it('returns undefined when the strip or the addressed slot is absent', () => {
+    expect(insertAutomationDomain(undefined, 'insert:0:thresholdDb')).toBeUndefined();
+    expect(
+      insertAutomationDomain(stripWith('dynamics.compressor'), 'insert:3:thresholdDb'),
+    ).toBeUndefined();
+  });
+
+  it('draws an uncatalogued parameter in the range its rack control uses', () => {
+    expect(insertAutomationDomain(stripWith('custom.processor'), 'insert:0:detector')).toEqual({
+      min: 0,
+      max: 1,
+      unit: '',
+    });
+    expect(insertAutomationDomain(stripWith('custom.processor'), 'insert:0:releaseMs')).toEqual({
+      min: 0,
+      max: 5000,
+      unit: 'ms',
+    });
+  });
+});
