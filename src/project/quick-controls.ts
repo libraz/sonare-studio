@@ -10,7 +10,11 @@
  * call).
  */
 
-import { decodePatchFieldValue, type NumericPatchField } from '@/ui/devices/patch-draft';
+import {
+  decodePatchFieldValue,
+  type NumericPatchField,
+  patchFieldSpec,
+} from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 import type { SynthEnumTables } from '@/wasm/index.js';
 import {
@@ -63,8 +67,6 @@ export interface QuickControlResolvers {
 interface SynthControlSpec {
   id: keyof StoredSynthPatch & string;
   name: string;
-  min: number;
-  max: number;
   scale?: 'linear' | 'log';
   unit?: string;
   /** Value shown when neither patch nor preset defines the field. */
@@ -90,8 +92,6 @@ const SYNTH_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   {
     id: 'cutoffHz',
     name: 'Cutoff',
-    min: 20,
-    max: 20000,
     scale: 'log',
     unit: 'Hz',
     fallback: 18000,
@@ -99,30 +99,33 @@ const SYNTH_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   {
     id: 'resonanceQ',
     name: 'Resonance',
-    min: 0.1,
-    max: 20,
     scale: 'log',
     fallback: Math.SQRT1_2,
   },
-  { id: 'drive', name: 'Drive', min: 0, max: 1, fallback: 0 },
-  { id: 'ampAttackMs', name: 'Attack', min: 0, max: 5000, unit: 'ms', fallback: 5 },
-  { id: 'ampDecayMs', name: 'Decay', min: 0, max: 5000, unit: 'ms', fallback: 60 },
-  { id: 'ampSustain', name: 'Sustain', min: 0, max: 1, fallback: 0.7 },
-  { id: 'ampReleaseMs', name: 'Release', min: 0, max: 5000, unit: 'ms', fallback: 120 },
-  { id: 'gain', name: 'Gain', min: 0, max: 2, fallback: 1 },
+  { id: 'drive', name: 'Drive', fallback: 0 },
+  { id: 'ampAttackMs', name: 'Attack', unit: 'ms', fallback: 5 },
+  { id: 'ampDecayMs', name: 'Decay', unit: 'ms', fallback: 60 },
+  { id: 'ampSustain', name: 'Sustain', fallback: 0.7 },
+  { id: 'ampReleaseMs', name: 'Release', unit: 'ms', fallback: 120 },
+  { id: 'gain', name: 'Gain', fallback: 1 },
 ];
+
+/** Editing range of a synth quick control: the patch editor's range for the field. */
+function synthControlRange(id: string): { min: number; max: number } {
+  const field = patchFieldSpec(id);
+  if (!field) throw new Error(`Quick control "${id}" has no patch field spec`);
+  return { min: field.min, max: field.max };
+}
 
 /** Amp/body-oriented controls for plucked-string presets such as guitar/bass. */
 const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
-  { id: 'drive', name: 'Pre Drive', min: 0, max: 1, fallback: 0 },
-  { id: 'bodyMix', name: 'Body', min: 0, max: 1, fallback: 0.35 },
-  { id: 'busDrive', name: 'Amp Drive', min: 0, max: 1, fallback: 0 },
-  { id: 'gain', name: 'Output', min: 0, max: 2, fallback: 1 },
+  { id: 'drive', name: 'Pre Drive', fallback: 0 },
+  { id: 'bodyMix', name: 'Body', fallback: 0.35 },
+  { id: 'busDrive', name: 'Amp Drive', fallback: 0 },
+  { id: 'gain', name: 'Output', fallback: 1 },
   {
     id: 'cutoffHz',
     name: 'Tone',
-    min: 20,
-    max: 20000,
     scale: 'log',
     unit: 'Hz',
     fallback: 18000,
@@ -130,13 +133,11 @@ const PLUCKED_STRING_QUICK_CONTROLS: ReadonlyArray<SynthControlSpec> = [
   {
     id: 'resonanceQ',
     name: 'Cab Q',
-    min: 0.1,
-    max: 20,
     scale: 'log',
     fallback: Math.SQRT1_2,
   },
-  { id: 'ampAttackMs', name: 'Pick', min: 0, max: 5000, unit: 'ms', fallback: 5 },
-  { id: 'ampReleaseMs', name: 'Damp', min: 0, max: 5000, unit: 'ms', fallback: 120 },
+  { id: 'ampAttackMs', name: 'Pick', unit: 'ms', fallback: 5 },
+  { id: 'ampReleaseMs', name: 'Damp', unit: 'ms', fallback: 120 },
 ];
 
 /** NativeSynth enum fields exposed after the stable numeric quick controls. */
@@ -364,8 +365,7 @@ export function listQuickControls(
         id: spec.id,
         name: spec.name,
         value,
-        min: spec.min,
-        max: spec.max,
+        ...synthControlRange(spec.id),
         defaultValue: spec.fallback,
       };
       if (spec.scale !== undefined) control.scale = spec.scale;
@@ -436,14 +436,13 @@ export function setQuickControl(
         id,
         name: numericSpec.name,
         value: numericSpec.fallback,
-        min: numericSpec.min,
-        max: numericSpec.max,
+        ...synthControlRange(numericSpec.id),
         defaultValue: numericSpec.fallback,
         ...(numericSpec.scale !== undefined ? { scale: numericSpec.scale } : {}),
         ...(numericSpec.unit !== undefined ? { unit: numericSpec.unit } : {}),
       };
       validateProcessorControlValue(control, value);
-      const clamped = Math.min(numericSpec.max, Math.max(numericSpec.min, value));
+      const clamped = Math.min(control.max, Math.max(control.min, value));
       const basePatch: StoredSynthPatch =
         instrument.kind === 'synth-patch' ? { ...instrument.patch } : { preset: instrument.preset };
       const nextPatch = { ...basePatch, [id]: clamped } as StoredSynthPatch;

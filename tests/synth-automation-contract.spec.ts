@@ -1,0 +1,30 @@
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { AUTOMATABLE_SYNTH_PARAMS } from '@/project/instrument';
+import { patchFieldSpec } from '@/ui/devices/patch-draft';
+import * as wasm from '@/wasm/index.js';
+
+// Checked against the real engine: its parameterInfo describes every hosted
+// instrument parameter, which a stub cannot.
+beforeAll(async () => {
+  const wasmBinary = readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`);
+  await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
+});
+
+describe('instrument automation parameters', () => {
+  it('are realtime-safe engine parameters whose editor range the engine accepts', () => {
+    const engine = new wasm.RealtimeEngine(48000, 512);
+    engine.setTrackLanes([{ trackId: 1 }]);
+    engine.setSynthInstrument('saw-lead', 1);
+    for (const name of AUTOMATABLE_SYNTH_PARAMS) {
+      const id = engine.resolveInstrumentAutomationId(1, name);
+      expect(id, name).toBeGreaterThanOrEqual(0);
+      const info = engine.parameterInfo(id);
+      expect(info.rtSafe, name).toBe(true);
+      const spec = patchFieldSpec(name);
+      expect(spec, name).not.toBeNull();
+      expect(spec?.min, name).toBeGreaterThanOrEqual(info.minValue);
+      expect(spec?.max, name).toBeLessThanOrEqual(info.maxValue);
+    }
+  });
+});
