@@ -87,6 +87,71 @@ export function registerHistoryStateContributor<T>(
   registeredHistoryStateContributors().set(id, contributor as HistoryStateContributor<unknown>);
 }
 
+/** Mirror state a post-edit reconciler compares across one command. */
+export interface PostEditSnapshot {
+  readonly tracks: ReadonlyArray<EditorTrack>;
+  readonly clips: ReadonlyArray<EditorClip>;
+  readonly chords: ReadonlyArray<EditorChordSymbol>;
+  readonly timeSignatures: ReadonlyArray<TimeSignatureSegment>;
+}
+
+/** What a post-edit reconciler sees once a forward command's action has succeeded. */
+export interface PostEditContext {
+  /** Mirror before the command. */
+  before: PostEditSnapshot;
+  /** Mirror after the action; entries equal to `before` share its objects. */
+  after: PostEditSnapshot;
+  store: ReturnType<typeof useProjectStore>;
+  /** Project edits already counted in this history entry. */
+  projectEdits: number;
+}
+
+/**
+ * Brings dependent state in line with a forward edit inside the same history
+ * entry. Returns the Project edits it applied, or undefined when it left the
+ * mirror untouched; it must undo its own Project edits before failing.
+ */
+export type PostEditReconciler = (context: PostEditContext) => number | undefined;
+
+// Same module-cycle constraint as the state contributors above.
+// biome-ignore lint/suspicious/noVar: this module-cycle boundary requires a hoisted binding.
+var postEditReconcilers: Map<string, PostEditReconciler> | undefined;
+let reconciling = false;
+
+/**
+ * Registers a reconciler run by {@link execute} and {@link executeAtomic}
+ * after the action succeeds and before the entry is pushed. Undo, redo and
+ * commands issued from inside a reconciler do not run reconcilers.
+ */
+export function registerPostEditReconciler(id: string, reconciler: PostEditReconciler): void {
+  postEditReconcilers ??= new Map<string, PostEditReconciler>();
+  postEditReconcilers.set(id, reconciler);
+}
+
+/** Runs the registered reconcilers; `changed` is false when none touched the mirror. */
+function reconcileAfterEdit(
+  store: ReturnType<typeof useProjectStore>,
+  before: PostEditSnapshot,
+  after: PostEditSnapshot,
+  projectEdits: number,
+): { projectEdits: number; changed: boolean } {
+  if (reconciling || postEditReconcilers === undefined) return { projectEdits: 0, changed: false };
+  let added = 0;
+  let changed = false;
+  reconciling = true;
+  try {
+    for (const reconciler of postEditReconcilers.values()) {
+      const applied = reconciler({ before, after, store, projectEdits: projectEdits + added });
+      if (applied === undefined) continue;
+      changed = true;
+      added += applied;
+    }
+  } finally {
+    reconciling = false;
+  }
+  return { projectEdits: added, changed };
+}
+
 /** Deep-copies the MIDI-learn binding map into a detached plain map. */
 function cloneMidiCcBindings(
   bindings: ReadonlyMap<string, MidiCcBinding>,
@@ -286,6 +351,15 @@ function cloneTrack(track: EditorTrack): EditorTrack {
   const next: EditorTrack = { ...track };
   if (track.instrument !== undefined) next.instrument = cloneInstrument(track.instrument);
   if (track.mixer !== undefined) next.mixer = cloneStrip(track.mixer);
+  if (track.leadFollow !== undefined) {
+    next.leadFollow = {
+      leadTrackId: track.leadFollow.leadTrackId,
+      stash: track.leadFollow.stash.map((entry) => ({
+        clipId: entry.clipId,
+        note: { ...entry.note },
+      })),
+    };
+  }
   return next;
 }
 
@@ -680,8 +754,10 @@ export function execute<T>(projectEdits: number, action: () => T): T {
   const store = useProjectStore();
   const before = captureSnapshot(store);
   const result = action();
-  const after = captureSnapshot(store, before);
-  pushHistory(historyEntry(before, after, projectEdits));
+  let after = captureSnapshot(store, before);
+  const reconciled = reconcileAfterEdit(store, before, after, projectEdits);
+  if (reconciled.changed) after = captureSnapshot(store, before);
+  pushHistory(historyEntry(before, after, projectEdits + reconciled.projectEdits));
   return result;
 }
 
@@ -712,7 +788,11 @@ export function executeAtomic<T>(action: (edit: AtomicProjectEdit) => T): T {
   };
   try {
     const result = action(edit);
-    pushHistory(historyEntry(before, captureSnapshot(store, before), completedProjectEdits));
+    let after = captureSnapshot(store, before);
+    const reconciled = reconcileAfterEdit(store, before, after, completedProjectEdits);
+    completedProjectEdits += reconciled.projectEdits;
+    if (reconciled.changed) after = captureSnapshot(store, before);
+    pushHistory(historyEntry(before, after, completedProjectEdits));
     return result;
   } catch (error) {
     for (let index = 0; index < completedProjectEdits; index++) project.undo();

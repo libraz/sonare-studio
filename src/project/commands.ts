@@ -107,6 +107,8 @@ export {
   undo,
 } from './command/history';
 export { insertSecondaryDominantBefore } from './command/insert-secondary-dominant';
+export { applyKeyChangeMarkers } from './command/key-changes';
+export { setTrackLeadFollow } from './command/lead-follow';
 export {
   addMasteringProcessor,
   removeMasteringProcessor,
@@ -284,6 +286,7 @@ export {
   setTrackMute,
   setTrackPan,
   setTrackPercussion,
+  setTrackPitchRange,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSolo,

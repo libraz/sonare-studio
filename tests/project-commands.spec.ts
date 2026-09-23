@@ -1,7 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { busAutomationTarget } from '@/project/automation';
-import { executeApp, executeAtomic } from '@/project/command/history';
+import {
+  execute,
+  executeApp,
+  executeAtomic,
+  registerPostEditReconciler,
+} from '@/project/command/history';
 import {
   addAudioClip,
   addGroupTrack,
@@ -12,6 +17,7 @@ import {
   addTrack,
   applyGrooveToActiveClip,
   applyGrooveToSelection,
+  applyKeyChangeMarkers,
   applyNoteEdits,
   bakeClipMidiFx,
   canRedo,
@@ -90,10 +96,12 @@ import {
   setTrackColor,
   setTrackFrozen,
   setTrackInstrument,
+  setTrackLeadFollow,
   setTrackMidiFx,
   setTrackMute,
   setTrackPan,
   setTrackPercussion,
+  setTrackPitchRange,
   setTrackSelection,
   setTrackSolo,
   setTracksColor,
@@ -1383,6 +1391,17 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
 
       expect(detectChordsForClip(drumClip)).toBe(0);
       expect(store.chords).toEqual([]);
+    });
+
+    it('detectChordsForClip ignores channel-10 hits mixed into a melodic clip', () => {
+      const clipId = store.clipId;
+      addNotes([60, 64, 67].map((pitch) => ({ pitch, startPpq: 0, durationPpq: 0.5 })));
+      // Half the notes on channel 10 keeps the track melodic; held, they spell Db-F-Ab.
+      addNotes([61, 65, 68].map((pitch) => ({ pitch, startPpq: 0, durationPpq: 4, channel: 9 })));
+
+      detectChordsForClip(clipId);
+
+      expect(store.chords[0]).toMatchObject({ startPpq: 0, rootPc: 0, quality: 0 });
     });
   });
 
@@ -2704,6 +2723,87 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       store.dispose();
       expect(canUndo()).toBe(false);
       expect(canRedo()).toBe(false);
+    });
+  });
+
+  describe('post-edit reconcilers', () => {
+    let probe: ((projectEdits: number) => number | undefined) | null = null;
+    registerPostEditReconciler('project-commands-probe', ({ projectEdits }) =>
+      probe === null ? undefined : probe(projectEdits),
+    );
+
+    it('run once per forward command with its edit count, never on undo, redo or re-entry', () => {
+      const seen: number[] = [];
+      probe = (projectEdits) => {
+        seen.push(projectEdits);
+        execute(0, () => undefined);
+        return undefined;
+      };
+      try {
+        addTrack({ name: 'Probe' });
+        expect(seen).toEqual([1]);
+        executeAtomic((edit) => {
+          edit(1, () => getProject().addTrack({ kind: 'midi', name: 'A' }));
+          edit(1, () => getProject().addTrack({ kind: 'midi', name: 'B' }));
+          store.refresh();
+        });
+        expect(seen).toEqual([1, 2]);
+        undo();
+        redo();
+        expect(seen).toEqual([1, 2]);
+      } finally {
+        probe = null;
+      }
+    });
+
+    it('fold the edits a reconciler applies into the same undo step', () => {
+      const trackId = store.tracks[0].id;
+      probe = () => {
+        probe = null;
+        getProject().renameTrack(trackId, 'Reconciled');
+        store.refresh();
+        return 1;
+      };
+      try {
+        setTrackColor(trackId, '#123456');
+      } finally {
+        probe = null;
+      }
+      expect(store.tracks[0]).toMatchObject({ name: 'Reconciled', color: '#123456' });
+      expect(undo()).toBe(true);
+      expect(store.tracks[0].name).toBe('Piano');
+      expect(store.tracks[0].color).not.toBe('#123456');
+      expect(canUndo()).toBe(false);
+    });
+  });
+
+  describe('lead follow through the command barrel', () => {
+    it('exports the follow, pitch-range and key-change commands', () => {
+      expect(typeof setTrackLeadFollow).toBe('function');
+      expect(typeof setTrackPitchRange).toBe('function');
+      expect(typeof applyKeyChangeMarkers).toBe('function');
+    });
+
+    it('keeps parked notes in history apart from later in-place edits', () => {
+      setProjectChords([{ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 }]);
+      const leadId = addTrack({ name: 'Lead' });
+      const leadClipId = addMidiClip({ trackId: leadId, lengthPpq: 8 });
+      const backingId = addTrack({ name: 'Backing' });
+      const backingClipId = addMidiClip({ trackId: backingId, lengthPpq: 8 });
+      setActiveClip(backingClipId);
+      addNotes([60, 64, 67].map((pitch) => ({ pitch, startPpq: 0, durationPpq: 4 })));
+      setTrackLeadFollow(backingId, leadId);
+      setActiveClip(leadClipId);
+      addNote({ pitch: 65, startPpq: 0, durationPpq: 1 });
+
+      const parked = () =>
+        store.tracks.find((track) => track.id === backingId)?.leadFollow?.stash ?? [];
+      expect(parked().map((entry) => entry.note.pitch)).toEqual([64]);
+      // Mutating the live mirror in place must not reach the history snapshots.
+      parked()[0].note.pitch = 0;
+      undo();
+      redo();
+      expect(parked().map((entry) => entry.note.pitch)).toEqual([64]);
     });
   });
 });

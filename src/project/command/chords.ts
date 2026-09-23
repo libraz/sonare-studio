@@ -3,6 +3,7 @@ import { effectiveKeyScale } from '@/compose/key';
 import { timeSignatureAtPpq } from '@/compose/meter';
 import { melodyPitchClassesInRegion } from '@/compose/reharm';
 import {
+  harmonicNotes,
   harmonicTracksOnly,
   isDrumTrack,
   isMelodyTrack,
@@ -21,7 +22,7 @@ import {
 } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
-import { clipKind, type EditorNote } from '../types';
+import { clipKind, type EditorNote, type LeadFollowStashEntry } from '../types';
 import { execute, executeAtomic } from './history';
 import { requireClip } from './utils';
 
@@ -44,11 +45,11 @@ export function setProjectChords(symbols: ReadonlyArray<EditorChordSymbol>): voi
   const sanitized = sanitizeChordSymbols(symbols);
   const project = getProject();
   const before = store.chords.map((chord) => ({ ...chord }));
-  const followEdits = planChordFollowEdits(store, before, sanitized);
+  const { clipEdits: followEdits, stashes } = planChordFollowEdits(store, before, sanitized);
   // The annotation encoding has no field for omitted tones, so the symbols just
   // written are handed to the read-back as hints; without them a chord that
   // omits a tone would come back sounding it.
-  if (followEdits.length === 0) {
+  if (followEdits.length === 0 && stashes.size === 0) {
     execute(1, () => {
       project.annotateChords(toProjectChordSymbols(sanitized));
       store.refresh(undefined, sanitized);
@@ -60,6 +61,13 @@ export function setProjectChords(symbols: ReadonlyArray<EditorChordSymbol>): voi
     for (const clipEdit of followEdits) {
       edit(1, () => project.setMidiEvents(clipEdit.clipId, notesToProjectEvents(clipEdit.notes)));
     }
+    // Parked lead-follow notes move with their track, so they return at the new pitch.
+    store.tracks = store.tracks.map((track) => {
+      const stash = stashes.get(track.id);
+      return stash === undefined || track.leadFollow === undefined
+        ? track
+        : { ...track, leadFollow: { ...track.leadFollow, stash } };
+    });
     // Re-voiced notes keep their editor ids, so selection and score
     // annotations survive the chord change.
     store.refresh(
@@ -75,18 +83,25 @@ interface ChordFollowClipEdit {
   notes: EditorNote[];
 }
 
+/** Re-voiced clips plus, per track, its re-voiced lead-follow stash. */
+interface ChordFollowPlan {
+  clipEdits: ChordFollowClipEdit[];
+  stashes: Map<number, LeadFollowStashEntry[]>;
+}
+
 /**
  * Works out how the tracks following the chord track must be re-voiced for a
- * pending chord edit. Percussion tracks, frozen tracks and looping clips are
- * skipped: a looping clip sounds one note under several chord regions, so no
- * single pitch could follow them all.
+ * pending chord edit, their parked lead-follow notes included. Percussion
+ * tracks, frozen tracks and looping clips are skipped: a looping clip sounds
+ * one note under several chord regions, so no single pitch could follow them all.
  */
 function planChordFollowEdits(
   store: ReturnType<typeof useProjectStore>,
   before: ReadonlyArray<EditorChordSymbol>,
   after: ReadonlyArray<EditorChordSymbol>,
-): ChordFollowClipEdit[] {
+): ChordFollowPlan {
   const edits: ChordFollowClipEdit[] = [];
+  const stashes = new Map<number, LeadFollowStashEntry[]>();
   for (const track of store.tracks) {
     const mode = track.chordFollow;
     if (mode === undefined || track.frozen !== undefined || track.percussion === true) continue;
@@ -110,8 +125,30 @@ function planChordFollowEdits(
         notes: clip.notes.map((note) => ({ ...note, pitch: pitchById.get(note.id) ?? note.pitch })),
       });
     }
+    const stash = track.leadFollow?.stash ?? [];
+    const stashUpdates = chordFollowUpdates(
+      stash.flatMap((entry, index) => {
+        const clip = store.clips.find((candidate) => candidate.id === entry.clipId);
+        if (clip === undefined || clip.loopEnabled) return [];
+        const timelinePpq = midiSourcePpqToTimeline(clip, entry.note.startPpq);
+        return [{ id: index, pitch: entry.note.pitch, timelinePpq }];
+      }),
+      before,
+      after,
+      mode,
+    );
+    if (stashUpdates.length > 0) {
+      const pitchByIndex = new Map(stashUpdates.map((update) => [update.id, update.pitch]));
+      stashes.set(
+        track.id,
+        stash.map((entry, index) => {
+          const pitch = pitchByIndex.get(index);
+          return pitch === undefined ? entry : { ...entry, note: { ...entry.note, pitch } };
+        }),
+      );
+    }
   }
-  return edits;
+  return { clipEdits: edits, stashes };
 }
 
 /** Clears the project chord track (one undoable entry); no-op when empty. */
@@ -228,7 +265,7 @@ export function detectChordsForClip(clipId: number): number {
   // arrangement-wide estimate excludes the same tracks via harmonicTracksOnly).
   const track = store.tracks.find((entry) => entry.id === clip.trackId);
   if (track && isDrumTrack(track, notes)) return 0;
-  const detected = estimateChordSymbols(notes, {
+  const detected = estimateChordSymbols(track ? harmonicNotes(track, notes) : notes, {
     clipStartPpq: clip.startPpq,
     clipLengthPpq: clip.lengthPpq,
     measureLengthPpq: measureLengthAtPpq(store, clip.startPpq),

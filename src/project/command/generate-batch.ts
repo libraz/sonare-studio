@@ -12,6 +12,9 @@
  * The generators build their notes through the shared plan builders, which do
  * not touch the Project, so this command is the sole `execute` boundary for the
  * whole batch (never nesting the single-shot commands' own boundaries).
+ *
+ * A batch that writes both a motif and a backing makes the backing follow the
+ * motif's track; the lead-follow reconciler thins it in the same entry.
  */
 
 import type { TrackPart } from '../generation';
@@ -23,6 +26,7 @@ import { buildDrumsPlan, type GenerateDrumsParams } from './generate-drums';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
 import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { type AtomicProjectEdit, executeAtomic } from './history';
+import { leadFollowRejection } from './lead-follow';
 import { pruneClipScoreAnnotations } from './tracks';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
@@ -47,8 +51,33 @@ export type BatchPartSpec =
 
 /** One deferred write plus the number of wasm-Project edits it performs. */
 interface BatchOp {
+  part: TrackPart;
   edits: number;
-  apply: (edit: AtomicProjectEdit) => void;
+  /** Performs the write and returns the id of the track it wrote. */
+  apply: (edit: AtomicProjectEdit) => number;
+}
+
+/** Id of the track owning a clip the batch just created. */
+function trackOfClip(store: ReturnType<typeof useProjectStore>, clipId: number): number {
+  const clip = store.clips.find((entry) => entry.id === clipId);
+  if (clip === undefined) throw new Error(`Generated clip ${clipId} is missing`);
+  return clip.trackId;
+}
+
+/** Makes the generated backing follow the generated motif when the pair is allowed. */
+function followMotif(
+  store: ReturnType<typeof useProjectStore>,
+  written: ReadonlyMap<TrackPart, number>,
+): void {
+  const motifTrackId = written.get('motif');
+  const backingTrackId = written.get('backing');
+  if (motifTrackId === undefined || backingTrackId === undefined) return;
+  if (leadFollowRejection(store, backingTrackId, motifTrackId) !== null) return;
+  store.tracks = store.tracks.map((track) =>
+    track.id === backingTrackId
+      ? { ...track, leadFollow: { leadTrackId: motifTrackId, stash: [] } }
+      : track,
+  );
 }
 
 /** Builds the new-track plan for a part spec (motif's clip target excluded). */
@@ -135,9 +164,11 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       const merged = buildMotifClipMerge(store, clip, spec.params, mode);
       if (merged === null) continue;
       ops.push({
+        part: spec.part,
         edits: 1,
         apply: (edit) => {
           edit(1, () => project.setMidiEvents(clip.id, notesToProjectEvents(merged)));
+          return clip.trackId;
         },
       });
       continue;
@@ -157,41 +188,49 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       }
       const oldClipCount = store.clips.filter((clip) => clip.trackId === trackId).length;
       ops.push({
+        part: spec.part,
         edits: existing ? oldClipCount + 3 : EDITS_PER_TRACK,
         apply: (edit) => {
-          if (existing) replaceTrack(store, trackId, plan, edit);
-          else
-            addGeneratedTrack(
-              store,
-              {
-                name: plan.name,
-                notes: plan.notes,
-                startPpq: 0,
-                lengthPpq: plan.lengthPpq,
-                preset: plan.preset,
-                provenance: plan.provenance,
-              },
-              edit,
-            );
+          if (existing) {
+            replaceTrack(store, trackId, plan, edit);
+            return trackId;
+          }
+          const clipId = addGeneratedTrack(
+            store,
+            {
+              name: plan.name,
+              notes: plan.notes,
+              startPpq: 0,
+              lengthPpq: plan.lengthPpq,
+              preset: plan.preset,
+              provenance: plan.provenance,
+            },
+            edit,
+          );
+          return trackOfClip(store, clipId);
         },
       });
       continue;
     }
 
     ops.push({
+      part: spec.part,
       edits: EDITS_PER_TRACK,
       apply: (edit) =>
-        addGeneratedTrack(
+        trackOfClip(
           store,
-          {
-            name: plan.name,
-            notes: plan.notes,
-            startPpq: 0,
-            lengthPpq: plan.lengthPpq,
-            preset: plan.preset,
-            provenance: plan.provenance,
-          },
-          edit,
+          addGeneratedTrack(
+            store,
+            {
+              name: plan.name,
+              notes: plan.notes,
+              startPpq: 0,
+              lengthPpq: plan.lengthPpq,
+              preset: plan.preset,
+              provenance: plan.provenance,
+            },
+            edit,
+          ),
         ),
     });
   }
@@ -200,8 +239,10 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
   if (totalEdits === 0) return 0;
 
   executeAtomic((edit) => {
-    for (const op of ops) op.apply(edit);
+    const written = new Map<TrackPart, number>();
+    for (const op of ops) written.set(op.part, op.apply(edit));
     store.refresh();
+    followMotif(store, written);
   });
   return ops.length;
 }

@@ -273,6 +273,12 @@ export const useProjectStore = defineStore('project', () => {
    */
   const scaleHighlightEstimated = ref(false);
   /**
+   * Whether the last lead-follow reconcile was skipped because thinning would
+   * exceed the undo budget or a write failed (editor-only, not undoable and
+   * never persisted). Cleared by the next reconcile that completes.
+   */
+  const leadFollowDeferred = ref(false);
+  /**
    * Display-only score annotations keyed by clip id then editor note id
    * (app-level metadata; never written to the Project or to MIDI data).
    * Entries whose note no longer exists are ignored by the score pipeline.
@@ -907,6 +913,7 @@ export const useProjectStore = defineStore('project', () => {
     snapEnabled.value = true;
     scaleHighlight.value = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
     scaleHighlightEstimated.value = false;
+    leadFollowDeferred.value = false;
     estimatedKey = null;
     scoreAnnotations.value = {};
     displayTransposeSemitones.value = 0;
@@ -946,6 +953,7 @@ export const useProjectStore = defineStore('project', () => {
     snapEnabled,
     scaleHighlight,
     scaleHighlightEstimated,
+    leadFollowDeferred,
     setScaleHighlight,
     setScaleHighlightEnabled,
     scoreAnnotations,

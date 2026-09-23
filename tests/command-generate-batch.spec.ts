@@ -316,6 +316,51 @@ describe('generateTracksBatchCommand', () => {
     const track = store.tracks.find((entry) => entry.id === trackId);
     expect(track?.generated?.part).toBe('bass');
   });
+
+  const followOf = (part: 'backing') =>
+    store.tracks.find((track) => track.generated?.part === part)?.leadFollow;
+
+  it('makes a backing generated with a new motif follow the motif track', () => {
+    setProjectChords(FOUR_CHORDS);
+    const trackCount = store.tracks.length;
+    generateTracksBatchCommand([
+      { part: 'motif', params: {}, target: { kind: 'new' } },
+      { part: 'backing', params: {}, target: { kind: 'new' } },
+    ]);
+    const motif = store.tracks.find((track) => track.generated?.part === 'motif');
+    expect(followOf('backing')?.leadTrackId).toBe(motif?.id);
+    // The follow setting and any thinning belong to the one generation step.
+    expect(undo()).toBe(true);
+    expect(store.tracks.length).toBe(trackCount);
+  });
+
+  it('follows the active clip track when the motif is written into a clip', () => {
+    setProjectChords(FOUR_CHORDS);
+    const activeTrackId = store.activeClip?.trackId;
+    generateTracksBatchCommand([
+      { part: 'motif', params: {}, target: { kind: 'clip', mode: 'append' } },
+      { part: 'backing', params: {}, target: { kind: 'new' } },
+    ]);
+    expect(activeTrackId).toBeDefined();
+    expect(followOf('backing')?.leadTrackId).toBe(activeTrackId);
+  });
+
+  it('follows the replaced track when the motif replaces one', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'bass', params: {}, target: { kind: 'new' } }]);
+    const replacedId = store.tracks.find((track) => track.generated?.part === 'bass')?.id ?? -1;
+    generateTracksBatchCommand([
+      { part: 'motif', params: {}, target: { kind: 'replaceTrack', trackId: replacedId } },
+      { part: 'backing', params: {}, target: { kind: 'new' } },
+    ]);
+    expect(followOf('backing')?.leadTrackId).toBe(replacedId);
+  });
+
+  it('leaves a backing generated without a motif unfollowed', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'backing', params: {}, target: { kind: 'new' } }]);
+    expect(followOf('backing')).toBeUndefined();
+  });
 });
 
 describe('partForTrack', () => {
