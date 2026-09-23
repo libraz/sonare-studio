@@ -45,10 +45,6 @@ import * as warp from './scenarios/warp.mjs';
 export const scenarios = [
   boot,
   piano_roll,
-  // Before track_and_clip: once the header list overflows and scrolls, the
-  // arrangement canvas rows do not follow, so clicks aimed from a header row
-  // land on the wrong lane.
-  placement_guide,
   score,
   score_annotations,
   shortcut_help,
@@ -80,4 +76,6 @@ export const scenarios = [
   export_dialog,
   export_midi,
   export_dawproject,
+  // Last: it leaves its own tracks, an empty active clip and a far playhead.
+  placement_guide,
 ];
