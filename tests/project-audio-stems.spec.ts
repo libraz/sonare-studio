@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { type AudioStemSeparator, separateAudioClipStems } from '@/project/audio-stems';
+import {
+  type AudioStemSeparator,
+  separateAudioClipComponents,
+  separateAudioClipStems,
+} from '@/project/audio-stems';
 import { normalizeTempoMap } from '@/project/tempo-map';
 
 /** A minimal audio-clip window with neutral defaults. */
@@ -386,78 +390,6 @@ describe('separateAudioClipStems', () => {
     expect(stems[2].channels[0][0]).toBe(3);
   });
 
-  it('uses decompose activations as a conservative HPSS bleed gate', async () => {
-    const decomposeCalls: Array<{
-      length: number;
-      nFeatures: number;
-      nFrames: number;
-      nComponents: number;
-      init?: string;
-    }> = [];
-    const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
-      loadAudioAsset: async () => asset([1], WINDOW_FRAMES),
-      separateStems: (samples, sampleRate) => ({
-        harmonic: new Float32Array(samples.length).fill(1),
-        percussive: new Float32Array(samples.length).fill(1),
-        residual: new Float32Array(samples.length).fill(0.5),
-        sampleRate: sampleRate ?? 0,
-      }),
-      enhancers: {
-        decomposeWithInit: (samples, nFeatures, nFrames, nComponents, _nIter, _beta, init) => {
-          decomposeCalls.push({
-            length: samples.length,
-            nFeatures,
-            nFrames,
-            nComponents,
-            init,
-          });
-          const activations = new Float32Array(nFrames * 2);
-          activations.fill(1, 0, nFrames);
-          for (let index = 0; index < nFrames; index += 1) {
-            activations[nFrames + index] = index % 2 === 0 ? 0 : 10;
-          }
-          return { h: activations };
-        },
-      },
-    });
-
-    expect(decomposeCalls).toEqual([
-      {
-        length: 48000,
-        nFeatures: 1,
-        nFrames: 48000,
-        nComponents: 2,
-        init: 'nndsvd',
-      },
-    ]);
-    expect(stems[0].channels[0][0]).toBeCloseTo(1.35);
-    expect(stems[0].channels[0][1]).toBeCloseTo(0.6818, 3);
-    expect(stems[1].channels[0][0]).toBeCloseTo(0.65);
-    expect(stems[1].channels[0][1]).toBeCloseTo(1.3182, 3);
-    expect(stems[0].channels[0][0] + stems[1].channels[0][0]).toBeCloseTo(2);
-    expect(stems[0].channels[0][1] + stems[1].channels[0][1]).toBeCloseTo(2);
-    expect(stems[2].channels[0][0]).toBe(0.5);
-  });
-
-  it('keeps HPSS stems when decompose activations cannot be used', async () => {
-    const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
-      loadAudioAsset: async () => asset([1], WINDOW_FRAMES),
-      separateStems: (samples, sampleRate) => ({
-        harmonic: new Float32Array(samples.length).fill(1),
-        percussive: new Float32Array(samples.length).fill(2),
-        residual: new Float32Array(samples.length).fill(3),
-        sampleRate: sampleRate ?? 0,
-      }),
-      enhancers: {
-        decompose: () => ({ h: new Float32Array(8) }),
-      },
-    });
-
-    expect(stems[0].channels[0][0]).toBe(1);
-    expect(stems[1].channels[0][0]).toBe(2);
-    expect(stems[2].channels[0][0]).toBe(3);
-  });
-
   it('returns [] without an asset, at a non-positive tempo, or on an empty window', async () => {
     const { fn } = separator();
     await expect(
@@ -476,6 +408,69 @@ describe('separateAudioClipStems', () => {
       separateAudioClipStems(clipWindow(), 120, {
         loadAudioAsset: async () => asset([0.5], 0),
         separateStems: fn,
+      }),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe('separateAudioClipComponents', () => {
+  it('returns one stem per component with the source channel count and window length', async () => {
+    const decomposeCalls: Array<{ channelCount: number; sampleRate: number; count: number }> = [];
+    const stems = await separateAudioClipComponents(clipWindow({ lengthPpq: 2 }), 120, 3, {
+      loadAudioAsset: async () =>
+        ({
+          meta: {
+            id: 'asset-1',
+            name: 'stereo',
+            sampleRate: 48000,
+            numChannels: 2,
+            numFrames: WINDOW_FRAMES,
+          },
+          channels: [
+            new Float32Array(WINDOW_FRAMES).fill(1),
+            new Float32Array(WINDOW_FRAMES).fill(-1),
+          ],
+        }) as LoadedAudioAsset,
+      decompose: async (channels, sampleRate, count) => {
+        decomposeCalls.push({ channelCount: channels.length, sampleRate, count });
+        return Array.from({ length: count }, (_, index) =>
+          channels.map((channel) => channel.map((value) => value * (index + 1))),
+        );
+      },
+    });
+
+    expect(decomposeCalls).toEqual([{ channelCount: 2, sampleRate: 48000, count: 3 }]);
+    expect(stems).toHaveLength(3);
+    expect(stems.map((stem) => stem.kind)).toEqual(['component', 'component', 'component']);
+    expect(stems.map((stem) => stem.index)).toEqual([0, 1, 2]);
+    for (const stem of stems) {
+      expect(stem.sampleRate).toBe(48000);
+      expect(stem.channels).toHaveLength(2);
+      expect(stem.channels[0]).toHaveLength(48000);
+    }
+    expect(stems[0].channels[0][0]).toBe(1);
+    expect(stems[1].channels[0][0]).toBe(2);
+    expect(stems[2].channels[1][0]).toBe(-3);
+  });
+
+  it('returns [] without an asset, at a non-positive tempo, or on an empty window', async () => {
+    const decompose = async (channels: Float32Array[]) => [channels];
+    await expect(
+      separateAudioClipComponents(clipWindow({ assetId: undefined }), 120, 2, {
+        loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
+        decompose,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      separateAudioClipComponents(clipWindow(), 0, 2, {
+        loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
+        decompose,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      separateAudioClipComponents(clipWindow(), 120, 2, {
+        loadAudioAsset: async () => asset([0.5], 0),
+        decompose,
       }),
     ).resolves.toEqual([]);
   });

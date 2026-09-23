@@ -49,6 +49,7 @@ import {
   setClipSelection,
   setMarker,
   sliceAudioClipAtTransients,
+  splitAudioClipToComponents,
   splitAudioClipToStems,
   splitClip,
   type TrackPart,
@@ -178,8 +179,14 @@ const isDetectingSections = ref(false);
 /** True while a melody extraction is awaiting the engine. */
 const isExtractingMelody = ref(false);
 
-/** True while a stem separation is awaiting the engine. */
+/** True while a stem separation (either mode) is awaiting the engine. */
 const isSplittingStems = ref(false);
+
+/** Non-null while a components split is in flight; clicking the button cancels it. */
+const componentSplitAbort = ref<AbortController | null>(null);
+
+/** Component counts offered in the "Components" submenu. */
+const COMPONENT_SPLIT_COUNTS = [2, 3, 4, 6, 8] as const;
 
 /** True while a clip is being tuned to a MIDI track. */
 const isTuningToMidi = ref(false);
@@ -277,6 +284,67 @@ function splitToStems(): void {
       isSplittingStems.value = false;
     }
   })();
+}
+
+/**
+ * Splits the active audio clip into `count` NMF components, each on a new
+ * audio track. Cancelling through {@link componentSplitAbort} clears the busy
+ * state silently; any other failure is surfaced in `error`.
+ */
+function splitToComponents(clipId: number, count: number): void {
+  if (isSplittingStems.value) return;
+  error.value = '';
+  isSplittingStems.value = true;
+  const controller = new AbortController();
+  componentSplitAbort.value = controller;
+  void (async () => {
+    try {
+      const newClipIds = await splitAudioClipToComponents(clipId, count, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      if (newClipIds.length === 0) error.value = t.value.shell.arrangement.noStemsSeparated;
+      else setActiveClip(newClipIds[0]);
+    } catch (err) {
+      if (!controller.signal.aborted)
+        error.value = err instanceof Error ? err.message : String(err);
+    } finally {
+      isSplittingStems.value = false;
+      componentSplitAbort.value = null;
+    }
+  })();
+}
+
+/** Opens the "harmonic/percussive/residual" vs. "components" stem-split menu. */
+function openSplitStemsMenu(event: MouseEvent): void {
+  const clip = detectableAudioClip.value;
+  if (!clip || isSplittingStems.value) return;
+  const items: ContextMenuItem[] = [
+    {
+      id: 'split-stems-hpss',
+      label: t.value.shell.arrangement.splitStemsHpss,
+      run: () => splitToStems(),
+    },
+    {
+      id: 'split-stems-components',
+      label: t.value.shell.arrangement.splitStemsComponents,
+      children: COMPONENT_SPLIT_COUNTS.map((count) => ({
+        id: `split-stems-components-${count}`,
+        label: formatMessage(t.value.shell.arrangement.splitStemsComponentCount, { count }),
+        run: () => splitToComponents(clip.id, count),
+      })),
+    },
+  ];
+  openContextMenu(event.clientX, event.clientY, items);
+}
+
+/** Stem-split button handler: cancels a running components split, else opens the menu. */
+function onSplitStemsClick(event: MouseEvent): void {
+  if (componentSplitAbort.value) {
+    componentSplitAbort.value.abort();
+    return;
+  }
+  openSplitStemsMenu(event);
 }
 
 /** MIDI tracks a clip can be tuned to. */
@@ -1364,11 +1432,13 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="section-detect"
-          :disabled="detectableAudioClip === null || isSplittingStems"
+          :disabled="
+            detectableAudioClip === null || (isSplittingStems && componentSplitAbort === null)
+          "
           v-tooltip="t.shell.arrangement.splitStemsTitle"
-          @click="splitToStems"
+          @click="onSplitStemsClick"
         >
-          {{ t.shell.arrangement.splitStems }}
+          {{ componentSplitAbort ? t.shell.arrangement.cancelSplit : t.shell.arrangement.splitStems }}
         </button>
         <button
           type="button"

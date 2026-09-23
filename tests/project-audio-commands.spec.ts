@@ -20,6 +20,7 @@ import {
   setClipWarp,
   setTempoSegments,
   setTrackRecordInputChannel,
+  splitAudioClipToComponents,
   splitAudioClipToStems,
   splitClip,
   trimClip,
@@ -136,6 +137,14 @@ async function layDownStemSource(name: string): Promise<number> {
     }),
   });
   return clipId;
+}
+
+/** Fake component decomposer: component `k` is the input scaled by `k + 1`. */
+function fakeComponentDecompose(count: number) {
+  return async (channels: Float32Array[]): Promise<Float32Array[][]> =>
+    Array.from({ length: count }, (_, index) =>
+      channels.map((channel) => channel.map((value) => value * (index + 1))),
+    );
 }
 
 describe('audio track and clip commands', () => {
@@ -992,6 +1001,73 @@ describe('audio track and clip commands', () => {
     expect(readDoc().tracks).toHaveLength(2);
     expect(readDoc().clips).toHaveLength(2);
     expect(undo()).toBe(false);
+  });
+
+  it('lays down one track and clip per component, in decompose order, as one undoable edit', async () => {
+    const clipId = await layDownStemSource('Loop');
+    clearHistory();
+    const tracksBefore = store.tracks.length;
+    const clipsBefore = store.clips.length;
+
+    const componentClipIds = await splitAudioClipToComponents(clipId, 3, {
+      decompose: fakeComponentDecompose(3),
+    });
+
+    expect(componentClipIds).toHaveLength(3);
+    expect(store.tracks).toHaveLength(tracksBefore + 3);
+    expect(store.clips).toHaveLength(clipsBefore + 3);
+    const componentClips = componentClipIds.map((id) => store.clips.find((clip) => clip.id === id));
+    expect(componentClips.map((clip) => clip?.name)).toEqual([
+      'Loop component 1',
+      'Loop component 2',
+      'Loop component 3',
+    ]);
+    expect(new Set(componentClips.map((clip) => clip?.assetId)).size).toBe(3);
+
+    expect(undo()).toBe(true);
+    expect(store.tracks).toHaveLength(tracksBefore);
+    expect(store.clips).toHaveLength(clipsBefore);
+    expect(redo()).toBe(true);
+    expect(
+      store.clips.filter((clip) => componentClipIds.includes(clip.id)).map((clip) => clip.name),
+    ).toEqual(['Loop component 1', 'Loop component 2', 'Loop component 3']);
+  });
+
+  it('validates the component count as an integer in [2, 8]', async () => {
+    const clipId = await layDownStemSource('Loop');
+    await expect(
+      splitAudioClipToComponents(clipId, 1, { decompose: fakeComponentDecompose(1) }),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      splitAudioClipToComponents(clipId, 9, { decompose: fakeComponentDecompose(9) }),
+    ).rejects.toThrow(RangeError);
+    await expect(
+      splitAudioClipToComponents(clipId, 2.5, { decompose: fakeComponentDecompose(2) }),
+    ).rejects.toThrow(RangeError);
+  });
+
+  it('returns [] and leaves tracks/clips untouched when a component split is aborted', async () => {
+    const clipId = await layDownStemSource('Loop');
+    const tracksBefore = store.tracks.length;
+    const clipsBefore = store.clips.length;
+    const controller = new AbortController();
+    controller.abort();
+    const decompose = async (
+      _channels: Float32Array[],
+      _sampleRate: number,
+      _count: number,
+      signal?: AbortSignal,
+    ): Promise<Float32Array[][]> => {
+      if (signal?.aborted) throw new DOMException('Component split was aborted', 'AbortError');
+      return [];
+    };
+
+    await expect(
+      splitAudioClipToComponents(clipId, 2, { signal: controller.signal, decompose }),
+    ).resolves.toEqual([]);
+
+    expect(store.tracks).toHaveLength(tracksBefore);
+    expect(store.clips).toHaveLength(clipsBefore);
   });
 
   it('swaps a clip asset as one undoable command while preserving clip metadata', async () => {

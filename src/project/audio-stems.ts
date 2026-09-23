@@ -4,17 +4,22 @@
  * residual stems (each keeping the source channel count). When available, a
  * phase-vocoder seam is used as a length repair for separators that return
  * slightly drifted buffers, and an NN-filter seam can refine each waveform stem
- * only when it returns an equal-length matrix. Matrix NMF (`decompose`) is used
- * conservatively as a same-length bleed gate for HPSS waveforms when it returns
- * usable component activations; it never replaces HPSS with a reconstructed
- * waveform.
+ * only when it returns an equal-length matrix.
  *
- * The separator input is rendered through the same audible clip pipeline as
+ * `separateAudioClipComponents` splits the same rendered window into an
+ * arbitrary number of NMF components through an injected async `decompose`
+ * (production calls `decomposeStemsLinked` off the main thread; see
+ * decompose-stems-client).
+ *
+ * Both separators render their input through the same audible clip pipeline as
  * live playback and export, so take/comp, loop, warp, fades and tempo-map
- * changes are already baked into the clip-local window. Stereo clips are separated as linked
- * mid/side channels before being reconstructed to left/right, avoiding the
- * phase instability that comes from running unrelated L/R mono separations.
- * Other channel layouts fall back to independent mono channels.
+ * changes are already baked into the clip-local window. For HPSS, stereo clips
+ * are separated as linked mid/side channels before being reconstructed to
+ * left/right, avoiding the phase instability that comes from running unrelated
+ * L/R mono separations; other channel layouts fall back to independent mono
+ * channels. Component separation instead hands every channel to one shared NMF
+ * model, so the stereo image and per-channel phase are the wasm seam's own to
+ * preserve.
  * Side-effect-free and dependency-injected for testing; the asset, track and
  * clip creation lives in command/stems.
  */
@@ -60,29 +65,6 @@ export interface AudioStemEnhancers {
     nFft?: number,
     hopLength?: number,
   ) => Float32Array;
-  /**
-   * Matrix NMF seam. Its two component activations are read as a same-length
-   * bleed gate between the harmonic and percussive bands; nothing here is
-   * reconstructed from a mask, so a gated band is still the separator's own.
-   * Preferred in its `decomposeWithInit` form, which seeds deterministically.
-   */
-  decompose?: (
-    s: Float32Array,
-    nFeatures: number,
-    nFrames: number,
-    nComponents: number,
-    nIter?: number,
-    beta?: number,
-  ) => unknown;
-  decomposeWithInit?: (
-    s: Float32Array,
-    nFeatures: number,
-    nFrames: number,
-    nComponents: number,
-    nIter?: number,
-    beta?: number,
-    init?: 'random' | 'nndsvd',
-  ) => unknown;
   nnFilter?: (
     s: Float32Array,
     nFeatures: number,
@@ -118,8 +100,10 @@ export interface AudioStemsDeps {
 
 /** One separated stem ready to be stored as an asset and laid down as a clip. */
 export interface SeparatedStem {
-  /** Which band this is. */
-  kind: StemKind;
+  /** Which band this is, or `'component'` for an NMF component. */
+  kind: StemKind | 'component';
+  /** 0-based component index; set only when `kind` is `'component'`. */
+  index?: number;
   /** Planar channels (same channel count and length as the source window). */
   channels: Float32Array[];
   /** Sample rate of the channels, in Hz. */
@@ -156,77 +140,6 @@ function matrixData(
   return null;
 }
 
-function unknownMatrixData(result: unknown, keys: readonly string[]): Float32Array | null {
-  if (result instanceof Float32Array) return result;
-  if (!result || typeof result !== 'object') return null;
-  const record = result as Record<string, unknown>;
-  for (const key of keys) {
-    const value = record[key];
-    if (value instanceof Float32Array) return value;
-  }
-  return null;
-}
-
-function roughness(values: Float32Array, offset: number, stride: number, frames: number): number {
-  let delta = 0;
-  let energy = Math.abs(values[offset] ?? 0);
-  for (let index = 1; index < frames; index += 1) {
-    const previous = values[offset + (index - 1) * stride] ?? 0;
-    const current = values[offset + index * stride] ?? 0;
-    delta += Math.abs(current - previous);
-    energy += Math.abs(current);
-  }
-  return delta / Math.max(energy, 1e-6);
-}
-
-function smoothMasks(
-  first: Float32Array,
-  second: Float32Array,
-): { harmonic: Float32Array; percussive: Float32Array } {
-  const frames = Math.min(first.length, second.length);
-  const harmonic = new Float32Array(frames);
-  const percussive = new Float32Array(frames);
-  for (let index = 0; index < frames; index += 1) {
-    const a = Math.max(0, first[index]);
-    const b = Math.max(0, second[index]);
-    const total = a + b;
-    harmonic[index] = total > 1e-8 ? a / total : 1;
-    percussive[index] = total > 1e-8 ? b / total : 1;
-  }
-  return { harmonic, percussive };
-}
-
-function decomposeMasks(
-  samples: Float32Array,
-  enhancers?: AudioStemEnhancers,
-): { harmonic: Float32Array; percussive: Float32Array } | null {
-  const decompose = enhancers?.decomposeWithInit ?? enhancers?.decompose;
-  if (typeof decompose !== 'function' || samples.length < 2) return null;
-  const magnitude = new Float32Array(samples.length);
-  for (let index = 0; index < samples.length; index += 1) {
-    magnitude[index] = Math.abs(samples[index]);
-  }
-  try {
-    const result =
-      decompose === enhancers?.decomposeWithInit
-        ? enhancers.decomposeWithInit(magnitude, 1, samples.length, 2, 40, 2, 'nndsvd')
-        : decompose(magnitude, 1, samples.length, 2, 40, 2);
-    const activations = unknownMatrixData(result, ['h', 'H', 'activations', 'components']);
-    if (!activations || activations.length !== samples.length * 2) return null;
-    const first = new Float32Array(samples.length);
-    const second = new Float32Array(samples.length);
-    for (let index = 0; index < samples.length; index += 1) {
-      first[index] = Math.max(0, activations[index]);
-      second[index] = Math.max(0, activations[samples.length + index]);
-    }
-    const firstRough = roughness(activations, 0, 1, samples.length);
-    const secondRough = roughness(activations, samples.length, 1, samples.length);
-    return firstRough <= secondRough ? smoothMasks(first, second) : smoothMasks(second, first);
-  } catch {
-    return null;
-  }
-}
-
 function refineStemWaveform(
   samples: Float32Array,
   nnFilter?: AudioStemEnhancers['nnFilter'],
@@ -240,41 +153,13 @@ function refineStemWaveform(
   }
 }
 
-function applyDecomposeBleedGate(
-  split: Record<StemKind, Float32Array>,
-  source: Float32Array,
-  enhancers?: AudioStemEnhancers,
-): Record<StemKind, Float32Array> {
-  const masks = decomposeMasks(source, enhancers);
-  if (!masks) return split;
-  const strength = 0.35;
-  const harmonic = new Float32Array(split.harmonic.length);
-  const percussive = new Float32Array(split.percussive.length);
-  for (let index = 0; index < harmonic.length; index += 1) {
-    const harmonicMask = masks.harmonic[index] ?? 1;
-    const percussiveMask = masks.percussive[index] ?? 1;
-    const sourceSum = split.harmonic[index] + split.percussive[index];
-    let gatedHarmonic = split.harmonic[index] * (1 - strength + strength * harmonicMask);
-    let gatedPercussive = split.percussive[index] * (1 - strength + strength * percussiveMask);
-    const gatedSum = gatedHarmonic + gatedPercussive;
-    const deficit = sourceSum - gatedSum;
-    if (deficit > 0) {
-      if (harmonicMask >= percussiveMask) gatedHarmonic += deficit;
-      else gatedPercussive += deficit;
-    }
-    harmonic[index] = gatedHarmonic;
-    percussive[index] = gatedPercussive;
-  }
-  return { harmonic, percussive, residual: split.residual };
-}
-
 function processStemChannel(
   channel: Float32Array,
   sampleRate: number,
   deps: AudioStemsDeps,
 ): Record<StemKind, Float32Array> {
   const split = deps.separateStems(channel, sampleRate);
-  const fitted = {
+  return {
     harmonic: refineStemWaveform(
       fitStemLength(split.harmonic, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
       deps.enhancers?.nnFilter,
@@ -288,7 +173,6 @@ function processStemChannel(
       deps.enhancers?.nnFilter,
     ),
   };
-  return applyDecomposeBleedGate(fitted, channel, deps.enhancers);
 }
 
 function midSideChannels(left: Float32Array, right: Float32Array): [Float32Array, Float32Array] {
@@ -313,6 +197,25 @@ function leftRightFromMidSide(mid: Float32Array, side: Float32Array): [Float32Ar
   return [left, right];
 }
 
+/** Renders an audio clip's played window, or `null` when it has no audible content. */
+async function renderStemWindow(
+  clip: Omit<AudibleAudioClipFields, 'startPpq'> & { startPpq?: number },
+  tempo: AudioClipSliceTempo,
+  loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>,
+  stretch: StretchFn | undefined,
+): Promise<{ channels: Float32Array[]; sampleRate: number } | null> {
+  const rendered = await renderAudibleAudioClipWindow(
+    { ...clip, startPpq: clip.startPpq ?? 0 },
+    tempo,
+    loadAudioAsset,
+    { stretch },
+  );
+  if (!rendered) return null;
+  const { channels: window, sampleRate } = rendered;
+  if (window.length === 0 || (window[0]?.length ?? 0) === 0) return null;
+  return { channels: window, sampleRate };
+}
+
 /**
  * Separates an audio clip's played window into harmonic / percussive /
  * residual stems. Returns `[]` when the clip has no asset, the tempo is
@@ -329,15 +232,9 @@ export async function separateAudioClipStems(
   tempo: AudioClipSliceTempo,
   deps: AudioStemsDeps,
 ): Promise<SeparatedStem[]> {
-  const rendered = await renderAudibleAudioClipWindow(
-    { ...clip, startPpq: clip.startPpq ?? 0 },
-    tempo,
-    deps.loadAudioAsset,
-    { stretch: deps.stretch },
-  );
+  const rendered = await renderStemWindow(clip, tempo, deps.loadAudioAsset, deps.stretch);
   if (!rendered) return [];
   const { channels: window, sampleRate } = rendered;
-  if (window.length === 0 || (window[0]?.length ?? 0) === 0) return [];
 
   const harmonic: Float32Array[] = [];
   const percussive: Float32Array[] = [];
@@ -365,4 +262,43 @@ export async function separateAudioClipStems(
     { kind: 'percussive', channels: percussive, sampleRate },
     { kind: 'residual', channels: residual, sampleRate },
   ];
+}
+
+/** Injectable dependencies for {@link separateAudioClipComponents}. */
+export interface AudioComponentsDeps {
+  /** Loads an audio asset's PCM (defaults to the OPFS asset store). */
+  loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
+  /** Warp stretch seam override (tests); production shares the playback wasm seam. */
+  stretch?: StretchFn;
+  /** Runs the shared-model NMF factorisation; production runs it off-thread. */
+  decompose: (
+    channels: Float32Array[],
+    sampleRate: number,
+    count: number,
+  ) => Promise<Float32Array[][]>;
+}
+
+/**
+ * Separates an audio clip's played window into `count` NMF components, one
+ * shared model and mask across every channel. Returns `[]` when the clip has
+ * no asset, the tempo is non-positive, or the source window is empty.
+ *
+ * @param clip Audio clip to split (needs `assetId`).
+ * @param tempo Project tempo/map used by the playback-matching renderer.
+ * @param count Number of components to factor.
+ * @param deps Injected asset loader and decomposer.
+ * @returns One {@link SeparatedStem} per component, in the order `decompose`
+ *   returned them.
+ */
+export async function separateAudioClipComponents(
+  clip: Omit<AudibleAudioClipFields, 'startPpq'> & { startPpq?: number },
+  tempo: AudioClipSliceTempo,
+  count: number,
+  deps: AudioComponentsDeps,
+): Promise<SeparatedStem[]> {
+  const rendered = await renderStemWindow(clip, tempo, deps.loadAudioAsset, deps.stretch);
+  if (!rendered) return [];
+  const { channels: window, sampleRate } = rendered;
+  const components = await deps.decompose(window, sampleRate, count);
+  return components.map((channels, index) => ({ kind: 'component', index, channels, sampleRate }));
 }

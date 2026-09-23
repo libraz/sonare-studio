@@ -330,7 +330,11 @@ export const shellArrangement = {
     noMelodyDetected: 'アクティブクリップからメロディを検出できませんでした。',
     splitStems: 'ステム分離',
     splitStemsTitle:
-      'アクティブなオーディオクリップをハーモニック/パーカッシブ/残差ステムに分離し新規トラックへ配置',
+      'アクティブなオーディオクリップをハーモニック/パーカッシブ/残差、または指定した数の成分に分離し新規トラックへ配置',
+    splitStemsHpss: 'ハーモニック / パーカッシブ / 残差',
+    splitStemsComponents: '成分分離',
+    splitStemsComponentCount: '{count} 成分',
+    cancelSplit: '分離を中止',
     noStemsSeparated: 'アクティブクリップのステム分離は利用できません。',
     tuneToMidi: 'MIDI に合わせる',
     tuneToMidiTitle:

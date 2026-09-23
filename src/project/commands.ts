@@ -247,7 +247,7 @@ export {
   setDisplayTranspose,
   setNoteAnnotation,
 } from './command/score-annotations';
-export { splitAudioClipToStems } from './command/stems';
+export { splitAudioClipToComponents, splitAudioClipToStems } from './command/stems';
 export type { DetectedSectionSummary, SectionInput } from './command/timeline';
 export {
   deleteTime,

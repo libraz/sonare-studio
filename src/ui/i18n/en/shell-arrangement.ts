@@ -333,7 +333,11 @@ export const shellArrangement = {
     noMelodyDetected: 'No melody detected in the active clip.',
     splitStems: 'Split stems',
     splitStemsTitle:
-      'Split the active audio clip into harmonic, percussive and residual stems on new tracks',
+      'Split the active audio clip into harmonic/percussive/residual stems, or into a chosen number of components, each on a new track',
+    splitStemsHpss: 'Harmonic / percussive / residual',
+    splitStemsComponents: 'Components',
+    splitStemsComponentCount: '{count} components',
+    cancelSplit: 'Cancel split',
     noStemsSeparated: 'Stem separation is unavailable for the active clip.',
     tuneToMidi: 'Tune to MIDI',
     tuneToMidiTitle: "Tune the active audio clip's notes to the notes of a MIDI track they overlap",
