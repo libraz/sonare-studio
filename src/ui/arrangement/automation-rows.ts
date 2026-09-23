@@ -11,7 +11,14 @@
  * before any ruler offset or scroll is applied by the caller.
  */
 
-import { type AutomationParam, clampAutomationValue } from '@/project/automation';
+import {
+  type AutomationParam,
+  clampAutomationValue,
+  parseInstrumentAutomationParam,
+} from '@/project/automation';
+import type { MixerStrip } from '@/project/mixer';
+import { insertAutomationDomain } from '@/project/processor-controls';
+import { patchFieldSpec } from '@/ui/devices/patch-draft';
 
 /** Height of one expanded automation sublane in px. */
 export const AUTOMATION_LANE_HEIGHT_PX = 56;
@@ -194,6 +201,24 @@ export interface AutomationValueDomain {
   min: number;
   /** Value mapped to the sublane top. */
   max: number;
+}
+
+/**
+ * Display domain of a lane that is neither fader nor pan: an instrument lane
+ * draws its patch field's editor range, an insert lane the range its rack
+ * control uses. Undefined for fader/pan or a lane whose target is gone.
+ */
+export function automationLaneDomain(
+  strip: Pick<MixerStrip, 'inserts'> | undefined,
+  param: AutomationParam,
+): AutomationValueDomain | undefined {
+  const instrumentRef = parseInstrumentAutomationParam(param);
+  if (instrumentRef) {
+    const spec = patchFieldSpec(instrumentRef.paramName);
+    return spec ? { min: spec.min, max: spec.max } : undefined;
+  }
+  const domain = insertAutomationDomain(strip, param);
+  return domain ? { min: domain.min, max: domain.max } : undefined;
 }
 
 /**

@@ -19,10 +19,10 @@ import {
   type AutomationParam,
   evaluateAutomationValue,
 } from '@/project/automation';
-import { insertAutomationDomain } from '@/project/processor-controls';
 import type { EditorTrack } from '@/project/types';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
+  automationLaneDomain,
   automationValueDomain,
   automationValueToY,
 } from '@/ui/arrangement/automation-rows';
@@ -108,10 +108,7 @@ export function drawAutomationSublane(
 ): void {
   const { range, automationParams, automationLanes, automation, colors } = context;
   const param = automationParams[track.id] ?? 'faderDb';
-  const insertDomainInfo = insertAutomationDomain(track.mixer, param);
-  const insertDomain = insertDomainInfo
-    ? { min: insertDomainInfo.min, max: insertDomainInfo.max }
-    : undefined;
+  const insertDomain = automationLaneDomain(track.mixer, param);
   ctx.save();
   ctx.beginPath();
   const clipTop = Math.max(top, RULER_HEIGHT_PX);

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { insertAutomationParam, instrumentAutomationParam } from '@/project/automation';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
   AUTOMATION_LANE_PAD_PX,
+  automationLaneDomain,
   automationValueDomain,
   automationValueToY,
   automationYToValue,
@@ -249,5 +251,20 @@ describe('arrangement automation rows', () => {
       expect(automationValueToY(param, 1, top, height)).toBe(innerTop);
       expect(automationValueToY(param, 0, top, height)).toBe(innerBottom);
     });
+  });
+});
+
+describe('automationLaneDomain', () => {
+  it('draws a synth lane in its patch field range and an insert lane in its rack range', () => {
+    expect(automationLaneDomain(undefined, instrumentAutomationParam('cutoffHz'))).toEqual({
+      min: 20,
+      max: 20000,
+    });
+    const strip = { inserts: [{ processor: 'dynamics.compressor', params: {}, enabled: true }] };
+    expect(automationLaneDomain(strip, insertAutomationParam(0, 'thresholdDb'))).toEqual({
+      min: -60,
+      max: 0,
+    });
+    expect(automationLaneDomain(strip, 'faderDb')).toBeUndefined();
   });
 });

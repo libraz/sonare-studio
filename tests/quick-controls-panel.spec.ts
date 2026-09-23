@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuickControls from '@/components/devices/QuickControls.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
-import { insertAutomationParam } from '@/project/automation';
+import { insertAutomationParam, instrumentAutomationParam } from '@/project/automation';
 import { addInsert, clearHistory, undo } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { resetAutomationStripModes, setAutomationStripMode } from '@/ui/mixer/automation-mode';
@@ -218,6 +218,40 @@ describe('QuickControls.vue', () => {
     expect(store.automationLanes.find((l) => l.param === param)).toBeUndefined();
   });
 
+  it('touch-records an instrument knob into an instrument lane in a write mode', async () => {
+    setAutomationStripMode(trackId, 'touch');
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'instrument', trackId }, positionPpq: () => 0, isPlaying: true },
+    });
+    const knob = wrapper.find('[data-control="cutoffHz"]');
+    firePointer(knob, 'pointerdown', { button: 0, pointerId: 7, clientY: 200 });
+    firePointer(knob, 'pointermove', { pointerId: 7, clientY: 180 });
+    firePointer(knob, 'pointerup', { pointerId: 7, clientY: 180 });
+    await wrapper.vm.$nextTick();
+
+    // The drag wrote a lane; the preset instrument itself is left untouched.
+    expect(store.tracks[0].instrument).toBeUndefined();
+    const lane = store.automationLanes.find(
+      (l) => l.target === trackId && l.param === instrumentAutomationParam('cutoffHz'),
+    );
+    expect(lane?.points.length).toBeGreaterThan(0);
+  });
+
+  it('adds an instrument lane holding the current value from the knob context menu', async () => {
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'instrument', trackId }, positionPpq: () => 0 },
+    });
+    await wrapper
+      .find('[data-control="cutoffHz"]')
+      .trigger('contextmenu', { clientX: 5, clientY: 5 });
+    await wrapper.find('.qc-menu button').trigger('click');
+    await wrapper.vm.$nextTick();
+    const lane = store.automationLanes.find(
+      (l) => l.target === trackId && l.param === instrumentAutomationParam('cutoffHz'),
+    );
+    expect(lane?.points).toEqual([{ ppq: 0, value: 12000 }]);
+  });
+
   it('closes the MIDI learn context menu on outside pointerdown', async () => {
     const learn = useMidiLearn();
     const wrapper = mount(QuickControls, {
@@ -265,7 +299,10 @@ describe('QuickControls.vue', () => {
     await wrapper
       .find('[data-control="cutoffHz"]')
       .trigger('contextmenu', { clientX: 5, clientY: 5 });
-    await wrapper.find('.qc-menu button').trigger('click');
+    const learnButton = wrapper
+      .findAll('.qc-menu button')
+      .find((button) => button.text().includes('MIDI'));
+    await learnButton?.trigger('click');
     await wrapper.vm.$nextTick();
 
     expect(learn.isArmedId(`instrument:${trackId}:cutoffHz`)).toBe(true);

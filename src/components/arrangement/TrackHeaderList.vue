@@ -17,6 +17,7 @@ import {
   type AutomationLaneState,
   type AutomationParam,
   insertAutomationParam,
+  instrumentAutomationParam,
   isAutomationParam,
 } from '@/project/automation';
 import {
@@ -58,6 +59,12 @@ import { flattenTrackComps } from '@/project/comp-flatten';
 import { EXPRESSION_MAP_PRESETS, matchingExpressionMapPreset } from '@/project/expression-map';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { partForTrack } from '@/project/generation';
+import {
+  AUTOMATABLE_SYNTH_PARAMS,
+  type AutomatableSynthParam,
+  isNativeSynthInstrument,
+  trackInstrument,
+} from '@/project/instrument';
 import { MAX_VCA_GROUPS } from '@/project/mixer';
 import {
   PITCH_RANGE_PRESET_IDS,
@@ -76,6 +83,7 @@ import {
   trackActiveTakeIndex,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { patchFieldSpec } from '@/ui/devices/patch-draft';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
@@ -670,7 +678,35 @@ function automationParamOptions(
       });
     }
   });
+  if (
+    track.kind === 'midi' &&
+    track.frozen === undefined &&
+    isNativeSynthInstrument(trackInstrument(track))
+  ) {
+    for (const param of AUTOMATABLE_SYNTH_PARAMS) {
+      options.push({ value: instrumentAutomationParam(param), label: synthParamLabel(param) });
+    }
+  }
   return options;
+}
+
+/** Patch-editor section each synth field sits under, as its lane-label prefix. */
+const SYNTH_SECTION_LABEL_KEYS = {
+  osc: 'oscillator',
+  filter: 'filter',
+  amp: 'ampEnvelope',
+  'filter-env': 'filterEnvelope',
+  lfo: 'lfo',
+  global: 'global',
+} as const;
+
+/** "Section · Field" label for a synth parameter lane, e.g. "Amp envelope · Attack". */
+function synthParamLabel(param: AutomatableSynthParam): string {
+  const spec = patchFieldSpec(param);
+  if (!spec) return param;
+  const editor = t.value.shell.patchEditor;
+  const section = editor.sections[SYNTH_SECTION_LABEL_KEYS[spec.section]];
+  return `${section} · ${editor.fields[spec.labelKey] ?? spec.label}`;
 }
 
 function onAutomationParamChange(track: EditorTrack, value: string): void {

@@ -54,7 +54,6 @@ import {
 import { exportClipSmf } from '@/project/export';
 import { unfreezeTrack } from '@/project/freeze';
 import { grooveTemplateIsUsable } from '@/project/groove';
-import { insertAutomationDomain } from '@/project/processor-controls';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { snapPpqToMeterGrid } from '@/project/time-signature';
@@ -64,6 +63,7 @@ import { assetLengthPpq, audioClipSourceBounds } from '@/ui/arrangement/audio-cl
 import { getLoadedAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
+  automationLaneDomain,
   buildRowLayout,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
@@ -516,13 +516,13 @@ const automation = useAutomationInteractions({
       if (hit?.zone !== 'automation') return null;
       const track = visibleTracks.value[hit.index];
       const param = automationParams.value[track.id] ?? 'faderDb';
-      const insertDomain = insertAutomationDomain(track.mixer, param);
+      const insertDomain = automationLaneDomain(track.mixer, param);
       return {
         trackId: track.id,
         param,
         top: RULER_HEIGHT_PX + rowLayout.value.automationTop(hit.index) - scrollY.value,
         height: AUTOMATION_LANE_HEIGHT_PX,
-        ...(insertDomain ? { insertDomain: { min: insertDomain.min, max: insertDomain.max } } : {}),
+        ...(insertDomain ? { insertDomain } : {}),
       };
     },
   },

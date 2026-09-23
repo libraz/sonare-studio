@@ -4,9 +4,11 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import {
+  type AutomationParam,
   type AutomationTarget,
   busAutomationTarget,
   insertAutomationParam,
+  instrumentAutomationParam,
 } from '@/project/automation';
 import {
   isMixerBusStripTarget,
@@ -14,6 +16,7 @@ import {
   removeAutomationLane,
   setAutomationLanePoints,
 } from '@/project/commands';
+import { isAutomatableSynthParam } from '@/project/instrument';
 import type { NumberProcessorControl, ProcessorControlValue } from '@/project/processor-controls';
 import { formatProcessorControlValue } from '@/project/processor-controls';
 import {
@@ -54,18 +57,18 @@ const props = defineProps<{
   /** Optional catalog resolvers (tests, custom catalogs). */
   resolvers?: QuickControlResolvers;
   /**
-   * Playhead position getter in PPQ. Present enables touch-recording an insert
-   * knob into automation when its strip is in a write (touch/latch) mode.
+   * Playhead position getter in PPQ. Present enables touch-recording a knob
+   * into automation when its strip is in a write (touch/latch) mode.
    */
   positionPpq?: () => number;
   /** Current playhead sample position, used by future sample-accurate scheduling. */
   positionSample?: () => number;
   /** True while the transport runs (continuous touch recording). */
   isPlaying?: boolean;
-  /** Optional realtime automation scheduler for write-mode insert knob drags. */
+  /** Optional realtime automation scheduler for write-mode knob drags. */
   scheduleAutomationWrite?: (
     target: AutomationTarget,
-    param: ReturnType<typeof insertAutomationParam>,
+    param: AutomationParam,
     event: AutomationWriteScheduleEvent,
   ) => void;
 }>();
@@ -93,11 +96,11 @@ function apply(id: string, value: ProcessorControlValue, commit: boolean): void 
   }
 }
 
-// --- Insert-knob touch recording ---------------------------------------------
+// --- Knob touch recording -----------------------------------------------------
 
-/** Strip automation target for an insert device, or null (instrument). */
-const insertAutomationTarget = computed<AutomationTarget | null>(() => {
-  if (props.target.type !== 'insert') return null;
+/** Automation target of the device: its track for an instrument, else its strip. */
+const automationTarget = computed<AutomationTarget | null>(() => {
+  if (props.target.type === 'instrument') return props.target.trackId;
   const strip = props.target.trackId;
   if (strip === 'master') return 'master';
   if (typeof strip === 'number') return strip;
@@ -105,9 +108,11 @@ const insertAutomationTarget = computed<AutomationTarget | null>(() => {
   return null;
 });
 
-/** Insert param token for a control on this device, or null (instrument). */
-function insertParamToken(controlId: string): ReturnType<typeof insertAutomationParam> | null {
-  if (props.target.type !== 'insert') return null;
+/** Automation param token for a control, or null when the control has no lane. */
+function automationParamToken(controlId: string): AutomationParam | null {
+  if (props.target.type === 'instrument') {
+    return isAutomatableSynthParam(controlId) ? instrumentAutomationParam(controlId) : null;
+  }
   const stripTarget = props.target.trackId;
   const strip =
     stripTarget === 'master'
@@ -119,19 +124,19 @@ function insertParamToken(controlId: string): ReturnType<typeof insertAutomation
   return insertAutomationParam(slot?.id ?? props.target.index, controlId);
 }
 
-/** Write context decided when a write-mode insert-knob drag begins. */
+/** Write context decided when a write-mode knob drag begins. */
 interface KnobWriteContext {
   mode: AutomationWriteMode;
   target: AutomationTarget;
-  param: ReturnType<typeof insertAutomationParam>;
+  param: AutomationParam;
 }
 
 /** Resolves the touch-record context for a control, or null (not recording). */
 function writeContextFor(control: QuickControl): KnobWriteContext | null {
   if (control.kind !== 'number') return null;
   if (props.positionPpq === undefined) return null;
-  const target = insertAutomationTarget.value;
-  const param = insertParamToken(control.id);
+  const target = automationTarget.value;
+  const param = automationParamToken(control.id);
   if (target === null || param === null) return null;
   const mode = automationStripMode(target);
   if (!isAutomationWriteMode(mode)) return null;
@@ -324,9 +329,12 @@ function closeMenu(): void {
 
 function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
   // Open when the knob has at least one menu action: MIDI learn (when a handle
-  // is injected and the target is mappable) or automation (any insert knob).
+  // is injected and the target is mappable) or automation (a knob with a lane).
   const midiAvailable = midiLearn !== null && learnTargetId(control.id) !== '';
-  const automateAvailable = control.kind === 'number' && insertAutomationTarget.value !== null;
+  const automateAvailable =
+    control.kind === 'number' &&
+    automationTarget.value !== null &&
+    automationParamToken(control.id) !== null;
   if (!midiAvailable && !automateAvailable) return;
   event.preventDefault();
   menu.open = true;
@@ -336,18 +344,18 @@ function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
   window.addEventListener('pointerdown', onOutsidePointerDown, true);
 }
 
-/** Existing automation lane for a control's insert param, or undefined. */
+/** Existing automation lane for a control, or undefined. */
 function automationLaneFor(controlId: string) {
-  const target = insertAutomationTarget.value;
-  const param = insertParamToken(controlId);
+  const target = automationTarget.value;
+  const param = automationParamToken(controlId);
   if (target === null || param === null) return undefined;
   return store.automationLanes.find((lane) => lane.target === target && lane.param === param);
 }
 
 /** Creates or removes the automation lane for the menu's control. */
 function onToggleAutomation(): void {
-  const target = insertAutomationTarget.value;
-  const param = insertParamToken(menu.controlId);
+  const target = automationTarget.value;
+  const param = automationParamToken(menu.controlId);
   if (target !== null && param !== null) {
     if (automationLaneFor(menu.controlId)) {
       removeAutomationLane(target, param);
@@ -470,7 +478,11 @@ onBeforeUnmount(() => {
       role="menu"
     >
       <button
-        v-if="insertAutomationTarget !== null && menuControlIsNumeric()"
+        v-if="
+          automationTarget !== null &&
+          automationParamToken(menu.controlId) !== null &&
+          menuControlIsNumeric()
+        "
         type="button"
         role="menuitem"
         @click="onToggleAutomation"
