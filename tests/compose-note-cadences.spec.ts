@@ -8,15 +8,10 @@ import {
   segmentationQuality,
 } from '@/compose/note-cadences';
 import { editorNotesToNoteEvents } from '@/compose/notes-io';
-import type { TrackWithNotes } from '@/compose/tracks';
+import type { VoiceLine } from '@/compose/voice-context';
 import type { EditorChordSymbol } from '@/project/chords';
 import bwv565 from '@/project/demo/bwv565.json';
-import type {
-  EditorNote,
-  EditorTrack,
-  ScaleHighlightConfig,
-  TimeSignatureSegment,
-} from '@/project/types';
+import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
 import { MAJOR_MODE_MASK } from '@/project/types';
 import { MESSAGES } from '@/ui/i18n';
 
@@ -111,18 +106,8 @@ function bachVoice(index: number): EditorNote[] {
   }));
 }
 
-function bachTrack(index: number): TrackWithNotes {
-  return {
-    track: {
-      id: index + 1,
-      name: BACH.tracks[index].name,
-      color: '#fff',
-      kind: 'midi',
-      mute: false,
-      solo: false,
-    } as unknown as EditorTrack,
-    notes: bachVoice(index),
-  };
+function bachTrack(index: number): VoiceLine {
+  return { trackId: index + 1, role: 'melodic', notes: bachVoice(index) };
 }
 
 describe('cadences from a chord track', () => {
@@ -215,12 +200,7 @@ describe('cadences inferred from the notes', () => {
       guidanceInput({
         notes: melody,
         clipLengthPpq: 16,
-        otherTracks: [
-          {
-            track: { id: 2, name: 'Piano', color: '#fff', kind: 'midi' } as unknown as EditorTrack,
-            notes: accompaniment,
-          },
-        ],
+        lines: [{ trackId: 2, role: 'melodic', notes: accompaniment }],
       }),
     );
     const alone = buildGuidance(guidanceInput({ notes: melody, clipLengthPpq: 16 }));
@@ -309,7 +289,7 @@ describe('how far an arrival reaches', () => {
       chordSymbols: [],
       key: { enabled: true, rootPc: 2, modeMask: 1453 },
       timeSignatures: BACH.timeSignatures,
-      otherTracks: [bachTrack(1), bachTrack(2), bachTrack(3)],
+      lines: [bachTrack(1), bachTrack(2), bachTrack(3)],
     });
 
     expect(byNoteId.size).toBe(active.length);

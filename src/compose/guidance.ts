@@ -4,9 +4,9 @@
  *
  * Combines the compose adapters (key, chord timeline, meter, track hygiene)
  * with libcantus's safety/role/voice analysis into one deterministic pass.
- * Percussion tracks are dropped from the voice context before any safety
- * evaluation (see {@link harmonicTracksOnly}) so drum hits never register as
- * false dissonance against the melody.
+ * Percussion never reaches the analysis — the voice lines arrive without it
+ * (see `buildVoiceLines`) and the active clip's channel-10 notes are dropped
+ * here — so drum hits never register as false dissonance against the melody.
  *
  * Pure module (no Vue/Pinia); libcantus calls are guarded so unexpected input
  * degrades to a partial analysis instead of throwing at the caller.
@@ -27,6 +27,7 @@ import {
   isForbiddenMelodicLeap,
   isLeadingToneResolution,
   isScaleTone,
+  type KeyScale,
   type NoteData,
   NoteSafety,
   pitchToScaleDegree,
@@ -41,14 +42,31 @@ import {
 import { type SpelledPitch, spellLineInKeySignature } from '@/notation/pitch-spelling';
 import type { EditorChordSymbol } from '@/project/chords';
 import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
-import type { EditorNote, ScaleHighlightConfig, TimeSignatureSegment } from '@/project/types';
+import type {
+  EditorNote,
+  EditorTrack,
+  ScaleHighlightConfig,
+  TimeSignatureSegment,
+} from '@/project/types';
 import { buildChordTimeline } from './chord-at-tick';
-import { effectiveKeyScale, keyScaleToKeyFifths } from './key';
+import {
+  DEFAULT_GUIDANCE_PROFILE,
+  type GuidanceProfile,
+  toSafetyProfile,
+} from './guidance-profile';
+import { DEFAULT_KEY_SCALE } from './key';
+import { buildKeyMap, type KeyMap } from './key-map';
 import { strongBeatAt } from './meter';
 import { cadenceArrivals, cadencesByNote, type NoteCadence } from './note-cadences';
 import { editorNotesToNoteEvents } from './notes-io';
-import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
-import { buildVoiceContext, keySpeller, motionFindings, type OuterVoice } from './voice-context';
+import { harmonicNotes } from './tracks';
+import {
+  buildVoiceContext,
+  keySpeller,
+  motionFindings,
+  type OuterVoice,
+  type VoiceLine,
+} from './voice-context';
 
 /** Representative octave anchor: pitch class pc is evaluated as MIDI 60 + pc. */
 const CENTER_C = 60;
@@ -77,16 +95,19 @@ export interface GuidanceInput {
   chordSymbols: ReadonlyArray<EditorChordSymbol>;
   /** Store scale-highlight config (key context). */
   key: ScaleHighlightConfig;
+  /** Key timeline with `Key:` markers applied; defaults to {@link key} alone. */
+  keyMap?: KeyMap;
   /** Project meter map. */
   timeSignatures: ReadonlyArray<TimeSignatureSegment>;
-  /** Safety severity policy (default 'pop'). */
-  profile?: 'strict' | 'pop';
+  /** Part-writing strictness (default {@link DEFAULT_GUIDANCE_PROFILE}). */
+  profile?: GuidanceProfile;
   /**
-   * Other tracks for voice context (percussion excluded internally). Their
-   * notes must carry absolute timeline PPQ (clip offsets already applied);
-   * notes shared with the active clip (same id) are ignored.
+   * Track of the active clip. Its channel-10 notes are dropped unless it is
+   * explicitly marked non-percussion; when absent they are always dropped.
    */
-  otherTracks?: ReadonlyArray<TrackWithNotes>;
+  track?: EditorTrack;
+  /** Other tracks as voice lines on the absolute timeline (see `buildVoiceLines`). */
+  lines?: ReadonlyArray<VoiceLine>;
 }
 
 /** Per chord segment: safety of each pitch class, for background row tint. */
@@ -239,7 +260,7 @@ export interface GuidanceResult {
   segments: GuidanceSegment[];
   /** Analysis per active-clip note id. */
   byNoteId: Map<number, NoteAnalysis>;
-  /** Whether a key was set (highlight enabled). */
+  /** Whether a key is set anywhere in the clip window. */
   keySet: boolean;
   /**
    * Whether any chord covered the clip window, which is what decides how the
@@ -281,7 +302,7 @@ function tryEval<T>(fn: () => T): T | undefined {
  */
 function safetyRow(
   chord: ChordData | null,
-  key: ReturnType<typeof effectiveKeyScale>,
+  key: KeyScale,
   profile: SafetyProfile,
   strongBeat: boolean,
 ): Uint8Array {
@@ -302,65 +323,57 @@ function safetyRow(
   return row;
 }
 
+/** Stands in for an active clip whose track is not given: no percussion override. */
+const UNFLAGGED_TRACK = {} as EditorTrack;
+
 /**
  * Builds the full guidance for one active clip: background tint segments per
- * sounding chord and meter pulse, plus a per-note theory analysis map.
+ * sounding chord, key region and meter pulse, plus a per-note theory analysis map.
  */
 export function buildGuidance(input: GuidanceInput): GuidanceResult {
-  const profile: SafetyProfile = input.profile ?? 'pop';
-  const key = effectiveKeyScale(input.key);
-  const keySet = input.key.enabled;
+  const profile: SafetyProfile = toSafetyProfile(input.profile ?? DEFAULT_GUIDANCE_PROFILE);
+  const keyMap = input.keyMap ?? buildKeyMap(input.key, []);
+  const keyAt = (absBeat: number): KeyScale => keyMap.at(absBeat) ?? DEFAULT_KEY_SCALE;
   const timeline = buildChordTimeline(input.chordSymbols);
+  const notes = harmonicNotes(input.track ?? UNFLAGGED_TRACK, input.notes);
 
   // Tint the explicit clip window, not merely the span occupied by notes.
   // This keeps long empty tails and entirely empty clips analyzable.
   const windowStart = input.clipStartPpq;
   const windowEnd = windowStart + Math.max(0, input.clipLengthPpq);
+  const keySet =
+    keyMap.keySetAt(windowStart) ||
+    keyMap.regions.some(
+      (region) => region.key !== null && region.endPpq > windowStart && region.startPpq < windowEnd,
+    );
 
   // Voice context: one line per non-percussion other track, kept separate (not
-  // pooled) so each voice's motion can be tracked across time. That per-voice
-  // motion is what the counterpoint verdicts (parallels, hidden parallels,
-  // voice crossing, suspension) read — none of which need a chord. Each track
-  // is reduced to its highest sounding pitch at a beat as that voice's
-  // representative, so a residually polyphonic track still contributes an outer
-  // voice rather than an ambiguous cluster.
-  // Per-note analysis is time ordered. Its unique onsets are also the only
-  // instants at which counterpoint context is queried, so index other voices
-  // against that small, relevant time domain instead of rescanning every
-  // project note for every active note. That same grid of slots carries the
-  // history a parallel has to be read against (see {@link DOUBLING_RUN_SLOTS}),
-  // which is why the indexes below are built once for the whole pass.
-  const sorted = [...input.notes].sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
+  // pooled) so each voice's motion can be followed across time. Vertical
+  // readings hear every pitch a line sounds; motion readings follow each line's
+  // top voice. The note onsets are the only instants the context is queried
+  // at, and they also carry the history a parallel is read against (see
+  // {@link DOUBLING_RUN_SLOTS}), so the indexes are built once for the pass.
+  const sorted = [...notes].sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch);
   const voiceQueryBeats = [
     ...new Set(sorted.map((note) => input.clipStartPpq + note.startPpq)),
   ].sort((a, b) => a - b);
-  const activeIds = new Set(input.notes.map((note) => note.id));
-  const otherVoiceLines: EditorNote[][] = [];
-  if (input.otherTracks !== undefined) {
-    const { harmonic } = harmonicTracksOnly(input.otherTracks);
-    for (const item of harmonic) {
-      const line = item.notes.filter((note) => !activeIds.has(note.id));
-      if (line.length > 0) otherVoiceLines.push(line);
-    }
-  }
-  // A line's position stands in for its track id so two inputs sharing an id
-  // stay two voices.
-  const otherVoices = buildVoiceContext(
-    otherVoiceLines.map((notes, index) => ({ trackId: index, role: 'melodic', notes })),
-    voiceQueryBeats,
-    input.timeSignatures,
-  );
+  const lines = input.lines ?? [];
+  const voices = buildVoiceContext(lines, voiceQueryBeats, input.timeSignatures);
+  const activeLine: EditorNote[] = sorted.map((note) => ({
+    ...note,
+    startPpq: input.clipStartPpq + note.startPpq,
+  }));
+
   /**
    * Each other line's top voice at `absBeat`, carrying its top at `prevBeat`
-   * when given. Unlike `outerVoicesAt` with a previous beat, the pitch there is
-   * not bar-bounded: evaluateSafety measures the step unbounded, and the bar
-   * bound belongs to the dismissals below.
+   * when given. The pitch there is not bar-bounded: evaluateSafety measures the
+   * step unbounded, and the bar bound belongs to the dismissals below.
    */
   const topVoicesAt = (absBeat: number, prevBeat?: number): OuterVoice[] => {
-    const tops = otherVoices.outerVoicesAt(absBeat, undefined).filter((v) => v.edge === 'top');
+    const tops = voices.outerVoicesAt(absBeat, undefined).filter((v) => v.edge === 'top');
     if (prevBeat === undefined) return tops;
     const prevTops = new Map(
-      otherVoices
+      voices
         .outerVoicesAt(prevBeat, undefined)
         .filter((v) => v.edge === 'top')
         .map((v) => [v.trackId, v.pitch]),
@@ -371,19 +384,35 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     });
   };
   /**
-   * Snapshot of every voice sounding at `absBeat`, each carrying its pitch at
-   * `prevBeat` when given so evaluateSafety can measure motion between the two
-   * events. Voices silent at `absBeat` are omitted.
+   * The other lines at `absBeat` as libcantus voices: each top voice carrying
+   * its pitch at `prevBeat` for the motion readings, then every other pitch
+   * sounding with it, without a previous pitch, for the vertical ones.
    */
-  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] =>
-    topVoicesAt(absBeat, prevBeat).map(({ pitch, prevPitch }) =>
-      prevPitch !== undefined ? { pitch, prevPitch } : { pitch },
-    );
-  /** Interval to the bass (lowest concurrent voice) for the card, if audible. */
-  const verticalAt = (pitch: number, others: VoiceSnapshot[]): VerticalInfo | undefined => {
+  const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] => {
+    const out: VoiceSnapshot[] = [];
+    const seen = new Set<string>();
+    for (const top of topVoicesAt(absBeat, prevBeat)) {
+      seen.add(`${top.trackId}:${top.pitch}`);
+      out.push(
+        top.prevPitch !== undefined
+          ? { pitch: top.pitch, prevPitch: top.prevPitch }
+          : { pitch: top.pitch },
+      );
+    }
+    for (const sounding of voices.soundingAt(absBeat)) {
+      const id = `${sounding.trackId}:${sounding.pitch}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ pitch: sounding.pitch });
+    }
+    return out;
+  };
+  /** Interval to the bass (lowest pitch any other line sounds) for the card, if audible. */
+  const verticalAt = (pitch: number, absBeat: number): VerticalInfo | undefined => {
     let bass: number | undefined;
-    for (const voice of others)
-      bass = bass === undefined ? voice.pitch : Math.min(bass, voice.pitch);
+    for (const sounding of voices.soundingAt(absBeat)) {
+      bass = bass === undefined ? sounding.pitch : Math.min(bass, sounding.pitch);
+    }
     if (bass === undefined || bass >= pitch) return undefined;
     const semitones = pitch - bass;
     // This is explicitly the interval *to the bass*. A perfect fourth above
@@ -398,20 +427,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     return { toBass: semitones, consonance };
   };
   /**
-   * The texture at `absBeat` ordered low to high: the candidate note and every
-   * other voice sounding with it, the same reduction the readings above take.
-   *
-   * Two of the counterpoint rules are about *which* pair of voices is being
-   * asked about rather than about what a pair does, and neither question can be
-   * answered from a pair alone — the outer voices and the voice next to you are
-   * both facts about everything else sounding. The library provides the
-   * predicates and leaves the choice of pair to the caller, which is this.
-   */
-  const soundingWith = (pitch: number, absBeat: number): number[] =>
-    [pitch, ...topVoicesAt(absBeat).map((voice) => voice.pitch)].sort((a, b) => a - b);
-  /**
    * Whether more than an octave separates the candidate from the voice next to
-   * it in the texture.
+   * it among the top voices sounding with it.
    *
    * Only adjacent pairs are asked, and never the bottom one: bass-to-tenor
    * spacing is conventionally exempt, and a melody carried an eleventh above a
@@ -419,7 +436,9 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
    * note it has. With two voices sounding, the only pair is that exempt one.
    */
   const wideSpacingAt = (pitch: number, absBeat: number): boolean => {
-    const sounding = soundingWith(pitch, absBeat);
+    const sounding = [pitch, ...topVoicesAt(absBeat).map((voice) => voice.pitch)].sort(
+      (a, b) => a - b,
+    );
     for (let index = 1; index + 1 < sounding.length; index++) {
       const lower = sounding[index];
       const upper = sounding[index + 1];
@@ -433,16 +452,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // followed against another voice's the way the others are followed against
   // it: same top-of-the-texture reduction, same instants.
   const activeVoice = buildVoiceContext(
-    [
-      {
-        trackId: 0,
-        role: 'melodic',
-        notes: input.notes.map((note) => ({
-          ...note,
-          startPpq: input.clipStartPpq + note.startPpq,
-        })),
-      },
-    ],
+    [{ trackId: 0, role: 'melodic', notes: activeLine }],
     voiceQueryBeats,
     input.timeSignatures,
   );
@@ -450,109 +460,37 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     activeVoice.outerVoicesAt(beat, undefined)[0]?.pitch;
   const slotOfBeat = new Map(voiceQueryBeats.map((beat, slot) => [beat, slot]));
   /**
-   * Per other voice, the length of the unbroken run of slots holding one
+   * Per other line, the length of the unbroken run of slots holding one
    * constant separation from the active voice that each slot belongs to. A
    * separation neither voice defines (one of them silent) breaks the run, which
-   * is what the NaN comparison below does. Computed in one sweep per voice so
-   * reading a note's run is a lookup.
+   * is what the NaN comparison below does.
    */
   const otherTopsBySlot = voiceQueryBeats.map(
     (beat) => new Map(topVoicesAt(beat).map((voice) => [voice.trackId, voice.pitch])),
   );
-  const doublingRuns = otherVoiceLines.map((_, voice) => {
+  const doublingRuns = new Map<number, Int32Array>();
+  for (const line of lines) {
     const runs = new Int32Array(voiceQueryBeats.length);
     let runStart = 0;
     let held = Number.NaN;
     for (let slot = 0; slot <= voiceQueryBeats.length; slot++) {
       const beat = voiceQueryBeats[slot];
       const top = beat !== undefined ? activeTopAt(beat) : undefined;
-      const other = beat !== undefined ? otherTopsBySlot[slot].get(voice) : undefined;
+      const other = beat !== undefined ? otherTopsBySlot[slot].get(line.trackId) : undefined;
       const separation = top !== undefined && other !== undefined ? top - other : Number.NaN;
       if (separation === held) continue;
       for (let filled = runStart; filled < slot; filled++) runs[filled] = slot - runStart;
       runStart = slot;
       held = separation;
     }
-    return runs;
-  });
-  /**
-   * The counterpoint predicates read spelled notes: an augmented second and a
-   * minor third span the same three semitones, and a diminished fourth sounds
-   * like a major third, so a bare MIDI pair cannot state the question they ask.
-   * Given integers they silently fall back to the sounding reading and let
-   * every augmented interval through.
-   *
-   * The spelling is decided from the project key — the same key the hover card
-   * spells its pitch names from, since the card's `keyFifths` is derived from
-   * this very scale-highlight config — so the card cannot name a note against
-   * one key and analyse it against another. That choice is a real one and not a
-   * detail: reading D minor commits the piece to Bb rather than A#, and it is
-   * exactly that commitment which makes the step up to C# an augmented second.
-   *
-   * What the analysis does not borrow is the *engraving* rule the card's title
-   * spells with, which puts a chromatic tone on the side of the key signature
-   * so a lower neighbour of C stays written as B. That is right for a staff and
-   * wrong for an interval: it spells D minor's C# as Db, and then the same D
-   * minor line reads full of diminished fourths that nobody wrote. The
-   * interval spelling counted from the tonic is what these predicates are
-   * asking about, so it is what they are given.
-   */
-  const spell = keySpeller(key);
-  /**
-   * Key-only spelling, memoized per pitch. Used for the other voices, whose
-   * notes are only ever compared by perfect class — a comparison no spelling
-   * changes — so they need a valid spelling rather than the best one, and MIDI's
-   * 128 pitches make the cache bounded.
-   */
-  const keySpellings = new Map<number, NoteData | undefined>();
-  const spellFromKey = (pitch: number): NoteData | undefined => {
-    let spelled = keySpellings.get(pitch);
-    if (spelled === undefined && !keySpellings.has(pitch)) {
-      spelled = spell(pitch);
-      keySpellings.set(pitch, spelled);
-    }
-    return spelled;
-  };
-  /**
-   * The staff reading of the clip's own notes, solved as one line: the spelling
-   * the score and the MusicXML export engrave with, carried on the analysis so
-   * the hover card names a note the way its notehead is written.
-   *
-   * A line can only be spelled whole — which letter a chromatic tone takes is
-   * decided by the notes around it — so this is computed once per pass rather
-   * than per hover, where re-solving the entire clip on every mouse move would
-   * buy nothing: the answer cannot change between two hovers of the same clip.
-   *
-   * The clip goes over as a single line, the same reduction the melodic label
-   * pass below makes of it. The notation layer splits a part into notated
-   * voices before spelling it, but a clip is one editable part and carries no
-   * such split, so there is nothing here to split it by.
-   *
-   * The signature is the project key's own, which is how the surfaces reach it
-   * too, so the card's title and the staff answer from one key signature.
-   */
-  const engravedByNoteId = new Map<number, SpelledPitch>();
-  if (keySet) {
-    const engraved = spellLineInKeySignature(
-      sorted.map((note) => ({
-        midi: note.pitch,
-        startBeat: input.clipStartPpq + note.startPpq,
-        durationBeat: note.durationPpq,
-      })),
-      keyScaleToKeyFifths(key),
-    );
-    sorted.forEach((note, index) => {
-      engravedByNoteId.set(note.id, engraved[index]);
-    });
+    doublingRuns.set(line.trackId, runs);
   }
   /**
    * Whether the library's parallel-perfect verdict on a candidate describes a
-   * voice-leading event the composer can act on.
-   *
-   * `evaluateSafety` reports one bit for the whole note, so the pairs that
-   * earned it are reconstructed here with the library's own predicate — the
-   * verdict stands unless every one of them is dismissed, and a pair the
-   * reconstruction cannot account for keeps it.
+   * voice-leading event the composer can act on. The pairs that earned the bit
+   * are rebuilt with the library's own predicate; the verdict stands unless
+   * every one of them is dismissed, and a pair the rebuild cannot account for
+   * keeps it.
    */
   const parallelPerfectIsReal = (
     pitch: number,
@@ -561,10 +499,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     prevAbs: number | undefined,
   ): boolean => {
     if (prevPitch === undefined || prevAbs === undefined) return true;
-    // A parallel is motion measured across one step of the voice, and the step
-    // is whatever this part last played — after a rest that can be bars back.
-    // Past the bar in force the two events are no longer heard as consecutive,
-    // so the interval they share is a coincidence rather than a progression.
+    // Past the bar in force the two events are no longer heard as consecutive.
     const bar = meterBarLengthPpq(timeSignatureAt(input.timeSignatures, absBeat));
     if (absBeat - prevAbs > bar) return false;
     const slot = slotOfBeat.get(absBeat);
@@ -578,32 +513,19 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         createsParallelPerfect(prevPitch, pitch, other.prevPitch, other.pitch),
     );
     if (!fired) return true;
-    // The runs here span the whole slot run, so the earlier slots are the run
-    // minus the candidate's own.
-    const { parallelPerfect } = motionFindings(pitch, prevPitch, others, (other) =>
-      isActiveVoice && slot !== undefined ? doublingRuns[other.trackId][slot] - 1 : 0,
-    );
+    // The runs span the whole slot run, so the earlier slots are the run minus
+    // the candidate's own.
+    const { parallelPerfect } = motionFindings(pitch, prevPitch, others, (other) => {
+      const runs = doublingRuns.get(other.trackId);
+      return isActiveVoice && slot !== undefined && runs !== undefined ? runs[slot] - 1 : 0;
+    });
     return parallelPerfect.length > 0;
   };
   /**
-   * Whether the library's hidden-parallel verdict on a candidate describes a
-   * voice-leading event the composer can act on.
-   *
-   * The library already applies the traditional step exception, so every
-   * verdict here is a perfect interval entered by similar motion with the upper
-   * voice leaping. What it cannot apply is the other half of the rule: a direct
-   * fifth or octave is a fault *between the outer voices*, and the same motion
-   * buried between two inner parts is what four-part writing accepts. Selecting
-   * that pair needs the whole texture, which only the caller has — and asking
-   * every pair of a four-voice texture instead reports faults in writing that
-   * has none: a plain chorale with textbook spacing comes back with three.
-   *
-   * Reconstruction and dismissal follow the parallel reading above: the pairs
-   * that earned the bit are found with the library's own predicate, the verdict
-   * stands unless every one of them is dismissed, and a pair that cannot be
-   * accounted for keeps it. The bar bound is the same too, and for the same
-   * reason — across a longer gap than that, the two events are not heard as one
-   * voice moving.
+   * Whether the library's hidden-parallel verdict describes a voice-leading
+   * event the composer can act on: a direct fifth or octave is a fault between
+   * the outer voices of the texture and accepted between inner parts. Rebuilt,
+   * dismissed and bar-bounded the way the parallel reading above is.
    */
   const hiddenParallelIsReal = (
     pitch: number,
@@ -622,16 +544,75 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     );
     return !fired || motionFindings(pitch, prevPitch, others, () => 0).hiddenOuter;
   };
+
+  /**
+   * The counterpoint predicates read spelled notes: an augmented second and a
+   * minor third span the same three semitones, so a bare MIDI pair cannot state
+   * the question they ask. The spelling counts intervals from the tonic of the
+   * key in force at the note (see {@link keySpeller}); the engraving rule the
+   * card's title uses would spell D minor's C# as Db and invent diminished
+   * fourths nobody wrote.
+   */
+  const spellers = new Map<string, ReturnType<typeof keySpeller>>();
+  const spellerFor = (key: KeyScale): ReturnType<typeof keySpeller> => {
+    const id = `${key.rootPc}:${key.modeMask12}`;
+    let speller = spellers.get(id);
+    if (speller === undefined) {
+      speller = keySpeller(key);
+      spellers.set(id, speller);
+    }
+    return speller;
+  };
+  /**
+   * Context-free spelling for the other voices, memoized per key and pitch.
+   * They are only ever compared by perfect class — a comparison no spelling
+   * changes — so they need a valid spelling rather than the best one.
+   */
+  const keySpellings = new Map<string, NoteData | undefined>();
+  const spellFromKey = (pitch: number, key: KeyScale): NoteData | undefined => {
+    const id = `${key.rootPc}:${key.modeMask12}:${pitch}`;
+    if (keySpellings.has(id)) return keySpellings.get(id);
+    const spelled = spellerFor(key)(pitch);
+    keySpellings.set(id, spelled);
+    return spelled;
+  };
+  /**
+   * The staff reading of the clip's own notes: the spelling the score and the
+   * MusicXML export engrave with, carried on the analysis so the hover card
+   * names a note the way its notehead is written. A line can only be spelled
+   * whole, so it is solved once per pass, one run per key region under that
+   * region's signature. Notes where no key is set carry none.
+   */
+  const engravedByNoteId = new Map<number, SpelledPitch>();
+  const runsByRegion = new Map<number, EditorNote[]>();
+  for (const note of activeLine) {
+    if (!keyMap.keySetAt(note.startPpq)) continue;
+    const region = keyMap.regions.findIndex(
+      (entry) => note.startPpq >= entry.startPpq && note.startPpq < entry.endPpq,
+    );
+    const run = runsByRegion.get(region);
+    if (run === undefined) runsByRegion.set(region, [note]);
+    else run.push(note);
+  }
+  for (const [region, run] of runsByRegion) {
+    const engraved = spellLineInKeySignature(
+      run.map((note) => ({
+        midi: note.pitch,
+        startBeat: note.startPpq,
+        durationBeat: note.durationPpq,
+      })),
+      keyMap.keyFifthsAt(keyMap.regions[region].startPpq),
+    );
+    run.forEach((note, index) => {
+      engravedByNoteId.set(note.id, engraved[index]);
+    });
+  }
   /**
    * Whether the candidate completes an *ottava battuta* against any other
    * voice: a perfect octave or unison reached by contrary motion with the upper
-   * of the two voices leaping down onto it.
-   *
-   * It reuses the pair machinery above and the same two instants, but none of
-   * the parallel suppression: that reading dismisses contrary-motion pairs
-   * because contrary motion is not parallel motion, and contrary motion is
-   * precisely what this rule is about. The two rules name different events and
-   * are therefore gated separately.
+   * of the two voices leaping down onto it. It reuses the pair machinery above
+   * but none of the parallel suppression, which dismisses contrary motion — the
+   * very motion this rule is about.
    */
   const battutaWithOthers = (
     spelled: NoteData,
@@ -640,11 +621,12 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     prevPitch: number,
     absBeat: number,
     prevAbs: number,
+    key: KeyScale,
   ): boolean => {
     for (const { pitch: other, prevPitch: otherPrev } of topVoicesAt(absBeat, prevAbs)) {
       if (otherPrev === undefined) continue;
-      const otherSpelled = spellFromKey(other);
-      const otherPrevSpelled = spellFromKey(otherPrev);
+      const otherSpelled = spellFromKey(other, key);
+      const otherPrevSpelled = spellFromKey(otherPrev, key);
       if (otherSpelled === undefined || otherPrevSpelled === undefined) continue;
       // Which voice is the upper one is decided where the pair arrives, since
       // that is the interval the rule is about. On a unison arrival the two land
@@ -672,19 +654,22 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     for (const segment of overlapping) {
       const absStart = Math.max(segment.startBeat, windowStart);
       const absEnd = Math.min(segment.endBeat, windowEnd);
-      // A chord can span several strong and weak metric positions. Split it at
-      // the active meter's beat unit so background tint uses the same context
-      // as the per-note analysis rather than inheriting the chord's first beat.
+      // A chord can span several metric positions and key regions. Split it at
+      // the active meter's beat unit and at each key change so the tint uses
+      // the same context as the per-note analysis.
       for (let cursor = absStart; cursor < absEnd - 1e-6; ) {
         const meter = timeSignatureAt(input.timeSignatures, cursor);
         const meterUnitPpq = 4 / meter.denominator;
-        const end = Math.min(absEnd, cursor + meterUnitPpq);
+        const keyRegionEnd =
+          keyMap.regions.find((region) => cursor >= region.startPpq && cursor < region.endPpq)
+            ?.endPpq ?? Number.POSITIVE_INFINITY;
+        const end = Math.min(absEnd, cursor + meterUnitPpq, keyRegionEnd);
         segments.push({
           startBeat: cursor - input.clipStartPpq + sourceOffset,
           endBeat: end - input.clipStartPpq + sourceOffset,
           safetyByPc: safetyRow(
             segment.chord,
-            key,
+            keyAt(cursor),
             profile,
             strongBeatAt(input.timeSignatures, cursor),
           ),
@@ -702,20 +687,26 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
 
   // Cadences are a property of the whole texture, not of the part being edited,
   // so the harmony is read over every sounding voice: the active clip's notes on
-  // the shared timeline plus the other (non-percussion, non-duplicated) lines
-  // already gathered for the counterpoint context. Reading them costs nothing
-  // when a chord track states the progression, so the notes are only pooled when
-  // there is none to state it.
+  // the shared timeline plus the other lines gathered for the voice context.
+  // Reading them costs nothing when a chord track states the progression, so
+  // the notes are only pooled when there is none to state it. Cadences and the
+  // melodic labels below read the key in force at the clip's start.
+  const windowKey = keyAt(windowStart);
   const cadenceNotes =
     input.chordSymbols.length > 0
       ? []
       : [
-          ...editorNotesToNoteEvents(input.notes, input.clipStartPpq),
-          ...otherVoiceLines.flatMap((line) => editorNotesToNoteEvents(line)),
+          ...editorNotesToNoteEvents(notes, input.clipStartPpq),
+          ...lines.flatMap((line) => editorNotesToNoteEvents(line.notes)),
         ].sort((a, b) => a.startBeat - b.startBeat || a.pitch - b.pitch);
-  const cadences = cadenceArrivals(input.chordSymbols, cadenceNotes, key, input.timeSignatures);
+  const cadences = cadenceArrivals(
+    input.chordSymbols,
+    cadenceNotes,
+    windowKey,
+    input.timeSignatures,
+  );
   const cadenceByNoteId = cadencesByNote(
-    input.notes,
+    notes,
     (note) => input.clipStartPpq + note.startPpq,
     cadences.arrivals,
     cadences.inferred,
@@ -752,12 +743,10 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   /**
    * The onset group following each onset, by its representative (highest)
    * pitch. A chromatic note is spelled by where it goes as well as by where it
-   * came from — the C# rising to D is a leading tone, the Db falling to C an
-   * inflection — so the melodic reading needs one note of lookahead, which the
-   * time-ordered walk below does not otherwise have.
+   * came from, so the melodic reading needs one note of lookahead.
    */
   const groupPitchByOnset = new Map<number, number>();
-  for (const note of sorted) groupPitchByOnset.set(note.startPpq, note.pitch);
+  for (const note of activeLine) groupPitchByOnset.set(note.startPpq, note.pitch);
   const onsets = [...groupPitchByOnset.keys()];
   const nextGroupPitchByOnset = new Map<number, number>();
   for (let index = 0; index + 1 < onsets.length; index++) {
@@ -770,20 +759,20 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   let lastPitch: number | undefined;
   let lastSpelled: NoteData | undefined;
   let groupOnset = Number.NaN;
-  for (const note of sorted) {
-    if (note.startPpq !== groupOnset) {
+  for (const note of activeLine) {
+    const absBeat = note.startPpq;
+    if (absBeat !== groupOnset) {
       if (!Number.isNaN(groupOnset)) prevGroupOnset = groupOnset;
       if (lastPitch !== undefined) {
         prevGroupPitch = lastPitch;
         prevGroupSpelled = lastSpelled;
       }
-      groupOnset = note.startPpq;
+      groupOnset = absBeat;
     }
-    const absBeat = input.clipStartPpq + note.startPpq;
-    // Absolute beat of this voice's previous onset group, so other voices are
-    // sampled at the same two instants the candidate moves between (a parallel
-    // is motion measured across one step of the reference voice).
-    const prevAbs = prevGroupOnset !== undefined ? input.clipStartPpq + prevGroupOnset : undefined;
+    // This voice's previous onset group, so other voices are sampled at the
+    // same two instants the candidate moves between.
+    const prevAbs = prevGroupOnset;
+    const key = keyAt(absBeat);
     const chord = timeline.at(absBeat);
     const analysis: NoteAnalysis = {
       degree: pitchToScaleDegree(note.pitch, key),
@@ -798,8 +787,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       const chordScale = chordScaleFor(chord);
       if (chordScale !== undefined) analysis.chordScale = chordScale;
     }
-    const others = othersAt(absBeat, prevAbs);
-    const vertical = verticalAt(note.pitch, others);
+    const vertical = verticalAt(note.pitch, absBeat);
     if (vertical !== undefined) analysis.vertical = vertical;
     const cadence = cadenceByNoteId.get(note.id);
     if (cadence !== undefined) analysis.cadence = cadence;
@@ -811,19 +799,14 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         prevPitch,
         chord,
         key,
-        otherVoices: others,
+        otherVoices: othersAt(absBeat, prevAbs),
         strongBeat: strongBeatAt(input.timeSignatures, absBeat),
       }),
     );
     // The two motion-into-a-perfect-interval reasons are dismissed here rather
     // than where the card is written: the verdict is the analysis every surface
-    // reads, so a reason that does not describe the music has no business
-    // travelling on it. Only those bits are cleared — the vertical dissonance,
-    // suspension and voice-crossing readings, and the `resolveTo` target the
-    // resolution arrows follow, are the library's answers untouched. The
-    // severity stays as scored too: it is the worst of every reason weighed
-    // together, which cannot be re-derived from outside, and it is only ever
-    // shown against a chord.
+    // reads. Only those bits are cleared; the other reasons, the severity and
+    // the `resolveTo` target are the library's answers untouched.
     if (safety !== undefined) {
       let cleared = 0;
       if (
@@ -840,22 +823,15 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       }
       analysis.safety = cleared === 0 ? safety : { ...safety, reasons: safety.reasons & ~cleared };
     }
-    // The readings the verdict's four reason bits do not carry. They are
-    // measured across the same step of the voice the verdict is measured across
-    // — this note and the previous onset group, unbounded, exactly as
-    // evaluateSafety is handed it above — so the card never reports a motion
-    // the two halves of the analysis disagreed about. The bar-length bound
-    // belongs to the *dismissals* above rather than to the step itself, which is
-    // why it is not repeated here.
-    const nextPitch = nextGroupPitchByOnset.get(note.startPpq);
-    const spelled = spell(note.pitch, {
+    // The readings the verdict's reason bits do not carry, measured across the
+    // same step of the voice the verdict is measured across.
+    const nextPitch = nextGroupPitchByOnset.get(absBeat);
+    const spelled = spellerFor(key)(note.pitch, {
       ...(prevPitch !== undefined ? { previous: prevPitch } : {}),
       ...(nextPitch !== undefined ? { next: nextPitch } : {}),
     });
     const findings: CounterpointFindings = {};
-    // Spacing stands outside the guard below: it reads one instant rather than
-    // a step between two, so it holds for the clip's first note as well, and
-    // the pitches it compares are sounding ones that need no spelling.
+    // Spacing reads one instant rather than a step, so it needs no previous note.
     if (wideSpacingAt(note.pitch, absBeat)) findings.wideSpacing = true;
     if (
       spelled !== undefined &&
@@ -868,13 +844,14 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         findings.forbiddenLeap = true;
       }
       // Alone among the three this one is a claim about the key rather than
-      // about the voices, so it is only made where a key was actually set: with
-      // none, the analysis falls back to C major and would announce a
-      // resolution in a key nobody chose.
-      if (keySet && tryEval(() => isLeadingToneResolution(previous, spelled, key)) === true) {
+      // about the voices, so it is only made where a key was actually set.
+      if (
+        keyMap.keySetAt(absBeat) &&
+        tryEval(() => isLeadingToneResolution(previous, spelled, key)) === true
+      ) {
         findings.leadingToneResolution = true;
       }
-      if (battutaWithOthers(spelled, previous, note.pitch, prevPitch, absBeat, prevAbs)) {
+      if (battutaWithOthers(spelled, previous, note.pitch, prevPitch, absBeat, prevAbs, key)) {
         findings.battuta = true;
       }
     }
@@ -885,14 +862,13 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   }
 
   // Melodic labels: one analyzeVoice pass over the clip's notes as a single
-  // voice. Ids are carried directly on VoiceNote (rather than reducing to the
-  // top voice, which would drop them); analyzeVoice treats shared onsets as
-  // cluster members and skips melodic labels for them, so passing all notes
-  // is safe. Results map back to notes through AnalyzedNote.noteId.
-  const voice: VoiceNote[] = sorted.map((note) => ({
+  // voice. Ids are carried directly on VoiceNote; analyzeVoice treats shared
+  // onsets as cluster members and skips melodic labels for them, so passing all
+  // notes is safe. Results map back to notes through AnalyzedNote.noteId.
+  const voice: VoiceNote[] = activeLine.map((note) => ({
     id: note.id,
     pitch: note.pitch,
-    startBeat: input.clipStartPpq + note.startPpq,
+    startBeat: note.startPpq,
     durationBeat: note.durationPpq,
     velocity: note.velocity,
   }));
@@ -901,7 +877,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       analyzeVoice(
         voice,
         (beat) => timeline.at(beat),
-        key,
+        windowKey,
         (beat) => othersAt(beat),
       ),
     ) ?? [];

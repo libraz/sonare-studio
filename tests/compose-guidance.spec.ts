@@ -2,6 +2,10 @@ import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
 import { buildGuidance, type GuidanceInput, resolutionTargetOf } from '@/compose/guidance';
+import { buildKeyMap } from '@/compose/key-map';
+import { keyMarkerName } from '@/compose/key-name';
+import { harmonicTracksOnly } from '@/compose/tracks';
+import type { VoiceLine } from '@/compose/voice-context';
 import type { EditorChordSymbol } from '@/project/chords';
 import type { EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
@@ -167,7 +171,11 @@ describe('buildGuidance', () => {
       guidanceInput({
         notes: [note({ id: 30, pitch: 64, startPpq: 0, durationPpq: 1 })],
         chordSymbols: [chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 })],
-        otherTracks: [drums],
+        lines: harmonicTracksOnly([drums]).harmonic.map((item) => ({
+          trackId: item.track.id,
+          role: 'melodic',
+          notes: item.notes,
+        })),
       }),
     );
     const analysis = result.byNoteId.get(30);
@@ -258,11 +266,11 @@ describe('buildGuidance', () => {
 describe('counterpoint (voice-relative, no chord progression)', () => {
   it('reports the interval and consonance against the bass without any chord', () => {
     // A single other voice a perfect fifth below the active note; no progression.
-    const lower = { track: track({ id: 2, name: 'Bass' }), notes: [note({ id: 200, pitch: 55 })] };
+    const lower: VoiceLine = { trackId: 2, role: 'melodic', notes: [note({ id: 200, pitch: 55 })] };
     const result = buildGuidance(
       guidanceInput({
         notes: [note({ id: 80, pitch: 62, startPpq: 0, durationPpq: 1 })],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     expect(result.chordPresent).toBe(false);
@@ -274,9 +282,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     const result = buildGuidance(
       guidanceInput({
         notes: [note({ id: 81, pitch: 65, startPpq: 0, durationPpq: 1 })],
-        otherTracks: [
-          { track: track({ id: 2, name: 'Bass' }), notes: [note({ id: 201, pitch: 60 })] },
-          { track: track({ id: 3, name: 'Alto' }), notes: [note({ id: 202, pitch: 69 })] },
+        lines: [
+          { trackId: 2, role: 'melodic', notes: [note({ id: 201, pitch: 60 })] },
+          { trackId: 3, role: 'melodic', notes: [note({ id: 202, pitch: 69 })] },
         ],
       }),
     );
@@ -286,8 +294,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
 
   it('flags parallel perfect fifths between two voices with no chord', () => {
     // Active voice C4->D4 over a voice a fifth below (F3->G3): parallel fifths.
-    const lower = {
-      track: track({ id: 2, name: 'Bass' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 210, pitch: 53, startPpq: 0, durationPpq: 1 }),
         note({ id: 211, pitch: 55, startPpq: 1, durationPpq: 1 }),
@@ -299,7 +308,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 90, pitch: 60, startPpq: 0, durationPpq: 1 }),
           note({ id: 91, pitch: 62, startPpq: 1, durationPpq: 1 }),
         ],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     const analysis = result.byNoteId.get(91);
@@ -311,8 +320,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     // Two voices an octave apart for five slots running: this is one line
     // reinforced, the texture of an organ or a horn section, and calling every
     // note of it a parallel octave says nothing the composer can act on.
-    const lower = {
-      track: track({ id: 2, name: 'Tenor' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [60, 62, 64, 62, 60].map((pitch, index) =>
         note({ id: 300 + index, pitch, startPpq: index, durationPpq: 1 }),
       ),
@@ -323,7 +333,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
         notes: [72, 74, 76, 74, 72].map((pitch, index) =>
           note({ id: 100 + index, pitch, startPpq: index, durationPpq: 1 }),
         ),
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     for (let index = 0; index < 5; index++) {
@@ -336,8 +346,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
   it('still flags two voices that only meet at an octave for one step', () => {
     // The same octave, held for a single step before the voices part company:
     // two independent lines falling into a parallel, which is the finding.
-    const lower = {
-      track: track({ id: 2, name: 'Tenor' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [60, 62, 67].map((pitch, index) =>
         note({ id: 310 + index, pitch, startPpq: index, durationPpq: 1 }),
       ),
@@ -347,7 +358,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
         notes: [72, 74, 77].map((pitch, index) =>
           note({ id: 110 + index, pitch, startPpq: index, durationPpq: 1 }),
         ),
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     expect(
@@ -358,8 +369,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
   it('still flags parallel fifths between two voices that are not doubling', () => {
     // E4 -> D4 over A3 -> G3: a perfect fifth carried by similar motion between
     // voices that hold no fixed separation on either side of it.
-    const lower = {
-      track: track({ id: 2, name: 'Tenor' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 320, pitch: 57, startPpq: 0, durationPpq: 1 }),
         note({ id: 321, pitch: 55, startPpq: 1, durationPpq: 1 }),
@@ -373,7 +385,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 121, pitch: 62, startPpq: 1, durationPpq: 1 }),
           note({ id: 122, pitch: 67, startPpq: 2, durationPpq: 1 }),
         ],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     expect(
@@ -384,8 +396,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
   it('does not call contrary motion between two octaves a parallel', () => {
     // A5 -> Bb4 against A3 -> Bb3: the octave classes match on both sides, but
     // the voices move in opposite directions, so nothing runs parallel.
-    const lower = {
-      track: track({ id: 2, name: 'Tenor' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 330, pitch: 57, startPpq: 0, durationPpq: 1 }),
         note({ id: 331, pitch: 58, startPpq: 1, durationPpq: 1 }),
@@ -397,7 +410,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 130, pitch: 81, startPpq: 0, durationPpq: 1 }),
           note({ id: 131, pitch: 70, startPpq: 1, durationPpq: 1 }),
         ],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     const analysis = result.byNoteId.get(131);
@@ -409,8 +422,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     // The voice's previous note is what a parallel is measured against, and
     // after a long rest that note is bars away: the same fifths one bar apart
     // are a progression, six beats apart they are a coincidence.
-    const lower = (endBeat: number) => ({
-      track: track({ id: 2, name: 'Tenor' }),
+    const lower = (endBeat: number): VoiceLine => ({
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 340, pitch: 53, startPpq: 0, durationPpq: 1 }),
         note({ id: 341, pitch: 55, startPpq: endBeat, durationPpq: 1 }),
@@ -423,7 +437,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 140, pitch: 60, startPpq: 0, durationPpq: 1 }),
           note({ id: 141, pitch: 62, startPpq: 4, durationPpq: 1 }),
         ],
-        otherTracks: [lower(4)],
+        lines: [lower(4)],
       }),
     );
     const acrossBars = buildGuidance(
@@ -433,7 +447,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 150, pitch: 60, startPpq: 0, durationPpq: 1 }),
           note({ id: 151, pitch: 62, startPpq: 6, durationPpq: 1 }),
         ],
-        otherTracks: [lower(6)],
+        lines: [lower(6)],
       }),
     );
     expect(
@@ -454,9 +468,10 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 160, pitch: 62, startPpq: 0, durationPpq: 1 }),
           note({ id: 161, pitch: 72, startPpq: 1, durationPpq: 1 }),
         ],
-        otherTracks: [
+        lines: [
           {
-            track: track({ id: 2, name: 'Bass' }),
+            trackId: 2,
+            role: 'melodic',
             notes: [
               note({ id: 350, pitch: 55, startPpq: 0, durationPpq: 1 }),
               note({ id: 351, pitch: 60, startPpq: 1, durationPpq: 1 }),
@@ -471,9 +486,10 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 170, pitch: 62, startPpq: 0, durationPpq: 1 }),
           note({ id: 171, pitch: 58, startPpq: 1, durationPpq: 1 }),
         ],
-        otherTracks: [
+        lines: [
           {
-            track: track({ id: 2, name: 'Alto' }),
+            trackId: 2,
+            role: 'melodic',
             // Held across both slots, so the voice the candidate crosses is
             // still sounding when it lands under it.
             notes: [note({ id: 360, pitch: 60, startPpq: 0, durationPpq: 2 })],
@@ -489,9 +505,10 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 180, pitch: 72, startPpq: 1, durationPpq: 1 }),
           note({ id: 181, pitch: 72, startPpq: 2, durationPpq: 1 }),
         ],
-        otherTracks: [
+        lines: [
           {
-            track: track({ id: 2, name: 'Bass' }),
+            trackId: 2,
+            role: 'melodic',
             notes: [
               note({ id: 370, pitch: 60, startPpq: 1, durationPpq: 1 }),
               note({ id: 371, pitch: 62, startPpq: 2, durationPpq: 1 }),
@@ -516,8 +533,9 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
     // octave into a dissonant seventh on the downbeat: a textbook suspension,
     // chord-free. The dissonance must land on a strong beat (beat 2 here), where
     // suspensions resolve.
-    const lower = {
-      track: track({ id: 2, name: 'Bass' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 220, pitch: 60, startPpq: 1, durationPpq: 1 }),
         note({ id: 221, pitch: 62, startPpq: 2, durationPpq: 1 }),
@@ -529,7 +547,7 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
           note({ id: 92, pitch: 72, startPpq: 1, durationPpq: 1 }),
           note({ id: 93, pitch: 72, startPpq: 2, durationPpq: 1 }),
         ],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     const held = result.byNoteId.get(93);
@@ -537,11 +555,11 @@ describe('counterpoint (voice-relative, no chord progression)', () => {
   });
 
   it('renders a counterpoint card line from the voice context', () => {
-    const lower = { track: track({ id: 2, name: 'Bass' }), notes: [note({ id: 230, pitch: 55 })] };
+    const lower: VoiceLine = { trackId: 2, role: 'melodic', notes: [note({ id: 230, pitch: 55 })] };
     const result = buildGuidance(
       guidanceInput({
         notes: [note({ id: 94, pitch: 62, startPpq: 0, durationPpq: 1 })],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     const analysis = result.byNoteId.get(94);
@@ -598,8 +616,9 @@ describe('resolutionTargetOf', () => {
     // no chord anywhere. The verdict is what carries it, and the card's
     // counterpoint line reads it, so it must be computed even though the
     // safety line is withheld for want of a chord.
-    const lower = {
-      track: track({ id: 2, name: 'Bass' }),
+    const lower: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 240, pitch: 60, startPpq: 1, durationPpq: 1 }),
         note({ id: 241, pitch: 62, startPpq: 2, durationPpq: 1 }),
@@ -611,7 +630,7 @@ describe('resolutionTargetOf', () => {
           note({ id: 95, pitch: 72, startPpq: 1, durationPpq: 1 }),
           note({ id: 96, pitch: 72, startPpq: 2, durationPpq: 1 }),
         ],
-        otherTracks: [lower],
+        lines: [lower],
       }),
     );
     const held = result.byNoteId.get(96);
@@ -1013,5 +1032,91 @@ describe('buildTheoryCard', () => {
     expect(beginnerNote).toBeDefined();
     expect(theoryNote).toBeDefined();
     expect(beginnerNote).not.toBe(theoryNote);
+  });
+});
+
+describe('buildGuidance voice context, key map and profile', () => {
+  const C_CHORD = chordSymbol({ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 });
+
+  it('tints the avoid note over the chord as dissonant under the default counterpoint profile', () => {
+    // F over C major is the chord's avoid note: the strict profile rejects it
+    // outright, while pop only warns.
+    const counterpoint = buildGuidance(guidanceInput({ chordSymbols: [C_CHORD] }));
+    const pop = buildGuidance(guidanceInput({ chordSymbols: [C_CHORD], profile: 'pop' }));
+    expect(counterpoint.segments[1].safetyByPc[5]).toBe(NoteSafety.Dissonant);
+    expect(pop.segments[1].safetyByPc[5]).not.toBe(NoteSafety.Dissonant);
+  });
+
+  it('reads the tint and the notes in the key a Key: marker sets from its position', () => {
+    const input = {
+      clipLengthPpq: 8,
+      chordSymbols: [C_CHORD],
+      notes: [
+        note({ id: 1, pitch: 68, startPpq: 1, durationPpq: 1 }),
+        note({ id: 2, pitch: 68, startPpq: 5, durationPpq: 1 }),
+      ],
+    };
+    const marked = buildGuidance(
+      guidanceInput({
+        ...input,
+        keyMap: buildKeyMap(C_MAJOR_KEY, [{ id: 1, ppq: 4.5, name: keyMarkerName(-3, false) }]),
+      }),
+    );
+    const inC = buildGuidance(guidanceInput(input));
+    const inEFlat = buildGuidance(guidanceInput({ ...input, key: E_FLAT_MAJOR_KEY }));
+
+    // The marker splits the beat it lands in, and each side is tinted in its key.
+    const boundary = marked.segments.findIndex((segment) => segment.startBeat === 4.5);
+    expect(boundary).toBeGreaterThan(0);
+    expect(marked.segments[boundary - 1].endBeat).toBe(4.5);
+    expect([...marked.segments[1].safetyByPc]).toEqual([...inC.segments[1].safetyByPc]);
+    const lastMarked = marked.segments[marked.segments.length - 1];
+    const lastEFlat = inEFlat.segments[inEFlat.segments.length - 1];
+    expect([...lastMarked.safetyByPc]).toEqual([...lastEFlat.safetyByPc]);
+    expect([...lastMarked.safetyByPc]).not.toEqual([...inC.segments[7].safetyByPc]);
+
+    // Ab is chromatic before the marker and the subdominant after it.
+    expect(marked.byNoteId.get(1)?.isScaleTone).toBe(false);
+    expect(marked.byNoteId.get(2)?.isScaleTone).toBe(true);
+    expect(marked.byNoteId.get(2)?.degree).toBe(4);
+  });
+
+  it('hears a clash with an inner voice of the accompaniment', () => {
+    // The accompaniment holds F3-E4-A4; F4 is consonant with both its outer
+    // voices and a semitone above its inner E4.
+    const backing: VoiceLine = {
+      trackId: 2,
+      role: 'accompaniment',
+      notes: [53, 64, 69].map((pitch, index) =>
+        note({ id: -1 - index, pitch, startPpq: 0, durationPpq: 4 }),
+      ),
+    };
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 1, pitch: 65, startPpq: 0, durationPpq: 1 })],
+        lines: [backing],
+      }),
+    );
+    const analysis = result.byNoteId.get(1);
+    expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.VerticalDissonance).toBeTruthy();
+    // The bass is the lowest pitch sounding, not the top of the part.
+    expect(analysis?.vertical).toEqual({ toBass: 12, consonance: 'perfect' });
+  });
+
+  it('leaves channel-10 notes of the edited clip out of the analysis', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        notes: [
+          // A drum hit a tritone below the melody's first note: read as a
+          // melodic step it would be a forbidden leap.
+          note({ id: 2, pitch: 58, startPpq: 0, durationPpq: 1, channel: 9 }),
+          note({ id: 1, pitch: 64, startPpq: 1, durationPpq: 1 }),
+        ],
+        chordSymbols: [C_CHORD],
+      }),
+    );
+    expect(result.byNoteId.has(2)).toBe(false);
+    expect(result.byNoteId.get(1)?.counterpoint?.forbiddenLeap).toBeUndefined();
+    expect(result.byNoteId.get(1)?.safety?.safety).toBe(NoteSafety.Safe);
   });
 });

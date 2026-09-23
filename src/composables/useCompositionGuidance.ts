@@ -12,7 +12,6 @@
 
 import { chordToRoman, functionOf } from '@libraz/libcantus';
 import { type ComputedRef, computed } from 'vue';
-import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { buildChordTimeline } from '@/compose/chord-at-tick';
@@ -28,8 +27,9 @@ import {
   type GuidanceSegment,
   resolutionTargetOf,
 } from '@/compose/guidance';
-import { effectiveKeyScale } from '@/compose/key';
-import type { TrackWithNotes } from '@/compose/tracks';
+import { DEFAULT_KEY_SCALE } from '@/compose/key';
+import { buildKeyMap } from '@/compose/key-map';
+import { buildVoiceLines } from '@/compose/voice-context';
 import { audibleMidiProjector } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
@@ -47,7 +47,10 @@ export interface ResolutionArrow {
 }
 
 export interface CompositionGuidance {
-  /** Background tint segments for the note grid; undefined without an active clip. */
+  /**
+   * Background tint segments for the note grid; undefined without an active
+   * clip or while the background-tint setting is off.
+   */
   guidanceSegments: ComputedRef<GuidanceSegment[] | undefined>;
   /** Hover theory-card resolver for the note grid; undefined without an active clip. */
   noteCard: ComputedRef<((noteId: number) => TheoryCard | null) | undefined>;
@@ -91,28 +94,13 @@ export function useCompositionGuidance(): CompositionGuidance {
     () => new Map(activeOccurrences.value.map((entry) => [entry.note.id, entry])),
   );
 
+  /** The project's key timeline: the declared key overridden by `Key:` markers. */
+  const keyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
+
   const guidance = computed<GuidanceResult | null>(() => {
     const clip = store.activeClip;
     if (!clip) return null;
-    // Voice context: every non-active track, its notes flattened across the
-    // track's clips and shifted to absolute timeline PPQ (guidance drops
-    // percussion tracks itself).
-    const otherTracks: TrackWithNotes[] = [];
-    for (const track of store.tracks) {
-      if (track.id === clip.trackId) continue;
-      const clips = store.clipsByTrack.get(track.id) ?? [];
-      let syntheticId = -1;
-      const notes = clips.flatMap((other) =>
-        audibleMidiProjector(other, { expandLoops: false }).map((entry) => ({
-          ...entry.note,
-          startPpq: entry.timelineStartPpq,
-          durationPpq: entry.durationPpq,
-          sourceIdentity: entry.sourceIdentity,
-          id: syntheticId--,
-        })),
-      );
-      otherTracks.push({ track, notes });
-    }
+    const track = store.tracks.find((entry) => entry.id === clip.trackId);
     return buildGuidance({
       notes: activeNotes.value,
       clipStartPpq: clip.startPpq,
@@ -120,8 +108,12 @@ export function useCompositionGuidance(): CompositionGuidance {
       sourceOffsetPpq: clip.sourceOffsetPpq,
       chordSymbols: store.chords,
       key: store.scaleHighlight,
+      keyMap: keyMap.value,
       timeSignatures: store.timeSignatures,
-      otherTracks,
+      profile: appSettings.settings.guidanceProfile,
+      ...(track !== undefined ? { track } : {}),
+      // Every other track, loops expanded, as it actually sounds.
+      lines: buildVoiceLines(store.tracks, store.clipsByTrack, clip.trackId),
     });
   });
 
@@ -137,17 +129,19 @@ export function useCompositionGuidance(): CompositionGuidance {
     if (analysis === undefined) return null;
     const occurrence = activeOccurrenceByNoteId.value.get(noteId);
     if (!occurrence) return null;
+    const at = occurrence.timelineStartPpq;
+    const keySet = keyMap.value.keySetAt(at);
     const ctx: Parameters<typeof buildTheoryCard>[1] = {
       pitch: occurrence.note.pitch,
       velocity: occurrence.note.velocity,
-      keySet: result.keySet,
+      keySet,
       keyEstimated: store.scaleHighlightEstimated,
       noteNameSystem: noteNames.system.value,
-      ...(result.keySet ? { keyFifths: keyFifthsForScaleHighlight(store.scaleHighlight) } : {}),
+      ...(keySet ? { keyFifths: keyMap.value.keyFifthsAt(at) } : {}),
     };
-    const chord = chordTimeline.value.at(occurrence.timelineStartPpq);
+    const chord = chordTimeline.value.at(at);
     if (chord !== null) {
-      const key = effectiveKeyScale(store.scaleHighlight);
+      const key = keyMap.value.at(at) ?? DEFAULT_KEY_SCALE;
       try {
         ctx.chordRoman = chordToRoman(chord, key);
         ctx.chordFunction = functionOf(chord, key);
@@ -160,7 +154,9 @@ export function useCompositionGuidance(): CompositionGuidance {
 
   // buildGuidance already emits segments in the clip's source frame (see its
   // sourceOffsetPpq input), matching the notes the piano roll draws.
-  const guidanceSegments = computed(() => guidance.value?.segments);
+  const guidanceSegments = computed(() =>
+    appSettings.settings.pianoRollGuidanceTint ? guidance.value?.segments : undefined,
+  );
   // Re-emit the resolver identity when the level changes too, so consumers that
   // key off `noteCard` re-render the currently shown card at the new level.
   const noteCard = computed(() =>

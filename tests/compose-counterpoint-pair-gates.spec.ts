@@ -15,8 +15,8 @@
 import { createsHiddenParallelPerfect, ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildGuidance, type GuidanceInput, type NoteAnalysis } from '@/compose/guidance';
-import type { TrackWithNotes } from '@/compose/tracks';
-import type { EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
+import type { VoiceLine } from '@/compose/voice-context';
+import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
 
 function note(partial: Partial<EditorNote>): EditorNote {
@@ -31,21 +31,6 @@ function note(partial: Partial<EditorNote>): EditorNote {
   };
 }
 
-function track(partial: Partial<EditorTrack>): EditorTrack {
-  return {
-    id: 1,
-    name: 'Track',
-    color: '#fff',
-    kind: 'midi',
-    mute: false,
-    solo: false,
-    volume: 1,
-    pan: 0,
-    order: 0,
-    ...partial,
-  } as EditorTrack;
-}
-
 const C_MAJOR_KEY: ScaleHighlightConfig = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
 const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 
@@ -58,8 +43,9 @@ function textureAt(slot: number, active: number[], others: number[][]): NoteAnal
   const notes = active.map((pitch, index) =>
     note({ id: index + 1, pitch, startPpq: index, durationPpq: 1 }),
   );
-  const otherTracks: TrackWithNotes[] = others.map((line, voice) => ({
-    track: track({ id: voice + 2, name: `Voice ${voice + 2}` }),
+  const lines: VoiceLine[] = others.map((line, voice) => ({
+    trackId: voice + 2,
+    role: 'melodic',
     notes: line.map((pitch, index) =>
       note({ id: (voice + 1) * 100 + index, pitch, startPpq: index, durationPpq: 1 }),
     ),
@@ -71,7 +57,7 @@ function textureAt(slot: number, active: number[], others: number[][]): NoteAnal
     chordSymbols: [],
     key: C_MAJOR_KEY,
     timeSignatures: FOUR_FOUR,
-    otherTracks,
+    lines,
   };
   return buildGuidance(input).byNoteId.get(slot + 1);
 }
@@ -124,8 +110,9 @@ describe('hidden parallels', () => {
       note({ id: 1, pitch: 59, startPpq: 0, durationPpq: 1 }),
       note({ id: 2, pitch: 65, startPpq: 6, durationPpq: 1 }),
     ];
-    const other: TrackWithNotes = {
-      track: track({ id: 2, name: 'Lower' }),
+    const other: VoiceLine = {
+      trackId: 2,
+      role: 'melodic',
       notes: [
         note({ id: 101, pitch: 48, startPpq: 0, durationPpq: 1 }),
         note({ id: 102, pitch: 53, startPpq: 6, durationPpq: 1 }),
@@ -138,7 +125,7 @@ describe('hidden parallels', () => {
       chordSymbols: [],
       key: C_MAJOR_KEY,
       timeSignatures: FOUR_FOUR,
-      otherTracks: [other],
+      lines: [other],
     });
     expect(hidden(result.byNoteId.get(2))).toBe(false);
   });

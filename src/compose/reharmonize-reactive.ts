@@ -105,7 +105,7 @@ export interface ReharmonizationProposal {
   changedIndices: number[];
 }
 
-/** Safety profile used for the melody-fit test (matches the guidance default). */
+/** Safety profile used for the melody-fit test; fit does not depend on part-writing strictness. */
 const FIT_PROFILE: SafetyProfile = 'pop';
 
 /** Whether a chord region overlaps any locked span. */

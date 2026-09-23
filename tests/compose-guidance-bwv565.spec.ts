@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { buildGuidance } from '@/compose/guidance';
 import { detectScaleHighlightFromTracks } from '@/compose/key';
-import type { TrackWithNotes } from '@/compose/tracks';
+import type { VoiceLine } from '@/compose/voice-context';
 import { type SpelledPitch, spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import type { EditorNote, EditorTrack, ScaleHighlightConfig } from '@/project/types';
@@ -83,9 +83,9 @@ describe('BWV 565 counterpoint verdicts', () => {
     };
     for (const voice of voices) {
       // Every other voice is context, exactly as the active clip sees them.
-      const otherTracks: TrackWithNotes[] = voices
+      const lines: VoiceLine[] = voices
         .filter((other) => other !== voice)
-        .map((other) => ({ track: other.track, notes: other.notes }));
+        .map((other) => ({ trackId: other.track.id, role: 'melodic', notes: other.notes }));
       const result = buildGuidance({
         notes: voice.notes,
         clipStartPpq: 0,
@@ -94,7 +94,7 @@ describe('BWV 565 counterpoint verdicts', () => {
         chordSymbols: [],
         key: NO_KEY,
         timeSignatures: document.timeSignatures,
-        otherTracks,
+        lines,
       });
       counts.notes += voice.notes.length;
       for (const analysis of result.byNoteId.values()) {
@@ -121,7 +121,9 @@ describe('BWV 565 counterpoint verdicts', () => {
     // Everything else is the library's answer untouched.
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);
-    expect(counts.verticalDissonance).toBe(107);
+    // Vertical readings hear every pitch of the other parts, so four clashes with
+    // a lower note of another part's chord, hidden under its top voice, count too.
+    expect(counts.verticalDissonance).toBe(111);
   });
 
   it('reads the predicate suite over the whole piece without disturbing the verdicts', async () => {
@@ -149,9 +151,9 @@ describe('BWV 565 counterpoint verdicts', () => {
       verticalDissonance: 0,
     };
     for (const voice of voices) {
-      const otherTracks: TrackWithNotes[] = voices
+      const lines: VoiceLine[] = voices
         .filter((other) => other !== voice)
-        .map((other) => ({ track: other.track, notes: other.notes }));
+        .map((other) => ({ trackId: other.track.id, role: 'melodic', notes: other.notes }));
       const result = buildGuidance({
         notes: voice.notes,
         clipStartPpq: 0,
@@ -160,7 +162,7 @@ describe('BWV 565 counterpoint verdicts', () => {
         chordSymbols: [],
         key,
         timeSignatures: document.timeSignatures,
-        otherTracks,
+        lines,
       });
       counts.notes += voice.notes.length;
       for (const analysis of result.byNoteId.values()) {
@@ -199,7 +201,7 @@ describe('BWV 565 counterpoint verdicts', () => {
     expect(counts.hiddenParallel).toBe(24);
     expect(counts.voiceCrossing).toBe(12);
     expect(counts.suspension).toBe(10);
-    expect(counts.verticalDissonance).toBe(107);
+    expect(counts.verticalDissonance).toBe(111);
   });
 
   it('engraves the chromatic notes off the line rather than off the signature', async () => {
@@ -219,9 +221,9 @@ describe('BWV 565 counterpoint verdicts', () => {
     let forbiddenLeap = 0;
     const rewritten = new Map<string, number>();
     for (const voice of voices) {
-      const otherTracks: TrackWithNotes[] = voices
+      const lines: VoiceLine[] = voices
         .filter((other) => other !== voice)
-        .map((other) => ({ track: other.track, notes: other.notes }));
+        .map((other) => ({ trackId: other.track.id, role: 'melodic', notes: other.notes }));
       const result = buildGuidance({
         notes: voice.notes,
         clipStartPpq: 0,
@@ -230,7 +232,7 @@ describe('BWV 565 counterpoint verdicts', () => {
         chordSymbols: [],
         key,
         timeSignatures: document.timeSignatures,
-        otherTracks,
+        lines,
       });
       const pitchByNoteId = new Map(voice.notes.map((note) => [note.id, note.pitch]));
       for (const [noteId, analysis] of result.byNoteId) {

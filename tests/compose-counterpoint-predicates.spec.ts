@@ -14,7 +14,8 @@ import { isForbiddenMelodicLeap, ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
 import { buildGuidance, type GuidanceInput, type NoteAnalysis } from '@/compose/guidance';
-import type { EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
+import type { VoiceLine } from '@/compose/voice-context';
+import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
 import { MESSAGES } from '@/ui/i18n';
 
@@ -28,21 +29,6 @@ function note(partial: Partial<EditorNote>): EditorNote {
     channel: 0,
     ...partial,
   };
-}
-
-function track(partial: Partial<EditorTrack>): EditorTrack {
-  return {
-    id: 1,
-    name: 'Track',
-    color: '#fff',
-    kind: 'midi',
-    mute: false,
-    solo: false,
-    volume: 1,
-    pan: 0,
-    order: 0,
-    ...partial,
-  } as EditorTrack;
 }
 
 const C_MAJOR_KEY: ScaleHighlightConfig = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
@@ -71,9 +57,10 @@ function twoNoteLine(first: number, second: number): EditorNote[] {
 }
 
 /** The other voice as a track of its own, one note per slot. */
-function otherVoice(pitches: number[]): { track: EditorTrack; notes: EditorNote[] } {
+function otherVoice(pitches: number[]): VoiceLine {
   return {
-    track: track({ id: 2, name: 'Lower' }),
+    trackId: 2,
+    role: 'melodic',
     notes: pitches.map((pitch, index) =>
       note({ id: 500 + index, pitch, startPpq: index, durationPpq: 1 }),
     ),
@@ -161,7 +148,7 @@ describe('ottava battuta', () => {
     // sides, the upper one arriving by a leap downward.
     const findings = findingsOf({
       notes: twoNoteLine(84, 76),
-      otherTracks: [otherVoice([55, 64])],
+      lines: [otherVoice([55, 64])],
     });
     expect(findings?.battuta).toBe(true);
   });
@@ -171,7 +158,7 @@ describe('ottava battuta', () => {
     // octave, but the upper voice steps into it, which the rule allows.
     const findings = findingsOf({
       notes: twoNoteLine(77, 76),
-      otherTracks: [otherVoice([55, 64])],
+      lines: [otherVoice([55, 64])],
     });
     expect(findings?.battuta).toBe(undefined);
   });
@@ -182,7 +169,7 @@ describe('ottava battuta', () => {
     // correctly, since nothing runs parallel. The battuta is a different rule
     // about exactly that motion, and it must still be reported.
     const result = buildGuidance(
-      guidanceInput({ notes: twoNoteLine(81, 69), otherTracks: [otherVoice([45, 57])] }),
+      guidanceInput({ notes: twoNoteLine(81, 69), lines: [otherVoice([45, 57])] }),
     );
     const analysis = result.byNoteId.get(2);
     expect((analysis?.safety?.reasons ?? 0) & ReasonFlag.ParallelPerfect).toBe(0);
@@ -199,9 +186,10 @@ describe('counterpoint card lines', () => {
     const result = buildGuidance(
       guidanceInput({
         notes: twoNoteLine(62, 56),
-        otherTracks: [
+        lines: [
           {
-            track: track({ id: 2, name: 'Alto' }),
+            trackId: 2,
+            role: 'melodic',
             notes: [note({ id: 600, pitch: 60, startPpq: 0, durationPpq: 2 })],
           },
         ],
@@ -303,17 +291,18 @@ describe('counterpoint card lines', () => {
     // each from a fixture of its own: inserting readings into the chain must
     // not reorder or displace any of them.
     const parallel = buildGuidance(
-      guidanceInput({ notes: twoNoteLine(60, 62), otherTracks: [otherVoice([53, 55])] }),
+      guidanceInput({ notes: twoNoteLine(60, 62), lines: [otherVoice([53, 55])] }),
     );
     const hidden = buildGuidance(
-      guidanceInput({ notes: twoNoteLine(62, 72), otherTracks: [otherVoice([55, 60])] }),
+      guidanceInput({ notes: twoNoteLine(62, 72), lines: [otherVoice([55, 60])] }),
     );
     const crossing = buildGuidance(
       guidanceInput({
         notes: twoNoteLine(62, 58),
-        otherTracks: [
+        lines: [
           {
-            track: track({ id: 2, name: 'Alto' }),
+            trackId: 2,
+            role: 'melodic',
             notes: [note({ id: 610, pitch: 60, startPpq: 0, durationPpq: 2 })],
           },
         ],
@@ -325,9 +314,10 @@ describe('counterpoint card lines', () => {
           note({ id: 1, pitch: 72, startPpq: 1, durationPpq: 1 }),
           note({ id: 2, pitch: 72, startPpq: 2, durationPpq: 1 }),
         ],
-        otherTracks: [
+        lines: [
           {
-            track: track({ id: 2, name: 'Bass' }),
+            trackId: 2,
+            role: 'melodic',
             notes: [
               note({ id: 620, pitch: 60, startPpq: 1, durationPpq: 1 }),
               note({ id: 621, pitch: 62, startPpq: 2, durationPpq: 1 }),
