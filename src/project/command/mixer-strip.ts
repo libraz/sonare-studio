@@ -32,6 +32,7 @@ import {
   type StripEq,
   type StripSend,
 } from '../mixer';
+import { editedProcessorParams } from '../processor-controls';
 import { useProjectStore } from '../store';
 import {
   pruneInsertProcessorReferences,
@@ -691,7 +692,7 @@ export function setInsertParam(
       const next = cloneStrip(strip);
       next.inserts[index] = {
         ...next.inserts[index],
-        params: { ...next.inserts[index].params, [param]: value },
+        params: editedProcessorParams(slot.processor, next.inserts[index].params, param, value),
       };
       writeStrip(store, target, next);
       store.refresh();

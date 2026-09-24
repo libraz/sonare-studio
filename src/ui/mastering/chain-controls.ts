@@ -11,12 +11,14 @@
 import type { InsertSlot } from '@/project/mixer';
 import {
   catalogParamInfo,
+  catalogSlots,
   type ProcessorControl,
   type ProcessorParamInfo,
   processorControls,
   processorControlValueFromMidi,
 } from '@/project/processor-controls';
 import { getWasmModule } from '@/project/store';
+import type { MasteringInsertSlot } from '@/wasm/index.js';
 
 /** One mastering parameter control (knob, toggle, or enum menu). */
 export type MasteringControl = ProcessorControl;
@@ -25,6 +27,8 @@ export type MasteringControl = ProcessorControl;
 export type MasteringParamResolver = (processor: string) => string[];
 /** Resolves typed runtime parameter metadata (injectable for tests). */
 export type MasteringParamInfoResolver = (processor: string) => ProcessorParamInfo[];
+/** Resolves a processor's conditional key groups (injectable for tests). */
+export type MasteringSlotResolver = (processor: string) => MasteringInsertSlot[];
 
 /** Default param resolver: the wasm catalog, when the module is loaded. */
 function defaultResolveParams(processor: string): string[] {
@@ -51,6 +55,7 @@ export function masteringProcessorControls(
   slot: InsertSlot,
   resolveParams: MasteringParamResolver = defaultResolveParams,
   resolveParamInfo: MasteringParamInfoResolver = catalogParamInfo,
+  resolveSlots: MasteringSlotResolver = catalogSlots,
 ): MasteringControl[] {
   const catalogNames = resolveParams(slot.processor);
   return processorControls(
@@ -58,6 +63,7 @@ export function masteringProcessorControls(
     catalogNames,
     slot.params,
     resolveParamInfo(slot.processor),
+    resolveSlots(slot.processor),
   );
 }
 

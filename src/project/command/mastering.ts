@@ -7,6 +7,7 @@ import {
   type MasteringChainState,
   type ProjectMixerState,
 } from '../mixer';
+import { editedProcessorParams } from '../processor-controls';
 import { useProjectStore } from '../store';
 import {
   pruneMasteringProcessorReferences,
@@ -266,7 +267,7 @@ export function setMasteringParam(
     () => {
       chain.processors[index] = {
         ...chain.processors[index],
-        params: { ...chain.processors[index].params, [param]: value },
+        params: editedProcessorParams(slot.processor, chain.processors[index].params, param, value),
       };
       writeMasteringChain(store, chain);
       store.refresh();

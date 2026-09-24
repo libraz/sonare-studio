@@ -10,7 +10,7 @@
  */
 
 import { formatControlValue } from '@/ui/devices/knob-math';
-import type { MasteringInsertParamInfo } from '@/wasm/index.js';
+import type { MasteringInsertParamInfo, MasteringInsertSlot } from '@/wasm/index.js';
 import { type AutomationParam, parseInsertAutomationParam } from './automation';
 import { insertIndexForAutomationRef } from './automation-insert';
 import {
@@ -79,7 +79,7 @@ export type ProcessorParamInfo = Pick<
   MasteringInsertParamInfo,
   'name' | 'type' | 'unit' | 'min' | 'max' | 'default'
 > &
-  Partial<Pick<MasteringInsertParamInfo, 'id' | 'choices'>>;
+  Partial<Pick<MasteringInsertParamInfo, 'id' | 'choices' | 'slot'>>;
 
 interface NumberControlSpec {
   kind: 'number';
@@ -382,50 +382,144 @@ export function processorControl(
   };
 }
 
-/**
- * Band-slot keys per EQ insert: a numbered band exists only once its
- * frequencyHz is set, so its other fields do nothing before that.
- */
-const BAND_SLOT_KEYS: Readonly<Record<string, RegExp>> = {
-  'eq.parametric': /^(band)\d+\./u,
-  'eq.minimumPhase': /^(band)\d+\./u,
-  'eq.linearPhase': /^(band)\d+\./u,
-  'eq.dynamic': /^(band)\d+\./u,
-  'eq.equalizer': /^(band)\d+\./u,
-  'eq.midSide': /^(midBand|sideBand)\d+\./u,
-  'multiband.dynamicEq': /^(band\d+\.dyn)\d+\./u,
-};
+/** A multiband crossover's cutoff key, `cutoff<i>Hz`. */
+const CROSSOVER_CUTOFF = /^cutoff\d+Hz$/u;
+
+/** Highest crossover cutoff a rack offers, the top of the Hz knob range. */
+const CROSSOVER_CUTOFF_CEILING_HZ = 20000;
+
+/** A crossover cutoff the insert reads, with the value it reads. */
+interface CutoffInEffect {
+  name: string;
+  value: number;
+}
 
 /**
- * Keeps the band-slot names a rack should show: every field of a band whose
- * frequency is set, plus the frequency of the first unused band of each family
- * so another band can be added. Other names pass through.
+ * The crossover cutoffs an insert reads: the supplied cutoff keys when there
+ * are any (they replace the default split whole), else the catalog defaults.
  */
-function visibleBandSlotNames(
+function cutoffsInEffect(
+  paramInfo: ReadonlyArray<ProcessorParamInfo>,
+  params: Readonly<Record<string, unknown>>,
+): CutoffInEffect[] {
+  const cutoffs = paramInfo.filter((info) => CROSSOVER_CUTOFF.test(info.name));
+  const supplied = cutoffs.flatMap((info) => {
+    const value = params[info.name];
+    return typeof value === 'number' ? [{ name: info.name, value }] : [];
+  });
+  if (supplied.length > 0) return supplied;
+  return cutoffs.flatMap((info) =>
+    typeof info.default === 'number' ? [{ name: info.name, value: info.default }] : [],
+  );
+}
+
+/**
+ * The params after one edit. A crossover cutoff edit also writes the other
+ * cutoffs in effect: a partial cutoff set replaces the default split, so the
+ * edit would otherwise drop the default cutoffs and their bands.
+ */
+export function editedProcessorParams<T extends Readonly<Record<string, unknown>>>(
   processor: string,
+  params: T,
+  param: string,
+  value: number | boolean,
+): T {
+  if (!CROSSOVER_CUTOFF.test(param)) return { ...params, [param]: value };
+  const kept = Object.fromEntries(
+    cutoffsInEffect(catalogParamInfo(processor), params).map((cutoff) => [
+      cutoff.name,
+      cutoff.value,
+    ]),
+  );
+  return { ...kept, ...params, [param]: value };
+}
+
+/** Conditional key groups per loaded module, by processor. */
+const slotCache = new WeakMap<object, Map<string, MasteringInsertSlot[]>>();
+
+/** The loaded module's conditional key groups of one processor, or [] before init. */
+export function catalogSlots(processor: string): MasteringInsertSlot[] {
+  let wasm: ReturnType<typeof getWasmModule>;
+  try {
+    wasm = getWasmModule();
+  } catch {
+    return [];
+  }
+  if (typeof wasm.masteringProcessorCatalog !== 'function') return [];
+  let byProcessor = slotCache.get(wasm);
+  if (!byProcessor) {
+    byProcessor = new Map(wasm.masteringProcessorCatalog().map((entry) => [entry.id, entry.slots]));
+    slotCache.set(wasm, byProcessor);
+  }
+  return byProcessor.get(processor) ?? [];
+}
+
+/** The names a rack shows, and a default for the cutoff that adds a band. */
+interface VisibleSlotNames {
+  names: string[];
+  addCutoff?: CutoffInEffect;
+}
+
+/**
+ * Keeps the conditional keys a rack should show: every key of a slot that
+ * exists, plus one key (its frequency when it has one) of the first missing
+ * `anyKey` slot of each family so another band can be added. Crossover
+ * cutoffs show the ones in effect and the next one, which adds a band.
+ */
+function visibleSlotNames(
   names: ReadonlyArray<string>,
   params: Readonly<Record<string, unknown>>,
-): string[] {
-  const pattern = BAND_SLOT_KEYS[processor];
-  if (!pattern) return [...names];
-  const slotOf = (name: string): { slot: string; family: string } | null => {
-    const match = pattern.exec(name);
-    return match ? { slot: match[0].slice(0, -1), family: match[1] } : null;
-  };
-  const used = new Set<string>();
-  const nextFree = new Map<string, string>();
+  paramInfo: ReadonlyArray<ProcessorParamInfo>,
+  slots: ReadonlyArray<MasteringInsertSlot>,
+): VisibleSlotNames {
+  if (slots.length === 0) return { names: [...names] };
+  const slotOf = new Map(paramInfo.map((info) => [info.name, info.slot ?? null]));
+  const keysBySlot = new Map<string, string[]>();
   for (const name of names) {
-    const entry = slotOf(name);
-    if (!entry || !name.endsWith('.frequencyHz')) continue;
-    if (typeof params[name] === 'number') used.add(entry.slot);
-    else if (!nextFree.has(entry.family)) nextFree.set(entry.family, entry.slot);
+    const slot = slotOf.get(name);
+    if (slot) keysBySlot.set(slot, [...(keysBySlot.get(slot) ?? []), name]);
   }
-  return names.filter((name) => {
-    const entry = slotOf(name);
-    if (!entry) return true;
-    if (used.has(entry.slot)) return true;
-    return nextFree.get(entry.family) === entry.slot && name.endsWith('.frequencyHz');
-  });
+  const cutoffs = cutoffsInEffect(paramInfo, params);
+  const existing = new Set<string>();
+  const offered = new Set<string>();
+  const offeredFamilies = new Set<string>();
+  // A parent slot is always listed before the slots naming it.
+  for (const slot of slots) {
+    if (slot.parent !== null && !existing.has(slot.parent)) continue;
+    const keys = keysBySlot.get(slot.name) ?? [];
+    const exists =
+      slot.activation === 'always'
+        ? cutoffs.length >= slot.minCrossoverCutoffs
+        : keys.some((key) => params[key] !== undefined);
+    if (exists) {
+      existing.add(slot.name);
+      continue;
+    }
+    const family = `${slot.parent ?? ''}|${slot.name.replace(/\d+$/u, '')}`;
+    if (slot.activation !== 'anyKey' || offeredFamilies.has(family)) continue;
+    offeredFamilies.add(family);
+    const key = keys.find((name) => name.endsWith('.frequencyHz')) ?? keys[0];
+    if (key !== undefined) offered.add(key);
+  }
+  const inEffect = new Set(cutoffs.map((cutoff) => cutoff.name));
+  const nextCutoff = names.find((name) => CROSSOVER_CUTOFF.test(name) && !inEffect.has(name));
+  const last = cutoffs.at(-1)?.value;
+  return {
+    names: names.filter((name) => {
+      if (CROSSOVER_CUTOFF.test(name)) return inEffect.has(name) || name === nextCutoff;
+      const slot = slotOf.get(name) ?? null;
+      return slot === null || existing.has(slot) || offered.has(name);
+    }),
+    // Cutoffs must ascend, so the added one starts above the last in effect.
+    ...(nextCutoff !== undefined && last !== undefined
+      ? {
+          addCutoff: {
+            name: nextCutoff,
+            value: Math.sqrt(last * CROSSOVER_CUTOFF_CEILING_HZ),
+          },
+        }
+      : {}),
+  };
 }
 
 /** Builds all descriptors for one processor in the shared order. */
@@ -434,14 +528,23 @@ export function processorControls(
   catalogNames: ReadonlyArray<string>,
   params: Readonly<Record<string, unknown>>,
   paramInfo: ReadonlyArray<ProcessorParamInfo> = [],
+  slots: ReadonlyArray<MasteringInsertSlot> = [],
 ): ProcessorControl[] {
   const infoByName = new Map(paramInfo.map((info) => [info.name, info]));
-  return visibleBandSlotNames(
-    processor,
+  const visible = visibleSlotNames(
     processorControlNames(catalogNames, paramInfo, params),
     params,
-  )
-    .map((name) => processorControl(processor, name, params[name], infoByName.get(name)))
+    paramInfo,
+    slots,
+  );
+  const { addCutoff } = visible;
+  return visible.names
+    .map((name) => {
+      const info = infoByName.get(name);
+      const withDefault =
+        addCutoff?.name === name && info ? { ...info, default: addCutoff.value } : info;
+      return processorControl(processor, name, params[name], withDefault);
+    })
     .filter((control): control is ProcessorControl => control !== null);
 }
 

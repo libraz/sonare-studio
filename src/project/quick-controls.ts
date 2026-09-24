@@ -16,7 +16,7 @@ import {
   patchFieldSpec,
 } from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
-import type { SynthEnumTables } from '@/wasm/index.js';
+import type { MasteringInsertSlot, SynthEnumTables } from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
   isMixerBusStripTarget,
@@ -35,6 +35,7 @@ import {
 import type { InsertSlot, MixerStrip } from './mixer';
 import {
   catalogParamInfo,
+  catalogSlots,
   type ProcessorControl,
   type ProcessorControlValue,
   type ProcessorEnumOption,
@@ -61,6 +62,8 @@ export interface QuickControlResolvers {
   resolveInsertParams?: (processor: string) => string[];
   /** Resolves engine-provided parameter metadata, including an optional unit. */
   resolveInsertParamInfo?: (processor: string) => ProcessorParamInfo[];
+  /** Resolves an insert processor's conditional key groups (EQ and crossover bands). */
+  resolveInsertSlots?: (processor: string) => MasteringInsertSlot[];
 }
 
 /** One entry of the NativeSynth quick-control table. */
@@ -386,7 +389,8 @@ export function listQuickControls(
   const catalogNames = resolveParams(slot.processor);
   const resolveInfo = resolvers.resolveInsertParamInfo ?? catalogParamInfo;
   const paramInfo = resolveInfo(slot.processor);
-  return processorControls(slot.processor, catalogNames, slot.params, paramInfo);
+  const slots = (resolvers.resolveInsertSlots ?? catalogSlots)(slot.processor);
+  return processorControls(slot.processor, catalogNames, slot.params, paramInfo, slots);
 }
 
 /**
