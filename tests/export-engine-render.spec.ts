@@ -2026,6 +2026,38 @@ describe('renderProjectWithEngine', () => {
     expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(96), 5);
   });
 
+  it('binds GM-enabled synth presets and schedules their initial selection offline', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].instrument = {
+      kind: 'synth-preset',
+      preset: 'saw-lead',
+      useGmPrograms: true,
+      gmBank: 128,
+      gmProgram: 25,
+    };
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setSynthInstrument')).toEqual([
+      ['setSynthInstrument', { preset: 'saw-lead', useGmPrograms: true }, 1],
+    ]);
+    const midi = engine.named('setMidiClips')[0][1] as Array<{
+      events: Array<{ renderFrame: number; word0: number; wordCount: number }>;
+    }>;
+    expect(midi[0].events.slice(0, 3)).toEqual([
+      { renderFrame: 0, word0: ccWord(0, 0, 1), wordCount: 1 },
+      { renderFrame: 0, word0: ccWord(0, 32, 0), wordCount: 1 },
+      { renderFrame: 0, word0: pcWord(0, 25), wordCount: 1 },
+    ]);
+    expect(midi[0].events[3]).toEqual({
+      renderFrame: 1,
+      word0: noteOnWord(0, 60, 96),
+      wordCount: 1,
+    });
+  });
+
   it('drives synth-patch instrument lanes on the bound instrument during offline playback', async () => {
     const doc = makeDoc();
     doc.tracks[1].mute = true;

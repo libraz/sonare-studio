@@ -13,6 +13,7 @@ import { loadFont as loadStoredFont } from '@/project/fonts';
 import {
   DEFAULT_SYNTH_PRESET,
   instrumentCacheSegment,
+  type SynthPresetInstrument,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -230,7 +231,8 @@ export function noteEventsFromNotes(notes: ReadonlyArray<MidiNote>): NoteEvent[]
  *
  * The key covers everything that influences the rendered audio: note content
  * (order-insensitive), tempo, instrument identity (preset name, hashed patch
- * content, or SoundFont id + bank/program), and sample rate.
+ * content, or SoundFont id + bank/program), GM mode and initial selection, and
+ * sample rate.
  *
  * @param notes Notes of the phrase.
  * @param options Render options (sampleRate required; tempo/instrument use defaults).
@@ -325,6 +327,32 @@ function sf2ProgramEvents(
   return events;
 }
 
+/** Builds the initial GM bank/program events for a NativeSynth preset. */
+function synthPresetProgramEvents(
+  wasm: WasmModule,
+  instrument: SynthPresetInstrument,
+  channels: ReadonlyArray<number>,
+): ProjectMidiEvent[] {
+  if (
+    instrument.useGmPrograms !== true ||
+    (instrument.gmBank === undefined && instrument.gmProgram === undefined)
+  ) {
+    return [];
+  }
+  const events: ProjectMidiEvent[] = [];
+  const program = instrument.gmProgram ?? 0;
+  for (const channel of channels) {
+    if (instrument.gmBank !== undefined && typeof wasm.Project.midiBankProgram === 'function') {
+      const bankMsb = (instrument.gmBank >> 7) & 0x7f;
+      const bankLsb = instrument.gmBank & 0x7f;
+      events.push(...wasm.Project.midiBankProgram(0, 0, channel, bankMsb, bankLsb, program));
+    } else {
+      events.push(wasm.Project.midiProgram(0, 0, channel, program));
+    }
+  }
+  return events;
+}
+
 /**
  * Renders a MIDI phrase offline to planar stereo audio using the libsonare
  * instrument selected by the options (NativeSynth preset or patch, or a
@@ -374,10 +402,10 @@ export async function prerenderMidiClip(
         ? wasm.Project.midiNoteOn(e.ppq, 0, e.channel, e.note, e.velocity)
         : wasm.Project.midiNoteOff(e.ppq, 0, e.channel, e.note, e.velocity),
     );
+    const usedChannels = [...new Set(events.map((e) => e.channel))];
     let interleaved: Float32Array;
     if (instrument.kind === 'sf2') {
       project.loadSoundFont(fontData as Uint8Array);
-      const usedChannels = [...new Set(events.map((e) => e.channel))];
       const programEvents = sf2ProgramEvents(wasm, instrument, usedChannels);
       // The engine orders same-frame events non-stably.  A bank/program
       // prelude at PPQ 0 must therefore precede a phrase that starts at 0,
@@ -394,11 +422,25 @@ export async function prerenderMidiClip(
         numChannels: 2,
       });
     } else {
-      project.setMidiEvents(clipId, noteEvents);
+      const programEvents =
+        instrument.kind === 'synth-preset'
+          ? synthPresetProgramEvents(wasm, instrument, usedChannels)
+          : [];
+      // A GM prelude at PPQ 0 must precede a phrase that starts at 0, just as
+      // the realtime scheduler shifts its frame-zero phrase events.
+      const preludeSafeNoteEvents =
+        programEvents.length === 0
+          ? noteEvents
+          : noteEvents.map((event) =>
+              event.ppq === 0 ? { ...event, ppq: tempoBpm / (60 * options.sampleRate) } : event,
+            );
+      project.setMidiEvents(clipId, [...programEvents, ...preludeSafeNoteEvents]);
       const patch =
         instrument.kind === 'synth-patch'
           ? instrument.patch
-          : resolvePresetName(wasm, instrument.preset);
+          : instrument.useGmPrograms === true
+            ? { preset: resolvePresetName(wasm, instrument.preset), useGmPrograms: true }
+            : resolvePresetName(wasm, instrument.preset);
       interleaved = project.bounceWithSynthInstrument(patch, { numChannels: 2 });
     }
     const channels = deinterleave(interleaved, 2);

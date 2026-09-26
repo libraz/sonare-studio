@@ -912,7 +912,11 @@ export async function renderProjectWithEngine(
       const instrument = effectiveInstruments[index];
       const destinationId = trackIds[index];
       if (instrument?.kind === 'synth-preset') {
-        engine.setSynthInstrument(resolvePreset(instrument.preset), destinationId);
+        const preset = resolvePreset(instrument.preset);
+        engine.setSynthInstrument(
+          instrument.useGmPrograms === true ? { preset, useGmPrograms: true } : preset,
+          destinationId,
+        );
       } else if (instrument?.kind === 'synth-patch') {
         engine.setSynthInstrument(instrument.patch, destinationId);
       } else if (instrument?.kind === 'sf2') {

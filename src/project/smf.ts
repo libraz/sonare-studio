@@ -2,6 +2,7 @@ import { keyMarkerName, keySignatureFromName } from '@/compose/key-name';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
+import { gmProgramForPreset } from './instrument';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from './midi-cc';
 import {
   notesToProjectMidiEvents,
@@ -25,6 +26,7 @@ import { type SmfSysExPacket, TRACK_COLOR_PALETTE } from './types';
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_BPM = 120;
+const GM2_DRUM_BANK = 120 << 7;
 const DEFAULT_CLIP_LENGTH_PPQ = 1;
 const SMF_EDGE_PAD_PPQ = 1 / 480;
 const PPQ_INTEGER_EPSILON = 1 / 256;
@@ -330,7 +332,8 @@ function displayClipLength(lengthPpq: number): number {
 }
 
 function presetForGmProgram(program: number, ch: number, bank?: number): string {
-  if (ch === 9 || bank === 128) return 'drum-kit';
+  if (ch === 9 || (bank !== undefined && bank >> 7 === 120)) return 'drum-kit';
+  if (program === 4 || program === 5) return 'e-piano';
   if (program < 8) return 'acoustic-piano';
   if (program < 16) return 'e-piano';
   if (program < 24) return 'organ';
@@ -345,37 +348,6 @@ function presetForGmProgram(program: number, ch: number, bank?: number): string 
   if (program < 112) return 'pluck';
   if (program < 120) return 'drum-kit';
   return 'sine';
-}
-
-function gmProgramForPreset(preset: string): number {
-  switch (preset) {
-    case 'acoustic-piano':
-      return 0;
-    case 'e-piano':
-      return 8;
-    case 'organ':
-      return 16;
-    case 'electric-guitar':
-      return 27;
-    case 'sub-bass':
-      return 38;
-    case 'warm-pad':
-      return 89;
-    case 'brass':
-      return 61;
-    case 'saw-lead':
-      return 81;
-    case 'square-lead':
-      return 80;
-    case 'pluck':
-      return 104;
-    case 'drum-kit':
-      return 0;
-    case 'sine':
-      return 120;
-    default:
-      return 4;
-  }
 }
 
 function extractEvents(raw: unknown): SerializedMidiEvent[] {
@@ -424,7 +396,7 @@ function programAt(
 }
 
 function groupKey(programs: ReadonlyArray<ProgramEntry>, ch: number, ppq: number): TrackGroupKey {
-  if (ch === 9) return { channel: ch, bank: 128, program: 0 };
+  if (ch === 9) return { channel: ch, bank: GM2_DRUM_BANK, program: 0 };
   const program = programAt(programs, ch, ppq);
   return {
     channel: ch,
@@ -662,17 +634,20 @@ function trackDocument(
         }
       : undefined;
   const firstProgram =
-    programs.find((entry) => entry.channel === 9 || entry.bank === 128) ??
+    programs.find(
+      (entry) => entry.channel === 9 || (entry.bank !== undefined && entry.bank >> 7 === 120),
+    ) ??
     programs[0] ??
     defaultProgram ??
     (events.some((event) => channel(event) === 9)
-      ? { ppq: 0, channel: 9, program: 0, bank: 128 }
+      ? { ppq: 0, channel: 9, program: 0, bank: GM2_DRUM_BANK }
       : undefined);
   const instrument = firstProgram
     ? {
         instrument: {
           kind: 'synth-preset' as const,
           preset: presetForGmProgram(firstProgram.program, firstProgram.channel, firstProgram.bank),
+          useGmPrograms: true,
           ...(firstProgram.bank !== undefined ? { gmBank: firstProgram.bank } : {}),
           gmProgram: firstProgram.program,
         },
@@ -718,7 +693,7 @@ function splitTrackByChannelAndProgram(
     )
     .map((group, offset) => {
       const suffix =
-        group.key.channel === 9 || group.key.bank === 128
+        group.key.channel === 9 || (group.key.bank !== undefined && group.key.bank >> 7 === 120)
           ? ` Ch ${group.key.channel + 1} Drums`
           : ` Ch ${group.key.channel + 1} ${presetForGmProgram(group.key.program ?? 0, group.key.channel, group.key.bank)}`;
       return trackDocument(track, clip, group.events, index + offset, suffix);
@@ -1139,7 +1114,7 @@ async function projectFromDocument(
             ),
           );
         } else if (preset === 'drum-kit') {
-          events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 1, 0, program));
+          events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 120, 0, program));
         } else {
           events.unshift(wasm.Project.midiProgram(0, 0, ch, program));
         }

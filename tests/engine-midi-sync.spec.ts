@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { buildMidiClipSchedules, createMidiSync, midiStateAtPpq } from '@/engine/midi-sync';
-import { instrumentAutomationParam } from '@/project/automation';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
 import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
@@ -652,6 +651,51 @@ describe('buildMidiClipSchedules', () => {
       });
     });
   });
+
+  describe('GM NativeSynth program prelude', () => {
+    const gmTrack = (bank?: number, program?: number): EditorTrack =>
+      makeTrack(1, {
+        instrument: {
+          kind: 'synth-preset',
+          preset: 'saw-lead',
+          useGmPrograms: true,
+          ...(bank !== undefined ? { gmBank: bank } : {}),
+          ...(program !== undefined ? { gmProgram: program } : {}),
+        },
+      });
+
+    it('emits the initial bank/program before a frame-0 NativeSynth phrase', () => {
+      const clip = makeClip(1, 1, { startPpq: 0 });
+      const [schedule] = buildMidiClipSchedules([gmTrack(128, 25)], [clip], TEMPO_120, SAMPLE_RATE);
+
+      expect(schedule.events).toEqual([
+        { renderFrame: 0, word0: ccWord(0, 0, 1), wordCount: 1 },
+        { renderFrame: 0, word0: ccWord(0, 32, 0), wordCount: 1 },
+        { renderFrame: 0, word0: pcWord(0, 25), wordCount: 1 },
+        { renderFrame: 1, word0: noteOnWord(0, 60, 100), wordCount: 1 },
+        { renderFrame: SPP - 1, word0: noteOffWord(0, 60), wordCount: 1 },
+      ]);
+    });
+
+    it('includes channels used only by an explicit program-change lane', () => {
+      const clip = makeClip(1, 1, {
+        startPpq: 2,
+        notes: [],
+        programChangeLanes: [{ channel: 3, points: [{ ppq: 0, program: 7 }] }],
+      });
+      const [schedule] = buildMidiClipSchedules(
+        [gmTrack(undefined, 25)],
+        [clip],
+        TEMPO_120,
+        SAMPLE_RATE,
+      );
+
+      expect(schedule.events).toEqual([
+        { renderFrame: 2 * SPP - 1, word0: pcWord(3, 25), wordCount: 1 },
+        { renderFrame: 2 * SPP, word0: pcWord(3, 7), wordCount: 1 },
+      ]);
+    });
+  });
 });
 
 describe('midiStateAtPpq', () => {
@@ -803,6 +847,32 @@ describe('createMidiSync', () => {
     const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
     await sync.sync([track], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, 'va:saw-lead');
+  });
+
+  it('binds GM-enabled synth presets as a NativeSynth GM patch object', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle, { resolvePreset: (preset) => `va:${preset}` });
+
+    await sync.sync(
+      [
+        makeTrack(1, {
+          instrument: {
+            kind: 'synth-preset',
+            preset: 'saw-lead',
+            useGmPrograms: true,
+            gmBank: 128,
+            gmProgram: 25,
+          },
+        }),
+      ],
+      [],
+      TEMPO_120,
+    );
+
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, {
+      preset: 'va:saw-lead',
+      useGmPrograms: true,
+    });
   });
 
   it('falls back to the default synth when an imported preset fails to bind', async () => {

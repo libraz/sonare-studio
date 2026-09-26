@@ -1065,6 +1065,7 @@ const FAKE_GM_FAMILIES = [
 
 const FAKE_GM_INSTRUMENTS = Array.from({ length: 128 }, (_, index) => `Program ${index}`);
 FAKE_GM_INSTRUMENTS[0] = 'Acoustic Grand Piano';
+FAKE_GM_INSTRUMENTS[4] = 'Electric Piano 1';
 FAKE_GM_INSTRUMENTS[16] = 'Drawbar Organ';
 FAKE_GM_INSTRUMENTS[19] = 'Church Organ';
 FAKE_GM_INSTRUMENTS[24] = 'Nylon Guitar';
@@ -1576,6 +1577,10 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     init: async () => {},
     synthPresetNames: fakeSynthPresetNames,
     synthPresetPatch: fakeSynthPresetPatch,
+    synthGsVariationIsVoicedApart: (bank: number, program: number) => bank === 1 && program === 24,
+    synthGsDrumKitName: (program: number) =>
+      program === 0 ? 'Standard Kit' : program === 8 ? 'Room Kit' : null,
+    synthGsDrumKitIsVoicedApart: (program: number) => program === 8,
     masteringInsertNames: () => Object.keys(FAKE_INSERT_PARAMS),
     masteringProcessorCatalog: () =>
       Object.keys(FAKE_INSERT_PARAMS).map((id) => ({

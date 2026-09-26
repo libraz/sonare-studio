@@ -213,6 +213,24 @@
   overflow: auto;
 }
 
+.gm-hint {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.gm-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.gm-use {
+  align-self: flex-start;
+}
+
 /* Layout only — SearchField owns the field face, focus ring and metrics. */
 .preset-search {
   width: 100%;

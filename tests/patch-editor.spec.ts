@@ -8,7 +8,7 @@ import {
   resetShortcutBlockingOverlaysForTest,
   shortcutBlockingOverlayOpen,
 } from '@/ui/overlay-registry';
-import { selectOption } from './helpers/select-menu';
+import { openSelect, selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -83,6 +83,17 @@ describe('PatchEditor.vue', () => {
     expect((wrapper.find('[data-field="ampSustain"]').element as HTMLInputElement).value).toBe(
       '0.6',
     );
+  });
+
+  it('does not offer an unbound sample engine as a playable patch mode', async () => {
+    const wrapper = mountOpen();
+    const engineRow = wrapper.findAll('.enum-row').find((row) => row.text().includes('Engine'));
+    expect(engineRow).toBeDefined();
+    await openSelect(wrapper, '.patch-section[aria-label="Global"] .enum-row .select-menu');
+    const sample = Array.from(document.querySelectorAll('.select-option')).find(
+      (option) => option.querySelector('.select-option-label')?.textContent === 'sample',
+    );
+    expect(sample?.getAttribute('aria-disabled')).toBe('true');
   });
 
   it('applies edits as one undoable synth-patch instrument', async () => {

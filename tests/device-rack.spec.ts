@@ -7,11 +7,12 @@ import {
   addAudioTrack,
   addTrack,
   clearHistory,
+  renameTrack,
   setActiveTrack,
   setTrackInstrument,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { selectOption } from './helpers/select-menu';
+import { selectOption, selectValueText } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -146,6 +147,100 @@ describe('DeviceRack.vue', () => {
     expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'saw-lead' });
     expect(wrapper.find('.instrument-picker').exists()).toBe(false);
     expect(wrapper.find('.instrument-name').text()).toBe('saw-lead');
+  });
+
+  it('selects a built-in GM program and reopens on its GM settings', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    await wrapper
+      .findAll('.picker-tab')
+      .find((tab) => tab.text() === 'GM')
+      ?.trigger('click');
+    await selectOption(wrapper, '.gm-field .select-menu', '025 · Nylon Guitar');
+    await wrapper.find('.gm-use').trigger('click');
+
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'synth-preset',
+      preset: 'e-piano',
+      useGmPrograms: true,
+      gmBank: 0,
+      gmProgram: 24,
+    });
+    expect(wrapper.find('.instrument-name').text()).toBe('GM · Nylon Guitar');
+
+    await wrapper.find('.instrument-button').trigger('click');
+    expect(wrapper.find('.picker-tab.active').text()).toBe('GM');
+  });
+
+  it('encodes a GS variation as bank select MSB and preserves it when reopened', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    await wrapper
+      .findAll('.picker-tab')
+      .find((tab) => tab.text() === 'GM')
+      ?.trigger('click');
+    expect(selectValueText(wrapper, '.gm-field .select-menu')).toBe('005 · Electric Piano 1');
+    await selectOption(wrapper, '.gm-field .select-menu', '025 · Nylon Guitar');
+    await selectOption(wrapper, '.gm-field + .gm-field .select-menu', '1 · Ukulele');
+    await wrapper.find('.gm-use').trigger('click');
+
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'synth-preset',
+      preset: 'e-piano',
+      useGmPrograms: true,
+      gmBank: 128,
+      gmProgram: 24,
+    });
+    await wrapper.find('.instrument-button').trigger('click');
+    expect(selectValueText(wrapper, '.gm-field + .gm-field .select-menu')).toBe('1 · Ukulele');
+    expect(wrapper.find('.instrument-name').text()).toBe('GM · Ukulele');
+  });
+
+  it('shows drum kits for a percussion track even without an explicit override', async () => {
+    renameTrack(trackId, 'Drums');
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    await wrapper
+      .findAll('.picker-tab')
+      .find((tab) => tab.text() === 'GM')
+      ?.trigger('click');
+    expect(selectValueText(wrapper, '.gm-field .select-menu')).toBe('001 · Standard Kit');
+    await selectOption(wrapper, '.gm-field .select-menu', '009 · Room Kit');
+    await wrapper.find('.gm-use').trigger('click');
+    expect(store.tracks[0].instrument).toMatchObject({
+      useGmPrograms: true,
+      gmBank: 120 << 7,
+      gmProgram: 8,
+    });
+    expect(wrapper.find('.instrument-name').text()).toBe('GM · Room Kit');
+  });
+
+  it('keeps an imported bank that has no voice for the current program', async () => {
+    setTrackInstrument(trackId, {
+      kind: 'synth-preset',
+      preset: 'cello',
+      useGmPrograms: true,
+      gmBank: 129,
+      gmProgram: 42,
+    });
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    expect(selectValueText(wrapper, '.gm-field + .gm-field .select-menu')).toBe('1');
+    await wrapper.find('.gm-use').trigger('click');
+    expect(store.tracks[0].instrument).toMatchObject({ gmBank: 129, gmProgram: 42 });
+  });
+
+  it('opens the drum kit picker for a drum-kit preset on an empty track', async () => {
+    setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'drum-kit' });
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    await wrapper
+      .findAll('.picker-tab')
+      .find((tab) => tab.text() === 'GM')
+      ?.trigger('click');
+    expect(selectValueText(wrapper, '.gm-field .select-menu')).toBe('001 · Standard Kit');
+    await wrapper.find('.gm-use').trigger('click');
+    expect(store.tracks[0].instrument).toMatchObject({ gmBank: 120 << 7, gmProgram: 0 });
   });
 
   it('removes the instrument picker outside-click listener on unmount', async () => {

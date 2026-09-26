@@ -4,7 +4,8 @@
  * A track instrument describes how the track's MIDI clips are rendered to
  * audio by the offline bounce (src/engine/instruments.ts). The three variants
  * map onto the libsonare Project bounce entry points:
- * - 'synth-preset' -> bounceWithSynthInstrument(presetName)
+ * - 'synth-preset' -> bounceWithSynthInstrument(presetName), or a binding
+ *   object when the NativeSynth GM program resolver is enabled
  * - 'synth-patch'  -> bounceWithSynthInstrument(patch) (NativeSynth SynthPatch)
  * - 'sf2'          -> loadSoundFont + bounceWithSf2Instrument (bank/program
  *   selection is injected as MIDI bank-select/program-change events)
@@ -28,11 +29,92 @@ export interface SynthPresetInstrument {
   kind: 'synth-preset';
   /** Preset name from the NativeSynth catalog (synthPresetNames()). */
   preset: string;
+  /** Resolve incoming MIDI bank/program messages through the NativeSynth GM bank. */
+  useGmPrograms?: boolean;
   /** Original GM bank imported from SMF; export uses it before preset reverse-mapping. */
   gmBank?: number;
   /** Original GM program imported from SMF; export uses it before preset reverse-mapping. */
   gmProgram?: number;
 }
+
+/** Program used when a catalog preset is converted to a GM instrument or exported as SMF. */
+export function gmProgramForPreset(preset: string): number {
+  return PRESET_GM_PROGRAM[preset] ?? 4;
+}
+
+/** NativeSynth's named presets and their nearest standard GM address. */
+const PRESET_GM_PROGRAM: Readonly<Record<string, number>> = {
+  sine: 80,
+  saw: 81,
+  square: 80,
+  triangle: 81,
+  'saw-lead': 81,
+  'square-lead': 80,
+  'sub-bass': 38,
+  'warm-pad': 89,
+  'e-piano': 4,
+  bell: 14,
+  brass: 56,
+  pluck: 104,
+  'classical-guitar': 24,
+  'steel-guitar': 25,
+  'electric-guitar': 26,
+  harp: 46,
+  harpsichord: 6,
+  'bass-acoustic': 32,
+  'bass-fingered': 33,
+  'bass-picked': 34,
+  'bass-fretless': 35,
+  'bass-slap': 36,
+  marimba: 12,
+  glass: 9,
+  organ: 16,
+  'drum-kit': 0,
+  'acoustic-piano': 0,
+  'church-organ': 19,
+  'church-flute': 19,
+  'church-bourdon': 19,
+  'church-trumpet': 19,
+  violin: 40,
+  viola: 41,
+  cello: 42,
+  contrabass: 43,
+  clarinet: 71,
+  'soprano-sax': 64,
+  'alto-sax': 65,
+  'tenor-sax': 66,
+  'baritone-sax': 67,
+  oboe: 68,
+  'english-horn': 69,
+  bassoon: 70,
+  trumpet: 56,
+  trombone: 57,
+  tuba: 58,
+  'french-horn': 60,
+  'muted-trumpet': 59,
+  cornet: 56,
+  flugelhorn: 56,
+  euphonium: 57,
+  'concert-flute': 73,
+  piccolo: 72,
+  recorder: 74,
+  'pan-flute': 75,
+  shakuhachi: 77,
+  'tin-whistle': 78,
+  ocarina: 79,
+  'blown-bottle': 76,
+  'harp-plucked': 46,
+  koto: 107,
+  sitar: 104,
+  tanpura: 104,
+  'choir-aah': 52,
+  'choir-ooh': 53,
+  'voice-eeh': 54,
+  accordion: 21,
+  harmonica: 22,
+  bandoneon: 23,
+  'reed-organ': 20,
+};
 
 /** Instrument variant: an editable NativeSynth patch (possibly preset-based). */
 export interface SynthPatchInstrument {
@@ -210,6 +292,12 @@ export function isNativeSynthInstrument(
   return instrument.kind === 'synth-preset' || instrument.kind === 'synth-patch';
 }
 
+/** Identity suffix for the optional NativeSynth GM program mode. */
+function synthPresetGmIdentitySuffix(instrument: SynthPresetInstrument): string {
+  if (instrument.useGmPrograms !== true) return '';
+  return `:gm=1:${instrument.gmBank ?? -1}:${instrument.gmProgram ?? -1}`;
+}
+
 /**
  * A stable key identifying an instrument for destination de-duplication: two
  * tracks whose instruments produce the same key can share one engine playback
@@ -219,7 +307,7 @@ export function isNativeSynthInstrument(
 export function instrumentDedupeKey(instrument: TrackInstrument): string {
   switch (instrument.kind) {
     case 'synth-preset':
-      return `synth-preset:${instrument.preset}`;
+      return `synth-preset:${instrument.preset}${synthPresetGmIdentitySuffix(instrument)}`;
     case 'synth-patch':
       return `synth-patch:${JSON.stringify(instrument.patch)}`;
     case 'sf2': {
@@ -232,7 +320,7 @@ export function instrumentDedupeKey(instrument: TrackInstrument): string {
           : '';
       return `sf2:${instrument.fontId}:${instrument.bank ?? 'bank-default'}:${
         instrument.program ?? 'program-default'
-      }:gain=${instrument.gain ?? 'gain-default'}:polyphony=${instrument.polyphony ?? 'polyphony-default'}${channelMap}`;
+      }:gain=${instrument.gain ?? 'gain-default'}:polyphony=${instrument.polyphony ?? 'polyphony-default'}:model=${instrument.preferModelForModeledFamilies === true ? 1 : 0}${channelMap}`;
     }
     case 'external-midi':
       return `external-midi:${instrument.outputPortId}:ch${instrument.channel + 1}`;
@@ -268,6 +356,9 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
     case 'synth-preset':
       if (typeof instrument.preset !== 'string' || instrument.preset.length === 0) {
         throw new RangeError('Synth preset instrument requires a non-empty preset name');
+      }
+      if (instrument.useGmPrograms !== undefined && typeof instrument.useGmPrograms !== 'boolean') {
+        throw new RangeError('Synth preset useGmPrograms must be a boolean when present');
       }
       if (
         instrument.gmBank !== undefined &&
@@ -391,7 +482,8 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
  * The segment covers everything in the instrument that influences the bounced
  * audio: preset name, the full patch content (canonicalized and hashed), or
  * the SoundFont id plus bank/program. The synth-preset form intentionally
- * matches the historical `preset=<name>` cache-key segment.
+ * matches the historical `preset=<name>` cache-key segment when GM mode is
+ * disabled; GM mode appends its initial bank/program selection.
  *
  * @param instrument Instrument to identify.
  * @returns A stable key segment.
@@ -453,7 +545,7 @@ export function sf2ChannelProgram(
 export function instrumentCacheSegment(instrument: TrackInstrument): string {
   switch (instrument.kind) {
     case 'synth-preset':
-      return `preset=${encodeURIComponent(instrument.preset)}`;
+      return `preset=${encodeURIComponent(instrument.preset)}${synthPresetGmIdentitySuffix(instrument)}`;
     case 'synth-patch':
       return `patch=${fnv1a32Hex(canonicalJson(instrument.patch))}`;
     case 'sf2': {

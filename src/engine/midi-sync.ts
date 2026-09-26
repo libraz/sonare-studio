@@ -38,6 +38,7 @@ import {
   effectiveTrackInstrument,
   instrumentDedupeKey,
   isNativeSynthInstrument,
+  type SynthPresetInstrument,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -84,6 +85,19 @@ const CC_BANK_SELECT_LSB = 32;
 /** Clamps a value into [min, max]. */
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/** Resolves the optional initial GM selection for a NativeSynth preset. */
+function synthPresetGmProgram(
+  instrument: SynthPresetInstrument | undefined,
+): { bank?: number; program?: number } | null {
+  if (
+    instrument?.useGmPrograms !== true ||
+    (instrument.gmBank === undefined && instrument.gmProgram === undefined)
+  ) {
+    return null;
+  }
+  return { bank: instrument.gmBank, program: instrument.gmProgram };
 }
 
 /**
@@ -141,11 +155,14 @@ export type ClipArticulations = ReadonlyMap<number, ReadonlyMap<number, NoteArti
  * discrete control-change events, one per breakpoint, at the breakpoint's
  * absolute frame; CC-only clips (or muted clips with CC) still schedule.
  *
- * SF2 instruments with an explicit bank and/or program get a per-channel
- * program prelude (bank-select CCs, then program change) one sample before
- * the clip start. A clip starting at sample 0 has no earlier sample, so the
- * prelude sits at frame 0 and the clip's own frame-0 note events are shifted
- * to frame 1 (one sample, inaudible) to keep the prelude strictly first.
+ * SF2 instruments with an explicit bank and/or program, and GM-enabled
+ * NativeSynth presets with an initial GM selection, get a per-channel program
+ * prelude (bank-select CCs, then program change) one sample before the clip
+ * start. A clip starting at sample 0 has no earlier sample, so the prelude
+ * sits at frame 0 and the clip's own frame-0 events are shifted to frame 1
+ * (one sample, inaudible) to keep the prelude strictly first. Program-change
+ * lanes are included in the channel set, so an explicit lane still applies
+ * after the initial selection.
  *
  * A track with an expression map turns each annotated articulation into a key
  * switch and/or controller placed just before the note it marks. Nothing is
@@ -239,10 +256,12 @@ export function buildMidiClipSchedules(
 
     const instrument = effectiveTrackInstrument(track, projectExternalMidi);
     const sf2 = instrument?.kind === 'sf2' ? instrument : undefined;
+    const gmSynth = instrument?.kind === 'synth-preset' ? instrument : undefined;
     // A prelude is needed when the track sets a bank/program or carries a
-    // per-channel program map (multi-timbral GM/GS module).
+    // per-channel program map (multi-timbral GM/GS module), and for a
+    // NativeSynth preset that opts into its GM program resolver.
     let hasPrelude = false;
-    if (sf2) {
+    if (sf2 || gmSynth) {
       const preludeFrame = Math.max(0, startSample - 1);
       const channels = new Set([
         ...notes.map((entry) => clamp(entry.note.channel ?? 0, 0, 15)),
@@ -253,7 +272,7 @@ export function buildMidiClipSchedules(
         ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
       ]);
       for (const channel of [...channels].sort((a, b) => a - b)) {
-        const resolved = sf2ChannelProgram(sf2, channel);
+        const resolved = sf2 ? sf2ChannelProgram(sf2, channel) : synthPresetGmProgram(gmSynth);
         if (resolved === null) continue;
         hasPrelude = true;
         if (resolved.bank !== undefined) {
@@ -674,7 +693,11 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     try {
       handle.engine.setMidiDestinationExternal(destinationId, instrument.kind === 'external-midi');
       if (instrument.kind === 'synth-preset') {
-        handle.engine.setSynthInstrument(destinationId, resolvePreset(instrument.preset));
+        const preset = resolvePreset(instrument.preset);
+        handle.engine.setSynthInstrument(
+          destinationId,
+          instrument.useGmPrograms === true ? { preset, useGmPrograms: true } : preset,
+        );
       } else if (instrument.kind === 'synth-patch') {
         handle.engine.setSynthInstrument(
           destinationId,
@@ -696,7 +719,13 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       }
       try {
         handle.engine.setMidiDestinationExternal(destinationId, false);
-        handle.engine.setSynthInstrument(destinationId, resolvePreset(DEFAULT_SYNTH_PRESET));
+        const fallbackPreset = resolvePreset(DEFAULT_SYNTH_PRESET);
+        handle.engine.setSynthInstrument(
+          destinationId,
+          instrument.kind === 'synth-preset' && instrument.useGmPrograms === true
+            ? { preset: fallbackPreset, useGmPrograms: true }
+            : fallbackPreset,
+        );
         console.warn(
           `MIDI sync: ${instrumentDedupeKey(instrument)} failed to bind on track ${track.id} (${
             track.name

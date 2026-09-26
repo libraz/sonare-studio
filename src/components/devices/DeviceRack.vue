@@ -6,6 +6,7 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
+import { isDrumTrack } from '@/compose/tracks';
 import { deleteFontGuarded } from '@/persistence/asset-leases';
 import { readFileBytesBounded } from '@/persistence/local-file';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
@@ -31,7 +32,11 @@ import {
   saveFont,
 } from '@/project/fonts';
 import type { Sf2ChannelProgram } from '@/project/instrument';
-import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
+import {
+  type ExternalMidiInstrument,
+  effectiveTrackInstrument,
+  gmProgramForPreset,
+} from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
 import {
   collectActiveSoundFontUsage,
@@ -185,6 +190,21 @@ watch(
 const instrumentCaption = computed(() => {
   const current = instrument.value;
   if (!current) return '';
+  if (current.kind === 'synth-preset' && current.useGmPrograms) {
+    const program = current.gmProgram ?? 0;
+    const catalog = gmCatalog();
+    const bank = gmEffectiveBank(current.gmBank ?? 0);
+    const base = catalog?.Project?.gmInstrumentName?.(program);
+    const variation = bank ? catalog?.Project?.gm2InstrumentName?.(bank, program) : null;
+    const name = gmIsDrums.value
+      ? catalog?.synthGsDrumKitName?.(program)
+      : variation && variation !== base
+        ? variation
+        : base && bank
+          ? `${base} · ${bank}`
+          : base;
+    return name ? `GM · ${name}` : `GM · ${program + 1}`;
+  }
   const fontName = current.kind === 'sf2' ? (fontNames.value[current.fontId] ?? null) : null;
   return instrumentLabel(current, fontName);
 });
@@ -224,7 +244,7 @@ const quickControlKey = computed(() => {
 
 // --- Instrument picker popover --------------------------------------------------
 
-type PickerTab = 'presets' | 'sf2' | 'patch' | 'external';
+type PickerTab = 'presets' | 'gm' | 'sf2' | 'patch' | 'external';
 
 const pickerOpen = ref(false);
 const pickerTab = ref<PickerTab>('presets');
@@ -236,6 +256,131 @@ const presetGroups = computed(() => groupPresets(presetCatalog.value, presetQuer
 const filteredPresetCount = computed(() =>
   presetGroups.value.reduce((sum, group) => sum + group.presets.length, 0),
 );
+
+interface GmCatalog {
+  Project?: {
+    gmInstrumentName?: (program: number) => string | null;
+    gm2InstrumentName?: (bank: number, program: number) => string | null;
+  };
+  synthGsDrumKitName?: (program: number) => string | null;
+  synthGsDrumKitIsVoicedApart?: (program: number) => boolean | null;
+  synthGsVariationIsVoicedApart?: (bank: number, program: number) => boolean | null;
+}
+
+function gmCatalog(): GmCatalog | null {
+  try {
+    return getWasmModule() as unknown as GmCatalog;
+  } catch {
+    return null;
+  }
+}
+
+const gmProgram = ref(0);
+const gmBank = ref(0);
+const gmIsDrums = computed(() => {
+  const track = activeTrack.value;
+  return track
+    ? isDrumTrack(
+        track,
+        (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes),
+      ) ||
+        (instrument.value?.kind === 'synth-preset' &&
+          (instrument.value.preset === 'drum-kit' ||
+            (instrument.value.useGmPrograms === true &&
+              (instrument.value.gmBank ?? 0) >> 7 === 120)))
+    : false;
+});
+
+/** NativeSynth reads GS variations from CC0, or GM2 variations from CC32 with MSB 121. */
+function gmEffectiveBank(bank: number): number {
+  const msb = bank >> 7;
+  return msb === 121 ? bank & 0x7f : msb;
+}
+
+function gmVariationLabel(bank: number, program: number): string {
+  const catalog = gmCatalog();
+  const name = catalog?.Project?.gm2InstrumentName?.(bank, program);
+  const base = catalog?.Project?.gmInstrumentName?.(program);
+  return name && name !== base ? `${bank} · ${name}` : String(bank);
+}
+const gmProgramOptions = computed(() => {
+  const catalog = gmCatalog();
+  return Array.from({ length: 128 }, (_, program) => {
+    const name = gmIsDrums.value
+      ? catalog?.synthGsDrumKitName?.(program)
+      : catalog?.Project?.gmInstrumentName?.(program);
+    return name === null || name === undefined
+      ? null
+      : {
+          value: program,
+          label: `${String(program + 1).padStart(3, '0')} · ${name}`,
+          disabled:
+            gmIsDrums.value && program !== 0
+              ? catalog?.synthGsDrumKitIsVoicedApart?.(program) === false
+              : false,
+        };
+  }).filter(
+    (option): option is { value: number; label: string; disabled: boolean } => option !== null,
+  );
+});
+const gmBankOptions = computed(() => {
+  const catalog = gmCatalog();
+  const options: { value: number; label: string }[] = [
+    { value: 0, label: t.value.shell.devicesPanel.gmStandard },
+  ];
+  if (gmIsDrums.value) return options;
+  if (catalog?.synthGsVariationIsVoicedApart) {
+    for (let bank = 1; bank < 128; bank++) {
+      if (catalog.synthGsVariationIsVoicedApart(bank, gmProgram.value) !== true) continue;
+      options.push({ value: bank << 7, label: gmVariationLabel(bank, gmProgram.value) });
+    }
+  }
+  // Keep an imported GM2 or GS bank selectable without rewriting its original CC bytes.
+  const current = instrument.value;
+  if (current?.kind === 'synth-preset' && current.useGmPrograms && current.gmBank) {
+    const bank = gmEffectiveBank(current.gmBank);
+    if (!options.some((option) => option.value === current.gmBank)) {
+      options.push({ value: current.gmBank, label: gmVariationLabel(bank, gmProgram.value) });
+    }
+  }
+  return options;
+});
+
+function seedGmSelection(): void {
+  const current = instrument.value;
+  gmBank.value =
+    current?.kind === 'synth-preset' && current.useGmPrograms ? (current.gmBank ?? 0) : 0;
+  if (current?.kind === 'synth-preset' && current.useGmPrograms) {
+    gmProgram.value = current.gmProgram ?? 0;
+  } else if (current?.kind === 'synth-preset') {
+    gmProgram.value = gmIsDrums.value ? 0 : gmProgramForPreset(current.preset);
+  } else {
+    gmProgram.value = 0;
+  }
+  if (!gmBankOptions.value.some((option) => option.value === gmBank.value)) gmBank.value = 0;
+}
+
+function selectGmProgram(program: number): void {
+  gmProgram.value = program;
+  if (!gmBankOptions.value.some((option) => option.value === gmBank.value)) gmBank.value = 0;
+}
+
+function useGmInstrument(): void {
+  const track = activeTrack.value;
+  if (!track) return;
+  const current = instrument.value;
+  const preset = current?.kind === 'synth-preset' ? current.preset : 'e-piano';
+  run(() =>
+    setTrackInstrument(track.id, {
+      kind: 'synth-preset',
+      preset,
+      useGmPrograms: true,
+      gmBank: gmIsDrums.value ? 120 << 7 : gmBank.value,
+      gmProgram: gmProgram.value,
+    }),
+  );
+  pickerOpen.value = false;
+}
 
 function presetCategoryLabel(category: PresetCategory): string {
   return t.value.shell.devicesPanel.presetCategories[category];
@@ -256,10 +401,13 @@ function openInstrumentPicker(): void {
   selectedDevice.value = 'instrument';
   pickerOpen.value = true;
   refreshPresetCatalog();
+  seedGmSelection();
   sf2Selection.value = createSf2Selection(instrument.value);
   sf2MultiTimbral.value = sf2Selection.value.channelMap.length > 0;
   syncExternalSelection();
-  if (instrument.value?.kind === 'sf2') pickerTab.value = 'sf2';
+  if (instrument.value?.kind === 'synth-preset' && instrument.value.useGmPrograms)
+    pickerTab.value = 'gm';
+  else if (instrument.value?.kind === 'sf2') pickerTab.value = 'sf2';
   else if (instrument.value?.kind === 'synth-patch') pickerTab.value = 'patch';
   else if (instrument.value?.kind === 'external-midi') pickerTab.value = 'external';
   else pickerTab.value = 'presets';
@@ -923,6 +1071,8 @@ function onMoveInsert(from: number, to: number): void {
 
 function displayInstrumentKind(): string {
   const current = instrument.value;
+  if (current?.kind === 'synth-preset' && current.useGmPrograms)
+    return t.value.shell.devicesPanel.gm;
   if (current?.kind === 'synth-preset') return t.value.shell.devicesPanel.kindPreset;
   if (current?.kind === 'synth-patch') return t.value.shell.devicesPanel.kindPatch;
   if (current?.kind === 'sf2') return t.value.shell.devicesPanel.kindSf2;
@@ -935,6 +1085,8 @@ const instrumentSourceCaption = computed(() => {
   if (current?.kind === 'sf2') return t.value.shell.devicesPanel.sourceSf2;
   if (current?.kind === 'external-midi') return t.value.shell.devicesPanel.sourceExternalMidi;
   if (current?.kind === 'synth-patch') return t.value.shell.devicesPanel.sourceBuiltinPatch;
+  if (current?.kind === 'synth-preset' && current.useGmPrograms)
+    return t.value.shell.devicesPanel.sourceGm;
   if (current?.kind === 'synth-preset') return t.value.shell.devicesPanel.sourceBuiltinPreset;
   return '';
 });
@@ -995,6 +1147,16 @@ const instrumentSourceCaption = computed(() => {
               @click="openTab('presets')"
             >
               {{ t.shell.devicesPanel.presets }}
+            </button>
+            <button
+              type="button"
+              class="picker-tab"
+              role="tab"
+              :aria-selected="pickerTab === 'gm'"
+              :class="{ active: pickerTab === 'gm' }"
+              @click="openTab('gm')"
+            >
+              {{ t.shell.devicesPanel.gm }}
             </button>
             <button
               type="button"
@@ -1062,6 +1224,32 @@ const instrumentSourceCaption = computed(() => {
                 </ul>
               </section>
             </div>
+          </div>
+
+          <div v-else-if="pickerTab === 'gm'" class="picker-body gm-picker">
+            <p class="gm-hint">{{ t.shell.devicesPanel.gmHint }}</p>
+            <label class="gm-field">
+              <span>{{ gmIsDrums ? t.shell.devicesPanel.drumKit : t.shell.devicesPanel.program }}</span>
+              <SelectMenu
+                :model-value="gmProgram"
+                :options="gmProgramOptions"
+                size="sm"
+                :aria-label="gmIsDrums ? t.shell.devicesPanel.drumKit : t.shell.devicesPanel.program"
+                @update:model-value="selectGmProgram"
+              />
+            </label>
+            <label v-if="!gmIsDrums && gmBankOptions.length > 1" class="gm-field">
+              <span>{{ t.shell.devicesPanel.gmVariation }}</span>
+              <SelectMenu
+                v-model="gmBank"
+                :options="gmBankOptions"
+                size="sm"
+                :aria-label="t.shell.devicesPanel.gmVariation"
+              />
+            </label>
+            <button type="button" class="gm-use primary" :disabled="gmProgramOptions.length === 0" @click="useGmInstrument">
+              {{ t.shell.devicesPanel.useGm }}
+            </button>
           </div>
 
           <div v-else-if="pickerTab === 'sf2'" class="picker-body">

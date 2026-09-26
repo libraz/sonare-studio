@@ -44,8 +44,9 @@ sections can be detected from the material and coloured by what recurs.
 ghost notes, ornaments, MIDI FX, expression maps, groove, QWERTY music typing
 and step input. A step sequencer covers pattern, Euclidean and randomize work.
 
-**Play sound.** Per-track instruments: built-in synth presets, SoundFont (SF2)
-playback, and GM-style multi-timbral setups where channel 10 is the drum kit.
+**Play sound.** Per-track instruments: built-in synth presets, built-in GM/GS
+programs and drum kits, SoundFont (SF2) playback, and GM-style multi-timbral
+setups where channel 10 is the drum kit.
 Each track gets an insert chain and quick controls in the device rack.
 
 **Mix and master.** Channel strips with gain, pan, sends, EQ and inserts, plus

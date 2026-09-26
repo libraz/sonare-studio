@@ -179,8 +179,15 @@ function enumValue(field: EnumFieldView): string {
 }
 
 /** Maps a string enum table to SelectMenu options. */
-function enumOptions(values: string[]): { value: string; label: string }[] {
-  return values.map((value) => ({ value, label: value }));
+function enumOptions(
+  values: string[],
+): { value: string; label: string; disabled: boolean; detail?: string }[] {
+  return values.map((value) => ({
+    value,
+    label: value,
+    disabled: value === 'sample',
+    ...(value === 'sample' ? { detail: t.value.shell.patchEditor.sampleBankRequired } : {}),
+  }));
 }
 
 function onEnumChange(field: EnumFieldView, value: string): void {

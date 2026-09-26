@@ -8,6 +8,7 @@ import {
 import {
   cloneInstrument,
   defaultTrackInstrument,
+  gmProgramForPreset,
   instrumentCacheSegment,
   instrumentDedupeKey,
   instrumentEquals,
@@ -19,7 +20,49 @@ import {
   validateTrackInstrument,
 } from '@/project/instrument';
 
+describe('gmProgramForPreset', () => {
+  it('maps catalog voices to their GM address when switching modes or exporting SMF', () => {
+    expect(
+      [
+        'e-piano',
+        'electric-guitar',
+        'brass',
+        'violin',
+        'cello',
+        'clarinet',
+        'trumpet',
+        'concert-flute',
+      ].map(gmProgramForPreset),
+    ).toEqual([4, 26, 56, 40, 42, 71, 56, 73]);
+  });
+});
+
 describe('instrumentDedupeKey', () => {
+  it('keeps GM-enabled synth selections on separate destinations', () => {
+    const plain = instrumentDedupeKey({ kind: 'synth-preset', preset: 'e-piano' });
+    const gm = instrumentDedupeKey({
+      kind: 'synth-preset',
+      preset: 'e-piano',
+      useGmPrograms: true,
+      gmBank: 128,
+      gmProgram: 25,
+    });
+
+    expect(gm).not.toBe(plain);
+    expect(
+      instrumentDedupeKey({
+        kind: 'synth-preset',
+        preset: 'e-piano',
+        useGmPrograms: true,
+        gmBank: 128,
+        gmProgram: 26,
+      }),
+    ).not.toBe(gm);
+    expect(
+      instrumentDedupeKey({ kind: 'synth-preset', preset: 'e-piano', useGmPrograms: false }),
+    ).toBe(plain);
+  });
+
   it('keeps SF2 gain and polyphony variants on separate playback destinations', () => {
     const base = { kind: 'sf2', fontId: 'gm', bank: 0, program: 1 } as const;
 
@@ -28,6 +71,9 @@ describe('instrumentDedupeKey', () => {
     );
     expect(instrumentDedupeKey({ ...base, polyphony: 24 })).not.toBe(
       instrumentDedupeKey({ ...base, polyphony: 48 }),
+    );
+    expect(instrumentDedupeKey({ ...base, preferModelForModeledFamilies: true })).not.toBe(
+      instrumentDedupeKey({ ...base, preferModelForModeledFamilies: false }),
     );
   });
 });
@@ -108,6 +154,32 @@ describe('instrumentCacheSegment', () => {
     expect(instrumentCacheSegment({ kind: 'synth-preset', preset: 'e-piano' })).toBe(
       'preset=e-piano',
     );
+  });
+
+  it('keys GM-enabled synth presets by mode and initial selection', () => {
+    const plain = instrumentCacheSegment({ kind: 'synth-preset', preset: 'e-piano' });
+    const gm = instrumentCacheSegment({
+      kind: 'synth-preset',
+      preset: 'e-piano',
+      useGmPrograms: true,
+      gmBank: 128,
+      gmProgram: 25,
+    });
+
+    expect(gm).toBe('preset=e-piano:gm=1:128:25');
+    expect(gm).not.toBe(plain);
+    expect(
+      instrumentCacheSegment({
+        kind: 'synth-preset',
+        preset: 'e-piano',
+        useGmPrograms: true,
+        gmBank: 128,
+        gmProgram: 26,
+      }),
+    ).not.toBe(gm);
+    expect(
+      instrumentCacheSegment({ kind: 'synth-preset', preset: 'e-piano', useGmPrograms: false }),
+    ).toBe(plain);
   });
 
   it('hashes synth patches insensitively to field order', () => {
@@ -254,6 +326,22 @@ describe('instrument helpers', () => {
 
   it('validateTrackInstrument rejects malformed variants', () => {
     expect(() => validateTrackInstrument({ kind: 'synth-preset', preset: '' })).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'synth-preset',
+        preset: 'e-piano',
+        useGmPrograms: 1 as unknown as boolean,
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'synth-preset',
+        preset: 'e-piano',
+        useGmPrograms: true,
+        gmBank: 128,
+        gmProgram: 25,
+      }),
+    ).not.toThrow();
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', bank: -1 })).toThrow(
       RangeError,
     );
@@ -454,6 +542,33 @@ describe('prerenderMidiClip per instrument kind', () => {
   it('keeps catalog-listed preset names as-is', async () => {
     await prerenderMidiClip(NOTES, { ...OPTS, preset: 'saw-lead' });
     expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toBe('saw-lead');
+  });
+
+  it('prerenders a GM-enabled preset with its initial bank/program prelude', async () => {
+    await prerenderMidiClip(NOTES, {
+      ...OPTS,
+      instrument: {
+        kind: 'synth-preset',
+        preset: 'saw-lead',
+        useGmPrograms: true,
+        gmBank: 128,
+        gmProgram: 25,
+      },
+    });
+
+    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toEqual({
+      preset: 'saw-lead',
+      useGmPrograms: true,
+    });
+    const events = wasmMock.setMidiEvents.mock.calls[0][1] as Array<{
+      ppq: number;
+      data0: number;
+    }>;
+    expect(events.slice(0, 6).map((event) => (event.data0 >>> 20) & 0xf)).toEqual([
+      0xb, 0xb, 0xc, 0xb, 0xb, 0xc,
+    ]);
+    expect(events.slice(0, 6).every((event) => event.ppq === 0)).toBe(true);
+    expect(events[6].ppq).toBeCloseTo(1 / 24000);
   });
 
   it('loads the SoundFont and bounces through the SF2 player', async () => {
