@@ -28,7 +28,7 @@ import {
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { humanizePresetName, restorationPresets } from '@/ui/mastering/preset-catalog';
-import type { MasteringPreset, RirDiagnostic } from '@/wasm/index.js';
+import type { RirDiagnostic } from '@/wasm/index.js';
 import { editedAssetName, pushVersion, type VersionHistoryState } from './history';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { formatMidiNote, parseMidiNote } from './note-names';
