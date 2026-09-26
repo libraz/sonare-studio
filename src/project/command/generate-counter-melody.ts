@@ -18,6 +18,7 @@ import { topVoiceOnly } from '@/compose/tracks';
 import { trackProvenance } from '../generation';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
+import { clipKind } from '../types';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
 import { executeAtomic } from './history';
 
@@ -40,15 +41,14 @@ export interface GenerateCounterMelodyParams {
  * Builds the counter-melody plan for a new track without writing to the
  * Project.
  *
- * @returns The plan, or null when the active clip has no melody.
- * @throws Error when there is no active clip.
+ * @returns The plan, or null when there is no active MIDI clip with a melody.
  */
 export function buildCounterPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateCounterMelodyParams = {},
 ): TrackPlan | null {
   const clip = store.activeClip;
-  if (clip === null) throw new Error('No active clip for a counter melody');
+  if (clip === null || clipKind(clip) !== 'midi') return null;
   const projected = projectMidiNoteOccurrences(clip);
   if (projected.length === 0) return null;
 
@@ -93,7 +93,6 @@ export function buildCounterPlan(
  *
  * @param params Generation options (see {@link GenerateCounterMelodyParams}).
  * @returns The number of counter notes written (0 when there is no melody).
- * @throws Error when there is no active clip.
  */
 export function generateCounterMelodyCommand(params: GenerateCounterMelodyParams = {}): number {
   const store = useProjectStore();

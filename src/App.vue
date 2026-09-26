@@ -698,6 +698,12 @@ function onOpenChordList(): void {
   listsInitialTab.value = 'chords';
 }
 
+/** Closes the generation dialog and reveals the newly selected lead clip. */
+function onComposeLead(): void {
+  trackGenerateDialogOpen.value = false;
+  selectDockTab('roll');
+}
+
 /** Reveals the key editor from the Generate dialog's "change key" link: closes the modal dock, then deep-links. */
 function onOpenGenerateKey(): void {
   chordGenerateDialogOpen.value = false;
@@ -1490,6 +1496,7 @@ onMounted(installLaunchQueueConsumer);
       :open-with="trackGenerateOpenWith"
       @close="trackGenerateDialogOpen = false"
       @open-chords="openChordGenerateDialog"
+      @compose-lead="onComposeLead"
     />
 
     <KeyChangeDialog :open="keyChangeDialogOpen" @close="keyChangeDialogOpen = false" />

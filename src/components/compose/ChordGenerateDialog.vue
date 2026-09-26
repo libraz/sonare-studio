@@ -620,9 +620,9 @@ function onKeydown(event: KeyboardEvent): void {
 .chord-done {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-3);
+  justify-content: center;
   min-width: 20rem;
-  min-height: 4rem;
+  min-height: min(22rem, 52vh);
 }
 
 .done-title {

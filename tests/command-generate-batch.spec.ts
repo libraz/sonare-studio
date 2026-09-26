@@ -16,6 +16,7 @@ import {
 } from '@/project/generation';
 import { createDefaultStrip } from '@/project/mixer';
 import { getProject, useProjectStore } from '@/project/store';
+import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
 vi.mock('@/lib/wasm', async () => {
@@ -72,6 +73,22 @@ describe('generateTracksBatchCommand', () => {
     ]);
     expect(written).toBe(1);
     expect(store.tracks.length).toBe(trackCount + 1);
+  });
+
+  it('keeps available parts when an empty project has no counter melody source', async () => {
+    await store.loadDocument(createTemplate('empty'));
+    setProjectChords(FOUR_CHORDS);
+    const written = generateTracksBatchCommand([
+      { part: 'motif', params: { bars: 4 }, target: { kind: 'new' } },
+      { part: 'drums', params: { bars: 4 }, target: { kind: 'new' } },
+      { part: 'bass', params: {}, target: { kind: 'new' } },
+      { part: 'counter', params: {}, target: { kind: 'new' } },
+      { part: 'backing', params: {}, target: { kind: 'new' } },
+    ]);
+    expect(written).toBe(4);
+    expect(store.tracks.map((track) => track.name)).toEqual(['Motif', 'Drums', 'Bass', 'Backing']);
+    expect(undo()).toBe(true);
+    expect(store.tracks).toHaveLength(0);
   });
 
   it('replaces an existing generated track in the same undo step', () => {

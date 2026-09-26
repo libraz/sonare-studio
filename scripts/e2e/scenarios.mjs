@@ -12,6 +12,7 @@ import * as audio_record from './scenarios/audio-record.mjs';
 import * as automation_ramp from './scenarios/automation-ramp.mjs';
 import * as automation_write from './scenarios/automation-write.mjs';
 import * as boot from './scenarios/boot.mjs';
+import * as composition_flow from './scenarios/composition-flow.mjs';
 import * as cycle_recording from './scenarios/cycle-recording.mjs';
 import * as export_dawproject from './scenarios/export-dawproject.mjs';
 import * as export_dialog from './scenarios/export-dialog.mjs';
@@ -78,4 +79,6 @@ export const scenarios = [
   export_dawproject,
   // Last: it leaves its own tracks, an empty active clip and a far playhead.
   placement_guide,
+  // Standalone new-project journey, kept last because it replaces the demo.
+  composition_flow,
 ];

@@ -6,6 +6,7 @@ import { toSafetyProfile } from '@/compose/guidance-profile';
 import {
   type BatchPartSpec,
   type BatchTarget,
+  createLeadMelodyCommand,
   generateTracksBatchCommand,
   MAX_DRUM_DIFFICULTY,
   MIN_DRUM_DIFFICULTY,
@@ -43,6 +44,8 @@ const emit = defineEmits<{
   close: [];
   /** Request to open Flow A (gate's "create" button, or "edit chords" link). */
   openChords: [];
+  /** The lead target was created or selected from the completion state. */
+  composeLead: [];
 }>();
 
 const store = useProjectStore();
@@ -123,6 +126,7 @@ function reroll(part: TrackPart): void {
 
 const error = ref<string | null>(null);
 const generating = ref(false);
+const done = ref(false);
 
 // --- Length basis --------------------------------------------------------------
 
@@ -132,9 +136,22 @@ const chordProgressionBars = computed(() => {
   return Math.max(0, Math.round(end / BEATS_PER_BAR));
 });
 
+/** Active editable MIDI clip (enables motif's clip targets). */
+const activeMidiClip = computed(() => {
+  const clip = store.activeClip;
+  const track = clip ? store.tracks.find((entry) => entry.id === clip.trackId) : null;
+  return clip !== null && clipKind(clip) === 'midi' && track?.frozen === undefined ? clip : null;
+});
+
+/** Active MIDI clip used as the counter-melody source, including frozen clips. */
+const counterSourceClip = computed(() => {
+  const clip = store.activeClip;
+  return clip !== null && clipKind(clip) === 'midi' ? clip : null;
+});
+
 /** Active MIDI clip's melody length in bars, or null when none is active. */
 const counterBars = computed(() => {
-  const clip = store.activeClip;
+  const clip = counterSourceClip.value;
   if (clip === null) return null;
   const notes = projectMidiNoteOccurrences(clip);
   if (notes.length === 0) return null;
@@ -143,13 +160,11 @@ const counterBars = computed(() => {
 });
 
 const hasChords = computed(() => store.chords.length > 0);
+const counterAvailable = computed(() => counterBars.value !== null);
 
-/** MIDI clip currently active (enables motif's clip targets). */
-const activeMidiClip = computed(() => {
-  const clip = store.activeClip;
-  const track = clip ? store.tracks.find((entry) => entry.id === clip.trackId) : null;
-  return clip !== null && clipKind(clip) === 'midi' && track?.frozen === undefined ? clip : null;
-});
+function isPartAvailable(part: TrackPart): boolean {
+  return part !== 'counter' || counterAvailable.value;
+}
 
 // --- Part parameters -----------------------------------------------------------
 
@@ -290,6 +305,12 @@ watch(drumBars, (value) => {
 watch(motifBars, (value) => {
   if (value !== chordProgressionBars.value) motifBarsDirty.value = true;
 });
+watch(counterAvailable, (available) => {
+  if (!available) {
+    parts.counter.checked = false;
+    parts.counter.expanded = false;
+  }
+});
 
 // --- Open / reset --------------------------------------------------------------
 
@@ -300,6 +321,7 @@ function resetState(): void {
     parts[id].target = 'new';
   }
   error.value = null;
+  done.value = false;
   drumBarsDirty.value = false;
   motifBarsDirty.value = false;
   reseedBars();
@@ -313,8 +335,8 @@ watch(
     const openWith = props.openWith;
     if (openWith) {
       const state = parts[openWith.part];
-      state.checked = true;
-      state.expanded = true;
+      state.checked = isPartAvailable(openWith.part);
+      state.expanded = isPartAvailable(openWith.part);
       const target = encodeTarget(openWith.target);
       if (targetOptions(openWith.part).some((option) => option.value === target)) {
         state.target = target;
@@ -322,6 +344,7 @@ watch(
         state.target = 'new';
         error.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
       }
+      if (!isPartAvailable(openWith.part)) error.value = g.value.counterUnavailable;
     }
   },
   { immediate: true },
@@ -369,10 +392,14 @@ function targetOptions(part: TrackPart): { value: string; label: string }[] {
 
 // --- Derived checklist state ---------------------------------------------------
 
-const selectedCount = computed(() => PART_IDS.filter((id) => parts[id].checked).length);
+const selectedCount = computed(
+  () => PART_IDS.filter((id) => parts[id].checked && isPartAvailable(id)).length,
+);
 
 const midOverlap = computed(
-  () => PART_IDS.filter((id) => parts[id].checked && MID_RANGE_PARTS.has(id)).length >= 2,
+  () =>
+    PART_IDS.filter((id) => parts[id].checked && isPartAvailable(id) && MID_RANGE_PARTS.has(id))
+      .length >= 2,
 );
 
 /** Result length in bars shown on a part row (null = clip-derived, unknown). */
@@ -407,10 +434,10 @@ function resultTargetOf(part: TrackPart): string {
 // --- Presets -------------------------------------------------------------------
 
 function applyPreset(ids: readonly TrackPart[]): void {
-  for (const id of PART_IDS) parts[id].checked = ids.includes(id);
+  for (const id of PART_IDS) parts[id].checked = ids.includes(id) && isPartAvailable(id);
 }
 
-function presetRhythmSection(): void {
+function presetAccompaniment(): void {
   applyPreset(['drums', 'bass', 'backing']);
 }
 
@@ -460,7 +487,7 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
 function buildSpecs(): BatchPartSpec[] {
   const specs: BatchPartSpec[] = [];
   for (const part of PART_IDS) {
-    if (!parts[part].checked) continue;
+    if (!parts[part].checked || !isPartAvailable(part)) continue;
     const target = decodeTarget(parts[part].target);
     specs.push({ part, params: paramsFor(part), target } as BatchPartSpec);
   }
@@ -477,7 +504,9 @@ function onGenerate(): void {
   generating.value = true;
   try {
     const written = generateTracksBatchCommand(buildSpecs());
-    if (written > 0) emit('close');
+    const isRegeneration = props.openWith !== null && props.openWith !== undefined;
+    if (written > 0 && !isRegeneration) done.value = true;
+    else if (written > 0) emit('close');
     else error.value = g.value.error;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -486,7 +515,22 @@ function onGenerate(): void {
   }
 }
 
+function onComposeLead(): void {
+  error.value = null;
+  try {
+    const clipId = createLeadMelodyCommand(g.value.leadName);
+    if (clipId === null) {
+      error.value = g.value.leadError;
+      return;
+    }
+    emit('composeLead');
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
 function toggleExpanded(part: TrackPart): void {
+  if (!isPartAvailable(part)) return;
   parts[part].expanded = !parts[part].expanded;
 }
 </script>
@@ -498,6 +542,20 @@ function toggleExpanded(part: TrackPart): void {
     <div v-if="!hasChords" class="gate">
       <p class="gate-title">{{ g.gateTitle }}</p>
       <p class="gate-body">{{ g.gateBody }}</p>
+    </div>
+
+    <div v-else-if="done" class="track-done">
+      <div class="chord-summary">
+        <span class="chord-summary-label">{{ g.chordSummaryLabel }}</span>
+        <span class="chord-summary-bars">{{
+          formatMessage(g.chordBars, { count: chordProgressionBars })
+        }}</span>
+      </div>
+      <div class="done-message">
+        <p class="done-title">{{ g.doneTitle }}</p>
+        <p class="done-body">{{ g.doneBody }}</p>
+      </div>
+      <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
     </div>
 
     <div v-else class="track-fields">
@@ -522,8 +580,8 @@ function toggleExpanded(part: TrackPart): void {
       <div class="preset-row">
         <span class="field-label">{{ g.presetsLabel }}</span>
         <div class="preset-buttons">
-          <button type="button" class="preset-chip" @click="presetRhythmSection">
-            {{ g.presetRhythmSection }}
+          <button type="button" class="preset-chip" @click="presetAccompaniment">
+            {{ g.presetAccompaniment }}
           </button>
           <button type="button" class="preset-chip" @click="presetAll">{{ g.presetAll }}</button>
           <button type="button" class="preset-chip" @click="presetClear">{{ g.presetClear }}</button>
@@ -538,8 +596,13 @@ function toggleExpanded(part: TrackPart): void {
           :class="{ checked: parts[part].checked }"
         >
           <div class="part-head">
-            <label class="part-check">
-              <input v-model="parts[part].checked" type="checkbox" />
+            <label class="part-check" :class="{ disabled: !isPartAvailable(part) }">
+              <input
+                v-model="parts[part].checked"
+                type="checkbox"
+                :disabled="!isPartAvailable(part)"
+                :aria-describedby="!isPartAvailable(part) ? `part-disabled-${part}` : undefined"
+              />
               <span class="part-name">{{ g[PART_LABEL_KEYS[part]] }}</span>
             </label>
             <span class="part-role">{{ g[PART_ROLE_KEYS[part]] }}</span>
@@ -547,7 +610,11 @@ function toggleExpanded(part: TrackPart): void {
               <span>{{ resultBarsText(part) }}</span>
               <span class="part-result-target">{{ resultTargetOf(part) }}</span>
             </span>
-            <select v-model="parts[part].target" class="part-target">
+            <select
+              v-model="parts[part].target"
+              class="part-target"
+              :disabled="!isPartAvailable(part)"
+            >
               <option v-for="option in targetOptions(part)" :key="option.value" :value="option.value">
                 {{ option.label }}
               </option>
@@ -556,11 +623,19 @@ function toggleExpanded(part: TrackPart): void {
               type="button"
               class="part-expand"
               :aria-expanded="parts[part].expanded"
+              :disabled="!isPartAvailable(part)"
               @click="toggleExpanded(part)"
             >
               {{ g.details }}
             </button>
           </div>
+          <p
+            v-if="!isPartAvailable(part)"
+            :id="`part-disabled-${part}`"
+            class="part-disabled-hint"
+          >
+            {{ g.counterUnavailable }}
+          </p>
 
           <div v-if="parts[part].expanded" class="part-params">
             <template v-if="part === 'motif'">
@@ -762,6 +837,12 @@ function toggleExpanded(part: TrackPart): void {
           {{ g.gateCreate }}
         </button>
       </template>
+      <template v-else-if="done">
+        <button type="button" @click="onCancel">{{ g.close }}</button>
+        <button type="button" class="primary compose-lead" @click="onComposeLead">
+          {{ g.composeLead }}
+        </button>
+      </template>
       <template v-else>
         <button type="button" @click="onCancel">{{ g.cancel }}</button>
         <button
@@ -771,7 +852,11 @@ function toggleExpanded(part: TrackPart): void {
           @click="onGenerate"
         >
           {{
-            selectedCount === 0 ? g.generateEmpty : formatMessage(g.generate, { count: selectedCount })
+            selectedCount === 0
+              ? g.generateEmpty
+              : selectedCount === 1
+                ? g.generateOne
+                : formatMessage(g.generate, { count: selectedCount })
           }}
         </button>
       </template>
@@ -785,8 +870,38 @@ function toggleExpanded(part: TrackPart): void {
   flex-direction: column;
   gap: var(--sp-4);
   min-width: 24rem;
+  min-height: min(22rem, 52vh);
   max-height: 60vh;
   overflow-y: auto;
+}
+
+.track-done {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 24rem;
+  min-height: min(22rem, 52vh);
+}
+
+.done-message {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--sp-2);
+}
+
+.done-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+
+.done-body {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
 }
 
 .field-label {
@@ -940,6 +1055,14 @@ function toggleExpanded(part: TrackPart): void {
   cursor: pointer;
 }
 
+.part-check.disabled {
+  cursor: not-allowed;
+}
+
+.part-check.disabled .part-name {
+  color: var(--text-2);
+}
+
 .part-name {
   font-size: var(--fs-md);
   font-weight: var(--fw-medium);
@@ -948,7 +1071,7 @@ function toggleExpanded(part: TrackPart): void {
 
 .part-role {
   font-size: var(--fs-xs);
-  color: var(--text-4);
+  color: var(--text-2);
 }
 
 .part-result {
@@ -957,11 +1080,17 @@ function toggleExpanded(part: TrackPart): void {
   gap: var(--sp-2);
   margin-left: auto;
   font-size: var(--fs-xs);
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 .part-result-target {
-  color: var(--text-4);
+  color: var(--text-3);
+}
+
+.part-disabled-hint {
+  margin: var(--sp-2) 0 0 calc(1rem + var(--sp-2));
+  font-size: var(--fs-xs);
+  color: var(--text-2);
 }
 
 .part-target {

@@ -93,6 +93,7 @@ export type {
   ReharmonizeStrength,
 } from './command/generate-harmonize';
 export { harmonizeFromMelodyCommand } from './command/generate-harmonize';
+export { createLeadMelodyCommand } from './command/generate-lead';
 export type { GenerateMotifParams } from './command/generate-motif';
 export { generateMotifCommand } from './command/generate-motif';
 export type { GenerateProgressionParams } from './command/generate-progression';

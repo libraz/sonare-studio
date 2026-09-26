@@ -9,6 +9,7 @@ import { setTrackFrozen } from '@/project/command/clips-state';
 import { clearHistory, undo } from '@/project/command/history';
 import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
+import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
 vi.mock('@/lib/wasm', async () => {
@@ -151,6 +152,24 @@ describe('TrackGenerateDialog', () => {
     expect(document.body.querySelectorAll('.part-row').length).toBe(5);
   });
 
+  it('keeps the counter part unavailable until a melody clip has notes', async () => {
+    await store.loadDocument(createTemplate('empty'));
+    setProjectChords(FOUR_CHORDS);
+    await open();
+    const boxes = partCheckboxes();
+    expect(boxes[3].disabled).toBe(true);
+    const counterRow = document.body.querySelectorAll('.part-row')[3];
+    expect(counterRow.querySelector<HTMLSelectElement>('.part-target')?.disabled).toBe(true);
+    expect(counterRow.querySelector<HTMLButtonElement>('.part-expand')?.disabled).toBe(true);
+    const all = [...document.body.querySelectorAll<HTMLButtonElement>('.preset-chip')].find(
+      (button) => button.textContent?.trim() === 'All',
+    );
+    all?.click();
+    await nextTick();
+    expect(partCheckboxes().filter((box) => box.checked)).toHaveLength(4);
+    expect(boxes[3].checked).toBe(false);
+  });
+
   it('defaults drums length to the chord-progression bar count', async () => {
     setProjectChords(FOUR_CHORDS); // 16 beats = 4 bars
     await open();
@@ -213,7 +232,11 @@ describe('TrackGenerateDialog', () => {
     confirm()?.click();
     await nextTick();
     expect(store.tracks.length).toBe(trackCount + 2);
-    expect(wrapper?.emitted('close')).toBeTruthy();
+    expect(document.body.querySelector('.track-done')).not.toBeNull();
+    expect(document.body.querySelector('.modal-foot button:not(.primary)')?.textContent).toContain(
+      'Close',
+    );
+    expect(wrapper?.emitted('close')).toBeFalsy();
     // One undo removes both generated tracks.
     expect(undo()).toBe(true);
     expect(store.tracks.length).toBe(trackCount);
@@ -267,16 +290,15 @@ describe('TrackGenerateDialog', () => {
     expect(confirm()?.disabled).toBe(true);
   });
 
-  it('keeps the dialog open and reports a zero-write generation', async () => {
+  it('does not generate when the only requested part lacks a source melody', async () => {
     setProjectChords(FOUR_CHORDS);
     await open();
-    // Counter melody has no prerequisite melody in the empty active clip.
+    // Programmatic change events cannot bypass the prerequisite either.
     checkPart(3);
     await nextTick();
-    confirm()?.click();
-    await nextTick();
+    expect(confirm()?.disabled).toBe(true);
     expect(wrapper?.emitted('close')).toBeFalsy();
-    expect(document.body.querySelector('.dialog-error')?.textContent).toContain('no changes');
+    expect(store.tracks.some((track) => track.name === 'Counter melody')).toBe(false);
   });
 
   it('pre-selects the part when opened for a track replacement', async () => {
