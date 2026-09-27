@@ -14,9 +14,10 @@ import {
   addTrack,
   clearHistory,
   crossfadeClips,
+  moveClip,
   undo,
 } from '@/project/commands';
-import { useProjectStore } from '@/project/store';
+import { getProject, useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
@@ -155,6 +156,8 @@ describe('crossfadeClips command', () => {
 
     crossfadeClips(left, right, { lengthPpq: 1, leftSourceEndPpq: 8 });
 
+    expect(getProject().getOverlapPolicy()).toBe(1);
+
     expect(store.clips.find((c) => c.id === left)).toMatchObject({
       lengthPpq: 5,
       fadeOutPpq: 1,
@@ -163,6 +166,20 @@ describe('crossfadeClips command', () => {
 
     expect(undo()).toBe(true);
     expect(store.clips.find((c) => c.id === left)?.lengthPpq).toBe(4);
+    expect(getProject().getOverlapPolicy()).toBe(0);
+    uninstallMockOpfs();
+  });
+
+  it('keeps ordinary moves from creating new overlaps after a crossfade', async () => {
+    const trackId = addAudioTrack();
+    const left = await addAudioClip({ trackId, assetId: 'a', lengthPpq: 4, startPpq: 0 });
+    const right = await addAudioClip({ trackId, assetId: 'b', lengthPpq: 4, startPpq: 4 });
+    const unrelated = await addAudioClip({ trackId, assetId: 'c', lengthPpq: 2, startPpq: 9 });
+
+    crossfadeClips(left, right, { lengthPpq: 1, leftSourceEndPpq: 8 });
+
+    expect(() => moveClip(unrelated, 1)).toThrow(/overlap/);
+    expect(store.clips.find((clip) => clip.id === unrelated)?.startPpq).toBe(9);
     uninstallMockOpfs();
   });
 

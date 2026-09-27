@@ -94,6 +94,7 @@ interface FakeWarpMap {
 
 /** Complete native-history state, including the allocator cursors. */
 interface FakeState {
+  overlapPolicy: number;
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
   tracks: FakeTrack[];
@@ -170,6 +171,7 @@ function trackKindOrdinal(kind: unknown): number {
 
 function cloneState(state: FakeState): FakeState {
   return {
+    overlapPolicy: state.overlapPolicy,
     tempoSegments: state.tempoSegments.map((s) => ({ ...s })),
     timeSignatures: state.timeSignatures.map((s) => ({ ...s })),
     tracks: state.tracks.map((t) => ({ ...t })),
@@ -193,6 +195,7 @@ function cloneState(state: FakeState): FakeState {
 export class FakeProject {
   private sampleRate = 48000;
   private state: FakeState = {
+    overlapPolicy: 0,
     tempoSegments: [],
     timeSignatures: [],
     tracks: [],
@@ -323,6 +326,16 @@ export class FakeProject {
 
   getSampleRate(): number {
     return this.sampleRate;
+  }
+
+  setOverlapPolicy(policy: number): void {
+    this.edit(() => {
+      this.state.overlapPolicy = policy;
+    });
+  }
+
+  getOverlapPolicy(): number {
+    return this.state.overlapPolicy;
   }
 
   setTempoSegments(

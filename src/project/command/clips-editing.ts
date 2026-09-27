@@ -63,6 +63,42 @@ import {
 } from './utils';
 
 // ---------------------------------------------------------------------------
+
+/** Keep ordinary edits from creating new overlaps after a crossfade enables
+ * the native project's global overlap policy. Existing crossfade pairs may
+ * still be moved or trimmed together. */
+function assertNoNewClipOverlaps(
+  clips: readonly EditorClip[],
+  changes: ReadonlyArray<{ clipId: number; startPpq: number; lengthPpq: number; trackId: number }>,
+): void {
+  const byId = new Map(changes.map((change) => [change.clipId, change]));
+  const overlaps = (aStart: number, aLength: number, bStart: number, bLength: number): boolean =>
+    aStart < bStart + bLength && bStart < aStart + aLength;
+  for (let i = 0; i < clips.length; i += 1) {
+    const a = clips[i];
+    const nextA = byId.get(a.id);
+    for (let j = i + 1; j < clips.length; j += 1) {
+      const b = clips[j];
+      const nextB = byId.get(b.id);
+      if (!nextA && !nextB) continue;
+      const aTrack = nextA?.trackId ?? a.trackId;
+      const bTrack = nextB?.trackId ?? b.trackId;
+      if (aTrack !== bTrack) continue;
+      if (
+        !overlaps(
+          nextA?.startPpq ?? a.startPpq,
+          nextA?.lengthPpq ?? a.lengthPpq,
+          nextB?.startPpq ?? b.startPpq,
+          nextB?.lengthPpq ?? b.lengthPpq,
+        )
+      )
+        continue;
+      if (a.trackId === b.trackId && overlaps(a.startPpq, a.lengthPpq, b.startPpq, b.lengthPpq))
+        continue;
+      throw new RangeError(`Clip edit would overlap clip ${nextA ? b.id : a.id}`);
+    }
+  }
+}
 // Clip structural-editing commands
 // ---------------------------------------------------------------------------
 
@@ -126,6 +162,16 @@ export function moveClip(clipId: number, newStartPpq: number, newTrackId?: numbe
       );
     }
   }
+  if (project.getOverlapPolicy() === 1) {
+    assertNoNewClipOverlaps(store.clips, [
+      {
+        clipId,
+        startPpq: newStartPpq,
+        lengthPpq: clip.lengthPpq,
+        trackId: newTrackId ?? clip.trackId,
+      },
+    ]);
+  }
   execute(1, () => {
     if (newTrackId === undefined) project.moveClip(clipId, newStartPpq);
     else project.moveClip(clipId, newStartPpq, newTrackId);
@@ -154,6 +200,20 @@ export function moveClips(
         );
       }
     }
+  }
+  if (project.getOverlapPolicy() === 1) {
+    assertNoNewClipOverlaps(
+      store.clips,
+      moves.map((move) => {
+        const clip = requireEditableClip(store, move.clipId);
+        return {
+          clipId: move.clipId,
+          startPpq: move.newStartPpq,
+          lengthPpq: clip.lengthPpq,
+          trackId: move.newTrackId ?? clip.trackId,
+        };
+      }),
+    );
   }
   executeAtomic((edit) => {
     for (const move of moves) {
@@ -990,10 +1050,21 @@ export function splitClip(clipId: number, splitPpq: number): number {
  */
 export function trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void {
   const store = useProjectStore();
-  requireEditableClip(store, clipId);
+  const project = getProject();
+  const clip = requireEditableClip(store, clipId);
   validatePpq(newStartPpq, 'Clip startPpq');
   if (!Number.isFinite(newLengthPpq) || newLengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${newLengthPpq}`);
+  }
+  if (project.getOverlapPolicy() === 1) {
+    assertNoNewClipOverlaps(store.clips, [
+      {
+        clipId,
+        startPpq: newStartPpq,
+        lengthPpq: newLengthPpq,
+        trackId: clip.trackId,
+      },
+    ]);
   }
   executeAtomic((edit) => trimClipWithin(edit, clipId, newStartPpq, newLengthPpq, true));
 }

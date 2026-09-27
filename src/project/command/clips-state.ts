@@ -214,6 +214,12 @@ export function crossfadeClips(
   validateClipFadePair(plan.lengthPpq, rightFadeOut, right.lengthPpq);
   executeAtomic((edit) => {
     if (Math.abs(plan.leftLengthPpq - left.lengthPpq) > 1e-9) {
+      // A crossfade of touching clips creates an intentional overlap. The
+      // native project otherwise rejects the extension under its default
+      // disallow policy. Keep the policy change in the same Undo step.
+      if (project.getOverlapPolicy() === 0) {
+        edit(1, () => project.setOverlapPolicy(1));
+      }
       edit(1, () => project.trimClip(left.id, left.startPpq, plan.leftLengthPpq));
     }
     edit(1, () =>
