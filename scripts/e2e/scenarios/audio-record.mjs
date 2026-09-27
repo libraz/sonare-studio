@@ -22,9 +22,19 @@ export async function run(ctx) {
   // authoritative startup path for this browser smoke.
   await page.evaluate(() => window.__sonareDebug.seekPpq(0));
   await page.click('.transport-bar .transport-key.play');
-  await page.waitForFunction(() => window.__sonareDebug?.engineStarted() === true, null, {
-    timeout: 60000,
-  });
+  try {
+    await page.waitForFunction(() => window.__sonareDebug?.engineStarted() === true, null, {
+      timeout: 60000,
+    });
+  } catch {
+    const state = await page.evaluate(() => ({
+      started: window.__sonareDebug.engineStarted(),
+      error: window.__sonareDebug.lastError(),
+      playDisabled: document.querySelector('.transport-bar .transport-key.play')?.disabled,
+      stopDisabled: document.querySelector('.transport-bar .transport-key.stop')?.disabled,
+    }));
+    throw new Error(`audio engine did not start: ${JSON.stringify(state)}`);
+  }
   console.info('engine started');
 
   // Do not seek while the transport is running: it is a separate lifecycle

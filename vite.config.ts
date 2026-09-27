@@ -135,7 +135,7 @@ export default defineConfig({
     __SONARE_BUILD_COMMIT__: JSON.stringify(buildCommit()),
     __SONARE_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
-  server: { headers: coiHeaders },
+  server: { headers: coiHeaders, hmr: env.SONARE_E2E_NO_HMR === '1' ? false : undefined },
   preview: { headers: coiHeaders },
   worker: { format: 'es' },
   // sonare.wasm is imported from src/wasm; exclude from optimization and serve as-is.

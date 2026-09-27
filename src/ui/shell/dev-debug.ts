@@ -108,6 +108,22 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
 
   (window as { __sonareDebug?: unknown }).__sonareDebug = {
     noteCount: () => store.notes.length,
+    activeNotes: () =>
+      store.notes.map((note) => ({
+        id: note.id,
+        pitch: note.pitch,
+        channel: note.channel,
+        startPpq: note.startPpq,
+        durationPpq: note.durationPpq,
+      })),
+    chordCount: () => store.chords.length,
+    chordRanges: () =>
+      store.chords.map((chord) => ({
+        startPpq: chord.startPpq,
+        endPpq: chord.endPpq,
+        rootPc: chord.rootPc,
+        quality: chord.quality,
+      })),
     selectionCount: () => store.selection.size,
     initialized: () => store.initialized,
     engineStarted: () => handle.value !== null,
@@ -126,6 +142,17 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         startPpq: clip.startPpq,
         lengthPpq: clip.lengthPpq,
       })),
+    clipSettings: (id: number) => {
+      const clip = store.clips.find((entry) => entry.id === id);
+      return clip
+        ? {
+            gain: clip.gain,
+            fadeInPpq: clip.fadeInPpq,
+            fadeOutPpq: clip.fadeOutPpq,
+            warpEnabled: clip.warp?.enabled ?? false,
+          }
+        : null;
+    },
     // Lane order as the mixer sync declared it and as the engine facade holds
     // it. Meters read the first, automation ids resolve through the second, so
     // a divergence points one at the other's track.
@@ -190,6 +217,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         totalFrames: result.totalFrames,
         sampleRate: result.sampleRate,
         peakDb: result.report.peakDb,
+        channelPeaksDb: result.channels.map((channel) => peakOf([channel])),
         truePeakDb: result.report.truePeakDb ?? null,
         lufs: result.report.lufs ?? null,
         wavBytes: wav.length,
@@ -207,6 +235,10 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     meterPeakDb: () => {
       const latest = bridge.value?.latest;
       return latest ? Math.max(latest.peakDbL, latest.peakDbR) : null;
+    },
+    meterChannelPeaksDb: () => {
+      const latest = bridge.value?.latest;
+      return latest ? [latest.peakDbL, latest.peakDbR] : null;
     },
     trackMeterDb: (trackId: number) => {
       const source = ctx.trackMeterSource(trackId);
