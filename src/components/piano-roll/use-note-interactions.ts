@@ -97,6 +97,8 @@ export interface UseNoteInteractionsOptions {
   resolveCreatedPitch?(pitch: number): number;
   /** Optionally maps a moved note pitch to the pitch that should be committed. */
   resolveEditedPitch?(pitch: number): number;
+  /** Returns the MIDI channel newly created notes should use. Defaults to 0. */
+  getCreatedChannel?(): number;
   /**
    * Optional velocity resolver for newly drawn notes. When omitted, drawing
    * inherits the selected note velocity, then the latest note velocity, and
@@ -221,6 +223,7 @@ interface DrawNoteGesture {
   start: InteractionPoint;
   startPpq: number;
   pitch: number;
+  channel: number;
 }
 
 /** Erase-tool gesture: notes the pointer sweeps over are removed on release. */
@@ -335,6 +338,12 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     return clampPitch(options.resolveEditedPitch?.(pitch) ?? pitch);
   }
 
+  /** Clamps the channel chosen by the host to the MIDI channel range. */
+  function createdChannel(): number {
+    const channel = options.getCreatedChannel?.() ?? 0;
+    return Number.isFinite(channel) ? Math.min(15, Math.max(0, Math.round(channel))) : 0;
+  }
+
   function clampPpq(ppq: number): number {
     const rawMin = options.getMinPpq?.();
     const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
@@ -440,7 +449,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       velocity: drawVelocity(),
       startPpq: g.startPpq,
       durationPpq: drawLength(g, point, modifiers),
-      channel: 0,
+      channel: g.channel,
     };
     return [...options.getNotes().map((note) => ({ ...note })), draft];
   }
@@ -657,6 +666,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         start: point,
         startPpq: drawStartPpq(point, modifiers),
         pitch,
+        channel: createdChannel(),
       };
       previewNotes.value = buildDrawPreview(gesture, point, modifiers);
       setReadout(point, `Draw ${formatPpq(drawLength(gesture, point, modifiers))} ppq`);
@@ -835,12 +845,14 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       return;
     if (g.kind === 'draw-note') {
       const velocity = drawVelocity();
-      const id = commands.addNote({
+      const input: NewEditorNote = {
         pitch: g.pitch,
         startPpq: g.startPpq,
         durationPpq: drawLength(g, point, modifiers),
         ...(velocity === DEFAULT_DRAW_VELOCITY ? {} : { velocity }),
-      });
+        ...(g.channel === 0 ? {} : { channel: g.channel }),
+      };
+      const id = commands.addNote(input);
       commands.setSelection([id]);
       return;
     }
@@ -926,12 +938,15 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
           : DEFAULT_MIN_DURATION_PPQ;
     const pitch = createdPitch(point);
     const velocity = drawVelocity();
-    const id = commands.addNote({
+    const channel = createdChannel();
+    const input: NewEditorNote = {
       pitch,
       startPpq,
       durationPpq,
       ...(velocity === DEFAULT_DRAW_VELOCITY ? {} : { velocity }),
-    });
+      ...(channel === 0 ? {} : { channel }),
+    };
+    const id = commands.addNote(input);
     commands.setSelection([id]);
     options.onAudition?.(pitch, velocity);
   }

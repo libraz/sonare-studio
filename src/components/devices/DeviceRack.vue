@@ -283,11 +283,7 @@ const gmIsDrums = computed(() => {
     ? isDrumTrack(
         track,
         (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes),
-      ) ||
-        (instrument.value?.kind === 'synth-preset' &&
-          (instrument.value.preset === 'drum-kit' ||
-            (instrument.value.useGmPrograms === true &&
-              (instrument.value.gmBank ?? 0) >> 7 === 120)))
+      )
     : false;
 });
 

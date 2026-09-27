@@ -24,6 +24,7 @@ import {
   snapshotNotes,
   toggleLockRegion,
 } from '@/compose/reharmonize-session';
+import { isDrumTrack } from '@/compose/tracks';
 import { formatChordName } from '@/project/chords';
 import {
   applyReharmonizationProposal,
@@ -90,9 +91,19 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
     set: (value: boolean) => appSettings.set('pianoRollAutoReharmonize', value),
   });
 
+  /** Drum classification must see sibling clips, even when the active clip is empty. */
+  const activeTrackNotes = computed(() => {
+    const track = store.activeTrack;
+    return track
+      ? (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes)
+      : store.notes;
+  });
+
   const reharmonizeActive = computed(
     () =>
       autoReharmonize.value &&
+      store.activeTrack !== null &&
+      !isDrumTrack(store.activeTrack, activeTrackNotes.value) &&
       store.activeTrack?.frozen === undefined &&
       store.clipId >= 0 &&
       (store.activeClip?.kind ?? 'midi') === 'midi' &&

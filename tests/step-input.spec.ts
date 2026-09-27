@@ -70,6 +70,93 @@ describe('useStepInput', () => {
     expect(step.cursorPpq.value).toBe(0.5);
   });
 
+  it('keeps step-entered notes on an imported percussion channel', () => {
+    const store = useProjectStore();
+    store.tracks = [
+      {
+        id: 7,
+        name: 'Imported Kit',
+        color: '#fff',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        order: 0,
+      },
+    ];
+    store.activeTrackId = 7;
+    store.notes = [{ id: 1, pitch: 36, velocity: 96, startPpq: 0, durationPpq: 0.25, channel: 9 }];
+    const step = useStepInput();
+    step.arm();
+
+    step.enterNote(38);
+
+    expect(addNoteMock).toHaveBeenCalledWith({
+      pitch: 38,
+      startPpq: 0,
+      durationPpq: 0.25,
+      channel: 9,
+    });
+  });
+
+  it('uses sibling clip notes when the active percussion clip is empty', () => {
+    const store = useProjectStore();
+    store.tracks = [
+      {
+        id: 7,
+        name: 'Imported Part',
+        color: '#fff',
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        order: 0,
+      },
+    ];
+    store.activeTrackId = 7;
+    store.clips = [
+      {
+        id: 1,
+        trackId: 7,
+        name: 'Source',
+        startPpq: 0,
+        lengthPpq: 4,
+        sourceOffsetPpq: 0,
+        gain: 1,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+        notes: [{ id: 1, pitch: 36, velocity: 96, startPpq: 0, durationPpq: 0.25, channel: 9 }],
+      },
+      {
+        id: 2,
+        trackId: 7,
+        name: 'New take',
+        startPpq: 4,
+        lengthPpq: 4,
+        sourceOffsetPpq: 0,
+        gain: 1,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+        notes: [],
+      },
+    ];
+    store.clipId = 2;
+    store.notes = [];
+    const step = useStepInput();
+    step.arm();
+
+    step.enterNote(38);
+
+    expect(addNoteMock).toHaveBeenCalledWith({
+      pitch: 38,
+      startPpq: 0,
+      durationPpq: 0.25,
+      channel: 9,
+    });
+  });
+
   it('converts the timeline cursor to the active clip source window', () => {
     const store = useProjectStore();
     store.clips = [

@@ -21,10 +21,11 @@
  */
 
 import type { NoteEvent } from '@libraz/libcantus';
+import type { TrackInstrument } from '@/project/instrument';
 import type { EditorNote, EditorTrack } from '@/project/types';
 
 /** GM percussion channel (MIDI channel 10, zero-based 9). */
-const GM_PERCUSSION_CHANNEL = 9;
+export const GM_PERCUSSION_CHANNEL = 9;
 
 /** Fraction of a track's notes on channel 10 above which it reads as percussion. */
 const PERCUSSION_CHANNEL_FRACTION = 0.5;
@@ -40,6 +41,38 @@ const DRUM_NAME_PATTERN = /\b(drums?|perc(?:ussion)?|kit|cajon|conga|bongo|timba
 /** Conventional names that explicitly identify a melodic/top-line track. */
 const MELODY_NAME_PATTERN = /\b(lead|melody|vocal|vox|topline|solo)\b/i;
 
+/** Whether a bank uses the GM2 percussion MSB (120). */
+function isPercussionBank(bank: number | undefined): boolean {
+  return bank !== undefined && Math.floor(bank / 128) === 120;
+}
+
+/** Whether a stored instrument explicitly selects a percussion sound bank. */
+function instrumentDeclaresPercussion(instrument: TrackInstrument | undefined): boolean {
+  if (!instrument) return false;
+  if (instrument.kind === 'synth-preset') {
+    return (
+      instrument.preset === 'drum-kit' ||
+      (instrument.useGmPrograms === true && isPercussionBank(instrument.gmBank))
+    );
+  }
+  if (instrument.kind === 'synth-patch') return instrument.patch.preset === 'drum-kit';
+  if (instrument.kind === 'sf2') {
+    if (isPercussionBank(instrument.bank)) return true;
+    const channelMap = instrument.channelMap;
+    // A multi-timbral SF2 can carry both drums and melodic channels. Only
+    // classify the whole track from its map when every mapped destination is
+    // percussion; mixed maps defer to the notes' channel majority below.
+    return (
+      channelMap !== undefined &&
+      channelMap.length > 0 &&
+      channelMap.every(
+        (entry) => entry.channel === GM_PERCUSSION_CHANNEL || isPercussionBank(entry.bank),
+      )
+    );
+  }
+  return false;
+}
+
 /** A track paired with the editor notes it currently carries (across its clips). */
 export interface TrackWithNotes {
   track: EditorTrack;
@@ -51,16 +84,22 @@ export interface TrackWithNotes {
  * analysis. Judgment order:
  *  1. The explicit {@link EditorTrack.percussion} override, if set.
  *  2. Generated drum tracks ({@link EditorTrack.generated?.part} === 'drums').
- *  3. Name heuristic matching drum/percussion conventions.
- *  4. Majority of notes sitting on the GM percussion channel (10).
+ *  3. An instrument selecting a drum kit or GM2 percussion bank.
+ *  4. Name heuristic matching drum/percussion conventions.
+ *  5. Majority of notes sitting on the GM percussion channel (10).
  *
  * @param track Track to classify.
  * @param notes The track's notes (optional; the channel test is skipped when
  *   empty or absent).
  */
-export function isDrumTrack(track: EditorTrack, notes?: ReadonlyArray<EditorNote>): boolean {
+export function isDrumTrack(
+  track: EditorTrack | null | undefined,
+  notes?: ReadonlyArray<EditorNote>,
+): boolean {
+  if (!track) return false;
   if (track.percussion !== undefined) return track.percussion;
   if (track.generated?.part === 'drums') return true;
+  if (instrumentDeclaresPercussion(track.instrument)) return true;
   if (DRUM_NAME_PATTERN.test(track.name)) return true;
   if (notes && notes.length > 0) {
     let onPercussion = 0;
@@ -70,6 +109,33 @@ export function isDrumTrack(track: EditorTrack, notes?: ReadonlyArray<EditorNote
     if (onPercussion / notes.length > PERCUSSION_CHANNEL_FRACTION) return true;
   }
   return false;
+}
+
+/**
+ * Picks the MIDI channel new notes should use for a track.
+ *
+ * Percussion always uses the GM percussion channel. For melodic tracks, retain
+ * the modal channel already present in the clip so edits to imported
+ * multi-channel material do not silently move notes to channel 1. Ties prefer
+ * the lower channel number, making the result independent of note ordering.
+ */
+export function preferredNoteChannel(
+  track: EditorTrack | null | undefined,
+  notes: ReadonlyArray<EditorNote>,
+): number {
+  if (!track) return 0;
+  if (isDrumTrack(track, notes)) return GM_PERCUSSION_CHANNEL;
+  const counts = new Array<number>(16).fill(0);
+  for (const note of notes) {
+    if (Number.isInteger(note.channel) && note.channel >= 0 && note.channel < counts.length) {
+      counts[note.channel] += 1;
+    }
+  }
+  let preferred = 0;
+  for (let channel = 1; channel < counts.length; channel += 1) {
+    if (counts[channel] > counts[preferred]) preferred = channel;
+  }
+  return preferred;
 }
 
 /** True when a track name explicitly declares it as the melodic/top voice. */

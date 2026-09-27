@@ -37,4 +37,58 @@ describe('useReactiveReharmonization', () => {
     expect(session.lockedRegions.value).toEqual([]);
     expect(session.pendingProposal.value).toBeNull();
   });
+
+  it('does not activate melody reharmonization for a percussion track', async () => {
+    const track = store.activeTrack;
+    expect(track).not.toBeNull();
+    if (!track) return;
+    store.tracks = [{ ...track, percussion: true }];
+    store.chords = [{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }];
+
+    const session = scope.run(() => useReactiveReharmonization());
+    if (!session) throw new Error('effect scope did not run');
+    session.autoReharmonize.value = true;
+    await nextTick();
+
+    expect(session.reharmonizeActive.value).toBe(false);
+
+    store.tracks = [{ ...track, percussion: false }];
+    await nextTick();
+    expect(session.reharmonizeActive.value).toBe(true);
+  });
+
+  it('classifies an empty active clip from percussion notes in a sibling clip', async () => {
+    const track = store.activeTrack;
+    const source = store.activeClip;
+    expect(track).not.toBeNull();
+    expect(source).not.toBeNull();
+    if (!track || !source) return;
+    store.tracks = [{ ...track }];
+    store.clips = [
+      {
+        ...source,
+        notes: [
+          {
+            id: 1,
+            pitch: 36,
+            velocity: 96,
+            startPpq: 0,
+            durationPpq: 0.25,
+            channel: 9,
+          },
+        ],
+      },
+      { ...source, id: source.id + 1, startPpq: source.startPpq + source.lengthPpq, notes: [] },
+    ];
+    store.clipId = source.id + 1;
+    store.notes = [];
+    store.chords = [{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }];
+
+    const session = scope.run(() => useReactiveReharmonization());
+    if (!session) throw new Error('effect scope did not run');
+    session.autoReharmonize.value = true;
+    await nextTick();
+
+    expect(session.reharmonizeActive.value).toBe(false);
+  });
 });

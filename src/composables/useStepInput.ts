@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, ref } from 'vue';
+import { preferredNoteChannel } from '@/compose/tracks';
 import { addNote } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
@@ -93,11 +94,16 @@ export function useStepInput(): StepInputHandle {
         )
       : cursorPpq.value;
     const sourceStart = clip ? timelineStart - clip.startPpq + clip.sourceOffsetPpq : timelineStart;
+    const trackNotes = store.activeTrack
+      ? (store.clipsByTrack.get(store.activeTrack.id) ?? []).flatMap((item) => item.notes)
+      : store.notes;
+    const channel = preferredNoteChannel(store.activeTrack, trackNotes);
     const id = addNote({
       pitch,
       startPpq: sourceStart,
       durationPpq,
       ...(velocity !== undefined ? { velocity } : {}),
+      ...(channel === 0 ? {} : { channel }),
     });
     cursorPpq.value = timelineStart + durationPpq;
     return id;

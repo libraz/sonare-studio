@@ -35,6 +35,7 @@ function makeHarness(
   readOnly: boolean | (() => boolean) = false,
   minPpq?: number,
   snapPpq?: (ppq: number) => number,
+  createdChannel?: number,
 ) {
   const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
   let selection = new Set<number>(initialSelection);
@@ -61,6 +62,7 @@ function makeHarness(
     ...(minPpq === undefined ? {} : { getMinPpq: () => minPpq }),
     ...(maxPpq === undefined ? {} : { getMaxPpq: () => maxPpq }),
     ...(snapPpq === undefined ? {} : { snapPpq }),
+    ...(createdChannel === undefined ? {} : { getCreatedChannel: () => createdChannel }),
     ...(resolvePitch === undefined
       ? {}
       : { resolveCreatedPitch: resolvePitch, resolveEditedPitch: resolvePitch }),
@@ -646,6 +648,49 @@ describe('useNoteInteractions', () => {
       const preview = interactions.previewNotes.value;
       expect(preview).not.toBeNull();
       expect(preview?.at(-1)).toMatchObject({ id: -1, startPpq: 3, durationPpq: 1, pitch: 60 });
+    });
+
+    it('keeps a percussion draw preview and commit on channel 10', () => {
+      const { commands, interactions, setTool } = makeHarness(
+        [],
+        [],
+        undefined,
+        undefined,
+        false,
+        undefined,
+        undefined,
+        9,
+      );
+      setTool('draw');
+      interactions.onPointerDown({ x: 300, y: 675 });
+      expect(interactions.previewNotes.value?.at(-1)).toMatchObject({ channel: 9 });
+      interactions.onPointerUp({ x: 300, y: 675 });
+      expect(commands.addNote).toHaveBeenCalledWith({
+        pitch: 60,
+        startPpq: 3,
+        durationPpq: 0.25,
+        channel: 9,
+      });
+    });
+  });
+
+  it('uses the preferred channel for double-click creation', () => {
+    const { commands, interactions } = makeHarness(
+      [],
+      [],
+      undefined,
+      undefined,
+      false,
+      undefined,
+      undefined,
+      9,
+    );
+    interactions.onDoubleClick({ x: 337, y: 675 });
+    expect(commands.addNote).toHaveBeenCalledWith({
+      pitch: 60,
+      startPpq: 3.25,
+      durationPpq: 0.25,
+      channel: 9,
     });
   });
 
