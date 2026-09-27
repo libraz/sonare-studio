@@ -64,9 +64,10 @@ import StripSends from './StripSends.vue';
  * Frozen tracks carry a snowflake tag next to the name (the strip's fader,
  * pan and sends stay live while the track plays its baked render).
  *
- * Group-track strips are tagged GROUP and drop controls that the group bus
- * engine path does not support (R/T/L, solo, sends, output bus and EQ).
- * Fader, mute and inserts keep working through the group-bus sync layer.
+ * Group-track strips are tagged GROUP and keep the controls that are meaningful
+ * on their group bus: EQ, pan and strip options. Sends, output routing and pan
+ * automation remain track-lane features. Fader, mute and inserts keep working
+ * through the group-bus sync layer.
  */
 
 const props = withDefaults(
@@ -204,13 +205,11 @@ function onContextMenu(event: MouseEvent): void {
     label: t.value.shell.mixer.strip.resetFader,
     run: () => setStripGain(props.target, 0),
   });
-  if (!isGroup.value) {
-    items.push({
-      id: 'reset-pan',
-      label: t.value.shell.mixer.strip.centerPan,
-      run: () => setStripPan(props.target, 0),
-    });
-  }
+  items.push({
+    id: 'reset-pan',
+    label: t.value.shell.mixer.strip.centerPan,
+    run: () => setStripPan(props.target, 0),
+  });
   if (currentTrack && !isGroup.value) {
     const safe = currentTrack.soloSafe === true;
     items.push(
@@ -281,10 +280,19 @@ const gestures = useStripGestures({
   automation,
 });
 
-const { onGainChange, onPanChange } = gestures;
+const { onGainChange, onPanChange: onGesturePanChange } = gestures;
 
-/** Strip-local DSP options are available on track and master strips, not groups. */
-const canStripOptions = computed(() => !isGroup.value);
+/** Group pan is a direct bus control; its automation lane is intentionally unsupported. */
+function onPanChange(pan: number, commit: boolean): void {
+  if (isGroup.value) {
+    setStripPan(props.target, pan, { commit });
+    return;
+  }
+  onGesturePanChange(pan, commit);
+}
+
+/** Group automation state must never override the audible bus pan display. */
+const panValue = computed(() => (isGroup.value ? strip.value.pan : displayedPan.value));
 
 function learnTrackStateId(param: MidiLearnTrackStateParam): string {
   return typeof props.target === 'number' ? midiLearnTrackStateTargetId(props.target, param) : '';
@@ -350,7 +358,7 @@ onBeforeUnmount(() => {
       <InsertRack :target="props.target" />
     </div>
 
-    <div v-if="!isGroup" class="strip-section">
+    <div class="strip-section">
       <StripEqSection :target="props.target" :scope="props.scope" />
     </div>
 
@@ -371,30 +379,30 @@ onBeforeUnmount(() => {
 
     <div class="strip-spacer" />
 
-    <div v-if="!isGroup" class="strip-pan">
+    <div class="strip-pan">
       <div class="strip-pan-knob">
         <MixerKnob
-          :value="displayedPan"
+          :value="panValue"
           :min="-1"
           :max="1"
           :default-value="0"
           :label="t.shell.mixer.strip.pan"
-          :display="formatPan(displayedPan)"
+          :display="formatPan(panValue)"
           :size="24"
-          :disabled="followsPan"
+          :disabled="isGroup ? false : followsPan"
           @change="onPanChange"
         />
         <NumericReadout
-          :value="displayedPan"
+          :value="panValue"
           :min="-1"
           :max="1"
           :step="0.01"
-          :display="formatPan(displayedPan)"
+          :display="formatPan(panValue)"
           :ariaLabel="t.shell.mixer.strip.pan"
-          :disabled="followsPan"
+          :disabled="isGroup ? false : followsPan"
           @change="(value) => onPanChange(value, true)"
         />
-        <StripOptionsPopover v-if="canStripOptions" :target="props.target" :name="name" />
+        <StripOptionsPopover :target="props.target" :name="name" />
       </div>
       <div v-if="track" class="strip-toggles">
         <button

@@ -125,7 +125,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(store.tracks[0].pan).toBe(0.3);
   });
 
-  it('promotes legacy track pan into the audible strip and centers group pan on load', async () => {
+  it('promotes legacy track pan into the audible strip and preserves group pan on load', async () => {
     const legacy = serializeProject();
     legacy.tracks[0].pan = -0.6;
     delete legacy.tracks[0].mixer;
@@ -145,11 +145,11 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     await loadProjectDocument(legacy);
 
     expect(store.tracks[0]).toMatchObject({ pan: -0.6, mixer: { pan: -0.6 } });
-    expect(store.tracks[1]).toMatchObject({ pan: 0, mixer: { gainDb: -3, pan: 0 } });
+    expect(store.tracks[1]).toMatchObject({ pan: 0.8, mixer: { gainDb: -3, pan: 0.8 } });
     expect(store.automationLanes.some((lane) => lane.target === store.tracks[1].id)).toBe(false);
     const saved = serializeProject();
     expect(saved.tracks[0]).toMatchObject({ pan: -0.6, mixer: { pan: -0.6 } });
-    expect(saved.tracks[1]).toMatchObject({ pan: 0, mixer: { gainDb: -3, pan: 0 } });
+    expect(saved.tracks[1]).toMatchObject({ pan: 0.8, mixer: { gainDb: -3, pan: 0.8 } });
   });
 
   it('rejects group pan automation commands', () => {
@@ -227,6 +227,37 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     expect(store.mixer.buses[0].strip?.inserts).toMatchObject([
       { processor: 'dynamics.compressor', params: { thresholdDb: -18 }, enabled: true },
     ]);
+  });
+
+  it('round-trips return-bus pan modes and EQ through the document', async () => {
+    const busId = addMixerBus({ name: 'FX' });
+    const target = mixerBusStripTarget(busId);
+    setStripPan(target, -0.25);
+    setStripPanLaw(target, 'const6dB');
+    setStripPanMode(target, 'dualPan');
+    setStripDualPan(target, -1, 0.6);
+    setStripEq(target, {
+      enabled: true,
+      bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }],
+    });
+
+    const doc = serializeProject();
+    expect(doc.mixer?.buses[0].strip).toMatchObject({
+      pan: -0.25,
+      panLaw: 'const6dB',
+      panMode: 'dualPan',
+      dualPan: { left: -1, right: 0.6 },
+      eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }] },
+    });
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    expect(store.mixer.buses[0].strip).toMatchObject({
+      pan: -0.25,
+      panLaw: 'const6dB',
+      panMode: 'dualPan',
+      dualPan: { left: -1, right: 0.6 },
+      eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }] },
+    });
   });
 
   it('round-trips bus gain automation through the bus document entry', async () => {

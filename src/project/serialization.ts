@@ -297,7 +297,7 @@ export interface DocumentTrack {
   solo: boolean;
   /** Linear track volume (>= 0, 1 = unity). */
   volume: number;
-  /** Compatibility mirror of mixer.pan; group tracks are always centered. */
+  /** Compatibility mirror of mixer.pan for older document readers. */
   pan: number;
   /** Clips on this track, ordered by timeline start. */
   clips: DocumentClip[];
@@ -841,7 +841,7 @@ export function serializeProject(): ProjectDocument {
     tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
     timeSignatures: store.timeSignatures.map((segment) => ({ ...segment })),
     tracks: store.tracks.map((track) => {
-      const audiblePan = track.kind === 'group' ? 0 : (track.mixer?.pan ?? track.pan);
+      const audiblePan = track.mixer?.pan ?? track.pan;
       const legacyVolume = Number.isFinite(track.volume) && track.volume >= 0 ? track.volume : 1;
       const needsVolumeMigration = legacyVolume !== 1;
       const out: DocumentTrack = {
@@ -874,10 +874,7 @@ export function serializeProject(): ProjectDocument {
       }
       if (track.mixer !== undefined || needsVolumeMigration) {
         const baseMixer = track.mixer ?? createDefaultStrip();
-        const mixer =
-          track.kind === 'group' && baseMixer.pan !== 0
-            ? { ...cloneStrip(baseMixer), pan: 0 }
-            : cloneStrip(baseMixer);
+        const mixer = cloneStrip(baseMixer);
         if (needsVolumeMigration) mixer.gainDb += linearToDb(legacyVolume);
         // Insert sidechain sources are session track ids; store them as
         // positional indices (dangling references drop out).

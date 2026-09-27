@@ -86,17 +86,15 @@ describe('StripSends MIDI learn', () => {
     expect(store.tracks[0].mixer?.sends).toEqual([{ busId, levelDb: -11.5, enabled: true }]);
   });
 
-  it('warns when an active send targets a latency-bearing return', async () => {
+  it('keeps a send to a latency-bearing return available without a false warning', async () => {
     const busId = addMixerBus({ name: 'Parallel comp' });
     addInsert(mixerBusStripTarget(busId), 'dynamics.limiter', { lookaheadMs: 5 });
     setSend(trackId, busId, { levelDb: -12 });
 
     const wrapper = mount(StripSends, { props: { target: trackId } });
 
-    expect(wrapper.find('.send-latency-warning').exists()).toBe(true);
-    expect(wrapper.find('.send-latency-warning').attributes('aria-label')).toContain(
-      'Send delay compensation is unavailable',
-    );
+    expect(wrapper.find('.send-row').exists()).toBe(true);
+    expect(wrapper.find('.send-latency-warning').exists()).toBe(false);
   });
 
   it('arms send enabled and timing bindings from the row controls', async () => {

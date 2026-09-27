@@ -133,7 +133,7 @@ describe('StripOptionsPopover MIDI learn', () => {
     expect(store.tracks[0].mixer?.dualPan?.left).toBeCloseTo(0.7);
 
     expect(undo()).toBe(true);
-    expect(store.tracks[0].mixer?.dualPan?.left).toBeCloseTo(0);
+    expect(store.tracks[0].mixer?.dualPan?.left).toBeCloseTo(-1);
     expect(undo()).toBe(false);
   });
 });

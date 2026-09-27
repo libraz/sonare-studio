@@ -12,6 +12,7 @@ import {
   cloneStrip,
   createDefaultStrip,
   createProcessorId,
+  DEFAULT_DUAL_PAN,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
@@ -40,10 +41,12 @@ import {
 } from '../target-reference-registry';
 import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
 import { validateInsertParams } from './insert-params';
+import { setMixerBusGain } from './mixer-buses';
 import {
   currentStrip,
   isMixerBusStripTarget,
   type MixerStripTarget,
+  mixerBusIdFromTarget,
   requireInsert,
   writeStrip,
 } from './mixer-internal';
@@ -299,7 +302,7 @@ export function setTrackInstruments(
  * Sets a strip's gain as one undoable edit. Strip gain is audible: it is
  * mirrored to the engine lane (or master) fader in realtime.
  *
- * @param target Track id or 'master'.
+ * @param target Track id, return/group bus target, or 'master'.
  * @param gainDb New gain in dB (finite, within [-96, 24]).
  * @param options Gesture coalescing for fader drags.
  */
@@ -309,6 +312,10 @@ export function setStripGain(
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();
+  if (isMixerBusStripTarget(target)) {
+    setMixerBusGain(mixerBusIdFromTarget(target), gainDb, options);
+    return;
+  }
   const strip = currentStrip(store, target);
   if (!Number.isFinite(gainDb) || gainDb < MIN_STRIP_GAIN_DB || gainDb > MAX_STRIP_GAIN_DB) {
     throw new RangeError(
@@ -330,7 +337,7 @@ export function setStripGain(
  * Sets a strip's pan as one undoable edit. Strip pan is audible: it is
  * mirrored to the engine lane (or master) pan in realtime.
  *
- * @param target Track id or 'master'.
+ * @param target Track id, return/group bus target, or 'master'.
  * @param pan New balance in [-1, 1].
  * @param options Gesture coalescing for knob drags.
  */
@@ -344,9 +351,6 @@ export function setStripPan(
     throw new RangeError(`Strip pan must be in [-1, 1], got ${pan}`);
   }
   const track = typeof target === 'number' ? requireTrack(store, target) : undefined;
-  if (track?.kind === 'group') {
-    throw new RangeError('Group bus pan is not supported by the audio engine');
-  }
   const strip = currentStrip(store, target);
   const key = `strip-pan:${String(target)}`;
   // EditorTrack.pan remains as a document-compatibility mirror for older
@@ -702,12 +706,11 @@ export function setInsertParam(
 }
 
 /**
- * Replaces a strip's EQ as one undoable edit. Track and master EQ are audible
- * in realtime (mirrored to the engine strip EQ, see src/engine/strip-sync.ts).
- * Bus return strips currently have no engine-side EQ ABI, so they are rejected
- * instead of storing an inert EQ state.
+ * Replaces a strip's EQ as one undoable edit. Track, group-bus, return-bus and
+ * master EQ are mirrored to the matching engine strip when supported by the
+ * active libsonare ABI.
  *
- * @param target Track id or 'master'.
+ * @param target Track id, return/group bus target, or 'master'.
  * @param eq New EQ state, or null to remove the EQ.
  * @param options Gesture coalescing for band drags.
  */
@@ -717,9 +720,6 @@ export function setStripEq(
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();
-  if (isMixerBusStripTarget(target)) {
-    throw new RangeError('Bus return strips do not support EQ');
-  }
   const strip = currentStrip(store, target);
   if (eq !== null && !Array.isArray(eq.bands)) {
     throw new RangeError('Strip EQ requires a bands array');
@@ -835,16 +835,19 @@ export function setStripChannelDelaySamples(trackId: number, samples: number): v
 }
 
 /**
- * Sets a track strip's pan law as one undoable edit. Mirrored to the engine
- * strip panner (setTrackStripPanLaw). Track strips only (the master/bus lanes
- * have no strip panner).
+ * Sets a track or return/group bus strip's pan law as one undoable edit.
+ * Master pan-law state is not accepted because the realtime engine exposes no
+ * master-strip setter for it.
  *
- * @param trackId Id of the track.
+ * @param target Track id or return/group bus target.
  * @param law New pan law (one of {@link PAN_LAW_IDS}).
  */
-export function setStripPanLaw(trackId: number, law: PanLawId): void {
+export function setStripPanLaw(target: MixerStripTarget, law: PanLawId): void {
   const store = useProjectStore();
-  const strip = currentStrip(store, trackId);
+  if (target === 'master') {
+    throw new RangeError('Master strip pan law is not supported by the realtime engine');
+  }
+  const strip = currentStrip(store, target);
   if (!PAN_LAW_IDS.includes(law)) {
     throw new RangeError(`Unknown pan law: ${law}`);
   }
@@ -854,21 +857,25 @@ export function setStripPanLaw(trackId: number, law: PanLawId): void {
     // Keep the field absent at the default so neutral strips stay neutral.
     if (law === DEFAULT_PAN_LAW) delete next.panLaw;
     else next.panLaw = law;
-    writeStrip(store, trackId, next);
+    writeStrip(store, target, next);
     store.refresh();
   });
 }
 
 /**
- * Sets a track strip's pan mode as one undoable edit. Mirrored to the engine
- * strip panner (setTrackStripPanMode). Track strips only.
+ * Sets a track or return/group bus strip's pan mode as one undoable edit.
+ * Master pan-mode state is not accepted because the realtime engine exposes no
+ * master-strip setter for it.
  *
- * @param trackId Id of the track.
+ * @param target Track id or return/group bus target.
  * @param mode New pan mode (one of {@link PAN_MODE_IDS}).
  */
-export function setStripPanMode(trackId: number, mode: PanModeId): void {
+export function setStripPanMode(target: MixerStripTarget, mode: PanModeId): void {
   const store = useProjectStore();
-  const strip = currentStrip(store, trackId);
+  if (target === 'master') {
+    throw new RangeError('Master strip pan mode is not supported by the realtime engine');
+  }
+  const strip = currentStrip(store, target);
   if (!PAN_MODE_IDS.includes(mode)) {
     throw new RangeError(`Unknown pan mode: ${mode}`);
   }
@@ -883,39 +890,46 @@ export function setStripPanMode(trackId: number, mode: PanModeId): void {
       // realtime and offline engines both receive explicit L/R values, and
       // loading the saved document produces the same panner state.
       if (mode === 'dualPan' && next.dualPan === undefined) {
-        next.dualPan = { left: next.pan, right: next.pan };
+        // A stereo strip's neutral dual-pan identity is L=-1/R=+1. Keep that
+        // identity even when the legacy balance knob is currently offset;
+        // copying `next.pan` into both channels would collapse the stereo
+        // image when the mode changes.
+        next.dualPan = { ...DEFAULT_DUAL_PAN };
       }
     }
-    writeStrip(store, trackId, next);
+    writeStrip(store, target, next);
     store.refresh();
   });
 }
 
 /**
- * Sets a track strip's independent left/right pan positions (used in 'dualPan'
- * mode) as one undoable edit. Mirrored to the engine strip panner
- * (setTrackStripDualPan). Track strips only.
+ * Sets independent left/right pan positions (used in 'dualPan' mode) on a
+ * track or return/group bus strip as one undoable edit. Master dual-pan state
+ * is not accepted because the realtime engine exposes no master-strip setter.
  *
- * @param trackId Id of the track.
+ * @param target Track id or return/group bus target.
  * @param left New left-channel pan in [-1, 1].
  * @param right New right-channel pan in [-1, 1].
  * @param options Gesture coalescing for slider drags.
  */
 export function setStripDualPan(
-  trackId: number,
+  target: MixerStripTarget,
   left: number,
   right: number,
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();
-  const strip = currentStrip(store, trackId);
+  if (target === 'master') {
+    throw new RangeError('Master strip dual pan is not supported by the realtime engine');
+  }
+  const strip = currentStrip(store, target);
   if (!Number.isFinite(left) || left < -1 || left > 1) {
     throw new RangeError(`Dual-pan left must be in [-1, 1], got ${left}`);
   }
   if (!Number.isFinite(right) || right < -1 || right > 1) {
     throw new RangeError(`Dual-pan right must be in [-1, 1], got ${right}`);
   }
-  const key = `strip-dual-pan:${trackId}`;
+  const key = `strip-dual-pan:${String(target)}`;
   if (strip.dualPan?.left === left && strip.dualPan?.right === right && !hasPendingGesture(key)) {
     return;
   }
@@ -923,7 +937,7 @@ export function setStripDualPan(
     () => {
       const next = cloneStrip(strip);
       next.dualPan = { left, right };
-      writeStrip(store, trackId, next);
+      writeStrip(store, target, next);
       store.refresh();
     },
     { key, commit: options?.commit ?? true },

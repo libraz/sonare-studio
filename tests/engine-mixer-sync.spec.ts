@@ -303,7 +303,7 @@ describe('createMixerSync', () => {
             ...createDefaultStrip(),
             panLaw: 'const6dB',
             panMode: 'dualPan',
-            dualPan: { left: -1, right: 2 },
+            dualPan: { left: -2, right: 0.5 },
           },
         }),
       ],
@@ -314,7 +314,29 @@ describe('createMixerSync', () => {
     expect(engine.setTrackStripPanMode).toHaveBeenCalledTimes(1);
     expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
     expect(engine.setTrackStripDualPan).toHaveBeenCalledTimes(1);
-    expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, -1, 1);
+    expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, -1, 0.5);
+  });
+
+  it('preserves the neutral stereo dual-pan image when only the strip pan is set', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+
+    sync.sync(
+      [
+        makeTrack(1, {
+          mixer: {
+            ...createDefaultStrip(),
+            pan: 0.6,
+            panMode: 'dualPan',
+          },
+        }),
+      ],
+      neutralMaster(),
+    );
+
+    expect(engine.setStripPan).toHaveBeenCalledWith(1, 0.6);
+    expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
+    expect(engine.setTrackStripDualPan).not.toHaveBeenCalled();
   });
 
   it('uses legacy track pan without a strip and clamps strip pan', () => {

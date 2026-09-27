@@ -109,7 +109,6 @@ export function buildMixerSnapshot(
     mixer: cloneMixerState(mixer),
     tracks: tracks.map((track) => {
       const mixerStrip = cloneStrip(track.mixer ?? createDefaultStrip());
-      if (track.kind === 'group') mixerStrip.pan = 0;
       const entry: MixerSnapshotTrack = {
         id: track.id,
         volume: 1,
@@ -171,8 +170,7 @@ export function mergeMixerSnapshot(
       if (snapshotVolume !== undefined && Number.isFinite(snapshotVolume) && snapshotVolume >= 0) {
         next.mixer.gainDb += linearToDb(snapshotVolume);
       }
-      if (track.kind === 'group') next.mixer.pan = 0;
-      next.pan = track.kind === 'group' ? 0 : next.mixer.pan;
+      next.pan = next.mixer.pan;
       next.volume = 1;
       next.mute = entry.mute;
       next.solo = entry.solo;

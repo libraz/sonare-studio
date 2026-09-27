@@ -31,6 +31,7 @@ import {
   previousBankOffset,
 } from '@/project/control-surface';
 import {
+  DEFAULT_DUAL_PAN,
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_STRIP_WIDTH,
@@ -504,11 +505,11 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
               const left =
                 stripControl.param === 'dualPanLeft'
                   ? next
-                  : (strip?.dualPan?.left ?? strip?.pan ?? 0);
+                  : (strip?.dualPan?.left ?? DEFAULT_DUAL_PAN.left);
               const right =
                 stripControl.param === 'dualPanRight'
                   ? next
-                  : (strip?.dualPan?.right ?? strip?.pan ?? 0);
+                  : (strip?.dualPan?.right ?? DEFAULT_DUAL_PAN.right);
               setStripDualPan(stripControl.scope, left, right);
             }
           }
@@ -532,14 +533,13 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
           const strip = useProjectStore().mixer.buses.find(
             (bus) => bus.id === busStripControl.busId,
           )?.strip;
-          if (!strip) return false;
           const enabled = value >= 64;
           setStripPolarityInvert(
             target,
-            busStripControl.param === 'polarityLeft' ? enabled : strip.polarityInvertLeft === true,
+            busStripControl.param === 'polarityLeft' ? enabled : strip?.polarityInvertLeft === true,
             busStripControl.param === 'polarityRight'
               ? enabled
-              : strip.polarityInvertRight === true,
+              : strip?.polarityInvertRight === true,
           );
         }
         return true;

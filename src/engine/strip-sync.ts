@@ -46,8 +46,11 @@ import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 import {
   engineBusInsertAutomationIndex,
+  engineBusPanHasDsp,
+  engineBusPanState,
   engineBusStrip,
   engineEqBands,
+  engineMasterPannerHasDsp,
   stripSceneFieldsHaveDsp,
 } from './engine-declaration';
 
@@ -64,7 +67,7 @@ export interface StripSyncOptions {
 }
 
 export interface BusSceneJsonOptions {
-  /** Include bus EQ metadata for engines that expose the future bus-EQ ABI. */
+  /** Include bus EQ metadata for engines that expose the bus-EQ ABI. */
   includeEq?: boolean;
 }
 
@@ -95,6 +98,11 @@ export function busSceneJson(
     width?: number;
     polarityInvertLeft?: boolean;
     polarityInvertRight?: boolean;
+    pan?: number;
+    panMode?: number;
+    dualPanLeft?: number;
+    dualPanRight?: number;
+    panLaw?: number;
     eq?: { enabled: true; bands: EqBand[] };
   } = { id: `bus-${busId}`, role: 'submix', inserts };
   const inputTrimDb = strip?.inputTrimDb ?? 0;
@@ -103,6 +111,12 @@ export function busSceneJson(
   if (width !== 1) bus.width = width;
   if (strip?.polarityInvertLeft === true) bus.polarityInvertLeft = true;
   if (strip?.polarityInvertRight === true) bus.polarityInvertRight = true;
+  const pan = engineBusPanState(strip);
+  if (pan.pan !== 0) bus.pan = pan.pan;
+  if (pan.panMode !== 0) bus.panMode = pan.panMode;
+  if (pan.dualPanLeft !== -1) bus.dualPanLeft = pan.dualPanLeft;
+  if (pan.dualPanRight !== 1) bus.dualPanRight = pan.dualPanRight;
+  if (pan.panLaw !== 0) bus.panLaw = pan.panLaw;
   const eqBands = options.includeEq ? engineEqBands(strip) : [];
   if (eqBands.length > 0) bus.eq = { enabled: true, bands: eqBands };
   return JSON.stringify({ version: 1, strips: [], buses: [bus], connections: [] });
@@ -121,9 +135,9 @@ export function groupBusGainDb(track: EditorTrack, vcaOffset = 0, muted = track.
 
 /**
  * Builds the scene JSON declaring one strip's insert chain (exported for
- * tests). The strip stays neutral apart from its inserts: no faderDb/pan
- * (those live on the engine's mixer lane) and no EQ (the dedicated strip EQ
- * is edited per band via setStripEq after the JSON send). Each insert's
+ * tests). Track strips leave faderDb/pan on the mixer lane. Master strip JSON
+ * repeats its current fader/pan because replacing the master scene resets
+ * those scalars in libsonare. EQ is edited per band after the JSON send. Each insert's
  * "params" value is embedded as an object, the form the engine writes.
  *
  * @param target Track id, or 'master' for the master strip.
@@ -145,12 +159,23 @@ export function stripSceneJson(
   });
   const id = target === 'master' ? 'master' : `track-${target}`;
   const sceneStrip: Record<string, unknown> = { id, inserts };
+  if (target === 'master') {
+    if ((strip?.gainDb ?? 0) !== 0) sceneStrip.faderDb = strip?.gainDb;
+    if ((strip?.pan ?? 0) !== 0) sceneStrip.pan = strip?.pan;
+  }
   const inputTrimDb = strip?.inputTrimDb ?? 0;
   if (inputTrimDb !== 0) sceneStrip.inputTrimDb = inputTrimDb;
   const width = strip?.width ?? 1;
   if (width !== 1) sceneStrip.width = width;
   if (strip?.polarityInvertLeft === true) sceneStrip.polarityInvertLeft = true;
   if (strip?.polarityInvertRight === true) sceneStrip.polarityInvertRight = true;
+  if (target === 'master') {
+    const panner = engineBusPanState(strip);
+    if (panner.panLaw !== 0) sceneStrip.panLaw = panner.panLaw;
+    if (panner.panMode !== 0) sceneStrip.panMode = panner.panMode;
+    if (panner.dualPanLeft !== -1) sceneStrip.dualPanLeft = panner.dualPanLeft;
+    if (panner.dualPanRight !== 1) sceneStrip.dualPanRight = panner.dualPanRight;
+  }
   return JSON.stringify({ version: 1, strips: [sceneStrip], buses: [], connections: [] });
 }
 
@@ -203,7 +228,11 @@ function syncInsertNumericParams(
  * polarity edit that touched no insert). Numeric insert values are excluded so
  * knob drags can use the realtime param setter instead of replacing the scene.
  */
-function busStripDspKey(strip: MixerStrip | undefined, includeEnabled: boolean): string {
+function busStripDspKey(
+  strip: MixerStrip | undefined,
+  includeEnabled: boolean,
+  includePan: boolean,
+): string {
   return JSON.stringify({
     inserts: (strip?.inserts ?? []).map((slot) => ({
       processor: slot.processor,
@@ -214,6 +243,7 @@ function busStripDspKey(strip: MixerStrip | undefined, includeEnabled: boolean):
     width: strip?.width ?? 1,
     polarityInvertLeft: strip?.polarityInvertLeft === true,
     polarityInvertRight: strip?.polarityInvertRight === true,
+    ...(includePan ? { pan: engineBusPanState(strip) } : {}),
   });
 }
 
@@ -254,6 +284,8 @@ interface StripMemory {
   enabled: boolean[];
   /** Serialized EQ band as last applied (index = engine band index). */
   eqBandJson: string[];
+  /** Numeric bus panner state last applied; absent for track/master strips. */
+  busPan?: ReturnType<typeof engineBusPanState>;
 }
 
 type BusInsertBypassEngine = {
@@ -261,7 +293,14 @@ type BusInsertBypassEngine = {
 };
 
 type BusEqEngine = {
-  setBusStripEq?: (busId: number, bandIndex: number, band: EqBand) => void;
+  setBusStripEqBand?: (busId: number, bandIndex: number, band: EqBand) => void;
+};
+
+type BusPanEngine = {
+  setBusStripPan?: (busId: number, pan: number) => void;
+  setBusStripPanLaw?: (busId: number, panLaw: number) => void;
+  setBusStripPanMode?: (busId: number, panMode: number) => void;
+  setBusStripDualPan?: (busId: number, leftPan: number, rightPan: number) => void;
 };
 
 /** Mirrors store strip/bus/send state onto a running engine. */
@@ -304,7 +343,13 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   const insertCatalog = options.insertCatalog ?? null;
   const busInsertBypass = (handle.engine as unknown as BusInsertBypassEngine)
     .setBusStripInsertBypassed;
-  const busEq = (handle.engine as unknown as BusEqEngine).setBusStripEq;
+  const busEq = (handle.engine as unknown as BusEqEngine).setBusStripEqBand;
+  const busPanEngine = handle.engine as unknown as BusPanEngine;
+  const supportsBusPan =
+    typeof busPanEngine.setBusStripPan === 'function' &&
+    typeof busPanEngine.setBusStripPanLaw === 'function' &&
+    typeof busPanEngine.setBusStripPanMode === 'function' &&
+    typeof busPanEngine.setBusStripDualPan === 'function';
   // Engine bus numbers are compacted to the currently declared bus set so UI
   // meter/scope targets stay within the engine's fixed bus telemetry range.
   // When a number is reassigned, bus-related diff caches are reset and sends /
@@ -343,6 +388,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       width: strip?.width ?? 1,
       polarityInvertLeft: strip?.polarityInvertLeft === true,
       polarityInvertRight: strip?.polarityInvertRight === true,
+      ...(target === 'master' ? { panner: engineBusPanState(strip) } : {}),
       inserts: inserts.map((slot) => ({
         processor: slot.processor,
         params: insertParamStructure(slot),
@@ -353,7 +399,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const effectiveEqBands = engineEqBands(strip);
     const enabled = inserts.map((slot) => slot.enabled);
 
-    const hasSceneDsp = stripSceneFieldsHaveDsp(strip);
+    const hasSceneDsp =
+      stripSceneFieldsHaveDsp(strip) || (target === 'master' && engineMasterPannerHasDsp(strip));
     if (!memory && !hasSceneDsp && inserts.length === 0 && effectiveEqBands.length === 0) {
       return undefined;
     }
@@ -364,7 +411,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       sendStripJson(stripSceneJson(target, strip, insertCatalog));
       const eqBandJson: string[] = [];
       for (let i = 0; i < inserts.length; i += 1) {
-        if (!enabled[i]) handle.engine.setStripInsertBypassed(target, i, true);
+        handle.engine.setStripInsertBypassed(target, i, !enabled[i]);
       }
       for (let i = 0; i < effectiveEqBands.length; i += 1) {
         handle.engine.setStripEq(target, i, effectiveEqBands[i]);
@@ -402,13 +449,15 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   ): StripMemory | undefined => {
     const supportsBypass = typeof busInsertBypass === 'function';
     const supportsBusEq = typeof busEq === 'function';
-    const structureKey = busStripDspKey(strip, !supportsBypass);
+    const structureKey = busStripDspKey(strip, !supportsBypass, !supportsBusPan);
     const sceneStrip = supportsBypass ? strip : engineBusStrip(strip);
     const sceneInserts = sceneStrip?.inserts ?? [];
     const insertParams = insertNumericParams(sceneInserts);
     const enabled = sceneInserts.map((slot) => slot.enabled);
     const effectiveEqBands = supportsBusEq ? engineEqBands(strip) : [];
-    const hasSceneDsp = stripSceneFieldsHaveDsp(strip) || effectiveEqBands.length > 0;
+    const hasSceneDsp =
+      stripSceneFieldsHaveDsp(strip) || engineBusPanHasDsp(strip) || effectiveEqBands.length > 0;
+    const busPan = engineBusPanState(strip);
 
     if (!memory && !hasSceneDsp && sceneInserts.length === 0 && !forceScene) {
       return undefined;
@@ -422,17 +471,17 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       );
       if (supportsBypass) {
         enabled.forEach((slotEnabled, insertIndex) => {
-          if (!slotEnabled) busInsertBypass(busId, insertIndex, true);
+          busInsertBypass.call(handle.engine, busId, insertIndex, !slotEnabled);
         });
       }
       const eqBandJson: string[] = [];
       if (supportsBusEq) {
         effectiveEqBands.forEach((band, bandIndex) => {
-          busEq(busId, bandIndex, band);
+          busEq.call(handle.engine, busId, bandIndex, band);
           eqBandJson.push(JSON.stringify(band));
         });
       }
-      return { structureKey, insertParams, enabled, eqBandJson };
+      return { structureKey, insertParams, enabled, eqBandJson, busPan };
     }
 
     syncInsertNumericParams(memory.insertParams, insertParams, (insertIndex, paramName, value) => {
@@ -441,7 +490,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     if (supportsBypass) {
       enabled.forEach((slotEnabled, insertIndex) => {
         if (memory.enabled[insertIndex] !== slotEnabled) {
-          busInsertBypass(busId, insertIndex, !slotEnabled);
+          busInsertBypass.call(handle.engine, busId, insertIndex, !slotEnabled);
         }
       });
     }
@@ -451,11 +500,27 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       for (let i = 0; i < bandCount; i += 1) {
         const nextBand: EqBand = effectiveEqBands[i] ?? { enabled: false };
         const json = JSON.stringify(nextBand);
-        if (memory.eqBandJson[i] !== json) busEq(busId, i, nextBand);
+        if (memory.eqBandJson[i] !== json) busEq.call(handle.engine, busId, i, nextBand);
         eqBandJson.push(json);
       }
     }
-    return { structureKey, insertParams, enabled, eqBandJson };
+    if (supportsBusPan) {
+      const previousPan = memory.busPan ?? engineBusPanState(undefined);
+      if (previousPan.pan !== busPan.pan) busPanEngine.setBusStripPan?.(busId, busPan.pan);
+      if (previousPan.panLaw !== busPan.panLaw) {
+        busPanEngine.setBusStripPanLaw?.(busId, busPan.panLaw);
+      }
+      if (previousPan.panMode !== busPan.panMode) {
+        busPanEngine.setBusStripPanMode?.(busId, busPan.panMode);
+      }
+      if (
+        previousPan.dualPanLeft !== busPan.dualPanLeft ||
+        previousPan.dualPanRight !== busPan.dualPanRight
+      ) {
+        busPanEngine.setBusStripDualPan?.(busId, busPan.dualPanLeft, busPan.dualPanRight);
+      }
+    }
+    return { structureKey, insertParams, enabled, eqBandJson, busPan };
   };
 
   // The sync phase order is load-bearing:

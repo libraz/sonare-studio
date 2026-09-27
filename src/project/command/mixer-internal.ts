@@ -37,7 +37,7 @@ export function currentStrip(
   return track.mixer ?? createDefaultStrip();
 }
 
-/** Writes a strip back onto its target (track mirror or master). */
+/** Writes a strip back onto its target (track, return bus, or master). */
 export function writeStrip(
   store: ReturnType<typeof useProjectStore>,
   target: MixerStripTarget,

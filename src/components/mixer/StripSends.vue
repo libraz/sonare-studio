@@ -3,12 +3,8 @@ import { computed, inject, ref } from 'vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { MixerStripTarget } from '@/project/commands';
 import { setSend } from '@/project/commands';
-import {
-  insertLatencyResolverFromCatalog,
-  stripInsertLatencySamples,
-} from '@/project/insert-latency';
 import { createDefaultStrip, type MixerStrip, type StripSend } from '@/project/mixer';
-import { getProject, getWasmModule, useProjectStore } from '@/project/store';
+import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
 import { midiLearnSendTargetId } from '@/ui/midi/midi-learn';
 import { formatDb } from '@/ui/mixer/db-scale';
@@ -47,27 +43,6 @@ const strip = computed<MixerStrip>(() => {
 });
 
 const buses = computed(() => store.mixer.buses);
-
-/** Buses whose enabled inserts can delay a send without a compensating stage. */
-const latencySamplesByBus = computed(() => {
-  try {
-    const wasm = getWasmModule();
-    const resolver = insertLatencyResolverFromCatalog(
-      wasm.masteringProcessorCatalog(),
-      getProject().getSampleRate(),
-      wasm.masteringInsertTiming,
-    );
-    return new Map(
-      buses.value.map((bus) => [bus.id, stripInsertLatencySamples(bus.strip, resolver)]),
-    );
-  } catch {
-    return new Map<string, number>();
-  }
-});
-
-function busHasUncompensatedLatency(busId: string): boolean {
-  return (latencySamplesByBus.value.get(busId) ?? 0) > 0;
-}
 
 /** Local knob values while dragging (busId -> dB), cleared on commit. */
 const preview = ref<Record<string, number>>({});
@@ -173,15 +148,6 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
       >
         {{ bus.name }}
       </button>
-      <span
-        v-if="!isMaster && sendFor(bus.id)?.enabled !== false && busHasUncompensatedLatency(bus.id)"
-        class="send-latency-warning"
-        v-tooltip="t.shell.mixer.sends.latencyWarning"
-        role="img"
-        :aria-label="t.shell.mixer.sends.latencyWarning"
-      >
-        ⚠
-      </span>
       <button
         v-if="learnState(bus.id, 'enabled')"
         type="button"

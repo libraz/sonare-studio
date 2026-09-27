@@ -127,8 +127,8 @@ describe('track freeze / bounce UI', () => {
       );
 
       const groupStrip = mount(ChannelStrip, { props: { target: groupId }, shallow: true });
-      expect(groupStrip.find('.strip-pan').exists()).toBe(false);
-      expect(groupStrip.findComponent({ name: 'MixerKnob' }).exists()).toBe(false);
+      expect(groupStrip.find('.strip-pan').exists()).toBe(true);
+      expect(groupStrip.findComponent({ name: 'MixerKnob' }).exists()).toBe(true);
     });
   });
 

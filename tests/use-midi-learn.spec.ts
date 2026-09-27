@@ -622,7 +622,7 @@ describe('useMidiLearn', () => {
     const dualRightId = midiLearnStripControlTargetId(7, 'dualPanRight');
     learn.armId(dualRightId);
     learn.handleCc({ channel: 0, controller: 27, value: 0 });
-    expect(setStripDualPan).toHaveBeenCalledWith(7, 0.25, -1);
+    expect(setStripDualPan).toHaveBeenCalledWith(7, -1, -1);
   });
 
   it('binds and drives strip polarity switches from CC thresholds', () => {

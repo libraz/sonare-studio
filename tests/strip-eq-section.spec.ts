@@ -5,7 +5,13 @@ import StripEqSection from '@/components/mixer/StripEqSection.vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { ScopeFrame, ScopeListener, ScopeSource } from '@/engine/scope';
-import { clearHistory, setStripEq, undo } from '@/project/commands';
+import {
+  addMixerBus,
+  clearHistory,
+  mixerBusStripTarget,
+  setStripEq,
+  undo,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
 import { midiLearnEqTargetId } from '@/ui/midi/midi-learn';
@@ -134,6 +140,24 @@ describe('StripEqSection', () => {
     expect(band?.dynamic).toBeUndefined();
     expect(band?.thresholdDb).toBeUndefined();
     expect(band?.rangeDb).toBeUndefined();
+  });
+
+  it('reads and writes the dedicated EQ on a return bus', async () => {
+    const busId = addMixerBus({ name: 'FX' });
+    const wrapper = mountEq({ target: mixerBusStripTarget(busId) });
+
+    expect(wrapper.find('.eq-power').attributes('aria-pressed')).toBe('false');
+    await wrapper.get('.eq-power').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    expect(store.mixer.buses[0].strip?.eq).toMatchObject({
+      enabled: true,
+      bands: expect.any(Array),
+    });
+    expect(wrapper.findAll('.eq-band')).toHaveLength(3);
+
+    wrapper.findAllComponents({ name: 'MixerKnob' })[0]?.vm.$emit('change', 240, true);
+    expect(store.mixer.buses[0].strip?.eq?.bands[0]?.frequencyHz).toBe(240);
   });
 
   it('arms and clears EQ band MIDI learn targets from the band menu', async () => {

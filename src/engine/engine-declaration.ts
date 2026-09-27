@@ -7,8 +7,79 @@
  */
 
 import { type AutomationCurve, automationCurveCode } from '@/project/automation';
-import type { MixerStrip } from '@/project/mixer';
+import {
+  clampPan,
+  DEFAULT_PAN_LAW,
+  DEFAULT_PAN_MODE,
+  type MixerStrip,
+  type PanLawId,
+  type PanModeId,
+} from '@/project/mixer';
 import type { EqBand } from '@/wasm/index.js';
+
+/** Raw libsonare ordinals for the project-facing pan law names. */
+const ENGINE_PAN_LAW_CODES: Readonly<Record<PanLawId, number>> = {
+  const3dB: 0,
+  'const4.5dB': 1,
+  const6dB: 2,
+  linear0dB: 3,
+};
+
+/** Raw libsonare ordinals for the project-facing pan mode names. */
+const ENGINE_PAN_MODE_CODES: Readonly<Record<PanModeId, number>> = {
+  balance: 0,
+  stereoPan: 1,
+  dualPan: 2,
+};
+
+/** Bus panner state in the numeric shape accepted by scene JSON and setters. */
+export interface EngineBusPanState {
+  pan: number;
+  panLaw: number;
+  panMode: number;
+  dualPanLeft: number;
+  dualPanRight: number;
+}
+
+function finitePan(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? clampPan(value) : fallback;
+}
+
+/** Converts one app strip's optional panner fields to libsonare defaults/codes. */
+export function engineBusPanState(strip: MixerStrip | undefined): EngineBusPanState {
+  const panLaw = strip?.panLaw ?? DEFAULT_PAN_LAW;
+  const panMode = strip?.panMode ?? DEFAULT_PAN_MODE;
+  return {
+    pan: finitePan(strip?.pan, 0),
+    panLaw: ENGINE_PAN_LAW_CODES[panLaw] ?? ENGINE_PAN_LAW_CODES[DEFAULT_PAN_LAW],
+    panMode: ENGINE_PAN_MODE_CODES[panMode] ?? ENGINE_PAN_MODE_CODES[DEFAULT_PAN_MODE],
+    dualPanLeft: finitePan(strip?.dualPan?.left, -1),
+    dualPanRight: finitePan(strip?.dualPan?.right, 1),
+  };
+}
+
+/** True when running the bus panner would change a neutral bus's output. */
+export function engineBusPanHasDsp(strip: MixerStrip | undefined): boolean {
+  const state = engineBusPanState(strip);
+  return (
+    state.pan !== 0 ||
+    state.panLaw !== ENGINE_PAN_LAW_CODES[DEFAULT_PAN_LAW] ||
+    state.panMode !== ENGINE_PAN_MODE_CODES[DEFAULT_PAN_MODE] ||
+    state.dualPanLeft !== -1 ||
+    state.dualPanRight !== 1
+  );
+}
+
+/** Master fader pan is sent separately; these panner details need a strip scene. */
+export function engineMasterPannerHasDsp(strip: MixerStrip | undefined): boolean {
+  const state = engineBusPanState(strip);
+  return (
+    state.panLaw !== ENGINE_PAN_LAW_CODES[DEFAULT_PAN_LAW] ||
+    state.panMode !== ENGINE_PAN_MODE_CODES[DEFAULT_PAN_MODE] ||
+    state.dualPanLeft !== -1 ||
+    state.dualPanRight !== 1
+  );
+}
 
 /** One finite automation point in the shape accepted by the engine. */
 export interface EngineAutomationPoint {
@@ -103,6 +174,7 @@ export function engineBusStripHasDsp(strip: MixerStrip | undefined, includeBusEq
   const busStrip = engineBusStrip(strip);
   return (
     stripSceneFieldsHaveDsp(strip) ||
+    engineBusPanHasDsp(strip) ||
     (busStrip?.inserts.length ?? 0) > 0 ||
     (includeBusEq && engineEqBands(strip).length > 0)
   );

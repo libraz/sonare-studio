@@ -188,9 +188,11 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
         channelDelaySamples: pdc.delayFor(track),
         panLaw: strip?.panLaw ?? DEFAULT_PAN_LAW,
         panMode: strip?.panMode ?? DEFAULT_PAN_MODE,
-        // Dual pan defaults to the strip pan position on both channels.
-        dualPanLeft: pflAudition ? 0 : clampPan(strip?.dualPan?.left ?? pan),
-        dualPanRight: pflAudition ? 0 : clampPan(strip?.dualPan?.right ?? pan),
+        // The engine's neutral dual-pan state preserves the stereo image. A
+        // strip pan value must not collapse both channels when dual-pan mode
+        // is selected without explicit per-channel positions.
+        dualPanLeft: pflAudition ? 0 : clampPan(strip?.dualPan?.left ?? -1),
+        dualPanRight: pflAudition ? 0 : clampPan(strip?.dualPan?.right ?? 1),
       };
       const prev = laneStates.get(track.id);
       if (prev?.gainDb !== next.gainDb) handle.engine.setStripGain(track.id, next.gainDb);
@@ -212,8 +214,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
         handle.engine.setTrackStripPanMode(track.id, next.panMode);
       }
       if (prev?.dualPanLeft !== next.dualPanLeft || prev?.dualPanRight !== next.dualPanRight) {
-        const defaultDualPan =
-          !prev && next.dualPanLeft === next.pan && next.dualPanRight === next.pan;
+        const defaultDualPan = !prev && next.dualPanLeft === -1 && next.dualPanRight === 1;
         if (!defaultDualPan) {
           handle.engine.setTrackStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
         }

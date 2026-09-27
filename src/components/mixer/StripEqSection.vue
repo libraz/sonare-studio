@@ -3,6 +3,7 @@ import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { ScopeFrame, ScopeSource } from '@/engine/scope';
+import { isMixerBusStripTarget, mixerBusIdFromTarget } from '@/project/command/mixer-internal';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
 import { setStripEq } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripEq } from '@/project/mixer';
@@ -29,9 +30,9 @@ import MixerKnob from './MixerKnob.vue';
  * The strip EQ is a libsonare EqBand list; enabling the section seeds a neutral
  * three-band layout (low shelf / peak / high shelf). Each band's type can be
  * switched (low/high cut, shelf, bell, notch) and bands can be added or removed
- * — the engine sync mirrors the whole band list per strip, so the count is not
- * fixed. Every edit goes through setStripEq, whose per-strip gesture key
- * coalesces a knob drag into one undo entry.
+ * — the engine sync mirrors the whole band list per track, group or return bus,
+ * so the count is not fixed. Every edit goes through setStripEq, whose
+ * per-strip gesture key coalesces a knob drag into one undo entry.
  */
 
 const props = defineProps<{
@@ -103,6 +104,10 @@ function bandUsesGain(band: EqBand): boolean {
 
 const strip = computed<MixerStrip>(() => {
   if (props.target === 'master') return store.mixer.master;
+  if (isMixerBusStripTarget(props.target)) {
+    const busId = mixerBusIdFromTarget(props.target);
+    return store.mixer.buses.find((bus) => bus.id === busId)?.strip ?? createDefaultStrip();
+  }
   const track = store.tracks.find((t) => t.id === props.target);
   return track?.mixer ?? createDefaultStrip();
 });
@@ -397,7 +402,7 @@ function learnEqId(index: number, param: MidiLearnEqParam): string {
 }
 
 function appendMidiLearnItems(items: ContextMenuItem[], index: number, band: EqBand): void {
-  if (!midiLearn) return;
+  if (!midiLearn || (typeof props.target !== 'number' && props.target !== 'master')) return;
   const params: MidiLearnEqParam[] = bandUsesGain(band)
     ? ['frequencyHz', 'gainDb', 'q']
     : ['frequencyHz', 'q'];

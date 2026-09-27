@@ -132,6 +132,9 @@ export const DEFAULT_PAN_LAW: PanLawId = 'const3dB';
 /** Default pan mode (balance). */
 export const DEFAULT_PAN_MODE: PanModeId = 'balance';
 
+/** Default dual-pan positions: preserve a stereo strip's left/right identity. */
+export const DEFAULT_DUAL_PAN: DualPan = { left: -1, right: 1 };
+
 /** Default stereo width (unchanged mid/side balance). */
 export const DEFAULT_STRIP_WIDTH = 1;
 
@@ -195,19 +198,19 @@ export interface MixerStrip {
    */
   channelDelaySamples?: number;
   /**
-   * Strip pan law (track strips only); mirrored to the engine via
-   * setTrackStripPanLaw. Absent = {@link DEFAULT_PAN_LAW}.
+   * Strip pan law; mirrored to the engine via the track or bus setter.
+   * Absent = {@link DEFAULT_PAN_LAW}.
    */
   panLaw?: PanLawId;
   /**
-   * Strip pan mode (track strips only); mirrored to the engine via
-   * setTrackStripPanMode. Absent = {@link DEFAULT_PAN_MODE}.
+   * Strip pan mode; mirrored to the engine via the track or bus setter.
+   * Absent = {@link DEFAULT_PAN_MODE}.
    */
   panMode?: PanModeId;
   /**
-   * Independent left/right pan positions for 'dualPan' mode (track strips
-   * only); mirrored to the engine via setTrackStripDualPan. Absent = derived
-   * from {@link MixerStrip.pan} (both channels at the strip pan position).
+   * Independent left/right pan positions for 'dualPan' mode; mirrored to the
+   * engine via the track or bus setter. Absent = the engine's identity dual
+   * pan (-1, +1) when dual-pan mode is selected.
    */
   dualPan?: DualPan;
 }

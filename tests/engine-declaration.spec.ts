@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   engineAutomationPoints,
+  engineBusPanHasDsp,
+  engineBusPanState,
   engineBusStrip,
+  engineBusStripHasDsp,
   engineEqBands,
   engineFaderAutomationPoints,
   stripSceneFieldsHaveDsp,
@@ -67,5 +70,36 @@ describe('engine declaration helpers', () => {
     expect(stripSceneFieldsHaveDsp({ ...createDefaultStrip(), polarityInvertLeft: true })).toBe(
       true,
     );
+  });
+
+  it('encodes neutral bus pan defaults without inventing DSP', () => {
+    expect(engineBusPanState(createDefaultStrip())).toEqual({
+      pan: 0,
+      panLaw: 0,
+      panMode: 0,
+      dualPanLeft: -1,
+      dualPanRight: 1,
+    });
+    expect(engineBusPanHasDsp(createDefaultStrip())).toBe(false);
+    expect(engineBusStripHasDsp(createDefaultStrip())).toBe(false);
+  });
+
+  it('detects pan-only bus DSP and maps string modes/laws to libsonare codes', () => {
+    const strip = {
+      ...createDefaultStrip(),
+      pan: 0.25,
+      panLaw: 'linear0dB' as const,
+      panMode: 'dualPan' as const,
+      dualPan: { left: -0.5, right: 0.75 },
+    };
+    expect(engineBusPanState(strip)).toEqual({
+      pan: 0.25,
+      panLaw: 3,
+      panMode: 2,
+      dualPanLeft: -0.5,
+      dualPanRight: 0.75,
+    });
+    expect(engineBusPanHasDsp(strip)).toBe(true);
+    expect(engineBusStripHasDsp(strip)).toBe(true);
   });
 });

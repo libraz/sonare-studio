@@ -9,7 +9,13 @@ import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { InsertLatencyResolver } from '@/project/insert-latency';
-import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
+import type {
+  EngineClip,
+  EngineTrackSend,
+  PanLawInput,
+  PanMode,
+  RealtimeEngine,
+} from '@/wasm/index.js';
 
 /** Reserved engine mixer parameter namespace (mirrors the facade encoding). */
 export const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
@@ -84,15 +90,23 @@ export type OfflineRenderEngine = Pick<
   | 'process'
   | 'destroy'
 > & {
-  /** Future ABI: per-bus insert bypass matching track/master strips. */
+  /** Per-bus insert bypass matching track/master strips. */
   setBusStripInsertBypassed?: (
     busId: number,
     insertIndex: number,
     bypassed: boolean,
     resetOnBypass?: boolean,
   ) => void;
-  /** Future ABI: per-bus EQ band setter. Current engines may omit it. */
+  /** Per-bus EQ band setter. Older engines may omit it. */
   setBusStripEqBandJson?: (busId: number, bandIndex: number, json: string) => void;
+  /** Per-bus output pan setter; omitted only by pre-bus-pan engines. */
+  setBusStripPan?: (busId: number, pan: number) => void;
+  /** Per-bus pan-law setter; omitted only by pre-bus-pan engines. */
+  setBusStripPanLaw?: (busId: number, panLaw: PanLawInput) => void;
+  /** Per-bus pan-mode setter; omitted only by pre-bus-pan engines. */
+  setBusStripPanMode?: (busId: number, panMode: PanMode | number) => void;
+  /** Per-bus dual-pan setter; omitted only by pre-bus-pan engines. */
+  setBusStripDualPan?: (busId: number, leftPan: number, rightPan: number) => void;
 };
 
 /** One engine track send (numeric engine bus id). */

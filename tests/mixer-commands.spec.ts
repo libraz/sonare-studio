@@ -226,12 +226,16 @@ describe('mixer commands', () => {
       expect(() => setStripPan(trackId, 2)).toThrow(RangeError);
     });
 
-    it('rejects group pan instead of storing an inaudible control', () => {
+    it('stores group-bus pan and keeps the legacy track mirror', () => {
       const groupId = addGroupTrack({ name: 'Drum Bus' });
-      expect(() => setStripPan(groupId, 0.5)).toThrow(/Group bus pan is not supported/);
+      setStripPan(groupId, 0.5);
       const group = store.tracks.find((track) => track.id === groupId);
-      expect(group?.pan).toBe(0);
-      expect(group?.mixer).toBeUndefined();
+      expect(group).toMatchObject({ pan: 0.5, mixer: { pan: 0.5 } });
+      expect(undo()).toBe(true);
+      expect(store.tracks.find((track) => track.id === groupId)).toMatchObject({
+        pan: 0,
+      });
+      expect(store.tracks.find((track) => track.id === groupId)?.mixer).toBeUndefined();
     });
 
     it('coalesces a fader drag into one history entry', () => {
@@ -291,17 +295,52 @@ describe('mixer commands', () => {
       expect(() => setStripPanLaw(trackId, 'bogus' as 'const3dB')).toThrow(RangeError);
     });
 
-    it('persists dual-pan defaults when changing mode, undoably', () => {
+    it('keeps stereo identity when entering dual-pan from an offset pan, undoably', () => {
       setStripPan(trackId, 0.4);
       setStripPanMode(trackId, 'dualPan');
       expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
-      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: 0.4, right: 0.4 });
+      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -1, right: 1 });
       setStripPanMode(trackId, 'balance');
       expect(store.tracks[0].mixer?.panMode).toBeUndefined();
       undo();
       expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
-      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: 0.4, right: 0.4 });
+      expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -1, right: 1 });
       expect(() => setStripPanMode(trackId, 'bogus' as 'balance')).toThrow(RangeError);
+    });
+
+    it('keeps a neutral stereo strip in dual-pan identity', () => {
+      setStripPanMode(trackId, 'dualPan');
+      expect(store.tracks[0].mixer).toMatchObject({
+        panMode: 'dualPan',
+        dualPan: { left: -1, right: 1 },
+      });
+    });
+
+    it('supports pan controls on return buses and group buses', () => {
+      const busId = addMixerBus({ name: 'FX' });
+      const busTarget = mixerBusStripTarget(busId);
+      const groupId = addGroupTrack({ name: 'Group' });
+
+      setStripPanLaw(busTarget, 'const6dB');
+      setStripPanMode(busTarget, 'dualPan');
+      setStripDualPan(busTarget, -1, 0.75);
+      setStripPanLaw(groupId, 'linear0dB');
+      setStripPanMode(groupId, 'stereoPan');
+      setStripDualPan(groupId, -0.5, 0.5);
+
+      expect(store.mixer.buses[0].strip).toMatchObject({
+        panLaw: 'const6dB',
+        panMode: 'dualPan',
+        dualPan: { left: -1, right: 0.75 },
+      });
+      expect(store.tracks.find((track) => track.id === groupId)?.mixer).toMatchObject({
+        panLaw: 'linear0dB',
+        panMode: 'stereoPan',
+        dualPan: { left: -0.5, right: 0.5 },
+      });
+      expect(() => setStripPanLaw('master', 'const6dB')).toThrow(RangeError);
+      expect(() => setStripPanMode('master', 'stereoPan')).toThrow(RangeError);
+      expect(() => setStripDualPan('master', -1, 1)).toThrow(RangeError);
     });
 
     it('sets and validates dual-pan positions undoably', () => {
@@ -411,16 +450,19 @@ describe('mixer commands', () => {
       expect(canUndo()).toBe(false);
     });
 
-    it('rejects bus return EQ because the engine has no bus EQ ABI', () => {
+    it('supports return-bus EQ and undoes it as one strip edit', () => {
       const busId = addMixerBus({ name: 'FX' });
       const target = mixerBusStripTarget(busId);
 
-      expect(() =>
-        setStripEq(target, {
-          enabled: true,
-          bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
-        }),
-      ).toThrow(RangeError);
+      setStripEq(target, {
+        enabled: true,
+        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+      });
+      expect(store.mixer.buses[0].strip?.eq).toEqual({
+        enabled: true,
+        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+      });
+      undo();
       expect(store.mixer.buses[0].strip?.eq).toBeUndefined();
       expect(canUndo()).toBe(true); // only the bus creation is undoable
     });
@@ -442,6 +484,15 @@ describe('mixer commands', () => {
       expect(store.mixer.buses[0].gainDb).toBe(0);
       expect(() => setMixerBusGain('nope', 0)).toThrow(RangeError);
       expect(() => setMixerBusGain(busId, Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    });
+
+    it('routes generic strip gain on a return bus to the audible bus fader', () => {
+      const busId = addMixerBus();
+      setStripGain(mixerBusStripTarget(busId), -9);
+      expect(store.mixer.buses[0].gainDb).toBe(-9);
+      expect(store.mixer.buses[0].strip?.gainDb).toBeUndefined();
+      undo();
+      expect(store.mixer.buses[0].gainDb).toBe(0);
     });
 
     it('mutes a bus undoably without losing its fader value', () => {
@@ -1282,41 +1333,34 @@ describe('mixer commands', () => {
       });
     });
 
-    it('drops mixer scene sidechain keys on group-track insert strips', () => {
-      const groupId = addGroupTrack({ name: 'Group' });
+    it('rejects mixer scene sidechain keys on group-track insert strips', () => {
+      addGroupTrack({ name: 'Group' });
 
-      const result = applyMixerSceneJson(
-        JSON.stringify({
-          version: 1,
-          strips: [
-            { id: 'host' },
-            {
-              id: 'group',
-              inserts: [
-                {
-                  processor: 'dynamics.sidechainRouter',
-                  params: { rangeDb: 12 },
-                  sidechainKey: 'host',
-                },
-              ],
-            },
-          ],
-          buses: [],
-          connections: [],
-        }),
-      );
-
-      const group = store.tracks.find((track) => track.id === groupId);
-      expect(result.trackCount).toBe(2);
-      expect(group?.kind).toBe('group');
-      expect(group?.mixer?.inserts[0]).toMatchObject({
-        processor: 'dynamics.sidechainRouter',
-        params: { rangeDb: 12 },
-        enabled: true,
-      });
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            version: 1,
+            strips: [
+              { id: 'host' },
+              {
+                id: 'group',
+                inserts: [
+                  {
+                    processor: 'dynamics.sidechainRouter',
+                    params: { rangeDb: 12 },
+                    sidechainKey: 'host',
+                  },
+                ],
+              },
+            ],
+            buses: [],
+            connections: [],
+          }),
+        ),
+      ).toThrow(/sidechain keys need engine support/);
     });
 
-    it('centers group pan imported from a mixer scene', () => {
+    it('preserves group pan imported from a mixer scene', () => {
       const groupId = addGroupTrack({ name: 'Group' });
       applyMixerSceneJson(
         JSON.stringify({
@@ -1328,9 +1372,220 @@ describe('mixer commands', () => {
       );
 
       expect(store.tracks.find((track) => track.id === groupId)).toMatchObject({
-        pan: 0,
-        mixer: { pan: 0 },
+        pan: 0.75,
+        mixer: { pan: 0.75 },
       });
+    });
+
+    it('imports direct bus pan and EQ fields from the current scene schema', () => {
+      const busId = addMixerBus({ id: 'old-bus', name: 'Old' });
+      // Keep the current project independent of the scene's bus ids: the
+      // scene replaces the bus list as one atomic template operation.
+      expect(busId).toBe('old-bus');
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [],
+          buses: [
+            {
+              id: 'renamed-master',
+              role: 'master',
+              inputTrimDb: -2,
+              pan: 0.1,
+              eq: {
+                enabled: true,
+                bands: [{ type: 'Peak', frequencyHz: 700, gainDb: -1.5 }],
+              },
+            },
+            {
+              id: 'room',
+              role: 'aux',
+              pan: -0.35,
+              panMode: 2,
+              dualPanLeft: -1,
+              dualPanRight: 0.6,
+              panLaw: 2,
+              inputTrimDb: -3,
+              eq: {
+                enabled: true,
+                bands: [{ type: 'Peak', frequencyHz: 1200, gainDb: 2 }],
+              },
+              inserts: [{ processor: 'dynamics.compressor', params: { thresholdDb: -18 } }],
+            },
+          ],
+          connections: [],
+        }),
+      );
+
+      expect(store.mixer.buses).toHaveLength(1);
+      expect(store.mixer.buses[0]).toMatchObject({ id: 'room' });
+      expect(store.mixer.buses[0].strip).toMatchObject({
+        pan: -0.35,
+        panMode: 'dualPan',
+        dualPan: { left: -1, right: 0.6 },
+        panLaw: 'const6dB',
+        inputTrimDb: -3,
+        eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1200, gainDb: 2 }] },
+        inserts: [{ processor: 'dynamics.compressor' }],
+      });
+      expect(store.mixer.master).toMatchObject({
+        inputTrimDb: -2,
+        pan: 0.1,
+        eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 700, gainDb: -1.5 }] },
+      });
+    });
+
+    it('rejects ambiguous direct bus and legacy return DSP', () => {
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            version: 1,
+            buses: [
+              {
+                id: 'room',
+                role: 'aux',
+                eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 900, gainDb: 2 }] },
+                inserts: [],
+              },
+            ],
+            connections: [{ source: 'room', destination: 'room-return' }],
+            strips: [
+              {
+                id: 'room-return',
+                inserts: [{ processor: 'dynamics.compressor', params: {} }],
+              },
+            ],
+          }),
+        ),
+      ).toThrow(/direct DSP.*legacy return strip/);
+    });
+
+    it('rejects direct bus pan combined with a legacy return insert', () => {
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            version: 1,
+            buses: [{ id: 'room', role: 'aux', pan: 0.5 }],
+            connections: [{ source: 'room', destination: 'room-return' }],
+            strips: [
+              { id: 'room-return', inserts: [{ processor: 'dynamics.compressor', params: {} }] },
+            ],
+          }),
+        ),
+      ).toThrow(/direct DSP or pan.*legacy return strip/);
+    });
+
+    it('keeps legacy return DSP when direct bus fields are explicitly neutral', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          buses: [{ id: 'room', role: 'aux', pan: 0, inputTrimDb: 0, width: 1 }],
+          connections: [{ source: 'room', destination: 'room-return' }],
+          strips: [{ id: 'room-return', pan: 0.5, inputTrimDb: -3, width: 0.8 }],
+        }),
+      );
+
+      expect(store.mixer.buses[0].strip).toMatchObject({ pan: 0.5, inputTrimDb: -3, width: 0.8 });
+    });
+
+    it('maps legacy return mute and solo onto the audible bus', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          buses: [{ id: 'room', role: 'aux' }],
+          connections: [{ source: 'room', destination: 'room-return' }],
+          strips: [{ id: 'room-return', muted: true, soloed: true }],
+        }),
+      );
+
+      expect(store.mixer.buses[0]).toMatchObject({ id: 'room', mute: true, solo: true });
+    });
+
+    it('rejects legacy return sends that the bus engine cannot route', () => {
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            version: 1,
+            buses: [{ id: 'room', role: 'aux' }],
+            connections: [{ source: 'room', destination: 'room-return' }],
+            strips: [
+              {
+                id: 'room-return',
+                sends: [{ destinationBusId: 'room', sendDb: -6 }],
+              },
+            ],
+          }),
+        ),
+      ).toThrow(/unsupported sends/);
+    });
+
+    it('uses the master role when an aux bus owns the literal master id', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [],
+          buses: [
+            { id: 'master', role: 'aux', pan: -0.5 },
+            { id: 'actual-master', role: 'master', pan: 0.25 },
+          ],
+          connections: [],
+        }),
+      );
+
+      expect(store.mixer.buses).toHaveLength(1);
+      expect(store.mixer.buses[0]).toMatchObject({ id: 'master', strip: { pan: -0.5 } });
+      expect(store.mixer.master.pan).toBe(0.25);
+    });
+
+    it('imports the submix role emitted by the Studio bus scene', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [],
+          buses: [{ id: 'drums', role: 'submix', pan: -0.3 }],
+          connections: [],
+        }),
+      );
+
+      expect(store.mixer.buses[0]).toMatchObject({ id: 'drums', strip: { pan: -0.3 } });
+    });
+
+    it('rejects non-stereo scene buses instead of changing their layout', () => {
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            version: 1,
+            strips: [],
+            buses: [{ id: 'surround', role: 'submix', layout: '5.1' }],
+            connections: [],
+          }),
+        ),
+      ).toThrow(/unsupported channel layout 5\.1/);
+    });
+
+    it.each(['aux', 'master'] as const)('rejects unrenderable %s bus sidechain inserts', (role) => {
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            version: 1,
+            strips: [{ id: 'key-source' }],
+            buses: [
+              {
+                id: role === 'master' ? 'actual-master' : 'room',
+                role,
+                inserts: [
+                  {
+                    processor: 'dynamics.compressor',
+                    params: {},
+                    sidechainKey: 'key-source',
+                  },
+                ],
+              },
+            ],
+            connections: [],
+          }),
+        ),
+      ).toThrow(/sidechain keys need engine support/);
     });
 
     it('keeps mixer scene strip mapping bounded to existing tracks', () => {

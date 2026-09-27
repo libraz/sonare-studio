@@ -95,12 +95,12 @@ describe('ChannelStrip output-bus selector', () => {
     expect(mountStrip(trackId).find('.strip-output').exists()).toBe(false);
   });
 
-  it('hides the EQ section on group tracks only', () => {
+  it('shows the EQ section on group tracks and the master', () => {
     const groupId = addGroupTrack();
 
     expect(mountStrip(trackId).findComponent({ name: 'StripEqSection' }).exists()).toBe(true);
     expect(mountStrip('master').findComponent({ name: 'StripEqSection' }).exists()).toBe(true);
-    expect(mountStrip(groupId).findComponent({ name: 'StripEqSection' }).exists()).toBe(false);
+    expect(mountStrip(groupId).findComponent({ name: 'StripEqSection' }).exists()).toBe(true);
   });
 
   it('shows track gain reduction when the lane meter reports dynamics GR', async () => {

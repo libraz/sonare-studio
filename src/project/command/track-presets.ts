@@ -57,7 +57,6 @@ function stripForDestination(source: MixerStrip, trackId: number, groupTrack: bo
     return copied;
   });
   if (groupTrack) {
-    next.pan = 0;
     next.sends = [];
     delete next.outputBusId;
   } else {

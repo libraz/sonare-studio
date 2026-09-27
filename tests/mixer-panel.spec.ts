@@ -1,8 +1,9 @@
 import { shallowMount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import ChannelStrip from '@/components/mixer/ChannelStrip.vue';
 import MixerPanel from '@/components/mixer/MixerPanel.vue';
-import { addTrack, clearHistory } from '@/project/commands';
+import { addGroupTrack, addTrack, clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -103,5 +104,17 @@ describe('MixerPanel.vue', () => {
     await soloMode.vm.$emit('update:modelValue', 'pfl');
 
     expect(store.mixer.soloMode).toBe('pfl');
+  });
+
+  it('keeps group strips on the bus-capable pan/EQ surface', () => {
+    const groupId = addGroupTrack({ name: 'Music Bus' });
+    const wrapper = shallowMount(ChannelStrip, { props: { target: groupId } });
+
+    expect(wrapper.find('.strip-pan').exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'StripEqSection' }).exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'StripOptionsPopover' }).exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'StripAutomationControls' }).exists()).toBe(false);
+    expect(wrapper.findComponent({ name: 'StripSends' }).exists()).toBe(false);
+    expect(wrapper.find('.strip-output').exists()).toBe(false);
   });
 });

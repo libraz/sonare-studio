@@ -450,6 +450,27 @@ export function hydrateProjectFromDocument(
 ): HydratedDocument {
   created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
   created.setSampleRate(doc.sampleRate > 0 ? doc.sampleRate : DEFAULT_SAMPLE_RATE);
+  // DAWproject and saved sessions may contain intentional overlapping clips
+  // (for example, a crossfade). The native project defaults to rejecting
+  // overlap, so select the matching policy before adding the first clip.
+  if (
+    doc.tracks.some((track) => {
+      const ordered = track.clips
+        .map((clip) => ({
+          startPpq: finiteAtLeast(clip.startPpq, 0, 0),
+          lengthPpq: finiteAtLeast(clip.lengthPpq, Number.EPSILON, 1),
+        }))
+        .sort((a, b) => a.startPpq - b.startPpq);
+      let latestEnd = -Infinity;
+      for (const clip of ordered) {
+        if (clip.startPpq < latestEnd) return true;
+        latestEnd = Math.max(latestEnd, clip.startPpq + clip.lengthPpq);
+      }
+      return false;
+    })
+  ) {
+    created.setOverlapPolicy(1);
+  }
   const tempo =
     doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
   const normalizedTempo = normalizeTempoMap(tempo, DEFAULT_TEMPO_BPM);
@@ -478,25 +499,21 @@ export function hydrateProjectFromDocument(
     const importedStrip = track.mixer !== undefined ? cloneStrip(track.mixer) : undefined;
     // Schema-v3 files written before the audible-pan migration may only
     // carry DocumentTrack.pan. Promote it into MixerStrip.pan on load.
-    // Group buses have no pan DSP, so reject their persisted no-op value
-    // by centering both the strip and compatibility mirror.
+    // Group and return buses now have the same stereo pan stage as tracks, so
+    // retain their persisted value instead of discarding it.
     if (importedStrip !== undefined) {
       importedStrip.pan =
-        track.kind !== 'group' &&
-        Number.isFinite(importedStrip.pan) &&
-        importedStrip.pan >= -1 &&
-        importedStrip.pan <= 1
+        Number.isFinite(importedStrip.pan) && importedStrip.pan >= -1 && importedStrip.pan <= 1
           ? importedStrip.pan
-          : track.kind === 'group'
-            ? 0
-            : documentPan;
+          : documentPan;
+      if (importedStrip.panMode === 'dualPan' && importedStrip.dualPan === undefined) {
+        importedStrip.dualPan = { left: -1, right: 1 };
+      }
     }
-    const audiblePan = track.kind === 'group' ? 0 : (importedStrip?.pan ?? documentPan);
+    const audiblePan = importedStrip?.pan ?? documentPan;
     let migratedStrip =
       importedStrip ??
-      (track.kind !== 'group' && audiblePan !== 0
-        ? { ...createDefaultStrip(), pan: audiblePan }
-        : undefined);
+      (audiblePan !== 0 ? { ...createDefaultStrip(), pan: audiblePan } : undefined);
     // `volume` was the pre-v4 linear fader field. Keep accepting it from
     // old documents, but fold it into the canonical dB strip gain before
     // exposing the mirror so a later fader edit cannot double-count it.

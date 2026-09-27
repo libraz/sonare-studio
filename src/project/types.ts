@@ -177,7 +177,7 @@ export interface EditorTrack {
   volume: number;
   /**
    * Compatibility mirror of `mixer.pan` for older project readers. New code
-   * must use the mixer strip; group tracks are always centered.
+   * must use the mixer strip.
    */
   pan: number;
   /** Display order index; always equals the track's index in the mirror. */

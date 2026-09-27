@@ -16,6 +16,7 @@ import {
   setMixerBusGain,
   setMixerBusMute,
   setMixerBusSolo,
+  setStripPan,
 } from '@/project/commands';
 import type { MixerBus } from '@/project/mixer';
 import { canRouteReturnSolo } from '@/project/mixer';
@@ -29,12 +30,14 @@ import {
   isAutomationWriteMode,
   toggleAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
-import { FADER_MAX_DB, FADER_MIN_DB, formatDb } from '@/ui/mixer/db-scale';
+import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
+import MixerKnob from './MixerKnob.vue';
 import NumericReadout from './NumericReadout.vue';
 import SpectrumAnalyzer from './SpectrumAnalyzer.vue';
 import StereoGoniometer from './StereoGoniometer.vue';
+import StripEqSection from './StripEqSection.vue';
 import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
 import StripOptionsPopover from './StripOptionsPopover.vue';
@@ -84,6 +87,7 @@ const props = withDefaults(
 const store = useProjectStore();
 const automationTarget = computed<BusAutomationTarget>(() => busAutomationTarget(props.bus.id));
 const stripTarget = computed(() => mixerBusStripTarget(props.bus.id));
+const pan = computed(() => props.bus.strip?.pan ?? 0);
 const { t } = useI18n();
 const autoMode = computed(() => automationStripMode(automationTarget.value));
 const faderLane = computed(() =>
@@ -142,6 +146,10 @@ function onFaderChange(db: number, commit: boolean): void {
   setMixerBusGain(props.bus.id, db, { commit });
 }
 
+function onPanChange(value: number, commit: boolean): void {
+  setStripPan(stripTarget.value, value, { commit });
+}
+
 function onRemove(): void {
   removeMixerBus(props.bus.id);
 }
@@ -191,6 +199,32 @@ onBeforeUnmount(() => {
     </div>
     <div class="bus-inserts">
       <InsertRack :target="stripTarget" />
+    </div>
+    <div class="bus-eq">
+      <StripEqSection :target="stripTarget" :scope="props.scope" />
+    </div>
+    <div class="bus-pan">
+      <div class="bus-pan-knob">
+        <MixerKnob
+          :value="pan"
+          :min="-1"
+          :max="1"
+          :default-value="0"
+          :label="t.shell.mixer.strip.pan"
+          :display="formatPan(pan)"
+          :size="24"
+          @change="onPanChange"
+        />
+        <NumericReadout
+          :value="pan"
+          :min="-1"
+          :max="1"
+          :step="0.01"
+          :display="formatPan(pan)"
+          :ariaLabel="t.shell.mixer.strip.pan"
+          @change="(value) => onPanChange(value, true)"
+        />
+      </div>
     </div>
     <div class="bus-toggles">
       <button
@@ -307,6 +341,25 @@ onBeforeUnmount(() => {
   width: 100%;
   border-top: 1px solid var(--border-subtle);
   padding-top: var(--sp-2);
+}
+
+.bus-eq {
+  width: 100%;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--sp-2);
+}
+
+.bus-pan {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.bus-pan-knob {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .bus-auto {

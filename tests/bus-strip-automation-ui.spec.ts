@@ -3,7 +3,10 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import BusStrip from '@/components/mixer/BusStrip.vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
+import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import NumericReadout from '@/components/mixer/NumericReadout.vue';
+import StripEqSection from '@/components/mixer/StripEqSection.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
 import { busAutomationTarget } from '@/project/automation';
@@ -119,6 +122,22 @@ describe('BusStrip automation UI', () => {
     expect(wrapper.find('.strip-gr-value').text()).toBe('-5.5');
   });
 
+  it('exposes the return pan and dedicated EQ target using the strip grammar', async () => {
+    const wrapper = mountStrip();
+
+    expect(wrapper.find('.bus-pan').exists()).toBe(true);
+    expect(wrapper.find('.bus-eq').exists()).toBe(true);
+    expect(wrapper.findComponent(StripEqSection).props('target')).toBe(`bus:${busId}`);
+
+    const pan = wrapper.findComponent(MixerKnob);
+    expect(pan.props('label')).toBe('Pan');
+    pan.vm.$emit('change', -0.4, false);
+    pan.vm.$emit('change', -0.4, true);
+    await wrapper.vm.$nextTick();
+
+    expect(store.mixer.buses[0].strip?.pan).toBe(-0.4);
+  });
+
   it('writes bus output trim, width, and polarity from the shaping popover', async () => {
     const wrapper = mountStrip();
     await wrapper.find('.strip-options-btn').trigger('click');
@@ -137,9 +156,37 @@ describe('BusStrip automation UI', () => {
     expect(store.mixer.buses[0].strip?.polarityInvertLeft).toBe(true);
   });
 
+  it('exposes bus pan law and dual-pan controls without channel delay', async () => {
+    const wrapper = mountStrip();
+    await wrapper.find('.strip-options-btn').trigger('click');
+
+    expect(wrapper.find('input[aria-label="Channel delay"]').exists()).toBe(false);
+    const selects = wrapper.findAllComponents(SelectMenu);
+    expect(selects.map((select) => select.props('ariaLabel'))).toEqual(
+      expect.arrayContaining(['Pan law', 'Pan mode']),
+    );
+
+    selects
+      .find((select) => select.props('ariaLabel') === 'Pan mode')
+      ?.vm.$emit('change', 'dualPan');
+    await wrapper.vm.$nextTick();
+
+    const left = wrapper.get('input[aria-label="Dual pan L"]');
+    const right = wrapper.get('input[aria-label="Dual pan R"]');
+    expect(left.element.value).toBe('-1');
+    expect(right.element.value).toBe('1');
+
+    await left.setValue('-0.6');
+    await left.trigger('change');
+    expect(store.mixer.buses[0].strip?.dualPan?.left).toBe(-0.6);
+  });
+
   it('commits exact bus gain, input trim, and width values from numeric readouts', async () => {
     const wrapper = mountStrip();
-    wrapper.getComponent(NumericReadout).vm.$emit('change', -6);
+    wrapper
+      .findAllComponents(NumericReadout)
+      .find((readout) => readout.classes('bus-readout'))
+      ?.vm.$emit('change', -6);
     await wrapper.vm.$nextTick();
     expect(store.mixer.buses[0].gainDb).toBe(-6);
 
@@ -170,6 +217,17 @@ describe('BusStrip automation UI', () => {
     await wrapper.vm.$nextTick();
     expect(learn.bindingForId(targetId)).toEqual({ channel: 0, controller: 31 });
     expect(store.mixer.buses[0].strip?.inputTrimDb).toBe(48);
+  });
+
+  it('applies the first bus polarity MIDI action to a neutral strip', () => {
+    expect(store.mixer.buses[0].strip).toBeUndefined();
+    const learn = useMidiLearn();
+    const targetId = midiLearnBusStripControlTargetId(busId, 'polarityLeft');
+    learn.armId(targetId);
+    learn.handleCc({ channel: 0, controller: 32, value: 127 });
+
+    expect(store.mixer.buses[0].strip?.polarityInvertLeft).toBe(true);
+    expect(store.mixer.buses[0].strip?.polarityInvertRight === true).toBe(false);
   });
 
   it('removes the options popover outside-click listener on unmount', async () => {
