@@ -10,7 +10,7 @@
  * active clip's notes can consume it (the score reuses the card resolver).
  */
 
-import { chordToRoman, functionOf } from '@libraz/libcantus';
+import { chordToRoman, functionOf, NoteSafety } from '@libraz/libcantus';
 import { type ComputedRef, computed } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useNoteNames } from '@/composables/useNoteNames';
@@ -27,8 +27,10 @@ import {
   type GuidanceSegment,
   resolutionTargetOf,
 } from '@/compose/guidance';
+import { analyzeHarmony } from '@/compose/harmonic-analysis';
 import { DEFAULT_KEY_SCALE } from '@/compose/key';
 import { buildKeyMap } from '@/compose/key-map';
+import { isDrumTrack } from '@/compose/tracks';
 import { buildVoiceLines } from '@/compose/voice-context';
 import { audibleMidiProjector } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
@@ -54,18 +56,28 @@ export interface CompositionGuidance {
   guidanceSegments: ComputedRef<GuidanceSegment[] | undefined>;
   /** Hover theory-card resolver for the note grid; undefined without an active clip. */
   noteCard: ComputedRef<((noteId: number) => TheoryCard | null) | undefined>;
+  /** Harmonic warning severity per active-clip note; notes with no harmonic clash are omitted. */
+  noteSafety: ComputedRef<ReadonlyMap<number, NoteSafety.Warning | NoteSafety.Dissonant>>;
   /** Resolution arrows for the active clip's notes; undefined without an active clip. */
   resolutionArrows: ComputedRef<ResolutionArrow[] | undefined>;
   /** Active-clip notes whose expected resolution did not follow. */
   unresolvedNoteIds: ComputedRef<ReadonlySet<number>>;
 }
 
+export interface CompositionGuidanceOptions {
+  /** Reactive getter used by hidden editor surfaces to skip expensive analysis. */
+  enabled?: () => boolean;
+}
+
 /** Builds the reactive composition-guidance surface for the active clip. */
-export function useCompositionGuidance(): CompositionGuidance {
+export function useCompositionGuidance(
+  options: CompositionGuidanceOptions = {},
+): CompositionGuidance {
   const store = useProjectStore();
   const { t } = useI18n();
   const appSettings = useAppSettings();
   const noteNames = useNoteNames();
+  const isEnabled = options.enabled ?? (() => true);
 
   /**
    * Card string bundle for the active explanation level: the shared role /
@@ -78,19 +90,39 @@ export function useCompositionGuidance(): CompositionGuidance {
     theoryLabelsFor(t.value.theory, appSettings.settings.explainLevel, t.value.harmony.cadence),
   );
 
-  /** The active source window is all editor guidance needs; loops are rendered by playback. */
+  /** Source-window occurrences used by editor cards and resolution arrows. */
   const activeOccurrences = computed(() => {
     const clip = store.activeClip;
     return clip ? audibleMidiProjector(clip, { expandLoops: false }) : [];
   });
 
+  /** Every audible loop occurrence used by harmonic guidance aggregation. */
+  const guidanceOccurrences = computed(() => {
+    const clip = store.activeClip;
+    return clip ? audibleMidiProjector(clip) : [];
+  });
+
   const activeNotes = computed(() =>
-    activeOccurrences.value.map((entry) => ({
+    guidanceOccurrences.value.map((entry) => ({
       ...entry.note,
       startPpq: entry.clipStartPpq,
       durationPpq: entry.durationPpq,
     })),
   );
+
+  /** The active track and all of its notes, used for durable drum detection. */
+  const activeTrack = computed(() => {
+    const clip = store.activeClip;
+    return clip ? (store.tracks.find((entry) => entry.id === clip.trackId) ?? null) : null;
+  });
+  const activeTrackNotes = computed(() => {
+    const track = activeTrack.value;
+    return track ? (store.clipsByTrack.get(track.id) ?? []).flatMap((entry) => entry.notes) : [];
+  });
+  const activeTrackIsDrum = computed(() => {
+    const track = activeTrack.value;
+    return track !== null && isDrumTrack(track, activeTrackNotes.value);
+  });
 
   const activeOccurrenceByNoteId = computed(
     () => new Map(activeOccurrences.value.map((entry) => [entry.note.id, entry])),
@@ -100,9 +132,17 @@ export function useCompositionGuidance(): CompositionGuidance {
   const keyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
 
   const guidance = computed<GuidanceResult | null>(() => {
+    if (!isEnabled()) return null;
     const clip = store.activeClip;
     if (!clip) return null;
-    const track = store.tracks.find((entry) => entry.id === clip.trackId);
+    const track = activeTrack.value;
+    // Percussion has no harmonic guidance surface. Avoid constructing chord,
+    // voice-leading and sustained-boundary analysis for a track whose consumers
+    // will suppress every result; this also keeps a dense drum clip cheap while
+    // editing it.
+    if (activeTrackIsDrum.value) {
+      return { segments: [], byNoteId: new Map(), keySet: false, chordPresent: false };
+    }
     const followers = store.tracks.filter(
       (entry) => entry.leadFollow?.leadTrackId === clip.trackId,
     );
@@ -128,7 +168,7 @@ export function useCompositionGuidance(): CompositionGuidance {
       keyMap: keyMap.value,
       timeSignatures: store.timeSignatures,
       profile: appSettings.settings.guidanceProfile,
-      ...(track !== undefined ? { track } : {}),
+      ...(track !== null ? { track } : {}),
       // Every other track, loops expanded, as it actually sounds.
       lines: buildVoiceLines(store.tracks, store.clipsByTrack, clip.trackId),
       parkedLines: buildVoiceLines(followers, parkedClips, clip.trackId),
@@ -138,6 +178,8 @@ export function useCompositionGuidance(): CompositionGuidance {
 
   /** Chord timeline for card context, built once per chord-track change. */
   const chordTimeline = computed(() => buildChordTimeline(store.chords));
+  /** Functional chord labels shared with the chord lane, including V7/x. */
+  const harmonicAnalysis = computed(() => analyzeHarmony(store.chords, keyMap.value));
 
   /** Resolves the hover theory card for one active-clip note, or null. */
   function theoryCardFor(noteId: number): TheoryCard | null {
@@ -163,7 +205,12 @@ export function useCompositionGuidance(): CompositionGuidance {
     if (chord !== null) {
       const key = keyMap.value.at(at) ?? DEFAULT_KEY_SCALE;
       try {
-        ctx.chordRoman = chordToRoman(chord, key);
+        const symbol = store.chords.find((entry) => at >= entry.startPpq && at < entry.endPpq);
+        const appliedRoman =
+          symbol === undefined
+            ? undefined
+            : harmonicAnalysis.value.byStartPpq.get(symbol.startPpq)?.appliedRoman;
+        ctx.chordRoman = appliedRoman ?? chordToRoman(chord, key);
         ctx.chordFunction = functionOf(chord, key);
       } catch {
         // Unmappable chord: the card simply omits the chord line.
@@ -174,20 +221,60 @@ export function useCompositionGuidance(): CompositionGuidance {
 
   // buildGuidance already emits segments in the clip's source frame (see its
   // sourceOffsetPpq input), matching the notes the piano roll draws.
-  const guidanceSegments = computed(() =>
-    appSettings.settings.pianoRollGuidanceTint ? guidance.value?.segments : undefined,
-  );
+  const guidanceSegments = computed(() => {
+    const result = guidance.value;
+    if (
+      !appSettings.settings.pianoRollGuidanceTint ||
+      result === null ||
+      !result.chordPresent ||
+      activeTrackIsDrum.value
+    ) {
+      return undefined;
+    }
+    return result.segments;
+  });
   // Re-emit the resolver identity when the level changes too, so consumers that
   // key off `noteCard` re-render the currently shown card at the new level.
   const noteCard = computed(() =>
-    guidance.value !== null && cardLabels.value ? theoryCardFor : undefined,
+    guidance.value !== null && cardLabels.value && !activeTrackIsDrum.value
+      ? (noteId: number) => theoryCardFor(noteId)
+      : undefined,
+  );
+
+  const noteSafety = computed<ReadonlyMap<number, NoteSafety.Warning | NoteSafety.Dissonant>>(
+    () => {
+      const result = guidance.value;
+      if (result === null || activeTrackIsDrum.value) return new Map();
+      const out = new Map<number, NoteSafety.Warning | NoteSafety.Dissonant>();
+      for (const [noteId, analysis] of result.byNoteId) {
+        let worst: NoteSafety.Warning | NoteSafety.Dissonant | undefined = analysis.worstSafety;
+        if (analysis.chordSounding) {
+          const onset = analysis.safety?.safety;
+          if (
+            (onset === NoteSafety.Warning || onset === NoteSafety.Dissonant) &&
+            (worst === undefined || onset > worst)
+          ) {
+            worst = onset;
+          }
+        }
+        const sustained = analysis.sustainedSafety?.safety;
+        if (
+          (sustained === NoteSafety.Warning || sustained === NoteSafety.Dissonant) &&
+          (worst === undefined || sustained > worst)
+        ) {
+          worst = sustained;
+        }
+        if (worst !== undefined) out.set(noteId, worst);
+      }
+      return out;
+    },
   );
 
   /** Resolution arrows for notes carrying a resolution obligation. */
   const resolutionArrows = computed<ResolutionArrow[] | undefined>(() => {
     const result = guidance.value;
     const clip = store.activeClip;
-    if (result === null || clip === null) return undefined;
+    if (result === null || clip === null || activeTrackIsDrum.value) return undefined;
     const arrows: ResolutionArrow[] = [];
     // Arrow origins are the notes' right edges in the same source-relative frame
     // the piano roll draws in, so add the clip's trim offset to the projector's
@@ -210,6 +297,7 @@ export function useCompositionGuidance(): CompositionGuidance {
   });
 
   const unresolvedNoteIds = computed<ReadonlySet<number>>(() => {
+    if (activeTrackIsDrum.value) return new Set<number>();
     const ids = new Set<number>();
     for (const [id, analysis] of guidance.value?.byNoteId ?? []) {
       if (analysis.pendingResolution?.resolved === false) ids.add(id);
@@ -217,5 +305,5 @@ export function useCompositionGuidance(): CompositionGuidance {
     return ids;
   });
 
-  return { guidanceSegments, noteCard, resolutionArrows, unresolvedNoteIds };
+  return { guidanceSegments, noteCard, noteSafety, resolutionArrows, unresolvedNoteIds };
 }

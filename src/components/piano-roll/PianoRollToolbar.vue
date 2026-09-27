@@ -38,6 +38,8 @@ const guidanceTint = defineModel<boolean>('guidanceTint', { required: true });
 const props = defineProps<{
   /** True while the active track is frozen and content mutations are blocked. */
   readOnly?: boolean;
+  /** True when the active track is percussion and melodic guidance is inapplicable. */
+  drumTrack?: boolean;
   /** True when a MIDI clip is active and can receive a transform. */
   canTransform: boolean;
   /** Active clip id passed to the transform popover. */
@@ -114,6 +116,7 @@ function onLegendClick(trackId: number): void {
       v-model="snapToScale"
       :label="t.shell.pianoRoll.snapScaleToggle"
       :title="t.shell.pianoRoll.snapScaleToggleTitle"
+      :disabled="props.drumTrack === true"
       size="sm"
     />
     <div class="tool-readout" :title="activeTool.hint" aria-live="polite">
@@ -150,7 +153,7 @@ function onLegendClick(trackId: number): void {
       v-model="autoReharmonize"
       :label="t.shell.pianoRoll.reharmonize.toggle"
       :title="t.shell.pianoRoll.reharmonize.toggleTitle"
-      :disabled="props.readOnly === true"
+      :disabled="props.readOnly === true || props.drumTrack === true"
       size="sm"
     />
     <ToggleButton
@@ -353,6 +356,7 @@ function onLegendClick(trackId: number): void {
 .roll-toolbar {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
   padding: 0.25rem 0.5rem;
@@ -463,9 +467,11 @@ function onLegendClick(trackId: number): void {
 
 .track-legend {
   display: flex;
+  flex: 1 1 14rem;
   align-items: center;
   gap: 0.25rem;
-  min-width: 0;
+  min-width: min(14rem, 100%);
+  max-width: 100%;
   overflow-x: auto;
 }
 

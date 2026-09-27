@@ -102,6 +102,7 @@ export const shellEditors = {
     guide: 'ガイド',
     guideTitle: 'ガイダンスの色と記号の意味',
     guideHeading: '作曲ガイド',
+    guideSafe: 'コードに合う音',
     guideWarning: '使い方に注意',
     guideDissonant: 'コードとぶつかる音',
     guideResolution: '解決先',
@@ -110,6 +111,9 @@ export const shellEditors = {
     guideClose: 'ガイドを閉じる',
     guideProfile: 'プロファイル',
     guideBackgroundHeading: '背景ガイド',
+    guideExistingHeading: '配置済みの音',
+    guideExistingWarning: '黄線：鳴っている間のコードに対して緊張感があります',
+    guideExistingDissonant: '赤線：鳴っている間のコードとぶつかっています',
     guideAvoidNoteCounterpoint:
       '対位法では、アボイドノートの行が強拍に限らずどの拍でも赤くなります。',
     guidePlacementHeading: '配置ガイド（鉛筆の列）',

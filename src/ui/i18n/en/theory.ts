@@ -81,6 +81,10 @@ export const theory = {
         warning: 'Works, but adds tension — use with care',
         dissonant: 'Clashes with the chord — it may sound off',
       },
+      sustainedSafety: {
+        warning: 'The chord change at bar {bar}, beat {beat} adds tension to this held note',
+        dissonant: 'The chord change at bar {bar}, beat {beat} makes this held note clash',
+      },
       labels: {
         suspension: 'Leans on the chord, then steps down to settle',
         appoggiatura: 'Arrives with a leap and leans in, then steps away to settle',
@@ -136,6 +140,10 @@ export const theory = {
         warning: 'Use with care',
         dissonant: 'Clashes with the chord',
       },
+      sustainedSafety: {
+        warning: 'Held into bar {bar}, beat {beat}: added tension',
+        dissonant: 'Held into bar {bar}, beat {beat}: clashes with the new chord',
+      },
       labels: {
         suspension: 'Suspension: resolve down by step',
         appoggiatura: 'Appoggiatura: arrives by leap, resolve by step',
@@ -190,6 +198,10 @@ export const theory = {
         safe: 'Consonant / chord-scale tone',
         warning: 'Tension — conditional',
         dissonant: 'Dissonant against the chord',
+      },
+      sustainedSafety: {
+        warning: 'Sustained into bar {bar}, beat {beat}: conditional tension under the new chord',
+        dissonant: 'Sustained into bar {bar}, beat {beat}: dissonant under the new chord',
       },
       labels: {
         suspension: 'Suspension — resolves stepwise down',

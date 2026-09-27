@@ -104,7 +104,7 @@
 .score-theory-card {
   position: absolute;
   z-index: 5;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .score-body {

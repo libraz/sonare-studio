@@ -18,6 +18,7 @@ import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import type { EditorToolId } from '@/ui/editor/tools';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import { type GhostNote, hitTestGhost } from './overlay';
@@ -70,6 +71,8 @@ const props = defineProps<{
   timeSignatureOriginPpq?: number;
   /** Gesture state machine shared with the container. */
   interactions: NoteInteractions;
+  /** The active tool; ghost notes only switch clips while selecting. */
+  activeTool?: EditorToolId;
   /** Playhead position getter in PPQ; omit to hide the playhead. */
   positionPpq?: () => number;
   /** Fixed local column to pin the playhead to while following, else null. */
@@ -84,6 +87,8 @@ const props = defineProps<{
   noteCard?: (noteId: number) => TheoryCard | null;
   /** Voice-leading resolution arrows for the active clip; omit to draw none. */
   resolutionArrows?: ResolutionArrow[];
+  /** Chord-context warning severity per note; no-chord notes are omitted. */
+  noteSafety?: ReadonlyMap<number, NoteSafety.Warning | NoteSafety.Dissonant>;
   /** Pencil placement verdicts (indexed by MIDI pitch) for one cell; null or omitted draws none. */
   placementColumn?: PlacementColumn | null;
   /** Notes whose expected resolution did not follow; they carry the warning band. */
@@ -168,6 +173,31 @@ function updateTheoryCard(point: InteractionPoint): void {
   cardPoint.value = point;
 }
 
+/** Re-resolves the pinned card when chord/key guidance changes under it. */
+function refreshTheoryCard(): void {
+  const resolve = props.noteCard;
+  if (!resolve) {
+    if (hoveredCard.value !== null) cardHold.dismiss();
+    return;
+  }
+  const note =
+    hoveredNote.value ??
+    (cardNoteId.value === null
+      ? undefined
+      : props.notes.find((entry) => entry.id === cardNoteId.value));
+  if (!note) return;
+  const next = resolve(note.id);
+  if (next === null) {
+    cardHold.dismiss();
+    return;
+  }
+  cardHold.keep();
+  cardNoteId.value = note.id;
+  hoveredCard.value = next;
+}
+
+watch(() => props.noteCard, refreshTheoryCard, { flush: 'sync' });
+
 /**
  * Fixed-viewport position of the hover theory card. The card is teleported to
  * the document body (so a lower-stacking bottom panel can never cover it and the
@@ -194,7 +224,11 @@ const theoryCardStyle = computed<Record<string, string> | null>(() => {
     top = py - CARD_POINTER_OFFSET_PX - CARD_ESTIMATED_HEIGHT_PX;
   }
   top = Math.max(4, Math.min(top, vh - CARD_ESTIMATED_HEIGHT_PX - 4));
-  return { left: `${left}px`, top: `${top}px` };
+  return {
+    left: `${left}px`,
+    top: `${top}px`,
+    '--theory-card-reach': `${CARD_POINTER_OFFSET_PX}px`,
+  };
 });
 
 /** Unique painter layer suffix so several editors can share one painter. */
@@ -453,17 +487,21 @@ function drawBackground(): void {
     }
   }
 
-  // Guidance tint over the scale rows: only warning/dissonant pitch classes
-  // are filled (safe rows draw nothing) so the base palette stays dominant.
+  // Guidance tint over the scale rows. Safe rows use a very light tint so the
+  // recommended area is visible without washing out the key and black-key
+  // structure; no-chord clips omit guidanceSegments altogether.
   for (const segment of props.guidanceSegments ?? []) {
     const x0 = Math.max(0, range.ppqToX(segment.startBeat));
     const x1 = Math.min(w, range.ppqToX(segment.endBeat));
     if (x1 <= x0) continue;
     for (let pitch = lowPitch; pitch <= highPitch; pitch++) {
       const safety = segment.safetyByPc[((pitch % 12) + 12) % 12];
-      if (safety === NoteSafety.Safe) continue;
       ctx.fillStyle =
-        safety === NoteSafety.Dissonant ? COLORS.guidanceDissonant : COLORS.guidanceWarning;
+        safety === NoteSafety.Safe
+          ? COLORS.guidanceSafe
+          : safety === NoteSafety.Dissonant
+            ? COLORS.guidanceDissonant
+            : COLORS.guidanceWarning;
       ctx.fillRect(x0, range.pitchToY(pitch), x1 - x0, range.rowHeight);
     }
   }
@@ -533,10 +571,19 @@ function drawNotes(): void {
     const offScale = scaleMaskActive && !props.highlightedPitchClasses[pitchClass];
     const tooShort = note.durationPpq <= SHORT_NOTE_WARNING_PPQ;
     const overlap = overlapIds.has(note.id);
+    const safety = props.noteSafety?.get(note.id);
+    const harmonicWarning = safety === NoteSafety.Warning;
+    const dissonant = safety === NoteSafety.Dissonant;
     const unresolved = props.unresolvedNoteIds?.has(note.id) === true;
-    if (overlap || offScale || tooShort || unresolved) {
-      ctx.fillStyle = overlap ? COLORS.noteError : COLORS.noteWarning;
-      ctx.fillRect(x + 2, y + 2, Math.max(2, Math.min(noteW - 4, 18)), 2);
+    if (overlap || harmonicWarning || dissonant || offScale || tooShort || unresolved) {
+      // Overlaps and harmonic dissonance are errors; all other guidance is a
+      // caution. Keep the priority explicit so a harmless scale warning can
+      // never hide an overlap or a chord clash.
+      ctx.fillStyle = overlap || dissonant ? COLORS.noteError : COLORS.noteWarning;
+      // A harmony warning belongs to the entire sounding note. A short mark
+      // is reserved for local edit issues such as overlaps and tiny notes.
+      const warningWidth = harmonicWarning || dissonant ? noteW - 4 : Math.min(noteW - 4, 18);
+      ctx.fillRect(x + 2, y + 2, Math.max(2, warningWidth), 2);
     }
 
     if (range.rowHeight >= LABEL_MIN_ROW_HEIGHT && noteW >= LABEL_MIN_NOTE_WIDTH) {
@@ -898,6 +945,7 @@ watch(
     props.notes,
     props.ghostNotes,
     props.noteColor,
+    props.noteSafety,
     props.unresolvedNoteIds,
     props.interactions.previewNotes.value,
   ],
@@ -957,7 +1005,7 @@ function onPointerDown(event: PointerEvent): void {
   const mods = modifiers(event);
   // A press on a ghost note requests track/clip activation instead of an
   // editing gesture; alt keeps the current track and edits normally.
-  if (!mods.alt) {
+  if (!mods.alt && (props.activeTool === undefined || props.activeTool === 'select')) {
     const ghost = hitTestGhost(props.notes, props.ghostNotes ?? [], point, props.range);
     if (ghost) {
       emit('ghost-activate', ghost);
@@ -970,9 +1018,10 @@ function onPointerDown(event: PointerEvent): void {
 function onPointerMove(event: PointerEvent): void {
   const point = localPoint(event);
   const mods = modifiers(event);
-  hoveredGhost.value = mods.alt
-    ? null
-    : hitTestGhost(props.notes, props.ghostNotes ?? [], point, props.range);
+  hoveredGhost.value =
+    mods.alt || (props.activeTool !== undefined && props.activeTool !== 'select')
+      ? null
+      : hitTestGhost(props.notes, props.ghostNotes ?? [], point, props.range);
   // Mirror the ghost-note hover HUD for the active layer: surface the editable
   // note under the pointer so hovering an active note reads it out too. The
   // overlay suppresses it while a ghost is hovered or a gesture is in flight.
@@ -1100,12 +1149,12 @@ function onContextMenu(event: MouseEvent): void {
 
 /* Theory card pinned near the note it explains. Teleported to the body and
  * fixed-positioned at the tooltip layer so no panel can cover it and the grid's
- * overflow clip cannot cut it; the card ignores the pointer so it can never
- * block a gesture, while its ⓘ affordance opts back in to stay clickable. */
+ * overflow clip cannot cut it; the card owns its visible area and a transparent
+ * reach halo so the pointer can cross the fixed offset from the note. */
 .note-grid-theory-card {
   position: fixed;
   z-index: 200;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .note-grid-live {

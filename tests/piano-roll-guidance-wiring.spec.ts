@@ -36,7 +36,8 @@ describe('piano-roll placement guidance wiring', () => {
   });
 
   it('bands the unresolved notes the composition guidance reports', () => {
-    expect(editor).toMatch(/\bunresolvedNoteIds\b[^\n]*=\s*useCompositionGuidance\(\)/);
+    expect(editor).toMatch(/\bunresolvedNoteIds\b[^\n]*=\s*useCompositionGuidance\(\{/);
+    expect(editor).toContain('enabled: () => props.guidanceEnabled !== false');
     expect(elementTag(editor, 'NoteGridCanvas')).toContain(
       ':unresolved-note-ids="unresolvedNoteIds"',
     );

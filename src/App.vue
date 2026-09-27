@@ -1284,6 +1284,7 @@ onMounted(installLaunchQueueConsumer);
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
             :force-lane-hidden="scoreVisible"
+            :guidance-enabled="dockTab === 'roll' && !dockCollapsed"
             :audition="auditionNote"
             @seek="onSeek"
             @open-chords="onOpenChordList"
@@ -1311,6 +1312,7 @@ onMounted(installLaunchQueueConsumer);
             :style="scoreResized ? { flex: 'none', height: `${scoreHeight}px` } : undefined"
             :position-ppq="() => positionPpq"
             :is-playing="isPlaying"
+            :guidance-enabled="dockTab === 'roll' && !dockCollapsed"
             @seek="onSeek"
           />
         </section>

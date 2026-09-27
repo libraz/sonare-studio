@@ -254,7 +254,9 @@ const qualityOptionsByIndex = computed<ReadonlyArray<ReadonlyArray<QualityOption
  */
 function romanFor(chord: EditorChordSymbol): string {
   if (!keySet.value) return '';
-  return chordToRoman(editorChordToChord(chord), effectiveKeyScale(store.scaleHighlight));
+  return chordToRoman(editorChordToChord(chord), effectiveKeyScale(store.scaleHighlight), {
+    applied: true,
+  });
 }
 
 /** Repeating-pattern groups detected in the current chord track (see {@link detectProgressionGroups}). */

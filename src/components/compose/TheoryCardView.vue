@@ -16,11 +16,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  /**
-   * True while the ⓘ affordance has the pointer or keyboard focus. Hosts that
-   * dismiss the card on hover keep it alive while this is set, otherwise
-   * reaching the button would close the card it lives in.
-   */
+  /** True while the card itself has pointer or keyboard presence. */
   hold: [held: boolean];
 }>();
 
@@ -31,21 +27,27 @@ function toggleTerm(index: number): void {
   openTerm.value = openTerm.value === index ? null : index;
 }
 
-// Pointer and focus presence on the ⓘ, reported to the host as one flag and
-// emitted synchronously: the host arms its dismissal on the very event that
-// hands the pointer over, so a deferred hold would arrive too late to be read
-// as one continuous reach.
-let infoPointer = false;
-let infoFocus = false;
+// Pointer and focus presence on the whole card, reported to the host as one
+// flag and emitted synchronously: the host arms its dismissal on the very
+// event that hands the pointer over, so a deferred hold would arrive too late
+// to be read as one continuous reach.
+let cardPointer = false;
+let cardFocus = false;
 let held = false;
 
-function setInfoHold(part: 'pointer' | 'focus', on: boolean): void {
-  if (part === 'pointer') infoPointer = on;
-  else infoFocus = on;
-  const next = infoPointer || infoFocus;
+function setCardHold(part: 'pointer' | 'focus', on: boolean): void {
+  if (part === 'pointer') cardPointer = on;
+  else cardFocus = on;
+  const next = cardPointer || cardFocus;
   if (next === held) return;
   held = next;
   emit('hold', next);
+}
+
+function onCardFocusOut(event: FocusEvent): void {
+  const next = event.relatedTarget;
+  if (next instanceof Node && (event.currentTarget as HTMLElement).contains(next)) return;
+  setCardHold('focus', false);
 }
 
 // A new card (hovering a different note) starts with every definition collapsed.
@@ -58,7 +60,13 @@ watch(
 </script>
 
 <template>
-  <div class="theory-card">
+  <div
+    class="theory-card"
+    @pointerenter="setCardHold('pointer', true)"
+    @pointerleave="setCardHold('pointer', false)"
+    @focusin="setCardHold('focus', true)"
+    @focusout="onCardFocusOut"
+  >
     <div class="theory-card-title">{{ card.title }}</div>
     <template v-for="(line, index) in card.lines" :key="index">
       <div class="theory-card-line">
@@ -75,10 +83,6 @@ watch(
           :aria-label="line.term.term"
           :aria-expanded="openTerm === index"
           @click="toggleTerm(index)"
-          @pointerenter="setInfoHold('pointer', true)"
-          @pointerleave="setInfoHold('pointer', false)"
-          @focus="setInfoHold('focus', true)"
-          @blur="setInfoHold('focus', false)"
         >
           ⓘ
         </button>
@@ -93,6 +97,7 @@ watch(
 
 <style scoped>
 .theory-card {
+  position: relative;
   max-width: 230px;
   padding: 6px 9px;
   border-radius: 5px;
@@ -101,14 +106,32 @@ watch(
   color: var(--text-1);
   border: 1px solid var(--border-strong);
   box-shadow: var(--raise-hi);
+  /* Hosts set this to the card's pointer offset. The transparent reach area
+     bridges the gap between a note and this fixed card without changing the
+     card's visible bounds. */
+  --theory-card-reach: 12px;
+  isolation: isolate;
+}
+
+.theory-card::before {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--theory-card-reach));
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: auto;
 }
 
 .theory-card-title {
+  position: relative;
+  z-index: 1;
   margin-bottom: 2px;
   font-weight: 600;
 }
 
 .theory-card-line {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -148,9 +171,7 @@ watch(
 }
 
 /* The ⓘ affordance: a borderless ghost glyph that only gains weight when its
-   definition is open, so it stays quiet until the reader reaches for it. The
-   card is pointer-events:none in some hosts (the score), so the button opts
-   itself back into pointer events to stay clickable. */
+   definition is open, so it stays quiet until the reader reaches for it. */
 .theory-card-info {
   flex: none;
   border: none;
@@ -168,6 +189,8 @@ watch(
 }
 
 .theory-card-glossary {
+  position: relative;
+  z-index: 1;
   margin: 2px 0 3px;
   padding: 3px 6px;
   border-radius: 4px;

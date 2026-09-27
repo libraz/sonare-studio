@@ -61,6 +61,8 @@ export interface TheoryLabels {
   functions: Readonly<Record<'tonic' | 'subdominant' | 'dominant', string>>;
   /** Fallback safety text when the analysis carries no rationale. */
   safety: Readonly<Record<'safe' | 'warning' | 'dissonant', string>>;
+  /** Text for a warning that starts at a later chord boundary, with bar/beat. */
+  sustainedSafety: Readonly<Record<'warning' | 'dissonant', string>>;
   /** Beginner text per non-chord-tone label kind. */
   labels: Readonly<
     Record<
@@ -182,6 +184,7 @@ export type CounterpointVerdict =
 export interface TheoryLevelLabels {
   lock: TheoryLabels['lock'];
   safety: TheoryLabels['safety'];
+  sustainedSafety: TheoryLabels['sustainedSafety'];
   labels: TheoryLabels['labels'];
   scaleDegree: string;
   nonScaleSuffix: string;
@@ -234,6 +237,7 @@ export function theoryLabelsFor(
     cadenceArrival: levelLabels.cadenceArrival,
     lock: levelLabels.lock,
     safety: levelLabels.safety,
+    sustainedSafety: levelLabels.sustainedSafety,
     labels: levelLabels.labels,
     scaleDegree: levelLabels.scaleDegree,
     nonScaleSuffix: levelLabels.nonScaleSuffix,
@@ -708,6 +712,16 @@ export function buildTheoryCard(
     lines.push({
       label: labels.lines.safety,
       text: labels.safety[SAFETY_KEY[analysis.safety.safety]],
+    });
+  }
+  if (analysis.sustainedSafety !== undefined) {
+    const { safety, bar, beat } = analysis.sustainedSafety;
+    const verdict = safety === NoteSafety.Dissonant ? 'dissonant' : 'warning';
+    lines.push({
+      label: labels.lines.safety,
+      text: labels.sustainedSafety[verdict]
+        .replace('{bar}', String(bar))
+        .replace('{beat}', String(beat)),
     });
   }
   return { title, lines };

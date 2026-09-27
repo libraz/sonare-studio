@@ -83,19 +83,33 @@ describe('TheoryCardView', () => {
     expect(wrapper.find('.theory-card-glossary').exists()).toBe(false);
   });
 
-  it('holds while the affordance has the pointer or focus, and releases once', async () => {
+  it('holds while the card has the pointer or focus, and releases once outside', async () => {
     const wrapper = mount(TheoryCardView, { props: { card: makeCard() } });
+    const card = wrapper.get('.theory-card');
     const info = wrapper.get('.theory-card-info');
 
-    await info.trigger('pointerenter');
-    await info.trigger('focus');
-    // Focus arriving on an already hovered button is the same hold, not a second one.
+    await card.trigger('pointerenter');
+    await info.trigger('focusin');
+    // Focus arriving on an already hovered card is the same hold, not a second one.
     expect(wrapper.emitted('hold')).toEqual([[true]]);
 
-    await info.trigger('pointerleave');
+    await card.trigger('pointerleave');
     expect(wrapper.emitted('hold')).toEqual([[true]]);
 
-    await info.trigger('blur');
+    await card.trigger('focusout', { relatedTarget: null });
+    expect(wrapper.emitted('hold')).toEqual([[true], [false]]);
+  });
+
+  it('keeps focus hold while focus moves between card controls', async () => {
+    const wrapper = mount(TheoryCardView, { props: { card: makeCard() } });
+    const card = wrapper.get('.theory-card');
+    const info = wrapper.get('.theory-card-info');
+
+    await info.trigger('focusin');
+    await card.trigger('focusout', { relatedTarget: info.element });
+
+    expect(wrapper.emitted('hold')).toEqual([[true]]);
+    await card.trigger('focusout', { relatedTarget: null });
     expect(wrapper.emitted('hold')).toEqual([[true], [false]]);
   });
 });

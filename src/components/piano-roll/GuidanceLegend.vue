@@ -98,6 +98,10 @@ function setProfile(next: GuidanceProfile): void {
     <span class="legend-section-label">{{ t.shell.pianoRoll.guideBackgroundHeading }}</span>
     <ul class="legend-items">
       <li>
+        <span class="swatch" :style="{ background: COLORS.guidanceSafe }" />
+        <span>{{ t.shell.pianoRoll.guideSafe }}</span>
+      </li>
+      <li>
         <span class="swatch" :style="{ background: COLORS.guidanceWarning }" />
         <span>{{ t.shell.pianoRoll.guideWarning }}</span>
       </li>
@@ -130,6 +134,19 @@ function setProfile(next: GuidanceProfile): void {
     <p v-if="profile === 'counterpoint'" class="legend-note">
       {{ t.shell.pianoRoll.guideAvoidNoteCounterpoint }}
     </p>
+    <span class="legend-section-label legend-section-split">
+      {{ t.shell.pianoRoll.guideExistingHeading }}
+    </span>
+    <ul class="legend-items">
+      <li>
+        <span class="note-line-swatch" :style="{ borderColor: COLORS.noteWarning }" />
+        <span>{{ t.shell.pianoRoll.guideExistingWarning }}</span>
+      </li>
+      <li>
+        <span class="note-line-swatch" :style="{ borderColor: COLORS.noteError }" />
+        <span>{{ t.shell.pianoRoll.guideExistingDissonant }}</span>
+      </li>
+    </ul>
     <span class="legend-section-label legend-section-split">
       {{ t.shell.pianoRoll.guidePlacementHeading }}
     </span>
@@ -270,6 +287,15 @@ function setProfile(next: GuidanceProfile): void {
 
 .swatch-svg {
   display: block;
+}
+
+.note-line-swatch {
+  flex: none;
+  width: 20px;
+  height: 12px;
+  border-top: 3px solid;
+  background: var(--accent-soft);
+  border-radius: 2px;
 }
 
 .legend-section-label {

@@ -81,6 +81,11 @@ export const theory = {
         warning: '使えますが緊張感が出ます。扱いに注意',
         dissonant: 'コードとぶつかる音。外れて聞こえることがあります',
       },
+      sustainedSafety: {
+        warning: '{bar}小節{beat}拍のコードチェンジで、この伸ばした音に緊張感が出ます',
+        dissonant:
+          '{bar}小節{beat}拍のコードチェンジで、この伸ばした音が新しいコードとぶつかります',
+      },
       labels: {
         suspension: 'コードに寄りかかってから、一歩下がって収まります',
         appoggiatura: '跳んで入って寄りかかり、一歩動いて収まります',
@@ -136,6 +141,10 @@ export const theory = {
         warning: '使い方に注意',
         dissonant: 'コードとぶつかる音',
       },
+      sustainedSafety: {
+        warning: '{bar}小節{beat}拍まで伸ばすと、次のコードで緊張感が出ます',
+        dissonant: '{bar}小節{beat}拍まで伸ばすと、新しいコードとぶつかります',
+      },
       labels: {
         suspension: '掛留音: 次で下行して解決',
         appoggiatura: '倚音: 跳んで入り、順次で解決',
@@ -190,6 +199,10 @@ export const theory = {
         safe: '協和／コードスケール音',
         warning: 'テンション — 条件付き',
         dissonant: 'コードに対し不協和',
+      },
+      sustainedSafety: {
+        warning: '{bar}小節{beat}拍まで持続: 新しいコードでは条件付きの緊張音',
+        dissonant: '{bar}小節{beat}拍まで持続: 新しいコードでは不協和',
       },
       labels: {
         suspension: '掛留 — 順次下行で解決',

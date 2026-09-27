@@ -40,7 +40,12 @@ import {
 } from '@libraz/libcantus';
 import { type SpelledPitch, spellLineInKeySignature } from '@/notation/pitch-spelling';
 import type { EditorChordSymbol } from '@/project/chords';
-import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
+import {
+  measureRangeAt,
+  meterBarLengthPpq,
+  meterBeatLengthPpq,
+  timeSignatureAt,
+} from '@/project/time-signature';
 import type {
   EditorNote,
   EditorTrack,
@@ -131,6 +136,21 @@ export interface PendingResolution {
   /** Whether `next` is expected; absent while no onset follows. */
   resolved?: boolean;
 }
+
+/**
+ * A chord boundary reached while this note is still sounding. The boundary is
+ * kept with the verdict so a card can explain where a sustained clash starts.
+ */
+export interface SustainedSafety {
+  safety: NoteSafety.Warning | NoteSafety.Dissonant;
+  chordStartPpq: number;
+  /** One-based musical location used by the note theory card. */
+  bar: number;
+  beat: number;
+}
+
+/** Harmonic severity retained when one source note occurs in several loops. */
+export type HarmonicSafety = NoteSafety.Warning | NoteSafety.Dissonant;
 
 /** Per chord segment: safety of each pitch class, for background row tint. */
 export interface GuidanceSegment {
@@ -223,6 +243,10 @@ export interface CounterpointFindings {
 /** Per-note theory analysis (keyed by EditorNote.id in the result map). */
 export interface NoteAnalysis {
   safety?: SafetyResult;
+  /** Worst non-safe verdict at a later chord boundary inside this note. */
+  sustainedSafety?: SustainedSafety;
+  /** Worst harmonic severity across all audible loop occurrences of this note. */
+  worstSafety?: HarmonicSafety;
   role?: VoicedRole;
   analyzed?: AnalyzedNote;
   /** Scale degree of the note in the key, counted from 1 (-1 off the scale). */
@@ -315,6 +339,23 @@ export function resolutionTargetOf(analysis: NoteAnalysis): number | undefined {
     if ('resolveTo' in label && typeof label.resolveTo === 'number') return label.resolveTo;
   }
   return analysis.safety?.resolveTo;
+}
+
+function maxHarmonicSafety(
+  current: HarmonicSafety | undefined,
+  candidate: HarmonicSafety | undefined,
+): HarmonicSafety | undefined {
+  if (current === undefined) return candidate;
+  if (candidate === undefined) return current;
+  return candidate > current ? candidate : current;
+}
+
+/** Harmonic verdicts worth carrying into the source note's aggregate map. */
+function harmonicSafetyOf(analysis: NoteAnalysis): HarmonicSafety | undefined {
+  const onset = analysis.chordSounding ? analysis.safety?.safety : undefined;
+  const onsetSafety =
+    onset === NoteSafety.Warning || onset === NoteSafety.Dissonant ? onset : undefined;
+  return maxHarmonicSafety(onsetSafety, analysis.sustainedSafety?.safety);
 }
 
 /** Runs a libcantus call that may throw; undefined signals "no result". */
@@ -424,6 +465,19 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     ...note,
     startPpq: input.clipStartPpq + note.startPpq,
   }));
+  // A loop occurrence keeps the source note id. Keep the first occurrence for
+  // card and melodic/placement readings, while the full active line remains in
+  // the harmonic pass so its worst severity can be aggregated below.
+  const firstStartByNoteId = new Map<number, number>();
+  for (const note of input.notes) {
+    if (!firstStartByNoteId.has(note.id)) firstStartByNoteId.set(note.id, note.startPpq);
+  }
+  const firstActiveLine = activeLine.filter(
+    (note) => firstStartByNoteId.get(note.id) === note.startPpq - input.clipStartPpq,
+  );
+  const firstInputNotes = input.notes.filter(
+    (note) => firstStartByNoteId.get(note.id) === note.startPpq,
+  );
 
   /**
    * Each other line's top voice at `absBeat`, carrying its top at `prevBeat`
@@ -475,6 +529,85 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   };
   const othersAt = (absBeat: number, prevBeat?: number): VoiceSnapshot[] =>
     trackedOthersAt(absBeat, prevBeat).map((entry) => entry.voice);
+
+  // Sustained notes are rechecked only at chord starts they actually cross.
+  // Keep those boundaries out of voiceQueryBeats: adding them would make a
+  // held voice look like a moving voice and change the doubling-run readings.
+  const sustainedOthersCache = new Map<number, VoiceSnapshot[]>();
+  const sustainedOthersAt = (absBeat: number): VoiceSnapshot[] => {
+    const cached = sustainedOthersCache.get(absBeat);
+    if (cached !== undefined) return cached;
+    const others = trackedOthersAt(absBeat).map((entry) => entry.voice);
+    sustainedOthersCache.set(absBeat, others);
+    return others;
+  };
+
+  /**
+   * Finds the first chord segment whose start is strictly after `startBeat`.
+   * Chord symbols are sorted by buildChordTimeline, so each note walks only
+   * the boundaries inside its duration instead of scanning the whole track.
+   */
+  const firstChordBoundaryAfter = (startBeat: number): number => {
+    const segments = timeline.segments;
+    let low = 0;
+    let high = segments.length;
+    while (low < high) {
+      const middle = low + Math.floor((high - low) / 2);
+      if (segments[middle].startBeat <= startBeat) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+
+  const sustainedSafetyFor = (note: EditorNote): SustainedSafety | undefined => {
+    const noteEnd = Math.min(note.startPpq + note.durationPpq, windowEnd);
+    if (!(noteEnd > note.startPpq)) return undefined;
+    let worst: SustainedSafety | undefined;
+    for (
+      let index = firstChordBoundaryAfter(note.startPpq);
+      index < timeline.segments.length;
+      index += 1
+    ) {
+      const boundary = timeline.segments[index].startBeat;
+      // The boundary at the note's right edge is outside its sounding span.
+      if (!(boundary < noteEnd)) break;
+      const chord = timeline.at(boundary);
+      // A gap or an overlapping symbol that is not the active timeline chord
+      // carries no harmonic verdict.
+      if (chord === null) continue;
+      const result = tryEval(() =>
+        evaluateSafety({
+          profile,
+          candidatePitch: note.pitch,
+          // A held note did not move at the chord boundary.
+          prevPitch: note.pitch,
+          chord,
+          key: keyAt(boundary),
+          otherVoices: sustainedOthersAt(boundary),
+          strongBeat: strongBeatAt(input.timeSignatures, boundary),
+        }),
+      );
+      const safety = result?.safety;
+      if (safety !== NoteSafety.Warning && safety !== NoteSafety.Dissonant) continue;
+      const measure = measureRangeAt(input.timeSignatures, boundary);
+      const beat = Math.floor((boundary - measure.startPpq) / meterBeatLengthPpq(measure)) + 1;
+      const candidate: SustainedSafety = {
+        safety,
+        chordStartPpq: boundary,
+        bar: measure.index + 1,
+        beat,
+      };
+      if (
+        worst === undefined ||
+        candidate.safety > worst.safety ||
+        (candidate.safety === worst.safety && candidate.chordStartPpq < worst.chordStartPpq)
+      ) {
+        worst = candidate;
+      }
+    }
+    return worst;
+  };
+
   /** Interval to the bass (lowest pitch any other line sounds) for the card, if audible. */
   const verticalAt = (pitch: number, absBeat: number): VerticalInfo | undefined => {
     let bass: number | undefined;
@@ -769,7 +902,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
     input.timeSignatures,
   );
   const cadenceByNoteId = cadencesByNote(
-    notes,
+    firstInputNotes,
     (note) => input.clipStartPpq + note.startPpq,
     cadences.arrivals,
     cadences.inferred,
@@ -885,6 +1018,8 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
           : { ...verdict, reasons: (verdict.reasons & ~raisedBits) | pairwise };
       if (heard.length > 0) analysis.partners = heard;
     }
+    const sustainedSafety = sustainedSafetyFor(note);
+    if (sustainedSafety !== undefined) analysis.sustainedSafety = sustainedSafety;
     // The readings the verdict's reason bits do not carry, measured across the
     // same step of the voice the verdict is measured across.
     const nextPitch = nextGroupPitchByOnset.get(absBeat);
@@ -918,7 +1053,14 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       }
     }
     if (Object.keys(findings).length > 0) analysis.counterpoint = findings;
-    byNoteId.set(note.id, analysis);
+    const existing = byNoteId.get(note.id);
+    if (existing === undefined) {
+      const worst = harmonicSafetyOf(analysis);
+      if (worst !== undefined) analysis.worstSafety = worst;
+      byNoteId.set(note.id, analysis);
+    } else {
+      existing.worstSafety = maxHarmonicSafety(existing.worstSafety, harmonicSafetyOf(analysis));
+    }
     lastPitch = note.pitch;
     lastSpelled = spelled;
   }
@@ -934,20 +1076,24 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
       : voices;
   const followerTrackIds = input.followerTrackIds ?? new Set<number>();
   const onsetGroups = new Map<number, number[]>();
-  for (const note of activeLine) {
+  for (const note of firstActiveLine) {
     const group = onsetGroups.get(note.startPpq);
     if (group === undefined) onsetGroups.set(note.startPpq, [note.pitch]);
     else group.push(note.pitch);
   }
   const groupOnsets = [...onsetGroups.keys()];
-  for (const note of activeLine) {
+  const nextGroupOnset = new Map<number, number>();
+  for (let index = 0; index + 1 < groupOnsets.length; index += 1) {
+    nextGroupOnset.set(groupOnsets[index], groupOnsets[index + 1]);
+  }
+  for (const note of firstActiveLine) {
     const analysis = byNoteId.get(note.id);
     if (analysis === undefined) continue;
     const [verdict] = evaluatePlacementColumn(
       {
         startPpq: note.startPpq,
         lengthPpq: note.durationPpq,
-        activeNotes: activeLine.filter((other) => other !== note),
+        activeNotes: firstActiveLine.filter((other) => other !== note),
         voices: placementVoices,
         chords: timeline,
         keyMap,
@@ -973,7 +1119,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
         : undefined;
     const expected = verdict.resolveTo ?? [];
     if (kind === undefined || expected.length === 0) continue;
-    const nextOnset = groupOnsets.find((onset) => onset > note.startPpq);
+    const nextOnset = nextGroupOnset.get(note.startPpq);
     const next =
       nextOnset !== undefined
         ? nearestPitch(onsetGroups.get(nextOnset) ?? [], note.pitch)
@@ -988,7 +1134,7 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // voice. Ids are carried directly on VoiceNote; analyzeVoice treats shared
   // onsets as cluster members and skips melodic labels for them, so passing all
   // notes is safe. Results map back to notes through AnalyzedNote.noteId.
-  const voice: VoiceNote[] = activeLine.map((note) => ({
+  const voice: VoiceNote[] = firstActiveLine.map((note) => ({
     id: note.id,
     pitch: note.pitch,
     startBeat: note.startPpq,

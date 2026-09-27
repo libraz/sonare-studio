@@ -52,6 +52,11 @@ describe('explanation-level wording', () => {
 
         for (const value of Object.values(labels.lock)) expect(value.length).toBeGreaterThan(0);
         for (const value of Object.values(labels.safety)) expect(value.length).toBeGreaterThan(0);
+        for (const value of Object.values(labels.sustainedSafety)) {
+          expect(value.length).toBeGreaterThan(0);
+          expect(value).toContain('{bar}');
+          expect(value).toContain('{beat}');
+        }
         for (const kind of LABEL_KINDS) {
           expect(labels.labels[kind]?.length ?? 0).toBeGreaterThan(0);
         }

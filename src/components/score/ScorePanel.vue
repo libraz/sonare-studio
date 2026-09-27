@@ -15,6 +15,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { TheoryCard } from '@/compose/explain';
+import { GM_PERCUSSION_CHANNEL, isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
 import {
@@ -77,6 +78,8 @@ const props = defineProps<{
   positionPpq?: () => number;
   /** True while the transport is playing; enables horizontal score following. */
   isPlaying?: boolean;
+  /** Skip harmonic analysis while the score is hidden in another dock tab. */
+  guidanceEnabled?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -400,10 +403,17 @@ const interactions = useScoreInteractions({
   },
   onInsertAt: (startPpq) => {
     const source = store.notes.find((note) => store.selection.has(note.id));
+    const track = store.activeTrack;
+    const trackNotes = track
+      ? (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes)
+      : store.notes;
+    const drum = isDrumTrack(track, trackNotes);
     addNote({
-      pitch: source?.pitch ?? 60,
+      pitch: source?.pitch ?? (drum ? 36 : 60),
       velocity: source?.velocity ?? 96,
-      channel: source?.channel ?? 0,
+      channel: drum
+        ? GM_PERCUSSION_CHANNEL
+        : (source?.channel ?? preferredNoteChannel(track, trackNotes)),
       startPpq,
       durationPpq: source?.durationPpq ?? divisionPpq(),
     });
@@ -412,7 +422,7 @@ const interactions = useScoreInteractions({
 
 // --- Theory hover card -------------------------------------------------------------
 
-const guidance = useCompositionGuidance();
+const guidance = useCompositionGuidance({ enabled: () => props.guidanceEnabled !== false });
 /** Theory card for the note under the pointer, or null when none is hovered. */
 const hoverCard = ref<TheoryCard | null>(null);
 /** Note whose card is currently resolved, avoiding repeated theory work on pointermove. */
@@ -426,6 +436,16 @@ const cardHold = useTheoryCardHold(() => {
   hoverCardNoteId.value = null;
   hoverCard.value = null;
 });
+
+// Chord edits and Undo can change the reading of a note while the pointer
+// stays still. Refresh the visible card without waiting for another hover.
+watch(
+  [() => store.chords, () => (hoverCardNoteId.value === null ? null : guidance.noteCard.value)],
+  () => {
+    const noteId = hoverCardNoteId.value;
+    if (noteId !== null) hoverCard.value = guidance.noteCard.value?.(noteId) ?? null;
+  },
+);
 
 /**
  * Combined score-body pointer move: forwards to the annotate staff-drag tracker
@@ -905,7 +925,11 @@ onBeforeUnmount(() => {
         v-if="hoverCard"
         class="score-theory-card"
         :card="hoverCard"
-        :style="{ left: `${hoverCardPos.x}px`, top: `${hoverCardPos.y}px` }"
+        :style="{
+          left: `${hoverCardPos.x}px`,
+          top: `${hoverCardPos.y}px`,
+          '--theory-card-reach': `${CARD_POINTER_OFFSET_PX}px`,
+        }"
         @hold="cardHold.onHold"
       />
       <div v-if="notation.loading.value" class="score-loading">

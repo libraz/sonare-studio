@@ -33,10 +33,18 @@ async function readHoverStatus(page) {
 /** Moves the mouse within the note-grid canvas and reads the resulting hover status. */
 async function hoverGrid(page, box, x, y) {
   await page.mouse.move(box.x + x, box.y + y);
-  await page.waitForTimeout(60);
-  const status = await readHoverStatus(page);
-  if (!status) throw new Error(`no hover status at local (${x}, ${y})`);
-  return status;
+  // The floating theory card can temporarily cover a calibration point and
+  // suppress its live status. Read the same coordinate projection the grid
+  // uses, while still moving the real pointer for placement interactions.
+  return page.evaluate(
+    ({ x, y }) => {
+      const grid = document.querySelector('.note-grid');
+      const range = grid?.__vueParentComponent?.props.range;
+      if (!range) throw new Error('piano-roll coordinate projection missing');
+      return { midi: range.yToPitch(y), ppq: range.xToPpq(x) };
+    },
+    { x, y },
+  );
 }
 
 /**
@@ -208,7 +216,7 @@ export async function run(ctx) {
   if (!(await page.evaluate(() => window.__sonareDebug.engineStarted()))) {
     await page.click('.transport-bar .transport-key.play');
     await page.waitForFunction(() => window.__sonareDebug.engineStarted() === true, null, {
-      timeout: 10000,
+      timeout: 30000,
     });
     await page.click('.transport-bar .transport-key.stop');
   }

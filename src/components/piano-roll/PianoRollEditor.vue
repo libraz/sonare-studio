@@ -10,6 +10,7 @@ import { useNoteNames } from '@/composables/useNoteNames';
 import { usePlacementGuidance } from '@/composables/usePlacementGuidance';
 import { useReactiveReharmonization } from '@/composables/useReactiveReharmonization';
 import { buildKeyMap } from '@/compose/key-map';
+import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import {
   addNote,
   addNotes,
@@ -114,6 +115,8 @@ const props = defineProps<{
   isPlaying?: boolean;
   /** Hides the bottom velocity / CC lane without changing the saved user preference. */
   forceLaneHidden?: boolean;
+  /** Skip harmonic analysis while the editor is hidden in another dock tab. */
+  guidanceEnabled?: boolean;
   /**
    * Audible-feedback hook: plays a short preview of a note's pitch/velocity
    * when one is clicked or created. Omit to edit silently.
@@ -343,10 +346,19 @@ const { vThumbStyle, hThumbStyle, onVScrollDown, onHScrollDown, onScrollMove, on
 /** Active clip color for the CC curve. */
 const trackColor = computed(() => store.activeTrack?.color ?? DEFAULT_NOTE_COLOR);
 const contentReadOnly = computed(() => store.activeTrack?.frozen !== undefined);
+/** Notes across every clip on the active track, including clips not open in the roll. */
+const activeTrackNotes = computed(() => {
+  const track = store.activeTrack;
+  return track
+    ? (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes)
+    : store.notes;
+});
+/** Percussion tracks keep their GM channel and bypass melodic guidance rules. */
+const activeTrackIsDrum = computed(() => isDrumTrack(store.activeTrack, activeTrackNotes.value));
 
 /** Composition-guidance tint segments and hover theory-card resolver. */
-const { guidanceSegments, noteCard, resolutionArrows, unresolvedNoteIds } =
-  useCompositionGuidance();
+const { guidanceSegments, noteCard, noteSafety, resolutionArrows, unresolvedNoteIds } =
+  useCompositionGuidance({ enabled: () => props.guidanceEnabled !== false });
 
 /**
  * Reactive melody-first reharmonization: an opt-in auto-suggest that proposes
@@ -936,7 +948,7 @@ function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: bool
 }
 
 function resolveScalePitch(pitch: number): number {
-  if (!snapToScaleEnabled.value) return pitch;
+  if (activeTrackIsDrum.value || !snapToScaleEnabled.value) return pitch;
   const mask = store.highlightedPitchClasses;
   if (!mask.some(Boolean) || mask[((pitch % 12) + 12) % 12]) return pitch;
   for (let distance = 1; distance <= 12; distance++) {
@@ -962,6 +974,7 @@ const interactions = useNoteInteractions({
   getMaxPpq: () => sourceWindowEndPpq.value,
   resolveCreatedPitch: resolveScalePitch,
   resolveEditedPitch: resolveScalePitch,
+  getCreatedChannel: () => preferredNoteChannel(store.activeTrack, activeTrackNotes.value),
   commands: { addNote, addNotes, updateNotes, deleteNotes, setSelection, splitNote },
   auditionDuringDrag: () => auditionDrag.value,
   ...(props.audition ? { onAudition: props.audition } : {}),
@@ -1204,6 +1217,7 @@ onBeforeUnmount(() => {
       v-model:placement-guide="placementGuide"
       v-model:guidance-tint="guidanceTint"
       :read-only="contentReadOnly"
+      :drum-track="activeTrackIsDrum"
       :can-transform="canTransform"
       :clip-id="store.clipId"
       :note-count="audibleSourceNotes.length"
@@ -1275,12 +1289,14 @@ onBeforeUnmount(() => {
           :time-signatures="store.timeSignatures"
           :time-signature-origin-ppq="timeSignatureOriginPpq"
           :interactions="interactions"
+          :active-tool="tool"
           :position-ppq="props.positionPpq ? localPositionPpq : undefined"
           :anchored-local-x="followAnchorLocalX"
           :note-color="noteColor"
           :ghost-notes="ghostNotes"
           :guidance-segments="guidanceSegments"
           :note-card="noteCard"
+          :note-safety="noteSafety"
           :resolution-arrows="resolutionArrows"
           :placement-column="placementColumn"
           :unresolved-note-ids="unresolvedNoteIds"

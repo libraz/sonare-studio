@@ -102,6 +102,7 @@ export const shellEditors = {
     guide: 'Guide',
     guideTitle: 'What the guidance colours and marks mean',
     guideHeading: 'Composition guide',
+    guideSafe: 'Fits the chord',
     guideWarning: 'Use with care',
     guideDissonant: 'Clashes with the chord',
     guideResolution: 'Expected resolution',
@@ -110,6 +111,9 @@ export const shellEditors = {
     guideClose: 'Close the guide',
     guideProfile: 'Profile',
     guideBackgroundHeading: 'Row tint',
+    guideExistingHeading: 'Existing notes',
+    guideExistingWarning: 'Amber line: this note adds tension under the current chords',
+    guideExistingDissonant: 'Red line: this note clashes with a chord while it sounds',
     guideAvoidNoteCounterpoint:
       'Under counterpoint, avoid-note rows turn red on every beat, not only on strong beats.',
     guidePlacementHeading: 'Pencil column',

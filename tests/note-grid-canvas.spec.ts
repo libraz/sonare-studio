@@ -1,3 +1,4 @@
+import { NoteSafety } from '@libraz/libcantus';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
@@ -6,6 +7,7 @@ import { PIANO_ROLL_COLORS } from '@/components/piano-roll/theme';
 import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
 import type { PlacementColumn } from '@/composables/usePlacementGuidance';
 import type { TheoryCard } from '@/compose/explain';
+import type { GuidanceSegment } from '@/compose/guidance';
 import type { PlacementLevel, PlacementVerdict } from '@/compose/placement';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
@@ -56,7 +58,12 @@ beforeEach(() => {
   vi.mocked(painter.schedule).mockClear();
 });
 
-function mountGrid(noteId: number | null, noteCard?: (id: number) => TheoryCard | null) {
+function mountGrid(
+  noteId: number | null,
+  noteCard?: (id: number) => TheoryCard | null,
+  guidanceSegments?: GuidanceSegment[],
+  noteSafety?: ReadonlyMap<number, NoteSafety.Warning | NoteSafety.Dissonant>,
+) {
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -83,11 +90,53 @@ function mountGrid(noteId: number | null, noteCard?: (id: number) => TheoryCard 
       timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
       interactions: makeInteractions(noteId),
       ...(noteCard ? { noteCard } : {}),
+      ...(guidanceSegments ? { guidanceSegments } : {}),
+      ...(noteSafety ? { noteSafety } : {}),
     },
   });
 }
 
 describe('NoteGridCanvas', () => {
+  it('lets the draw tool place notes over accompaniment ghosts without switching tracks', async () => {
+    wrapper = mountGrid(null);
+    await wrapper.setProps({
+      ghostNotes: [
+        {
+          noteId: 9,
+          clipId: 12,
+          trackId: 4,
+          pitch: 74,
+          startPpq: 6,
+          durationPpq: 1,
+          color: '#888888',
+          trackName: 'Backing',
+        },
+      ],
+      activeTool: 'select',
+    });
+    const grid = wrapper.get('.note-grid').element as HTMLElement;
+    grid.setPointerCapture = vi.fn();
+    const pressGhost = () =>
+      grid.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 650,
+          clientY: 535,
+        }),
+      );
+
+    pressGhost();
+    expect(wrapper.emitted('ghost-activate')).toHaveLength(1);
+    const interactions = wrapper.props('interactions');
+    expect(interactions.onPointerDown).not.toHaveBeenCalled();
+
+    await wrapper.setProps({ activeTool: 'draw' });
+    pressGhost();
+    expect(wrapper.emitted('ghost-activate')).toHaveLength(1);
+    expect(interactions.onPointerDown).toHaveBeenCalledTimes(1);
+  });
+
   it('exposes notes as virtual options with selection, edit, and context actions', async () => {
     wrapper = mountGrid(1);
     const navigator = wrapper.get('[role="listbox"]');
@@ -204,11 +253,26 @@ describe('NoteGridCanvas theory card', () => {
     const pinned = shownCard();
     expect(pinned?.textContent).toContain('C4 #1');
     const style = pinned?.getAttribute('style');
+    expect(style).toContain('--theory-card-reach: 14px');
 
     movePointerTo(140, 260);
     await nextTick();
 
     expect(shownCard()?.getAttribute('style')).toBe(style);
+  });
+
+  it('refreshes the pinned card when the guidance resolver changes in place', async () => {
+    wrapper = mountGrid(1, (id) => theoryCard(id));
+    movePointerTo(100, 200);
+    await nextTick();
+    expect(shownCard()?.textContent).toContain('C4 #1');
+
+    await wrapper.setProps({
+      noteCard: (id: number) => ({ ...theoryCard(id), title: `D4 #${id}` }),
+    });
+    await nextTick();
+
+    expect(shownCard()?.textContent).toContain('D4 #1');
   });
 
   it('dismisses the card shortly after the pointer leaves the grid', async () => {
@@ -234,8 +298,9 @@ describe('NoteGridCanvas theory card', () => {
 
     // Reaching the affordance takes the pointer off the grid, which is exactly
     // the leave that used to dismiss the card before it could be clicked.
-    const info = document.querySelector('.theory-card-info');
-    info?.dispatchEvent(new PointerEvent('pointerenter'));
+    const card = document.querySelector('.note-grid-theory-card');
+    const info = card?.querySelector('.theory-card-info');
+    card?.dispatchEvent(new PointerEvent('pointerenter'));
     await wrapper.get('.note-grid').trigger('pointerleave');
     vi.advanceTimersByTime(1000);
     await nextTick();
@@ -245,7 +310,7 @@ describe('NoteGridCanvas theory card', () => {
     await nextTick();
     expect(shownCard()?.textContent).toContain('A note belonging to the chord.');
 
-    info?.dispatchEvent(new PointerEvent('pointerleave'));
+    card?.dispatchEvent(new PointerEvent('pointerleave'));
     vi.advanceTimersByTime(1000);
     await nextTick();
     expect(shownCard()).toBeNull();
@@ -335,6 +400,13 @@ describe('NoteGridCanvas placement column', () => {
     calls[calls.length - 1]?.[1]();
   }
 
+  function paintBackground(): void {
+    const calls = vi
+      .mocked(painter.schedule)
+      .mock.calls.filter(([layer]) => layer.startsWith('note-grid-background-'));
+    calls[calls.length - 1]?.[1]();
+  }
+
   let fake: ReturnType<typeof fakeContext>;
   let getContextSpy: { mockRestore(): void } | null = null;
 
@@ -372,6 +444,17 @@ describe('NoteGridCanvas placement column', () => {
     paintOverlay();
     expect(fake.fills).toContain(PIANO_ROLL_COLORS.guidanceWarning);
     expect(fake.strokes).not.toContain(PIANO_ROLL_COLORS.placementHatch);
+  });
+
+  it('tints safe pitch rows when a chord guidance segment is present', async () => {
+    const safetyByPc = new Uint8Array(12).fill(NoteSafety.Safe);
+    wrapper = mountGrid(1, undefined, [{ startBeat: 0, endBeat: 2, safetyByPc }]);
+    await wrapper.setProps({ revision: 1 });
+    fake.fills.length = 0;
+
+    paintBackground();
+
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.guidanceSafe);
   });
 
   it('underlines a row that thins a following accompaniment with a dotted line', async () => {
@@ -432,6 +515,24 @@ describe('NoteGridCanvas placement column', () => {
     fake.fills.length = 0;
     paintNotes();
     expect(fake.fills).toContain(PIANO_ROLL_COLORS.noteWarning);
+  });
+
+  it('uses harmonic severity for the note stripe and repaints when it changes', async () => {
+    wrapper = mountColumn(column({}), 10);
+    await wrapper.setProps({
+      notes: [makeNote({ id: 7 })],
+      noteSafety: new Map([[7, NoteSafety.Warning]]),
+      unresolvedNoteIds: new Set<number>(),
+    });
+    fake.fills.length = 0;
+    paintNotes();
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.noteWarning);
+    expect(fake.fills).not.toContain(PIANO_ROLL_COLORS.noteError);
+
+    await wrapper.setProps({ noteSafety: new Map([[7, NoteSafety.Dissonant]]) });
+    fake.fills.length = 0;
+    paintNotes();
+    expect(fake.fills).toContain(PIANO_ROLL_COLORS.noteError);
   });
 
   it('repaints only the overlay when the column changes', async () => {

@@ -142,6 +142,90 @@ describe('buildGuidance', () => {
     expect(analysis?.safety?.safety).not.toBe(NoteSafety.Safe);
   });
 
+  it('rechecks a held note at later chord starts, but not at its exact end', () => {
+    const chords = [
+      chordSymbol({ startPpq: 0, endPpq: 2, rootPc: 0, quality: 0 }),
+      chordSymbol({ startPpq: 2, endPpq: 4, rootPc: 7, quality: 0 }),
+    ];
+    const held = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 21, pitch: 60, startPpq: 0, durationPpq: 3 })],
+        chordSymbols: chords,
+      }),
+    ).byNoteId.get(21);
+    expect(held?.chordSounding).toBe(true);
+    expect(held?.sustainedSafety).toMatchObject({
+      chordStartPpq: 2,
+      bar: 1,
+      beat: 3,
+    });
+
+    const endsAtBoundary = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 22, pitch: 60, startPpq: 0, durationPpq: 2 })],
+        chordSymbols: chords,
+      }),
+    ).byNoteId.get(22);
+    expect(endsAtBoundary?.sustainedSafety).toBeUndefined();
+  });
+
+  it('keeps the worst later verdict when a held note crosses several chords', () => {
+    const analysis = buildGuidance(
+      guidanceInput({
+        notes: [note({ id: 24, pitch: 64, startPpq: 0, durationPpq: 3 })],
+        chordSymbols: [
+          chordSymbol({ startPpq: 0, endPpq: 1, rootPc: 0, quality: 0 }),
+          chordSymbol({ startPpq: 1, endPpq: 2, rootPc: 7, quality: 0 }),
+          chordSymbol({ startPpq: 2, endPpq: 4, rootPc: 11, quality: 0 }),
+        ],
+      }),
+    ).byNoteId.get(24);
+    expect(analysis?.sustainedSafety).toMatchObject({
+      safety: NoteSafety.Dissonant,
+      chordStartPpq: 2,
+    });
+  });
+
+  it('aggregates harmonic severity for repeated source-note ids while keeping the first onset', () => {
+    const analysis = buildGuidance(
+      guidanceInput({
+        notes: [
+          note({ id: 25, pitch: 60, startPpq: 0, durationPpq: 1 }),
+          // The same id models the next loop occurrence in the shared timeline.
+          note({ id: 25, pitch: 60, startPpq: 4, durationPpq: 1 }),
+        ],
+        clipLengthPpq: 8,
+        chordSymbols: [
+          chordSymbol({ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }),
+          chordSymbol({ startPpq: 4, endPpq: 8, rootPc: 11, quality: 0 }),
+        ],
+      }),
+    ).byNoteId.get(25);
+    expect(analysis?.chordSounding).toBe(true);
+    expect(analysis?.safety?.safety).toBe(NoteSafety.Safe);
+    expect(analysis?.worstSafety).toBe(NoteSafety.Dissonant);
+  });
+
+  it('reports a later clash even when the note starts in a chord gap', () => {
+    const result = buildGuidance(
+      guidanceInput({
+        // F# is evaluated without a chord at onset, then against C at beat 2.
+        notes: [note({ id: 23, pitch: 66, startPpq: 0, durationPpq: 3 })],
+        chordSymbols: [chordSymbol({ startPpq: 2, endPpq: 4, rootPc: 0, quality: 0 })],
+      }),
+    );
+    const analysis = result.byNoteId.get(23);
+    expect(analysis?.chordSounding).toBe(false);
+    expect(analysis?.safety?.safety).toBe(NoteSafety.Dissonant);
+    expect(analysis?.sustainedSafety?.safety).toBe(NoteSafety.Dissonant);
+    const card = buildTheoryCard(
+      analysis!,
+      { pitch: 66, keySet: true },
+      theoryLabelsFor(MESSAGES.en.theory, 'normal', MESSAGES.en.harmony.cadence),
+    );
+    expect(card.lines.some((line) => line.text.includes('bar 1, beat 3'))).toBe(true);
+  });
+
   it.each([
     ['m(add9)', chordSymbol({ quality: 11 }), 62],
     ['min9', chordSymbol({ quality: 6, extensions: [2] }), 62],
