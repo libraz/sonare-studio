@@ -9,6 +9,7 @@ import {
   type ChromaAnalyzer,
 } from '../audio-sections';
 import type { AutomationLaneState } from '../automation';
+import { type EditorChordSymbol, toProjectChordSymbols } from '../chords';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import {
@@ -20,10 +21,13 @@ import { allocateMarkerId, allocateSectionId, getProject, useProjectStore } from
 import { normalizeTempoMap } from '../tempo-map';
 import {
   deleteAutomationLanes,
+  deleteChordSymbols,
   deleteMarkers,
   deleteSections,
   deleteTimelineSegments,
+  duplicateChordSymbols,
   insertAutomationLanes,
+  insertChordSymbols,
   insertMarkers,
   insertSections,
   insertTimelineSegments,
@@ -158,6 +162,21 @@ function applyTimelineMetadata(
   });
 }
 
+/** Writes the transformed chord track inside the surrounding atomic edit. */
+function applyChordTimeline(
+  edit: AtomicProjectEdit,
+  chords: ReadonlyArray<EditorChordSymbol>,
+): void {
+  const store = useProjectStore();
+  // Keep chord-less projects chord-less. When a track exists, annotate once so
+  // the native Project undo entry stays in the same atomic ripple operation.
+  if (store.chords.length === 0 && chords.length === 0) return;
+  edit(1, () => getProject().annotateChords(toProjectChordSymbols(chords)));
+  // Omissions are app-side hints because the native annotation encoding has no
+  // field for them; pass the transformed symbols through every ripple refresh.
+  store.refresh(undefined, chords);
+}
+
 /** Rebuilds every native warp map after clip starts and the tempo map move together. */
 function reinstallTimelineWarps(edit: AtomicProjectEdit): void {
   const store = useProjectStore();
@@ -213,19 +232,25 @@ function duplicateTimelineMapWindow<T extends TempoSegment | TimeSignatureSegmen
   return [...byPosition.values()].sort((left, right) => left.startPpq - right.startPpq);
 }
 
-/** Duplicates an intersecting clip window before the timeline gap is inserted. */
+/** Duplicates an intersecting clip window into temporary empty timeline space. */
 function duplicateClipWindowForTimeline(
   edit: AtomicProjectEdit,
   source: EditorClip,
   windowStartPpq: number,
   windowEndPpq: number,
+  parkingStartPpq: number,
 ): number {
   const store = useProjectStore();
   const project = getProject();
   const windowOffsetPpq = windowStartPpq - source.startPpq;
   const windowLengthPpq = windowEndPpq - windowStartPpq;
-  const copyId = edit(1, () => project.duplicateClip(source.id, source.startPpq));
-  edit(1, () => project.trimClip(copyId, windowStartPpq, windowLengthPpq));
+  let copyId: number;
+  try {
+    copyId = edit(1, () => project.duplicateClip(source.id, parkingStartPpq));
+  } catch (error) {
+    throw new Error(`Could not duplicate ${clipKind(source)} clip ${source.id}: ${String(error)}`);
+  }
+  edit(1, () => project.trimClip(copyId, parkingStartPpq + windowOffsetPpq, windowLengthPpq));
   store.refresh();
   store.clips = store.clips.map((clip) =>
     clip.id === copyId
@@ -555,6 +580,7 @@ export function insertTime(atPpq: number, lengthPpq: number): void {
   }
   const store = useProjectStore();
   const clips = store.clips.map((clip) => ({ ...clip }));
+  const nextChords = insertChordSymbols(store.chords, atPpq, lengthPpq);
   const impacted = clips.filter(
     (clip) => clip.startPpq >= atPpq || clip.startPpq + clip.lengthPpq > atPpq,
   );
@@ -572,6 +598,7 @@ export function insertTime(atPpq: number, lengthPpq: number): void {
       }
     }
     applyTimelineMetadata(edit, 'insert', atPpq, lengthPpq);
+    applyChordTimeline(edit, nextChords);
     store.refresh();
     reinstallTimelineWarps(edit);
     store.refresh();
@@ -591,6 +618,7 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
   const sourceClips = store.clips
     .filter((clip) => clip.startPpq < endPpq && clip.startPpq + clip.lengthPpq > startPpq)
     .map((clip) => ({ ...clip }));
+  const originalClips = store.clips.map((clip) => ({ ...clip }));
   const impacted = store.clips.filter(
     (clip) => clip.startPpq >= endPpq || clip.startPpq + clip.lengthPpq > endPpq,
   );
@@ -610,22 +638,29 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
     ...segment,
     ...(segment.grouping ? { grouping: [...segment.grouping] } : {}),
   }));
+  const nextChords = duplicateChordSymbols(store.chords, startPpq, endPpq);
 
   executeAtomic((edit) => {
+    // A normal project disallows overlapping clips. Keep temporary copies past
+    // the final ripple boundary, then place their trimmed windows in the gap.
+    let parkingStartPpq =
+      Math.max(endPpq, ...originalClips.map((clip) => clip.startPpq + clip.lengthPpq)) +
+      lengthPpq +
+      1;
     const copies = sourceClips.map((source) => {
       const windowStartPpq = Math.max(startPpq, source.startPpq);
       const windowEndPpq = Math.min(endPpq, source.startPpq + source.lengthPpq);
+      const parking = parkingStartPpq;
+      parkingStartPpq += source.lengthPpq + 1;
       return {
-        id: duplicateClipWindowForTimeline(edit, source, windowStartPpq, windowEndPpq),
+        id: duplicateClipWindowForTimeline(edit, source, windowStartPpq, windowEndPpq, parking),
         targetStartPpq: windowStartPpq + lengthPpq,
       };
     });
 
-    // The freshly-created copies occupy the source window, so this same ripple
-    // pass shifts the original later content while leaving each trimmed copy
-    // anchored until it is moved into the newly inserted gap below.
-    const clips = store.clips.map((clip) => ({ ...clip }));
-    for (const clip of clips) {
+    // Ripple only original clips; temporary copies stay parked until the gap
+    // is clear. They are moved into it after the timeline metadata is updated.
+    for (const clip of originalClips) {
       const end = clip.startPpq + clip.lengthPpq;
       if (clip.startPpq >= endPpq) {
         moveClipWithin(edit, clip.id, clip.startPpq + lengthPpq);
@@ -698,6 +733,7 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
       ),
     );
     for (const copy of copies) moveClipWithin(edit, copy.id, copy.targetStartPpq);
+    applyChordTimeline(edit, nextChords);
     store.refresh();
     reinstallTimelineWarps(edit);
     store.refresh();
@@ -729,6 +765,7 @@ export function deleteTime(startPpq: number, endPpq: number): void {
   const store = useProjectStore();
   const lengthPpq = endPpq - startPpq;
   const clips = store.clips.map((clip) => ({ ...clip }));
+  const nextChords = deleteChordSymbols(store.chords, startPpq, endPpq);
   const impacted = clips.filter((clip) => clip.startPpq + clip.lengthPpq > startPpq);
   validateRippleClips(impacted, (clip) => {
     const end = clip.startPpq + clip.lengthPpq;
@@ -754,6 +791,7 @@ export function deleteTime(startPpq: number, endPpq: number): void {
       }
     }
     applyTimelineMetadata(edit, 'delete', startPpq, endPpq);
+    applyChordTimeline(edit, nextChords);
     store.refresh();
     reinstallTimelineWarps(edit);
     store.refresh();

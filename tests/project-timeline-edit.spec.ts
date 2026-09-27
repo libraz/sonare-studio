@@ -1,16 +1,54 @@
 import { describe, expect, it } from 'vitest';
 import {
   deleteAutomationLanes,
+  deleteChordSymbols,
   deleteMarkers,
   deleteSections,
   deleteTimelineSegments,
+  duplicateChordSymbols,
   insertAutomationLanes,
+  insertChordSymbols,
   insertMarkers,
   insertSections,
   insertTimelineSegments,
 } from '@/project/timeline-edit';
 
 describe('timeline metadata transforms', () => {
+  const chord = (startPpq: number, endPpq: number, rootPc: number) => ({
+    startPpq,
+    endPpq,
+    rootPc,
+    quality: 0,
+    extensions: [9],
+    omissions: [4],
+    romanNumeral: `I${rootPc}`,
+  });
+
+  it('splits chords around inserted time and preserves theory metadata', () => {
+    expect(insertChordSymbols([chord(0, 8, 0), chord(8, 12, 5)], 4, 2)).toEqual([
+      chord(0, 4, 0),
+      chord(6, 10, 0),
+      chord(10, 14, 5),
+    ]);
+  });
+
+  it('crops chords at a deleted range while keeping both surviving sides', () => {
+    expect(deleteChordSymbols([chord(0, 8, 0), chord(8, 12, 5)], 2, 6)).toEqual([
+      chord(0, 2, 0),
+      chord(2, 4, 0),
+      chord(4, 8, 5),
+    ]);
+  });
+
+  it('duplicates only the source intersections and ripples later chord regions', () => {
+    expect(duplicateChordSymbols([chord(0, 8, 0), chord(8, 12, 5)], 2, 6)).toEqual([
+      chord(0, 6, 0),
+      chord(6, 10, 0),
+      chord(10, 12, 0),
+      chord(12, 16, 5),
+    ]);
+  });
+
   it('shifts markers and expands sections across inserted time', () => {
     expect(
       insertMarkers(
