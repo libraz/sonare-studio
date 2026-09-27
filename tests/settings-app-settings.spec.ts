@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { APP_SETTINGS_STORAGE_KEY, useAppSettings } from '@/composables/useAppSettings';
+import { DEFAULT_APP_GUIDANCE_PROFILE } from '@/compose/guidance-profile';
 import {
   APP_SETTINGS_VERSION,
   AUTOSAVE_INTERVAL_MAX_MS,
@@ -80,7 +81,18 @@ describe('sanitizeAppSettings', () => {
     expect(sanitizeAppSettings({ explainLevel: 'wizard' }).explainLevel).toBe(
       DEFAULT_APP_SETTINGS.explainLevel,
     );
-    expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('theory');
+    expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('beginner');
+  });
+
+  it('starts fresh composers in beginner pop mode while retaining explicit saved choices', () => {
+    expect(DEFAULT_APP_SETTINGS.explainLevel).toBe('beginner');
+    expect(DEFAULT_APP_SETTINGS.guidanceProfile).toBe(DEFAULT_APP_GUIDANCE_PROFILE);
+
+    const saved = sanitizeAppSettings({ explainLevel: 'theory', guidanceProfile: 'counterpoint' });
+    expect(decodeAppSettings(encodeAppSettings(saved))).toMatchObject({
+      explainLevel: 'theory',
+      guidanceProfile: 'counterpoint',
+    });
   });
 
   it('persists only valid unique mixer visibility ids', () => {

@@ -345,6 +345,11 @@ watch(
         error.value = t.value.shell.arrangement.trackHeader.unfreezeTitle;
       }
       if (!isPartAvailable(openWith.part)) error.value = g.value.counterUnavailable;
+    } else {
+      // The normal path is the quick beginner flow: generate a usable
+      // accompaniment first, then continue into the lead composer. Keep
+      // regeneration focused on the requested part via the branch above.
+      presetAccompaniment();
     }
   },
   { immediate: true },

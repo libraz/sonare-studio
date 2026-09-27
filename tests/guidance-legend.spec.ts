@@ -49,15 +49,17 @@ describe('GuidanceLegend', () => {
       profileName.counterpoint,
       profileName.pop,
     ]);
-    expect(radios[0].attributes('aria-checked')).toBe('true');
-
-    await radios[1].trigger('click');
-    expect(useAppSettings().settings.guidanceProfile).toBe('pop');
     expect(radios[1].attributes('aria-checked')).toBe('true');
+
+    await radios[0].trigger('click');
+    expect(useAppSettings().settings.guidanceProfile).toBe('counterpoint');
+    expect(radios[0].attributes('aria-checked')).toBe('true');
   });
 
   it('says avoid-note rows turn red on every beat only under counterpoint', async () => {
     const wrapper = mountLegend();
+    useAppSettings().set('guidanceProfile', 'counterpoint');
+    await wrapper.vm.$nextTick();
     expect(wrapper.text()).toContain(roll.guideAvoidNoteCounterpoint);
 
     useAppSettings().set('guidanceProfile', 'pop');

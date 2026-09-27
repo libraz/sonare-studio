@@ -8,7 +8,7 @@
  */
 
 import type { NoteNameSystem } from '@libraz/libcantus';
-import { DEFAULT_GUIDANCE_PROFILE, type GuidanceProfile } from '@/compose/guidance-profile';
+import { DEFAULT_APP_GUIDANCE_PROFILE, type GuidanceProfile } from '@/compose/guidance-profile';
 import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
@@ -178,13 +178,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // Reactive chord suggestions can surprise a first-time composer; opt in.
   pianoRollAutoReharmonize: false,
   confirmDestructive: true,
-  // Full theory wording by default; the choice is then remembered as a user
-  // preference (beginner/normal soften the same card lines).
-  explainLevel: 'theory',
+  // Plain wording and pop placement rules help a first-time composer get a
+  // usable result quickly; explicit saved preferences still win on reload.
+  explainLevel: 'beginner',
   loudnessTargetLufs: -14,
   streamingPlatforms: createDefaultStreamingPlatforms(),
   mixerHiddenTrackIds: [],
-  guidanceProfile: DEFAULT_GUIDANCE_PROFILE,
+  guidanceProfile: DEFAULT_APP_GUIDANCE_PROFILE,
   pianoRollPlacementGuide: true,
   pianoRollGuidanceTint: true,
 };

@@ -57,6 +57,14 @@ function checkPart(index: number): void {
   box.dispatchEvent(new Event('change'));
 }
 
+/** Clears the beginner accompaniment preset before a selective test. */
+function clearParts(): void {
+  const clear = [...document.body.querySelectorAll<HTMLButtonElement>('.preset-chip')].find(
+    (button) => button.textContent?.trim() === 'Clear',
+  );
+  clear?.click();
+}
+
 beforeEach(async () => {
   setActivePinia(createPinia());
   store = useProjectStore();
@@ -152,6 +160,21 @@ describe('TrackGenerateDialog', () => {
     expect(document.body.querySelectorAll('.part-row').length).toBe(5);
   });
 
+  it('preselects a usable accompaniment and keeps live selections intact', async () => {
+    setProjectChords(FOUR_CHORDS);
+    await open();
+
+    expect(partCheckboxes().map((box) => box.checked)).toEqual([false, true, true, false, true]);
+
+    clearParts();
+    checkPart(0);
+    await nextTick();
+    // A reactive project update must not reset a user's in-progress choices.
+    setProjectChords(FOUR_CHORDS);
+    await nextTick();
+    expect(partCheckboxes().map((box) => box.checked)).toEqual([true, false, false, false, false]);
+  });
+
   it('keeps the counter part unavailable until a melody clip has notes', async () => {
     await store.loadDocument(createTemplate('empty'));
     setProjectChords(FOUR_CHORDS);
@@ -225,6 +248,7 @@ describe('TrackGenerateDialog', () => {
     await open();
     const trackCount = store.tracks.length;
     // Check drums (index 1) and bass (index 2).
+    clearParts();
     checkPart(1);
     checkPart(2);
     await nextTick();
@@ -287,6 +311,8 @@ describe('TrackGenerateDialog', () => {
   it('disables generate with nothing selected', async () => {
     setProjectChords(FOUR_CHORDS);
     await open();
+    clearParts();
+    await nextTick();
     expect(confirm()?.disabled).toBe(true);
   });
 
@@ -294,6 +320,7 @@ describe('TrackGenerateDialog', () => {
     setProjectChords(FOUR_CHORDS);
     await open();
     // Programmatic change events cannot bypass the prerequisite either.
+    clearParts();
     checkPart(3);
     await nextTick();
     expect(confirm()?.disabled).toBe(true);
@@ -311,6 +338,8 @@ describe('TrackGenerateDialog', () => {
     // Drums (index 1) is pre-checked; others are not.
     expect(boxes[1].checked).toBe(true);
     expect(boxes[0].checked).toBe(false);
+    expect(boxes[2].checked).toBe(false);
+    expect(boxes[4].checked).toBe(false);
     const trackCount = store.tracks.length;
     confirm()?.click();
     await nextTick();
@@ -338,8 +367,10 @@ describe('TrackGenerateDialog', () => {
     expect(document.body.querySelector('.dialog-error')?.textContent).toContain('Unfreeze');
   });
 
-  it('counter melody generation uses strict profile by default (counterpoint)', async () => {
+  it('counter melody generation honors an explicitly selected counterpoint profile', async () => {
     setProjectChords(FOUR_CHORDS);
+    const { useAppSettings } = await import('@/composables/useAppSettings');
+    useAppSettings().set('guidanceProfile', 'counterpoint');
     // Add a note to the active clip so counter melody can generate
     const activeClip = store.activeClip;
     if (activeClip) {
@@ -356,7 +387,7 @@ describe('TrackGenerateDialog', () => {
     confirm()?.click();
     await nextTick();
 
-    // With counterpoint (default), counter melody should be generated with strict profile
+    // The explicit counterpoint setting should reach the generator.
     const tracks = store.tracks.filter((track) => track.name === 'Counter melody');
     expect(tracks.length).toBe(1);
   });
@@ -365,7 +396,7 @@ describe('TrackGenerateDialog', () => {
     setProjectChords(FOUR_CHORDS);
     const { useAppSettings } = await import('@/composables/useAppSettings');
     const appSettings = useAppSettings();
-    appSettings.guidanceProfile = 'pop';
+    appSettings.set('guidanceProfile', 'pop');
 
     // Add a note to the active clip so counter melody can generate
     const activeClip = store.activeClip;

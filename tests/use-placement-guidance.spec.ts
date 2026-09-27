@@ -175,7 +175,7 @@ describe('usePlacementGuidance', () => {
     const cell = ref({ startPpq: 0, lengthPpq: 1 });
     const column = usePlacementGuidance(cell);
     column.value;
-    useAppSettings().set('guidanceProfile', 'pop');
+    useAppSettings().set('guidanceProfile', 'counterpoint');
     column.value;
     expect(evaluateSpy).toHaveBeenCalledTimes(2);
   });
