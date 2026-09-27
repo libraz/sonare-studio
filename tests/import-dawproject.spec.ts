@@ -1419,7 +1419,7 @@ describe('importDawproject', () => {
     expect(imported.tracks[0]).toMatchObject({
       name: 'Drum Bus',
       kind: 'group',
-      pan: 0,
+      pan: 0.8,
     });
     expect(imported.tracks[1]).toMatchObject({
       name: 'Kick',

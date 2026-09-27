@@ -410,7 +410,7 @@ describe('useProjectExport', () => {
     expect(prompt.message).not.toContain('legacy track pan');
     expect(prompt.message).toContain('external MIDI route');
     expect(prompt.message).toContain('arrangement section');
-    expect(prompt.message).toContain('chord track symbol');
+    expect(prompt.message).not.toContain('chord track symbol');
     expect(prompt.message).toContain('score display setting');
     expect(prompt.message).toContain('MIDI learn CC binding');
     expect(prompt.message).toContain('mixer snapshot slot');

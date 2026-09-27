@@ -491,7 +491,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
   );
   const trackElements: XmlElement[] = doc.tracks.map((track, index): XmlElement => {
     const strip = track.mixer ?? NEUTRAL_STRIP;
-    const audiblePan = track.kind === 'group' ? 0 : (track.mixer?.pan ?? track.pan);
+    const audiblePan = track.mixer?.pan ?? track.pan;
     const vcaOffsetDb = track.vcaId !== undefined ? (vcaGainDbById.get(track.vcaId) ?? 0) : 0;
     const channelId = `channel-${index}`;
     // DAWproject nesting alone does not route audio in every host. Mirror the

@@ -95,7 +95,6 @@ export const shellFrame = {
         trackColors: '{count}件の非HEXトラックカラー設定',
         externalMidiRoutes: '{count}件の外部MIDIルーティング設定',
         arrangementSections: '{count}件のアレンジセクション範囲/色設定',
-        chordSymbols: '{count}件のコードトラック記号',
         scoreDisplaySettings: '{count}件の譜面表示設定',
         midiCcBindings: '{count}件のMIDI Learn CC割り当て',
         mixerSnapshots: '{count}件のミキサースナップショットスロット',

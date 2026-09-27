@@ -184,6 +184,14 @@ describe('exportDawproject structure', () => {
     expect(attr(signature, 'denominator')).toBe('8');
   });
 
+  it('exports the audible group bus pan', async () => {
+    const project = await exportProjectXml(
+      makeDoc([makeTrack([], { name: 'Drum Bus', kind: 'group', pan: 0.6 })]),
+    );
+    const groupPan = project.querySelector('Structure > Track[name="Drum Bus"] Channel Pan');
+    expect(floatAttr(groupPan, 'value')).toBeCloseTo(0.8);
+  });
+
   it('maps tracks to Structure with content types, channels and a master track', async () => {
     const doc = makeDoc(
       [
@@ -1215,6 +1223,17 @@ describe('exportDawproject audio', () => {
 });
 
 describe('exportDawproject round-trip sanity', () => {
+  it('preserves the project chord track in the Sonare archive extension', async () => {
+    const chords = [
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+      { startPpq: 4, endPpq: 8, rootPc: 2, quality: 4, extensions: [1, 6], romanNumeral: 'V7/V' },
+    ];
+    const doc = makeDoc([makeTrack([makeMidiClip()])], { chords });
+    const bytes = await exportDawproject(doc, { includeAudio: false });
+
+    expect(importDawproject(bytes).chords).toEqual(chords);
+  });
+
   it('represents every track, clip and note exactly once', async () => {
     const doc = makeDoc(
       [

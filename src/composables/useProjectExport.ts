@@ -144,7 +144,6 @@ export function useProjectExport(options: ProjectExportOptions) {
     let trackColors = 0;
     let externalMidiRoutes = doc.externalMidiDefault !== undefined ? 1 : 0;
     const arrangementSections = doc.sections.length;
-    const chordSymbols = doc.chords?.length ?? 0;
     const scoreDisplaySettings = doc.score !== undefined ? 1 : 0;
     const midiCcBindings = doc.midiCcBindings?.length ?? 0;
     const mixerSnapshots = doc.mixerSnapshots
@@ -233,7 +232,6 @@ export function useProjectExport(options: ProjectExportOptions) {
       ...(arrangementSections > 0
         ? [formatMessage(messages.arrangementSections, { count: arrangementSections })]
         : []),
-      ...(chordSymbols > 0 ? [formatMessage(messages.chordSymbols, { count: chordSymbols })] : []),
       ...(scoreDisplaySettings > 0
         ? [formatMessage(messages.scoreDisplaySettings, { count: scoreDisplaySettings })]
         : []),

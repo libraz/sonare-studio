@@ -27,4 +27,21 @@ describe('Sonare DAWproject metadata limits', () => {
     expect(Object.keys(metadata.tracks ?? {})).toHaveLength(4096);
     expect(metadata.vcaGroups).toBeUndefined();
   });
+
+  it('keeps valid chord annotations and discards malformed chord fields', () => {
+    const metadata = parseSonareDawprojectMetadata(
+      encode({
+        schemaVersion: 1,
+        chords: [
+          { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+          { startPpq: 4, endPpq: 8, rootPc: 99, quality: 4 },
+          { startPpq: 8, endPpq: 12, rootPc: 2, quality: 4, romanNumeral: 'x'.repeat(1025) },
+        ],
+      }),
+    );
+    expect(metadata.chords).toEqual([
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 },
+      { startPpq: 8, endPpq: 12, rootPc: 2, quality: 4 },
+    ]);
+  });
 });

@@ -6,6 +6,7 @@
  * schema-valid for other DAWs.
  */
 
+import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
 
@@ -33,6 +34,8 @@ export interface SonareDawprojectMetadata {
   tracks?: Record<string, SonareTrackMetadata>;
   vcaGroups?: VcaGroup[];
   sections?: DocumentSection[];
+  /** Chord annotations have no portable DAWproject counterpart. */
+  chords?: EditorChordSymbol[];
   /** MIDI expression is vendor data: DAWproject has no portable clip lane. */
   midiExpressions?: Record<string, SonareMidiExpression>;
 }
@@ -130,6 +133,7 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
     ...(doc.mixer?.vcaGroups?.length ? { vcaGroups: doc.mixer.vcaGroups } : {}),
     ...(Object.keys(sidechainSources).length > 0 ? { sidechainSources } : {}),
     ...(doc.sections.length > 0 ? { sections: doc.sections } : {}),
+    ...(doc.chords?.length ? { chords: doc.chords.map((chord) => ({ ...chord })) } : {}),
     ...(Object.keys(midiExpressions).length ? { midiExpressions } : {}),
   };
 }
@@ -168,6 +172,51 @@ function sections(value: unknown): DocumentSection[] {
     }
     return [{ name, color, startPpq, endPpq }];
   });
+}
+
+function chords(value: unknown): EditorChordSymbol[] {
+  if (!Array.isArray(value)) return [];
+  const parsed = value.slice(0, MAX_METADATA_OBJECT_ENTRIES).flatMap((item) => {
+    const chord = object(item);
+    if (!chord) return [];
+    const startPpq = optionalFinite(chord.startPpq);
+    const endPpq = optionalFinite(chord.endPpq);
+    const rootPc = integer(chord.rootPc, 0, 11);
+    const quality = integer(chord.quality, 0, 255);
+    if (
+      startPpq === undefined ||
+      startPpq < 0 ||
+      endPpq === undefined ||
+      endPpq <= startPpq ||
+      rootPc === undefined ||
+      quality === undefined
+    )
+      return [];
+    const bassPc = integer(chord.bassPc, 0, 11);
+    const tones = (value: unknown): number[] =>
+      Array.isArray(value)
+        ? value.slice(0, 12).flatMap((tone) => {
+            const semitone = integer(tone, 0, 11);
+            return semitone === undefined ? [] : [semitone];
+          })
+        : [];
+    return [
+      {
+        startPpq,
+        endPpq,
+        rootPc,
+        quality,
+        ...(bassPc === undefined ? {} : { bassPc }),
+        ...(tones(chord.extensions).length ? { extensions: tones(chord.extensions) } : {}),
+        ...(tones(chord.omissions).length ? { omissions: tones(chord.omissions) } : {}),
+        ...(typeof chord.romanNumeral === 'string' &&
+        chord.romanNumeral.length <= MAX_METADATA_STRING_LENGTH
+          ? { romanNumeral: chord.romanNumeral }
+          : {}),
+      },
+    ];
+  });
+  return sanitizeChordSymbols(parsed);
 }
 
 function boundedEntries(value: Record<string, unknown>): Array<[string, unknown]> {
@@ -309,6 +358,7 @@ export function parseSonareDawprojectMetadata(
         ];
       });
     const parsedSections = sections(root.sections);
+    const parsedChords = chords(root.chords);
     const parsedMidiExpressions = midiExpressions(root.midiExpressions);
     return {
       schemaVersion: 1,
@@ -316,6 +366,7 @@ export function parseSonareDawprojectMetadata(
       ...(Object.keys(sidechainSources).length ? { sidechainSources } : {}),
       ...(vcaGroups.length ? { vcaGroups } : {}),
       ...(parsedSections.length ? { sections: parsedSections } : {}),
+      ...(parsedChords.length ? { chords: parsedChords } : {}),
       ...(Object.keys(parsedMidiExpressions).length
         ? { midiExpressions: parsedMidiExpressions }
         : {}),

@@ -454,10 +454,9 @@ function readTracks(
       ...(sonareStripGainDb !== null && sonareStripGainDb !== undefined
         ? { sonareStripGainDb }
         : {}),
-      // Group-channel pan cannot be represented by Sonare's current group-bus
-      // DSP. Center it at the import boundary instead of persisting a silent
-      // control. Regular track pan is promoted into MixerStrip.pan on load.
-      pan: kind === 'group' || pan === null ? 0 : Math.min(1, Math.max(-1, pan * 2 - 1)),
+      // Group channels use the same bus panner as other mixer channels.
+      // The imported channel pan is promoted into MixerStrip.pan on load.
+      pan: pan === null ? 0 : Math.min(1, Math.max(-1, pan * 2 - 1)),
       clips: [],
       sendRefs: readSendRefs(channel),
       inserts: readInsertDevices(
@@ -1831,6 +1830,7 @@ function importDawprojectDocuments(
         ),
     ),
     sections,
+    ...(sonareMetadata.chords?.length ? { chords: sonareMetadata.chords } : {}),
   };
   if (mixer) doc.mixer = mixer;
   if (masterAutomation.length > 0) doc.masterAutomation = masterAutomation;
