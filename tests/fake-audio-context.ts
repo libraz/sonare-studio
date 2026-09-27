@@ -14,8 +14,23 @@ export interface FakeAudioBuffer {
 }
 
 /** Gain node stub. */
+export interface FakeAudioParamEvent {
+  kind: 'cancel' | 'hold' | 'set' | 'ramp';
+  value?: number;
+  when: number;
+}
+
+/** AudioParam stub with enough automation to exercise clickless ramps. */
+export interface FakeAudioParam {
+  value: number;
+  cancelScheduledValues(when: number): void;
+  cancelAndHoldAtTime(when: number): void;
+  setValueAtTime(value: number, when: number): void;
+  linearRampToValueAtTime(value: number, when: number): void;
+}
+
 export interface FakeGainNode {
-  gain: { value: number };
+  gain: FakeAudioParam;
   connections: unknown[];
   disconnected: boolean;
   connect(target: unknown): void;
@@ -27,20 +42,23 @@ export interface FakeBufferSourceNode {
   buffer: FakeAudioBuffer | null;
   onended: (() => void) | null;
   started: boolean;
+  startOffset: number;
   stopped: boolean;
   connections: unknown[];
   connect(target: unknown): void;
   disconnect(): void;
-  start(): void;
+  start(when?: number, offset?: number): void;
   stop(): void;
 }
 
 /** AudioContext stub exposing the nodes it created for assertions. */
 export interface FakeAudioContext {
   state: AudioContextState;
+  currentTime: number;
   destination: { kind: string };
   gains: FakeGainNode[];
   sources: FakeBufferSourceNode[];
+  gainEvents: FakeAudioParamEvent[];
   resumeCount: number;
   closed: boolean;
   createGain(): FakeGainNode;
@@ -56,14 +74,72 @@ export function createFakeAudioContext(
 ): FakeAudioContext {
   const context: FakeAudioContext = {
     state: options.state ?? 'running',
+    currentTime: 0,
     destination: { kind: 'destination' },
     gains: [],
     sources: [],
+    gainEvents: [],
     resumeCount: 0,
     closed: false,
     createGain() {
+      type AutomationEvent = {
+        kind: 'set' | 'ramp';
+        value: number;
+        when: number;
+      };
+      let baseValue = 1;
+      let automation: AutomationEvent[] = [];
+
+      function valueAt(when: number): number {
+        let value = baseValue;
+        let valueWhen = Number.NEGATIVE_INFINITY;
+        for (const event of automation) {
+          if (event.kind === 'ramp') {
+            const span = event.when - valueWhen;
+            if (when < event.when) {
+              const ratio = span > 0 ? Math.min(1, Math.max(0, (when - valueWhen) / span)) : 1;
+              return value + (event.value - value) * ratio;
+            }
+            value = event.value;
+            valueWhen = event.when;
+            continue;
+          }
+          if (event.when > when) break;
+          value = event.value;
+          valueWhen = event.when;
+        }
+        return value;
+      }
+
       const gain: FakeGainNode = {
-        gain: { value: 1 },
+        gain: {
+          get value() {
+            return valueAt(context.currentTime);
+          },
+          set value(value: number) {
+            baseValue = value;
+            automation = [];
+          },
+          cancelScheduledValues(when) {
+            automation = automation.filter((event) => event.when < when);
+            context.gainEvents.push({ kind: 'cancel', when });
+          },
+          cancelAndHoldAtTime(when) {
+            const held = valueAt(when);
+            automation = automation.filter((event) => event.when < when);
+            automation.push({ kind: 'set', value: held, when });
+            context.gainEvents.push({ kind: 'hold', value: held, when });
+          },
+          setValueAtTime(value, when) {
+            automation = automation.filter((event) => event.when < when);
+            automation.push({ kind: 'set', value, when });
+            context.gainEvents.push({ kind: 'set', value, when });
+          },
+          linearRampToValueAtTime(value, when) {
+            automation.push({ kind: 'ramp', value, when });
+            context.gainEvents.push({ kind: 'ramp', value, when });
+          },
+        },
         connections: [],
         disconnected: false,
         connect(target) {
@@ -93,6 +169,7 @@ export function createFakeAudioContext(
         buffer: null,
         onended: null,
         started: false,
+        startOffset: 0,
         stopped: false,
         connections: [],
         connect(target) {
@@ -101,8 +178,9 @@ export function createFakeAudioContext(
         disconnect() {
           // Connections are kept for assertions; nothing to undo.
         },
-        start() {
+        start(_when = 0, offset = 0) {
           node.started = true;
+          node.startOffset = offset;
         },
         stop() {
           node.stopped = true;

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  calculatePreviewLevelMatch,
+  createABAudioPreview,
   createAudioPreview,
   DEFAULT_PREVIEW_GAIN,
   previewStretchRate,
@@ -26,6 +28,32 @@ const source = (frames = 4, channels = 2, sampleRate = 48000) => ({
   ),
   sampleRate,
 });
+
+/**
+ * Instrument the otherwise minimal fake Web Audio context with the timing
+ * methods used by the synchronized A/B monitor. Keeping this local avoids
+ * weakening the shared generic preview fixture just to test ramp scheduling.
+ */
+function setupAB() {
+  const context = createFakeAudioContext();
+  const starts: Array<{ when: number; offset: number }> = [];
+  const createBufferSource = context.createBufferSource.bind(context);
+  context.createBufferSource = () => {
+    const node = createBufferSource();
+    const start = node.start.bind(node);
+    node.start = (when = 0, offset = 0) => {
+      starts.push({ when, offset });
+      start(when, offset);
+    };
+    return node;
+  };
+  const changes: Array<string | null> = [];
+  const preview = createABAudioPreview({
+    contextFactory: () => asAudioContext(context),
+    onChange: (id) => changes.push(id),
+  });
+  return { context, starts, gainEvents: context.gainEvents, changes, preview };
+}
 
 describe('createAudioPreview', () => {
   it('creates the AudioContext lazily on first play only', () => {
@@ -127,6 +155,146 @@ describe('createAudioPreview', () => {
     const { context, preview } = setup({ gain: 0.5 });
     preview.play('a', source());
     expect(context.gains[0].gain.value).toBe(0.5);
+  });
+
+  it('starts a replacement preview at the requested offset and exposes position', () => {
+    const { context, preview } = setup();
+    preview.play('a', source(48000));
+    preview.seek(0.75);
+    expect(preview.position()).toBeCloseTo(0.75);
+    expect(context.sources[0].stopped).toBe(true);
+    expect(context.sources[1].started).toBe(true);
+    expect(context.sources[1].startOffset).toBeCloseTo(0.75);
+
+    context.currentTime = 0.1;
+    expect(preview.position()).toBeCloseTo(0.85);
+
+    preview.play('b', source(48000), preview.position());
+    expect(preview.playingId()).toBe('b');
+    expect(context.sources[1].stopped).toBe(true);
+    expect(context.sources[2].startOffset).toBeCloseTo(0.85);
+    expect(preview.position()).toBeCloseTo(0.85);
+  });
+
+  it('updates monitor gain without altering the source buffers', () => {
+    const { context, preview } = setup();
+    preview.play('a', source());
+    preview.setGain(0.25);
+    expect(context.gains[0].gain.value).toBe(0.25);
+    expect(context.sources[0].buffer?.channelData[0]).toEqual(
+      Float32Array.from([0, 0.1, 0.2, 0.3]),
+    );
+  });
+});
+
+describe('calculatePreviewLevelMatch', () => {
+  it('attenuates only the louder processed side', () => {
+    expect(calculatePreviewLevelMatch(-10, -14)).toEqual({
+      available: true,
+      processedGainDb: -4,
+      bypassedGainDb: 0,
+    });
+  });
+
+  it('attenuates only the louder bypassed side', () => {
+    expect(calculatePreviewLevelMatch(-16, -12)).toEqual({
+      available: true,
+      processedGainDb: 0,
+      bypassedGainDb: -4,
+    });
+  });
+
+  it('uses unity gain when either report is missing or invalid', () => {
+    expect(calculatePreviewLevelMatch(undefined, -14)).toEqual({
+      available: false,
+      processedGainDb: 0,
+      bypassedGainDb: 0,
+    });
+    expect(calculatePreviewLevelMatch(Number.NaN, -14)).toEqual({
+      available: false,
+      processedGainDb: 0,
+      bypassedGainDb: 0,
+    });
+  });
+});
+
+describe('createABAudioPreview', () => {
+  it('starts both variants together and switches by ramping gains without restarting', () => {
+    const { context, starts, gainEvents, preview } = setupAB();
+    const processedGain = DEFAULT_PREVIEW_GAIN * 10 ** (-4 / 20);
+    preview.play(
+      'mix',
+      { processed: source(48000), bypassed: source(48000) },
+      'processed',
+      { processed: processedGain, bypassed: DEFAULT_PREVIEW_GAIN },
+      0.25,
+    );
+
+    expect(starts).toHaveLength(2);
+    expect(starts[0]).toEqual({ when: starts[1].when, offset: 0.25 });
+    expect(preview.position()).toBeCloseTo(0.25);
+    expect(context.gains).toHaveLength(2);
+    expect(context.gains.map((node) => node.connections)).toEqual([
+      [context.destination],
+      [context.destination],
+    ]);
+
+    context.currentTime = starts[0].when + 0.2;
+    expect(preview.position()).toBeCloseTo(0.45);
+    preview.selectVariant('bypassed');
+
+    expect(preview.variant()).toBe('bypassed');
+    expect(starts).toHaveLength(2);
+    const switchRamps = gainEvents.filter((event) => event.kind === 'ramp');
+    expect(switchRamps.map((event) => event.value)).toEqual([0, DEFAULT_PREVIEW_GAIN]);
+    expect(switchRamps.map((event) => event.when)).toEqual([
+      context.currentTime + 0.015,
+      context.currentTime + 0.015,
+    ]);
+    expect(preview.position()).toBeCloseTo(0.45);
+  });
+
+  it('holds the interpolated gain when a second switch lands mid-ramp', () => {
+    const { context, starts, gainEvents, preview } = setupAB();
+    preview.play('mix', { processed: source(48000), bypassed: source(48000) }, 'processed', {
+      processed: DEFAULT_PREVIEW_GAIN,
+      bypassed: DEFAULT_PREVIEW_GAIN,
+    });
+
+    context.currentTime = starts[0].when + 0.2;
+    preview.selectVariant('bypassed');
+    context.currentTime = starts[0].when + 0.2075;
+    const gainBeforeReselect = context.gains[0].gain.value;
+    expect(gainBeforeReselect).toBeCloseTo(DEFAULT_PREVIEW_GAIN / 2, 4);
+
+    preview.selectVariant('processed');
+    const hold = gainEvents.findLast((event) => event.kind === 'hold');
+    expect(hold?.value).toBeCloseTo(gainBeforeReselect, 4);
+    expect(context.gains[0].gain.value).toBeCloseTo(gainBeforeReselect, 4);
+  });
+
+  it('ramps newly measured gains and stops both sources on natural end', () => {
+    const { context, starts, gainEvents, changes, preview } = setupAB();
+    const processedGain = DEFAULT_PREVIEW_GAIN * 10 ** (-4 / 20);
+    preview.play('mix', { processed: source(48000), bypassed: source(24000) }, 'processed', {
+      processed: processedGain,
+      bypassed: DEFAULT_PREVIEW_GAIN,
+    });
+    preview.setGains({ processed: DEFAULT_PREVIEW_GAIN, bypassed: processedGain });
+    const rampValues = gainEvents
+      .filter((event) => event.kind === 'ramp')
+      .map((event) => event.value);
+    expect(rampValues).toEqual([DEFAULT_PREVIEW_GAIN, 0]);
+    expect(starts).toHaveLength(2);
+
+    context.currentTime = starts[0].when + 0.6;
+    context.sources[1].onended?.();
+    expect(preview.playingId()).toBe('mix');
+    context.sources[0].onended?.();
+    expect(changes).toEqual(['mix', null]);
+    expect(context.sources[0].stopped).toBe(true);
+    expect(context.sources[1].stopped).toBe(true);
+    expect(preview.playingId()).toBeNull();
   });
 });
 

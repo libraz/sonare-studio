@@ -12,6 +12,42 @@
 /** Default preview output gain (linear). */
 export const DEFAULT_PREVIEW_GAIN = 0.8;
 
+/** Result of monitor-only loudness matching between two preview variants. */
+export interface PreviewLevelMatch {
+  /** True when both integrated-LUFS measurements can be compared. */
+  available: boolean;
+  /** Monitor attenuation applied to the processed variant, in dB. */
+  processedGainDb: number;
+  /** Monitor attenuation applied to the bypassed variant, in dB. */
+  bypassedGainDb: number;
+}
+
+/**
+ * Computes monitor attenuation for a processed/bypassed A/B preview pair.
+ *
+ * The quieter valid render is the reference. Only the louder render is
+ * attenuated, and the returned dB values are intended for one common gain
+ * node so the stereo image is preserved. Missing, infinite or otherwise
+ * unusable LUFS measurements deliberately fall back to unity.
+ */
+export function calculatePreviewLevelMatch(
+  processedLufs: number | undefined,
+  bypassedLufs: number | undefined,
+): PreviewLevelMatch {
+  if (!Number.isFinite(processedLufs) || !Number.isFinite(bypassedLufs)) {
+    return { available: false, processedGainDb: 0, bypassedGainDb: 0 };
+  }
+  const processed = processedLufs as number;
+  const bypassed = bypassedLufs as number;
+  if (processed > bypassed) {
+    return { available: true, processedGainDb: bypassed - processed, bypassedGainDb: 0 };
+  }
+  if (bypassed > processed) {
+    return { available: true, processedGainDb: 0, bypassedGainDb: processed - bypassed };
+  }
+  return { available: true, processedGainDb: 0, bypassedGainDb: 0 };
+}
+
 /** Audio fed to {@link AudioPreview.play}; treat the channels as immutable. */
 export interface PreviewSource {
   /** Planar channel buffers of equal length (>= 1 channel). */
@@ -37,8 +73,14 @@ export interface AudioPreviewOptions {
 export interface AudioPreview {
   /** Id passed to the most recent `play()` still sounding, or null. */
   playingId(): string | null;
-  /** Stops any current playback and starts the given source. */
-  play(id: string, source: PreviewSource): void;
+  /** Current playback position in seconds, or zero when stopped. */
+  position(): number;
+  /** Stops any current playback and starts the given source at an optional offset. */
+  play(id: string, source: PreviewSource, offsetSeconds?: number): void;
+  /** Seeks the current preview to an offset in seconds without changing its id. */
+  seek(positionSeconds: number): void;
+  /** Sets the monitor output gain (linear); does not alter the source audio. */
+  setGain(gain: number): void;
   /** Stops playback (no-op when nothing is playing). */
   stop(): void;
   /** Stops playback and closes the AudioContext (if one was created). */
@@ -54,10 +96,17 @@ export interface AudioPreview {
  */
 export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPreview {
   const factory = options.contextFactory ?? (() => new AudioContext());
-  const gainValue = options.gain ?? DEFAULT_PREVIEW_GAIN;
+  let gainValue = options.gain ?? DEFAULT_PREVIEW_GAIN;
   let context: AudioContext | null = null;
   let gainNode: GainNode | null = null;
-  let current: { id: string; node: AudioBufferSourceNode } | null = null;
+  let current: {
+    id: string;
+    node: AudioBufferSourceNode;
+    buffer: AudioBuffer;
+    duration: number;
+    offsetSeconds: number;
+    startedAt: number;
+  } | null = null;
   let disposed = false;
 
   function ensureContext(): AudioContext {
@@ -90,7 +139,51 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
     options.onChange?.(null);
   }
 
-  function play(id: string, source: PreviewSource): void {
+  function audioTime(ctx: AudioContext): number {
+    const value = ctx.currentTime;
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function position(): number {
+    const entry = current;
+    if (!entry || !context) return 0;
+    const elapsed = Math.max(0, audioTime(context) - entry.startedAt);
+    return Math.min(entry.duration, entry.offsetSeconds + elapsed);
+  }
+
+  function createSource(
+    id: string,
+    buffer: AudioBuffer,
+    offsetSeconds: number,
+    notify: boolean,
+  ): void {
+    const ctx = ensureContext();
+    const duration = buffer.length / buffer.sampleRate;
+    const offset = Math.min(Math.max(0, offsetSeconds), duration);
+    const node = ctx.createBufferSource();
+    node.buffer = buffer;
+    if (gainNode) node.connect(gainNode);
+    const entry = {
+      id,
+      node,
+      buffer,
+      duration,
+      offsetSeconds: offset,
+      startedAt: audioTime(ctx),
+    };
+    current = entry;
+    node.onended = () => {
+      if (current === entry) {
+        current = null;
+        options.onChange?.(null);
+      }
+    };
+    if (ctx.state === 'suspended') void ctx.resume();
+    node.start(0, offset);
+    if (notify) options.onChange?.(id);
+  }
+
+  function play(id: string, source: PreviewSource, offsetSeconds = 0): void {
     if (disposed) return;
     const frames = source.channels[0]?.length ?? 0;
     if (source.channels.length === 0 || frames === 0 || !(source.sampleRate > 0)) return;
@@ -101,20 +194,21 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
       // Copy so wasm- or SharedArrayBuffer-backed channels are accepted.
       buffer.copyToChannel(new Float32Array(source.channels[c]), c);
     }
-    const node = ctx.createBufferSource();
-    node.buffer = buffer;
-    if (gainNode) node.connect(gainNode);
-    const entry = { id, node };
-    current = entry;
-    node.onended = () => {
-      if (current === entry) {
-        current = null;
-        options.onChange?.(null);
-      }
-    };
-    if (ctx.state === 'suspended') void ctx.resume();
-    node.start();
-    options.onChange?.(id);
+    createSource(id, buffer, offsetSeconds, true);
+  }
+
+  function seek(positionSeconds: number): void {
+    const entry = current;
+    if (!entry || !Number.isFinite(positionSeconds)) return;
+    const nextPosition = Math.min(Math.max(0, positionSeconds), entry.duration);
+    stopSilently();
+    createSource(entry.id, entry.buffer, nextPosition, false);
+  }
+
+  function setGain(gain: number): void {
+    if (!Number.isFinite(gain) || gain < 0) return;
+    gainValue = gain;
+    if (gainNode) gainNode.gain.value = gain;
   }
 
   function dispose(): void {
@@ -134,7 +228,317 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
 
   return {
     playingId: () => current?.id ?? null,
+    position,
     play,
+    seek,
+    setGain,
+    stop,
+    dispose,
+  };
+}
+
+/** The two variants used by a mastering A/B monitor. */
+export type PreviewVariant = 'processed' | 'bypassed';
+
+/** Source buffers kept in sync by {@link createABAudioPreview}. */
+export interface ABPreviewSources {
+  processed: PreviewSource;
+  bypassed: PreviewSource;
+}
+
+/** Absolute monitor gains for the two A/B variants (linear). */
+export interface ABPreviewGains {
+  processed: number;
+  bypassed: number;
+}
+
+/** Options for the synchronized mastering A/B monitor. */
+export interface ABAudioPreviewOptions {
+  /** AudioContext factory; defaults to `() => new AudioContext()`. */
+  contextFactory?: PreviewContextFactory;
+  /** Initial gain used for each variant before the first level-match update. */
+  gain?: number;
+  /** Crossfade duration in seconds; defaults to a short clickless ramp. */
+  rampSeconds?: number;
+  /** Notified when the synchronized pair starts or stops. */
+  onChange?: (playingId: string | null) => void;
+}
+
+/** Synchronized, dual-source monitor used by the mastering A/B preview. */
+export interface ABAudioPreview {
+  /** Id passed to the active `play()` call, or null when stopped. */
+  playingId(): string | null;
+  /** Selected monitor variant. */
+  variant(): PreviewVariant;
+  /** Current synchronized playback position in seconds, or zero when stopped. */
+  position(): number;
+  /** Starts both variants at one audio time and opens the selected side. */
+  play(
+    id: string,
+    sources: ABPreviewSources,
+    variant: PreviewVariant,
+    gains: ABPreviewGains,
+    offsetSeconds?: number,
+  ): void;
+  /** Crossfades to the other already-running source without restarting it. */
+  selectVariant(variant: PreviewVariant): void;
+  /** Updates both monitor targets and ramps the currently selected output. */
+  setGains(gains: ABPreviewGains): void;
+  /** Stops both sources (no-op when nothing is playing). */
+  stop(): void;
+  /** Stops playback and closes the AudioContext. */
+  dispose(): void;
+}
+
+/** Default short A/B crossfade, long enough to avoid a hard discontinuity. */
+export const DEFAULT_AB_PREVIEW_RAMP_SECONDS = 0.015;
+
+function validPreviewSource(source: PreviewSource): boolean {
+  const frames = source.channels[0]?.length ?? 0;
+  return source.channels.length > 0 && frames > 0 && source.sampleRate > 0;
+}
+
+function copyPreviewBuffer(context: AudioContext, source: PreviewSource): AudioBuffer {
+  const frames = source.channels[0]?.length ?? 0;
+  const buffer = context.createBuffer(source.channels.length, frames, source.sampleRate);
+  for (let c = 0; c < source.channels.length; c++) {
+    buffer.copyToChannel(new Float32Array(source.channels[c]), c);
+  }
+  return buffer;
+}
+
+/** Schedules a short linear gain ramp where the host exposes AudioParam timing. */
+function schedulePreviewGain(node: GainNode, target: number, now: number, duration: number): void {
+  const param = node.gain as AudioParam & { value: number };
+  if (
+    typeof param.setValueAtTime === 'function' &&
+    typeof param.linearRampToValueAtTime === 'function'
+  ) {
+    if (typeof param.cancelAndHoldAtTime === 'function') {
+      // Preserve the interpolated value when a second A/B switch lands in an
+      // existing ramp. A read of `param.value` alone only exposes the last
+      // committed value in several Web Audio implementations.
+      param.cancelAndHoldAtTime(now);
+    } else if (typeof param.cancelScheduledValues === 'function') {
+      param.cancelScheduledValues(now);
+      param.setValueAtTime(param.value, now);
+    } else {
+      param.value = target;
+      return;
+    }
+    param.linearRampToValueAtTime(target, now + duration);
+  } else {
+    param.value = target;
+  }
+}
+
+/** Sets an initial gain at a common future source start time. */
+function setPreviewGainAtStart(node: GainNode, target: number, when: number): void {
+  const param = node.gain as AudioParam & { value: number };
+  if (typeof param.setValueAtTime === 'function') {
+    if (typeof param.cancelScheduledValues === 'function') param.cancelScheduledValues(when);
+    param.setValueAtTime(target, when);
+  } else {
+    param.value = target;
+  }
+}
+
+/**
+ * Creates a mastering A/B monitor with both renders running in lockstep.
+ * Switching variants only ramps their separate gain nodes, so the source
+ * position and phase relationship never jump. This is intentionally separate
+ * from the generic one-source media preview API.
+ */
+export function createABAudioPreview(options: ABAudioPreviewOptions = {}): ABAudioPreview {
+  const factory = options.contextFactory ?? (() => new AudioContext());
+  const rampSeconds =
+    Number.isFinite(options.rampSeconds) && (options.rampSeconds ?? 0) >= 0
+      ? (options.rampSeconds as number)
+      : DEFAULT_AB_PREVIEW_RAMP_SECONDS;
+  let gainTargets: ABPreviewGains = {
+    processed: options.gain ?? DEFAULT_PREVIEW_GAIN,
+    bypassed: options.gain ?? DEFAULT_PREVIEW_GAIN,
+  };
+  let context: AudioContext | null = null;
+  let gainNodes: Record<PreviewVariant, GainNode> | null = null;
+  let current: {
+    id: string;
+    variant: PreviewVariant;
+    sources: Record<PreviewVariant, AudioBufferSourceNode>;
+    durations: Record<PreviewVariant, number>;
+    offsetSeconds: number;
+    startedAt: number;
+  } | null = null;
+  let selectedVariant: PreviewVariant = 'processed';
+  let disposed = false;
+
+  function ensureContext(): AudioContext {
+    if (!context) {
+      context = factory();
+      gainNodes = {
+        processed: context.createGain(),
+        bypassed: context.createGain(),
+      };
+      gainNodes.processed.gain.value = gainTargets.processed;
+      gainNodes.bypassed.gain.value = 0;
+      gainNodes.processed.connect(context.destination);
+      gainNodes.bypassed.connect(context.destination);
+    }
+    return context;
+  }
+
+  function audioTime(ctx: AudioContext): number {
+    const value = ctx.currentTime;
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function selectedTarget(variant: PreviewVariant): number {
+    return variant === selectedVariant ? gainTargets[variant] : 0;
+  }
+
+  function stopSilently(): void {
+    const entry = current;
+    if (!entry) return;
+    current = null;
+    for (const variant of ['processed', 'bypassed'] as const) {
+      const node = entry.sources[variant];
+      node.onended = null;
+      try {
+        node.stop();
+      } catch {
+        // Already stopped or never started; nothing to do.
+      }
+      node.disconnect();
+    }
+  }
+
+  function stop(): void {
+    if (!current) return;
+    stopSilently();
+    options.onChange?.(null);
+  }
+
+  function position(): number {
+    if (!current || !context) return 0;
+    const elapsed = Math.max(0, audioTime(context) - current.startedAt);
+    const duration = Math.max(current.durations.processed, current.durations.bypassed);
+    return Math.min(duration, current.offsetSeconds + elapsed);
+  }
+
+  function play(
+    id: string,
+    sources: ABPreviewSources,
+    variant: PreviewVariant,
+    gains: ABPreviewGains,
+    offsetSeconds = 0,
+  ): void {
+    if (
+      disposed ||
+      !validPreviewSource(sources.processed) ||
+      !validPreviewSource(sources.bypassed)
+    ) {
+      return;
+    }
+    const ctx = ensureContext();
+    stopSilently();
+    gainTargets = { ...gains };
+    selectedVariant = variant;
+    const buffers = {
+      processed: copyPreviewBuffer(ctx, sources.processed),
+      bypassed: copyPreviewBuffer(ctx, sources.bypassed),
+    };
+    const durations = {
+      processed: buffers.processed.length / buffers.processed.sampleRate,
+      bypassed: buffers.bypassed.length / buffers.bypassed.sampleRate,
+    };
+    const offset = Math.max(
+      0,
+      Math.min(offsetSeconds, Math.max(durations.processed, durations.bypassed)),
+    );
+    const now = audioTime(ctx);
+    const when = now + 0.01;
+    const nodes = {
+      processed: ctx.createBufferSource(),
+      bypassed: ctx.createBufferSource(),
+    };
+    nodes.processed.buffer = buffers.processed;
+    nodes.bypassed.buffer = buffers.bypassed;
+    nodes.processed.connect(gainNodes!.processed);
+    nodes.bypassed.connect(gainNodes!.bypassed);
+    setPreviewGainAtStart(gainNodes!.processed, selectedTarget('processed'), when);
+    setPreviewGainAtStart(gainNodes!.bypassed, selectedTarget('bypassed'), when);
+    const entry = {
+      id,
+      variant,
+      sources: nodes,
+      durations,
+      offsetSeconds: offset,
+      startedAt: when,
+    };
+    current = entry;
+    for (const source of Object.values(nodes)) {
+      source.onended = () => {
+        if (current !== entry) return;
+        // The selected source owns the audible end of the preview. The other
+        // source may be shorter, but ending it must not cut off the selected
+        // variant while it is still sounding.
+        if (source === entry.sources[entry.variant]) {
+          stopSilently();
+          options.onChange?.(null);
+        }
+      };
+    }
+    if (ctx.state === 'suspended') void ctx.resume();
+    nodes.processed.start(when, offset);
+    nodes.bypassed.start(when, offset);
+    options.onChange?.(id);
+  }
+
+  function selectVariant(next: PreviewVariant): void {
+    selectedVariant = next;
+    const ctx = context;
+    const nodes = gainNodes;
+    if (!current || !ctx || !nodes || current.variant === next) {
+      if (current) current.variant = next;
+      return;
+    }
+    current.variant = next;
+    const now = audioTime(ctx);
+    schedulePreviewGain(nodes.processed, selectedTarget('processed'), now, rampSeconds);
+    schedulePreviewGain(nodes.bypassed, selectedTarget('bypassed'), now, rampSeconds);
+  }
+
+  function setGains(next: ABPreviewGains): void {
+    gainTargets = { ...next };
+    if (!current || !context || !gainNodes) return;
+    const now = audioTime(context);
+    schedulePreviewGain(gainNodes.processed, selectedTarget('processed'), now, rampSeconds);
+    schedulePreviewGain(gainNodes.bypassed, selectedTarget('bypassed'), now, rampSeconds);
+  }
+
+  function dispose(): void {
+    if (disposed) return;
+    disposed = true;
+    stop();
+    gainNodes?.processed.disconnect();
+    gainNodes?.bypassed.disconnect();
+    gainNodes = null;
+    if (context) {
+      const closing = context;
+      context = null;
+      void closing.close().catch(() => {
+        // Closing an already-closed context is harmless.
+      });
+    }
+  }
+
+  return {
+    playingId: () => current?.id ?? null,
+    variant: () => selectedVariant,
+    position,
+    play,
+    selectVariant,
+    setGains,
     stop,
     dispose,
   };
