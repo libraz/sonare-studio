@@ -351,6 +351,33 @@ describe('useAppShortcutsMenu', () => {
     expect(togglePlayback).toHaveBeenCalledTimes(2);
   });
 
+  it('uses arrangement clip selection for Edit clipboard actions after the active clip is cut', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const positionPpq = ref(40);
+    // Keep a stale note selection to reproduce the state reached when focus
+    // moves from the piano roll to the arrangement without selecting a note.
+    store.selection = new Set([999]);
+    const { menu } = harness({ value: false }, { positionPpq });
+    menu.focusZone.value = 'arrange';
+
+    const editItems = () =>
+      menu.menuBarModel.value.find((entry) => entry.id === 'edit')?.items ?? [];
+    const item = (id: string) => editItems().find((entry) => entry.id === id);
+
+    expect(item('edit.copy')?.disabled).toBe(false);
+    expect(item('edit.cut')?.disabled).toBe(false);
+    expect(item('edit.paste')?.disabled).toBe(true);
+    item('edit.copy')?.run?.();
+    item('edit.cut')?.run?.();
+
+    expect(store.activeClip).toBeNull();
+    expect(item('edit.paste')?.disabled).toBe(false);
+    item('edit.paste')?.run?.();
+    expect(store.activeClip?.startPpq).toBe(positionPpq.value);
+    store.dispose();
+  });
+
   it('keeps the project unchanged and surfaces a raw WASM duplicate failure from both entry points', async () => {
     const store = useProjectStore();
     await store.init();

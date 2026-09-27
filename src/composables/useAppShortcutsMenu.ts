@@ -5,6 +5,11 @@ import type { useShortcuts } from '@/composables/useShortcuts';
 import type { EngineHandle } from '@/engine/engine';
 import { describeError } from '@/lib/errors';
 import {
+  canPasteClipAt,
+  clipClipboardVersion,
+  hasCopiedClip,
+} from '@/project/command/clips-clipboard';
+import {
   canRedo,
   canUndo,
   copyActiveClip,
@@ -226,9 +231,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'edit.paste':
         if (activeContentReadOnly()) return false;
         if (focusZone.value === 'arrange') {
-          return (
-            pasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0)) !== null
-          );
+          const startPpq = Math.max(0, options.positionPpq?.value ?? 0);
+          if (!hasCopiedClip() || !canPasteClipAt(store.activeTrackId, startPpq)) return false;
+          return pasteClipAt(store.activeTrackId, startPpq) !== null;
         }
         return pasteNotesAt(Math.max(0, options.positionPpq?.value ?? 0)).length > 0;
       case 'edit.selectAllNotes':
@@ -459,15 +464,23 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
 
   function editItems(): MenuBarItem[] {
     const a = t.value.shortcuts.actions;
-    const noSelection = store.selection.size === 0;
+    // The clipboard is process-local, so read its revision to keep the menu
+    // reactive after a copy made by a keyboard shortcut or another surface.
+    void clipClipboardVersion.value;
+    const arrangementFocus = focusZone.value === 'arrange';
+    const noSelection = arrangementFocus ? !store.activeClip : store.selection.size === 0;
     const noClip = !store.activeClip;
     const readOnly = activeContentReadOnly();
+    const pasteUnavailable = arrangementFocus
+      ? !hasCopiedClip() ||
+        !canPasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0))
+      : noClip;
     return [
       actionItem('edit.undo', a['edit.undo'], { disabled: !canUndo() }),
       actionItem('edit.redo', a['edit.redo'], { disabled: !canRedo() }),
       actionItem('edit.copy', a['edit.copy'], { disabled: noSelection }),
       actionItem('edit.cut', a['edit.cut'], { disabled: readOnly || noSelection }),
-      actionItem('edit.paste', a['edit.paste'], { disabled: readOnly || noClip }),
+      actionItem('edit.paste', a['edit.paste'], { disabled: readOnly || pasteUnavailable }),
       sep('edit.sep-select'),
       actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
       actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], {

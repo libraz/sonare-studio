@@ -17,6 +17,7 @@ import {
   planClipCrossfade,
 } from '@/project/clip-crossfade';
 import { clipSplitBlockReason } from '@/project/clip-split';
+import { canPasteClipAt } from '@/project/command/clips-clipboard';
 import {
   addMidiClip,
   alignClipToReference,
@@ -590,6 +591,14 @@ const laneView: ClipInteractionsView = {
   },
 };
 
+/** Resolves the content track under a context-menu point, excluding sublanes. */
+function trackIdAtPoint(point: { x: number; y: number }): number | null {
+  if (point.y < RULER_HEIGHT_PX) return null;
+  const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
+  if (hit?.zone !== 'track') return null;
+  return visibleTracks.value[hit.index]?.id ?? null;
+}
+
 /**
  * Trim bounds of a non-looping audio clip against its backing asset; null
  * (unbounded) for MIDI clips, looping clips and assets not yet loaded.
@@ -1000,9 +1009,14 @@ function runCrossfade(clipId: number): void {
   if (!partner) return;
   try {
     crossfadeClips(clip.id, partner.id, crossfadeOptionsFor(clip, partner));
-  } catch {
+  } catch (cause) {
     const plan = planClipCrossfade(clip, partner, crossfadeOptionsFor(clip, partner));
-    error.value = 'reason' in plan ? crossfadeReasonText(plan.reason) : '';
+    error.value =
+      'reason' in plan
+        ? crossfadeReasonText(plan.reason)
+        : cause instanceof Error
+          ? cause.message
+          : String(cause);
   }
 }
 
@@ -1071,10 +1085,29 @@ function onClipContext(payload: {
   ppq: number;
 }): void {
   const clip = payload.clipId === null ? null : store.clips.find((c) => c.id === payload.clipId);
-  if (!clip) return;
+  if (!clip) {
+    const canvasRect = canvasCell.value?.getBoundingClientRect();
+    const trackId = trackIdAtPoint({
+      x: payload.x - (canvasRect?.left ?? 0),
+      y: payload.y - (canvasRect?.top ?? 0),
+    });
+    if (trackId === null) return;
+    const pastePpq = snapArrangementPpq(payload.ppq);
+    if (!canPasteClipAt(trackId, pastePpq)) return;
+    openContextMenu(payload.x, payload.y, [
+      {
+        id: 'paste',
+        label: t.value.shell.arrangement.clipActions.paste,
+        hint: '⌘V',
+        run: () => pasteClipAt(trackId, pastePpq),
+      },
+    ]);
+    return;
+  }
   setActiveClip(clip.id);
   const end = clip.startPpq + clip.lengthPpq;
   const splitPpq = snapArrangementPpq(payload.ppq);
+  const pastePpq = splitPpq;
   const splitBlocked = clipSplitBlockReason(clip, splitPpq);
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
@@ -1125,8 +1158,8 @@ function onClipContext(payload: {
       id: 'paste',
       label: t.value.shell.arrangement.clipActions.paste,
       hint: '⌘V',
-      disabled: frozen,
-      run: () => pasteClipAt(clip.trackId, Math.max(0, payload.ppq)),
+      disabled: frozen || !canPasteClipAt(clip.trackId, pastePpq),
+      run: () => pasteClipAt(clip.trackId, pastePpq),
     },
     { id: 'sep-clip-edit', separator: true },
     {

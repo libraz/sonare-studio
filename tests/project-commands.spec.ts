@@ -686,6 +686,23 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(store.clips.some((clip) => clip.id === cutPasteId)).toBe(false);
     });
 
+    it('rejects incompatible, frozen and overlapping clip paste destinations without changing the project', () => {
+      const sourceTrackId = store.tracks[0].id;
+      const audioTrackId = addTrack({ name: 'Audio', kind: 'audio' });
+      const frozenTrackId = addTrack({ name: 'Frozen' });
+      setTrackFrozen(frozenTrackId, { assetId: 'frozen-paste' });
+      expect(copyActiveClip()).toBe(true);
+      clearHistory();
+      const before = getProject().toJson();
+
+      expect(pasteClipAt(-999, 16)).toBeNull();
+      expect(pasteClipAt(audioTrackId, 16)).toBeNull();
+      expect(pasteClipAt(frozenTrackId, 16)).toBeNull();
+      expect(pasteClipAt(sourceTrackId, 0)).toBeNull();
+      expect(getProject().toJson()).toBe(before);
+      expect(canUndo()).toBe(false);
+    });
+
     it('pastes an audio clip by sharing its asset reference', async () => {
       const sourceTrackId = addTrack({ name: 'Recorded', kind: 'audio' });
       const destinationTrackId = addTrack({ name: 'Double', kind: 'audio' });
@@ -2341,6 +2358,77 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       ]);
       expect(undo()).toBe(true);
       expect(store.timeSignatures).toEqual([]);
+    });
+
+    it('insertTime ripples chord regions and keeps omitted tones through undo/redo', () => {
+      const before = [
+        { startPpq: 0, endPpq: 8, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 8, endPpq: 12, rootPc: 5, quality: 0, extensions: [9] },
+      ];
+      setProjectChords(before);
+      clearHistory();
+
+      insertTime(4, 4);
+
+      const after = [
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 8, endPpq: 12, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 12, endPpq: 16, rootPc: 5, quality: 0, extensions: [9] },
+      ];
+      expect(store.chords).toEqual(after);
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual(before);
+      expect(redo()).toBe(true);
+      expect(store.chords).toEqual(after);
+    });
+
+    it('deleteTime crops chord regions and restores them through undo/redo', () => {
+      const before = [
+        { startPpq: 0, endPpq: 16, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 16, endPpq: 20, rootPc: 7, quality: 4, extensions: [2] },
+      ];
+      setProjectChords(before);
+      clearHistory();
+
+      deleteTime(4, 8);
+
+      const after = [
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 4, endPpq: 12, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 12, endPpq: 16, rootPc: 7, quality: 4, extensions: [2] },
+      ];
+      expect(store.chords).toEqual(after);
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual(before);
+      expect(redo()).toBe(true);
+      expect(store.chords).toEqual(after);
+    });
+
+    it('duplicateTime copies a four-bar chord progression in one undoable edit', () => {
+      const before = [
+        { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0, omissions: [4] },
+        { startPpq: 4, endPpq: 8, rootPc: 5, quality: 0, extensions: [9] },
+        { startPpq: 8, endPpq: 12, rootPc: 7, quality: 0 },
+        { startPpq: 12, endPpq: 16, rootPc: 0, quality: 0 },
+      ];
+      setProjectChords(before);
+      clearHistory();
+
+      duplicateTime(0, 16);
+
+      const after = [
+        ...before,
+        ...before.map((chord) => ({
+          ...chord,
+          startPpq: chord.startPpq + 16,
+          endPpq: chord.endPpq + 16,
+        })),
+      ];
+      expect(store.chords).toEqual(after);
+      expect(undo()).toBe(true);
+      expect(store.chords).toEqual(before);
+      expect(redo()).toBe(true);
+      expect(store.chords).toEqual(after);
     });
 
     it('insertTime ripples clips and all timeline metadata as one undoable edit', () => {

@@ -1,3 +1,4 @@
+import { shallowRef } from 'vue';
 import { audioAssetUri } from '@/persistence/assets';
 import { type ClipScoreAnnotations, remapClipScoreAnnotations } from '../annotations';
 import {
@@ -23,6 +24,9 @@ interface ClipClipboard {
 
 let clipClipboard: ClipClipboard | null = null;
 
+/** Invalidates menu models when the process-local arrangement clipboard changes. */
+export const clipClipboardVersion = shallowRef(0);
+
 function detachedClip(clip: EditorClip): EditorClip {
   return structuredClone(clip);
 }
@@ -37,7 +41,48 @@ export function copyActiveClip(): boolean {
     clip: detachedClip(clip),
     ...(annotations === undefined ? {} : { scoreAnnotations: structuredClone(annotations) }),
   };
+  clipClipboardVersion.value += 1;
   return true;
+}
+
+/** Returns whether an arrangement clip is currently available to paste. */
+export function hasCopiedClip(): boolean {
+  return clipClipboard !== null;
+}
+
+/**
+ * Returns whether the copied clip can be pasted into a track at a timeline
+ * position. This mirrors the command's compatibility and editability guards
+ * so menu surfaces can disable an action before it throws.
+ */
+export function canPasteClipAt(trackId: number, startPpq = 0): boolean {
+  if (
+    clipClipboard === null ||
+    !Number.isFinite(startPpq) ||
+    startPpq < 0 ||
+    !Number.isFinite(clipClipboard.clip.lengthPpq) ||
+    clipClipboard.clip.lengthPpq <= 0
+  ) {
+    return false;
+  }
+  const store = useProjectStore();
+  const destination = store.tracks.find((track) => track.id === trackId);
+  if (
+    destination === undefined ||
+    destination.frozen !== undefined ||
+    !canTrackContainClip(destination.kind, clipKind(clipClipboard.clip))
+  ) {
+    return false;
+  }
+  if (clipKind(clipClipboard.clip) === 'audio' && !clipClipboard.clip.assetId) return false;
+  const endPpq = startPpq + clipClipboard.clip.lengthPpq;
+  if (!Number.isFinite(endPpq)) return false;
+  return !store.clips.some(
+    (clip) =>
+      clip.trackId === trackId &&
+      clip.startPpq < endPpq &&
+      startPpq < clip.startPpq + clip.lengthPpq,
+  );
 }
 
 /** Copies the active clip before removing it, so it can be pasted elsewhere. */
@@ -56,7 +101,7 @@ export function cutActiveClip(): boolean {
  * compatible clipboard/destination.
  */
 export function pasteClipAt(trackId: number, startPpq: number): number | null {
-  if (clipClipboard === null || !Number.isFinite(startPpq) || startPpq < 0) return null;
+  if (!canPasteClipAt(trackId, startPpq) || clipClipboard === null) return null;
   const store = useProjectStore();
   const project = getProject();
   const source = detachedClip(clipClipboard.clip);
