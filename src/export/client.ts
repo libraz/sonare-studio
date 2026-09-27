@@ -19,11 +19,21 @@ import type {
   ExportWorkerStem,
 } from '@/workers/export.worker';
 import {
+  MASTERING_BUFFER_LIMIT_ERROR_CODE,
+  MASTERING_STEREO_FRAME_LIMIT,
+  MasteringBufferLimitError,
+} from './mastering-limit';
+import {
   MixdownCancelledError,
   type MixdownProgressFn,
   type MixdownResult,
   type MixdownStem,
 } from './mixdown';
+
+export {
+  MASTERING_BUFFER_LIMIT_ERROR_CODE,
+  MasteringBufferLimitError,
+} from './mastering-limit';
 
 export type { ExportRenderOptions };
 
@@ -66,6 +76,17 @@ function toMixdownStem(stem: ExportWorkerStem): MixdownStem {
     channels: [stem.left, stem.right],
     report: stem.report,
   };
+}
+
+function errorFromWorkerResponse(response: Extract<ExportResponse, { type: 'error' }>): Error {
+  if (response.code === MASTERING_BUFFER_LIMIT_ERROR_CODE) {
+    return new MasteringBufferLimitError({
+      totalFrames: response.totalFrames ?? Number.POSITIVE_INFINITY,
+      maxFrames: response.maxFrames ?? MASTERING_STEREO_FRAME_LIMIT,
+      sampleRate: response.sampleRate ?? 0,
+    });
+  }
+  return new Error(response.error);
 }
 
 /** Converts the transferred worker payload back into a MixdownResult. */
@@ -277,7 +298,7 @@ export class ExportClient {
     }
     this.pending.delete(response.id);
     if (response.type === 'error') {
-      entry.reject(new Error(response.error));
+      entry.reject(errorFromWorkerResponse(response));
     } else {
       entry.resolve(response);
     }

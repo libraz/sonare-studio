@@ -45,6 +45,7 @@ import {
   engineBusStripHasDsp,
   engineEqBands,
   engineFaderAutomationPoints,
+  engineMasterPannerHasDsp,
 } from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
 import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
@@ -60,6 +61,7 @@ import {
   planMasteringStages,
   runMasteringEnginePass,
 } from '@/export/mastering-automation';
+import { assertMasteringBufferWithinLimit } from '@/export/mastering-limit';
 import { assertRenderPayloadMemory, estimateRenderPayloadMemory } from '@/export/memory-budget';
 import {
   type ExportLimitation,
@@ -373,6 +375,14 @@ export async function renderProjectWithEngine(
   const stemCount =
     stemTracks.length + stemBuses.length + (options.stems && options.masterStem === true ? 1 : 0);
   const chain = doc.mixer?.masteringChain;
+  const mastering = deps?.mastering ?? null;
+  // Plan once before any render PCM is allocated. The same plan is reused
+  // below when applying the rack, so the guard and the actual path cannot
+  // disagree about whether a stage is whole-buffer or engine-driven.
+  const masteringPlan =
+    includeMasterChain && chain && masteringChainIsActive(chain) && mastering
+      ? planMasteringStages(chain, doc.masterAutomation ?? [], range.startPpq, masteringCapability)
+      : null;
   const hasFullBufferMastering =
     includeMasterChain &&
     chain !== undefined &&
@@ -425,6 +435,15 @@ export async function renderProjectWithEngine(
     audibleTrackIndices,
     options.appendReleaseTailForExplicitRange,
   );
+  assertMasteringBufferWithinLimit({
+    totalFrames: preflightWindow.totalFrames,
+    sampleRate,
+    includeMasterChain,
+    usesPreset:
+      masteringPlan !== null && chain?.preset !== undefined && mastering?.applyPreset !== undefined,
+    wholeBufferProcessorCount:
+      masteringPlan?.stages.filter((stage) => stage.kind === 'whole-buffer').length ?? 0,
+  });
   if (options.memoryBudgetBytes !== undefined) {
     assertRenderPayloadMemory(
       estimateRenderPayloadMemory({
@@ -515,6 +534,17 @@ export async function renderProjectWithEngine(
     audibleTrackIndices,
     options.appendReleaseTailForExplicitRange,
   );
+  // Asset metadata is optional for injected render dependencies. Prepared
+  // audio can extend the final window beyond the earlier inexpensive estimate.
+  assertMasteringBufferWithinLimit({
+    totalFrames,
+    sampleRate,
+    includeMasterChain,
+    usesPreset:
+      masteringPlan !== null && chain?.preset !== undefined && mastering?.applyPreset !== undefined,
+    wholeBufferProcessorCount:
+      masteringPlan?.stages.filter((stage) => stage.kind === 'whole-buffer').length ?? 0,
+  });
   if (options.memoryBudgetBytes !== undefined) {
     const preparedClipBytes = sourceAudioClips.reduce(
       (sum, clip) =>
@@ -612,7 +642,7 @@ export async function renderProjectWithEngine(
       );
       if (supportsBusInsertBypass) {
         bus.strip?.inserts.forEach((slot, insertIndex) => {
-          if (!slot.enabled) engine.setBusStripInsertBypassed?.(busId, insertIndex, true);
+          engine.setBusStripInsertBypassed?.(busId, insertIndex, !slot.enabled);
         });
       }
       if (supportsBusEq) {
@@ -650,7 +680,7 @@ export async function renderProjectWithEngine(
           );
           if (supportsBusInsertBypass) {
             strip?.inserts.forEach((slot, insertIndex) => {
-              if (!slot.enabled) engine.setBusStripInsertBypassed?.(busId, insertIndex, true);
+              engine.setBusStripInsertBypassed?.(busId, insertIndex, !slot.enabled);
             });
           }
           if (supportsBusEq) {
@@ -665,7 +695,7 @@ export async function renderProjectWithEngine(
         // Frozen tracks bypass their strip DSP (baked into the render).
         engine.setTrackStripJson(trackId, stripSceneJson(trackId, strip));
         strip.inserts.forEach((slot, insertIndex) => {
-          if (!slot.enabled) engine.setTrackStripInsertBypassed(trackId, insertIndex, true);
+          engine.setTrackStripInsertBypassed(trackId, insertIndex, !slot.enabled);
         });
         engineEqBands(strip).forEach((band, bandIndex) => {
           engine.setTrackStripEqBandJson(trackId, bandIndex, JSON.stringify(band));
@@ -752,10 +782,14 @@ export async function renderProjectWithEngine(
     // keeps the master strip independent, then applies the entire mastering
     // rack after its preset in declared order below.
     const masterStrip = master;
-    if (pass.masterStrip && masterStrip && stripHasDsp(masterStrip)) {
+    if (
+      pass.masterStrip &&
+      masterStrip &&
+      (stripHasDsp(masterStrip) || engineMasterPannerHasDsp(masterStrip))
+    ) {
       engine.setMasterStripJson(stripSceneJson('master', masterStrip));
       masterStrip.inserts.forEach((slot, insertIndex) => {
-        if (!slot.enabled) engine.setMasterStripInsertBypassed(insertIndex, true);
+        engine.setMasterStripInsertBypassed(insertIndex, !slot.enabled);
       });
       engineEqBands(masterStrip).forEach((band, bandIndex) => {
         engine.setMasterStripEqBandJson(bandIndex, JSON.stringify(band));
@@ -1159,8 +1193,6 @@ export async function renderProjectWithEngine(
   const sf2PreRenderCount = conflictingSf2TrackIndices.size;
   const passSpan = 0.9 / (1 + stemPassCount + sf2PreRenderCount);
   let passIndex = 0;
-  const mastering = deps?.mastering ?? null;
-
   // A plain master pass can be delivered block by block. Do not take this
   // path when any later stage needs the complete waveform (mastering chain,
   // stems, or multi-SF2 pre-renders), as preserving those semantics wins over
@@ -1368,12 +1400,10 @@ export async function renderProjectWithEngine(
   let masteringFrozenParams: string[] | undefined;
   let presetLoudnessLimit: ExportLimitation | undefined;
   if (includeMasterChain && chain && masteringChainIsActive(chain) && mastering) {
-    const plan = planMasteringStages(
-      chain,
-      doc.masterAutomation ?? [],
-      range.startPpq,
-      masteringCapability,
-    );
+    // The plan was computed during preflight, before the render buffers were
+    // created. It is non-null under the same condition as this branch.
+    const plan = masteringPlan;
+    if (!plan) throw new Error('Mastering stage plan was not prepared');
     masteringFrozenParams = plan.frozenParams;
     if (chain.preset !== undefined && mastering.applyPreset) {
       checkCancel();

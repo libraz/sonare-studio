@@ -8,10 +8,16 @@ import { confirmDialog } from '@/composables/useDialogs';
 import { audioFileMetadataForDocument } from '@/export/audio-file-metadata';
 import { audioExportPreflight } from '@/export/audio-preflight';
 import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
-import { type ExportRenderHandle, ExportWorkerError, renderMixdownInWorker } from '@/export/client';
+import {
+  type ExportRenderHandle,
+  ExportWorkerError,
+  MasteringBufferLimitError,
+  renderMixdownInWorker,
+} from '@/export/client';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
 import { offlineAutomationLimitations } from '@/export/engine-render';
+import { documentAudibleTrackIndices, resolveRenderWindow } from '@/export/engine-render-context';
 import {
   formatClippingCensus,
   formatExportLimitation,
@@ -20,6 +26,15 @@ import {
 } from '@/export/export-issue-format';
 import { formatExportStage } from '@/export/export-stage';
 import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
+import {
+  type MasteringCatalogEntry,
+  masteringCapabilityFromCatalog,
+  planMasteringStages,
+} from '@/export/mastering-automation';
+import {
+  assertMasteringBufferWithinLimit,
+  MASTERING_STEREO_FRAME_LIMIT,
+} from '@/export/mastering-limit';
 import {
   assertCodecPayloadMemory,
   DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
@@ -54,7 +69,10 @@ import type { WavBitDepth } from '@/export/wav';
 import { createWavStreamWriter, type WavStreamWriter } from '@/export/wav-stream';
 import { downloadBlob } from '@/lib/download';
 import { PayloadMemoryMeter } from '@/lib/payload-memory';
+import { ensureWasm } from '@/lib/wasm';
+import { masteringChainIsActive } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
+import { normalizeTempoMap } from '@/project/tempo-map';
 import { useI18n } from '@/ui/i18n';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
@@ -332,6 +350,11 @@ function formatLevel(value: number): string {
   return Number.isFinite(value) ? value.toFixed(1) : '-inf';
 }
 
+function formatMasteringDuration(frames: number, sampleRate: number): string {
+  if (!Number.isFinite(frames) || sampleRate <= 0) return '—';
+  return (frames / sampleRate).toFixed(1);
+}
+
 function isIntegerPcmExport(encoderId: string, model: ExportOptionsModel): boolean {
   return (
     (encoderId === WAV_ENCODER_ID && model.wavBitDepth !== '32f') ||
@@ -382,6 +405,63 @@ function workerBackedEncoding(encoder: AudioEncoder): boolean {
   );
 }
 
+/**
+ * Checks the whole-buffer mastering limit before starting the export worker.
+ * The inexpensive timeline estimate runs first; the WASM catalog is loaded
+ * only when the selected window could exceed the stereo frame limit.
+ */
+async function preflightMasteringBuffer(
+  doc: ProjectDocument,
+  exportModel: ExportOptionsModel,
+  loopRegion: MixdownRangePpq | null | undefined,
+  signal: AbortSignal,
+): Promise<void> {
+  if (!exportModel.includeMasterChain) return;
+  const chain = doc.mixer?.masteringChain;
+  if (!chain || !masteringChainIsActive(chain)) return;
+
+  const range =
+    exportModel.range === 'loop' && loopRegion
+      ? loopRegion
+      : { startPpq: 0, endPpq: null as number | null };
+  const renderWindow = resolveRenderWindow(
+    doc,
+    normalizeTempoMap(doc.tempoSegments),
+    range,
+    exportModel.sampleRate,
+    exportModel.releaseTailSeconds,
+    [],
+    documentAudibleTrackIndices(doc),
+  );
+  if (renderWindow.totalFrames <= MASTERING_STEREO_FRAME_LIMIT) return;
+  signal.throwIfAborted();
+
+  const wasm = await ensureWasm();
+  signal.throwIfAborted();
+  const surface = wasm as unknown as {
+    masteringProcessStereo?: unknown;
+    masterAudioStereo?: unknown;
+    masteringProcessorCatalog?: () => Array<MasteringCatalogEntry>;
+  };
+  // The renderer skips the rack when the process seam is unavailable. Keep
+  // the UI preflight in lockstep with that behavior.
+  if (typeof surface.masteringProcessStereo !== 'function') return;
+  const catalog = surface.masteringProcessorCatalog?.();
+  const plan = planMasteringStages(
+    chain,
+    doc.masterAutomation ?? [],
+    range.startPpq,
+    masteringCapabilityFromCatalog(catalog),
+  );
+  assertMasteringBufferWithinLimit({
+    totalFrames: renderWindow.totalFrames,
+    sampleRate: exportModel.sampleRate,
+    includeMasterChain: true,
+    usesPreset: chain.preset !== undefined && typeof surface.masterAudioStereo === 'function',
+    wholeBufferProcessorCount: plan.stages.filter((stage) => stage.kind === 'whole-buffer').length,
+  });
+}
+
 async function onExport(): Promise<void> {
   if (!canExport.value) return;
   const encoders = selectedEncoders.value;
@@ -420,6 +500,7 @@ async function onExport(): Promise<void> {
       );
       throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${lines.join('\n')}`);
     }
+    await preflightMasteringBuffer(doc, exportModel, props.loopRegion, controller.signal);
     const acceptedLimitations = [
       ...offlineAutomationLimitations(doc).map((limitation) =>
         formatExportLimitation(limitation, issueStrings),
@@ -722,6 +803,11 @@ async function onExport(): Promise<void> {
       cancelled.value = true;
     } else if (error instanceof ExportWorkerError) {
       errorMessage.value = t.value.dialogs.exportAudio.workerError;
+    } else if (error instanceof MasteringBufferLimitError) {
+      const message = t.value.dialogs.exportAudio.masteringBufferLimit;
+      errorMessage.value = message
+        .replace('{duration}', formatMasteringDuration(error.totalFrames, error.sampleRate))
+        .replace('{limit}', formatMasteringDuration(error.maxFrames, error.sampleRate));
     } else {
       errorMessage.value = error instanceof Error ? error.message : String(error);
     }

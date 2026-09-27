@@ -4,6 +4,7 @@ import {
   ExportClient,
   ExportWorkerError,
   getExportClient,
+  MasteringBufferLimitError,
 } from '@/export/client';
 import { MixdownCancelledError } from '@/export/mixdown';
 import type { ProjectDocument } from '@/project/serialization';
@@ -339,6 +340,28 @@ describe('ExportClient', () => {
       },
     });
     await expect(second.result).resolves.toBeDefined();
+  });
+
+  it('maps a typed whole-buffer limit response without exposing a raw wasm error', async () => {
+    const handle = client.renderMixdown(makeDoc());
+    worker.emit({
+      id: 1,
+      type: 'error',
+      error: 'internal wasm detail',
+      code: 'mastering-buffer-limit',
+      totalFrames: 33_554_433,
+      maxFrames: 33_554_432,
+      sampleRate: 48_000,
+    });
+    await expect(handle.result).rejects.toMatchObject({
+      name: 'MasteringBufferLimitError',
+      code: 'mastering-buffer-limit',
+      totalFrames: 33_554_433,
+      maxFrames: 33_554_432,
+      sampleRate: 48_000,
+    });
+    await expect(handle.result).rejects.toBeInstanceOf(MasteringBufferLimitError);
+    await expect(handle.result).rejects.not.toThrow('internal wasm detail');
   });
 
   it('ignores responses with unknown ids', async () => {

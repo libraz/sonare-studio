@@ -17,6 +17,10 @@
 
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import { renderProjectWithEngine } from '@/export/engine-render';
+import {
+  MASTERING_BUFFER_LIMIT_ERROR_CODE,
+  MasteringBufferLimitError,
+} from '@/export/mastering-limit';
 import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import {
   MixdownCancelledError,
@@ -105,7 +109,15 @@ export type ExportResponse =
   | { id: number; type: 'render'; result: ExportWorkerResult }
   | { id: number; type: 'cancelled' }
   | { id: number; type: 'destroy' }
-  | { id: number; type: 'error'; error: string };
+  | {
+      id: number;
+      type: 'error';
+      error: string;
+      code?: string;
+      totalFrames?: number;
+      maxFrames?: number;
+      sampleRate?: number;
+    };
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -124,6 +136,25 @@ const assetClipPageStream = createAssetClipPageBindingFactory(readAssetFrames);
 
 function post(message: ExportResponse, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
+}
+
+function serializeExportError(error: unknown): {
+  error: string;
+  code?: string;
+  totalFrames?: number;
+  maxFrames?: number;
+  sampleRate?: number;
+} {
+  if (error instanceof MasteringBufferLimitError) {
+    return {
+      error: error.message,
+      code: MASTERING_BUFFER_LIMIT_ERROR_CODE,
+      totalFrames: error.totalFrames,
+      maxFrames: error.maxFrames,
+      sampleRate: error.sampleRate,
+    };
+  }
+  return { error: error instanceof Error ? error.message : String(error) };
 }
 
 /** Yields one macrotask so queued messages (cancel) get processed. */
@@ -327,10 +358,11 @@ scope.onmessage = (event: MessageEvent<ExportRequest>) => {
     try {
       await handle(request);
     } catch (error) {
+      const serialized = serializeExportError(error);
       post({
         id: request.id,
         type: 'error',
-        error: error instanceof Error ? error.message : String(error),
+        ...serialized,
       });
     }
   });

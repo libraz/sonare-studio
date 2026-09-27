@@ -140,6 +140,8 @@ export const dialogs = {
     cancel: 'Cancel',
     cancelled: 'Export cancelled.',
     workerError: 'The export worker stopped unexpectedly. Please try exporting again.',
+    masteringBufferLimit:
+      'This export is too long for the selected mastering chain ({duration}s; maximum {limit}s). Choose a shorter range or turn off the master chain and export without mastering.',
     automationWarningTitle: 'Automation export limitation',
     automationWarningMessage:
       'Some automation cannot vary during offline export and will be evaluated at the render start. Continue with these limitations?',

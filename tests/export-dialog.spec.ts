@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
-import type { ExportRenderHandle } from '@/export/client';
+import { type ExportRenderHandle, MasteringBufferLimitError } from '@/export/client';
 import { type EncodeFlacOptions, encodeFlac } from '@/export/flac';
 import {
   MixdownCancelledError,
@@ -422,6 +422,24 @@ describe('ExportDialog', () => {
 
     expect(control.render).not.toHaveBeenCalled();
     expect(q('.export-cancelled')).not.toBeNull();
+  });
+
+  it('turns a whole-buffer mastering limit into an actionable localized message', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await clickExport();
+    control.reject(
+      new MasteringBufferLimitError({
+        totalFrames: 33_554_433,
+        maxFrames: 33_554_432,
+        sampleRate: 48_000,
+      }),
+    );
+    await flushPromises();
+
+    expect(q('.dialog-error')?.textContent).toContain('Choose a shorter range');
+    expect(q('.dialog-error')?.textContent).toContain('master chain');
+    expect(q('.dialog-error')?.textContent).not.toContain('WASM Float32 input budget');
   });
 
   it('confirms before integer encoding an over-0 dBFS mixdown', async () => {

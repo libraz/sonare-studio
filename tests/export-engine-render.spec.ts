@@ -2502,6 +2502,26 @@ describe('renderProjectWithEngine', () => {
     expect(params.get(0x4d58ff01)).toBeCloseTo(-3, 5);
   });
 
+  it('renders master panner details even without inserts or EQ', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('fixture mixer is missing');
+    doc.mixer.master.panLaw = 'const6dB';
+    doc.mixer.master.panMode = 'dualPan';
+    doc.mixer.master.dualPan = { left: -0.5, right: 0.75 };
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const scenes = engine.named('setMasterStripJson');
+    expect(scenes).toHaveLength(1);
+    expect(JSON.parse(scenes[0][1] as string).strips[0]).toMatchObject({
+      panLaw: 2,
+      panMode: 2,
+      dualPanLeft: -0.5,
+      dualPanRight: 0.75,
+    });
+  });
+
   it('renders stems as isolated engine passes without the master stage', async () => {
     const engines: FakeEngine[] = [];
     const result = await renderProjectWithEngine(makeDoc(), {
@@ -4614,6 +4634,35 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     ]);
   });
 
+  it('exports group-bus pan and EQ through the same bus strip declaration', async () => {
+    const doc = makeGroupDoc();
+    const group = doc.tracks[2] as unknown as {
+      mixer: Record<string, unknown>;
+    };
+    group.mixer.pan = -0.4;
+    group.mixer.panLaw = 'const6dB';
+    group.mixer.panMode = 'stereoPan';
+    group.mixer.eq = {
+      enabled: true,
+      bands: [{ enabled: true, type: 'peak', frequencyHz: 800, gainDb: 2, q: 1 }],
+    };
+
+    const engine = new FakeEngineWithBusEq();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const scene = JSON.parse(engine.named('setBusStripJson')[0][2] as string);
+    expect(scene.buses[0].id).toBe('bus-2');
+    expect(scene.buses[0]).toMatchObject({
+      pan: -0.4,
+      panLaw: 2,
+      panMode: 1,
+      eq: {
+        enabled: true,
+        bands: [{ enabled: true, type: 'peak', frequencyHz: 800, gainDb: 2, q: 1 }],
+      },
+    });
+  });
+
   it('floors a muted group bus to silence and skips the bus strip without enabled inserts', async () => {
     const doc = makeGroupDoc();
     const group = doc.tracks[2] as unknown as {
@@ -5025,6 +5074,38 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setBusStripEqBandJson')).toEqual([
       ['setBusStripEqBandJson', 1, 0, JSON.stringify(band)],
     ]);
+  });
+
+  it('exports return-bus pan and EQ fields with neutral defaults omitted', async () => {
+    const doc = makeDoc();
+    const band = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
+    if (doc.mixer) {
+      doc.mixer.buses[0].strip = {
+        gainDb: 0,
+        pan: 0.25,
+        panLaw: 'linear0dB',
+        panMode: 'dualPan',
+        dualPan: { left: -0.5, right: 0.75 },
+        sends: [],
+        inserts: [],
+        eq: { enabled: true, bands: [band] },
+      };
+    }
+
+    const engine = new FakeEngineWithBusEq();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const scene = JSON.parse(engine.named('setBusStripJson')[0][2] as string);
+    expect(scene.buses[0]).toMatchObject({
+      pan: 0.25,
+      panLaw: 3,
+      panMode: 2,
+      dualPanLeft: -0.5,
+      dualPanRight: 0.75,
+      eq: { enabled: true, bands: [band] },
+    });
+    expect(scene.buses[0]).not.toHaveProperty('inputTrimDb');
+    expect(scene.buses[0]).not.toHaveProperty('width');
   });
 
   it('replays bus gain automation lanes before rendering', async () => {
