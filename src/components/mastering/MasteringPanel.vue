@@ -8,6 +8,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { renderMixdownInWorker } from '@/export/client';
 import { formatClippingCensus } from '@/export/export-issue-format';
 import type { MixdownResult } from '@/export/mixdown';
+import { dbToLinear } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import {
   addMasteringProcessor,
@@ -21,6 +22,7 @@ import {
   setMasteringPresetOverride,
 } from '@/project/commands';
 import { createDefaultMasteringChain, type MasteringChainState } from '@/project/mixer';
+import { getWasmModule } from '@/project/runtime';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -41,6 +43,18 @@ import {
   humanizePresetName,
   loadMasteringPresetCatalog,
 } from '@/ui/mastering/preset-catalog';
+import {
+  getPresetControlDescriptor,
+  hasPresetControlOverride,
+  isKnownPresetOverrideKey,
+  PRESET_CONTROL_DESCRIPTORS,
+  type PresetControlDescriptor,
+  type PresetControlKey,
+  parsePresetControlValue,
+  presetControlOverridesForEdit,
+  presetControlOverridesForReset,
+  resolvePresetControlValue,
+} from '@/ui/mastering/preset-controls';
 import {
   createMasteringPreviewController,
   type MasteringPreviewState,
@@ -64,7 +78,13 @@ import {
   type StreamingTarget,
   streamingTargetsFromReport,
 } from '@/ui/mastering/streaming';
-import { createAudioPreview } from '@/ui/media/preview';
+import {
+  calculatePreviewLevelMatch,
+  createABAudioPreview,
+  DEFAULT_PREVIEW_GAIN,
+  type PreviewContextFactory,
+  type PreviewLevelMatch,
+} from '@/ui/media/preview';
 import {
   groupInsertCatalogEntries,
   type InsertCatalogGroup,
@@ -103,6 +123,8 @@ const props = withDefaults(
     renderMixdown?: PreviewRenderFn | null;
     /** Browser decoder override for reference-comparison tests. */
     decodeReference?: ((file: File) => Promise<MasteringReferenceAudio>) | null;
+    /** AudioContext factory override for A/B monitor tests. */
+    previewContextFactory?: PreviewContextFactory | null;
   }>(),
   {
     loopEnabled: false,
@@ -111,6 +133,7 @@ const props = withDefaults(
     previewBars: DEFAULT_PREVIEW_BARS,
     renderMixdown: null,
     decodeReference: null,
+    previewContextFactory: null,
   },
 );
 
@@ -164,51 +187,124 @@ function onSelectPreset(preset: string | null): void {
 
 // --- Preset overrides ---------------------------------------------------------
 
-const presetOverrideKey = ref('');
-const presetOverrideValue = ref('');
+/** Runtime parameters from the selected preset, with a safe empty fallback. */
+const presetParams = computed<Readonly<Record<string, unknown>>>(() => {
+  const preset = chain.value.preset;
+  if (!preset) return {};
+  try {
+    return getWasmModule().masteringPresetParams(preset as MasteringPreset);
+  } catch {
+    return {};
+  }
+});
 
-/** Public, cross-preset override paths exposed by the mastering API. */
-const KNOWN_PRESET_OVERRIDE_KEYS = [
-  'loudness.enabled',
-  'loudness.targetLufs',
-  'loudness.ceilingDb',
-  'loudness.truePeakOversample',
-  'loudness.releaseMs',
-  'loudness.maxLimiterGainReductionDb',
-  'repair.reductionDb',
-] as const;
-const presetOverrideKeyIsKnown = computed(() =>
-  KNOWN_PRESET_OVERRIDE_KEYS.includes(
-    presetOverrideKey.value.trim() as (typeof KNOWN_PRESET_OVERRIDE_KEYS)[number],
+const presetControlSections = computed(() => ({
+  output: PRESET_CONTROL_DESCRIPTORS.filter((descriptor) => descriptor.section === 'output'),
+  restoration: PRESET_CONTROL_DESCRIPTORS.filter(
+    (descriptor) => descriptor.section === 'restoration',
   ),
-);
+}));
 
 const presetOverrideEntries = computed(() =>
-  Object.entries(chain.value.presetOverrides ?? {}).sort(([a], [b]) => a.localeCompare(b)),
+  Object.entries(chain.value.presetOverrides ?? {})
+    .filter(([key]) => !isKnownPresetOverrideKey(key))
+    .sort(([a], [b]) => a.localeCompare(b)),
 );
 
-function parsePresetOverrideValue(input: string): number | boolean {
-  const value = input.trim();
-  if (value.toLowerCase() === 'true') return true;
-  if (value.toLowerCase() === 'false') return false;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) {
-    throw new RangeError(t.value.shell.mastering.presetOverrides.invalidValue);
-  }
-  return numeric;
+function presetControlValue(descriptor: PresetControlDescriptor) {
+  return resolvePresetControlValue(
+    descriptor,
+    presetParams.value,
+    chain.value.presetOverrides ?? {},
+  );
 }
 
-function onAddPresetOverride(): void {
-  try {
-    const key = presetOverrideKey.value.trim();
-    const value = parsePresetOverrideValue(presetOverrideValue.value);
-    setMasteringPresetOverride(key, value);
-    presetOverrideKey.value = '';
-    presetOverrideValue.value = '';
-    error.value = '';
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+function presetControlLabel(key: PresetControlKey): string {
+  const labels = t.value.shell.mastering.presetOverrides.controls;
+  switch (key) {
+    case 'loudness.enabled':
+      return labels.loudnessEnabled;
+    case 'loudness.targetLufs':
+      return labels.targetLufs;
+    case 'loudness.ceilingDb':
+      return labels.ceilingDb;
+    case 'loudness.truePeakOversample':
+      return labels.truePeakOversample;
+    case 'loudness.releaseMs':
+      return labels.releaseMs;
+    case 'loudness.maxLimiterGainReductionDb':
+      return labels.maxLimiterGainReductionDb;
+    case 'repair.denoise.enabled':
+      return labels.denoiseEnabled;
+    case 'repair.denoise.reductionDb':
+      return labels.denoiseReductionDb;
   }
+  return key;
+}
+
+function presetControlUnit(descriptor: PresetControlDescriptor): string {
+  if (descriptor.key === 'loudness.truePeakOversample') {
+    return t.value.shell.mastering.presetOverrides.units.times;
+  }
+  if (descriptor.key === 'loudness.targetLufs') {
+    return t.value.shell.mastering.presetOverrides.units.lufs;
+  }
+  if (descriptor.key === 'loudness.ceilingDb') {
+    return t.value.shell.mastering.presetOverrides.units.dbtp;
+  }
+  if (descriptor.key === 'loudness.releaseMs') {
+    return t.value.shell.mastering.presetOverrides.units.ms;
+  }
+  if (descriptor.kind === 'number') return t.value.shell.mastering.presetOverrides.units.db;
+  return '';
+}
+
+function presetControlMin(descriptor: PresetControlDescriptor): number | undefined {
+  return descriptor.min;
+}
+
+function presetControlMax(descriptor: PresetControlDescriptor): number | undefined {
+  return descriptor.max;
+}
+
+function presetControlStep(descriptor: PresetControlDescriptor): number | undefined {
+  return descriptor.step;
+}
+
+function applyPresetControl(key: string, input: unknown): void {
+  const descriptor = getPresetControlDescriptor(key);
+  if (!descriptor || !chain.value.preset) return;
+  try {
+    const value = parsePresetControlValue(descriptor, input);
+    const overrides = chain.value.presetOverrides ?? {};
+    const next = presetControlOverridesForEdit(descriptor, value, presetParams.value, overrides);
+    runCommand(() => {
+      applyMasteringPresetWithOverrides(chain.value.preset as string, next);
+    });
+  } catch {
+    error.value = t.value.shell.mastering.presetOverrides.invalidValue;
+  }
+}
+
+function onPresetControlInput(key: string, event: Event): void {
+  const descriptor = getPresetControlDescriptor(key);
+  const target = event.target as HTMLInputElement | HTMLSelectElement | null;
+  if (!descriptor || !target) return;
+  applyPresetControl(
+    key,
+    descriptor.kind === 'boolean' ? (target as HTMLInputElement).checked : target.value,
+  );
+}
+
+function onResetPresetControl(key: PresetControlKey): void {
+  const overrides = chain.value.presetOverrides ?? {};
+  if (!hasPresetControlOverride(key, overrides)) return;
+  const descriptor = getPresetControlDescriptor(key);
+  if (!descriptor) return;
+  const next = presetControlOverridesForReset(descriptor, presetParams.value, overrides);
+  runCommand(() => {
+    applyMasteringPresetWithOverrides(chain.value.preset as string, next);
+  });
 }
 
 function onClearPresetOverride(key: string): void {
@@ -602,12 +698,18 @@ previewState.value = controller.state();
 
 /** A = chain applied, B = chain bypassed. */
 const variant = ref<'processed' | 'bypassed'>('processed');
+/** Monitor-only A/B level matching; enabled by default for fair comparisons. */
+const levelMatchEnabled = ref(true);
 
 const activeResult = computed<MixdownResult | null>(() => {
   const state = previewState.value;
   if (!state) return null;
   return variant.value === 'processed' ? state.processed : state.bypassed;
 });
+
+const canPlayPreview = computed(
+  () => !!previewState.value?.processed && !!previewState.value?.bypassed,
+);
 
 /** Bumped on any project change that could affect the rendered preview. */
 const projectRevision = ref(0);
@@ -632,6 +734,16 @@ watch(
 const previewStale = computed(
   () => previewState.value?.status === 'ready' && previewRevision.value !== projectRevision.value,
 );
+
+const levelMatch = computed<PreviewLevelMatch>(() => {
+  if (previewStale.value) {
+    return { available: false, processedGainDb: 0, bypassedGainDb: 0 };
+  }
+  return calculatePreviewLevelMatch(
+    previewState.value?.processed?.report.lufs,
+    previewState.value?.bypassed?.report.lufs,
+  );
+});
 
 async function onPreview(): Promise<void> {
   let doc: ReturnType<typeof serializeProject>;
@@ -668,7 +780,8 @@ function onCancelPreview(): void {
 
 const playingId = ref<string | null>(null);
 
-const audioPreview = createAudioPreview({
+const audioPreview = createABAudioPreview({
+  ...(props.previewContextFactory ? { contextFactory: props.previewContextFactory } : {}),
   onChange: (id) => {
     playingId.value = id;
   },
@@ -676,13 +789,30 @@ const audioPreview = createAudioPreview({
 
 const isPlaying = computed(() => playingId.value !== null);
 
-function playActiveResult(): void {
-  const result = activeResult.value;
-  if (!result) return;
-  audioPreview.play(`mastering-preview:${variant.value}`, {
-    channels: result.channels,
-    sampleRate: result.sampleRate,
-  });
+function monitorPreviewGains(): { processed: number; bypassed: number } {
+  if (!levelMatchEnabled.value || !levelMatch.value.available) {
+    return { processed: DEFAULT_PREVIEW_GAIN, bypassed: DEFAULT_PREVIEW_GAIN };
+  }
+  return {
+    processed: DEFAULT_PREVIEW_GAIN * dbToLinear(levelMatch.value.processedGainDb),
+    bypassed: DEFAULT_PREVIEW_GAIN * dbToLinear(levelMatch.value.bypassedGainDb),
+  };
+}
+
+function playActiveResult(offsetSeconds = 0): void {
+  const processed = previewState.value?.processed;
+  const bypassed = previewState.value?.bypassed;
+  if (!processed || !bypassed) return;
+  audioPreview.play(
+    'mastering-preview',
+    {
+      processed: { channels: processed.channels, sampleRate: processed.sampleRate },
+      bypassed: { channels: bypassed.channels, sampleRate: bypassed.sampleRate },
+    },
+    variant.value,
+    monitorPreviewGains(),
+    offsetSeconds,
+  );
 }
 
 function onTogglePlay(): void {
@@ -693,9 +823,21 @@ function onTogglePlay(): void {
 function onSelectVariant(next: 'processed' | 'bypassed'): void {
   if (variant.value === next) return;
   variant.value = next;
-  // Keep the A/B comparison seamless: restart playback on the other render.
-  if (isPlaying.value) playActiveResult();
+  // Both variants are already running at the same audio time. Switching only
+  // ramps their separate monitor gains, so playback position never jumps.
+  if (isPlaying.value) audioPreview.selectVariant(next);
 }
+
+function onToggleLevelMatch(enabled: boolean): void {
+  levelMatchEnabled.value = enabled;
+  if (isPlaying.value) audioPreview.setGains(monitorPreviewGains());
+}
+
+watch([levelMatch, levelMatchEnabled], () => {
+  // A project edit can make the rendered report stale while playback is
+  // active. Keep the monitor target in sync with the visible Unavailable state.
+  if (isPlaying.value) audioPreview.setGains(monitorPreviewGains());
+});
 
 // --- Loudness readout --------------------------------------------------------------
 
@@ -938,60 +1080,153 @@ onBeforeUnmount(() => {
               }}
             </span>
           </div>
-          <div class="preset-override-form">
-            <input
-              v-model="presetOverrideKey"
-              class="preset-override-key"
-              type="text"
-              list="preset-override-key-suggestions"
-              :disabled="!chain.preset"
-              :placeholder="t.shell.mastering.presetOverrides.keyPlaceholder"
-              :aria-label="t.shell.mastering.presetOverrides.key"
-              @keydown.enter.prevent="onAddPresetOverride"
-            />
-            <datalist id="preset-override-key-suggestions">
-              <option v-for="key in KNOWN_PRESET_OVERRIDE_KEYS" :key="key" :value="key" />
-            </datalist>
-            <input
-              v-model="presetOverrideValue"
-              class="preset-override-value"
-              type="text"
-              :disabled="!chain.preset"
-              :placeholder="t.shell.mastering.presetOverrides.valuePlaceholder"
-              :aria-label="t.shell.mastering.presetOverrides.value"
-              @keydown.enter.prevent="onAddPresetOverride"
-            />
-            <button
-              type="button"
-              class="preset-override-add"
-              :disabled="!chain.preset"
-              @click="onAddPresetOverride"
-            >
-              {{ t.shell.mastering.presetOverrides.add }}
-            </button>
-          </div>
-          <p
-            v-if="presetOverrideKey.trim() && !presetOverrideKeyIsKnown"
-            class="preset-override-warning"
-            role="status"
-          >
-            {{ t.shell.mastering.presetOverrides.unknownKey }}
+          <p v-if="chain.preset" class="preset-overrides-preview-note">
+            {{ t.shell.mastering.presetOverrides.previewOnly }}
           </p>
-          <ul v-if="presetOverrideEntries.length > 0" class="preset-override-list">
-            <li v-for="[key, value] in presetOverrideEntries" :key="key">
-              <span class="preset-override-param">{{ key }}</span>
-              <span class="preset-override-equals">=</span>
-              <span class="preset-override-current">{{ String(value) }}</span>
-              <button
-                type="button"
-                class="preset-override-remove"
-                :aria-label="t.shell.mastering.presetOverrides.remove"
-                @click="onClearPresetOverride(key)"
+          <div class="preset-control-section">
+            <h3 class="preset-control-section-title">
+              {{ t.shell.mastering.presetOverrides.output }}
+            </h3>
+            <div class="preset-control-grid">
+              <div
+                v-for="descriptor in presetControlSections.output"
+                :key="descriptor.key"
+                class="preset-control"
+                :class="{
+                  overridden: hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {}),
+                }"
+                :data-preset-control="descriptor.key"
               >
-                x
-              </button>
-            </li>
-          </ul>
+                <span class="preset-control-label">{{ presetControlLabel(descriptor.key) }}</span>
+                <span class="preset-control-input">
+                  <input
+                    v-if="descriptor.kind === 'boolean'"
+                    type="checkbox"
+                    :checked="Boolean(presetControlValue(descriptor))"
+                    :disabled="!chain.preset"
+                    :aria-label="presetControlLabel(descriptor.key)"
+                    @change="onPresetControlInput(descriptor.key, $event)"
+                  />
+                  <select
+                    v-else-if="descriptor.kind === 'enum'"
+                    :value="presetControlValue(descriptor)"
+                    :disabled="!chain.preset"
+                    :aria-label="presetControlLabel(descriptor.key)"
+                    @change="onPresetControlInput(descriptor.key, $event)"
+                  >
+                    <option v-for="option in descriptor.options" :key="option" :value="option">
+                      {{ option }}{{ presetControlUnit(descriptor) }}
+                    </option>
+                  </select>
+                  <input
+                    v-else
+                    type="number"
+                    :value="presetControlValue(descriptor)"
+                    :min="presetControlMin(descriptor)"
+                    :max="presetControlMax(descriptor)"
+                    :step="presetControlStep(descriptor)"
+                    :disabled="!chain.preset"
+                    :aria-label="presetControlLabel(descriptor.key)"
+                    @change="onPresetControlInput(descriptor.key, $event)"
+                  />
+                  <span v-if="presetControlUnit(descriptor)" class="preset-control-unit">
+                    {{ presetControlUnit(descriptor) }}
+                  </span>
+                </span>
+                <button
+                  v-if="hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {})"
+                  type="button"
+                  class="preset-control-reset"
+                  :aria-label="
+                    formatMessage(t.shell.mastering.presetOverrides.reset, {
+                      label: presetControlLabel(descriptor.key),
+                    })
+                  "
+                  :disabled="!chain.preset"
+                  @click="onResetPresetControl(descriptor.key)"
+                >
+                  ↺
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="preset-control-section">
+            <h3 class="preset-control-section-title">
+              {{ t.shell.mastering.presetOverrides.restoration }}
+            </h3>
+            <div class="preset-control-grid">
+              <div
+                v-for="descriptor in presetControlSections.restoration"
+                :key="descriptor.key"
+                class="preset-control"
+                :class="{
+                  overridden: hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {}),
+                }"
+                :data-preset-control="descriptor.key"
+                >
+                  <span class="preset-control-label">{{ presetControlLabel(descriptor.key) }}</span>
+                  <span class="preset-control-input">
+                    <input
+                      v-if="descriptor.kind === 'boolean'"
+                      type="checkbox"
+                      :checked="Boolean(presetControlValue(descriptor))"
+                      :disabled="!chain.preset"
+                      :aria-label="presetControlLabel(descriptor.key)"
+                      @change="onPresetControlInput(descriptor.key, $event)"
+                    />
+                    <input
+                      v-else
+                      type="number"
+                      :value="presetControlValue(descriptor)"
+                      :min="presetControlMin(descriptor)"
+                      :max="presetControlMax(descriptor)"
+                      :step="presetControlStep(descriptor)"
+                      :disabled="!chain.preset"
+                      :aria-label="presetControlLabel(descriptor.key)"
+                      @change="onPresetControlInput(descriptor.key, $event)"
+                    />
+                    <span class="preset-control-unit">{{ presetControlUnit(descriptor) }}</span>
+                  </span>
+                <button
+                  v-if="hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {})"
+                  type="button"
+                  class="preset-control-reset"
+                  :aria-label="
+                    formatMessage(t.shell.mastering.presetOverrides.reset, {
+                      label: presetControlLabel(descriptor.key),
+                    })
+                  "
+                  :disabled="!chain.preset"
+                  @click="onResetPresetControl(descriptor.key)"
+                >
+                  ↺
+                </button>
+              </div>
+            </div>
+          </div>
+          <details v-if="presetOverrideEntries.length > 0" class="preset-override-advanced">
+            <summary>
+              {{ t.shell.mastering.presetOverrides.advanced }} ({{ presetOverrideEntries.length }})
+            </summary>
+            <ul class="preset-override-list">
+              <li v-for="[key, value] in presetOverrideEntries" :key="key">
+                <span class="preset-override-param">{{ key }}</span>
+                <span class="preset-override-equals">=</span>
+                <span class="preset-override-current">{{ String(value) }}</span>
+                <span class="preset-override-note">
+                  {{ t.shell.mastering.presetOverrides.unknownValue }}
+                </span>
+                <button
+                  type="button"
+                  class="preset-override-remove"
+                  :aria-label="t.shell.mastering.presetOverrides.remove"
+                  @click="onClearPresetOverride(key)"
+                >
+                  ×
+                </button>
+              </li>
+            </ul>
+          </details>
         </section>
         <section class="mastering-reference">
           <div class="mastering-reference-head">
@@ -1032,8 +1267,12 @@ onBeforeUnmount(() => {
           :has-processed="!!previewState?.processed"
           :has-bypassed="!!previewState?.bypassed"
           :variant="variant"
-          :can-play="!!activeResult"
+          :can-play="canPlayPreview"
           :is-playing="isPlaying"
+          :level-match-enabled="levelMatchEnabled"
+          :level-match-available="levelMatch.available"
+          :processed-level-match-db="levelMatch.processedGainDb"
+          :bypassed-level-match-db="levelMatch.bypassedGainDb"
           :stale="previewStale"
           :checking-targets="checkingTargets"
           :streaming-platforms="streamingPlatforms"
@@ -1047,6 +1286,7 @@ onBeforeUnmount(() => {
           @cancel="onCancelPreview"
           @select-variant="onSelectVariant"
           @toggle-play="onTogglePlay"
+          @toggle-level-match="onToggleLevelMatch"
           @check-targets="onCheckTargets"
           @add-streaming-platform="onAddStreamingPlatform"
           @remove-streaming-platform="onRemoveStreamingPlatform"

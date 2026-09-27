@@ -239,14 +239,65 @@
   color: var(--text-4);
 }
 
-.preset-override-form {
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(90px, 130px) auto;
-  gap: var(--sp-2);
-  align-items: center;
+.preset-overrides-preview-note {
+  margin: 0;
+  color: var(--text-4);
+  font: var(--fs-2xs) var(--font-sans);
 }
 
-.preset-override-form input {
+.preset-control-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.preset-control-section-title {
+  margin: 0;
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.preset-control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 3px var(--sp-3);
+}
+
+.preset-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 2px 3px 2px 5px;
+  border-radius: var(--radius-xs);
+}
+
+.preset-control.overridden {
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+}
+
+.preset-control-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font: var(--fs-2xs) var(--font-sans);
+}
+
+.preset-control-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.preset-control-input input[type='number'],
+.preset-control-input select {
+  width: 78px;
   min-width: 0;
   box-sizing: border-box;
   font: var(--fs-2xs) var(--font-sans);
@@ -258,12 +309,28 @@
   padding: 3px 6px;
 }
 
-.preset-override-form input:focus-visible {
+.preset-control-input select {
+  width: 67px;
+  padding-right: 2px;
+}
+
+.preset-control-input input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.preset-control-input input:focus-visible,
+.preset-control-input select:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
 }
 
-.preset-override-add,
+.preset-control-unit {
+  color: var(--text-4);
+  font: var(--fs-2xs) var(--font-mono);
+  white-space: nowrap;
+}
+
+.preset-control-reset,
 .preset-override-remove {
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
@@ -275,19 +342,31 @@
   box-shadow: var(--control-lift);
 }
 
-.preset-override-add:hover:not(:disabled),
+.preset-control-reset:hover:not(:disabled),
 .preset-override-remove:hover:not(:disabled) {
   background: var(--surface-4);
 }
 
-.preset-override-add:disabled {
+.preset-control-reset {
+  width: 20px;
+  padding: 2px 0;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.preset-control-reset:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.preset-override-warning {
-  margin: 0;
-  color: var(--warning-text);
+.preset-override-advanced {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-1);
+}
+
+.preset-override-advanced summary {
+  cursor: pointer;
+  color: var(--text-4);
   font: var(--fs-2xs) var(--font-sans);
 }
 
@@ -340,6 +419,11 @@
   padding: 1px 5px;
   color: var(--text-4);
   box-shadow: none;
+}
+
+.preset-override-list .preset-override-note {
+  color: var(--text-4);
+  font: var(--fs-2xs) var(--font-sans);
 }
 
 .chain-rack {

@@ -34,6 +34,14 @@ defineProps<{
   canPlay: boolean;
   /** True while preview playback is running. */
   isPlaying: boolean;
+  /** True when monitor-only loudness matching is enabled. */
+  levelMatchEnabled: boolean;
+  /** True when both A/B integrated-LUFS reports are valid and current. */
+  levelMatchAvailable: boolean;
+  /** Monitor attenuation applied to the processed variant, in dB. */
+  processedLevelMatchDb: number;
+  /** Monitor attenuation applied to the bypassed variant, in dB. */
+  bypassedLevelMatchDb: number;
   /** True when the ready render no longer matches the current project. */
   stale: boolean;
   /** True while a streaming-target check is in flight. */
@@ -59,6 +67,7 @@ const emit = defineEmits<{
   (event: 'cancel'): void;
   (event: 'select-variant', variant: 'processed' | 'bypassed'): void;
   (event: 'toggle-play'): void;
+  (event: 'toggle-level-match', enabled: boolean): void;
   (event: 'check-targets'): void;
   (event: 'add-streaming-platform'): void;
   (event: 'remove-streaming-platform', index: number): void;
@@ -71,6 +80,11 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+function formatAttenuation(value: number): string {
+  const db = Math.abs(value) < 0.05 ? 0 : value;
+  return `${db.toFixed(1)} dB`;
+}
 </script>
 
 <template>
@@ -108,6 +122,30 @@ const { t } = useI18n();
           B
         </button>
       </div>
+      <label class="level-match-toggle">
+        <input
+          type="checkbox"
+          :checked="levelMatchEnabled"
+          :aria-label="t.shell.mastering.levelMatch"
+          @change="emit('toggle-level-match', ($event.target as HTMLInputElement).checked)"
+        />
+        <span>{{ t.shell.mastering.levelMatch }}</span>
+      </label>
+      <span
+        class="level-match-status"
+        :class="{ unavailable: levelMatchEnabled && !levelMatchAvailable }"
+        role="status"
+        :aria-label="t.shell.mastering.levelMatchStatus"
+      >
+        <template v-if="!levelMatchEnabled">{{ t.shell.mastering.levelMatchOff }}</template>
+        <template v-else-if="!levelMatchAvailable">
+          {{ t.shell.mastering.levelMatchUnavailable }}
+        </template>
+        <template v-else>
+          A {{ formatAttenuation(processedLevelMatchDb) }} · B
+          {{ formatAttenuation(bypassedLevelMatchDb) }}
+        </template>
+      </span>
       <button type="button" class="play-button" :disabled="!canPlay" @click="emit('toggle-play')">
         <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
         <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>

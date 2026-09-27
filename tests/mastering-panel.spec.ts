@@ -11,11 +11,14 @@ import {
   clearHistory,
   setMasteringEnabled,
   setMasteringPreset,
+  setMasteringPresetOverride,
   undo,
 } from '@/project/commands';
 import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { DEFAULT_PREVIEW_GAIN } from '@/ui/media/preview';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
+import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -33,7 +36,7 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
-function makeResult(value: number): MixdownResult {
+function makeResult(value: number, lufs = -14): MixdownResult {
   return {
     channels: [new Float32Array([value]), new Float32Array([value])],
     sampleRate: 48000,
@@ -41,7 +44,7 @@ function makeResult(value: number): MixdownResult {
     report: {
       peakDb: -6,
       truePeakDb: -0.1,
-      lufs: -14,
+      lufs,
       momentaryLufs: -12.5,
       shortTermLufs: -13.2,
       loudnessRange: 4.5,
@@ -163,57 +166,152 @@ describe('MasteringPanel.vue', () => {
     expect(remove).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
   });
 
-  it('edits flat mastering preset overrides from the panel', async () => {
+  it('edits typed mastering preset controls and resets them to the preset', async () => {
     setMasteringPreset('streaming');
     const wrapper = mount(MasteringPanel);
 
-    await wrapper.find('.preset-override-key').setValue('loudness.targetLufs');
-    await wrapper.find('.preset-override-value').setValue('-14');
-    await wrapper.find('.preset-override-add').trigger('click');
-
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
-    expect((wrapper.find('.preset-override-key').element as HTMLInputElement).value).toBe('');
-    expect((wrapper.find('.preset-override-value').element as HTMLInputElement).value).toBe('');
-
-    await wrapper.find('.preset-override-key').setValue('limiter.truePeak');
-    await wrapper.find('.preset-override-value').setValue('true');
-    await wrapper.find('.preset-override-add').trigger('click');
+    const target = wrapper.get('[data-preset-control="loudness.targetLufs"] input');
+    expect((target.element as HTMLInputElement).value).toBe('-12');
+    await target.setValue('-14');
 
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'limiter.truePeak': true,
+      'loudness.enabled': true,
       'loudness.targetLufs': -14,
     });
-    expect(wrapper.findAll('.preset-override-list li').map((item) => item.text())).toEqual([
-      'limiter.truePeak=true x',
-      'loudness.targetLufs=-14 x',
-    ]);
+    expect(wrapper.get('[data-preset-control="loudness.targetLufs"]').classes()).toContain(
+      'overridden',
+    );
 
-    await wrapper.findAll('.preset-override-remove')[0].trigger('click');
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+    await wrapper
+      .get('[data-preset-control="loudness.targetLufs"] .preset-control-reset')
+      .trigger('click');
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+    expect(
+      (wrapper.get('[data-preset-control="loudness.targetLufs"] input').element as HTMLInputElement)
+        .value,
+    ).toBe('-12');
+
+    await wrapper.get('[data-preset-control="loudness.truePeakOversample"] select').setValue('8');
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'loudness.enabled': true,
+      'loudness.truePeakOversample': 8,
+    });
+    undo();
+    await nextTick();
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
   });
 
-  it('suggests supported override keys and warns before accepting an unknown one', async () => {
+  it('allows enabling a preset denoise stage whose default is off', async () => {
     setMasteringPreset('streaming');
     const wrapper = mount(MasteringPanel);
+    const denoise = wrapper.get('[data-preset-control="repair.denoise.enabled"] input');
+    expect((denoise.element as HTMLInputElement).checked).toBe(false);
 
-    expect(
-      wrapper
-        .findAll('#preset-override-key-suggestions option')
-        .map((option) => option.attributes('value')),
-    ).toContain('loudness.targetLufs');
+    await denoise.setValue(true);
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.denoise.enabled': true,
+    });
+    expect((denoise.element as HTMLInputElement).checked).toBe(true);
+  });
 
-    await wrapper.find('.preset-override-key').setValue('loudness.targetLufs');
-    expect(wrapper.find('.preset-override-warning').exists()).toBe(false);
-    await wrapper.find('.preset-override-key').setValue('loudness.targetLuf');
-    expect(wrapper.get('.preset-override-warning').text()).toContain('Unknown override key');
+  it('resets denoise enable without activating a remaining reduction override', async () => {
+    setMasteringPreset('streaming');
+    const wrapper = mount(MasteringPanel);
+    const reduction = wrapper.get('[data-preset-control="repair.denoise.reductionDb"] input');
+    const enabled = wrapper.get('[data-preset-control="repair.denoise.enabled"] input');
+
+    await reduction.setValue(80);
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.denoise.enabled': false,
+      'repair.denoise.reductionDb': 80,
+    });
+    await enabled.setValue(true);
+    await wrapper
+      .get('[data-preset-control="repair.denoise.enabled"] .preset-control-reset')
+      .trigger('click');
+    expect((enabled.element as HTMLInputElement).checked).toBe(false);
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.denoise.enabled': false,
+      'repair.denoise.reductionDb': 80,
+    });
+
+    await wrapper
+      .get('[data-preset-control="repair.denoise.reductionDb"] .preset-control-reset')
+      .trigger('click');
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+  });
+
+  it('shows the effective denoise state for a legacy parameter-only override', async () => {
+    setMasteringPreset('streaming');
+    setMasteringPresetOverride('repair.reductionDb', 80);
+    const wrapper = mount(MasteringPanel);
+    const enabled = wrapper.get('[data-preset-control="repair.denoise.enabled"] input');
+    expect((enabled.element as HTMLInputElement).checked).toBe(true);
+
+    await enabled.setValue(false);
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.reductionDb': 80,
+      'repair.denoise.enabled': false,
+    });
+    expect((enabled.element as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('normalizes duplicate denoise aliases in one undoable edit', async () => {
+    setMasteringPreset('streaming');
+    setMasteringPresetOverride('repair.denoise.reductionDb', 18);
+    setMasteringPresetOverride('repair.reductionDb', 20);
+    clearHistory();
+    const wrapper = mount(MasteringPanel);
+
+    const denoise = wrapper.get('[data-preset-control="repair.denoise.reductionDb"] input');
+    await denoise.setValue(22);
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.denoise.enabled': true,
+      'repair.denoise.reductionDb': 22,
+    });
+
+    undo();
+    await nextTick();
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.denoise.reductionDb': 18,
+      'repair.reductionDb': 20,
+    });
+
+    await wrapper
+      .get('[data-preset-control="repair.denoise.reductionDb"] .preset-control-reset')
+      .trigger('click');
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+    undo();
+    await nextTick();
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      'repair.denoise.reductionDb': 18,
+      'repair.reductionDb': 20,
+    });
+  });
+
+  it('preserves unknown saved overrides in Advanced and allows removing them', async () => {
+    setMasteringPreset('streaming');
+    setMasteringPresetOverride('limiter.truePeak', true);
+    const wrapper = mount(MasteringPanel);
+
+    const advanced = wrapper.get('.preset-override-advanced');
+    expect(advanced.text()).toContain('limiter.truePeak');
+    expect(advanced.text()).toContain('Saved by an older version');
+    await advanced.get('.preset-override-remove').trigger('click');
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
   });
 
   it('keeps preset override controls disabled until a preset is selected', async () => {
     const wrapper = mount(MasteringPanel);
 
-    expect(wrapper.find<HTMLInputElement>('.preset-override-key').element.disabled).toBe(true);
-    expect(wrapper.find<HTMLInputElement>('.preset-override-value').element.disabled).toBe(true);
-    expect(wrapper.find<HTMLButtonElement>('.preset-override-add').element.disabled).toBe(true);
+    expect(
+      wrapper.findAll('[data-preset-control] input, [data-preset-control] select'),
+    ).toHaveLength(8);
+    for (const control of wrapper.findAll<HTMLInputElement | HTMLSelectElement>(
+      '[data-preset-control] input, [data-preset-control] select',
+    )) {
+      expect(control.element.disabled).toBe(true);
+    }
   });
 
   it('clears the preset via the "No preset" item', async () => {
@@ -413,6 +511,78 @@ describe('MasteringPanel.vue', () => {
     expect(abButtons[1].attributes('disabled')).toBeUndefined();
     expect(wrapper.find('.play-button').attributes('disabled')).toBeUndefined();
     expect(wrapper.find('.preview-stale').exists()).toBe(false);
+  });
+
+  it('level matches the louder A/B render and can be disabled for a raw comparison', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5, -10));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25, -14));
+    await flush();
+
+    const toggle = wrapper.get<HTMLInputElement>('.level-match-toggle input');
+    expect(toggle.element.checked).toBe(true);
+    expect(wrapper.get('.level-match-status').text()).toBe('A -4.0 dB · B 0.0 dB');
+
+    await toggle.setValue(false);
+    expect(wrapper.get('.level-match-status').text()).toBe('Off');
+    await toggle.setValue(true);
+    expect(wrapper.get('.level-match-status').text()).toBe('A -4.0 dB · B 0.0 dB');
+  });
+
+  it('reports level matching as unavailable for invalid or stale measurements', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResultWithoutLoudness(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25, -14));
+    await flush();
+    expect(wrapper.get('.level-match-status').text()).toBe('Unavailable');
+
+    setMasteringPreset('pop');
+    await nextTick();
+    expect(wrapper.get('.preview-stale').exists()).toBe(true);
+    expect(wrapper.get('.level-match-status').text()).toBe('Unavailable');
+  });
+
+  it('returns the active monitor to unity when a playing preview becomes stale', async () => {
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const context = createFakeAudioContext();
+    const wrapper = mount(MasteringPanel, {
+      props: {
+        renderMixdown: fake.render,
+        previewContextFactory: () => asAudioContext(context),
+      },
+    });
+
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5, -10));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25, -14));
+    await flush();
+    await wrapper.findAll('.ab-button')[0].trigger('click');
+    await wrapper.find('.play-button').trigger('click');
+    context.currentTime = 0.02;
+    const attenuatedProcessedGain = DEFAULT_PREVIEW_GAIN * 10 ** (-4 / 20);
+    expect(context.gains[0].gain.value).toBeCloseTo(attenuatedProcessedGain);
+
+    setMasteringPreset('pop');
+    await flush();
+    expect(wrapper.get('.level-match-status').text()).toBe('Unavailable');
+    expect(wrapper.get('.preview-stale').exists()).toBe(true);
+    // The monitor follows the same short clickless ramp as an A/B switch.
+    context.currentTime = 0.04;
+    expect(context.gains[0].gain.value).toBeCloseTo(DEFAULT_PREVIEW_GAIN);
+    expect(context.sources).toHaveLength(2);
+    expect(context.sources.every((source) => source.started)).toBe(true);
   });
 
   it('reports how much the previewed chain clipped, not only that it might', async () => {
