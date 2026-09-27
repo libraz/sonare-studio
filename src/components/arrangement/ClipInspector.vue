@@ -155,6 +155,7 @@ function onLoopToggle(): void {
       type="button"
       class="ci-redetect"
       v-tooltip="t.shell.arrangement.clipInspector.redetectTitle"
+      :disabled="props.frozen"
       @click="emit('redetectTempo', props.clip.id)"
     >
       {{ t.shell.arrangement.clipInspector.redetect }}
