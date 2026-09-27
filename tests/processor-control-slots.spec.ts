@@ -52,7 +52,7 @@ describe('processorControls slots', () => {
         ...keysOf('eq.parametric', 'band2'),
       ]),
     );
-  });
+  }, 60_000); // The first catalog lookup also pays for cold WASM metadata initialization in the full suite.
 
   it('offers a free band per mid/side family', () => {
     const ids = slotIds('eq.midSide', { 'midBand0.gainDb': 2 });
