@@ -4,7 +4,7 @@ SONARE_JS_FILE="src/wasm/sonare.js"
 INDEX_JS_FILE="src/wasm/index.js"
 WORKLET_JS_FILE="src/wasm/worklet.js"
 META_FILE="src/wasm/meta.json"
-LIBSONARE_DIR="../libsonare"
+LIBSONARE_DIR="${LIBSONARE_DIR:-../libsonare}"
 
 file_size() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -81,7 +81,7 @@ if [ -f "$WASM_FILE" ]; then
 
   # Get commit hash from libsonare repo
   COMMIT_HASH=""
-  if [ -d "$LIBSONARE_DIR/.git" ]; then
+  if git -C "$LIBSONARE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     COMMIT_HASH=$(git -C "$LIBSONARE_DIR" rev-parse --short HEAD)
   fi
 

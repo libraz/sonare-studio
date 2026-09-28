@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-LIBSONARE_DIR="../libsonare"
+LIBSONARE_DIR="${LIBSONARE_DIR:-../libsonare}"
 WASM_PKG_DIR="$LIBSONARE_DIR/bindings/wasm"
 DIST_DIR="$WASM_PKG_DIR/dist"
 DEST_DIR="src/wasm"
