@@ -51,7 +51,14 @@ export async function run(ctx) {
       null,
       { timeout: 5000 },
     );
-    const peakLimited = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+    // Read several fresh blocks. The first meter frame after a DSP rebuild can
+    // belong to a quiet transition even while the limiter is working.
+    let peakLimited = -120;
+    for (let i = 0; i < 8; i++) {
+      const peak = await page.evaluate(() => window.__sonareDebug.meterPeakDb());
+      if (peak !== null && peak > peakLimited) peakLimited = peak;
+      await page.waitForTimeout(100);
+    }
 
     // Bypassing the limiter must restore the level, still without re-scheduling.
     await page.evaluate(() => window.__sonareDebug.setMasterInsertEnabled(0, false));
@@ -82,7 +89,7 @@ export async function run(ctx) {
       fail(`master insert edits caused a re-schedule: pending=${stripState.pending}`);
     }
     console.info(
-      `realtime master limiter: live peak capped to ${peakLimited?.toFixed(1)} dB without re-scheduling`,
+      `realtime master limiter: live peak capped to ${peakLimited.toFixed(1)} dB without re-scheduling`,
     );
 
     // Chain equivalence: the offline export must apply the same limiter and
@@ -91,13 +98,13 @@ export async function run(ctx) {
     if (exportLimited.peakDb > -50 || exportLimited.peakDb < -75) {
       fail(`export ignored the master limiter: peak ${exportLimited.peakDb} dB`);
     }
-    if (peakLimited !== null && Math.abs(exportLimited.peakDb - peakLimited) > 8) {
+    if (Math.abs(exportLimited.peakDb - peakLimited) > 8) {
       fail(
         `realtime vs export diverge: live ${peakLimited.toFixed(1)} dB, export ${exportLimited.peakDb.toFixed(1)} dB`,
       );
     }
     console.info(
-      `chain equivalence: live ${peakLimited?.toFixed(1)} dB vs export ${exportLimited.peakDb.toFixed(1)} dB`,
+      `chain equivalence: live ${peakLimited.toFixed(1)} dB vs export ${exportLimited.peakDb.toFixed(1)} dB`,
     );
     await page.evaluate(() => window.__sonareDebug.removeMasterInsert(0));
     await page.waitForFunction(() => window.__sonareDebug.masterInsertCount() === 0, null, {

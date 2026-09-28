@@ -25,6 +25,8 @@ import * as export_dialog from './scenarios/export-dialog.mjs';
 import * as export_equivalence from './scenarios/export-equivalence.mjs';
 import * as export_midi from './scenarios/export-midi.mjs';
 import * as freeze_bounce from './scenarios/freeze-bounce.mjs';
+import * as gs_efx_sf2 from './scenarios/gs-efx-sf2.mjs';
+import * as guitar_amp_di from './scenarios/guitar-amp-di.mjs';
 import * as imported_song_edit from './scenarios/imported-song-edit.mjs';
 import * as input_monitor from './scenarios/input-monitor.mjs';
 import * as jpop_long_form from './scenarios/jpop-long-form.mjs';
@@ -35,6 +37,7 @@ import * as long_master_export_preflight from './scenarios/long-master-export-pr
 import * as master_limiter from './scenarios/master-limiter.mjs';
 import * as mastering_chain from './scenarios/mastering-chain.mjs';
 import * as midi_clip_envelope from './scenarios/midi-clip-envelope.mjs';
+import * as mix_suggestion from './scenarios/mix-suggestion.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
 import * as opfs_restore from './scenarios/opfs-restore.mjs';
 import * as piano_roll from './scenarios/piano-roll.mjs';
@@ -77,6 +80,7 @@ export const scenarios = [
   audio_record,
   input_monitor,
   mixer_strips,
+  mix_suggestion,
   realtime_mute,
   rack_instrument,
   rack_inserts,
@@ -115,4 +119,6 @@ export const scenarios = [
   jpop_long_form,
   jpop_section_variations,
   baroque_organ_compose,
+  guitar_amp_di,
+  gs_efx_sf2,
 ];

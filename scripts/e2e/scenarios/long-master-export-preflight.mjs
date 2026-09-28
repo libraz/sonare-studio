@@ -13,7 +13,7 @@ export async function run({ page, baseUrl, fail }) {
   await page.click('.dock-tabs button:has-text("Mastering")');
   await page.click('.mastering-panel .chain-add');
   await page
-    .locator('.chain-catalog .catalog-item')
+    .locator('.chain-catalog .catalog-item-label')
     .filter({ hasText: /^Tape$/ })
     .first()
     .click();

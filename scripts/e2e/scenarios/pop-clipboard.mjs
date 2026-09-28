@@ -31,7 +31,13 @@ export async function run({ page, fail }) {
     fail('Edit Copy is disabled for a selected arrangement clip');
   await copy.click();
 
-  await page.mouse.click(box.x + 320.3, laneY, { button: 'right' });
+  const pasteHeaderBox = await header.boundingBox();
+  if (!pasteHeaderBox) throw new Error('generated lead track moved outside the viewport');
+  await page.mouse.click(
+    box.x + 320.3,
+    pasteHeaderBox.y + Math.min(pasteHeaderBox.height, 56) / 2,
+    { button: 'right' },
+  );
   const paste = page.locator('.context-menu-item[data-menu-item-id="paste"]');
   await paste.waitFor({ state: 'visible' });
   await paste.click();
@@ -53,24 +59,40 @@ export async function run({ page, fail }) {
   }
 
   await page.keyboard.press('Escape');
-  await page.keyboard.press('Meta+Shift+f');
-  const sourceX = await page.evaluate(
-    (beat) => {
-      const canvas = document.querySelector('.arrangement-canvas');
-      const range = canvas?.__vueParentComponent?.props.range;
-      if (!canvas || !range) throw new Error('arrangement range missing');
-      const rect = canvas.getBoundingClientRect();
-      const localX = range.ppqToX(beat);
-      if (localX < 0 || localX > rect.width)
-        throw new Error('original lead clip is outside the fitted arrangement');
-      return rect.left + localX;
-    },
-    source.startPpq + source.lengthPpq / 2,
-  );
-  await page.mouse.click(sourceX, laneY);
+  // The first click at this x selected the original. Keep the arrangement's
+  // current zoom: fitting an existing long song shrinks a four-bar clip to a
+  // few pixels and makes the next pointer action ambiguous.
+  const cutHeaderBox = await header.boundingBox();
+  if (!cutHeaderBox) throw new Error('generated lead track moved outside the viewport');
+  const cutY = cutHeaderBox.y + Math.min(cutHeaderBox.height, 56) / 2;
+  await page.mouse.click(box.x + 20, cutY);
   const selectedSource = await page.evaluate(() => window.__sonareDebug.activeClipId());
-  if (selectedSource !== source.id)
-    fail(`arrangement selected clip ${selectedSource} instead of ${source.id} before Cut`);
+  if (selectedSource !== source.id) {
+    const selected = (await page.evaluate(() => window.__sonareDebug.clipRanges())).find(
+      (clip) => clip.id === selectedSource,
+    );
+    const hit = await page.evaluate(
+      ({ x, y }) => {
+        const wrapper = document.querySelector('.arrangement-canvas');
+        const rect = wrapper?.getBoundingClientRect();
+        const props = wrapper?.__vueParentComponent?.props;
+        if (!rect || !props) return null;
+        return {
+          hitId: props.interactions?.hitClipAt({ x: x - rect.left, y: y - rect.top }),
+          ppq: props.range?.xToPpq(x - rect.left),
+          scrollY: props.scrollY,
+          element: document.elementFromPoint(x, y)?.className,
+          x: x - rect.left,
+          y: y - rect.top,
+        };
+      },
+      { x: box.x + 20, y: cutY },
+    );
+    fail(
+      `arrangement selected ${JSON.stringify(selected)} instead of ${JSON.stringify(source)} before Cut; hit ${JSON.stringify(hit)}`,
+    );
+    return;
+  }
   await page.click('#menubar-trigger-edit');
   const cut = page.locator('[id="menubar-edit-edit.cut"]');
   if ((await cut.getAttribute('aria-disabled')) === 'true')

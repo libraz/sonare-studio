@@ -29,6 +29,7 @@ export async function run(ctx) {
   );
   const audioClips = await page.evaluate(() => window.__sonareDebug.audioClipCount());
   const clipKinds = await page.evaluate(() => window.__sonareDebug.clipKinds());
+  const placedClip = (await page.evaluate(() => window.__sonareDebug.clipRanges())).at(-1);
   if (audioClips !== 1 || clipKinds[clipKinds.length - 1] !== 'audio') {
     fail(`expected one audio clip, got audioClipCount=${audioClips} kinds=${clipKinds}`);
   } else {
@@ -41,19 +42,34 @@ export async function run(ctx) {
     console.info('audio track auto-created for the asset');
   }
 
-  // The clip sits at PPQ 0 on the last lane; once the asset loads, waveform
-  // columns paint colors there that an empty stretch of the same lane lacks.
-  const laneIndex = tracksAfterAdd - 1;
+  // The new track may be scrolled into view and the clip starts at the current
+  // playhead. Sample its actual row and timeline position, then compare the
+  // waveform body with an empty part of that row.
   const deadline = Date.now() + 20000;
   let waveformStats = { novelColors: 0, litPixels: 0 };
   while (Date.now() < deadline) {
-    waveformStats = await page.evaluate((lane) => {
-      const canvas = document.querySelector('.arrangement-canvas canvas');
+    waveformStats = await page.evaluate((clip) => {
+      const wrapper = document.querySelector('.arrangement-canvas');
+      const canvas = wrapper?.querySelector('canvas');
       if (!(canvas instanceof HTMLCanvasElement)) return { novelColors: 0, litPixels: 0 };
+      const props = wrapper?.__vueParentComponent?.props;
+      const lane = props?.tracks?.findIndex((track) => track.id === clip?.trackId) ?? -1;
+      if (!props?.range || !props?.rowLayout || lane < 0) {
+        return { novelColors: 0, litPixels: 0 };
+      }
       const ctx = canvas.getContext('2d');
       const scaleX = canvas.width / canvas.clientWidth;
       const scaleY = canvas.height / canvas.clientHeight;
-      const laneTop = 28 + lane * 56;
+      const laneTop = 28 + props.rowLayout.rowTop(lane) - props.scrollY;
+      const clipX = props.range.ppqToX(clip.startPpq) + 2;
+      if (
+        laneTop < 28 ||
+        laneTop + 48 > canvas.clientHeight ||
+        clipX < 0 ||
+        clipX > canvas.clientWidth - 8
+      ) {
+        return { novelColors: 0, litPixels: 0 };
+      }
       const read = (cssX) =>
         ctx.getImageData(
           Math.round(cssX * scaleX),
@@ -69,9 +85,7 @@ export async function run(ctx) {
         }
         return counts;
       };
-      // 0.5 s at 120 BPM is 1 PPQ = 10 px at the default zoom; compare the
-      // clip body against an empty stretch of the same lane.
-      const clipColors = colorCounts(read(1));
+      const clipColors = colorCounts(read(clipX));
       const emptyColors = colorCounts(read(canvas.clientWidth * 0.8));
       let novelColors = 0;
       let litPixels = 0;
@@ -81,7 +95,7 @@ export async function run(ctx) {
         litPixels += count;
       }
       return { novelColors, litPixels };
-    }, laneIndex);
+    }, placedClip);
     // At least the clip fill plus waveform columns, covering most of the body.
     if (waveformStats.novelColors >= 2 && waveformStats.litPixels >= 100) break;
     await page.waitForTimeout(250);

@@ -184,5 +184,7 @@ export async function run({ page, baseUrl, fail }) {
     { timeout: 5000 },
   );
   console.info('counter melody generated from the lead clip');
+  await page.locator('.modal-card:has(.track-done) .modal-close').click();
+  await page.locator('.modal-scrim').waitFor({ state: 'detached' });
   if (browserErrors.length > 0) fail(`browser errors: ${browserErrors.join(' | ')}`);
 }

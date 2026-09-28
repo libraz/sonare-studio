@@ -4,8 +4,11 @@ import { makeWavBytes } from '../harness.mjs';
 export const name = 'pop-arrangement';
 
 export async function run({ page, fail }) {
-  await page.locator('.modal-card:has(.track-done) .modal-foot button:not(.primary)').click();
-  await page.locator('.modal-card:has(.track-done)').waitFor({ state: 'detached' });
+  const completedDialog = page.locator('.modal-card:has(.track-done)');
+  if (await completedDialog.isVisible()) {
+    await completedDialog.locator('.modal-foot button:not(.primary)').click();
+    await completedDialog.waitFor({ state: 'detached' });
+  }
 
   const before = await page.evaluate(() => ({
     chords: window.__sonareDebug.chordRanges(),

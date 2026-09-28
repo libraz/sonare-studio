@@ -6,6 +6,13 @@ export async function run(ctx) {
 
   await page.click('.dock-tabs button:has-text("Mastering")');
   await page.waitForSelector('.mastering-panel .chain-add', { timeout: 10000 });
+  const signalPath = await page.locator('.mastering-panel .mastering-signal-path').innerText();
+  if (
+    !signalPath.includes('Live') ||
+    !signalPath.includes('Preset → all enabled rack processors')
+  ) {
+    fail(`mastering signal path is unclear: ${signalPath}`);
+  }
 
   // A named preset exposes the same compact controls a mastering engineer
   // uses for an offline render. Edit two values, switch tabs to remount the
@@ -157,8 +164,25 @@ export async function run(ctx) {
   for (const processorLabel of [/^Brickwall Limiter$/, /^Tape$/]) {
     await page.click('.mastering-panel .chain-add');
     await page.waitForSelector('.chain-catalog .catalog-item', { timeout: 10000 });
+    if (processorLabel.test('Brickwall Limiter')) {
+      const liveScope = await page
+        .locator('.chain-catalog .catalog-item')
+        .filter({ hasText: 'Brickwall Limiter' })
+        .first()
+        .locator('.catalog-item-scope')
+        .innerText();
+      const renderScope = await page
+        .locator('.chain-catalog .catalog-item')
+        .filter({ hasText: 'Dereverb Classical' })
+        .first()
+        .locator('.catalog-item-scope')
+        .innerText();
+      if (liveScope !== 'Live' || renderScope !== 'Render') {
+        fail(`processor scope labels are wrong: limiter=${liveScope}, dereverb=${renderScope}`);
+      }
+    }
     await page
-      .locator('.chain-catalog .catalog-item')
+      .locator('.chain-catalog .catalog-item-label')
       .filter({ hasText: processorLabel })
       .first()
       .click();
