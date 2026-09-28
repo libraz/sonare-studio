@@ -7,6 +7,7 @@ import TrackGenerateDialog from '@/components/compose/TrackGenerateDialog.vue';
 import { setProjectChords } from '@/project/command/chords';
 import { setTrackFrozen } from '@/project/command/clips-state';
 import { clearHistory, undo } from '@/project/command/history';
+import { setSections } from '@/project/command/timeline';
 import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
@@ -141,6 +142,7 @@ describe('TrackGenerateDialog', () => {
   }
 
   it('shows the gate when there is no chord progression', async () => {
+    await store.loadDocument(createTemplate('empty'));
     await open();
     expect(document.body.querySelector('.gate')).not.toBeNull();
     expect(document.body.querySelector('.part-list')).toBeNull();
@@ -158,6 +160,40 @@ describe('TrackGenerateDialog', () => {
     expect(document.body.querySelector('.part-list')).not.toBeNull();
     // Five part rows are always present.
     expect(document.body.querySelectorAll('.part-row').length).toBe(5);
+  });
+
+  it('opens the accompaniment flow for an empty organ template without chords', async () => {
+    await store.loadDocument(createTemplate('baroque-organ'));
+    await open();
+
+    expect(document.body.querySelector('.gate')).toBeNull();
+    const rows = [...document.body.querySelectorAll<HTMLElement>('.part-row')];
+    expect(rows).toHaveLength(5);
+    expect(partCheckboxes().map((box) => box.disabled)).toEqual([false, false, true, true, true]);
+    expect(partCheckboxes().map((box) => box.checked)).toEqual([true, false, false, false, false]);
+    expect(rows[2]?.querySelector('.part-disabled-hint')?.textContent).toContain(
+      'Requires a chord progression',
+    );
+  });
+
+  it('offers empty editable organ lanes as replacement targets for any part', async () => {
+    await store.loadDocument(createTemplate('baroque-organ'));
+    await open();
+
+    const motifTarget = document.body
+      .querySelectorAll<HTMLElement>('.part-row')[0]
+      ?.querySelector<HTMLSelectElement>('.part-target');
+    const motifOptions = Array.from(motifTarget?.options ?? []).map((option) =>
+      option.textContent?.trim(),
+    );
+    expect(motifOptions).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Manual I Soprano'),
+        expect.stringContaining('Manual I Alto'),
+        expect.stringContaining('Manual II Tenor'),
+        expect.stringContaining('Pedal Bass'),
+      ]),
+    );
   });
 
   it('preselects a usable accompaniment and keeps live selections intact', async () => {
@@ -346,6 +382,47 @@ describe('TrackGenerateDialog', () => {
     // Replacement nets zero tracks and keeps a single Drums track.
     expect(store.tracks.length).toBe(trackCount);
     expect(store.tracks.filter((track) => track.name === 'Drums')).toHaveLength(1);
+  });
+
+  it('opens a saved section as a drum range and keeps the next-section build-up', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([
+      { part: 'drums', params: { bars: 4, seed: 10 }, target: { kind: 'new' } },
+    ]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    if (!drums) throw new Error('missing generated drums fixture');
+    setSections([
+      { name: 'Pre-chorus 1', startPpq: 4, endPpq: 12 },
+      { name: 'Chorus 1', startPpq: 12, endPpq: 16 },
+    ]);
+    const preChorusSection = store.sections[0];
+    if (!preChorusSection) throw new Error('missing saved section fixture');
+
+    await open({
+      part: 'drums',
+      target: { kind: 'replaceRange', trackId: drums.id, startPpq: 4, endPpq: 12 },
+    });
+
+    const row = [...document.body.querySelectorAll<HTMLElement>('.part-row')][1];
+    expect(row.querySelector('.drum-range-panel')).not.toBeNull();
+    expect(row.querySelector<HTMLInputElement>('.drum-range-start')?.value).toBe('2');
+    expect(row.querySelector<HTMLInputElement>('.drum-range-length')?.value).toBe('2');
+    expect(row.querySelector<HTMLSelectElement>('.drum-range-panel select')?.value).toBe(
+      `section:${preChorusSection.id}`,
+    );
+
+    const selects = [...row.querySelectorAll<HTMLSelectElement>('.part-params select')];
+    expect(selects[2]?.value).toBe('prechorus');
+    expect(selects[3]?.value).toBe('chorus');
+    expect(row.querySelector('.drum-range-summary')?.textContent).toContain('2–3');
+
+    const trackCount = store.tracks.length;
+    confirm()?.click();
+    await nextTick();
+    expect(store.tracks).toHaveLength(trackCount);
+    expect(wrapper?.emitted('close')).toBeTruthy();
+    expect(document.body.querySelector('.dialog-error')).toBeNull();
   });
 
   it('does not offer a frozen track as a generation target', async () => {

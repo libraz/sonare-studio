@@ -247,6 +247,7 @@ describe('generation command suite', () => {
       };
 
       store.tempoBpm = 200;
+      store.tempoSegments = [{ startPpq: 0, bpm: 200 }];
       const easy = hits(MIN_DRUM_DIFFICULTY);
       const hard = hits(MAX_DRUM_DIFFICULTY);
       expect(easy).toBeLessThan(hard);
@@ -255,6 +256,7 @@ describe('generation command suite', () => {
 
       // The same ceiling holds back less when there is more time between strokes.
       store.tempoBpm = 80;
+      store.tempoSegments = [{ startPpq: 0, bpm: 80 }];
       expect(hits(MIN_DRUM_DIFFICULTY)).toBeGreaterThan(easy);
     });
   });

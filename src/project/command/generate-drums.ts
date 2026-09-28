@@ -7,8 +7,9 @@
  * track reads back as percussion and the harmonic surfaces exclude it (see
  * src/compose/tracks.ts). Output is deterministic in `seed`.
  *
- * libcantus assumes a four-beat bar; non-4/4 projects still get a 4/4 grid
- * (drum meter support is a library concern), which the dialog surfaces.
+ * libcantus assumes a four-beat bar; non-4/4 projects are rejected for the
+ * requested range (drum meter support is a library concern), which the dialog
+ * surfaces.
  */
 
 import {
@@ -20,6 +21,7 @@ import {
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
+import { normalizeTempoMap, tempoAtPpq } from '../tempo-map';
 import { isFourFourBarRange } from '../time-signature';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
 import { executeAtomic } from './history';
@@ -82,12 +84,16 @@ export const MAX_DRUM_DIFFICULTY: number = MAX_DIFFICULTY;
 export function buildDrumsPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateDrumsParams = {},
+  startPpq = 0,
 ): TrackPlan | null {
   const bars = params.bars ?? 4;
   if (!Number.isInteger(bars) || bars <= 0) {
     throw new RangeError(`Drum bars must be a positive integer, got ${bars}`);
   }
-  if (!isFourFourBarRange(store.timeSignatures, 0, bars)) {
+  if (!Number.isFinite(startPpq) || startPpq < 0) {
+    throw new RangeError(`Drum startPpq must be finite and >= 0, got ${startPpq}`);
+  }
+  if (!isFourFourBarRange(store.timeSignatures, startPpq, bars)) {
     throw new RangeError('Drum generation currently supports 4/4 bars only.');
   }
   const section = params.section ?? 'verse';
@@ -103,7 +109,7 @@ export function buildDrumsPlan(
     ...(params.euclideanKick !== undefined ? { euclideanKick: params.euclideanKick } : {}),
     ctx: {
       seed: params.seed ?? 0,
-      bpm: store.tempoBpm,
+      bpm: tempoAtPpq(normalizeTempoMap(store.tempoSegments, store.tempoBpm), startPpq),
       complexity: {
         rhythmic: params.density ?? 0.6,
         ...(params.difficulty !== undefined ? { difficulty: params.difficulty } : {}),

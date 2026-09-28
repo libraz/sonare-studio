@@ -23,6 +23,11 @@ import { buildBackingPlan, type GenerateBackingParams } from './generate-backing
 import { buildBassPlan, type GenerateBassParams } from './generate-bass';
 import { buildCounterPlan, type GenerateCounterMelodyParams } from './generate-counter-melody';
 import { buildDrumsPlan, type GenerateDrumsParams } from './generate-drums';
+import {
+  applyDrumsRangePlan,
+  buildDrumsRangePlan,
+  type RegenerateDrumsRangeParams,
+} from './generate-drums-range';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
 import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { type AtomicProjectEdit, executeAtomic } from './history';
@@ -38,6 +43,8 @@ export type BatchTarget =
   | { kind: 'new' }
   /** Replace an existing track, inheriting its slot/name/mixer where feasible. */
   | { kind: 'replaceTrack'; trackId: number }
+  /** Drums only: replace a four-four section inside one existing drum clip. */
+  | { kind: 'replaceRange'; trackId: number; startPpq: number; endPpq: number }
   /** Motif only: write into the active MIDI clip. */
   | { kind: 'clip'; mode: 'append' | 'replace' };
 
@@ -169,6 +176,28 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
         apply: (edit) => {
           edit(1, () => project.setMidiEvents(clip.id, notesToProjectEvents(merged)));
           return clip.trackId;
+        },
+      });
+      continue;
+    }
+
+    if (spec.target.kind === 'replaceRange') {
+      if (spec.part !== 'drums') {
+        throw new RangeError('The replaceRange target is supported for drums only.');
+      }
+      const rangePlan = buildDrumsRangePlan(store, {
+        ...spec.params,
+        trackId: spec.target.trackId,
+        startPpq: spec.target.startPpq,
+        endPpq: spec.target.endPpq,
+      } satisfies RegenerateDrumsRangeParams);
+      if (rangePlan === null) continue;
+      ops.push({
+        part: spec.part,
+        edits: 1,
+        apply: (edit) => {
+          applyDrumsRangePlan(store, rangePlan, edit);
+          return rangePlan.trackId;
         },
       });
       continue;

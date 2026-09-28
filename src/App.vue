@@ -91,6 +91,7 @@ import {
   undo,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
+import { partForTrack } from '@/project/generation';
 import { persistedProjectStateKey } from '@/project/persisted-state';
 import { evaluateProjectCapacity, formatProjectCapacityIssue } from '@/project/project-capacity';
 import { serializeProject } from '@/project/serialization';
@@ -333,6 +334,31 @@ function onRegenerateTrack(trackId: number, part: TrackPart): void {
     return;
   }
   openTrackGenerateDialog({ part, target: { kind: 'replaceTrack', trackId } });
+}
+
+/** Start a drum variation at exactly the clicked arrangement section. */
+function onRegenerateSectionDrums(sectionId: number): void {
+  const section = store.sections.find((entry) => entry.id === sectionId);
+  if (!section) return;
+  const track = store.tracks.find(
+    (entry) =>
+      entry.kind === 'midi' &&
+      entry.frozen === undefined &&
+      (partForTrack(entry) === 'drums' || entry.percussion === true),
+  );
+  if (!track) {
+    errorMessage.value = t.value.shell.arrangement.regenerateSectionDrumsNoTrack;
+    return;
+  }
+  openTrackGenerateDialog({
+    part: 'drums',
+    target: {
+      kind: 'replaceRange',
+      trackId: track.id,
+      startPpq: section.startPpq,
+      endPpq: section.endPpq,
+    },
+  });
 }
 
 /** One-shot deep-link target for the lists dock panel (chord-lane "open list" action). */
@@ -982,6 +1008,7 @@ onMounted(installLaunchQueueConsumer);
           @change-instrument="openTrackInstrumentPicker"
           @generate="openChordGenerateDialog"
           @regenerate-track="onRegenerateTrack"
+          @regenerate-section-drums="onRegenerateSectionDrums"
           @open-chords="onOpenChordList"
         />
         <ClipInspector

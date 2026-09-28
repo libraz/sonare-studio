@@ -15,6 +15,7 @@ import {
 import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/generation';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { isFourFourBarRange } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -160,9 +161,19 @@ const counterBars = computed(() => {
 });
 
 const hasChords = computed(() => store.chords.length > 0);
+const hasEditableMidiClip = computed(() =>
+  store.clips.some((clip) => {
+    if (clipKind(clip) !== 'midi') return false;
+    const track = store.tracks.find((entry) => entry.id === clip.trackId);
+    return track?.frozen === undefined;
+  }),
+);
+/** A melody clip is enough to open the motif/drum/counter workflow without chords. */
+const hasGeneratorSource = computed(() => hasChords.value || hasEditableMidiClip.value);
 const counterAvailable = computed(() => counterBars.value !== null);
 
 function isPartAvailable(part: TrackPart): boolean {
+  if (!hasChords.value && (part === 'bass' || part === 'backing')) return false;
   return part !== 'counter' || counterAvailable.value;
 }
 
@@ -236,6 +247,7 @@ const SECTIONS: ReadonlyArray<{
 ];
 const drumStyle = ref<GrooveId>('standard');
 const drumSection = ref<SectionId>('verse');
+const drumNextSection = ref<SectionId | 'same'>('same');
 const drumBars = ref(4);
 const drumBarsDirty = ref(false);
 const drumDensity = ref(0.6);
@@ -249,6 +261,44 @@ const drumDifficulty = ref(0);
 const DRUM_DIFFICULTIES: ReadonlyArray<number> = Array.from(
   { length: MAX_DRUM_DIFFICULTY - MIN_DRUM_DIFFICULTY + 1 },
   (_unused, index) => MIN_DRUM_DIFFICULTY + index,
+);
+
+/** Range controls used only when a drum track's existing material is targeted. */
+const DRUM_RANGE_MANUAL = 'manual';
+const drumRangeStartBar = ref(1);
+const drumRangeLengthBars = ref(4);
+const drumRangeSectionId = ref(DRUM_RANGE_MANUAL);
+
+interface SavedDrumSection {
+  id: number;
+  name: string;
+  startBar: number;
+  lengthBars: number;
+}
+
+/** Saved arrangement sections that can be addressed on the generator's 4/4 grid. */
+const savedDrumSections = computed<ReadonlyArray<SavedDrumSection>>(() =>
+  store.sections.flatMap((section) => {
+    const startBar = section.startPpq / BEATS_PER_BAR + 1;
+    const lengthBars = (section.endPpq - section.startPpq) / BEATS_PER_BAR;
+    if (
+      !Number.isInteger(startBar) ||
+      !Number.isInteger(lengthBars) ||
+      startBar < 1 ||
+      lengthBars < 1 ||
+      !isFourFourBarRange(store.timeSignatures, section.startPpq, lengthBars)
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: section.id,
+        name: section.name.trim() || formatMessage(g.value.rangeUnnamedSection, { id: section.id }),
+        startBar,
+        lengthBars,
+      },
+    ];
+  }),
 );
 
 type BassStyle = 'root' | 'rootFifth' | 'pop' | 'walking' | 'arpeggio';
@@ -324,6 +374,10 @@ function resetState(): void {
   done.value = false;
   drumBarsDirty.value = false;
   motifBarsDirty.value = false;
+  drumNextSection.value = 'same';
+  drumRangeStartBar.value = 1;
+  drumRangeLengthBars.value = 4;
+  drumRangeSectionId.value = DRUM_RANGE_MANUAL;
   reseedBars();
 }
 
@@ -349,7 +403,8 @@ watch(
       // The normal path is the quick beginner flow: generate a usable
       // accompaniment first, then continue into the lead composer. Keep
       // regeneration focused on the requested part via the branch above.
-      presetAccompaniment();
+      if (!hasChords.value && hasEditableMidiClip.value) applyPreset(['motif']);
+      else presetAccompaniment();
     }
   },
   { immediate: true },
@@ -357,15 +412,160 @@ watch(
 
 // --- Targets -------------------------------------------------------------------
 
+function targetTrackId(value: string, prefix: 'replace' | 'range'): number | null {
+  if (!value.startsWith(`${prefix}:`)) return null;
+  const trackId = Number(value.slice(prefix.length + 1));
+  return Number.isInteger(trackId) && trackId >= 0 ? trackId : null;
+}
+
+const drumRangeTrackId = computed(() => targetTrackId(parts.drums.target, 'range'));
+const isDrumRangeTarget = computed(() => drumRangeTrackId.value !== null);
+
+const drumRangeStartPpq = computed(() => (Math.round(drumRangeStartBar.value) - 1) * BEATS_PER_BAR);
+const drumRangeEndPpq = computed(
+  () => drumRangeStartPpq.value + Math.round(drumRangeLengthBars.value) * BEATS_PER_BAR,
+);
+
+const drumRangeTargetClipEndPpq = computed(() => {
+  const trackId = drumRangeTrackId.value;
+  if (trackId === null) return 0;
+  return store.clips
+    .filter((clip) => clip.trackId === trackId)
+    .reduce((end, clip) => Math.max(end, clip.startPpq + clip.lengthPpq), 0);
+});
+const drumRangeTargetClipStartPpq = computed(() => {
+  const trackId = drumRangeTrackId.value;
+  if (trackId === null) return 0;
+  const starts = store.clips
+    .filter((clip) => clip.trackId === trackId)
+    .map((clip) => clip.startPpq);
+  return starts.length === 0 ? 0 : Math.min(...starts);
+});
+
+/** A translated, actionable validation message shown before the command runs. */
+const drumRangeValidation = computed(() => {
+  if (!isDrumRangeTarget.value) return null;
+  const start = drumRangeStartBar.value;
+  const length = drumRangeLengthBars.value;
+  if (!Number.isInteger(start) || start < 1 || !Number.isInteger(length) || length < 1) {
+    return g.value.rangeInvalid;
+  }
+  if (!isFourFourBarRange(store.timeSignatures, drumRangeStartPpq.value, length)) {
+    return g.value.rangeMeterError;
+  }
+  const clipStart = drumRangeTargetClipStartPpq.value;
+  if (clipStart > 0 && drumRangeStartPpq.value < clipStart) {
+    return formatMessage(g.value.rangeBeforeTrack, {
+      start: Math.round(clipStart / BEATS_PER_BAR) + 1,
+    });
+  }
+  const clipEnd = drumRangeTargetClipEndPpq.value;
+  if (clipEnd > 0 && drumRangeEndPpq.value > clipEnd) {
+    return formatMessage(g.value.rangeOutsideTrack, {
+      end: Math.round(clipEnd / BEATS_PER_BAR),
+    });
+  }
+  const intersecting = store.clips.filter(
+    (clip) =>
+      clip.trackId === drumRangeTrackId.value &&
+      clipKind(clip) === 'midi' &&
+      clip.startPpq < drumRangeEndPpq.value &&
+      clip.startPpq + clip.lengthPpq > drumRangeStartPpq.value,
+  );
+  const targetClip = intersecting[0];
+  if (
+    intersecting.length !== 1 ||
+    targetClip === undefined ||
+    targetClip.startPpq > drumRangeStartPpq.value ||
+    targetClip.startPpq + targetClip.lengthPpq < drumRangeEndPpq.value
+  ) {
+    return g.value.rangeSingleClip;
+  }
+  if (targetClip.loopEnabled) return g.value.rangeLoopedClip;
+  return null;
+});
+
+function onDrumRangeSectionChange(): void {
+  if (drumRangeSectionId.value === DRUM_RANGE_MANUAL) return;
+  const sectionId = Number(drumRangeSectionId.value.slice('section:'.length));
+  const section = savedDrumSections.value.find((entry) => entry.id === sectionId);
+  if (section === undefined) {
+    drumRangeSectionId.value = DRUM_RANGE_MANUAL;
+    return;
+  }
+  drumRangeStartBar.value = section.startBar;
+  drumRangeLengthBars.value = section.lengthBars;
+  applyDrumSectionContext(
+    (section.startBar - 1) * BEATS_PER_BAR,
+    (section.startBar - 1 + section.lengthBars) * BEATS_PER_BAR,
+  );
+}
+
+function onTargetChanged(part: TrackPart): void {
+  if (part === 'drums' && isDrumRangeTarget.value) {
+    // Selecting a range target immediately exposes the scope controls so a
+    // user never has to guess which part of the track will be overwritten.
+    parts.drums.expanded = true;
+  }
+}
+
+/** Maps common section names to the generator's section shaping presets. */
+function sectionIdFromName(name: string): SectionId | null {
+  const normalized = name.trim().toLocaleLowerCase();
+  if (/(pre.?chorus|prechorus|bメロ|サビ前)/u.test(normalized)) return 'prechorus';
+  if (/(chorus|hook|サビ)/u.test(normalized)) return 'chorus';
+  if (/(intro|イントロ)/u.test(normalized)) return 'intro';
+  if (/(verse|aメロ)/u.test(normalized)) return 'verse';
+  if (/(bridge|間奏|ブリッジ)/u.test(normalized)) return 'bridge';
+  if (/(outro|エンディング|アウトロ)/u.test(normalized)) return 'outro';
+  return null;
+}
+
+/** Loads the saved section's style and its following section into drum controls. */
+function applyDrumSectionContext(startPpq: number, endPpq: number): void {
+  const section = store.sections.find(
+    (entry) => entry.startPpq === startPpq && entry.endPpq === endPpq,
+  );
+  if (section === undefined) return;
+
+  const sectionId = sectionIdFromName(section.name);
+  if (sectionId !== null) drumSection.value = sectionId;
+
+  const next = store.sections.find((entry) => entry.startPpq === endPpq);
+  const nextId = next === undefined ? null : sectionIdFromName(next.name);
+  drumNextSection.value = nextId ?? (sectionId === 'prechorus' ? 'chorus' : 'same');
+
+  const saved = savedDrumSections.value.find((entry) => entry.id === section.id);
+  drumRangeSectionId.value = saved === undefined ? DRUM_RANGE_MANUAL : `section:${section.id}`;
+}
+
 function encodeTarget(target: BatchTarget): string {
   if (target.kind === 'new') return 'new';
   if (target.kind === 'replaceTrack') return `replace:${target.trackId}`;
+  if (target.kind === 'replaceRange') {
+    drumRangeStartBar.value = Math.floor(target.startPpq / BEATS_PER_BAR) + 1;
+    drumRangeLengthBars.value = Math.max(
+      1,
+      Math.round((target.endPpq - target.startPpq) / BEATS_PER_BAR),
+    );
+    applyDrumSectionContext(target.startPpq, target.endPpq);
+    return `range:${target.trackId}`;
+  }
   return `clip:${target.mode}`;
 }
 
 function decodeTarget(value: string): BatchTarget {
   if (value.startsWith('replace:')) {
     return { kind: 'replaceTrack', trackId: Number(value.slice('replace:'.length)) };
+  }
+  const rangeTrackId = targetTrackId(value, 'range');
+  if (rangeTrackId !== null) {
+    return {
+      kind: 'replaceRange',
+      trackId: rangeTrackId,
+      startPpq: drumRangeStartPpq.value,
+      endPpq: drumRangeEndPpq.value,
+    };
   }
   if (value === 'clip:append') return { kind: 'clip', mode: 'append' };
   if (value === 'clip:replace') return { kind: 'clip', mode: 'replace' };
@@ -374,12 +574,25 @@ function decodeTarget(value: string): BatchTarget {
 
 /** Replacement candidates for a part: tracks recorded as (or named after) it. */
 function replaceCandidates(part: TrackPart): { value: string; label: string }[] {
-  return store.tracks
-    .filter((track) => track.frozen === undefined && partForTrack(track) === part)
-    .map((track) => ({
-      value: `replace:${track.id}`,
-      label: formatMessage(g.value.targetReplace, { name: track.name }),
-    }));
+  const matching = store.tracks.filter(
+    (track) => track.frozen === undefined && partForTrack(track) === part,
+  );
+  // Empty MIDI lanes are useful in a prepared arrangement (for example
+  // Soprano/Tenor/Pedal in an organ template). Offer them after a known part,
+  // while never stealing a hand-authored lane that already contains notes.
+  const emptyMidi = store.tracks.filter(
+    (track) =>
+      track.frozen === undefined &&
+      track.kind === 'midi' &&
+      partForTrack(track) === null &&
+      store.clips
+        .filter((clip) => clip.trackId === track.id && clipKind(clip) === 'midi')
+        .every((clip) => clip.notes.length === 0),
+  );
+  return [...matching, ...emptyMidi].map((track) => ({
+    value: `replace:${track.id}`,
+    label: formatMessage(g.value.targetReplace, { name: track.name }),
+  }));
 }
 
 /** Full target dropdown for a part. */
@@ -391,7 +604,20 @@ function targetOptions(part: TrackPart): { value: string; label: string }[] {
       { value: 'clip:replace', label: g.value.targetClipReplace },
     );
   }
-  options.push(...replaceCandidates(part));
+  const replacements = replaceCandidates(part);
+  options.push(...replacements);
+  if (part === 'drums') {
+    for (const option of replacements) {
+      const trackId = targetTrackId(option.value, 'replace');
+      if (trackId === null) continue;
+      const track = store.tracks.find((entry) => entry.id === trackId);
+      if (track === undefined || partForTrack(track) !== 'drums') continue;
+      options.push({
+        value: `range:${trackId}`,
+        label: formatMessage(g.value.targetReplaceRange, { name: track.name }),
+      });
+    }
+  }
   return options;
 }
 
@@ -411,7 +637,9 @@ const midOverlap = computed(
 function resultBarsOf(part: TrackPart): number | null {
   switch (part) {
     case 'drums':
-      return Math.max(1, Math.round(drumBars.value));
+      return isDrumRangeTarget.value
+        ? Math.max(1, Math.round(drumRangeLengthBars.value))
+        : Math.max(1, Math.round(drumBars.value));
     case 'motif':
       return Math.max(1, Math.round(motifBars.value));
     case 'bass':
@@ -432,6 +660,7 @@ function resultBarsText(part: TrackPart): string {
 function resultTargetOf(part: TrackPart): string {
   const value = parts[part].target;
   if (value.startsWith('clip:')) return g.value.resultToClip;
+  if (value.startsWith('range:')) return g.value.resultToRange;
   if (value.startsWith('replace:')) return g.value.resultToReplace;
   return g.value.resultToNew;
 }
@@ -472,6 +701,7 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
         section: drumSection.value,
         density: Math.min(1, Math.max(0, drumDensity.value)),
         fills: drumFills.value,
+        ...(drumNextSection.value !== 'same' ? { nextSection: drumNextSection.value } : {}),
         ...(drumDifficulty.value > 0 ? { difficulty: drumDifficulty.value } : {}),
         seed: seedFor('drums'),
       };
@@ -505,6 +735,10 @@ function onCancel(): void {
 
 function onGenerate(): void {
   if (selectedCount.value === 0 || generating.value) return;
+  if (drumRangeValidation.value !== null) {
+    error.value = drumRangeValidation.value;
+    return;
+  }
   error.value = null;
   generating.value = true;
   try {
@@ -544,7 +778,7 @@ function toggleExpanded(part: TrackPart): void {
   <AppModal :open="props.open" size="md" :aria-label="g.title" @close="onCancel">
     <template #title>{{ g.title }}</template>
 
-    <div v-if="!hasChords" class="gate">
+    <div v-if="!hasGeneratorSource" class="gate">
       <p class="gate-title">{{ g.gateTitle }}</p>
       <p class="gate-body">{{ g.gateBody }}</p>
     </div>
@@ -552,13 +786,14 @@ function toggleExpanded(part: TrackPart): void {
     <div v-else-if="done" class="track-done">
       <div class="chord-summary">
         <span class="chord-summary-label">{{ g.chordSummaryLabel }}</span>
-        <span class="chord-summary-bars">{{
+        <span v-if="hasChords" class="chord-summary-bars">{{
           formatMessage(g.chordBars, { count: chordProgressionBars })
         }}</span>
+        <span v-else class="chord-summary-bars">{{ g.noChordsSummary }}</span>
       </div>
       <div class="done-message">
         <p class="done-title">{{ g.doneTitle }}</p>
-        <p class="done-body">{{ g.doneBody }}</p>
+        <p class="done-body">{{ hasChords ? g.doneBody : g.doneBodyNoChords }}</p>
       </div>
       <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
     </div>
@@ -566,9 +801,10 @@ function toggleExpanded(part: TrackPart): void {
     <div v-else class="track-fields">
       <div class="chord-summary">
         <span class="chord-summary-label">{{ g.chordSummaryLabel }}</span>
-        <span class="chord-summary-bars">{{
+        <span v-if="hasChords" class="chord-summary-bars">{{
           formatMessage(g.chordBars, { count: chordProgressionBars })
         }}</span>
+        <span v-else class="chord-summary-bars">{{ g.noChordsSummary }}</span>
         <button type="button" class="edit-chords" @click="emit('openChords')">
           {{ g.editChords }}
         </button>
@@ -619,6 +855,7 @@ function toggleExpanded(part: TrackPart): void {
               v-model="parts[part].target"
               class="part-target"
               :disabled="!isPartAvailable(part)"
+              @change="onTargetChanged(part)"
             >
               <option v-for="option in targetOptions(part)" :key="option.value" :value="option.value">
                 {{ option.label }}
@@ -639,7 +876,7 @@ function toggleExpanded(part: TrackPart): void {
             :id="`part-disabled-${part}`"
             class="part-disabled-hint"
           >
-            {{ g.counterUnavailable }}
+            {{ part === 'counter' ? g.counterUnavailable : g.chordsRequired }}
           </p>
 
           <div v-if="parts[part].expanded" class="part-params">
@@ -682,10 +919,72 @@ function toggleExpanded(part: TrackPart): void {
             </template>
 
             <template v-else-if="part === 'drums'">
+              <div v-if="isDrumRangeTarget" class="drum-range-panel">
+                <div class="drum-range-heading">
+                  <span class="field-label">{{ g.rangeTitle }}</span>
+                  <span class="drum-range-preserve">{{ g.rangePreserve }}</span>
+                </div>
+                <p class="drum-range-hint">{{ g.rangeHint }}</p>
+                <label v-if="savedDrumSections.length > 0" class="number-field saved-range-field">
+                  <span class="field-label">{{ g.rangeSection }}</span>
+                  <select v-model="drumRangeSectionId" @change="onDrumRangeSectionChange">
+                    <option :value="DRUM_RANGE_MANUAL">{{ g.rangeManual }}</option>
+                    <option
+                      v-for="section in savedDrumSections"
+                      :key="section.id"
+                      :value="`section:${section.id}`"
+                    >
+                      {{
+                        formatMessage(g.rangeSectionOption, {
+                          name: section.name,
+                          start: section.startBar,
+                          end: section.startBar + section.lengthBars - 1,
+                        })
+                      }}
+                    </option>
+                  </select>
+                </label>
+                <div class="number-row drum-range-numbers">
+                  <label class="number-field">
+                    <span class="field-label">{{ g.rangeStart }}</span>
+                    <input
+                      v-model.number="drumRangeStartBar"
+                      class="drum-range-start"
+                      type="number"
+                      min="1"
+                      step="1"
+                      @input="drumRangeSectionId = DRUM_RANGE_MANUAL"
+                    />
+                  </label>
+                  <label class="number-field">
+                    <span class="field-label">{{ g.rangeLength }}</span>
+                    <input
+                      v-model.number="drumRangeLengthBars"
+                      class="drum-range-length"
+                      type="number"
+                      min="1"
+                      max="128"
+                      step="1"
+                      @input="drumRangeSectionId = DRUM_RANGE_MANUAL"
+                    />
+                  </label>
+                </div>
+                <p class="drum-range-summary">
+                  {{
+                    formatMessage(g.rangeSummary, {
+                      start: drumRangeStartBar,
+                      end: drumRangeStartBar + drumRangeLengthBars - 1,
+                    })
+                  }}
+                </p>
+                <p v-if="drumRangeValidation" class="dialog-error drum-range-error" role="alert">
+                  {{ drumRangeValidation }}
+                </p>
+              </div>
               <div class="number-row">
                 <label class="number-field">
                   <span class="field-label">{{ g.grooveStyle }}</span>
-                  <select v-model="drumStyle">
+                  <select v-model="drumStyle" class="drum-style">
                     <option v-for="option in GROOVES" :key="option.id" :value="option.id">
                       {{ g[option.labelKey] }}
                     </option>
@@ -693,8 +992,17 @@ function toggleExpanded(part: TrackPart): void {
                 </label>
                 <label class="number-field">
                   <span class="field-label">{{ g.section }}</span>
-                  <select v-model="drumSection">
+                  <select v-model="drumSection" class="drum-section-type">
                     <option v-for="option in SECTIONS" :key="option.id" :value="option.id">
+                      {{ g[option.labelKey] }}
+                    </option>
+                  </select>
+                </label>
+                <label class="number-field">
+                  <span class="field-label">{{ g.nextSection }}</span>
+                  <select v-model="drumNextSection" class="drum-next-section">
+                    <option value="same">{{ g.nextSectionSame }}</option>
+                    <option v-for="option in SECTIONS" :key="`next-${option.id}`" :value="option.id">
                       {{ g[option.labelKey] }}
                     </option>
                   </select>
@@ -712,7 +1020,7 @@ function toggleExpanded(part: TrackPart): void {
               <div class="number-row">
                 <label class="number-field">
                   <span class="field-label">{{ g.bars }}</span>
-                  <input v-model.number="drumBars" type="number" min="1" max="64" step="1" />
+                  <input v-model.number="drumBars" type="number" min="1" max="256" step="1" />
                   <span class="bars-caption">{{
                     formatMessage(g.barsCaption, { count: chordProgressionBars })
                   }}</span>
@@ -836,7 +1144,7 @@ function toggleExpanded(part: TrackPart): void {
     </div>
 
     <template #actions>
-      <template v-if="!hasChords">
+      <template v-if="!hasGeneratorSource">
         <button type="button" @click="onCancel">{{ g.gateCancel }}</button>
         <button type="button" class="primary gate-create" @click="emit('openChords')">
           {{ g.gateCreate }}
@@ -1125,8 +1433,45 @@ function toggleExpanded(part: TrackPart): void {
   border-top: 1px solid var(--border);
 }
 
+.drum-range-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-inset);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: var(--radius-sm);
+}
+
+.drum-range-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.drum-range-preserve,
+.drum-range-hint,
+.drum-range-summary {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.saved-range-field {
+  max-width: 22rem;
+}
+
+.drum-range-numbers {
+  max-width: 22rem;
+}
+
+.drum-range-error {
+  margin-top: var(--sp-1);
+}
+
 .number-row {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--sp-5);
 }
 
@@ -1135,6 +1480,7 @@ function toggleExpanded(part: TrackPart): void {
   flex-direction: column;
   gap: var(--sp-2);
   flex: 1 1 0;
+  min-width: 8rem;
 }
 
 .number-field input,

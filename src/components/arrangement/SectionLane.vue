@@ -28,6 +28,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Request to move the transport playhead to an absolute PPQ position. */
   seek: [ppq: number];
+  /** Open drum generation with this section as the replacement range. */
+  regenerateDrums: [sectionId: number];
 }>();
 
 const store = useProjectStore();
@@ -177,6 +179,11 @@ function onBandClick(band: SectionBand, event: MouseEvent): void {
 function onBandContextMenu(band: SectionBand, event: MouseEvent): void {
   event.preventDefault();
   openContextMenu(event.clientX, event.clientY, [
+    {
+      id: 'regenerate-section-drums',
+      label: t.value.shell.arrangement.regenerateSectionDrums,
+      run: () => emit('regenerateDrums', band.id),
+    },
     {
       id: 'duplicate-section',
       label: t.value.shell.arrangement.duplicateSection,

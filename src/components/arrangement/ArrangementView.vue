@@ -152,6 +152,8 @@ const emit = defineEmits<{
   changeInstrument: [trackId: number];
   /** Request to regenerate a track by replacing it (track-header context menu). */
   regenerateTrack: [trackId: number, part: TrackPart];
+  /** Request to vary the drums in a named section. */
+  regenerateSectionDrums: [sectionId: number];
   /** Request to open the music-generation dialog (chord-lane corner button). */
   generate: [];
   /** Request to reveal the chord list editor (chord-lane double-click). */
@@ -1541,7 +1543,13 @@ onBeforeUnmount(() => {
           {{ t.shell.arrangement.tuneToMidi }}
         </button>
       </div>
-      <SectionLane class="cell-sections" :range="range" :revision="revision" @seek="onSeek" />
+      <SectionLane
+        class="cell-sections"
+        :range="range"
+        :revision="revision"
+        @seek="onSeek"
+        @regenerate-drums="(sectionId) => emit('regenerateSectionDrums', sectionId)"
+      />
       <div class="cell-corner">
         <span class="cell-corner-label">{{ t.shell.arrangement.chords }}</span>
         <button

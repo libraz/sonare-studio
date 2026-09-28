@@ -57,6 +57,9 @@ describe('SectionLane', () => {
 
     await wrapper.find('.section-band').trigger('contextmenu', { clientX: 12, clientY: 20 });
 
-    expect(useContextMenuState().items).toMatchObject([{ id: 'duplicate-section' }]);
+    expect(useContextMenuState().items).toMatchObject([
+      { id: 'regenerate-section-drums' },
+      { id: 'duplicate-section' },
+    ]);
   });
 });
