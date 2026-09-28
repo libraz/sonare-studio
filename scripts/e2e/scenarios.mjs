@@ -13,7 +13,10 @@ import * as audio_import from './scenarios/audio-import.mjs';
 import * as audio_record from './scenarios/audio-record.mjs';
 import * as automation_ramp from './scenarios/automation-ramp.mjs';
 import * as automation_write from './scenarios/automation-write.mjs';
+import * as baroque_organ_compose from './scenarios/baroque-organ-compose.mjs';
 import * as boot from './scenarios/boot.mjs';
+import * as bus_master_sidechain from './scenarios/bus-master-sidechain.mjs';
+import * as bus_routing from './scenarios/bus-routing.mjs';
 import * as composition_flow from './scenarios/composition-flow.mjs';
 import * as cycle_recording from './scenarios/cycle-recording.mjs';
 import * as dawproject_roundtrip from './scenarios/dawproject-roundtrip.mjs';
@@ -24,11 +27,14 @@ import * as export_midi from './scenarios/export-midi.mjs';
 import * as freeze_bounce from './scenarios/freeze-bounce.mjs';
 import * as imported_song_edit from './scenarios/imported-song-edit.mjs';
 import * as input_monitor from './scenarios/input-monitor.mjs';
+import * as jpop_long_form from './scenarios/jpop-long-form.mjs';
+import * as jpop_section_variations from './scenarios/jpop-section-variations.mjs';
 import * as lane_meters from './scenarios/lane-meters.mjs';
 import * as layouts from './scenarios/layouts.mjs';
 import * as long_master_export_preflight from './scenarios/long-master-export-preflight.mjs';
 import * as master_limiter from './scenarios/master-limiter.mjs';
 import * as mastering_chain from './scenarios/mastering-chain.mjs';
+import * as midi_clip_envelope from './scenarios/midi-clip-envelope.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
 import * as opfs_restore from './scenarios/opfs-restore.mjs';
 import * as piano_roll from './scenarios/piano-roll.mjs';
@@ -56,6 +62,7 @@ import * as warp from './scenarios/warp.mjs';
 
 export const scenarios = [
   boot,
+  midi_clip_envelope,
   theory_hover,
   piano_roll,
   score,
@@ -83,6 +90,8 @@ export const scenarios = [
   export_equivalence,
   cycle_recording,
   sidechain,
+  bus_routing,
+  bus_master_sidechain,
   warp,
   freeze_bounce,
   mastering_chain,
@@ -103,4 +112,7 @@ export const scenarios = [
   audio_alignment,
   audio_arrangement_edit,
   dawproject_roundtrip,
+  jpop_long_form,
+  jpop_section_variations,
+  baroque_organ_compose,
 ];

@@ -16,26 +16,37 @@ import {
   addAudioTrack,
   addGroupTrack,
   addInsert,
+  addMidiClip,
   addMixerBus,
+  addNote,
+  addTrack,
   deleteClip,
+  mixerBusStripTarget,
   removeAutomationLane,
   removeInsert,
   removeMixerBus,
   removeTrack,
+  setActiveClip,
   setAutomationLanePoints,
   setClipActiveTake,
   setClipCompSegments,
+  setClipFades,
+  setClipGain,
   setClipTakes,
   setClipWarp,
   setInsertEnabled,
   setInsertSidechain,
+  setMixerBusChannelLayout,
+  setMixerBusGain,
   setSend,
   setStripGain,
+  setStripOutputBus,
   setTempoSegments,
   setTrackGroup,
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
+import type { MixerSidechainSource } from '@/project/mixer';
 import type { ScheduledProjectClip } from '@/project/scheduling';
 import { serializeProject } from '@/project/serialization';
 import type { useProjectStore } from '@/project/store';
@@ -130,6 +141,8 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     trackCount: () => store.tracks.length,
     trackIds: () => store.tracks.map((track) => track.id),
     clipCount: () => store.clips.length,
+    midiClipIds: () =>
+      store.clips.filter((clip) => clipKind(clip) === 'midi').map((clip) => clip.id),
     clipKinds: () => store.clips.map((clip) => clipKind(clip)),
     audioClipCount: () => store.clips.filter((clip) => isAudioClip(clip)).length,
     // Placement, not just counts: the engine refuses two clips that overlap on
@@ -173,8 +186,10 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     recordingError: () => recording.error.value,
     setInputMonitor: (enabled: boolean) => recording.setMonitor(enabled),
     projectName: () => store.projectName,
+    projectDocument: () => serializeProject(),
     activeTrackId: () => store.activeTrackId,
     activeClipId: () => store.clipId,
+    selectClip: (clipId: number) => setActiveClip(clipId),
     applyPending: () => applyPending.value,
     scheduledClipIds: () => ctx.scheduledClips().map((clip) => clip.engineClipId),
     engineMidiClipCount: () => ctx.midiSync()?.scheduledClipCount() ?? 0,
@@ -206,6 +221,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       includeMasterChain = true,
       range?: { startPpq: number; endPpq: number },
       stems = false,
+      windows = 0,
     ) => {
       const result = await renderMixdownInWorker(serializeProject(), {
         includeMasterChain,
@@ -218,6 +234,14 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         sampleRate: result.sampleRate,
         peakDb: result.report.peakDb,
         channelPeaksDb: result.channels.map((channel) => peakOf([channel])),
+        windowPeaksDb:
+          windows > 0
+            ? Array.from({ length: windows }, (_, index) => {
+                const from = Math.floor((index * result.totalFrames) / windows);
+                const to = Math.floor(((index + 1) * result.totalFrames) / windows);
+                return peakOf(result.channels.map((channel) => channel.subarray(from, to)));
+              })
+            : null,
         truePeakDb: result.report.truePeakDb ?? null,
         lufs: result.report.lufs ?? null,
         wavBytes: wav.length,
@@ -277,8 +301,11 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       params?: Record<string, number | boolean>,
     ) => addInsert(trackId, processor, params),
     removeTrackInsert: (trackId: number, index: number) => removeInsert(trackId, index),
-    setInsertSidechain: (trackId: number, index: number, sourceTrackId: number | null) =>
-      setInsertSidechain(trackId, index, sourceTrackId),
+    setInsertSidechain: (
+      target: number | 'master' | `bus:${string}`,
+      index: number,
+      source: number | MixerSidechainSource | null,
+    ) => setInsertSidechain(target, index, source),
     setStripGainDb: (target: number | 'master', gainDb: number) => setStripGain(target, gainDb),
     removeClip: (clipId: number) => deleteClip(clipId),
     freezeTrack: (trackId: number) => freezeTrack(trackId),
@@ -330,6 +357,9 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         })),
     setClipTakes: (clipId: number, takes: { assetId: string; name: string }[], active?: number) =>
       setClipTakes(clipId, takes, active),
+    setClipGain: (clipId: number, gain: number) => setClipGain(clipId, gain),
+    setClipFades: (clipId: number, fadeInPpq: number, fadeOutPpq: number) =>
+      setClipFades(clipId, fadeInPpq, fadeOutPpq),
     setClipActiveTake: (clipId: number, takeIndex: number) => setClipActiveTake(clipId, takeIndex),
     setClipCompSegments: (clipId: number, segments: { startPpq: number; takeIndex: number }[]) =>
       setClipCompSegments(clipId, segments),
@@ -339,6 +369,29 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       return ingestTone(sampleRate, seconds, frequencyHz, amplitude);
     },
     addMixerBus: (name?: string) => addMixerBus(name !== undefined ? { name } : {}),
+    addBusInsert: (busId: string, processor: string, params?: Record<string, number | boolean>) =>
+      addInsert(mixerBusStripTarget(busId), processor, params),
+    removeBusInsert: (busId: string, index: number) =>
+      removeInsert(mixerBusStripTarget(busId), index),
+    setBusOutput: (busId: string, destination: string | null) =>
+      setStripOutputBus(mixerBusStripTarget(busId), destination),
+    setTrackOutput: (trackId: number, destination: string | null) =>
+      setStripOutputBus(trackId, destination),
+    setBusSend: (
+      busId: string,
+      destination: string,
+      send: { levelDb: number; enabled?: boolean; timing?: 'preFader' | 'postFader' } | null,
+    ) => setSend(mixerBusStripTarget(busId), destination, send),
+    setBusGain: (busId: string, gainDb: number) => setMixerBusGain(busId, gainDb),
+    setBusLayout: (busId: string, layout: 'mono' | 'stereo' | '5.1' | '7.1') =>
+      setMixerBusChannelLayout(busId, layout),
+    addMidiTestClip: (name = 'MIDI envelope', startPpq = 64) => {
+      const trackId = addTrack({ kind: 'midi', name });
+      const clipId = addMidiClip({ trackId, startPpq, lengthPpq: 4, name });
+      setActiveClip(clipId);
+      addNote({ pitch: 60, startPpq: 0, durationPpq: 4, velocity: 100 });
+      return { trackId, clipId };
+    },
     removeMixerBus: (busId: string) => removeMixerBus(busId),
     setSend: (
       target: number | 'master',
