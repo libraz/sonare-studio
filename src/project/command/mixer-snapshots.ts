@@ -137,6 +137,14 @@ function sanitizeStripRouting(strip: MixerStrip, validBusIds: ReadonlySet<string
   if (next.outputBusId !== undefined && !validBusIds.has(next.outputBusId)) {
     delete next.outputBusId;
   }
+  next.inserts = next.inserts.map((slot) => {
+    if (slot.sidechainSourceBusId === undefined || validBusIds.has(slot.sidechainSourceBusId)) {
+      return slot;
+    }
+    const cleared = { ...slot };
+    delete cleared.sidechainSourceBusId;
+    return cleared;
+  });
   return next;
 }
 
@@ -161,6 +169,10 @@ export function mergeMixerSnapshot(
   const validBusIds = new Set(mixer.buses.map((bus) => bus.id));
   const validVcaIds = new Set((mixer.vcaGroups ?? []).map((group) => group.id));
   const byId = new Map(snapshot.tracks.map((entry) => [entry.id, entry]));
+  mixer.master = sanitizeStripRouting(mixer.master, validBusIds);
+  mixer.buses = mixer.buses.map((bus) =>
+    bus.strip ? { ...bus, strip: sanitizeStripRouting(bus.strip, validBusIds) } : bus,
+  );
   const tracks = currentTracks.map((track) => {
     const entry = byId.get(track.id);
     const next: EditorTrack = { ...track };
@@ -363,14 +375,24 @@ export function importMixerSnapshotSlots(state: MixerSnapshotSlotState | null): 
 
 /** Drops a removed track and every sidechain reference to it from all slots. */
 export function pruneMixerSnapshotTrackReferences(trackId: number): void {
+  const prune = (strip: MixerStrip): MixerStrip => {
+    const next = pruneStripTrackReferences(strip, trackId);
+    if (!next.inserts.some((slot) => slot.sidechainSourceGroupTrackId === trackId)) return next;
+    const cleaned = cloneStrip(next);
+    cleaned.inserts = cleaned.inserts.map((slot) => {
+      if (slot.sidechainSourceGroupTrackId !== trackId) return slot;
+      const cleared = { ...slot };
+      delete cleared.sidechainSourceGroupTrackId;
+      return cleared;
+    });
+    return cleaned;
+  };
   for (const slot of MIXER_SNAPSHOT_SLOTS) {
     const snapshot = slots.snapshots[slot];
     if (!snapshot) continue;
     const mixer = cloneMixerState(snapshot.mixer);
-    mixer.master = pruneStripTrackReferences(mixer.master, trackId);
-    mixer.buses = mixer.buses.map((bus) =>
-      bus.strip ? { ...bus, strip: pruneStripTrackReferences(bus.strip, trackId) } : bus,
-    );
+    mixer.master = prune(mixer.master);
+    mixer.buses = mixer.buses.map((bus) => (bus.strip ? { ...bus, strip: prune(bus.strip) } : bus));
     slots.snapshots[slot] = markRaw({
       ...snapshot,
       mixer,
@@ -378,7 +400,7 @@ export function pruneMixerSnapshotTrackReferences(trackId: number): void {
         .filter((track) => track.id !== trackId)
         .map((track) => ({
           ...track,
-          mixer: pruneStripTrackReferences(track.mixer, trackId),
+          mixer: prune(track.mixer),
         })),
       ...(snapshot.automationLanes !== undefined
         ? {

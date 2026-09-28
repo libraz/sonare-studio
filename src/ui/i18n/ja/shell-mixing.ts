@@ -215,6 +215,7 @@ export const shellMixing = {
       masterTitle:
         'マスターのセンドはルーティングのみです（マスターにはエンジンセンドバスがありません）',
       stripTitle: 'プロジェクトバスへのセンドレベルです。名前をクリックするとミュートします',
+      blockedTitle: '使用不可: バスのフィードバックループになります',
       mutedTitle: 'ミュート中のセンド - クリックでミュート解除',
       activeTitle: '有効なセンド - クリックでミュート',
       unsetTitle: 'センド未作成 - ノブを回すと作成',
@@ -228,6 +229,8 @@ export const shellMixing = {
       master: 'マスター',
       output: 'OUT',
       pan: 'Pan',
+      stereoOnly: 'ステレオ専用',
+      stereoControlsUnavailable: 'サラウンドバスではステレオパンと幅を使用できません',
       options: 'ストリップオプション',
       optionsNamed: '{name} のストリップオプション',
       inputTrim: '入力トリム',
@@ -264,6 +267,15 @@ export const shellMixing = {
       automationLatchTitle: 'オートメーション・ラッチ（記録した最後の値をレーン終端まで保持）',
       automationLatch: '{name} のオートメーション・ラッチ',
       outputBus: '{name} の出力バス',
+      channelLayout: 'チャンネル構成',
+      channelLayouts: {
+        mono: 'モノ',
+        stereo: 'ステレオ',
+        '5.1': '5.1 サラウンド',
+        '7.1': '7.1 サラウンド',
+      },
+      surroundLayoutRequiresNeutral:
+        'サラウンドに切り替える前に、ステレオパン・パンモード・幅をニュートラルに戻してください',
       mute: 'ミュート',
       unmute: 'ミュート解除',
       muteNamed: '{name} をミュート',

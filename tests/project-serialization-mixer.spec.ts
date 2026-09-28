@@ -16,6 +16,8 @@ import {
   recallMixerSnapshot,
   saveMixerSnapshot,
   setAutomationLanePoints,
+  setInsertSidechain,
+  setMixerBusChannelLayout,
   setMixerSoloMode,
   setSend,
   setStripChannelDelaySamples,
@@ -214,6 +216,132 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(serializeProject()).toEqual(doc);
     expect(store.tracks[0].mixer?.outputBusId).toBe(busId);
+  });
+
+  it('round-trips group-bus sidechain references by document track index', async () => {
+    const sourceGroupId = addGroupTrack({ name: 'Key group' });
+    const targetGroupId = addGroupTrack({ name: 'Ducker group' });
+    addInsert(targetGroupId, 'dynamics.sidechainRouter');
+    setInsertSidechain(targetGroupId, 0, { kind: 'group', trackId: sourceGroupId });
+
+    const doc = serializeProject();
+    const targetEntry = doc.tracks.find((track) => track.name === 'Ducker group');
+    const serializedInsert = targetEntry?.mixer?.inserts[0] as
+      | (InsertSlot & { sidechainSourceGroupTrackIndex?: number })
+      | undefined;
+    expect(serializedInsert).toMatchObject({
+      sidechainSourceGroupTrackIndex: 1,
+    });
+    expect(serializedInsert?.sidechainSourceGroupTrackId).toBeUndefined();
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    const loadedSource = store.tracks.find((track) => track.name === 'Key group');
+    const loadedTarget = store.tracks.find((track) => track.name === 'Ducker group');
+    expect(loadedTarget?.mixer?.inserts[0].sidechainSourceGroupTrackId).toBe(loadedSource?.id);
+  });
+
+  it('migrates legacy group track keys or rejects them on ordinary tracks', async () => {
+    const sourceGroupId = addGroupTrack({ name: 'Key group' });
+    const sourceGroupIndex = store.tracks.findIndex((track) => track.id === sourceGroupId);
+    addInsert(store.tracks[0].id, 'dynamics.compressor');
+    const ordinaryDoc = serializeProject();
+    const ordinarySlot = ordinaryDoc.tracks[0]!.mixer!.inserts[0] as InsertSlot & {
+      sidechainSourceIndex?: number;
+    };
+    ordinarySlot.sidechainSourceIndex = sourceGroupIndex;
+    await expect(loadProjectDocument(ordinaryDoc)).rejects.toThrow(/group sidechain key/);
+
+    const targetGroupId = addGroupTrack({ name: 'Ducker group' });
+    addInsert(targetGroupId, 'dynamics.compressor');
+    const groupDoc = serializeProject();
+    const targetEntry = groupDoc.tracks.find((track) => track.name === 'Ducker group')!;
+    const groupSlot = targetEntry.mixer!.inserts[0] as InsertSlot & {
+      sidechainSourceIndex?: number;
+      sidechainSourceGroupTrackIndex?: number;
+    };
+    delete groupSlot.sidechainSourceGroupTrackIndex;
+    groupSlot.sidechainSourceIndex = sourceGroupIndex;
+
+    await loadProjectDocument(groupDoc);
+    const loadedSource = store.tracks.find((track) => track.name === 'Key group');
+    const loadedTarget = store.tracks.find((track) => track.name === 'Ducker group');
+    expect(loadedTarget?.mixer?.inserts[0].sidechainSourceGroupTrackId).toBe(loadedSource?.id);
+    expect(loadedTarget?.mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+  });
+
+  it('rejects duplicate, empty and reserved mixer bus ids while loading', async () => {
+    const cases = [
+      { id: '', message: /must not be empty/ },
+      { id: 'group:1', message: /reserved/ },
+      { id: 'master', message: /reserved/ },
+      { id: 'return-solo-discard', message: /reserved/ },
+    ] as const;
+    for (const [index, entry] of cases.entries()) {
+      addMixerBus({ id: `room-${index}` });
+      const doc = serializeProject();
+      doc.mixer!.buses[0].id = entry.id;
+      await expect(loadProjectDocument(doc)).rejects.toThrow(entry.message);
+    }
+
+    addMixerBus({ id: 'room' });
+    const duplicateDoc = serializeProject();
+    duplicateDoc.mixer!.buses.push({ ...duplicateDoc.mixer!.buses[0] });
+    await expect(loadProjectDocument(duplicateDoc)).rejects.toThrow(/already exists/);
+  });
+
+  it('round-trips bus sends, output routing, surround layout and bus sidechains', async () => {
+    const sourceBusId = addMixerBus({ name: 'Key' });
+    const targetBusId = addMixerBus({ name: 'Target' });
+    const outputBusId = addMixerBus({ name: 'Output' });
+    setMixerBusChannelLayout(targetBusId, '5.1');
+    store.mixer.masterLayout = '7.1';
+    const target = mixerBusStripTarget(targetBusId);
+    setSend(target, outputBusId, { levelDb: -9, timing: 'preFader' });
+    setStripOutputBus(target, outputBusId);
+    addInsert(target, 'dynamics.compressor');
+    setInsertSidechain(target, 0, { kind: 'bus', busId: sourceBusId });
+    addInsert('master', 'dynamics.compressor');
+    setInsertSidechain('master', 0, { kind: 'bus', busId: sourceBusId });
+    const sourceStrip = store.mixer.buses.find((bus) => bus.id === sourceBusId)?.strip;
+    if (sourceStrip) {
+      sourceStrip.surroundPan = {
+        azimuth: 45,
+        elevation: 0,
+        divergence: 0.25,
+        lfe: 0.2,
+        distance: 1,
+      };
+    }
+
+    const doc = serializeProject();
+    expect(doc.mixer?.buses).toMatchObject([
+      { id: sourceBusId, name: 'Key', gainDb: 0 },
+      {
+        id: targetBusId,
+        channelLayout: '5.1',
+        strip: {
+          outputBusId,
+          sends: [{ busId: outputBusId, levelDb: -9, enabled: true, timing: 'preFader' }],
+          inserts: [{ sidechainSourceBusId: sourceBusId }],
+        },
+      },
+      { id: outputBusId, name: 'Output', gainDb: 0 },
+    ]);
+    expect(doc.mixer?.master.inserts[0]).toMatchObject({
+      sidechainSourceBusId: sourceBusId,
+    });
+    expect(doc.mixer?.masterLayout).toBe('7.1');
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+    const loadedTarget = store.mixer.buses.find((bus) => bus.id === targetBusId);
+    expect(loadedTarget?.channelLayout).toBe('5.1');
+    expect(loadedTarget?.strip).toMatchObject({
+      outputBusId,
+      sends: [{ busId: outputBusId, timing: 'preFader' }],
+      inserts: [{ sidechainSourceBusId: sourceBusId }],
+    });
+    expect(store.mixer.masterLayout).toBe('7.1');
+    expect(store.mixer.master.inserts[0].sidechainSourceBusId).toBe(sourceBusId);
   });
 
   it('round-trips a bus return insert chain through the document', async () => {
@@ -454,7 +582,7 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     ]);
   });
 
-  it('drops group-track insert sidechain sources from mixer snapshot slots', async () => {
+  it('preserves group-track insert sidechain sources in mixer snapshot slots', async () => {
     const sourceId = store.tracks[0].id;
     const groupId = addGroupTrack({ name: 'Group' });
     addInsert(groupId, 'dynamics.compressor', { thresholdDb: -12 });
@@ -472,13 +600,13 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
       | undefined;
 
     expect(snapshotSlot?.sidechainSourceTrackId).toBeUndefined();
-    expect(snapshotSlot?.sidechainSourceIndex).toBeUndefined();
+    expect(snapshotSlot?.sidechainSourceIndex).toBe(0);
 
     clearMixerSnapshots();
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(recallMixerSnapshot('D')).toBe(true);
     const loadedGroup = store.tracks.find((track) => track.kind === 'group');
-    expect(loadedGroup?.mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+    expect(loadedGroup?.mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
   });
 
   it('drops a track VCA assignment whose group is missing from the document', async () => {

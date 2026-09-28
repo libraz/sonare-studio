@@ -36,12 +36,20 @@ export function registerTargetReferenceContributor(contributor: TargetReferenceC
 
 /** Returns a strip with references to one sidechain source removed. */
 export function pruneStripTrackReferences(strip: MixerStrip, trackId: number): MixerStrip {
-  if (!strip.inserts.some((slot) => slot.sidechainSourceTrackId === trackId)) return strip;
+  if (
+    !strip.inserts.some(
+      (slot) =>
+        slot.sidechainSourceTrackId === trackId || slot.sidechainSourceGroupTrackId === trackId,
+    )
+  )
+    return strip;
   const next = cloneStrip(strip);
   next.inserts = next.inserts.map((slot) => {
-    if (slot.sidechainSourceTrackId !== trackId) return slot;
+    if (slot.sidechainSourceTrackId !== trackId && slot.sidechainSourceGroupTrackId !== trackId)
+      return slot;
     const cleared = { ...slot };
-    delete cleared.sidechainSourceTrackId;
+    if (cleared.sidechainSourceTrackId === trackId) delete cleared.sidechainSourceTrackId;
+    if (cleared.sidechainSourceGroupTrackId === trackId) delete cleared.sidechainSourceGroupTrackId;
     return cleared;
   });
   return next;

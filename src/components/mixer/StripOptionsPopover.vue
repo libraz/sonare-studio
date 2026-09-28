@@ -6,6 +6,7 @@ import {
   currentStrip,
   isMixerBusStripTarget,
   type MixerStripTarget,
+  mixerBusIdFromTarget,
 } from '@/project/command/mixer-internal';
 import {
   setStripChannelDelaySamples,
@@ -68,6 +69,14 @@ const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 const strip = computed<MixerStrip>(() => currentStrip(store, props.target));
 
+/** Surround return buses do not expose the engine's stereo panner or width stage. */
+const isSurroundBus = computed(() => {
+  const target = props.target;
+  if (!isMixerBusStripTarget(target)) return false;
+  const bus = store.mixer.buses.find((entry) => entry.id === mixerBusIdFromTarget(target));
+  return bus?.channelLayout === '5.1' || bus?.channelLayout === '7.1';
+});
+
 /** Pan law/mode controls are available on track/group and return-bus strips. */
 const canPannerOptions = computed(() => props.target !== 'master');
 /** Channel alignment delay is a regular track-lane control, not a group bus. */
@@ -128,6 +137,7 @@ function onInputTrimInput(event: Event, commit: boolean): void {
 }
 
 function onWidthInput(event: Event, commit: boolean): void {
+  if (isSurroundBus.value) return;
   const raw = Number.parseFloat((event.target as HTMLInputElement).value);
   const value = Number.isFinite(raw)
     ? Math.min(MAX_STRIP_WIDTH, Math.max(MIN_STRIP_WIDTH, raw))
@@ -142,6 +152,7 @@ function onInputTrimValue(value: number): void {
 
 /** Commits a bounded width entered through the adjacent numeric readout. */
 function onWidthValue(value: number): void {
+  if (isSurroundBus.value) return;
   setStripWidth(props.target, value);
 }
 
@@ -159,18 +170,18 @@ function onChannelDelayInput(event: Event): void {
 }
 
 function onPanLawChange(value: string): void {
-  if (props.target === 'master') return;
+  if (props.target === 'master' || isSurroundBus.value) return;
   setStripPanLaw(props.target, value as PanLawId);
 }
 
 function onPanModeChange(value: string): void {
-  if (props.target === 'master') return;
+  if (props.target === 'master' || isSurroundBus.value) return;
   setStripPanMode(props.target, value as PanModeId);
 }
 
 /** Updates or commits a dual-pan slider edit, keeping the other channel intact. */
 function onDualPanInput(channel: 'left' | 'right', event: Event, commit: boolean): void {
-  if (props.target === 'master') return;
+  if (props.target === 'master' || isSurroundBus.value) return;
   const raw = Number.parseFloat((event.target as HTMLInputElement).value);
   const value = Number.isFinite(raw) ? Math.min(1, Math.max(-1, raw)) : 0;
   const left = channel === 'left' ? value : dualPanLeft.value;
@@ -190,6 +201,16 @@ function learnTargetId(param: MidiLearnStripControlParam): string {
 
 function learnState(param: MidiLearnStripControlParam): 'unbound' | 'armed' | 'bound' | undefined {
   if (!midiLearn) return undefined;
+  if (
+    isSurroundBus.value &&
+    (param === 'width' ||
+      param === 'panLaw' ||
+      param === 'panMode' ||
+      param === 'dualPanLeft' ||
+      param === 'dualPanRight')
+  ) {
+    return undefined;
+  }
   if (
     isMixerBusStripTarget(props.target) &&
     !(
@@ -250,6 +271,9 @@ onBeforeUnmount(() => {
     </button>
     <Transition name="pop">
     <div v-if="optionsOpen" class="strip-options-popover" role="menu">
+      <p v-if="isSurroundBus" class="strip-options-note" role="note">
+        {{ t.shell.mixer.strip.stereoControlsUnavailable }}
+      </p>
       <label class="strip-options-row">
         <span class="strip-options-label">{{ t.shell.mixer.strip.inputTrim }}</span>
         <span class="strip-options-field">
@@ -301,7 +325,7 @@ onBeforeUnmount(() => {
           </button>
         </span>
       </label>
-      <label class="strip-options-row">
+      <label class="strip-options-row" :class="{ 'is-disabled': isSurroundBus }">
         <span class="strip-options-label">{{ t.shell.mixer.strip.width }}</span>
         <span class="strip-options-field">
           <input
@@ -311,6 +335,7 @@ onBeforeUnmount(() => {
             :step="0.01"
             :value="stripWidth"
             :aria-label="t.shell.mixer.strip.width"
+            :disabled="isSurroundBus"
             @input="onWidthInput($event, false)"
             @change="onWidthInput($event, true)"
           />
@@ -322,6 +347,7 @@ onBeforeUnmount(() => {
             :step="0.01"
             :display="stripWidth.toFixed(2)"
             :ariaLabel="t.shell.mixer.strip.width"
+            :disabled="isSurroundBus"
             @change="onWidthValue"
           />
           <button
@@ -466,13 +492,18 @@ onBeforeUnmount(() => {
           </button>
         </span>
       </label>
-      <div v-if="canPannerOptions" class="strip-options-row">
+      <div
+        v-if="canPannerOptions"
+        class="strip-options-row"
+        :class="{ 'is-disabled': isSurroundBus }"
+      >
         <span class="strip-options-label">{{ t.shell.mixer.strip.panLaw }}</span>
         <span class="strip-options-field">
           <SelectMenu
             :model-value="panLaw"
             size="sm"
             :options="panLawOptions"
+            :disabled="isSurroundBus"
             :aria-label="t.shell.mixer.strip.panLaw"
             @change="onPanLawChange"
           />
@@ -503,13 +534,18 @@ onBeforeUnmount(() => {
           </button>
         </span>
       </div>
-      <div v-if="canPannerOptions" class="strip-options-row">
+      <div
+        v-if="canPannerOptions"
+        class="strip-options-row"
+        :class="{ 'is-disabled': isSurroundBus }"
+      >
         <span class="strip-options-label">{{ t.shell.mixer.strip.panMode }}</span>
         <span class="strip-options-field">
           <SelectMenu
             :model-value="panMode"
             size="sm"
             :options="panModeOptions"
+            :disabled="isSurroundBus"
             :aria-label="t.shell.mixer.strip.panMode"
             @change="onPanModeChange"
           />
@@ -541,7 +577,7 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <template v-if="canPannerOptions && panMode === 'dualPan'">
-        <label class="strip-options-row">
+        <label class="strip-options-row" :class="{ 'is-disabled': isSurroundBus }">
           <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanLeft }}</span>
           <span class="strip-options-field">
             <input
@@ -551,6 +587,7 @@ onBeforeUnmount(() => {
               step="0.01"
               :value="dualPanLeft"
               :aria-label="t.shell.mixer.strip.dualPanLeft"
+              :disabled="isSurroundBus"
               @input="onDualPanInput('left', $event, false)"
               @change="onDualPanInput('left', $event, true)"
             />
@@ -582,7 +619,7 @@ onBeforeUnmount(() => {
             </button>
           </span>
         </label>
-        <label class="strip-options-row">
+        <label class="strip-options-row" :class="{ 'is-disabled': isSurroundBus }">
           <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanRight }}</span>
           <span class="strip-options-field">
             <input
@@ -592,6 +629,7 @@ onBeforeUnmount(() => {
               step="0.01"
               :value="dualPanRight"
               :aria-label="t.shell.mixer.strip.dualPanRight"
+              :disabled="isSurroundBus"
               @input="onDualPanInput('right', $event, false)"
               @change="onDualPanInput('right', $event, true)"
             />
@@ -671,6 +709,16 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.strip-options-row.is-disabled {
+  opacity: 0.62;
+}
+
+.strip-options-note {
+  margin: 0 0 var(--sp-1);
+  font: var(--fs-2xs) / 1.3 var(--font-sans);
+  color: var(--text-4);
 }
 
 .strip-options-label {

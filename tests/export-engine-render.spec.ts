@@ -12,6 +12,7 @@ import {
   instrumentAutomationParam,
   masteringAutomationParam,
 } from '@/project/automation';
+import type { InsertSlot } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
 
@@ -75,6 +76,12 @@ class FakeEngine implements OfflineRenderEngine {
   }
   setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number): void {
     this.record('setLaneSidechain', trackId, insertIndex, sourceTrackId);
+  }
+  setBusSidechain(busId: number, insertIndex: number, sourceKind: number, sourceId: number): void {
+    this.record('setBusSidechain', busId, insertIndex, sourceKind, sourceId);
+  }
+  setMasterSidechain(insertIndex: number, sourceKind: number, sourceId: number): void {
+    this.record('setMasterSidechain', insertIndex, sourceKind, sourceId);
   }
   setTrackStripInsertBypassed(trackId: number, index: number, bypassed: boolean): void {
     this.record('setTrackStripInsertBypassed', trackId, index, bypassed);
@@ -244,6 +251,11 @@ class AudibilityEngine extends FakeEngine {
     startFrame: number;
     endFrame: number;
     velocity: number;
+    clipStart: number;
+    clipLength: number;
+    clipGain: number;
+    fadeInSamples: number;
+    fadeOutSamples: number;
   }> = [];
 
   setTrackLanes(lanes: Array<number | { trackId: number }>): void {
@@ -403,6 +415,9 @@ class AudibilityEngine extends FakeEngine {
       destinationId: number;
       startSample?: number;
       lengthSamples?: number;
+      gain?: number;
+      fadeInSamples?: number;
+      fadeOutSamples?: number;
       loop?: boolean;
       loopLengthSamples?: number;
       events: Array<{ renderFrame: number; word0: number }>;
@@ -417,6 +432,11 @@ class AudibilityEngine extends FakeEngine {
         startFrame: number;
         endFrame: number;
         velocity: number;
+        clipStart: number;
+        clipLength: number;
+        clipGain: number;
+        fadeInSamples: number;
+        fadeOutSamples: number;
       }> = [];
       for (const event of clip.events) {
         const status = midiStatus(event.word0);
@@ -438,6 +458,11 @@ class AudibilityEngine extends FakeEngine {
           startFrame: start.startFrame,
           endFrame: event.renderFrame,
           velocity: start.velocity,
+          clipStart: clip.startSample ?? 0,
+          clipLength: clip.lengthSamples ?? Number.POSITIVE_INFINITY,
+          clipGain: clip.gain ?? 1,
+          fadeInSamples: clip.fadeInSamples ?? 0,
+          fadeOutSamples: clip.fadeOutSamples ?? 0,
         });
       }
       if (
@@ -556,9 +581,18 @@ class AudibilityEngine extends FakeEngine {
         if (!audibleTrackIds.has(note.trackId)) continue;
         const sourceFrame = frame - (this.laneDelayByTrack.get(note.trackId) ?? 0);
         if (sourceFrame >= note.startFrame && sourceFrame < note.endFrame) {
+          const clipFrame = sourceFrame - note.clipStart;
+          const fadeIn = note.fadeInSamples > 0 ? Math.min(1, clipFrame / note.fadeInSamples) : 1;
+          const fadeOut =
+            note.fadeOutSamples > 0 && Number.isFinite(note.clipLength)
+              ? Math.min(1, (note.clipLength - clipFrame) / note.fadeOutSamples)
+              : 1;
           const value =
             this.midiSample(note.trackId, note.velocity) *
-            laneGainForTrack(note.trackId, sourceFrame);
+            laneGainForTrack(note.trackId, sourceFrame) *
+            note.clipGain *
+            fadeIn *
+            fadeOut;
           const panned = stereoForTrack(note.trackId, value, value);
           leftSample += panned[0];
           rightSample += panned[1];
@@ -764,6 +798,13 @@ function defaultAudioLevel(
 }
 
 describe('renderProjectWithEngine', () => {
+  it('rejects a surround master layout before producing a misleading stereo export', async () => {
+    const doc = makeDoc();
+    doc.mixer!.masterLayout = '5.1';
+    await expect(renderProjectWithEngine(doc, renderOptions(new FakeEngine()))).rejects.toThrow(
+      /Surround master export is unavailable/,
+    );
+  });
   it('assigns collision-free synthetic ids beyond 10,000 MIDI clips per track', () => {
     const doc = makeDoc();
     const source = doc.tracks[0].clips[0];
@@ -832,8 +873,133 @@ describe('renderProjectWithEngine', () => {
 
     const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
 
-    // buildMidiClipSchedules folds clip gain into note-on velocity: 100 * 0.5.
+    // The instrument sees velocity 100; the engine multiplies its rendered
+    // audio by the clip's linear gain 0.5.
     expect(result.channels[0][0]).toBeCloseTo(defaultMidiLevel(50), 5);
+  });
+
+  it('removes non-selected pre-fader sends from isolated stem lanes', async () => {
+    const doc = makeDoc();
+    const send = doc.tracks[1].mixer?.sends[0];
+    if (!send) throw new Error('missing send fixture');
+    send.timing = 'preFader';
+    const engines: FakeEngine[] = [];
+    await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      stems: true,
+    });
+    const keysStemLanes = engines[1].named('setTrackLanes')[0][1] as Array<{
+      trackId: number;
+      sends?: unknown[];
+    }>;
+    expect(keysStemLanes[1]).toEqual({ trackId: 2 });
+  });
+
+  it('refuses return stems when all engine bus slots are occupied', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    for (let index = 1; index < 8; index++) {
+      doc.mixer.buses.push({ id: `bus-${index}`, name: `Bus ${index}`, gainDb: 0 });
+    }
+    await expect(
+      renderProjectWithEngine(doc, {
+        ...renderOptions(new FakeEngine()),
+        stems: true,
+        busStems: true,
+      }),
+    ).rejects.toThrow(/Return stems require one free engine bus/);
+  });
+
+  it('reuses an existing return-solo discard bus for return stems', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses[0].solo = true;
+    for (let index = 1; index < 7; index++) {
+      doc.mixer.buses.push({ id: `bus-${index}`, name: `Bus ${index}`, gainDb: 0 });
+    }
+    const engines: FakeEngine[] = [];
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      stems: true,
+      busStems: true,
+    });
+    const declarations = engines.flatMap((engine) => engine.named('setTrackBuses'));
+    expect(declarations.length).toBeGreaterThan(1);
+    expect(declarations.every(([, buses]) => (buses as unknown[]).length === 8)).toBe(true);
+  });
+
+  it('refuses return stems whose nested bus graph would make stems overlap', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses.push({ id: 'bus-b', name: 'B', gainDb: 0 });
+    doc.mixer.buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      inserts: [],
+      sends: [],
+      outputBusId: 'bus-b',
+    };
+    await expect(
+      renderProjectWithEngine(doc, {
+        ...renderOptions(new FakeEngine()),
+        stems: true,
+        busStems: true,
+      }),
+    ).rejects.toThrow(/Return stems cannot isolate nested bus routing/);
+  });
+
+  it('refuses return stems when a bus insert keys from another bus', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses.push({ id: 'bus-b', name: 'B', gainDb: 0 });
+    doc.mixer.buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [
+        {
+          processor: 'dynamics.duckingProcessor',
+          params: {},
+          enabled: true,
+          sidechainSourceBusId: 'bus-b',
+        },
+      ],
+    };
+    await expect(
+      renderProjectWithEngine(doc, {
+        ...renderOptions(new FakeEngine()),
+        stems: true,
+        busStems: true,
+      }),
+    ).rejects.toThrow(/Return stems cannot isolate nested bus routing or bus sidechain keys/);
+  });
+
+  it('applies MIDI clip fades to the instrument audio over the clip span', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].clips[0].fadeInPpq = 1;
+    doc.tracks[0].clips[0].fadeOutPpq = 1;
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 4, channel: 0 },
+    ];
+
+    const result = await renderProjectWithEngine(doc, renderOptions(new AudibilityEngine()));
+    const level = defaultMidiLevel(100);
+    expect(result.channels[0][0]).toBeCloseTo(0, 5);
+    expect(result.channels[0][Math.round(SAMPLES_PER_PPQ / 2)]).toBeCloseTo(level * 0.5, 5);
+    expect(result.channels[0][2 * SAMPLES_PER_PPQ]).toBeCloseTo(level, 5);
+    expect(result.channels[0][Math.round(3.5 * SAMPLES_PER_PPQ)]).toBeCloseTo(level * 0.5, 5);
   });
 
   it('sums simultaneous MIDI notes by their audible velocities', async () => {
@@ -2013,6 +2179,55 @@ describe('renderProjectWithEngine', () => {
     expect(engines).toHaveLength(1);
   });
 
+  it('rejects cross-font SF2 key rendering before an isolated bounce can lose the key', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+    doc.tracks[1].kind = 'midi';
+    doc.tracks[1].instrument = { kind: 'sf2', fontId: 'font-b' };
+    doc.tracks[1].clips = structuredClone(doc.tracks[0].clips);
+    doc.tracks[0].mixer = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceIndex: 1,
+        } as InsertSlot,
+      ],
+    };
+
+    await expect(
+      renderProjectWithEngine(doc, {
+        ...renderOptions(new FakeEngine()),
+        loadFont: async () => new Uint8Array([1]),
+      }),
+    ).rejects.toThrow(/conflicting fonts/);
+  });
+
+  it('allows a master key when conflicting SoundFonts are pre-rendered before the final pass', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+    doc.tracks[1].kind = 'midi';
+    doc.tracks[1].instrument = { kind: 'sf2', fontId: 'font-b' };
+    doc.tracks[1].clips = structuredClone(doc.tracks[0].clips);
+    doc.mixer!.master.inserts.push({
+      processor: 'dynamics.compressor',
+      params: {},
+      enabled: true,
+      sidechainSourceIndex: 0,
+    } as InsertSlot);
+
+    await expect(
+      renderProjectWithEngine(doc, {
+        ...renderOptions(new FakeEngine()),
+        loadFont: async () => new Uint8Array([1]),
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it('binds synth patch instruments before audible MIDI playback', async () => {
     const doc = makeDoc();
     doc.tracks[1].mute = true;
@@ -2725,6 +2940,38 @@ describe('renderProjectWithEngine', () => {
     expect(result.totalFrames).toBe(SAMPLES_PER_PPQ);
   });
 
+  it.each(['pre-fader send', 'master sidechain key'])(
+    'loads muted audio needed by a %s before the fader gate',
+    async (source) => {
+      const doc = makeDoc();
+      doc.tracks[1].mute = true;
+      if (source === 'pre-fader send') {
+        doc.tracks[1].mixer!.sends[0].timing = 'preFader';
+      } else {
+        doc.tracks[1].mixer!.sends = [];
+        doc.mixer!.master.inserts.push({
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceIndex: 1,
+        } as InsertSlot);
+      }
+      const loadAudioAsset = vi.fn(async () => fakeAsset());
+      const loadAudioAssetMeta = vi.fn(async () => fakeAsset().meta);
+
+      await renderProjectWithEngine(doc, {
+        deps: null,
+        createEngine: () => new FakeEngine(),
+        loadAudioAsset,
+        loadAudioAssetMeta,
+        range: { startPpq: 2, endPpq: 4 },
+      });
+
+      expect(loadAudioAssetMeta).toHaveBeenCalled();
+      expect(loadAudioAsset).toHaveBeenCalled();
+    },
+  );
+
   it('renders requested mixer buses as return stems', async () => {
     const engines: FakeEngine[] = [];
     const result = await renderProjectWithEngine(makeDoc(), {
@@ -2807,12 +3054,12 @@ describe('renderProjectWithEngine', () => {
     const directStemPass = engines[1];
     expect(directStemPass.named('setTrackLanes')[0][1]).toEqual([
       { trackId: 1 },
-      { trackId: 2, sends: [{ busId: 1, levelDb: -9, enabled: true }], outputBusId: 2 },
+      { trackId: 2 },
       { trackId: 3 },
     ]);
     const groupStemPass = engines[2];
     expect(groupStemPass.named('setTrackLanes')[0][1]).toEqual([
-      { trackId: 1, sends: [{ busId: 1, levelDb: -12, enabled: true }] },
+      { trackId: 1 },
       { trackId: 2, outputBusId: 2 },
       { trackId: 3 },
     ]);
@@ -4332,6 +4579,130 @@ function makeGroupDoc(): ProjectDocument {
 }
 
 describe('renderProjectWithEngine with group tracks and sidechains', () => {
+  it('binds return, group and master inserts to document track and bus keys', async () => {
+    const doc = makeGroupDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [
+        {
+          processor: 'dynamics.duckingProcessor',
+          params: {},
+          enabled: true,
+          sidechainSourceIndex: 1,
+        } as unknown as InsertSlot,
+      ],
+    };
+    doc.mixer.buses.push({
+      id: 'bus-b',
+      name: 'B',
+      gainDb: 0,
+      strip: {
+        gainDb: 0,
+        pan: 0,
+        sends: [],
+        inserts: [
+          {
+            processor: 'dynamics.duckingProcessor',
+            params: {},
+            enabled: true,
+            sidechainSourceBusId: 'bus-a',
+          } as unknown as InsertSlot,
+        ],
+      },
+    });
+    doc.tracks[2].mixer = {
+      ...(doc.tracks[2].mixer ?? { gainDb: 0, pan: 0, sends: [], inserts: [] }),
+      inserts: [
+        {
+          processor: 'dynamics.duckingProcessor',
+          params: {},
+          enabled: true,
+          sidechainSourceIndex: 1,
+        } as unknown as InsertSlot,
+      ],
+    };
+    doc.mixer.master.inserts = [
+      {
+        processor: 'dynamics.duckingProcessor',
+        params: {},
+        enabled: true,
+        sidechainSourceGroupTrackIndex: 2,
+      } as unknown as InsertSlot,
+    ];
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+    expect(engine.named('setBusSidechain')).toEqual([
+      ['setBusSidechain', 1, 0, 0, 2],
+      ['setBusSidechain', 2, 0, 1, 1],
+      ['setBusSidechain', 3, 0, 0, 2],
+    ]);
+    expect(engine.named('setMasterSidechain')).toEqual([['setMasterSidechain', 0, 1, 3]]);
+  });
+
+  it('binds a keyed bus insert at its compacted index on an older engine', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [
+        { processor: 'saturation.tape', params: {}, enabled: false },
+        {
+          processor: 'dynamics.duckingProcessor',
+          params: {},
+          enabled: true,
+          sidechainSourceIndex: 0,
+        } as unknown as InsertSlot,
+      ],
+    };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+    expect(engine.named('setBusSidechain')).toEqual([['setBusSidechain', 1, 0, 0, 1]]);
+  });
+
+  it('declares return and group bus sends and outputs with surround width', async () => {
+    const doc = makeGroupDoc();
+    const buses = doc.mixer?.buses;
+    if (!buses) throw new Error('missing mixer buses');
+    buses.push({ id: 'bus-b', name: 'B', gainDb: 0 });
+    buses[0].channelLayout = '5.1';
+    buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      inserts: [],
+      sends: [{ busId: 'bus-b', levelDb: -9, enabled: true, timing: 'preFader' }],
+      outputBusId: 'bus-b',
+    };
+    doc.tracks[2].mixer = {
+      ...(doc.tracks[2].mixer ?? { gainDb: 0, pan: 0, inserts: [], sends: [] }),
+      sends: [{ busId: 'bus-b', levelDb: -12, enabled: true }],
+      outputBusId: 'bus-b',
+    };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+    const declared = engine.named('setTrackBuses')[0][1] as Array<Record<string, unknown>>;
+    expect(declared).toEqual([
+      {
+        busId: 1,
+        gainDb: -6,
+        channelLayout: 2,
+        outputBusId: 2,
+        sends: [{ busId: 2, levelDb: -9, enabled: true, sendTiming: 'preFader' }],
+      },
+      { busId: 2, gainDb: 0 },
+      {
+        busId: 3,
+        gainDb: expect.any(Number),
+        outputBusId: 2,
+        sends: [{ busId: 2, levelDb: -12, enabled: true }],
+      },
+    ]);
+  });
+
   it('declares the group bus after the send buses and routes members through it', async () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(makeGroupDoc(), renderOptions(engine));

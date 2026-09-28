@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
-import type { MixerStripTarget } from '@/project/commands';
-import { setSend } from '@/project/commands';
+import { assertNoBusRoutingCycle, mixerBusTopology } from '@/project/bus-topology';
+import {
+  isMixerBusStripTarget,
+  type MixerStripTarget,
+  mixerBusIdFromTarget,
+  setSend,
+} from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripSend } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { useI18n } from '@/ui/i18n';
@@ -13,20 +18,23 @@ import NumericReadout from './NumericReadout.vue';
 
 /**
  * Send section of a channel strip: one level knob per project bus, with a
- * per-send mute (click the bus name). Track sends are live — strip-sync mirrors
- * them to the engine bus lanes — so they are audible; only the master strip has
- * no engine send bus, so its sends are routing-only. setSend has no gesture
- * coalescing, so knob drags preview locally and issue a single command on
- * release — one undo entry per drag either way.
+ * per-send mute (click the bus name). Track and bus sends are live — strip-sync
+ * mirrors them to the engine bus lanes — so they are audible; only the master
+ * strip has no engine send bus, so its sends are routing-only. Bus-to-bus rows
+ * stay visible for removing an old route, while self-routes and cycles are
+ * disabled before they reach the command layer.
  */
 
 const props = defineProps<{
-  /** Strip the section edits: a track id or 'master'. */
+  /** Strip the section edits: a track, group, return bus, or 'master'. */
   target: MixerStripTarget;
 }>();
 
 /** The master strip has no engine send bus, so its sends are routing-only. */
 const isMaster = computed(() => props.target === 'master');
+const sourceBusId = computed(() =>
+  isMixerBusStripTarget(props.target) ? mixerBusIdFromTarget(props.target) : null,
+);
 
 const store = useProjectStore();
 const { t } = useI18n();
@@ -38,6 +46,10 @@ const SEND_MAX_DB = 6;
 
 const strip = computed<MixerStrip>(() => {
   if (props.target === 'master') return store.mixer.master;
+  if (isMixerBusStripTarget(props.target)) {
+    const busId = mixerBusIdFromTarget(props.target);
+    return store.mixer.buses.find((bus) => bus.id === busId)?.strip ?? createDefaultStrip();
+  }
   const track = store.tracks.find((t) => t.id === props.target);
   return track?.mixer ?? createDefaultStrip();
 });
@@ -46,6 +58,32 @@ const buses = computed(() => store.mixer.buses);
 
 /** Local knob values while dragging (busId -> dB), cleared on commit. */
 const preview = ref<Record<string, number>>({});
+
+/**
+ * Returns whether a return bus can receive another edge from this strip.
+ * Ordinary tracks and groups have no user-visible bus node here, while return
+ * buses participate in the project bus graph and must remain acyclic.
+ */
+function isSendDestinationAllowed(busId: string): boolean {
+  const source = sourceBusId.value;
+  if (source === null) return true;
+  if (source === busId) return false;
+  try {
+    assertNoBusRoutingCycle(
+      mixerBusTopology(
+        store.mixer,
+        store.tracks
+          .filter((track) => track.kind === 'group')
+          .map((track) => ({ id: track.id, mixer: track.mixer })),
+      ),
+      source,
+      busId,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function sendFor(busId: string): StripSend | undefined {
   return strip.value.sends.find((send) => send.busId === busId);
@@ -58,6 +96,7 @@ function levelFor(busId: string): number {
 }
 
 function onLevelChange(busId: string, value: number, commit: boolean): void {
+  if (!isSendDestinationAllowed(busId)) return;
   if (!commit) {
     preview.value = { ...preview.value, [busId]: value };
     return;
@@ -70,6 +109,7 @@ function onLevelChange(busId: string, value: number, commit: boolean): void {
 }
 
 function onToggleEnabled(busId: string): void {
+  if (!isSendDestinationAllowed(busId)) return;
   const existing = sendFor(busId);
   if (!existing) return;
   setSend(props.target, busId, { levelDb: existing.levelDb, enabled: !existing.enabled });
@@ -81,6 +121,7 @@ function isPreFader(busId: string): boolean {
 }
 
 function onToggleTiming(busId: string): void {
+  if (!isSendDestinationAllowed(busId)) return;
   const existing = sendFor(busId);
   if (!existing) return;
   setSend(props.target, busId, {
@@ -136,9 +177,15 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
       <button
         type="button"
         class="send-name"
-        :class="{ off: sendFor(bus.id)?.enabled === false, unset: !sendFor(bus.id) }"
+        :class="{
+          off: sendFor(bus.id)?.enabled === false,
+          unset: !sendFor(bus.id),
+          blocked: !isSendDestinationAllowed(bus.id),
+        }"
         v-tooltip="
-          sendFor(bus.id)
+          !isSendDestinationAllowed(bus.id)
+            ? t.shell.mixer.sends.blockedTitle
+            : sendFor(bus.id)
             ? sendFor(bus.id)?.enabled === false
               ? t.shell.mixer.sends.mutedTitle
               : t.shell.mixer.sends.activeTitle
@@ -216,6 +263,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
         :max="SEND_MAX_DB"
         :display="`${formatDb(levelFor(bus.id))} dB`"
         :size="18"
+        :disabled="!isSendDestinationAllowed(bus.id)"
         :midi-learn-state="learnState(bus.id)"
         @change="(value, commit) => onLevelChange(bus.id, value, commit)"
         @midi-learn="onMidiLearn(bus.id)"
@@ -229,6 +277,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
         :display="formatDb(levelFor(bus.id))"
         unit="dB"
         :ariaLabel="`${bus.name} ${t.shell.mixer.sends.title}`"
+        :disabled="!isSendDestinationAllowed(bus.id)"
         @change="(value) => onLevelChange(bus.id, value, true)"
       />
       <button
@@ -316,6 +365,12 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 
 .send-name.unset {
   color: var(--text-4);
+}
+
+.send-name.blocked {
+  color: var(--text-4);
+  cursor: not-allowed;
+  text-decoration: line-through;
 }
 
 .send-timing {

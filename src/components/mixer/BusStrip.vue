@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { promptDialog } from '@/composables/useDialogs';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
@@ -8,6 +9,8 @@ import {
   busAutomationTarget,
   evaluateAutomationValue,
 } from '@/project/automation';
+import { assertNoBusRoutingCycle, mixerBusTopology } from '@/project/bus-topology';
+import { setMixerBusChannelLayout } from '@/project/command/mixer';
 import {
   mixerBusStripTarget,
   removeMixerBus,
@@ -16,10 +19,16 @@ import {
   setMixerBusGain,
   setMixerBusMute,
   setMixerBusSolo,
+  setStripOutputBus,
   setStripPan,
 } from '@/project/commands';
-import type { MixerBus } from '@/project/mixer';
-import { canRouteReturnSolo } from '@/project/mixer';
+import {
+  canRouteReturnSolo,
+  DEFAULT_STRIP_WIDTH,
+  MIXER_CHANNEL_LAYOUTS,
+  type MixerBus,
+  type MixerChannelLayout,
+} from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
@@ -41,6 +50,7 @@ import StripEqSection from './StripEqSection.vue';
 import StripGrMeter from './StripGrMeter.vue';
 import StripMeter from './StripMeter.vue';
 import StripOptionsPopover from './StripOptionsPopover.vue';
+import StripSends from './StripSends.vue';
 
 /**
  * Compact mixer strip for a send/return bus: a name header, an insert rack, the
@@ -114,6 +124,68 @@ const gainDb = computed(() =>
 );
 const muted = computed(() => props.bus.mute === true);
 const soloed = computed(() => props.bus.solo === true);
+const channelLayout = computed<MixerChannelLayout>(() => props.bus.channelLayout ?? 'stereo');
+const isSurroundBus = computed(
+  () => channelLayout.value === '5.1' || channelLayout.value === '7.1',
+);
+const hasStereoPannerState = computed(() => {
+  const strip = props.bus.strip;
+  return (
+    strip !== undefined &&
+    ((strip.width ?? DEFAULT_STRIP_WIDTH) !== DEFAULT_STRIP_WIDTH ||
+      (strip.pan ?? 0) !== 0 ||
+      strip.panMode !== undefined ||
+      strip.panLaw !== undefined ||
+      strip.dualPan !== undefined)
+  );
+});
+const outputBusValue = computed(() => props.bus.strip?.outputBusId ?? '');
+const channelLayoutError = ref('');
+
+/** A return bus can route into another return bus, but never itself or a cycle. */
+function isOutputBusAllowed(busId: string): boolean {
+  if (busId === props.bus.id) return false;
+  try {
+    assertNoBusRoutingCycle(
+      mixerBusTopology(
+        store.mixer,
+        store.tracks
+          .filter((track) => track.kind === 'group')
+          .map((track) => ({ id: track.id, mixer: track.mixer })),
+      ),
+      props.bus.id,
+      busId,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const outputBusOptions = computed(() => [
+  { value: '', label: t.value.shell.mixer.strip.master },
+  ...store.mixer.buses.map((bus) => ({
+    value: bus.id,
+    label: bus.name,
+    disabled: !isOutputBusAllowed(bus.id),
+  })),
+]);
+
+const channelLayoutOptions = computed(() =>
+  MIXER_CHANNEL_LAYOUTS.map((layout) => {
+    const disabled = hasStereoPannerState.value && (layout === '5.1' || layout === '7.1');
+    return {
+      value: layout,
+      label: t.value.shell.mixer.strip.channelLayouts[layout],
+      ...(disabled
+        ? {
+            disabled: true,
+            detail: t.value.shell.mixer.strip.surroundLayoutRequiresNeutral,
+          }
+        : {}),
+    };
+  }),
+);
 /** A return solo parks the silenced direct outputs on one extra engine bus. */
 const canSolo = computed(
   () => soloed.value || canRouteReturnSolo(store.mixer.buses.length, store.tracks),
@@ -148,6 +220,24 @@ function onFaderChange(db: number, commit: boolean): void {
 
 function onPanChange(value: number, commit: boolean): void {
   setStripPan(stripTarget.value, value, { commit });
+}
+
+function onOutputBusChange(value: string): void {
+  if (value !== '' && !isOutputBusAllowed(value)) return;
+  setStripOutputBus(stripTarget.value, value === '' ? null : value);
+}
+
+function onChannelLayoutChange(value: MixerChannelLayout): void {
+  if (hasStereoPannerState.value && (value === '5.1' || value === '7.1')) {
+    channelLayoutError.value = t.value.shell.mixer.strip.surroundLayoutRequiresNeutral;
+    return;
+  }
+  try {
+    setMixerBusChannelLayout(props.bus.id, value === 'stereo' ? null : value);
+    channelLayoutError.value = '';
+  } catch {
+    channelLayoutError.value = t.value.shell.mixer.strip.surroundLayoutRequiresNeutral;
+  }
 }
 
 function onRemove(): void {
@@ -203,7 +293,39 @@ onBeforeUnmount(() => {
     <div class="bus-eq">
       <StripEqSection :target="stripTarget" :scope="props.scope" />
     </div>
-    <div class="bus-pan">
+    <div v-if="store.mixer.buses.length > 0" class="bus-routing">
+      <div class="bus-route-row">
+        <span class="bus-route-label">{{ t.shell.mixer.strip.output }}</span>
+        <SelectMenu
+          :model-value="outputBusValue"
+          size="sm"
+          :options="outputBusOptions"
+          :aria-label="formatMessage(t.shell.mixer.strip.outputBus, { name: props.bus.name })"
+          @change="onOutputBusChange"
+        />
+      </div>
+      <div class="bus-route-row">
+        <span class="bus-route-label">{{ t.shell.mixer.strip.channelLayout }}</span>
+        <SelectMenu
+          :model-value="channelLayout"
+          size="sm"
+          :options="channelLayoutOptions"
+          :aria-label="t.shell.mixer.strip.channelLayout"
+          @change="(value) => onChannelLayoutChange(value as MixerChannelLayout)"
+        />
+      </div>
+      <span v-if="channelLayoutError" class="bus-route-error" role="alert" aria-live="polite">
+        {{ channelLayoutError }}
+      </span>
+    </div>
+    <div v-if="store.mixer.buses.length > 0" class="bus-sends">
+      <StripSends :target="stripTarget" />
+    </div>
+    <div
+      class="bus-pan"
+      :class="{ disabled: isSurroundBus }"
+      v-tooltip="isSurroundBus ? t.shell.mixer.strip.stereoControlsUnavailable : undefined"
+    >
       <div class="bus-pan-knob">
         <MixerKnob
           :value="pan"
@@ -213,6 +335,7 @@ onBeforeUnmount(() => {
           :label="t.shell.mixer.strip.pan"
           :display="formatPan(pan)"
           :size="24"
+          :disabled="isSurroundBus"
           @change="onPanChange"
         />
         <NumericReadout
@@ -222,9 +345,13 @@ onBeforeUnmount(() => {
           :step="0.01"
           :display="formatPan(pan)"
           :ariaLabel="t.shell.mixer.strip.pan"
+          :disabled="isSurroundBus"
           @change="(value) => onPanChange(value, true)"
         />
       </div>
+      <span v-if="isSurroundBus" class="bus-pan-note" role="note">
+        {{ t.shell.mixer.strip.stereoOnly }}
+      </span>
     </div>
     <div class="bus-toggles">
       <button
@@ -349,11 +476,69 @@ onBeforeUnmount(() => {
   padding-top: var(--sp-2);
 }
 
+.bus-routing,
+.bus-sends {
+  width: 100%;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: var(--sp-2);
+}
+
+.bus-routing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.bus-route-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.bus-route-label {
+  flex: none;
+  width: 2.25rem;
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-4);
+  user-select: none;
+}
+
+.bus-route-row :deep(.select-menu) {
+  min-width: 0;
+  flex: 1;
+}
+
+.bus-route-row :deep(.select-trigger) {
+  width: 100%;
+  min-width: 0;
+}
+
+.bus-route-error {
+  font: var(--fs-2xs) / 1.3 var(--font-sans);
+  color: var(--danger-text);
+}
+
 .bus-pan {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: var(--sp-1);
   width: 100%;
+}
+
+.bus-pan.disabled {
+  color: var(--text-4);
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.bus-pan-note {
+  font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-4);
+  user-select: none;
 }
 
 .bus-pan-knob {

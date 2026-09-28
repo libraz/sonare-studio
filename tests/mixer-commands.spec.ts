@@ -39,6 +39,7 @@ import {
   setInsertParam,
   setInsertSidechain,
   setMasteringPreset,
+  setMixerBusChannelLayout,
   setMixerBusGain,
   setMixerBusMute,
   setMixerBusSolo,
@@ -343,6 +344,25 @@ describe('mixer commands', () => {
       expect(() => setStripDualPan('master', -1, 1)).toThrow(RangeError);
     });
 
+    it('rejects stereo pan stages on surround return buses', () => {
+      const busId = addMixerBus({ name: 'Surround FX' });
+      const target = mixerBusStripTarget(busId);
+      setMixerBusChannelLayout(busId, '5.1');
+
+      expect(() => setStripPan(target, 0.25)).toThrow(/Surround mixer buses/);
+      expect(() => setStripWidth(target, 0.5)).toThrow(/Surround mixer buses/);
+      expect(() => setStripPanLaw(target, 'const6dB')).toThrow(/Surround mixer buses/);
+      expect(() => setStripPanMode(target, 'stereoPan')).toThrow(/Surround mixer buses/);
+      expect(() => setStripDualPan(target, -0.5, 0.5)).toThrow(/Surround mixer buses/);
+      expect(store.mixer.buses[0].strip).toBeUndefined();
+
+      // Returning to stereo re-enables those controls and removes only the
+      // layout marker; no hidden panner state was created by the rejected edits.
+      setMixerBusChannelLayout(busId, null);
+      setStripPan(target, 0.25);
+      expect(store.mixer.buses[0].strip?.pan).toBe(0.25);
+    });
+
     it('sets and validates dual-pan positions undoably', () => {
       setStripDualPan(trackId, -0.5, 0.75);
       expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -0.5, right: 0.75 });
@@ -642,6 +662,34 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.sends[0].timing).toBeUndefined();
     });
 
+    it('routes bus sends and outputs through the bus strip, rejecting cycles', () => {
+      const source = addMixerBus({ name: 'FX' });
+      const destination = addMixerBus({ name: 'Print' });
+      const sourceTarget = mixerBusStripTarget(source);
+
+      setSend(sourceTarget, destination, { levelDb: -9, timing: 'preFader' });
+      setStripOutputBus(sourceTarget, destination);
+      expect(store.mixer.buses[0].strip).toMatchObject({
+        sends: [{ busId: destination, levelDb: -9, enabled: true, timing: 'preFader' }],
+        outputBusId: destination,
+      });
+      expect(() => setSend(mixerBusStripTarget(destination), source, { levelDb: -6 })).toThrow(
+        /routing cycle/,
+      );
+      expect(() => setStripOutputBus(mixerBusStripTarget(destination), source)).toThrow(
+        /routing cycle/,
+      );
+    });
+
+    it('sets and clears surround bus layouts', () => {
+      const busId = addMixerBus({ name: 'Atmos' });
+      setMixerBusChannelLayout(busId, '5.1');
+      expect(store.mixer.buses[0].channelLayout).toBe('5.1');
+      setMixerBusChannelLayout(busId, null);
+      expect(store.mixer.buses[0].channelLayout).toBeUndefined();
+      expect(() => setMixerBusChannelLayout('missing', '5.1')).toThrow(RangeError);
+    });
+
     it('rejects adding a bus beyond the engine limit', () => {
       for (let i = 0; i < MAX_MIXER_BUSES; i++) addMixerBus();
       expect(store.mixer.buses).toHaveLength(MAX_MIXER_BUSES);
@@ -722,11 +770,12 @@ describe('mixer commands', () => {
       expect(canUndo()).toBe(false);
     });
 
-    it('rejects routing the master, a group track, or an unknown bus', () => {
+    it('rejects routing the master or an unknown bus, while allowing group buses', () => {
       const busId = addMixerBus();
       const groupId = addGroupTrack();
       expect(() => setStripOutputBus('master', busId)).toThrow(RangeError);
-      expect(() => setStripOutputBus(groupId, busId)).toThrow(RangeError);
+      setStripOutputBus(groupId, busId);
+      expect(store.tracks.find((track) => track.id === groupId)?.mixer?.outputBusId).toBe(busId);
       expect(() => setStripOutputBus(trackId, 'nope')).toThrow(RangeError);
     });
 
@@ -861,8 +910,32 @@ describe('mixer commands', () => {
       expect(() => setInsertSidechain(9999, 0, sourceId)).toThrow(RangeError);
       const groupId = addGroupTrack({ name: 'Group' });
       addInsert(groupId, 'dynamics.compressor');
-      expect(() => setInsertSidechain(groupId, 0, sourceId)).toThrow(/Group track inserts/);
+      setInsertSidechain(groupId, 0, sourceId);
+      expect(
+        store.tracks.find((track) => track.id === groupId)?.mixer?.inserts[0]
+          .sidechainSourceTrackId,
+      ).toBe(sourceId);
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
+    });
+
+    it('requires the group namespace when a group track is the key source', () => {
+      const groupId = addGroupTrack({ name: 'Key group' });
+      addInsert(trackId, 'dynamics.compressor');
+      expect(() => setInsertSidechain(trackId, 0, { kind: 'track', trackId: groupId })).toThrow(
+        /group sidechain key/,
+      );
+
+      const busId = addMixerBus({ name: 'Target bus' });
+      const busTarget = mixerBusStripTarget(busId);
+      addInsert(busTarget, 'dynamics.compressor');
+      expect(() => setInsertSidechain(busTarget, 0, { kind: 'track', trackId: groupId })).toThrow(
+        /group sidechain key/,
+      );
+
+      addInsert('master', 'dynamics.compressor');
+      expect(() => setInsertSidechain('master', 0, { kind: 'track', trackId: groupId })).toThrow(
+        /group sidechain key/,
+      );
     });
 
     it('clearing an absent source is not an undoable edit', () => {
@@ -880,6 +953,47 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
       undo();
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBe(sourceId);
+    });
+
+    it('keys a bus insert from another bus and rejects a self key', () => {
+      const keyBus = addMixerBus({ name: 'Key' });
+      const targetBus = addMixerBus({ name: 'Target' });
+      const target = mixerBusStripTarget(targetBus);
+      addInsert(target, 'dynamics.compressor');
+
+      setInsertSidechain(target, 0, { kind: 'bus', busId: keyBus });
+      expect(store.mixer.buses[1].strip?.inserts[0].sidechainSourceBusId).toBe(keyBus);
+      expect(() => setInsertSidechain(target, 0, { kind: 'bus', busId: targetBus })).toThrow(
+        /own bus/,
+      );
+
+      const keyTarget = mixerBusStripTarget(keyBus);
+      addInsert(keyTarget, 'dynamics.compressor');
+      expect(() => setInsertSidechain(keyTarget, 0, { kind: 'bus', busId: targetBus })).toThrow(
+        /routing cycle/,
+      );
+    });
+
+    it('validates bus and group sidechain keys against group-bus cycles', () => {
+      const sourceBus = addMixerBus({ name: 'Key' });
+      const targetGroup = addGroupTrack({ name: 'Target group' });
+      setStripOutputBus(targetGroup, sourceBus);
+      addInsert(targetGroup, 'dynamics.compressor');
+
+      expect(() => setInsertSidechain(targetGroup, 0, { kind: 'bus', busId: sourceBus })).toThrow(
+        /routing cycle/,
+      );
+
+      const sourceGroup = addGroupTrack({ name: 'Source group' });
+      addInsert(targetGroup, 'dynamics.sidechainRouter');
+      setInsertSidechain(targetGroup, 1, { kind: 'group', trackId: sourceGroup });
+      expect(
+        store.tracks.find((track) => track.id === targetGroup)?.mixer?.inserts[1]
+          .sidechainSourceGroupTrackId,
+      ).toBe(sourceGroup);
+      expect(() =>
+        setInsertSidechain(targetGroup, 1, { kind: 'group', trackId: targetGroup }),
+      ).toThrow(/own group bus/);
     });
 
     it('removing the source track also clears bus insert sidechains', () => {
@@ -947,6 +1061,34 @@ describe('mixer commands', () => {
         processor: 'dynamics.compressor',
         params: { thresholdDb: -6 },
       });
+    });
+
+    it('validates copied sidechain sources and routing cycles before replacing', () => {
+      const firstBusId = addMixerBus({ id: 'first' });
+      const secondBusId = addMixerBus({ id: 'second' });
+      addInsert(trackId, 'dynamics.compressor');
+      expect(() =>
+        replaceInsert(trackId, 0, {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceBusId: firstBusId,
+        }),
+      ).toThrow(/Ordinary track inserts can only use track sidechain keys/);
+
+      const firstTarget = mixerBusStripTarget(firstBusId);
+      const secondTarget = mixerBusStripTarget(secondBusId);
+      addInsert(firstTarget, 'dynamics.compressor');
+      addInsert(secondTarget, 'dynamics.compressor');
+      setInsertSidechain(firstTarget, 0, { kind: 'bus', busId: secondBusId });
+      expect(() =>
+        replaceInsert(secondTarget, 0, {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceBusId: firstBusId,
+        }),
+      ).toThrow(/routing cycle/);
     });
 
     it('changes identity and prunes old processor references when the type changes', () => {
@@ -1333,31 +1475,31 @@ describe('mixer commands', () => {
       });
     });
 
-    it('rejects mixer scene sidechain keys on group-track insert strips', () => {
-      addGroupTrack({ name: 'Group' });
-
-      expect(() =>
-        applyMixerSceneJson(
-          JSON.stringify({
-            version: 1,
-            strips: [
-              { id: 'host' },
-              {
-                id: 'group',
-                inserts: [
-                  {
-                    processor: 'dynamics.sidechainRouter',
-                    params: { rangeDb: 12 },
-                    sidechainKey: 'host',
-                  },
-                ],
-              },
-            ],
-            buses: [],
-            connections: [],
-          }),
-        ),
-      ).toThrow(/sidechain keys need engine support/);
+    it('maps mixer scene sidechain keys onto group-track bus inserts', () => {
+      const groupId = addGroupTrack({ name: 'Group' });
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [
+            { id: 'host' },
+            {
+              id: 'group',
+              inserts: [
+                {
+                  processor: 'dynamics.sidechainRouter',
+                  params: { rangeDb: 12 },
+                  sidechainKey: 'host',
+                },
+              ],
+            },
+          ],
+          buses: [],
+          connections: [],
+        }),
+      );
+      expect(store.tracks.find((track) => track.id === groupId)?.mixer?.inserts[0]).toMatchObject({
+        sidechainSourceTrackId: trackId,
+      });
     });
 
     it('preserves group pan imported from a mixer scene', () => {
@@ -1501,40 +1643,42 @@ describe('mixer commands', () => {
       expect(store.mixer.buses[0]).toMatchObject({ id: 'room', mute: true, solo: true });
     });
 
-    it('rejects legacy return sends that the bus engine cannot route', () => {
+    it('imports legacy return sends into the bus strip', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          buses: [
+            { id: 'room', role: 'aux' },
+            { id: 'print', role: 'aux' },
+          ],
+          connections: [{ source: 'room', destination: 'room-return' }],
+          strips: [
+            {
+              id: 'room-return',
+              sends: [{ destinationBusId: 'print', sendDb: -6 }],
+            },
+          ],
+        }),
+      );
+      expect(store.mixer.buses[0].strip?.sends).toEqual([
+        { busId: 'print', levelDb: -6, enabled: true },
+      ]);
+    });
+
+    it('rejects a literal master id on an aux bus when a master role exists', () => {
       expect(() =>
         applyMixerSceneJson(
           JSON.stringify({
             version: 1,
-            buses: [{ id: 'room', role: 'aux' }],
-            connections: [{ source: 'room', destination: 'room-return' }],
-            strips: [
-              {
-                id: 'room-return',
-                sends: [{ destinationBusId: 'room', sendDb: -6 }],
-              },
+            strips: [],
+            buses: [
+              { id: 'master', role: 'aux', pan: -0.5 },
+              { id: 'actual-master', role: 'master', pan: 0.25 },
             ],
+            connections: [],
           }),
         ),
-      ).toThrow(/unsupported sends/);
-    });
-
-    it('uses the master role when an aux bus owns the literal master id', () => {
-      applyMixerSceneJson(
-        JSON.stringify({
-          version: 1,
-          strips: [],
-          buses: [
-            { id: 'master', role: 'aux', pan: -0.5 },
-            { id: 'actual-master', role: 'master', pan: 0.25 },
-          ],
-          connections: [],
-        }),
-      );
-
-      expect(store.mixer.buses).toHaveLength(1);
-      expect(store.mixer.buses[0]).toMatchObject({ id: 'master', strip: { pan: -0.5 } });
-      expect(store.mixer.master.pan).toBe(0.25);
+      ).toThrow(/reserved/);
     });
 
     it('imports the submix role emitted by the Studio bus scene', () => {
@@ -1550,42 +1694,183 @@ describe('mixer commands', () => {
       expect(store.mixer.buses[0]).toMatchObject({ id: 'drums', strip: { pan: -0.3 } });
     });
 
-    it('rejects non-stereo scene buses instead of changing their layout', () => {
+    it('imports surround scene bus layouts and strip source positions', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [
+            {
+              id: 'source',
+              sourceLayout: '5.1',
+              surroundPan: {
+                azimuth: 30,
+                elevation: 2,
+                divergence: 0.25,
+                lfe: 0.1,
+                distance: 0.8,
+              },
+            },
+          ],
+          buses: [
+            {
+              id: 'surround',
+              role: 'submix',
+              layout: '5.1',
+            },
+          ],
+          connections: [],
+        }),
+      );
+      expect(store.mixer.buses[0].channelLayout).toBe('5.1');
+      expect(store.mixer.buses[0].strip?.surroundPan).toBeUndefined();
+      expect(store.tracks[0].mixer?.sourceLayout).toBe('5.1');
+      expect(store.tracks[0].mixer?.surroundPan).toEqual({
+        azimuth: 30,
+        elevation: 2,
+        divergence: 0.25,
+        lfe: 0.1,
+        distance: 0.8,
+      });
+    });
+
+    it('rejects invalid scene bus ids before replacing the mixer', () => {
+      for (const [buses, message] of [
+        [[{ id: '' }, { id: 'room' }], /must not be empty/],
+        [[{ id: 'room' }, { id: 'room' }], /already exists/],
+        [[{ id: 'group:1' }], /reserved/],
+        [[{ id: 'return-solo-discard' }], /reserved/],
+      ] as const) {
+        expect(() =>
+          applyMixerSceneJson(JSON.stringify({ strips: [], buses, connections: [] })),
+        ).toThrow(message);
+      }
+    });
+
+    it('rejects bus sidechain keys on ordinary scene tracks', () => {
+      expect(() =>
+        applyMixerSceneJson(
+          JSON.stringify({
+            strips: [
+              {
+                id: 'track',
+                inserts: [{ processor: 'dynamics.compressor', sidechainKey: 'room' }],
+              },
+            ],
+            buses: [{ id: 'room', role: 'aux' }],
+            connections: [],
+          }),
+        ),
+      ).toThrow(/must reference a track/);
+    });
+
+    it('maps legacy return-strip sidechain keys to the owning bus', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          strips: [{ id: 'room-return' }],
+          buses: [
+            { id: 'room', role: 'aux' },
+            {
+              id: 'print',
+              role: 'aux',
+              inserts: [{ processor: 'dynamics.compressor', sidechainKey: 'room-return' }],
+            },
+          ],
+          connections: [{ source: 'room', destination: 'room-return' }],
+        }),
+      );
+      expect(store.mixer.buses.find((bus) => bus.id === 'print')?.strip?.inserts[0]).toMatchObject({
+        sidechainSourceBusId: 'room',
+      });
+    });
+
+    it('imports bus-to-bus output routes, sends and bus sidechain keys', () => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [
+            {
+              id: 'room-return',
+              sends: [{ destinationBusId: 'print', sendDb: -8, timing: 'pre' }],
+            },
+          ],
+          buses: [
+            { id: 'key', role: 'aux' },
+            {
+              id: 'room',
+              role: 'aux',
+              inserts: [
+                {
+                  processor: 'dynamics.compressor',
+                  params: {},
+                  sidechainKey: 'key',
+                },
+              ],
+            },
+            { id: 'print', role: 'aux' },
+          ],
+          connections: [
+            { source: 'room', destination: 'room-return' },
+            { source: 'room', destination: 'print' },
+          ],
+        }),
+      );
+      const room = store.mixer.buses.find((bus) => bus.id === 'room');
+      expect(room?.strip).toMatchObject({
+        outputBusId: 'print',
+        sends: [{ busId: 'print', levelDb: -8, timing: 'preFader' }],
+        inserts: [{ sidechainSourceBusId: 'key' }],
+      });
+    });
+
+    it('rejects reciprocal bus sidechain keys in a scene', () => {
       expect(() =>
         applyMixerSceneJson(
           JSON.stringify({
             version: 1,
             strips: [],
-            buses: [{ id: 'surround', role: 'submix', layout: '5.1' }],
-            connections: [],
-          }),
-        ),
-      ).toThrow(/unsupported channel layout 5\.1/);
-    });
-
-    it.each(['aux', 'master'] as const)('rejects unrenderable %s bus sidechain inserts', (role) => {
-      expect(() =>
-        applyMixerSceneJson(
-          JSON.stringify({
-            version: 1,
-            strips: [{ id: 'key-source' }],
             buses: [
               {
-                id: role === 'master' ? 'actual-master' : 'room',
-                role,
-                inserts: [
-                  {
-                    processor: 'dynamics.compressor',
-                    params: {},
-                    sidechainKey: 'key-source',
-                  },
-                ],
+                id: 'a',
+                role: 'aux',
+                inserts: [{ processor: 'dynamics.compressor', sidechainKey: 'b' }],
+              },
+              {
+                id: 'b',
+                role: 'aux',
+                inserts: [{ processor: 'dynamics.compressor', sidechainKey: 'a' }],
               },
             ],
             connections: [],
           }),
         ),
-      ).toThrow(/sidechain keys need engine support/);
+      ).toThrow(/routing cycle/);
+    });
+
+    it.each(['aux', 'master'] as const)('imports %s bus sidechain inserts', (role) => {
+      applyMixerSceneJson(
+        JSON.stringify({
+          version: 1,
+          strips: [{ id: 'key-source' }],
+          buses: [
+            {
+              id: role === 'master' ? 'actual-master' : 'room',
+              role,
+              inserts: [
+                {
+                  processor: 'dynamics.compressor',
+                  params: {},
+                  sidechainKey: 'key-source',
+                },
+              ],
+            },
+          ],
+          connections: [],
+        }),
+      );
+      const strip = role === 'master' ? store.mixer.master : store.mixer.buses[0].strip;
+      expect(strip?.inserts[0]).toMatchObject({
+        sidechainSourceTrackId: trackId,
+      });
     });
 
     it('keeps mixer scene strip mapping bounded to existing tracks', () => {

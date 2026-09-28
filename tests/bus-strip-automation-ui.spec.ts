@@ -129,7 +129,7 @@ describe('BusStrip automation UI', () => {
     expect(wrapper.find('.bus-eq').exists()).toBe(true);
     expect(wrapper.findComponent(StripEqSection).props('target')).toBe(`bus:${busId}`);
 
-    const pan = wrapper.findComponent(MixerKnob);
+    const pan = wrapper.find('.bus-pan').findComponent(MixerKnob);
     expect(pan.props('label')).toBe('Pan');
     pan.vm.$emit('change', -0.4, false);
     pan.vm.$emit('change', -0.4, true);

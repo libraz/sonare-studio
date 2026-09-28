@@ -9,6 +9,11 @@ import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
 import type { AutomationParam } from '@/project/automation';
 import {
+  assertNoBusRoutingCycle,
+  groupBusTopologyId,
+  mixerBusTopology,
+} from '@/project/bus-topology';
+import {
   addVcaGroup,
   renameTrack,
   setActiveTrack,
@@ -65,9 +70,8 @@ import StripSends from './StripSends.vue';
  * pan and sends stay live while the track plays its baked render).
  *
  * Group-track strips are tagged GROUP and keep the controls that are meaningful
- * on their group bus: EQ, pan and strip options. Sends, output routing and pan
- * automation remain track-lane features. Fader, mute and inserts keep working
- * through the group-bus sync layer.
+ * on their group bus: EQ, pan, sends, output routing and strip options. Fader,
+ * mute and inserts keep working through the group-bus sync layer.
  */
 
 const props = withDefaults(
@@ -123,6 +127,8 @@ const strip = computed<MixerStrip>(() => {
 });
 
 const isGroup = computed(() => track.value?.kind === 'group');
+/** Every audible channel can feed a send bus; grouped members still feed their group output. */
+const showSends = computed(() => !isMaster.value);
 
 const name = computed(() =>
   isMaster.value ? t.value.shell.mixer.strip.master : (track.value?.name ?? ''),
@@ -148,22 +154,49 @@ function onSoloClick(track: EditorTrack, event: MouseEvent): void {
 }
 
 /**
- * Output-bus selector is offered on non-group track strips that have at least
- * one send bus to route into. Group members hide it (their group bus always
- * wins); the master strip and group tracks have no routable lane.
+ * Output-bus selector is offered on top-level track and group strips that have
+ * at least one send bus to route into. Group members hide it (their group bus
+ * always wins); the master strip has no routable lane.
  */
 const showOutputBus = computed(
-  () =>
-    !isMaster.value &&
-    !isGroup.value &&
-    track.value?.groupId === undefined &&
-    store.mixer.buses.length > 0,
+  () => !isMaster.value && track.value?.groupId === undefined && store.mixer.buses.length > 0,
 );
 
-/** Output-bus options: the master mix plus every send bus (value = bus id). */
+/** Group tracks are internal bus nodes when checking their output routes. */
+const outputSourceBusId = computed(() =>
+  isGroup.value && track.value ? groupBusTopologyId(track.value.id) : undefined,
+);
+
+/** Prevent a group output route from introducing a self-route or cycle. */
+function isOutputBusAllowed(busId: string): boolean {
+  const source = outputSourceBusId.value;
+  if (source === undefined) return true;
+  if (source === busId) return false;
+  try {
+    assertNoBusRoutingCycle(
+      mixerBusTopology(
+        store.mixer,
+        store.tracks
+          .filter((entry) => entry.kind === 'group')
+          .map((entry) => ({ id: entry.id, mixer: entry.mixer })),
+      ),
+      source,
+      busId,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Output-bus options: the master mix plus every valid send-bus destination. */
 const outputBusOptions = computed(() => [
   { value: '', label: t.value.shell.mixer.strip.master },
-  ...store.mixer.buses.map((bus) => ({ value: bus.id, label: bus.name })),
+  ...store.mixer.buses.map((bus) => ({
+    value: bus.id,
+    label: bus.name,
+    disabled: !isOutputBusAllowed(bus.id),
+  })),
 ]);
 
 /** Selected output bus id, or '' for the master mix. */
@@ -171,6 +204,7 @@ const outputBusValue = computed(() => strip.value.outputBusId ?? '');
 
 function onOutputBusChange(value: string): void {
   if (!track.value) return;
+  if (value !== '' && !isOutputBusAllowed(value)) return;
   setStripOutputBus(track.value.id, value === '' ? null : value);
 }
 
@@ -362,7 +396,7 @@ onBeforeUnmount(() => {
       <StripEqSection :target="props.target" :scope="props.scope" />
     </div>
 
-    <div v-if="!isMaster && !isGroup" class="strip-section">
+    <div v-if="showSends" class="strip-section">
       <StripSends :target="props.target" />
     </div>
 

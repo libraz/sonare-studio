@@ -3,6 +3,11 @@ import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import {
+  assertNoBusRoutingCycle,
+  groupBusTopologyId,
+  mixerBusTopology,
+} from '@/project/bus-topology';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
 import {
   isMixerBusStripTarget,
@@ -15,7 +20,6 @@ import type { ProcessorControlValue } from '@/project/processor-controls';
 import { formatProcessorControlValue } from '@/project/processor-controls';
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
-import type { EditorTrack } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { openContextMenu } from '@/ui/menu/context-menu';
 import { midiLearnInsertTargetId } from '@/ui/midi/midi-learn';
@@ -43,9 +47,9 @@ import MixerKnob from './MixerKnob.vue';
  * All edits go through the undoable command layer; parameter knob drags
  * coalesce into one history entry via the quick-control gesture protocol.
  *
- * Sidechain-keyed processors (ducking/sidechainRouter) on track strips get a
- * key-source select picking which other track's audio drives the sidechain;
- * the master strip has no engine lane to key from, so it shows none.
+ * Sidechain-keyed processors (ducking/sidechainRouter) expose a compact key
+ * source selector. Track, group-bus, return-bus and master inserts use the same
+ * control; self-routes and bus feedback loops are disabled in the menu.
  */
 
 const props = defineProps<{
@@ -261,29 +265,113 @@ function onDragEnd(): void {
 
 // --- Sidechain key source ------------------------------------------------------
 
-/** Sidechain select value meaning "no key source" (track ids are never < 0). */
-const SIDECHAIN_NONE = -1;
+/** String values keep track, group and return-bus id namespaces unambiguous. */
+type SidechainSourceValue = 'none' | `track:${number}` | `group:${number}` | `bus:${string}`;
+const SIDECHAIN_NONE: SidechainSourceValue = 'none';
 
-/** Tracks selectable as sidechain key sources (any other track lane, including groups). */
-const sidechainSources = computed<EditorTrack[]>(() =>
-  store.tracks.filter((track) => track.id !== props.target),
-);
+/** Ordinary track strips accept track keys only; bus/group keys target bus nodes. */
+const ordinaryTrackTarget = computed(() => {
+  if (typeof props.target !== 'number') return false;
+  return store.tracks.find((track) => track.id === props.target)?.kind !== 'group';
+});
 
-/** Key-source options: "No key" plus every selectable source track. */
-const sidechainOptions = computed<{ value: number; label: string }[]>(() => [
-  { value: SIDECHAIN_NONE, label: t.value.shell.inserts.noKey },
-  ...sidechainSources.value.map((track) => ({ value: track.id, label: track.name })),
-]);
+/** The bus node receiving a bus/group sidechain dependency, when one exists. */
+const sidechainTargetBusId = computed<string | null>(() => {
+  const target = props.target;
+  if (isMixerBusStripTarget(target)) return mixerBusIdFromTarget(target);
+  if (typeof target !== 'number') return null;
+  const track = store.tracks.find((entry) => entry.id === target);
+  return track?.kind === 'group' ? groupBusTopologyId(track.id) : null;
+});
 
-/** True when the slot gets a key-source select (keyed insert on a track strip). */
-function hasSidechainSelect(slot: InsertSlot): boolean {
-  return typeof props.target === 'number' && isSidechainKeyedProcessor(slot.processor);
+function isSidechainNodeAllowed(sourceNodeId: string): boolean {
+  const targetNodeId = sidechainTargetBusId.value;
+  if (targetNodeId === null) return true;
+  if (targetNodeId === sourceNodeId) return false;
+  try {
+    assertNoBusRoutingCycle(
+      mixerBusTopology(
+        store.mixer,
+        store.tracks
+          .filter((track) => track.kind === 'group')
+          .map((track) => ({ id: track.id, mixer: track.mixer })),
+      ),
+      sourceNodeId,
+      targetNodeId,
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function onSidechainChange(index: number, value: number): void {
-  if (typeof props.target !== 'number') return;
+/** A return-bus key source must not point at itself or close a bus cycle. */
+function isSidechainBusSourceAllowed(busId: string): boolean {
+  return isSidechainNodeAllowed(busId);
+}
+
+/** A group-bus key source follows the same topology rules as a return bus. */
+function isSidechainGroupSourceAllowed(trackId: number): boolean {
+  return isSidechainNodeAllowed(groupBusTopologyId(trackId));
+}
+
+/** Key-source options: no key, tracks, group buses and return buses. */
+const sidechainOptions = computed<
+  { value: SidechainSourceValue; label: string; disabled?: boolean }[]
+>(() => [
+  { value: SIDECHAIN_NONE, label: t.value.shell.inserts.noKey },
+  ...store.tracks
+    .filter(
+      (track) =>
+        track.id !== props.target && !(ordinaryTrackTarget.value && track.kind === 'group'),
+    )
+    .map((track) => {
+      const groupSource = track.kind === 'group' && !ordinaryTrackTarget.value;
+      return {
+        value: (groupSource ? `group:${track.id}` : `track:${track.id}`) as SidechainSourceValue,
+        label:
+          track.kind === 'group'
+            ? `${track.name} · ${t.value.shell.mixer.strip.group}`
+            : track.name,
+        ...(groupSource ? { disabled: !isSidechainGroupSourceAllowed(track.id) } : {}),
+      };
+    }),
+  ...(ordinaryTrackTarget.value
+    ? []
+    : store.mixer.buses.map((bus) => ({
+        value: `bus:${bus.id}` as SidechainSourceValue,
+        label: `${bus.name} · ${t.value.shell.mixer.strip.bus}`,
+        disabled: !isSidechainBusSourceAllowed(bus.id),
+      }))),
+]);
+
+function sidechainValue(slot: InsertSlot): SidechainSourceValue {
+  if (slot.sidechainSourceBusId !== undefined) return `bus:${slot.sidechainSourceBusId}`;
+  if (slot.sidechainSourceGroupTrackId !== undefined) {
+    return ordinaryTrackTarget.value
+      ? `track:${slot.sidechainSourceGroupTrackId}`
+      : `group:${slot.sidechainSourceGroupTrackId}`;
+  }
+  if (slot.sidechainSourceTrackId !== undefined) return `track:${slot.sidechainSourceTrackId}`;
+  return SIDECHAIN_NONE;
+}
+
+/** True when the slot gets a key-source select (all engine strip targets). */
+function hasSidechainSelect(slot: InsertSlot): boolean {
+  return isSidechainKeyedProcessor(slot.processor);
+}
+
+function onSidechainChange(index: number, value: SidechainSourceValue): void {
   try {
-    setInsertSidechain(props.target, index, value === SIDECHAIN_NONE ? null : value);
+    const source =
+      value === SIDECHAIN_NONE
+        ? null
+        : value.startsWith('track:')
+          ? { kind: 'track' as const, trackId: Number(value.slice('track:'.length)) }
+          : value.startsWith('group:')
+            ? { kind: 'group' as const, trackId: Number(value.slice('group:'.length)) }
+            : { kind: 'bus' as const, busId: value.slice('bus:'.length) };
+    setInsertSidechain(props.target, index, source);
     error.value = '';
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -399,7 +487,7 @@ onBeforeUnmount(() => {
           <span class="insert-sidechain-label">{{ t.shell.inserts.key }}</span>
           <SelectMenu
             class="insert-sidechain-select"
-            :model-value="slot.sidechainSourceTrackId ?? SIDECHAIN_NONE"
+            :model-value="sidechainValue(slot)"
             :options="sidechainOptions"
             :aria-label="t.shell.inserts.sidechainKey"
             size="sm"

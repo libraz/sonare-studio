@@ -25,6 +25,12 @@ import { linearToDb, SILENCE_DB } from '@/lib/db';
 import type { EqBand, SendTiming } from '@/wasm/index.js';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
+/** Explicit source namespaces accepted by an insert sidechain key command. */
+export type MixerSidechainSource =
+  | { kind: 'track'; trackId: number }
+  | { kind: 'bus'; busId: string }
+  | { kind: 'group'; trackId: number };
+
 /** One insert effect slot referencing the wasm processor catalog by name. */
 export interface InsertSlot {
   /** Stable identity used by automation lanes across reorder/serialization. */
@@ -40,7 +46,67 @@ export interface InsertSlot {
    * processors on track strips only); absent = the insert's internal key.
    */
   sidechainSourceTrackId?: number;
+  /**
+   * Bus that keys this insert.  This is the app-level bus id; the realtime
+   * engine maps it to its compact bus ordinal when the mixer topology is
+   * published.  Track sidechains keep using `sidechainSourceTrackId` for
+   * backwards compatibility with existing documents and reference cleanup.
+   */
+  sidechainSourceBusId?: string;
+  /**
+   * Group track whose internal engine bus keys this insert.  Group buses do
+   * not have a `MixerBus` entry, so they need a separate reference from a
+   * user-created return bus.
+   */
+  sidechainSourceGroupTrackId?: number;
 }
+
+/** Channel layouts accepted by libsonare's mixer buses and scene JSON. */
+export type MixerChannelLayout = 'mono' | 'stereo' | '5.1' | '7.1';
+
+/** Channel-layout values in the order used by libsonare's realtime ABI. */
+export const MIXER_CHANNEL_LAYOUTS: ReadonlyArray<MixerChannelLayout> = [
+  'mono',
+  'stereo',
+  '5.1',
+  '7.1',
+];
+
+/** True when a value is a supported mixer channel layout. */
+export function isMixerChannelLayout(value: unknown): value is MixerChannelLayout {
+  return typeof value === 'string' && MIXER_CHANNEL_LAYOUTS.includes(value as MixerChannelLayout);
+}
+
+/** Converts a scene/model channel layout to libsonare's numeric ABI code. */
+export function mixerChannelLayoutCode(layout: MixerChannelLayout | undefined): number {
+  if (layout === 'mono') return 0;
+  if (layout === '5.1') return 2;
+  if (layout === '7.1') return 3;
+  return 1;
+}
+
+/** One strip's source position in a surround destination bus. */
+export interface SurroundPan {
+  /** Horizontal azimuth in degrees (-180..180; 0 = front-center). */
+  azimuth: number;
+  /** Reserved for future height beds; retained for scene round-trips. */
+  elevation: number;
+  /** Spread from a point source to the front bed (0..1). */
+  divergence: number;
+  /** Linear LFE send (0..1). */
+  lfe: number;
+  /** Reserved for future focus/spread controls; default is 1. */
+  distance: number;
+}
+
+/** Default surround source position used by libsonare. */
+export const DEFAULT_SURROUND_PAN: SurroundPan = {
+  azimuth: 0,
+  elevation: 0,
+  divergence: 0,
+  lfe: 0,
+  distance: 1,
+};
 
 let nextProcessorId = 1;
 
@@ -213,6 +279,10 @@ export interface MixerStrip {
    * pan (-1, +1) when dual-pan mode is selected.
    */
   dualPan?: DualPan;
+  /** Source channel layout carried into a surround destination bus. */
+  sourceLayout?: MixerChannelLayout;
+  /** Surround position used when this strip feeds a 5.1/7.1 bus. */
+  surroundPan?: SurroundPan;
 }
 
 /**
@@ -255,6 +325,8 @@ export interface MixerBus {
    * {@link returnSoloRouting}).
    */
   solo?: boolean;
+  /** Channel layout of this bus; absent keeps libsonare's stereo default. */
+  channelLayout?: MixerChannelLayout;
   /** Optional return-bus insert strip. Sends sum through this chain. */
   strip?: MixerStrip;
 }
@@ -290,6 +362,8 @@ export interface ProjectMixerState {
   soloMode?: MixerSoloMode;
   /** Master strip (gain/pan, inserts and EQ are all audible in realtime). */
   master: MixerStrip;
+  /** Master output layout; absent keeps the stereo browser/output default. */
+  masterLayout?: MixerChannelLayout;
   /** Send buses (realtime engine bus lanes, at most {@link MAX_MIXER_BUSES}). */
   buses: MixerBus[];
   /** VCA control groups; absent/empty = none. */
@@ -515,6 +589,14 @@ export function cloneMixerState(state: ProjectMixerState): ProjectMixerState {
 
 /** True when a strip is neutral (no audible or UI-only deviation). */
 export function isDefaultStrip(strip: MixerStrip): boolean {
+  const surroundPan = strip.surroundPan;
+  const hasNonDefaultSurroundPan =
+    surroundPan !== undefined &&
+    (surroundPan.azimuth !== DEFAULT_SURROUND_PAN.azimuth ||
+      surroundPan.elevation !== DEFAULT_SURROUND_PAN.elevation ||
+      surroundPan.divergence !== DEFAULT_SURROUND_PAN.divergence ||
+      surroundPan.lfe !== DEFAULT_SURROUND_PAN.lfe ||
+      surroundPan.distance !== DEFAULT_SURROUND_PAN.distance);
   return (
     strip.gainDb === 0 &&
     strip.pan === 0 &&
@@ -529,7 +611,9 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
     (strip.channelDelaySamples ?? 0) === 0 &&
     (strip.panLaw ?? DEFAULT_PAN_LAW) === DEFAULT_PAN_LAW &&
     (strip.panMode ?? DEFAULT_PAN_MODE) === DEFAULT_PAN_MODE &&
-    strip.dualPan === undefined
+    strip.dualPan === undefined &&
+    (strip.sourceLayout ?? 'stereo') === 'stereo' &&
+    !hasNonDefaultSurroundPan
   );
 }
 
@@ -556,6 +640,7 @@ export function masteringChainIsActive(chain: MasteringChainState | undefined): 
 export function isDefaultMixerState(state: ProjectMixerState): boolean {
   return (
     isDefaultStrip(state.master) &&
+    (state.masterLayout ?? 'stereo') === 'stereo' &&
     normalizeMixerSoloMode(state.soloMode) === DEFAULT_MIXER_SOLO_MODE &&
     state.buses.length === 0 &&
     (state.vcaGroups === undefined || state.vcaGroups.length === 0) &&

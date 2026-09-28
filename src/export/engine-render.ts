@@ -49,7 +49,7 @@ import {
 } from '@/engine/engine-declaration';
 import { resolvePresetName } from '@/engine/instruments';
 import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
-import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
+import { busSceneJson, MAX_ENGINE_BUSES, stripSceneJson } from '@/engine/strip-sync';
 import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
 import { planAudioClipStreams } from '@/export/clip-page-plan';
 import { AudioClipStreamSession, type PagedClipSpec } from '@/export/clip-page-stream';
@@ -99,6 +99,7 @@ import {
   DEFAULT_PAN_MODE,
   effectiveTrackMute,
   laneGainDb,
+  type MixerStrip,
   masteringChainIsActive,
   normalizeMixerSoloMode,
   returnSoloRouting,
@@ -119,6 +120,7 @@ import {
   buildBusRouting,
   buildMidiSchedules,
   documentAudibleTrackIndices,
+  documentRenderContributorIndices,
   preloadSoundFonts,
   resolveRenderWindow,
 } from './engine-render-context';
@@ -191,6 +193,9 @@ export async function renderProjectWithEngine(
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Render sample rate must be finite and > 0, got ${sampleRate}`);
   }
+  if (doc.mixer?.masterLayout && doc.mixer.masterLayout !== 'stereo') {
+    throw new RangeError('Surround master export is unavailable; select a stereo master layout');
+  }
   const includeMasterChain = options.includeMasterChain ?? true;
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const loadAudioMeta =
@@ -252,8 +257,15 @@ export async function renderProjectWithEngine(
 
   // Bus/send routing, VCA offsets, solo state and lane specs (live strip-sync
   // ordering: send buses first, then one bus per group track).
-  const { vcaGainDbById, vcaControlsById, busNumberById, buses, groupBusByTrackIndex, lanes } =
-    buildBusRouting(doc, trackIds);
+  const {
+    vcaGainDbById,
+    vcaControlsById,
+    busNumberById,
+    buses,
+    groupBusByTrackIndex,
+    lanes,
+    discardBusId,
+  } = buildBusRouting(doc, trackIds);
   const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
   const documentSoloExpansion = {
     isGroup: (track: ProjectDocument['tracks'][number]) => track.kind === 'group',
@@ -262,12 +274,13 @@ export async function renderProjectWithEngine(
   };
   const audibleTrackIndices = documentAudibleTrackIndices(doc);
   if (options.freezeTrackIndex !== undefined) audibleTrackIndices.add(options.freezeTrackIndex);
+  const renderContributorIndices = documentRenderContributorIndices(doc, audibleTrackIndices);
   const prerollSeconds = Math.min(
     MAX_PREROLL_SECONDS,
     Math.max(
       PREROLL_SECONDS,
       suggestedTailSeconds(
-        activeTimeEffectSlots(doc, audibleTrackIndices, {
+        activeTimeEffectSlots(doc, renderContributorIndices, {
           includeMaster: includeMasterChain,
           includeMastering: includeMasterChain,
         }),
@@ -296,7 +309,7 @@ export async function renderProjectWithEngine(
   const activeMidiTrackIndices = activeMidiTrackIndicesForRange(
     midiSchedules,
     trackIds,
-    audibleTrackIndices,
+    renderContributorIndices,
     midiRangeStartSample,
     midiRangeEndSample,
   );
@@ -320,6 +333,24 @@ export async function renderProjectWithEngine(
   const conflictingSf2TrackIndices = hasSoundFontSlotConflict(soundFontUsage)
     ? new Set(activeSf2TrackIndices)
     : new Set<number>();
+  if (conflictingSf2TrackIndices.size > 0) {
+    const hasCrossFontKey = [...conflictingSf2TrackIndices].some((targetIndex) =>
+      doc.tracks[targetIndex].mixer?.inserts.some((slot) => {
+        const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
+        return (
+          slot.enabled &&
+          sourceIndex !== undefined &&
+          sourceIndex !== targetIndex &&
+          activeSf2TrackIndices.has(sourceIndex)
+        );
+      }),
+    );
+    if (hasCrossFontKey) {
+      throw new RangeError(
+        'A SoundFont track keyed by another active SoundFont cannot be rendered accurately with conflicting fonts',
+      );
+    }
+  }
 
   // A group return is audible when either the group itself passes the shared
   // mute/solo projection or one of its routed members does. The latter matters
@@ -372,6 +403,44 @@ export async function renderProjectWithEngine(
             return busNumber === undefined ? [] : [{ bus, busIndex, busNumber }];
           })
       : [];
+  if (stemBuses.length > 0) {
+    // A return-stem pass needs one silent bus for direct outputs. With a full
+    // bus graph there is no safe existing bus to reuse as that sink.
+    if (buses.length >= MAX_ENGINE_BUSES && discardBusId === undefined) {
+      throw new RangeError('Return stems require one free engine bus for isolation');
+    }
+    // A downstream return or bus-key source can collect signals from several
+    // return domains. Rendering those domains in separate passes changes the
+    // input to nonlinear processors, so such stems cannot be re-summed to the
+    // document mix. Keep the full mix export available and reject this stem
+    // mode explicitly until the engine exposes per-bus capture.
+    const nestedReturn = (doc.mixer?.buses ?? []).some(
+      (bus) =>
+        bus.strip?.outputBusId !== undefined ||
+        (bus.strip?.sends.length ?? 0) > 0 ||
+        bus.strip?.inserts.some(
+          (slot) =>
+            slot.sidechainSourceBusId !== undefined ||
+            (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex !==
+              undefined,
+        ),
+    );
+    const nestedGroup = doc.tracks.some(
+      (track) =>
+        track.kind === 'group' &&
+        (track.mixer?.outputBusId !== undefined ||
+          (track.mixer?.sends.length ?? 0) > 0 ||
+          track.mixer?.inserts.some(
+            (slot) =>
+              slot.sidechainSourceBusId !== undefined ||
+              (slot as { sidechainSourceGroupTrackIndex?: number })
+                .sidechainSourceGroupTrackIndex !== undefined,
+          )),
+    );
+    if (nestedReturn || nestedGroup) {
+      throw new RangeError('Return stems cannot isolate nested bus routing or bus sidechain keys');
+    }
+  }
   const stemCount =
     stemTracks.length + stemBuses.length + (options.stems && options.masterStem === true ? 1 : 0);
   const chain = doc.mixer?.masteringChain;
@@ -410,7 +479,7 @@ export async function renderProjectWithEngine(
           loadAudioMeta,
           checkCancel,
           range: contributionRange,
-          audibleTrackIndices,
+          audibleTrackIndices: renderContributorIndices,
         })
       : [];
   const streamedKeys = new Set(clipStreamPlans.map((plan) => plan.key));
@@ -421,7 +490,7 @@ export async function renderProjectWithEngine(
         loadAudioMeta,
         checkCancel,
         range: contributionRange,
-        audibleTrackIndices,
+        audibleTrackIndices: renderContributorIndices,
         streamedKeys,
       })
     : { sourceAudioBytes: 0, preparedClipBytes: 0, audioWindowClips: [] };
@@ -432,7 +501,7 @@ export async function renderProjectWithEngine(
     sampleRate,
     options.releaseTailSeconds,
     audioMemory.audioWindowClips,
-    audibleTrackIndices,
+    renderContributorIndices,
     options.appendReleaseTailForExplicitRange,
   );
   assertMasteringBufferWithinLimit({
@@ -512,7 +581,7 @@ export async function renderProjectWithEngine(
     checkCancel,
     mediaIssues,
     range: contributionRange,
-    audibleTrackIndices,
+    audibleTrackIndices: renderContributorIndices,
     streamedKeys,
   });
 
@@ -531,7 +600,7 @@ export async function renderProjectWithEngine(
         lengthSamples: plan.frameCount,
       })),
     ],
-    audibleTrackIndices,
+    renderContributorIndices,
     options.appendReleaseTailForExplicitRange,
   );
   // Asset metadata is optional for injected render dependencies. Prepared
@@ -597,17 +666,30 @@ export async function renderProjectWithEngine(
     // pass adds a silent discard bus so non-selected direct outputs can be
     // removed while selected sends/outputs still feed the return.
     const silentBusId =
-      pass.busStemId === null ? null : buses.reduce((max, bus) => Math.max(max, bus.busId), 0) + 1;
+      pass.busStemId === null
+        ? null
+        : (discardBusId ?? buses.reduce((max, bus) => Math.max(max, bus.busId), 0) + 1);
     const passBuses =
-      silentBusId === null ? buses : [...buses, { busId: silentBusId, gainDb: -120 }];
+      silentBusId === null || discardBusId === silentBusId
+        ? buses
+        : [...buses, { busId: silentBusId, gainDb: -120 }];
     if (passBuses.length > 0) engine.setTrackBuses(passBuses);
+    // A muted lane can still feed a pre-fader send: libsonare taps it before
+    // the lane's mute/solo gate. An isolated render must remove sends from
+    // every non-selected lane while retaining its lane for sidechain state.
+    const isolatedLanes =
+      pass.stemIndices === null
+        ? lanes
+        : lanes.map((lane, index) =>
+            pass.stemIndices?.has(index) ? lane : { trackId: lane.trackId },
+          );
     const passLanes =
       pass.freezeIndex !== null
-        ? lanes.map((lane, index) =>
+        ? isolatedLanes.map((lane, index) =>
             index === pass.freezeIndex ? { trackId: lane.trackId } : lane,
           )
         : pass.busStemId !== null && silentBusId !== null
-          ? lanes.map((lane) => {
+          ? isolatedLanes.map((lane) => {
               const sends = lane.sends?.filter((send) => send.busId === pass.busStemId) ?? [];
               const outputBusId =
                 lane.outputBusId === pass.busStemId ? pass.busStemId : silentBusId;
@@ -618,7 +700,7 @@ export async function renderProjectWithEngine(
               };
             })
           : pass.stemIndices !== null && pass.stemRouting !== 'document'
-            ? lanes.map((lane, index) => {
+            ? isolatedLanes.map((lane, index) => {
                 if (!pass.stemIndices?.has(index)) return lane;
                 return {
                   trackId: lane.trackId,
@@ -628,7 +710,7 @@ export async function renderProjectWithEngine(
                     : {}),
                 };
               })
-            : lanes;
+            : isolatedLanes;
     engine.setTrackLanes(passLanes);
 
     for (const bus of doc.mixer?.buses ?? []) {
@@ -775,6 +857,66 @@ export async function renderProjectWithEngine(
       });
     });
 
+    // Bus and master keys are attached after their insert scenes exist. A
+    // document stores track/group references positionally and return bus keys
+    // by stable bus id; resolve them to this render pass's compact engine IDs.
+    const sidechainSource = (slot: unknown): { kind: number; id: number } | null => {
+      if (!slot || typeof slot !== 'object') return null;
+      const source = slot as {
+        sidechainSourceIndex?: number;
+        sidechainSourceBusId?: string;
+        sidechainSourceGroupTrackIndex?: number;
+      };
+      if (
+        Number.isInteger(source.sidechainSourceIndex) &&
+        (source.sidechainSourceIndex as number) >= 0 &&
+        (source.sidechainSourceIndex as number) < trackIds.length
+      ) {
+        return { kind: 0, id: trackIds[source.sidechainSourceIndex as number] };
+      }
+      if (source.sidechainSourceBusId !== undefined) {
+        const id = busNumberById.get(source.sidechainSourceBusId);
+        if (id !== undefined) return { kind: 1, id };
+      }
+      if (source.sidechainSourceGroupTrackIndex !== undefined) {
+        const id = groupBusByTrackIndex.get(source.sidechainSourceGroupTrackIndex);
+        if (id !== undefined) return { kind: 1, id };
+      }
+      return null;
+    };
+    const keyBusInsert = (
+      busId: number,
+      strip: MixerStrip | undefined,
+      insertIndex: number,
+      slot: unknown,
+    ): void => {
+      const source = sidechainSource(slot);
+      if (!source) return;
+      const engineIndex = engineBusInsertAutomationIndex(
+        strip,
+        insertIndex,
+        supportsBusInsertBypass,
+      );
+      if (engineIndex === undefined) return;
+      if (!engine.setBusSidechain) throw new Error('Engine does not support bus sidechains');
+      engine.setBusSidechain(busId, engineIndex, source.kind, source.id);
+    };
+    for (const bus of doc.mixer?.buses ?? []) {
+      const busId = busNumberById.get(bus.id);
+      if (busId === undefined) continue;
+      bus.strip?.inserts.forEach((slot, insertIndex) => {
+        keyBusInsert(busId, bus.strip, insertIndex, slot);
+      });
+    }
+    doc.tracks.forEach((track, index) => {
+      if (track.kind !== 'group') return;
+      const busId = groupBusByTrackIndex.get(index);
+      if (busId === undefined) return;
+      track.mixer?.inserts.forEach((slot, insertIndex) => {
+        keyBusInsert(busId, track.mixer, insertIndex, slot);
+      });
+    });
+
     // Master strip: inserts/EQ only with the chain enabled; gain/pan whenever
     // the pass renders master levels (stems are pre-master).
     const master = doc.mixer?.master;
@@ -793,6 +935,13 @@ export async function renderProjectWithEngine(
       });
       engineEqBands(masterStrip).forEach((band, bandIndex) => {
         engine.setMasterStripEqBandJson(bandIndex, JSON.stringify(band));
+      });
+      masterStrip.inserts.forEach((slot, insertIndex) => {
+        const source = sidechainSource(slot);
+        if (!source) return;
+        if (!engine.setMasterSidechain)
+          throw new Error('Engine does not support master sidechains');
+        engine.setMasterSidechain(insertIndex, source.kind, source.id);
       });
     }
     if (pass.masterLevels) {

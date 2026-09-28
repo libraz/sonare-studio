@@ -10,6 +10,7 @@ import {
   clearHistory,
   mixerBusStripTarget,
   setSend,
+  setStripOutputBus,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { midiLearnSendTargetId } from '@/ui/midi/midi-learn';
@@ -121,5 +122,34 @@ describe('StripSends MIDI learn', () => {
 
     await learnButtons[1].trigger('click');
     expect(learn.isArmedId(timingId)).toBe(true);
+  });
+
+  it('writes a return-bus send through the same compact send surface', async () => {
+    const sourceBusId = addMixerBus({ name: 'Parallel' });
+    const destinationBusId = addMixerBus({ name: 'Verb' });
+    const wrapper = mount(StripSends, {
+      props: { target: mixerBusStripTarget(sourceBusId) },
+    });
+
+    const readouts = wrapper.findAllComponents(NumericReadout);
+    expect(readouts).toHaveLength(2);
+    readouts[1].vm.$emit('change', -9);
+    await wrapper.vm.$nextTick();
+
+    expect(store.mixer.buses[0].strip?.sends).toEqual([
+      { busId: destinationBusId, levelDb: -9, enabled: true },
+    ]);
+  });
+
+  it('disables return sends that would self-route or close a feedback loop', async () => {
+    const sourceBusId = addMixerBus({ name: 'Parallel' });
+    const destinationBusId = addMixerBus({ name: 'Verb' });
+    setStripOutputBus(mixerBusStripTarget(destinationBusId), sourceBusId);
+    const wrapper = mount(StripSends, {
+      props: { target: mixerBusStripTarget(sourceBusId) },
+    });
+
+    expect(wrapper.findAll('.knob.disabled')).toHaveLength(2);
+    expect(wrapper.findAll('.numeric-readout:disabled')).toHaveLength(2);
   });
 });

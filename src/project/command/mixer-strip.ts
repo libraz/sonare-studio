@@ -2,6 +2,12 @@ import { parseMidiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import type { SendTiming } from '@/wasm/index.js';
 import { parseInsertAutomationParam } from '../automation';
 import {
+  assertKnownBusDestination,
+  assertNoBusRoutingCycle,
+  groupBusTopologyId,
+  mixerBusTopology,
+} from '../bus-topology';
+import {
   cloneInstrument,
   type ExternalMidiInstrument,
   instrumentEquals,
@@ -10,7 +16,6 @@ import {
 } from '../instrument';
 import {
   cloneStrip,
-  createDefaultStrip,
   createProcessorId,
   DEFAULT_DUAL_PAN,
   DEFAULT_PAN_LAW,
@@ -24,6 +29,7 @@ import {
   MIN_INPUT_TRIM_DB,
   MIN_STRIP_GAIN_DB,
   MIN_STRIP_WIDTH,
+  type MixerSidechainSource,
   type MixerSoloMode,
   normalizeMixerSoloMode,
   PAN_LAW_IDS,
@@ -88,6 +94,169 @@ function pruneReplacedInsertReferences(
 
 function sameMidiLearnScope(target: MixerStripTarget, scope: number | 'master'): boolean {
   return (target === 'master' || typeof target === 'number') && target === scope;
+}
+
+/** Rejects stereo-only strip stages on a surround return bus. */
+function assertStereoBusStageAllowed(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+): void {
+  if (!isMixerBusStripTarget(target)) return;
+  const bus = store.mixer.buses.find((entry) => entry.id === mixerBusIdFromTarget(target));
+  if (bus?.channelLayout === '5.1' || bus?.channelLayout === '7.1') {
+    throw new RangeError('Surround mixer buses cannot carry a stereo pan or width stage');
+  }
+}
+
+/** Reads the one sidechain namespace carried by an insert slot. */
+function sidechainSourceFromSlot(
+  slot: Pick<
+    InsertSlot,
+    'sidechainSourceTrackId' | 'sidechainSourceBusId' | 'sidechainSourceGroupTrackId'
+  >,
+): MixerSidechainSource | null {
+  const sources: MixerSidechainSource[] = [];
+  if (slot.sidechainSourceTrackId !== undefined) {
+    sources.push({ kind: 'track', trackId: slot.sidechainSourceTrackId });
+  }
+  if (slot.sidechainSourceBusId !== undefined) {
+    sources.push({ kind: 'bus', busId: slot.sidechainSourceBusId });
+  }
+  if (slot.sidechainSourceGroupTrackId !== undefined) {
+    sources.push({ kind: 'group', trackId: slot.sidechainSourceGroupTrackId });
+  }
+  if (sources.length > 1) {
+    throw new RangeError('Insert sidechain source must use one namespace');
+  }
+  return sources[0] ?? null;
+}
+
+/** Returns bus/group graph ids carried by an insert sidechain slot. */
+function sidechainTopologySources(
+  slot: Pick<InsertSlot, 'sidechainSourceBusId' | 'sidechainSourceGroupTrackId'>,
+): string[] {
+  const sources: string[] = [];
+  if (slot.sidechainSourceBusId !== undefined) sources.push(slot.sidechainSourceBusId);
+  if (slot.sidechainSourceGroupTrackId !== undefined) {
+    sources.push(groupBusTopologyId(slot.sidechainSourceGroupTrackId));
+  }
+  return sources;
+}
+
+/** Returns the bus/group graph id for a strip target, when it has one. */
+function sidechainTargetTopologyId(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+): string | undefined {
+  if (isMixerBusStripTarget(target)) return mixerBusIdFromTarget(target);
+  if (typeof target !== 'number') return undefined;
+  const track = requireTrack(store, target);
+  return track.kind === 'group' ? groupBusTopologyId(track.id) : undefined;
+}
+
+/**
+ * Removes the destination insert's previous bus/group sidechain edges before
+ * validating a replacement. This lets a slot switch from one source to
+ * another without treating its old edge as a newly introduced cycle.
+ */
+function topologyWithoutInsertSidechain(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+  previousSlot: InsertSlot,
+) {
+  const targetId = sidechainTargetTopologyId(store, target);
+  const previousSources = new Set(sidechainTopologySources(previousSlot));
+  const nodes = mixerBusTopology(
+    store.mixer,
+    store.tracks
+      .filter((track) => track.kind === 'group')
+      .map((track) => ({ id: track.id, mixer: track.mixer })),
+  );
+  if (targetId === undefined || previousSources.size === 0) return nodes;
+  return nodes.map((node) =>
+    node.id === targetId
+      ? {
+          ...node,
+          sidechainSources: (node.sidechainSources ?? []).filter(
+            (source) => !previousSources.has(source),
+          ),
+        }
+      : node,
+  );
+}
+
+/** Validates a track/bus/group source before a slot is written. */
+function validateInsertSidechainSource(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+  source: MixerSidechainSource | null,
+  previousSlot?: InsertSlot,
+): void {
+  const targetTrack = typeof target === 'number' ? requireTrack(store, target) : undefined;
+  if (targetTrack && source !== null && source.kind !== 'track' && targetTrack.kind !== 'group') {
+    throw new RangeError('Ordinary track inserts can only use track sidechain keys');
+  }
+  if (source?.kind === 'track') {
+    const sourceTrack = requireTrack(store, source.trackId);
+    if (sourceTrack.kind === 'group') {
+      throw new RangeError(
+        `Track ${source.trackId} is a group bus; use a group sidechain key instead`,
+      );
+    }
+    if (targetTrack?.id === source.trackId) {
+      throw new RangeError('An insert cannot key from its own track');
+    }
+  }
+  if (source?.kind === 'group') {
+    const sourceTrack = requireTrack(store, source.trackId);
+    if (sourceTrack.kind !== 'group') {
+      throw new RangeError(`Track ${source.trackId} is not a group bus`);
+    }
+    if (targetTrack?.kind === 'group' && targetTrack.id === source.trackId) {
+      throw new RangeError('A group insert cannot key from its own group bus');
+    }
+  }
+  if (source?.kind === 'bus') {
+    if (!store.mixer.buses.some((bus) => bus.id === source.busId)) {
+      throw new RangeError(`Unknown mixer bus id: ${source.busId}`);
+    }
+    if (isMixerBusStripTarget(target) && mixerBusIdFromTarget(target) === source.busId) {
+      throw new RangeError('A bus insert cannot key from its own bus');
+    }
+  }
+
+  const sourceBusId =
+    source?.kind === 'bus'
+      ? source.busId
+      : source?.kind === 'group'
+        ? groupBusTopologyId(source.trackId)
+        : undefined;
+  const targetBusId = sidechainTargetTopologyId(store, target);
+  if (sourceBusId === undefined || targetBusId === undefined) return;
+  const nodes = topologyWithoutInsertSidechain(
+    store,
+    target,
+    previousSlot ?? {
+      processor: '',
+      params: {},
+      enabled: true,
+    },
+  );
+  const knownBusIds = new Set(nodes.map((node) => node.id));
+  assertKnownBusDestination(sourceBusId, knownBusIds, targetBusId);
+  assertNoBusRoutingCycle(nodes, sourceBusId, targetBusId);
+}
+
+function sidechainSourceFields(
+  source: MixerSidechainSource | null,
+): Pick<
+  InsertSlot,
+  'sidechainSourceTrackId' | 'sidechainSourceBusId' | 'sidechainSourceGroupTrackId'
+> {
+  if (source?.kind === 'track') return { sidechainSourceTrackId: source.trackId };
+  if (source?.kind === 'bus') return { sidechainSourceBusId: source.busId };
+  if (source?.kind === 'group') return { sidechainSourceGroupTrackId: source.trackId };
+  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -358,6 +527,7 @@ export function setStripPan(
   if (strip.pan === pan && (track === undefined || track.pan === pan) && !hasPendingGesture(key)) {
     return;
   }
+  assertStereoBusStageAllowed(store, target);
   executeApp(
     () => {
       writeStrip(store, target, { ...cloneStrip(strip), pan });
@@ -428,6 +598,7 @@ export function setStripWidth(
   }
   const key = `strip-width:${String(target)}`;
   if ((strip.width ?? DEFAULT_STRIP_WIDTH) === width && !hasPendingGesture(key)) return;
+  assertStereoBusStageAllowed(store, target);
   executeApp(
     () => {
       const next = cloneStrip(strip);
@@ -593,6 +764,8 @@ export function replaceInsert(
   if (source.processor.length === 0)
     throw new RangeError('Insert processor name must not be empty');
   validateInsertParams(source.params);
+  const normalizedSource = sidechainSourceFromSlot(source);
+  validateInsertSidechainSource(store, target, normalizedSource, destination);
   executeApp(() => {
     const next = cloneStrip(strip);
     const processorChanged = destination.processor !== source.processor;
@@ -601,9 +774,7 @@ export function replaceInsert(
       processor: source.processor,
       enabled: source.enabled,
       params: { ...source.params },
-      ...(source.sidechainSourceTrackId !== undefined && source.sidechainSourceTrackId !== target
-        ? { sidechainSourceTrackId: source.sidechainSourceTrackId }
-        : {}),
+      ...sidechainSourceFields(normalizedSource),
     };
     next.inserts[index] = slot;
     writeStrip(store, target, next);
@@ -626,42 +797,61 @@ function createReplacementProcessorId(strip: ReturnType<typeof cloneStrip>): str
 }
 
 /**
- * Sets (or clears with null) the sidechain key source of a track insert as
- * one undoable edit. Only non-group track strips support keyed inserts: group
- * track inserts are rendered as engine bus strips, and the current engine has
- * no bus-strip sidechain binding API.
+ * Sets (or clears with null) the sidechain key source of an insert as one
+ * undoable edit. The legacy numeric source form remains shorthand for a track
+ * sidechain; bus and group sources use an explicit discriminant because their
+ * ids have different namespaces.
  *
- * @param trackId Track owning the insert.
+ * @param target Track, return-bus, or master strip owning the insert.
  * @param index Insert slot index.
- * @param sourceTrackId Track whose audio keys the insert, or null.
+ * @param source Track id, `{ kind: 'bus', busId }`, `{ kind: 'group', trackId }`, or null.
  */
 export function setInsertSidechain(
-  trackId: number,
+  target: MixerStripTarget,
   index: number,
-  sourceTrackId: number | null,
+  source: number | MixerSidechainSource | null,
 ): void {
   const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (track.kind === 'group') {
-    throw new RangeError('Group track inserts do not support sidechain keys');
-  }
-  const strip = track.mixer;
-  if (!strip) throw new RangeError(`Track ${trackId} has no mixer strip`);
+  const strip =
+    typeof target === 'number'
+      ? (() => {
+          const track = requireTrack(store, target);
+          if (!track.mixer) throw new RangeError(`Track ${target} has no mixer strip`);
+          return track.mixer;
+        })()
+      : currentStrip(store, target);
   const slot = requireInsert(strip, index);
-  if (sourceTrackId !== null) {
-    requireTrack(store, sourceTrackId);
-    if (sourceTrackId === trackId) {
-      throw new RangeError('An insert cannot key from its own track');
-    }
-  }
-  if ((slot.sidechainSourceTrackId ?? null) === sourceTrackId) return;
+  const normalized =
+    typeof source === 'number' ? { kind: 'track' as const, trackId: source } : source;
+  validateInsertSidechainSource(store, target, normalized, slot);
+  const same =
+    normalized === null
+      ? slot.sidechainSourceTrackId === undefined &&
+        slot.sidechainSourceBusId === undefined &&
+        slot.sidechainSourceGroupTrackId === undefined
+      : normalized.kind === 'track'
+        ? slot.sidechainSourceTrackId === normalized.trackId &&
+          slot.sidechainSourceBusId === undefined &&
+          slot.sidechainSourceGroupTrackId === undefined
+        : normalized.kind === 'bus'
+          ? slot.sidechainSourceBusId === normalized.busId &&
+            slot.sidechainSourceTrackId === undefined &&
+            slot.sidechainSourceGroupTrackId === undefined
+          : slot.sidechainSourceGroupTrackId === normalized.trackId &&
+            slot.sidechainSourceTrackId === undefined &&
+            slot.sidechainSourceBusId === undefined;
+  if (same) return;
   executeApp(() => {
     const next = cloneStrip(strip);
     const updated = { ...next.inserts[index] };
-    if (sourceTrackId === null) delete updated.sidechainSourceTrackId;
-    else updated.sidechainSourceTrackId = sourceTrackId;
+    delete updated.sidechainSourceTrackId;
+    delete updated.sidechainSourceBusId;
+    delete updated.sidechainSourceGroupTrackId;
+    if (normalized?.kind === 'track') updated.sidechainSourceTrackId = normalized.trackId;
+    if (normalized?.kind === 'bus') updated.sidechainSourceBusId = normalized.busId;
+    if (normalized?.kind === 'group') updated.sidechainSourceGroupTrackId = normalized.trackId;
     next.inserts[index] = updated;
-    writeStrip(store, trackId, next);
+    writeStrip(store, target, next);
     store.refresh();
   });
 }
@@ -764,6 +954,28 @@ export function setSend(
   if (!store.mixer.buses.some((bus) => bus.id === busId)) {
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }
+  if (
+    send !== null &&
+    (isMixerBusStripTarget(target) ||
+      (typeof target === 'number' &&
+        store.tracks.find((track) => track.id === target)?.kind === 'group'))
+  ) {
+    const sourceBusId = isMixerBusStripTarget(target)
+      ? mixerBusIdFromTarget(target)
+      : groupBusTopologyId(target as number);
+    const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
+    assertKnownBusDestination(busId, knownBusIds, sourceBusId);
+    assertNoBusRoutingCycle(
+      mixerBusTopology(
+        store.mixer,
+        store.tracks
+          .filter((track) => track.kind === 'group')
+          .map((track) => ({ id: track.id, mixer: track.mixer })),
+      ),
+      sourceBusId,
+      busId,
+    );
+  }
   if (send !== null && !Number.isFinite(send.levelDb)) {
     throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
   }
@@ -852,6 +1064,7 @@ export function setStripPanLaw(target: MixerStripTarget, law: PanLawId): void {
     throw new RangeError(`Unknown pan law: ${law}`);
   }
   if ((strip.panLaw ?? DEFAULT_PAN_LAW) === law) return;
+  assertStereoBusStageAllowed(store, target);
   executeApp(() => {
     const next = cloneStrip(strip);
     // Keep the field absent at the default so neutral strips stay neutral.
@@ -880,6 +1093,7 @@ export function setStripPanMode(target: MixerStripTarget, mode: PanModeId): void
     throw new RangeError(`Unknown pan mode: ${mode}`);
   }
   if ((strip.panMode ?? DEFAULT_PAN_MODE) === mode) return;
+  assertStereoBusStageAllowed(store, target);
   executeApp(() => {
     const next = cloneStrip(strip);
     // Keep the field absent at the default so neutral strips stay neutral.
@@ -933,6 +1147,7 @@ export function setStripDualPan(
   if (strip.dualPan?.left === left && strip.dualPan?.right === right && !hasPendingGesture(key)) {
     return;
   }
+  assertStereoBusStageAllowed(store, target);
   executeApp(
     () => {
       const next = cloneStrip(strip);
@@ -959,17 +1174,30 @@ export function setStripOutputBus(target: MixerStripTarget, busId: string | null
   if (target === 'master') {
     throw new RangeError('The master strip has no output bus to route');
   }
-  if (isMixerBusStripTarget(target)) {
-    throw new RangeError('A bus return strip has no output bus to route');
-  }
-  const track = requireTrack(store, target);
-  if (track.kind === 'group') {
-    throw new RangeError('Group tracks carry their own bus and cannot be re-routed');
-  }
+  const sourceBusId = isMixerBusStripTarget(target)
+    ? mixerBusIdFromTarget(target)
+    : (() => {
+        const track = requireTrack(store, target);
+        return track.kind === 'group' ? groupBusTopologyId(track.id) : undefined;
+      })();
   if (busId !== null && !store.mixer.buses.some((bus) => bus.id === busId)) {
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }
-  const strip = track.mixer ?? createDefaultStrip();
+  if (busId !== null && sourceBusId !== undefined) {
+    const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
+    assertKnownBusDestination(busId, knownBusIds, sourceBusId);
+    assertNoBusRoutingCycle(
+      mixerBusTopology(
+        store.mixer,
+        store.tracks
+          .filter((track) => track.kind === 'group')
+          .map((track) => ({ id: track.id, mixer: track.mixer })),
+      ),
+      sourceBusId,
+      busId,
+    );
+  }
+  const strip = currentStrip(store, target);
   if ((strip.outputBusId ?? null) === busId) return;
   executeApp(() => {
     const next = cloneStrip(strip);

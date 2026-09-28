@@ -106,6 +106,8 @@ import {
 type InsertWithDocumentSidechainIndex = {
   sidechainSourceIndex?: number;
   sidechainSourceTrackId?: number;
+  sidechainSourceGroupTrackIndex?: number;
+  sidechainSourceGroupTrackId?: number;
 };
 
 function isDocumentMarker(value: unknown): value is { ppq: number; name: string } {
@@ -151,6 +153,17 @@ function resolveStripSidechainSourceIds(
       slot.sidechainSourceTrackId = trackMirror[sourceIndex].id;
     }
     delete slot.sidechainSourceIndex;
+    const groupSourceIndex = slot.sidechainSourceGroupTrackIndex;
+    if (
+      groupSourceIndex !== undefined &&
+      Number.isInteger(groupSourceIndex) &&
+      groupSourceIndex >= 0 &&
+      groupSourceIndex < trackMirror.length &&
+      trackMirror[groupSourceIndex].kind === 'group'
+    ) {
+      slot.sidechainSourceGroupTrackId = trackMirror[groupSourceIndex].id;
+    }
+    delete slot.sidechainSourceGroupTrackIndex;
   }
 }
 
@@ -690,6 +703,12 @@ export const useProjectStore = defineStore('project', () => {
       for (const bus of mixer.value.buses) {
         resolveStripSidechainSourceIds(
           bus.strip?.inserts as InsertWithDocumentSidechainIndex[] | undefined,
+          trackMirror,
+        );
+      }
+      for (const track of trackMirror) {
+        resolveStripSidechainSourceIds(
+          track.mixer?.inserts as InsertWithDocumentSidechainIndex[] | undefined,
           trackMirror,
         );
       }

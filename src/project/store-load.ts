@@ -760,7 +760,6 @@ export function hydrateProjectFromDocument(
     inserts.forEach((slot, slotIndex) => {
       const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
       if (
-        entry.kind === 'group' ||
         sourceIndex === undefined ||
         !Number.isInteger(sourceIndex) ||
         sourceIndex < 0 ||

@@ -1,5 +1,10 @@
 import { isBusAutomationTarget, parseInsertAutomationParam } from '../automation';
 import {
+  assertValidMixerBusId,
+  assertValidMixerBusTopology,
+  mixerBusTopology,
+} from '../bus-topology';
+import {
   assertEngineBusCapacity,
   cloneStrip,
   createDefaultStrip,
@@ -7,7 +12,9 @@ import {
   DEFAULT_DUAL_PAN,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
+  DEFAULT_SURROUND_PAN,
   type InsertSlot,
+  isMixerChannelLayout,
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_MIXER_BUSES,
@@ -18,12 +25,14 @@ import {
   MIN_STRIP_GAIN_DB,
   MIN_STRIP_WIDTH,
   type MixerBus,
+  type MixerChannelLayout,
   type MixerStrip,
   type PanLawId,
   type PanModeId,
   type ProjectMixerState,
   type StripEq,
   type StripSend,
+  type SurroundPan,
 } from '../mixer';
 import { getWasmModule, useProjectStore } from '../store';
 import { reconcileProcessorTargetReferences } from '../target-reference-registry';
@@ -35,6 +44,13 @@ interface SceneInsert {
   params?: unknown;
   sidechainKey?: unknown;
 }
+
+type SceneSidechainSource =
+  | { kind: 'track'; trackId: number }
+  | { kind: 'bus'; busId: string }
+  | { kind: 'group'; trackId: number };
+
+type SceneSidechainTarget = 'track' | 'group' | 'bus' | 'master';
 
 interface SceneSend {
   destinationBusId?: unknown;
@@ -55,6 +71,8 @@ interface SceneStrip {
   panMode?: unknown;
   dualPanLeft?: unknown;
   dualPanRight?: unknown;
+  sourceLayout?: unknown;
+  surroundPan?: unknown;
   eq?: unknown;
   muted?: unknown;
   soloed?: unknown;
@@ -200,17 +218,13 @@ function loadRealtimeInsertCatalog(): ReadonlySet<string> | null {
 function sceneInserts(
   inserts: unknown,
   validProcessors: ReadonlySet<string> | null,
-  sidechainBySceneId?: ReadonlyMap<string, number>,
+  sidechainBySceneId?: ReadonlyMap<string, SceneSidechainSource>,
+  sidechainTarget: SceneSidechainTarget = 'track',
 ): InsertSlot[] {
   if (!Array.isArray(inserts)) return [];
   return inserts.flatMap((entry): InsertSlot[] => {
     const record = objectRecord(entry) as SceneInsert | null;
     if (!record || typeof record.processor !== 'string' || record.processor.length === 0) return [];
-    if (typeof record.sidechainKey === 'string' && sidechainBySceneId === undefined) {
-      throw new RangeError(
-        'Mixer scene bus/group/master inserts with sidechain keys need engine support',
-      );
-    }
     if (validProcessors && !validProcessors.has(record.processor)) return [];
     const slot: InsertSlot = {
       id: createProcessorId(),
@@ -218,8 +232,16 @@ function sceneInserts(
       params: readParams(record.params),
       enabled: true,
     };
-    if (typeof record.sidechainKey === 'string' && sidechainBySceneId?.has(record.sidechainKey)) {
-      slot.sidechainSourceTrackId = sidechainBySceneId.get(record.sidechainKey);
+    if (typeof record.sidechainKey === 'string') {
+      const source = sidechainBySceneId?.get(record.sidechainKey);
+      if (source && sidechainTarget === 'track' && source.kind !== 'track') {
+        throw new RangeError(
+          `Mixer scene track sidechain key ${record.sidechainKey} must reference a track`,
+        );
+      }
+      if (source?.kind === 'track') slot.sidechainSourceTrackId = source.trackId;
+      if (source?.kind === 'bus') slot.sidechainSourceBusId = source.busId;
+      if (source?.kind === 'group') slot.sidechainSourceGroupTrackId = source.trackId;
     }
     return [slot];
   });
@@ -246,7 +268,8 @@ function sceneStripToMixerStrip(
   validBusIds: ReadonlySet<string>,
   validProcessors: ReadonlySet<string> | null,
   outputBusId: string | undefined,
-  sidechainBySceneId?: ReadonlyMap<string, number>,
+  sidechainBySceneId?: ReadonlyMap<string, SceneSidechainSource>,
+  sidechainTarget: SceneSidechainTarget = 'track',
 ): MixerStrip {
   const next = createDefaultStrip();
   next.gainDb = clamp(finiteNumber(strip.faderDb) ?? 0, MIN_STRIP_GAIN_DB, MAX_STRIP_GAIN_DB);
@@ -291,9 +314,44 @@ function sceneStripToMixerStrip(
   }
   const eq = sceneEq(strip.eq);
   if (eq !== undefined) next.eq = eq;
-  next.inserts = sceneInserts(strip.inserts, validProcessors, sidechainBySceneId);
+  const sourceLayout = sceneChannelLayout(strip.sourceLayout);
+  if (sourceLayout !== undefined && sourceLayout !== 'stereo') next.sourceLayout = sourceLayout;
+  const surroundPan = sceneSurroundPan(strip.surroundPan);
+  if (surroundPan !== undefined) next.surroundPan = surroundPan;
+  next.inserts = sceneInserts(strip.inserts, validProcessors, sidechainBySceneId, sidechainTarget);
   next.sends = sceneSends(strip.sends, validBusIds);
   if (outputBusId !== undefined && validBusIds.has(outputBusId)) next.outputBusId = outputBusId;
+  return next;
+}
+
+function sceneChannelLayout(value: unknown): MixerChannelLayout | undefined {
+  return isMixerChannelLayout(value) ? value : undefined;
+}
+
+function sceneSurroundPan(value: unknown): SurroundPan | undefined {
+  const record = objectRecord(value);
+  if (!record) return undefined;
+  const azimuth = finiteNumber(record.azimuth);
+  const elevation = finiteNumber(record.elevation);
+  const divergence = finiteNumber(record.divergence);
+  const lfe = finiteNumber(record.lfe);
+  const distance = finiteNumber(record.distance);
+  const next: SurroundPan = {
+    azimuth: clamp(azimuth ?? DEFAULT_SURROUND_PAN.azimuth, -180, 180),
+    elevation: elevation ?? DEFAULT_SURROUND_PAN.elevation,
+    divergence: clamp(divergence ?? DEFAULT_SURROUND_PAN.divergence, 0, 1),
+    lfe: clamp(lfe ?? DEFAULT_SURROUND_PAN.lfe, 0, 1),
+    distance: distance ?? DEFAULT_SURROUND_PAN.distance,
+  };
+  if (
+    next.azimuth === DEFAULT_SURROUND_PAN.azimuth &&
+    next.elevation === DEFAULT_SURROUND_PAN.elevation &&
+    next.divergence === DEFAULT_SURROUND_PAN.divergence &&
+    next.lfe === DEFAULT_SURROUND_PAN.lfe &&
+    next.distance === DEFAULT_SURROUND_PAN.distance
+  ) {
+    return undefined;
+  }
   return next;
 }
 
@@ -302,6 +360,7 @@ function applySceneBusStripFields(
   strip: MixerStrip,
   bus: SceneBus,
   validProcessors: ReadonlySet<string> | null,
+  sidechainBySceneId?: ReadonlyMap<string, SceneSidechainSource>,
 ): void {
   const busInputTrim = finiteNumber(bus.inputTrimDb);
   if (busInputTrim !== undefined) {
@@ -351,7 +410,7 @@ function applySceneBusStripFields(
   }
   const busEq = sceneEq(bus.eq);
   if (busEq !== undefined) strip.eq = busEq;
-  const busInserts = sceneInserts(bus.inserts, validProcessors);
+  const busInserts = sceneInserts(bus.inserts, validProcessors, sidechainBySceneId, 'bus');
   // Older templates put return inserts on the connected strip. A new scene
   // can put them directly on the bus; prefer the direct bus form when it has
   // usable entries, otherwise retain the legacy connected-strip chain.
@@ -372,8 +431,16 @@ function sceneStripHasDsp(strip: SceneStrip | SceneBus | undefined): boolean {
 }
 
 /** Whether a scene entry carries a non-neutral output panner stage. */
-function sceneEntryHasPanner(strip: SceneStrip | SceneBus | undefined): boolean {
+function sceneEntryHasPanner(
+  strip: SceneStrip | SceneBus | undefined,
+  allowSurroundPan = false,
+): boolean {
   if (!strip) return false;
+  // Surround position is a source-strip property. Callers pass true only for
+  // a SceneStrip; SceneBus has no such field and must keep it inert.
+  if (allowSurroundPan && sceneSurroundPan((strip as SceneStrip).surroundPan) !== undefined) {
+    return true;
+  }
   const pan = finiteNumber(strip.pan);
   const mode = finiteNumber(strip.panMode);
   const law = finiteNumber(strip.panLaw);
@@ -393,7 +460,7 @@ function assertNoBusReturnDspConflict(bus: SceneBus, returnStrip: SceneStrip | u
   if (!returnStrip) return;
   if (
     (sceneStripHasDsp(bus) || sceneEntryHasPanner(bus)) &&
-    (sceneStripHasDsp(returnStrip) || sceneEntryHasPanner(returnStrip))
+    (sceneStripHasDsp(returnStrip) || sceneEntryHasPanner(returnStrip, true))
   ) {
     throw new RangeError(
       `Mixer scene bus ${String(bus.id)} carries direct DSP or pan and a legacy return strip also carries DSP or pan; use one representation`,
@@ -457,10 +524,19 @@ function buildScenePlan(
     if (id) stripsById.set(id, strip);
   }
   for (const bus of scene.buses) {
-    if (bus.layout !== undefined && bus.layout !== 'stereo') {
-      throw new RangeError(
-        `Mixer scene bus ${String(bus.id)} uses unsupported channel layout ${String(bus.layout)}`,
-      );
+    if (bus.layout !== undefined && !isMixerChannelLayout(bus.layout)) {
+      throw new RangeError(`Mixer scene bus ${String(bus.id)} uses unknown channel layout`);
+    }
+    if (
+      (bus.layout === '5.1' || bus.layout === '7.1') &&
+      ((finiteNumber(bus.width) !== undefined && finiteNumber(bus.width) !== 1) ||
+        (finiteNumber(bus.pan) !== undefined && finiteNumber(bus.pan) !== 0) ||
+        (finiteNumber(bus.panMode) !== undefined && finiteNumber(bus.panMode) !== 0) ||
+        (finiteNumber(bus.panLaw) !== undefined && finiteNumber(bus.panLaw) !== 0) ||
+        (finiteNumber(bus.dualPanLeft) !== undefined && finiteNumber(bus.dualPanLeft) !== -1) ||
+        (finiteNumber(bus.dualPanRight) !== undefined && finiteNumber(bus.dualPanRight) !== 1))
+    ) {
+      throw new RangeError(`Mixer scene bus ${String(bus.id)} cannot carry stereo pan or width`);
     }
   }
 
@@ -468,8 +544,17 @@ function buildScenePlan(
     scene.buses.find((bus) => bus.role === 'master') ??
     scene.buses.find((bus) => bus.id === 'master');
 
+  const sceneBusIds = new Set<string>();
+  for (const bus of scene.buses) {
+    // Only the scene's resolved master entry may use the reserved `master`
+    // id. An aux entry with that id would survive scene import but fail when
+    // the resulting project is serialized.
+    assertValidMixerBusId(bus.id, sceneBusIds, { allowMaster: bus === masterBus });
+    sceneBusIds.add(bus.id);
+  }
+
   const busEntries = scene.buses.filter((bus) => {
-    if (typeof bus.id !== 'string' || bus === masterBus) return false;
+    if (bus === masterBus) return false;
     return bus.role !== 'master';
   });
   if (busEntries.length > MAX_MIXER_BUSES) {
@@ -479,12 +564,15 @@ function buildScenePlan(
   const busIds = new Set(busEntries.map((bus) => bus.id as string));
   const returnStripByBus = new Map<string, string>();
   const outputBusByStrip = new Map<string, string>();
+  const outputBusByBus = new Map<string, string>();
   for (const connection of scene.connections) {
     if (typeof connection.source !== 'string' || typeof connection.destination !== 'string') {
       continue;
     }
     if (busIds.has(connection.source) && stripsById.has(connection.destination)) {
       returnStripByBus.set(connection.source, connection.destination);
+    } else if (busIds.has(connection.source) && busIds.has(connection.destination)) {
+      outputBusByBus.set(connection.source, connection.destination);
     } else if (stripsById.has(connection.source) && busIds.has(connection.destination)) {
       outputBusByStrip.set(connection.source, connection.destination);
     }
@@ -505,37 +593,66 @@ function buildScenePlan(
     byTrackId
       ? trackSceneStrips.find((strip) => sceneStripTrackId(strip) === track.id)
       : trackSceneStrips[index];
-  const sidechainBySceneId = new Map<string, number>();
+  const sidechainBySceneId = new Map<string, SceneSidechainSource>();
   tracks.forEach((track, index) => {
     const strip = stripForTrack(track, index);
     const id = strip ? sceneId(strip) : null;
-    if (id) sidechainBySceneId.set(id, track.id);
+    if (id) {
+      sidechainBySceneId.set(
+        id,
+        track.kind === 'group'
+          ? { kind: 'group', trackId: track.id }
+          : { kind: 'track', trackId: track.id },
+      );
+    }
   });
+  for (const bus of busEntries) {
+    if (typeof bus.id === 'string' && bus.id.length > 0) {
+      sidechainBySceneId.set(bus.id, { kind: 'bus', busId: bus.id });
+    }
+  }
+  // Legacy scenes attach a return strip to a bus through a connection. Once
+  // collapsed into the Studio bus strip, that return strip's id must resolve
+  // as the owning bus when another insert keys it.
+  for (const bus of busEntries) {
+    const returnStripId = returnStripByBus.get(bus.id as string);
+    if (returnStripId !== undefined) {
+      sidechainBySceneId.set(returnStripId, { kind: 'bus', busId: bus.id as string });
+    }
+  }
 
   const mixerBuses: MixerBus[] = busEntries.map((bus) => {
     const busId = bus.id as string;
     const returnStrip = stripsById.get(returnStripByBus.get(busId) ?? '');
-    if (Array.isArray(returnStrip?.sends) && returnStrip.sends.length > 0) {
-      throw new RangeError(`Mixer scene return strip for bus ${busId} has unsupported sends`);
-    }
     assertNoBusReturnDspConflict(bus, returnStrip);
     const strip = returnStrip
-      ? sceneStripToMixerStrip(returnStrip, busIds, validProcessors, undefined)
+      ? sceneStripToMixerStrip(
+          returnStrip,
+          busIds,
+          validProcessors,
+          undefined,
+          sidechainBySceneId,
+          'bus',
+        )
       : createDefaultStrip();
-    const legacyHasDsp = sceneStripHasDsp(returnStrip) || sceneEntryHasPanner(returnStrip);
-    if (!legacyHasDsp) applySceneBusStripFields(strip, bus, validProcessors);
+    const legacyHasDsp = sceneStripHasDsp(returnStrip) || sceneEntryHasPanner(returnStrip, true);
+    if (!legacyHasDsp) applySceneBusStripFields(strip, bus, validProcessors, sidechainBySceneId);
     const gainDb = strip.gainDb;
     strip.gainDb = 0;
+    const outputBusId = outputBusByBus.get(busId);
+    if (outputBusId !== undefined) strip.outputBusId = outputBusId;
     return {
       id: busId,
       name: busDisplayName(busId) || busId,
       gainDb,
       ...(booleanValue(returnStrip?.muted) === true ? { mute: true } : {}),
       ...(booleanValue(returnStrip?.soloed) === true ? { solo: true } : {}),
+      ...(sceneChannelLayout(bus.layout) && sceneChannelLayout(bus.layout) !== 'stereo'
+        ? { channelLayout: sceneChannelLayout(bus.layout) }
+        : {}),
       strip,
     };
   });
-
   const vcaGroups = scene.vcaGroups.slice(0, MAX_VCA_GROUPS).flatMap((group, index) => {
     const id = typeof group.id === 'string' && group.id.length > 0 ? group.id : `vca-${index + 1}`;
     return [
@@ -561,13 +678,14 @@ function buildScenePlan(
     if (!sceneStrip) return track;
     replacedTrackIds.add(track.id);
     const id = sceneId(sceneStrip);
-    const outputBusId = id && track.kind !== 'group' ? outputBusByStrip.get(id) : undefined;
+    const outputBusId = id ? outputBusByStrip.get(id) : undefined;
     const mixer = sceneStripToMixerStrip(
       sceneStrip,
       busIds,
       validProcessors,
       outputBusId,
-      track.kind === 'group' ? undefined : sidechainBySceneId,
+      sidechainBySceneId,
+      track.kind === 'group' ? 'group' : 'track',
     );
     const next: EditorTrack = {
       ...track,
@@ -586,7 +704,21 @@ function buildScenePlan(
   });
 
   const master = cloneStrip(createDefaultStrip());
-  if (masterBus) applySceneBusStripFields(master, masterBus, validProcessors);
+  if (masterBus) {
+    applySceneBusStripFields(master, masterBus, validProcessors, sidechainBySceneId);
+  }
+  const masterLayout = sceneChannelLayout(masterBus?.layout);
+
+  // Include group strips as topology nodes so a scene cannot restore a
+  // reciprocal bus/group sidechain pair that the engine would reject.
+  assertValidMixerBusTopology(
+    mixerBusTopology(
+      { buses: mixerBuses },
+      nextTracks
+        .filter((track) => track.kind === 'group')
+        .map((track) => ({ id: track.id, mixer: track.mixer })),
+    ),
+  );
   // The historical scene contract uses an empty master bus as a marker and
   // leaves the app's existing master chain intact. Direct bus fields are a
   // newer, explicit master strip representation, so they must opt into the
@@ -602,6 +734,7 @@ function buildScenePlan(
     mixer: {
       master,
       buses: mixerBuses,
+      ...(masterLayout !== undefined && masterLayout !== 'stereo' ? { masterLayout } : {}),
       ...(vcaGroups.length > 0 ? { vcaGroups } : {}),
     },
     tracks: nextTracks,

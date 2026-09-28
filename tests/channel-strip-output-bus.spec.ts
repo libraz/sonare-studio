@@ -86,13 +86,15 @@ describe('ChannelStrip output-bus selector', () => {
     expect(mountStrip('master').findComponent({ name: 'StripSends' }).exists()).toBe(false);
   });
 
-  it('hides the selector on group tracks and grouped members', () => {
+  it('shows group output routing while keeping sends on grouped members', () => {
     addMixerBus({ name: 'FX' });
     const groupId = addGroupTrack();
     setTrackGroup(trackId, groupId);
 
-    expect(mountStrip(groupId).find('.strip-output').exists()).toBe(false);
+    expect(mountStrip(groupId).find('.strip-output').exists()).toBe(true);
+    expect(mountStrip(groupId).findComponent({ name: 'StripSends' }).exists()).toBe(true);
     expect(mountStrip(trackId).find('.strip-output').exists()).toBe(false);
+    expect(mountStrip(trackId).findComponent({ name: 'StripSends' }).exists()).toBe(true);
   });
 
   it('shows the EQ section on group tracks and the master', () => {

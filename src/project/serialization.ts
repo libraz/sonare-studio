@@ -26,6 +26,11 @@ import {
   cloneAutomationLane,
   isBusAutomationTarget,
 } from './automation';
+import {
+  assertValidMixerBusId,
+  assertValidMixerBusTopology,
+  mixerBusTopology,
+} from './bus-topology';
 import type { EditorChordSymbol } from './chords';
 import {
   exportMixerSnapshotSlots,
@@ -493,11 +498,22 @@ function stripWithSidechainSourceIndices(
 ): MixerStrip {
   const out = cloneStrip(strip);
   for (const slot of out.inserts) {
-    if (slot.sidechainSourceTrackId === undefined) continue;
-    const sourceIndex = tracks.findIndex((entry) => entry.id === slot.sidechainSourceTrackId);
-    delete slot.sidechainSourceTrackId;
-    if (allowSidechain && sourceIndex >= 0) {
-      (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = sourceIndex;
+    if (slot.sidechainSourceTrackId !== undefined) {
+      const sourceIndex = tracks.findIndex((entry) => entry.id === slot.sidechainSourceTrackId);
+      delete slot.sidechainSourceTrackId;
+      if (allowSidechain && sourceIndex >= 0) {
+        (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = sourceIndex;
+      }
+    }
+    if (slot.sidechainSourceGroupTrackId !== undefined) {
+      const sourceIndex = tracks.findIndex(
+        (entry) => entry.id === slot.sidechainSourceGroupTrackId,
+      );
+      delete slot.sidechainSourceGroupTrackId;
+      if (allowSidechain && sourceIndex >= 0) {
+        (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex =
+          sourceIndex;
+      }
     }
   }
   return out;
@@ -516,6 +532,18 @@ function stripWithSidechainSourceIds(
     if (allowSidechain && typeof sourceIndex === 'number' && Number.isInteger(sourceIndex)) {
       const source = tracks[sourceIndex];
       if (source) slot.sidechainSourceTrackId = source.id;
+    }
+    const groupSourceIndex = (slot as { sidechainSourceGroupTrackIndex?: unknown })
+      .sidechainSourceGroupTrackIndex;
+    delete (slot as { sidechainSourceGroupTrackIndex?: unknown }).sidechainSourceGroupTrackIndex;
+    if (
+      allowSidechain &&
+      typeof groupSourceIndex === 'number' &&
+      Number.isInteger(groupSourceIndex) &&
+      groupSourceIndex >= 0 &&
+      groupSourceIndex < tracks.length
+    ) {
+      slot.sidechainSourceGroupTrackId = tracks[groupSourceIndex].id;
     }
   }
   return out;
@@ -551,12 +579,152 @@ function resolveMixerSidechainSourceIds(
       ) {
         slot.sidechainSourceTrackId = tracks[sourceIndex].id;
       }
+      const groupSourceIndex = (slot as { sidechainSourceGroupTrackIndex?: unknown })
+        .sidechainSourceGroupTrackIndex;
+      delete (slot as { sidechainSourceGroupTrackIndex?: unknown }).sidechainSourceGroupTrackIndex;
+      if (
+        typeof groupSourceIndex === 'number' &&
+        Number.isInteger(groupSourceIndex) &&
+        groupSourceIndex >= 0 &&
+        groupSourceIndex < tracks.length
+      ) {
+        slot.sidechainSourceGroupTrackId = tracks[groupSourceIndex].id;
+      }
     }
   };
   resolveStrip(mixer.master);
   for (const bus of mixer.buses) {
     if (bus.strip !== undefined) resolveStrip(bus.strip);
   }
+}
+
+/**
+ * Migrates a legacy positional track key that points at a group track into
+ * the explicit group-bus namespace. Ordinary track strips cannot consume a
+ * group lane, so those documents fail before they reach the native project
+ * instead of silently producing an unkeyed insert.
+ */
+function normalizeDocumentGroupSidechainKeys(
+  strip: MixerStrip | undefined,
+  targetKind: TrackKind | 'bus' | 'master',
+  tracks: ReadonlyArray<Pick<DocumentTrack, 'kind'>>,
+): void {
+  if (!strip) return;
+  for (const slot of strip.inserts) {
+    const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    if (
+      typeof sourceIndex !== 'number' ||
+      !Number.isInteger(sourceIndex) ||
+      sourceIndex < 0 ||
+      sourceIndex >= tracks.length ||
+      tracks[sourceIndex].kind !== 'group'
+    ) {
+      continue;
+    }
+    if (targetKind !== 'group' && targetKind !== 'bus' && targetKind !== 'master') {
+      throw new RangeError(
+        `Track sidechain source ${sourceIndex} is a group bus; use a group sidechain key`,
+      );
+    }
+    delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex =
+      sourceIndex;
+  }
+}
+
+/** Applies the group-key migration to all persisted mixer snapshot scopes. */
+function normalizeDocumentSnapshotGroupSidechainKeys(
+  slots: DocumentMixerSnapshotSlots | undefined,
+  tracks: ReadonlyArray<DocumentTrack>,
+): void {
+  if (!slots) return;
+  for (const snapshot of Object.values(slots.slots)) {
+    if (!snapshot) continue;
+    normalizeDocumentGroupSidechainKeys(snapshot.mixer.master, 'master', tracks);
+    for (const bus of snapshot.mixer.buses) {
+      normalizeDocumentGroupSidechainKeys(bus.strip, 'bus', tracks);
+    }
+    for (const entry of snapshot.tracks) {
+      const target = tracks[entry.trackIndex];
+      if (target) normalizeDocumentGroupSidechainKeys(entry.mixer, target.kind, tracks);
+    }
+  }
+}
+
+/**
+ * Validates mixer ids and bus/group routing before a document reaches the
+ * native project. Documents store group sidechain references positionally, so
+ * the topology uses the document track index as the temporary group id.
+ */
+function validateDocumentMixerRouting(
+  mixer: DocumentMixerState | undefined,
+  tracks: ReadonlyArray<DocumentTrack>,
+): void {
+  if (!mixer) {
+    for (const track of tracks) {
+      normalizeDocumentGroupSidechainKeys(track.mixer, track.kind, tracks);
+    }
+    return;
+  }
+  const busIds = new Set<string>();
+  for (const bus of mixer.buses) {
+    assertValidMixerBusId(bus.id, busIds);
+    busIds.add(bus.id);
+  }
+
+  const normalizeStrip = (strip: MixerStrip | undefined): MixerStrip | undefined => {
+    if (!strip) return undefined;
+    const next = cloneStrip(strip);
+    for (const slot of next.inserts) {
+      const groupIndex = (slot as { sidechainSourceGroupTrackIndex?: unknown })
+        .sidechainSourceGroupTrackIndex;
+      if (groupIndex !== undefined) {
+        slot.sidechainSourceGroupTrackId =
+          typeof groupIndex === 'number' && Number.isInteger(groupIndex) ? groupIndex : -1;
+      }
+    }
+    return next;
+  };
+
+  const assertTrackBusReferences = (strip: MixerStrip | undefined): void => {
+    if (!strip) return;
+    if (strip.outputBusId !== undefined && !busIds.has(strip.outputBusId)) {
+      throw new RangeError(`Unknown mixer bus id: ${strip.outputBusId}`);
+    }
+    for (const send of strip.sends) {
+      if (!busIds.has(send.busId)) {
+        throw new RangeError(`Unknown mixer bus id: ${send.busId}`);
+      }
+    }
+  };
+
+  for (const track of tracks) assertTrackBusReferences(track.mixer);
+  for (const track of tracks) {
+    normalizeDocumentGroupSidechainKeys(track.mixer, track.kind, tracks);
+  }
+  normalizeDocumentGroupSidechainKeys(mixer.master, 'master', tracks);
+  for (const bus of mixer.buses) {
+    normalizeDocumentGroupSidechainKeys(bus.strip, 'bus', tracks);
+  }
+  for (const slot of mixer.master.inserts) {
+    if (slot.sidechainSourceBusId !== undefined && !busIds.has(slot.sidechainSourceBusId)) {
+      throw new RangeError(`Unknown mixer bus id: ${slot.sidechainSourceBusId}`);
+    }
+  }
+
+  const busNodes = mixerBusTopology(
+    {
+      buses: mixer.buses.map((bus) => ({
+        ...bus,
+        ...(bus.strip ? { strip: normalizeStrip(bus.strip) } : {}),
+      })),
+    },
+    tracks
+      .map((track, index) => ({ track, index }))
+      .filter(({ track }) => track.kind === 'group')
+      .map(({ track, index }) => ({ id: index, mixer: normalizeStrip(track.mixer) })),
+  );
+  assertValidMixerBusTopology(busNodes);
 }
 
 /** Converts in-memory mixer snapshot slots to document-portable slots. */
@@ -571,12 +739,11 @@ function toDocumentMixerSnapshotSlots(
     const entries = snapshot.tracks.flatMap((entry) => {
       const trackIndex = tracks.findIndex((track) => track.id === entry.id);
       if (trackIndex < 0) return [];
-      const track = tracks[trackIndex] as { id: number; kind?: string };
       return [
         {
           ...entry,
           trackIndex,
-          mixer: stripWithSidechainSourceIndices(entry.mixer, tracks, track.kind !== 'group'),
+          mixer: stripWithSidechainSourceIndices(entry.mixer, tracks),
           id: undefined,
         },
       ];
@@ -622,11 +789,7 @@ function fromDocumentMixerSnapshotSlots(
         return [
           {
             id: track.id,
-            mixer: stripWithSidechainSourceIds(
-              entry.mixer,
-              tracks,
-              (track as { kind?: string }).kind !== 'group',
-            ),
+            mixer: stripWithSidechainSourceIds(entry.mixer, tracks, true),
             mute: entry.mute,
             solo: entry.solo,
             ...(entry.volume !== undefined ? { volume: entry.volume } : {}),
@@ -878,7 +1041,7 @@ export function serializeProject(): ProjectDocument {
         if (needsVolumeMigration) mixer.gainDb += linearToDb(legacyVolume);
         // Insert sidechain sources are session track ids; store them as
         // positional indices (dangling references drop out).
-        out.mixer = stripWithSidechainSourceIndices(mixer, store.tracks, track.kind !== 'group');
+        out.mixer = stripWithSidechainSourceIndices(mixer, store.tracks);
       }
       if (track.groupId !== undefined) {
         const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
@@ -1112,9 +1275,18 @@ export async function loadProjectDocument(doc: ProjectDocument): Promise<void> {
     id: index + 1,
     kind: track.kind,
   }));
+  validateDocumentMixerRouting(doc.mixer, doc.tracks);
+  normalizeDocumentSnapshotGroupSidechainKeys(doc.mixerSnapshots, doc.tracks);
   fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, validationTracks);
   await store.loadDocument(doc);
   resolveMixerSidechainSourceIds(store.mixer, store.tracks);
+  // `store.loadDocument` resolves legacy track sidechain indices while it
+  // rebuilds the native project. Group-bus references live only in the app
+  // mixer mirror, so resolve their positional form after the track ids exist.
+  store.tracks = store.tracks.map((track) => {
+    if (!track.mixer) return track;
+    return { ...track, mixer: stripWithSidechainSourceIds(track.mixer, store.tracks, true) };
+  });
   clearHistory();
   importMixerSnapshotSlots(fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, store.tracks));
 }

@@ -1,9 +1,22 @@
-import { shallowMount } from '@vue/test-utils';
+import { mount, shallowMount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import BusStrip from '@/components/mixer/BusStrip.vue';
 import ChannelStrip from '@/components/mixer/ChannelStrip.vue';
+import InsertRack from '@/components/mixer/InsertRack.vue';
 import MixerPanel from '@/components/mixer/MixerPanel.vue';
-import { addGroupTrack, addTrack, clearHistory } from '@/project/commands';
+import StripOptionsPopover from '@/components/mixer/StripOptionsPopover.vue';
+import SelectMenu from '@/components/shell/SelectMenu.vue';
+import {
+  addGroupTrack,
+  addInsert,
+  addMixerBus,
+  addTrack,
+  clearHistory,
+  mixerBusStripTarget,
+  setStripOutputBus,
+  setStripPan,
+} from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -114,7 +127,163 @@ describe('MixerPanel.vue', () => {
     expect(wrapper.findComponent({ name: 'StripEqSection' }).exists()).toBe(true);
     expect(wrapper.findComponent({ name: 'StripOptionsPopover' }).exists()).toBe(true);
     expect(wrapper.findComponent({ name: 'StripAutomationControls' }).exists()).toBe(false);
-    expect(wrapper.findComponent({ name: 'StripSends' }).exists()).toBe(false);
+    expect(wrapper.findComponent({ name: 'StripSends' }).exists()).toBe(true);
     expect(wrapper.find('.strip-output').exists()).toBe(false);
+  });
+
+  it('exposes return-bus sends, output routing and channel layout controls', async () => {
+    addMixerBus({ name: 'Parallel' });
+    const destinationBusId = addMixerBus({ name: 'Master FX' });
+    const wrapper = shallowMount(BusStrip, {
+      props: { bus: store.mixer.buses[0] },
+      global: {
+        directives: { tooltip: {} },
+        stubs: {
+          InsertRack: true,
+          StripEqSection: true,
+          StripSends: true,
+          StripMeter: true,
+          MixerFader: true,
+          MixerKnob: true,
+          NumericReadout: true,
+          StripGrMeter: true,
+          SpectrumAnalyzer: true,
+          StereoGoniometer: true,
+          StripOptionsPopover: true,
+        },
+      },
+    });
+
+    expect(wrapper.find('.bus-routing').exists()).toBe(true);
+    expect(wrapper.findComponent({ name: 'StripSends' }).exists()).toBe(true);
+    const selects = wrapper.findAllComponents(SelectMenu);
+    expect(selects).toHaveLength(2);
+
+    await selects[0].vm.$emit('change', destinationBusId);
+    await selects[1].vm.$emit('change', '5.1');
+    await wrapper.vm.$nextTick();
+
+    expect(store.mixer.buses[0]).toMatchObject({ channelLayout: '5.1' });
+    expect(store.mixer.buses[0].strip).toMatchObject({ outputBusId: destinationBusId });
+  });
+
+  it('disables stereo bus pan and width controls for surround layouts', async () => {
+    const busId = addMixerBus({ name: 'Surround', channelLayout: '5.1' });
+    const busWrapper = shallowMount(BusStrip, {
+      props: { bus: store.mixer.buses[0] },
+      global: {
+        directives: { tooltip: {} },
+        stubs: {
+          InsertRack: true,
+          StripEqSection: true,
+          StripSends: true,
+          StripMeter: true,
+          MixerFader: true,
+          MixerKnob: true,
+          NumericReadout: true,
+          StripGrMeter: true,
+          SpectrumAnalyzer: true,
+          StereoGoniometer: true,
+          StripOptionsPopover: true,
+        },
+      },
+    });
+
+    expect(busWrapper.find('.bus-pan').classes()).toContain('disabled');
+    expect(busWrapper.findComponent({ name: 'MixerKnob' }).props('disabled')).toBe(true);
+    expect(busWrapper.findAllComponents({ name: 'NumericReadout' })[0]?.props('disabled')).toBe(
+      true,
+    );
+    expect(busWrapper.find('.bus-pan-note').text()).toBe('Stereo only');
+
+    const optionsWrapper = mount(StripOptionsPopover, {
+      props: { target: mixerBusStripTarget(busId), name: 'Surround' },
+      global: { directives: { tooltip: {} } },
+    });
+    await optionsWrapper.find('.strip-options-btn').trigger('click');
+
+    expect(optionsWrapper.find('.strip-options-note').text()).toContain('Stereo pan and width');
+    const ranges = optionsWrapper.findAll('input[type="range"]');
+    expect(ranges[1]?.attributes('disabled')).toBeDefined();
+    const pannerSelects = optionsWrapper.findAllComponents(SelectMenu);
+    expect(pannerSelects).toHaveLength(2);
+    expect(pannerSelects.every((select) => select.props('disabled') === true)).toBe(true);
+    optionsWrapper.unmount();
+  });
+
+  it('filters sidechain keys by strip capability and disables group feedback choices', async () => {
+    const targetId = store.tracks[0].id;
+    const groupId = addGroupTrack({ name: 'Drum Bus' });
+    addMixerBus({ name: 'Verb' });
+    addInsert(targetId, 'dynamics.sidechainRouter');
+
+    const ordinaryWrapper = mount(InsertRack, {
+      props: { target: targetId },
+      global: {
+        directives: { tooltip: {} },
+        stubs: { MixerKnob: true, Teleport: true },
+      },
+    });
+    await ordinaryWrapper.find('.insert-name').trigger('click');
+    await ordinaryWrapper.find('.insert-sidechain-select .select-trigger').trigger('click');
+    const ordinaryOptions = ordinaryWrapper.findAll('.select-option');
+    expect(ordinaryOptions.map((option) => option.text())).not.toContain('Verb · BUS');
+    expect(ordinaryOptions.map((option) => option.text())).not.toContain('Drum Bus · GROUP');
+    ordinaryWrapper.unmount();
+
+    const groupOutput = addMixerBus({ name: 'Group out' });
+    const feedbackSource = addMixerBus({ name: 'Feedback source' });
+    setStripOutputBus(groupId, groupOutput);
+    setStripOutputBus(mixerBusStripTarget(groupOutput), feedbackSource);
+    addInsert(groupId, 'dynamics.sidechainRouter');
+
+    const groupWrapper = mount(InsertRack, {
+      props: { target: groupId },
+      global: {
+        directives: { tooltip: {} },
+        stubs: { MixerKnob: true, Teleport: true },
+      },
+    });
+    await groupWrapper.find('.insert-name').trigger('click');
+    await groupWrapper.find('.insert-sidechain-select .select-trigger').trigger('click');
+    const feedbackOption = groupWrapper
+      .findAll('.select-option')
+      .find((option) => option.text() === 'Feedback source · BUS');
+    expect(feedbackOption?.classes()).toContain('is-disabled');
+    groupWrapper.unmount();
+  });
+
+  it('blocks surround layout choices until stereo bus shaping is neutral', async () => {
+    const busId = addMixerBus({ name: 'Shaped bus' });
+    setStripPan(mixerBusStripTarget(busId), 0.25);
+    const wrapper = shallowMount(BusStrip, {
+      props: { bus: store.mixer.buses[0] },
+      global: {
+        directives: { tooltip: {} },
+        stubs: {
+          InsertRack: true,
+          StripEqSection: true,
+          StripSends: true,
+          StripMeter: true,
+          MixerFader: true,
+          MixerKnob: true,
+          NumericReadout: true,
+          StripGrMeter: true,
+          SpectrumAnalyzer: true,
+          StereoGoniometer: true,
+          StripOptionsPopover: true,
+        },
+      },
+    });
+
+    const layoutSelect = wrapper.findAllComponents(SelectMenu)[1];
+    const surroundOption = layoutSelect
+      .props('options')
+      .find((option: { value: string; disabled?: boolean }) => option.value === '5.1');
+    expect(surroundOption?.disabled).toBe(true);
+
+    await layoutSelect.vm.$emit('change', '5.1');
+    expect(store.mixer.buses[0].channelLayout).toBeUndefined();
+    expect(wrapper.find('.bus-route-error').text()).toContain('Reset stereo pan');
   });
 });

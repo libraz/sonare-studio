@@ -5,11 +5,13 @@
  * focused submodules so existing importers keep a single entry point.
  */
 
+export type { MixerSidechainSource } from '../mixer';
 export type { AddMixerBusInput } from './mixer-buses';
 export {
   addMixerBus,
   removeMixerBus,
   renameMixerBus,
+  setMixerBusChannelLayout,
   setMixerBusGain,
   setMixerBusMute,
   setMixerBusSolo,

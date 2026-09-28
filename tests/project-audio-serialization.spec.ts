@@ -331,13 +331,13 @@ describe('group membership and insert sidechain serialization (schema v3)', () =
     expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
   });
 
-  it('drops group-track insert sidechain sources at serialize time', () => {
+  it('serializes group-track insert sidechain sources', () => {
     addInsert(groupId, 'dynamics.compressor', { thresholdDb: -12 });
     store.tracks[1].mixer!.inserts[0].sidechainSourceTrackId = midiId;
 
     const doc = serializeProject();
     const slot = doc.tracks[1].mixer?.inserts[0] as unknown as Record<string, unknown>;
-    expect('sidechainSourceIndex' in slot).toBe(false);
+    expect(slot.sidechainSourceIndex).toBe(0);
     expect('sidechainSourceTrackId' in slot).toBe(false);
   });
 
@@ -404,7 +404,7 @@ describe('group membership and insert sidechain serialization (schema v3)', () =
     expect(reserialized.tracks.every((track) => track.groupIndex === undefined)).toBe(true);
   });
 
-  it('drops group-track insert sidechain sources at load time', async () => {
+  it('restores group-track insert sidechain sources at load time', async () => {
     const doc = JSON.parse(JSON.stringify(serializeProject())) as ProjectDocument;
     doc.tracks[1].mixer = {
       gainDb: 0,
@@ -424,7 +424,7 @@ describe('group membership and insert sidechain serialization (schema v3)', () =
 
     const slot = store.tracks[1].mixer?.inserts[0] as unknown as Record<string, unknown>;
     expect(slot.processor).toBe('dynamics.compressor');
-    expect('sidechainSourceTrackId' in slot).toBe(false);
+    expect(slot.sidechainSourceTrackId).toBe(store.tracks[0].id);
     expect('sidechainSourceIndex' in slot).toBe(false);
   });
 });

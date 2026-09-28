@@ -1,12 +1,15 @@
 import { parseMidiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { busAutomationTarget } from '../automation';
+import { assertKnownBusDestination, assertValidMixerBusId } from '../bus-topology';
 import {
   assertCanAddEngineBus,
   canRouteReturnSolo,
   cloneStrip,
+  isMixerChannelLayout,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
   MIN_STRIP_GAIN_DB,
+  type MixerChannelLayout,
   type MixerStrip,
 } from '../mixer';
 import { useProjectStore } from '../store';
@@ -20,6 +23,10 @@ export interface AddMixerBusInput {
   id?: string;
   /** Display name; defaults to the id. */
   name?: string;
+  /** Channel layout; absent keeps the stereo default. */
+  channelLayout?: MixerChannelLayout;
+  /** Optional output bus route; absent routes to the master mix. */
+  outputBusId?: string;
 }
 
 /**
@@ -35,10 +42,7 @@ export function addMixerBus(input: AddMixerBusInput = {}): string {
   assertCanAddEngineBus(store.mixer.buses.length, store.tracks);
   let id = input.id;
   if (id !== undefined) {
-    if (id.length === 0) throw new RangeError('Mixer bus id must not be empty');
-    if (store.mixer.buses.some((bus) => bus.id === id)) {
-      throw new RangeError(`Mixer bus id already exists: ${id}`);
-    }
+    assertValidMixerBusId(id, new Set(store.mixer.buses.map((bus) => bus.id)));
   } else {
     let n = 1;
     while (store.mixer.buses.some((bus) => bus.id === `bus-${n}`)) n++;
@@ -46,10 +50,37 @@ export function addMixerBus(input: AddMixerBusInput = {}): string {
   }
   const busId = id;
   const name = input.name ?? busId;
+  if (input.channelLayout !== undefined && !isMixerChannelLayout(input.channelLayout)) {
+    throw new RangeError(`Unknown mixer bus channel layout: ${String(input.channelLayout)}`);
+  }
+  if (input.outputBusId !== undefined) {
+    const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
+    // The new bus is not in the old list yet, but it is the route source.
+    assertKnownBusDestination(input.outputBusId, knownBusIds, busId);
+  }
   return executeApp(() => {
     store.mixer = {
       ...store.mixer,
-      buses: [...store.mixer.buses, { id: busId, name, gainDb: 0 }],
+      buses: [
+        ...store.mixer.buses,
+        {
+          id: busId,
+          name,
+          gainDb: 0,
+          ...(input.channelLayout !== undefined ? { channelLayout: input.channelLayout } : {}),
+          ...(input.outputBusId !== undefined
+            ? {
+                strip: {
+                  gainDb: 0,
+                  pan: 0,
+                  inserts: [],
+                  sends: [],
+                  outputBusId: input.outputBusId,
+                },
+              }
+            : {}),
+        },
+      ],
     };
     store.refresh();
     return busId;
@@ -73,10 +104,19 @@ export function removeMixerBus(busId: string): void {
     const detachBus = (strip: MixerStrip): MixerStrip => {
       const sendsBus = strip.sends.some((send) => send.busId === busId);
       const routesBus = strip.outputBusId === busId;
-      if (!sendsBus && !routesBus) return strip;
+      const sidechainBus = strip.inserts.some((slot) => slot.sidechainSourceBusId === busId);
+      if (!sendsBus && !routesBus && !sidechainBus) return strip;
       const next = cloneStrip(strip);
       if (sendsBus) next.sends = next.sends.filter((send) => send.busId !== busId);
       if (routesBus) delete next.outputBusId;
+      if (sidechainBus) {
+        next.inserts = next.inserts.map((slot) => {
+          if (slot.sidechainSourceBusId !== busId) return slot;
+          const cleared = { ...slot };
+          delete cleared.sidechainSourceBusId;
+          return cleared;
+        });
+      }
       return next;
     };
     store.tracks = store.tracks.map((track) =>
@@ -89,7 +129,9 @@ export function removeMixerBus(busId: string): void {
       // removed bus; detach those too so no strip references a dropped bus.
       buses: store.mixer.buses
         .filter((bus) => bus.id !== busId)
-        .map((bus) => (bus.strip ? { ...bus, strip: detachBus(bus.strip) } : bus)),
+        .map((bus) => {
+          return bus.strip ? { ...bus, strip: detachBus(bus.strip) } : bus;
+        }),
     };
     const target = busAutomationTarget(busId);
     store.automationLanes = store.automationLanes.filter((lane) => lane.target !== target);
@@ -225,6 +267,47 @@ export function renameMixerBus(busId: string, name: string): void {
       buses: store.mixer.buses.map((entry) =>
         entry.id === busId ? { ...entry, name: nextName } : entry,
       ),
+    };
+    store.refresh();
+  });
+}
+
+/** Sets a return bus's channel layout as one undoable edit. */
+export function setMixerBusChannelLayout(
+  busId: string,
+  channelLayout: MixerChannelLayout | null,
+): void {
+  const store = useProjectStore();
+  const bus = store.mixer.buses.find((entry) => entry.id === busId);
+  if (!bus) throw new RangeError(`Unknown mixer bus id: ${busId}`);
+  if (channelLayout !== null && !isMixerChannelLayout(channelLayout)) {
+    throw new RangeError(`Unknown mixer bus channel layout: ${String(channelLayout)}`);
+  }
+  if ((bus.channelLayout ?? 'stereo') === (channelLayout ?? 'stereo')) return;
+  if (channelLayout === '5.1' || channelLayout === '7.1') {
+    const strip = bus.strip;
+    if (
+      strip &&
+      ((strip.width ?? 1) !== 1 ||
+        (strip.pan ?? 0) !== 0 ||
+        strip.panMode !== undefined ||
+        strip.panLaw !== undefined ||
+        strip.dualPan !== undefined)
+    ) {
+      throw new RangeError('Surround mixer buses cannot carry a stereo pan or width stage');
+    }
+  }
+  executeApp(() => {
+    store.mixer = {
+      ...store.mixer,
+      buses: store.mixer.buses.map((entry) => {
+        if (entry.id !== busId) return entry;
+        if (channelLayout === null || channelLayout === 'stereo') {
+          const { channelLayout: _channelLayout, ...withoutLayout } = entry;
+          return withoutLayout;
+        }
+        return { ...entry, channelLayout };
+      }),
     };
     store.refresh();
   });

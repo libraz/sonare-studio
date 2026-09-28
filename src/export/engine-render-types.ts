@@ -90,6 +90,15 @@ export type OfflineRenderEngine = Pick<
   | 'process'
   | 'destroy'
 > & {
+  /** Key a bus insert from a track or another bus (new libsonare ABI). */
+  setBusSidechain?: (
+    busId: number,
+    insertIndex: number,
+    sourceKind: number,
+    sourceId: number,
+  ) => void;
+  /** Key a master insert from a track or bus. */
+  setMasterSidechain?: (insertIndex: number, sourceKind: number, sourceId: number) => void;
   /** Per-bus insert bypass matching track/master strips. */
   setBusStripInsertBypassed?: (
     busId: number,

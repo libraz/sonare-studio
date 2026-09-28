@@ -251,7 +251,7 @@ describe('InsertRack sidechain source options', () => {
     await wrapper.vm.$nextTick();
 
     const labels = wrapper.findAll('.select-option').map((option) => option.text());
-    expect(labels).toEqual(['No key', 'Kick', 'Drum Bus']);
+    expect(labels).toEqual(['No key', 'Kick']);
     expect(labels).not.toContain(store.tracks.find((track) => track.id === targetId)?.name);
     expect(sourceId).not.toBe(groupId);
     wrapper.unmount();

@@ -13,6 +13,7 @@ import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   effectiveTrackMute,
   returnSoloRouting,
+  type StripSend,
   tracksWithVcaSolo,
   type VcaControlState,
   vcaOffsetDb,
@@ -22,6 +23,7 @@ import type { ProjectDocument } from '@/project/serialization';
 import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
+import type { EngineBus } from '@/wasm/index.js';
 import { type EngineClipSpec, RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
 
 /** One engine track lane spec (numeric ids, optional sends/output bus). */
@@ -42,11 +44,13 @@ export interface BusRouting {
   /** Engine bus number keyed by document send-bus id. */
   busNumberById: Map<string, number>;
   /** Declared engine buses (send buses first, then one per group track). */
-  buses: Array<{ busId: number; gainDb?: number }>;
+  buses: EngineBus[];
   /** Engine bus number keyed by group-track index. */
   groupBusByTrackIndex: Map<number, number>;
   /** Engine lane specs, one per document track. */
   lanes: LaneSpec[];
+  /** Already-declared silent sink for return solo audition, if present. */
+  discardBusId?: number;
 }
 
 /** PPQ window used by contribution planning; null end means project end. */
@@ -102,6 +106,30 @@ export function documentAudibleTrackIndices(doc: ProjectDocument): Set<number> {
     }
   });
   return audible;
+}
+
+/** Media needed before mute/solo gates for PRE sends and external keys. */
+export function documentRenderContributorIndices(
+  doc: ProjectDocument,
+  audible: ReadonlySet<number>,
+): Set<number> {
+  const allStrips = [
+    ...doc.tracks.map((track) => track.mixer),
+    doc.mixer?.master,
+    ...(doc.mixer?.buses ?? []).map((bus) => bus.strip),
+  ];
+  const needsPreGateMedia = allStrips.some(
+    (strip) =>
+      strip?.sends?.some((send) => send.enabled && send.timing === 'preFader') ||
+      strip?.inserts?.some(
+        (slot) =>
+          slot.enabled &&
+          ('sidechainSourceIndex' in slot ||
+            'sidechainSourceGroupTrackIndex' in slot ||
+            slot.sidechainSourceBusId !== undefined),
+      ),
+  );
+  return needsPreGateMedia ? new Set(doc.tracks.map((_, index) => index)) : new Set(audible);
 }
 
 function midiStatus(word0: number): number {
@@ -193,7 +221,7 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   // discard bus and every other bus is floored, exactly as live strip-sync
   // does, so an export made while a return is soloed sounds like the audition.
   const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
-  const buses = (doc.mixer?.buses ?? []).map((bus, index) => {
+  const buses: EngineBus[] = (doc.mixer?.buses ?? []).map((bus, index) => {
     busNumberById.set(bus.id, index + 1);
     return { busId: index + 1, gainDb: returnSolo.busGainDb(bus) };
   });
@@ -222,6 +250,39 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   const discardBusId =
     returnSolo.active && buses.length < MAX_ENGINE_BUSES ? buses.length + 1 : undefined;
   if (discardBusId !== undefined) buses.push({ busId: discardBusId, gainDb: SILENCE_DB });
+  // The return bus and group bus share the engine's bus graph. Resolve their
+  // main outputs and auxiliary sends only after every bus has a numeric ID.
+  const busSend = (send: StripSend): SendSpec => ({
+    busId: busNumberById.get(send.busId) as number,
+    levelDb: send.levelDb,
+    enabled: send.enabled,
+    ...(send.timing === 'preFader' ? { sendTiming: 'preFader' as const } : {}),
+  });
+  for (const bus of doc.mixer?.buses ?? []) {
+    const busId = busNumberById.get(bus.id);
+    if (busId === undefined) continue;
+    const entry = buses[busId - 1];
+    const layout = bus.channelLayout ?? 'stereo';
+    if (layout !== 'stereo') {
+      entry.channelLayout = { mono: 0, stereo: 1, '5.1': 2, '7.1': 3 }[layout];
+    }
+    const outputBusId = bus.strip?.outputBusId
+      ? busNumberById.get(bus.strip.outputBusId)
+      : undefined;
+    if (outputBusId !== undefined) entry.outputBusId = outputBusId;
+    const sends = (bus.strip?.sends ?? [])
+      .filter((send) => busNumberById.has(send.busId))
+      .map(busSend);
+    if (sends.length > 0) entry.sends = sends;
+  }
+  for (const [trackIndex, busId] of groupBusByTrackIndex) {
+    const strip = doc.tracks[trackIndex]?.mixer;
+    const entry = buses[busId - 1];
+    const outputBusId = strip?.outputBusId ? busNumberById.get(strip.outputBusId) : undefined;
+    if (outputBusId !== undefined) entry.outputBusId = outputBusId;
+    const sends = (strip?.sends ?? []).filter((send) => busNumberById.has(send.busId)).map(busSend);
+    if (sends.length > 0) entry.sends = sends;
+  }
   const lanes = doc.tracks.map((track, index) => {
     const sends: SendSpec[] = (track.mixer?.sends ?? [])
       .filter((send) => busNumberById.has(send.busId))
@@ -261,6 +322,7 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
     buses,
     groupBusByTrackIndex,
     lanes,
+    discardBusId,
   };
 }
 
@@ -349,6 +411,8 @@ export function buildMidiSchedules(
         lengthPpq: clip.lengthPpq,
         sourceOffsetPpq: clip.sourceOffsetPpq,
         gain: clip.gain,
+        ...(clip.fadeInPpq !== undefined ? { fadeInPpq: clip.fadeInPpq } : {}),
+        ...(clip.fadeOutPpq !== undefined ? { fadeOutPpq: clip.fadeOutPpq } : {}),
         loopEnabled: clip.loopEnabled,
         loopLengthPpq: clip.loopLengthPpq,
         // Document notes drop the editor id; synthesize stable ones.

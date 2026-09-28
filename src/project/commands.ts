@@ -89,6 +89,11 @@ export {
   MIN_DRUM_DIFFICULTY,
 } from './command/generate-drums';
 export type {
+  DrumsRangePlan,
+  RegenerateDrumsRangeParams,
+} from './command/generate-drums-range';
+export { regenerateDrumsRangeCommand } from './command/generate-drums-range';
+export type {
   HarmonizeFromMelodyParams,
   ReharmonizeStrength,
 } from './command/generate-harmonize';
@@ -139,7 +144,12 @@ export {
   setClipMidiActiveTake,
   setClipMidiCompSegments,
 } from './command/midi-recording';
-export type { MixerSnapshot, MixerSnapshotTrack, MixerStripTarget } from './command/mixer';
+export type {
+  MixerSidechainSource,
+  MixerSnapshot,
+  MixerSnapshotTrack,
+  MixerStripTarget,
+} from './command/mixer';
 export {
   addInsert,
   addMixerBus,
@@ -160,6 +170,7 @@ export {
   setInsertEnabled,
   setInsertParam,
   setInsertSidechain,
+  setMixerBusChannelLayout,
   setMixerBusGain,
   setMixerBusMute,
   setMixerBusSolo,

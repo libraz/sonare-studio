@@ -76,6 +76,8 @@ function makeHandle(): {
     setBusGain: ReturnType<typeof vi.fn>;
     setSends: ReturnType<typeof vi.fn>;
     setTrackOutputBus: ReturnType<typeof vi.fn>;
+    setBusSidechain: ReturnType<typeof vi.fn>;
+    setMasterSidechain: ReturnType<typeof vi.fn>;
     setBusStripJson: ReturnType<typeof vi.fn>;
     setBusStripInsertBypassed?: ReturnType<typeof vi.fn>;
     setBusStripEqBand?: ReturnType<typeof vi.fn>;
@@ -98,6 +100,8 @@ function makeHandle(): {
     setBusGain: vi.fn(),
     setSends: vi.fn(),
     setTrackOutputBus: vi.fn(),
+    setBusSidechain: vi.fn(),
+    setMasterSidechain: vi.fn(),
     setBusStripJson: vi.fn(),
     setLaneSidechain: vi.fn(),
   };
@@ -185,6 +189,34 @@ describe('stripSceneJson', () => {
     });
   });
 
+  it('declares source layout and surround pan metadata', () => {
+    const parsed = JSON.parse(
+      stripSceneJson(
+        7,
+        makeStrip({
+          sourceLayout: '5.1',
+          surroundPan: {
+            azimuth: 45,
+            elevation: 2,
+            divergence: 0.25,
+            lfe: 0.1,
+            distance: 0.8,
+          },
+        }),
+      ),
+    );
+    expect(parsed.strips[0]).toMatchObject({
+      sourceLayout: '5.1',
+      surroundPan: {
+        azimuth: 45,
+        elevation: 2,
+        divergence: 0.25,
+        lfe: 0.1,
+        distance: 0.8,
+      },
+    });
+  });
+
   it('uses the master strip id for the master target', () => {
     const parsed = JSON.parse(stripSceneJson('master', makeStrip())) as {
       strips: Array<{ id: string }>;
@@ -259,6 +291,39 @@ describe('createStripSync', () => {
       1,
       stripSceneJson(1, makeStrip({ inputTrimDb: 6 })),
     );
+  });
+
+  it('sends source layout and surround pan metadata on metadata-only changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const first = makeStrip({
+      sourceLayout: '5.1',
+      surroundPan: {
+        azimuth: 30,
+        elevation: 0,
+        divergence: 0,
+        lfe: 0,
+        distance: 1,
+      },
+    });
+
+    sync.sync([makeTrack(1, first)], makeMixer());
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, first));
+    clearCalls(engine);
+
+    const next = makeStrip({
+      sourceLayout: '7.1',
+      surroundPan: {
+        azimuth: -45,
+        elevation: 1,
+        divergence: 0.25,
+        lfe: 0.1,
+        distance: 0.8,
+      },
+    });
+    sync.sync([makeTrack(1, next)], makeMixer());
+    expect(engine.setTrackStripJson).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, next));
   });
 
   it('toggles only the bypass flag when an insert is enabled/disabled', () => {
@@ -647,6 +712,111 @@ describe('createStripSync', () => {
     expect(engine.setBusGain).not.toHaveBeenCalled();
   });
 
+  it('declares bus layouts, outputs, and sends as topology and patches gain alone', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const first = makeBus('A', -1);
+    first.channelLayout = '5.1';
+    first.strip = makeStrip({
+      outputBusId: 'B',
+      sends: [{ busId: 'B', levelDb: -9, enabled: true, timing: 'preFader' }],
+    });
+    const second = makeBus('B');
+
+    sync.sync([], makeMixer({ buses: [first, second] }));
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([
+      {
+        busId: 1,
+        gainDb: -1,
+        channelLayout: 2,
+        outputBusId: 2,
+        sends: [{ busId: 2, levelDb: -9, enabled: true, sendTiming: 'preFader' }],
+      },
+      { busId: 2, gainDb: 0 },
+    ]);
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [{ ...first, gainDb: -3 }, second] }));
+    expect(engine.setTrackBuses).not.toHaveBeenCalled();
+    expect(engine.setBusGain).toHaveBeenCalledWith(1, -3);
+    clearCalls(engine);
+
+    const changed = {
+      ...first,
+      strip: makeStrip({
+        sends: [{ busId: 'B', levelDb: -9, enabled: true, timing: 'preFader' }],
+      }),
+    };
+    sync.sync([], makeMixer({ buses: [changed, second] }));
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([
+      {
+        busId: 1,
+        gainDb: -1,
+        channelLayout: 2,
+        sends: [{ busId: 2, levelDb: -9, enabled: true, sendTiming: 'preFader' }],
+      },
+      { busId: 2, gainDb: 0 },
+    ]);
+    expect(engine.setBusGain).not.toHaveBeenCalled();
+  });
+
+  it('routes group-bus outputs and sends through the compact engine map', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const group = makeGroupTrack(
+      10,
+      makeStrip({ sends: [{ busId: 'A', levelDb: -6, enabled: true }], outputBusId: 'A' }),
+    );
+
+    sync.sync([group], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([
+      { busId: 1, gainDb: 0 },
+      {
+        busId: 2,
+        gainDb: 0,
+        outputBusId: 1,
+        sends: [{ busId: 1, levelDb: -6, enabled: true }],
+      },
+    ]);
+  });
+
+  it('drops stale bus sends before replacing a removed destination bus', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const source = {
+      ...makeBus('A'),
+      strip: makeStrip({ sends: [{ busId: 'B', levelDb: -6, enabled: true }] }),
+    };
+    sync.sync([], makeMixer({ buses: [source, makeBus('B')] }));
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [source] }));
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: 0 }]);
+  });
+
+  it('clears compacted bus sidechains before a bus-number remap', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const keyed = makeStrip({
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceBusId: 'B',
+        },
+      ],
+    });
+    sync.sync([], makeMixer({ buses: [{ ...makeBus('A'), strip: keyed }, makeBus('B')] }));
+    clearCalls(engine);
+
+    sync.sync([], makeMixer({ buses: [makeBus('B')] }));
+    expect(engine.setBusSidechain).toHaveBeenCalledWith(1, 0, 'bus', 0);
+    expect(engine.setBusSidechain.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackBuses.mock.invocationCallOrder[0],
+    );
+  });
+
   it('silences a muted return bus while retaining its stored fader value', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -981,6 +1151,30 @@ describe('busSceneJson', () => {
     expect(neutral).not.toHaveProperty('dualPanLeft');
     expect(neutral).not.toHaveProperty('dualPanRight');
     expect(neutral).not.toHaveProperty('panLaw');
+  });
+
+  it('keeps stereo pan and width neutral for a surround bus', () => {
+    const parsed = JSON.parse(
+      busSceneJson(
+        2,
+        makeStrip({
+          width: 1.5,
+          pan: 0.25,
+          panMode: 'dualPan',
+          panLaw: 'linear0dB',
+          dualPan: { left: -0.5, right: 0.75 },
+        }),
+        null,
+        { channelLayout: '5.1' },
+      ),
+    );
+    expect(parsed.buses[0]).toMatchObject({ id: 'bus-2', role: 'submix', layout: '5.1' });
+    expect(parsed.buses[0]).not.toHaveProperty('width');
+    expect(parsed.buses[0]).not.toHaveProperty('pan');
+    expect(parsed.buses[0]).not.toHaveProperty('panMode');
+    expect(parsed.buses[0]).not.toHaveProperty('dualPanLeft');
+    expect(parsed.buses[0]).not.toHaveProperty('dualPanRight');
+    expect(parsed.buses[0]).not.toHaveProperty('panLaw');
   });
 
   it('does not serialize inert bus EQ state into the bus scene by default', () => {
@@ -1567,6 +1761,70 @@ describe('createStripSync output-bus routing', () => {
     expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 0);
   });
 
+  it('clears old output routes before a compact bus-number remap', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(1, makeStrip({ outputBusId: 'B' }));
+
+    sync.sync([track], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
+    clearCalls(engine);
+
+    // B moves from engine bus 2 to 1. Native set_buses validates the current
+    // lane output before replacing the bus list, so the old route must be
+    // cleared first and replayed only after the declaration is accepted.
+    sync.sync([track], makeMixer({ buses: [makeBus('B')] }));
+    expect(engine.setTrackOutputBus).toHaveBeenNthCalledWith(1, 1, 0);
+    expect(engine.setTrackOutputBus).toHaveBeenNthCalledWith(2, 1, 1);
+    expect(engine.setTrackOutputBus.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackBuses.mock.invocationCallOrder[0],
+    );
+    expect(engine.setTrackBuses.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackOutputBus.mock.invocationCallOrder[1],
+    );
+  });
+
+  it('clears a retired lane route before forgetting it', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(1, makeStrip({ outputBusId: 'A' }));
+
+    sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
+    clearCalls(engine);
+
+    // Mixer lanes are retained after a track is deleted, so the route must be
+    // detached even while the destination bus still exists.
+    sync.sync([], makeMixer({ buses: [makeBus('A')] }));
+    expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 0);
+    clearCalls(engine);
+
+    // Removing the now-unused bus must remain valid on the retained lane.
+    expect(() => sync.sync([], makeMixer())).not.toThrow();
+    expect(engine.setTrackBuses).toHaveBeenCalledWith([]);
+  });
+
+  it('clears numeric sends before a logical bus remap and replays them after', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const track = makeTrack(1, makeStrip({ sends: [{ busId: 'B', levelDb: -6, enabled: true }] }));
+
+    sync.sync([track], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
+    clearCalls(engine);
+
+    // B moves from numeric id 2 to 1 while id 2 is reused by C. Do not let
+    // the old numeric send alias C during setTrackBuses.
+    sync.sync([track], makeMixer({ buses: [makeBus('B'), makeBus('C')] }));
+    expect(engine.setSends).toHaveBeenNthCalledWith(1, 1, []);
+    expect(engine.setSends).toHaveBeenNthCalledWith(2, 1, [
+      { busId: 1, levelDb: -6, enabled: true },
+    ]);
+    expect(engine.setSends.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackBuses.mock.invocationCallOrder[0],
+    );
+    expect(engine.setTrackBuses.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setSends.mock.invocationCallOrder[1],
+    );
+  });
+
   it('ignores an output bus set on a group track itself', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -1648,5 +1906,84 @@ describe('createStripSync sidechain bindings', () => {
     sync.sync([makeTrack(1, keyedStrip(2))], makeMixer());
     expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
     expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, null);
+  });
+
+  it('binds and diffs bus and master strip sidechains', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const busStrip = (source: number | undefined): MixerStrip =>
+      makeStrip({
+        inserts: [
+          {
+            processor: 'dynamics.compressor',
+            params: {},
+            enabled: true,
+            ...(source === undefined ? {} : { sidechainSourceTrackId: source }),
+          },
+        ],
+      });
+
+    sync.sync(
+      [makeTrack(1), makeTrack(2), makeTrack(3)],
+      makeMixer({ buses: [{ ...makeBus('A'), strip: busStrip(2) }], master: busStrip(2) }),
+    );
+    expect(engine.setBusSidechain).toHaveBeenCalledWith(1, 0, 'track', 2);
+    expect(engine.setMasterSidechain).toHaveBeenCalledWith(0, 'track', 2);
+    engine.setBusSidechain.mockClear();
+    engine.setMasterSidechain.mockClear();
+
+    sync.sync(
+      [makeTrack(1), makeTrack(2), makeTrack(3)],
+      makeMixer({ buses: [{ ...makeBus('A'), strip: busStrip(3) }], master: busStrip(3) }),
+    );
+    expect(engine.setBusSidechain).toHaveBeenCalledWith(1, 0, 'track', 3);
+    expect(engine.setMasterSidechain).toHaveBeenCalledWith(0, 'track', 3);
+    engine.setBusSidechain.mockClear();
+    engine.setMasterSidechain.mockClear();
+
+    sync.sync(
+      [makeTrack(1), makeTrack(2), makeTrack(3)],
+      makeMixer({
+        buses: [{ ...makeBus('A'), strip: busStrip(undefined) }],
+        master: busStrip(undefined),
+      }),
+    );
+    expect(engine.setBusSidechain).toHaveBeenCalledWith(1, 0, 'track', 0);
+    expect(engine.setMasterSidechain).toHaveBeenCalledWith(0, 'track', 0);
+  });
+
+  it('maps bus and group-track sidechain sources after bus numbering', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const busSourceStrip = makeStrip({
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceBusId: 'B',
+        },
+      ],
+    });
+    const groupSourceStrip = makeStrip({
+      inserts: [
+        {
+          processor: 'dynamics.compressor',
+          params: {},
+          enabled: true,
+          sidechainSourceGroupTrackId: 20,
+        },
+      ],
+    });
+
+    sync.sync(
+      [makeGroupTrack(10, groupSourceStrip), makeGroupTrack(20)],
+      makeMixer({
+        buses: [{ ...makeBus('A'), strip: busSourceStrip }, makeBus('B')],
+      }),
+    );
+    expect(engine.setBusSidechain).toHaveBeenCalledWith(1, 0, 'bus', 2);
+    // Group buses follow user buses in the compact numbering.
+    expect(engine.setBusSidechain).toHaveBeenCalledWith(3, 0, 'bus', 4);
   });
 });
