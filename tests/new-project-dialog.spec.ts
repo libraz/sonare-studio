@@ -58,6 +58,8 @@ describe('NewProjectDialog', () => {
     expect(options.map((o) => o.querySelector('.template-label')?.textContent)).toEqual([
       'Empty',
       'Band',
+      'J-pop',
+      'Baroque organ',
       'GM Orchestra',
       'Programming',
       'Transcription',
@@ -79,6 +81,29 @@ describe('NewProjectDialog', () => {
       'Piano',
       'Guitar',
       'Vocal',
+    ]);
+  });
+
+  it('previews the long-form composition templates', async () => {
+    open();
+    const jpop = qa('[role="option"]')[2];
+    jpop.click();
+    await nextTick();
+    expect(qa('.preview-track').map((track) => track.textContent?.trim())).toEqual([
+      'Drums',
+      'Bass',
+      'Backing',
+      'Lead',
+    ]);
+
+    const organ = qa('[role="option"]')[3];
+    organ.click();
+    await nextTick();
+    expect(qa('.preview-track').map((track) => track.textContent?.trim())).toEqual([
+      'Manual I Soprano',
+      'Manual I Alto',
+      'Manual II Tenor',
+      'Pedal Bass',
     ]);
   });
 

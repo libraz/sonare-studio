@@ -39,6 +39,8 @@ const TEMPLATE_MESSAGE_KEYS: Record<
 > = {
   empty: 'empty',
   band: 'band',
+  jpop: 'jpop',
+  'baroque-organ': 'baroqueOrgan',
   'gm-orchestra': 'gmOrchestra',
   programming: 'programming',
   transcription: 'transcription',
@@ -48,6 +50,8 @@ const TEMPLATE_MESSAGE_KEYS: Record<
 const templateInfo = computed<Record<TemplateName, { label: string; description: string }>>(() => ({
   empty: t.value.dialogs.newProject.templateInfo.empty,
   band: t.value.dialogs.newProject.templateInfo.band,
+  jpop: t.value.dialogs.newProject.templateInfo.jpop,
+  'baroque-organ': t.value.dialogs.newProject.templateInfo.baroqueOrgan,
   'gm-orchestra': t.value.dialogs.newProject.templateInfo.gmOrchestra,
   programming: t.value.dialogs.newProject.templateInfo.programming,
   transcription: t.value.dialogs.newProject.templateInfo.transcription,

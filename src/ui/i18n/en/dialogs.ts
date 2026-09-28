@@ -69,6 +69,14 @@ export const dialogs = {
         label: 'Band',
         description: 'Drums, bass, piano, guitar and vocal',
       },
+      jpop: {
+        label: 'J-pop',
+        description: '96-bar song form with drums, bass, backing and lead',
+      },
+      baroqueOrgan: {
+        label: 'Baroque organ',
+        description: '64 bars in D harmonic minor with four organ voices',
+      },
       gmOrchestra: {
         label: 'GM Orchestra',
         description: 'Full orchestral section layout',

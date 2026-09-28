@@ -71,6 +71,14 @@ export const dialogs = {
         label: 'バンド',
         description: 'ドラム、ベース、ピアノ、ギター、ボーカル',
       },
+      jpop: {
+        label: 'J-pop',
+        description: 'ドラム、ベース、伴奏、主旋律の96小節構成',
+      },
+      baroqueOrgan: {
+        label: 'バロックオルガン',
+        description: 'Dハーモニックマイナー、4声、64小節の作曲用',
+      },
       gmOrchestra: {
         label: 'GMオーケストラ',
         description: 'フルオーケストラのセクション構成',
