@@ -237,7 +237,13 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.mixer.soloMode,
         store.mixer.buses,
       );
-      stripSync.sync(store.tracks, store.mixer, mixerSync.sceneGeneration?.());
+      stripSync.sync(
+        store.tracks,
+        store.mixer,
+        mixerSync.sceneGeneration?.(),
+        mixerSync.positiveChannelDelayTrackIds(),
+      );
+      mixerSync.applyChannelDelays(stripSync.sceneGeneration());
     } catch (err) {
       errorMessage.value = describeError(err);
       if (syncOptions.throwOnError) throw err;

@@ -90,6 +90,8 @@ export type OfflineRenderEngine = Pick<
   | 'process'
   | 'destroy'
 > & {
+  /** Apply one complete setup SysEx frame to an already-bound SF2 player. */
+  pushMidiSysex?: (destinationId: number, data: Uint8Array, renderFrame?: number) => void;
   /** Key a bus insert from a track or another bus (new libsonare ABI). */
   setBusSidechain?: (
     busId: number,

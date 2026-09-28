@@ -80,8 +80,13 @@ describe('useEngineProjectSync', () => {
       sync: vi.fn(() => calls.push('mixer')),
       laneTrackIds: () => [1],
       sceneGeneration: () => 7,
+      positiveChannelDelayTrackIds: () => new Set(),
+      applyChannelDelays: vi.fn(() => calls.push('delay')),
     };
-    const stripSync = { sync: vi.fn(() => calls.push('strip')) } as unknown as StripSync;
+    const stripSync = {
+      sync: vi.fn(() => calls.push('strip')),
+      sceneGeneration: () => 11,
+    } as unknown as StripSync;
     const midiSync: MidiSync = {
       sync: vi.fn(async () => {
         calls.push('midi');
@@ -112,14 +117,20 @@ describe('useEngineProjectSync', () => {
 
     await projectSync.syncMidiState();
 
-    expect(calls).toEqual(['mixer', 'strip', 'midi']);
-    expect(stripSync.sync).toHaveBeenCalledWith(store.tracks, store.mixer, 7);
+    expect(calls).toEqual(['mixer', 'strip', 'delay', 'midi']);
+    expect(stripSync.sync).toHaveBeenCalledWith(store.tracks, store.mixer, 7, new Set());
+    expect(mixerSync.applyChannelDelays).toHaveBeenCalledWith(11);
     scope.stop();
   });
 
   it('reports no meter/scope source for lanes past the meter target range', () => {
     const laneTrackIds = Array.from({ length: 33 }, (_, i) => i + 1);
-    const mixerSync: MixerSync = { sync: vi.fn(), laneTrackIds: () => laneTrackIds };
+    const mixerSync: MixerSync = {
+      sync: vi.fn(),
+      laneTrackIds: () => laneTrackIds,
+      positiveChannelDelayTrackIds: () => new Set(),
+      applyChannelDelays: vi.fn(),
+    };
     const stripSync = { sync: vi.fn() } as unknown as StripSync;
     const bridge = { forTarget: (id: number) => ({ id }) } as never;
     const scopeBridge = { forTarget: (id: number) => ({ id }) } as never;
@@ -165,8 +176,13 @@ describe('useEngineProjectSync', () => {
         instrument: { kind: 'sf2', fontId: 'missing-font' },
       },
     ];
-    const mixerSync: MixerSync = { sync: vi.fn(), laneTrackIds: () => [7] };
-    const stripSync = { sync: vi.fn() } as unknown as StripSync;
+    const mixerSync: MixerSync = {
+      sync: vi.fn(),
+      laneTrackIds: () => [7],
+      positiveChannelDelayTrackIds: () => new Set(),
+      applyChannelDelays: vi.fn(),
+    };
+    const stripSync = { sync: vi.fn(), sceneGeneration: () => 0 } as unknown as StripSync;
     const midiSync: MidiSync = {
       sync: vi.fn(async () => undefined),
       scheduledClipCount: () => 0,
@@ -224,8 +240,10 @@ describe('useEngineProjectSync', () => {
     const mixerSync: MixerSync = {
       sync: vi.fn(),
       laneTrackIds: () => [1],
+      positiveChannelDelayTrackIds: () => new Set(),
+      applyChannelDelays: vi.fn(),
     };
-    const stripSync = { sync: vi.fn() } as unknown as StripSync;
+    const stripSync = { sync: vi.fn(), sceneGeneration: () => 0 } as unknown as StripSync;
     const midiSync: MidiSync = {
       sync: vi.fn(async () => undefined),
       scheduledClipCount: () => 1,

@@ -79,12 +79,18 @@ export interface MixerSync {
    * state outside the lane scene must replay it when this changes.
    */
   sceneGeneration?(): number;
+  /** Tracks needing an engine strip solely for automatic channel alignment. */
+  positiveChannelDelayTrackIds(): ReadonlySet<number>;
+  /** Sends deferred channel delays after strip-sync has declared the strips. */
+  applyChannelDelays(stripSceneGeneration: number): void;
 }
 
 /** Options for {@link createMixerSync}. */
 export interface MixerSyncOptions {
   /** Optional processor-latency resolver used for automatic track PDC. */
   insertLatency?: InsertLatencyResolver;
+  /** Studio defers PDC until after strip scenes have been installed. */
+  deferChannelDelay?: boolean;
 }
 
 const zeroInsertLatency: InsertLatencyResolver = () => 0;
@@ -128,6 +134,9 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
   const retiredMuted = new Set<number>();
   let masterState: { gainDb: number; pan: number } | undefined;
   let sceneGeneration = 0;
+  const pendingChannelDelays = new Map<number, number>();
+  const appliedChannelDelays = new Map<number, number>();
+  let appliedStripSceneGeneration: number | undefined;
   const resolveInsertLatency = options.insertLatency ?? zeroInsertLatency;
 
   const sync = (
@@ -170,6 +179,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     });
     const auditionSoloStates = pflAuditionStates(tracks, vcaControls, soloMode);
     const pdc = createInsertPdcPlan(tracks, pdcBuses ?? [], resolveInsertLatency);
+    pendingChannelDelays.clear();
     for (const track of tracks) {
       const trackIndex = tracks.indexOf(track);
       const strip = track.mixer;
@@ -205,8 +215,11 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
           ? prev.channelDelaySamples !== next.channelDelaySamples
           : next.channelDelaySamples !== 0
       ) {
-        handle.engine.setTrackStripChannelDelaySamples(track.id, next.channelDelaySamples);
+        if (!options.deferChannelDelay) {
+          handle.engine.setTrackStripChannelDelaySamples(track.id, next.channelDelaySamples);
+        }
       }
+      if (options.deferChannelDelay) pendingChannelDelays.set(track.id, next.channelDelaySamples);
       if (prev ? prev.panLaw !== next.panLaw : next.panLaw !== DEFAULT_PAN_LAW) {
         handle.engine.setTrackStripPanLaw(track.id, next.panLaw);
       }
@@ -231,5 +244,25 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     masterState = masterNext;
   };
 
-  return { sync, laneTrackIds: () => laneIds, sceneGeneration: () => sceneGeneration };
+  return {
+    sync,
+    laneTrackIds: () => laneIds,
+    sceneGeneration: () => sceneGeneration,
+    positiveChannelDelayTrackIds: () =>
+      new Set(
+        [...pendingChannelDelays].filter(([, delay]) => delay > 0).map(([trackId]) => trackId),
+      ),
+    applyChannelDelays: (stripSceneGeneration) => {
+      if (!options.deferChannelDelay) return;
+      const sceneChanged = appliedStripSceneGeneration !== stripSceneGeneration;
+      for (const [trackId, delay] of pendingChannelDelays) {
+        if (delay === 0 && !appliedChannelDelays.has(trackId)) continue;
+        if (sceneChanged || appliedChannelDelays.get(trackId) !== delay) {
+          handle.engine.setTrackStripChannelDelaySamples(trackId, delay);
+          appliedChannelDelays.set(trackId, delay);
+        }
+      }
+      appliedStripSceneGeneration = stripSceneGeneration;
+    },
+  };
 }

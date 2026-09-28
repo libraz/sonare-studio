@@ -25,6 +25,11 @@
  *   note velocities retain their musical meaning.
  */
 
+import {
+  type GsSysExDestination,
+  MAX_REALTIME_SYSEX_BYTES,
+  pushGsSetupSysex,
+} from '@/engine/gs-sysex';
 import type { NoteArticulation } from '@/project/annotations';
 import {
   expressionMapEntryFor,
@@ -656,6 +661,8 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let clipCount = 0;
   let currentMediaIssues: MediaCompletenessIssue[] = [];
   let nativeSynthDestinations = new Map<number, number>();
+  let lastGsSetupSysexKey: string | undefined;
+  let lastBoundSf2Destinations = new Map<number, string>();
   let lastStateSource:
     | {
         tracks: ReadonlyArray<EditorTrack>;
@@ -703,7 +710,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     destinationId: number,
     instrument: TrackInstrument,
     soundFontReady = true,
-  ): void {
+  ): boolean {
     try {
       handle.engine.setMidiDestinationExternal(destinationId, instrument.kind === 'external-midi');
       if (instrument.kind === 'synth-preset') {
@@ -712,16 +719,21 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
           destinationId,
           instrument.useGmPrograms === true ? { preset, useGmPrograms: true } : preset,
         );
+        return false;
       } else if (instrument.kind === 'synth-patch') {
         handle.engine.setSynthInstrument(
           destinationId,
           instrument.patch as Record<string, unknown>,
         );
+        return false;
       } else if (instrument.kind === 'sf2' && soundFontReady) {
         handle.engine.setSf2Instrument(destinationId, sf2PlaybackConfig(instrument));
+        return true;
       } else if (instrument.kind === 'sf2') {
         handle.engine.setSynthInstrument(destinationId, resolvePreset(DEFAULT_SYNTH_PRESET));
+        return false;
       }
+      return false;
     } catch (err) {
       if (instrument.kind === 'external-midi') {
         throw new Error(
@@ -746,6 +758,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
           }) destination ${destinationId}; fell back to ${DEFAULT_SYNTH_PRESET}.`,
           err,
         );
+        return false;
       } catch (fallbackErr) {
         throw new Error(
           `Failed to bind MIDI instrument for track ${track.id} (${track.name}) destination ${destinationId}: ${instrumentDedupeKey(
@@ -816,6 +829,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     }
 
     const nextNativeSynthDestinations = new Map<number, number>();
+    const nextBoundSf2Destinations = new Map<number, string>();
     for (const track of tracks) {
       if (track.kind !== 'midi') continue;
       // A frozen track plays from its baked asset; loading its instrument (and,
@@ -833,14 +847,32 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       }
       // When several imported tracks share a destination, bind that destination
       // only once to the first track's instrument.
-      if (lastInstrumentKeyByDestination.get(destinationId) === instrumentKey) continue;
+      if (lastInstrumentKeyByDestination.get(destinationId) === instrumentKey) {
+        const previousSf2Key = lastBoundSf2Destinations.get(destinationId);
+        if (previousSf2Key !== undefined) {
+          nextBoundSf2Destinations.set(destinationId, previousSf2Key);
+        }
+        continue;
+      }
       if (lastInstrumentKeyByDestination.has(destinationId) && destinationId !== track.id) continue;
-      bindInstrument(track, destinationId, instrument, soundFontReady);
+      const sf2Bound = bindInstrument(track, destinationId, instrument, soundFontReady);
+      if (sf2Bound) nextBoundSf2Destinations.set(destinationId, instrumentKey);
       // external-midi: no internal instrument is bound; the engine routes the
       // track's MIDI to the external output queue (drained by useWebMidiOutput).
       lastInstrumentKeyByDestination.set(destinationId, instrumentKey);
     }
     nativeSynthDestinations = nextNativeSynthDestinations;
+    const gsDestinations: GsSysExDestination[] = [...nextBoundSf2Destinations].map(
+      ([destinationId, bindingKey]) => ({ destinationId, bindingKey }),
+    );
+    const gsSetup = pushGsSetupSysex(handle.engine, clips, gsDestinations, lastGsSetupSysexKey);
+    if (gsSetup.changed && gsSetup.unsupportedPacketCount > 0) {
+      console.warn(
+        `MIDI sync: ${gsSetup.unsupportedPacketCount} SMF SysEx packet(s) were kept for SMF roundtrip and not applied to realtime GS instruments (only complete setup frames at PPQ 0 up to ${MAX_REALTIME_SYSEX_BYTES} bytes are supported).`,
+      );
+    }
+    lastGsSetupSysexKey = gsSetup.key;
+    lastBoundSf2Destinations = nextBoundSf2Destinations;
 
     // Mirror each track's live, non-destructive MIDI-FX insert. The engine
     // transforms the destination's MIDI before synthesis, so a change installs

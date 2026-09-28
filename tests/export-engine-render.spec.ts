@@ -15,6 +15,7 @@ import {
 import type { InsertSlot } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
+import { neutralMixDocument } from '@/ui/mixer/mix-assistant';
 
 const resample = vi.hoisted(() =>
   vi.fn((samples: Float32Array, sourceRate: number, targetRate: number): Float32Array => {
@@ -155,6 +156,9 @@ class FakeEngine implements OfflineRenderEngine {
   }
   setSf2Instrument(config?: object, destinationId?: number): void {
     this.record('setSf2Instrument', config, destinationId);
+  }
+  pushMidiSysex(destinationId: number, data: Uint8Array, renderFrame = -1): void {
+    this.record('pushMidiSysex', destinationId, data, renderFrame);
   }
   seekSample(sample: number): void {
     this.record('seekSample', sample);
@@ -2072,6 +2076,80 @@ describe('renderProjectWithEngine', () => {
       word0: noteOnWord(0, 60, 96),
       wordCount: 1,
     });
+  });
+
+  it('applies complete setup GS SysEx after binding SF2 and before MIDI playback', async () => {
+    const doc = makeDoc();
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+    doc.tracks[0].clips[0].smfSysEx = [
+      {
+        ppq: 0,
+        status: 0xf0,
+        data: [0x41, 0x10, 0x42, 0x12, 0x40, 0x03, 0x00, 0x01, 0x10, 0x2c, 0xf7],
+      },
+    ];
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(engine),
+      loadFont: async () => new Uint8Array([1, 2, 3]),
+    });
+
+    expect(engine.named('pushMidiSysex')).toEqual([
+      [
+        'pushMidiSysex',
+        1,
+        Uint8Array.from([0xf0, 0x41, 0x10, 0x42, 0x12, 0x40, 0x03, 0x00, 0x01, 0x10, 0x2c, 0xf7]),
+        -1,
+      ],
+    ]);
+    const bindIndex = engine.calls.findIndex(([name]) => name === 'setSf2Instrument');
+    const sysexIndex = engine.calls.findIndex(([name]) => name === 'pushMidiSysex');
+    const scheduleIndex = engine.calls.findIndex(([name]) => name === 'setMidiClips');
+    expect(bindIndex).toBeGreaterThanOrEqual(0);
+    expect(sysexIndex).toBeGreaterThan(bindIndex);
+    expect(scheduleIndex).toBeGreaterThan(sysexIndex);
+  });
+
+  it('fans setup GS SysEx only to selected SF2 pre-render passes', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'font-a' };
+    doc.tracks[0].clips[0].smfSysEx = [
+      {
+        ppq: 0,
+        status: 0xf0,
+        data: [0x41, 0x10, 0x42, 0x12, 0x40, 0x03, 0x00, 0x01, 0x10, 0x2c, 0xf7],
+      },
+    ];
+    doc.tracks.push({
+      name: 'Brass',
+      color: '#fc0',
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      instrument: { kind: 'sf2', fontId: 'font-b' },
+      clips: [structuredClone(doc.tracks[0].clips[0])],
+    } as (typeof doc.tracks)[number]);
+    const engines: FakeEngine[] = [];
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(new FakeEngine()),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engines.push(engine);
+        return engine;
+      },
+      loadFont: async (fontId) => new Uint8Array([fontId === 'font-a' ? 1 : 2]),
+    });
+
+    expect(engines).toHaveLength(3);
+    expect(engines[0].named('pushMidiSysex').map(([, data]) => data)).toHaveLength(1);
+    expect(engines[0].named('pushMidiSysex')[0][1]).toBe(1);
+    expect(engines[1].named('pushMidiSysex').map(([, data]) => data)).toHaveLength(1);
+    expect(engines[1].named('pushMidiSysex')[0][1]).toBe(3);
+    expect(engines[2].named('pushMidiSysex')).toEqual([]);
   });
 
   it('keeps project-inherited external MIDI tracks out of the offline synth renderer', async () => {
@@ -4579,6 +4657,16 @@ function makeGroupDoc(): ProjectDocument {
 }
 
 describe('renderProjectWithEngine with group tracks and sidechains', () => {
+  it('renders grouped child stems independently for mix assistant analysis', async () => {
+    const result = await renderProjectWithEngine(neutralMixDocument(makeGroupDoc()), {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => new FakeEngine(),
+      stems: true,
+    });
+    expect(result.stems?.map((stem) => stem.trackIndex)).toContain(1);
+  });
+
   it('binds return, group and master inserts to document track and bus keys', async () => {
     const doc = makeGroupDoc();
     if (!doc.mixer) throw new Error('missing mixer');
@@ -5339,6 +5427,42 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
     expect(engine.named('setTrackStripChannelDelaySamples')).toEqual([
       ['setTrackStripChannelDelaySamples', 2, 136],
+    ]);
+  });
+
+  it('declares a neutral strip before PDC on a lane without strip DSP', async () => {
+    const doc = makeDoc();
+    (doc.tracks[0] as { mixer: Record<string, unknown> }).mixer = {
+      gainDb: 0,
+      pan: 0,
+      inserts: [{ processor: 'saturation.ampSim', params: {}, enabled: true }],
+      sends: [],
+    };
+    doc.tracks[1].mixer = undefined;
+
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(engine),
+      insertLatency: (slot) => (slot.processor === 'saturation.ampSim' ? 12 : 0),
+    });
+
+    const neutralIndex = engine.calls.findIndex(
+      ([name, trackId, json]) =>
+        name === 'setTrackStripJson' &&
+        trackId === 2 &&
+        typeof json === 'string' &&
+        JSON.parse(json).strips[0].inserts.length === 0,
+    );
+    const delayIndex = engine.calls.findIndex(
+      ([name, trackId]) => name === 'setTrackStripChannelDelaySamples' && trackId === 2,
+    );
+
+    expect(neutralIndex).toBeGreaterThanOrEqual(0);
+    expect(delayIndex).toBeGreaterThan(neutralIndex);
+    expect(engine.named('setTrackStripChannelDelaySamples')).toContainEqual([
+      'setTrackStripChannelDelaySamples',
+      2,
+      12,
     ]);
   });
 

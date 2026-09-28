@@ -44,7 +44,8 @@ import {
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { isConstructionOnlyParam } from '@/project/processor-controls';
+import { catalogParamInfo, isConstructionOnlyParam } from '@/project/processor-controls';
+import { currentWasmModule } from '@/project/runtime';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
@@ -207,9 +208,49 @@ export function stripSceneJson(
   return JSON.stringify({ version: 1, strips: [sceneStrip], buses: [], connections: [] });
 }
 
-/** True for a numeric insert param the engine can patch without rebuilding the insert. */
+type InsertParamKind = 'structural' | 'patchableRoot' | 'patchableConditional';
+
+/**
+ * Classifies one insert parameter for strip structure and realtime updates.
+ *
+ * The catalog is the authority for whether a key has a realtime target and
+ * whether its value belongs to a conditional insert slot. A missing catalog
+ * is possible during engine startup, so retain the historical construction
+ * check as a compatibility fallback. Once a processor has catalog metadata,
+ * an unlisted saved key is structural: sending it through the realtime setter
+ * would otherwise leave the engine and the persisted strip out of sync.
+ */
+function insertParamKind(slot: InsertSlot, key: string, value: unknown): InsertParamKind {
+  if (typeof value !== 'number') return 'structural';
+  // A preset changes the entire amplifier configuration. Even on older WASM
+  // catalogs that do not describe presetIndex, patching one numeric parameter
+  // cannot replace the active rig: the insert must be constructed again.
+  if (slot.processor === 'saturation.ampSim' && key === 'presetIndex') return 'structural';
+
+  const entries = catalogParamInfo(slot.processor);
+  const info = entries.find((entry) => entry.name === key);
+  if (info !== undefined) {
+    if (info.id === null || info.rtSafe === false) return 'structural';
+    return info.slot === null ? 'patchableRoot' : 'patchableConditional';
+  }
+
+  // Before the catalog is initialized, preserve the previous behaviour for
+  // known construction-only checks. An initialized catalog makes unknown
+  // keys structural so a saved extra cannot be mistaken for a live target.
+  if (
+    currentWasmModule() === null &&
+    entries.length === 0 &&
+    !isConstructionOnlyParam(slot.processor, key)
+  ) {
+    return 'patchableRoot';
+  }
+  return 'structural';
+}
+
+/** True for a numeric insert param the engine can patch without rebuilding. */
 function isPatchableParam(slot: InsertSlot, key: string, value: unknown): value is number {
-  return typeof value === 'number' && !isConstructionOnlyParam(slot.processor, key);
+  const kind = insertParamKind(slot, key, value);
+  return kind === 'patchableRoot' || kind === 'patchableConditional';
 }
 
 /**
@@ -217,11 +258,17 @@ function isPatchableParam(slot: InsertSlot, key: string, value: unknown): value 
  * while building the insert. Patchable numeric values are masked out.
  */
 function insertParamStructure(slot: InsertSlot): Record<string, number | boolean | null> {
-  return Object.fromEntries(
-    Object.entries(slot.params)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => [key, isPatchableParam(slot, key, value) ? null : value]),
-  );
+  const entries: Array<[string, number | boolean | null]> = [];
+  for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
+    const kind = insertParamKind(slot, key, value);
+    // A top-level realtime value does not affect construction, so its
+    // presence must not turn a knob drag into a full strip replacement.
+    if (kind === 'patchableRoot') continue;
+    // Conditional values need a stable presence marker. Adding/removing the
+    // first key creates/destroys the nested processor state and must rebuild.
+    entries.push([key, kind === 'patchableConditional' ? null : value]);
+  }
+  return Object.fromEntries(entries);
 }
 
 /** Patchable numeric insert params last seen by the engine, keyed by insert index. */
@@ -247,6 +294,24 @@ function syncInsertNumericParams(
       if (previousParams[paramName] !== value) sendInsertParam(insertIndex, paramName, value);
     }
   }
+}
+
+/** True when a previously applied root realtime key was removed from a slot. */
+function hasRemovedPatchableRootParam(
+  previous: ReadonlyArray<Record<string, number>>,
+  next: ReadonlyArray<Record<string, number>>,
+  inserts: ReadonlyArray<InsertSlot>,
+): boolean {
+  for (let insertIndex = 0; insertIndex < previous.length; insertIndex += 1) {
+    const slot = inserts[insertIndex];
+    if (!slot) continue;
+    const nextParams = next[insertIndex] ?? {};
+    for (const [paramName, value] of Object.entries(previous[insertIndex] ?? {})) {
+      if (paramName in nextParams) continue;
+      if (insertParamKind(slot, paramName, value) === 'patchableRoot') return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -479,6 +544,7 @@ export interface StripSync {
     tracks: ReadonlyArray<EditorTrack>,
     mixer: ProjectMixerState,
     sceneGeneration?: number,
+    pdcTrackIds?: ReadonlySet<number>,
   ): void;
   /** Engine bus id assigned to a store bus id (undefined when never seen). */
   busIdFor(storeBusId: string): number | undefined;
@@ -567,6 +633,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     sendStripJson: (sceneJson: string) => void,
     sendInsertParam: (insertIndex: number, paramName: string, value: number) => void,
     forceScene = false,
+    ensureScene = false,
   ): StripMemory | undefined => {
     const inserts = strip?.inserts ?? [];
     const insertParams = insertNumericParams(inserts);
@@ -587,16 +654,30 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     // band objects; an EQ disabled as a whole contributes no bands.
     const effectiveEqBands = engineEqBands(strip);
     const enabled = inserts.map((slot) => slot.enabled);
+    const removedPatchableRootParam =
+      memory !== undefined &&
+      hasRemovedPatchableRootParam(memory.insertParams, insertParams, inserts);
 
     const hasSceneDsp =
       stripSceneFieldsHaveDsp(strip) ||
       stripSceneMetadataHasDsp(strip) ||
       (target === 'master' && engineMasterPannerHasDsp(strip));
-    if (!memory && !hasSceneDsp && inserts.length === 0 && effectiveEqBands.length === 0) {
+    if (
+      !memory &&
+      !ensureScene &&
+      !hasSceneDsp &&
+      inserts.length === 0 &&
+      effectiveEqBands.length === 0
+    ) {
       return undefined;
     }
 
-    if (forceScene || !memory || memory.structureKey !== structureKey) {
+    if (
+      forceScene ||
+      !memory ||
+      memory.structureKey !== structureKey ||
+      removedPatchableRootParam
+    ) {
       // Full re-send: the engine replaces the whole strip, resetting its EQ
       // bands and bypass flags, so both are replayed after the JSON.
       sendStripJson(stripSceneJson(target, strip, insertCatalog));
@@ -652,6 +733,9 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const sceneInserts = sceneStrip?.inserts ?? [];
     const insertParams = insertNumericParams(sceneInserts);
     const enabled = sceneInserts.map((slot) => slot.enabled);
+    const removedPatchableRootParam =
+      memory !== undefined &&
+      hasRemovedPatchableRootParam(memory.insertParams, insertParams, sceneInserts);
     const effectiveEqBands = supportsBusEq ? engineEqBands(strip) : [];
     const hasSceneDsp =
       stripSceneFieldsHaveDsp(strip) ||
@@ -663,7 +747,12 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       return undefined;
     }
 
-    if (forceScene || !memory || memory.structureKey !== structureKey) {
+    if (
+      forceScene ||
+      !memory ||
+      memory.structureKey !== structureKey ||
+      removedPatchableRootParam
+    ) {
       onSceneSend?.();
       handle.engine.setBusStripJson(
         busId,
@@ -737,6 +826,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     tracks: ReadonlyArray<EditorTrack>,
     mixer: ProjectMixerState,
     sceneGeneration?: number,
+    pdcTrackIds?: ReadonlySet<number>,
   ): void => {
     // The facade retains strip JSON and can replay it as part of a structural
     // mixer command (notably setTrackLanes). That replacement clears master
@@ -1068,6 +1158,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         },
         (insertIndex, paramName, value) =>
           handle.engine.setTrackStripInsertParamByName(track.id, insertIndex, paramName, value),
+        false,
+        pdcTrackIds?.has(track.id) ?? false,
       );
       if (memory) trackStripMemory.set(track.id, memory);
     }

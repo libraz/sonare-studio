@@ -47,6 +47,11 @@ import {
   engineFaderAutomationPoints,
   engineMasterPannerHasDsp,
 } from '@/engine/engine-declaration';
+import {
+  type GsSysExDestination,
+  MAX_REALTIME_SYSEX_BYTES,
+  pushGsSetupSysex,
+} from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
 import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { busSceneJson, MAX_ENGINE_BUSES, stripSceneJson } from '@/engine/strip-sync';
@@ -530,6 +535,7 @@ export async function renderProjectWithEngine(
   }
 
   const mediaIssues: NonNullable<MixdownReport['mediaIssues']> = [];
+  let warnedUnsupportedGsSysex = false;
   // Pre-load instrument fonts only after the metadata-only audio preflight.
   // A missing font must not turn into a raw storage error: finish the render
   // with a structured issue so the export dialog can explain and block it.
@@ -773,7 +779,13 @@ export async function renderProjectWithEngine(
         }
         return;
       }
-      if (track.frozen === undefined && !usesPreRenderedSf2 && strip && stripHasDsp(strip)) {
+      // A channel-delay target must already have a strip in libsonare. Keep
+      // the declaration decision separate from the store strip: frozen lanes
+      // and SF2 pre-render lanes deliberately bypass their stored DSP, so
+      // they need the same neutral declaration before receiving PDC.
+      const hasDeclaredTrackStrip =
+        track.frozen === undefined && !usesPreRenderedSf2 && stripHasDsp(strip);
+      if (hasDeclaredTrackStrip && strip) {
         // Frozen tracks bypass their strip DSP (baked into the render).
         engine.setTrackStripJson(trackId, stripSceneJson(trackId, strip));
         strip.inserts.forEach((slot, insertIndex) => {
@@ -782,6 +794,13 @@ export async function renderProjectWithEngine(
         engineEqBands(strip).forEach((band, bandIndex) => {
           engine.setTrackStripEqBandJson(trackId, bandIndex, JSON.stringify(band));
         });
+      }
+      const channelDelay = pdc.delayFor(pdcTracks[index]);
+      if (pass.freezeIndex !== index && channelDelay > 0 && !hasDeclaredTrackStrip) {
+        // libsonare rejects channel-delay setters for lanes without a strip
+        // scene. Install this neutral scene before the panner setters below;
+        // replacing a scene must not erase a lane's pan mode or dual-pan.
+        engine.setTrackStripJson(trackId, stripSceneJson(trackId, undefined));
       }
       if (pass.stemIndices === null) {
         // Solo-safe lanes and routed group members stay in the effective solo
@@ -833,7 +852,6 @@ export async function renderProjectWithEngine(
         // The pre-rendered SF2 PCM contains the insert processor's own
         // latency, but not the live PDC channel delay (freeze passes keep it
         // outside the bake), so the final lane still receives normal PDC.
-        const channelDelay = pdc.delayFor(pdcTracks[index]);
         if (channelDelay > 0) engine.setTrackStripChannelDelaySamples(trackId, channelDelay);
       }
     });
@@ -1088,6 +1106,7 @@ export async function renderProjectWithEngine(
     // bounces; their final pass binds no SF2 player and schedules those
     // bounces as audio on the original lanes instead.
     let loadedFontId: string | undefined;
+    const boundSf2Destinations: GsSysExDestination[] = [];
     for (let index = 0; index < doc.tracks.length; index++) {
       const track = doc.tracks[index];
       if (track.kind !== 'midi') continue;
@@ -1110,6 +1129,12 @@ export async function renderProjectWithEngine(
           loadedFontId = instrument.fontId;
         }
         engine.setSf2Instrument(sf2PlaybackConfig(instrument), destinationId);
+        if (bytes !== undefined) {
+          boundSf2Destinations.push({
+            destinationId,
+            bindingKey: JSON.stringify({ instrument, fontId: instrument.fontId }),
+          });
+        }
       }
       // Instrument lanes resolve against the instrument just bound, as live.
       if (instrument !== undefined && isNativeSynthInstrument(instrument)) {
@@ -1135,6 +1160,18 @@ export async function renderProjectWithEngine(
         const json = midiFxConfigJson(track.midiFx);
         if (json !== null) engine.setMidiFx(destinationId, json);
       }
+    }
+
+    const gsSetup = pushGsSetupSysex(
+      engine,
+      doc.tracks.flatMap((track) => track.clips),
+      boundSf2Destinations,
+    );
+    if (gsSetup.unsupportedPacketCount > 0 && !warnedUnsupportedGsSysex) {
+      console.warn(
+        `Offline render: ${gsSetup.unsupportedPacketCount} SMF SysEx packet(s) were kept for SMF roundtrip and not applied to realtime GS instruments (only complete setup frames at PPQ 0 up to ${MAX_REALTIME_SYSEX_BYTES} bytes are supported).`,
+      );
+      warnedUnsupportedGsSysex = true;
     }
 
     const passMidiSchedules = midiSchedules.filter((schedule) => {

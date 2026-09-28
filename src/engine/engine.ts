@@ -60,11 +60,27 @@ interface WorkletRuntimeErrorMessage {
   message: string;
 }
 
+interface WorkletSyncErrorMessage {
+  type: 'syncError';
+  syncType: string;
+  message: string;
+}
+
 function isWorkletRuntimeErrorMessage(value: unknown): value is WorkletRuntimeErrorMessage {
   return (
     value !== null &&
     typeof value === 'object' &&
     (value as { type?: unknown }).type === 'runtimeError' &&
+    typeof (value as { message?: unknown }).message === 'string'
+  );
+}
+
+function isWorkletSyncErrorMessage(value: unknown): value is WorkletSyncErrorMessage {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    (value as { type?: unknown }).type === 'syncError' &&
+    typeof (value as { syncType?: unknown }).syncType === 'string' &&
     typeof (value as { message?: unknown }).message === 'string'
   );
 }
@@ -336,6 +352,12 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
   // runtimeError first; re-dispatch it through the standard processorerror
   // path so lifecycle ownership and cleanup remain centralized.
   const onWorkletRuntimeError = (event: MessageEvent) => {
+    if (isWorkletSyncErrorMessage(event.data)) {
+      const message = `Audio engine sync failed (${event.data.syncType}): ${event.data.message}`;
+      console.error(message);
+      engine.node.dispatchEvent(new CustomEvent('processorerror', { detail: message }));
+      return;
+    }
     if (!isWorkletRuntimeErrorMessage(event.data)) return;
     console.error(`Engine worklet runtime error: ${event.data.message}`);
     engine.node.dispatchEvent(new Event('processorerror'));

@@ -290,7 +290,10 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                 wasm.masteringInsertTiming,
               )
             : undefined;
-        const nextMixerSync = createMixerSync(stagedHandle, { insertLatency });
+        const nextMixerSync = createMixerSync(stagedHandle, {
+          insertLatency,
+          deferChannelDelay: true,
+        });
         const nextStripSync = createStripSync(stagedHandle, { insertCatalog });
         const masteringInsertIndexFor = (processorIndex: number): number | undefined => {
           const processors = store.mixer.masteringChain?.processors ?? [];
@@ -594,8 +597,11 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         nextBridge = createMeterBridge(stagedHandle);
         nextAnalyser = createAnalyserBridge(stagedHandle);
         nextScope = createScopeBridge(stagedHandle);
-        stagedHandle.engine.node.onprocessorerror = () => {
-          const message = 'Engine worklet processor crashed during processing (onprocessorerror).';
+        stagedHandle.engine.node.onprocessorerror = (event) => {
+          const message =
+            event instanceof CustomEvent && typeof event.detail === 'string'
+              ? event.detail
+              : 'Engine worklet processor crashed during processing (onprocessorerror).';
           if (options.handle.value !== stagedHandle) {
             if (!published && epoch === lifecycleEpoch) {
               controller.abort(new Error(message));

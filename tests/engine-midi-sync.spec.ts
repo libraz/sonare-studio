@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
+import { pushGsSetupSysex } from '@/engine/gs-sysex';
 import { buildMidiClipSchedules, createMidiSync, midiStateAtPpq } from '@/engine/midi-sync';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
@@ -103,6 +104,7 @@ function makeHandle(): {
     setSynthInstrument: ReturnType<typeof vi.fn>;
     loadSoundFont: ReturnType<typeof vi.fn>;
     setSf2Instrument: ReturnType<typeof vi.fn>;
+    pushMidiSysex: ReturnType<typeof vi.fn>;
     clearMidiFx: ReturnType<typeof vi.fn>;
     setMidiFx: ReturnType<typeof vi.fn>;
     setMidiDestinationExternal: ReturnType<typeof vi.fn>;
@@ -115,6 +117,7 @@ function makeHandle(): {
     setSynthInstrument: vi.fn(),
     loadSoundFont: vi.fn(),
     setSf2Instrument: vi.fn(),
+    pushMidiSysex: vi.fn(),
     clearMidiFx: vi.fn(),
     setMidiFx: vi.fn(),
     setMidiDestinationExternal: vi.fn(),
@@ -771,6 +774,141 @@ describe('midiStateAtPpq', () => {
 
     expect(fromDocumentOrder).toEqual([{ destinationId: 1, word0: ccWord(0, 11, 90) }]);
     expect(fromReverseOrder).toEqual(fromDocumentOrder);
+  });
+});
+
+describe('GS setup SysEx', () => {
+  // Roland GS DT1: select EFX TYPE = Overdrive (01 10) at 40 03 00.
+  // The frame is complete after the trailing checksum and F7.
+  const gsEfxType = {
+    ppq: 0,
+    status: 0xf0 as const,
+    data: [0x41, 0x10, 0x42, 0x12, 0x40, 0x03, 0x00, 0x01, 0x10, 0x2c, 0xf7],
+  };
+
+  it('fans out ordered, deduplicated setup frames to unique destinations', () => {
+    const engine = { pushMidiSysex: vi.fn() };
+    const clips = [
+      {
+        startPpq: 0,
+        smfSysEx: [
+          gsEfxType,
+          { ...gsEfxType, data: [...gsEfxType.data.slice(0, -1), 0x01, 0xf7] },
+          gsEfxType,
+        ],
+      },
+    ];
+
+    const result = pushGsSetupSysex(engine, clips, [
+      { destinationId: 4, bindingKey: 'sf2:b' },
+      { destinationId: 2, bindingKey: 'sf2:a' },
+      { destinationId: 4, bindingKey: 'sf2:b-duplicate' },
+    ]);
+
+    expect(result.unsupportedPacketCount).toBe(0);
+    expect(result.sentCount).toBe(4);
+    expect(engine.pushMidiSysex.mock.calls).toEqual([
+      [2, Uint8Array.from([0xf0, ...gsEfxType.data]), -1],
+      [2, Uint8Array.from([0xf0, ...gsEfxType.data.slice(0, -1), 0x01, 0xf7]), -1],
+      [4, Uint8Array.from([0xf0, ...gsEfxType.data]), -1],
+      [4, Uint8Array.from([0xf0, ...gsEfxType.data.slice(0, -1), 0x01, 0xf7]), -1],
+    ]);
+  });
+
+  it('keeps mid-song, fragmented, continuation and oversized packets out of the push queue', () => {
+    const engine = { pushMidiSysex: vi.fn() };
+    const oversized = { ...gsEfxType, data: [...new Array(512).fill(0x01), 0xf7] };
+    const result = pushGsSetupSysex(
+      engine,
+      [
+        {
+          startPpq: 0,
+          smfSysEx: [
+            gsEfxType,
+            { ...gsEfxType, ppq: 1 },
+            { ...gsEfxType, status: 0xf7 },
+            { ...gsEfxType, data: gsEfxType.data.slice(0, -1) },
+            oversized,
+          ],
+        },
+      ],
+      [{ destinationId: 1, bindingKey: 'sf2:ok' }],
+    );
+
+    expect(result.frames).toHaveLength(1);
+    expect(result.unsupportedPacketCount).toBe(4);
+    expect(result.sentCount).toBe(1);
+    expect(engine.pushMidiSysex).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not queue the same state twice and replays when the binding changes', () => {
+    const engine = { pushMidiSysex: vi.fn() };
+    const clips = [{ startPpq: 0, smfSysEx: [gsEfxType] }];
+    const first = pushGsSetupSysex(engine, clips, [{ destinationId: 1, bindingKey: 'sf2:a' }]);
+    const second = pushGsSetupSysex(
+      engine,
+      clips,
+      [{ destinationId: 1, bindingKey: 'sf2:a' }],
+      first.key,
+    );
+    const third = pushGsSetupSysex(
+      engine,
+      clips,
+      [{ destinationId: 1, bindingKey: 'sf2:b' }],
+      second.key,
+    );
+
+    expect(first.sentCount).toBe(1);
+    expect(second.sentCount).toBe(0);
+    expect(second.changed).toBe(false);
+    expect(third.sentCount).toBe(1);
+    expect(engine.pushMidiSysex).toHaveBeenCalledTimes(2);
+  });
+
+  it('only sends setup SysEx to an SF2 binding supplied by the caller', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle, { loadFont: async () => new Uint8Array([1]) });
+    const clips = [makeClip(1, 1, { notes: [], smfSysEx: [gsEfxType] })];
+
+    await sync.sync(
+      [
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font' } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } }),
+      ],
+      clips,
+      TEMPO_120,
+    );
+    expect(engine.pushMidiSysex).toHaveBeenCalledWith(
+      1,
+      Uint8Array.from([0xf0, ...gsEfxType.data]),
+      -1,
+    );
+    expect(engine.pushMidiSysex).not.toHaveBeenCalledWith(
+      2,
+      expect.any(Uint8Array),
+      expect.any(Number),
+    );
+
+    await sync.sync(
+      [
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font' } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } }),
+      ],
+      clips,
+      TEMPO_120,
+    );
+    expect(engine.pushMidiSysex).toHaveBeenCalledTimes(1);
+
+    const recreated = createMidiSync(handle, { loadFont: async () => new Uint8Array([1]) });
+    await recreated.sync(
+      [
+        makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font' } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } }),
+      ],
+      clips,
+      TEMPO_120,
+    );
+    expect(engine.pushMidiSysex).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -253,6 +253,30 @@ describe('createMixerSync', () => {
     expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(3, 136);
   });
 
+  it('defers positive PDC until a strip scene has been declared', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle, {
+      insertLatency: (slot) => (slot.processor === 'linear.eq' ? 12 : 0),
+      deferChannelDelay: true,
+    });
+    const latent = makeTrack(1, {
+      mixer: {
+        ...createDefaultStrip(),
+        inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+      },
+    });
+    sync.sync([latent, makeTrack(2)], neutralMaster());
+    expect(sync.positiveChannelDelayTrackIds()).toEqual(new Set([2]));
+    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalled();
+
+    sync.applyChannelDelays(1);
+    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 12);
+    engine.setTrackStripChannelDelaySamples.mockClear();
+    sync.sync([latent, makeTrack(2)], neutralMaster());
+    sync.applyChannelDelays(1);
+    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalled();
+  });
+
   it('includes return-bus insert latency when synchronizing PDC', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle, {

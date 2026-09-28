@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { linearToDb } from '@/engine/mixer-sync';
 import {
@@ -18,12 +18,83 @@ import {
 import type { EditorTrack } from '@/project/types';
 import type { EqBand } from '@/wasm/index.js';
 
+type RuntimeModule = NonNullable<ReturnType<typeof import('@/project/runtime').currentWasmModule>>;
+const runtimeState = vi.hoisted(() => ({ ready: true }));
+
+vi.mock('@/project/runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/project/runtime')>()),
+  currentWasmModule: () => (runtimeState.ready ? ({} as RuntimeModule) : null),
+}));
+
 // The soft clipper's ceiling is read only when the insert is built.
 vi.mock('@/project/processor-controls', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/project/processor-controls')>()),
+  // Keep the strip-sync tests independent of WASM startup while still
+  // exercising the catalog's root/conditional distinction.
+  catalogParamInfo: (processor: string) => {
+    const rootParams: Record<string, string[]> = {
+      'dynamics.compressor': ['thresholdDb'],
+      'gate.expander': ['floorDb'],
+      'saturation.ampSim': [
+        'drive',
+        'bassDb',
+        'midDb',
+        'trebleDb',
+        'presenceDb',
+        'levelDb',
+        'power',
+        'sag',
+        'transformer',
+        'nfb',
+        'micAxis',
+        'micBAxis',
+        'micBlend',
+        'cone',
+        'crossover',
+        'biasShift',
+        'inputDb',
+      ],
+      'saturation.softClipper': ['driveDb'],
+      'saturation.tape': ['drive'],
+    };
+    const names = rootParams[processor];
+    if (names === undefined) {
+      if (processor !== 'eq.parametric') return [];
+      return [
+        {
+          name: 'band0.gainDb',
+          id: 0,
+          rtSafe: true,
+          type: 'number' as const,
+          min: null,
+          max: null,
+          default: null,
+          unit: null,
+          choices: null,
+          slot: 'band0',
+        },
+      ];
+    }
+    return names.map((name, id) => ({
+      name,
+      id,
+      rtSafe: true,
+      type: 'number' as const,
+      min: null,
+      max: null,
+      default: null,
+      unit: null,
+      choices: null,
+      slot: null,
+    }));
+  },
   isConstructionOnlyParam: (processor: string, param: string) =>
     processor === 'saturation.softClipper' && param === 'ceiling',
 }));
+
+afterEach(() => {
+  runtimeState.ready = true;
+});
 
 /** Builds a track mirror entry, optionally with a mixer strip. */
 function makeTrack(id: number, mixer?: MixerStrip): EditorTrack {
@@ -416,6 +487,185 @@ describe('createStripSync', () => {
     sync.sync([makeTrack(1, next)], makeMixer());
     expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, next));
     expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds the guitar amp when its preset changes', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (presetIndex: number): MixerStrip =>
+      makeStrip({
+        inserts: [
+          {
+            processor: 'saturation.ampSim',
+            params: { presetIndex, drive: 0.55 },
+            enabled: true,
+          },
+        ],
+      });
+
+    sync.sync([makeTrack(1, stripFor(0))], makeMixer());
+    clearCalls(engine);
+    const next = stripFor(5);
+    sync.sync([makeTrack(1, next)], makeMixer());
+
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, next));
+    expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
+  });
+
+  it('patches the first root amp override without rebuilding the strip', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (params: Record<string, number>): MixerStrip =>
+      makeStrip({
+        inserts: [{ processor: 'saturation.ampSim', params, enabled: true }],
+      });
+
+    sync.sync([makeTrack(1, stripFor({ presetIndex: 0 }))], makeMixer());
+    clearCalls(engine);
+
+    sync.sync([makeTrack(1, stripFor({ presetIndex: 0, bassDb: 6 }))], makeMixer());
+
+    expect(engine.setTrackStripJson).not.toHaveBeenCalled();
+    expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'bassDb', 6);
+  });
+
+  it.each([1, 'master'] as const)(
+    'rebuilds %s when a root realtime insert value is removed',
+    (target) => {
+      const { handle, engine } = makeHandle();
+      const sync = createStripSync(handle);
+      const withBass = makeStrip({
+        inserts: [
+          {
+            processor: 'saturation.ampSim',
+            params: { presetIndex: 0, bassDb: 6 },
+            enabled: true,
+          },
+        ],
+      });
+      const withoutBass = makeStrip({
+        inserts: [{ processor: 'saturation.ampSim', params: { presetIndex: 0 }, enabled: true }],
+      });
+      const send = (strip: MixerStrip): void => {
+        if (target === 'master') {
+          sync.sync([], makeMixer({ master: strip }));
+        } else {
+          sync.sync([makeTrack(target, strip)], makeMixer());
+        }
+      };
+
+      send(withBass);
+      clearCalls(engine);
+      send(withoutBass);
+
+      if (target === 'master') {
+        expect(engine.setMasterStripJson).toHaveBeenCalledWith(
+          stripSceneJson('master', withoutBass),
+        );
+      } else {
+        expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, withoutBass));
+      }
+      expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
+      expect(engine.setMasterStripInsertParamByName).not.toHaveBeenCalled();
+    },
+  );
+
+  it('patches and safely rebuilds a root amp override on a return bus', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const busFor = (params: Record<string, number>): MixerBus => ({
+      ...makeBus('FX'),
+      strip: makeStrip({
+        inserts: [{ processor: 'saturation.ampSim', params, enabled: true }],
+      }),
+    });
+
+    sync.sync([], makeMixer({ buses: [busFor({ presetIndex: 0 })] }));
+    clearCalls(engine);
+    sync.sync([], makeMixer({ buses: [busFor({ presetIndex: 0, bassDb: 6 })] }));
+    expect(engine.setBusStripJson).not.toHaveBeenCalled();
+    expect(engine.setBusStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'bassDb', 6);
+
+    clearCalls(engine);
+    const withoutBass = busFor({ presetIndex: 0 });
+    sync.sync([], makeMixer({ buses: [withoutBass] }));
+    expect(engine.setBusStripJson).toHaveBeenCalledWith(1, busSceneJson(1, withoutBass.strip));
+    expect(engine.setBusStripInsertParamByName).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds when a conditional insert slot first appears or disappears', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (params: Record<string, number>): MixerStrip =>
+      makeStrip({ inserts: [{ processor: 'eq.parametric', params, enabled: true }] });
+
+    sync.sync([makeTrack(1, stripFor({}))], makeMixer());
+    clearCalls(engine);
+    const firstBand = stripFor({ 'band0.gainDb': 3 });
+    sync.sync([makeTrack(1, firstBand)], makeMixer());
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, firstBand));
+    expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
+
+    clearCalls(engine);
+    const editedBand = stripFor({ 'band0.gainDb': 5 });
+    sync.sync([makeTrack(1, editedBand)], makeMixer());
+    expect(engine.setTrackStripJson).not.toHaveBeenCalled();
+    expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'band0.gainDb', 5);
+
+    clearCalls(engine);
+    const empty = stripFor({});
+    sync.sync([makeTrack(1, empty)], makeMixer());
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, empty));
+    expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds for an unknown numeric key on a catalogued processor', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (mystery: number): MixerStrip =>
+      makeStrip({
+        inserts: [
+          {
+            processor: 'saturation.tape',
+            params: { drive: 0.4, mystery },
+            enabled: true,
+          },
+        ],
+      });
+
+    sync.sync([makeTrack(1, stripFor(0.1))], makeMixer());
+    clearCalls(engine);
+    const next = stripFor(0.2);
+    sync.sync([makeTrack(1, next)], makeMixer());
+
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(1, stripSceneJson(1, next));
+    expect(engine.setTrackStripInsertParamByName).not.toHaveBeenCalled();
+  });
+
+  it('keeps the legacy numeric fallback before the WASM catalog is ready', () => {
+    runtimeState.ready = false;
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const stripFor = (value: number): MixerStrip =>
+      makeStrip({
+        inserts: [{ processor: 'made.up', params: { value }, enabled: true }],
+      });
+
+    sync.sync([makeTrack(1, stripFor(0.1))], makeMixer());
+    clearCalls(engine);
+    const next = stripFor(0.2);
+    sync.sync([makeTrack(1, next)], makeMixer());
+
+    expect(engine.setTrackStripJson).not.toHaveBeenCalled();
+    expect(engine.setTrackStripInsertParamByName).toHaveBeenCalledWith(1, 0, 'value', 0.2);
+  });
+
+  it('declares a neutral track strip when another insert needs PDC on it', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const dry = makeTrack(2);
+    sync.sync([dry], makeMixer(), 1, new Set([2]));
+    expect(engine.setTrackStripJson).toHaveBeenCalledWith(2, stripSceneJson(2, undefined));
   });
 
   it('re-sends strip JSON when a non-numeric insert param changes', () => {
