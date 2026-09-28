@@ -29,7 +29,6 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type MasteringSuggestion,
   parseMasteringSuggestion,
-  suggestedPreset,
   suggestedPresetOverrides,
 } from '@/ui/mastering/assistant';
 import {
@@ -42,6 +41,7 @@ import {
   filterPresetCatalog,
   humanizePresetName,
   loadMasteringPresetCatalog,
+  masteringPresetInfo,
 } from '@/ui/mastering/preset-catalog';
 import {
   getPresetControlDescriptor,
@@ -356,10 +356,10 @@ function downmixMono(channels: ReadonlyArray<Float32Array>): Float32Array {
 
 /**
  * Analyzes the chain-free (bypassed) render of the preview range with the
- * libsonare mastering assistant and applies its top genre as a preset. The
- * assistant's genre candidates are preset identifiers, so the suggestion maps
- * straight onto the (undoable) preset selector; the alternatives are shown as
- * chips the user can apply instead. Renders a preview first when none is ready.
+ * libsonare mastering assistant. The assistant starts from the selected
+ * mastering preset, or streaming when no compatible preset is selected, then
+ * applies the returned chain tuning as overrides in one undoable edit.
+ * Renders a preview first when none is ready.
  */
 async function onAutoSuggest(): Promise<void> {
   if (suggesting.value) return;
@@ -377,11 +377,17 @@ async function onAutoSuggest(): Promise<void> {
     const pair = stereoPair(source.channels);
     const suggestStereo = wasm.masteringAssistantSuggestStereo;
     const suggest = wasm.masteringAssistantSuggest;
+    const selectedPreset = chain.value.preset;
+    const preset =
+      selectedPreset && masteringPresetInfo(selectedPreset)?.kind === 'mastering'
+        ? selectedPreset
+        : 'streaming';
+    const params = { preset };
     let json: string;
     if (pair && typeof suggestStereo === 'function') {
-      json = suggestStereo({ ...pair, sampleRate: source.sampleRate });
+      json = suggestStereo({ ...pair, sampleRate: source.sampleRate, params });
     } else if (typeof suggest === 'function') {
-      json = suggest(downmixMono(source.channels), source.sampleRate);
+      json = suggest(downmixMono(source.channels), source.sampleRate, params);
     } else {
       error.value = t.value.shell.mastering.assistant.unavailable;
       return;
@@ -396,23 +402,20 @@ async function onAutoSuggest(): Promise<void> {
       return;
     }
     suggestion.value = parsed;
-    if (presetCatalog.value.length === 0) presetCatalog.value = loadMasteringPresetCatalog();
-    const preset = suggestedPreset(parsed, presetCatalog.value);
-    if (!preset) return;
-    // The tuned chain describes the top candidate, so it only refines that preset.
-    const presetParams =
-      preset === parsed.genreCandidates[0]?.name && parsed.chainParams
-        ? wasm.masteringPresetParams(preset as MasteringPreset)
-        : null;
+    // The assistant response describes the named base preset, so compare its
+    // complete tuned chain with that preset before storing only the deltas.
+    const baseParams = parsed.chainParams
+      ? wasm.masteringPresetParams(preset as MasteringPreset)
+      : null;
     const overrides =
-      presetParams && parsed.chainParams
-        ? suggestedPresetOverrides(parsed.chainParams, presetParams)
+      baseParams && parsed.chainParams
+        ? suggestedPresetOverrides(parsed.chainParams, baseParams)
         : {};
     suggestionTuning.value = {
       preset,
       entries: Object.entries(overrides).map(([key, to]) => ({
         key,
-        from: presetParams?.[key],
+        from: baseParams?.[key],
         to,
       })),
     };
@@ -1065,7 +1068,6 @@ onBeforeUnmount(() => {
           :suggestion="suggestion"
           :preset="chain.preset"
           :adjustments="suggestionAdjustments"
-          @select="onSelectPreset"
         />
         <section class="preset-overrides" :class="{ disabled: !chain.preset }">
           <div class="preset-overrides-head">

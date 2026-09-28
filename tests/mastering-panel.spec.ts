@@ -24,13 +24,13 @@ vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
   const { vi: vitest } = await import('vitest');
   const fakeModule = createFakeWasmModule();
-  // Distinct genres per entry point so a test can tell which one ran.
+  // Distinct entry points remain mockable so tests can tell which one ran.
   Object.assign(fakeModule, {
     masteringAssistantSuggest: vitest.fn(() =>
-      JSON.stringify({ genreCandidates: [{ name: 'pop', score: 1 }] }),
+      JSON.stringify({ explanation: ['base preset: streaming'] }),
     ),
     masteringAssistantSuggestStereo: vitest.fn(() =>
-      JSON.stringify({ genreCandidates: [{ name: 'edm', score: 1 }] }),
+      JSON.stringify({ explanation: ['base preset: streaming'] }),
     ),
   });
   return { ensureWasm: async () => fakeModule };
@@ -778,10 +778,35 @@ describe('MasteringPanel.vue', () => {
       left: Float32Array;
       right: Float32Array;
       sampleRate: number;
+      params: { preset: string };
     };
     expect(request.left).toBeInstanceOf(Float32Array);
     expect(request.right).toBeInstanceOf(Float32Array);
     expect(request.sampleRate).toBe(48000);
+    expect(request.params).toEqual({ preset: 'streaming' });
+    expect(store.mixer.masteringChain?.preset).toBe('streaming');
+  });
+
+  it('uses the selected mastering preset as the assistant base', async () => {
+    setMasteringPreset('edm');
+    const wasm = await masteringWasm();
+    wasm.masteringAssistantSuggestStereo?.mockClear();
+    addMasteringProcessor('eq.tilt');
+    const fake = makeFakeRender();
+    const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
+    await wrapper.find('.preview-button').trigger('click');
+    fake.calls[0].resolve(makeResult(0.5));
+    await flush();
+    fake.calls[1].resolve(makeResult(0.25));
+    await flush();
+
+    await wrapper.find('.assist-button').trigger('click');
+    await flush();
+
+    const request = wasm.masteringAssistantSuggestStereo?.mock.calls[0][0] as {
+      params: { preset: string };
+    };
+    expect(request.params).toEqual({ preset: 'edm' });
     expect(store.mixer.masteringChain?.preset).toBe('edm');
   });
 
@@ -789,7 +814,6 @@ describe('MasteringPanel.vue', () => {
     const wasm = await masteringWasm();
     wasm.masteringAssistantSuggestStereo?.mockReturnValueOnce(
       JSON.stringify({
-        genreCandidates: [{ name: 'edm', score: 1 }],
         chainConfig: {
           version: 1,
           params: { 'loudness.targetLufs': -14, 'loudness.ceilingDb': -1 },
@@ -808,7 +832,7 @@ describe('MasteringPanel.vue', () => {
     await wrapper.find('.assist-button').trigger('click');
     await flush();
 
-    expect(store.mixer.masteringChain?.preset).toBe('edm');
+    expect(store.mixer.masteringChain?.preset).toBe('streaming');
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
     const adjustments = wrapper.findAll('.assist-adjustments li');
     expect(adjustments).toHaveLength(1);
@@ -840,7 +864,8 @@ describe('MasteringPanel.vue', () => {
       await flush();
 
       expect(wasm.masteringAssistantSuggest).toHaveBeenCalledTimes(1);
-      expect(store.mixer.masteringChain?.preset).toBe('pop');
+      expect(wasm.masteringAssistantSuggest.mock.calls[0][2]).toEqual({ preset: 'streaming' });
+      expect(store.mixer.masteringChain?.preset).toBe('streaming');
     } finally {
       wasm.masteringAssistantSuggestStereo = stereo;
     }

@@ -21,6 +21,19 @@ export async function run(ctx) {
   } else {
     await streamingPreset.click();
   }
+  // The assistant now starts from the selected preset and returns measured
+  // adjustments; it no longer picks a genre. Exercise the real WASM analysis
+  // and assert the named base appears in the UI after the preview render.
+  await page.click('.mastering-panel .assist-button');
+  await page.waitForSelector('.mastering-panel .assist-result .assist-chip-name', {
+    timeout: 60000,
+  });
+  const assistantBase = await page
+    .locator('.mastering-panel .assist-result .assist-chip-name')
+    .textContent();
+  if (!assistantBase?.includes('Streaming')) {
+    fail(`assistant did not use the selected Streaming preset: ${assistantBase}`);
+  }
   // PPQ is quarter-note ticks; 8 ticks is a short, audible probe and keeps
   // the worker render comfortably within libsonare's Float32 input budget.
   const presetProbeRange = { startPpq: 0, endPpq: 8 };

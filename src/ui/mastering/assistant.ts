@@ -1,23 +1,14 @@
 /**
  * Parsing for the libsonare mastering assistant (`masteringAssistantSuggest`),
  * which analyzes a mix and returns a JSON string. Pure data module: it turns
- * that string into a typed suggestion and picks the preset to apply. The wasm
- * call, the audio render and the (undoable) preset apply live in the panel.
+ * that string into a typed suggestion. The wasm call, the audio render and
+ * the (undoable) preset apply live in the panel.
  *
- * The assistant's `genreCandidates[].name` values are the camelCase preset
- * identifiers (pop, edm, jpop, …), so the top candidate maps directly onto the
- * project's mastering preset selector. Its flat `chainConfig.params` is that
- * preset's chain tuned to the mix; the keys where it differs from the preset
- * become the chain's preset overrides.
+ * The assistant starts from the named preset supplied by the caller (the
+ * runtime defaults to `streaming`) and returns that chain tuned to the mix.
+ * Its flat `chainConfig.params` contains the complete tuned chain; the keys
+ * where it differs from the selected preset become the project's overrides.
  */
-
-/** One scored genre/preset candidate from the assistant. */
-export interface MasteringGenreCandidate {
-  /** camelCase preset identifier (e.g. 'pop', 'jpop'). */
-  name: string;
-  /** Match score (higher = stronger); candidates arrive best-first. */
-  score: number;
-}
 
 /** Numeric audio profile measured by the assistant. */
 export interface MasteringProfile {
@@ -36,13 +27,11 @@ export interface MasteringProfile {
 
 /** A parsed mastering-assistant suggestion. */
 export interface MasteringSuggestion {
-  /** Scored preset candidates, best first (may be empty). */
-  genreCandidates: MasteringGenreCandidate[];
   /** Human-readable reasoning lines from the assistant (may be empty). */
   explanation: string[];
   /** Measured audio profile, or null when the assistant omitted it. */
   profile: MasteringProfile | null;
-  /** Flat chain params tuned for the top candidate, or null when omitted. */
+  /** Flat chain params tuned from the named base preset, or null when omitted. */
   chainParams: Record<string, number | boolean> | null;
 }
 
@@ -67,36 +56,30 @@ function numberField(record: Record<string, unknown>, key: string): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function emptySuggestion(): MasteringSuggestion {
+  return { explanation: [], profile: null, chainParams: null };
+}
+
 /**
  * Parses the assistant's JSON string into a typed suggestion. Malformed input,
  * missing fields and wrong types are tolerated: a non-object or unparseable
  * string yields an empty suggestion rather than throwing.
  *
  * @param json The raw string returned by `masteringAssistantSuggest`.
- * @returns The parsed suggestion (empty candidates/explanation, null profile,
- *   on any problem).
+ * @returns The parsed suggestion (empty explanation, null profile and chain
+ *   params on any problem).
  */
 export function parseMasteringSuggestion(json: string): MasteringSuggestion {
   let root: unknown;
   try {
     root = JSON.parse(json);
   } catch {
-    return { genreCandidates: [], explanation: [], profile: null, chainParams: null };
+    return emptySuggestion();
   }
   if (typeof root !== 'object' || root === null) {
-    return { genreCandidates: [], explanation: [], profile: null, chainParams: null };
+    return emptySuggestion();
   }
   const record = root as Record<string, unknown>;
-
-  const genreCandidates: MasteringGenreCandidate[] = [];
-  if (Array.isArray(record.genreCandidates)) {
-    for (const entry of record.genreCandidates) {
-      if (typeof entry !== 'object' || entry === null) continue;
-      const candidate = entry as Record<string, unknown>;
-      if (typeof candidate.name !== 'string' || candidate.name.length === 0) continue;
-      genreCandidates.push({ name: candidate.name, score: numberField(candidate, 'score') });
-    }
-  }
 
   const explanation: string[] = Array.isArray(record.explanation)
     ? record.explanation.filter((line): line is string => typeof line === 'string')
@@ -120,7 +103,7 @@ export function parseMasteringSuggestion(json: string): MasteringSuggestion {
     }
   }
 
-  return { genreCandidates, explanation, profile, chainParams };
+  return { explanation, profile, chainParams };
 }
 
 /**
@@ -145,24 +128,4 @@ export function suggestedPresetOverrides(
     if (!same) overrides[key] = value;
   }
   return overrides;
-}
-
-/**
- * Picks the preset to apply from a suggestion: the best candidate the project
- * actually offers, falling back to the best candidate overall (still a valid
- * preset id) and then to null when there are no candidates.
- *
- * @param suggestion A parsed suggestion.
- * @param available Preset identifiers the project's catalog supports.
- * @returns The preset name to apply, or null.
- */
-export function suggestedPreset(
-  suggestion: MasteringSuggestion,
-  available: ReadonlyArray<string>,
-): string | null {
-  const candidates = suggestion.genreCandidates;
-  if (candidates.length === 0) return null;
-  const offered = new Set(available);
-  const match = candidates.find((candidate) => offered.has(candidate.name));
-  return (match ?? candidates[0]).name;
 }

@@ -4,17 +4,17 @@ import type { MasteringSuggestion } from '@/ui/mastering/assistant';
 import { humanizePresetName } from '@/ui/mastering/preset-catalog';
 
 /**
- * Result block for the mastering assistant: the scored preset chips (apply on
- * click), the preset values the suggestion tuned, the assistant's explanation
- * lines and the measured loudness profile.
+ * Result block for the mastering assistant: the named base preset, the preset
+ * values the suggestion tuned, the assistant's explanation lines and the
+ * measured loudness profile.
  * The analysis and the (undoable) preset apply are owned by the panel; this
- * component only renders the parsed suggestion and emits the chosen preset.
+ * component only renders the parsed suggestion.
  */
 
 defineProps<{
   /** Parsed assistant suggestion to display. */
   suggestion: MasteringSuggestion;
-  /** Currently selected preset id, used to highlight the matching chip. */
+  /** Base preset used for this suggestion. */
   preset: string | undefined;
   /** Preset values the suggestion tuned, applied as the preset's overrides. */
   adjustments: ReadonlyArray<{
@@ -23,8 +23,6 @@ defineProps<{
     to: number | boolean;
   }>;
 }>();
-
-const emit = defineEmits<(event: 'select', preset: string) => void>();
 
 const { t } = useI18n();
 
@@ -38,21 +36,11 @@ function formatValue(value: number | boolean | undefined): string {
 
 <template>
   <section class="assist-result" :aria-label="t.shell.mastering.assistant.recommended">
-    <div v-if="suggestion.genreCandidates.length" class="assist-section">
+    <div class="assist-section">
       <div class="assist-heading">{{ t.shell.mastering.assistant.recommended }}</div>
-      <div class="assist-candidates">
-        <button
-          v-for="candidate in suggestion.genreCandidates"
-          :key="candidate.name"
-          type="button"
-          class="assist-chip"
-          :class="{ active: candidate.name === preset }"
-          @click="emit('select', candidate.name)"
-        >
-          <span class="assist-chip-name">{{ humanizePresetName(candidate.name) }}</span>
-          <span class="assist-score">{{ Math.round(candidate.score * 100) }}</span>
-        </button>
-      </div>
+      <span class="assist-chip active" role="status">
+        <span class="assist-chip-name">{{ humanizePresetName(preset ?? 'streaming') }}</span>
+      </span>
     </div>
     <div v-if="adjustments.length" class="assist-section">
       <div class="assist-heading">{{ t.shell.mastering.assistant.adjusted }}</div>
