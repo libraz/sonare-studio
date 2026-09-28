@@ -116,6 +116,8 @@ interface MixerScene {
   vcaGroups: SceneVcaGroup[];
 }
 
+const MIX_ASSISTANT_INSERT_PREFIX = 'mix-assistant-';
+
 /** Summary returned after applying a mixer scene template. */
 export interface ApplyMixerSceneResult {
   /** Number of current tracks that received a scene strip. */
@@ -509,6 +511,7 @@ function buildScenePlan(
   scene: MixerScene,
   tracks: ReadonlyArray<EditorTrack>,
   validProcessors: ReadonlySet<string> | null,
+  preserveTrackInserts = false,
 ): {
   mixer: ProjectMixerState;
   tracks: EditorTrack[];
@@ -687,6 +690,20 @@ function buildScenePlan(
       sidechainBySceneId,
       track.kind === 'group' ? 'group' : 'track',
     );
+    if (preserveTrackInserts) {
+      // Keep the user's chain and its stable ids. A later suggestion replaces
+      // the previous suggestion's processors instead of stacking duplicates.
+      const userInserts = (track.mixer ? cloneStrip(track.mixer).inserts : []).filter(
+        (slot) => slot.id?.startsWith(MIX_ASSISTANT_INSERT_PREFIX) !== true,
+      );
+      mixer.inserts = [
+        ...userInserts,
+        ...mixer.inserts.map((slot) => ({
+          ...slot,
+          id: `${MIX_ASSISTANT_INSERT_PREFIX}${slot.id ?? createProcessorId()}`,
+        })),
+      ];
+    }
     const next: EditorTrack = {
       ...track,
       mixer,
@@ -757,10 +774,18 @@ function buildScenePlan(
  * declares a master bus, and an empty one says nothing about the user's chain.
  * Direct master bus DSP or panner fields opt into replacing the master strip.
  */
-export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
+export function applyMixerSceneJson(
+  sceneJson: string,
+  options: { preserveTrackInserts?: boolean } = {},
+): ApplyMixerSceneResult {
   const scene = parseSceneJson(sceneJson);
   const store = useProjectStore();
-  const plan = buildScenePlan(scene, store.tracks, loadRealtimeInsertCatalog());
+  const plan = buildScenePlan(
+    scene,
+    store.tracks,
+    loadRealtimeInsertCatalog(),
+    options.preserveTrackInserts === true,
+  );
   const { replacedTrackIds, replacesMaster } = plan;
   return executeApp(() => {
     // Scene templates replace routing and strip state, not project-wide
@@ -784,7 +809,11 @@ export function applyMixerSceneJson(sceneJson: string): ApplyMixerSceneResult {
         return !replacesMaster || parseInsertAutomationParam(lane.param) === undefined;
       }
       if (replacedTrackIds.has(lane.target)) {
-        return parseInsertAutomationParam(lane.param) === undefined;
+        const insert = parseInsertAutomationParam(lane.param);
+        if (options.preserveTrackInserts === true) {
+          return !insert?.processorId?.startsWith(MIX_ASSISTANT_INSERT_PREFIX);
+        }
+        return insert === undefined;
       }
       return true;
     });

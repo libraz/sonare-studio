@@ -14,6 +14,7 @@ import {
   setMasteringPresetOverride,
   undo,
 } from '@/project/commands';
+import { getWasmModule } from '@/project/runtime';
 import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { DEFAULT_PREVIEW_GAIN } from '@/ui/media/preview';
@@ -123,8 +124,108 @@ describe('MasteringPanel.vue', () => {
   it('shows the empty chain with no preset selected', () => {
     const wrapper = mount(MasteringPanel);
     expect(wrapper.find('.preset-button').text()).toContain('No preset');
+    expect(wrapper.find('.mastering-signal-path').text()).toContain(
+      'Playback: realtime processors',
+    );
+    expect(wrapper.find('.mastering-signal-path').text()).toContain('Preview/export');
     expect(wrapper.findAll('.chain-slot')).toHaveLength(0);
     expect(wrapper.find('.chain-add').exists()).toBe(true);
+  });
+
+  it('explains live and render paths and classifies processors from the realtime catalog', async () => {
+    setMasteringPreset('streaming');
+    addMasteringProcessor('dynamics.compressor');
+    // This processor is available to the offline catalog but absent from the
+    // fake authoritative realtime insert catalog.
+    addMasteringProcessor('repair.dereverbClassical');
+    const wasm = getWasmModule() as unknown as {
+      masteringProcessorCatalog: () => Array<{
+        id: string;
+        kind: 'realtime' | 'offline' | 'pair';
+        realtimeInsertable: boolean;
+        stereoOnly: boolean;
+      }>;
+    };
+    const originalCatalog = wasm.masteringProcessorCatalog;
+    wasm.masteringProcessorCatalog = () => [
+      ...originalCatalog(),
+      {
+        id: 'repair.dereverbClassical',
+        kind: 'offline',
+        realtimeInsertable: false,
+        stereoOnly: false,
+      },
+    ];
+    try {
+      const wrapper = mount(MasteringPanel);
+
+      expect(wrapper.find('.preset-button').text()).toContain('Streaming');
+      expect(wrapper.find('.mastering-signal-path').text()).toContain(
+        'Playback: realtime processors (also render/export)',
+      );
+      expect(wrapper.find('.mastering-signal-path').text()).toContain(
+        'Preset → all enabled rack processors',
+      );
+
+      const runtimeBadges = wrapper.findAll('.chain-runtime');
+      expect(runtimeBadges).toHaveLength(2);
+      expect(runtimeBadges[0].classes()).toContain('runtime-live-export');
+      expect(runtimeBadges[0].text()).toBe('Live');
+      expect(runtimeBadges[0].attributes('title')).toBe('Live + export');
+      expect(runtimeBadges[1].classes()).toContain('runtime-preview-export');
+      expect(runtimeBadges[1].text()).toBe('Render');
+      expect(runtimeBadges[1].attributes('title')).toBe('Preview / export');
+
+      await wrapper.find('.chain-add').trigger('click');
+      const catalogItems = wrapper.findAll('.catalog-item');
+      expect(catalogItems[0]?.find('.catalog-item-scope').text()).toBe('Live');
+      expect(catalogItems[0]?.find('.catalog-item-scope').attributes('title')).toBe(
+        'Live + export',
+      );
+      const offlineItem = catalogItems.find(
+        (item) => item.find('.catalog-item-label').text() === 'Dereverb Classical',
+      );
+      expect(offlineItem?.find('.catalog-item-scope').text()).toBe('Render');
+      expect(offlineItem?.find('.catalog-item-scope').attributes('title')).toBe('Preview / export');
+      wrapper.unmount();
+    } finally {
+      wasm.masteringProcessorCatalog = originalCatalog;
+    }
+  });
+
+  it('keeps a valid empty realtime catalog distinct from an unavailable catalog', () => {
+    addMasteringProcessor('dynamics.compressor');
+    const wasm = getWasmModule() as unknown as {
+      masteringInsertNames: () => string[];
+    };
+    const originalNames = wasm.masteringInsertNames;
+    try {
+      wasm.masteringInsertNames = () => [];
+      const emptyCatalogWrapper = mount(MasteringPanel);
+      expect(emptyCatalogWrapper.find('.chain-runtime').classes()).toContain(
+        'runtime-preview-export',
+      );
+      expect(emptyCatalogWrapper.find('.chain-runtime').text()).toBe('Render');
+      emptyCatalogWrapper.unmount();
+
+      wasm.masteringInsertNames = () => [1] as unknown as string[];
+      const malformedCatalogWrapper = mount(MasteringPanel);
+      expect(malformedCatalogWrapper.find('.chain-runtime').classes()).toContain('runtime-unknown');
+      malformedCatalogWrapper.unmount();
+
+      wasm.masteringInsertNames = () => {
+        throw new Error('catalog unavailable');
+      };
+      const unavailableCatalogWrapper = mount(MasteringPanel);
+      expect(unavailableCatalogWrapper.find('.chain-runtime').classes()).toContain(
+        'runtime-unknown',
+      );
+      expect(unavailableCatalogWrapper.find('.chain-runtime').text()).toBe('Unknown');
+      expect(unavailableCatalogWrapper.find('.mastering-signal-path-warning').exists()).toBe(true);
+      unavailableCatalogWrapper.unmount();
+    } finally {
+      wasm.masteringInsertNames = originalNames;
+    }
   });
 
   it('selects a preset from the searchable dropdown as an undoable edit', async () => {

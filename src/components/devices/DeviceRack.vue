@@ -63,6 +63,8 @@ import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
 import { formatSize } from '@/ui/shell/format';
 import type { Sf2ProgramStatus } from '@/wasm/index.js';
+import StripAutomationControls from '../mixer/StripAutomationControls.vue';
+import AmpSimEditor from './AmpSimEditor.vue';
 import PatchEditor from './PatchEditor.vue';
 import QuickControls from './QuickControls.vue';
 
@@ -126,6 +128,12 @@ const instrument = computed(() => {
 });
 
 const inserts = computed(() => activeTrack.value?.mixer?.inserts ?? []);
+
+const ampSimInsertIndex = computed(() =>
+  inserts.value.findIndex((insert) => insert.processor === 'saturation.ampSim'),
+);
+
+const isAudioTrack = computed(() => activeTrack.value?.kind === 'audio');
 
 const activeTrackUsesProjectExternal = computed(
   () => activeTrack.value?.externalMidiMode === 'project' && store.projectExternalMidi !== null,
@@ -213,6 +221,14 @@ const instrumentCaption = computed(() => {
 
 /** 'instrument' or the index of the selected insert slot. */
 const selectedDevice = ref<'instrument' | number>('instrument');
+
+/** The selected amp slot, when the active device is an AmpSim insert. */
+const selectedAmpSimInsertIndex = computed(() => {
+  const selected = selectedDevice.value;
+  return typeof selected === 'number' && inserts.value[selected]?.processor === 'saturation.ampSim'
+    ? selected
+    : -1;
+});
 
 watch(
   () => store.activeTrackId,
@@ -1025,6 +1041,20 @@ function onAddInsert(processor: string): void {
   });
 }
 
+/** Opens the existing amp or adds a clean amp to an audio/DI track. */
+function openOrAddGuitarAmp(): void {
+  const track = activeTrack.value;
+  if (track?.kind !== 'audio') return;
+  if (ampSimInsertIndex.value >= 0) {
+    selectedDevice.value = ampSimInsertIndex.value;
+    return;
+  }
+  run(() => {
+    const index = addInsert(track.id, 'saturation.ampSim', { presetIndex: 0 });
+    selectedDevice.value = index;
+  });
+}
+
 function onToggleInsert(index: number): void {
   const track = activeTrack.value;
   const slot = inserts.value[index];
@@ -1553,6 +1583,20 @@ const instrumentSourceCaption = computed(() => {
         </Transition>
       </div>
 
+      <section v-if="isAudioTrack" class="guitar-amp-entry" :aria-label="t.shell.devicesPanel.guitarAmpTitle">
+        <div class="guitar-amp-copy">
+          <h4>{{ t.shell.devicesPanel.guitarAmpTitle }}</h4>
+          <p>{{ t.shell.devicesPanel.guitarAmpHint }}</p>
+        </div>
+        <button type="button" class="guitar-amp-action" @click="openOrAddGuitarAmp">
+          {{
+            ampSimInsertIndex >= 0
+              ? t.shell.devicesPanel.openGuitarAmp
+              : t.shell.devicesPanel.addGuitarAmp
+          }}
+        </button>
+      </section>
+
       <DeviceInsertChain
         v-model:add-insert-value="addInsertValue"
         :inserts="inserts"
@@ -1565,8 +1609,25 @@ const instrumentSourceCaption = computed(() => {
         @move-insert="onMoveInsert"
       />
 
+      <AmpSimEditor
+        v-if="isAudioTrack && selectedAmpSimInsertIndex >= 0"
+        :track-id="activeTrack.id"
+        :insert-index="selectedAmpSimInsertIndex"
+        :position-ppq="positionPpq"
+        :position-sample="positionSample"
+        :is-playing="transportPlaying"
+        :schedule-automation-write="scheduleAutomationWrite"
+      />
+
       <div class="rack-quick-controls">
-        <h4 class="chain-title">{{ t.shell.devicesPanel.quickControls }}</h4>
+        <div class="rack-quick-controls-header">
+          <h4 class="chain-title">{{ t.shell.devicesPanel.quickControls }}</h4>
+          <StripAutomationControls
+            v-if="activeTrack && activeTrack.kind !== 'group' && quickControlTarget"
+            :target="activeTrack.id"
+            :name="activeTrack.name"
+          />
+        </div>
         <QuickControls
           v-if="quickControlTarget"
           :key="quickControlKey"

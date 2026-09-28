@@ -145,6 +145,40 @@ const chain = computed<MasteringChainState>(
   () => store.mixer.masteringChain ?? createDefaultMasteringChain(),
 );
 
+type ProcessorRuntime = 'live-export' | 'preview-export' | 'unknown';
+
+/**
+ * The live engine accepts only the names returned by its authoritative insert
+ * catalog. The authoritative name API is read directly here so a valid empty
+ * array remains an empty set; only an unavailable or malformed API result is
+ * shown as unknown rather than guessing from a processor category or the
+ * offline catalog.
+ */
+const realtimeProcessorNames = computed<ReadonlySet<string> | null>(() => {
+  if (!store.initialized) return null;
+  try {
+    const names = getWasmModule().masteringInsertNames();
+    if (!Array.isArray(names) || !names.every((name) => typeof name === 'string')) return null;
+    return new Set(names);
+  } catch {
+    return null;
+  }
+});
+
+function processorRuntime(processor: string): ProcessorRuntime {
+  const names = realtimeProcessorNames.value;
+  if (!names) return 'unknown';
+  return names.has(processor) ? 'live-export' : 'preview-export';
+}
+
+const processorRuntimeStates = computed<ProcessorRuntime[]>(() =>
+  chain.value.processors.map((slot) => processorRuntime(slot.processor)),
+);
+
+const hasUnknownProcessorRuntime = computed(() =>
+  processorRuntimeStates.value.some((state) => state === 'unknown'),
+);
+
 /** Surfaced when a command or render rejects. */
 const error = ref('');
 
@@ -1028,6 +1062,24 @@ onBeforeUnmount(() => {
         @update:query="presetQuery = $event"
         @select="onSelectPreset"
       />
+      <div
+        class="mastering-signal-path"
+        role="note"
+        :aria-label="t.shell.mastering.signalPath.title"
+      >
+        <span class="mastering-signal-path-title">{{ t.shell.mastering.signalPath.title }}</span>
+        <span class="mastering-signal-path-row">
+          <span class="mastering-signal-path-label">{{ t.shell.mastering.signalPath.liveLabel }}</span>
+          <span>{{ t.shell.mastering.signalPath.live }}</span>
+        </span>
+        <span class="mastering-signal-path-row">
+          <span class="mastering-signal-path-label">{{ t.shell.mastering.signalPath.renderLabel }}</span>
+          <span>{{ t.shell.mastering.signalPath.render }}</span>
+        </span>
+        <span v-if="hasUnknownProcessorRuntime" class="mastering-signal-path-warning">
+          {{ t.shell.mastering.signalPath.classificationUnavailable }}
+        </span>
+      </div>
       <button
         type="button"
         class="assist-button"
@@ -1050,6 +1102,8 @@ onBeforeUnmount(() => {
         :drag-over-index="dragOverIndex"
         :add-menu-open="addMenuOpen"
         :catalog="catalog"
+        :processor-runtime="processorRuntimeStates"
+        :realtime-processor-ids="realtimeProcessorNames"
         @toggle-enabled="onToggleEnabled"
         @toggle-expanded="toggleExpanded"
         @remove="onRemove"

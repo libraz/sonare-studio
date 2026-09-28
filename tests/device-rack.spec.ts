@@ -1,10 +1,12 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import AmpSimEditor from '@/components/devices/AmpSimEditor.vue';
 import DeviceRack from '@/components/devices/DeviceRack.vue';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 import {
   addAudioTrack,
+  addInsert,
   addTrack,
   clearHistory,
   renameTrack,
@@ -131,6 +133,55 @@ describe('DeviceRack.vue', () => {
     const wrapper = mount(DeviceRack);
     expect(wrapper.find('.instrument-button').exists()).toBe(false);
     expect(wrapper.find('.add-insert').exists()).toBe(true);
+  });
+
+  it('keeps amp quick controls and strip automation beside the open amp editor', async () => {
+    const audioId = addAudioTrack({ name: 'DI Guitar' });
+    setActiveTrack(audioId);
+    const positionPpq = () => 8;
+    const positionSample = () => 1024;
+    const scheduleAutomationWrite = vi.fn();
+    const wrapper = mount(DeviceRack, {
+      props: { positionPpq, positionSample, transportPlaying: true, scheduleAutomationWrite },
+    });
+
+    await wrapper.find('.guitar-amp-action').trigger('click');
+
+    expect(wrapper.find('.amp-sim-editor').exists()).toBe(true);
+    const ampEditor = wrapper.findComponent(AmpSimEditor);
+    expect(ampEditor.props('positionPpq')).toBe(positionPpq);
+    expect(ampEditor.props('positionSample')).toBe(positionSample);
+    expect(ampEditor.props('isPlaying')).toBe(true);
+    expect(ampEditor.props('scheduleAutomationWrite')).toBe(scheduleAutomationWrite);
+    expect(wrapper.find('.rack-quick-controls').exists()).toBe(true);
+    expect(
+      wrapper.find('.rack-quick-controls [data-control="drive"]').attributes('aria-valuenow'),
+    ).toBe('0.25');
+    expect(wrapper.find('.rack-quick-controls [data-control="micDistanceCm"]').exists()).toBe(
+      false,
+    );
+    expect(wrapper.find('.rack-quick-controls .strip-auto').exists()).toBe(true);
+    expect(wrapper.findAll('.rack-quick-controls .strip-auto button')).toHaveLength(3);
+  });
+
+  it('opens the selected amp insert when a track contains multiple amp slots', async () => {
+    const audioId = addAudioTrack({ name: 'DI Guitar' });
+    addInsert(audioId, 'saturation.ampSim', { presetIndex: 0 });
+    addInsert(audioId, 'saturation.ampSim', { presetIndex: 5 });
+    setActiveTrack(audioId);
+    const wrapper = mount(DeviceRack);
+
+    // The shortcut opens the first amp, preserving the familiar guitar-amp action.
+    await wrapper.find('.guitar-amp-action').trigger('click');
+    expect(wrapper.find('input[aria-label="Drive"]').element).toHaveProperty('value', '0.25');
+
+    await wrapper.findAll('.insert-name')[1].trigger('click');
+    expect(wrapper.find('input[aria-label="Drive"]').element).toHaveProperty('value', '0.8');
+
+    await wrapper.find('input[aria-label="Drive"]').setValue('0.9');
+    const inserts = store.tracks.find((track) => track.id === audioId)?.mixer?.inserts;
+    expect(inserts?.[0].params.drive).toBeUndefined();
+    expect(inserts?.[1].params.drive).toBe(0.9);
   });
 
   it('opens the picker and commits a searched preset selection', async () => {

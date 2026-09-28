@@ -20,6 +20,7 @@ import { isAutomatableSynthParam } from '@/project/instrument';
 import type { NumberProcessorControl, ProcessorControlValue } from '@/project/processor-controls';
 import { formatProcessorControlValue } from '@/project/processor-controls';
 import {
+  isAmpConstructionOnlyParam,
   listQuickControls,
   type QuickControl,
   type QuickControlResolvers,
@@ -121,7 +122,8 @@ function automationParamToken(controlId: string): AutomationParam | null {
         ? store.tracks.find((track) => track.id === stripTarget)?.mixer
         : store.mixer.buses.find((bus) => bus.id === mixerBusIdFromTarget(stripTarget))?.strip;
   const slot = strip?.inserts[props.target.index];
-  return insertAutomationParam(slot?.id ?? props.target.index, controlId);
+  if (!slot || isAmpConstructionOnlyParam(slot.processor, controlId)) return null;
+  return insertAutomationParam(slot.id ?? props.target.index, controlId);
 }
 
 /** Write context decided when a write-mode knob drag begins. */

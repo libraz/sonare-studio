@@ -119,6 +119,49 @@ describe('QuickControls.vue', () => {
     expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
   });
 
+  it('renders inherited amp values from the selected preset and hides construction controls', () => {
+    addInsert(trackId, 'saturation.ampSim', { presetIndex: 5 });
+    const wrapper = mount(QuickControls, {
+      props: { target: { type: 'insert', trackId, index: 0 } },
+    });
+
+    expect(wrapper.find('[data-control="drive"]').attributes('aria-valuenow')).toBe('0.8');
+    expect(wrapper.find('[data-control="micDistanceCm"]').exists()).toBe(false);
+    expect(wrapper.find('[data-control="ampModel"]').exists()).toBe(false);
+  });
+
+  it('touch-records an amp realtime knob while construction controls stay unavailable', async () => {
+    addInsert(trackId, 'saturation.ampSim', { presetIndex: 5 });
+    setAutomationStripMode(trackId, 'touch');
+    const scheduled: unknown[] = [];
+    const wrapper = mount(QuickControls, {
+      props: {
+        target: { type: 'insert', trackId, index: 0 },
+        positionPpq: () => 0,
+        positionSample: () => 512,
+        isPlaying: true,
+        scheduleAutomationWrite: (...args: unknown[]) => scheduled.push(args),
+      },
+    });
+    const drive = wrapper.find('[data-control="drive"]');
+    firePointer(drive, 'pointerdown', { button: 0, pointerId: 8, clientY: 100 });
+    firePointer(drive, 'pointermove', { pointerId: 8, clientY: 130 });
+    firePointer(drive, 'pointerup', { pointerId: 8, clientY: 130 });
+    await wrapper.vm.$nextTick();
+
+    const insert = store.tracks[0].mixer?.inserts[0];
+    const param = insertAutomationParam(insert?.id as string, 'drive');
+    expect(insert?.params.drive).toBeUndefined();
+    expect(
+      store.automationLanes.find((lane) => lane.param === param)?.points.length,
+    ).toBeGreaterThan(0);
+    expect(scheduled[0]).toEqual([
+      trackId,
+      param,
+      expect.objectContaining({ ppq: 0, samplePos: 512 }),
+    ]);
+  });
+
   it('renders typed insert controls as toggles and enum menus', async () => {
     addInsert(trackId, 'dynamics.compressor');
     const wrapper = mount(QuickControls, {

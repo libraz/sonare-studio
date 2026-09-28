@@ -34,7 +34,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>();
 
 /** Bars measured when no loop is active. */
-const SUGGEST_BARS = 32;
+const SUGGEST_BARS = 8;
 
 const store = useProjectStore();
 const { t } = useI18n();
@@ -47,6 +47,7 @@ const result = shallowRef<MixAssistantResult | null>(null);
 const measuredTracks = shallowRef<ReadonlyMap<string, { id: number; name: string }>>(new Map());
 let handle: ExportRenderHandle | null = null;
 let generation = 0;
+let measuredProject = '';
 
 async function analyze(): Promise<void> {
   const current = ++generation;
@@ -55,7 +56,9 @@ async function analyze(): Promise<void> {
   error.value = null;
   result.value = null;
   try {
-    const doc = neutralMixDocument(serializeProject());
+    const source = serializeProject();
+    measuredProject = JSON.stringify(source);
+    const doc = neutralMixDocument(source);
     const range = derivePreviewRange(
       { enabled: props.loopEnabled, startPpq: props.loopStartPpq, endPpq: props.loopEndPpq },
       store.timeSignatures,
@@ -69,6 +72,10 @@ async function analyze(): Promise<void> {
     });
     const rendered = await handle.result;
     if (current !== generation) return;
+    if (JSON.stringify(serializeProject()) !== measuredProject) {
+      error.value = s.value.stale;
+      return;
+    }
     const stems: MixAssistantStem[] = (rendered.stems ?? []).flatMap((stem) => {
       const track = store.tracks[stem.trackIndex];
       if ((stem.source ?? 'track') !== 'track' || !track || track.kind === 'group') return [];
@@ -127,6 +134,11 @@ function classLabel(source: string): string {
 function onApply(): void {
   const suggestion = result.value;
   if (!suggestion) return;
+  if (JSON.stringify(serializeProject()) !== measuredProject) {
+    error.value = s.value.stale;
+    result.value = null;
+    return;
+  }
   const stillThere = [...measuredTracks.value.values()].every((measured) =>
     store.tracks.some((track) => track.id === measured.id),
   );
@@ -135,7 +147,7 @@ function onApply(): void {
     return;
   }
   try {
-    applyMixerSceneJson(JSON.stringify(suggestion.scene));
+    applyMixerSceneJson(JSON.stringify(suggestion.scene), { preserveTrackInserts: true });
     emit('close');
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);

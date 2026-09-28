@@ -115,6 +115,7 @@ export const FALLBACK_INSERT_CATALOG: readonly string[] = [
   'saturation.tape',
   'saturation.tube',
   'saturation.softClipper',
+  'saturation.ampSim',
   'saturation.exciter',
   'saturation.waveshaper',
   'spectral.airBand',

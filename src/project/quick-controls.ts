@@ -16,7 +16,11 @@ import {
   patchFieldSpec,
 } from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
-import type { MasteringInsertSlot, SynthEnumTables } from '@/wasm/index.js';
+import type {
+  MasteringAmpPresetCatalogEntry,
+  MasteringInsertSlot,
+  SynthEnumTables,
+} from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
   isMixerBusStripTarget,
@@ -64,7 +68,27 @@ export interface QuickControlResolvers {
   resolveInsertParamInfo?: (processor: string) => ProcessorParamInfo[];
   /** Resolves an insert processor's conditional key groups (EQ and crossover bands). */
   resolveInsertSlots?: (processor: string) => MasteringInsertSlot[];
+  /** Resolves the canonical amp-sim rigs used for sparse preset parameters. */
+  resolveAmpPresetCatalog?: () => MasteringAmpPresetCatalogEntry[];
 }
+
+/** Amp-sim keys that are read while constructing the processor, not in realtime. */
+const AMP_CONSTRUCTION_ONLY_PARAMS = new Set([
+  'presetIndex',
+  'topology',
+  'ampModel',
+  'cab',
+  'cabModel',
+  'micModel',
+  'micDistanceCm',
+  'micBModel',
+  'micBDistanceCm',
+  'micBInvert',
+  'doppler',
+  'preampStages',
+  'powerTube',
+]);
+const ampPresetCatalogCache = new WeakMap<object, MasteringAmpPresetCatalogEntry[]>();
 
 /** One entry of the NativeSynth quick-control table. */
 interface SynthControlSpec {
@@ -285,6 +309,79 @@ function defaultResolveInsertParams(processor: string): string[] {
   }
 }
 
+/** Returns the canonical amp-sim catalog from the loaded libsonare module. */
+function defaultResolveAmpPresetCatalog(): MasteringAmpPresetCatalogEntry[] {
+  try {
+    const wasm = getWasmModule();
+    const cached = ampPresetCatalogCache.get(wasm);
+    if (cached) return cached;
+    if (typeof wasm.masteringAmpPresetCatalog !== 'function') return [];
+    const entries = wasm.masteringAmpPresetCatalog();
+    ampPresetCatalogCache.set(wasm, entries);
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Resolves sparse amp parameters against the canonical preset values. The
+ * document keeps only `presetIndex` and explicit overrides; the quick-control
+ * surface must still display the values the realtime insert actually starts
+ * with. Unknown presets retain the normal catalog defaults.
+ */
+interface ResolvedAmpParams {
+  params: Readonly<Record<string, unknown>>;
+  hasPresetIndex: boolean;
+  catalogAvailable: boolean;
+}
+
+function resolvedInsertParams(
+  processor: string,
+  params: Readonly<Record<string, unknown>>,
+  resolveAmpPresetCatalog: () => MasteringAmpPresetCatalogEntry[],
+): ResolvedAmpParams {
+  if (processor !== 'saturation.ampSim') {
+    return { params, hasPresetIndex: false, catalogAvailable: false };
+  }
+  const presetIndex = params.presetIndex;
+  const hasPresetIndex = typeof presetIndex === 'number' && Number.isInteger(presetIndex);
+  let catalog: MasteringAmpPresetCatalogEntry[] = [];
+  try {
+    catalog = resolveAmpPresetCatalog();
+  } catch {
+    catalog = [];
+  }
+  if (!hasPresetIndex) {
+    return {
+      params,
+      hasPresetIndex: false,
+      catalogAvailable: catalog.length > 0,
+    };
+  }
+  const preset = catalog.find((entry) => entry.index === presetIndex);
+  return {
+    params: preset ? { ...preset.params, ...params } : params,
+    hasPresetIndex: true,
+    catalogAvailable: catalog.length > 0,
+  };
+}
+
+/** Construction-only amp controls must not be offered as live knobs. */
+export function isAmpConstructionOnlyParam(
+  processor: string,
+  param: string,
+  paramInfo: ReadonlyArray<ProcessorParamInfo> = catalogParamInfo(processor),
+): boolean {
+  if (processor !== 'saturation.ampSim') return false;
+  const info = paramInfo.find((entry) => entry.name === param);
+  return (
+    AMP_CONSTRUCTION_ONLY_PARAMS.has(param) ||
+    info?.id === null ||
+    (info as { rtSafe?: boolean } | undefined)?.rtSafe === false
+  );
+}
+
 /** Returns the strip a quick-control insert target lives on, or throws. */
 function requireStrip(target: MixerStripTarget): MixerStrip {
   const store = useProjectStore();
@@ -390,7 +487,32 @@ export function listQuickControls(
   const resolveInfo = resolvers.resolveInsertParamInfo ?? catalogParamInfo;
   const paramInfo = resolveInfo(slot.processor);
   const slots = (resolvers.resolveInsertSlots ?? catalogSlots)(slot.processor);
-  return processorControls(slot.processor, catalogNames, slot.params, paramInfo, slots);
+  const resolved = resolvedInsertParams(
+    slot.processor,
+    slot.params,
+    resolvers.resolveAmpPresetCatalog ?? defaultResolveAmpPresetCatalog,
+  );
+  const controls = processorControls(
+    slot.processor,
+    catalogNames,
+    resolved.params,
+    paramInfo,
+    slots,
+  );
+  if (
+    slot.processor === 'saturation.ampSim' &&
+    resolved.hasPresetIndex &&
+    !resolved.catalogAvailable
+  ) {
+    return controls.filter(
+      (control) =>
+        Object.hasOwn(slot.params, control.id) &&
+        !isAmpConstructionOnlyParam(slot.processor, control.id, paramInfo),
+    );
+  }
+  return controls.filter(
+    (control) => !isAmpConstructionOnlyParam(slot.processor, control.id, paramInfo),
+  );
 }
 
 /**

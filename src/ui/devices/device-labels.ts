@@ -6,6 +6,10 @@
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { patchEditCount } from './patch-draft';
 
+const INSERT_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
+  'saturation.ampSim': 'Guitar Amp',
+};
+
 /** Splits a camelCase identifier into a capitalized display name. */
 function humanize(name: string): string {
   const spaced = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
@@ -67,6 +71,8 @@ export function instrumentLabel(instrument: TrackInstrument, fontName?: string |
  * catalog name (e.g. 'dynamics.compressor' → 'Compressor').
  */
 export function insertLabel(processor: string): string {
+  const override = INSERT_LABEL_OVERRIDES[processor];
+  if (override !== undefined) return override;
   const segments = processor.split('.');
   const last = segments[segments.length - 1] ?? processor;
   return last.length > 0 ? humanize(last) : processor;

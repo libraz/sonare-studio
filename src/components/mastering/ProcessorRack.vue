@@ -29,6 +29,10 @@ const props = defineProps<{
   addMenuOpen: boolean;
   /** Grouped processor catalog for the add menu. */
   catalog: ReadonlyArray<InsertCatalogGroup>;
+  /** Live/realtime availability from the authoritative engine catalog. */
+  processorRuntime: ReadonlyArray<'live-export' | 'preview-export' | 'unknown'>;
+  /** Authoritative realtime processor ids used to label the offline add menu. */
+  realtimeProcessorIds: ReadonlySet<string> | null;
 }>();
 
 const emit = defineEmits<{
@@ -71,6 +75,33 @@ function moveProcessor(index: number, delta: -1 | 1): void {
   emit('move', index, target);
 }
 
+function processorRuntimeFor(processor: string): 'live-export' | 'preview-export' | 'unknown' {
+  if (!props.realtimeProcessorIds) return 'unknown';
+  return props.realtimeProcessorIds.has(processor) ? 'live-export' : 'preview-export';
+}
+
+function processorRuntimeLabel(runtime: 'live-export' | 'preview-export' | 'unknown'): string {
+  switch (runtime) {
+    case 'live-export':
+      return t.value.shell.mastering.signalPath.processorLiveExport;
+    case 'preview-export':
+      return t.value.shell.mastering.signalPath.processorPreviewExport;
+    case 'unknown':
+      return t.value.shell.mastering.signalPath.processorUnknown;
+  }
+}
+
+function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unknown'): string {
+  switch (runtime) {
+    case 'live-export':
+      return t.value.shell.mastering.signalPath.processorLiveBadge;
+    case 'preview-export':
+      return t.value.shell.mastering.signalPath.processorPreviewBadge;
+    case 'unknown':
+      return t.value.shell.mastering.signalPath.processorUnknownBadge;
+  }
+}
+
 defineExpose({ addMenuEl });
 </script>
 
@@ -87,6 +118,7 @@ defineExpose({ addMenuEl });
       :can-move-up="index > 0"
       :can-move-down="index < processors.length - 1"
       :controls="controlsFor(index)"
+      :processor-runtime="processorRuntime[index] ?? 'unknown'"
       @toggle-enabled="emit('toggle-enabled', $event)"
       @toggle-expanded="emit('toggle-expanded', $event)"
       @remove="emit('remove', $event)"
@@ -125,6 +157,14 @@ defineExpose({ addMenuEl });
             @click="emit('add-processor', processor.id)"
           >
             <span class="catalog-item-label">{{ processor.label }}</span>
+            <span
+              class="catalog-item-scope"
+              :class="`scope-${processorRuntimeFor(processor.id)}`"
+              :title="processorRuntimeLabel(processorRuntimeFor(processor.id))"
+              :aria-label="processorRuntimeLabel(processorRuntimeFor(processor.id))"
+            >
+              {{ processorRuntimeBadge(processorRuntimeFor(processor.id)) }}
+            </span>
             <span v-if="processor.stereoOnly" class="catalog-item-tag">{{
               t.shell.inserts.stereoOnly
             }}</span>

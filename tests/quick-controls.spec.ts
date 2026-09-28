@@ -1,7 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { addInsert, clearHistory, setTrackInstrument, undo } from '@/project/commands';
-import { listQuickControls, setQuickControl } from '@/project/quick-controls';
+import {
+  isAmpConstructionOnlyParam,
+  listQuickControls,
+  setQuickControl,
+} from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -186,6 +190,44 @@ describe('quick controls', () => {
         kind: 'boolean',
         value: false,
       });
+    });
+
+    it('resolves amp quick controls from the canonical preset and omits construction parameters', () => {
+      addInsert(trackId, 'saturation.ampSim', { presetIndex: 5 });
+      const controls = listQuickControls({ type: 'insert', trackId, index: 0 });
+
+      expect(controls.find((control) => control.id === 'drive')).toMatchObject({
+        kind: 'number',
+        value: 0.8,
+      });
+      expect(controls.find((control) => control.id === 'bassDb')).toMatchObject({ value: 1 });
+      expect(controls.map((control) => control.id)).not.toEqual(
+        expect.arrayContaining(['presetIndex', 'ampModel', 'cab', 'micDistanceCm']),
+      );
+    });
+
+    it('does not guess inherited amp values when the preset catalog is unavailable', () => {
+      addInsert(trackId, 'saturation.ampSim', { presetIndex: 0, drive: 0.7 });
+      const controls = listQuickControls(
+        { type: 'insert', trackId, index: 0 },
+        { resolveAmpPresetCatalog: () => [] },
+      );
+
+      expect(controls.map((control) => control.id)).toEqual(['drive']);
+      expect(controls[0]).toMatchObject({ value: 0.7 });
+    });
+
+    it('keeps amp realtime parameters eligible for QuickControls', () => {
+      expect(
+        isAmpConstructionOnlyParam('saturation.ampSim', 'biasShift', [
+          { name: 'biasShift', id: 15 },
+        ]),
+      ).toBe(false);
+      expect(
+        isAmpConstructionOnlyParam('saturation.ampSim', 'micDistanceCm', [
+          { name: 'micDistanceCm', id: null },
+        ]),
+      ).toBe(true);
     });
 
     it('types indexed EQ booleans and enums from the catalog', () => {

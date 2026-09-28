@@ -1211,6 +1211,395 @@ export const FAKE_MASTERING_PRESETS = [
   'vinyl',
 ] as const;
 
+/** Mirrors the libsonare amp preset catalog used by AmpSimEditor tests. */
+export const FAKE_AMP_PRESET_CATALOG = [
+  {
+    index: 0,
+    name: 'cleanCombo',
+    params: {
+      drive: 0.25,
+      bassDb: 2,
+      midDb: -1,
+      trebleDb: 3,
+      presenceDb: 1.5,
+      inputDb: 0,
+      levelDb: 0,
+      cab: true,
+      ampModel: 1,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.15,
+      sag: 30 / 440,
+      nfb: 0.4,
+      micAxis: 0.35,
+      micDistanceCm: 3,
+    },
+  },
+  {
+    index: 1,
+    name: 'chimeEdge',
+    params: {
+      drive: 0.45,
+      bassDb: 0,
+      midDb: 1.5,
+      trebleDb: 3.5,
+      presenceDb: 2,
+      cab: true,
+      ampModel: 4,
+      cabModel: 0,
+      micModel: 3,
+      power: 0.35,
+      sag: 24 / 320,
+      nfb: 0,
+      micAxis: 0.2,
+      micDistanceCm: 4,
+    },
+  },
+  {
+    index: 2,
+    name: 'classicCrunch',
+    params: {
+      drive: 0.6,
+      bassDb: 0,
+      midDb: 0,
+      trebleDb: 0,
+      presenceDb: 1,
+      cab: true,
+      ampModel: 0,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.4,
+      sag: 26 / 440,
+      nfb: 0.3,
+      micAxis: 0.3,
+      micDistanceCm: 2.5,
+    },
+  },
+  {
+    index: 3,
+    name: 'tweedGrind',
+    params: {
+      drive: 0.62,
+      bassDb: 3,
+      midDb: 1,
+      trebleDb: -2,
+      presenceDb: 0,
+      cab: true,
+      ampModel: 3,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.65,
+      sag: 50 / 350,
+      nfb: 0,
+      micAxis: 0.45,
+      micDistanceCm: 3,
+      levelDb: 1,
+    },
+  },
+  {
+    index: 4,
+    name: 'britStack',
+    params: {
+      drive: 0.7,
+      bassDb: -1,
+      midDb: 1,
+      trebleDb: 3,
+      presenceDb: 2,
+      cab: true,
+      ampModel: 0,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.6,
+      sag: 21.6 / 470,
+      nfb: 0.35,
+      micAxis: 0.25,
+      micDistanceCm: 2.5,
+    },
+  },
+  {
+    index: 5,
+    name: 'modernLead',
+    params: {
+      drive: 0.8,
+      bassDb: 1,
+      midDb: -3,
+      trebleDb: 4,
+      presenceDb: 3,
+      cab: true,
+      ampModel: 2,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.55,
+      sag: 20 / 480,
+      nfb: 0.45,
+      micAxis: 0.2,
+      micDistanceCm: 2.5,
+      levelDb: -1,
+    },
+  },
+  {
+    index: 6,
+    name: 'rectifierChug',
+    params: {
+      drive: 0.85,
+      bassDb: 5,
+      midDb: -6,
+      trebleDb: 2,
+      presenceDb: 1,
+      cab: true,
+      ampModel: 5,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.7,
+      sag: 59.4 / 480,
+      nfb: 0.2,
+      micAxis: 0.3,
+      micDistanceCm: 2.5,
+      levelDb: -2,
+    },
+  },
+  {
+    index: 7,
+    name: 'coldBiasBuzz',
+    params: {
+      drive: 0.5,
+      bassDb: 0,
+      midDb: 0,
+      trebleDb: 0,
+      presenceDb: 0,
+      cab: true,
+      ampModel: 0,
+      cabModel: 0,
+      micModel: 1,
+      power: 0.75,
+      sag: 20 / 320,
+      nfb: 0.15,
+      micAxis: 0.4,
+      micDistanceCm: 3,
+    },
+  },
+  {
+    index: 8,
+    name: 'bassDi',
+    params: {
+      drive: 0.15,
+      bassDb: 2,
+      midDb: 0,
+      trebleDb: 1,
+      presenceDb: 0,
+      cab: false,
+      ampModel: 1,
+      cabModel: 0,
+      micModel: 0,
+      power: 0.2,
+      sag: 15 / 450,
+      nfb: 0.3,
+      micAxis: 0,
+      micDistanceCm: 2.5,
+      levelDb: -1,
+    },
+  },
+  {
+    index: 9,
+    name: 'bassRig',
+    params: {
+      drive: 0.35,
+      bassDb: 3,
+      midDb: -1,
+      trebleDb: 1,
+      presenceDb: 0,
+      cab: true,
+      ampModel: 0,
+      cabModel: 1,
+      micModel: 1,
+      power: 0.45,
+      sag: 21 / 600,
+      nfb: 0.25,
+      micAxis: 0.5,
+      micDistanceCm: 5,
+    },
+  },
+] as const;
+
+type FakeAmpParamInfo = {
+  name: string;
+  id: number | null;
+  rtSafe: boolean;
+  type: 'boolean' | 'number' | 'enum' | 'string';
+  min: number | null;
+  max: number | null;
+  default: number | boolean | null;
+  unit: string | null;
+  choices: Array<{ name: string; value: number }> | null;
+  slot: null;
+};
+
+function fakeAmpNumber(
+  name: string,
+  id: number | null,
+  defaultValue: number,
+  unit: string | null = null,
+): FakeAmpParamInfo {
+  return {
+    name,
+    id,
+    rtSafe: id !== null,
+    type: 'number',
+    min: null,
+    max: null,
+    default: defaultValue,
+    unit,
+    choices: null,
+    slot: null,
+  };
+}
+
+function fakeAmpBoolean(name: string, id: number | null, defaultValue: boolean): FakeAmpParamInfo {
+  return {
+    name,
+    id,
+    rtSafe: id !== null,
+    type: 'boolean',
+    min: null,
+    max: null,
+    default: defaultValue,
+    unit: null,
+    choices: null,
+    slot: null,
+  };
+}
+
+function fakeAmpEnum(
+  name: string,
+  choices: Array<{ name: string; value: number }>,
+  defaultValue: number,
+): FakeAmpParamInfo {
+  return {
+    name,
+    id: null,
+    rtSafe: false,
+    type: 'enum',
+    min: null,
+    max: null,
+    default: defaultValue,
+    unit: null,
+    choices,
+    slot: null,
+  };
+}
+
+const FAKE_AMP_PARAM_DEFAULTS: FakeAmpParamInfo[] = [
+  fakeAmpNumber('drive', 0, 0.5),
+  fakeAmpNumber('bassDb', 1, 0, 'dB'),
+  fakeAmpNumber('midDb', 2, 0, 'dB'),
+  fakeAmpNumber('trebleDb', 3, 0, 'dB'),
+  fakeAmpNumber('presenceDb', 4, 0, 'dB'),
+  fakeAmpNumber('levelDb', 5, 0, 'dB'),
+  fakeAmpNumber('power', 6, 0),
+  fakeAmpNumber('sag', 7, 0),
+  fakeAmpNumber('transformer', 8, 0),
+  fakeAmpNumber('nfb', 9, 0),
+  fakeAmpNumber('micAxis', 10, 0),
+  fakeAmpNumber('micBAxis', 11, 0),
+  fakeAmpNumber('micBlend', 12, 0),
+  fakeAmpNumber('cone', 13, 0),
+  fakeAmpNumber('crossover', 14, 0),
+  fakeAmpNumber('biasShift', 15, 0),
+  fakeAmpNumber('inputDb', 16, 0, 'dB'),
+  fakeAmpEnum(
+    'ampModel',
+    [
+      { name: 'classicCrunch', value: 0 },
+      { name: 'fenderClean', value: 1 },
+      { name: 'modernHiGain', value: 2 },
+      { name: 'tweed', value: 3 },
+      { name: 'voxChime', value: 4 },
+      { name: 'rectifier', value: 5 },
+    ],
+    0,
+  ),
+  fakeAmpBoolean('cab', null, true),
+  fakeAmpBoolean('cabIrDrivers', null, true),
+  {
+    name: 'cabIrF32Base64',
+    id: null,
+    rtSafe: false,
+    type: 'string',
+    min: null,
+    max: null,
+    default: null,
+    unit: null,
+    choices: null,
+    slot: null,
+  },
+  fakeAmpBoolean('cabIrGenerate', null, false),
+  fakeAmpNumber('cabIrSampleRate', null, 0),
+  fakeAmpEnum(
+    'cabModel',
+    [
+      { name: 'guitar4x12', value: 0 },
+      { name: 'bass8x10', value: 1 },
+    ],
+    0,
+  ),
+  fakeAmpNumber('doppler', null, 0),
+  fakeAmpNumber('micBDistanceCm', null, 15),
+  fakeAmpBoolean('micBInvert', null, false),
+  fakeAmpEnum(
+    'micBModel',
+    [
+      { name: 'none', value: 0 },
+      { name: 'dynamic', value: 1 },
+      { name: 'ribbon', value: 2 },
+      { name: 'condenser', value: 3 },
+    ],
+    0,
+  ),
+  fakeAmpNumber('micDistanceCm', null, 2.5),
+  fakeAmpEnum(
+    'micModel',
+    [
+      { name: 'none', value: 0 },
+      { name: 'dynamic', value: 1 },
+      { name: 'ribbon', value: 2 },
+      { name: 'condenser', value: 3 },
+    ],
+    0,
+  ),
+  fakeAmpEnum(
+    'powerTube',
+    [
+      { name: '6l6', value: 0 },
+      { name: 'el34', value: 1 },
+      { name: 'el84', value: 2 },
+      { name: '6v6', value: 3 },
+    ],
+    0,
+  ),
+  fakeAmpNumber('preampStages', null, 2),
+  {
+    name: 'preset',
+    id: null,
+    rtSafe: false,
+    type: 'string',
+    min: null,
+    max: null,
+    default: null,
+    unit: null,
+    choices: null,
+    slot: null,
+  },
+  fakeAmpNumber('presetIndex', null, -1),
+  fakeAmpEnum(
+    'topology',
+    [
+      { name: 'voiced', value: 0 },
+      { name: 'circuit', value: 1 },
+    ],
+    0,
+  ),
+];
+
 /** Mirrors capabilityCatalog().masteringPresets for the fake preset names. */
 export function fakeMasteringPresetCatalog() {
   return FAKE_MASTERING_PRESETS.map((name) =>
@@ -1617,7 +2006,16 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
       tailSamples: 0,
     }),
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
-    masteringInsertParamInfo: (name: string) => FAKE_INSERT_PARAM_INFO[name] ?? [],
+    masteringInsertParamInfo: (name: string) =>
+      name === 'saturation.ampSim'
+        ? [...FAKE_AMP_PARAM_DEFAULTS]
+        : (FAKE_INSERT_PARAM_INFO[name] ?? []),
+    masteringAmpPresetCatalog: () =>
+      FAKE_AMP_PRESET_CATALOG.map((entry) => ({
+        index: entry.index,
+        name: entry.name,
+        params: { inputDb: 0, levelDb: 0, ...entry.params },
+      })),
     masteringPresetNames: fakeMasteringPresetNames,
     capabilityCatalog: () => ({ masteringPresets: fakeMasteringPresetCatalog() }),
     masteringPresetParams: () => ({ 'loudness.targetLufs': -12, 'loudness.ceilingDb': -1 }),

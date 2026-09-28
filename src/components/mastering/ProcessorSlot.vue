@@ -38,6 +38,8 @@ const props = defineProps<{
   canMoveDown: boolean;
   /** Parameter controls for the expanded knobs (empty unless expanded). */
   controls: ReadonlyArray<MasteringControl>;
+  /** Live/realtime availability from the authoritative engine catalog. */
+  processorRuntime: 'live-export' | 'preview-export' | 'unknown';
 }>();
 
 const emit = defineEmits<{
@@ -123,6 +125,28 @@ function onMidiLearnMastering(index: number, control: MasteringControl): void {
 function onMidiForgetMastering(index: number, control: MasteringControl): void {
   midiLearn?.clearId(learnMasteringId(index, control));
 }
+
+function processorRuntimeLabel(runtime: 'live-export' | 'preview-export' | 'unknown'): string {
+  switch (runtime) {
+    case 'live-export':
+      return t.value.shell.mastering.signalPath.processorLiveExport;
+    case 'preview-export':
+      return t.value.shell.mastering.signalPath.processorPreviewExport;
+    case 'unknown':
+      return t.value.shell.mastering.signalPath.processorUnknown;
+  }
+}
+
+function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unknown'): string {
+  switch (runtime) {
+    case 'live-export':
+      return t.value.shell.mastering.signalPath.processorLiveBadge;
+    case 'preview-export':
+      return t.value.shell.mastering.signalPath.processorPreviewBadge;
+    case 'unknown':
+      return t.value.shell.mastering.signalPath.processorUnknownBadge;
+  }
+}
 </script>
 
 <template>
@@ -172,6 +196,14 @@ function onMidiForgetMastering(index: number, control: MasteringControl): void {
       {{ humanizeInsertName(slot.processor) }}
     </button>
     <span class="chain-badge">{{ categoryLabel(processorCategory(slot.processor)) }}</span>
+    <span
+      class="chain-runtime"
+      :class="`runtime-${processorRuntime}`"
+      :title="processorRuntimeLabel(processorRuntime)"
+      :aria-label="processorRuntimeLabel(processorRuntime)"
+    >
+      {{ processorRuntimeBadge(processorRuntime) }}
+    </span>
     <button
       type="button"
       class="chain-move"
