@@ -23,12 +23,84 @@ import {
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { clipKind, type EditorNote, type LeadFollowStashEntry } from '../types';
-import { execute, executeAtomic } from './history';
+import { type AtomicProjectEdit, execute, executeAtomic } from './history';
 import { requireClip } from './utils';
 
 /** Measure length in PPQ at a position, from the active time signature. */
 function measureLengthAtPpq(store: ReturnType<typeof useProjectStore>, ppq: number): number {
   return meterBarLengthPpq(timeSignatureAt(store.timeSignatures, ppq));
+}
+
+/**
+ * Repeats a chord stream from timeline zero until the requested PPQ length.
+ *
+ * The source span is measured from its first start to its furthest end, so a
+ * progression whose first symbol does not start at zero is still a usable
+ * pattern. The final symbol is clipped at the requested boundary and all
+ * optional chord fields are copied before the returned stream is sanitized.
+ */
+export function tileChordSymbols(
+  symbols: ReadonlyArray<EditorChordSymbol>,
+  lengthPpq: number,
+): EditorChordSymbol[] {
+  if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) return [];
+  const source = sanitizeChordSymbols(symbols);
+  if (source.length === 0) return [];
+  const sourceStart = source[0]?.startPpq ?? 0;
+  const sourceEnd = source.reduce((max, symbol) => Math.max(max, symbol.endPpq), sourceStart);
+  const period = sourceEnd - sourceStart;
+  if (!(period > 0)) return [];
+
+  const tiled: EditorChordSymbol[] = [];
+  for (let offset = 0; offset < lengthPpq; offset += period) {
+    for (const symbol of source) {
+      const startPpq = offset + symbol.startPpq - sourceStart;
+      const endPpq = offset + symbol.endPpq - sourceStart;
+      if (startPpq >= lengthPpq || endPpq <= 0) continue;
+      tiled.push({
+        ...symbol,
+        startPpq: Math.max(0, startPpq),
+        endPpq: Math.min(lengthPpq, endPpq),
+        ...(symbol.extensions !== undefined ? { extensions: [...symbol.extensions] } : {}),
+        ...(symbol.omissions !== undefined ? { omissions: [...symbol.omissions] } : {}),
+      });
+    }
+  }
+  return sanitizeChordSymbols(tiled);
+}
+
+/** Whether two chord streams carry the same regions and chord annotations. */
+export function sameChordStream(
+  left: ReadonlyArray<EditorChordSymbol>,
+  right: ReadonlyArray<EditorChordSymbol>,
+): boolean {
+  const a = sanitizeChordSymbols(left);
+  const b = sanitizeChordSymbols(right);
+  if (a.length !== b.length) return false;
+  return a.every((symbol, index) => {
+    const other = b[index];
+    if (other === undefined) return false;
+    if (
+      symbol.startPpq !== other.startPpq ||
+      symbol.endPpq !== other.endPpq ||
+      symbol.rootPc !== other.rootPc ||
+      symbol.quality !== other.quality ||
+      (symbol.bassPc ?? null) !== (other.bassPc ?? null) ||
+      symbol.romanNumeral !== other.romanNumeral
+    ) {
+      return false;
+    }
+    const extensions = symbol.extensions ?? [];
+    const otherExtensions = other.extensions ?? [];
+    const omissions = symbol.omissions ?? [];
+    const otherOmissions = other.omissions ?? [];
+    return (
+      extensions.length === otherExtensions.length &&
+      extensions.every((value, toneIndex) => value === otherExtensions[toneIndex]) &&
+      omissions.length === otherOmissions.length &&
+      omissions.every((value, toneIndex) => value === otherOmissions[toneIndex])
+    );
+  });
 }
 
 /**
@@ -56,25 +128,27 @@ export function setProjectChords(symbols: ReadonlyArray<EditorChordSymbol>): voi
     });
     return;
   }
-  executeAtomic((edit) => {
-    edit(1, () => project.annotateChords(toProjectChordSymbols(sanitized)));
-    for (const clipEdit of followEdits) {
-      edit(1, () => project.setMidiEvents(clipEdit.clipId, notesToProjectEvents(clipEdit.notes)));
-    }
-    // Parked lead-follow notes move with their track, so they return at the new pitch.
-    store.tracks = store.tracks.map((track) => {
-      const stash = stashes.get(track.id);
-      return stash === undefined || track.leadFollow === undefined
-        ? track
-        : { ...track, leadFollow: { ...track.leadFollow, stash } };
-    });
-    // Re-voiced notes keep their editor ids, so selection and score
-    // annotations survive the chord change.
-    store.refresh(
-      new Map(followEdits.map((clipEdit) => [clipEdit.clipId, clipEdit.notes])),
-      sanitized,
-    );
-  });
+  executeAtomic((edit) =>
+    writeProjectChordPlan(store, sanitized, { clipEdits: followEdits, stashes }, edit),
+  );
+}
+
+/**
+ * Writes a chord stream as one step inside a caller-owned atomic command.
+ *
+ * Chord-follow note and stash updates are counted as part of the same
+ * transaction, so undo restores both the prior annotations and every
+ * re-voiced note.
+ */
+export function applyProjectChords(
+  store: ReturnType<typeof useProjectStore>,
+  symbols: ReadonlyArray<EditorChordSymbol>,
+  edit: AtomicProjectEdit,
+): void {
+  const sanitized = sanitizeChordSymbols(symbols);
+  const before = store.chords.map((chord) => ({ ...chord }));
+  const plan = planChordFollowEdits(store, before, sanitized);
+  writeProjectChordPlan(store, sanitized, plan, edit);
 }
 
 /** One clip's re-voiced note list, ready to write back to the Project. */
@@ -87,6 +161,31 @@ interface ChordFollowClipEdit {
 interface ChordFollowPlan {
   clipEdits: ChordFollowClipEdit[];
   stashes: Map<number, LeadFollowStashEntry[]>;
+}
+
+/** Applies an already-computed chord-follow plan inside the caller's transaction. */
+function writeProjectChordPlan(
+  store: ReturnType<typeof useProjectStore>,
+  sanitized: ReadonlyArray<EditorChordSymbol>,
+  plan: ChordFollowPlan,
+  edit: AtomicProjectEdit,
+): void {
+  const project = getProject();
+  const { clipEdits, stashes } = plan;
+  edit(1, () => project.annotateChords(toProjectChordSymbols(sanitized)));
+  for (const clipEdit of clipEdits) {
+    edit(1, () => project.setMidiEvents(clipEdit.clipId, notesToProjectEvents(clipEdit.notes)));
+  }
+  // Parked lead-follow notes move with their track, so they return at the new pitch.
+  store.tracks = store.tracks.map((track) => {
+    const stash = stashes.get(track.id);
+    return stash === undefined || track.leadFollow === undefined
+      ? track
+      : { ...track, leadFollow: { ...track.leadFollow, stash } };
+  });
+  // Re-voiced notes keep their editor ids, so selection and score annotations
+  // survive the chord change.
+  store.refresh(new Map(clipEdits.map((clipEdit) => [clipEdit.clipId, clipEdit.notes])), sanitized);
 }
 
 /**

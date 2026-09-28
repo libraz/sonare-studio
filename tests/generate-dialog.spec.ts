@@ -231,13 +231,114 @@ describe('TrackGenerateDialog', () => {
 
   it('defaults drums length to the chord-progression bar count', async () => {
     setProjectChords(FOUR_CHORDS); // 16 beats = 4 bars
+    store.tempoBpm = 120;
+    store.tempoSegments = [{ startPpq: 0, bpm: 120 }];
     await open();
+    expect(document.body.querySelector<HTMLInputElement>('.whole-bars-input')?.value).toBe('4');
+    expect(document.body.querySelector<HTMLInputElement>('.whole-time-input')?.value).toBe('0:08');
     const drumsRow = [...document.body.querySelectorAll<HTMLElement>('.part-row')][1];
     drumsRow?.querySelector<HTMLButtonElement>('.part-expand')?.click();
     await nextTick();
     const barsInput = drumsRow?.querySelector<HTMLInputElement>('input[type="number"]');
     expect(barsInput?.value).toBe('4');
     expect(drumsRow?.querySelector('.bars-caption')?.textContent).toContain('4');
+  });
+
+  it('generates the selected parts and chord lane for the entered song time', async () => {
+    setProjectChords(FOUR_CHORDS);
+    store.tempoBpm = 120;
+    store.tempoSegments = [{ startPpq: 0, bpm: 120 }];
+    await open();
+    const time = document.body.querySelector<HTMLInputElement>('.whole-time-input');
+    if (!time) throw new Error('missing song time input');
+    time.value = '0:12';
+    time.dispatchEvent(new Event('change'));
+    await nextTick();
+
+    expect(document.body.querySelector<HTMLInputElement>('.whole-bars-input')?.value).toBe('6');
+    expect(document.body.querySelector('.whole-length')?.textContent).toContain('repeat to 6 bars');
+    confirm()?.click();
+    await nextTick();
+
+    expect(Math.max(...store.chords.map((chord) => chord.endPpq))).toBe(24);
+    for (const name of ['Drums', 'Bass', 'Backing']) {
+      const track = store.tracks.find((entry) => entry.name === name);
+      const clip = store.clips.find((entry) => entry.trackId === track?.id);
+      expect(clip?.lengthPpq).toBe(24);
+    }
+    expect(undo()).toBe(true);
+    expect(Math.max(...store.chords.map((chord) => chord.endPpq))).toBe(16);
+  });
+
+  it('converts time through tempo ramps before rounding to bars', async () => {
+    setProjectChords(FOUR_CHORDS);
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120, endBpm: 60 },
+      { startPpq: 16, bpm: 60 },
+    ];
+    await open();
+    const time = document.body.querySelector<HTMLInputElement>('.whole-time-input');
+    if (!time) throw new Error('missing song time input');
+    expect(time.value).toBe('0:11');
+    time.value = '0:11';
+    time.dispatchEvent(new Event('change'));
+    await nextTick();
+    expect(document.body.querySelector<HTMLInputElement>('.whole-bars-input')?.value).toBe('4');
+  });
+
+  it('chooses the closest elapsed bar under a slowing tempo ramp', async () => {
+    setProjectChords(FOUR_CHORDS);
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 120, endBpm: 10 },
+      { startPpq: 8, bpm: 10 },
+    ];
+    await open();
+    const time = document.body.querySelector<HTMLInputElement>('.whole-time-input');
+    if (!time) throw new Error('missing song time input');
+    time.value = '0:06';
+    time.dispatchEvent(new Event('change'));
+    await nextTick();
+    expect(document.body.querySelector<HTMLInputElement>('.whole-bars-input')?.value).toBe('1');
+  });
+
+  it('accepts a song-length time and rejects out-of-range bars', async () => {
+    setProjectChords(FOUR_CHORDS);
+    store.tempoBpm = 120;
+    store.tempoSegments = [{ startPpq: 0, bpm: 120 }];
+    await open();
+    const time = document.body.querySelector<HTMLInputElement>('.whole-time-input');
+    const bars = document.body.querySelector<HTMLInputElement>('.whole-bars-input');
+    if (!time || !bars) throw new Error('missing song length inputs');
+    time.value = '3:00';
+    time.dispatchEvent(new Event('change'));
+    await nextTick();
+    expect(bars.value).toBe('90');
+
+    bars.value = '257';
+    bars.dispatchEvent(new Event('input'));
+    await nextTick();
+    expect(confirm()?.disabled).toBe(true);
+    expect(document.body.querySelector('.whole-length [role="alert"]')?.textContent).toContain(
+      '1 to 256',
+    );
+  });
+
+  it('rejects invalid per-part bar overrides before generation', async () => {
+    setProjectChords(FOUR_CHORDS);
+    await open();
+    checkPart(0);
+    expandPart(0);
+    await nextTick();
+    const motif = document.body.querySelectorAll<HTMLElement>('.part-row')[0];
+    const bars = motif.querySelector<HTMLInputElement>('input[type="number"]');
+    if (!bars) throw new Error('missing motif length input');
+    bars.value = '257';
+    bars.dispatchEvent(new Event('input'));
+    await nextTick();
+    expect(confirm()?.disabled).toBe(true);
+    expect(document.body.querySelector('.track-fields > [role="alert"]')?.textContent).toContain(
+      '1 to 256',
+    );
   });
 
   /**
@@ -423,6 +524,34 @@ describe('TrackGenerateDialog', () => {
     expect(store.tracks).toHaveLength(trackCount);
     expect(wrapper?.emitted('close')).toBeTruthy();
     expect(document.body.querySelector('.dialog-error')).toBeNull();
+  });
+
+  it('ignores a stale drum range when drums are unchecked for whole-song generation', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    if (!drums) throw new Error('missing generated drums fixture');
+    await open();
+    const row = document.body.querySelectorAll<HTMLElement>('.part-row')[1];
+    const target = row.querySelector<HTMLSelectElement>('.part-target');
+    if (!target) throw new Error('missing drum target');
+    target.value = `range:${drums.id}`;
+    target.dispatchEvent(new Event('change'));
+    await nextTick();
+    const start = row.querySelector<HTMLInputElement>('.drum-range-start');
+    if (!start) throw new Error('missing drum range start');
+    start.value = '99';
+    start.dispatchEvent(new Event('input'));
+    await nextTick();
+    expect(document.body.querySelector('.whole-length')).toBeNull();
+
+    const drumsBox = partCheckboxes()[1];
+    drumsBox.checked = false;
+    drumsBox.dispatchEvent(new Event('change'));
+    await nextTick();
+    expect(document.body.querySelector('.whole-length')).not.toBeNull();
+    expect(confirm()?.disabled).toBe(false);
   });
 
   it('does not offer a frozen track as a generation target', async () => {

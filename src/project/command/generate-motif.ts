@@ -27,6 +27,7 @@ import {
 } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projection';
@@ -96,6 +97,7 @@ export function buildMotifCell(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateMotifParams,
   target: GenerationTargetFrame,
+  chords: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): MotifCell {
   const bars = motifBars(params);
   if (!isFourFourBarRange(target.timeSignatures, target.startPpq, bars)) {
@@ -112,8 +114,8 @@ export function buildMotifCell(
   if (params.transform !== undefined) {
     cell = transformMotif(cell, params.transform, params.transformAmount, key);
   }
-  const develop = params.develop ?? store.chords.length > 0;
-  if (develop && store.chords.length > 0) {
+  const develop = params.develop ?? chords.length > 0;
+  if (develop && chords.length > 0) {
     // developMotif works in target-local beats. Its chord query must therefore
     // add the absolute target start instead of querying song-start harmony.
     const targetTimeline: ChordTimeline = {
@@ -136,15 +138,16 @@ export function buildMotifCell(
 export function buildMotifPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateMotifParams = {},
+  chords: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): TrackPlan | null {
   const lengthPpq = motifBars(params) * BEATS_PER_BAR;
   const target = createGenerationTargetFrame({
     startPpq: 0,
     endPpq: lengthPpq,
-    chords: store.chords,
+    chords,
     timeSignatures: store.timeSignatures,
   });
-  const cell = buildMotifCell(store, params, target);
+  const cell = buildMotifCell(store, params, target, chords);
   const fresh = noteEventsToNewEditorNotes(cell.notes, { channel: 0 });
   if (fresh.length === 0) return null;
   return {
@@ -166,6 +169,7 @@ export function buildMotifClipMerge(
   clip: EditorClip,
   params: GenerateMotifParams,
   mode: 'append' | 'replace',
+  chords: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): RawNote[] | null {
   const audible = audibleMidiProjector(clip, { expandLoops: false });
   const sourceWindow = audibleMidiSourceWindow(clip);
@@ -181,10 +185,10 @@ export function buildMotifClipMerge(
   const target = createGenerationTargetFrame({
     startPpq: clip.startPpq + offset,
     endPpq: clip.startPpq + offset + availablePpq,
-    chords: store.chords,
+    chords,
     timeSignatures: store.timeSignatures,
   });
-  const cell = buildMotifCell(store, params, target);
+  const cell = buildMotifCell(store, params, target, chords);
   const existing = mode === 'replace' ? [] : clip.notes;
   const sourceOffset = clip.sourceOffsetPpq + offset;
   const bounded = cell.notes

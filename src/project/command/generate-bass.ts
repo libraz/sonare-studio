@@ -14,6 +14,7 @@ import { type BassLineOptions, type BassSegment, generateBassLine } from '@libra
 import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
@@ -40,11 +41,12 @@ export interface GenerateBassParams {
 export function buildBassPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateBassParams = {},
+  chords: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): TrackPlan | null {
-  if (store.chords.length === 0) return null;
+  if (chords.length === 0) return null;
 
   const key = effectiveKeyScale(store.scaleHighlight);
-  const segments: BassSegment[] = store.chords.map((symbol) => ({
+  const segments: BassSegment[] = chords.map((symbol) => ({
     startBeat: symbol.startPpq,
     endBeat: symbol.endPpq,
     chord: editorChordToChord(symbol),

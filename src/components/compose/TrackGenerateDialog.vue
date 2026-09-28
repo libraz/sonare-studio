@@ -15,6 +15,7 @@ import {
 import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/generation';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { normalizeTempoMap, ppqDurationSeconds, secondsToPpq } from '@/project/tempo-map';
 import { isFourFourBarRange } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -128,6 +129,82 @@ function reroll(part: TrackPart): void {
 const error = ref<string | null>(null);
 const generating = ref(false);
 const done = ref(false);
+const wholeBars = ref(4);
+const wholeBarsDirty = ref(false);
+const durationError = ref<string | null>(null);
+const tempoMap = computed(() => normalizeTempoMap(store.tempoSegments, store.tempoBpm));
+
+function formatDuration(seconds: number): string {
+  const rounded = Math.round(seconds);
+  return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, '0')}`;
+}
+
+const wholeDuration = computed(() =>
+  Number.isFinite(wholeBars.value) && wholeBars.value > 0
+    ? ppqDurationSeconds(tempoMap.value, 0, wholeBars.value * BEATS_PER_BAR)
+    : 0,
+);
+
+const wholeLengthError = computed(() => {
+  if (!Number.isInteger(wholeBars.value) || wholeBars.value < 1 || wholeBars.value > 256) {
+    return g.value.lengthInvalid;
+  }
+  if (!isFourFourBarRange(store.timeSignatures, 0, wholeBars.value)) {
+    return g.value.lengthMeterError;
+  }
+  return durationError.value;
+});
+
+/** Range replacement and track-header regeneration keep their existing scope. */
+const usesWholeLength = computed(
+  () => !props.openWith && !(parts.drums.checked && isDrumRangeTarget.value),
+);
+const appliesWholeLength = computed(
+  () =>
+    usesWholeLength.value &&
+    (['motif', 'drums', 'bass', 'backing'] as const).some(
+      (part) => parts[part].checked && isPartAvailable(part),
+    ),
+);
+
+function setWholeBars(value: number): void {
+  wholeBars.value = value;
+  wholeBarsDirty.value = true;
+  motifBars.value = value;
+  drumBars.value = value;
+  motifBarsDirty.value = false;
+  drumBarsDirty.value = false;
+  durationError.value = null;
+}
+
+function onWholeBarsInput(event: Event): void {
+  setWholeBars(Number((event.target as HTMLInputElement).value));
+}
+
+function onDurationChange(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const match = /^(\d+):([0-5]\d)$/.exec(input.value.trim());
+  if (match === null) {
+    durationError.value = g.value.lengthTimeInvalid;
+    return;
+  }
+  const seconds = Number(match[1]) * 60 + Number(match[2]);
+  if (seconds <= 0) {
+    durationError.value = g.value.lengthTimeInvalid;
+    return;
+  }
+  const lower = Math.max(1, Math.floor(secondsToPpq(tempoMap.value, seconds) / BEATS_PER_BAR));
+  const upper = lower + 1;
+  const lowerSeconds = ppqDurationSeconds(tempoMap.value, 0, lower * BEATS_PER_BAR);
+  const upperSeconds = ppqDurationSeconds(tempoMap.value, 0, upper * BEATS_PER_BAR);
+  const bars = seconds - lowerSeconds <= upperSeconds - seconds ? lower : upper;
+  if (!Number.isInteger(bars) || bars < 1 || bars > 256) {
+    durationError.value = g.value.lengthInvalid;
+    return;
+  }
+  setWholeBars(bars);
+  input.value = formatDuration(wholeDuration.value);
+}
 
 // --- Length basis --------------------------------------------------------------
 
@@ -341,20 +418,16 @@ const backingStyle = ref<BackingStyleId>('smooth');
 
 /** Re-seeds drums/motif bars from the progression length until manually edited. */
 function reseedBars(): void {
-  const bars = chordProgressionBars.value;
+  const bars = chordProgressionBars.value || counterBars.value || 4;
   if (bars > 0) {
-    if (!drumBarsDirty.value) drumBars.value = bars;
-    if (!motifBarsDirty.value) motifBars.value = bars;
+    if (!wholeBarsDirty.value) wholeBars.value = bars;
+    if (!drumBarsDirty.value) drumBars.value = wholeBars.value;
+    if (!motifBarsDirty.value) motifBars.value = wholeBars.value;
   }
 }
 
 watch(chordProgressionBars, reseedBars);
-watch(drumBars, (value) => {
-  if (value !== chordProgressionBars.value) drumBarsDirty.value = true;
-});
-watch(motifBars, (value) => {
-  if (value !== chordProgressionBars.value) motifBarsDirty.value = true;
-});
+watch(counterBars, reseedBars);
 watch(counterAvailable, (available) => {
   if (!available) {
     parts.counter.checked = false;
@@ -374,6 +447,8 @@ function resetState(): void {
   done.value = false;
   drumBarsDirty.value = false;
   motifBarsDirty.value = false;
+  wholeBarsDirty.value = false;
+  durationError.value = null;
   drumNextSection.value = 'same';
   drumRangeStartBar.value = 1;
   drumRangeLengthBars.value = 4;
@@ -627,6 +702,22 @@ const selectedCount = computed(
   () => PART_IDS.filter((id) => parts[id].checked && isPartAvailable(id)).length,
 );
 
+const partBarsError = computed(() => {
+  const invalid = (bars: number) => !Number.isInteger(bars) || bars < 1 || bars > 256;
+  if (parts.motif.checked && isPartAvailable('motif') && invalid(motifBars.value)) {
+    return g.value.partLengthInvalid;
+  }
+  if (
+    parts.drums.checked &&
+    isPartAvailable('drums') &&
+    !isDrumRangeTarget.value &&
+    invalid(drumBars.value)
+  ) {
+    return g.value.partLengthInvalid;
+  }
+  return null;
+});
+
 const midOverlap = computed(
   () =>
     PART_IDS.filter((id) => parts[id].checked && isPartAvailable(id) && MID_RANGE_PARTS.has(id))
@@ -644,7 +735,7 @@ function resultBarsOf(part: TrackPart): number | null {
       return Math.max(1, Math.round(motifBars.value));
     case 'bass':
     case 'backing':
-      return chordProgressionBars.value;
+      return usesWholeLength.value ? wholeBars.value : chordProgressionBars.value;
     case 'counter':
       return counterBars.value ?? chordProgressionBars.value;
   }
@@ -653,7 +744,10 @@ function resultBarsOf(part: TrackPart): number | null {
 /** The "N bars" label on a part row, or empty when the length is unknown. */
 function resultBarsText(part: TrackPart): string {
   const bars = resultBarsOf(part);
-  return bars === null ? '' : formatMessage(g.value.resultBars, { count: bars });
+  if (bars === null) return '';
+  return formatMessage(part === 'counter' ? g.value.sourceBars : g.value.resultBars, {
+    count: bars,
+  });
 }
 
 /** The trailing "→ …" hint on a part row, from its target. */
@@ -689,14 +783,14 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
   switch (part) {
     case 'motif':
       return {
-        bars: Math.round(motifBars.value),
+        bars: motifBars.value,
         contour: motifContour.value,
         develop: motifDevelop.value,
         seed: seedFor('motif'),
       };
     case 'drums':
       return {
-        bars: Math.round(drumBars.value),
+        bars: drumBars.value,
         style: drumStyle.value,
         section: drumSection.value,
         density: Math.min(1, Math.max(0, drumDensity.value)),
@@ -735,14 +829,25 @@ function onCancel(): void {
 
 function onGenerate(): void {
   if (selectedCount.value === 0 || generating.value) return;
-  if (drumRangeValidation.value !== null) {
+  if (partBarsError.value !== null) {
+    error.value = partBarsError.value;
+    return;
+  }
+  if (appliesWholeLength.value && wholeLengthError.value !== null) {
+    error.value = wholeLengthError.value;
+    return;
+  }
+  if (parts.drums.checked && drumRangeValidation.value !== null) {
     error.value = drumRangeValidation.value;
     return;
   }
   error.value = null;
   generating.value = true;
   try {
-    const written = generateTracksBatchCommand(buildSpecs());
+    const written = generateTracksBatchCommand(
+      buildSpecs(),
+      appliesWholeLength.value ? { targetBars: wholeBars.value } : undefined,
+    );
     const isRegeneration = props.openWith !== null && props.openWith !== undefined;
     if (written > 0 && !isRegeneration) done.value = true;
     else if (written > 0) emit('close');
@@ -808,6 +913,46 @@ function toggleExpanded(part: TrackPart): void {
         <button type="button" class="edit-chords" @click="emit('openChords')">
           {{ g.editChords }}
         </button>
+      </div>
+
+      <div v-if="usesWholeLength" class="whole-length">
+        <span class="field-label">{{ g.lengthTitle }}</span>
+        <div class="whole-length-fields">
+          <label class="number-field">
+            <span class="field-label">{{ g.bars }}</span>
+            <input
+              :value="wholeBars"
+              class="whole-bars-input"
+              type="number"
+              min="1"
+              max="256"
+              step="1"
+              @input="onWholeBarsInput"
+            />
+          </label>
+          <label class="number-field">
+            <span class="field-label">{{ g.lengthTime }}</span>
+            <input
+              :value="formatDuration(wholeDuration)"
+              class="whole-time-input"
+              type="text"
+              inputmode="numeric"
+              placeholder="3:00"
+              @change="onDurationChange"
+            />
+          </label>
+        </div>
+        <p class="whole-length-note">{{
+          formatMessage(g.lengthActual, { duration: formatDuration(wholeDuration) })
+        }}</p>
+        <p class="whole-length-note">{{ g.lengthScope }}</p>
+        <p v-if="appliesWholeLength && hasChords && wholeBars > chordProgressionBars" class="whole-length-note">
+          {{ formatMessage(g.lengthRepeatChords, { count: wholeBars }) }}
+        </p>
+        <p v-else-if="appliesWholeLength && hasChords && wholeBars < chordProgressionBars" class="whole-length-note">
+          {{ formatMessage(g.lengthTrimChords, { count: wholeBars }) }}
+        </p>
+        <p v-if="appliesWholeLength && wholeLengthError" class="dialog-error" role="alert">{{ wholeLengthError }}</p>
       </div>
 
       <div class="seed-row">
@@ -899,7 +1044,14 @@ function toggleExpanded(part: TrackPart): void {
               <div class="number-row">
                 <label class="number-field">
                   <span class="field-label">{{ g.bars }}</span>
-                  <input v-model.number="motifBars" type="number" min="1" max="64" step="1" />
+                  <input
+                    v-model.number="motifBars"
+                    type="number"
+                    min="1"
+                    max="256"
+                    step="1"
+                    @input="motifBarsDirty = true"
+                  />
                   <span class="bars-caption">{{
                     formatMessage(g.barsCaption, { count: chordProgressionBars })
                   }}</span>
@@ -1020,7 +1172,14 @@ function toggleExpanded(part: TrackPart): void {
               <div class="number-row">
                 <label class="number-field">
                   <span class="field-label">{{ g.bars }}</span>
-                  <input v-model.number="drumBars" type="number" min="1" max="256" step="1" />
+                  <input
+                    v-model.number="drumBars"
+                    type="number"
+                    min="1"
+                    max="256"
+                    step="1"
+                    @input="drumBarsDirty = true"
+                  />
                   <span class="bars-caption">{{
                     formatMessage(g.barsCaption, { count: chordProgressionBars })
                   }}</span>
@@ -1140,6 +1299,7 @@ function toggleExpanded(part: TrackPart): void {
 
       <p v-if="midOverlap" class="collision-inline">{{ g.collisionMidOverlap }}</p>
       <p class="collision-note">{{ g.collisionNote }}</p>
+      <p v-if="partBarsError" class="dialog-error" role="alert">{{ partBarsError }}</p>
       <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
     </div>
 
@@ -1161,7 +1321,7 @@ function toggleExpanded(part: TrackPart): void {
         <button
           type="button"
           class="primary generate-confirm"
-          :disabled="selectedCount === 0 || generating"
+          :disabled="selectedCount === 0 || generating || partBarsError !== null || (appliesWholeLength && wholeLengthError !== null) || (parts.drums.checked && drumRangeValidation !== null)"
           @click="onGenerate"
         >
           {{
@@ -1256,6 +1416,33 @@ function toggleExpanded(part: TrackPart): void {
 
 .edit-chords:hover {
   text-decoration: underline;
+}
+
+.whole-length {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+
+.whole-length-fields {
+  display: flex;
+  gap: var(--sp-3);
+}
+
+.whole-length-fields .number-field {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.whole-length-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
 }
 
 /* The one number the whole arrangement is drawn from, above the part list so

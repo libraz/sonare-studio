@@ -17,8 +17,11 @@
  * motif's track; the lead-follow reconciler thins it in the same entry.
  */
 
+import type { EditorChordSymbol } from '../chords';
 import type { TrackPart } from '../generation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
+import { isFourFourBarRange } from '../time-signature';
+import { applyProjectChords, sameChordStream, tileChordSymbols } from './chords';
 import { buildBackingPlan, type GenerateBackingParams } from './generate-backing';
 import { buildBassPlan, type GenerateBassParams } from './generate-bass';
 import { buildCounterPlan, type GenerateCounterMelodyParams } from './generate-counter-melody';
@@ -56,6 +59,12 @@ export type BatchPartSpec =
   | { part: 'counter'; params: GenerateCounterMelodyParams; target: BatchTarget }
   | { part: 'backing'; params: GenerateBackingParams; target: BatchTarget };
 
+/** Optional arrangement-wide length for a whole generation run. */
+export interface GenerateTracksBatchOptions {
+  /** Number of four-four bars in the generated chord-dependent arrangement. */
+  targetBars?: number;
+}
+
 /** One deferred write plus the number of wasm-Project edits it performs. */
 interface BatchOp {
   part: TrackPart;
@@ -88,18 +97,22 @@ function followMotif(
 }
 
 /** Builds the new-track plan for a part spec (motif's clip target excluded). */
-function planFor(store: ReturnType<typeof useProjectStore>, spec: BatchPartSpec): TrackPlan | null {
+function planFor(
+  store: ReturnType<typeof useProjectStore>,
+  spec: BatchPartSpec,
+  chords: ReadonlyArray<EditorChordSymbol>,
+): TrackPlan | null {
   switch (spec.part) {
     case 'motif':
-      return buildMotifPlan(store, spec.params);
+      return buildMotifPlan(store, spec.params, chords);
     case 'drums':
       return buildDrumsPlan(store, spec.params);
     case 'bass':
-      return buildBassPlan(store, spec.params);
+      return buildBassPlan(store, spec.params, chords);
     case 'counter':
-      return buildCounterPlan(store, spec.params);
+      return buildCounterPlan(store, spec.params, chords);
     case 'backing':
-      return buildBackingPlan(store, spec.params);
+      return buildBackingPlan(store, spec.params, chords);
   }
 }
 
@@ -149,15 +162,12 @@ function replaceTrack(
   }
 }
 
-/**
- * Generates the selected parts in one undoable transaction.
- *
- * @param specs The parts to generate, each with its parameters and target.
- * @returns The number of parts actually written (empty generations are
- *   skipped).
- */
-export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>): number {
-  const store = useProjectStore();
+/** Builds deferred writes from the store state visible at this point. */
+function buildBatchOps(
+  store: ReturnType<typeof useProjectStore>,
+  specs: ReadonlyArray<BatchPartSpec>,
+  chords: ReadonlyArray<EditorChordSymbol>,
+): BatchOp[] {
   const project = getProject();
   const ops: BatchOp[] = [];
 
@@ -168,7 +178,7 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       if (clip === null) continue;
       requireEditableClip(store, clip.id);
       const mode = spec.target.mode;
-      const merged = buildMotifClipMerge(store, clip, spec.params, mode);
+      const merged = buildMotifClipMerge(store, clip, spec.params, mode, chords);
       if (merged === null) continue;
       ops.push({
         part: spec.part,
@@ -203,7 +213,7 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
       continue;
     }
 
-    const plan = planFor(store, spec);
+    const plan = planFor(store, spec, chords);
     if (plan === null) continue;
 
     if (spec.target.kind === 'replaceTrack') {
@@ -264,14 +274,57 @@ export function generateTracksBatchCommand(specs: ReadonlyArray<BatchPartSpec>):
     });
   }
 
-  const totalEdits = ops.reduce((sum, op) => sum + op.edits, 0);
+  return ops;
+}
+
+/**
+ * Generates the selected parts in one undoable transaction.
+ *
+ * @param specs The parts to generate, each with its parameters and target.
+ * @returns The number of parts actually written (empty generations are
+ *   skipped).
+ */
+export function generateTracksBatchCommand(
+  specs: ReadonlyArray<BatchPartSpec>,
+  options: GenerateTracksBatchOptions = {},
+): number {
+  const store = useProjectStore();
+  const targetBars = options.targetBars;
+  if (targetBars !== undefined) {
+    if (!Number.isInteger(targetBars) || targetBars < 1 || targetBars > 256) {
+      throw new RangeError(`Target bars must be an integer from 1 to 256, got ${targetBars}`);
+    }
+    if (!isFourFourBarRange(store.timeSignatures, 0, targetBars)) {
+      throw new RangeError('Whole generation currently supports 4/4 bars only.');
+    }
+  }
+  const targetChords =
+    targetBars === undefined || store.chords.length === 0
+      ? undefined
+      : tileChordSymbols(store.chords, targetBars * 4);
+  const effectiveChords: ReadonlyArray<EditorChordSymbol> = targetChords ?? store.chords;
+  const preflightOps = buildBatchOps(store, specs, effectiveChords);
+
+  const writesChords =
+    targetChords !== undefined &&
+    targetChords.length > 0 &&
+    preflightOps.length > 0 &&
+    !sameChordStream(store.chords, targetChords);
+  const totalEdits = preflightOps.reduce((sum, op) => sum + op.edits, 0) + (writesChords ? 1 : 0);
   if (totalEdits === 0) return 0;
 
+  let writtenCount = 0;
   executeAtomic((edit) => {
+    if (writesChords && targetChords !== undefined) applyProjectChords(store, targetChords, edit);
+    const ops = writesChords ? buildBatchOps(store, specs, effectiveChords) : preflightOps;
+    if (writesChords && ops.length === 0) {
+      throw new Error('Generation became empty after applying the target chord stream.');
+    }
     const written = new Map<TrackPart, number>();
     for (const op of ops) written.set(op.part, op.apply(edit));
     store.refresh();
     followMotif(store, written);
+    writtenCount = ops.length;
   });
-  return ops.length;
+  return writtenCount;
 }

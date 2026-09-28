@@ -5,7 +5,15 @@ import { setProjectChords } from '@/project/command/chords';
 import { setTrackFrozen } from '@/project/command/clips-state';
 import { generateTracksBatchCommand } from '@/project/command/generate-batch';
 import { clearHistory, redo, undo } from '@/project/command/history';
-import { addNote, renameTrack, setNoteAnnotation } from '@/project/commands';
+import {
+  addMidiClip,
+  addNote,
+  addTrack,
+  renameTrack,
+  setActiveClip,
+  setNoteAnnotation,
+  setTrackChordFollow,
+} from '@/project/commands';
 import {
   CURRENT_ALGORITHM_VERSION,
   MAX_GENERATION_SEED,
@@ -62,6 +70,268 @@ describe('generateTracksBatchCommand', () => {
     expect(store.tracks.length).toBe(trackCount);
     expect(redo()).toBe(true);
     expect(store.tracks.length).toBe(trackCount + 3);
+  });
+
+  it('tiles chords to the requested shorter arrangement while keeping part bars explicit', () => {
+    setProjectChords(FOUR_CHORDS);
+    const trackCount = store.tracks.length;
+    const written = generateTracksBatchCommand(
+      [
+        { part: 'motif', params: { bars: 1 }, target: { kind: 'new' } },
+        { part: 'drums', params: { bars: 1 }, target: { kind: 'new' } },
+        { part: 'bass', params: {}, target: { kind: 'new' } },
+        { part: 'backing', params: {}, target: { kind: 'new' } },
+      ],
+      { targetBars: 2 },
+    );
+
+    expect(written).toBe(4);
+    expect(store.chords).toEqual(FOUR_CHORDS.slice(0, 2));
+    expect(
+      store.clips.find((clip) => clip.trackId === store.tracks.find((t) => t.name === 'Motif')?.id)
+        ?.lengthPpq,
+    ).toBe(4);
+    expect(
+      store.clips.find((clip) => clip.trackId === store.tracks.find((t) => t.name === 'Drums')?.id)
+        ?.lengthPpq,
+    ).toBe(4);
+    expect(
+      store.clips.find((clip) => clip.trackId === store.tracks.find((t) => t.name === 'Bass')?.id)
+        ?.lengthPpq,
+    ).toBe(8);
+    expect(
+      store.clips.find(
+        (clip) => clip.trackId === store.tracks.find((t) => t.name === 'Backing')?.id,
+      )?.lengthPpq,
+    ).toBe(8);
+
+    expect(undo()).toBe(true);
+    expect(store.tracks).toHaveLength(trackCount);
+    expect(store.chords).toEqual(FOUR_CHORDS);
+  });
+
+  it('tiles a longer target by repeating the progression and extends chord-based clips', () => {
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand(
+      [
+        { part: 'bass', params: {}, target: { kind: 'new' } },
+        { part: 'backing', params: {}, target: { kind: 'new' } },
+      ],
+      { targetBars: 6 },
+    );
+
+    expect(store.chords.map((chord) => chord.rootPc)).toEqual([0, 7, 9, 5, 0, 7]);
+    expect(store.chords.at(-1)?.endPpq).toBe(24);
+    for (const name of ['Bass', 'Backing']) {
+      const track = store.tracks.find((entry) => entry.name === name);
+      expect(track).toBeDefined();
+      expect(store.clips.find((clip) => clip.trackId === track?.id)?.lengthPpq).toBe(24);
+    }
+  });
+
+  it('clips a repeated chord at the final target boundary', () => {
+    setProjectChords([
+      { startPpq: 0, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 16, rootPc: 7, quality: 0 },
+    ]);
+    generateTracksBatchCommand([{ part: 'backing', params: {}, target: { kind: 'new' } }], {
+      targetBars: 3,
+    });
+
+    expect(store.chords).toEqual([
+      { startPpq: 0, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 12, rootPc: 7, quality: 0 },
+    ]);
+    const backing = store.tracks.find((track) => track.name === 'Backing');
+    expect(store.clips.find((clip) => clip.trackId === backing?.id)?.lengthPpq).toBe(12);
+  });
+
+  it('keeps chord-follow updates in the same whole-generation undo step', () => {
+    const activeClip = store.activeClip;
+    if (activeClip === null) throw new Error('missing active clip fixture');
+    const noteId = addNote({ pitch: 60, startPpq: 4, durationPpq: 1 });
+    setTrackChordFollow(activeClip.trackId, 'root');
+    setProjectChords([
+      { startPpq: 2, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 10, rootPc: 7, quality: 0 },
+    ]);
+    clearHistory();
+
+    generateTracksBatchCommand([{ part: 'backing', params: {}, target: { kind: 'new' } }], {
+      targetBars: 2,
+    });
+
+    expect(store.notes.find((note) => note.id === noteId)?.pitch).toBe(55);
+    expect(undo()).toBe(true);
+    expect(store.notes.find((note) => note.id === noteId)?.pitch).toBe(60);
+    expect(store.chords).toEqual([
+      { startPpq: 2, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 10, rootPc: 7, quality: 0 },
+    ]);
+  });
+
+  it('does not re-voice a chord-follow replacement after rebuilding its target plan', () => {
+    const noteShape = (trackId: number) =>
+      store.clips
+        .find((clip) => clip.trackId === trackId)
+        ?.notes.map(({ pitch, startPpq, durationPpq, velocity, channel }) => ({
+          pitch,
+          startPpq,
+          durationPpq,
+          velocity,
+          channel,
+        }));
+    const latestBackingId = (): number => {
+      const track = [...store.tracks]
+        .reverse()
+        .find((entry) => entry.generated?.part === 'backing');
+      if (track === undefined) throw new Error('missing backing fixture');
+      return track.id;
+    };
+
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'backing', params: {}, target: { kind: 'new' } }], {
+      targetBars: 6,
+    });
+    const expectedId = latestBackingId();
+    const expected = noteShape(expectedId);
+
+    setProjectChords(FOUR_CHORDS);
+    generateTracksBatchCommand([{ part: 'backing', params: {}, target: { kind: 'new' } }], {
+      targetBars: 4,
+    });
+    const followerId = latestBackingId();
+    const oldFollower = noteShape(followerId);
+    generateTracksBatchCommand([{ part: 'backing', params: {}, target: { kind: 'new' } }], {
+      targetBars: 4,
+    });
+    const plainId = latestBackingId();
+    const oldPlain = noteShape(plainId);
+    setTrackChordFollow(followerId, 'root');
+    clearHistory();
+
+    expect(
+      generateTracksBatchCommand(
+        [
+          { part: 'backing', params: {}, target: { kind: 'replaceTrack', trackId: followerId } },
+          { part: 'backing', params: {}, target: { kind: 'replaceTrack', trackId: plainId } },
+        ],
+        { targetBars: 6 },
+      ),
+    ).toBe(2);
+    expect(noteShape(followerId)).toEqual(expected);
+    expect(noteShape(plainId)).toEqual(expected);
+
+    expect(undo()).toBe(true);
+    expect(store.chords).toEqual(FOUR_CHORDS);
+    expect(noteShape(followerId)).toEqual(oldFollower);
+    expect(noteShape(plainId)).toEqual(oldPlain);
+  });
+
+  it('rebuilds motif clip merges after chord-follow revoice and undoes them atomically', () => {
+    const followerClip = store.activeClip;
+    if (followerClip === null) throw new Error('missing active clip fixture');
+    const plainTrackId = addTrack({ name: 'Plain motif' });
+    const plainClipId = addMidiClip({ trackId: plainTrackId, lengthPpq: 32 });
+    const noteShape = (clipId: number) =>
+      store.clips
+        .find((clip) => clip.id === clipId)
+        ?.notes.map(({ pitch, startPpq, durationPpq, velocity, channel }) => ({
+          pitch,
+          startPpq,
+          durationPpq,
+          velocity,
+          channel,
+        }));
+
+    setActiveClip(followerClip.id);
+    addNote({ pitch: 60, startPpq: 4, durationPpq: 1 });
+    setActiveClip(plainClipId);
+    addNote({ pitch: 60, startPpq: 4, durationPpq: 1 });
+    setTrackChordFollow(followerClip.trackId, 'root');
+    setProjectChords([
+      { startPpq: 2, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 10, rootPc: 7, quality: 0 },
+    ]);
+    clearHistory();
+
+    setActiveClip(followerClip.id);
+    generateTracksBatchCommand(
+      [
+        {
+          part: 'motif',
+          params: { bars: 1, seed: 0, develop: true },
+          target: { kind: 'clip', mode: 'append' },
+        },
+      ],
+      { targetBars: 3 },
+    );
+    const followerResult = noteShape(followerClip.id);
+    const followerGenerated = followerResult?.filter((note) => note.startPpq >= 5);
+    expect(followerResult?.find((note) => note.startPpq === 4)?.pitch).toBe(55);
+    expect(followerGenerated?.length).toBeGreaterThan(0);
+    expect(undo()).toBe(true);
+    expect(store.chords).toEqual([
+      { startPpq: 2, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 10, rootPc: 7, quality: 0 },
+    ]);
+    expect(noteShape(followerClip.id)?.find((note) => note.startPpq === 4)?.pitch).toBe(60);
+
+    setActiveClip(plainClipId);
+    generateTracksBatchCommand(
+      [
+        {
+          part: 'motif',
+          params: { bars: 1, seed: 0, develop: true },
+          target: { kind: 'clip', mode: 'append' },
+        },
+      ],
+      { targetBars: 3 },
+    );
+    const plainResult = noteShape(plainClipId);
+    expect(plainResult?.filter((note) => note.startPpq >= 5)).toEqual(followerGenerated);
+    expect(plainResult?.find((note) => note.startPpq === 4)?.pitch).toBe(60);
+    expect(undo()).toBe(true);
+    expect(store.chords).toEqual([
+      { startPpq: 2, endPpq: 6, rootPc: 0, quality: 0 },
+      { startPpq: 6, endPpq: 10, rootPc: 7, quality: 0 },
+    ]);
+    expect(noteShape(plainClipId)?.find((note) => note.startPpq === 4)?.pitch).toBe(60);
+  });
+
+  it('keeps motif and drums available at a requested length without chords', () => {
+    const written = generateTracksBatchCommand(
+      [
+        { part: 'motif', params: { bars: 1 }, target: { kind: 'new' } },
+        { part: 'drums', params: { bars: 1 }, target: { kind: 'new' } },
+      ],
+      { targetBars: 2 },
+    );
+
+    expect(written).toBe(2);
+    expect(store.chords).toEqual([]);
+    expect(store.tracks.map((track) => track.name)).toEqual(['Piano', 'Motif', 'Drums']);
+  });
+
+  it('rejects invalid whole lengths and non-four-four target ranges before writing', () => {
+    setProjectChords(FOUR_CHORDS);
+    const before = store.chords.map((chord) => ({ ...chord }));
+    for (const targetBars of [0, 257, 1.5]) {
+      expect(() =>
+        generateTracksBatchCommand([{ part: 'bass', params: {}, target: { kind: 'new' } }], {
+          targetBars,
+        }),
+      ).toThrow(RangeError);
+      expect(store.chords).toEqual(before);
+    }
+
+    store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
+    expect(() =>
+      generateTracksBatchCommand([{ part: 'bass', params: {}, target: { kind: 'new' } }], {
+        targetBars: 1,
+      }),
+    ).toThrow(/4\/4/);
+    expect(store.chords).toEqual(before);
   });
 
   it('skips empty generations', () => {

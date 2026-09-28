@@ -15,6 +15,7 @@ import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { topVoiceOnly } from '@/compose/tracks';
+import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
@@ -46,6 +47,7 @@ export interface GenerateCounterMelodyParams {
 export function buildCounterPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateCounterMelodyParams = {},
+  chords: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): TrackPlan | null {
   const clip = store.activeClip;
   if (clip === null || clipKind(clip) !== 'midi') return null;
@@ -63,7 +65,7 @@ export function buildCounterPlan(
   const target = createGenerationTargetFrame({
     startPpq: clip.startPpq,
     endPpq: clip.startPpq + clip.lengthPpq,
-    chords: store.chords,
+    chords,
     timeSignatures: store.timeSignatures,
   });
 

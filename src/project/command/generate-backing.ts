@@ -21,6 +21,7 @@ import {
 } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
 import { effectiveKeyScale } from '@/compose/key';
+import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
@@ -85,10 +86,11 @@ function voicingsFor(
 export function buildBackingPlan(
   store: ReturnType<typeof useProjectStore>,
   params: GenerateBackingParams = {},
+  chordSymbols: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): TrackPlan | null {
-  if (store.chords.length === 0) return null;
+  if (chordSymbols.length === 0) return null;
 
-  const regions = [...store.chords].sort((a, b) => a.startPpq - b.startPpq);
+  const regions = [...chordSymbols].sort((a, b) => a.startPpq - b.startPpq);
   const chords = regions.map(editorChordToChord);
   const voicings = voicingsFor(chords, params, effectiveKeyScale(store.scaleHighlight));
 
