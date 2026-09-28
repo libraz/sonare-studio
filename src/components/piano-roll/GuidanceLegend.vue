@@ -212,17 +212,28 @@ function setProfile(next: GuidanceProfile): void {
 <style scoped>
 .guidance-legend {
   position: absolute;
+  box-sizing: border-box;
   top: calc(100% + 4px);
   right: 0.5rem;
   z-index: 40;
   min-width: 15rem;
   padding: 0.5rem 0.75rem;
-  background: var(--surface-3);
+  max-height: min(480px, calc(100vh - 100px));
+  overflow-y: auto;
+  background: var(--surface-floating);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: var(--raise-hi);
+  box-shadow: var(--shadow-pop);
   font: var(--fs-sm)/1.4 var(--font-sans);
   color: var(--text-1);
+}
+
+@media (max-height: 900px) {
+  .guidance-legend {
+    top: auto;
+    bottom: calc(100% + 4px);
+    max-height: min(220px, calc(100vh - 100px));
+  }
 }
 
 .legend-header {

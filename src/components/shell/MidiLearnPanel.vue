@@ -774,14 +774,15 @@ function clearAll(): void {
 }
 
 .ml-bind-set {
-  color: var(--text-1);
-  box-shadow: inset 0 0 0 1px var(--accent-muted), var(--raise-hi), var(--shadow-1);
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: none;
 }
 
 .ml-bind-armed {
   background: var(--accent);
   color: var(--accent-text);
-  box-shadow: inset 0 0 0 1px var(--accent), var(--raise-hi), var(--shadow-1);
+  box-shadow: none;
 }
 
 .ml-devices {

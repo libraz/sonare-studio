@@ -40,7 +40,7 @@ describe('arrangement loop split entry-point wiring', () => {
       "import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';",
     );
     expect(arrangementView).toContain("const snapChoice = computed<number | 'bar'>({");
-    expect(arrangementView).toContain('<SelectMenu\n          v-model="snapChoice"');
+    expect(arrangementView).toMatch(/<SelectMenu\s+v-model="snapChoice"/);
     expect(arrangementView).toContain(':options="SNAP_CHOICES"');
   });
 

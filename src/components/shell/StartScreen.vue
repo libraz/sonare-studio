@@ -12,11 +12,8 @@ import { formatSize, formatTimestamp } from '@/ui/shell/format';
  * silently landing in a demo: continue the autosaved session, create a new
  * project, open the bundled demo song, or open / import a saved project.
  *
- * The layout is a compact centred dialog: a brand header, raised action-card
- * buttons carrying a round icon and a title/subtitle (the headline action gets
- * an accent-tinted face), an "open saved" divider, a list of saved projects,
- * and a row of secondary import/backup chips — all in the shared control-face
- * language (a hairline ring plus a soft lift, never a drawn border).
+ * The layout is a compact launcher: a brand header, a short list of project
+ * actions, saved projects, and secondary import/backup actions.
  *
  * The overlay sits below the modal layer (z-index 90 < 100) so the New and Open
  * dialogs it triggers render on top of it; it stays mounted until a project is
@@ -230,10 +227,10 @@ function projectMeta(info: StoredProjectInfo): string {
 .ss-head {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--sp-2);
-  padding: var(--sp-8) var(--sp-7) var(--sp-6);
-  text-align: center;
+  padding: var(--sp-8) var(--sp-8) var(--sp-6);
+  text-align: left;
 }
 
 .ss-subtitle {
@@ -245,8 +242,8 @@ function projectMeta(info: StoredProjectInfo): string {
 .ss-body {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-4);
-  padding: 0 var(--sp-7) var(--sp-7);
+  gap: var(--sp-3);
+  padding: 0 var(--sp-8) var(--sp-7);
 }
 
 /* --- Action buttons --------------------------------------------------- */
@@ -255,77 +252,53 @@ function projectMeta(info: StoredProjectInfo): string {
   align-items: center;
   gap: var(--sp-5);
   width: 100%;
-  padding: var(--sp-5) var(--sp-6);
+  padding: var(--sp-4) var(--sp-5);
   text-align: left;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--radius-lg);
   background: var(--surface-2);
-  box-shadow: var(--control-edge), var(--shadow-1);
+  box-shadow: none;
   color: var(--text-1);
   cursor: pointer;
   transition:
     background var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .ss-action:hover {
-  box-shadow: var(--control-edge-hover), var(--shadow-2);
-  transform: translateY(-1px);
+  background: var(--surface-3);
 }
 
 .ss-action:active {
-  transform: translateY(0);
-  box-shadow: var(--control-edge), var(--inset-well);
+  background: var(--surface-4);
 }
 
 .ss-action:focus-visible {
   outline: none;
-  box-shadow: var(--control-edge), var(--ring);
+  box-shadow: var(--ring);
 }
 
-/* Headline action: an accent-tinted face with an accent hairline ring and a
- * soft accent glow — no drawn border, so it never reads as a heavy embossed box
- * and stays the same size as the neutral actions. */
 .ss-action.primary {
   background: var(--accent-soft);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
-    0 1px 3px color-mix(in srgb, var(--accent) 20%, transparent),
-    var(--shadow-1);
 }
 
 .ss-action.primary:hover {
-  background: color-mix(in srgb, var(--accent), transparent 84%);
-  box-shadow:
-    inset 0 0 0 1px var(--accent),
-    0 3px 10px color-mix(in srgb, var(--accent) 26%, transparent),
-    var(--shadow-2);
-  transform: translateY(-1px);
-}
-
-.ss-action.primary:active {
-  transform: translateY(0);
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
 }
 
 .ss-action.primary:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--accent), var(--ring);
+  box-shadow: var(--ring);
 }
 
-/* iOS "app-icon" rounded square rather than a bare circle, so the glyph sits on
- * a deliberate tile. A hairline ring gives the tile an edge without a drawn
- * border. */
 .ss-action-icon {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: var(--radius-md);
-  background: var(--surface-inset);
-  box-shadow: var(--control-edge);
+  background: var(--surface-1);
   color: var(--text-2);
 }
 
@@ -336,7 +309,6 @@ function projectMeta(info: StoredProjectInfo): string {
 
 .ss-action.primary .ss-action-icon {
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-2));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--accent);
 }
 
@@ -364,20 +336,16 @@ function projectMeta(info: StoredProjectInfo): string {
   color: var(--text-3);
 }
 
-/* Trailing affordance: a muted chevron that nudges toward the label on hover. */
 .ss-action-arrow {
   flex: none;
   width: 18px;
   height: 18px;
   color: var(--text-4);
-  transition:
-    transform var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
+  transition: color var(--dur-1) var(--ease-out);
 }
 
 .ss-action:hover .ss-action-arrow {
   color: var(--text-3);
-  transform: translateX(2px);
 }
 
 .ss-action.primary .ss-action-arrow {
@@ -418,19 +386,18 @@ function projectMeta(info: StoredProjectInfo): string {
   width: 100%;
   padding: var(--sp-4) var(--sp-5);
   text-align: left;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--surface-2);
-  box-shadow: var(--control-edge);
+  box-shadow: none;
   cursor: pointer;
   transition:
     background var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .ss-project:hover {
   background: var(--surface-4);
-  box-shadow: var(--control-edge-hover), var(--shadow-1);
 }
 
 .ss-project:focus-visible {
@@ -467,10 +434,10 @@ function projectMeta(info: StoredProjectInfo): string {
   gap: var(--sp-3);
   width: 100%;
   padding: var(--sp-3) var(--sp-4);
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--surface-2);
-  box-shadow: var(--control-edge), var(--shadow-1);
+  box-shadow: none;
   color: var(--text-2);
   font: inherit;
   font-size: var(--fs-sm);
@@ -479,8 +446,7 @@ function projectMeta(info: StoredProjectInfo): string {
   transition:
     color var(--dur-1) var(--ease-out),
     background var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .ss-import-icon {
@@ -501,7 +467,6 @@ function projectMeta(info: StoredProjectInfo): string {
 .ss-import:hover {
   color: var(--text-1);
   background: var(--surface-4);
-  box-shadow: var(--control-edge-hover), var(--shadow-2);
 }
 
 .ss-import:hover .ss-import-icon {
@@ -509,30 +474,29 @@ function projectMeta(info: StoredProjectInfo): string {
 }
 
 .ss-import:active {
-  transform: translateY(0.5px);
-  box-shadow: var(--control-edge), var(--inset-well);
+  background: var(--surface-1);
 }
 
 .ss-import:focus-visible {
   outline: none;
-  box-shadow: var(--control-edge), var(--ring);
+  box-shadow: var(--ring);
 }
 
 /* --- Disclaimer footer ------------------------------------------------ */
 .ss-notice {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--sp-2);
-  padding: var(--sp-5) var(--sp-7) var(--sp-6);
+  padding: var(--sp-5) var(--sp-8) var(--sp-6);
   border-top: 1px solid var(--border-subtle);
-  background: var(--surface-1);
-  text-align: center;
+  background: var(--surface-2);
+  text-align: left;
 }
 
 .ss-notice-text {
   margin: 0;
-  max-width: 34ch;
+  max-width: 56ch;
   font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-4);

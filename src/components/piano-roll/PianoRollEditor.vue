@@ -1505,7 +1505,9 @@ onBeforeUnmount(() => {
   display: grid;
   /* Columns are set inline from KEYBOARD_COLUMN_WIDTH_PX so the keyboard width
      and the playhead follow anchor stay derived from one source. */
-  grid-template-rows: 18px 24px 18px 1fr 132px 12px 22px;
+  /* The parameter lane yields space to the note grid on shorter screens. A
+     fixed 132px lane collapses the playable grid entirely at 720px height. */
+  grid-template-rows: 18px 24px 18px minmax(0, 1fr) clamp(48px, 25%, 132px) 12px 22px;
 }
 
 /* Collapse the parameter-lane row when the user hides the block; the grid and

@@ -35,10 +35,10 @@ describe('useAppShellLayout', () => {
   });
 
   it('computes a viewport-aware arrangement bound', () => {
-    expect(maximumArrangementHeight(1000)).toBe(760);
+    expect(maximumArrangementHeight(1000)).toBe(510);
     expect(maximumArrangementHeight(300)).toBe(120);
     expect(maximumArrangementHeight(5000)).toBe(2000);
-    expect(clampArrangementHeight(1200, 600)).toBe(360);
+    expect(clampArrangementHeight(1200, 600)).toBe(120);
   });
 
   it('clamps a stored arrangement height on load', () => {
@@ -47,7 +47,7 @@ describe('useAppShellLayout', () => {
 
     const layout = useAppShellLayout();
 
-    expect(layout.arrangeHeight.value).toBe(360);
+    expect(layout.arrangeHeight.value).toBe(120);
     layout.disposeLayout();
   });
 
@@ -73,8 +73,8 @@ describe('useAppShellLayout', () => {
 
     layout.layoutBindings.arrangeHeightPx.value = 1800;
 
-    expect(layout.arrangeHeight.value).toBe(760);
-    expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('760');
+    expect(layout.arrangeHeight.value).toBe(510);
+    expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('510');
     layout.disposeLayout();
   });
 
@@ -85,8 +85,8 @@ describe('useAppShellLayout', () => {
 
     window.dispatchEvent(new Event('resize'));
 
-    expect(layout.arrangeHeight.value).toBe(280);
-    expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('280');
+    expect(layout.arrangeHeight.value).toBe(120);
+    expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('120');
     layout.disposeLayout();
   });
 

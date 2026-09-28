@@ -740,7 +740,7 @@ defineExpose({
   padding: var(--sp-1) var(--sp-2);
   font: inherit;
   font-variant-numeric: tabular-nums;
-  box-shadow: var(--control-edge), var(--inset-well);
+  box-shadow: var(--field-edge), var(--inset-well);
   width: 3.5rem;
 }
 

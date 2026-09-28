@@ -253,9 +253,9 @@ function onMidiForget(): void {
 .knob {
   position: relative;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, var(--surface-4), var(--surface-2) 72%);
+  background: var(--surface-field);
   border: 1px solid var(--border);
-  box-shadow: var(--raise-hi);
+  box-shadow: none;
   cursor: ns-resize;
   touch-action: none;
   flex: none;
@@ -269,6 +269,7 @@ function onMidiForget(): void {
 
 .knob.dragging {
   border-color: var(--accent);
+  box-shadow: var(--ring);
 }
 
 .knob.disabled {
@@ -288,15 +289,27 @@ function onMidiForget(): void {
   left: 50%;
   top: 8%;
   width: 2px;
-  height: 38%;
+  height: 42%;
   margin-left: -1px;
   border-radius: 1px;
-  background: var(--accent);
+  background: var(--accent-strong);
+}
+
+.knob-pointer::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--accent-strong);
 }
 
 .knob-label {
   font: var(--fw-normal) var(--fs-chrome-md) var(--font-sans);
-  color: var(--text-4);
+  color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   user-select: none;

@@ -110,233 +110,235 @@ function onLegendClick(trackId: number): void {
 </script>
 
 <template>
-  <div class="roll-toolbar">
-    <ToggleButton v-model="overlayEnabled" :label="t.shell.pianoRoll.overlay" size="sm" />
-    <ToggleButton
-      v-model="snapToScale"
-      :label="t.shell.pianoRoll.snapScaleToggle"
-      :title="t.shell.pianoRoll.snapScaleToggleTitle"
-      :disabled="props.drumTrack === true"
-      size="sm"
-    />
-    <div class="tool-readout" :title="activeTool.hint" aria-live="polite">
-      <span class="tool-readout__glyph" aria-hidden="true">{{ activeTool.glyph }}</span>
-      <span>{{ activeTool.label }}</span>
-    </div>
-    <SelectMenu
-      v-model="ghostMode"
-      class="toolbar-select"
-      size="sm"
-      :options="ghostModeOptions"
-      :aria-label="t.shell.pianoRoll.ghostMode"
-    />
-    <ToggleButton
-      v-model="ghostHideMuted"
-      :label="t.shell.pianoRoll.ghostHideMuted"
-      :title="t.shell.pianoRoll.ghostHideMutedTitle"
-      size="sm"
-    />
-    <SelectMenu
-      v-model="noteColorMode"
-      class="toolbar-select"
-      size="sm"
-      :options="noteColorModeOptions"
-      :aria-label="t.shell.pianoRoll.noteColorMode"
-    />
-    <ToggleButton
-      v-model="auditionDrag"
-      :label="t.shell.pianoRoll.auditionDrag"
-      :title="t.shell.pianoRoll.auditionDragTitle"
-      size="sm"
-    />
-    <ToggleButton
-      v-model="autoReharmonize"
-      :label="t.shell.pianoRoll.reharmonize.toggle"
-      :title="t.shell.pianoRoll.reharmonize.toggleTitle"
-      :disabled="props.readOnly === true || props.drumTrack === true"
-      size="sm"
-    />
-    <ToggleButton
-      v-model="placementGuide"
-      :label="t.shell.pianoRoll.placementGuideToggle"
-      :title="t.shell.pianoRoll.placementGuideToggleTitle"
-      size="sm"
-    />
-    <ToggleButton
-      v-model="guidanceTint"
-      :label="t.shell.pianoRoll.guidanceTintToggle"
-      :title="t.shell.pianoRoll.guidanceTintToggleTitle"
-      size="sm"
-    />
-    <div class="track-legend">
+  <div class="roll-toolbar" @wheel.stop>
+    <div class="roll-toolbar-scroll" @wheel.stop>
+      <ToggleButton v-model="overlayEnabled" :label="t.shell.pianoRoll.overlay" size="sm" />
+      <ToggleButton
+        v-model="snapToScale"
+        :label="t.shell.pianoRoll.snapScaleToggle"
+        :title="t.shell.pianoRoll.snapScaleToggleTitle"
+        :disabled="props.drumTrack === true"
+        size="sm"
+      />
+      <div class="tool-readout" :title="activeTool.hint" aria-live="polite">
+        <span class="tool-readout__glyph" aria-hidden="true">{{ activeTool.glyph }}</span>
+        <span>{{ activeTool.label }}</span>
+      </div>
+      <SelectMenu
+        v-model="ghostMode"
+        class="toolbar-select"
+        size="sm"
+        :options="ghostModeOptions"
+        :aria-label="t.shell.pianoRoll.ghostMode"
+      />
+      <ToggleButton
+        v-model="ghostHideMuted"
+        :label="t.shell.pianoRoll.ghostHideMuted"
+        :title="t.shell.pianoRoll.ghostHideMutedTitle"
+        size="sm"
+      />
+      <SelectMenu
+        v-model="noteColorMode"
+        class="toolbar-select"
+        size="sm"
+        :options="noteColorModeOptions"
+        :aria-label="t.shell.pianoRoll.noteColorMode"
+      />
+      <ToggleButton
+        v-model="auditionDrag"
+        :label="t.shell.pianoRoll.auditionDrag"
+        :title="t.shell.pianoRoll.auditionDragTitle"
+        size="sm"
+      />
+      <ToggleButton
+        v-model="autoReharmonize"
+        :label="t.shell.pianoRoll.reharmonize.toggle"
+        :title="t.shell.pianoRoll.reharmonize.toggleTitle"
+        :disabled="props.readOnly === true || props.drumTrack === true"
+        size="sm"
+      />
+      <ToggleButton
+        v-model="placementGuide"
+        :label="t.shell.pianoRoll.placementGuideToggle"
+        :title="t.shell.pianoRoll.placementGuideToggleTitle"
+        size="sm"
+      />
+      <ToggleButton
+        v-model="guidanceTint"
+        :label="t.shell.pianoRoll.guidanceTintToggle"
+        :title="t.shell.pianoRoll.guidanceTintToggleTitle"
+        size="sm"
+      />
+      <div class="track-legend">
+        <button
+          v-for="track in store.tracks"
+          :key="track.id"
+          type="button"
+          class="legend-chip"
+          :class="{ 'legend-chip-active': track.id === store.activeTrackId }"
+          v-tooltip="track.name"
+          @click="onLegendClick(track.id)"
+        >
+          <span class="chip-swatch" :style="{ background: track.color }" />
+          <span class="chip-name">{{ track.name }}</span>
+        </button>
+      </div>
+      <div class="zoom-cluster" role="group" :aria-label="t.shell.pianoRoll.zoom">
+        <span class="fit-pair">
+          <button
+            type="button"
+            class="fit-btn"
+            v-tooltip="t.shell.pianoRoll.fitClipTitle"
+            :aria-label="t.shell.pianoRoll.fitClip"
+            @click="emit('fitClip')"
+          >
+            {{ t.shell.pianoRoll.fitClip }}
+          </button>
+          <button
+            type="button"
+            class="fit-btn"
+            v-tooltip="t.shell.pianoRoll.fitNotesTitle"
+            :aria-label="t.shell.pianoRoll.fitNotes"
+            @click="emit('fitNotes')"
+          >
+            {{ t.shell.pianoRoll.fitNotes }}
+          </button>
+          <button
+            type="button"
+            class="fit-btn"
+            v-tooltip="t.shell.pianoRoll.fitSelectionTitle"
+            :aria-label="t.shell.pianoRoll.fitSelection"
+            @click="emit('fitSelection')"
+          >
+            {{ t.shell.pianoRoll.fitSelection }}
+          </button>
+        </span>
+        <span class="zoom-pair">
+          <button
+            type="button"
+            class="zoom-btn"
+            v-tooltip="t.shell.pianoRoll.zoomOutTimeTitle"
+            :aria-label="t.shell.pianoRoll.zoomOutHorizontal"
+            @click="emit('zoomHorizontal', 1 / ZOOM_BUTTON_STEP)"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="zoom-btn"
+            v-tooltip="t.shell.pianoRoll.zoomInTimeTitle"
+            :aria-label="t.shell.pianoRoll.zoomInHorizontal"
+            @click="emit('zoomHorizontal', ZOOM_BUTTON_STEP)"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M8 0v5M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
+          </button>
+        </span>
+        <span class="zoom-pair">
+          <button
+            type="button"
+            class="zoom-btn"
+            v-tooltip="t.shell.pianoRoll.zoomOutPitchTitle"
+            :aria-label="t.shell.pianoRoll.zoomOutVertical"
+            @click="emit('zoomVertical', 1 / ZOOM_BUTTON_STEP)"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="zoom-btn"
+            v-tooltip="t.shell.pianoRoll.zoomInPitchTitle"
+            :aria-label="t.shell.pianoRoll.zoomInVertical"
+            @click="emit('zoomVertical', ZOOM_BUTTON_STEP)"
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path d="M12.75 6.25v3.5M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" />
+            </svg>
+          </button>
+        </span>
+      </div>
+      <ToggleButton
+        v-model="laneVisible"
+        class="lane-toggle"
+        size="sm"
+        :label="t.shell.pianoRoll.laneToggle"
+        :title="t.shell.pianoRoll.laneToggleTitle"
+        :disabled="props.laneToggleDisabled === true"
+      />
       <button
-        v-for="track in store.tracks"
-        :key="track.id"
         type="button"
-        class="legend-chip"
-        :class="{ 'legend-chip-active': track.id === store.activeTrackId }"
-        v-tooltip="track.name"
-        @click="onLegendClick(track.id)"
+        class="fx-toggle"
+        :class="{ 'fx-toggle-active': fxPanelOpen }"
+        :disabled="!canTransform"
+        :aria-expanded="fxPanelOpen"
+        v-tooltip="t.shell.pianoRoll.midiFxTitle"
+        @click="toggleFxPanel"
       >
-        <span class="chip-swatch" :style="{ background: track.color }" />
-        <span class="chip-name">{{ track.name }}</span>
+        {{ t.shell.pianoRoll.midiFx }}
+      </button>
+      <button
+        type="button"
+        class="fx-toggle"
+        :class="{ 'fx-toggle-active': ornamentOpen }"
+        :disabled="!canTransform"
+        :aria-expanded="ornamentOpen"
+        v-tooltip="t.shell.pianoRoll.ornamentTitle"
+        @click="toggleOrnamentPanel"
+      >
+        {{ t.shell.pianoRoll.ornamentToggle }}
+      </button>
+      <button
+        type="button"
+        class="fx-toggle"
+        :class="{ 'fx-toggle-active': legendOpen }"
+        :aria-expanded="legendOpen"
+        v-tooltip="t.shell.pianoRoll.guideTitle"
+        @click="legendOpen = !legendOpen"
+      >
+        {{ t.shell.pianoRoll.guide }}
       </button>
     </div>
-    <div class="zoom-cluster" role="group" :aria-label="t.shell.pianoRoll.zoom">
-      <span class="fit-pair">
-        <button
-          type="button"
-          class="fit-btn"
-          v-tooltip="t.shell.pianoRoll.fitClipTitle"
-          :aria-label="t.shell.pianoRoll.fitClip"
-          @click="emit('fitClip')"
-        >
-          {{ t.shell.pianoRoll.fitClip }}
-        </button>
-        <button
-          type="button"
-          class="fit-btn"
-          v-tooltip="t.shell.pianoRoll.fitNotesTitle"
-          :aria-label="t.shell.pianoRoll.fitNotes"
-          @click="emit('fitNotes')"
-        >
-          {{ t.shell.pianoRoll.fitNotes }}
-        </button>
-        <button
-          type="button"
-          class="fit-btn"
-          v-tooltip="t.shell.pianoRoll.fitSelectionTitle"
-          :aria-label="t.shell.pianoRoll.fitSelection"
-          @click="emit('fitSelection')"
-        >
-          {{ t.shell.pianoRoll.fitSelection }}
-        </button>
-      </span>
-      <span class="zoom-pair">
-        <button
-          type="button"
-          class="zoom-btn"
-          v-tooltip="t.shell.pianoRoll.zoomOutTimeTitle"
-          :aria-label="t.shell.pianoRoll.zoomOutHorizontal"
-          @click="emit('zoomHorizontal', 1 / ZOOM_BUTTON_STEP)"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path d="M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
-              stroke-linecap="round" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="zoom-btn"
-          v-tooltip="t.shell.pianoRoll.zoomInTimeTitle"
-          :aria-label="t.shell.pianoRoll.zoomInHorizontal"
-          @click="emit('zoomHorizontal', ZOOM_BUTTON_STEP)"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M2 8h12M2 8l2.5-2.5M2 8l2.5 2.5M14 8l-2.5-2.5M14 8l-2.5 2.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path d="M8 0v5M5.5 2.5h5" fill="none" stroke="currentColor" stroke-width="1.6"
-              stroke-linecap="round" />
-          </svg>
-        </button>
-      </span>
-      <span class="zoom-pair">
-        <button
-          type="button"
-          class="zoom-btn"
-          v-tooltip="t.shell.pianoRoll.zoomOutPitchTitle"
-          :aria-label="t.shell.pianoRoll.zoomOutVertical"
-          @click="emit('zoomVertical', 1 / ZOOM_BUTTON_STEP)"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path d="M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
-              stroke-linecap="round" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          class="zoom-btn"
-          v-tooltip="t.shell.pianoRoll.zoomInPitchTitle"
-          :aria-label="t.shell.pianoRoll.zoomInVertical"
-          @click="emit('zoomVertical', ZOOM_BUTTON_STEP)"
-        >
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M8 2v12M8 2L5.5 4.5M8 2l2.5 2.5M8 14l-2.5-2.5M8 14l2.5-2.5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <path d="M12.75 6.25v3.5M11 8h3.5" fill="none" stroke="currentColor" stroke-width="1.6"
-              stroke-linecap="round" />
-          </svg>
-        </button>
-      </span>
-    </div>
-    <ToggleButton
-      v-model="laneVisible"
-      class="lane-toggle"
-      size="sm"
-      :label="t.shell.pianoRoll.laneToggle"
-      :title="t.shell.pianoRoll.laneToggleTitle"
-      :disabled="props.laneToggleDisabled === true"
-    />
-    <button
-      type="button"
-      class="fx-toggle"
-      :class="{ 'fx-toggle-active': fxPanelOpen }"
-      :disabled="!canTransform"
-      :aria-expanded="fxPanelOpen"
-      v-tooltip="t.shell.pianoRoll.midiFxTitle"
-      @click="toggleFxPanel"
-    >
-      {{ t.shell.pianoRoll.midiFx }}
-    </button>
-    <button
-      type="button"
-      class="fx-toggle"
-      :class="{ 'fx-toggle-active': ornamentOpen }"
-      :disabled="!canTransform"
-      :aria-expanded="ornamentOpen"
-      v-tooltip="t.shell.pianoRoll.ornamentTitle"
-      @click="toggleOrnamentPanel"
-    >
-      {{ t.shell.pianoRoll.ornamentToggle }}
-    </button>
-    <button
-      type="button"
-      class="fx-toggle"
-      :class="{ 'fx-toggle-active': legendOpen }"
-      :aria-expanded="legendOpen"
-      v-tooltip="t.shell.pianoRoll.guideTitle"
-      @click="legendOpen = !legendOpen"
-    >
-      {{ t.shell.pianoRoll.guide }}
-    </button>
     <GuidanceLegend v-if="legendOpen" @close="legendOpen = false" />
     <MidiFxPanel
       v-if="fxPanelOpen && canTransform"
@@ -355,15 +357,21 @@ function onLegendClick(trackId: number): void {
 <style scoped>
 .roll-toolbar {
   position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.25rem 0.5rem;
-  background: var(--surface-2);
+  background: var(--surface-panel);
   border-bottom: 1px solid var(--border-strong);
-  box-shadow: var(--raise-hi);
   font: var(--fs-sm)/1.4 var(--font-sans);
+}
+
+.roll-toolbar-scroll {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.25rem 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  white-space: nowrap;
 }
 
 .zoom-cluster {
@@ -414,8 +422,6 @@ function onLegendClick(trackId: number): void {
   gap: 2px;
 }
 
-/* Inherits the controls.css raised-face baseline (hover/active/press); only the
- * compact metrics and surface tint differ from the canonical button. */
 .zoom-btn,
 .fit-btn {
   display: flex;
@@ -425,7 +431,7 @@ function onLegendClick(trackId: number): void {
   min-width: 1.6rem;
   padding: 0.1rem 0.3rem;
   font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
-  background: var(--surface-3);
+  background: transparent;
   border-radius: var(--radius-sm);
 }
 
@@ -438,6 +444,14 @@ function onLegendClick(trackId: number): void {
 .fit-btn:hover:not(:disabled),
 .fx-toggle:hover:not(:disabled) {
   color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.zoom-btn:focus-visible,
+.fit-btn:focus-visible,
+.fx-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 .lane-toggle {
@@ -450,14 +464,14 @@ function onLegendClick(trackId: number): void {
   font: var(--fs-xs)/1.4 var(--font-sans);
   font-weight: var(--fw-semibold);
   letter-spacing: 0.02em;
-  background: var(--surface-3);
+  background: transparent;
   border-radius: var(--radius-sm);
 }
 
 .fx-toggle-active {
-  background: var(--accent);
-  color: var(--accent-text);
-  box-shadow: var(--raise-hi), var(--shadow-1);
+  background: var(--surface-selection);
+  color: var(--accent);
+  box-shadow: none;
 }
 
 .fx-toggle:disabled {
@@ -467,11 +481,11 @@ function onLegendClick(trackId: number): void {
 
 .track-legend {
   display: flex;
-  flex: 1 1 14rem;
+  flex: 0 0 auto;
   align-items: center;
   gap: 0.25rem;
-  min-width: min(14rem, 100%);
-  max-width: 100%;
+  min-width: 0;
+  max-width: min(25rem, 40vw);
   overflow-x: auto;
 }
 
@@ -481,7 +495,7 @@ function onLegendClick(trackId: number): void {
   gap: 0.3rem;
   padding: 0.1rem 0.45rem;
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   background: transparent;
   box-shadow: none;
   color: var(--text-3);
@@ -500,16 +514,15 @@ function onLegendClick(trackId: number): void {
   box-shadow: var(--ring);
 }
 
-/* Pair the accent tint with a thin inner ring so the active chip is
- * unambiguous against a merely hovered one. */
 .legend-chip-active {
   background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent-muted);
+  box-shadow: none;
   color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
 .legend-chip-active:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--accent-muted), var(--ring);
+  box-shadow: var(--ring);
 }
 
 .chip-swatch {

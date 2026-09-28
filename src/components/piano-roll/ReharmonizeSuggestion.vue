@@ -76,7 +76,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
   padding: 0.25rem 0.35rem 0.25rem 0.65rem;
   background: var(--surface-3);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   box-shadow: var(--raise-hi), var(--shadow-1);
   font: var(--fs-xs)/1.4 var(--font-sans);
   color: var(--text-2);
@@ -104,7 +104,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
   gap: 0.25rem;
   padding: 0.05rem 0.4rem;
   background: var(--surface-inset);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-xs);
 }
 
 .chip-from {
@@ -133,7 +133,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
   background: var(--accent);
   color: var(--accent-text);
   border: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   font: var(--fw-semibold) var(--fs-xs)/1.4 var(--font-sans);
   cursor: pointer;
   transition: background var(--dur-1) var(--ease-out);

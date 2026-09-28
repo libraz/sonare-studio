@@ -1563,7 +1563,8 @@ onBeforeUnmount(() => {
 .history-entry.current {
   background: var(--surface-selected);
   color: var(--text-1);
-  box-shadow: inset 0 0 0 1px var(--accent), var(--control-edge);
+  font-weight: var(--fw-semibold);
+  box-shadow: none;
 }
 
 .history-entry:disabled {

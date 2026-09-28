@@ -351,15 +351,26 @@ function pct(value: number): string {
   right: var(--sp-3);
   z-index: 40;
   width: 280px;
+  max-height: min(480px, calc(100vh - 100px));
   display: flex;
   flex-direction: column;
-  background: var(--glass-3);
+  overflow-y: auto;
+  background: var(--surface-floating);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--glass-hairline), var(--shadow-pop);
   font-family: var(--font-sans);
   color: var(--text-2);
+}
+
+@media (max-height: 900px) {
+  .midi-fx-panel {
+    top: auto;
+    bottom: calc(100% + var(--sp-2));
+    max-height: min(220px, calc(100vh - 100px));
+  }
 }
 
 .fx-head {

@@ -144,7 +144,7 @@ function segmentTitle(segment: StripSegment): string {
   border: none;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--surface-3) 55%, transparent);
-  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  box-shadow: none;
   color: var(--text-4);
   font: var(--fw-semibold) var(--fs-2xs)/1 var(--font-sans);
   letter-spacing: 0.03em;
@@ -161,12 +161,11 @@ function segmentTitle(segment: StripSegment): string {
   color: var(--text-2);
 }
 
-/* Accent tint + inner ring, matching the app's "active chip" idiom, so pinned
- * harmony reads clearly without shouting over the notes below. */
+/* Accent tint marks pinned harmony without adding a perimeter stroke. */
 .lock-segment-locked,
 .lock-segment-locked:hover {
   background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent-muted);
+  box-shadow: none;
   color: var(--text-1);
 }
 

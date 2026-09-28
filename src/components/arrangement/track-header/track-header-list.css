@@ -1,196 +1,229 @@
 .track-headers {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  width: 100%;
+  width: 192px;
+  min-width: 192px;
+  max-width: 192px;
   height: 100%;
-  background: var(--surface-2);
+  background: var(--surface-panel);
   border-right: 1px solid var(--border-strong);
   overflow: hidden;
 }
 
-.headers-top {
+.track-headers .headers-top {
   display: flex;
   align-items: center;
+  box-sizing: border-box;
+  width: 100%;
   padding: 0 var(--sp-3);
+  background: var(--surface-toolbar);
   border-bottom: 1px solid var(--border-strong);
-  box-shadow: var(--raise-hi);
   flex: none;
 }
 
-.add-track-menu {
+.track-headers .add-track-menu {
   position: relative;
 }
 
-.add-track {
-  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+.track-headers .add-track {
+  box-sizing: border-box;
+  min-height: 20px;
+  padding: 2px var(--sp-3);
   color: var(--text-2);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   background: var(--surface-3);
-  border-radius: var(--radius-sm);
-  padding: 2px var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: 2px;
   cursor: pointer;
-  box-shadow: var(--control-lift);
-  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 
-.add-track:hover {
+.track-headers .add-track:hover {
   background: var(--surface-4);
-  box-shadow: var(--control-lift-hover);
 }
 
-/* Compact variant of the shared .control-menu popover language: frosted glass,
-   hairline rim and accent-fill item hover to match every other app menu. */
-.add-track-items {
+.track-headers .add-track:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* Compact variant of the shared .control-menu popover language. */
+.track-headers .add-track-items {
   position: absolute;
   top: calc(100% + 2px);
   left: 0;
   z-index: 10;
   display: flex;
   flex-direction: column;
-  /* Grow to fit the longest label so items never wrap. */
+  box-sizing: border-box;
   width: max-content;
   min-width: 110px;
   padding: var(--sp-1);
-  background: var(--glass-3);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--glass-hairline), var(--shadow-pop);
+  background: var(--surface-floating);
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
 }
 
-.add-track-items button {
-  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+.track-headers .add-track-items button {
+  box-sizing: border-box;
+  padding: 5px var(--sp-3);
   color: var(--text-2);
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  border-radius: var(--radius-xs);
-  padding: 5px var(--sp-4);
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   text-align: left;
   white-space: nowrap;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
   cursor: pointer;
   transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
-.add-track-items button:hover {
-  background: var(--accent);
+.track-headers .add-track-items button:hover,
+.track-headers .add-track-items button:focus-visible {
   color: var(--accent-text);
+  background: var(--accent);
+  outline: none;
 }
 
-.headers-error {
+.track-headers .headers-error {
+  box-sizing: border-box;
   margin: 0;
   padding: 2px var(--sp-3);
-  background: var(--danger-surface);
   color: var(--danger-text);
-  font: var(--fs-2xs)/1.4 var(--font-sans);
+  font: var(--fs-2xs) / 1.4 var(--font-sans);
+  background: var(--danger-surface);
 }
 
-.headers-viewport {
+.track-headers .headers-viewport {
   flex: 1;
   min-height: 0;
-  /* clip, not hidden: rows are positioned entirely by the shared scrollY
-     transform below, and overflow: hidden still lets the browser's own
-     scrollIntoView-on-focus adjust scrollTop, desyncing this column from
-     the canvas. clip forbids programmatic scrolling outright. */
+  /* Rows are positioned by the shared scrollY transform. Keep this column
+     from acquiring an independent scroll position. */
   overflow: clip;
 }
 
-.track-header {
+.track-headers .track-header {
+  position: relative;
+  z-index: 0;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-1);
+  background: var(--surface-panel);
   cursor: pointer;
   user-select: none;
   transition: background var(--dur-1) var(--ease-out);
 }
 
-.track-row {
+.track-headers .track-header:has(.track-overflow-panel:popover-open) {
+  z-index: 20;
+}
+
+.track-headers .track-row {
   display: flex;
   align-items: stretch;
   box-sizing: border-box;
+  min-width: 0;
   flex: none;
 }
 
-.track-header.active {
-  background: var(--surface-selected);
+.track-headers .track-header.active {
+  background: var(--surface-panel);
 }
 
-.track-header.selected:not(.active) {
+.track-headers .track-header.active > .track-row {
+  background: var(--surface-selection);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.track-headers .track-header.selected:not(.active) {
   background: color-mix(in srgb, var(--surface-selected), var(--surface-1) 45%);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
-.track-header.track-frozen {
-  /* Cool, theme-aware tint marking a baked/frozen lane. */
+.track-headers .track-header.track-frozen {
   background: color-mix(in srgb, var(--surface-1), var(--accent) 12%);
 }
 
-.track-header.track-frozen .track-name {
+.track-headers .track-header.track-frozen .track-name {
   color: color-mix(in srgb, var(--text-2), var(--accent) 40%);
 }
 
-.track-header.track-frozen.active {
-  background: var(--surface-selected);
+.track-headers .track-header.track-frozen.active {
+  background: var(--surface-panel);
 }
 
-.track-header.dragging {
+.track-headers .track-header.dragging {
   opacity: 0.6;
 }
 
-.track-header.drop-target {
+.track-headers .track-header.drop-target {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
-.track-grip {
+.track-headers .track-grip {
   display: flex;
   align-items: center;
-  padding: 0 3px;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 15px;
+  padding: 0;
   color: var(--text-4);
   font: var(--fs-2xs) var(--font-sans);
   letter-spacing: -1px;
   cursor: grab;
   touch-action: none;
   transition: color var(--dur-1) var(--ease-out);
+  flex: none;
 }
 
-.track-grip:hover {
+.track-headers .track-grip:hover {
   color: var(--text-3);
 }
 
-.track-header.dragging .track-grip,
-.track-grip:active {
+.track-headers .track-header.dragging .track-grip,
+.track-headers .track-grip:active {
   cursor: grabbing;
 }
 
-.track-swatch {
+.track-headers .track-swatch {
+  box-sizing: border-box;
   width: 6px;
-  border: none;
-  padding: 0;
   margin: 4px 0;
-  border-radius: var(--radius-sm);
+  padding: 0;
+  background: var(--accent);
+  border: 0;
+  border-radius: 2px;
   cursor: pointer;
   flex: none;
 }
 
-.track-main {
-  flex: 1;
-  min-width: 0;
+.track-headers .track-swatch:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.track-headers .track-main {
   display: flex;
+  flex: 1;
   flex-direction: column;
   justify-content: center;
+  box-sizing: border-box;
+  min-width: 0;
   gap: 4px;
   padding: 4px 6px;
 }
 
-.track-name-row {
+.track-headers .track-name-row {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 4px;
 }
 
-.group-collapse {
+.track-headers .group-collapse {
+  box-sizing: border-box;
   width: 16px;
   height: 16px;
   padding: 0;
@@ -198,320 +231,602 @@
   font: inherit;
   line-height: 1;
   background: transparent;
-  border: 0;
-  border-radius: 3px;
+  border: 1px solid transparent;
+  border-radius: 2px;
   cursor: pointer;
+  flex: none;
 }
 
-.group-collapse:hover {
+.track-headers .group-collapse:hover {
   color: var(--text-2);
   background: var(--surface-4);
 }
 
-.track-header.group-member .track-name {
+.track-headers .group-collapse:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.track-headers .track-header.group-member .track-name {
   padding-left: var(--sp-2);
 }
 
-.track-kind {
+.track-headers .track-kind {
   flex: none;
-  font: var(--fs-2xs) var(--font-sans);
   color: var(--text-4);
+  font: var(--fs-2xs) var(--font-sans);
 }
 
-.track-name {
+.track-headers .track-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
+  color: var(--text-1);
+  font: var(--fw-semibold) var(--fs-sm) var(--font-sans);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
-  color: var(--text-2);
 }
 
-.track-name-input {
+.track-headers .track-name-input {
   flex: 1;
   min-width: 0;
-  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
-  color: var(--text-1);
-  background: var(--surface-0);
-  border: none;
-  border-radius: var(--radius-sm);
-  box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
+  box-sizing: border-box;
   padding: 0 3px;
+  color: var(--text-1);
+  font: var(--fw-semibold) var(--fs-sm) var(--font-sans);
+  background: var(--surface-field);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  box-shadow: none;
 }
 
-.track-delete {
-  border: none;
-  background: transparent;
-  box-shadow: none;
+.track-headers .track-name-input:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.track-headers .track-delete {
+  box-sizing: border-box;
+  padding: 0 2px;
   color: var(--text-4);
   font: var(--fs-sm) var(--font-sans);
   line-height: 1;
-  padding: 0 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
   cursor: pointer;
   visibility: hidden;
+  flex: none;
 }
 
-.track-header:hover .track-delete {
+.track-headers .track-header:hover .track-delete,
+.track-headers .track-header:focus-within .track-delete {
   visibility: visible;
 }
 
-.track-delete:hover {
+.track-headers .track-delete:hover {
   color: var(--danger-text);
 }
 
-.track-controls {
+.track-headers .track-delete:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* The always visible control row contains the quick performance actions and
+   faders. Less frequent actions live in the overflow disclosure below. */
+.track-headers .track-controls {
   display: flex;
   align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
   gap: 4px;
 }
 
-.toggle {
-  width: 16px;
-  height: 14px;
-  font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
-  line-height: 1;
-  color: var(--text-3);
-  background: var(--surface-3);
-  border-radius: var(--radius-sm);
+.track-headers .track-primary-controls {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  overflow: hidden;
+  background: var(--surface-field);
+  border: 1px solid transparent;
+  border-radius: 0;
+  flex: none;
+}
+
+.track-headers .track-mix-controls {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  flex: 1 1 0;
+}
+
+.track-headers .track-overflow {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  flex: none;
+}
+
+.track-headers .track-overflow-summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 20px;
+  height: 18px;
   padding: 0;
+  color: var(--text-3);
+  font: var(--fw-bold) var(--fs-chrome-lg) / 1 var(--font-sans);
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  border-radius: 2px;
   cursor: pointer;
-  box-shadow: var(--control-lift);
-  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+  list-style: none;
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 
-/* Compose the global focus ring onto the control face: the per-control
-   box-shadow outranks focus-visible.css, so it must re-emit the ring itself. */
-.toggle:focus-visible,
-.track-bounce:focus-visible,
-.takes-flatten:focus-visible {
-  box-shadow: var(--control-lift), var(--ring);
+.track-headers .track-overflow-summary:hover {
+  color: var(--text-1);
+  background: var(--surface-4);
 }
 
-.toggle.arm.on {
-  color: #fff;
-  background: var(--danger);
-}
-
-.toggle.mute.on {
-  color: var(--surface-0);
-  background: var(--warning);
-}
-
-.toggle.solo.on {
-  color: var(--surface-0);
+.track-headers .track-overflow:has(.track-overflow-panel:popover-open) .track-overflow-summary {
+  color: var(--accent-text);
   background: var(--accent);
 }
 
-.toggle.automation.on {
-  color: var(--surface-0);
-  background: var(--success);
+.track-headers .track-overflow-summary:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
-.toggle.takes.on {
-  color: var(--surface-0);
-  background: color-mix(in srgb, var(--accent), var(--danger) 45%);
+.track-headers .track-overflow-panel {
+  position: fixed;
+  inset: auto;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: min(178px, calc(100vw - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  margin: 0;
+  padding: 6px;
+  gap: 6px;
+  overflow: auto;
+  background: var(--surface-floating);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
 }
 
-.toggle.freeze.on {
-  color: var(--surface-0);
-  background: color-mix(in srgb, var(--accent), var(--success) 40%);
+.track-headers .track-overflow-panel:popover-open {
+  display: flex;
+  visibility: hidden;
 }
 
-.toggle.freeze:disabled,
-.track-bounce:disabled {
+.track-headers .track-secondary-controls,
+.track-headers .track-routing-controls {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.track-headers .track-compact-mix-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.track-headers .track-compact-mix-controls label {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
+  color: var(--text-3);
+}
+
+.track-headers .track-routing-controls {
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* All track actions use flat one-pixel faces. This selector is intentionally
+   scoped: mixer controls also use the generic .toggle class. */
+.track-headers .toggle {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--text-3);
+  font: var(--fw-bold) var(--fs-chrome-lg) / 1 var(--font-sans);
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+/* R/M/S/A form one instrument-like segmented control. The outer face owns
+   the boundary; each segment only contributes a quiet internal separator. */
+.track-headers .track-primary-controls .toggle {
+  width: 18px;
+  flex: 1 1 18px;
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.track-headers .track-primary-controls .toggle:first-child {
+  border-left: 0;
+}
+
+.track-headers .track-primary-controls .toggle:hover:not(:disabled) {
+  border-color: transparent;
+  border-left-color: var(--border-subtle);
+  background: var(--surface-3);
+}
+
+.track-headers .toggle:hover:not(:disabled),
+.track-headers .track-bounce:hover:not(:disabled),
+.track-headers .takes-flatten:hover {
+  color: var(--text-1);
+  background: var(--surface-4);
+}
+
+.track-headers .toggle:active:not(:disabled),
+.track-headers .track-bounce:active:not(:disabled),
+.track-headers .takes-flatten:active {
+  background: var(--surface-1);
+}
+
+.track-headers .toggle:is(.arm, .mute, .solo, .automation, .takes, .freeze).on {
+  color: var(--track-on-color);
+  background: color-mix(in srgb, var(--track-on-color) 20%, var(--surface-2));
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.track-headers .toggle.arm.on {
+  --track-on-color: var(--danger);
+}
+
+.track-headers .toggle.mute.on {
+  --track-on-color: var(--warning);
+}
+
+.track-headers .toggle.solo.on {
+  --track-on-color: var(--accent);
+}
+
+.track-headers .toggle.automation.on {
+  --track-on-color: var(--success);
+}
+
+.track-headers .toggle.takes.on {
+  --track-on-color: color-mix(in srgb, var(--accent), var(--danger) 45%);
+}
+
+.track-headers .toggle.freeze.on {
+  --track-on-color: color-mix(in srgb, var(--accent), var(--success) 40%);
+}
+
+.track-headers .track-primary-controls .toggle.on {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--track-on-color) 20%, var(--surface-field));
+  box-shadow: none;
+}
+
+.track-headers .track-primary-controls .toggle.on:not(:first-child) {
+  border-left-color: var(--border-subtle);
+}
+
+.track-headers .track-primary-controls .toggle.on + .toggle {
+  border-left-color: var(--border-subtle);
+}
+
+.track-headers .toggle.freeze:disabled,
+.track-headers .track-bounce:disabled {
   opacity: 0.5;
   cursor: wait;
 }
 
-.track-bounce {
-  height: 14px;
-  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
-  line-height: 1;
+.track-headers .track-bounce,
+.track-headers .takes-flatten {
+  box-sizing: border-box;
+  min-height: 18px;
+  padding: 0 5px;
   color: var(--text-3);
+  font: var(--fw-bold) var(--fs-chrome-md) / 1 var(--font-sans);
   background: var(--surface-3);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: 2px;
   cursor: pointer;
-  box-shadow: var(--control-lift);
-  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
 }
 
-.track-bounce:hover:not(:disabled) {
+.track-headers .toggle:focus-visible,
+.track-headers .track-bounce:focus-visible,
+.track-headers .takes-flatten:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.track-headers .track-record-input-select,
+.track-headers .track-record-device-select,
+.track-headers .track-group-select,
+.track-headers .track-vca-select {
+  display: block;
+  min-width: 0;
   color: var(--text-2);
-  background: var(--surface-4);
-  box-shadow: var(--control-lift-hover);
-}
-
-.track-record-input-select {
-  width: 58px;
-  flex: none;
   font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
+  flex: none;
 }
 
-.takes-flatten {
-  height: 14px;
-  font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
-  line-height: 1;
-  color: var(--text-3);
-  background: var(--surface-3);
-  border-radius: var(--radius-sm);
-  padding: 0 var(--sp-2);
-  cursor: pointer;
-  box-shadow: var(--control-lift);
-  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+.track-headers .track-record-input-select {
+  width: 54px;
 }
 
-.takes-flatten:hover {
+.track-headers .track-record-device-select {
+  width: 76px;
+}
+
+.track-headers .track-group-select,
+.track-headers .track-vca-select {
+  width: 70px;
+}
+
+.track-headers .select-trigger {
+  box-sizing: border-box;
+  min-height: 18px;
+  padding: 2px 4px;
   color: var(--text-2);
-  background: var(--surface-4);
-  box-shadow: var(--control-lift-hover);
+  font-size: var(--fs-2xs);
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  box-shadow: none;
 }
 
-.track-takes {
+.track-headers .select-trigger:hover:not(:disabled) {
+  background: var(--surface-4);
+  box-shadow: none;
+}
+
+.track-headers .select-trigger.is-open,
+.track-headers .select-trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+.track-headers .mini-slider {
+  display: block;
+  box-sizing: border-box;
+  min-width: 22px;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1 1 0;
+}
+
+.track-headers .mini-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--surface-field);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.track-headers .mini-slider::-moz-range-track {
+  height: 3px;
+  background: var(--surface-field);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.track-headers .mini-slider::-webkit-slider-thumb {
+  width: 7px;
+  height: 11px;
+  margin-top: -5px;
+  background: var(--accent);
+  border: 1px solid var(--surface-panel);
+  border-radius: 2px;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.track-headers .mini-slider::-moz-range-thumb {
+  width: 7px;
+  height: 11px;
+  background: var(--accent);
+  border: 1px solid var(--surface-panel);
+  border-radius: 2px;
+}
+
+.track-headers .mini-slider:focus-visible {
+  outline: none;
+}
+
+.track-headers .mini-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--ring);
+}
+
+.track-headers .mini-slider:focus-visible::-moz-range-thumb {
+  box-shadow: var(--ring);
+}
+
+/* Center detent: a hairline tick at 50% marks the pan-center (0) position. */
+.track-headers .mini-slider--pan::-webkit-slider-runnable-track {
+  background:
+    linear-gradient(var(--border-strong), var(--border-strong)) 50% / 1px 100% no-repeat,
+    var(--surface-inset);
+}
+
+.track-headers .mini-slider--pan::-moz-range-track {
+  background:
+    linear-gradient(var(--border-strong), var(--border-strong)) 50% / 1px 100% no-repeat,
+    var(--surface-inset);
+}
+
+.track-headers .track-takes {
   display: flex;
   flex-direction: column;
   flex: none;
-  border-top: 1px dashed var(--border-hi);
+  border-top: 1px solid var(--border-subtle);
   cursor: default;
 }
 
-.take-label-row {
+.track-headers .take-label-row {
   display: flex;
   align-items: center;
   box-sizing: border-box;
   padding: 0 var(--sp-3) 0 15px;
+  color: var(--text-3);
   font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
   font-variant-numeric: tabular-nums;
-  color: var(--text-3);
   border-bottom: 1px solid var(--border-subtle);
   transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
-.take-label-row:hover {
-  background: var(--surface-selected);
+.track-headers .take-label-row:hover {
   color: var(--text-2);
-}
-
-/* Live/comped take: left accent bar plus a selected tint so the active take
-   reads at a glance from the rest of the stack. */
-.take-label-row.take-active {
   background: var(--surface-selected);
-  color: var(--text-1);
-  box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.take-label-row:last-child {
+.track-headers .take-label-row.take-active {
+  color: var(--text-1);
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.track-headers .take-label-row:last-child {
   border-bottom: none;
 }
 
-.track-automation {
-  flex: 1;
-  min-height: 0;
+.track-headers .track-automation {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  box-sizing: border-box;
+  min-height: 0;
   padding: 0 var(--sp-3) 0 15px;
-  border-top: 1px dashed var(--border-hi);
+  gap: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
   cursor: default;
+  flex: 1;
 }
 
-.automation-label {
+.track-headers .automation-label {
   flex: none;
+  color: var(--text-4);
   font: var(--fw-semibold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.08em;
-  color: var(--text-4);
 }
 
-.automation-param {
-  /* Pass-through wrapper: the inner SelectMenu trigger carries the control face. */
+.track-headers .automation-param {
   flex: 1;
   min-width: 0;
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
 }
 
-.automation-enable {
+.track-headers .automation-enable {
   flex: none;
 }
 
-/* Recessed groove + raised thumb mini-slider, matching the control-face system
-   instead of the bare native UA track. The pan variant adds a center detent. */
-.mini-slider {
-  flex: 1;
+/* Compact zoom keeps one usable row: the name shares space with quick
+   controls, while the disclosure remains the keyboard path to everything
+   else. */
+.track-headers .track-row--compact .track-main {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+}
+
+.track-headers .track-row--compact .track-name-row {
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.track-headers .track-row--compact .track-controls {
+  flex: none;
+  gap: 2px;
+}
+
+.track-headers .track-row--compact .track-primary-controls {
+  width: max-content;
+}
+
+.track-headers .track-row--compact .toggle {
+  width: 15px;
+  height: 17px;
+  font-size: var(--fs-chrome-md);
+}
+
+.track-headers .track-row--compact .track-primary-controls .toggle {
+  width: 15px;
+  flex-basis: 15px;
+}
+
+.track-headers .track-row--compact .track-mix-controls {
+  display: none;
+}
+
+.track-headers .track-row--compact .track-compact-mix-controls .mini-slider {
+  width: 100%;
   min-width: 0;
-  height: 14px;
-  margin: 0;
-  background: transparent;
-  -webkit-appearance: none;
-  appearance: none;
-  cursor: pointer;
+  height: 17px;
+  flex: 1 1 auto;
 }
 
-.mini-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-inset);
-  box-shadow: var(--inset-well);
+.track-headers .track-row--compact .track-overflow-summary {
+  width: 18px;
+  height: 17px;
 }
 
-.mini-slider::-moz-range-track {
-  height: 4px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-inset);
-  box-shadow: var(--inset-well);
+/* The larger zoom keeps the same control order but gives the faders and
+   focus targets a little more breathing room. */
+.track-headers .track-row--tall .track-main {
+  gap: 8px;
+  padding: 8px 6px;
 }
 
-.mini-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 8px;
-  height: 12px;
-  margin-top: -4px;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: var(--control-bg);
-  box-shadow: var(--control-lift);
+.track-headers .track-row--tall .toggle,
+.track-headers .track-row--tall .track-overflow-summary {
+  height: 22px;
 }
 
-.mini-slider::-moz-range-thumb {
-  width: 8px;
-  height: 12px;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: var(--control-bg);
-  box-shadow: var(--control-lift);
+.track-headers .track-row--tall .toggle {
+  width: 18px;
 }
 
-.mini-slider:focus-visible {
-  outline: none;
+.track-headers .track-row--tall .track-overflow-summary {
+  width: 20px;
 }
 
-.mini-slider:focus-visible::-webkit-slider-thumb {
-  box-shadow: var(--control-lift), var(--ring);
+.track-headers .track-row--tall .track-overflow-summary {
+  font-size: var(--fs-sm);
 }
 
-.mini-slider:focus-visible::-moz-range-thumb {
-  box-shadow: var(--control-lift), var(--ring);
+.track-headers .track-row--tall .mini-slider {
+  height: 22px;
 }
 
-/* Center detent: a hairline tick at 50% marks the pan-center (0) position. */
-.mini-slider--pan::-webkit-slider-runnable-track {
-  background:
-    linear-gradient(var(--border-strong), var(--border-strong)) 50% / 1px 100% no-repeat,
-    var(--surface-inset);
-}
-
-.mini-slider--pan::-moz-range-track {
-  background:
-    linear-gradient(var(--border-strong), var(--border-strong)) 50% / 1px 100% no-repeat,
-    var(--surface-inset);
-}
-
-.track-group-select,
-.track-vca-select {
-  /* Pass-through wrapper: the inner SelectMenu trigger carries the control face. */
-  flex: 1;
-  min-width: 0;
-  max-width: 64px;
-  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
+.track-headers .track-row--tall .track-primary-controls .toggle {
+  height: 22px;
 }

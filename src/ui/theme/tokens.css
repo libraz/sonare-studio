@@ -1,52 +1,57 @@
 /*
- * Global design tokens for sonare studio — refined light "iOS glass" theme.
+ * Global design tokens for sonare studio's flat editing chrome.
  *
  * Single source of truth for color, type, spacing, radius, elevation and the
- * frosted-glass material. Every chrome component consumes these via var(); the
- * canvas/SVG editors (piano roll, arrangement) read the SEPARATE dark literals
- * in tokens.ts so the editor surfaces stay dark for contrast while the shell
- * around them is light. This is the intentional hybrid: light frosted chrome,
- * dark editor "screens".
+ * surface material. Every chrome component consumes these via var(); the
+ * canvas/SVG editors (piano roll, arrangement) read separate dark literals
+ * in tokens.ts so the editor surfaces stay dark for contrast.
  *
  * Re-tune the whole shell by editing this one file. Variable NAMES are stable
  * so components never need to change when the palette shifts.
  */
 :root {
-  /* --- Surfaces: backdrop (0) to most raised (4) -----------------------
-   * Light, near-white opaque fallbacks. Translucent glass is layered on top
-   * via the --glass-* tokens; these are what shows when blur is unsupported. */
-  --surface-0: #e9ecf2; /* app shell backdrop (behind glass) */
-  --surface-1: #f3f5f9; /* lanes, toolbars, diagnostics */
-  --surface-2: #ffffff; /* transport bar, panels, modals */
-  --surface-3: #f6f8fb; /* menus, inputs, popovers */
-  --surface-4: #eaeef4; /* hover / raised controls */
-  --surface-inset: #eceff4; /* recessed control wells (inputs, grooves) */
-  --surface-selected: #e4eefb; /* accent-tinted selected / active row */
+  /* Quiet, opaque surfaces keep the editor canvas visually dominant. */
+  --surface-0: #e6e9ed;
+  --surface-1: #eff1f3;
+  --surface-2: #f8f9fa;
+  --surface-3: #f3f5f6;
+  --surface-4: #e4e9ee;
+  --surface-inset: #e9ecf0;
+  --surface-selected: #dce9f8;
   --scrim: rgba(17, 24, 39, 0.28); /* modal backdrop dimming behind dialogs */
+
+  /* Purpose aliases keep surface roles explicit in component styles.  The
+   * numbered surfaces remain the compatibility contract; these names make a
+   * panel's visual job visible without introducing a second palette. */
+  --surface-toolbar: var(--surface-1);
+  --surface-panel: var(--surface-2);
+  --surface-field: var(--surface-inset);
+  --surface-selection: var(--surface-selected);
+  --surface-floating: var(--surface-3);
 
   /* --- Borders / hairlines ---------------------------------------------
    * Soft dark hairlines on light. `--border-strong` is no longer black — on a
    * light shell a structural seam reads as a slightly deeper gray. */
-  --border: rgba(17, 24, 39, 0.1); /* default 1px divider */
-  --border-strong: rgba(17, 24, 39, 0.16); /* structural seams */
-  --border-subtle: rgba(17, 24, 39, 0.05); /* faint inner lines */
-  --border-hi: rgba(255, 255, 255, 0.7); /* top-edge highlight on glass chrome */
-  --border-raised: rgba(17, 24, 39, 0.14); /* edge on raised controls */
+  --border: rgba(30, 43, 58, 0.14);
+  --border-strong: rgba(30, 43, 58, 0.22);
+  --border-subtle: rgba(30, 43, 58, 0.09);
+  --border-hi: rgba(30, 43, 58, 0.12);
+  --border-raised: rgba(30, 43, 58, 0.2);
 
   /* --- Text tiers ------------------------------------------------------- */
   --text-1: #11151c; /* primary / headings */
   --text-2: #3a4150; /* body */
   --text-3: #6b7385; /* muted labels */
-  --text-4: #a0a7b4; /* disabled / meta */
+  --text-4: #7e8794; /* disabled / meta */
 
-  /* --- Accent (iOS systemBlue family) ----------------------------------- */
-  --accent: #0a84ff; /* focus, active, highlights */
-  --accent-strong: #0a84ff; /* primary-button fill */
-  --accent-hover: #2b94ff; /* primary-button hover */
-  --accent-active: #006fe0; /* primary-button pressed */
+  /* --- Accent ------------------------------------------------------------ */
+  --accent: #2769b5;
+  --accent-strong: #2769b5;
+  --accent-hover: #3478c7;
+  --accent-active: #205a9c;
   --accent-text: #ffffff; /* text on accent fill */
-  --accent-muted: rgba(10, 132, 255, 0.22); /* selection / loop bands */
-  --accent-soft: rgba(10, 132, 255, 0.08); /* active-lane tint */
+  --accent-muted: rgba(39, 105, 181, 0.22);
+  --accent-soft: rgba(39, 105, 181, 0.09);
 
   /* --- Brand identity ---------------------------------------------------
    * The wordmark gradient — a deep-to-bright cobalt sweep, distinct from the
@@ -86,7 +91,7 @@
   --playhead: #ff6e6e;
 
   /* --- Canvas editor palette (DARK) ------------------------------------
-   * The hybrid: the shell chrome above is light frosted glass, but the canvas
+   * The hybrid: the shell chrome uses quiet matte surfaces, while the canvas
    * editors (piano roll, arrangement) stay dark for contrast and long-session
    * comfort. Their renderers read the literals in tokens.ts; these vars mirror
    * those literals so the palette is documented in one place and guarded
@@ -113,19 +118,14 @@
   --canvas-success: #34d399;
   --canvas-success-strong: #22c55e;
 
-  /* --- Frosted glass material ------------------------------------------
-   * The signature iOS material: a translucent white wash plus a heavy blur +
-   * saturation boost so the backdrop bleeds through with vibrancy. Components
-   * apply: background: var(--glass-2); backdrop-filter: var(--glass-blur).
-   * Refined/subtle tuning — readable through long editing sessions. */
-  --glass-1: rgba(248, 250, 253, 0.62); /* lanes / toolbars */
-  --glass-2: rgba(255, 255, 255, 0.74); /* panels / transport / menus */
-  --glass-3: rgba(255, 255, 255, 0.86); /* modals / elevated popovers */
-  --glass-blur: saturate(170%) blur(20px);
-  --glass-blur-strong: saturate(180%) blur(30px);
-  --scrim-blur: blur(3px); /* backdrop blur behind modal dialogs */
-  --glass-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.65),
-    inset 0 0 0 1px rgba(17, 24, 39, 0.06);
+  /* Legacy glass variable names remain for component compatibility. */
+  --glass-1: var(--surface-toolbar);
+  --glass-2: var(--surface-panel);
+  --glass-3: var(--surface-floating);
+  --glass-blur: none;
+  --glass-blur-strong: none;
+  --scrim-blur: none;
+  --glass-hairline: 0 0 0 transparent;
 
   /* --- Typography ------------------------------------------------------
    * The SF system stack IS the iOS typeface — keeping it is the intentional
@@ -166,50 +166,37 @@
   --sp-7: 20px; /* container padding / dialog gutters */
   --sp-8: 24px; /* modal scrim padding, large section gaps */
 
-  /* --- Radius -----------------------------------------------------------
-   * Tightened from the early "iOS pill" scale toward a more precise,
-   * pro-tool corner: controls read as crisp faces, not bubbly capsules.
-   * Containers (popovers, modals) keep softer corners for the glass feel. */
-  --radius-xs: 3px; /* micro radius for tags / dense inset wells */
-  --radius-sm: 5px;
-  --radius-md: 7px;
-  --radius-lg: 11px;
-  --radius-xl: 18px;
+  /* Full radius is reserved for actual circles and switch tracks. */
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
   --radius-full: 9999px;
 
-  /* --- Elevation — soft, diffuse, low-opacity (Apple-style) ------------ */
-  --shadow-1: 0 1px 2px rgba(17, 24, 39, 0.06), 0 1px 3px rgba(17, 24, 39, 0.05);
-  --shadow-2: 0 2px 8px rgba(17, 24, 39, 0.08), 0 1px 2px rgba(17, 24, 39, 0.04);
-  --shadow-pop: 0 10px 30px rgba(17, 24, 39, 0.14), 0 2px 8px rgba(17, 24, 39, 0.08);
-  --shadow-modal: 0 24px 70px rgba(17, 24, 39, 0.26), 0 6px 20px rgba(17, 24, 39, 0.12);
+  --shadow-1: 0 0 0 transparent;
+  --shadow-2: 0 0 0 transparent;
+  --shadow-pop: 0 8px 20px rgba(17, 24, 39, 0.13);
+  --shadow-modal: 0 16px 42px rgba(17, 24, 39, 0.22);
 
-  /* --- Surface dimensionality ------------------------------------------
-   * On light glass the top highlight is a near-opaque white line; the sheen is
-   * a whisper-thin top gloss (kept very subtle so faces read flat, not glossy);
-   * the well recesses inputs with a soft inner shadow rather than heavy black. */
-  --raise-hi: inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  --sheen: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.4),
-    rgba(255, 255, 255, 0) 55%
-  );
-  --inset-well: inset 0 1px 2px rgba(17, 24, 39, 0.08);
+  /* Compatibility tokens for components using the former raised faces. */
+  --raise-hi: inset 0 0 0 transparent;
+  --sheen: none;
+  --inset-well: 0 0 0 transparent;
 
-  /* --- Control faces ---------------------------------------------------
-   * The pro-tool control language: buttons and pop-ups are RAISED FACES, not
-   * outlined rectangles. Definition comes from a whisper hairline ring
-   * (--control-edge) plus a soft drop shadow — never a drawn 1px border. This
-   * is the single knob that retires the "HTML button" look app-wide. */
-  --control-bg: var(--surface-2);
+  /* Buttons use fill and type for state; typed fields retain a quiet edge. */
+  --control-bg: var(--surface-panel);
   --control-bg-hover: var(--surface-4);
   --control-bg-active: #e3e8ef;
-  --control-edge: inset 0 0 0 1px rgba(17, 24, 39, 0.07);
-  --control-edge-hover: inset 0 0 0 1px rgba(17, 24, 39, 0.12);
-  --control-lift: var(--raise-hi), var(--control-edge), var(--shadow-1);
-  --control-lift-hover: var(--raise-hi), var(--control-edge-hover), var(--shadow-2);
+  --control-edge: 0 0 0 transparent;
+  --control-edge-hover: 0 0 0 transparent;
+  --field-edge: inset 0 0 0 1px var(--border);
+  --field-edge-hover: inset 0 0 0 1px var(--border-strong);
+  --control-lift: var(--control-edge);
+  --control-lift-hover: var(--control-edge-hover);
 
   /* --- Focus ring ------------------------------------------------------- */
-  --ring: 0 0 0 3px rgba(10, 132, 255, 0.32); /* soft accent halo */
+  --ring: 0 0 0 2px rgba(39, 105, 181, 0.9);
 
   /* --- Motion ----------------------------------------------------------- */
   --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
@@ -246,7 +233,7 @@
   --scrim: rgba(0, 0, 0, 0.5); /* deeper dim so dialogs lift off the dark shell */
 
   --border: rgba(255, 255, 255, 0.1);
-  --border-strong: rgba(0, 0, 0, 0.85);
+  --border-strong: rgba(255, 255, 255, 0.2);
   --border-subtle: rgba(255, 255, 255, 0.05);
   --border-hi: rgba(255, 255, 255, 0.08);
   --border-raised: rgba(255, 255, 255, 0.14);
@@ -254,13 +241,13 @@
   --text-1: #e2e6ee;
   --text-2: #c8cdd6;
   --text-3: #8b93a3;
-  --text-4: #5b6270;
+  --text-4: #7e8796;
 
   --accent: #60a5fa;
-  --accent-strong: #2453a8;
-  --accent-hover: #2f67c0;
-  --accent-active: #1d4389;
-  --accent-text: #ffffff;
+  --accent-strong: #60a5fa;
+  --accent-hover: #83bafa;
+  --accent-active: #4d93e0;
+  --accent-text: #0b1624;
   --accent-muted: rgba(96, 165, 250, 0.24);
   --accent-soft: rgba(96, 165, 250, 0.1);
 
@@ -277,32 +264,29 @@
   --success: #34d399;
   --success-strong: #22c55e;
 
-  --glass-1: rgba(20, 22, 27, 0.58);
-  --glass-2: rgba(20, 22, 27, 0.72);
-  --glass-3: rgba(24, 27, 34, 0.88);
-  --glass-hairline: inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --glass-1: var(--surface-toolbar);
+  --glass-2: var(--surface-panel);
+  --glass-3: var(--surface-floating);
+  --glass-hairline: 0 0 0 transparent;
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.36), 0 1px 3px rgba(0, 0, 0, 0.24);
-  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.42), 0 1px 2px rgba(0, 0, 0, 0.28);
-  --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.56), 0 2px 8px rgba(0, 0, 0, 0.34);
-  --shadow-modal: 0 24px 70px rgba(0, 0, 0, 0.68), 0 6px 20px rgba(0, 0, 0, 0.4);
+  --shadow-1: 0 0 0 transparent;
+  --shadow-2: 0 0 0 transparent;
+  --shadow-pop: 0 8px 20px rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 16px 42px rgba(0, 0, 0, 0.55);
 
-  --raise-hi: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  --sheen: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.06),
-    rgba(255, 255, 255, 0) 55%
-  );
-  --inset-well: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  --raise-hi: inset 0 0 0 transparent;
+  --sheen: none;
+  --inset-well: 0 0 0 transparent;
 
-  --control-bg: var(--surface-2);
+  --control-bg: var(--surface-panel);
   --control-bg-hover: var(--surface-4);
   --control-bg-active: #0f1218;
-  --control-edge: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  --control-edge-hover: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  --control-edge: 0 0 0 transparent;
+  --control-edge-hover: 0 0 0 transparent;
+  --field-edge: inset 0 0 0 1px var(--border);
+  --field-edge-hover: inset 0 0 0 1px var(--border-strong);
 
-  --ring: 0 0 0 3px rgba(96, 165, 250, 0.34);
+  --ring: 0 0 0 2px rgba(96, 165, 250, 0.9);
 }
 
 /* Honour the OS reduced-motion preference: collapse all transitions. */

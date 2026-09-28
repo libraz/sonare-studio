@@ -108,6 +108,7 @@
   display: flex;
   align-items: stretch;
   min-width: 0;
+  min-height: 34px;
   background: var(--surface-1);
   border-bottom: 1px solid var(--border-strong);
 }
@@ -132,7 +133,7 @@
   border-radius: 0;
   color: var(--text-3);
   font: var(--fw-semibold) var(--fs-sm) var(--font-sans);
-  padding: 0.4rem 1rem;
+  padding: 0.5rem 1rem;
   cursor: default;
   white-space: nowrap;
   transition:
@@ -213,8 +214,9 @@
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  padding: 0.35rem 0.75rem;
-  background: var(--surface-1);
+  min-height: 34px;
+  padding: 0.4rem 0.75rem;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
   /* Never wrap to a second row (which would steal piano-roll height). The left
    * controls scroll sideways instead; the bar stays overflow-visible so the
@@ -242,16 +244,13 @@
   flex: none;
 }
 
-/* Plain action buttons in the bar (quantize, step navigation, MIDI connect,
- * MIDI Learn) match the compact pill sizing of the adjacent size="sm" toggle
- * pills and selects, so the control strip reads as one consistent dense row
- * instead of mixing full-height buttons with dense toggles. The toggle pills
- * keep their own sizing via higher-specificity scoped rules. */
+/* Toolbar actions share the dense, square control sizing. */
 .editor-toolbar-scroll > button,
 .editor-toolbar > .midi-learn-anchor > button {
   font-size: var(--fs-xs);
   padding: var(--sp-1) var(--sp-3);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
 }
 
 .step-cursor {

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 /**
- * Accessible, frosted-glass replacement for the native <select>. Drop-in: bind
+ * Accessible, matte replacement for the native <select>. Drop-in: bind
  * `v-model` and pass an `options` array. The trigger mirrors the tokenized
  * control baseline; the popover is teleported to the body, positioned under the
  * trigger (flipping above when there is no room) and supports full keyboard
@@ -64,17 +64,21 @@ function reposition(): void {
   const trigger = triggerRef.value;
   if (!trigger) return;
   const rect = trigger.getBoundingClientRect();
-  const below = window.innerHeight - rect.bottom;
-  const maxHeight = Math.min(320, Math.max(below, rect.top) - 16);
-  const openUp = below < 220 && rect.top > below;
+  // A teleported list cannot cover a native top-layer popover. Place it just
+  // outside that popover so every option remains visible and clickable.
+  const host = trigger.closest<HTMLElement>('[popover]:popover-open');
+  const edge = host?.getBoundingClientRect() ?? rect;
+  const below = window.innerHeight - edge.bottom;
+  const maxHeight = Math.min(320, Math.max(below, edge.top) - 16);
+  const openUp = below < 220 && edge.top > below;
   menuStyle.value = {
     position: 'fixed',
     left: `${rect.left}px`,
     minWidth: `${rect.width}px`,
     maxHeight: `${maxHeight}px`,
     ...(openUp
-      ? { bottom: `${window.innerHeight - rect.top + 6}px` }
-      : { top: `${rect.bottom + 6}px` }),
+      ? { bottom: `${window.innerHeight - edge.top + 6}px` }
+      : { top: `${edge.bottom + 6}px` }),
   };
 }
 
@@ -337,8 +341,8 @@ onBeforeUnmount(() => {
   font-family: var(--font-sans);
   font-size: var(--fs-sm);
   color: var(--text-1);
-  /* Native macOS pop-up button: a raised face, not a sunken form field. */
-  background: var(--control-bg);
+  /* Field face with a clear edge; menus use the separate floating surface. */
+  background: var(--surface-field);
   background-image: none;
   border: none;
   border-radius: var(--radius-md);
@@ -396,7 +400,7 @@ onBeforeUnmount(() => {
    * pin the option type scale to the trigger size instead of the body font. */
   font-size: var(--fs-sm);
   overflow: auto;
-  background: var(--glass-3);
+  background: var(--surface-floating);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);

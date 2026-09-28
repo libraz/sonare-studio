@@ -15,7 +15,9 @@ const SCORE_VISIBLE_KEY = 'sonare-studio.scoreVisible';
 /** The score is a single continuous line, so it needs only a modest height. */
 const SCORE_HEIGHT_MIN_PX = 120;
 const SCORE_DEFAULT_HEIGHT = 240;
-const ARRANGE_VIEWPORT_RESERVE_PX = 240;
+// Reserve room for the dock tabs, editing toolbars, a useful piano-roll canvas,
+// and the transport. Without this the editor canvas collapses at 720px height.
+const ARRANGE_VIEWPORT_RESERVE_PX = 490;
 const SCORE_VIEWPORT_RESERVE_PX = 360;
 
 export type DockTab = 'roll' | 'mixer' | 'mastering' | 'steps' | 'lists' | 'media' | 'sample';
@@ -30,7 +32,7 @@ const DOCK_TABS: ReadonlySet<DockTab> = new Set([
   'sample',
 ]);
 
-/** Viewport-aware upper bound that always leaves the editor dock reachable. */
+/** Viewport-aware upper bound that keeps the editor canvas usable. */
 export function maximumArrangementHeight(viewportHeight: number): number {
   const height = Number.isFinite(viewportHeight) ? viewportHeight : ARRANGE_DEFAULT_HEIGHT;
   return Math.max(

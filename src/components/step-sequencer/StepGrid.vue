@@ -403,7 +403,7 @@ watch(
 }
 
 .cell-active {
-  box-shadow: inset 0 0 0 1px var(--accent-muted);
+  box-shadow: none;
 }
 
 .step-velocity-accessible,

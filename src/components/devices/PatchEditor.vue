@@ -842,10 +842,10 @@ function onKeydown(event: KeyboardEvent): void {
   flex: 1;
 }
 
-/* Secondary buttons (Close, Audition) inherit the :where(button) control face;
- * Apply uses the shared .primary accent pill. Only the audition accent ring is
- * declared locally. */
+/* Audition uses a selected fill while the other actions use shared controls. */
 .patch-actions .audition {
-  box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-1);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: none;
 }
 </style>

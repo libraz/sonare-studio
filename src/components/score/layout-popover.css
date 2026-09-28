@@ -10,6 +10,7 @@
   background: var(--glass-3);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-hairline), var(--shadow-pop);
   font-size: var(--fs-sm);

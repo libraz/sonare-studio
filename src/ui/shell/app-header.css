@@ -1,12 +1,12 @@
 .app-bar {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  min-height: 36px;
-  padding: 0.25rem 0.6rem;
-  background: color-mix(in srgb, var(--surface-1), var(--surface-2) 48%);
-  border-bottom: 1px solid var(--border);
-  box-shadow: inset 0 1px 0 var(--border-hi);
+  gap: 0.6rem;
+  min-height: 42px;
+  padding: 0.3rem 0.75rem;
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: none;
   flex-wrap: nowrap;
   position: relative;
   z-index: 2;
@@ -23,7 +23,7 @@
 
 .menu-bar {
   display: inline-flex;
-  gap: 2px;
+  gap: 3px;
 }
 
 .menu-trigger {
@@ -36,7 +36,7 @@
   color: var(--text-2);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
-  padding: var(--sp-1) var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
@@ -133,16 +133,15 @@
 }
 
 .project-name {
-  position: absolute;
-  left: 50%;
-  max-width: min(28rem, 34vw);
-  transform: translateX(-50%);
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-2);
+  text-align: center;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
   pointer-events: auto;
 }
 
@@ -163,7 +162,7 @@
 }
 
 .bar-spacer {
-  flex: 1;
+  display: none;
 }
 
 .hidden-file-input {
@@ -217,7 +216,6 @@
 .header-tool.active {
   color: var(--accent);
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent), transparent 72%);
 }
 
 .theme-toggle {

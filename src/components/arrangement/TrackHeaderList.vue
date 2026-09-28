@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue';
 import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
@@ -180,6 +180,42 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 const displayTracks = computed(() => props.tracks ?? store.tracks);
+
+/** Position the native popover inside the visible header viewport. The top
+ * layer lets it escape the clipped rows while retaining keyboard dismissal. */
+function positionTrackOverflow(event: Event): void {
+  const panel = event.currentTarget;
+  if (!(panel instanceof HTMLElement)) return;
+  if (!panel.matches(':popover-open')) {
+    panel.style.visibility = 'hidden';
+    return;
+  }
+  const trigger = panel.previousElementSibling;
+  if (!(trigger instanceof HTMLElement)) return;
+  const viewport = trigger.closest('.headers-viewport')?.getBoundingClientRect();
+  const anchor = trigger.getBoundingClientRect();
+  const viewportTop = viewport?.top ?? 0;
+  const viewportBottom = viewport?.bottom ?? window.innerHeight;
+  panel.style.maxHeight = `${Math.max(40, Math.min(320, viewportBottom - viewportTop - 8))}px`;
+  const { width, height } = panel.getBoundingClientRect();
+  const below = anchor.bottom + 4;
+  const above = anchor.top - height - 4;
+  panel.style.top = `${below + height <= viewportBottom - 4 ? below : Math.max(viewportTop + 4, above)}px`;
+  panel.style.left = `${Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8))}px`;
+  panel.style.visibility = 'visible';
+}
+
+function closeTrackOverflows(): void {
+  for (const panel of document.querySelectorAll<HTMLElement>(
+    '.track-overflow-panel:popover-open',
+  )) {
+    panel.hidePopover();
+  }
+}
+
+watch([() => props.scrollY, () => props.laneHeight], closeTrackOverflows);
+onMounted(() => window.addEventListener('resize', closeTrackOverflows));
+onBeforeUnmount(() => window.removeEventListener('resize', closeTrackOverflows));
 
 /** Glyph shown in front of the track name per track kind. */
 const TRACK_KIND_GLYPHS: Record<TrackKind, string> = {
@@ -1094,7 +1130,14 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
           @click="activate(track, $event)"
           @contextmenu.prevent="onContextMenu(track, $event)"
         >
-          <div class="track-row" :style="{ height: `${props.laneHeight}px` }">
+          <div
+            class="track-row"
+            :class="{
+              'track-row--compact': props.laneHeight <= 44,
+              'track-row--tall': props.laneHeight >= 96,
+            }"
+            :style="{ height: `${props.laneHeight}px` }"
+          >
             <div
               class="track-grip"
               v-tooltip="t.shell.arrangement.trackHeader.dragReorder"
@@ -1169,209 +1212,299 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                 </button>
               </div>
               <div class="track-controls" @click.stop>
-                <button
-                  v-if="track.kind === 'audio' || track.kind === 'midi'"
-                  type="button"
-                  class="toggle arm"
-                  :class="{ on: isArmed(track) }"
-                  v-tooltip="t.shell.arrangement.trackHeader.recordArm"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.recordArmNamed, {
-                      name: track.name,
-                    })
+                <div class="track-primary-controls">
+                  <button
+                    v-if="track.kind === 'audio' || track.kind === 'midi'"
+                    type="button"
+                    class="toggle arm"
+                    :class="{ on: isArmed(track) }"
+                    v-tooltip="t.shell.arrangement.trackHeader.recordArm"
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.recordArmNamed, {
+                        name: track.name,
+                      })
+                    "
+                    :aria-pressed="isArmed(track)"
+                    @click="onToggleArm(track)"
+                  >
+                    R
+                  </button>
+                  <button
+                    type="button"
+                    class="toggle mute"
+                    :class="{ on: track.mute }"
+                    v-tooltip="t.shell.arrangement.trackHeader.mute"
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.muteNamed, { name: track.name })
+                    "
+                    :aria-pressed="track.mute"
+                    @click="setTrackMute(track.id, !track.mute)"
+                  >
+                    M
+                  </button>
+                  <button
+                    type="button"
+                    class="toggle solo"
+                    :class="{ on: track.solo }"
+                    v-tooltip="t.shell.arrangement.trackHeader.solo"
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.soloNamed, { name: track.name })
+                    "
+                    :aria-pressed="track.solo"
+                    @click="setTrackSolo(track.id, !track.solo)"
+                  >
+                    S
+                  </button>
+                  <button
+                    type="button"
+                    class="toggle automation"
+                    :class="{ on: isAutomationExpanded(track) }"
+                    v-tooltip="t.shell.arrangement.trackHeader.automationLane"
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.automationLaneOf, {
+                        name: track.name,
+                      })
+                    "
+                    :aria-pressed="isAutomationExpanded(track)"
+                    @click="onToggleAutomation(track)"
+                  >
+                    A
+                  </button>
+                </div>
+                <div class="track-mix-controls">
+                  <input
+                    class="mini-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    :value="trackVolumeFaderPosition(track)"
+                    v-tooltip="
+                      formatMessage(t.shell.arrangement.trackHeader.volumeTitle, {
+                        value: trackVolumeLabel(track),
+                      })
+                    "
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.volumeOf, { name: track.name })
+                    "
+                    @change="onVolumeChange(track, $event)"
+                  />
+                  <input
+                    v-if="track.kind !== 'group'"
+                    class="mini-slider mini-slider--pan"
+                    type="range"
+                    min="-1"
+                    max="1"
+                    step="0.01"
+                    :value="trackPan(track)"
+                    v-tooltip="
+                      formatMessage(t.shell.arrangement.trackHeader.panTitle, {
+                        value: trackPan(track).toFixed(2),
+                      })
+                    "
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.panOf, { name: track.name })
+                    "
+                    @change="onPanChange(track, $event)"
+                  />
+                </div>
+                <div
+                  v-if="
+                    props.laneHeight <= 44 ||
+                    track.kind !== 'group' ||
+                    takeRowCount(track) > 0 ||
+                    vcaGroups.length > 0
                   "
-                  :aria-pressed="isArmed(track)"
-                  @click="onToggleArm(track)"
+                  class="track-overflow"
                 >
-                  R
-                </button>
-                <button
-                  type="button"
-                  class="toggle mute"
-                  :class="{ on: track.mute }"
-                  v-tooltip="t.shell.arrangement.trackHeader.mute"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.muteNamed, { name: track.name })
-                  "
-                  :aria-pressed="track.mute"
-                  @click="setTrackMute(track.id, !track.mute)"
-                >
-                  M
-                </button>
-                <button
-                  type="button"
-                  class="toggle solo"
-                  :class="{ on: track.solo }"
-                  v-tooltip="t.shell.arrangement.trackHeader.solo"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.soloNamed, { name: track.name })
-                  "
-                  :aria-pressed="track.solo"
-                  @click="setTrackSolo(track.id, !track.solo)"
-                >
-                  S
-                </button>
-                <button
-                  type="button"
-                  class="toggle automation"
-                  :class="{ on: isAutomationExpanded(track) }"
-                  v-tooltip="t.shell.arrangement.trackHeader.automationLane"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.automationLaneOf, {
-                      name: track.name,
-                    })
-                  "
-                  :aria-pressed="isAutomationExpanded(track)"
-                  @click="onToggleAutomation(track)"
-                >
-                  A
-                </button>
-                <button
-                  v-if="track.kind !== 'group'"
-                  type="button"
-                  class="toggle freeze"
-                  :class="{ on: track.frozen !== undefined, busy: isFreezing(track) }"
-                  :disabled="isFreezing(track)"
-                  v-tooltip="
-                    track.frozen
-                      ? t.shell.arrangement.trackHeader.unfreezeTitle
-                      : t.shell.arrangement.trackHeader.freezeTitle
-                  "
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.freezeNamed, { name: track.name })
-                  "
-                  :aria-pressed="track.frozen !== undefined"
-                  @click="onToggleFreeze(track)"
-                >
-                  ❄
-                </button>
-                <button
-                  v-if="track.kind !== 'group' && trackHasClips(track)"
-                  type="button"
-                  class="track-bounce"
-                  :class="{ busy: isBouncing(track) }"
-                  :disabled="isBouncing(track)"
-                  v-tooltip="t.shell.arrangement.trackHeader.bounceTitle"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.bounceNamed, { name: track.name })
-                  "
-                  @click="onBounce(track)"
-                >
-                  BNC
-                </button>
-                <button
-                  v-if="takeRowCount(track) > 0"
-                  type="button"
-                  class="toggle takes"
-                  :class="{ on: isTakesExpanded(track) }"
-                  v-tooltip="t.shell.arrangement.trackHeader.takeLanes"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.takeLanesOf, {
-                      name: track.name,
-                    })
-                  "
-                  :aria-pressed="isTakesExpanded(track)"
-                  @click="onToggleTakes(track)"
-                >
-                  T
-                </button>
-                <button
-                  v-if="takeRowCount(track) > 0 && isTakesExpanded(track)"
-                  type="button"
-                  class="takes-flatten"
-                  v-tooltip="t.shell.arrangement.trackHeader.flattenTitle"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.flattenNamed, {
-                      name: track.name,
-                    })
-                  "
-                  @click="onFlattenTakes(track)"
-                >
-                  {{ t.shell.arrangement.trackHeader.flatten }}
-                </button>
-                <input
-                  class="mini-slider"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  :value="trackVolumeFaderPosition(track)"
-                  v-tooltip="
-                    formatMessage(t.shell.arrangement.trackHeader.volumeTitle, {
-                      value: trackVolumeLabel(track),
-                    })
-                  "
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.volumeOf, { name: track.name })
-                  "
-                  @change="onVolumeChange(track, $event)"
-                />
-                <input
-                  v-if="track.kind !== 'group'"
-                  class="mini-slider mini-slider--pan"
-                  type="range"
-                  min="-1"
-                  max="1"
-                  step="0.01"
-                  :value="trackPan(track)"
-                  v-tooltip="
-                    formatMessage(t.shell.arrangement.trackHeader.panTitle, {
-                      value: trackPan(track).toFixed(2),
-                    })
-                  "
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.panOf, { name: track.name })
-                  "
-                  @change="onPanChange(track, $event)"
-                />
-                <SelectMenu
-                  v-if="track.kind === 'audio'"
-                  class="track-record-input-select"
-                  size="sm"
-                  :model-value="recordInputChannelValue(track)"
-                  :options="recordInputChannelOptions"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.recordInputOf, {
-                      name: track.name,
-                    })
-                  "
-                  @change="onRecordInputChannelChange(track, Number($event))"
-                />
-                <SelectMenu
-                  v-if="track.kind === 'audio' && (props.recordInputDevices?.length ?? 0) > 0"
-                  class="track-record-device-select"
-                  size="sm"
-                  :model-value="recordInputDeviceValue(track)"
-                  :options="recordInputDeviceOptions"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.recordInputDeviceOf, {
-                      name: track.name,
-                    })
-                  "
-                  @change="onRecordInputDeviceChange(track, String($event))"
-                />
-                <SelectMenu
-                  v-if="track.kind !== 'group' && groupTracks.length > 0"
-                  class="track-group-select"
-                  size="sm"
-                  :model-value="track.groupId ?? GROUP_NONE"
-                  :options="groupOptions"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.groupOf, { name: track.name })
-                  "
-                  @change="onGroupChange(track, $event)"
-                />
-                <SelectMenu
-                  v-if="vcaGroups.length > 0"
-                  class="track-vca-select"
-                  size="sm"
-                  :model-value="track.vcaId ?? VCA_NONE"
-                  :options="vcaOptions"
-                  :aria-label="
-                    formatMessage(t.shell.arrangement.trackHeader.vcaOf, { name: track.name })
-                  "
-                  @change="onVcaChange(track, String($event))"
-                />
+                  <button
+                    type="button"
+                    class="track-overflow-summary"
+                    :popovertarget="`track-overflow-${track.id}`"
+                    :aria-label="
+                      formatMessage(t.shell.arrangement.trackHeader.moreActionsNamed, {
+                        name: track.name,
+                      })
+                    "
+                    v-tooltip="
+                      formatMessage(t.shell.arrangement.trackHeader.moreActionsNamed, {
+                        name: track.name,
+                      })
+                    "
+                  >
+                    <span aria-hidden="true">⋯</span>
+                  </button>
+                  <div
+                    :id="`track-overflow-${track.id}`"
+                    class="track-overflow-panel"
+                    popover="auto"
+                    @toggle="positionTrackOverflow"
+                    @wheel.stop
+                  >
+                    <div v-if="props.laneHeight <= 44" class="track-compact-mix-controls">
+                      <label>
+                        <span>{{ t.shell.arrangement.trackHeader.volumeDb }}</span>
+                        <input
+                          class="mini-slider"
+                          type="range"
+                          min="0"
+                          max="1"
+                          step="0.01"
+                          :value="trackVolumeFaderPosition(track)"
+                          :aria-label="
+                            formatMessage(t.shell.arrangement.trackHeader.volumeOf, {
+                              name: track.name,
+                            })
+                          "
+                          @change="onVolumeChange(track, $event)"
+                        />
+                      </label>
+                      <label v-if="track.kind !== 'group'">
+                        <span>{{ t.shell.arrangement.trackHeader.pan }}</span>
+                        <input
+                          class="mini-slider mini-slider--pan"
+                          type="range"
+                          min="-1"
+                          max="1"
+                          step="0.01"
+                          :value="trackPan(track)"
+                          :aria-label="
+                            formatMessage(t.shell.arrangement.trackHeader.panOf, {
+                              name: track.name,
+                            })
+                          "
+                          @change="onPanChange(track, $event)"
+                        />
+                      </label>
+                    </div>
+                    <div class="track-secondary-controls">
+                      <button
+                        v-if="track.kind !== 'group'"
+                        type="button"
+                        class="toggle freeze"
+                        :class="{ on: track.frozen !== undefined, busy: isFreezing(track) }"
+                        :disabled="isFreezing(track)"
+                        v-tooltip="
+                          track.frozen
+                            ? t.shell.arrangement.trackHeader.unfreezeTitle
+                            : t.shell.arrangement.trackHeader.freezeTitle
+                        "
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.freezeNamed, {
+                            name: track.name,
+                          })
+                        "
+                        :aria-pressed="track.frozen !== undefined"
+                        @click="onToggleFreeze(track)"
+                      >
+                        ❄
+                      </button>
+                      <button
+                        v-if="track.kind !== 'group' && trackHasClips(track)"
+                        type="button"
+                        class="track-bounce"
+                        :class="{ busy: isBouncing(track) }"
+                        :disabled="isBouncing(track)"
+                        v-tooltip="t.shell.arrangement.trackHeader.bounceTitle"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.bounceNamed, {
+                            name: track.name,
+                          })
+                        "
+                        @click="onBounce(track)"
+                      >
+                        BNC
+                      </button>
+                      <button
+                        v-if="takeRowCount(track) > 0"
+                        type="button"
+                        class="toggle takes"
+                        :class="{ on: isTakesExpanded(track) }"
+                        v-tooltip="t.shell.arrangement.trackHeader.takeLanes"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.takeLanesOf, {
+                            name: track.name,
+                          })
+                        "
+                        :aria-pressed="isTakesExpanded(track)"
+                        @click="onToggleTakes(track)"
+                      >
+                        T
+                      </button>
+                      <button
+                        v-if="takeRowCount(track) > 0 && isTakesExpanded(track)"
+                        type="button"
+                        class="takes-flatten"
+                        v-tooltip="t.shell.arrangement.trackHeader.flattenTitle"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.flattenNamed, {
+                            name: track.name,
+                          })
+                        "
+                        @click="onFlattenTakes(track)"
+                      >
+                        {{ t.shell.arrangement.trackHeader.flatten }}
+                      </button>
+                    </div>
+                    <div
+                      v-if="
+                        track.kind === 'audio' ||
+                        (track.kind !== 'group' && groupTracks.length > 0) ||
+                        vcaGroups.length > 0
+                      "
+                      class="track-routing-controls"
+                    >
+                      <SelectMenu
+                        v-if="track.kind === 'audio'"
+                        class="track-record-input-select"
+                        size="sm"
+                        :model-value="recordInputChannelValue(track)"
+                        :options="recordInputChannelOptions"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.recordInputOf, {
+                            name: track.name,
+                          })
+                        "
+                        @change="onRecordInputChannelChange(track, Number($event))"
+                      />
+                      <SelectMenu
+                        v-if="track.kind === 'audio' && (props.recordInputDevices?.length ?? 0) > 0"
+                        class="track-record-device-select"
+                        size="sm"
+                        :model-value="recordInputDeviceValue(track)"
+                        :options="recordInputDeviceOptions"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.recordInputDeviceOf, {
+                            name: track.name,
+                          })
+                        "
+                        @change="onRecordInputDeviceChange(track, String($event))"
+                      />
+                      <SelectMenu
+                        v-if="track.kind !== 'group' && groupTracks.length > 0"
+                        class="track-group-select"
+                        size="sm"
+                        :model-value="track.groupId ?? GROUP_NONE"
+                        :options="groupOptions"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.groupOf, { name: track.name })
+                        "
+                        @change="onGroupChange(track, $event)"
+                      />
+                      <SelectMenu
+                        v-if="vcaGroups.length > 0"
+                        class="track-vca-select"
+                        size="sm"
+                        :model-value="track.vcaId ?? VCA_NONE"
+                        :options="vcaOptions"
+                        :aria-label="
+                          formatMessage(t.shell.arrangement.trackHeader.vcaOf, { name: track.name })
+                        "
+                        @change="onVcaChange(track, String($event))"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -769,7 +769,7 @@ onBeforeUnmount(() => {
 .row-actions .danger {
   background: var(--danger-surface);
   color: var(--danger-text);
-  box-shadow: inset 0 0 0 1px var(--danger), var(--shadow-1);
+  box-shadow: none;
 }
 
 .confirm-label {

@@ -36,6 +36,7 @@
   transform-origin: top center;
 }
 .pop-leave-active {
+  pointer-events: none;
   transition:
     opacity var(--dur-1) var(--ease-out),
     transform var(--dur-1) var(--ease-out);

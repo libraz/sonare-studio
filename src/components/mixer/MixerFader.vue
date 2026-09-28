@@ -219,7 +219,7 @@ function tickTopPx(db: number): number {
   right: 0;
   transform: translateY(-50%);
   font: var(--fs-chrome-sm) var(--font-sans);
-  color: var(--text-4);
+  color: var(--text-3);
 }
 
 .fader-tick.unity {
@@ -253,9 +253,9 @@ function tickTopPx(db: number): number {
   width: 3px;
   margin-left: -1.5px;
   border-radius: 2px;
-  background: var(--surface-0);
+  background: var(--surface-field);
   border: 1px solid var(--border);
-  box-shadow: var(--inset-well);
+  box-shadow: none;
 }
 
 .fader-unity {
@@ -263,7 +263,7 @@ function tickTopPx(db: number): number {
   left: 2px;
   right: 2px;
   height: 1px;
-  background: var(--border-raised);
+  background: var(--accent-muted);
   pointer-events: none;
 }
 
@@ -274,11 +274,9 @@ function tickTopPx(db: number): number {
   height: 14px;
   margin-top: -7px;
   border-radius: 3px;
-  background: linear-gradient(var(--surface-4), var(--surface-2));
+  background: var(--surface-panel);
   border: 1px solid var(--border-raised);
-  box-shadow:
-    var(--shadow-1),
-    var(--raise-hi);
+  box-shadow: none;
   pointer-events: none;
   transition: border-color var(--dur-1) var(--ease-out);
 }
@@ -295,5 +293,6 @@ function tickTopPx(db: number): number {
 
 .fader-track.dragging .fader-thumb {
   border-color: var(--accent);
+  background: var(--surface-selection);
 }
 </style>

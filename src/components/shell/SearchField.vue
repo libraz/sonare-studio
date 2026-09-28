@@ -105,7 +105,7 @@ function clear(): void {
   padding: var(--sp-2) var(--sp-3);
   background: var(--surface-inset);
   border-radius: var(--radius-md);
-  box-shadow: var(--control-edge), var(--inset-well);
+  box-shadow: var(--field-edge), var(--inset-well);
   color: var(--text-3);
   transition: box-shadow var(--dur-1) var(--ease-out);
 }
@@ -180,7 +180,7 @@ function clear(): void {
   border: none;
   background: none;
   box-shadow: none;
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-sm);
   color: var(--text-3);
   cursor: pointer;
   transition:

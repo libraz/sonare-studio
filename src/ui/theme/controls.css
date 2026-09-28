@@ -1,5 +1,5 @@
 /*
- * Shared control primitives — light "iOS glass" baseline.
+ * Shared flat control primitives.
  *
  * Bare element rules use :where() so they carry ZERO specificity — every
  * component that already styles its own buttons/inputs keeps winning, while
@@ -11,33 +11,31 @@
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
   color: var(--text-2);
-  background: var(--control-bg);
-  border: none; /* faces are defined by --control-edge + shadow, not a drawn border */
+  background: transparent;
+  border: none;
   border-radius: var(--radius-md);
-  box-shadow: var(--control-lift);
+  box-shadow: none;
   padding: var(--sp-2) var(--sp-5);
   cursor: pointer;
   transition:
     background-color var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 :where(button):hover:not(:disabled) {
   background: var(--control-bg-hover);
-  box-shadow: var(--control-lift-hover);
+  box-shadow: none;
 }
 
 :where(button):active:not(:disabled) {
   background: var(--control-bg-active);
-  box-shadow: var(--control-edge), var(--inset-well);
-  transform: translateY(0.5px);
+  box-shadow: none;
 }
 
 :where(button):disabled {
   color: var(--text-4);
-  box-shadow: var(--control-edge);
+  box-shadow: none;
   cursor: default;
 }
 
@@ -45,10 +43,10 @@
   font-family: var(--font-sans);
   font-size: var(--fs-sm);
   color: var(--text-1);
-  background: var(--surface-inset);
+  background: var(--surface-field);
   border: none;
   border-radius: var(--radius-md);
-  box-shadow: var(--control-edge), var(--inset-well);
+  box-shadow: var(--field-edge), var(--inset-well);
   padding: var(--sp-2) var(--sp-3);
   transition:
     box-shadow var(--dur-1) var(--ease-out);
@@ -66,7 +64,7 @@
 /*
  * Custom-drawn checkbox / radio — retire the native form control entirely so
  * toggles read as part of the app, not the browser. appearance:none strips the
- * UA widget; the box is a crisp raised face with a hairline ring, the check is
+ * UA widget; the box is a crisp field face with a hairline ring, the check is
  * an inline SVG that appears on :checked, and the radio paints an accent dot.
  */
 :where(input[type='checkbox'], input[type='radio']) {
@@ -77,9 +75,9 @@
   height: 15px;
   margin: 0;
   padding: 0;
-  background: var(--control-bg);
+  background: var(--surface-panel);
   border: none;
-  box-shadow: var(--control-edge), var(--shadow-1);
+  box-shadow: var(--field-edge), var(--shadow-1);
   cursor: pointer;
   transition:
     background-color var(--dur-1) var(--ease-out),
@@ -95,7 +93,7 @@
 }
 
 :where(input[type='checkbox'], input[type='radio']):hover:not(:disabled) {
-  box-shadow: var(--control-edge-hover), var(--shadow-1);
+  box-shadow: var(--field-edge-hover), var(--shadow-1);
 }
 
 :where(input[type='checkbox']):checked {
@@ -113,29 +111,12 @@
 }
 
 /*
- * A quick spring pop when a toggle is checked. A keyframe declared on :checked
- * runs once as the state flips on; it leaves the box at scale 1, so the resting
- * face is unchanged. Collapses to nothing under reduced motion (--dur-2 = 0ms).
+ * Checked controls use a stable face. Instrument surfaces can animate their
+ * own values, but a form control should not jump when its state changes.
  */
-@keyframes control-check-pop {
-  0% {
-    transform: scale(0.7);
-  }
-  55% {
-    transform: scale(1.12);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-:where(input[type='checkbox'], input[type='radio']):checked {
-  animation: control-check-pop var(--dur-2) var(--ease-spring);
-}
-
 :where(input[type='checkbox'], input[type='radio']):focus-visible {
   outline: 2px solid transparent;
-  box-shadow: var(--control-edge), var(--ring);
+  box-shadow: var(--field-edge), var(--ring);
 }
 
 :where(input[type='checkbox'], input[type='radio']):disabled {
@@ -144,8 +125,7 @@
 }
 
 /*
- * Custom-drawn range slider — retire the native track/thumb so a slider reads as
- * a macOS-style groove + raised knob, not an HTML form widget. Vendor pseudo-
+ * Custom-drawn range slider with a flat track and compact thumb. Vendor pseudo-
  * elements MUST each live in their own rule: a grouped selector list is dropped
  * wholesale by an engine that does not recognise one of the tokens, so the track
  * and thumb are declared once per engine. Everything stays at :where() zero
@@ -165,9 +145,9 @@
 
 :where(input[type='range'])::-webkit-slider-runnable-track {
   height: 4px;
-  border-radius: var(--radius-full);
-  background: var(--surface-inset);
-  box-shadow: var(--control-edge), var(--inset-well);
+  border-radius: var(--radius-sm);
+  background: var(--surface-field);
+  box-shadow: var(--field-edge), var(--inset-well);
 }
 
 :where(input[type='range'])::-webkit-slider-thumb {
@@ -178,11 +158,10 @@
   /* Centre the 14px knob on the 4px track: (4 - 14) / 2. */
   margin-top: -5px;
   border-radius: var(--radius-full);
-  background: var(--control-bg);
+  background: var(--surface-panel);
   box-shadow: var(--control-lift);
   transition:
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 :where(input[type='range']:hover:not(:disabled))::-webkit-slider-thumb {
@@ -190,15 +169,14 @@
 }
 
 :where(input[type='range']:active:not(:disabled))::-webkit-slider-thumb {
-  transform: scale(1.1);
-  box-shadow: var(--control-edge), 0 0 0 4px var(--accent-soft), var(--shadow-1);
+  box-shadow: var(--control-edge-hover), var(--ring);
 }
 
 :where(input[type='range'])::-moz-range-track {
   height: 4px;
-  border-radius: var(--radius-full);
-  background: var(--surface-inset);
-  box-shadow: var(--control-edge), var(--inset-well);
+  border-radius: var(--radius-sm);
+  background: var(--surface-field);
+  box-shadow: var(--field-edge), var(--inset-well);
 }
 
 :where(input[type='range'])::-moz-range-thumb {
@@ -206,11 +184,10 @@
   height: 14px;
   border: none;
   border-radius: var(--radius-full);
-  background: var(--control-bg);
+  background: var(--surface-panel);
   box-shadow: var(--control-lift);
   transition:
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 :where(input[type='range']:hover:not(:disabled))::-moz-range-thumb {
@@ -218,8 +195,7 @@
 }
 
 :where(input[type='range']:active:not(:disabled))::-moz-range-thumb {
-  transform: scale(1.1);
-  box-shadow: var(--control-edge), 0 0 0 4px var(--accent-soft), var(--shadow-1);
+  box-shadow: var(--control-edge-hover), var(--ring);
 }
 
 :where(input[type='range']):focus-visible {
@@ -257,7 +233,7 @@
 }
 
 /*
- * Canonical primary action button — the iOS accent pill. Components define
+ * Canonical primary action button. Components define
  * `.primary` on a button and delete their local copy.
  */
 .primary {
@@ -265,17 +241,13 @@
   border: none;
   color: var(--accent-text);
   border-radius: var(--radius-md);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 1px 2px rgba(10, 132, 255, 0.35),
-    var(--shadow-1);
+  box-shadow: none;
   padding: var(--sp-2) 0.95rem;
   font-weight: var(--fw-semibold);
   cursor: pointer;
   transition:
     background-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 .primary:hover:not(:disabled) {
@@ -284,8 +256,13 @@
 
 .primary:active:not(:disabled) {
   background-color: var(--accent-active);
-  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.25);
-  transform: translateY(0.5px);
+  box-shadow: none;
+}
+
+.primary:focus-visible,
+.danger-action:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--ring);
 }
 
 .primary:disabled {
@@ -302,17 +279,13 @@
   border: none;
   color: #ffffff;
   border-radius: var(--radius-md);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.28),
-    0 1px 2px rgba(255, 59, 48, 0.35),
-    var(--shadow-1);
+  box-shadow: none;
   padding: var(--sp-2) 0.95rem;
   font-weight: var(--fw-semibold);
   cursor: pointer;
   transition:
     background-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 .danger-action:hover:not(:disabled) {
@@ -320,8 +293,7 @@
 }
 
 .danger-action:active:not(:disabled) {
-  box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.25);
-  transform: translateY(0.5px);
+  box-shadow: none;
 }
 
 /*
@@ -441,7 +413,7 @@
   display: flex;
   gap: 2px;
   padding: 2px;
-  background: var(--surface-inset);
+  background: var(--surface-field);
   border-radius: var(--radius-md);
   box-shadow: var(--control-edge), var(--inset-well);
 }
@@ -473,7 +445,7 @@
 }
 
 .segment.active {
-  background: var(--surface-2);
+  background: var(--surface-panel);
   color: var(--text-1);
   box-shadow: var(--control-edge), var(--shadow-1);
 }
@@ -485,7 +457,7 @@
 
 /*
  * Floating right-click menu shared by the mixer knob and fader (and any other
- * control using useControlInteractions). Frosted glass popover.
+ * control using useControlInteractions). Matte floating popover.
  */
 .control-menu {
   position: fixed;
@@ -494,7 +466,7 @@
   flex-direction: column;
   min-width: 7rem;
   padding: var(--sp-2);
-  background: var(--glass-3);
+  background: var(--surface-floating);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--border);

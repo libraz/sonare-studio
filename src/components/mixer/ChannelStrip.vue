@@ -578,16 +578,16 @@ onBeforeUnmount(() => {
   flex: none;
   box-sizing: border-box;
   padding: var(--sp-3) var(--sp-3) var(--sp-4);
-  background: var(--surface-2);
-  border-right: 1px solid var(--border);
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-subtle);
 }
 
 .channel-strip.active {
-  background: var(--surface-selected);
+  background: var(--surface-selection);
 }
 
 .channel-strip.master {
-  background: var(--surface-2);
+  background: var(--surface-toolbar);
   border-left: 1px solid var(--border);
 }
 
@@ -601,6 +601,12 @@ onBeforeUnmount(() => {
   padding: 0;
   cursor: pointer;
   min-width: 0;
+}
+
+.strip-header:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  box-shadow: var(--ring);
 }
 
 .strip-color {
@@ -617,7 +623,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
   color: var(--text-2);
 }
 
@@ -625,8 +631,9 @@ onBeforeUnmount(() => {
   flex: none;
   font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.06em;
-  color: var(--surface-0);
-  background: #a78bfa;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-muted);
   border-radius: 2px;
   padding: 1px 3px;
 }
@@ -635,8 +642,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   flex: none;
-  color: var(--surface-0);
-  background: #7dd3fc;
+  color: var(--accent);
+  background: var(--surface-selection);
+  border: 1px solid var(--accent-muted);
   border-radius: 2px;
   padding: 2px;
 }
@@ -648,8 +656,9 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   letter-spacing: 0.04em;
-  color: var(--surface-0);
-  background: var(--warning);
+  color: var(--warning-text);
+  background: var(--warning-surface);
+  border: 1px solid color-mix(in srgb, var(--warning) 52%, transparent);
   border-radius: 2px;
   padding: 1px 3px;
 }
@@ -668,7 +677,7 @@ onBeforeUnmount(() => {
 .strip-output-label {
   font: var(--fw-bold) var(--fs-chrome-md) var(--font-sans);
   letter-spacing: 0.06em;
-  color: var(--text-4);
+  color: var(--text-3);
   user-select: none;
 }
 
@@ -706,30 +715,34 @@ onBeforeUnmount(() => {
   height: 14px;
   font: var(--fw-bold) var(--fs-chrome-lg) var(--font-sans);
   line-height: 1;
-  color: var(--text-3);
-  background: var(--surface-3);
+  color: var(--text-2);
+  background: var(--surface-field);
   border-radius: 3px;
   padding: 0;
   cursor: pointer;
-  box-shadow: var(--control-lift);
+  box-shadow: var(--control-edge);
   transition:
     background var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out);
 }
 
 .toggle.mute.on {
-  color: var(--surface-0);
-  background: var(--warning);
+  color: var(--warning-text);
+  background: var(--warning-surface);
+  box-shadow: none;
 }
 
 .toggle.solo.on {
-  color: var(--surface-0);
-  background: var(--accent);
+  color: var(--accent-active);
+  background: var(--accent-soft);
+  box-shadow: none;
 }
 
-/* Solo-safe is shown as a persistent outline on the S button. */
+/* Solo-safe has a persistent warning tint. */
 .toggle.solo.safe {
-  box-shadow: inset 0 0 0 1px var(--warning);
+  color: var(--warning-text);
+  background: var(--warning-surface);
+  box-shadow: none;
 }
 
 .track-state-midi-learn,
@@ -738,28 +751,37 @@ onBeforeUnmount(() => {
   height: 14px;
   font: var(--fw-bold) var(--fs-chrome-sm) var(--font-sans);
   line-height: 1;
-  color: var(--text-3);
-  background: var(--surface-3);
+  color: var(--text-2);
+  background: var(--surface-field);
   border: none;
   border-radius: 3px;
   padding: 0 4px;
   cursor: pointer;
-  box-shadow: var(--control-lift);
+  box-shadow: var(--control-edge);
 }
 
 .track-state-midi-learn.armed {
-  color: var(--surface-0);
-  background: var(--accent);
+  color: var(--accent-active);
+  background: var(--accent-soft);
+  box-shadow: none;
 }
 
 .track-state-midi-learn.bound {
-  color: var(--accent);
+  color: var(--accent-active);
 }
 
 .track-state-midi-forget {
   width: 14px;
   padding: 0;
   color: var(--text-4);
+}
+
+.strip-toggles .toggle:focus-visible,
+.strip-toggles .track-state-midi-learn:focus-visible,
+.strip-toggles .track-state-midi-forget:focus-visible {
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  box-shadow: var(--ring);
 }
 
 .strip-fader-row {

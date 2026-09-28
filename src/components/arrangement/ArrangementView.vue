@@ -500,6 +500,15 @@ function onRevealTrack(trackId: number): void {
   bump();
 }
 
+// A clip added from the media browser can create a track below the viewport.
+// Keep the newly selected track and its clip visible without moving the view
+// again while the user edits other clips on that track.
+watch(
+  () => store.activeTrackId,
+  (trackId) => onRevealTrack(trackId),
+  { flush: 'post' },
+);
+
 function onToggleGroupCollapse(trackId: number, collapsed: boolean): void {
   const ids = collapsedGroupIds.value.filter((id) => id !== trackId);
   if (collapsed) ids.push(trackId);
@@ -1459,15 +1468,8 @@ onBeforeUnmount(() => {
   <div class="arrangement-view">
     <p v-if="error" class="arrangement-error" role="alert">{{ error }}</p>
     <p v-else-if="notice" class="arrangement-notice" role="status">{{ notice }}</p>
-    <div
-      class="arrangement-grid"
-      :style="{
-        gridTemplateColumns: `${TRACK_HEADER_WIDTH_PX}px 1fr`,
-        gridTemplateRows: `${SECTION_LANE_HEIGHT_PX}px ${CHORD_LANE_HEIGHT_PX}px 1fr`,
-      }"
-    >
-      <div class="cell-corner">
-        <span class="cell-corner-label">{{ t.shell.arrangement.sections }}</span>
+    <div class="arrangement-command-bar">
+      <div class="arrangement-view-controls">
         <SelectMenu
           v-model="snapChoice"
           class="arrangement-snap"
@@ -1495,6 +1497,8 @@ onBeforeUnmount(() => {
             +
           </button>
         </span>
+      </div>
+      <div class="arrangement-process-controls">
         <button
           type="button"
           class="section-detect"
@@ -1542,6 +1546,17 @@ onBeforeUnmount(() => {
         >
           {{ t.shell.arrangement.tuneToMidi }}
         </button>
+      </div>
+    </div>
+    <div
+      class="arrangement-grid"
+      :style="{
+        gridTemplateColumns: `${TRACK_HEADER_WIDTH_PX}px 1fr`,
+        gridTemplateRows: `${SECTION_LANE_HEIGHT_PX}px ${CHORD_LANE_HEIGHT_PX}px 1fr`,
+      }"
+    >
+      <div class="cell-corner">
+        <span class="cell-corner-label">{{ t.shell.arrangement.sections }}</span>
       </div>
       <SectionLane
         class="cell-sections"
@@ -1679,6 +1694,35 @@ onBeforeUnmount(() => {
   display: grid;
 }
 
+.arrangement-command-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  box-sizing: border-box;
+  flex: none;
+  min-width: 0;
+  min-height: 34px;
+  padding: 3px var(--sp-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.arrangement-view-controls,
+.arrangement-process-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+}
+
+.arrangement-process-controls {
+  padding-left: var(--sp-5);
+  border-left: 1px solid var(--border);
+}
+
 .cell-corner {
   display: flex;
   align-items: center;
@@ -1701,25 +1745,34 @@ onBeforeUnmount(() => {
 }
 
 .arrangement-snap {
-  flex: none;
+  flex: 0 0 110px;
 }
 
 .arrangement-zoom {
   display: flex;
   flex: none;
-  gap: 2px;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
 }
 
 .arrangement-zoom-button {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.35rem;
-  padding: 1px 3px;
-  color: var(--text-3);
-  font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
-  background: var(--surface-3);
-  border-radius: var(--radius-sm);
+  min-width: 24px;
+  min-height: 22px;
+  padding: 1px 4px;
+  color: var(--text-2);
+  font: var(--fw-semibold) var(--fs-md) var(--font-sans);
+  background: var(--surface-2);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.arrangement-zoom-button + .arrangement-zoom-button {
+  border-left: 1px solid var(--border);
 }
 
 .arrangement-zoom-button:hover {
@@ -1728,29 +1781,32 @@ onBeforeUnmount(() => {
 
 .section-detect {
   flex: none;
-  padding: 1px var(--sp-2);
-  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
-  letter-spacing: 0.04em;
+  min-height: 24px;
+  padding: 3px var(--sp-4);
+  font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
+  letter-spacing: 0.01em;
   color: var(--text-2);
-  background: var(--surface-3);
-  border-radius: var(--radius-sm);
-  box-shadow: var(--control-lift);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  box-shadow: none;
   cursor: pointer;
   transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
 .section-detect:hover:not(:disabled) {
   color: var(--text-1);
-  background: var(--surface-4);
-  box-shadow: var(--control-lift-hover);
+  background: var(--surface-3);
 }
 
 .section-detect:focus-visible {
-  box-shadow: var(--control-lift), var(--ring);
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 .section-detect:disabled {
-  opacity: 0.4;
+  color: var(--text-4);
+  opacity: 0.7;
   cursor: default;
 }
 
