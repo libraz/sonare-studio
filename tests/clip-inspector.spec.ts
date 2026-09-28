@@ -77,9 +77,9 @@ describe('ClipInspector', () => {
     expect(setClipFades).toHaveBeenCalledWith(7, 14, 2);
   });
 
-  it('hides fade fields and re-detect for MIDI clips', () => {
+  it('shows MIDI fade fields while keeping audio re-detect hidden', () => {
     wrapper = mount(ClipInspector, { props: { clip: midiClip() } });
-    expect(wrapper.find('input[aria-label="Fade-in length in beats"]').exists()).toBe(false);
+    expect(wrapper.find('input[aria-label="Fade-in length in beats"]').isVisible()).toBe(true);
     expect(wrapper.find('.ci-redetect').exists()).toBe(false);
   });
 

@@ -189,15 +189,17 @@ describe('buildMidiClipSchedules', () => {
     expect(schedule.events[1].word0).toBe(noteOffWord(3, 60));
   });
 
-  it('scales note-on velocities by the clip gain, clamped to [1, 127]', () => {
-    const velocityFor = (gain: number): number => {
+  it('keeps note velocity while the engine applies clip gain to rendered audio', () => {
+    const scheduleFor = (gain: number) => {
       const clip = makeClip(1, 1, { gain });
       const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
-      return (schedule.events[0].word0 as number) & 0x7f;
+      return schedule;
     };
-    expect(velocityFor(0.5)).toBe(50);
-    expect(velocityFor(2)).toBe(127);
-    expect(velocityFor(0.001)).toBe(1);
+    for (const gain of [0.5, 2, 0.001]) {
+      const schedule = scheduleFor(gain);
+      expect((schedule.events[0].word0 as number) & 0x7f).toBe(100);
+      expect(schedule.gain).toBe(gain);
+    }
   });
 
   it('encodes note-off velocity without scaling it by clip gain', () => {
@@ -207,9 +209,24 @@ describe('buildMidiClipSchedules', () => {
     });
     const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
     expect(schedule.events).toEqual([
-      { renderFrame: 0, word0: noteOnWord(0, 60, 50), wordCount: 1 },
+      { renderFrame: 0, word0: noteOnWord(0, 60, 100), wordCount: 1 },
       { renderFrame: SPP - 1, word0: noteOffWord(0, 60, 45), wordCount: 1 },
     ]);
+    expect(schedule.gain).toBe(0.5);
+  });
+
+  it('converts MIDI clip fades through the tempo map into rendered-audio envelopes', () => {
+    const clip = makeClip(1, 1, {
+      gain: 0.75,
+      lengthPpq: 4,
+      fadeInPpq: 1,
+      fadeOutPpq: 2,
+    });
+    const [schedule] = buildMidiClipSchedules([makeTrack(1)], [clip], TEMPO_120, SAMPLE_RATE);
+    expect(schedule.gain).toBe(0.75);
+    expect(schedule.fadeInSamples).toBe(SPP);
+    expect(schedule.fadeOutSamples).toBe(SPP * 2);
+    expect(schedule.lengthSamples).toBe(SPP * 4);
   });
 
   it('loops a clip by expanding the audible window into absolute events', () => {

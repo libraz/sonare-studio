@@ -21,8 +21,8 @@
  *   while the transport plays, flushed on stop) — no extra gating here.
  * - loadSoundFont is GLOBAL: the engine holds a single SoundFont, so tracks
  *   needing different fonts cannot be honored — the last loaded font wins.
- * - Scheduled MIDI clips have no gain field; clip gain is expressed by
- *   scaling note-on velocities.
+ * - Scheduled MIDI clip gain and fades shape the rendered instrument audio;
+ *   note velocities retain their musical meaning.
  */
 
 import type { NoteArticulation } from '@/project/annotations';
@@ -140,8 +140,8 @@ export type ClipArticulations = ReadonlyMap<number, ReadonlyMap<number, NoteArti
 /**
  * Compiles the MIDI clips of the given tracks into engine clip schedules
  * (exported for tests). Only clips on 'midi' tracks with MIDI content, notes
- * and an audible gain are scheduled; clip gain is baked into the note-on
- * velocities. All PPQ positions are converted to absolute samples through the
+ * and an audible gain are scheduled; clip gain and fades shape rendered audio.
+ * All PPQ positions are converted to absolute samples through the
  * given tempo map, so tempo changes and ramps inside a clip land on exact
  * frames (a clip's length is the sample distance between its start and end
  * positions, not a rounded duration).
@@ -313,7 +313,7 @@ export function buildMidiClipSchedules(
     for (const entry of notes) {
       const note = entry.note;
       const channel = clamp(note.channel ?? 0, 0, 15);
-      const velocity = clamp(Math.round(note.velocity * clip.gain), 1, 127);
+      const velocity = clamp(Math.round(note.velocity), 1, 127);
       let onFrame = ppqToSamples(tempoMap, entry.timelineStartPpq, sampleRate);
       if (shiftFrameZero && onFrame === 0) onFrame = 1;
       const expression = expressionMapEntryFor(
@@ -487,6 +487,20 @@ export function buildMidiClipSchedules(
       startSample,
       startPpq: clip.startPpq,
       lengthSamples,
+      gain: clip.gain,
+      fadeInSamples:
+        (clip.fadeInPpq ?? 0) > 0
+          ? ppqToSamples(tempoMap, clip.startPpq + (clip.fadeInPpq ?? 0), sampleRate) - startSample
+          : 0,
+      fadeOutSamples:
+        (clip.fadeOutPpq ?? 0) > 0
+          ? ppqToSamples(tempoMap, clip.startPpq + clip.lengthPpq, sampleRate) -
+            ppqToSamples(
+              tempoMap,
+              clip.startPpq + clip.lengthPpq - (clip.fadeOutPpq ?? 0),
+              sampleRate,
+            )
+          : 0,
       events,
     });
   }

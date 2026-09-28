@@ -9,13 +9,13 @@ import { useI18n } from '@/ui/i18n';
 
 /**
  * Compact inspector for the active arrangement clip: edits the clip gain,
- * fade-in / fade-out lengths (audio clips only) and loop toggle, plus a
+ * fade-in / fade-out lengths and loop toggle, plus a
  * re-detect tempo action for warped audio. Every field maps to a realtime
  * engine-honored property (clip gain and fades are applied when the clip is
  * scheduled), so edits here are audible on the next play, not cosmetic.
  *
- * The bar hides itself when no clip is active; fade fields appear only for
- * audio clips, where the engine renders fades.
+ * The bar hides itself when no clip is active. Both audio and MIDI clip fades
+ * shape the rendered audio.
  */
 
 const props = defineProps<{
@@ -37,7 +37,7 @@ const { t } = useI18n();
 /** Lowest gain shown before the field reads as silence ("-inf"). */
 const GAIN_FLOOR_DB = -60;
 
-/** True for audio clips, which carry fades and a source tempo. */
+/** True for audio clips, which carry a source tempo. */
 const isAudio = computed(() => props.clip !== null && isAudioClip(props.clip));
 
 /** The clip gain expressed in dB ('-inf' below the floor). */
@@ -109,8 +109,7 @@ function onLoopToggle(): void {
       <span class="ci-unit">dB</span>
     </label>
 
-    <template v-if="isAudio">
-      <label class="ci-field">
+    <label class="ci-field">
         {{ t.shell.arrangement.clipInspector.fadeIn }}
         <input
           class="ci-num"
@@ -123,8 +122,8 @@ function onLoopToggle(): void {
           @change="onFadeInput('in', $event)"
         />
         <span class="ci-unit">{{ t.shell.arrangement.clipInspector.beats }}</span>
-      </label>
-      <label class="ci-field">
+    </label>
+    <label class="ci-field">
         {{ t.shell.arrangement.clipInspector.fadeOut }}
         <input
           class="ci-num"
@@ -137,8 +136,7 @@ function onLoopToggle(): void {
           @change="onFadeInput('out', $event)"
         />
         <span class="ci-unit">{{ t.shell.arrangement.clipInspector.beats }}</span>
-      </label>
-    </template>
+    </label>
 
     <ToggleButton
       class="ci-loop"
