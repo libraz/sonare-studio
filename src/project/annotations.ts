@@ -352,7 +352,7 @@ export interface DocumentLineSpanAnnotation {
 }
 
 /** Display-quantize choices supported by the score toolbar. */
-export type ScoreDisplayQuantizeKey = '4' | '8' | '16' | '32' | '8t' | '16t';
+export type ScoreDisplayQuantizeKey = '4' | '8' | '16' | '32' | '64' | '8t' | '16t';
 
 /**
  * Display-quantize grid lengths in quarter-note PPQ.
@@ -368,6 +368,7 @@ export const SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ: Readonly<
   '8': 0.5,
   '16': 0.25,
   '32': 0.125,
+  '64': 0.0625,
   '8t': 1 / 3,
   '16t': 1 / 6,
 };
@@ -451,6 +452,7 @@ export function scoreDisplaySettingsFromDocument(
       quantize === '8' ||
       quantize === '16' ||
       quantize === '32' ||
+      quantize === '64' ||
       quantize === '8t' ||
       quantize === '16t'
         ? quantize

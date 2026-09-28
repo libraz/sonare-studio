@@ -9,6 +9,7 @@
  * start screen.
  */
 
+import { NATURAL_MINOR_MASK } from '@libraz/libcantus';
 import {
   type DocumentClip,
   type DocumentNote,
@@ -23,6 +24,22 @@ const DEMO_SAMPLE_RATE = 48000;
 
 /** Built-in pipe-organ physical model preset used for every voice. */
 const DEMO_PRESET = 'church-organ';
+
+/** Curated playback tempo markers for the demo's major structural changes. */
+const BWV565_PLAYBACK_TEMPO_SEGMENTS = [
+  { startPpq: 0, bpm: 30 },
+  { startPpq: 13, bpm: 80 },
+  { startPpq: 68, bpm: 70 },
+  { startPpq: 94, bpm: 100 },
+  { startPpq: 114, bpm: 50 },
+  { startPpq: 128, bpm: 90 },
+  { startPpq: 511.5, bpm: 30 },
+  { startPpq: 516, bpm: 70 },
+  { startPpq: 532, bpm: 50 },
+  { startPpq: 539, bpm: 80 },
+  { startPpq: 566, bpm: 60 },
+  { startPpq: 574, bpm: 40 },
+] as const;
 
 /** Shape of the generated `bwv565.json` asset. */
 interface Bwv565Asset {
@@ -78,8 +95,10 @@ export async function makeBwv565Document(): Promise<ProjectDocument> {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: asset.name,
     sampleRate: DEMO_SAMPLE_RATE,
-    tempoSegments: asset.tempoSegments.map((segment) => ({ ...segment })),
+    tempoSegments: BWV565_PLAYBACK_TEMPO_SEGMENTS.map((segment) => ({ ...segment })),
     timeSignatures: asset.timeSignatures.map((segment) => ({ ...segment })),
+    scaleHighlight: { enabled: true, rootPc: 2, modeMask: NATURAL_MINOR_MASK },
+    score: { fullScoreEnabled: true, displayQuantizeKey: '64' },
     tracks,
     markers: [],
     sections: [],

@@ -425,6 +425,16 @@ describe('score annotation serialization', () => {
     expect(serializeProject()).toEqual(doc);
   });
 
+  it('accepts the 64th-note display quantize key when loading a document', async () => {
+    const doc = serializeProject();
+    doc.score = { displayQuantizeKey: '64' };
+
+    await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
+
+    expect(store.scoreDisplaySettings.displayQuantizeKey).toBe('64');
+    expect(serializeProject().score?.displayQuantizeKey).toBe('64');
+  });
+
   it('drops orphaned annotations (deleted notes) from the document', () => {
     const a = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     const b = addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });

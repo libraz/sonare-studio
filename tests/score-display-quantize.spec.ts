@@ -10,6 +10,7 @@ const DISPLAY_QUANTIZE_KEYS: ReadonlyArray<ScoreDisplayQuantizeKey> = [
   '8',
   '16',
   '32',
+  '64',
   '8t',
   '16t',
 ];
@@ -20,5 +21,6 @@ describe('score display quantize catalog', () => {
     for (const key of DISPLAY_QUANTIZE_KEYS) {
       expect(SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ[key]).toBeGreaterThan(0);
     }
+    expect(SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ['64']).toBe(0.0625);
   });
 });

@@ -31,6 +31,11 @@ vi.mock('@/notation/io', async (importOriginal) => ({
   exportMusicXml: vi.fn(),
 }));
 
+vi.mock('@/notation/print', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/notation/print')>()),
+  downloadBlob: vi.fn(),
+}));
+
 interface FakeVerovioClient {
   client: VerovioClient;
   load: ReturnType<typeof vi.fn>;
@@ -185,6 +190,63 @@ describe('score artifact identity and exports', () => {
     resolveLoad?.(1);
     await pending;
     expect(notation.getCurrentXml()).toContain('<score-partwise');
+  });
+
+  it('hides tempo directions from the screen preview while retaining them for artifacts and exports', async () => {
+    const document = projectDocument('Tempo Project');
+    document.tempoSegments = [
+      { startPpq: 0, bpm: 120, endBpm: 90 },
+      { startPpq: 4, bpm: 90 },
+    ];
+    await loadProjectDocument(document);
+
+    const exportClients: FakeVerovioClient[] = [];
+    const createExportClient = vi.fn(() => {
+      const fake = fakeVerovio();
+      exportClients.push(fake);
+      return fake.client;
+    });
+    const { notation, verovio } = notationHarness(store, false, createExportClient);
+
+    await notation.transcribe();
+    const previewXml = verovio.load.mock.calls[0]?.[0] as string;
+    const artifactXml = notation.getCurrentXml();
+    expect(previewXml).not.toContain('<metronome>');
+    expect(previewXml).not.toContain('rit.');
+    expect(previewXml).not.toContain('a tempo');
+    expect(artifactXml).toContain('<metronome>');
+    expect(artifactXml).toContain('rit.');
+    expect(artifactXml).toContain('tempo="120"');
+    expect(artifactXml).toContain('tempo="90"');
+
+    notation.onExportMusicXml();
+    await settleExports();
+    const [musicXml] = vi.mocked(exportMusicXml).mock.calls[0] as [string, string];
+    expect(musicXml).toContain('tempo="120"');
+    expect(musicXml).toContain('tempo="90"');
+
+    vi.mocked(exportMusicXml).mockClear();
+    notation.onExportPartMusicXml();
+    await settleExports();
+    const [partXml] = vi.mocked(exportMusicXml).mock.calls[0] as [string, string];
+    expect(partXml).toContain('tempo="120"');
+    expect(partXml).toContain('tempo="90"');
+
+    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+    notation.onPrint();
+    await vi.waitFor(() => expect(exportClients).toHaveLength(1));
+    expect(exportClients[0]?.load.mock.calls[0]?.[0]).toContain('tempo="120"');
+    expect(exportClients[0]?.load.mock.calls[0]?.[0]).toContain('tempo="90"');
+    await vi.waitFor(() => expect(print).toHaveBeenCalledOnce());
+    window.dispatchEvent(new Event('afterprint'));
+    print.mockRestore();
+    await vi.waitFor(() => expect(notation.exporting.value).toBe(false));
+
+    notation.onExportPdf();
+    await vi.waitFor(() => expect(exportClients).toHaveLength(2));
+    expect(exportClients[1]?.load.mock.calls[0]?.[0]).toContain('tempo="120"');
+    expect(exportClients[1]?.load.mock.calls[0]?.[0]).toContain('tempo="90"');
+    await vi.waitFor(() => expect(notation.exporting.value).toBe(false));
   });
 
   it('invalidates the same numeric clip id across a project switch and clears an empty score', async () => {

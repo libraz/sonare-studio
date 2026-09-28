@@ -468,6 +468,18 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       : null;
   }
 
+  /**
+   * Omits tempo directions from the screen-only engraving. The screen client
+   * does not play this XML; playhead sync compares timemap qstamp with PPQ.
+   */
+  function serializeScreenMusicXml(score: NotatedScore): string {
+    const screenScore = { ...score };
+    delete screenScore.measureTempos;
+    delete screenScore.measureTempoMarks;
+    delete screenScore.measureTempoTexts;
+    return serializeMusicXml(screenScore);
+  }
+
   function clearArtifacts(): void {
     currentArtifact = null;
     svg.value = '';
@@ -552,7 +564,8 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         : [store.activeClip.trackId];
       if (!screenOperationIsCurrent(token, verovio)) return;
       const xml = serializeMusicXml(score);
-      const count = await verovio.load(xml, screenLayoutOptions());
+      const screenXml = serializeScreenMusicXml(score);
+      const count = await verovio.load(screenXml, screenLayoutOptions());
       if (!screenOperationIsCurrent(token, verovio)) return;
       const nextPage = Math.min(Math.max(page.value, 1), Math.max(count, 1));
       const [pageSvg, entries] = await Promise.all([
