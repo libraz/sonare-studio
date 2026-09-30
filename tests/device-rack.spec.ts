@@ -552,6 +552,37 @@ describe('DeviceRack.vue', () => {
     });
   });
 
+  it('commits and restores the GS EFX realisation picker value', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    const sf2Tab = wrapper.findAll('.picker-tab').find((tab) => tab.text() === 'SF2');
+    await sf2Tab?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-option')[0].trigger('click');
+    expect((wrapper.find('.sf2-efx-realization').element as HTMLSelectElement).value).toBe(
+      'modern',
+    );
+    await wrapper.find('.sf2-efx-realization').setValue('classic');
+    await wrapper.find('.use-sf2').trigger('click');
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'sf2',
+      fontId: 'fontaaaa00000001',
+      gsEfxRealization: 'classic',
+    });
+
+    await wrapper.find('.instrument-button').trigger('click');
+    expect((wrapper.find('.sf2-efx-realization').element as HTMLSelectElement).value).toBe(
+      'classic',
+    );
+    await wrapper.find('.sf2-efx-realization').setValue('modern');
+    await wrapper.find('.use-sf2').trigger('click');
+    expect(store.tracks[0].instrument).toEqual({
+      kind: 'sf2',
+      fontId: 'fontaaaa00000001',
+    });
+  });
+
   it('imports a .sf2 file into the font store and selects it', async () => {
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');

@@ -75,6 +75,9 @@ describe('instrumentDedupeKey', () => {
     expect(instrumentDedupeKey({ ...base, preferModelForModeledFamilies: true })).not.toBe(
       instrumentDedupeKey({ ...base, preferModelForModeledFamilies: false }),
     );
+    expect(instrumentDedupeKey({ ...base, gsEfxRealization: 'classic' })).not.toBe(
+      instrumentDedupeKey({ ...base, gsEfxRealization: 'modern' }),
+    );
   });
 });
 
@@ -259,6 +262,25 @@ describe('instrumentCacheSegment', () => {
         preferModelForModeledFamilies: false,
       }),
     ).toBe(sampled);
+  });
+
+  it('separates classic GS EFX from the modern cache identity', () => {
+    const modern = instrumentCacheSegment({ kind: 'sf2', fontId: 'font-a', program: 40 });
+    const explicitModern = instrumentCacheSegment({
+      kind: 'sf2',
+      fontId: 'font-a',
+      program: 40,
+      gsEfxRealization: 'modern',
+    });
+    const classic = instrumentCacheSegment({
+      kind: 'sf2',
+      fontId: 'font-a',
+      program: 40,
+      gsEfxRealization: 'classic',
+    });
+
+    expect(explicitModern).toBe(modern);
+    expect(classic).not.toBe(modern);
   });
 });
 
@@ -508,6 +530,15 @@ describe('instrument helpers', () => {
     ).toEqual({});
   });
 
+  it('forwards classic GS EFX while omitting the modern engine default', () => {
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gsEfxRealization: 'classic' })).toEqual({
+      gsEfxRealization: 'classic',
+    });
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gsEfxRealization: 'modern' })).toEqual(
+      {},
+    );
+  });
+
   it('validateTrackInstrument rejects a non-boolean modelled-instrument preference', () => {
     expect(() =>
       validateTrackInstrument({
@@ -521,6 +552,23 @@ describe('instrument helpers', () => {
         kind: 'sf2',
         fontId: 'gm',
         preferModelForModeledFamilies: 1 as unknown as boolean,
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('validateTrackInstrument accepts only named GS EFX realisations', () => {
+    expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm' })).not.toThrow();
+    expect(() =>
+      validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gsEfxRealization: 'modern' }),
+    ).not.toThrow();
+    expect(() =>
+      validateTrackInstrument({ kind: 'sf2', fontId: 'gm', gsEfxRealization: 'classic' }),
+    ).not.toThrow();
+    expect(() =>
+      validateTrackInstrument({
+        kind: 'sf2',
+        fontId: 'gm',
+        gsEfxRealization: 'legacy' as unknown as 'modern',
       }),
     ).toThrow(RangeError);
   });
@@ -595,6 +643,17 @@ describe('prerenderMidiClip per instrument kind', () => {
       loadFont,
     });
     expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: 1.5, polyphony: 24 });
+  });
+
+  it('forwards classic GS EFX realisation to the prerender bounce', async () => {
+    await prerenderMidiClip(NOTES, {
+      ...OPTS,
+      instrument: { kind: 'sf2', fontId: 'my-font', gsEfxRealization: 'classic' },
+      loadFont: async () => new Uint8Array([4]),
+    });
+    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({
+      gsEfxRealization: 'classic',
+    });
   });
 
   it('forwards an explicit zero gain to the SF2 bounce as silence', async () => {

@@ -11,6 +11,7 @@ import {
   MAX_SF2_POLYPHONY,
   MAX_SF2_PROGRAM,
   MIN_SF2_POLYPHONY,
+  SF2_DEFAULT_EFX_REALIZATION,
   SF2_DEFAULT_GAIN,
   SF2_DEFAULT_POLYPHONY,
 } from '@/ui/devices/sf2-model';
@@ -24,6 +25,7 @@ const EMPTY = {
   polyphony: SF2_DEFAULT_POLYPHONY,
   channelMap: [],
   preferModel: false,
+  gsEfxRealization: SF2_DEFAULT_EFX_REALIZATION,
 };
 
 describe('clampBank / clampProgram', () => {
@@ -82,6 +84,7 @@ describe('createSf2Selection', () => {
       polyphony: 24,
       channelMap: [],
       preferModel: false,
+      gsEfxRealization: SF2_DEFAULT_EFX_REALIZATION,
     });
   });
 
@@ -94,6 +97,7 @@ describe('createSf2Selection', () => {
       polyphony: SF2_DEFAULT_POLYPHONY,
       channelMap: [],
       preferModel: false,
+      gsEfxRealization: SF2_DEFAULT_EFX_REALIZATION,
     });
   });
 
@@ -103,6 +107,14 @@ describe('createSf2Selection', () => {
         .preferModel,
     ).toBe(true);
     expect(createSf2Selection({ kind: 'sf2', fontId: 'abc' }).preferModel).toBe(false);
+  });
+
+  it('restores classic GS EFX and defaults omitted values to modern', () => {
+    expect(
+      createSf2Selection({ kind: 'sf2', fontId: 'abc', gsEfxRealization: 'classic' })
+        .gsEfxRealization,
+    ).toBe('classic');
+    expect(createSf2Selection({ kind: 'sf2', fontId: 'abc' }).gsEfxRealization).toBe('modern');
   });
 
   it('restores and normalizes a multi-timbral channel map', () => {
@@ -144,6 +156,18 @@ describe('buildSf2Instrument', () => {
     expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', preferModel: false })).toEqual({
       kind: 'sf2',
       fontId: 'abc',
+    });
+  });
+
+  it('omits modern GS EFX and persists classic', () => {
+    expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', gsEfxRealization: 'modern' })).toEqual({
+      kind: 'sf2',
+      fontId: 'abc',
+    });
+    expect(buildSf2Instrument({ ...EMPTY, fontId: 'abc', gsEfxRealization: 'classic' })).toEqual({
+      kind: 'sf2',
+      fontId: 'abc',
+      gsEfxRealization: 'classic',
     });
   });
 

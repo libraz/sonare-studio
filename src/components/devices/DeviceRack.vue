@@ -588,6 +588,14 @@ function onPreferModelInput(event: Event): void {
   sf2Selection.value = { ...sf2Selection.value, preferModel: checked };
 }
 
+function onSf2EfxRealizationInput(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  sf2Selection.value = {
+    ...sf2Selection.value,
+    gsEfxRealization: value === 'classic' ? 'classic' : 'modern',
+  };
+}
+
 function useSf2(): void {
   const track = activeTrack.value;
   const next = buildSf2Instrument(sf2Selection.value);
@@ -1376,6 +1384,20 @@ const instrumentSourceCaption = computed(() => {
               </label>
             </div>
             <p class="sf2-prefer-model-hint">{{ t.shell.devicesPanel.preferModelHint }}</p>
+            <div class="sf2-efx-field">
+              <label for="sf2-efx-realization">{{ t.shell.devicesPanel.gsEfxRealization }}</label>
+              <select
+                id="sf2-efx-realization"
+                class="sf2-efx-realization"
+                :value="sf2Selection.gsEfxRealization"
+                :aria-label="t.shell.devicesPanel.gsEfxRealization"
+                @change="onSf2EfxRealizationInput"
+              >
+                <option value="modern">{{ t.shell.devicesPanel.gsEfxModern }}</option>
+                <option value="classic">{{ t.shell.devicesPanel.gsEfxClassic }}</option>
+              </select>
+              <p class="sf2-efx-hint">{{ t.shell.devicesPanel.gsEfxRealizationHint }}</p>
+            </div>
             <div class="sf2-program-browser">
               <p v-if="soundFontSlotWarning" class="sf2-slot-warning" role="alert">
                 {{ soundFontSlotWarning }}

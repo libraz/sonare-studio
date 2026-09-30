@@ -53,6 +53,11 @@ export const shellMixing = {
     preferModel: 'Prefer modelled instruments',
     preferModelHint:
       'Render the melodic GM programs the engine models physically through those models instead of the SoundFont samples. Drums stay on the SoundFont. This changes the rendered audio, so it is saved with the instrument.',
+    gsEfxRealization: 'GS EFX rendering',
+    gsEfxModern: 'Modern',
+    gsEfxClassic: 'Classic',
+    gsEfxRealizationHint:
+      'Applies to GS EFX SysEx in MIDI. Modern uses current effect models; Classic recreates vintage GS effects. Used for playback and export.',
     loadSf2: 'Load .sf2…',
     useSoundFont: 'Use SoundFont',
     multiTimbral: 'Multi-timbral',

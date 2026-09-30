@@ -4,7 +4,12 @@
  * variant.
  */
 
-import type { Sf2ChannelProgram, Sf2Instrument, TrackInstrument } from '@/project/instrument';
+import type {
+  Sf2ChannelProgram,
+  Sf2EfxRealization,
+  Sf2Instrument,
+  TrackInstrument,
+} from '@/project/instrument';
 
 /** Highest MIDI bank number (MSB * 128 + LSB). */
 export const MAX_SF2_BANK = 16383;
@@ -26,6 +31,9 @@ export const MIN_SF2_POLYPHONY = 1;
 
 /** Highest selectable voice cap (the engine clamps here too). */
 export const MAX_SF2_POLYPHONY = 64;
+
+/** Default GS EFX realisation used by libsonare when the field is omitted. */
+export const SF2_DEFAULT_EFX_REALIZATION: Sf2EfxRealization = 'modern';
 
 /** Editable SF2 selection state. */
 export interface Sf2Selection {
@@ -50,6 +58,8 @@ export interface Sf2Selection {
    * models rather than the SoundFont's samples. Drums stay SF2-first.
    */
   preferModel: boolean;
+  /** GS insertion-effect SysEx realisation. */
+  gsEfxRealization: Sf2EfxRealization;
 }
 
 /** GM percussion channel (0-based); channel 10 in 1-based MIDI terms. */
@@ -122,6 +132,8 @@ export function createSf2Selection(instrument?: TrackInstrument | null): Sf2Sele
       polyphony: clampPolyphony(instrument.polyphony ?? SF2_DEFAULT_POLYPHONY),
       channelMap: normalizeChannelMap(instrument.channelMap ?? []),
       preferModel: instrument.preferModelForModeledFamilies === true,
+      gsEfxRealization:
+        instrument.gsEfxRealization === 'classic' ? 'classic' : SF2_DEFAULT_EFX_REALIZATION,
     };
   }
   return {
@@ -132,6 +144,7 @@ export function createSf2Selection(instrument?: TrackInstrument | null): Sf2Sele
     polyphony: SF2_DEFAULT_POLYPHONY,
     channelMap: [],
     preferModel: false,
+    gsEfxRealization: SF2_DEFAULT_EFX_REALIZATION,
   };
 }
 
@@ -160,5 +173,8 @@ export function buildSf2Instrument(selection: Sf2Selection): Sf2Instrument | nul
   const channelMap = normalizeChannelMap(selection.channelMap);
   if (channelMap.length > 0) instrument.channelMap = channelMap;
   if (selection.preferModel) instrument.preferModelForModeledFamilies = true;
+  // Modern is the engine default and stays omitted so old and new projects
+  // share the same canonical document representation.
+  if (selection.gsEfxRealization === 'classic') instrument.gsEfxRealization = 'classic';
   return instrument;
 }

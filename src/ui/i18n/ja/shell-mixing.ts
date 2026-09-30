@@ -53,6 +53,11 @@ export const shellMixing = {
     preferModel: 'モデリング音源を優先',
     preferModelHint:
       'エンジンが物理モデルを持つ旋律系 GM 音色を、SoundFont のサンプルではなくモデルで鳴らします。ドラムは SoundFont のままです。鳴る音が変わる設定なので、楽器と一緒に保存されます。',
+    gsEfxRealization: 'GS EFX の再現方式',
+    gsEfxModern: 'モダン',
+    gsEfxClassic: 'クラシック',
+    gsEfxRealizationHint:
+      'MIDI の GS EFX SysEx に適用します。モダンは現行モデル、クラシックは従来の GS エフェクトを再現します。再生と書き出しの両方に反映されます。',
     loadSf2: '.sf2を読み込み...',
     useSoundFont: 'SoundFontを使用',
     multiTimbral: 'マルチティンバー',

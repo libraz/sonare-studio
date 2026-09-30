@@ -133,6 +133,9 @@ export interface Sf2ChannelProgram {
   program?: number;
 }
 
+/** How GS insertion-effect SysEx is realised by the SF2 player. */
+export type Sf2EfxRealization = 'modern' | 'classic';
+
 /** Instrument variant: a stored SoundFont (SF2) with optional program select. */
 export interface Sf2Instrument {
   kind: 'sf2';
@@ -165,6 +168,15 @@ export interface Sf2Instrument {
    * instrument (see {@link instrumentCacheSegment}).
    */
   preferModelForModeledFamilies?: boolean;
+  /**
+   * GS insertion-effect realisation. Omitted and 'modern' use libsonare's
+   * current effect models; 'classic' uses the classic GS effect models.
+   *
+   * The modern value is intentionally omitted from saved selections and
+   * playback configs so projects retain the engine default as their canonical
+   * representation.
+   */
+  gsEfxRealization?: Sf2EfxRealization;
 }
 
 /**
@@ -298,6 +310,11 @@ function synthPresetGmIdentitySuffix(instrument: SynthPresetInstrument): string 
   return `:gm=1:${instrument.gmBank ?? -1}:${instrument.gmProgram ?? -1}`;
 }
 
+/** Identity suffix for the non-default GS EFX realisation. */
+function sf2EfxIdentitySuffix(instrument: Sf2Instrument): string {
+  return instrument.gsEfxRealization === 'classic' ? ':efx=classic' : '';
+}
+
 /**
  * A stable key identifying an instrument for destination de-duplication: two
  * tracks whose instruments produce the same key can share one engine playback
@@ -320,7 +337,7 @@ export function instrumentDedupeKey(instrument: TrackInstrument): string {
           : '';
       return `sf2:${instrument.fontId}:${instrument.bank ?? 'bank-default'}:${
         instrument.program ?? 'program-default'
-      }:gain=${instrument.gain ?? 'gain-default'}:polyphony=${instrument.polyphony ?? 'polyphony-default'}:model=${instrument.preferModelForModeledFamilies === true ? 1 : 0}${channelMap}`;
+      }:gain=${instrument.gain ?? 'gain-default'}:polyphony=${instrument.polyphony ?? 'polyphony-default'}:model=${instrument.preferModelForModeledFamilies === true ? 1 : 0}${sf2EfxIdentitySuffix(instrument)}${channelMap}`;
     }
     case 'external-midi':
       return `external-midi:${instrument.outputPortId}:ch${instrument.channel + 1}`;
@@ -449,6 +466,15 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       ) {
         throw new RangeError('SF2 preferModelForModeledFamilies must be a boolean when present');
       }
+      if (
+        instrument.gsEfxRealization !== undefined &&
+        instrument.gsEfxRealization !== 'modern' &&
+        instrument.gsEfxRealization !== 'classic'
+      ) {
+        throw new RangeError(
+          `SF2 gsEfxRealization must be 'modern' or 'classic', got ${String(instrument.gsEfxRealization)}`,
+        );
+      }
       return;
     }
     case 'external-midi': {
@@ -503,16 +529,21 @@ export function sf2PlaybackConfig(instrument: Sf2Instrument): {
   gain?: number;
   polyphony?: number;
   preferModelForModeledFamilies?: boolean;
+  gsEfxRealization?: Sf2EfxRealization;
 } {
   const config: {
     gain?: number;
     polyphony?: number;
     preferModelForModeledFamilies?: boolean;
+    gsEfxRealization?: Sf2EfxRealization;
   } = {};
   if (instrument.gain !== undefined) config.gain = instrument.gain;
   if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
   if (instrument.preferModelForModeledFamilies === true) {
     config.preferModelForModeledFamilies = true;
+  }
+  if (instrument.gsEfxRealization === 'classic') {
+    config.gsEfxRealization = 'classic';
   }
   return config;
 }
@@ -561,7 +592,7 @@ export function instrumentCacheSegment(instrument: TrackInstrument): string {
       const model = instrument.preferModelForModeledFamilies === true ? ':model=1' : '';
       return `sf2=${encodeURIComponent(instrument.fontId)}:${instrument.bank ?? -1}:${
         instrument.program ?? -1
-      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}${channelMap}${model}`;
+      }:${instrument.gain ?? -1}:${instrument.polyphony ?? -1}${channelMap}${model}${sf2EfxIdentitySuffix(instrument)}`;
     }
     case 'external-midi':
       // External-MIDI tracks are not bounced; this segment exists only to keep
