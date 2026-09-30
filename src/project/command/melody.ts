@@ -1,11 +1,12 @@
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
-import { loadAsset } from '@/persistence/assets';
+import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import {
   type AudioMelodyAnalyzer,
   type AudioMelodyDeps,
   analyzeAudioClipMelody,
 } from '../audio-melody';
+import { type AudioTranscriptionOptions, transcribeAudioClip } from '../audio-transcription';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -13,11 +14,59 @@ import {
 } from '../operation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
+import { transcribeAudioInWorker } from '../transcribe-client';
 import { clipKind, TRACK_COLOR_PALETTE } from '../types';
 import { executeAtomic } from './history';
 import { requireClip } from './utils';
 
 const melodyAnalysisOperations = new OperationGeneration();
+const transcriptionOperations = new OperationGeneration();
+
+/** Options for the canonical mono/polyphonic audio-to-MIDI command. */
+export interface TranscribeAudioClipToMidiOptions {
+  /** `true` enables overlapping multi-F0 transcription. */
+  polyphonic?: boolean;
+  /** Cancels worker analysis before the project mutation is reached. */
+  signal?: AbortSignal;
+  /** Injectable adapter for command tests and host integrations. */
+  transcribe?: typeof transcribeAudioClip;
+}
+
+/** Creates a signal that follows both project staleness and user cancellation. */
+function linkedAbortSignal(
+  first: AbortSignal,
+  second: AbortSignal | undefined,
+): { signal: AbortSignal; dispose: () => void } {
+  if (second === undefined) return { signal: first, dispose: () => undefined };
+  const controller = new AbortController();
+  const abort = (source: AbortSignal): void => {
+    if (!controller.signal.aborted) controller.abort(source.reason);
+  };
+  if (first.aborted) abort(first);
+  if (second.aborted) abort(second);
+  const onFirstAbort = (): void => abort(first);
+  const onSecondAbort = (): void => abort(second);
+  first.addEventListener('abort', onFirstAbort, { once: true });
+  second.addEventListener('abort', onSecondAbort, { once: true });
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      first.removeEventListener('abort', onFirstAbort);
+      second.removeEventListener('abort', onSecondAbort);
+    },
+  };
+}
+
+function throwIfSignalAborted(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  if (typeof DOMException !== 'undefined') {
+    throw new DOMException('Transcription was aborted', 'AbortError');
+  }
+  const error = new Error('Transcription was aborted');
+  error.name = 'AbortError';
+  throw error;
+}
 
 function melodySourceRevision(
   store: ReturnType<typeof useProjectStore>,
@@ -36,6 +85,8 @@ function melodySourceRevision(
       sourceOffsetPpq: clip.sourceOffsetPpq,
       loopEnabled: clip.loopEnabled,
       loopLengthPpq: clip.loopLengthPpq,
+      fadeInPpq: clip.fadeInPpq,
+      fadeOutPpq: clip.fadeOutPpq,
       takes: clip.takes,
       compSegments: clip.compSegments,
       warp: clip.warp,
@@ -45,6 +96,7 @@ function melodySourceRevision(
     snapEnabled: store.snapEnabled,
     snapDivision: store.snapDivision,
     snapBar: store.snapBar,
+    timeSignatures: store.timeSignatures,
   });
 }
 
@@ -121,7 +173,7 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
     const lengthPpq = clip.lengthPpq;
     const events = notesToProjectEvents(notes.map((note) => ({ ...note, channel: 0 })));
 
-    // addTrack (1) + addClip/midi (2) + setMidiEvents (1) = 4 Project history edits.
+    // addTrack (1) + addClip/midi (1) + setMidiEvents (1) = 3 Project history edits.
     return executeAtomic((edit) => {
       const trackId = edit(1, () => project.addTrack({ kind: 'midi', name: trackName }));
       store.tracks = [
@@ -138,7 +190,7 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
           order: store.tracks.length,
         },
       ];
-      const newClipId = edit(2, () =>
+      const newClipId = edit(1, () =>
         project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
       );
       store.clips = [
@@ -166,6 +218,138 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
   } finally {
     if (melodyAnalysisOperations.isCurrent(operation.token)) {
       melodyAnalysisOperations.invalidate();
+    }
+  }
+}
+
+/**
+ * Transcribes an audio clip with libsonare's canonical mono/polyphonic
+ * detector and lays the result down as one new MIDI track and clip.
+ *
+ * Every asynchronous step completes before the three native Project edits are
+ * entered into one atomic history entry. The operation identity is checked
+ * immediately before that entry, so replacing the project or editing the
+ * source clip while the worker runs cannot create stale MIDI content.
+ *
+ * @returns The new MIDI clip id, or -1 when no notes were detected or the
+ *   operation became stale.
+ */
+export async function transcribeAudioClipToMidi(
+  clipId: number,
+  options: TranscribeAudioClipToMidiOptions = {},
+): Promise<number> {
+  const store = useProjectStore();
+  const clip = requireClip(store, clipId);
+  if (clipKind(clip) !== 'audio') {
+    throw new RangeError(`Clip ${clipId} is not an audio clip`);
+  }
+  const targetId = `transcription:${clipId}`;
+  const operation = beginProjectOperation(
+    transcriptionOperations,
+    store,
+    targetId,
+    melodySourceRevision(store, clipId),
+  );
+  const assertCurrent = (): void =>
+    assertProjectOperationCurrent(
+      transcriptionOperations,
+      operation,
+      store,
+      targetId,
+      melodySourceRevision(store, clipId),
+    );
+  const linked = linkedAbortSignal(operation.token.signal, options.signal);
+  try {
+    const rhythmQuantizePpq = store.snapEnabled
+      ? store.snapBar
+        ? meterBarLengthPpq(timeSignatureAt(store.timeSignatures, clip.startPpq))
+        : 4 / store.snapDivision
+      : undefined;
+    const transcriptionOptions: AudioTranscriptionOptions = {
+      polyphonic: options.polyphonic === true,
+      signal: linked.signal,
+      rhythmQuantizePpq,
+    };
+    const notes = await (options.transcribe ?? transcribeAudioClip)(
+      clip,
+      store.tempoBpm,
+      {
+        loadAudioAsset: async (assetId) => {
+          const asset = await loadAsset(assetId);
+          assertCurrent();
+          return asset;
+        },
+        loadAudioAssetMeta: async (assetId) => {
+          const meta = await loadAssetMeta(assetId);
+          assertCurrent();
+          return meta;
+        },
+        transcribe: transcribeAudioInWorker,
+      },
+      transcriptionOptions,
+      store.tempoSegments,
+    );
+    throwIfSignalAborted(linked.signal);
+    assertCurrent();
+    if (notes.length === 0) return -1;
+
+    const project = getProject();
+    const trackName = `${clip.name} ${options.polyphonic === true ? 'polyphonic' : 'melody'}`;
+    const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
+    const startPpq = clip.startPpq;
+    const lengthPpq = clip.lengthPpq;
+    const events = notesToProjectEvents(notes);
+
+    // addTrack (1) + addClip/midi (1) + setMidiEvents (1) = 3 Project edits.
+    return executeAtomic((edit) => {
+      const trackId = edit(1, () => project.addTrack({ kind: 'midi', name: trackName }));
+      store.tracks = [
+        ...store.tracks,
+        {
+          id: trackId,
+          name: trackName,
+          color,
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          order: store.tracks.length,
+        },
+      ];
+      const newClipId = edit(1, () =>
+        project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
+      );
+      store.clips = [
+        ...store.clips,
+        {
+          id: newClipId,
+          trackId,
+          name: trackName,
+          startPpq,
+          lengthPpq,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          notes: [],
+        },
+      ];
+      edit(1, () => project.setMidiEvents(newClipId, events));
+      store.refresh();
+      return newClipId;
+    });
+  } catch (error) {
+    if (error instanceof StaleProjectOperationError) return -1;
+    // A superseded project operation is a silent stale result. User aborts
+    // remain errors so the dialog can clear its busy state without surfacing
+    // a misleading analysis failure.
+    if (operation.token.signal.aborted && !options.signal?.aborted) return -1;
+    throw error;
+  } finally {
+    linked.dispose();
+    if (transcriptionOperations.isCurrent(operation.token)) {
+      transcriptionOperations.invalidate();
     }
   }
 }

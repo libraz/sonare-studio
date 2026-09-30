@@ -33,7 +33,6 @@ import {
   detectSectionsFromArrangement,
   detectSectionsFromAudioClip,
   duplicateClip,
-  extractMelodyFromAudioClip,
   glueMidiClips,
   insertTime,
   moveClip,
@@ -100,6 +99,7 @@ import ArrangementCanvas from './ArrangementCanvas.vue';
 import ChordLane from './ChordLane.vue';
 import SectionLane from './SectionLane.vue';
 import TrackHeaderList from './TrackHeaderList.vue';
+import TranscribeDialog from './TranscribeDialog.vue';
 import {
   CHORD_LANE_HEIGHT_PX,
   LANE_HEIGHT_PX,
@@ -180,8 +180,8 @@ const error = ref('');
 /** True while a section detection is awaiting the engine. */
 const isDetectingSections = ref(false);
 
-/** True while a melody extraction is awaiting the engine. */
-const isExtractingMelody = ref(false);
+/** Id of the audio clip currently shown in the transcription dialog. */
+const transcribeDialogClipId = ref<number | null>(null);
 
 /** True while a stem separation (either mode) is awaiting the engine. */
 const isSplittingStems = ref(false);
@@ -245,26 +245,16 @@ function detectSections(): void {
   })();
 }
 
-/**
- * Transcribes the active audio clip's melody to a new MIDI clip/track. Surfaces
- * an error when analysis fails or finds no notes.
- */
-function extractMelody(): void {
+/** Opens the canonical mono/polyphonic audio-to-MIDI dialog. */
+function openTranscribeDialog(): void {
   const clip = detectableAudioClip.value;
-  if (!clip || isExtractingMelody.value) return;
+  if (!clip) return;
   error.value = '';
-  isExtractingMelody.value = true;
-  void (async () => {
-    try {
-      const newClipId = await extractMelodyFromAudioClip(clip.id);
-      if (newClipId < 0) error.value = t.value.shell.arrangement.noMelodyDetected;
-      else setActiveClip(newClipId);
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
-    } finally {
-      isExtractingMelody.value = false;
-    }
-  })();
+  transcribeDialogClipId.value = clip.id;
+}
+
+function closeTranscribeDialog(): void {
+  transcribeDialogClipId.value = null;
 }
 
 /**
@@ -1520,9 +1510,9 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="section-detect"
-          :disabled="detectableAudioClip === null || isExtractingMelody"
+          :disabled="detectableAudioClip === null"
           v-tooltip="t.shell.arrangement.extractMelodyTitle"
-          @click="extractMelody"
+          @click="openTranscribeDialog"
         >
           {{ t.shell.arrangement.extractMelody }}
         </button>
@@ -1656,6 +1646,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <ArrangementAnalysisPanel :is-playing="props.isPlaying" @jump="onSeek" />
+    <TranscribeDialog
+      :open="transcribeDialogClipId !== null"
+      :clip-id="transcribeDialogClipId"
+      @close="closeTranscribeDialog"
+    />
   </div>
 </template>
 

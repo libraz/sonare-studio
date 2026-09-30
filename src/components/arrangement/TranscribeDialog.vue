@@ -1,0 +1,314 @@
+<script setup lang="ts">
+import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import AppModal from '@/components/shell/AppModal.vue';
+import { MAX_POLYPHONIC_SECONDS } from '@/project/audio-transcription';
+import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
+import { useProjectStore } from '@/project/store';
+import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
+import { isAudioClip } from '@/project/types';
+import { useI18n } from '@/ui/i18n';
+
+const props = defineProps<{
+  open: boolean;
+  clipId: number | null;
+}>();
+
+const emit = defineEmits<{
+  close: [];
+}>();
+
+const store = useProjectStore();
+const { t } = useI18n();
+const mode = ref<'melody' | 'polyphonic'>('melody');
+const busy = ref(false);
+const error = ref('');
+const controller = ref<AbortController | null>(null);
+const modeButtons: Record<'melody' | 'polyphonic', HTMLButtonElement | null> = {
+  melody: null,
+  polyphonic: null,
+};
+
+const copy = computed(() => t.value.shell.arrangement.transcribe);
+const clip = computed(() =>
+  props.clipId === null ? null : (store.clips.find((entry) => entry.id === props.clipId) ?? null),
+);
+const clipSeconds = computed(() => {
+  const current = clip.value;
+  if (!current || !isAudioClip(current)) return 0;
+  const map = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  return ppqDurationSeconds(map, current.startPpq, current.lengthPpq);
+});
+const clipRevision = computed(() => {
+  const current = clip.value;
+  if (!current || !isAudioClip(current)) return null;
+  return JSON.stringify({
+    id: current.id,
+    trackId: current.trackId,
+    name: current.name,
+    assetId: current.assetId,
+    startPpq: current.startPpq,
+    lengthPpq: current.lengthPpq,
+    sourceOffsetPpq: current.sourceOffsetPpq,
+    loopEnabled: current.loopEnabled,
+    loopLengthPpq: current.loopLengthPpq,
+    fadeInPpq: current.fadeInPpq,
+    fadeOutPpq: current.fadeOutPpq,
+    takes: current.takes,
+    compSegments: current.compSegments,
+    warp: current.warp,
+  });
+});
+const polyphonicUnavailable = computed(() => clipSeconds.value > MAX_POLYPHONIC_SECONDS);
+const polyphonicHint = computed(() =>
+  polyphonicUnavailable.value
+    ? copy.value.polyphonicLongClip.replace('{seconds}', String(MAX_POLYPHONIC_SECONDS))
+    : '',
+);
+
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) {
+      abort();
+      return;
+    }
+    mode.value = 'melody';
+    busy.value = false;
+    error.value = '';
+    controller.value = null;
+  },
+);
+
+watch(
+  () => [props.clipId, store.documentGeneration, clipRevision.value] as const,
+  ([clipId, generation, revision], [previousClipId, previousGeneration, previousRevision]) => {
+    if (
+      busy.value &&
+      (clipId !== previousClipId ||
+        generation !== previousGeneration ||
+        revision !== previousRevision)
+    ) {
+      abort();
+    }
+  },
+);
+
+function abort(): void {
+  controller.value?.abort();
+  controller.value = null;
+  busy.value = false;
+}
+
+function close(): void {
+  if (busy.value) abort();
+  emit('close');
+}
+
+function chooseMode(next: 'melody' | 'polyphonic'): void {
+  if (busy.value || (next === 'polyphonic' && polyphonicUnavailable.value)) return;
+  mode.value = next;
+  error.value = '';
+}
+
+function onModeKeydown(event: KeyboardEvent, current: 'melody' | 'polyphonic'): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const next = event.key === 'ArrowLeft' ? 'melody' : 'polyphonic';
+  if (next !== current) {
+    chooseMode(next);
+    if (mode.value === next) void nextTick(() => modeButtons[next]?.focus());
+  }
+}
+
+function setModeButton(
+  name: 'melody' | 'polyphonic',
+  element: Element | ComponentPublicInstance | null,
+): void {
+  modeButtons[name] = element instanceof HTMLButtonElement ? element : null;
+}
+
+function isAbortError(value: unknown): boolean {
+  return value instanceof Error && value.name === 'AbortError';
+}
+
+async function run(): Promise<void> {
+  const id = props.clipId;
+  if (id === null || busy.value) return;
+  if (mode.value === 'polyphonic' && polyphonicUnavailable.value) return;
+  error.value = '';
+  busy.value = true;
+  const currentController = new AbortController();
+  controller.value = currentController;
+  try {
+    const newClipId = await transcribeAudioClipToMidi(id, {
+      polyphonic: mode.value === 'polyphonic',
+      signal: currentController.signal,
+    });
+    if (currentController.signal.aborted) return;
+    if (newClipId < 0) {
+      error.value = copy.value.noNotes;
+      return;
+    }
+    setActiveClip(newClipId);
+    emit('close');
+  } catch (value) {
+    if (!currentController.signal.aborted && !isAbortError(value)) {
+      error.value = value instanceof Error ? value.message : String(value);
+    }
+  } finally {
+    if (controller.value === currentController) {
+      controller.value = null;
+      busy.value = false;
+    }
+  }
+}
+
+onBeforeUnmount(abort);
+</script>
+
+<template>
+  <AppModal
+    :open="props.open"
+    size="md"
+    :aria-label="copy.title"
+    @close="close"
+  >
+    <template #title>{{ copy.title }}</template>
+
+    <div class="transcribe-fields">
+      <p class="transcribe-description">{{ copy.description }}</p>
+
+      <div class="transcribe-mode" role="radiogroup" :aria-label="copy.modeLabel">
+        <button
+          type="button"
+          class="transcribe-mode-option"
+          :class="{ active: mode === 'melody' }"
+          role="radio"
+          :aria-checked="mode === 'melody'"
+          :tabindex="mode === 'melody' ? 0 : -1"
+          :ref="(element) => setModeButton('melody', element)"
+          :disabled="busy"
+          @click="chooseMode('melody')"
+          @keydown="onModeKeydown($event, 'melody')"
+        >
+          <span class="transcribe-mode-label">{{ copy.melody }}</span>
+          <span class="transcribe-mode-description">{{ copy.melodyDescription }}</span>
+        </button>
+        <button
+          type="button"
+          class="transcribe-mode-option"
+          :class="{ active: mode === 'polyphonic' }"
+          role="radio"
+          :aria-checked="mode === 'polyphonic'"
+          :tabindex="mode === 'polyphonic' ? 0 : -1"
+          :ref="(element) => setModeButton('polyphonic', element)"
+          :disabled="busy || polyphonicUnavailable"
+          :title="polyphonicUnavailable ? polyphonicHint : undefined"
+          @click="chooseMode('polyphonic')"
+          @keydown="onModeKeydown($event, 'polyphonic')"
+        >
+          <span class="transcribe-mode-label">{{ copy.polyphonic }}</span>
+          <span class="transcribe-mode-description">{{ copy.polyphonicDescription }}</span>
+        </button>
+      </div>
+
+      <p v-if="polyphonicHint" class="transcribe-hint">{{ polyphonicHint }}</p>
+      <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
+    </div>
+
+    <template #actions>
+      <button type="button" @click="close">
+        {{ busy ? copy.cancel : copy.close }}
+      </button>
+      <button
+        type="button"
+        class="primary"
+        :disabled="busy || clip === null || !isAudioClip(clip) || polyphonicUnavailable && mode === 'polyphonic'"
+        @click="run"
+      >
+        {{ busy ? copy.transcribing : copy.run }}
+      </button>
+    </template>
+  </AppModal>
+</template>
+
+<style scoped>
+.transcribe-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 22rem;
+  min-height: 13rem;
+}
+
+.transcribe-description,
+.transcribe-hint,
+.dialog-error {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+.transcribe-description {
+  color: var(--text-3);
+}
+
+.transcribe-hint {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.transcribe-mode {
+  display: flex;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.transcribe-mode-option {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  min-height: 6rem;
+  padding: var(--sp-3);
+  text-align: left;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+
+.transcribe-mode-option:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.transcribe-mode-option.active {
+  color: var(--text-1);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.transcribe-mode-option:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.transcribe-mode-label {
+  font-weight: var(--fw-semibold);
+}
+
+.transcribe-mode-description {
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  line-height: 1.4;
+}
+
+.dialog-error {
+  color: var(--danger-text);
+}
+</style>
