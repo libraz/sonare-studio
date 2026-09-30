@@ -308,7 +308,7 @@ describe('audio track and clip commands', () => {
     expect(store.clips.some((c) => c.id === first)).toBe(true);
     expect(readDoc().clips.some((c) => c.id === second)).toBe(false);
 
-    undo(); // removes the first clip (source registration path)
+    undo(); // removes the first clip (atomic source registration + clip path)
     expect(store.clips.some((c) => c.id === first)).toBe(false);
 
     redo();

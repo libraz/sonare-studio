@@ -43,7 +43,7 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
     parkClipForReplacement(store, clip, (startPpq) =>
       edit(1, () => project.moveClip(clipId, startPpq)),
     );
-    const newClipId = edit(2, () =>
+    const newClipId = edit(1, () =>
       project.addClip({
         trackId: clip.trackId,
         isMidi: false,

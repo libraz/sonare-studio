@@ -139,7 +139,7 @@ function replaceTrack(
     store,
     oldClips.map((clip) => clip.id),
   );
-  const clipId = edit(2, () =>
+  const clipId = edit(1, () =>
     getProject().addClip({
       trackId,
       isMidi: true,
@@ -228,7 +228,7 @@ function buildBatchOps(
       const oldClipCount = store.clips.filter((clip) => clip.trackId === trackId).length;
       ops.push({
         part: spec.part,
-        edits: existing ? oldClipCount + 3 : EDITS_PER_TRACK,
+        edits: existing ? oldClipCount + 2 : EDITS_PER_TRACK,
         apply: (edit) => {
           if (existing) {
             replaceTrack(store, trackId, plan, edit);

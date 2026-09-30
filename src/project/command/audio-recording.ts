@@ -66,7 +66,7 @@ export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput
       const known = getAudioSourceId(input.assetId);
       const sourceId =
         known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
-      const clipId = edit(2, () =>
+      const clipId = edit(1, () =>
         project.addClip({
           trackId: input.trackId,
           isMidi: false,

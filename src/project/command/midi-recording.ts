@@ -129,8 +129,8 @@ export function addRecordedMidiClip(input: AddRecordedMidiClipInput): number {
   const notes = activeTake?.notes ?? input.notes;
   const project = getProject();
   const events = notesToProjectEvents(notes.map((note) => ({ ...note })));
-  // addClip/midi (2) + setMidiEvents (1, only when there are notes).
-  const editCount = events.length > 0 ? 3 : 2;
+  // addClip/midi (1) + setMidiEvents (1, only when there are notes).
+  const editCount = events.length > 0 ? 2 : 1;
   return execute(editCount, () => {
     const newClipId = project.addClip({
       trackId: input.trackId,
@@ -461,9 +461,9 @@ export function overwriteRecordedMidiClip(input: AddRecordedMidiClipInput): numb
       removeClipWithin(edit, middleId);
     }
 
-    // Project.addClip records source registration and clip creation as two
-    // native edits (the same accounting used by addRecordedMidiClip).
-    const newClipId = edit(2, () =>
+    // Project.addClip records source registration and clip creation in one
+    // native transaction.
+    const newClipId = edit(1, () =>
       project.addClip({
         trackId: input.trackId,
         isMidi: true,

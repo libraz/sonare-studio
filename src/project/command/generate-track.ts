@@ -2,7 +2,7 @@
  * Shared builder for generation commands that lay a fresh line onto a new track.
  *
  * Drums, bass, and counter-melody all create one track carrying one MIDI clip
- * of generated notes. They share the same four wasm-Project edits — addTrack,
+ * of generated notes. They share the same three wasm-Project edits — addTrack,
  * addClip (source registration + clip insertion), setMidiEvents — so the count
  * lives here as {@link EDITS_PER_TRACK} and the mutation lives in
  * {@link addGeneratedTrack}. The helper reports each native call through the
@@ -40,7 +40,7 @@ export function materializeNote(note: NewEditorNote): RawNote {
 }
 
 /** wasm-Project history edits one {@link addGeneratedTrack} call performs. */
-export const EDITS_PER_TRACK = 4;
+export const EDITS_PER_TRACK = 3;
 
 /**
  * A generated part's notes destined for one new track. Part generators build
@@ -115,7 +115,7 @@ export function addGeneratedTrack(
       ...(track.provenance !== undefined ? { generated: { ...track.provenance } } : {}),
     },
   ];
-  const clipId = edit(2, () =>
+  const clipId = edit(1, () =>
     project.addClip({
       trackId,
       isMidi: true,

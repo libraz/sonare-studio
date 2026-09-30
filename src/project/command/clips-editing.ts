@@ -529,9 +529,9 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
   const notes = joinedNotes(occurrences);
   const name = ordered[0].name;
   return executeAtomic((edit) => {
-    // Project.addClip registers a backing source and the clip itself, which are
-    // two entries on the Project history (matching addMidiClip's execute(2)).
-    const newClipId = edit(2, () =>
+    // Project.addClip registers its backing source and clip in one native
+    // transaction, so it contributes one Project history entry.
+    const newClipId = edit(1, () =>
       project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
     );
     edit(1, () => project.setMidiEvents(newClipId, notesToProjectEvents(notes)));
@@ -866,7 +866,7 @@ export async function consolidateAudioClips(
       const sourceId = getAudioSourceId(assetId);
       let registeredSourceId: number | null = null;
       const newClipId = executeAtomic((edit) => {
-        const createdClipId = edit(2, () =>
+        const createdClipId = edit(1, () =>
           project.addClip({
             trackId,
             isMidi: false,

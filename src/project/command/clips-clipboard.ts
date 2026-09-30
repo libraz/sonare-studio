@@ -113,7 +113,7 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
   return executeAtomic((edit) => {
     const newClipId =
       kind === 'midi'
-        ? edit(2, () =>
+        ? edit(1, () =>
             project.addClip({
               trackId,
               isMidi: true,
@@ -133,7 +133,7 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
               knownSourceId <= project.sourceCount()
                 ? knownSourceId
                 : undefined;
-            const id = edit(2, () =>
+            const id = edit(1, () =>
               project.addClip({
                 trackId,
                 isMidi: false,

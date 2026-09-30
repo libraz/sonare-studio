@@ -32,8 +32,8 @@ export interface AddMidiClipInput {
 /**
  * Adds an empty MIDI clip to a track as one undoable edit.
  *
- * Project.addClip registers a backing source and the clip itself, which are
- * two entries on the Project history; undo reverts both at once.
+ * Project.addClip registers a backing source and the clip itself in one
+ * native transaction; undo reverts both at once.
  *
  * @param input Clip placement and optional name.
  * @returns The stable clip id allocated by the Project.
@@ -47,7 +47,7 @@ export function addMidiClip(input: AddMidiClipInput): number {
   if (!Number.isFinite(input.lengthPpq) || input.lengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${input.lengthPpq}`);
   }
-  return execute(2, () => {
+  return execute(1, () => {
     const newClipId = project.addClip({
       trackId: input.trackId,
       isMidi: true,
@@ -123,9 +123,9 @@ export interface AddAudioClipInput {
  * Adds an audio clip referencing a stored asset as one undoable edit.
  *
  * The wasm Project registers one audio source per asset: the first clip of an
- * asset registers a by-reference source (sourceUri "asset:<id>", two entries
+ * asset registers a by-reference source (sourceUri "asset:<id>", one entry
  * on the Project history, like addMidiClip), later clips of the same asset
- * are rebound to that source via Project.setClipSource (three entries). Undo
+ * are rebound to that source via Project.setClipSource (two entries). Undo
  * reverts the whole command at once either way.
  *
  * The clip's PCM stays in the asset store; playback loads it when scheduling
@@ -201,10 +201,10 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   const fadeOut = input.fadeOutPpq ?? 0;
   validateClipFadePair(fadeIn, fadeOut, finalLengthPpq);
   return executeAtomic((edit) => {
-    // addClip registers an inline source and creates a clip (two native
-    // history entries). It must be reported before any follow-up mutation so
+    // addClip registers an inline source and creates a clip in one native
+    // transaction. It must be reported before any follow-up mutation so
     // executeAtomic can undo it when a later source/fade/loop call fails.
-    const newClipId = edit(2, () =>
+    const newClipId = edit(1, () =>
       project.addClip({
         trackId: input.trackId,
         isMidi: false,
@@ -318,7 +318,7 @@ export function addBouncedClip(input: AddBouncedClipInput): number {
     known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
   return executeAtomic((edit) => {
     const trackId = edit(1, () => project.addTrack({ kind: 'audio', name: input.name }));
-    const newClipId = edit(2, () =>
+    const newClipId = edit(1, () =>
       project.addClip({
         trackId,
         isMidi: false,

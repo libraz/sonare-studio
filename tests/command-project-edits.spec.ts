@@ -52,19 +52,19 @@ describe('command projectEdits / undo granularity', () => {
     expect(getProject().toJson()).toBe(after);
   }
 
-  it('addMidiClip (source + clip = 2 edits) undoes in one step', () => {
+  it('addMidiClip (source + clip = 1 atomic edit) undoes in one step', () => {
     expectSingleUndoRoundTrip(() => {
       addMidiClip({ trackId, lengthPpq: 8 });
     });
   });
 
-  it('addAudioClip registering a new source (2 edits) undoes in one step', () => {
+  it('addAudioClip registering a new source (1 atomic edit) undoes in one step', () => {
     expectSingleUndoRoundTrip(() => {
       void addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
     });
   });
 
-  it('addAudioClip rebinding a known source (3 edits) undoes in one step', async () => {
+  it('addAudioClip rebinding a known source (2 edits) undoes in one step', async () => {
     // First clip registers the source; the second rebinds it (the asymmetric
     // edit count the command encodes).
     await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });

@@ -6,8 +6,10 @@
  * - toJson() emits the real snake_case document shape (tracks, clips,
  *   midi_content, tempo_segments, time_signatures, markers).
  * - The undo history granularity matches the real binding: most edits push
- *   one history entry; addClip pushes two (source registration + clip add)
- *   and addMidiClip pushes three (source + track + clip). setClipSource,
+ *   one history entry; addClip pushes one atomic transaction (source
+ *   registration + clip add), and addMidiClip pushes one transaction for its
+ *   track, source and clip.
+ *   setClipSource,
  *   setClipFade and setAudioSourceMetadata push one entry each.
  * - splitClip partitions MIDI events between the halves and tracks source
  *   offsets the way the real Project does.
@@ -444,11 +446,12 @@ export class FakeProject {
     if (desc.isMidi === false && (desc.audio === undefined || desc.audio.length === 0)) {
       throw new Error('audio clip requires non-empty inline audio data');
     }
-    // The real binding registers a source first (one history entry), then
-    // adds the clip (a second entry).
-    const sourceId = this.edit(() => {
-      this.state.sourceCount += 1;
-      const source: FakeSource = { id: this.state.sourceCount };
+    // The real binding registers the source and adds the clip in one native
+    // transaction, so one undo restores both together.
+    return this.edit(() => {
+      const sourceId = this.state.sourceCount + 1;
+      this.state.sourceCount = sourceId;
+      const source: FakeSource = { id: sourceId };
       if (desc.sourceUri !== undefined) source.uri = desc.sourceUri;
       if (desc.audio !== undefined) {
         const channels = desc.audioChannels ?? 1;
@@ -456,10 +459,7 @@ export class FakeProject {
         source.audioFrames = Math.floor(desc.audio.length / channels);
         source.audioSampleRate = desc.audioSampleRate ?? 48000;
       }
-      this.state.sources.set(this.state.sourceCount, source);
-      return this.state.sourceCount;
-    });
-    return this.edit(() => {
+      this.state.sources.set(sourceId, source);
       const id = this.nextClipId++;
       this.state.clips.push({
         id,
@@ -534,13 +534,30 @@ export class FakeProject {
   }
 
   addMidiClip(startPpq: number, lengthPpq: number): { trackId: number; clipId: number } {
-    const trackId = this.edit(() => {
-      const id = this.nextTrackId++;
-      this.state.tracks.push({ id, kind: 1, name: 'midi' });
-      return id;
+    // The native addMidiClip transaction contains the track, source and clip.
+    return this.edit(() => {
+      const trackId = this.nextTrackId++;
+      this.state.tracks.push({ id: trackId, kind: 1, name: 'midi' });
+      const sourceId = this.state.sourceCount + 1;
+      this.state.sourceCount = sourceId;
+      this.state.sources.set(sourceId, { id: sourceId });
+      const clipId = this.nextClipId++;
+      this.state.clips.push({
+        id: clipId,
+        track_id: trackId,
+        start_ppq: startPpq,
+        length_ppq: lengthPpq,
+        source_offset_ppq: 0,
+        gain: 1,
+        loop_mode: 0,
+        loop_length_ppq: 0,
+        source_id: sourceId,
+        fade_in_ppq: 0,
+        fade_out_ppq: 0,
+      });
+      this.state.midi.set(clipId, []);
+      return { trackId, clipId };
     });
-    const clipId = this.addClip({ trackId, isMidi: true, startPpq, lengthPpq });
-    return { trackId, clipId };
   }
 
   private requireClip(clipId: number): FakeClip {

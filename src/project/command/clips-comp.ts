@@ -195,7 +195,7 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
       parkClipForReplacement(store, clip, (startPpq) =>
         edit(1, () => project.moveClip(input.clipId, startPpq)),
       );
-      const newClipId = edit(2, () =>
+      const newClipId = edit(1, () =>
         project.addClip({
           trackId: clip.trackId,
           isMidi: false,

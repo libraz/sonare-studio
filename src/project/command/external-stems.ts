@@ -114,7 +114,7 @@ export async function importExternalStems(
             order: store.tracks.length,
           },
         ];
-        const newClipId = edit(2, () =>
+        const newClipId = edit(1, () =>
           project.addClip({
             trackId,
             isMidi: false,
