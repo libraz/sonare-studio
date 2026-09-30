@@ -1,3 +1,4 @@
+import { shallowReactive, shallowRef } from 'vue';
 import type { MidiCcBinding } from '@/ui/midi/midi-learn';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
@@ -179,8 +180,11 @@ export interface HistoryReferencedMediaIds {
   fontIds: Set<string>;
 }
 
-const undoStack: HistoryEntry[] = [];
-const redoStack: HistoryEntry[] = [];
+// The containers must notify shell computed values when entries are pushed,
+// popped or cleared. Keep them shallow so detached entries and their large
+// snapshots remain plain objects with their existing identity.
+const undoStack = shallowReactive<HistoryEntry[]>([]);
+const redoStack = shallowReactive<HistoryEntry[]>([]);
 let lastSnapshot: MirrorSnapshot | null = null;
 
 function deepEqual(a: unknown, b: unknown): boolean {
@@ -616,7 +620,7 @@ export function collectHistoryReferencedMediaIds(): HistoryReferencedMediaIds {
     foldSnapshotMediaIds(entry.before, refs);
     foldSnapshotMediaIds(entry.after, refs);
   }
-  if (pendingGesture) foldSnapshotMediaIds(pendingGesture.before, refs);
+  if (pendingGesture.value) foldSnapshotMediaIds(pendingGesture.value.before, refs);
   return refs;
 }
 
@@ -721,11 +725,11 @@ interface PendingGesture {
   before: MirrorSnapshot;
 }
 
-let pendingGesture: PendingGesture | null = null;
+const pendingGesture = shallowRef<PendingGesture | null>(null);
 
 /** True when an uncommitted gesture with this key is in flight. */
 export function hasPendingGesture(key: string): boolean {
-  return pendingGesture !== null && pendingGesture.key === key;
+  return pendingGesture.value !== null && pendingGesture.value.key === key;
 }
 
 /**
@@ -734,10 +738,10 @@ export function hasPendingGesture(key: string): boolean {
  * edit still undoes as a single step.
  */
 function flushPendingGesture(): void {
-  if (!pendingGesture) return;
+  if (!pendingGesture.value) return;
   const store = useProjectStore();
-  const before = pendingGesture.before;
-  pendingGesture = null;
+  const before = pendingGesture.value.before;
+  pendingGesture.value = null;
   pushHistory(historyEntry(before, captureSnapshot(store, before), 0));
 }
 
@@ -824,15 +828,17 @@ export interface CommandGestureOptions {
 export function executeApp<T>(action: () => T, gesture?: { key: string; commit: boolean }): T {
   const store = useProjectStore();
   if (gesture && !gesture.commit) {
-    if (pendingGesture && pendingGesture.key !== gesture.key) flushPendingGesture();
-    if (!pendingGesture) pendingGesture = { key: gesture.key, before: captureSnapshot(store) };
+    if (pendingGesture.value && pendingGesture.value.key !== gesture.key) flushPendingGesture();
+    if (!pendingGesture.value) {
+      pendingGesture.value = { key: gesture.key, before: captureSnapshot(store) };
+    }
     // The mirror diverges from the last committed entry, so redo is stale.
     clearRedoStack();
     return action();
   }
-  if (gesture && pendingGesture && pendingGesture.key === gesture.key) {
-    const before = pendingGesture.before;
-    pendingGesture = null;
+  if (gesture && pendingGesture.value && pendingGesture.value.key === gesture.key) {
+    const before = pendingGesture.value.before;
+    pendingGesture.value = null;
     const result = action();
     pushHistory(historyEntry(before, captureSnapshot(store, before), 0));
     return result;
@@ -884,7 +890,7 @@ export function redo(): boolean {
 
 /** True when at least one edit can be undone. */
 export function canUndo(): boolean {
-  return undoStack.length > 0 || pendingGesture !== null;
+  return undoStack.length > 0 || pendingGesture.value !== null;
 }
 
 /** True when at least one undone edit can be redone. */
@@ -909,7 +915,7 @@ export function clearHistory(): void {
   }
   undoStack.length = 0;
   redoStack.length = 0;
-  pendingGesture = null;
+  pendingGesture.value = null;
   historyBytes = 0;
   historyProjectEdits = 0;
   lastSnapshot = null;
