@@ -1,16 +1,20 @@
 /**
  * The scenario running order.
  *
- * Scenarios share one page and build on each other, so the order is part of
+ * Most scenarios share one page and build on each other, so the order is part of
  * the contract rather than a listing convenience: the demo has to be open
  * before anything can edit it, an asset has to be imported before a clip can
  * carry it, and the export scenarios read what the rest of the run produced.
+ * Self-contained persistence and production journeys create their own contexts.
  */
 
 import * as audio_alignment from './scenarios/audio-alignment.mjs';
 import * as audio_arrangement_edit from './scenarios/audio-arrangement-edit.mjs';
+import * as audio_edit_to_master from './scenarios/audio-edit-to-master.mjs';
 import * as audio_import from './scenarios/audio-import.mjs';
 import * as audio_record from './scenarios/audio-record.mjs';
+import * as audio_to_midi_production from './scenarios/audio-to-midi-production.mjs';
+import * as audio_transcribe from './scenarios/audio-transcribe.mjs';
 import * as automation_ramp from './scenarios/automation-ramp.mjs';
 import * as automation_write from './scenarios/automation-write.mjs';
 import * as baroque_organ_compose from './scenarios/baroque-organ-compose.mjs';
@@ -38,18 +42,23 @@ import * as master_limiter from './scenarios/master-limiter.mjs';
 import * as mastering_chain from './scenarios/mastering-chain.mjs';
 import * as midi_clip_envelope from './scenarios/midi-clip-envelope.mjs';
 import * as mix_suggestion from './scenarios/mix-suggestion.mjs';
+import * as mixer_snapshots from './scenarios/mixer-snapshots.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
+import * as multitrack_stems_handoff from './scenarios/multitrack-stems-handoff.mjs';
 import * as opfs_restore from './scenarios/opfs-restore.mjs';
 import * as piano_roll from './scenarios/piano-roll.mjs';
 import * as placement_guide from './scenarios/placement-guide.mjs';
 import * as pop_arrangement from './scenarios/pop-arrangement.mjs';
 import * as pop_audio_adjust from './scenarios/pop-audio-adjust.mjs';
 import * as pop_clipboard from './scenarios/pop-clipboard.mjs';
+import * as portable_project from './scenarios/portable-project.mjs';
+import * as project_revisions from './scenarios/project-revisions.mjs';
 import * as project_save_reopen from './scenarios/project-save-reopen.mjs';
 import * as rack_inserts from './scenarios/rack-inserts.mjs';
 import * as rack_instrument from './scenarios/rack-instrument.mjs';
 import * as realtime_midi from './scenarios/realtime-midi.mjs';
 import * as realtime_mute from './scenarios/realtime-mute.mjs';
+import * as sample_editor_flow from './scenarios/sample-editor-flow.mjs';
 import * as score from './scenarios/score.mjs';
 import * as score_annotations from './scenarios/score-annotations.mjs';
 import * as secondary_dominant_guidance from './scenarios/secondary-dominant-guidance.mjs';
@@ -121,4 +130,14 @@ export const scenarios = [
   baroque_organ_compose,
   guitar_amp_di,
   gs_efx_sf2,
+  audio_transcribe,
+  // Self-contained journeys; portable projects and revisions use fresh storage.
+  sample_editor_flow,
+  mixer_snapshots,
+  portable_project,
+  project_revisions,
+  // DAW production journeys each start with independent browser storage.
+  audio_to_midi_production,
+  multitrack_stems_handoff,
+  audio_edit_to_master,
 ];

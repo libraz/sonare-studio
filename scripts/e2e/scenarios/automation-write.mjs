@@ -8,7 +8,6 @@ export async function run(ctx) {
   const { rampTrackId } = ctx.state;
   // Read the arrangement box here rather than inheriting one measured in
   // an earlier scenario: the layout moves as scenarios add tracks.
-  const rulerBox = await page.locator('.arrangement-canvas').boundingBox();
   const sampleWindow = laneMeterSampler(page, rampTrackId);
 
   // The previous scenario removed the lane, so the write drag starts clean.
@@ -40,6 +39,7 @@ export async function run(ctx) {
   const savedViewport = page.viewportSize();
   await page.setViewportSize({ width: 1280, height: 960 });
   await writeStrip.locator('.fader-track').scrollIntoViewIfNeeded();
+  const rulerBox = await page.locator('.arrangement-canvas').boundingBox();
 
   // Record a rising fader drag across one loop pass ([0, 4) is 2 s at 120 BPM):
   // from ~10% of the throw (deep cut) up to ~75% (around unity).
@@ -49,9 +49,18 @@ export async function run(ctx) {
   await page.evaluate(() => window.__sonareDebug.setLoopRange(0, 4, true));
   await page.mouse.click(rulerBox.x + 2, rulerBox.y + 14); // playhead to PPQ 0
   await page.click('.transport-bar .transport-key.play');
-  await page.waitForFunction(() => window.__sonareDebug.positionPpq() < 0.4, null, {
-    timeout: 10000,
-  });
+  // The initial position is already zero. Wait for the rendered playing
+  // state and real clock progress so the strip receives a recording gesture
+  // rather than a stopped-mode edit that keeps replacing one lane point.
+  await page.locator('.transport-bar .transport-key.play[aria-pressed="true"]').waitFor();
+  await page.waitForFunction(
+    () => {
+      const ppq = window.__sonareDebug.positionPpq();
+      return ppq > 0 && ppq < 0.4;
+    },
+    null,
+    { timeout: 10000 },
+  );
   await page.mouse.move(faderX, dragYAt(0));
   await page.mouse.down();
   const dragSteps = 8;

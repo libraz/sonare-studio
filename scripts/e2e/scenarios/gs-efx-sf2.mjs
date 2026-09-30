@@ -41,7 +41,7 @@ function midiFile(withGs) {
   ]);
 }
 
-async function importAndBind(page, baseUrl, withGs) {
+async function importAndBind(page, baseUrl, withGs, efxRealization = 'modern') {
   await page.goto(baseUrl, { waitUntil: 'load' });
   await page.locator('[data-testid="start-import-midi"]').waitFor({ state: 'visible' });
   const chooserPromise = page.waitForEvent('filechooser');
@@ -82,6 +82,8 @@ async function importAndBind(page, baseUrl, withGs) {
     await font.waitFor({ state: 'visible', timeout: 10000 });
   }
   await font.click();
+  await page.locator('.instrument-picker .sf2-gain').fill('1.0');
+  await page.locator('.instrument-picker .sf2-efx-realization').selectOption(efxRealization);
   await page.locator('.instrument-picker .use-sf2').click();
   await page.waitForFunction(
     () =>
@@ -90,22 +92,65 @@ async function importAndBind(page, baseUrl, withGs) {
     null,
     { timeout: 30000 },
   );
-  return page.evaluate(() => window.__sonareDebug.exportProbe(false, { startPpq: 0, endPpq: 3.8 }));
+  if (efxRealization === 'classic') {
+    await page.locator('.instrument-button').click();
+    const persisted = await page.locator('.instrument-picker .sf2-efx-realization').inputValue();
+    if (persisted !== 'classic') {
+      throw new Error(`SF2 picker did not restore classic GS EFX: ${persisted}`);
+    }
+    await page.locator('.instrument-button').click();
+  }
+  const result = await page.evaluate(() =>
+    window.__sonareDebug.exportProbe(false, { startPpq: 0, endPpq: 3.8 }),
+  );
+  // The device change is an ordinary project command, so exercise history once
+  // while the picker is closed and restore the selected instrument for the
+  // remainder of the standalone scenario.
+  if (efxRealization === 'classic') {
+    await page.locator('.undo-toggle').click();
+    await page.waitForFunction(
+      () =>
+        !window.__sonareDebug.trackInstruments().includes('sf2') &&
+        !window.__sonareDebug.applyPending(),
+      null,
+      { timeout: 30000 },
+    );
+    await page.locator('.redo-toggle').click();
+    await page.waitForFunction(
+      () =>
+        window.__sonareDebug.trackInstruments().includes('sf2') &&
+        window.__sonareDebug.projectDocument().tracks.find((track) => track.name === 'Lead')
+          ?.instrument?.gsEfxRealization === 'classic' &&
+        !window.__sonareDebug.applyPending(),
+      null,
+      { timeout: 30000 },
+    );
+  }
+  return result;
 }
 
 export async function run({ page, baseUrl, fail }) {
   // Keep this fixture in the scenario, rather than relying on a user font in OPFS.
   if (readFileSync(sf2Path).length < 100) fail('GS SoundFont fixture is incomplete');
   const plain = await importAndBind(page, baseUrl, false);
-  const gs = await importAndBind(page, baseUrl, true);
+  const modern = await importAndBind(page, baseUrl, true, 'modern');
+  const classic = await importAndBind(page, baseUrl, true, 'classic');
   if (
     !Number.isFinite(plain.peakDb) ||
-    !Number.isFinite(gs.peakDb) ||
+    !Number.isFinite(modern.peakDb) ||
+    !Number.isFinite(classic.peakDb) ||
     plain.peakDb < -40 ||
-    gs.peakDb < -40 ||
-    plain.hash === gs.hash
+    modern.peakDb < -40 ||
+    classic.peakDb < -40 ||
+    plain.hash === modern.hash ||
+    plain.hash === classic.hash ||
+    modern.hash === classic.hash
   ) {
-    fail(`GS EFX had no audible effect on SF2 export: ${JSON.stringify({ plain, gs })}`);
+    fail(
+      `GS EFX variants had no audible distinction: ${JSON.stringify({ plain, modern, classic })}`,
+    );
   }
-  console.info(`GS EFX changed SF2 WAV ${plain.hash} → ${gs.hash}`);
+  console.info(
+    `GS EFX changed SF2 WAV plain=${plain.hash}, modern=${modern.hash}, classic=${classic.hash}`,
+  );
 }
