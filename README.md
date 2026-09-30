@@ -24,7 +24,7 @@ the browser's origin-private file system and leave it as ordinary files.
 **[libsonare](https://github.com/libraz/libsonare)** is the audio side: a C++17
 core compiled to WebAssembly that owns the project model, the DSP, the mastering
 chain, the analysis and the offline renderer. This repository carries a copy of
-its build output under `src/wasm/`, synced with `yarn copy:wasm`.
+its 1.8.0 build output under `src/wasm/`, synced with `yarn copy:wasm`.
 
 **[libcantus](https://github.com/libraz/libcantus)** is the theory side: a
 dependency-free TypeScript library, published as `@libraz/libcantus`, that does
@@ -46,7 +46,8 @@ and step input. A step sequencer covers pattern, Euclidean and randomize work.
 
 **Play sound.** Per-track instruments: built-in synth presets, built-in GM/GS
 programs and drum kits, SoundFont (SF2) playback, and GM-style multi-timbral
-setups where channel 10 is the drum kit.
+setups where channel 10 is the drum kit. SF2 instruments can use Modern or
+Classic GS insertion effects when the imported MIDI contains GS EFX SysEx.
 Each track gets an insert chain and quick controls in the device rack.
 
 **Mix and master.** Channel strips with gain, pan, sends, EQ and inserts, plus
@@ -83,9 +84,11 @@ markers, and a track's pitch range can be set to a voice or instrument preset.
 **Record and analyse audio.** Microphone recording with monitoring, count-in,
 metronome, punch and cycle recording into takes, then comping across them.
 Imported audio can be analysed for tempo, chords and sections, transcribed to a
-MIDI clip, or split into harmonic, percussive and residual stems. A sample
-editor handles clip content, and the media browser filters assets by key, BPM
-and loudness.
+MIDI clip in Melody or Polyphonic mode, or split into harmonic, percussive and
+residual stems. Transcription runs in a cancellable worker and adds its track
+and notes as one undoable edit; Polyphonic mode accepts clips up to 30 seconds.
+A sample editor handles clip content, and the media browser filters assets by
+key, BPM and loudness.
 
 **Move files in and out.** `.szd` projects, DAWproject, Standard MIDI File,
 MIDI 2.0 clip files, MusicXML, separated stems, and WAV / FLAC / MP3 mixdown
@@ -233,8 +236,13 @@ through the real engine — boot and cross-origin isolation, note editing and
 undo, score engraving and annotations, shortcuts and layouts, OPFS persistence,
 audio import and recording, the mixer, device rack, step sequencer, automation,
 cycle recording, routing, warp, freeze, mastering, and the audio, MIDI and
-DAWproject exports. Scenarios share one page and run in order, so each builds on
-what the last one left behind.
+DAWproject exports. It also covers sample-editor worker edits and undo, mixer
+snapshot recall, portable SZD exports with audio and SoundFonts, and named
+revision restoration. Most scenarios share one page and run in order. Portable
+project and revision scenarios use fresh browser contexts to check persistence
+without relying on assets or state left by another scenario.
+
+The DAW production journeys start from empty browser storage and cover audio-to-MIDI arrangement, multitrack mixing with stem delivery, and sample editing through mastering. Each saves and reopens its project, then inspects real downloaded WAV, MIDI or ZIP files. Checks include corrected MIDI pitches and timing, persisted mixer settings, stem samples that recombine into the mix, and mastered PCM that survives reopening.
 
 ```sh
 yarn dev --port 5199   # in the background
@@ -243,6 +251,15 @@ node scripts/e2e-smoke.mjs
 node scripts/e2e-smoke.mjs --list
 node scripts/e2e-smoke.mjs --only=boot,piano-roll,score
 node scripts/e2e-smoke.mjs --through=audio-record
+node scripts/e2e-smoke.mjs --only=boot,gs-efx-sf2,audio-transcribe
+node scripts/e2e-smoke.mjs --only=audio-to-midi-production,multitrack-stems-handoff,audio-edit-to-master
+```
+
+The production release E2E serves built assets with Cloudflare Pages-style HTML redirects and SPA fallbacks, then exercises real Service Worker installation, release changes, cache repair and offline revisits. Service Workers are disabled on the dev server, so this needs a separate run:
+
+```sh
+yarn build
+node scripts/e2e-pages.mjs
 ```
 
 Playwright is resolved from the temp roots first, then the project directory.
@@ -272,9 +289,11 @@ The app is a static site, but it has to be served cross-origin isolated.
   `worklet-manifest.json` and the document under both `/` and `/index.html` are
   revalidated on every request, so a worker is never paired with another
   release's manifest or document.
+- The Service Worker uses `/` as the canonical document. Cloudflare Pages redirects `/index.html` to `/`; a followed redirect must be reconstructed before it can answer a browser navigation. Installation also repairs redirected documents in older app caches, and the worker template contributes to the release cache identity.
+- An already installed broken worker can fail a return navigation before its replacement installs. The replacement repairs that cache without deleting stored projects; subsequent ordinary navigations can recover. An in-document recovery script cannot handle a failure that occurs before the document loads.
 - Keep every deployed file under 25 MiB, the Cloudflare Pages per-file limit.
   The largest artifact is the bundled Verovio engraving worker at roughly
-  7.5 MiB; `sonare.wasm` is about 4 MiB.
+  7.5 MiB; `sonare.wasm` is about 5.9 MiB (2.0 MiB gzipped).
 
 ## License
 
