@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BrandMark from '@/components/shell/BrandMark.vue';
+import PwaUpdateBanner from '@/components/shell/PwaUpdateBanner.vue';
 import type { StoredProjectInfo } from '@/persistence/opfs';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSize, formatTimestamp } from '@/ui/shell/format';
@@ -89,6 +90,8 @@ function projectMeta(info: StoredProjectInfo): string {
           <BrandMark size="lg" />
           <p class="ss-subtitle">{{ t.shell.startScreen.subtitle }}</p>
         </header>
+
+        <PwaUpdateBanner />
 
         <div class="ss-body">
           <button v-if="props.hasAutosave" type="button" class="ss-action"

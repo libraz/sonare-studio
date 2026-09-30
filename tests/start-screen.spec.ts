@@ -2,6 +2,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it } from 'vitest';
 import { nextTick } from 'vue';
 import StartScreen from '@/components/shell/StartScreen.vue';
+import { dismissPwaUpdateNotice, requestPwaAssetRecovery } from '@/pwa';
 
 let wrapper: VueWrapper | null = null;
 
@@ -23,12 +24,27 @@ function q<T extends Element = HTMLElement>(selector: string): T | null {
 }
 
 afterEach(() => {
+  dismissPwaUpdateNotice();
   wrapper?.unmount();
   wrapper = null;
   document.body.innerHTML = '';
 });
 
 describe('StartScreen', () => {
+  it('keeps the version recovery controls inside the launcher focus trap', async () => {
+    requestPwaAssetRecovery();
+    open();
+    await nextTick();
+    const dialog = q('[role="dialog"]');
+    const notice = dialog?.querySelector('.pwa-update');
+    expect(notice?.textContent).toContain('Reload');
+    const buttons = notice?.querySelectorAll('button');
+    expect(buttons?.[0].disabled).toBe(false);
+    buttons?.[1].click();
+    await nextTick();
+    expect(dialog?.querySelector('.pwa-update')).toBeNull();
+  });
+
   it('renders through the shared modal shell', () => {
     open();
     const dialog = q('[role="dialog"]');

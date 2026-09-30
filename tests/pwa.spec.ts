@@ -335,6 +335,7 @@ describe('PWA assets', () => {
     expect(appConfig).toContain('__SONARE_WORKLET_MODULE_URL__');
     expect(appConfig).toContain("name: 'pwa-precache-manifest'");
     expect(appConfig).toContain("fileName: 'precache-manifest.json'");
+    expect(appConfig).toContain('hashBuildValue(hash, serviceWorkerTemplate)');
     expect(appConfig).toContain("writeFileSync(resolve(options.dir ?? 'dist', 'sw.js')");
     expect(engine).toContain("typeof __SONARE_WORKLET_MODULE_URL__ === 'string'");
     expect(engine).not.toContain("WORKLET_MODULE_URL = '/sonare-engine-worklet.js'");
@@ -358,8 +359,8 @@ describe('PWA assets', () => {
 
     expect(rules.get('/assets/*')?.['Cache-Control']).toBe('public, max-age=31536000, immutable');
     // A rule matches the requested path rather than the file the host resolves
-    // it to, so the document needs an entry under every name it is asked for:
-    // the Service Worker fetches `/index.html`, navigations ask for `/`.
+    // it to, so both the canonical document and a legacy direct request stay
+    // revalidated while the Service Worker uses `/` as its shell key.
     for (const revalidated of [
       '/sw.js',
       '/precache-manifest.json',
@@ -381,6 +382,10 @@ class SwHeaders {
   get(name: string): string | null {
     return this.entries[name.toLowerCase()] ?? null;
   }
+
+  forEach(callback: (value: string, name: string) => void): void {
+    for (const [name, value] of Object.entries(this.entries)) callback(value, name);
+  }
 }
 
 class SwResponse {
@@ -388,19 +393,24 @@ class SwResponse {
   readonly status: number;
   readonly type = 'basic';
   readonly headers: SwHeaders;
+  readonly redirected: boolean;
 
   constructor(
     readonly body: string,
     status = 200,
     private readonly headerEntries: Record<string, string> = {},
+    options: { redirected?: boolean } = {},
   ) {
     this.status = status;
     this.ok = status >= 200 && status < 300;
     this.headers = new SwHeaders(headerEntries);
+    this.redirected = options.redirected ?? false;
   }
 
   clone(): SwResponse {
-    return new SwResponse(this.body, this.status, this.headerEntries);
+    return new SwResponse(this.body, this.status, this.headerEntries, {
+      redirected: this.redirected,
+    });
   }
 
   async json(): Promise<unknown> {
@@ -420,6 +430,12 @@ function shellFallbackResponse(): SwResponse {
   return new SwResponse('<!doctype html><html></html>', 200, {
     'content-type': 'text/html; charset=utf-8',
   });
+}
+
+function releaseResponse(body: string, path: string): SwResponse {
+  return path === '/'
+    ? new SwResponse(body, 200, { 'content-type': 'text/html; charset=utf-8' })
+    : new SwResponse(body);
 }
 
 class SwRequest {
@@ -538,7 +554,6 @@ function releaseManifest(release: string): { assets: string[]; cacheVersion: str
     cacheVersion: `sonare-studio-${release}`,
     assets: [
       '/',
-      '/index.html',
       '/manifest.webmanifest',
       '/worklet-manifest.json',
       `/assets/app-${release}.css`,
@@ -558,7 +573,7 @@ describe('Service Worker release isolation', () => {
       if (!online) throw new Error('offline');
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
-      return new SwResponse(`release-a:${path}`);
+      return releaseResponse(`release-a:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const worker = evaluateServiceWorker(
@@ -572,10 +587,164 @@ describe('Service Worker release isolation', () => {
     online = false;
 
     await expect(worker.fetch('/anything', 'navigate')).resolves.toMatchObject({
-      body: 'release-a:/index.html',
+      body: 'release-a:/',
     });
     const cache = caches.stores.get(manifest.cacheVersion);
     expect([...cache!.entries.keys()].sort()).toEqual([...manifest.assets].sort());
+  });
+
+  it('normalizes Cloudflare document redirects before caching and serving the shell', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('redirected');
+    manifest.assets.push('/index.html');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      if (path === '/' || path === '/index.html') {
+        return new SwResponse(
+          '<!doctype html><html><body>shell</body></html>',
+          200,
+          {
+            'content-type': 'text/html; charset=utf-8',
+            location: 'https://app.test/',
+            'content-length': '48',
+            'cross-origin-opener-policy': 'same-origin',
+          },
+          { redirected: true },
+        );
+      }
+      return new SwResponse(`asset:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+
+    await worker.install();
+    await worker.activate();
+
+    const cache = caches.stores.get(manifest.cacheVersion)!;
+    const shell = cache.entries.get('/');
+    expect(shell).toMatchObject({ body: '<!doctype html><html><body>shell</body></html>' });
+    expect(shell?.redirected).toBe(false);
+    expect(shell?.headers.get('location')).toBeNull();
+    expect(shell?.headers.get('content-length')).toBeNull();
+    expect(shell?.headers.get('cross-origin-opener-policy')).toBe('same-origin');
+    expect(cache.entries.has('/index.html')).toBe(false);
+
+    await expect(worker.fetch('/project', 'navigate')).resolves.toMatchObject({
+      body: '<!doctype html><html><body>shell</body></html>',
+      redirected: false,
+    });
+  });
+
+  it('normalizes a redirected live shell when the release manifest is unavailable', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse('offline', 503);
+      if (path === '/') {
+        return new SwResponse(
+          '<html>live shell</html>',
+          200,
+          {
+            location: 'https://app.test/',
+            'content-type': 'text/html; charset=utf-8',
+          },
+          { redirected: true },
+        );
+      }
+      return new SwResponse(`asset:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', 'sonare-studio-live'),
+      caches,
+      fetcher,
+    );
+
+    await expect(worker.fetch('/project', 'navigate')).resolves.toMatchObject({
+      body: '<html>live shell</html>',
+      redirected: false,
+    });
+  });
+
+  it('rejects a JavaScript response under the canonical shell key', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('wrong-content');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      if (path === '/') {
+        return new SwResponse('window.notTheShell = true;', 200, {
+          'content-type': 'text/javascript; charset=utf-8',
+        });
+      }
+      return new SwResponse(`asset:${path}`);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+
+    await expect(worker.install()).rejects.toThrow('without an HTML shell: /');
+    expect(await caches.keys()).toEqual([]);
+  });
+
+  it('repairs a legacy active cache before a new worker can activate', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const manifest = releaseManifest('new');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
+      return releaseResponse(`release-new:${path}`, path);
+    };
+    const caches = new SwCacheStorage(fetcher);
+    const oldCache = await caches.open('sonare-studio-old');
+    await oldCache.put(
+      '/',
+      new SwResponse(
+        '<html>root shell</html>',
+        200,
+        {
+          'content-type': 'text/html; charset=utf-8',
+          location: 'https://app.test/',
+        },
+        { redirected: true },
+      ),
+    );
+    await oldCache.put(
+      '/index.html',
+      new SwResponse(
+        '<html>old shell</html>',
+        200,
+        {
+          'content-type': 'text/html; charset=utf-8',
+          location: 'https://app.test/',
+        },
+        { redirected: true },
+      ),
+    );
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', manifest.cacheVersion),
+      caches,
+      fetcher,
+    );
+
+    await worker.install();
+
+    const migrated = caches.stores.get('sonare-studio-old')!;
+    expect(migrated.entries.get('/index.html')?.redirected).toBe(false);
+    expect(migrated.entries.get('/index.html')?.body).toBe('<html>old shell</html>');
+    expect(migrated.entries.get('/index.html')?.headers.get('location')).toBeNull();
+    expect(migrated.entries.get('/')?.body).toBe('<html>root shell</html>');
+    expect(migrated.entries.get('/')?.redirected).toBe(false);
+    expect(migrated.entries.get('/')?.headers.get('location')).toBeNull();
+    expect(await caches.keys()).toContain('sonare-studio-old');
   });
 
   it('keeps the active release intact through failed and waiting updates', async () => {
@@ -593,7 +762,7 @@ describe('Service Worker release isolation', () => {
       }
       if (failB && path === '/assets/app-b.js') throw new Error('partial deploy');
       const release = path.includes('-b.') ? 'b' : activeManifest === manifestB ? 'b' : 'a';
-      return new SwResponse(`release-${release}:${path}`);
+      return releaseResponse(`release-${release}:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const workerA = evaluateServiceWorker(
@@ -627,14 +796,14 @@ describe('Service Worker release isolation', () => {
 
     online = false;
     await expect(workerA.fetch('/next', 'navigate')).resolves.toMatchObject({
-      body: 'release-a:/index.html',
+      body: 'release-a:/',
     });
     await expect(workerA.fetch('/assets/app-b.js')).rejects.toThrow('offline');
 
     await waitingB.activate();
     expect(await caches.keys()).toEqual([manifestB.cacheVersion]);
     await expect(waitingB.fetch('/next', 'navigate')).resolves.toMatchObject({
-      body: 'release-b:/index.html',
+      body: 'release-b:/',
     });
   });
 
@@ -644,7 +813,7 @@ describe('Service Worker release isolation', () => {
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
-      return new SwResponse(`release-a:${path}`);
+      return releaseResponse(`release-a:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const worker = evaluateServiceWorker(
@@ -660,7 +829,7 @@ describe('Service Worker release isolation', () => {
     caches.stores.delete(manifest.cacheVersion);
 
     await expect(worker.fetch('/anything', 'navigate')).resolves.toMatchObject({
-      body: 'release-a:/index.html',
+      body: 'release-a:/',
     });
     const repaired = caches.stores.get(manifest.cacheVersion);
     expect([...repaired!.entries.keys()].sort()).toEqual([...manifest.assets].sort());
@@ -672,7 +841,7 @@ describe('Service Worker release isolation', () => {
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
-      return new SwResponse(`release-a:${path}`);
+      return releaseResponse(`release-a:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const worker = evaluateServiceWorker(
@@ -707,7 +876,7 @@ describe('Service Worker release isolation', () => {
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(activeManifest));
       if (staleEdge && path === '/assets/app-b.js') return shellFallbackResponse();
-      return new SwResponse(`release-${activeManifest === manifestB ? 'b' : 'a'}:${path}`);
+      return releaseResponse(`release-${activeManifest === manifestB ? 'b' : 'a'}:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const workerA = evaluateServiceWorker(
@@ -745,7 +914,7 @@ describe('Service Worker release isolation', () => {
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
       if (path.startsWith('/assets/gone-')) return shellFallbackResponse();
-      return new SwResponse(`release-a:${path}`);
+      return releaseResponse(`release-a:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const worker = evaluateServiceWorker(
@@ -762,7 +931,7 @@ describe('Service Worker release isolation', () => {
     await expect(worker.fetch('/assets/gone-a.js')).resolves.toMatchObject({ status: 404 });
     // The document itself is still the app shell and must stay servable.
     await expect(worker.fetch('/anything', 'navigate')).resolves.toMatchObject({
-      body: 'release-a:/index.html',
+      body: 'release-a:/',
     });
   });
 
@@ -774,7 +943,7 @@ describe('Service Worker release isolation', () => {
       if (!online) throw new Error('offline');
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse(JSON.stringify(manifest));
-      return new SwResponse(`release-a:${path}`);
+      return releaseResponse(`release-a:${path}`, path);
     };
     const caches = new SwCacheStorage(fetcher);
     const worker = evaluateServiceWorker(
@@ -796,5 +965,83 @@ describe('Service Worker release isolation', () => {
     // An uncacheable request must resolve too: an undefined response would fail
     // at the browser level rather than as one the app can report.
     await expect(worker.fetch('/somewhere/else.txt')).resolves.toMatchObject({ status: 504 });
+  });
+
+  it('returns a live shell when Cache Storage cannot be opened', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/precache-manifest.json') return new SwResponse('unavailable', 503);
+      if (path === '/') return releaseResponse('<html>live shell</html>', path);
+      return new SwResponse(`asset:${path}`);
+    };
+    const cacheStorage = {
+      open: vi.fn(async () => {
+        throw new Error('Cache Storage unavailable');
+      }),
+      keys: vi.fn(async () => []),
+      delete: vi.fn(async () => true),
+    } as unknown as SwCacheStorage;
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', 'sonare-studio-cache-open-failure'),
+      cacheStorage,
+      fetcher,
+    );
+
+    await expect(worker.fetch('/project', 'navigate')).resolves.toMatchObject({
+      body: '<html>live shell</html>',
+      status: 200,
+    });
+  });
+
+  it('returns a normalized cached shell when cache repair cannot be written', async () => {
+    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const fetcher = async (request: SwRequest): Promise<SwResponse> => {
+      const path = cacheKey(request);
+      if (path === '/') {
+        return new SwResponse(
+          '<html>cached shell</html>',
+          200,
+          {
+            'content-type': 'text/html; charset=utf-8',
+            location: 'https://app.test/',
+          },
+          { redirected: true },
+        );
+      }
+      return new SwResponse(`asset:${path}`);
+    };
+    const cache = new SwCache(fetcher);
+    cache.entries.set(
+      '/',
+      new SwResponse(
+        '<html>cached shell</html>',
+        200,
+        {
+          'content-type': 'text/html; charset=utf-8',
+          location: 'https://app.test/',
+        },
+        { redirected: true },
+      ),
+    );
+    cache.put = vi.fn(async () => {
+      throw new Error('quota exceeded');
+    });
+    const cacheStorage = {
+      open: vi.fn(async () => cache),
+      keys: vi.fn(async () => ['sonare-studio-cache-write-failure']),
+      delete: vi.fn(async () => true),
+    } as unknown as SwCacheStorage;
+    const worker = evaluateServiceWorker(
+      template.replaceAll('__SONARE_CACHE_VERSION__', 'sonare-studio-cache-write-failure'),
+      cacheStorage,
+      fetcher,
+    );
+
+    await expect(worker.fetch('/project', 'navigate')).resolves.toMatchObject({
+      body: '<html>cached shell</html>',
+      redirected: false,
+      status: 200,
+    });
   });
 });

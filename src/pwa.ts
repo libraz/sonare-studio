@@ -109,6 +109,7 @@ function observeRegistration(
   registration: ServiceWorkerRegistration,
   container: ServiceWorkerContainer,
 ): void {
+  let hadController = Boolean(container.controller);
   if (registration.waiting && container.controller) publishUpdate(registration, 'update');
   registration.addEventListener?.('updatefound', () => {
     const installing = registration.installing;
@@ -119,11 +120,15 @@ function observeRegistration(
     });
   });
   container.addEventListener?.('controllerchange', () => {
+    const wasControlled = hadController;
+    hadController = Boolean(container.controller);
     if (reloadAfterControllerChange) {
       reloadAfterControllerChange = false;
       reloadPage();
       return;
     }
+    // The first install claiming this page is not a newer app release.
+    if (!wasControlled) return;
     // Another client activated a newer release. Activation deletes the cache
     // this document was loaded from, so every chunk this build has not loaded
     // yet is now unreachable. Offer the reload affordance — which runs the

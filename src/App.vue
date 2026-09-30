@@ -283,6 +283,9 @@ const autosave = useAutosave({
 // document first so OPFS writes cannot be abandoned mid-update.
 onScopeDispose(
   installPwaReloadPreparation(async () => {
+    // The launcher has no live document to save. An update must remain
+    // usable before the user creates or opens a project.
+    if (!store.initialized) return true;
     const saved = await autosave.saveNow();
     return saved;
   }),
@@ -982,7 +985,7 @@ onMounted(installLaunchQueueConsumer);
       :auto-dismiss-ms="0"
       @dismiss="dismissCapacityWarning"
     />
-    <PwaUpdateBanner />
+    <PwaUpdateBanner v-if="!startScreenOpen" />
 
     <main class="main-row">
       <div class="workspace">

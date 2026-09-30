@@ -49,7 +49,6 @@ function pwaPrecacheManifest(): Plugin {
       const workletUrl = workletModuleUrl();
       const assets = new Set([
         '/',
-        '/index.html',
         '/manifest.webmanifest',
         '/icon.svg',
         '/icon-192.png',
@@ -59,11 +58,15 @@ function pwaPrecacheManifest(): Plugin {
         '/precache-manifest.json',
       ]);
       let hash = 0x811c9dc5;
+      const serviceWorkerTemplate = readFileSync(resolve('public/sw.js'), 'utf8');
       for (const [fileName, output] of Object.entries(bundle).sort(([a], [b]) =>
         a.localeCompare(b),
       )) {
         if (fileName === 'sw.js' || fileName === 'precache-manifest.json') continue;
-        assets.add(`/${fileName}`);
+        // Cloudflare Pages canonicalizes `/index.html` to `/`; keep the shell
+        // under the canonical key while still hashing the emitted document
+        // below so a document change creates a new release cache.
+        if (fileName !== 'index.html') assets.add(`/${fileName}`);
         hash = hashBuildValue(hash, fileName);
         hash = hashBuildValue(hash, output.type === 'chunk' ? output.code : output.source);
       }
@@ -77,6 +80,9 @@ function pwaPrecacheManifest(): Plugin {
         hash = hashBuildValue(hash, readFileSync(resolve('public', path)));
       }
       hash = hashBuildValue(hash, workletUrl);
+      // The cache version must change when the worker's recovery or caching
+      // contract changes, even if the application bundle stays byte-identical.
+      hash = hashBuildValue(hash, serviceWorkerTemplate);
       const release = hash.toString(16).padStart(8, '0');
       const cacheVersion = `sonare-studio-${release}`;
       const manifest = {
@@ -88,11 +94,13 @@ function pwaPrecacheManifest(): Plugin {
         fileName: 'precache-manifest.json',
         source: `${JSON.stringify(manifest, null, 2)}\n`,
       });
-      const template = readFileSync(resolve('public/sw.js'), 'utf8');
-      if (!template.includes('__SONARE_CACHE_VERSION__')) {
+      if (!serviceWorkerTemplate.includes('__SONARE_CACHE_VERSION__')) {
         throw new Error('Service Worker template is missing its cache-version placeholder.');
       }
-      generatedServiceWorker = template.replaceAll('__SONARE_CACHE_VERSION__', cacheVersion);
+      generatedServiceWorker = serviceWorkerTemplate.replaceAll(
+        '__SONARE_CACHE_VERSION__',
+        cacheVersion,
+      );
     },
     writeBundle(options) {
       if (!generatedServiceWorker) throw new Error('Service Worker was not generated.');
