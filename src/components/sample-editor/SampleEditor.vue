@@ -15,6 +15,7 @@ import {
   type VersionHistoryState,
 } from '@/ui/sample-editor/history';
 import { formatMidiNote } from '@/ui/sample-editor/note-names';
+import { declipWithheld, repairChannelSummaries } from '@/ui/sample-editor/repair-analysis';
 import { MODE_OPTIONS, rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
@@ -34,6 +35,7 @@ import {
   type SpectralEditMode,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
+import type { MasteringRepairStageName } from '@/wasm/index.js';
 
 /**
  * Sample editor panel: shows the full waveform of one stored audio asset
@@ -150,6 +152,7 @@ const operations = useSampleOperations({
 });
 const {
   notices,
+  resultStatus,
   gainDbInput,
   normalizeTargetInput,
   pitchInput,
@@ -158,6 +161,9 @@ const {
   scaleModeInput,
   voicePitchInput,
   voiceFormantInput,
+  voiceFormantAbsolute,
+  autoTuneDetect,
+  autoTuneStrengthInput,
   stretchInput,
   noteShiftMsInput,
   silenceThresholdInput,
@@ -179,6 +185,10 @@ const {
   estimatingRoom,
   acousticAnalysis,
   analyzingAcoustic,
+  repairAnalysis,
+  repairStageChecked,
+  analyzingRepair,
+  setRepairStageChecked,
   opsDisabled,
   referenceOptions,
   roomPresetOptions,
@@ -198,6 +208,7 @@ const {
   onPitchCorrectTimevarying,
   onTuneReference,
   onScaleCorrect,
+  onAutoTune,
   onVoiceChange,
   onTimeStretch,
   onNoteStretch,
@@ -211,6 +222,8 @@ const {
   onDehum,
   onDereverb,
   onTrimSilenceRepair,
+  onAnalyzeRepair,
+  onApplyRepair,
   onHarmonic,
   onPercussive,
   onSpectralDenoise,
@@ -223,6 +236,29 @@ const {
   onMatchEq,
   onAnalyzeMatchEq,
 } = operations;
+
+const repairSummaries = computed(() =>
+  repairAnalysis.value ? repairChannelSummaries(repairAnalysis.value) : [],
+);
+const repairAnyChecked = computed(
+  () =>
+    repairAnalysis.value?.recommended.some((stage) => repairStageChecked.value[stage.stage]) ??
+    false,
+);
+
+/** Tooltip of a repair stage toggle: the single-stage button's description. */
+function repairStageTitle(stage: MasteringRepairStageName): string {
+  const text = t.value.shell.sampleEditor;
+  const titles: Record<MasteringRepairStageName, string> = {
+    declip: text.declipTitle,
+    declick: text.declickTitle,
+    decrackle: text.decrackleTitle,
+    dehum: text.dehumTitle,
+    denoise: text.denoiseTitle,
+    dereverb: text.dereverbTitle,
+  };
+  return titles[stage];
+}
 
 const readout = computed(() => {
   const meta = asset.value?.meta;
@@ -640,6 +676,36 @@ onBeforeUnmount(() => {
       >
         {{ t.shell.sampleEditor.apply }}
       </button>
+      <ToggleButton
+        v-model="autoTuneDetect"
+        :label="t.shell.sampleEditor.autoTuneDetect"
+        :title="t.shell.sampleEditor.autoTuneDetectTitle"
+        :disabled="opsDisabled || !wasmAvail.autoTune"
+        size="sm"
+      />
+      <label v-tooltip="t.shell.sampleEditor.autoTuneStrengthTitle">
+        {{ t.shell.sampleEditor.autoTuneStrength }}
+        <input
+          v-model="autoTuneStrengthInput"
+          class="num"
+          type="number"
+          step="5"
+          min="0"
+          max="100"
+          :disabled="opsDisabled || !wasmAvail.autoTune"
+        />
+        %
+      </label>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.autoTune"
+        v-tooltip="
+          wasmAvail.autoTune ? t.shell.sampleEditor.autoTuneTitle : t.shell.sampleEditor.unavailable
+        "
+        @click="onAutoTune"
+      >
+        {{ t.shell.sampleEditor.autoTune }}
+      </button>
       <span class="sep" />
       <label>
         {{ t.shell.sampleEditor.voicePitch }}
@@ -649,6 +715,13 @@ onBeforeUnmount(() => {
         {{ t.shell.sampleEditor.voiceFormant }}
         <input v-model="voiceFormantInput" class="num" type="number" step="0.05" min="0.1" /> ×
       </label>
+      <ToggleButton
+        v-model="voiceFormantAbsolute"
+        :label="t.shell.sampleEditor.voiceFormantAbsolute"
+        :title="t.shell.sampleEditor.voiceFormantAbsoluteTitle"
+        :disabled="opsDisabled || !wasmAvail.voiceChange"
+        size="sm"
+      />
       <button
         type="button"
         :disabled="opsDisabled || !wasmAvail.voiceChange"
@@ -700,6 +773,18 @@ onBeforeUnmount(() => {
         @click="onNoteMove"
       >
         {{ t.shell.sampleEditor.noteMove }}
+      </button>
+      <button
+        type="button"
+        :disabled="opsDisabled || !wasmAvail.repairSession || analyzingRepair"
+        v-tooltip="
+          wasmAvail.repairSession
+            ? t.shell.sampleEditor.analyzeRepairTitle
+            : t.shell.sampleEditor.unavailable
+        "
+        @click="onAnalyzeRepair"
+      >
+        {{ t.shell.sampleEditor.analyzeRepair }}
       </button>
       <button
         type="button"
@@ -1071,6 +1156,56 @@ onBeforeUnmount(() => {
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-for="notice in notices" :key="notice" class="notice" role="status">{{ notice }}</p>
+    <p v-if="resultStatus" class="result-status" role="status">{{ resultStatus }}</p>
+    <div v-if="repairAnalysis" class="match-eq-analysis repair-analysis" role="status">
+      <div class="match-eq-head">
+        <span class="match-eq-title">{{ t.shell.sampleEditor.repairAnalysisTitle }}</span>
+        <span v-if="Number.isFinite(repairAnalysis.integratedLufs)" class="match-eq-loudness">
+          {{ repairAnalysis.integratedLufs.toFixed(1) }} LUFS
+        </span>
+      </div>
+      <dl class="repair-channels">
+        <template v-for="row in repairSummaries" :key="row.channel">
+          <dt>{{ row.channel }}</dt>
+          <dd>
+            <span v-for="item in row.items" :key="item.kind" class="repair-defect">
+              <span class="repair-defect-label">{{ t.shell.sampleEditor.repairDefects[item.kind] }}</span>
+              {{ item.value }}
+            </span>
+            <span v-if="row.items.length === 0">—</span>
+          </dd>
+        </template>
+      </dl>
+      <p v-if="declipWithheld(repairAnalysis)" class="repair-note">
+        {{ t.shell.sampleEditor.repairDeclipWithheld }}
+      </p>
+      <div
+        v-if="repairAnalysis.recommended.length > 0"
+        class="toolbar"
+        role="group"
+        :aria-label="t.shell.sampleEditor.repairStages"
+      >
+        <ToggleButton
+          v-for="stage in repairAnalysis.recommended"
+          :key="stage.stage"
+          :model-value="repairStageChecked[stage.stage] === true"
+          :label="t.shell.sampleEditor[stage.stage]"
+          :title="repairStageTitle(stage.stage)"
+          :disabled="opsDisabled"
+          size="sm"
+          @update:model-value="(checked: boolean) => setRepairStageChecked(stage.stage, checked)"
+        />
+        <button
+          type="button"
+          :disabled="opsDisabled || !repairAnyChecked"
+          v-tooltip="t.shell.sampleEditor.repairApplyTitle"
+          @click="onApplyRepair"
+        >
+          {{ t.shell.sampleEditor.repairApply }}
+        </button>
+      </div>
+      <p v-else class="repair-note">{{ t.shell.sampleEditor.repairNoStages }}</p>
+    </div>
     <div v-if="matchEqAnalysis" class="match-eq-analysis">
       <div class="match-eq-head">
         <span class="match-eq-title">{{ t.shell.sampleEditor.matchEqAnalysisTitle }}</span>
@@ -1297,6 +1432,11 @@ onBeforeUnmount(() => {
   gap: var(--sp-3);
 }
 
+/* A bare select sizes to its value; at full width it would take a wrapped row of its own. */
+.toolbar > .select-menu {
+  width: auto;
+}
+
 .toolbar label {
   display: inline-flex;
   align-items: center;
@@ -1422,6 +1562,41 @@ onBeforeUnmount(() => {
 .notice {
   margin: 0;
   color: var(--warning);
+}
+
+.result-status {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.repair-channels {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.repair-channels dt {
+  color: var(--text-3);
+  font-weight: var(--fw-semibold);
+}
+
+.repair-channels dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-5);
+  margin: 0;
+  color: var(--text-1);
+}
+
+.repair-defect-label {
+  color: var(--text-3);
+}
+
+.repair-note {
+  margin: 0;
+  color: var(--text-3);
 }
 
 .match-eq-analysis {

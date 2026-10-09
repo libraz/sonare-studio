@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   analyzeImpulseResponseRange,
   analyzeMatchEqToReference,
+  analyzeRepairRange,
+  autoTuneRange,
   declickRange,
   declipRange,
   decrackleRange,
@@ -21,6 +23,7 @@ import {
   pitchCorrectRange,
   pitchCorrectTimevaryingRange,
   pitchShiftRange,
+  repairStagesRange,
   restoreRange,
   roomEstimateHasGeometry,
   roomEstimateToPreset,
@@ -64,6 +67,7 @@ describe('wasmOpAvailability', () => {
       pitchCorrectTimevarying: false,
       tuneReference: false,
       scaleCorrect: false,
+      autoTune: false,
       voiceChange: false,
       harmonic: false,
       percussive: false,
@@ -79,6 +83,7 @@ describe('wasmOpAvailability', () => {
       dehum: false,
       dereverb: false,
       trimSilence: false,
+      repairSession: false,
       detectOnsets: false,
       splitSilence: false,
       matchEq: false,
@@ -138,6 +143,7 @@ describe('wasmOpAvailability', () => {
       tuneReference: false,
       // Needs pitchYin + scaleQuantizeMidi + pitchCorrectToMidi; only the last is present.
       scaleCorrect: false,
+      autoTune: false,
       voiceChange: false,
       harmonic: false,
       percussive: false,
@@ -153,6 +159,7 @@ describe('wasmOpAvailability', () => {
       dehum: true,
       dereverb: false,
       trimSilence: false,
+      repairSession: false,
       detectOnsets: true,
       splitSilence: true,
       matchEq: true,
@@ -897,12 +904,16 @@ describe('voiceChangeRange', () => {
         _sampleRate?: number,
         options?: { pitchSemitones?: number; formantFactor?: number },
       ) => {
-        expect(options).toEqual({ pitchSemitones: 3, formantFactor: 1.2 });
+        expect(options).toEqual({
+          pitchSemitones: 3,
+          formantFactor: 1.2,
+          formantMode: 'absolute',
+        });
         return samples.map((v) => v + (options?.pitchSemitones ?? 0)) as Float32Array;
       },
     );
     const mod: SampleEditorWasmOps = { voiceChange };
-    const out = voiceChangeRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 3, 1.2, {
+    const out = voiceChangeRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 3, 1.2, 'absolute', {
       startFrame: 1,
       endFrame: 3,
     });
@@ -918,15 +929,125 @@ describe('voiceChangeRange', () => {
     const mod: SampleEditorWasmOps = {
       voiceChange: (samples) => samples.map((v) => -v) as Float32Array,
     };
-    expect(plain(voiceChangeRange(mod, ch([1, 2]), 48000, 0, 1))).toEqual([[-1, -2]]);
+    expect(plain(voiceChangeRange(mod, ch([1, 2]), 48000, 0, 1, 'relative'))).toEqual([[-1, -2]]);
   });
 
   it('throws when unavailable or the parameters are invalid', () => {
-    expect(() => voiceChangeRange({}, ch([1]), 48000, 0, 1)).toThrow(/unavailable/);
+    expect(() => voiceChangeRange({}, ch([1]), 48000, 0, 1, 'relative')).toThrow(/unavailable/);
     const mod: SampleEditorWasmOps = { voiceChange: (samples) => samples };
-    expect(() => voiceChangeRange(mod, ch([1]), 48000, Number.NaN, 1)).toThrow(RangeError);
-    expect(() => voiceChangeRange(mod, ch([1]), 48000, 0, 0)).toThrow(RangeError);
-    expect(() => voiceChangeRange(mod, ch([1]), 48000, 0, -1)).toThrow(RangeError);
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, Number.NaN, 1, 'relative')).toThrow(
+      RangeError,
+    );
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, 0, 0, 'relative')).toThrow(RangeError);
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, 0, -1, 'relative')).toThrow(RangeError);
+  });
+
+  it("propagates libsonare's refusal of an unreachable absolute request", () => {
+    const refusal = new RangeError('formantFactor must be in [0.69, 2.08] for +4 semitones');
+    const mod: SampleEditorWasmOps = {
+      voiceChange: () => {
+        throw refusal;
+      },
+    };
+    expect(() => voiceChangeRange(mod, ch([1]), 48000, 4, 3, 'absolute')).toThrow(refusal);
+  });
+});
+
+describe('autoTuneRange', () => {
+  it('resolves the key on the first channel and shares it with the rest', () => {
+    const autoTune = vi.fn(
+      (request: Parameters<NonNullable<SampleEditorWasmOps['autoTune']>>[0]) => ({
+        samples: request.samples.map((v) => v * 10) as Float32Array,
+        key: { root: 9 as const, mode: 'minor' as const, confidence: 0.6 },
+      }),
+    );
+    const mod = { autoTune } as unknown as SampleEditorWasmOps;
+    const out = autoTuneRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 44100, 'detect', 0.8, {
+      startFrame: 1,
+      endFrame: 3,
+    });
+    expect(plain(out.channels)).toEqual([
+      [1, 20, 30, 4],
+      [5, 60, 70, 8],
+    ]);
+    expect(out.key).toEqual({ root: 9, mode: 'minor', confidence: 0.6 });
+    expect(autoTune).toHaveBeenCalledTimes(2);
+    expect(autoTune.mock.calls[0][0]).toMatchObject({
+      sampleRate: 44100,
+      key: 'detect',
+      strength: 0.8,
+    });
+    expect(autoTune.mock.calls[1][0]).toMatchObject({
+      key: { root: 9, mode: 'minor' },
+      strength: 0.8,
+    });
+  });
+
+  it('passes a named key through', () => {
+    const autoTune = vi.fn((request: { samples: Float32Array }) => ({
+      samples: request.samples,
+      key: { root: 2, mode: 'dorian', confidence: 1 },
+    }));
+    const mod = { autoTune } as unknown as SampleEditorWasmOps;
+    autoTuneRange(mod, ch([1, 2]), 48000, { root: 2, mode: 'dorian' }, 1);
+    expect(autoTune.mock.calls[0][0]).toMatchObject({ key: { root: 2, mode: 'dorian' } });
+  });
+
+  it('throws when unavailable or the range is empty', () => {
+    expect(() => autoTuneRange({}, ch([1]), 48000, 'detect', 1)).toThrow(/unavailable/);
+    const mod = { autoTune: vi.fn() } as unknown as SampleEditorWasmOps;
+    expect(() =>
+      autoTuneRange(mod, ch([1, 2]), 48000, 'detect', 1, { startFrame: 1, endFrame: 1 }),
+    ).toThrow(RangeError);
+  });
+});
+
+describe('analyzeRepairRange / repairStagesRange', () => {
+  it('analyzes every channel of the range in one call', () => {
+    const analysis = { recommended: [{ stage: 'declick' }] };
+    const masteringRepairAnalyze = vi.fn(() => analysis);
+    const mod = { masteringRepairAnalyze } as unknown as SampleEditorWasmOps;
+    expect(
+      analyzeRepairRange(mod, ch([1, 2, 3], [4, 5, 6]), 48000, { startFrame: 1, endFrame: 3 }),
+    ).toBe(analysis);
+    expect(masteringRepairAnalyze).toHaveBeenCalledWith({
+      channels: [new Float32Array([2, 3]), new Float32Array([5, 6])],
+      sampleRate: 48000,
+    });
+  });
+
+  it('applies the stages to the range in one call and splices the result', () => {
+    const masteringRepairApply = vi.fn((request: { channels: Float32Array[] }) => ({
+      channels: request.channels.map((c) => c.map((v) => -v) as Float32Array),
+      reports: [],
+    }));
+    const mod = { masteringRepairApply } as unknown as SampleEditorWasmOps;
+    const stages = [{ stage: 'dehum' as const, fundamentalHz: 50 }, { stage: 'declick' as const }];
+    const out = repairStagesRange(mod, ch([1, 2, 3], [4, 5, 6]), 48000, stages, {
+      startFrame: 0,
+      endFrame: 2,
+    });
+    expect(plain(out)).toEqual([
+      [-1, -2, 3],
+      [-4, -5, 6],
+    ]);
+    expect(masteringRepairApply).toHaveBeenCalledTimes(1);
+    expect(masteringRepairApply.mock.calls[0][0]).toMatchObject({ sampleRate: 48000, stages });
+  });
+
+  it('throws when unavailable, with no stage, or on an empty range', () => {
+    expect(() => analyzeRepairRange({}, ch([1]), 48000)).toThrow(/unavailable/);
+    expect(() => repairStagesRange({}, ch([1]), 48000, [{ stage: 'declick' }])).toThrow(
+      /unavailable/,
+    );
+    const mod = {
+      masteringRepairAnalyze: vi.fn(),
+      masteringRepairApply: vi.fn(),
+    } as unknown as SampleEditorWasmOps;
+    expect(() => repairStagesRange(mod, ch([1]), 48000, [])).toThrow(RangeError);
+    expect(() =>
+      analyzeRepairRange(mod, ch([1, 2]), 48000, { startFrame: 1, endFrame: 1 }),
+    ).toThrow(RangeError);
   });
 });
 

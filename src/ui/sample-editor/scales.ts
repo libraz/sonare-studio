@@ -9,6 +9,7 @@
  */
 
 import { type NoteNameSystem, namedScaleMask, type ScaleName } from '@libraz/libcantus';
+import type { KeyMode } from '@/wasm/index.js';
 import { pitchClassNames } from './note-names';
 
 /**
@@ -16,14 +17,14 @@ import { pitchClassNames } from './note-names';
  * name in the shared scale vocabulary rather than by intervals written out
  * here, so this picker and the key editor cannot drift on what a mode is.
  */
-const MODES: ReadonlyArray<{ name: string; scale: ScaleName }> = [
-  { name: 'Major', scale: 'major' },
-  { name: 'Minor', scale: 'naturalMinor' },
-  { name: 'Dorian', scale: 'dorian' },
-  { name: 'Phrygian', scale: 'phrygian' },
-  { name: 'Lydian', scale: 'lydian' },
-  { name: 'Mixolydian', scale: 'mixolydian' },
-  { name: 'Locrian', scale: 'locrian' },
+const MODES: ReadonlyArray<{ name: string; scale: ScaleName; key: KeyMode }> = [
+  { name: 'Major', scale: 'major', key: 'major' },
+  { name: 'Minor', scale: 'naturalMinor', key: 'minor' },
+  { name: 'Dorian', scale: 'dorian', key: 'dorian' },
+  { name: 'Phrygian', scale: 'phrygian', key: 'phrygian' },
+  { name: 'Lydian', scale: 'lydian', key: 'lydian' },
+  { name: 'Mixolydian', scale: 'mixolydian', key: 'mixolydian' },
+  { name: 'Locrian', scale: 'locrian', key: 'locrian' },
 ];
 
 /**
@@ -37,6 +38,26 @@ export function modeMaskFor(mode: number): number {
   const mask = namedScaleMask((MODES[mode] ?? MODES[0]).scale);
   if (mask === undefined) throw new RangeError(`Unknown scale for mode ordinal ${mode}`);
   return mask;
+}
+
+/**
+ * libsonare key-mode name for a `Mode` ordinal, as `autoTune` takes it.
+ *
+ * @param mode - The `Mode` ordinal (0 = Major … 6 = Locrian).
+ */
+export function keyModeFor(mode: number): KeyMode {
+  const entry = MODES[mode];
+  if (!entry) throw new RangeError(`Unknown mode ordinal ${mode}`);
+  return entry.key;
+}
+
+/**
+ * `Mode` ordinal of a libsonare key-mode name, as `autoTune` reports it.
+ *
+ * @param key - Key-mode name (`'major'`, `'minor'`, `'dorian'`, ...).
+ */
+export function modeOrdinalOf(key: KeyMode): number {
+  return MODES.findIndex((entry) => entry.key === key);
 }
 
 /**

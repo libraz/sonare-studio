@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { MODE_OPTIONS, modeMaskFor, rootOptions, scaleName } from '@/ui/sample-editor/scales';
+import {
+  keyModeFor,
+  MODE_OPTIONS,
+  modeMaskFor,
+  modeOrdinalOf,
+  rootOptions,
+  scaleName,
+} from '@/ui/sample-editor/scales';
 
 describe('modeMaskFor', () => {
   it('builds the major mask matching libsonare ScaleQuantizer default', () => {
@@ -41,5 +48,20 @@ describe('picker options', () => {
     expect(MODE_OPTIONS).toHaveLength(7);
     expect(MODE_OPTIONS[0]).toEqual({ value: '0', label: 'Major' });
     expect(MODE_OPTIONS[1]).toEqual({ value: '1', label: 'Minor' });
+  });
+});
+
+describe('keyModeFor / modeOrdinalOf', () => {
+  it('maps Mode ordinals to libsonare key-mode names and back', () => {
+    expect(keyModeFor(0)).toBe('major');
+    expect(keyModeFor(1)).toBe('minor');
+    expect(keyModeFor(6)).toBe('locrian');
+    for (let ordinal = 0; ordinal < MODE_OPTIONS.length; ordinal++) {
+      expect(modeOrdinalOf(keyModeFor(ordinal))).toBe(ordinal);
+    }
+  });
+
+  it('refuses an unknown ordinal', () => {
+    expect(() => keyModeFor(7)).toThrow(RangeError);
   });
 });

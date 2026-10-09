@@ -28,7 +28,13 @@ import {
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { humanizePresetName, restorationPresets } from '@/ui/mastering/preset-catalog';
-import type { RirDiagnostic } from '@/wasm/index.js';
+import type {
+  AutoTuneKey,
+  MasteringRepairAnalysis,
+  MasteringRepairStageName,
+  PitchClass,
+  RirDiagnostic,
+} from '@/wasm/index.js';
 import { editedAssetName, pushVersion, type VersionHistoryState } from './history';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { formatMidiNote, parseMidiNote } from './note-names';
@@ -48,11 +54,14 @@ import {
   trimToRange,
 } from './ops';
 import { runSampleOperationInWorker, type SampleOperation } from './ops-client';
-import { modeMaskFor, scaleName } from './scales';
+import { checkedRepairStages } from './repair-analysis';
+import { keyModeFor, modeMaskFor, modeOrdinalOf, scaleName } from './scales';
 import {
   type AcousticAnalysisSummary,
   analyzeImpulseResponseRange,
   analyzeMatchEqToReference,
+  analyzeRepairRange,
+  autoTuneRange,
   declickRange,
   declipRange,
   decrackleRange,
@@ -71,6 +80,7 @@ import {
   pitchShiftRange,
   type RoomEstimateSummary,
   type RoomMorphPreset,
+  repairStagesRange,
   restoreRange,
   roomEstimateHasGeometry,
   roomEstimateToPreset,
@@ -184,6 +194,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const operations = new OperationGeneration();
   /** Non-fatal notes about the last committed operation's result. */
   const notices = ref<string[]>([]);
+  /** Neutral outcome of the last committed operation (e.g. the key auto-tune used). */
+  const resultStatus = ref<string | null>(null);
 
   interface SampleOperationToken {
     operation: GenerationToken;
@@ -274,6 +286,12 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   /** Voice-change controls: pitch transpose (semitones) and formant scale. */
   const voicePitchInput = ref('0');
   const voiceFormantInput = ref('1');
+  /** Formant factor taken relative to the input whatever the pitch shift. */
+  const voiceFormantAbsolute = ref(false);
+  /** Auto-tune: detect the key (true) or use the scale picker's root and mode. */
+  const autoTuneDetect = ref(true);
+  /** Auto-tune correction strength as a percentage string (100 = full snap). */
+  const autoTuneStrengthInput = ref('100');
   const stretchInput = ref('1');
   /** Note-move nudge in milliseconds (negative moves the note earlier). */
   const noteShiftMsInput = ref('0');
@@ -312,6 +330,12 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const acousticAnalysis = ref<AcousticAnalysisSummary | null>(null);
   /** True while acoustic analysis is awaiting the engine. */
   const analyzingAcoustic = ref(false);
+  /** Latest repair analysis of the selection (or whole file). */
+  const repairAnalysis = ref<MasteringRepairAnalysis | null>(null);
+  /** Checked state per recommended repair stage. */
+  const repairStageChecked = ref<Partial<Record<MasteringRepairStageName, boolean>>>({});
+  /** True while the repair analysis is awaiting the engine. */
+  const analyzingRepair = ref(false);
 
   const opsDisabled = computed(
     () => busy.value || loading.value || !asset.value || asset.value.meta.numFrames === 0,
@@ -385,10 +409,22 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   watch(asset, () => {
     operations.invalidate();
     roomEstimate.value = null;
+    repairAnalysis.value = null;
     if (roomPresetId.value === ESTIMATED_ROOM_PRESET_ID) {
       roomPresetId.value = ROOM_PRESETS[0].id;
     }
   });
+
+  // A repair analysis describes the range it measured; another range voids it.
+  watch(
+    () => {
+      const range = selRange();
+      return range ? `${range.startFrame}:${range.endFrame}` : '';
+    },
+    () => {
+      repairAnalysis.value = null;
+    },
+  );
 
   function selectedRoomPreset(): { id: string; label: string; preset: RoomMorphPreset } | null {
     if (roomPresetId.value === ESTIMATED_ROOM_PRESET_ID) {
@@ -416,10 +452,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
    * Runs one offline operation: produces new channel buffers, stores them as a
    * new asset version, records it in the history and switches to it. When the
    * result is byte-identical to the current version (same content hash) the
-   * editor stays put.
+   * editor stays put. A label function is read after the result is produced.
    */
   async function runOp(
-    label: string,
+    label: string | (() => string),
     produce: (
       channels: Float32Array[],
       range: SampleRange,
@@ -434,6 +470,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     busy.value = true;
     error.value = null;
     notices.value = [];
+    resultStatus.value = null;
     try {
       const range = resolveRange(loaded.channels, token.range);
       // Synchronous fallbacks copy shared asset channels. Worker operations
@@ -450,7 +487,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
       if (!operationIsCurrent(token)) return false;
       if (meta.id !== token.targetAssetId) {
         const sourceAssetId = token.targetAssetId;
-        historyState.value = pushVersion(historyState.value, { assetId: meta.id, label });
+        historyState.value = pushVersion(historyState.value, {
+          assetId: meta.id,
+          label: typeof label === 'function' ? label() : label,
+        });
         currentAssetId.value = meta.id;
         emitAssetCreated(meta.id, sourceAssetId);
         await loadCurrent(meta.id);
@@ -650,6 +690,42 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
+  /** Auto-tunes the selection to the detected key or the scale picker's key. */
+  async function onAutoTune(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    const percent = parseNumber(autoTuneStrengthInput.value);
+    if (percent === null || percent < 0 || percent > 100) {
+      error.value = t.value.shell.sampleEditor.errors.autoTuneStrength;
+      return;
+    }
+    const strength = percent / 100;
+    const key: 'detect' | AutoTuneKey = autoTuneDetect.value
+      ? 'detect'
+      : {
+          // The root picker only offers pitch classes 0-11.
+          root: Number(scaleRootInput.value) as PitchClass,
+          mode: keyModeFor(Number(scaleModeInput.value)),
+        };
+    let scale = '';
+    const committed = await runOp(
+      () => formatMessage(t.value.shell.sampleEditor.ops.autoTune, { scale }),
+      (channels, range) => {
+        const tuned = autoTuneRange(ops, channels, sampleRate(), key, strength, range);
+        scale = scaleName(tuned.key.root, modeOrdinalOf(tuned.key.mode), noteNames.system.value);
+        return tuned.channels;
+      },
+    );
+    if (committed) {
+      resultStatus.value = formatMessage(
+        key === 'detect'
+          ? t.value.shell.sampleEditor.autoTuneResultDetected
+          : t.value.shell.sampleEditor.autoTuneResult,
+        { scale },
+      );
+    }
+  }
+
   async function onVoiceChange(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
@@ -659,14 +735,28 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
       error.value = t.value.shell.sampleEditor.errors.voice;
       return;
     }
+    const formantMode = voiceFormantAbsolute.value ? 'absolute' : 'relative';
     await runOp(
-      formatMessage(t.value.shell.sampleEditor.ops.voice, {
-        sign: pitchSemitones >= 0 ? '+' : '',
-        semitones: pitchSemitones,
-        formant: formantFactor,
-      }),
+      formatMessage(
+        formantMode === 'absolute'
+          ? t.value.shell.sampleEditor.ops.voiceAbsolute
+          : t.value.shell.sampleEditor.ops.voice,
+        {
+          sign: pitchSemitones >= 0 ? '+' : '',
+          semitones: pitchSemitones,
+          formant: formantFactor,
+        },
+      ),
       (channels, range) =>
-        voiceChangeRange(ops, channels, sampleRate(), pitchSemitones, formantFactor, range),
+        voiceChangeRange(
+          ops,
+          channels,
+          sampleRate(),
+          pitchSemitones,
+          formantFactor,
+          formantMode,
+          range,
+        ),
     );
   }
 
@@ -794,6 +884,46 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     if (!ops) return;
     await runOp(t.value.shell.sampleEditor.ops.trimSilence, (channels, range) =>
       trimSilenceRange(ops, channels, sampleRate(), range),
+    );
+  }
+
+  /** Measures the selection's defects and pre-checks every recommended stage. */
+  async function onAnalyzeRepair(): Promise<void> {
+    const ops = wasmOps.value;
+    const loaded = asset.value;
+    if (!ops || !loaded || opsDisabled.value || analyzingRepair.value) return;
+    error.value = null;
+    analyzingRepair.value = true;
+    try {
+      const analysis = analyzeRepairRange(ops, loaded.channels, loaded.meta.sampleRate, selRange());
+      repairStageChecked.value = Object.fromEntries(
+        analysis.recommended.map((stage) => [stage.stage, true]),
+      );
+      repairAnalysis.value = analysis;
+    } catch (err) {
+      error.value = errorMessage(err);
+    } finally {
+      analyzingRepair.value = false;
+    }
+  }
+
+  /** Flips one recommended stage on or off. */
+  function setRepairStageChecked(stage: MasteringRepairStageName, checked: boolean): void {
+    repairStageChecked.value = { ...repairStageChecked.value, [stage]: checked };
+  }
+
+  /** Applies the checked recommended stages as one new version. */
+  async function onApplyRepair(): Promise<void> {
+    const ops = wasmOps.value;
+    const analysis = repairAnalysis.value;
+    if (!ops || !analysis) return;
+    const stages = checkedRepairStages(analysis, repairStageChecked.value);
+    if (stages.length === 0) return;
+    await runOp(
+      formatMessage(t.value.shell.sampleEditor.ops.repair, {
+        stages: stages.map((stage) => t.value.shell.sampleEditor[stage.stage]).join(', '),
+      }),
+      (channels, range) => repairStagesRange(ops, channels, sampleRate(), stages, range),
     );
   }
 
@@ -1087,6 +1217,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
       operations.dispose();
     },
     notices,
+    resultStatus,
     gainDbInput,
     normalizeTargetInput,
     pitchInput,
@@ -1095,6 +1226,9 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     scaleModeInput,
     voicePitchInput,
     voiceFormantInput,
+    voiceFormantAbsolute,
+    autoTuneDetect,
+    autoTuneStrengthInput,
     stretchInput,
     noteShiftMsInput,
     denoiseDepthInput,
@@ -1118,6 +1252,10 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     estimatingRoom,
     acousticAnalysis,
     analyzingAcoustic,
+    repairAnalysis,
+    repairStageChecked,
+    analyzingRepair,
+    setRepairStageChecked,
     opsDisabled,
     referenceOptions,
     roomPresetOptions,
@@ -1138,6 +1276,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onPitchCorrectTimevarying,
     onTuneReference,
     onScaleCorrect,
+    onAutoTune,
     onVoiceChange,
     onTimeStretch,
     onNoteStretch,
@@ -1150,6 +1289,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     onDehum,
     onDereverb,
     onTrimSilenceRepair,
+    onAnalyzeRepair,
+    onApplyRepair,
     onHarmonic,
     onPercussive,
     onSpectralDenoise,

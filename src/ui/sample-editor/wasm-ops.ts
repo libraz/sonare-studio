@@ -10,7 +10,16 @@
 
 import { stepOf } from '@libraz/libcantus';
 import { ensureWasm } from '@/lib/wasm';
-import type { MasteringPreset, MaterialPresetName, RirDiagnostic } from '@/wasm/index.js';
+import type {
+  AutoTuneKey,
+  FormantMode,
+  Key,
+  MasteringPreset,
+  MasteringRepairAnalysis,
+  MasteringRepairStage,
+  MaterialPresetName,
+  RirDiagnostic,
+} from '@/wasm/index.js';
 import {
   type MatchEqAnalysis,
   parseMatchEqCurve,
@@ -36,6 +45,7 @@ export type SampleEditorWasmOps = Partial<
     | 'pitchCorrectToMidiTimevarying'
     | 'estimateTuning'
     | 'scaleQuantizeMidi'
+    | 'autoTune'
     | 'voiceChange'
     | 'timeStretch'
     | 'noteStretch'
@@ -48,6 +58,8 @@ export type SampleEditorWasmOps = Partial<
     | 'masteringRepairDehum'
     | 'masteringRepairDereverbClassical'
     | 'masteringRepairTrimSilence'
+    | 'masteringRepairAnalyze'
+    | 'masteringRepairApply'
     | 'detectOnsets'
     | 'splitSilence'
     | 'noteSegments'
@@ -78,6 +90,7 @@ export interface WasmOpAvailability {
   pitchCorrectTimevarying: boolean;
   tuneReference: boolean;
   scaleCorrect: boolean;
+  autoTune: boolean;
   voiceChange: boolean;
   harmonic: boolean;
   percussive: boolean;
@@ -93,6 +106,7 @@ export interface WasmOpAvailability {
   dehum: boolean;
   dereverb: boolean;
   trimSilence: boolean;
+  repairSession: boolean;
   detectOnsets: boolean;
   splitSilence: boolean;
   matchEq: boolean;
@@ -130,6 +144,7 @@ export function wasmOpAvailability(
       typeof ops?.pitchYin === 'function' &&
       typeof ops?.scaleQuantizeMidi === 'function' &&
       typeof ops?.pitchCorrectToMidi === 'function',
+    autoTune: typeof ops?.autoTune === 'function',
     voiceChange: typeof ops?.voiceChange === 'function',
     harmonic: typeof ops?.harmonic === 'function',
     percussive: typeof ops?.percussive === 'function',
@@ -147,6 +162,9 @@ export function wasmOpAvailability(
     dehum: typeof ops?.masteringRepairDehum === 'function',
     dereverb: typeof ops?.masteringRepairDereverbClassical === 'function',
     trimSilence: typeof ops?.masteringRepairTrimSilence === 'function',
+    repairSession:
+      typeof ops?.masteringRepairAnalyze === 'function' &&
+      typeof ops?.masteringRepairApply === 'function',
     detectOnsets: typeof ops?.detectOnsets === 'function',
     splitSilence: typeof ops?.splitSilence === 'function',
     matchEq: typeof ops?.masteringPairProcess === 'function',
@@ -426,11 +444,54 @@ export function scaleCorrectRange(
 }
 
 /**
+ * Snaps the range's voiced pitch to a key with libsonare's auto-tune, for
+ * monophonic material. Each channel is tuned on its own; the key is resolved on
+ * the first channel (detected or as named) and shared with the rest, so every
+ * channel lands on the same scale.
+ *
+ * @param key - `'detect'` or a named `{ root, mode }`.
+ * @param strength - Correction strength in [0, 1].
+ * @returns The spliced channels and the key the audio was tuned to.
+ * @throws Error when the module does not provide autoTune.
+ * @throws RangeError on an empty range.
+ */
+export function autoTuneRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  key: 'detect' | AutoTuneKey,
+  strength: number,
+  range?: SampleRange | null,
+): { channels: Float32Array[]; key: Key } {
+  const fn = ops.autoTune;
+  if (typeof fn !== 'function') {
+    throw new Error('Auto-tune is unavailable in this libsonare build');
+  }
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
+  const first = fn({ samples: segments[0], sampleRate, key, strength });
+  const shared: AutoTuneKey = { root: first.key.root, mode: first.key.mode };
+  const tuned = [
+    first.samples,
+    ...segments
+      .slice(1)
+      .map((samples) => fn({ samples, sampleRate, key: shared, strength }).samples),
+  ];
+  return { channels: spliceRange(channels, resolved, tuned), key: first.key };
+}
+
+/**
  * Voice-changes the range, shifting pitch and formants independently in one
- * pass (duration preserved). Each channel is processed separately.
+ * pass (duration preserved). Each channel is processed separately. In
+ * `'absolute'` mode the formant factor is relative to the input whatever the
+ * pitch shift; libsonare refuses an unreachable request with the reachable range.
  *
  * @param pitchSemitones - Pitch transpose in semitones (0 = unchanged).
  * @param formantFactor - Formant scale (> 1 brighter, < 1 darker, 1 = neutral).
+ * @param formantMode - How the formant factor relates to the pitch shift.
  * @throws Error when the module does not provide voiceChange.
  * @throws RangeError when pitchSemitones is not finite or formantFactor <= 0.
  */
@@ -440,6 +501,7 @@ export function voiceChangeRange(
   sampleRate: number,
   pitchSemitones: number,
   formantFactor: number,
+  formantMode: FormantMode,
   range?: SampleRange | null,
 ): Float32Array[] {
   const fn = ops.voiceChange;
@@ -453,7 +515,7 @@ export function voiceChangeRange(
     throw new RangeError(`formantFactor must be > 0, got ${formantFactor}`);
   }
   return applyToRange(channels, range, (segment) =>
-    fn(segment, sampleRate, { pitchSemitones, formantFactor }),
+    fn(segment, sampleRate, { pitchSemitones, formantFactor, formantMode }),
   );
 }
 
@@ -869,6 +931,65 @@ export function trimSilenceRange(
     throw new Error('Trim silence is unavailable in this libsonare build');
   }
   return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+}
+
+/**
+ * Measures the range's repair defects on every channel and returns libsonare's
+ * recommended stages with their settings.
+ *
+ * @throws Error when the module does not provide masteringRepairAnalyze.
+ * @throws RangeError on an empty range.
+ */
+export function analyzeRepairRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  range?: SampleRange | null,
+): MasteringRepairAnalysis {
+  const fn = ops.masteringRepairAnalyze;
+  if (typeof fn !== 'function') {
+    throw new Error('Repair analysis is unavailable in this libsonare build');
+  }
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  return fn({
+    channels: channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
+    sampleRate,
+  });
+}
+
+/**
+ * Applies repair stages to every channel of the range in one libsonare call,
+ * so the linked stages take one decision across the channel set.
+ *
+ * @param stages - Stages with their settings, as the analysis recommends them.
+ * @throws Error when the module does not provide masteringRepairApply.
+ * @throws RangeError on an empty range or an empty stage list.
+ */
+export function repairStagesRange(
+  ops: SampleEditorWasmOps,
+  channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
+  stages: ReadonlyArray<MasteringRepairStage>,
+  range?: SampleRange | null,
+): Float32Array[] {
+  const fn = ops.masteringRepairApply;
+  if (typeof fn !== 'function') {
+    throw new Error('Repair is unavailable in this libsonare build');
+  }
+  if (stages.length === 0) throw new RangeError('Choose at least one repair stage');
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  const out = fn({
+    channels: channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
+    sampleRate,
+    stages: [...stages],
+  });
+  return spliceRange(channels, resolved, out.channels);
 }
 
 /**
