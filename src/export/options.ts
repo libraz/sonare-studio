@@ -6,6 +6,7 @@
  */
 
 import { zipSync } from 'fflate';
+import { MAX_RELEASE_TAIL_SECONDS } from '@/export/engine-render-types';
 import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES, MEBIBYTE } from '@/export/memory-budget';
 import type { MixdownRangePpq, MixdownReport } from '@/export/mixdown';
 import { dbToLinear } from '@/lib/db';
@@ -232,9 +233,9 @@ export function validateExportOptions(
   if (
     !Number.isFinite(model.releaseTailSeconds) ||
     model.releaseTailSeconds < 0 ||
-    model.releaseTailSeconds > 120
+    model.releaseTailSeconds > MAX_RELEASE_TAIL_SECONDS
   ) {
-    errors.push('Release tail must be between 0 and 120 seconds');
+    errors.push(`Release tail must be between 0 and ${MAX_RELEASE_TAIL_SECONDS} seconds`);
   }
   if (!isExportMemoryBudgetMiB(model.memoryBudgetMiB)) {
     errors.push(`Unsupported export memory budget: ${String(model.memoryBudgetMiB)} MiB`);

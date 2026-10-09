@@ -4,6 +4,7 @@
  * parameter namespace mirrors the facade encoding the live sync layers use.
  */
 
+import type { InsertTailResolver } from '@/export/audio-preflight';
 import type { ClipPageBindingFactory } from '@/export/clip-page-stream';
 import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
@@ -34,6 +35,9 @@ export const BLOCKS_PER_CHECKPOINT = 32;
 
 /** Release tail appended after the last clip for 'project' renders, in seconds. */
 export const RELEASE_TAIL_SECONDS = 2;
+
+/** Longest release tail an engine-derived tail may request, in seconds (an unbounded tail lands here). */
+export const MAX_RELEASE_TAIL_SECONDS = 120;
 
 /**
  * Audible pre-roll rendered and discarded before the capture window, in
@@ -92,6 +96,8 @@ export type OfflineRenderEngine = Pick<
   | 'process'
   | 'destroy'
 > & {
+  /** Longest audible tail after the last input, in samples (2147483647 = unbounded). */
+  tailSamples?: () => number;
   /** Apply one complete setup SysEx frame to an already-bound SF2 player. */
   pushMidiSysex?: (destinationId: number, data: Uint8Array, renderFrame?: number) => void;
   /** Key a bus insert from a track or another bus (new libsonare ABI). */
@@ -142,6 +148,12 @@ export interface EngineRenderOptions {
   range?: MixdownRange;
   /** Release tail appended after the final clip for project-range renders (default 2 seconds). */
   releaseTailSeconds?: number;
+  /**
+   * Derive the release tail from the configured engine's reported tail (capped
+   * at {@link MAX_RELEASE_TAIL_SECONDS}) instead of `releaseTailSeconds`, which
+   * still applies when the engine cannot report one.
+   */
+  releaseTailFromEngine?: boolean;
   /** Also append the release tail to an explicit PPQ range (used by bounce-in-place). */
   appendReleaseTailForExplicitRange?: boolean;
   /** Loop window used when range is 'loop'. */
@@ -217,6 +229,8 @@ export interface EngineRenderOptions {
   resampleAudio?: (samples: Float32Array, sourceRate: number, targetRate: number) => Float32Array;
   /** Optional processor-latency resolver used for automatic track PDC. */
   insertLatency?: InsertLatencyResolver;
+  /** Optional insert tail resolver used to size the stateful-DSP pre-roll. */
+  insertTail?: InsertTailResolver;
   /**
    * Mastering processor capability lookup deciding which automated rack stages
    * can run as engine strip inserts. Defaults to the wasm processor catalog;

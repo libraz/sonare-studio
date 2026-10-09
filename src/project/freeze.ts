@@ -7,7 +7,6 @@
  */
 
 import { resolvePresetName } from '@/engine/instruments';
-import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
 import { renderProjectWithEngine } from '@/export/engine-render';
 import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { OperationGeneration } from '@/lib/operation-generation';
@@ -85,15 +84,6 @@ async function renderFrozen(
   const { render, yieldBetweenBlocks } = resolveSeams(options);
   const wasm = await ensureWasm();
   if (shouldCancel()) throw new DOMException('Freeze render was superseded.', 'AbortError');
-  // Freezes are pre-fader, send-free renders, so only the target track's own
-  // time effects can leave audible material after its clips end.
-  const releaseTailSeconds = suggestedTailSeconds(
-    activeTimeEffectSlots(doc, new Set([trackIndex]), {
-      includeBuses: false,
-      includeMaster: false,
-      includeMastering: false,
-    }),
-  );
   return render(doc, {
     freezeTrackIndex: trackIndex,
     deps: null,
@@ -101,7 +91,7 @@ async function renderFrozen(
     memoryBudgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
     shouldCancel,
     yieldBetweenBlocks,
-    releaseTailSeconds,
+    releaseTailFromEngine: true,
     appendReleaseTailForExplicitRange: range !== null,
     ...(range !== null ? { range } : {}),
   });

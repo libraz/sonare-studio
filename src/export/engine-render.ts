@@ -55,7 +55,12 @@ import {
 import { resolvePresetName } from '@/engine/instruments';
 import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { busSceneJson, MAX_ENGINE_BUSES, stripSceneJson } from '@/engine/strip-sync';
-import { activeTimeEffectSlots, suggestedTailSeconds } from '@/export/audio-preflight';
+import {
+  estimatedTailSeconds,
+  type InsertTailCatalogEntry,
+  type InsertTailResolver,
+  insertTailResolverFromTiming,
+} from '@/export/audio-preflight';
 import { planAudioClipStreams } from '@/export/clip-page-plan';
 import { AudioClipStreamSession, type PagedClipSpec } from '@/export/clip-page-stream';
 import {
@@ -139,9 +144,11 @@ import {
   type EngineClipSpec,
   type EngineRenderOptions,
   MAX_PREROLL_SECONDS,
+  MAX_RELEASE_TAIL_SECONDS,
   masterParamId,
   type OfflineRenderEngine,
   PREROLL_SECONDS,
+  RELEASE_TAIL_SECONDS,
   RENDER_BLOCK_FRAMES,
   type RenderPass,
   resolveRange,
@@ -180,6 +187,25 @@ export function offlineAutomationLimitations(
   return limitations;
 }
 
+/** Level below which a release tail counts as decayed (the engine's own tail criterion). */
+const DECAYED_TAIL_LEVEL = 1e-5;
+
+/**
+ * Cuts the trailing frames after `floorFrame` that stay below
+ * {@link DECAYED_TAIL_LEVEL} on every channel; frames before it are kept.
+ */
+export function trimDecayedTail(channels: Float32Array[], floorFrame: number): Float32Array[] {
+  const length = channels[0]?.length ?? 0;
+  let end = length;
+  while (
+    end > floorFrame &&
+    channels.every((channel) => Math.abs(channel[end - 1]) < DECAYED_TAIL_LEVEL)
+  ) {
+    end -= 1;
+  }
+  return end === length ? channels : channels.map((channel) => channel.slice(0, end));
+}
+
 /**
  * Renders a project document to a stereo mixdown (and optional per-track
  * stems) through offline engine instances. See the module doc comment for
@@ -208,6 +234,7 @@ export async function renderProjectWithEngine(
   const loadFontBytes = options.loadFont ?? loadFont;
   let resolvePreset = options.resolvePreset ?? ((preset: string) => preset);
   let resolveInsertLatency: InsertLatencyResolver = options.insertLatency ?? (() => 0);
+  let resolveInsertTail: InsertTailResolver = options.insertTail ?? (() => 0);
   const checkCancel = () => {
     if (options.shouldCancel?.()) throw new MixdownCancelledError();
   };
@@ -232,11 +259,20 @@ export async function renderProjectWithEngine(
     }
     const catalog = (
       wasm as unknown as {
-        masteringProcessorCatalog?: () => Array<InsertLatencyCatalogEntry & MasteringCatalogEntry>;
+        masteringProcessorCatalog?: () => Array<
+          InsertLatencyCatalogEntry & InsertTailCatalogEntry & MasteringCatalogEntry
+        >;
       }
     ).masteringProcessorCatalog?.();
     if (!options.insertLatency) {
       resolveInsertLatency = insertLatencyResolverFromCatalog(
+        catalog,
+        sampleRate,
+        wasm.masteringInsertTiming,
+      );
+    }
+    if (!options.insertTail) {
+      resolveInsertTail = insertTailResolverFromTiming(
         catalog,
         sampleRate,
         wasm.masteringInsertTiming,
@@ -284,12 +320,10 @@ export async function renderProjectWithEngine(
     MAX_PREROLL_SECONDS,
     Math.max(
       PREROLL_SECONDS,
-      suggestedTailSeconds(
-        activeTimeEffectSlots(doc, renderContributorIndices, {
-          includeMaster: includeMasterChain,
-          includeMastering: includeMasterChain,
-        }),
-      ),
+      estimatedTailSeconds(doc, renderContributorIndices, resolveInsertTail, {
+        includeMaster: includeMasterChain,
+        includeMastering: includeMasterChain,
+      }),
     ),
   );
   // The capture range remains the user-selected window. Audio scheduling and
@@ -591,56 +625,6 @@ export async function renderProjectWithEngine(
     streamedKeys,
   });
 
-  // Resolve the render window in frames. Paged clips carry no buffer, so the
-  // window has to hear about them through their planned length.
-  const { startSample, totalFrames } = resolveRenderWindow(
-    doc,
-    tempoMap,
-    range,
-    sampleRate,
-    options.releaseTailSeconds,
-    [
-      ...sourceAudioClips,
-      ...clipStreamPlans.map((plan) => ({
-        startPpq: plan.startPpq,
-        lengthSamples: plan.frameCount,
-      })),
-    ],
-    renderContributorIndices,
-    options.appendReleaseTailForExplicitRange,
-  );
-  // Asset metadata is optional for injected render dependencies. Prepared
-  // audio can extend the final window beyond the earlier inexpensive estimate.
-  assertMasteringBufferWithinLimit({
-    totalFrames,
-    sampleRate,
-    includeMasterChain,
-    usesPreset:
-      masteringPlan !== null && chain?.preset !== undefined && mastering?.applyPreset !== undefined,
-    wholeBufferProcessorCount:
-      masteringPlan?.stages.filter((stage) => stage.kind === 'whole-buffer').length ?? 0,
-  });
-  if (options.memoryBudgetBytes !== undefined) {
-    const preparedClipBytes = sourceAudioClips.reduce(
-      (sum, clip) =>
-        sum + clip.channels.reduce((channelSum, channel) => channelSum + channel.byteLength, 0),
-      0,
-    );
-    assertRenderPayloadMemory(
-      estimateRenderPayloadMemory({
-        totalFrames,
-        stemCount,
-        streamingStems: options.onStem !== undefined,
-        streamingMixdown: streamingMixdownEligible,
-        transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
-        retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
-        sourceAudioBytes: audioMemory.sourceAudioBytes,
-        preparedClipBytes,
-        soundFontBytes,
-      }),
-      options.memoryBudgetBytes,
-    );
-  }
   // Project documents use positional `groupIndex` membership while the live
   // editor plan uses stable numeric track ids in `groupId`. Build the exact
   // equivalent identity graph before deriving PDC, otherwise group-bus insert
@@ -663,6 +647,7 @@ export async function renderProjectWithEngine(
     engine: OfflineRenderEngine,
     pass: RenderPass,
     pagedClips: ReadonlyArray<PagedClipSpec> = [],
+    includeClips = true,
   ): void => {
     const supportsBusEq = typeof engine.setBusStripEqBandJson === 'function';
     const supportsBusInsertBypass = typeof engine.setBusStripInsertBypassed === 'function';
@@ -1195,8 +1180,118 @@ export async function renderProjectWithEngine(
     engine.setWarpVoiceCapacity(
       Math.min(MAX_WARP_VOICES, Math.max(DEFAULT_WARP_VOICES, warpedClips)),
     );
-    if (passClips.length > 0) engine.setClips(passClips as EngineClipSpec[]);
+    if (includeClips && passClips.length > 0) engine.setClips(passClips as EngineClipSpec[]);
   };
+
+  // The engine reports the longest audible tail once the program is installed;
+  // a throwaway engine holding only the strips and instruments measures it.
+  const freezeIndex = options.freezeTrackIndex;
+  if (freezeIndex !== undefined) {
+    if (!Number.isInteger(freezeIndex) || freezeIndex < 0 || freezeIndex >= doc.tracks.length) {
+      throw new RangeError(`Freeze track index ${freezeIndex} is out of range`);
+    }
+    if (doc.tracks[freezeIndex].kind === 'group') {
+      throw new RangeError('Group tracks cannot be frozen');
+    }
+  }
+  const freezePass: RenderPass | null =
+    freezeIndex === undefined
+      ? null
+      : {
+          masterStrip: false,
+          masterLevels: false,
+          stemIndices: new Set([freezeIndex]),
+          stemRouting: 'document',
+          separateReturnStems: false,
+          busStemId: null,
+          freezeIndex,
+          sf2TrackIndices: activeSf2TrackIndices.has(freezeIndex)
+            ? new Set([freezeIndex])
+            : new Set(),
+          usePreRenderedSf2: false,
+        };
+  let releaseTailSeconds = options.releaseTailSeconds;
+  if (options.releaseTailFromEngine) {
+    const probe = (createEngine as NonNullable<typeof createEngine>)(
+      sampleRate,
+      RENDER_BLOCK_FRAMES,
+    );
+    try {
+      configureEngine(
+        probe,
+        freezePass ?? {
+          masterStrip: includeMasterChain,
+          masterLevels: true,
+          stemIndices: null,
+          stemRouting: 'document',
+          separateReturnStems: false,
+          busStemId: null,
+          freezeIndex: null,
+          sf2TrackIndices: activeSf2TrackIndices,
+          usePreRenderedSf2: false,
+        },
+        [],
+        false,
+      );
+      const tailSamples = probe.tailSamples?.();
+      if (tailSamples !== undefined && Number.isFinite(tailSamples) && tailSamples >= 0) {
+        releaseTailSeconds = Math.min(MAX_RELEASE_TAIL_SECONDS, tailSamples / sampleRate);
+      }
+    } finally {
+      probe.destroy();
+    }
+  }
+
+  // Resolve the render window in frames. Paged clips carry no buffer, so the
+  // window has to hear about them through their planned length.
+  const { startSample, totalFrames } = resolveRenderWindow(
+    doc,
+    tempoMap,
+    range,
+    sampleRate,
+    releaseTailSeconds,
+    [
+      ...sourceAudioClips,
+      ...clipStreamPlans.map((plan) => ({
+        startPpq: plan.startPpq,
+        lengthSamples: plan.frameCount,
+      })),
+    ],
+    renderContributorIndices,
+    options.appendReleaseTailForExplicitRange,
+  );
+  // Asset metadata is optional for injected render dependencies. Prepared
+  // audio can extend the final window beyond the earlier inexpensive estimate.
+  assertMasteringBufferWithinLimit({
+    totalFrames,
+    sampleRate,
+    includeMasterChain,
+    usesPreset:
+      masteringPlan !== null && chain?.preset !== undefined && mastering?.applyPreset !== undefined,
+    wholeBufferProcessorCount:
+      masteringPlan?.stages.filter((stage) => stage.kind === 'whole-buffer').length ?? 0,
+  });
+  if (options.memoryBudgetBytes !== undefined) {
+    const preparedClipBytes = sourceAudioClips.reduce(
+      (sum, clip) =>
+        sum + clip.channels.reduce((channelSum, channel) => channelSum + channel.byteLength, 0),
+      0,
+    );
+    assertRenderPayloadMemory(
+      estimateRenderPayloadMemory({
+        totalFrames,
+        stemCount,
+        streamingStems: options.onStem !== undefined,
+        streamingMixdown: streamingMixdownEligible,
+        transientStereoBuffers: streamingMixdownEligible ? 0 : undefined,
+        retainedAuxiliaryStereoBuffers: conflictingSf2TrackIndices.size,
+        sourceAudioBytes: audioMemory.sourceAudioBytes,
+        preparedClipBytes,
+        soundFontBytes,
+      }),
+      options.memoryBudgetBytes,
+    );
+  }
 
   /**
    * Drives one engine pass block by block over the render window, mapping its
@@ -1328,32 +1423,16 @@ export async function renderProjectWithEngine(
 
   // A freeze render is a single isolated pre-fader pass; everything else
   // renders the mix (and optional stems).
-  if (options.freezeTrackIndex !== undefined) {
-    const freezeIndex = options.freezeTrackIndex;
-    if (!Number.isInteger(freezeIndex) || freezeIndex < 0 || freezeIndex >= doc.tracks.length) {
-      throw new RangeError(`Freeze track index ${freezeIndex} is out of range`);
+  if (freezePass !== null) {
+    let channels = await runPass(freezePass, 'engine.freeze', 0, 0.9);
+    if (options.releaseTailFromEngine) {
+      // The engine tail is an upper bound; drop the appended part that has decayed out.
+      const appendedFrames =
+        range.endPpq === null || options.appendReleaseTailForExplicitRange
+          ? Math.round(Math.max(0, releaseTailSeconds ?? RELEASE_TAIL_SECONDS) * sampleRate)
+          : 0;
+      channels = trimDecayedTail(channels, Math.max(0, totalFrames - appendedFrames));
     }
-    if (doc.tracks[freezeIndex].kind === 'group') {
-      throw new RangeError('Group tracks cannot be frozen');
-    }
-    const channels = await runPass(
-      {
-        masterStrip: false,
-        masterLevels: false,
-        stemIndices: new Set([freezeIndex]),
-        stemRouting: 'document',
-        separateReturnStems: false,
-        busStemId: null,
-        freezeIndex,
-        sf2TrackIndices: activeSf2TrackIndices.has(freezeIndex)
-          ? new Set([freezeIndex])
-          : new Set(),
-        usePreRenderedSf2: false,
-      },
-      'engine.freeze',
-      0,
-      0.9,
-    );
     options.onProgress?.(1, 'done');
     let freezePeak = 0;
     for (const channel of channels) {
@@ -1365,7 +1444,7 @@ export async function renderProjectWithEngine(
     return {
       channels,
       sampleRate,
-      totalFrames,
+      totalFrames: channels[0]?.length ?? 0,
       report: {
         peakDb: peakDb(freezePeak),
       },

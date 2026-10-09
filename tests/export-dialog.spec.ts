@@ -20,6 +20,13 @@ import type {
 import type { ExportRenderOptions } from '@/workers/export.worker';
 import { chooseOption, openOptionLabels } from './helpers/select-menu';
 
+// Preflight asks the engine for insert tails; the fake module answers without loading WASM.
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
+
 // AppModal teleports its content (and SelectMenu its dropdown) to <body>, so the
 // dialog is queried through the document rather than the wrapper, and events are
 // dispatched natively. The mounts use attachTo: document.body so the teleported

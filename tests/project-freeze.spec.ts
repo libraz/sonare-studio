@@ -104,13 +104,13 @@ describe('track freeze and bounce-in-place', () => {
       expect(store.tracks[0].frozen).toEqual({ assetId: 'baked-1' });
     });
 
-    it('uses the target track release time instead of a fixed freeze tail', async () => {
+    it('takes the release tail from the engine instead of a fixed freeze tail', async () => {
       const voxId = addAudioTrack({ name: 'Vox' });
       addInsert(voxId, 'effects.reverb.plate', { decaySeconds: 6 });
 
       await freezeTrack(voxId, { render, ingest });
 
-      expect(render.mock.calls[0][1]).toMatchObject({ releaseTailSeconds: 6 });
+      expect(render.mock.calls[0][1]).toMatchObject({ releaseTailFromEngine: true });
     });
 
     it('is one undoable edit and unfreezeTrack reverts it', async () => {
@@ -248,7 +248,7 @@ describe('track freeze and bounce-in-place', () => {
       const clipId = await bounceTrackRange(gtrId, 4, 12, { render, ingest });
 
       expect(render.mock.calls[0][1]).toMatchObject({
-        releaseTailSeconds: 6,
+        releaseTailFromEngine: true,
         appendReleaseTailForExplicitRange: true,
       });
       expect(store.clips.find((clip) => clip.id === clipId)?.lengthPpq).toBe(8);

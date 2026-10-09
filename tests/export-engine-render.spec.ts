@@ -3,8 +3,13 @@ import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import type { OfflineRenderEngine } from '@/export/engine-render';
-import { offlineAutomationLimitations, renderProjectWithEngine } from '@/export/engine-render';
+import {
+  offlineAutomationLimitations,
+  renderProjectWithEngine,
+  trimDecayedTail,
+} from '@/export/engine-render';
 import { buildMidiSchedules } from '@/export/engine-render-context';
+import { MAX_RELEASE_TAIL_SECONDS } from '@/export/engine-render-types';
 import { MixdownCancelledError } from '@/export/mixdown';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
@@ -52,6 +57,8 @@ class FakeEngine implements OfflineRenderEngine {
   destroyed = false;
   /** Sample value process() writes into every frame. */
   fill = 0.25;
+  /** Value tailSamples() reports. */
+  tail = 0;
 
   private record(name: string, ...args: unknown[]): void {
     this.calls.push([name, ...args]);
@@ -162,6 +169,9 @@ class FakeEngine implements OfflineRenderEngine {
   }
   warpStretchOverflowCount(): number {
     return 0;
+  }
+  tailSamples(): number {
+    return this.tail;
   }
   setMidiClips(clips: unknown): void {
     this.record('setMidiClips', clips);
@@ -1149,6 +1159,65 @@ describe('renderProjectWithEngine', () => {
     expect(result.totalFrames).toBe(2 * SAMPLES_PER_PPQ + 1.5 * 48000);
   });
 
+  it('sizes the release tail from the engine-reported tail on request', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const engines: FakeEngine[] = [];
+    const result = await renderProjectWithEngine(doc, {
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engine.tail = 3 * 48000;
+        engines.push(engine);
+        return engine;
+      },
+      releaseTailSeconds: 1,
+      releaseTailFromEngine: true,
+    });
+
+    // Content ends at ppq 4 (2 s at 120 BPM); the engine tail replaces the 1 s option.
+    expect(result.totalFrames).toBe(2 * 48000 + 3 * 48000);
+    // The measuring engine holds the program but no clips, and is released.
+    expect(engines).toHaveLength(2);
+    expect(engines[0].destroyed).toBe(true);
+    expect(engines[0].named('setClips')).toEqual([]);
+    expect(engines[0].named('setTrackLanes')).toHaveLength(1);
+  });
+
+  it('trims only the decayed part of an appended tail', () => {
+    const left = Float32Array.from([0.5, 0, 0, 0.2, 1e-6, 0, 0]);
+    const right = Float32Array.from([0.5, 0, 0, 0, 0, 2e-5, 0]);
+    // The right channel still rings at frame 5, so frames up to it stay.
+    expect(trimDecayedTail([left, right], 2).map((channel) => channel.length)).toEqual([6, 6]);
+    // Below the floor nothing is cut, even when silent.
+    const silent = [new Float32Array(4), new Float32Array(4)];
+    expect(trimDecayedTail(silent, 3).map((channel) => channel.length)).toEqual([3, 3]);
+    const loud = [Float32Array.from([1, 1]), Float32Array.from([1, 1])];
+    expect(trimDecayedTail(loud, 0)).toBe(loud);
+  });
+
+  it('caps an unbounded engine tail and ignores one the engine cannot report', async () => {
+    const make = (tail: number | null) => ({
+      deps: null,
+      loadAudioAsset: async () => fakeAsset(),
+      createEngine: () => {
+        const engine = new FakeEngine();
+        engine.tail = tail ?? 0;
+        if (tail === null) (engine as { tailSamples?: unknown }).tailSamples = undefined;
+        return engine;
+      },
+      range: { startPpq: 0, endPpq: 4 },
+      appendReleaseTailForExplicitRange: true,
+      releaseTailSeconds: 1,
+      releaseTailFromEngine: true,
+    });
+    const unbounded = await renderProjectWithEngine(makeDoc(), make(2147483647));
+    expect(unbounded.totalFrames).toBe(2 * 48000 + MAX_RELEASE_TAIL_SECONDS * 48000);
+    const silent = await renderProjectWithEngine(makeDoc(), make(null));
+    expect(silent.totalFrames).toBe(2 * 48000 + 48000);
+  });
+
   it('uses bounded time-effect history before a windowed render', async () => {
     const doc = makeDoc();
     doc.mixer = {
@@ -1164,6 +1233,7 @@ describe('renderProjectWithEngine', () => {
       ...renderOptions(engine),
       range: { startPpq: 30, endPpq: 31 },
       releaseTailSeconds: 0,
+      insertTail: () => 20,
     });
 
     // The 20-second release suggestion is capped at 10 seconds. At 120 BPM,
@@ -2221,6 +2291,7 @@ describe('renderProjectWithEngine', () => {
     await renderProjectWithEngine(doc, {
       ...renderOptions(engine),
       range: { startPpq: 4, endPpq: 5 },
+      insertTail: () => 5,
       loadFont,
     });
 

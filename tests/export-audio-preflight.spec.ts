@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { audioExportPreflight } from '@/export/audio-preflight';
+import {
+  audioExportPreflight,
+  estimatedTailSeconds,
+  insertTailResolverFromTiming,
+} from '@/export/audio-preflight';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import type { ProjectDocument } from '@/project/serialization';
 
@@ -113,6 +117,7 @@ describe('audioExportPreflight', () => {
     const result = await audioExportPreflight(source, {
       range: 'project',
       releaseTailSeconds: 2,
+      insertTail: () => 8,
       loadAudioAsset: async (id) => loaded(id),
     });
     expect(result.warnings).toEqual([
@@ -397,5 +402,74 @@ describe('audioExportPreflight', () => {
         releaseTailSeconds: 0,
       }),
     ).resolves.toEqual({ blockers: [], warnings: [] });
+  });
+
+  describe('tail estimate', () => {
+    const slot = (processor: string, enabled = true) => ({ processor, enabled, params: {} });
+    const strip = (...inserts: ReturnType<typeof slot>[]) => ({
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts,
+    });
+    const track = (name: string, inserts: ReturnType<typeof slot>[]) =>
+      ({
+        name,
+        color: '#000',
+        kind: 'audio',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        mixer: strip(...inserts),
+        clips: [],
+      }) as ProjectDocument['tracks'][number];
+    const seconds: Record<string, number> = { a: 2, b: 3, m: 4 };
+    const resolve = (entry: { processor: string }) => seconds[entry.processor] ?? 0;
+
+    it('sums a chain, takes the longest lane and adds the master chain', () => {
+      const source = doc();
+      source.tracks = [track('One', [slot('a'), slot('b')]), track('Two', [slot('a')])];
+      source.mixer = {
+        master: strip(slot('m'), slot('a', false)),
+      } as unknown as ProjectDocument['mixer'];
+      expect(estimatedTailSeconds(source, new Set([0, 1]), resolve)).toBe(2 + 3 + 4);
+      expect(estimatedTailSeconds(source, new Set([1]), resolve)).toBe(2 + 4);
+      expect(estimatedTailSeconds(source, new Set([0]), resolve, { includeMaster: false })).toBe(5);
+    });
+
+    it('asks the engine with every key, then build keys, then the catalog default', () => {
+      const timing = vi.fn((_name: string, params: Record<string, number | boolean>) => {
+        if ('mix' in params) throw new Error('key not read at build time');
+        return { tailSamples: params.feedback === 0.5 ? 96000 : 48000 };
+      });
+      const catalog = [
+        {
+          id: 'effects.delay.stereo',
+          tailSamples: 24000,
+          params: [
+            { name: 'feedback', id: null },
+            { name: 'mix', id: 7 },
+          ],
+        },
+      ];
+      const resolver = insertTailResolverFromTiming(catalog, 48000, timing);
+      expect(resolver({ processor: 'effects.delay.stereo', params: { feedback: 0.5 } })).toBe(2);
+      expect(
+        resolver({ processor: 'effects.delay.stereo', params: { feedback: 0.5, mix: 0.3 } }),
+      ).toBe(2);
+      expect(resolver({ processor: 'unknown', params: {} })).toBe(0);
+      const refusing = insertTailResolverFromTiming(catalog, 48000, () => {
+        throw new Error('refused');
+      });
+      expect(refusing({ processor: 'effects.delay.stereo', params: {} })).toBe(0.5);
+    });
+
+    it('caps an unbounded engine answer', () => {
+      const resolver = insertTailResolverFromTiming([{ id: 'x' }], 48000, () => ({
+        tailSamples: 2147483647,
+      }));
+      expect(resolver({ processor: 'x', params: {} })).toBe(120);
+    });
   });
 });
