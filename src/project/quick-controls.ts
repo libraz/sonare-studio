@@ -29,7 +29,6 @@ import {
   setInsertParam,
   setTrackInstrument,
 } from './commands';
-import { INSERT_PARAM_DOMAIN_FALLBACK, insertParamDomain } from './insert-param-domains';
 import {
   isNativeSynthInstrument,
   type StoredSynthPatch,
@@ -40,6 +39,8 @@ import type { InsertSlot, MixerStrip } from './mixer';
 import {
   catalogParamInfo,
   catalogSlots,
+  clampToAccepted,
+  liveSiblingValue,
   type ProcessorControl,
   type ProcessorControlValue,
   type ProcessorEnumOption,
@@ -609,15 +610,12 @@ export function setQuickControl(
     setInsertParam(target.trackId, target.index, id, value as number | boolean, options);
     return;
   }
-  // The app-side range catalog is a drawing/interaction convenience, not an
-  // engine contract, so only an explicit domain narrows the value; a harmless
-  // LFO rate such as 2 Hz is not silently turned into 20 Hz. The catalog's
-  // bounds are what construction accepts and always apply.
-  const hasExplicitDomain = insertParamDomain(slot.processor, id) !== INSERT_PARAM_DOMAIN_FALLBACK;
-  const bounded = Math.min(
-    paramInfo?.max ?? Number.POSITIVE_INFINITY,
-    Math.max(paramInfo?.min ?? Number.NEGATIVE_INFINITY, value as number),
+  // The display range only draws the knob; the accepted bounds and the
+  // sibling keys this one depends on are what bound a typed value.
+  const next = clampToAccepted(
+    control,
+    value as number,
+    liveSiblingValue(slot.processor, slot.params),
   );
-  const next = hasExplicitDomain ? Math.min(control.max, Math.max(control.min, bounded)) : bounded;
   setInsertParam(target.trackId, target.index, id, next, options);
 }

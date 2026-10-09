@@ -5,12 +5,19 @@
  * needs to know how each value is edited. The engine's insert catalog
  * (masteringInsertParamInfo) is authoritative for that: its type, choices and
  * default decide whether a key is a toggle, a menu or a knob, and a key with no
- * automation id is read only when the insert is built. Names alone decide only
- * for a key the catalog does not describe.
+ * automation id is read only when the insert is built. The descriptor also
+ * supplies the display range (uiMin/uiMax), axis, unit, exclusive bounds, the
+ * Nyquist ceiling and sibling dependencies. Names decide only for what the
+ * descriptor leaves open.
  */
 
 import { formatControlValue } from '@/ui/devices/knob-math';
-import type { MasteringInsertParamInfo, MasteringInsertSlot } from '@/wasm/index.js';
+import type {
+  MasteringInsertParamDependency,
+  MasteringInsertParamInfo,
+  MasteringInsertParamUnit,
+  MasteringInsertSlot,
+} from '@/wasm/index.js';
 import { type AutomationParam, parseInsertAutomationParam } from './automation';
 import { insertIndexForAutomationRef } from './automation-insert';
 import {
@@ -42,11 +49,24 @@ interface ProcessorControlBase {
 export interface NumberProcessorControl extends ProcessorControlBase {
   kind: 'number';
   value: number;
+  /** Display range; the accepted range in {@link accepts} may be wider. */
   min: number;
   max: number;
   scale?: 'linear' | 'log';
   defaultValue: number;
   unit?: string;
+  /** What the engine accepts, when the catalog states it. */
+  accepts?: NumberAcceptance;
+  /** Siblings whose live value bounds this one, read as `this <relation> sibling`. */
+  dependsOn?: ReadonlyArray<MasteringInsertParamDependency>;
+}
+
+/** Accepted range of a numeric parameter; null ends are unbounded. */
+export interface NumberAcceptance {
+  min: number | null;
+  max: number | null;
+  minExclusive: boolean;
+  maxExclusive: boolean;
 }
 
 /** A boolean parameter rendered as a toggle button. */
@@ -79,7 +99,20 @@ export type ProcessorParamInfo = Pick<
   MasteringInsertParamInfo,
   'name' | 'type' | 'unit' | 'min' | 'max' | 'default'
 > &
-  Partial<Pick<MasteringInsertParamInfo, 'id' | 'choices' | 'slot'>>;
+  Partial<
+    Pick<
+      MasteringInsertParamInfo,
+      | 'id'
+      | 'choices'
+      | 'slot'
+      | 'uiMin'
+      | 'uiMax'
+      | 'scale'
+      | 'minExclusive'
+      | 'maxExclusive'
+      | 'dependsOn'
+    >
+  >;
 
 interface NumberControlSpec {
   kind: 'number';
@@ -88,6 +121,8 @@ interface NumberControlSpec {
   scale?: 'linear' | 'log';
   unit?: string;
   defaultValue: number;
+  accepts?: NumberAcceptance;
+  dependsOn?: ReadonlyArray<MasteringInsertParamDependency>;
 }
 
 interface BooleanControlSpec {
@@ -149,7 +184,11 @@ interface ParamRangeRule {
   defaultValue: number;
 }
 
-/** Shared fallback domains for unknown/custom insert parameters. */
+/**
+ * Hand windows for parameters whose descriptor states no display range or
+ * bounds (open-ended gains, thresholds, times and frequencies). A descriptor
+ * uiMin/uiMax or finite bound always replaces the matching end.
+ */
 const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /thresholdDb$/i, min: -60, max: 0, unit: 'dB', defaultValue: -24 },
   { test: /Db$/i, min: -24, max: 24, unit: 'dB', defaultValue: 0 },
@@ -157,7 +196,39 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /Ms$/i, min: 0, max: 5000, unit: 'ms', defaultValue: 10 },
   { test: /Hz$/i, min: 20, max: 20000, scale: 'log', unit: 'Hz', defaultValue: 1000 },
   { test: /^q$|Q$/u, min: 0.1, max: 18, scale: 'log', defaultValue: Math.SQRT1_2 },
+  // Power-of-two FFT size: the descriptor publishes no bounds for it.
+  { test: /^nFft$/u, min: 128, max: 8192, scale: 'log', unit: 'smp', defaultValue: 1024 },
 ];
+
+/** Readout suffix of each descriptor unit; '' shows a bare number. */
+const UNIT_LABELS: Readonly<Record<MasteringInsertParamUnit, string>> = {
+  dB: 'dB',
+  dBFS: 'dBFS',
+  LUFS: 'LUFS',
+  Hz: 'Hz',
+  ms: 'ms',
+  s: 's',
+  samples: 'smp',
+  m: 'm',
+  cm: 'cm',
+  deg: '°',
+  percent: '%',
+  degC: '°C',
+  V: 'V',
+  inPerSec: 'in/s',
+  dBPerOct: 'dB/oct',
+  semitones: 'st',
+  cents: 'ct',
+  ratio: '',
+  bits: 'bit',
+  count: '',
+  none: '',
+};
+
+/** Readout suffix for a descriptor unit; an unlisted unit shows as written. */
+export function unitLabel(unit: string): string {
+  return (UNIT_LABELS as Readonly<Record<string, string>>)[unit] ?? unit;
+}
 
 const DEFAULT_PARAM_RANGE: NumberControlSpec = {
   kind: 'number',
@@ -166,15 +237,26 @@ const DEFAULT_PARAM_RANGE: NumberControlSpec = {
   defaultValue: 0,
 };
 
-/** Parameter catalogs per loaded module; a build's catalog never changes. */
+/** Parameter catalogs per loaded module, keyed by processor and rate. */
 const catalogCache = new WeakMap<object, Map<string, MasteringInsertParamInfo[]>>();
 
 /** Construction-only key names per cached catalog entry list. */
 const constructionOnlyCache = new WeakMap<object, ReadonlySet<string>>();
 
+/** Rate the Nyquist-bounded ceilings are resolved at; undefined until the engine runs. */
+let processingSampleRate: number | undefined;
+
 /**
- * The loaded module's catalog metadata for one processor, or [] before the
- * module is initialized.
+ * Sets the project/engine rate that Nyquist-bounded insert ceilings resolve
+ * at. Controls built afterwards use the matching ceiling.
+ */
+export function setProcessingSampleRate(rate: number | undefined): void {
+  processingSampleRate = rate !== undefined && rate > 0 ? rate : undefined;
+}
+
+/**
+ * The loaded module's catalog metadata for one processor at the processing
+ * rate, or [] before the module is initialized.
  */
 export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] {
   let wasm: ReturnType<typeof getWasmModule>;
@@ -189,14 +271,20 @@ export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] 
     byProcessor = new Map();
     catalogCache.set(wasm, byProcessor);
   }
-  let entries = byProcessor.get(processor);
+  const key = `${processor}@${processingSampleRate ?? ''}`;
+  let entries = byProcessor.get(key);
   if (!entries) {
     try {
-      entries = wasm.masteringInsertParamInfo(processor);
+      entries = wasm.masteringInsertParamInfo(processor, processingSampleRate);
     } catch {
-      entries = [];
+      // A rate outside the supported range still has a rate-less answer.
+      try {
+        entries = wasm.masteringInsertParamInfo(processor);
+      } catch {
+        entries = [];
+      }
     }
-    byProcessor.set(processor, entries);
+    byProcessor.set(key, entries);
   }
   return entries;
 }
@@ -240,11 +328,21 @@ function clampToBounds(value: number, min: number | null, max: number | null): n
   return max === null ? floored : Math.min(max, floored);
 }
 
+/** Share of the display span a control stays clear of an exclusive bound by. */
+const EXCLUSIVE_INSET = 1e-3;
+
+/** Lowest log-axis end for a range that reaches zero: 20 Hz, else three decades under the top. */
+function logFloor(unit: string | null | undefined, max: number): number {
+  return unit === 'Hz' && max > 200 ? 20 : max / 1000;
+}
+
 /**
- * Resolves a numeric range: the app's display window (explicit domain, else a
- * name heuristic) narrowed to the catalog's hard bounds, with the catalog's
- * default when it publishes one. A parameter nothing in the app describes
- * takes the catalog bounds whole when both are finite.
+ * Resolves a numeric range. The window starts from the hand rules (a name
+ * heuristic, else the catalog bounds when both are finite), the descriptor's
+ * uiMin/uiMax replace its ends, and the result is narrowed to the accepted
+ * bounds. An end sitting on an exclusive bound is moved just inside it, and a
+ * log axis whose range reaches zero starts at a positive floor. The default
+ * is the catalog's when it publishes one.
  */
 export function processorNumberSpec(
   processor: string,
@@ -268,24 +366,50 @@ export function processorNumberSpec(
   } else {
     ({ min, max } = DEFAULT_PARAM_RANGE);
   }
+  min = info?.uiMin ?? min;
+  max = info?.uiMax ?? max;
   const narrowedMin = clampToBounds(min, hardMin, hardMax);
   const narrowedMax = clampToBounds(max, hardMin, hardMax);
   if (narrowedMax > narrowedMin) {
     min = narrowedMin;
     max = narrowedMax;
+  } else if (!(max > min)) {
+    max = min + 1;
   }
-  const scale = rule?.scale;
-  const unit = info?.unit || (hasDomain ? domain.unit : undefined) || rule?.unit;
+  const declaredUnit = info?.unit ? unitLabel(info.unit) : undefined;
+  const unit = declaredUnit ?? ((hasDomain ? domain.unit : '') || rule?.unit);
+  let scale = info?.scale === 'log' || (info?.scale === undefined && rule?.scale === 'log');
+  if (scale && min <= 0) {
+    if (max > 0) min = logFloor(info?.unit, max);
+    else scale = false;
+  } else if (info?.minExclusive && hardMin !== null && min === hardMin) {
+    min += (max - min) * EXCLUSIVE_INSET;
+  }
+  if (info?.maxExclusive && hardMax !== null && max === hardMax) {
+    max -= (max - min) * EXCLUSIVE_INSET;
+  }
   const fallbackDefault = rule?.defaultValue ?? DEFAULT_PARAM_RANGE.defaultValue;
   const catalogDefault =
     typeof info?.default === 'number' && Number.isFinite(info.default) ? info.default : undefined;
+  const accepts: NumberAcceptance | undefined =
+    info && (hardMin !== null || hardMax !== null)
+      ? {
+          min: hardMin,
+          max: hardMax,
+          minExclusive: info.minExclusive === true,
+          maxExclusive: info.maxExclusive === true,
+        }
+      : undefined;
+  const dependsOn = info?.dependsOn && info.dependsOn.length > 0 ? info.dependsOn : undefined;
   return {
     kind: 'number',
     min,
     max,
-    ...(scale !== undefined && min > 0 ? { scale } : {}),
+    ...(scale ? { scale: 'log' as const } : {}),
     ...(unit ? { unit } : {}),
     defaultValue: Math.min(max, Math.max(min, catalogDefault ?? fallbackDefault)),
+    ...(accepts ? { accepts } : {}),
+    ...(dependsOn ? { dependsOn } : {}),
   };
 }
 
@@ -379,6 +503,8 @@ export function processorControl(
     ...(spec.scale !== undefined && spec.min > 0 ? { scale: spec.scale } : {}),
     defaultValue: spec.defaultValue,
     ...(spec.unit !== undefined ? { unit: spec.unit } : {}),
+    ...(spec.accepts ? { accepts: spec.accepts } : {}),
+    ...(spec.dependsOn ? { dependsOn: spec.dependsOn } : {}),
   };
 }
 
@@ -424,14 +550,41 @@ export function editedProcessorParams<T extends Readonly<Record<string, unknown>
   param: string,
   value: number | boolean,
 ): T {
-  if (!CROSSOVER_CUTOFF.test(param)) return { ...params, [param]: value };
+  const bounded =
+    typeof value === 'number' ? withinSiblings(processor, params, param, value) : value;
+  if (!CROSSOVER_CUTOFF.test(param)) return { ...params, [param]: bounded };
   const kept = Object.fromEntries(
     cutoffsInEffect(catalogParamInfo(processor), params).map((cutoff) => [
       cutoff.name,
       cutoff.value,
     ]),
   );
-  return { ...kept, ...params, [param]: value };
+  return { ...kept, ...params, [param]: bounded };
+}
+
+/** A value held to the live value of each sibling its key depends on. */
+function withinSiblings(
+  processor: string,
+  params: Readonly<Record<string, unknown>>,
+  param: string,
+  value: number,
+): number {
+  const dependsOn = catalogParamInfo(processor).find((entry) => entry.name === param)?.dependsOn;
+  if (!dependsOn || dependsOn.length === 0) return value;
+  return clampToAccepted({ min: 0, max: 1, dependsOn }, value, liveSiblingValue(processor, params));
+}
+
+/** Reads a sibling key's live value: the stored one, else the catalog default. */
+export function liveSiblingValue(
+  processor: string,
+  params: Readonly<Record<string, unknown>>,
+): (key: string) => number | undefined {
+  return (key) => {
+    const set = params[key];
+    if (typeof set === 'number') return set;
+    const fallback = catalogParamInfo(processor).find((entry) => entry.name === key)?.default;
+    return typeof fallback === 'number' ? fallback : undefined;
+  };
 }
 
 /** Conditional key groups per loaded module, by processor. */
@@ -557,6 +710,13 @@ export function validateProcessorControlValue(
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw new RangeError(`Control "${control.id}" requires a finite number`);
     }
+    const { accepts } = control;
+    if (accepts?.minExclusive && accepts.min !== null && value <= accepts.min) {
+      throw new RangeError(`Control "${control.id}" must be greater than ${accepts.min}`);
+    }
+    if (accepts?.maxExclusive && accepts.max !== null && value >= accepts.max) {
+      throw new RangeError(`Control "${control.id}" must be less than ${accepts.max}`);
+    }
     return;
   }
   if (control.kind === 'boolean') {
@@ -568,6 +728,38 @@ export function validateProcessorControlValue(
   if (!control.options.some((option) => option.value === value)) {
     throw new RangeError(`Invalid value for enum control "${control.id}": ${String(value)}`);
   }
+}
+
+/**
+ * Clamps an edited number to what the engine accepts: the accepted bounds
+ * (an exclusive end is approached to just inside it) and each sibling the
+ * control depends on. The display range does not bound it.
+ *
+ * @param control The numeric control being edited.
+ * @param value Proposed value.
+ * @param sibling Live value of a sibling key, or undefined when it has none.
+ */
+export function clampToAccepted(
+  control: Pick<NumberProcessorControl, 'min' | 'max' | 'accepts' | 'dependsOn'>,
+  value: number,
+  sibling: (key: string) => number | undefined = () => undefined,
+): number {
+  const inset = (control.max - control.min) * EXCLUSIVE_INSET;
+  let lo = Number.NEGATIVE_INFINITY;
+  let hi = Number.POSITIVE_INFINITY;
+  const { accepts } = control;
+  if (accepts?.min != null) lo = accepts.min + (accepts.minExclusive ? inset : 0);
+  if (accepts?.max != null) hi = accepts.max - (accepts.maxExclusive ? inset : 0);
+  for (const dependency of control.dependsOn ?? []) {
+    const other = sibling(dependency.key);
+    if (other === undefined) continue;
+    const strict = dependency.relation === 'lt' || dependency.relation === 'gt';
+    const margin = strict ? (Number.isInteger(other) ? 1 : inset) : 0;
+    if (dependency.relation === 'le' || dependency.relation === 'lt')
+      hi = Math.min(hi, other - margin);
+    else lo = Math.max(lo, other + margin);
+  }
+  return lo > hi ? value : Math.min(hi, Math.max(lo, value));
 }
 
 /** Maps a MIDI CC sweep to the descriptor's native value type. */

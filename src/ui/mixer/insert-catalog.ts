@@ -85,6 +85,7 @@ const CATEGORY_LABELS: ReadonlyArray<readonly [string, string]> = [
   ['saturation', 'Saturation'],
   ['spectral', 'Spectral'],
   ['stereo', 'Stereo'],
+  ['voice', 'Voice'],
   ['maximizer', 'Maximizer'],
   ['utility', 'Utility'],
   ['repair', 'Repair'],

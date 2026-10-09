@@ -2,15 +2,61 @@ import { describe, expect, it } from 'vitest';
 import type { InsertSlot } from '@/project/mixer';
 import { clampControlValue, masteringProcessorControls } from '@/ui/mastering/chain-controls';
 
+const COMPRESSOR_INFO = [
+  {
+    name: 'thresholdDb',
+    type: 'number',
+    unit: 'dB',
+    min: null,
+    max: null,
+    default: -18,
+    uiMin: -60,
+    uiMax: 0,
+  },
+  {
+    name: 'attackMs',
+    type: 'number',
+    unit: 'ms',
+    min: 0,
+    max: null,
+    default: 10,
+    uiMin: 0,
+    uiMax: 200,
+    scale: 'log',
+  },
+  {
+    name: 'releaseMs',
+    type: 'number',
+    unit: 'ms',
+    min: 0,
+    max: null,
+    default: 100,
+    uiMin: 0,
+    uiMax: 2000,
+    scale: 'log',
+  },
+  {
+    name: 'makeupGainDb',
+    type: 'number',
+    unit: 'dB',
+    min: null,
+    max: 770.636,
+    default: 0,
+    uiMin: -12,
+    uiMax: 24,
+  },
+] as const;
+
 function slot(processor: string, params: Record<string, number> = {}): InsertSlot {
   return { processor, params, enabled: true };
 }
 
 describe('mastering chain controls', () => {
-  it('prefers processor-specific insert domains over name heuristics', () => {
+  it('prefers the descriptor display range over name heuristics', () => {
     const controls = masteringProcessorControls(
       slot('dynamics.compressor', { thresholdDb: -18 }),
       () => ['thresholdDb', 'attackMs', 'releaseMs', 'makeupGainDb'],
+      () => [...COMPRESSOR_INFO],
     );
 
     expect(controls.find((c) => c.id === 'thresholdDb')).toMatchObject({
@@ -21,13 +67,15 @@ describe('mastering chain controls', () => {
     });
     expect(controls.find((c) => c.id === 'attackMs')).toMatchObject({
       value: 10,
-      min: 0,
+      min: 0.2,
       max: 200,
+      scale: 'log',
       unit: 'ms',
     });
     expect(controls.find((c) => c.id === 'releaseMs')).toMatchObject({
-      min: 0,
+      min: 2,
       max: 2000,
+      scale: 'log',
       unit: 'ms',
     });
     expect(controls.find((c) => c.id === 'makeupGainDb')).toMatchObject({
@@ -70,9 +118,13 @@ describe('mastering chain controls', () => {
   });
 
   it('uses the resolved control range for clamping', () => {
-    const [control] = masteringProcessorControls(slot('dynamics.compressor'), () => ['attackMs']);
+    const [control] = masteringProcessorControls(
+      slot('dynamics.compressor'),
+      () => ['attackMs'],
+      () => [...COMPRESSOR_INFO],
+    );
 
     expect(clampControlValue(control, 900)).toBe(200);
-    expect(clampControlValue(control, -5)).toBe(0);
+    expect(clampControlValue(control, -5)).toBe(0.2);
   });
 });

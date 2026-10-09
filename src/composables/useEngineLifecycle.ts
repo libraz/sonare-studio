@@ -44,6 +44,7 @@ import {
   returnSoloRouting,
   vcaOffsetDb,
 } from '@/project/mixer';
+import { setProcessingSampleRate } from '@/project/processor-controls';
 import { nativeSynthFieldValue } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
@@ -277,6 +278,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           assertActive();
         }
         await store.init({ sampleRate: stagedHandle.ctx.sampleRate });
+        setProcessingSampleRate(stagedHandle.ctx.sampleRate);
         assertActive();
         const insertCatalog =
           typeof wasm.masteringInsertNames === 'function'

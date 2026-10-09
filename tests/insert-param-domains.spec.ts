@@ -15,18 +15,16 @@ describe('insertParamDomain', () => {
     }
   });
 
-  it('returns the catalogued domain for a known processor parameter', () => {
-    expect(insertParamDomain('dynamics.compressor', 'thresholdDb')).toEqual({
-      min: -60,
-      max: 0,
-      unit: 'dB',
+  it('keeps a window only for a parameter the descriptor leaves open', () => {
+    expect(insertParamDomain('saturation.softClipper', 'ceiling')).toEqual({
+      min: 0,
+      max: 1,
+      unit: '',
     });
-    expect(insertParamDomain('dynamics.compressor', 'makeupGainDb')).toEqual({
-      min: -12,
-      max: 24,
-      unit: 'dB',
-    });
-    expect(insertParamDomain('stereo.imager', 'width')).toEqual({ min: 0, max: 2, unit: '' });
+    // Covered by the descriptor's uiMin/uiMax, so no hand window remains.
+    expect(insertParamDomain('dynamics.compressor', 'thresholdDb')).toBe(
+      INSERT_PARAM_DOMAIN_FALLBACK,
+    );
   });
 
   it('falls back to the neutral window for unknown processors or parameters', () => {

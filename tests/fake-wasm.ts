@@ -1148,17 +1148,68 @@ export const FAKE_INSERT_PARAM_INFO: Record<
     rtSafe: boolean;
     type: 'number' | 'boolean' | 'enum';
     unit?: string;
+    min?: number | null;
+    max?: number | null;
+    uiMin?: number | null;
+    uiMax?: number | null;
+    scale?: 'linear' | 'log';
     default?: number | boolean;
     choices?: Array<{ name: string; value: number }>;
   }>
 > = {
   'dynamics.compressor': [
-    { name: 'thresholdDb', id: 0, rtSafe: true, type: 'number', unit: 'dB' },
-    { name: 'ratio', id: 1, rtSafe: true, type: 'number' },
-    { name: 'attackMs', id: 2, rtSafe: true, type: 'number', unit: 'ms' },
-    { name: 'releaseMs', id: 3, rtSafe: true, type: 'number', unit: 'ms' },
-    { name: 'kneeDb', id: 4, rtSafe: true, type: 'number', unit: 'dB' },
-    { name: 'makeupGainDb', id: 5, rtSafe: true, type: 'number', unit: 'dB' },
+    { name: 'thresholdDb', id: 0, rtSafe: true, type: 'number', unit: 'dB', uiMin: -60, uiMax: 0 },
+    {
+      name: 'ratio',
+      id: 1,
+      rtSafe: true,
+      type: 'number',
+      unit: 'ratio',
+      min: 1,
+      uiMin: 1,
+      uiMax: 20,
+    },
+    {
+      name: 'attackMs',
+      id: 2,
+      rtSafe: true,
+      type: 'number',
+      unit: 'ms',
+      min: 0,
+      uiMin: 0,
+      uiMax: 200,
+      scale: 'log',
+    },
+    {
+      name: 'releaseMs',
+      id: 3,
+      rtSafe: true,
+      type: 'number',
+      unit: 'ms',
+      min: 0,
+      uiMin: 0,
+      uiMax: 2000,
+      scale: 'log',
+    },
+    {
+      name: 'kneeDb',
+      id: 4,
+      rtSafe: true,
+      type: 'number',
+      unit: 'dB',
+      min: 0,
+      uiMin: 0,
+      uiMax: 24,
+    },
+    {
+      name: 'makeupGainDb',
+      id: 5,
+      rtSafe: true,
+      type: 'number',
+      unit: 'dB',
+      uiMin: -12,
+      uiMax: 24,
+    },
     { name: 'autoMakeup', id: 6, rtSafe: true, type: 'boolean', default: false },
     {
       name: 'detector',

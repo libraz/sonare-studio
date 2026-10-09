@@ -166,8 +166,9 @@ describe('quick controls', () => {
       });
       expect(controls.find((c) => c.id === 'ratio')).toMatchObject({ min: 1, max: 20, value: 4 });
       expect(controls.find((c) => c.id === 'attackMs')).toMatchObject({
-        min: 0,
+        min: 0.2,
         max: 200,
+        scale: 'log',
         unit: 'ms',
         value: 10,
         defaultValue: 10,
@@ -263,13 +264,25 @@ describe('quick controls', () => {
       expect(controls.find((c) => c.id === 'mix')).toMatchObject({ min: 0, max: 1, value: 0.4 });
     });
 
-    it('uses the modulation-rate domain and engine-provided unit metadata', () => {
+    it('uses the descriptor display range and unit for a modulation rate', () => {
       addInsert(trackId, 'modulation.chorus', { rateHz: 0.8 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         {
           resolveInsertParams: () => ['rateHz'],
-          resolveInsertParamInfo: () => [{ name: 'rateHz', unit: 'Hz' }],
+          resolveInsertParamInfo: () => [
+            {
+              name: 'rateHz',
+              type: 'number',
+              unit: 'Hz',
+              min: null,
+              max: null,
+              default: 0.8,
+              uiMin: 0,
+              uiMax: 10,
+              scale: 'linear',
+            },
+          ],
         },
       );
 
@@ -350,12 +363,14 @@ describe('quick controls', () => {
       });
     });
 
-    it('routes insert edits through setInsertParam with clamping', () => {
+    it('bounds insert edits by the accepted range, not the display range', () => {
       addInsert(trackId, 'dynamics.compressor');
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'thresholdDb', -200);
-      expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-60);
+      expect(store.tracks[0].mixer?.inserts[0].params.thresholdDb).toBe(-200);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'attackMs', -5);
+      expect(store.tracks[0].mixer?.inserts[0].params.attackMs).toBe(0);
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'attackMs', 900);
-      expect(store.tracks[0].mixer?.inserts[0].params.attackMs).toBe(200);
+      expect(store.tracks[0].mixer?.inserts[0].params.attackMs).toBe(900);
     });
 
     it('writes typed processor controls and rejects invalid values', () => {

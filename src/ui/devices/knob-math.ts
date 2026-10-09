@@ -80,6 +80,9 @@ export function knobRotationDeg(
   return (controlPercent(value, min, max, scale) * 2 - 1) * KNOB_ROTATION_MAX_DEG;
 }
 
+/** Units written against the number without a space. */
+const TIGHT_UNIT = /^[%°]/u;
+
 /**
  * Formats a control value for its readout label: large magnitudes drop
  * decimals, small ones keep up to two, and the unit (when given) is appended
@@ -96,5 +99,6 @@ export function formatControlValue(value: number, unit?: string): string {
   if (magnitude >= 1000) text = String(Math.round(value));
   else if (magnitude >= 100) text = value.toFixed(1).replace(/\.0$/, '');
   else text = value.toFixed(2).replace(/\.?0+$/, '') || '0';
-  return unit ? `${text} ${unit}` : text;
+  if (!unit) return text;
+  return TIGHT_UNIT.test(unit) ? `${text}${unit}` : `${text} ${unit}`;
 }
