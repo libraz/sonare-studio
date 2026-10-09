@@ -85,6 +85,7 @@ export const PRESET_CONTROL_DESCRIPTORS = [
     section: 'restoration',
     kind: 'number',
     min: 0,
+    max: 120,
     step: 0.1,
   },
 ] as const satisfies readonly PresetControlDescriptor[];

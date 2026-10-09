@@ -30,7 +30,7 @@ function createMockHandle(sampleRate = 48000): MockHandle {
     setTempo: vi.fn(),
     setLoop: vi.fn(() => true),
   };
-  const setMetronome = vi.fn();
+  const setMetronome = vi.fn(() => true);
   const pushMidiPanic = vi.fn();
   const pollTelemetry = vi.fn(() => []);
   let telemetryListener: ((record: SonareEngineTelemetryRecord) => void) | null = null;
@@ -295,6 +295,14 @@ describe('useTransport', () => {
     expect(mock.setMetronome).toHaveBeenLastCalledWith({ enabled: false });
     expect(transport.toggleMetronome(false)).toBe(false);
     expect(mock.setMetronome).toHaveBeenLastCalledWith({ enabled: false });
+  });
+
+  it('keeps the metronome state when the engine cannot queue the change', () => {
+    const mock = createMockHandle();
+    const { transport } = setup(mock.handle);
+    mock.setMetronome.mockReturnValueOnce(false);
+    expect(transport.toggleMetronome()).toBe(false);
+    expect(transport.metronomeEnabled.value).toBe(false);
   });
 
   it('updates the metronome beat and accent gains without changing its state', () => {

@@ -380,10 +380,12 @@ export function useTransport(
     const gain = Number.isFinite(beatGain)
       ? Math.min(1, Math.max(0, beatGain as number))
       : undefined;
-    handle.engine.setMetronome({
+    const queued = handle.engine.setMetronome({
       enabled: next,
       ...(gain === undefined ? {} : { beatGain: gain, accentGain: Math.min(1, gain * 2) }),
     });
+    // A full command ring refuses the change; keep the toggle on the engine's state.
+    if (!queued) return metronomeEnabled.value;
     metronomeEnabled.value = next;
     return next;
   };
