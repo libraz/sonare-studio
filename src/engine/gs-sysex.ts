@@ -82,10 +82,10 @@ export function collectGsSetupSysex(
  * destinations whose SF2 binding succeeded; NativeSynth, external and
  * fallback destinations are therefore excluded by construction.
  *
- * `renderFrame = -1` is intentional. libsonare realises a GS EFX SysEx on the
- * control thread and applies the resulting chain at the next audio block, so
- * scheduling a future packet would make its effect active before that packet's
- * musical position.
+ * The render frame is deliberately omitted (apply immediately). libsonare
+ * realises a GS EFX SysEx on the control thread and applies the resulting
+ * chain at the next audio block, so scheduling a future packet would make its
+ * effect active before that packet's musical position.
  */
 export function pushGsSetupSysex(
   engine: {
@@ -119,7 +119,7 @@ export function pushGsSetupSysex(
   let sentCount = 0;
   for (const [destinationId] of destinationState) {
     for (const frame of collection.frames) {
-      engine.pushMidiSysex(destinationId, frame, -1);
+      engine.pushMidiSysex(destinationId, frame);
       sentCount += 1;
     }
   }

@@ -1,18 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_LANE_METER_TARGETS } from '@/engine/meter-targets';
-import {
-  busParamId,
-  ENGINE_MIXER_PARAM_FADER_DB,
-  laneParamId,
-  masterParamId,
-} from '@/export/engine-render-types';
 import type { TrackInstrument } from '@/project/instrument';
 import {
   evaluateProjectCapacity,
   formatProjectCapacityIssue,
   MAX_INTERNAL_MIDI_INSTRUMENTS,
   MAX_METERED_MIXER_LANES,
-  MAX_MIXER_PARAM_LANES,
   type ProjectCapacityStrings,
 } from '@/project/project-capacity';
 import type { EditorTrack } from '@/project/types';
@@ -40,7 +33,6 @@ function sharedMidiTracks(n: number): EditorTrack[] {
 
 const STRINGS: ProjectCapacityStrings = {
   mixerLaneMeters: 'meters {lanes}/{limit}',
-  mixerLaneParamId: 'paramid {lanes}/{limit}',
   internalMidiInstruments: 'instruments {tracks}/{limit}',
 };
 
@@ -57,18 +49,6 @@ describe('evaluateProjectCapacity', () => {
       kind: 'mixer-lane-meters',
       lanes: MAX_METERED_MIXER_LANES + 1,
       limit: MAX_METERED_MIXER_LANES,
-    });
-  });
-
-  it('warns about parameter-id collision once lanes pass the param-id ceiling', () => {
-    expect(evaluateProjectCapacity(sharedMidiTracks(MAX_MIXER_PARAM_LANES))).not.toContainEqual(
-      expect.objectContaining({ kind: 'mixer-lane-param-id' }),
-    );
-    const issues = evaluateProjectCapacity(sharedMidiTracks(MAX_MIXER_PARAM_LANES + 1));
-    expect(issues).toContainEqual({
-      kind: 'mixer-lane-param-id',
-      lanes: MAX_MIXER_PARAM_LANES + 1,
-      limit: MAX_MIXER_PARAM_LANES,
     });
   });
 
@@ -118,9 +98,6 @@ describe('formatProjectCapacityIssue', () => {
       formatProjectCapacityIssue({ kind: 'mixer-lane-meters', lanes: 40, limit: 32 }, STRINGS),
     ).toBe('meters 40/32');
     expect(
-      formatProjectCapacityIssue({ kind: 'mixer-lane-param-id', lanes: 300, limit: 253 }, STRINGS),
-    ).toBe('paramid 300/253');
-    expect(
       formatProjectCapacityIssue(
         { kind: 'internal-midi-instruments', overflowTracks: 3, limit: 16 },
         STRINGS,
@@ -132,16 +109,5 @@ describe('formatProjectCapacityIssue', () => {
 describe('capacity thresholds stay locked to the engine id spaces', () => {
   it('mirrors the per-lane meter target count', () => {
     expect(MAX_METERED_MIXER_LANES).toBe(MAX_LANE_METER_TARGETS);
-  });
-
-  it('marks the first lane index that collides with a reserved param id', () => {
-    // Indices below the ceiling never alias a bus or the master strip...
-    const fader = ENGINE_MIXER_PARAM_FADER_DB;
-    const reserved = new Set([masterParamId(fader), busParamId(1, fader)]);
-    for (let index = 0; index < MAX_MIXER_PARAM_LANES; index++) {
-      expect(reserved.has(laneParamId(index, fader))).toBe(false);
-    }
-    // ...but the ceiling index itself collides with the first bus lane.
-    expect(laneParamId(MAX_MIXER_PARAM_LANES, fader)).toBe(busParamId(1, fader));
   });
 });

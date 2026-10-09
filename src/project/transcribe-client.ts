@@ -14,6 +14,8 @@ export interface TranscribeWorkerOptions {
   workerFactory?: TranscribeWorkerFactory;
   /** Original PCM rate when the worker must perform the bounded resample. */
   sourceSampleRate?: number;
+  /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
+  referenceHz?: number | 'auto';
 }
 
 function createWorker(): Worker {
@@ -72,7 +74,8 @@ function validResponse(
     noteCount >= 0 &&
     noteCount * 2 === response.events.length &&
     isFiniteNumber(response.tempoBpm) &&
-    response.tempoBpm > 0
+    response.tempoBpm > 0 &&
+    isFiniteNumber(response.tuning)
   );
 }
 
@@ -134,6 +137,7 @@ export function transcribeAudioInWorker(
           events: response.events,
           noteCount: response.noteCount,
           tempoBpm: response.tempoBpm,
+          tuning: response.tuning,
         },
       });
     };
@@ -160,6 +164,7 @@ export function transcribeAudioInWorker(
         ...(options.sourceSampleRate !== undefined
           ? { sourceSampleRate: options.sourceSampleRate }
           : {}),
+        ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
       };
       worker.addEventListener('message', onMessage as EventListener);
       worker.addEventListener('error', onError as EventListener);

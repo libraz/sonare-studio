@@ -93,9 +93,12 @@ import {
  * 2 wood, 4 carpet).
  */
 const ROOM_PRESETS: ReadonlyArray<{ id: string; preset: RoomMorphPreset }> = [
-  { id: 'smallRoom', preset: { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 2 } },
-  { id: 'largeRoom', preset: { lengthM: 9, widthM: 7, heightM: 3.5, materialPreset: 4 } },
-  { id: 'concertHall', preset: { lengthM: 24, widthM: 16, heightM: 10, materialPreset: 1 } },
+  { id: 'smallRoom', preset: { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 'wood' } },
+  { id: 'largeRoom', preset: { lengthM: 9, widthM: 7, heightM: 3.5, materialPreset: 'carpet' } },
+  {
+    id: 'concertHall',
+    preset: { lengthM: 24, widthM: 16, heightM: 10, materialPreset: 'concrete' },
+  },
 ];
 const ESTIMATED_ROOM_PRESET_ID = 'estimatedRoom';
 

@@ -192,43 +192,43 @@ describe('spellLineInKeySignature', () => {
 
 describe('keyToKeyFifths', () => {
   it('maps major keys to their signatures', () => {
-    expect(keyToKeyFifths({ root: 0, mode: 0 })).toBe(0); // C major
-    expect(keyToKeyFifths({ root: 7, mode: 0 })).toBe(1); // G major
-    expect(keyToKeyFifths({ root: 5, mode: 0 })).toBe(-1); // F major
-    expect(keyToKeyFifths({ root: 1, mode: 0 })).toBe(-5); // Db major
-    expect(keyToKeyFifths({ root: 6, mode: 0 })).toBe(6); // F# major
+    expect(keyToKeyFifths({ root: 0, mode: 'major' })).toBe(0); // C major
+    expect(keyToKeyFifths({ root: 7, mode: 'major' })).toBe(1); // G major
+    expect(keyToKeyFifths({ root: 5, mode: 'major' })).toBe(-1); // F major
+    expect(keyToKeyFifths({ root: 1, mode: 'major' })).toBe(-5); // Db major
+    expect(keyToKeyFifths({ root: 6, mode: 'major' })).toBe(6); // F# major
   });
 
   it('maps minor keys via the relative major', () => {
-    expect(keyToKeyFifths({ root: 9, mode: 1 })).toBe(0); // A minor
-    expect(keyToKeyFifths({ root: 4, mode: 1 })).toBe(1); // E minor
-    expect(keyToKeyFifths({ root: 2, mode: 1 })).toBe(-1); // D minor
-    expect(keyToKeyFifths({ root: 1, mode: 1 })).toBe(4); // C# minor
+    expect(keyToKeyFifths({ root: 9, mode: 'minor' })).toBe(0); // A minor
+    expect(keyToKeyFifths({ root: 4, mode: 'minor' })).toBe(1); // E minor
+    expect(keyToKeyFifths({ root: 2, mode: 'minor' })).toBe(-1); // D minor
+    expect(keyToKeyFifths({ root: 1, mode: 'minor' })).toBe(4); // C# minor
   });
 
   it('handles the other diatonic modes', () => {
-    expect(keyToKeyFifths({ root: 2, mode: 2 })).toBe(0); // D dorian
-    expect(keyToKeyFifths({ root: 5, mode: 4 })).toBe(0); // F lydian
-    expect(keyToKeyFifths({ root: 7, mode: 5 })).toBe(0); // G mixolydian
+    expect(keyToKeyFifths({ root: 2, mode: 'dorian' })).toBe(0); // D dorian
+    expect(keyToKeyFifths({ root: 5, mode: 'lydian' })).toBe(0); // F lydian
+    expect(keyToKeyFifths({ root: 7, mode: 'mixolydian' })).toBe(0); // G mixolydian
   });
 });
 
 describe('keyFifthsToKey', () => {
   it('returns the major tonic by default', () => {
-    expect(keyFifthsToKey(0)).toEqual({ root: 0, mode: 0 });
-    expect(keyFifthsToKey(1)).toEqual({ root: 7, mode: 0 });
-    expect(keyFifthsToKey(-5)).toEqual({ root: 1, mode: 0 });
+    expect(keyFifthsToKey(0)).toEqual({ root: 0, mode: 'major' });
+    expect(keyFifthsToKey(1)).toEqual({ root: 7, mode: 'major' });
+    expect(keyFifthsToKey(-5)).toEqual({ root: 1, mode: 'major' });
   });
 
   it('returns the requested mode tonic', () => {
-    expect(keyFifthsToKey(0, 1)).toEqual({ root: 9, mode: 1 }); // A minor
-    expect(keyFifthsToKey(4, 1)).toEqual({ root: 1, mode: 1 }); // C# minor
-    expect(keyFifthsToKey(0, 2)).toEqual({ root: 2, mode: 2 }); // D dorian
+    expect(keyFifthsToKey(0, 'minor')).toEqual({ root: 9, mode: 'minor' }); // A minor
+    expect(keyFifthsToKey(4, 'minor')).toEqual({ root: 1, mode: 'minor' }); // C# minor
+    expect(keyFifthsToKey(0, 'dorian')).toEqual({ root: 2, mode: 'dorian' }); // D dorian
   });
 
   it('round-trips with keyToKeyFifths across the canonical range', () => {
     for (let fifths = -5; fifths <= 6; fifths += 1) {
-      for (const mode of [0, 1] as const) {
+      for (const mode of ['major', 'minor'] as const) {
         expect(keyToKeyFifths(keyFifthsToKey(fifths, mode))).toBe(fifths);
       }
     }
@@ -237,14 +237,14 @@ describe('keyFifthsToKey', () => {
 
 describe('project mode encoding', () => {
   it('shifts audio Mode ordinals by one', () => {
-    expect(modeToProjectMode(0)).toBe(1); // Major
-    expect(modeToProjectMode(1)).toBe(2); // Minor
-    expect(modeToProjectMode(6)).toBe(7); // Locrian
+    expect(modeToProjectMode('major')).toBe(1); // Major
+    expect(modeToProjectMode('minor')).toBe(2); // Minor
+    expect(modeToProjectMode('locrian')).toBe(7); // Locrian
   });
 
   it('inverts the shift and rejects unknown values', () => {
-    expect(projectModeToMode(1)).toBe(0);
-    expect(projectModeToMode(7)).toBe(6);
+    expect(projectModeToMode(1)).toBe('major');
+    expect(projectModeToMode(7)).toBe('locrian');
     expect(projectModeToMode(0)).toBeUndefined();
     expect(projectModeToMode(8)).toBeUndefined();
     expect(projectModeToMode(1.5)).toBeUndefined();

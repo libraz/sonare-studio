@@ -132,13 +132,12 @@ import {
 import { buildReport } from './engine-render-report';
 import {
   BLOCKS_PER_CHECKPOINT,
-  busParamId,
+  busFaderParamId,
   DEFAULT_TEMPO_BPM,
   ENGINE_MIXER_PARAM_FADER_DB,
   ENGINE_MIXER_PARAM_PAN,
   type EngineClipSpec,
   type EngineRenderOptions,
-  laneParamId,
   MAX_PREROLL_SECONDS,
   masterParamId,
   type OfflineRenderEngine,
@@ -146,6 +145,7 @@ import {
   RENDER_BLOCK_FRAMES,
   type RenderPass,
   resolveRange,
+  trackLaneParamId,
 } from './engine-render-types';
 
 export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-types';
@@ -816,14 +816,14 @@ export async function renderProjectWithEngine(
       if (pass.freezeIndex === index) {
         // Pre-fader freeze: the lane renders at unity/centered with neutral pan
         // shaping; the live fader/pan/pan-law keep applying to the baked audio.
-        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB), 0);
-        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), 0);
+        engine.setParameter(trackLaneParamId(engine, trackId, 'faderDb'), 0);
+        engine.setParameter(trackLaneParamId(engine, trackId, 'pan'), 0);
       } else {
         const pflAudition = pass.stemIndices === null && auditionSoloStates[index] === true;
         // Lane fader includes the strip trim and the track's VCA group offset,
         // so a VCA-attenuated track exports at the level it plays back at.
         engine.setParameter(
-          laneParamId(index, ENGINE_MIXER_PARAM_FADER_DB),
+          trackLaneParamId(engine, trackId, 'faderDb'),
           pflAudition
             ? PFL_AUDITION_GAIN_DB
             : laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
@@ -832,7 +832,7 @@ export async function renderProjectWithEngine(
         // pre-migration projects and freshly imported foreign documents pan
         // identically before and after a save/load cycle.
         const pan = pflAudition ? 0 : clampPan(strip?.pan ?? track.pan ?? 0);
-        engine.setParameter(laneParamId(index, ENGINE_MIXER_PARAM_PAN), pan);
+        engine.setParameter(trackLaneParamId(engine, trackId, 'pan'), pan);
         // Pan law / mode / dual-pan / channel-delay shape the lane exactly as
         // live mixer-sync does; emit only the non-defaults to keep the command
         // budget small (the engine starts each lane at these defaults).
@@ -1032,12 +1032,11 @@ export async function renderProjectWithEngine(
             !returnSolo.active &&
             !effectiveTrackMute(track.mute, track.vcaId, vcaControlsById)
           ) {
-            engine.setAutomationLane(busParamId(groupBusId), points);
+            engine.setAutomationLane(busFaderParamId(engine, groupBusId), points);
           }
           continue;
         }
-        const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-        engine.setAutomationLane(laneParamId(index, kind), points);
+        engine.setAutomationLane(trackLaneParamId(engine, trackIds[index], lane.param), points);
       }
     });
     if (pass.masterLevels) {
@@ -1092,7 +1091,7 @@ export async function renderProjectWithEngine(
           continue;
         }
         if (lane.param !== 'faderDb') continue;
-        engine.setAutomationLane(busParamId(busId), points);
+        engine.setAutomationLane(busFaderParamId(engine, busId), points);
       }
     }
 

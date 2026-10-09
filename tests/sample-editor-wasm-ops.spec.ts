@@ -1229,7 +1229,7 @@ describe('repair operations', () => {
 });
 
 describe('roomMorphChannels', () => {
-  const preset = { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 2 };
+  const preset = { lengthM: 4, widthM: 3, heightM: 2.6, materialPreset: 'wood' as const };
   const morphed = (audio: Float32Array, diagnostics: RirDiagnostic[] = []) => ({
     audio,
     sampleRate: 48000,
@@ -1243,7 +1243,7 @@ describe('roomMorphChannels', () => {
           lengthM: 4,
           widthM: 3,
           heightM: 2.6,
-          materialPreset: 2,
+          materialPreset: 'wood',
           wet: 0.5,
         });
         // Echo the input then append a two-sample "tail" so the result is longer.
@@ -1321,11 +1321,10 @@ describe('roomMorphChannels', () => {
 });
 
 describe('synthesizeRirChannels', () => {
-  const preset = { lengthM: 6, widthM: 4, heightM: 3, materialPreset: 2 };
-  const rirResult = (rir: Float32Array, hasError: boolean, diagnostics: RirDiagnostic[] = []) => ({
+  const preset = { lengthM: 6, widthM: 4, heightM: 3, materialPreset: 'wood' as const };
+  const rirResult = (rir: Float32Array, diagnostics: RirDiagnostic[] = []) => ({
     rir,
     sampleRate: 48000,
-    hasError,
     diagnostics,
   });
 
@@ -1341,9 +1340,9 @@ describe('synthesizeRirChannels', () => {
         lengthM: 6,
         widthM: 4,
         heightM: 3,
-        materialPreset: 2,
+        materialPreset: 'wood',
       });
-      return rirResult(new Float32Array([1, 0.5, 0.25]), false, [diagnostic]);
+      return rirResult(new Float32Array([1, 0.5, 0.25]), [diagnostic]);
     });
 
     const out = synthesizeRirChannels({ synthesizeRir }, 48000, preset);
@@ -1354,18 +1353,10 @@ describe('synthesizeRirChannels', () => {
   it('validates availability, sample rate and synth errors', () => {
     expect(() => synthesizeRirChannels({}, 48000, preset)).toThrow(/unavailable/);
     expect(() =>
-      synthesizeRirChannels(
-        { synthesizeRir: () => rirResult(new Float32Array([1]), false) },
-        0,
-        preset,
-      ),
+      synthesizeRirChannels({ synthesizeRir: () => rirResult(new Float32Array([1])) }, 0, preset),
     ).toThrow(RangeError);
     expect(() =>
-      synthesizeRirChannels(
-        { synthesizeRir: () => rirResult(new Float32Array(), true) },
-        48000,
-        preset,
-      ),
+      synthesizeRirChannels({ synthesizeRir: () => rirResult(new Float32Array()) }, 48000, preset),
     ).toThrow(/failed/);
   });
 });
@@ -1375,15 +1366,15 @@ describe('estimateRoomRange', () => {
     const estimateRoom = vi.fn((samples: Float32Array, sampleRate?: number, options?: unknown) => {
       expect([...samples]).toEqual([4, 5]);
       expect(sampleRate).toBe(48000);
-      expect(options).toEqual({ mode: 0, nOctaveBands: 6 });
+      expect(options).toEqual({ mode: 'auto', nOctaveBands: 6 });
       return {
         volume: 120,
-        length: 6,
-        width: 5,
-        height: 4,
+        lengthM: 6,
+        widthM: 5,
+        heightM: 4,
         drrDb: -8,
         confidence: 0.75,
-        absorptionBands: new Float32Array([0.2, 0.3]),
+        bandAbsorption: new Float32Array([0.2, 0.3]),
         rt60Bands: new Float32Array([0.4, 0.6, Number.NaN]),
       };
     });
@@ -1409,12 +1400,12 @@ describe('estimateRoomRange', () => {
     const mod: SampleEditorWasmOps = {
       estimateRoom: () => ({
         volume: 0,
-        length: 0,
-        width: 0,
-        height: 0,
+        lengthM: 0,
+        widthM: 0,
+        heightM: 0,
         drrDb: 0,
         confidence: 0,
-        absorptionBands: new Float32Array(),
+        bandAbsorption: new Float32Array(),
         rt60Bands: new Float32Array(),
       }),
     };
@@ -1443,13 +1434,13 @@ describe('estimateRoomRange', () => {
       lengthM: 6,
       widthM: 4,
       heightM: 2,
-      materialPreset: 1,
+      materialPreset: 'concrete',
     });
     expect(roomEstimateToPreset({ ...base, absorptionMean: 0.52 })).toEqual({
       lengthM: 6,
       widthM: 4,
       heightM: 2,
-      materialPreset: 4,
+      materialPreset: 'carpet',
     });
     expect(() => roomEstimateToPreset({ ...base, length: 0, absorptionMean: Number.NaN })).toThrow(
       RangeError,

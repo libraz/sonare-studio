@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/** C-ABI version the vendored glue checks a module factory against in init(). */
+const WASM_ABI_VERSION = 0x04030207;
+
 const ENGINE_ABI_VERSION = 3;
 
 async function importFreshWasm() {
@@ -25,6 +28,7 @@ describe('wasm ABI wrapper declarations', () => {
     await wasm.init({
       moduleFactory: async () =>
         ({
+          abiVersion: () => WASM_ABI_VERSION,
           projectAbiVersion: () => 1,
           Project: NativeProject,
         }) as never,
@@ -86,6 +90,7 @@ describe('wasm ABI wrapper declarations', () => {
     await wasm.init({
       moduleFactory: async () =>
         ({
+          abiVersion: () => WASM_ABI_VERSION,
           engineAbiVersion: () => ENGINE_ABI_VERSION,
           RealtimeEngine: NativeRealtimeEngine,
         }) as never,

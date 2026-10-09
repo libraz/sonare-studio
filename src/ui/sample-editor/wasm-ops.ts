@@ -10,7 +10,7 @@
 
 import { stepOf } from '@libraz/libcantus';
 import { ensureWasm } from '@/lib/wasm';
-import type { MasteringPreset, RirDiagnostic } from '@/wasm/index.js';
+import type { MasteringPreset, MaterialPresetName, RirDiagnostic } from '@/wasm/index.js';
 import {
   type MatchEqAnalysis,
   parseMatchEqCurve,
@@ -1165,14 +1165,13 @@ export interface RoomRenderResult {
 
 /**
  * A room shape for {@link roomMorphChannels}: shoebox dimensions in metres plus
- * a libsonare wall-material preset (1 concrete, 2 wood, 3 curtain, 4 carpet,
- * 5 glass).
+ * a libsonare wall-material preset.
  */
 export interface RoomMorphPreset {
   lengthM: number;
   widthM: number;
   heightM: number;
-  materialPreset: number;
+  materialPreset: MaterialPresetName;
 }
 
 /**
@@ -1261,7 +1260,7 @@ export function synthesizeRirChannels(
     materialPreset: preset.materialPreset,
     ...(airAbsorption ? { airAbsorptionEnabled: true } : {}),
   });
-  if (result.hasError || result.rir.length === 0) {
+  if (result.rir.length === 0) {
     throw new Error('RIR synthesis failed for the selected room');
   }
   return { channels: [result.rir], diagnostics: result.diagnostics };
@@ -1372,11 +1371,11 @@ export function roomEstimateToPreset(estimate: RoomEstimateSummary): RoomMorphPr
   }
   const { length, width, height } = estimate;
   const absorption = estimate.absorptionMean;
-  let materialPreset = 2;
+  let materialPreset: MaterialPresetName = 'wood';
   if (Number.isFinite(absorption)) {
-    if (absorption < 0.18) materialPreset = 1;
-    else if (absorption >= 0.5) materialPreset = 4;
-    else if (absorption >= 0.35) materialPreset = 3;
+    if (absorption < 0.18) materialPreset = 'concrete';
+    else if (absorption >= 0.5) materialPreset = 'carpet';
+    else if (absorption >= 0.35) materialPreset = 'curtain';
   }
   return { lengthM: length, widthM: width, heightM: height, materialPreset };
 }
@@ -1399,17 +1398,17 @@ export function estimateRoomRange(
     throw new Error('Room estimation is unavailable in this libsonare build');
   }
   const mono = monoSelection(channels, sampleRate, range);
-  const estimate = fn(mono, sampleRate, { mode: 0, nOctaveBands: 6 });
+  const estimate = fn(mono, sampleRate, { mode: 'auto', nOctaveBands: 6 });
   const rt60Mid = averageFinite(estimate.rt60Bands, 0);
   return {
     volume: estimate.volume,
-    length: estimate.length,
-    width: estimate.width,
-    height: estimate.height,
+    length: estimate.lengthM,
+    width: estimate.widthM,
+    height: estimate.heightM,
     drrDb: estimate.drrDb,
     confidence: estimate.confidence,
     rt60Mid,
-    absorptionMean: averageFinite(estimate.absorptionBands, 0),
+    absorptionMean: averageFinite(estimate.bandAbsorption, 0),
   };
 }
 

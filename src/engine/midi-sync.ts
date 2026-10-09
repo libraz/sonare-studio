@@ -931,7 +931,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   return {
     sync,
     scheduledClipCount: () => clipCount,
-    restoreStateAtPpq: (ppq, renderFrame = -1) => {
+    restoreStateAtPpq: (ppq, renderFrame) => {
       if (!lastStateSource) return;
       const events = midiStateAtPpq(
         lastStateSource.tracks,

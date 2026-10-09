@@ -208,8 +208,6 @@ export const shellFrame = {
   capacity: {
     warningIntro:
       'このプロジェクトはエンジンの容量上限を超えています。一部のストリップやトラックが正しく動作しない可能性があります:',
-    mixerLaneParamId:
-      'ミキサーストリップが {lanes} 本あります。{limit} 本を超えるストリップのフェーダー/オートメーション制御がバスまたはマスター出力へ誤ルートする場合があります。',
     mixerLaneMeters:
       'ミキサーストリップが {lanes} 本あります。{limit} 本を超えるストリップにはレベルメーター/スコープがありません。',
     internalMidiInstruments:

@@ -69,6 +69,8 @@ export type OfflineRenderEngine = Pick<
   | 'setTrackStripDualPan'
   | 'setTrackStripChannelDelaySamples'
   | 'setParameter'
+  | 'resolveTrackLaneAutomationId'
+  | 'resolveBusAutomationId'
   | 'resolveTrackInsertAutomationId'
   | 'resolveMasterInsertAutomationId'
   | 'resolveBusInsertAutomationId'
@@ -294,9 +296,20 @@ export function resolveRange(options: EngineRenderOptions): {
   return { startPpq, endPpq };
 }
 
-/** Reserved engine parameter id for one lane parameter. */
-export function laneParamId(laneIndex: number, kind: number): number {
-  return ENGINE_MIXER_TARGET_BASE | ((laneIndex & 0xff) << 8) | (kind & 0xff);
+/**
+ * Engine parameter id of a track's lane fader or pan. The id names the track,
+ * so it is resolved after setTrackLanes declared the track.
+ *
+ * @throws Error when the engine has no lane for the track.
+ */
+export function trackLaneParamId(
+  engine: Pick<OfflineRenderEngine, 'resolveTrackLaneAutomationId'>,
+  trackId: number,
+  param: 'faderDb' | 'pan',
+): number {
+  const id = engine.resolveTrackLaneAutomationId(trackId, param);
+  if (id < 0) throw new Error(`Engine has no lane for track ${trackId}`);
+  return id;
 }
 
 /** Reserved engine parameter id for one master strip parameter. */
@@ -304,7 +317,17 @@ export function masterParamId(kind: number): number {
   return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | (kind & 0xff);
 }
 
-/** Packed mixer parameter id for a bus fader lane (mirrors the live facade). */
-export function busParamId(busId: number, kind = ENGINE_MIXER_PARAM_FADER_DB): number {
-  return ENGINE_MIXER_TARGET_BASE | (((254 - busId) & 0xff) << 8) | (kind & 0xff);
+/**
+ * Engine parameter id of a bus fader. The id names the bus, so it is resolved
+ * after setTrackBuses declared the bus.
+ *
+ * @throws Error when the engine has no such bus.
+ */
+export function busFaderParamId(
+  engine: Pick<OfflineRenderEngine, 'resolveBusAutomationId'>,
+  busId: number,
+): number {
+  const id = engine.resolveBusAutomationId(busId, 'faderDb');
+  if (id < 0) throw new Error(`Engine has no bus ${busId}`);
+  return id;
 }

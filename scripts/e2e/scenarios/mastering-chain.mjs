@@ -173,12 +173,12 @@ export async function run(ctx) {
         .innerText();
       const renderScope = await page
         .locator('.chain-catalog .catalog-item')
-        .filter({ hasText: 'Dereverb Classical' })
+        .filter({ hasText: 'Declick' })
         .first()
         .locator('.catalog-item-scope')
         .innerText();
       if (liveScope !== 'Live' || renderScope !== 'Render') {
-        fail(`processor scope labels are wrong: limiter=${liveScope}, dereverb=${renderScope}`);
+        fail(`processor scope labels are wrong: limiter=${liveScope}, declick=${renderScope}`);
       }
     }
     await page

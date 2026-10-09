@@ -12,11 +12,20 @@ export interface TranscribeWorkerRequest {
   /** Original PCM rate; omitted when it already equals `sampleRate`. */
   sourceSampleRate?: number;
   polyphonic: boolean;
+  /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
+  referenceHz?: number | 'auto';
 }
 
 /** Result sent back by the transcription worker. */
 export type TranscribeWorkerResponse =
-  | { type: 'done'; events: ProjectMidiEvent[]; noteCount: number; tempoBpm: number }
+  | {
+      type: 'done';
+      events: ProjectMidiEvent[];
+      noteCount: number;
+      tempoBpm: number;
+      /** Tuning used, in fractions of a semitone (given or measured). */
+      tuning: number;
+    }
   | { type: 'error'; error: string };
 
 function isFiniteNumber(value: unknown): value is number {
@@ -50,7 +59,10 @@ function validRequest(value: unknown): value is TranscribeWorkerRequest {
     request.sampleRate > 0 &&
     (request.sourceSampleRate === undefined ||
       (isFiniteNumber(request.sourceSampleRate) && request.sourceSampleRate > 0)) &&
-    typeof request.polyphonic === 'boolean'
+    typeof request.polyphonic === 'boolean' &&
+    (request.referenceHz === undefined ||
+      request.referenceHz === 'auto' ||
+      (isFiniteNumber(request.referenceHz) && request.referenceHz > 0))
   );
 }
 
@@ -66,7 +78,8 @@ function validResult(value: unknown): value is TranscribeResult {
     noteCount >= 0 &&
     noteCount * 2 === result.events.length &&
     isFiniteNumber(result.tempoBpm) &&
-    result.tempoBpm > 0
+    result.tempoBpm > 0 &&
+    isFiniteNumber(result.tuning)
   );
 }
 
@@ -103,6 +116,7 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
         sampleRate: request.sampleRate,
         tempoBpm: 60,
         polyphonic: request.polyphonic,
+        ...(request.referenceHz !== undefined ? { referenceHz: request.referenceHz } : {}),
       });
       if (!validResult(result)) {
         throw new Error('Transcription worker returned an invalid result');
@@ -112,6 +126,7 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
         events: result.events,
         noteCount: result.noteCount,
         tempoBpm: result.tempoBpm,
+        tuning: result.tuning,
       } satisfies TranscribeWorkerResponse);
     })
     .catch(postError);

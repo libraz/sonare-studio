@@ -24,7 +24,7 @@ import {
 } from '@libraz/libcantus';
 import { keyFifthsToSpelledKey } from '@/compose/key';
 import { formatSpelledPitch } from '@/lib/pitch';
-import type { Key, Mode } from '@/wasm/index.js';
+import type { Key, KeyMode } from '@/wasm/index.js';
 
 /** Diatonic step letter (MusicXML `<step>`). */
 export type Step = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
@@ -388,12 +388,27 @@ export function chordPitchClassName(
   return `${spelled.step}${accidental}`;
 }
 
-/**
- * Key-fifths offset of each libsonare `Mode` relative to the major key with
- * the same tonic (index = audio `Mode` ordinal: Major, Minor, Dorian,
- * Phrygian, Lydian, Mixolydian, Locrian).
- */
-const MODE_FIFTHS_OFFSET: ReadonlyArray<number> = [0, -3, -2, -4, 1, -1, -5];
+/** libsonare key modes in `Mode` ordinal order (Major = 0). */
+const KEY_MODES: ReadonlyArray<KeyMode> = [
+  'major',
+  'minor',
+  'dorian',
+  'phrygian',
+  'lydian',
+  'mixolydian',
+  'locrian',
+];
+
+/** Key-fifths offset of each libsonare key mode relative to the major key with the same tonic. */
+const MODE_FIFTHS_OFFSET: Readonly<Record<KeyMode, number>> = {
+  major: 0,
+  minor: -3,
+  dorian: -2,
+  phrygian: -4,
+  lydian: 1,
+  mixolydian: -1,
+  locrian: -5,
+};
 
 /**
  * Normalizes a fifths count to the canonical range -5..6 (enharmonic keys
@@ -411,8 +426,7 @@ function normalizeFifths(fifths: number): number {
  * so the result is normalized to -5..6 (e.g. tonic pc 6 major -> 6 = F#
  * major, never -6 = Gb major).
  *
- * @param key Tonic pitch class and mode (libsonare audio `Mode` ordinals,
- *   Major = 0; not the +1-shifted `ProjectKeySegment.mode` encoding).
+ * @param key Tonic pitch class and libsonare mode name.
  * @returns Key signature fifths in -5..6.
  */
 export function keyToKeyFifths(key: Pick<Key, 'root' | 'mode'>): number {
@@ -426,38 +440,39 @@ export function keyToKeyFifths(key: Pick<Key, 'root' | 'mode'>): number {
  * Computes the libsonare key (tonic + mode) for a key signature.
  *
  * @param keyFifths Key signature fifths (-7..7).
- * @param mode Audio `Mode` ordinal the signature should be read in
- *   (defaults to Major = 0).
+ * @param mode Mode the signature should be read in (defaults to major).
  * @returns Tonic pitch class and mode; e.g. (0, Minor) -> A minor.
  */
-export function keyFifthsToKey(keyFifths: number, mode: Mode = 0): Pick<Key, 'root' | 'mode'> {
+export function keyFifthsToKey(
+  keyFifths: number,
+  mode: KeyMode = 'major',
+): Pick<Key, 'root' | 'mode'> {
   const majorFifths = keyFifths - MODE_FIFTHS_OFFSET[mode];
   const root = (((majorFifths * 7) % 12) + 12) % 12;
   return { root: root as Key['root'], mode };
 }
 
 /**
- * Converts an audio `Mode` ordinal (Major = 0) to the `ProjectKeySegment.mode`
- * encoding (0 = unknown, 1 = major, 2 = minor, ...).
+ * Converts a libsonare key mode to the `ProjectKeySegment.mode` encoding
+ * (0 = unknown, 1 = major, 2 = minor, ...).
  *
- * @param mode Audio `Mode` ordinal.
- * @returns The +1-shifted project annotation ordinal.
+ * @param mode libsonare key mode name.
+ * @returns The project annotation ordinal.
  */
-export function modeToProjectMode(mode: Mode): number {
-  return mode + 1;
+export function modeToProjectMode(mode: KeyMode): number {
+  return KEY_MODES.indexOf(mode) + 1;
 }
 
 /**
  * Converts a `ProjectKeySegment.mode` ordinal (0 = unknown, 1 = major, ...)
- * back to the audio `Mode` enum.
+ * back to a libsonare key mode.
  *
  * @param projectMode Project annotation mode ordinal.
- * @returns The audio `Mode` ordinal, or undefined for unknown (0) or
- *   out-of-range values.
+ * @returns The key mode, or undefined for unknown (0) or out-of-range values.
  */
-export function projectModeToMode(projectMode: number): Mode | undefined {
+export function projectModeToMode(projectMode: number): KeyMode | undefined {
   if (!Number.isInteger(projectMode) || projectMode < 1 || projectMode > 7) {
     return undefined;
   }
-  return (projectMode - 1) as Mode;
+  return KEY_MODES[projectMode - 1];
 }

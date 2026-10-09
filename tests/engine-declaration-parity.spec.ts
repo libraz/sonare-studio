@@ -4,10 +4,9 @@ import type { EngineHandle } from '@/engine/engine';
 import { createStripSync } from '@/engine/strip-sync';
 import { type OfflineRenderEngine, renderProjectWithEngine } from '@/export/engine-render';
 import {
-  busParamId,
   ENGINE_MIXER_PARAM_FADER_DB,
   ENGINE_MIXER_PARAM_PAN,
-  laneParamId,
+  ENGINE_MIXER_TARGET_BASE,
   masterParamId,
 } from '@/export/engine-render-types';
 import {
@@ -21,6 +20,17 @@ import type { EditorTrack } from '@/project/types';
 import type { EqBand } from '@/wasm/index.js';
 
 type EngineCall = [string, ...unknown[]];
+
+/** Stub track fader/pan id; both declaration paths must resolve the same one. */
+function stubTrackParamId(trackId: number, param: 'faderDb' | 'pan'): number {
+  const kind = param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
+  return ENGINE_MIXER_TARGET_BASE | ((trackId - 1) << 8) | kind;
+}
+
+/** Stub bus fader id. */
+function stubBusParamId(busId: number): number {
+  return ENGINE_MIXER_TARGET_BASE | ((254 - busId) << 8) | ENGINE_MIXER_PARAM_FADER_DB;
+}
 type SemanticCall = [string, ...unknown[]];
 
 class DeclarationRecorder implements OfflineRenderEngine {
@@ -88,11 +98,17 @@ class DeclarationRecorder implements OfflineRenderEngine {
     this.record('automationParamId', target, param);
     const kind = param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
     if (target === 'master') return masterParamId(kind);
-    return laneParamId(target - 1, kind);
+    return stubTrackParamId(target, param);
+  }
+  resolveTrackLaneAutomationId(trackId: number, param: 'faderDb' | 'pan'): number {
+    return stubTrackParamId(trackId, param);
+  }
+  resolveBusAutomationId(busId: number, _param: 'faderDb'): number {
+    return stubBusParamId(busId);
   }
   busAutomationParamId(busId: number): number {
     this.record('busAutomationParamId', busId);
-    return busParamId(busId);
+    return stubBusParamId(busId);
   }
   setAutomationLane(paramId: number, points: unknown): void {
     this.record('setAutomationLane', paramId, points);

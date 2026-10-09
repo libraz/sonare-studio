@@ -27,6 +27,7 @@ class FakeWorker {
           ],
           noteCount: 1,
           tempoBpm: 60,
+          tuning: 0,
         } satisfies TranscribeWorkerResponse,
       } as MessageEvent);
     });

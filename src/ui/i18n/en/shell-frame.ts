@@ -207,8 +207,6 @@ export const shellFrame = {
   capacity: {
     warningIntro:
       'This project exceeds an engine capacity limit; some strips or tracks may not behave correctly:',
-    mixerLaneParamId:
-      'The project has {lanes} mixer strips. Fader and automation control for strips past {limit} can misroute to a bus or the master output.',
     mixerLaneMeters:
       'The project has {lanes} mixer strips. Strips past {limit} have no level meter or scope.',
     internalMidiInstruments:

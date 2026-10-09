@@ -60,11 +60,29 @@ class FakeEngine implements OfflineRenderEngine {
     return this.calls.filter(([n]) => n === name);
   }
 
+  private declaredTrackIds: number[] = [];
+  private declaredBusIds = new Set<number>();
+
   setTrackLanes(lanes: unknown): void {
     this.record('setTrackLanes', lanes);
+    this.declaredTrackIds = (lanes as Array<number | { trackId: number }>).map((lane) =>
+      typeof lane === 'number' ? lane : lane.trackId,
+    );
   }
   setTrackBuses(buses: unknown): void {
     this.record('setTrackBuses', buses);
+    this.declaredBusIds = new Set((buses as Array<{ busId: number }>).map((bus) => bus.busId));
+  }
+  /** Stub ids keep the packed lane-position shape so tests can decode them. */
+  resolveTrackLaneAutomationId(trackId: number, paramName: 'faderDb' | 'pan'): number {
+    const laneIndex = this.declaredTrackIds.indexOf(trackId);
+    if (laneIndex < 0) return -1;
+    const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
+    return ENGINE_MIXER_TARGET_BASE | (laneIndex << 8) | kind;
+  }
+  resolveBusAutomationId(busId: number, _paramName: 'faderDb'): number {
+    if (!this.declaredBusIds.has(busId)) return -1;
+    return ENGINE_MIXER_TARGET_BASE | ((254 - busId) << 8) | ENGINE_MIXER_PARAM_FADER_DB;
   }
   setTrackStripJson(trackId: number, json: string): void {
     this.record('setTrackStripJson', trackId, json);

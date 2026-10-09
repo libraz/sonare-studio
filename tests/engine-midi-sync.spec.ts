@@ -808,10 +808,10 @@ describe('GS setup SysEx', () => {
     expect(result.unsupportedPacketCount).toBe(0);
     expect(result.sentCount).toBe(4);
     expect(engine.pushMidiSysex.mock.calls).toEqual([
-      [2, Uint8Array.from([0xf0, ...gsEfxType.data]), -1],
-      [2, Uint8Array.from([0xf0, ...gsEfxType.data.slice(0, -1), 0x01, 0xf7]), -1],
-      [4, Uint8Array.from([0xf0, ...gsEfxType.data]), -1],
-      [4, Uint8Array.from([0xf0, ...gsEfxType.data.slice(0, -1), 0x01, 0xf7]), -1],
+      [2, Uint8Array.from([0xf0, ...gsEfxType.data])],
+      [2, Uint8Array.from([0xf0, ...gsEfxType.data.slice(0, -1), 0x01, 0xf7])],
+      [4, Uint8Array.from([0xf0, ...gsEfxType.data])],
+      [4, Uint8Array.from([0xf0, ...gsEfxType.data.slice(0, -1), 0x01, 0xf7])],
     ]);
   });
 
@@ -881,13 +881,8 @@ describe('GS setup SysEx', () => {
     expect(engine.pushMidiSysex).toHaveBeenCalledWith(
       1,
       Uint8Array.from([0xf0, ...gsEfxType.data]),
-      -1,
     );
-    expect(engine.pushMidiSysex).not.toHaveBeenCalledWith(
-      2,
-      expect.any(Uint8Array),
-      expect.any(Number),
-    );
+    expect(engine.pushMidiSysex).not.toHaveBeenCalledWith(2, expect.any(Uint8Array));
 
     await sync.sync(
       [
