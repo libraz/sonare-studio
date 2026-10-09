@@ -918,6 +918,18 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.inserts[0].sidechainSourceTrackId).toBeUndefined();
     });
 
+    it('refuses a track key that would close a cycle between track lanes', () => {
+      const kickId = addAudioTrack({ name: 'Kick' });
+      const bassId = addAudioTrack({ name: 'Bass' });
+      addInsert(trackId, 'dynamics.compressor');
+      addInsert(kickId, 'dynamics.compressor');
+      addInsert(bassId, 'dynamics.compressor');
+      setInsertSidechain(trackId, 0, kickId);
+      setInsertSidechain(kickId, 0, bassId);
+      expect(() => setInsertSidechain(bassId, 0, trackId)).toThrow(/cycle/);
+      expect(() => setInsertSidechain(kickId, 0, trackId)).toThrow(/cycle/);
+    });
+
     it('requires the group namespace when a group track is the key source', () => {
       const groupId = addGroupTrack({ name: 'Key group' });
       addInsert(trackId, 'dynamics.compressor');

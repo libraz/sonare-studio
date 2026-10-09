@@ -185,6 +185,34 @@ function topologyWithoutInsertSidechain(
   );
 }
 
+/**
+ * Reports whether `trackId` is keyed, directly or through other track lanes'
+ * inserts, from `keyTrackId`. The engine renders lanes in key order, so a new
+ * key edge closing such a path is refused there.
+ */
+function trackKeyedBy(
+  store: ReturnType<typeof useProjectStore>,
+  trackId: number,
+  keyTrackId: number,
+): boolean {
+  const visited = new Set<number>();
+  const pending = [trackId];
+  while (pending.length > 0) {
+    const current = pending.pop() as number;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const track = store.tracks.find((entry) => entry.id === current);
+    if (track?.kind === 'group') continue;
+    for (const slot of track?.mixer?.inserts ?? []) {
+      const source = slot.sidechainSourceTrackId;
+      if (source === undefined) continue;
+      if (source === keyTrackId) return true;
+      pending.push(source);
+    }
+  }
+  return false;
+}
+
 /** Validates a track/bus/group source before a slot is written. */
 function validateInsertSidechainSource(
   store: ReturnType<typeof useProjectStore>,
@@ -205,6 +233,15 @@ function validateInsertSidechainSource(
     }
     if (targetTrack?.id === source.trackId) {
       throw new RangeError('An insert cannot key from its own track');
+    }
+    if (
+      targetTrack?.kind !== 'group' &&
+      targetTrack !== undefined &&
+      trackKeyedBy(store, source.trackId, targetTrack.id)
+    ) {
+      throw new RangeError(
+        `Track ${source.trackId} is already keyed from track ${targetTrack.id}; keys cannot form a cycle`,
+      );
     }
   }
   if (source?.kind === 'group') {
