@@ -3,6 +3,7 @@ import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import type { MeterSource } from '@/engine/meters';
 import {
   assertNoBusRoutingCycle,
   groupBusTopologyId,
@@ -15,12 +16,18 @@ import {
   replaceInsert,
   setInsertSidechain,
 } from '@/project/commands';
-import { createDefaultStrip, type InsertSlot, type MixerStrip } from '@/project/mixer';
+import {
+  createDefaultStrip,
+  type InsertSlot,
+  type MixerSidechainSource,
+  type MixerStrip,
+} from '@/project/mixer';
 import type { ProcessorControlValue } from '@/project/processor-controls';
 import { formatProcessorControlValue } from '@/project/processor-controls';
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { formatLevel } from '@/ui/mastering/loudness';
 import { openContextMenu } from '@/ui/menu/context-menu';
 import { midiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import {
@@ -29,6 +36,7 @@ import {
   type InsertCatalogGroup,
   loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
+import { type InsertChainKind, insertGainReductionBySlot } from '@/ui/mixer/insert-gain-reduction';
 import {
   addInsertSlot,
   adjustExpandedAfterRemove,
@@ -37,6 +45,8 @@ import {
   reorderInsertSlots,
   toggleInsertEnabled,
 } from '@/ui/mixer/insert-rack';
+import { gainReductionFraction } from '@/ui/mixer/master-meter';
+import type { SidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import MixerKnob from './MixerKnob.vue';
 
@@ -49,13 +59,26 @@ import MixerKnob from './MixerKnob.vue';
  *
  * Sidechain-keyed processors (ducking/sidechainRouter) expose a compact key
  * source selector. Track, group-bus, return-bus and master inserts use the same
- * control; self-routes and bus feedback loops are disabled in the menu.
+ * control; self-routes and bus feedback loops are disabled in the menu, as
+ * are sources the running engine would refuse, with the reason as detail.
+ *
+ * Slots whose processor has reported gain reduction keep a compact readout
+ * and a hairline bar; processors that never reduce (EQ, reverb) show none.
  */
 
-const props = defineProps<{
-  /** Strip the rack edits: a track id or 'master'. */
-  target: MixerStripTarget;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** Strip the rack edits: a track id or 'master'. */
+    target: MixerStripTarget;
+    /** Meter source of the engine strip running these inserts. */
+    meter?: MeterSource | null;
+    /** Whether the mixer dock is visible and readouts should refresh. */
+    visible?: boolean;
+    /** Engine sidechain refusal lookup; null without a running engine. */
+    sidechainRefusal?: SidechainRefusalLookup | null;
+  }>(),
+  { meter: null, visible: true, sidechainRefusal: null },
+);
 
 const store = useProjectStore();
 const { t } = useI18n();
@@ -69,6 +92,68 @@ const strip = computed<MixerStrip>(() => {
   const track = store.tracks.find((t) => t.id === props.target);
   return track?.mixer ?? createDefaultStrip();
 });
+
+/** Chain kind deciding how store slots map to engine inserts. */
+const chainKind = computed<InsertChainKind>(() => {
+  if (props.target === 'master') return 'master';
+  if (isMixerBusStripTarget(props.target)) return 'bus';
+  const target = props.target;
+  return store.tracks.find((track) => track.id === target)?.kind === 'group' ? 'bus' : 'lane';
+});
+
+// --- Per-insert gain reduction -----------------------------------------------
+
+/** Reduction magnitude (dB, 0.1 dB steps) per store slot; undefined when idle. */
+const slotGrDb = ref<Array<number | undefined>>([]);
+/** Slots that have reduced at least once; only they keep a readout. */
+const grSlotKeys = ref(new Set<string>());
+
+function slotKey(slot: InsertSlot, index: number): string {
+  return slot.id ?? `${index}:${slot.processor}`;
+}
+
+function onInsertGr(valuesDb: readonly number[]): void {
+  const inserts = strip.value.inserts;
+  const next = insertGainReductionBySlot(chainKind.value, strip.value, valuesDb).map((db) =>
+    db === undefined ? undefined : Math.round(db * 10) / 10,
+  );
+  const current = slotGrDb.value;
+  if (next.length === current.length && next.every((db, i) => db === current[i])) return;
+  slotGrDb.value = next;
+  next.forEach((db, i) => {
+    const slot = inserts[i];
+    if (db === undefined || !slot) return;
+    const key = slotKey(slot, i);
+    if (!grSlotKeys.value.has(key)) grSlotKeys.value = new Set(grSlotKeys.value).add(key);
+  });
+}
+
+function hasGrReadout(slot: InsertSlot, index: number): boolean {
+  return grSlotKeys.value.has(slotKey(slot, index));
+}
+
+function grLabel(index: number): string {
+  const db = slotGrDb.value[index];
+  return db === undefined ? '0.0' : `-${formatLevel(db)}`;
+}
+
+function grFraction(index: number): number {
+  const db = slotGrDb.value[index];
+  return db === undefined ? 0 : gainReductionFraction(db);
+}
+
+let unsubscribeGr: (() => void) | null = null;
+
+watch(
+  () => [props.meter, props.visible] as const,
+  ([meter, visible]) => {
+    unsubscribeGr?.();
+    unsubscribeGr = null;
+    slotGrDb.value = [];
+    if (meter && visible) unsubscribeGr = meter.subscribeInsertGainReduction(onInsertGr);
+  },
+  { immediate: true },
+);
 
 /** Surfaced when a command rejects (e.g. unknown processor at apply time). */
 const error = ref('');
@@ -316,7 +401,7 @@ function isSidechainGroupSourceAllowed(trackId: number): boolean {
 }
 
 /** Key-source options: no key, tracks, group buses and return buses. */
-const sidechainOptions = computed<
+const storeSidechainOptions = computed<
   { value: SidechainSourceValue; label: string; disabled?: boolean }[]
 >(() => [
   { value: SIDECHAIN_NONE, label: t.value.shell.inserts.noKey },
@@ -345,6 +430,44 @@ const sidechainOptions = computed<
       }))),
 ]);
 
+/**
+ * Bumped when the key picker is about to open: the engine's answer is not
+ * reactive, so it is re-read against the engine state at that moment.
+ */
+const sidechainCheckEpoch = ref(0);
+
+function refreshSidechainChecks(): void {
+  sidechainCheckEpoch.value += 1;
+}
+
+/** Store options for the expanded slot, with engine refusals disabled and explained. */
+const sidechainOptions = computed<
+  { value: SidechainSourceValue; label: string; detail?: string; disabled?: boolean }[]
+>(() => {
+  void sidechainCheckEpoch.value;
+  const lookup = props.sidechainRefusal;
+  const index = expandedIndex.value;
+  if (!lookup || index === null) return storeSidechainOptions.value;
+  return storeSidechainOptions.value.map((option) => {
+    if (option.value === 'none' || option.disabled) return option;
+    const reason = lookup(props.target, index, sidechainSourceFromValue(option.value));
+    if (reason === null) return option;
+    return { ...option, disabled: true, detail: t.value.shell.inserts.sidechainRefusal[reason] };
+  });
+});
+
+function sidechainSourceFromValue(
+  value: Exclude<SidechainSourceValue, 'none'>,
+): MixerSidechainSource {
+  if (value.startsWith('track:')) {
+    return { kind: 'track', trackId: Number(value.slice('track:'.length)) };
+  }
+  if (value.startsWith('group:')) {
+    return { kind: 'group', trackId: Number(value.slice('group:'.length)) };
+  }
+  return { kind: 'bus', busId: value.slice('bus:'.length) };
+}
+
 function sidechainValue(slot: InsertSlot): SidechainSourceValue {
   if (slot.sidechainSourceBusId !== undefined) return `bus:${slot.sidechainSourceBusId}`;
   if (slot.sidechainSourceGroupTrackId !== undefined) {
@@ -363,14 +486,7 @@ function hasSidechainSelect(slot: InsertSlot): boolean {
 
 function onSidechainChange(index: number, value: SidechainSourceValue): void {
   try {
-    const source =
-      value === SIDECHAIN_NONE
-        ? null
-        : value.startsWith('track:')
-          ? { kind: 'track' as const, trackId: Number(value.slice('track:'.length)) }
-          : value.startsWith('group:')
-            ? { kind: 'group' as const, trackId: Number(value.slice('group:'.length)) }
-            : { kind: 'bus' as const, busId: value.slice('bus:'.length) };
+    const source = value === 'none' ? null : sidechainSourceFromValue(value);
     setInsertSidechain(props.target, index, source);
     error.value = '';
   } catch (err) {
@@ -417,6 +533,8 @@ watch(addMenuOpen, (open) => {
 });
 
 onBeforeUnmount(() => {
+  unsubscribeGr?.();
+  unsubscribeGr = null;
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   for (const gesture of gestures.values()) gesture.end();
   gestures.clear();
@@ -470,6 +588,24 @@ onBeforeUnmount(() => {
         >
           {{ humanizeInsertName(slot.processor) }}
         </button>
+        <span
+          v-if="hasGrReadout(slot, index)"
+          class="insert-gr"
+          :class="{ active: slotGrDb[index] !== undefined }"
+          role="meter"
+          :aria-label="
+            formatMessage(t.shell.inserts.gainReduction, {
+              name: humanizeInsertName(slot.processor),
+            })
+          "
+          :aria-valuenow="slotGrDb[index] ?? 0"
+          aria-valuemin="0"
+        >
+          {{ grLabel(index) }}
+        </span>
+        <span v-if="hasGrReadout(slot, index)" class="insert-gr-bar" aria-hidden="true">
+          <span class="insert-gr-fill" :style="{ width: `${grFraction(index) * 100}%` }" />
+        </span>
         <button
           type="button"
           class="insert-remove"
@@ -483,7 +619,12 @@ onBeforeUnmount(() => {
         </button>
       </div>
       <div v-if="expandedIndex === index" class="insert-params">
-        <label v-if="hasSidechainSelect(slot)" class="insert-sidechain">
+        <label
+          v-if="hasSidechainSelect(slot)"
+          class="insert-sidechain"
+          @pointerdown.capture="refreshSidechainChecks"
+          @keydown.capture="refreshSidechainChecks"
+        >
           <span class="insert-sidechain-label">{{ t.shell.inserts.key }}</span>
           <SelectMenu
             class="insert-sidechain-select"
@@ -704,6 +845,38 @@ onBeforeUnmount(() => {
 
 .insert-name.expanded {
   color: var(--accent);
+}
+
+.insert-gr {
+  flex: none;
+  min-width: 3.5ch;
+  text-align: right;
+  font: var(--fs-chrome-md) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+}
+
+.insert-gr.active {
+  color: var(--text-2);
+}
+
+/* Hairline reduction bar on the slot's bottom edge, right-anchored like StripGrMeter. */
+.insert-gr-bar {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+}
+
+.insert-gr-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  border-radius: 1px;
+  background: var(--meter-yellow);
 }
 
 .insert-remove {

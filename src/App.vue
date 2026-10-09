@@ -531,6 +531,7 @@ const {
   automationSync,
   midiSync,
   mixerLaneTrackIds,
+  sidechainRefusal,
 } = useEngineProjectSync({
   bridge,
   scope,
@@ -1368,6 +1369,7 @@ onMounted(installLaunchQueueConsumer);
             :loop-enabled="loopEnabled"
             :loop-start-ppq="loopStartPpq"
             :loop-end-ppq="loopEndPpq"
+            :sidechain-refusal="sidechainRefusal"
           />
         </section>
         <section

@@ -249,6 +249,17 @@ export const shellMixing = {
     stereoOnly: 'Stereo',
     copy: 'Copy insert',
     paste: 'Paste insert settings',
+    gainReduction: '{name} gain reduction',
+    sidechainRefusal: {
+      invalidTarget: 'This strip is not running in the engine yet',
+      insertOutOfRange: 'This insert is not running in the engine yet',
+      undeclaredSource: 'This source is not running in the engine yet',
+      invalidSourceKind: 'This strip cannot take a key from this kind of source',
+      selfKey: 'A strip cannot key from its own signal',
+      cycle: 'This key would close a sidechain loop',
+      tableFull: 'No free sidechain slots left in the engine',
+      planRefused: 'The engine cannot align this key (delay too long)',
+    },
   },
   mixer: {
     title: 'MIXER',

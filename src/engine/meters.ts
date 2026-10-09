@@ -53,6 +53,15 @@ export interface StereoMeterLevels {
 export type MeterListener = (levels: StereoMeterLevels) => void;
 
 /**
+ * Callback receiving a target strip's per-insert gain reduction: dB values
+ * (each <= 0) indexed by engine insert, pre-fader inserts before post-fader.
+ */
+export type InsertGainReductionListener = (valuesDb: readonly number[]) => void;
+
+/** Minimum interval between per-insert gain-reduction polls of one target on the ring transport. */
+export const INSERT_GAIN_REDUCTION_POLL_MS = 66;
+
+/**
  * Read-only view of one meter target's level stream: the most recent levels
  * plus a subscription for new snapshots.
  */
@@ -66,6 +75,15 @@ export interface MeterSource {
    * @returns An unsubscribe function; safe to call more than once.
    */
   subscribe(listener: MeterListener): () => void;
+  /**
+   * Registers a listener for the target strip's per-insert gain reduction.
+   * The postMessage transport carries it on meter records; on the ring
+   * transport the bridge polls the worklet only while a listener exists.
+   *
+   * @param listener Called with each new per-insert reading.
+   * @returns An unsubscribe function; safe to call more than once.
+   */
+  subscribeInsertGainReduction(listener: InsertGainReductionListener): () => void;
 }
 
 /**
@@ -145,6 +163,8 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   const latestByTarget = new Map<number, StereoMeterLevels>();
   const listenersByTarget = new Map<number, Set<MeterListener>>();
   const sources = new Map<number, MeterSource>();
+  const insertGrListenersByTarget = new Map<number, Set<InsertGainReductionListener>>();
+  const insertGrPolls = new Map<number, { inFlight: boolean; lastMs: number }>();
   let disposed = false;
   let rafId = 0;
 
@@ -157,6 +177,43 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       for (const listener of listeners) {
         listener(levels);
       }
+    }
+    // Only the newest record per target in a drain carries the array.
+    if (snapshot.insertGainReductionDb) {
+      publishInsertGr(targetId, snapshot.insertGainReductionDb);
+    }
+  };
+
+  function publishInsertGr(targetId: number, valuesDb: readonly number[]): void {
+    const listeners = insertGrListenersByTarget.get(targetId);
+    if (!listeners) return;
+    for (const listener of listeners) listener(valuesDb);
+  }
+
+  // Ring records have a fixed layout without per-insert values, so ask the
+  // worklet for each watched target, one request in flight and throttled.
+  const pollInsertGr = (now: number): void => {
+    for (const [targetId, listeners] of insertGrListenersByTarget) {
+      if (listeners.size === 0) continue;
+      let state = insertGrPolls.get(targetId);
+      if (!state) {
+        state = { inFlight: false, lastMs: Number.NEGATIVE_INFINITY };
+        insertGrPolls.set(targetId, state);
+      }
+      if (state.inFlight || now - state.lastMs < INSERT_GAIN_REDUCTION_POLL_MS) continue;
+      const poll = state;
+      poll.inFlight = true;
+      poll.lastMs = now;
+      handle.engine.pollInsertGainReduction(targetId).then(
+        (valuesDb) => {
+          poll.inFlight = false;
+          if (!disposed) publishInsertGr(targetId, valuesDb);
+        },
+        () => {
+          // Rejected once the node is destroyed; the next frame retries otherwise.
+          poll.inFlight = false;
+        },
+      );
     }
   };
 
@@ -177,13 +234,14 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       ? cancelAnimationFrame
       : (id: number): void => clearTimeout(id);
 
-  const poll = (): void => {
+  const poll = (now: number): void => {
     if (disposed) return;
     // Publish every polled record in order so each target's latest reading
     // reflects its newest record.
     for (const snapshot of handle.engine.pollMeters()) {
       publish(snapshot);
     }
+    pollInsertGr(now);
     rafId = raf(poll);
   };
   if (isSab) {
@@ -210,6 +268,19 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
           listenersByTarget.get(targetId)?.delete(listener);
         };
       },
+      subscribeInsertGainReduction(listener: InsertGainReductionListener): () => void {
+        let listeners = insertGrListenersByTarget.get(targetId);
+        if (!listeners) {
+          listeners = new Set();
+          insertGrListenersByTarget.set(targetId, listeners);
+        }
+        if (!disposed) {
+          listeners.add(listener);
+        }
+        return () => {
+          insertGrListenersByTarget.get(targetId)?.delete(listener);
+        };
+      },
     };
     sources.set(targetId, source);
     return source;
@@ -224,6 +295,9 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
     subscribe(listener: MeterListener): () => void {
       return master.subscribe(listener);
     },
+    subscribeInsertGainReduction(listener: InsertGainReductionListener): () => void {
+      return master.subscribeInsertGainReduction(listener);
+    },
     forTarget(targetId: number): MeterSource {
       return sourceFor(targetId);
     },
@@ -236,6 +310,10 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
         listeners.clear();
       }
       listenersByTarget.clear();
+      for (const listeners of insertGrListenersByTarget.values()) {
+        listeners.clear();
+      }
+      insertGrListenersByTarget.clear();
     },
   };
 }

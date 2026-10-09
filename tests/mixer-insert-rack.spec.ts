@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
 import InsertRack from '@/components/mixer/InsertRack.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
+import type { MeterSource } from '@/engine/meters';
 import { addAudioTrack, addGroupTrack, addInsert, clearHistory, undo } from '@/project/commands';
 import { createDefaultStrip, type InsertSlot } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
@@ -254,6 +255,104 @@ describe('InsertRack sidechain source options', () => {
     expect(labels).toEqual(['No key', 'Kick']);
     expect(labels).not.toContain(store.tracks.find((track) => track.id === targetId)?.name);
     expect(sourceId).not.toBe(groupId);
+    wrapper.unmount();
+  });
+
+  it('disables sources the engine refuses and explains why', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const targetId = store.tracks[0].id;
+    const kickId = addAudioTrack({ name: 'Kick' });
+    addAudioTrack({ name: 'Snare' });
+    store.tracks = store.tracks.map((track) =>
+      track.id === targetId ? { ...track, mixer: createDefaultStrip() } : track,
+    );
+    addInsert(targetId, 'dynamics.sidechainRouter');
+    const sidechainRefusal = vi.fn((_target, _index, source: { kind: string; trackId?: number }) =>
+      source.trackId === kickId ? ('planRefused' as const) : null,
+    );
+
+    const wrapper = mount(InsertRack, {
+      props: { target: targetId, sidechainRefusal },
+      global: {
+        directives: { tooltip: () => undefined },
+        stubs: { MixerKnob: true, Teleport: true },
+      },
+    });
+    await wrapper.find('.insert-name').trigger('click');
+    await wrapper.find('.insert-sidechain-select .select-trigger').trigger('click');
+    await wrapper.vm.$nextTick();
+
+    const kick = wrapper.findAll('.select-option').find((option) => option.text().includes('Kick'));
+    expect(kick?.attributes('aria-disabled')).toBe('true');
+    expect(kick?.text()).toContain('The engine cannot align this key');
+    const snare = wrapper
+      .findAll('.select-option')
+      .find((option) => option.text().includes('Snare'));
+    expect(snare?.attributes('aria-disabled')).not.toBe('true');
+    expect(sidechainRefusal).toHaveBeenCalledWith(targetId, 0, { kind: 'track', trackId: kickId });
+    wrapper.unmount();
+  });
+});
+
+describe('InsertRack per-insert gain reduction', () => {
+  function meterWith() {
+    let listener: ((values: readonly number[]) => void) | null = null;
+    const unsubscribe = vi.fn();
+    const meter: MeterSource = {
+      latest: {
+        frame: 0,
+        peakDbL: -120,
+        peakDbR: -120,
+        rmsDbL: -120,
+        rmsDbR: -120,
+        correlation: 0,
+      },
+      subscribe: () => () => {},
+      subscribeInsertGainReduction: (next) => {
+        listener = next;
+        return unsubscribe;
+      },
+    };
+    return { meter, emit: (values: readonly number[]) => listener?.(values), unsubscribe };
+  }
+
+  it('shows a readout only on slots that reduce and keeps it while idle', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const targetId = store.tracks[0].id;
+    store.tracks = store.tracks.map((track) =>
+      track.id === targetId ? { ...track, mixer: createDefaultStrip() } : track,
+    );
+    addInsert(targetId, 'eq.tilt');
+    addInsert(targetId, 'dynamics.compressor');
+    const { meter, emit, unsubscribe } = meterWith();
+    const wrapper = mount(InsertRack, {
+      props: { target: targetId, meter },
+      global: { directives: { tooltip: () => undefined }, stubs: { MixerKnob: true } },
+    });
+
+    expect(wrapper.findAll('.insert-gr')).toHaveLength(0);
+    emit([0, -3.24]);
+    await wrapper.vm.$nextTick();
+    const slots = wrapper.findAll('.insert-slot');
+    expect(slots[0].find('.insert-gr').exists()).toBe(false);
+    expect(slots[1].find('.insert-gr').text()).toBe('-3.2');
+    expect(slots[1].find('.insert-gr').classes()).toContain('active');
+
+    emit([0, 0]);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.findAll('.insert-slot')[1].find('.insert-gr').text()).toBe('0.0');
+    expect(wrapper.findAll('.insert-slot')[1].find('.insert-gr').classes()).not.toContain('active');
+
+    await wrapper.setProps({ visible: false });
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
     wrapper.unmount();
   });
 });

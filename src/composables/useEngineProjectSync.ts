@@ -1,4 +1,4 @@
-import { ref, type ShallowRef, watch } from 'vue';
+import { computed, ref, type ShallowRef, shallowRef, watch } from 'vue';
 import type { useTransport } from '@/composables/useTransport';
 import type { AutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
@@ -38,6 +38,7 @@ import {
   isAutomationStripPlaybackEnabled,
   resetAutomationStripModes,
 } from '@/ui/mixer/automation-mode';
+import { createSidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 
 const APPLY_DEBOUNCE_MS = 400;
 /** Collapse continuous MIDI editing before rebuilding the engine's full MIDI state. */
@@ -106,6 +107,8 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let midiSync: MidiSync | null = null;
   let transportSync: TransportSync | null = null;
   let webMidiOutput: WebMidiOutputBridge | null = null;
+  // Reactive mirror of stripSync for lookups that follow the engine's lifetime.
+  const installedStripSync = shallowRef<StripSync | null>(null);
   let applyGeneration = 0;
   let applyController: AbortController | null = null;
   let applyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -386,6 +389,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   function setEngineSyncHandles(handles: EngineSyncHandles): void {
     mixerSync = handles.mixerSync;
     stripSync = handles.stripSync;
+    installedStripSync.value = handles.stripSync;
     automationSync = handles.automationSync;
     midiSync = handles.midiSync;
     transport.setMidiStateRestorer?.(
@@ -409,6 +413,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     scheduledCount.value = 0;
     mixerSync = null;
     stripSync = null;
+    installedStripSync.value = null;
     automationSync = null;
     midiSync = null;
     transport.setMidiStateRestorer?.(null);
@@ -501,6 +506,13 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     },
   );
 
+  /** Why the running engine would refuse an insert sidechain key; null without an engine. */
+  const sidechainRefusal = computed(() => {
+    const h = handle.value;
+    const ids = installedStripSync.value;
+    return h && ids ? createSidechainRefusalLookup(h.engine, ids, () => store.tracks) : null;
+  });
+
   return {
     applyPending,
     scheduledCount,
@@ -530,5 +542,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     automationSync: () => automationSync,
     midiSync: () => midiSync,
     mixerLaneTrackIds: () => mixerSync?.laneTrackIds() ?? [],
+    sidechainRefusal,
   };
 }

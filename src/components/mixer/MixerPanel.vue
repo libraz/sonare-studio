@@ -23,6 +23,7 @@ import {
   loadMixerScenePresetCatalog,
   loadMixerScenePresetJson,
 } from '@/ui/mixer/scene-presets';
+import type { SidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 import BusStrip from './BusStrip.vue';
 import ChannelStrip from './ChannelStrip.vue';
 import MixerSnapshots from './MixerSnapshots.vue';
@@ -55,6 +56,8 @@ const props = withDefaults(
     meterFor?: ((trackId: number) => MeterSource | null) | null;
     /** Per-bus meter source lookup; null shows placeholder bus meters. */
     busMeterFor?: ((busId: string) => MeterSource | null) | null;
+    /** Engine sidechain refusal lookup for insert key pickers; null without an engine. */
+    sidechainRefusal?: SidechainRefusalLookup | null;
     /** Per-track scope source lookup (engine spectrum + goniometer). */
     scopeFor?: ((trackId: number) => ScopeSource | null) | null;
     /** Per-bus scope source lookup (engine spectrum + goniometer). */
@@ -84,6 +87,7 @@ const props = withDefaults(
     masterScope: null,
     meterFor: null,
     busMeterFor: null,
+    sidechainRefusal: null,
     scopeFor: null,
     busScopeFor: null,
     positionPpq: undefined,
@@ -95,6 +99,12 @@ const props = withDefaults(
 
 const store = useProjectStore();
 const appSettings = useAppSettings();
+
+/** A group track's inserts run on its group bus, so read their gain reduction there. */
+function insertMeterFor(track: EditorTrack): MeterSource | null {
+  if (track.kind !== 'group') return null;
+  return props.busMeterFor ? props.busMeterFor(`group:${track.id}`) : null;
+}
 const { t } = useI18n();
 
 /** Track ids hidden from the mixer view (persisted as a user layout preference). */
@@ -327,6 +337,8 @@ onBeforeUnmount(() => {
           :key="track.id"
           :target="track.id"
           :bridge="props.meterFor ? props.meterFor(track.id) : null"
+          :insert-meter="insertMeterFor(track)"
+          :sidechain-refusal="props.sidechainRefusal"
           :scope="props.scopeFor ? props.scopeFor(track.id) : null"
           :position-ppq="props.positionPpq"
           :position-sample="props.positionSample"
@@ -339,6 +351,7 @@ onBeforeUnmount(() => {
           :key="bus.id"
           :bus="bus"
           :bridge="props.busMeterFor ? props.busMeterFor(bus.id) : null"
+          :sidechain-refusal="props.sidechainRefusal"
           :scope="props.busScopeFor ? props.busScopeFor(bus.id) : null"
           :position-ppq="props.positionPpq"
           :position-sample="props.positionSample"
@@ -353,6 +366,7 @@ onBeforeUnmount(() => {
         class="master-strip"
         target="master"
         :bridge="props.bridge"
+        :sidechain-refusal="props.sidechainRefusal"
         :analyser="props.analyser"
         :scope="props.masterScope"
         :position-ppq="props.positionPpq"

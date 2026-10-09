@@ -40,6 +40,7 @@ import {
   toggleAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
 import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
+import type { SidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
 import MixerKnob from './MixerKnob.vue';
@@ -67,6 +68,8 @@ const props = withDefaults(
     bus: MixerBus;
     /** Live meter source for this bus; null shows a placeholder meter. */
     bridge?: MeterSource | null;
+    /** Engine sidechain refusal lookup for the insert key picker. */
+    sidechainRefusal?: SidechainRefusalLookup | null;
     /** Engine scope source (per-target spectrum + goniometer), when available. */
     scope?: ScopeSource | null;
     /** Playhead position getter in PPQ (automation follow/recording). */
@@ -86,6 +89,7 @@ const props = withDefaults(
   }>(),
   {
     bridge: null,
+    sidechainRefusal: null,
     scope: null,
     positionPpq: undefined,
     positionSample: undefined,
@@ -288,7 +292,12 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div class="bus-inserts">
-      <InsertRack :target="stripTarget" />
+      <InsertRack
+        :target="stripTarget"
+        :meter="props.bridge"
+        :visible="props.visible"
+        :sidechain-refusal="props.sidechainRefusal"
+      />
     </div>
     <div class="bus-eq">
       <StripEqSection :target="stripTarget" :scope="props.scope" />

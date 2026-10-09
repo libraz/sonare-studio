@@ -254,6 +254,17 @@ export const shellMixing = {
     stereoOnly: 'ステレオ',
     copy: 'インサートをコピー',
     paste: 'インサート設定を貼り付け',
+    gainReduction: '{name} のゲインリダクション',
+    sidechainRefusal: {
+      invalidTarget: 'このストリップはまだエンジンで動作していません',
+      insertOutOfRange: 'このインサートはまだエンジンで動作していません',
+      undeclaredSource: 'このソースはまだエンジンで動作していません',
+      invalidSourceKind: 'この種類のソースはこのストリップのキーにできません',
+      selfKey: '自分自身の信号はキーにできません',
+      cycle: 'サイドチェーンがループになります',
+      tableFull: 'エンジンのサイドチェーン枠が残っていません',
+      planRefused: 'エンジンがこのキーを揃えられません（遅延が大きすぎます）',
+    },
   },
   mixer: {
     title: 'ミキサー',

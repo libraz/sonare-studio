@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { createMeterBridge, METER_SILENCE_DB, type StereoMeterLevels } from '@/engine/meters';
+import {
+  createMeterBridge,
+  INSERT_GAIN_REDUCTION_POLL_MS,
+  METER_SILENCE_DB,
+  type StereoMeterLevels,
+} from '@/engine/meters';
 import type { SonareWorkletMeterSnapshot } from '@/wasm/worklet.js';
 
 /** Full engine meter record with overridable fields. */
@@ -274,6 +279,60 @@ describe('createMeterBridge', () => {
     const bridge = createMeterBridge(handle);
     expect(scheduled).toBe(0);
     expect(pollMeters).not.toHaveBeenCalled();
+    bridge.dispose();
+  });
+
+  it('fans postMessage per-insert gain reduction out to that target only', () => {
+    const { handle, emit } = makeHandle();
+    const bridge = createMeterBridge(handle);
+    const lane = vi.fn();
+    const master = vi.fn();
+    const unsubscribe = bridge.forTarget(3).subscribeInsertGainReduction(lane);
+    bridge.subscribeInsertGainReduction(master);
+
+    emit(makeSnapshot({ targetId: 3, insertGainReductionDb: [0, -4.5] }));
+    // Backlogged records omit the array and publish nothing.
+    emit(makeSnapshot({ targetId: 3 }));
+    expect(lane).toHaveBeenCalledTimes(1);
+    expect(lane).toHaveBeenCalledWith([0, -4.5]);
+    expect(master).not.toHaveBeenCalled();
+
+    unsubscribe();
+    emit(makeSnapshot({ targetId: 3, insertGainReductionDb: [-1] }));
+    expect(lane).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
+  it('polls per-insert gain reduction in SAB mode only for watched targets, throttled', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const { handle } = makeHandle('sab');
+    const pollInsertGainReduction = vi.fn(async (_targetId: number) => [-2, 0]);
+    (handle.engine as unknown as Record<string, unknown>).pollInsertGainReduction =
+      pollInsertGainReduction;
+    const bridge = createMeterBridge(handle);
+
+    frames.at(-1)?.(0);
+    expect(pollInsertGainReduction).not.toHaveBeenCalled();
+
+    const listener = vi.fn();
+    bridge.forTarget(4).subscribeInsertGainReduction(listener);
+    frames.at(-1)?.(100);
+    // A second frame while the request is in flight does not stack requests.
+    frames.at(-1)?.(200);
+    expect(pollInsertGainReduction).toHaveBeenCalledTimes(1);
+    expect(pollInsertGainReduction).toHaveBeenCalledWith(4);
+    await Promise.resolve();
+    expect(listener).toHaveBeenCalledWith([-2, 0]);
+
+    frames.at(-1)?.(100 + INSERT_GAIN_REDUCTION_POLL_MS - 1);
+    expect(pollInsertGainReduction).toHaveBeenCalledTimes(1);
+    frames.at(-1)?.(100 + INSERT_GAIN_REDUCTION_POLL_MS);
+    expect(pollInsertGainReduction).toHaveBeenCalledTimes(2);
     bridge.dispose();
   });
 });

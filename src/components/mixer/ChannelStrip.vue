@@ -34,6 +34,7 @@ import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { type MidiLearnTrackStateParam, midiLearnTrackStateTargetId } from '@/ui/midi/midi-learn';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
+import type { SidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 import { useStripAutomation } from '@/ui/mixer/use-strip-automation';
 import { useStripGestures } from '@/ui/mixer/use-strip-gestures';
 import InsertRack from './InsertRack.vue';
@@ -80,6 +81,10 @@ const props = withDefaults(
     target: number | 'master';
     /** Live meter source for this strip; null shows a placeholder meter. */
     bridge?: MeterSource | null;
+    /** Meter source of the engine strip running the inserts (a group track's bus); defaults to `bridge`. */
+    insertMeter?: MeterSource | null;
+    /** Engine sidechain refusal lookup for the insert key picker. */
+    sidechainRefusal?: SidechainRefusalLookup | null;
     /** Master analyser tap (master strip only); null draws placeholders. */
     analyser?: AnalyserBridge | null;
     /** Engine scope source (per-target spectrum + goniometer), when available. */
@@ -101,6 +106,8 @@ const props = withDefaults(
   }>(),
   {
     bridge: null,
+    insertMeter: null,
+    sidechainRefusal: null,
     analyser: null,
     scope: null,
     positionPpq: undefined,
@@ -389,7 +396,12 @@ onBeforeUnmount(() => {
     <StripAutomationControls v-if="!isGroup" :target="props.target" :name="name" />
 
     <div class="strip-section">
-      <InsertRack :target="props.target" />
+      <InsertRack
+        :target="props.target"
+        :meter="props.insertMeter ?? props.bridge"
+        :visible="props.visible"
+        :sidechain-refusal="props.sidechainRefusal"
+      />
     </div>
 
     <div class="strip-section">
@@ -543,7 +555,11 @@ onBeforeUnmount(() => {
       @change="(value) => onGainChange(value, true)"
     />
 
-    <StripGrMeter v-if="!isMaster" :bridge="props.bridge" :visible="props.visible" />
+    <StripGrMeter
+      v-if="!isMaster"
+      :bridge="props.insertMeter ?? props.bridge"
+      :visible="props.visible"
+    />
 
     <MasterMeterReadout
       v-if="isMaster"
