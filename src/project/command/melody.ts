@@ -28,6 +28,10 @@ export interface TranscribeAudioClipToMidiOptions {
   polyphonic?: boolean;
   /** Cancels worker analysis before the project mutation is reached. */
   signal?: AbortSignal;
+  /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
+  referenceHz?: number | 'auto';
+  /** Receives the tuning the notes were measured against, in fractions of a semitone. */
+  onTuning?: (tuning: number) => void;
   /** Injectable adapter for command tests and host integrations. */
   transcribe?: typeof transcribeAudioClip;
 }
@@ -269,6 +273,8 @@ export async function transcribeAudioClipToMidi(
       polyphonic: options.polyphonic === true,
       signal: linked.signal,
       rhythmQuantizePpq,
+      referenceHz: options.referenceHz,
+      onTuning: options.onTuning,
     };
     const notes = await (options.transcribe ?? transcribeAudioClip)(
       clip,

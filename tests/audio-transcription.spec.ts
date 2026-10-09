@@ -37,7 +37,7 @@ function asset(sampleRate: number, frames: number, channels = 2): LoadedAudioAss
 }
 
 function result(events: TranscribeResult['events']): TranscribeResult {
-  return { events, noteCount: events.length / 2, tempoBpm: 60 };
+  return { events, noteCount: events.length / 2, tempoBpm: 60, tuning: 0 };
 }
 
 describe('transcribeAudioClip', () => {
@@ -102,6 +102,25 @@ describe('transcribeAudioClip', () => {
     expect(call?.samples.length).toBe(96_000);
     expect(call?.sourceSampleRate).toBe(96_000);
     expect(call?.polyphonic).toBe(true);
+  });
+
+  it('forwards the reference request and reports the tuning used', async () => {
+    let seen: number | 'auto' | undefined;
+    const tunings: number[] = [];
+    await transcribeAudioClip(
+      { assetId: 'test-audio', startPpq: 0, lengthPpq: 1, sourceOffsetPpq: 0 },
+      60,
+      {
+        loadAudioAsset: async () => asset(1_000, 1_000, 1),
+        transcribe: async (_samples, _rate, _poly, options) => {
+          seen = options?.referenceHz;
+          return { ...result([]), tuning: -0.31 };
+        },
+      },
+      { referenceHz: 'auto', onTuning: (tuning) => tunings.push(tuning) },
+    );
+    expect(seen).toBe('auto');
+    expect(tunings).toEqual([-0.31]);
   });
 
   it('renders looped clip occurrences through the audible clip seam', async () => {

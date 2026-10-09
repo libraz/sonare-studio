@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
+import { ensureWasm } from '@/lib/wasm';
 import { MAX_POLYPHONIC_SECONDS } from '@/project/audio-transcription';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
 import { isAudioClip } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
+
+type TuningMode = 'concert' | 'auto';
 
 const props = defineProps<{
   open: boolean;
@@ -20,12 +23,18 @@ const emit = defineEmits<{
 const store = useProjectStore();
 const { t } = useI18n();
 const mode = ref<'melody' | 'polyphonic'>('melody');
+const tuningMode = ref<TuningMode>('concert');
+const detectedReference = ref('');
 const busy = ref(false);
 const error = ref('');
 const controller = ref<AbortController | null>(null);
 const modeButtons: Record<'melody' | 'polyphonic', HTMLButtonElement | null> = {
   melody: null,
   polyphonic: null,
+};
+const tuningButtons: Record<TuningMode, HTMLButtonElement | null> = {
+  concert: null,
+  auto: null,
 };
 
 const copy = computed(() => t.value.shell.arrangement.transcribe);
@@ -73,6 +82,8 @@ watch(
       return;
     }
     mode.value = 'melody';
+    tuningMode.value = 'concert';
+    detectedReference.value = '';
     busy.value = false;
     error.value = '';
     controller.value = null;
@@ -127,6 +138,30 @@ function setModeButton(
   modeButtons[name] = element instanceof HTMLButtonElement ? element : null;
 }
 
+function chooseTuning(next: TuningMode): void {
+  if (busy.value) return;
+  tuningMode.value = next;
+  detectedReference.value = '';
+  error.value = '';
+}
+
+function onTuningKeydown(event: KeyboardEvent, current: TuningMode): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const next = event.key === 'ArrowLeft' ? 'concert' : 'auto';
+  if (next !== current) {
+    chooseTuning(next);
+    if (tuningMode.value === next) void nextTick(() => tuningButtons[next]?.focus());
+  }
+}
+
+function setTuningButton(
+  name: TuningMode,
+  element: Element | ComponentPublicInstance | null,
+): void {
+  tuningButtons[name] = element instanceof HTMLButtonElement ? element : null;
+}
+
 function isAbortError(value: unknown): boolean {
   return value instanceof Error && value.name === 'AbortError';
 }
@@ -136,13 +171,24 @@ async function run(): Promise<void> {
   if (id === null || busy.value) return;
   if (mode.value === 'polyphonic' && polyphonicUnavailable.value) return;
   error.value = '';
+  detectedReference.value = '';
   busy.value = true;
   const currentController = new AbortController();
   controller.value = currentController;
   try {
+    const detect = tuningMode.value === 'auto';
+    let measured: number | undefined;
     const newClipId = await transcribeAudioClipToMidi(id, {
       polyphonic: mode.value === 'polyphonic',
       signal: currentController.signal,
+      ...(detect
+        ? {
+            referenceHz: 'auto' as const,
+            onTuning: (tuning: number) => {
+              measured = tuning;
+            },
+          }
+        : {}),
     });
     if (currentController.signal.aborted) return;
     if (newClipId < 0) {
@@ -150,6 +196,14 @@ async function run(): Promise<void> {
       return;
     }
     setActiveClip(newClipId);
+    if (detect && measured !== undefined) {
+      // Stay open so the measured reference can be read.
+      const wasm = await ensureWasm();
+      if (currentController.signal.aborted) return;
+      const hz = wasm.tuningToReferenceHz(measured, 440);
+      detectedReference.value = copy.value.detectedReference.replace('{hz}', hz.toFixed(1));
+      return;
+    }
     emit('close');
   } catch (value) {
     if (!currentController.signal.aborted && !isAbortError(value)) {
@@ -212,22 +266,62 @@ onBeforeUnmount(abort);
         </button>
       </div>
 
+      <div class="transcribe-tuning">
+        <span class="transcribe-tuning-label">{{ copy.tuningLabel }}</span>
+        <div class="transcribe-tuning-options" role="radiogroup" :aria-label="copy.tuningLabel">
+          <button
+            type="button"
+            class="transcribe-tuning-option"
+            :class="{ active: tuningMode === 'concert' }"
+            role="radio"
+            :aria-checked="tuningMode === 'concert'"
+            :tabindex="tuningMode === 'concert' ? 0 : -1"
+            :ref="(element) => setTuningButton('concert', element)"
+            :disabled="busy"
+            @click="chooseTuning('concert')"
+            @keydown="onTuningKeydown($event, 'concert')"
+          >
+            {{ copy.tuningConcert }}
+          </button>
+          <button
+            type="button"
+            class="transcribe-tuning-option"
+            :class="{ active: tuningMode === 'auto' }"
+            role="radio"
+            :aria-checked="tuningMode === 'auto'"
+            :tabindex="tuningMode === 'auto' ? 0 : -1"
+            :ref="(element) => setTuningButton('auto', element)"
+            :disabled="busy"
+            @click="chooseTuning('auto')"
+            @keydown="onTuningKeydown($event, 'auto')"
+          >
+            {{ copy.tuningAuto }}
+          </button>
+        </div>
+      </div>
+
       <p v-if="polyphonicHint" class="transcribe-hint">{{ polyphonicHint }}</p>
+      <p v-if="detectedReference" class="transcribe-result" role="status">{{ detectedReference }}</p>
       <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
     </div>
 
     <template #actions>
-      <button type="button" @click="close">
-        {{ busy ? copy.cancel : copy.close }}
+      <button v-if="detectedReference" type="button" class="primary" @click="close">
+        {{ copy.close }}
       </button>
-      <button
-        type="button"
-        class="primary"
-        :disabled="busy || clip === null || !isAudioClip(clip) || polyphonicUnavailable && mode === 'polyphonic'"
-        @click="run"
-      >
-        {{ busy ? copy.transcribing : copy.run }}
-      </button>
+      <template v-else>
+        <button type="button" @click="close">
+          {{ busy ? copy.cancel : copy.close }}
+        </button>
+        <button
+          type="button"
+          class="primary"
+          :disabled="busy || clip === null || !isAudioClip(clip) || polyphonicUnavailable && mode === 'polyphonic'"
+          @click="run"
+        >
+          {{ busy ? copy.transcribing : copy.run }}
+        </button>
+      </template>
     </template>
   </AppModal>
 </template>
@@ -238,11 +332,12 @@ onBeforeUnmount(abort);
   flex-direction: column;
   gap: var(--sp-4);
   min-width: 22rem;
-  min-height: 13rem;
+  min-height: 16rem;
 }
 
 .transcribe-description,
 .transcribe-hint,
+.transcribe-result,
 .dialog-error {
   margin: 0;
   font-size: var(--fs-sm);
@@ -264,6 +359,54 @@ onBeforeUnmount(abort);
   display: flex;
   gap: var(--sp-2);
   width: 100%;
+}
+
+.transcribe-tuning {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.transcribe-tuning-label {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.transcribe-tuning-options {
+  display: flex;
+  gap: var(--sp-2);
+  width: 100%;
+}
+
+.transcribe-tuning-option {
+  flex: 1 1 0;
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+
+.transcribe-tuning-option:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.transcribe-tuning-option.active {
+  color: var(--text-1);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.transcribe-tuning-option:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.transcribe-result {
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 .transcribe-mode-option {

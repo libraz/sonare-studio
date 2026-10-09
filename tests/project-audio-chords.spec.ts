@@ -269,9 +269,8 @@ describe('detectedChordQuality', () => {
     await analyzeAudioClipChords(audioClip(), 120, {
       loadAudioAsset: async () => asset(48000 * 8),
       detectChords,
-      estimateTuning: () => 0.25,
     });
-    expect(detectChords).toHaveBeenCalledWith(expect.any(Float32Array), 48000, { tuning: 0.25 });
+    expect(detectChords).toHaveBeenCalledWith(expect.any(Float32Array), 48000, { tuning: 'auto' });
   });
 
   it('carries the mapped quality into the detected symbols', async () => {

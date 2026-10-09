@@ -398,6 +398,10 @@ export const shellArrangement = {
       cancel: 'Cancel',
       close: 'Close',
       noNotes: 'No notes were detected in the active clip.',
+      tuningLabel: 'Tuning',
+      tuningConcert: 'A4 = 440 Hz',
+      tuningAuto: 'Detect from audio',
+      detectedReference: 'Detected tuning: A4 = {hz} Hz',
     },
     splitStems: 'Split stems',
     splitStemsTitle:

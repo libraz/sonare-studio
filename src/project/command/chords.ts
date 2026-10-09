@@ -413,7 +413,6 @@ export async function detectChordsFromAudioClip(clipId: number): Promise<number>
     {
       loadAudioAsset: loadAsset,
       detectChords: wasm.detectChords,
-      estimateTuning: (samples, sampleRate) => wasm.estimateTuning(samples, sampleRate),
     },
     store.tempoSegments,
   );

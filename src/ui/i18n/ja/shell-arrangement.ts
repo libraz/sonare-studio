@@ -395,6 +395,10 @@ export const shellArrangement = {
       cancel: 'キャンセル',
       close: '閉じる',
       noNotes: 'アクティブクリップから音符を検出できませんでした。',
+      tuningLabel: 'チューニング',
+      tuningConcert: 'A4 = 440 Hz',
+      tuningAuto: '音源から検出',
+      detectedReference: '検出したチューニング: A4 = {hz} Hz',
     },
     splitStems: 'ステム分離',
     splitStemsTitle:

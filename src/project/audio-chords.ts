@@ -17,7 +17,7 @@
 import type { ChordQuality } from '@libraz/libcantus';
 import { type EditorQuality, libcantusQualityToEditor } from '@/compose/chord-quality';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { estimateRecordingTuning, mixdownToMono } from './audio-import';
+import { mixdownToMono } from './audio-import';
 import { chordExtensionSignature, type EditorChordSymbol } from './chords';
 import { sliceAudioClipWindow } from './scheduling';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
@@ -132,7 +132,7 @@ export interface DetectedAudioChord {
 export type AudioChordDetector = (
   samples: Float32Array,
   sampleRate?: number,
-  options?: { tuning?: number },
+  options?: { tuning?: number | 'auto' },
 ) => { chords: ReadonlyArray<DetectedAudioChord> };
 
 /** Injectable dependencies for {@link analyzeAudioClipChords}. */
@@ -141,8 +141,6 @@ export interface AudioChordDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
   /** The audio chord detector. */
   detectChords: AudioChordDetector;
-  /** Tuning estimator, so an off-pitch recording is read on its own grid. */
-  estimateTuning?: (samples: Float32Array, sampleRate?: number) => number;
 }
 
 /**
@@ -177,12 +175,8 @@ export async function analyzeAudioClipChords(
   );
   const mono = mixdownToMono(window);
   if (mono.length === 0) return [];
-  const tuning = estimateRecordingTuning(deps.estimateTuning, mono, asset.meta.sampleRate);
-  const result = deps.detectChords(
-    mono,
-    asset.meta.sampleRate,
-    tuning === undefined ? undefined : { tuning },
-  );
+  // An off-pitch recording is read on its own pitch grid.
+  const result = deps.detectChords(mono, asset.meta.sampleRate, { tuning: 'auto' });
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
   // Map window-relative detection seconds onto the timeline through the tempo
   // map: the inverse of how playback positions the clip. The clip's audio

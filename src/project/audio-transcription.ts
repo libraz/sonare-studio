@@ -67,6 +67,10 @@ export interface AudioTranscriptionOptions {
   signal?: AbortSignal;
   /** Clip-relative rhythm grid; omitted preserves detector timing. */
   rhythmQuantizePpq?: number;
+  /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
+  referenceHz?: number | 'auto';
+  /** Receives the tuning the notes were measured against, in fractions of a semitone. */
+  onTuning?: (tuning: number) => void;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -310,9 +314,11 @@ export async function transcribeAudioClip(
   const result = await deps.transcribe(mono, targetRate, polyphonic, {
     signal: options.signal,
     ...(sourceRate !== targetRate ? { sourceSampleRate: sourceRate } : {}),
+    ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
   });
   throwIfAborted(options.signal);
   validateResult(result);
+  if (finite(result.tuning)) options.onTuning?.(result.tuning);
 
   // The worker requests tempoBpm=60, therefore each returned PPQ is seconds.
   // Convert the absolute elapsed time through the project's map and rebase it

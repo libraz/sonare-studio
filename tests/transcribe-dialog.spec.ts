@@ -14,7 +14,10 @@ vi.mock('@/project/commands', () => commands);
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
-  const fakeModule = createFakeWasmModule();
+  const fakeModule = {
+    ...createFakeWasmModule(),
+    tuningToReferenceHz: (tuning: number, a4 = 440) => a4 * 2 ** (tuning / 12),
+  };
   return { ensureWasm: async () => fakeModule };
 });
 
@@ -68,7 +71,9 @@ describe('TranscribeDialog', () => {
   it('exposes equal-width accessible melody and polyphonic modes', async () => {
     commands.transcribeAudioClipToMidi.mockResolvedValue(2);
     const w = open();
-    const modes = [...document.body.querySelectorAll<HTMLElement>('[role="radio"]')];
+    const modes = [
+      ...document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]'),
+    ];
     expect(modes).toHaveLength(2);
     expect(modes[0]?.getAttribute('aria-checked')).toBe('true');
     modes[0]?.focus();
@@ -89,9 +94,48 @@ describe('TranscribeDialog', () => {
     expect(w.emitted('close')).toHaveLength(1);
   });
 
+  it('measures the tuning when detection is chosen and reports the reference pitch', async () => {
+    commands.transcribeAudioClipToMidi.mockImplementation(
+      async (_id: number, options: { onTuning?: (tuning: number) => void }) => {
+        options.onTuning?.(-0.2);
+        return 2;
+      },
+    );
+    const w = open();
+    const tuning = [
+      ...document.body.querySelectorAll<HTMLElement>('.transcribe-tuning [role="radio"]'),
+    ];
+    expect(tuning.map((el) => el.textContent?.trim())).toEqual([
+      'A4 = 440 Hz',
+      'Detect from audio',
+    ]);
+    expect(tuning[0]?.getAttribute('aria-checked')).toBe('true');
+    tuning[1]?.click();
+    await nextTick();
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Detected tuning: A4 = 434.9 Hz'),
+    );
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
+      polyphonic: false,
+      signal: expect.any(AbortSignal),
+      referenceHz: 'auto',
+      onTuning: expect.any(Function),
+    });
+    expect(commands.setActiveClip).toHaveBeenCalledWith(2);
+    expect(w.emitted('close')).toBeUndefined();
+    // The finished dialog offers only Close, so the clip cannot be transcribed twice.
+    const actions = [...document.body.querySelectorAll<HTMLButtonElement>('button.primary')];
+    expect(actions.map((el) => el.textContent?.trim())).toEqual(['Close']);
+    actions[0]?.click();
+    await nextTick();
+    expect(w.emitted('close')).toHaveLength(1);
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledTimes(1);
+  });
+
   it('disables polyphonic mode and explains the split action for long clips', () => {
     open(31 * 4);
-    const poly = document.body.querySelectorAll<HTMLElement>('[role="radio"]')[1];
+    const poly = document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]')[1];
     expect(poly?.hasAttribute('disabled')).toBe(true);
     expect(document.body.textContent).toContain('Split');
   });
