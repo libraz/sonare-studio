@@ -1157,6 +1157,9 @@ export const FAKE_INSERT_PARAM_INFO: Record<
     choices?: Array<{ name: string; value: number }>;
   }>
 > = {
+  'eq.tilt': [
+    { name: 'tiltDb', id: 0, rtSafe: true, type: 'number', unit: 'dB', uiMin: -12, uiMax: 12 },
+  ],
   'dynamics.compressor': [
     { name: 'thresholdDb', id: 0, rtSafe: true, type: 'number', unit: 'dB', uiMin: -60, uiMax: 0 },
     {

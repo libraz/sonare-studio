@@ -58,6 +58,13 @@ const clearAllMidiCcBindings = vi.fn(() => {
   useProjectStore().midiCcBindings.clear();
 });
 
+// Insert controls read their ranges from the engine catalog the store loads.
+vi.mock('@/lib/wasm', async () => {
+  const { createFakeWasmModule } = await import('./fake-wasm');
+  const fakeModule = createFakeWasmModule();
+  return { ensureWasm: async () => fakeModule };
+});
+
 vi.mock('@/project/commands', () => ({
   setStripGain: (...args: unknown[]) => setStripGain(...args),
   setStripPan: (...args: unknown[]) => setStripPan(...args),
@@ -566,7 +573,8 @@ describe('useMidiLearn', () => {
     );
   });
 
-  it('binds and drives mastering processor parameters across their control ranges', () => {
+  it('binds and drives mastering processor parameters across their control ranges', async () => {
+    await useProjectStore().init();
     useProjectStore().mixer.masteringChain = {
       processors: [{ processor: 'eq.tilt', params: { tiltDb: 0 }, enabled: true }],
     };

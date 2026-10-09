@@ -211,10 +211,18 @@ describe('mastering preset controls', () => {
         denoise,
         { 'repair.denoise.reductionDb': 26 },
         {
-          'repair.denoise.reductionDb': 121,
+          'repair.denoise.reductionDb': 120,
         },
       ),
-    ).toBe(121);
+    ).toBe(120);
+    // libsonare refuses a denoise reduction above 120 dB, so such a saved value falls back.
+    expect(
+      resolvePresetControlValue(
+        denoise,
+        { 'repair.denoise.reductionDb': 26 },
+        { 'repair.denoise.reductionDb': 121 },
+      ),
+    ).toBe(26);
   });
 
   it('maps the legacy denoise alias without creating a second saved key', () => {
@@ -233,7 +241,8 @@ describe('mastering preset controls', () => {
     // Earlier project versions could save these libsonare-valid values. They
     // must remain visible and editable even outside the usual mastering range.
     expect(parsePresetControlValue(target, -61)).toBe(-61);
-    expect(parsePresetControlValue(denoise, 121)).toBe(121);
+    expect(parsePresetControlValue(denoise, 120)).toBe(120);
+    expect(() => parsePresetControlValue(denoise, 121)).toThrow(RangeError);
     expect(parsePresetControlValue(getPresetControlDescriptor('loudness.ceilingDb')!, 1)).toBe(1);
     expect(parsePresetControlValue(getPresetControlDescriptor('loudness.releaseMs')!, 6000)).toBe(
       6000,
