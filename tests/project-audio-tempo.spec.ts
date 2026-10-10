@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
-  type AudioTempoDetector,
   beatsToTimeSignatures,
   beatTimesToTempoSegments,
-  detectAudioClipTempo,
+  detectAudioClipBeatGrid,
   detectAudioClipTempoMap,
   detectAudioClipTimeSignatures,
   estimateAudioClipMeter,
@@ -26,53 +25,38 @@ function asset(frames: number, sampleRate = 48000): LoadedAudioAsset {
   } as LoadedAudioAsset;
 }
 
-/** A detector returning a fixed BPM and capturing the buffer it saw. */
-function detector(bpm: number): {
-  fn: AudioTempoDetector;
-  seen: { length: number; sampleRate?: number }[];
-} {
-  const seen: { length: number; sampleRate?: number }[] = [];
-  return {
-    fn: (samples, sampleRate) => {
-      seen.push({ length: samples.length, sampleRate });
-      return bpm;
-    },
-    seen,
-  };
-}
+describe('detectAudioClipBeatGrid', () => {
+  const clip = { assetId: 'asset-1', startPpq: 0, lengthPpq: 16, sourceOffsetPpq: 0 };
 
-describe('detectAudioClipTempo', () => {
-  it('returns the detected BPM, analyzing the sliced window at the asset rate', async () => {
-    // 120 BPM, 16 PPQ window => 8 s => 8 * 48000 frames sliced.
-    const det = detector(128);
-    const bpm = await detectAudioClipTempo(clipWindow({ lengthPpq: 16 }), 120, {
+  it('fits the grid of the audible window the beat tracker hears', async () => {
+    const seen: Array<{ length: number; sampleRate: number }> = [];
+    const beats = Array.from({ length: 16 }, (_, index) => 0.25 + index * 0.5);
+    const grid = await detectAudioClipBeatGrid(clip, [{ startPpq: 0, bpm: 120 }], 4, {
       loadAudioAsset: async () => asset(48000 * 20),
-      detectBpm: det.fn,
+      detectBeats: async (mono, sampleRate) => {
+        seen.push({ length: mono.length, sampleRate });
+        return { beats, downbeats: [beats[1], beats[5], beats[9]] };
+      },
     });
-    expect(bpm).toBe(128);
-    expect(det.seen).toEqual([{ length: 8 * 48000, sampleRate: 48000 }]);
+    // 16 PPQ at 120 BPM is the 8 s audible window.
+    expect(seen).toEqual([{ length: 8 * 48000, sampleRate: 48000 }]);
+    expect(grid?.bpm).toBeCloseTo(120, 6);
+    expect(grid?.downbeatSeconds).toBeCloseTo(0.75, 6);
   });
 
-  it('returns null without an asset, at non-positive tempo, or on an empty window', async () => {
-    const det = detector(120);
-    const deps = { loadAudioAsset: async () => asset(48000), detectBpm: det.fn };
-    expect(await detectAudioClipTempo(clipWindow({ assetId: undefined }), 120, deps)).toBeNull();
-    expect(await detectAudioClipTempo(clipWindow(), 0, deps)).toBeNull();
+  it('returns null when nothing is audible or too few beats are tracked', async () => {
+    const deps = {
+      loadAudioAsset: async () => asset(48000 * 20),
+      detectBeats: async () => ({ beats: [1], downbeats: [] }),
+    };
+    expect(await detectAudioClipBeatGrid(clip, [{ startPpq: 0, bpm: 120 }], 4, deps)).toBeNull();
     expect(
-      await detectAudioClipTempo(clipWindow(), 120, {
-        ...deps,
-        loadAudioAsset: async () => asset(0),
-      }),
-    ).toBeNull();
-  });
-
-  it('returns null when the detector yields a non-positive or non-finite BPM', async () => {
-    const deps = { loadAudioAsset: async () => asset(48000) };
-    expect(
-      await detectAudioClipTempo(clipWindow(), 120, { ...deps, detectBpm: () => 0 }),
-    ).toBeNull();
-    expect(
-      await detectAudioClipTempo(clipWindow(), 120, { ...deps, detectBpm: () => Number.NaN }),
+      await detectAudioClipBeatGrid(
+        { ...clip, lengthPpq: 0 },
+        [{ startPpq: 0, bpm: 120 }],
+        4,
+        deps,
+      ),
     ).toBeNull();
   });
 });

@@ -1,13 +1,12 @@
 /**
- * Audio-driven tempo detection: estimates either a single tempo (BPM) from an
- * audio clip's source window with libsonare's `detectBpm` — the same detector
- * used to tag tempo on import — or a variable tempo map from libsonare's
- * `detectBeats` beat tracker.
+ * Audio-driven tempo detection: a clip's beat grid (tempo and first downbeat,
+ * see {@link fitBeatGrid}) tracked in the analysis worker, or a variable tempo
+ * map from libsonare's `detectBeats` beat tracker.
  *
- * The clip window is cut with the same fixed-tempo slice as playback so the
- * detector hears the clip's audible region. The constant result is a BPM the
- * tempo-map editor offers as a draft; the variable result is a constant-per-
- * beat tempo map (see {@link beatTimesToTempoSegments}). The same beat tracker
+ * The constant tempo is the beat grid's fitted line rather than a one-shot
+ * estimate, which drifts most of a beat over a long piece. The tempo-map
+ * editor offers it as a draft; the variable result is a constant-per-beat
+ * tempo map (see {@link beatTimesToTempoSegments}). The same beat tracker
  * also drives a meter map from `detectDownbeats` (see
  * {@link beatsToTimeSignatures}). The pure cores are dependency-injected for
  * testing; the {@link detectActiveAudioClipTempo},
@@ -18,73 +17,83 @@
 
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import { type DetectedBeats, detectBeatsInWorker } from './audio-analysis-client';
 import { mixdownToMono } from './audio-import';
-import { sliceAudioClipWindow } from './scheduling';
+import { type BeatGrid, fitBeatGrid } from './beat-grid';
+import {
+  type AudibleAudioClipFields,
+  renderAudibleAudioClipWindow,
+  sliceAudioClipWindow,
+} from './scheduling';
 import { useProjectStore } from './store';
+import { normalizeTempoMap } from './tempo-map';
+import { meterBarLengthPpq, timeSignatureAt } from './time-signature';
 import { isAudioClip, type TempoSegment, type TimeSignatureSegment } from './types';
-
-/** The tempo detector signature (libsonare `detectBpm`). */
-export type AudioTempoDetector = (samples: Float32Array, sampleRate?: number) => number;
 
 /** The beat detector signature (libsonare `detectBeats`): beat times in seconds. */
 export type AudioBeatDetector = (samples: Float32Array, sampleRate?: number) => ArrayLike<number>;
 
-/** Injectable dependencies for {@link detectAudioClipTempo}. */
-export interface AudioTempoDeps {
-  /** Loads an audio asset's PCM (defaults to the OPFS asset store). */
+/** Injectable dependencies for {@link detectAudioClipBeatGrid}. */
+export interface AudioBeatGridDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
-  /** The tempo detector. */
-  detectBpm: AudioTempoDetector;
+  /** Tracks beats and downbeats in a mono buffer (the analysis worker by default). */
+  detectBeats: (mono: Float32Array, sampleRate: number) => Promise<DetectedBeats>;
 }
 
 /**
- * Detects a clip's tempo in BPM from its audio. Returns `null` when the clip
- * has no asset, the tempo is non-positive, the source window is empty, or the
- * detector yields a non-positive value.
+ * Fits the beat grid of a clip's audible window, as it would sound at
+ * `tempo` (comps, loops and fades included). Times are seconds from the
+ * clip's start.
  *
- * @param clip Audio clip window to analyze (needs `assetId`).
- * @param tempoBpm Current constant tempo (> 0) used to cut the source window.
- * @param deps Injected asset loader and tempo detector.
- * @returns The detected BPM, or null.
+ * @param clip Audio clip to analyze.
+ * @param tempo The project tempo map the window is rendered under.
+ * @param beatsPerBar Beats in one bar of the meter at the clip.
+ * @returns The grid, or null when nothing is audible or too few beats are found.
  */
-export async function detectAudioClipTempo(
-  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
-  tempoBpm: number,
-  deps: AudioTempoDeps,
-): Promise<number | null> {
-  if (clip.assetId === undefined || !(tempoBpm > 0)) return null;
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    asset.meta.sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
+export async function detectAudioClipBeatGrid(
+  clip: AudibleAudioClipFields,
+  tempo: ReadonlyArray<TempoSegment>,
+  beatsPerBar: number,
+  deps: AudioBeatGridDeps,
+): Promise<BeatGrid | null> {
+  const window = await renderAudibleAudioClipWindow(
+    clip,
+    normalizeTempoMap(tempo),
+    deps.loadAudioAsset,
   );
-  const mono = mixdownToMono(window);
+  if (!window) return null;
+  const mono = mixdownToMono(window.channels);
   if (mono.length === 0) return null;
-  const bpm = deps.detectBpm(mono, asset.meta.sampleRate);
-  return Number.isFinite(bpm) && bpm > 0 ? bpm : null;
+  const { beats, downbeats } = await deps.detectBeats(mono, window.sampleRate);
+  return fitBeatGrid(beats, downbeats, beatsPerBar);
+}
+
+/** Beats per bar of the project meter at a position, counted in quarter-note beats. */
+export function quarterBeatsPerBar(
+  timeSignatures: ReadonlyArray<TimeSignatureSegment>,
+  ppq: number,
+): number {
+  return Math.max(1, Math.round(meterBarLengthPpq(timeSignatureAt(timeSignatures, ppq))));
 }
 
 /**
- * Resolves the wasm tempo detector and asset loader and detects the tempo of
- * the active clip, when it is an audio clip carrying an asset. Returns null
- * when no such clip is active or the detector is unavailable.
+ * Detects the active clip's tempo from its beat grid, when it is an audio clip
+ * carrying an asset. Returns null when no such clip is active or no grid is found.
  *
  * @param clipId Editor id of the clip to analyze.
- * @returns The detected BPM, or null.
+ * @returns The fitted BPM, or null.
  */
 export async function detectActiveAudioClipTempo(clipId: number): Promise<number | null> {
   const store = useProjectStore();
   const clip = store.clips.find((c) => c.id === clipId);
   if (!clip || !isAudioClip(clip) || clip.assetId === undefined) return null;
-  const wasm = (await ensureWasm()) as unknown as { detectBpm?: AudioTempoDetector };
-  if (typeof wasm.detectBpm !== 'function') return null;
-  return detectAudioClipTempo(clip, store.tempoBpm, {
-    loadAudioAsset: loadAsset,
-    detectBpm: wasm.detectBpm,
-  });
+  const grid = await detectAudioClipBeatGrid(
+    clip,
+    store.tempoSegments.length > 0 ? store.tempoSegments : [{ startPpq: 0, bpm: store.tempoBpm }],
+    quarterBeatsPerBar(store.timeSignatures, clip.startPpq),
+    { loadAudioAsset: loadAsset, detectBeats: detectBeatsInWorker },
+  );
+  return grid?.bpm ?? null;
 }
 
 /** Injectable dependencies for {@link detectAudioClipTempoMap}. */

@@ -2,8 +2,9 @@ import { ensureWasm } from '@/lib/wasm';
 import type { AudioAssetTags } from '@/persistence/assets';
 import { type AudioAnalysisFunctions, analyzeAudioTags } from '@/project/audio-tags';
 
-/** One disposable tag-analysis request over a mono buffer. */
+/** One disposable request over a mono buffer: its asset tags, or its beats. */
 export interface AudioAnalysisWorkerRequest {
+  kind: 'tags' | 'beats';
   samples: Float32Array;
   sampleRate: number;
 }
@@ -12,12 +13,19 @@ export interface AudioAnalysisWorkerRequest {
 export type AudioAnalysisWorkerResponse =
   | { type: 'progress'; fraction: number }
   | { type: 'done'; tags: AudioAssetTags }
+  | { type: 'beats'; beats: number[]; downbeats: number[] }
   | { type: 'error'; error: string };
+
+interface BeatDetectors {
+  detectBeats: (samples: Float32Array, sampleRate?: number) => ArrayLike<number>;
+  detectDownbeats: (samples: Float32Array, sampleRate?: number) => ArrayLike<number>;
+}
 
 function validRequest(value: unknown): value is AudioAnalysisWorkerRequest {
   if (typeof value !== 'object' || value === null) return false;
   const request = value as Partial<AudioAnalysisWorkerRequest>;
   return (
+    (request.kind === 'tags' || request.kind === 'beats') &&
     request.samples instanceof Float32Array &&
     typeof request.sampleRate === 'number' &&
     Number.isFinite(request.sampleRate) &&
@@ -33,9 +41,18 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
     } satisfies AudioAnalysisWorkerResponse);
     return;
   }
-  const { samples, sampleRate } = event.data;
+  const { kind, samples, sampleRate } = event.data;
   ensureWasm()
     .then((wasm) => {
+      if (kind === 'beats') {
+        const detectors = wasm as unknown as BeatDetectors;
+        postMessage({
+          type: 'beats',
+          beats: Array.from(detectors.detectBeats(samples, sampleRate)),
+          downbeats: Array.from(detectors.detectDownbeats(samples, sampleRate)),
+        } satisfies AudioAnalysisWorkerResponse);
+        return;
+      }
       const tags = analyzeAudioTags(
         samples,
         sampleRate,
