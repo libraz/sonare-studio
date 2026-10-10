@@ -197,14 +197,22 @@ export function useNotePreview(options: NotePreviewOptions) {
     if (options.sendLiveExternalMidi?.(trackId, channelVoiceBytes(message), message.timeStampMs)) {
       return;
     }
-    // The current realtime ABI exposes immediate CC for internal instruments;
-    // all other channel voice is delivered through the external route above.
-    if (message.kind === 'cc') {
-      try {
-        h.engine.pushMidiCc(trackId, 0, message.channel, message.controller, message.value);
-      } catch (err) {
-        options.errorMessage.value = describeError(err);
+    try {
+      const { engine } = h;
+      const channel = message.channel;
+      if (message.kind === 'cc') {
+        engine.pushMidiCc(trackId, 0, channel, message.controller, message.value);
+      } else if (message.kind === 'pitch-bend') {
+        engine.pushMidiPitchBend(trackId, 0, channel, message.value);
+      } else if (message.kind === 'program-change') {
+        engine.pushMidiProgram(trackId, 0, channel, message.program);
+      } else if (message.kind === 'channel-pressure') {
+        engine.pushMidiChannelPressure(trackId, 0, channel, message.value);
+      } else {
+        engine.pushMidiPolyPressure(trackId, 0, channel, message.pitch, message.value);
       }
+    } catch (err) {
+      options.errorMessage.value = describeError(err);
     }
   }
 

@@ -17,8 +17,20 @@ function makeHandle() {
   const pushMidiNoteOn = vi.fn();
   const pushMidiNoteOff = vi.fn();
   const pushMidiCc = vi.fn();
+  const pushMidiPitchBend = vi.fn();
+  const pushMidiProgram = vi.fn();
+  const pushMidiChannelPressure = vi.fn();
+  const pushMidiPolyPressure = vi.fn();
   const handle = shallowRef<EngineHandle | null>({
-    engine: { pushMidiNoteOn, pushMidiNoteOff, pushMidiCc },
+    engine: {
+      pushMidiNoteOn,
+      pushMidiNoteOff,
+      pushMidiCc,
+      pushMidiPitchBend,
+      pushMidiProgram,
+      pushMidiChannelPressure,
+      pushMidiPolyPressure,
+    },
     ctx: { sampleRate: 48000 },
   } as unknown as EngineHandle);
   return { handle, pushMidiNoteOn, pushMidiNoteOff, pushMidiCc };
@@ -174,6 +186,19 @@ describe('useNotePreview live MIDI sustain', () => {
     const { preview, pushMidiCc } = setup();
     await preview.previewChannelVoice({ kind: 'cc', controller: 64, value: 127, channel: 4 });
     expect(pushMidiCc).toHaveBeenCalledWith(midiTrackId, 0, 4, 64, 127);
+  });
+
+  it('routes every channel voice kind to the internal realtime engine', async () => {
+    const { preview, handle } = setup();
+    const engine = handle.value?.engine as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    await preview.previewChannelVoice({ kind: 'pitch-bend', value: 4096, channel: 1 });
+    await preview.previewChannelVoice({ kind: 'program-change', program: 24, channel: 2 });
+    await preview.previewChannelVoice({ kind: 'channel-pressure', value: 90, channel: 3 });
+    await preview.previewChannelVoice({ kind: 'poly-pressure', pitch: 60, value: 70, channel: 5 });
+    expect(engine.pushMidiPitchBend).toHaveBeenCalledWith(midiTrackId, 0, 1, 4096);
+    expect(engine.pushMidiProgram).toHaveBeenCalledWith(midiTrackId, 0, 2, 24);
+    expect(engine.pushMidiChannelPressure).toHaveBeenCalledWith(midiTrackId, 0, 3, 90);
+    expect(engine.pushMidiPolyPressure).toHaveBeenCalledWith(midiTrackId, 0, 5, 60, 70);
   });
 
   it('auto-releases a held note after the safety timeout if the key-up is lost', async () => {
