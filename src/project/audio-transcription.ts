@@ -1,8 +1,8 @@
 /**
  * Canonical audio-to-MIDI adapter.
  *
- * The detector runs in a worker on a 60 BPM coordinate system (one PPQ is one
- * second). This module owns the project-side coordinate transform and note
+ * The detector runs in a worker on a constant grid at the project tempo where
+ * the clip starts, so note values mean what they do in the project. This module owns the project-side coordinate transform and note
  * pairing, so monophonic and polyphonic transcription share one placement
  * contract and one set of memory guards.
  */
@@ -14,15 +14,15 @@ import { mixdownToMono } from './audio-import';
 import { audioClipSegments } from './comping';
 import { pairEventsIntoNotes, type RawNote, type SerializedMidiEvent } from './midi-events';
 import { renderAudibleAudioClipWindow } from './scheduling';
-import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import { normalizeTempoMap, ppqToSeconds, secondsToPpq, tempoAtPpq } from './tempo-map';
 import type { TranscribeWorkerOptions } from './transcribe-client';
 import type { ClipCompSegment, ClipTake, ClipWarp, TempoSegment } from './types';
 import type { WarpRenderFn } from './warp';
 
-/** Polyphonic transcription's maximum source duration. */
-export const MAX_POLYPHONIC_SECONDS = 30;
+/** Polyphonic transcription's maximum source duration; working memory grows about 3 MB per second. */
+export const MAX_POLYPHONIC_SECONDS = 120;
 /** Polyphonic transcription's maximum detector input size at 48 kHz. */
-export const MAX_POLYPHONIC_SAMPLES = 1_440_000;
+export const MAX_POLYPHONIC_SAMPLES = 5_760_000;
 /** The detector receives at most this sample rate. */
 export const MAX_TRANSCRIPTION_SAMPLE_RATE = 48_000;
 /** Conservative preparation budget for decoded/rendered/transferred PCM. */
@@ -69,6 +69,8 @@ export interface AudioTranscriptionOptions {
   rhythmQuantizePpq?: number;
   /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
   referenceHz?: number | 'auto';
+  /** Shortest note kept, as a `1/n` note at the clip's tempo; omitted keeps the library default. */
+  minNoteDivision?: number;
   /** Receives the tuning the notes were measured against, in fractions of a semitone. */
   onTuning?: (tuning: number) => void;
 }
@@ -311,24 +313,27 @@ export async function transcribeAudioClip(
   const targetRate = Math.min(sourceRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
   if (mono.length === 0) return [];
   throwIfAborted(options.signal);
+  const gridTempoBpm = tempoAtPpq(map, clip.startPpq);
   const result = await deps.transcribe(mono, targetRate, polyphonic, {
     signal: options.signal,
+    tempoBpm: gridTempoBpm,
     ...(sourceRate !== targetRate ? { sourceSampleRate: sourceRate } : {}),
     ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
+    ...(options.minNoteDivision !== undefined ? { minNoteDivision: options.minNoteDivision } : {}),
   });
   throwIfAborted(options.signal);
   validateResult(result);
   if (finite(result.tuning)) options.onTuning?.(result.tuning);
 
-  // The worker requests tempoBpm=60, therefore each returned PPQ is seconds.
-  // Convert the absolute elapsed time through the project's map and rebase it
-  // to the source clip's local origin.
+  // Detector PPQ sits on a constant grid at the reported tempo; take it to
+  // elapsed seconds, through the project's map and back to the clip's origin.
+  const secondsPerBeat = 60 / result.tempoBpm;
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
-  const secondsToClipPpq = (seconds: number): number =>
-    secondsToPpq(map, clipStartSeconds + Math.max(0, seconds)) - clip.startPpq;
+  const beatsToClipPpq = (beats: number): number =>
+    secondsToPpq(map, clipStartSeconds + Math.max(0, beats) * secondsPerBeat) - clip.startPpq;
   const notes = eventNotes(result.events).flatMap((note) => {
-    const startPpq = Math.max(0, Math.min(clip.lengthPpq, secondsToClipPpq(note.startPpq)));
-    const endPpq = Math.min(clip.lengthPpq, secondsToClipPpq(note.startPpq + note.durationPpq));
+    const startPpq = Math.max(0, Math.min(clip.lengthPpq, beatsToClipPpq(note.startPpq)));
+    const endPpq = Math.min(clip.lengthPpq, beatsToClipPpq(note.startPpq + note.durationPpq));
     if (!(endPpq > startPpq)) return [];
     return [{ ...note, startPpq, durationPpq: endPpq - startPpq }];
   });

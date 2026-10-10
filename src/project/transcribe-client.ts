@@ -16,6 +16,10 @@ export interface TranscribeWorkerOptions {
   sourceSampleRate?: number;
   /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
   referenceHz?: number | 'auto';
+  /** Grid tempo the events come back on; omitted means 60 BPM (one PPQ per second). */
+  tempoBpm?: number;
+  /** Shortest note kept, as a `1/n` note at the grid tempo; omitted keeps the library default. */
+  minNoteDivision?: number;
 }
 
 function createWorker(): Worker {
@@ -165,6 +169,10 @@ export function transcribeAudioInWorker(
           ? { sourceSampleRate: options.sourceSampleRate }
           : {}),
         ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
+        ...(options.tempoBpm !== undefined ? { tempoBpm: options.tempoBpm } : {}),
+        ...(options.minNoteDivision !== undefined
+          ? { minNoteDivision: options.minNoteDivision }
+          : {}),
       };
       worker.addEventListener('message', onMessage as EventListener);
       worker.addEventListener('error', onError as EventListener);

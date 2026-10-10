@@ -75,6 +75,34 @@ describe('transcribeAudioClip', () => {
     expect(notes).toEqual([{ pitch: 60, velocity: 37, startPpq: 0, durationPpq: 2, channel: 0 }]);
   });
 
+  it('transcribes on the tempo at the clip start and places notes from that grid', async () => {
+    let options: { tempoBpm?: number; minNoteDivision?: number } | undefined;
+    const notes = await transcribeAudioClip(
+      { assetId: 'test-audio', startPpq: 4, lengthPpq: 8, sourceOffsetPpq: 0 },
+      60,
+      {
+        loadAudioAsset: async () => asset(1_000, 8_000, 1),
+        transcribe: async (_samples, _sampleRate, _polyphonic, workerOptions) => {
+          options = workerOptions;
+          // Beats on the 120 BPM grid: 1 -> 0.5 s, 3 -> 1.5 s.
+          return {
+            ...result([noteEvent(1, 0x9, 64, 90), noteEvent(3, 0x8, 64, 0)]),
+            tempoBpm: 120,
+          };
+        },
+      },
+      { polyphonic: true, minNoteDivision: 16 },
+      [
+        { startPpq: 0, bpm: 60 },
+        { startPpq: 4, bpm: 120 },
+      ],
+    );
+
+    expect(options?.tempoBpm).toBe(120);
+    expect(options?.minNoteDivision).toBe(16);
+    expect(notes).toEqual([{ pitch: 64, velocity: 90, startPpq: 1, durationPpq: 2, channel: 0 }]);
+  });
+
   it('passes high-rate input to the worker for bounded WASM resampling', async () => {
     let call:
       | {
@@ -322,7 +350,7 @@ describe('transcribeAudioClip', () => {
         },
         { polyphonic: true },
       ),
-    ).rejects.toThrow('limited to 30 seconds');
+    ).rejects.toThrow(`limited to ${MAX_POLYPHONIC_SECONDS} seconds`);
     expect(loadCalled).toBe(false);
     expect(transcribeCalled).toBe(false);
   });

@@ -30,6 +30,8 @@ export interface TranscribeAudioClipToMidiOptions {
   signal?: AbortSignal;
   /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
   referenceHz?: number | 'auto';
+  /** Shortest note kept, as a `1/n` note at the clip's tempo; omitted keeps the library default. */
+  minNoteDivision?: number;
   /** Receives the tuning the notes were measured against, in fractions of a semitone. */
   onTuning?: (tuning: number) => void;
   /** Injectable adapter for command tests and host integrations. */
@@ -274,6 +276,7 @@ export async function transcribeAudioClipToMidi(
       signal: linked.signal,
       rhythmQuantizePpq,
       referenceHz: options.referenceHz,
+      minNoteDivision: options.minNoteDivision,
       onTuning: options.onTuning,
     };
     const notes = await (options.transcribe ?? transcribeAudioClip)(

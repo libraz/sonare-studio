@@ -2,9 +2,9 @@ import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 
 /** Keep the worker boundary safe even when called outside the project adapter. */
-const MAX_POLYPHONIC_SAMPLES = 1_440_000;
+const MAX_POLYPHONIC_SAMPLES = 5_760_000;
 
-/** One disposable worker request. The worker always transcribes on a 60 BPM grid. */
+/** One disposable worker request. */
 export interface TranscribeWorkerRequest {
   samples: Float32Array;
   /** Detector output sample rate (at most 48 kHz in the app adapter). */
@@ -14,6 +14,10 @@ export interface TranscribeWorkerRequest {
   polyphonic: boolean;
   /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
   referenceHz?: number | 'auto';
+  /** Grid tempo the events come back on; omitted means 60 BPM (one PPQ per second). */
+  tempoBpm?: number;
+  /** Shortest note kept, as a `1/n` note at `tempoBpm`; omitted keeps the library default. */
+  minNoteDivision?: number;
 }
 
 /** Result sent back by the transcription worker. */
@@ -62,7 +66,13 @@ function validRequest(value: unknown): value is TranscribeWorkerRequest {
     typeof request.polyphonic === 'boolean' &&
     (request.referenceHz === undefined ||
       request.referenceHz === 'auto' ||
-      (isFiniteNumber(request.referenceHz) && request.referenceHz > 0))
+      (isFiniteNumber(request.referenceHz) && request.referenceHz > 0)) &&
+    (request.tempoBpm === undefined ||
+      (isFiniteNumber(request.tempoBpm) && request.tempoBpm > 0)) &&
+    (request.minNoteDivision === undefined ||
+      (Number.isInteger(request.minNoteDivision) &&
+        request.minNoteDivision >= 1 &&
+        request.minNoteDivision <= 128))
   );
 }
 
@@ -114,9 +124,12 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
       const result = wasm.transcribe({
         samples,
         sampleRate: request.sampleRate,
-        tempoBpm: 60,
+        tempoBpm: request.tempoBpm ?? 60,
         polyphonic: request.polyphonic,
         ...(request.referenceHz !== undefined ? { referenceHz: request.referenceHz } : {}),
+        ...(request.minNoteDivision !== undefined
+          ? { minNoteDivision: request.minNoteDivision }
+          : {}),
       });
       if (!validResult(result)) {
         throw new Error('Transcription worker returned an invalid result');
