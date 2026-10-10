@@ -267,6 +267,11 @@ export const AUTOMATABLE_SYNTH_PARAMS = [
   'hpCutoffHz',
   'sampleHoldHz',
   'bitDepth',
+  'driftRateHz',
+  'ampDelayMs',
+  'ampHoldMs',
+  'filterDelayMs',
+  'filterHoldMs',
 ] as const;
 
 /** One continuous NativeSynth patch field an automation lane can drive. */
@@ -275,7 +280,7 @@ export type AutomatableSynthParam = (typeof AUTOMATABLE_SYNTH_PARAMS)[number];
 /**
  * Automatable fields that reach voices already sounding. The rest are read
  * into each voice at note-on, so a lane moving them takes effect from the next
- * note.
+ * note (delay and hold apply when their envelope stage next starts).
  */
 const SOUNDING_VOICE_SYNTH_PARAMS: ReadonlySet<string> = new Set([
   'gain',
@@ -363,6 +368,19 @@ export function isDefaultInstrument(instrument: TrackInstrument): boolean {
   return instrument.kind === 'synth-preset' && instrument.preset === DEFAULT_SYNTH_PRESET;
 }
 
+/** Throws RangeError unless engine params are absent or a record of finite numbers. */
+function validateEngineParams(params: unknown): void {
+  if (params === undefined) return;
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) {
+    throw new RangeError('Synth patch engineParams must be an object when present');
+  }
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new RangeError(`Synth patch engineParams.${key} must be a finite number`);
+    }
+  }
+}
+
 /**
  * Validates an instrument's fields, throwing RangeError on malformed input.
  *
@@ -400,6 +418,10 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       ) {
         throw new RangeError('Synth patch instrument requires a patch object');
       }
+      if (instrument.patch.oneShot !== undefined && typeof instrument.patch.oneShot !== 'boolean') {
+        throw new RangeError('Synth patch oneShot must be a boolean when present');
+      }
+      validateEngineParams(instrument.patch.engineParams);
       return;
     case 'sf2': {
       if (typeof instrument.fontId !== 'string' || instrument.fontId.length === 0) {

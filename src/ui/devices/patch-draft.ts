@@ -9,7 +9,8 @@
  */
 
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
-import type { SynthModRouting } from '@/wasm/index.js';
+import { getWasmModule } from '@/project/runtime';
+import type { SynthModRouting, SynthParamInfo } from '@/wasm/index.js';
 import { FALLBACK_SYNTH_ENUMS } from './synth-enums';
 
 /** Editor section a patch field renders under. */
@@ -20,6 +21,7 @@ export type NumericPatchField =
   | 'unison'
   | 'detuneCents'
   | 'driftCents'
+  | 'driftRateHz'
   | 'drive'
   | 'stereoSpread'
   | 'cutoffHz'
@@ -27,11 +29,15 @@ export type NumericPatchField =
   | 'keyTrack'
   | 'envToCutoffCents'
   | 'velToCutoffCents'
+  | 'ampDelayMs'
   | 'ampAttackMs'
+  | 'ampHoldMs'
   | 'ampDecayMs'
   | 'ampSustain'
   | 'ampReleaseMs'
+  | 'filterDelayMs'
   | 'filterAttackMs'
+  | 'filterHoldMs'
   | 'filterDecayMs'
   | 'filterSustain'
   | 'filterReleaseMs'
@@ -112,6 +118,16 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     step: 1,
     unit: 'ct',
   },
+  {
+    id: 'driftRateHz',
+    labelKey: 'driftRateHz',
+    label: 'Drift Rate',
+    section: 'osc',
+    min: 0.01,
+    max: 20,
+    step: 0.01,
+    unit: 'Hz',
+  },
   { id: 'drive', labelKey: 'drive', label: 'Drive', section: 'osc', min: 0, max: 1, step: 0.01 },
   {
     id: 'stereoSpread',
@@ -191,9 +207,29 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     unit: 'ct',
   },
   {
+    id: 'ampDelayMs',
+    labelKey: 'ampDelayMs',
+    label: 'Delay',
+    section: 'amp',
+    min: 0,
+    max: 5000,
+    step: 1,
+    unit: 'ms',
+  },
+  {
     id: 'ampAttackMs',
     labelKey: 'ampAttackMs',
     label: 'Attack',
+    section: 'amp',
+    min: 0,
+    max: 5000,
+    step: 1,
+    unit: 'ms',
+  },
+  {
+    id: 'ampHoldMs',
+    labelKey: 'ampHoldMs',
+    label: 'Hold',
     section: 'amp',
     min: 0,
     max: 5000,
@@ -230,9 +266,29 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     unit: 'ms',
   },
   {
+    id: 'filterDelayMs',
+    labelKey: 'filterDelayMs',
+    label: 'Delay',
+    section: 'filter-env',
+    min: 0,
+    max: 5000,
+    step: 1,
+    unit: 'ms',
+  },
+  {
     id: 'filterAttackMs',
     labelKey: 'filterAttackMs',
     label: 'Attack',
+    section: 'filter-env',
+    min: 0,
+    max: 5000,
+    step: 1,
+    unit: 'ms',
+  },
+  {
+    id: 'filterHoldMs',
+    labelKey: 'filterHoldMs',
+    label: 'Hold',
     section: 'filter-env',
     min: 0,
     max: 5000,
@@ -404,6 +460,83 @@ export function clampPatchField(id: NumericPatchField, value: number): number {
   return spec.integer ? Math.round(clamped) : clamped;
 }
 
+// --- Engine model params -----------------------------------------------------
+
+/** Lists the model fields an engine mode accepts (empty for modes without a section). */
+export type EngineParamInfoResolver = (
+  engineMode: StoredSynthPatch['engineMode'],
+) => SynthParamInfo[];
+
+/** Descriptor source backed by the loaded wasm; empty before init or on an unknown mode. */
+export const wasmEngineParamInfo: EngineParamInfoResolver = (engineMode) => {
+  if (engineMode === undefined) return [];
+  try {
+    return getWasmModule().synthEngineParamInfo(engineMode);
+  } catch {
+    return [];
+  }
+};
+
+/** Keeps the finite numeric entries of a raw engine-params record. */
+function finiteEngineParams(raw: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return out;
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return out;
+}
+
+/** Clamps one value to a descriptor: booleans to 0/1, integers rounded, closed ranges enforced. */
+export function clampEngineParam(info: SynthParamInfo, value: number): number {
+  if (info.type === 'boolean') return value !== 0 ? 1 : 0;
+  let next = value;
+  if (info.min !== undefined) next = Math.max(info.min, next);
+  if (info.max !== undefined) next = Math.min(info.max, next);
+  return info.integer ? Math.round(next) : next;
+}
+
+/**
+ * Reduces engine params to what an engine lists: unknown keys and non-finite
+ * values are dropped, the rest clamped, so the library never refuses the patch.
+ */
+export function clampEngineParams(
+  raw: unknown,
+  info: ReadonlyArray<SynthParamInfo>,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  const byName = new Map(info.map((entry) => [entry.name, entry]));
+  for (const [key, value] of Object.entries(finiteEngineParams(raw))) {
+    const entry = byName.get(key);
+    if (entry) out[key] = clampEngineParam(entry, value);
+  }
+  return out;
+}
+
+/**
+ * Readable caption for an engine key: camelCase words split, digits detached,
+ * dotted segments joined with a middle dot (`ranks2.level` -> "Ranks 2 · Level").
+ */
+export function humanizeEngineParamName(name: string): string {
+  return name
+    .split('.')
+    .map((part) =>
+      part
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/([A-Za-z])(\d)/g, '$1 $2')
+        .replace(/^./, (c) => c.toUpperCase()),
+    )
+    .join(' \u00b7 ');
+}
+
+/** Slider step for an engine field: whole numbers when integer, else a decade of the range / 200. */
+export function engineParamStep(info: SynthParamInfo): number {
+  if (info.integer || info.type === 'boolean') return 1;
+  const span = (info.max ?? 1) - (info.min ?? 0);
+  if (!(span > 0)) return 0.01;
+  return 10 ** Math.floor(Math.log10(span / 200));
+}
+
 // --- Mod matrix --------------------------------------------------------------
 
 /** One editable mod-matrix row (string-valued source/destination). */
@@ -501,6 +634,11 @@ function copyPatchFields(target: StoredSynthPatch, source: StoredSynthPatch): vo
       (target as Record<string, unknown>)[field] = value;
     }
   }
+  if (typeof source.oneShot === 'boolean') target.oneShot = source.oneShot;
+  if (source.engineParams) {
+    const params = finiteEngineParams(source.engineParams);
+    if (Object.keys(params).length > 0) target.engineParams = { ...target.engineParams, ...params };
+  }
   if (source.useGmPrograms === true) target.useGmPrograms = true;
   if (Array.isArray(source.modRoutings) && source.modRoutings.length > 0) {
     target.modRoutings = source.modRoutings.map((routing) => ({ ...routing }));
@@ -545,12 +683,17 @@ export function createPatchDraft(
  * Sanitizes a draft into a StoredSynthPatch ready to commit: numeric fields are
  * clamped to their spec ranges (non-finite values are dropped), enum fields are
  * kept as strings, mod routings are filtered/clamped/capped, and
- * binding-internal fields (destinationId) are never emitted.
+ * binding-internal fields (destinationId) are never emitted. Engine params
+ * are reduced to the keys the patch's engine lists, clamped to the descriptor.
  *
  * @param draft Editor draft (not mutated).
+ * @param engineInfo Engine descriptor source (the loaded wasm by default).
  * @returns A clean patch.
  */
-export function sanitizePatchDraft(draft: StoredSynthPatch): StoredSynthPatch {
+export function sanitizePatchDraft(
+  draft: StoredSynthPatch,
+  engineInfo: EngineParamInfoResolver = wasmEngineParamInfo,
+): StoredSynthPatch {
   const out: StoredSynthPatch = {};
   if (typeof draft.preset === 'string' && draft.preset.length > 0) out.preset = draft.preset;
   const record = draft as Record<string, unknown>;
@@ -565,6 +708,9 @@ export function sanitizePatchDraft(draft: StoredSynthPatch): StoredSynthPatch {
       (out as Record<string, unknown>)[field] = value;
     }
   }
+  if (typeof draft.oneShot === 'boolean') out.oneShot = draft.oneShot;
+  const engineParams = clampEngineParams(draft.engineParams, engineInfo(out.engineMode));
+  if (Object.keys(engineParams).length > 0) out.engineParams = engineParams;
   // Emitted only when on, so an untouched patch stays byte-identical.
   if (draft.useGmPrograms === true) out.useGmPrograms = true;
   // An empty array clears the base mod matrix; omitting the key would keep it.
@@ -584,6 +730,8 @@ export function patchEditCount(patch: StoredSynthPatch): number {
     const value = record[field];
     if (typeof value === 'string' && value !== '' && value !== 'default') count += 1;
   }
+  if (typeof patch.oneShot === 'boolean') count += 1;
+  count += Object.keys(patch.engineParams ?? {}).length;
   if (patch.useGmPrograms === true) count += 1;
   // Any routing list is an edit — an empty one clears the base mod matrix.
   if (Array.isArray(patch.modRoutings)) count += 1;
@@ -602,12 +750,12 @@ export interface EnvelopePoint {
 const SUSTAIN_WIDTH_FRACTION = 0.25;
 
 /**
- * Computes the ADSR polyline of the mini envelope display.
+ * Computes the DAHDSR polyline of the mini envelope display.
  *
- * The sustain plateau takes a fixed quarter of the width; attack, decay and
- * release split the rest proportionally to their times (each at least one
- * pixel so degenerate envelopes stay visible). y = 0 is full level, y =
- * height is silence.
+ * The sustain plateau takes a fixed quarter of the width; the timed stages
+ * split the rest proportionally to their times (each at least one pixel so
+ * degenerate envelopes stay visible). y = 0 is full level, y = height is
+ * silence. Delay and hold add points only when non-zero.
  *
  * @param attackMs Attack time (>= 0).
  * @param decayMs Decay time (>= 0).
@@ -615,7 +763,9 @@ const SUSTAIN_WIDTH_FRACTION = 0.25;
  * @param releaseMs Release time (>= 0).
  * @param width Canvas width in px (> 0).
  * @param height Canvas height in px (> 0).
- * @returns Five points: start, attack peak, decay end, sustain end, release end.
+ * @param delayMs Delay before the attack (>= 0).
+ * @param holdMs Hold at the peak (>= 0).
+ * @returns Start, [delay end], attack peak, [hold end], decay end, sustain end, release end.
  */
 export function adsrEnvelopePoints(
   attackMs: number,
@@ -624,25 +774,36 @@ export function adsrEnvelopePoints(
   releaseMs: number,
   width: number,
   height: number,
+  delayMs = 0,
+  holdMs = 0,
 ): EnvelopePoint[] {
-  const a = Math.max(0, Number.isFinite(attackMs) ? attackMs : 0);
-  const d = Math.max(0, Number.isFinite(decayMs) ? decayMs : 0);
-  const r = Math.max(0, Number.isFinite(releaseMs) ? releaseMs : 0);
+  const time = (ms: number) => Math.max(0, Number.isFinite(ms) ? ms : 0);
+  const dl = time(delayMs);
+  const a = time(attackMs);
+  const h = time(holdMs);
+  const d = time(decayMs);
+  const r = time(releaseMs);
   const s = Math.min(1, Math.max(0, Number.isFinite(sustain) ? sustain : 0));
   const sustainWidth = width * SUSTAIN_WIDTH_FRACTION;
   const segmentWidth = width - sustainWidth;
-  const total = a + d + r;
-  const ax = total > 0 ? (a / total) * segmentWidth : segmentWidth / 3;
-  const dx = total > 0 ? (d / total) * segmentWidth : segmentWidth / 3;
+  const total = dl + a + h + d + r;
+  const share = (ms: number) => (total > 0 ? (ms / total) * segmentWidth : segmentWidth / 3);
   const sustainY = height * (1 - s);
-  const x1 = Math.max(1, ax);
-  const x2 = x1 + Math.max(1, dx);
-  const x3 = x2 + sustainWidth;
-  return [
-    { x: 0, y: height },
-    { x: x1, y: 0 },
-    { x: x2, y: sustainY },
-    { x: x3, y: sustainY },
-    { x: width, y: height },
-  ];
+  const points: EnvelopePoint[] = [{ x: 0, y: height }];
+  let x = 0;
+  if (dl > 0) {
+    x += Math.max(1, share(dl));
+    points.push({ x, y: height });
+  }
+  x += Math.max(1, share(a));
+  points.push({ x, y: 0 });
+  if (h > 0) {
+    x += Math.max(1, share(h));
+    points.push({ x, y: 0 });
+  }
+  x += Math.max(1, share(d));
+  points.push({ x, y: sustainY });
+  points.push({ x: x + sustainWidth, y: sustainY });
+  points.push({ x: width, y: height });
+  return points;
 }

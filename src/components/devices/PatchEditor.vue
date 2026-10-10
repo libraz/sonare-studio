@@ -3,15 +3,20 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { setTrackInstrument } from '@/project/commands';
 import { type StoredSynthPatch, trackInstrument } from '@/project/instrument';
+import { unitLabel } from '@/project/processor-controls';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { createPatchAudition, type PatchAudition } from '@/ui/devices/audition';
 import { formatControlValue } from '@/ui/devices/knob-math';
 import {
   adsrEnvelopePoints,
+  clampEngineParam,
+  clampEngineParams,
   clampPatchField,
   createModMatrixRow,
   createPatchDraft,
   type EnumPatchField,
+  engineParamStep,
+  humanizeEngineParamName,
   MAX_MOD_ROUTINGS,
   MOD_DEPTH_MAX,
   MOD_DEPTH_MIN,
@@ -22,13 +27,14 @@ import {
   type PresetPatchResolver,
   patchFieldsForSection,
   sanitizePatchDraft,
+  wasmEngineParamInfo,
 } from '@/ui/devices/patch-draft';
 import { resolveSynthEnums, SYNTH_RETRIGGER_OPTIONS } from '@/ui/devices/synth-enums';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import { TOKENS } from '@/ui/theme/tokens';
-import type { SynthEnumTables } from '@/wasm/index.js';
+import type { SynthEnumTables, SynthParamInfo } from '@/wasm/index.js';
 
 /**
  * Modal NativeSynth patch editor. The dialog edits a local draft seeded from
@@ -191,7 +197,74 @@ function enumOptions(
 }
 
 function onEnumChange(field: EnumFieldView, value: string): void {
-  draft.value = { ...draft.value, [field.id]: value };
+  const next: StoredSynthPatch = { ...draft.value, [field.id]: value };
+  // Model fields belong to one engine; keep only those the new engine lists.
+  if (field.id === 'engineMode')
+    setEngineParams(
+      next,
+      clampEngineParams(next.engineParams, wasmEngineParamInfo(next.engineMode)),
+    );
+  draft.value = next;
+}
+
+// --- Engine model ------------------------------------------------------------
+
+/** Model fields the selected engine lists; empty hides the section. */
+const engineFields = computed<SynthParamInfo[]>(() => wasmEngineParamInfo(draft.value.engineMode));
+
+/** Writes engine params onto a patch, dropping the key when none remain. */
+function setEngineParams(patch: StoredSynthPatch, params: Record<string, number>): void {
+  if (Object.keys(params).length > 0) patch.engineParams = params;
+  else delete patch.engineParams;
+}
+
+function engineIsSet(info: SynthParamInfo): boolean {
+  return draft.value.engineParams?.[info.name] !== undefined;
+}
+
+/** The patch's value, or the engine's base value while the key is unset. */
+function engineValue(info: SynthParamInfo): number {
+  return draft.value.engineParams?.[info.name] ?? info.default;
+}
+
+function engineLabel(info: SynthParamInfo): string {
+  return humanizeEngineParamName(info.name);
+}
+
+function engineUnit(info: SynthParamInfo): string | undefined {
+  const label = unitLabel(info.unit);
+  return label === '' ? undefined : label;
+}
+
+function engineHasRange(info: SynthParamInfo): boolean {
+  return info.min !== undefined && info.max !== undefined;
+}
+
+function setEngineValue(info: SynthParamInfo, raw: number): void {
+  if (!Number.isFinite(raw)) return;
+  const next = { ...draft.value };
+  setEngineParams(next, {
+    ...draft.value.engineParams,
+    [info.name]: clampEngineParam(info, raw),
+  });
+  draft.value = next;
+}
+
+function onEngineInput(info: SynthParamInfo, event: Event): void {
+  const target = event.target as HTMLInputElement;
+  setEngineValue(info, info.type === 'boolean' ? (target.checked ? 1 : 0) : Number(target.value));
+}
+
+function resetEngineParam(info: SynthParamInfo): void {
+  const { [info.name]: _removed, ...rest } = draft.value.engineParams ?? {};
+  const next = { ...draft.value };
+  setEngineParams(next, rest);
+  draft.value = next;
+}
+
+/** Toggles one-shot. Unlike GM programs the explicit off is kept, so it can override a one-shot base. */
+function onOneShotChange(event: Event): void {
+  draft.value = { ...draft.value, oneShot: (event.target as HTMLInputElement).checked };
 }
 
 /**
@@ -238,6 +311,8 @@ function onModDepthInput(index: number, event: Event): void {
 const ENVELOPE_FALLBACKS = { attackMs: 5, decayMs: 60, sustain: 0.7, releaseMs: 120 };
 
 function envelopeInputs(): {
+  delayMs: number;
+  holdMs: number;
   attackMs: number;
   decayMs: number;
   sustain: number;
@@ -247,7 +322,13 @@ function envelopeInputs(): {
     const raw = (draft.value as Record<string, unknown>)[id];
     return typeof raw === 'number' && raw !== 0 ? raw : null;
   };
+  const timed = (id: 'ampDelayMs' | 'ampHoldMs') => {
+    const raw = (draft.value as Record<string, unknown>)[id];
+    return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+  };
   return {
+    delayMs: timed('ampDelayMs'),
+    holdMs: timed('ampHoldMs'),
     attackMs: value('ampAttackMs') ?? ENVELOPE_FALLBACKS.attackMs,
     decayMs: value('ampDecayMs') ?? ENVELOPE_FALLBACKS.decayMs,
     sustain: value('ampSustain') ?? ENVELOPE_FALLBACKS.sustain,
@@ -295,6 +376,8 @@ function drawEnvelope(): void {
     env.releaseMs,
     width - 2,
     height - 4,
+    env.delayMs,
+    env.holdMs,
   );
   ctx.strokeStyle = canvasToken(canvas, '--canvas-accent', TOKENS.accent);
   ctx.lineWidth = 1.5;
@@ -319,7 +402,7 @@ function buildPatch(): StoredSynthPatch {
   const merged: StoredSynthPatch = { ...draft.value };
   // The editor owns the whole mod matrix, so it always replaces the base one.
   merged.modRoutings = modRowsToRoutings(modRows.value);
-  return sanitizePatchDraft(merged);
+  return sanitizePatchDraft(merged, wasmEngineParamInfo);
 }
 
 function onApply(): void {
@@ -475,6 +558,16 @@ function onKeydown(event: KeyboardEvent): void {
             />
             <span class="field-value">{{ formatControlValue(fieldValue(field), field.unit) }}</span>
           </label>
+          <label class="toggle-row">
+            <input
+              type="checkbox"
+              data-field="oneShot"
+              :checked="draft.oneShot === true"
+              @change="onOneShotChange"
+            />
+            <span class="field-label">{{ t.shell.patchEditor.toggles.oneShot }}</span>
+          </label>
+          <p class="toggle-hint">{{ t.shell.patchEditor.toggles.oneShotHint }}</p>
         </section>
 
         <section class="patch-section" :aria-label="t.shell.patchEditor.sections.filterEnvelope">
@@ -546,6 +639,77 @@ function onKeydown(event: KeyboardEvent): void {
             <span class="field-label">{{ t.shell.patchEditor.toggles.useGmPrograms }}</span>
           </label>
           <p class="toggle-hint">{{ t.shell.patchEditor.toggles.useGmProgramsHint }}</p>
+        </section>
+
+        <section
+          v-if="engineFields.length > 0"
+          class="patch-section engine-model"
+          :aria-label="t.shell.patchEditor.sections.engineModel"
+        >
+          <h3 class="section-title">{{ t.shell.patchEditor.sections.engineModelTitle }}</h3>
+          <div class="engine-fields">
+            <div
+              v-for="info in engineFields"
+              :key="info.name"
+              class="engine-row"
+              :class="{ 'is-base': !engineIsSet(info) }"
+            >
+              <label class="engine-control">
+                <span class="field-label" v-tooltip="info.name">{{ engineLabel(info) }}</span>
+                <input
+                  v-if="info.type === 'boolean'"
+                  type="checkbox"
+                  :data-engine-param="info.name"
+                  :checked="engineValue(info) !== 0"
+                  @change="onEngineInput(info, $event)"
+                />
+                <template v-else>
+                  <input
+                    v-if="engineHasRange(info)"
+                    type="range"
+                    :data-engine-param="info.name"
+                    :min="info.min"
+                    :max="info.max"
+                    :step="engineParamStep(info)"
+                    :value="engineValue(info)"
+                    @input="onEngineInput(info, $event)"
+                  />
+                  <input
+                    v-else
+                    type="number"
+                    class="engine-number"
+                    :data-engine-param="info.name"
+                    :min="info.min"
+                    :max="info.max"
+                    :step="engineParamStep(info)"
+                    :value="engineValue(info)"
+                    @change="onEngineInput(info, $event)"
+                  />
+                  <span class="field-value">{{
+                    formatControlValue(engineValue(info), engineUnit(info))
+                  }}</span>
+                </template>
+              </label>
+              <button
+                v-if="engineIsSet(info)"
+                type="button"
+                class="engine-reset"
+                :data-engine-reset="info.name"
+                :aria-label="formatMessage(t.shell.patchEditor.engineModel.reset, { name: engineLabel(info) })"
+                v-tooltip="
+                  formatMessage(t.shell.patchEditor.engineModel.reset, { name: engineLabel(info) }) +
+                  ' (' +
+                  formatMessage(t.shell.patchEditor.engineModel.base, {
+                    value: formatControlValue(info.default, engineUnit(info)),
+                  }) +
+                  ')'
+                "
+                @click="resetEngineParam(info)"
+              >
+                ↺
+              </button>
+            </div>
+          </div>
         </section>
 
         <section class="patch-section mod-matrix" :aria-label="t.shell.patchEditor.sections.modMatrix">
@@ -777,8 +941,78 @@ function onKeydown(event: KeyboardEvent): void {
   box-shadow: inset 0 0 0 1px var(--canvas-border), var(--inset-well);
 }
 
-.mod-matrix {
+.mod-matrix,
+.engine-model {
   grid-column: 1 / -1;
+}
+
+.engine-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 0.25rem 0.9rem;
+}
+
+.engine-row {
+  display: grid;
+  grid-template-columns: 1fr 1rem;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.engine-control {
+  display: grid;
+  grid-template-columns: 7rem 1fr 3.6rem;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.engine-control input[type='range'] {
+  width: 100%;
+  height: 12px;
+  accent-color: var(--accent);
+  border-radius: var(--radius-xs);
+}
+
+.engine-control input[type='range']:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.engine-control input[type='checkbox'] {
+  justify-self: start;
+  accent-color: var(--accent);
+}
+
+.engine-number {
+  grid-column: 2 / -1;
+  min-width: 0;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: none;
+  border-radius: var(--radius-xs);
+  box-shadow: var(--control-edge), var(--inset-well);
+  font-size: var(--fs-xs);
+  padding: 1px var(--sp-2);
+}
+
+/* A key the patch leaves unset shows the engine's base value, dimmed. */
+.engine-row.is-base .field-value {
+  color: var(--text-4);
+}
+
+.engine-reset {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.engine-reset:hover {
+  color: var(--text-1);
 }
 
 .mod-row {

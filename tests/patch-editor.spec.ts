@@ -246,3 +246,54 @@ describe('PatchEditor.vue', () => {
     expect((wrapper.find('[data-field="drive"]').element as HTMLInputElement).value).toBe('0.9');
   });
 });
+
+describe('PatchEditor.vue engine model', () => {
+  it('renders the engine fields, shows base values and resets a set key', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const trackId = store.tracks[0].id;
+    const { getWasmModule } = await import('@/project/store');
+    (getWasmModule() as unknown as Record<string, unknown>).synthEngineParamInfo = (
+      mode: string,
+    ) =>
+      mode === 'bowed-string'
+        ? [
+            { name: 'bowForce', type: 'number', min: 0, max: 1, default: 0.55, unit: 'none' },
+            { name: 'elastoPlastic', type: 'boolean', default: 0, unit: 'none' },
+          ]
+        : [];
+    setTrackInstrument(trackId, {
+      kind: 'synth-patch',
+      patch: { engineMode: 'bowed-string', engineParams: { bowForce: 0.9 } },
+    });
+    const wrapper = mount(PatchEditor, { props: { open: true, trackId } });
+    const slider = wrapper.find('[data-engine-param="bowForce"]');
+    expect((slider.element as HTMLInputElement).value).toBe('0.9');
+    expect(wrapper.find('[data-engine-param="elastoPlastic"]').exists()).toBe(true);
+    expect(wrapper.find('[data-engine-reset="elastoPlastic"]').exists()).toBe(false);
+
+    await wrapper.find('[data-engine-reset="bowForce"]').trigger('click');
+    expect((wrapper.find('[data-engine-param="bowForce"]').element as HTMLInputElement).value).toBe(
+      '0.55',
+    );
+    expect(wrapper.find('[data-engine-reset="bowForce"]').exists()).toBe(false);
+
+    await wrapper.find('[data-engine-param="elastoPlastic"]').setValue(true);
+    await wrapper.find('button.primary').trigger('click');
+    const track = store.tracks.find((t) => t.id === trackId);
+    expect(track?.instrument).toMatchObject({
+      patch: { engineParams: { elastoPlastic: 1 } },
+    });
+    wrapper.unmount();
+    delete (getWasmModule() as unknown as Record<string, unknown>).synthEngineParamInfo;
+  });
+
+  it('hides the section when the engine lists no fields', () => {
+    const wrapper = mount(PatchEditor, { props: { open: true, trackId: 0 } });
+    expect(wrapper.find('.engine-model').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});

@@ -43,9 +43,11 @@ describe('patchFieldsForSection', () => {
     expect(total).toBe(PATCH_FIELD_SPECS.length);
   });
 
-  it('keeps the four amp envelope fields together', () => {
+  it('keeps the amp envelope fields together in DAHDSR order', () => {
     expect(patchFieldsForSection('amp').map((spec) => spec.id)).toEqual([
+      'ampDelayMs',
       'ampAttackMs',
+      'ampHoldMs',
       'ampDecayMs',
       'ampSustain',
       'ampReleaseMs',
@@ -290,6 +292,18 @@ describe('patchEditCount', () => {
 });
 
 describe('adsrEnvelopePoints', () => {
+  it('adds delay and hold points only when non-zero', () => {
+    const points = adsrEnvelopePoints(100, 100, 0.5, 200, 160, 40, 50, 50);
+    expect(points).toHaveLength(7);
+    expect(points[1]).toMatchObject({ y: 40 });
+    expect(points[2].y).toBe(0);
+    expect(points[3].y).toBe(0);
+    expect(points[6]).toEqual({ x: 160, y: 40 });
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i].x).toBeGreaterThan(points[i - 1].x);
+    }
+  });
+
   it('produces a five-point polyline spanning the canvas', () => {
     const points = adsrEnvelopePoints(100, 100, 0.5, 200, 160, 40);
     expect(points).toHaveLength(5);
