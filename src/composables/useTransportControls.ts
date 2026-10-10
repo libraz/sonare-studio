@@ -24,6 +24,8 @@ export interface TransportControlsOptions {
   loopStartPpq: Ref<number>;
   positionPpq: Ref<number>;
   recording: Recording;
+  /** True while any audio or MIDI take is being recorded. */
+  recordingActive: Ref<boolean>;
   tempo: Ref<number>;
   transport: Transport;
   ensureEngineStarted: () => Promise<EngineHandle | null>;
@@ -70,6 +72,9 @@ export function useTransportControls(options: TransportControlsOptions) {
       });
       return;
     }
+    // Playing from the project end would only run on through silence.
+    const end = projectEndPpq();
+    if (end > 0 && options.positionPpq.value >= end) options.transport.seekPpq(0);
     options.transport.play();
   }
 
@@ -179,6 +184,23 @@ export function useTransportControls(options: TransportControlsOptions) {
       }
     },
   );
+
+  // A new or loaded document starts stopped at its beginning.
+  watch(
+    () => store.documentGeneration,
+    () => {
+      stopPlayback();
+      seekToStart();
+    },
+  );
+
+  // Stop when the playhead crosses the project end, unless looping or recording.
+  watch(options.positionPpq, (ppq, previous) => {
+    if (!options.isPlaying.value || options.loopEnabled.value) return;
+    if (options.recordingActive.value) return;
+    const end = projectEndPpq();
+    if (end > 0 && previous < end && ppq >= end) stopPlayback();
+  });
 
   watch(options.positionPpq, (ppq) => {
     if (!autoPunchEnabled.value || !options.isPlaying.value) return;

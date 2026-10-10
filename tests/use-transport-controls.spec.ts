@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, nextTick, ref, shallowRef } from 'vue';
 import { useTransportControls } from '@/composables/useTransportControls';
 import type { EngineHandle } from '@/engine/engine';
+import { addMidiClip, addTrack } from '@/project/commands';
+import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -62,6 +64,7 @@ function harness() {
       loopStartPpq,
       positionPpq,
       recording,
+      recordingActive: isRecording,
       tempo: ref(120),
       transport,
       ensureEngineStarted: async () => null,
@@ -189,6 +192,7 @@ describe('useTransportControls playback start races', () => {
         loopStartPpq: ref(0),
         positionPpq: ref(0),
         recording,
+        recordingActive: ref(false),
         tempo: ref(120),
         transport,
         ensureEngineStarted: () => pendingStart.promise,
@@ -222,5 +226,99 @@ describe('useTransportControls playback start races', () => {
     await nextTick();
 
     expect(h.transport.play).not.toHaveBeenCalled();
+  });
+});
+
+describe('useTransportControls project end', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    addMidiClip({ trackId: addTrack({ name: 'Lead' }), startPpq: 0, lengthPpq: 48 });
+  });
+
+  function endHarness(options: { loopEnabled?: boolean; recordingActive?: boolean } = {}) {
+    const isPlaying = ref(true);
+    const positionPpq = ref(0);
+    const transport = {
+      play: vi.fn(),
+      stop: vi.fn(),
+      seekPpq: vi.fn(),
+      setLoop: vi.fn(),
+      setTempo: vi.fn(),
+    } as unknown as Parameters<typeof useTransportControls>[0]['transport'];
+    const recording = {
+      armedTrackId: ref<number | null>(null),
+      isRecording: ref(false),
+      record: vi.fn(async () => true),
+      stopRecord: vi.fn(async () => true),
+    } as unknown as Parameters<typeof useTransportControls>[0]['recording'];
+    const scope = effectScope();
+    const controls = scope.run(() =>
+      useTransportControls({
+        errorMessage: ref(''),
+        handle: shallowRef({} as EngineHandle),
+        isPlaying,
+        loopEnabled: ref(options.loopEnabled ?? false),
+        loopEndPpq: ref(0),
+        loopStartPpq: ref(0),
+        positionPpq,
+        recording,
+        recordingActive: ref(options.recordingActive ?? false),
+        tempo: ref(120),
+        transport,
+        ensureEngineStarted: async () => null,
+        onStopped: () => {},
+        scheduleApply: () => {},
+        syncTransportState: () => {},
+      }),
+    );
+    if (!controls) throw new Error('effect scope did not run');
+    return { controls, scope, isPlaying, positionPpq, transport };
+  }
+
+  it('stops when the playhead crosses the end of the last clip', async () => {
+    const h = endHarness();
+    h.positionPpq.value = 47.9;
+    await nextTick();
+    expect(h.transport.stop).not.toHaveBeenCalled();
+    h.positionPpq.value = 48.1;
+    await nextTick();
+    expect(h.transport.stop).toHaveBeenCalledTimes(1);
+    h.scope.stop();
+  });
+
+  it('keeps playing past the end while looping or recording', async () => {
+    for (const options of [{ loopEnabled: true }, { recordingActive: true }]) {
+      const h = endHarness(options);
+      h.positionPpq.value = 47;
+      await nextTick();
+      h.positionPpq.value = 49;
+      await nextTick();
+      expect(h.transport.stop).not.toHaveBeenCalled();
+      h.scope.stop();
+    }
+  });
+
+  it('stops and rewinds when a new document replaces the project', async () => {
+    const h = endHarness();
+    h.positionPpq.value = 40;
+    await nextTick();
+    await loadProjectDocument(serializeProject());
+    await nextTick();
+    expect(h.transport.stop).toHaveBeenCalled();
+    expect(h.transport.seekPpq).toHaveBeenCalledWith(0);
+    h.scope.stop();
+  });
+
+  it('rewinds to the start when playback starts at the project end', () => {
+    const h = endHarness();
+    h.isPlaying.value = false;
+    h.positionPpq.value = 48;
+    h.controls.startPlayback();
+    expect(h.transport.seekPpq).toHaveBeenCalledWith(0);
+    expect(h.transport.play).toHaveBeenCalledTimes(1);
+    h.scope.stop();
   });
 });

@@ -681,6 +681,7 @@ const {
   loopStartPpq,
   positionPpq,
   recording,
+  recordingActive: isRecording,
   tempo,
   transport,
   ensureEngineStarted,
@@ -946,6 +947,7 @@ onMounted(installLaunchQueueConsumer);
   <div class="app-shell" data-app-shell-focus-fallback tabindex="-1">
     <AppHeader
       :autosave-last-saved-at="autosave.lastSavedAt.value"
+      :busy="busy && !startScreenOpen"
       :can-redo="historyCanRedo"
       :can-undo="historyCanUndo"
       :can-install-pwa="canInstallPwa"
@@ -1397,7 +1399,7 @@ onMounted(installLaunchQueueConsumer);
         >
           <!-- Kept alive via v-show: the step pattern is session-local
                component state and must survive tab switches. -->
-          <StepSequencer />
+          <StepSequencer :is-playing="isPlaying" :position-ppq="() => positionPpq" />
         </section>
         <section
           v-show="dockTab === 'lists'"
@@ -1600,6 +1602,7 @@ onMounted(installLaunchQueueConsumer);
 
     <StartScreen
       :open="startScreenOpen"
+      :busy="busy"
       :opfs-available="opfsAvailable"
       :has-autosave="hasAutosave"
       :stored-projects="storedProjects"
