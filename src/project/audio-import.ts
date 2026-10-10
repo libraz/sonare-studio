@@ -3,13 +3,12 @@
  *
  * The flow is split so the core stays testable without browser audio:
  * - {@link ingestAudioBuffer} is pure data-in/data-out (plus asset-store I/O):
- *   it saves the buffers as an asset and optionally analyzes tempo/key.
+ *   it saves the buffers as an asset after reading its tags in a worker.
  * - {@link decodeAndIngest} is the thin browser wrapper that decodes a file
  *   via OfflineAudioContext.decodeAudioData (stereo is preserved; no mono
  *   downmix) and forwards to ingestAudioBuffer.
  */
 
-import { ensureWasm } from '@/lib/wasm';
 import { type AudioAssetMeta, type AudioAssetTags, saveAsset } from '@/persistence/assets';
 import {
   MAX_AUDIO_CHANNELS,
@@ -17,95 +16,8 @@ import {
   MAX_AUDIO_SAMPLES,
   MAX_EXTERNAL_AUDIO_FILE_BYTES,
 } from '@/persistence/resource-limits';
-
-/**
- * The analysis functions consumed on import. Matches the libsonare module
- * surface (detectBpm/detectKey), but any compatible implementation works.
- */
-export interface AudioAnalysisFunctions {
-  /** Unified full analysis; used as a seed for tempo/key/rhythm/dynamics/timbre tags. */
-  analyze?: (
-    samples: Float32Array,
-    sampleRate?: number,
-    options?: { tuning?: number | 'auto' },
-  ) => {
-    bpm?: number;
-    bpmConfidence?: number;
-    key?: { name?: string; shortName?: string; confidence?: number };
-    timeSignature?: { numerator?: number; denominator?: number; confidence?: number };
-    rhythm?: {
-      syncopation?: number;
-      grooveType?: string;
-      patternRegularity?: number;
-      tempoStability?: number;
-      timeSignature?: { numerator?: number; denominator?: number; confidence?: number };
-    };
-    dynamics?: {
-      dynamicRangeDb?: number;
-      peakDb?: number;
-      rmsDb?: number;
-      crestFactor?: number;
-      loudnessRangeDb?: number;
-      isCompressed?: boolean;
-    };
-    timbre?: {
-      brightness?: number;
-      warmth?: number;
-      density?: number;
-      roughness?: number;
-      complexity?: number;
-    };
-    form?: string;
-  };
-  /** Detailed tempo analysis; preferred over detectBpm when present. */
-  analyzeBpm?: (samples: Float32Array, sampleRate?: number) => { bpm: number; confidence?: number };
-  /** Returns the detected tempo in BPM (mono samples + sample rate). */
-  detectBpm?: (samples: Float32Array, sampleRate?: number) => number;
-  /** Returns the detected key (mono samples + sample rate). */
-  detectKey?: (
-    samples: Float32Array,
-    sampleRate?: number,
-  ) => { name: string; shortName?: string; confidence?: number };
-  /** Detailed key candidates; used when detectKey is absent. */
-  detectKeyCandidates?: (
-    samples: Float32Array,
-    sampleRate?: number,
-  ) => Array<{ key?: { name?: string; shortName?: string; confidence?: number } }>;
-  /** Detailed rhythm analysis; used for time-signature/groove tags. */
-  analyzeRhythm?: (
-    samples: Float32Array,
-    sampleRate?: number,
-  ) => {
-    bpm?: number;
-    timeSignature?: { numerator?: number; denominator?: number; confidence?: number };
-    grooveType?: string;
-  };
-  /** Dynamics analysis; used for asset inspector tags. */
-  analyzeDynamics?: (
-    samples: Float32Array,
-    sampleRate?: number,
-  ) => {
-    dynamicRangeDb?: number;
-    peakDb?: number;
-    rmsDb?: number;
-    crestFactor?: number;
-    loudnessRangeDb?: number;
-    isCompressed?: boolean;
-  };
-  /** Timbre analysis; used for asset inspector tags. */
-  analyzeTimbre?: (
-    samples: Float32Array,
-    sampleRate?: number,
-  ) => {
-    brightness?: number;
-    warmth?: number;
-    density?: number;
-    roughness?: number;
-    complexity?: number;
-  };
-  /** Returns the EBU R128 loudness (mono samples + sample rate). */
-  lufs?: (samples: Float32Array, sampleRate?: number) => { integratedLufs: number };
-}
+import { analyzeAudioTagsInWorker } from './audio-analysis-client';
+import { type AnalysisProgress, type AudioAnalysisFunctions, analyzeAudioTags } from './audio-tags';
 
 /** Options for {@link ingestAudioBuffer}. */
 export interface IngestAudioOptions {
@@ -114,11 +26,12 @@ export interface IngestAudioOptions {
   /** Tags to store as-is (merged under analysis results). */
   tags?: AudioAssetTags;
   /**
-   * Analysis provider: pass functions to use, null to disable analysis, or
-   * leave undefined to use the libsonare wasm module when it exposes
-   * detectBpm/detectKey (a graceful no-op otherwise).
+   * Analysis provider: pass functions to run in place, null to disable
+   * analysis, or leave undefined to run the libsonare detectors in a worker.
    */
   analysis?: AudioAnalysisFunctions | null;
+  /** Receives the share of the tag analysis done so far, in [0, 1]. */
+  onProgress?: AnalysisProgress;
 }
 
 /** Options for {@link decodeAndIngest}. */
@@ -176,226 +89,22 @@ export function mixdownToMono(channels: ReadonlyArray<Float32Array>): Float32Arr
   return out;
 }
 
-/**
- * Resolves the default analysis provider from the wasm module, if loadable.
- * Exposed so callers re-analyzing an already-imported clip (e.g. the clip
- * inspector's "Re-detect tempo") reuse the same detector wiring as import.
- */
-export async function resolveAudioAnalysis(): Promise<AudioAnalysisFunctions | null> {
-  try {
-    const wasm = (await ensureWasm()) as unknown as AudioAnalysisFunctions;
-    if (
-      typeof wasm.analyzeBpm === 'function' ||
-      typeof wasm.detectBpm === 'function' ||
-      typeof wasm.detectKey === 'function' ||
-      typeof wasm.detectKeyCandidates === 'function' ||
-      typeof wasm.analyzeRhythm === 'function' ||
-      typeof wasm.analyzeDynamics === 'function' ||
-      typeof wasm.analyzeTimbre === 'function' ||
-      typeof wasm.analyze === 'function' ||
-      typeof wasm.lufs === 'function'
-    ) {
-      return wasm;
-    }
-  } catch {
-    // No wasm available: analysis is optional.
-  }
-  return null;
-}
-
-/**
- * Runs tempo/key/loudness analysis over a mono mixdown and returns the tags.
- * Every analysis step is best-effort: detector errors or unusable results
- * yield no tag rather than failing the import.
- *
- * @param channels Planar channel buffers.
- * @param sampleRate Sample rate of the buffers in Hz.
- * @param analysis Analysis functions (skipped when absent).
- * @returns Tags with the successful detections (possibly empty).
- */
-export function analyzeAudioTags(
+/** Tags are best effort: a worker that cannot start or load leaves the asset untagged. */
+async function detectTags(
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
-  analysis: AudioAnalysisFunctions | null | undefined,
-): AudioAssetTags {
-  const tags: AudioAssetTags = {};
-  if (!analysis || channels.length === 0 || channels[0].length === 0) return tags;
+  options: IngestAudioOptions,
+): Promise<AudioAssetTags> {
+  if (options.analysis === null) return {};
   const mono = mixdownToMono(channels);
-  const applyMeter = (
-    meter: { numerator?: number; denominator?: number; confidence?: number } | undefined,
-  ): void => {
-    const numerator = meter?.numerator;
-    const denominator = meter?.denominator;
-    if (
-      Number.isInteger(numerator) &&
-      Number.isInteger(denominator) &&
-      (numerator ?? 0) > 0 &&
-      (denominator ?? 0) > 0
-    ) {
-      tags.timeSignature = `${numerator}/${denominator}`;
-      const confidence = meter?.confidence;
-      if (Number.isFinite(confidence)) tags.timeSignatureConfidence = confidence;
-    }
-  };
-  const applyDynamics = (
-    dynamics:
-      | {
-          dynamicRangeDb?: number;
-          peakDb?: number;
-          rmsDb?: number;
-          crestFactor?: number;
-          loudnessRangeDb?: number;
-          isCompressed?: boolean;
-        }
-      | undefined,
-  ): void => {
-    const dynamicRangeDb = dynamics?.dynamicRangeDb;
-    const peakDb = dynamics?.peakDb;
-    const rmsDb = dynamics?.rmsDb;
-    const crestFactor = dynamics?.crestFactor;
-    const loudnessRangeDb = dynamics?.loudnessRangeDb;
-    if (Number.isFinite(dynamicRangeDb)) tags.dynamicRangeDb = dynamicRangeDb;
-    if (Number.isFinite(peakDb)) tags.peakDb = peakDb;
-    if (Number.isFinite(rmsDb)) tags.rmsDb = rmsDb;
-    if (Number.isFinite(crestFactor)) tags.crestFactor = crestFactor;
-    if (Number.isFinite(loudnessRangeDb)) tags.loudnessRangeDb = loudnessRangeDb;
-    if (typeof dynamics?.isCompressed === 'boolean') tags.isCompressed = dynamics.isCompressed;
-  };
-  const applyTimbre = (
-    timbre:
-      | {
-          brightness?: number;
-          warmth?: number;
-          density?: number;
-          roughness?: number;
-          complexity?: number;
-        }
-      | undefined,
-  ): void => {
-    const brightness = timbre?.brightness;
-    const warmth = timbre?.warmth;
-    const density = timbre?.density;
-    const roughness = timbre?.roughness;
-    const complexity = timbre?.complexity;
-    if (Number.isFinite(brightness)) tags.brightness = brightness;
-    if (Number.isFinite(warmth)) tags.warmth = warmth;
-    if (Number.isFinite(density)) tags.density = density;
-    if (Number.isFinite(roughness)) tags.roughness = roughness;
-    if (Number.isFinite(complexity)) tags.complexity = complexity;
-  };
-  if (typeof analysis.analyze === 'function') {
-    try {
-      // An off-pitch recording reads its key on its own pitch grid.
-      const result = analysis.analyze(mono, sampleRate, { tuning: 'auto' });
-      const bpm = result?.bpm;
-      const bpmConfidence = result?.bpmConfidence;
-      const keyConfidence = result?.key?.confidence;
-      const rhythm = result?.rhythm;
-      const syncopation = rhythm?.syncopation;
-      const patternRegularity = rhythm?.patternRegularity;
-      const tempoStability = rhythm?.tempoStability;
-      if (Number.isFinite(bpm) && (bpm ?? 0) > 0) tags.bpm = bpm;
-      if (Number.isFinite(bpmConfidence)) tags.bpmConfidence = bpmConfidence;
-      const label = result?.key?.shortName || result?.key?.name;
-      if (typeof label === 'string' && label.length > 0) tags.key = label;
-      if (Number.isFinite(keyConfidence)) tags.keyConfidence = keyConfidence;
-      applyMeter(result?.timeSignature ?? rhythm?.timeSignature);
-      if (Number.isFinite(syncopation)) tags.syncopation = syncopation;
-      if (Number.isFinite(patternRegularity)) tags.patternRegularity = patternRegularity;
-      if (Number.isFinite(tempoStability)) tags.tempoStability = tempoStability;
-      if (typeof rhythm?.grooveType === 'string' && rhythm.grooveType.length > 0) {
-        tags.grooveType = rhythm.grooveType;
-      }
-      applyDynamics(result?.dynamics);
-      applyTimbre(result?.timbre);
-      if (typeof result?.form === 'string' && result.form.length > 0) tags.form = result.form;
-    } catch {
-      // Best effort: fall back to dedicated detectors below.
-    }
+  if (options.analysis !== undefined) {
+    return analyzeAudioTags(mono, sampleRate, options.analysis, options.onProgress);
   }
-  if (typeof analysis.analyzeBpm === 'function') {
-    try {
-      const result = analysis.analyzeBpm(mono, sampleRate);
-      if (Number.isFinite(result?.bpm) && result.bpm > 0) tags.bpm = result.bpm;
-      if (Number.isFinite(result?.confidence)) tags.bpmConfidence = result.confidence;
-    } catch {
-      // Best effort: fall back to detectBpm below when present.
-    }
+  try {
+    return await analyzeAudioTagsInWorker(mono, sampleRate, { onProgress: options.onProgress });
+  } catch {
+    return {};
   }
-  if (tags.bpm === undefined && typeof analysis.detectBpm === 'function') {
-    try {
-      const bpm = analysis.detectBpm(mono, sampleRate);
-      if (Number.isFinite(bpm) && bpm > 0) tags.bpm = bpm;
-    } catch {
-      // Best effort: no bpm tag.
-    }
-  }
-  if (typeof analysis.detectKey === 'function') {
-    try {
-      const key = analysis.detectKey(mono, sampleRate);
-      const label = key?.shortName || key?.name;
-      if (typeof label === 'string' && label.length > 0) tags.key = label;
-      if (Number.isFinite(key?.confidence)) tags.keyConfidence = key.confidence;
-    } catch {
-      // Best effort: no key tag.
-    }
-  }
-  if (tags.key === undefined && typeof analysis.detectKeyCandidates === 'function') {
-    try {
-      const candidates = analysis.detectKeyCandidates(mono, sampleRate);
-      const key = candidates.find((candidate) => candidate.key)?.key;
-      const label = key?.shortName || key?.name;
-      if (typeof label === 'string' && label.length > 0) tags.key = label;
-      const confidence = key?.confidence;
-      if (Number.isFinite(confidence)) tags.keyConfidence = confidence;
-    } catch {
-      // Best effort: no key tag.
-    }
-  }
-  if (typeof analysis.analyzeRhythm === 'function') {
-    try {
-      const rhythm = analysis.analyzeRhythm(mono, sampleRate);
-      const rhythmBpm = rhythm?.bpm;
-      if (
-        tags.bpm === undefined &&
-        typeof rhythmBpm === 'number' &&
-        Number.isFinite(rhythmBpm) &&
-        rhythmBpm > 0
-      ) {
-        tags.bpm = rhythmBpm;
-      }
-      applyMeter(rhythm?.timeSignature);
-      if (typeof rhythm?.grooveType === 'string' && rhythm.grooveType.length > 0) {
-        tags.grooveType = rhythm.grooveType;
-      }
-    } catch {
-      // Best effort: no rhythm tags.
-    }
-  }
-  if (typeof analysis.analyzeDynamics === 'function') {
-    try {
-      applyDynamics(analysis.analyzeDynamics(mono, sampleRate));
-    } catch {
-      // Best effort: no dynamics tags.
-    }
-  }
-  if (typeof analysis.analyzeTimbre === 'function') {
-    try {
-      applyTimbre(analysis.analyzeTimbre(mono, sampleRate));
-    } catch {
-      // Best effort: no timbre tags.
-    }
-  }
-  if (typeof analysis.lufs === 'function') {
-    try {
-      const loudness = analysis.lufs(mono, sampleRate);
-      // Silence yields -Infinity; only keep a finite measurement.
-      if (Number.isFinite(loudness?.integratedLufs)) tags.lufs = loudness.integratedLufs;
-    } catch {
-      // Best effort: no loudness tag.
-    }
-  }
-  return tags;
 }
 
 /**
@@ -414,8 +123,7 @@ export async function ingestAudioBuffer(
   name: string,
   options: IngestAudioOptions = {},
 ): Promise<AudioAssetMeta> {
-  const analysis = options.analysis === undefined ? await resolveAudioAnalysis() : options.analysis;
-  const detected = analyzeAudioTags(channels, sampleRate, analysis);
+  const detected = await detectTags(channels, sampleRate, options);
   const tags: AudioAssetTags = { ...detected, ...options.tags };
   const hasTags = Object.values(tags).some((value) => value !== undefined);
   return saveAsset(

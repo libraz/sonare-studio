@@ -21,11 +21,14 @@ const assetStore = vi.hoisted(() => ({
 vi.mock('@/persistence/assets', () => assetStore);
 
 const audioImport = vi.hoisted(() => ({
-  analyzeAudioTags: vi.fn(),
   decodeAndIngest: vi.fn(),
-  resolveAudioAnalysis: vi.fn(),
+  decodeAudioFile: vi.fn(),
+  mixdownToMono: (channels: Float32Array[]) => new Float32Array(channels[0]),
 }));
 vi.mock('@/project/audio-import', () => audioImport);
+
+const analysisClient = vi.hoisted(() => ({ analyzeAudioTagsInWorker: vi.fn() }));
+vi.mock('@/project/audio-analysis-client', () => analysisClient);
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -137,8 +140,7 @@ describe('useProjectAudioAssets', () => {
         numFrames: 12,
       },
     });
-    audioImport.resolveAudioAnalysis.mockResolvedValue({ detectBpm: vi.fn() });
-    audioImport.analyzeAudioTags.mockReturnValue({ bpm: 96.04 });
+    analysisClient.analyzeAudioTagsInWorker.mockResolvedValue({ bpm: 96.04 });
     const assets = useProjectAudioAssets({
       closeProjectMenu: vi.fn(),
       renderInfo,
@@ -148,12 +150,9 @@ describe('useProjectAudioAssets', () => {
 
     await assets.onRedetectClipTempo(clipId);
 
-    expect(audioImport.analyzeAudioTags).toHaveBeenCalledWith(
-      [new Float32Array([5, 6, 7, 8, 9, 10, 11, 12])],
+    expect(analysisClient.analyzeAudioTagsInWorker).toHaveBeenCalledWith(
+      new Float32Array([5, 6, 7, 8, 9, 10, 11, 12]),
       4,
-      {
-        detectBpm: expect.any(Function),
-      },
     );
     expect(store.clips.find((clip) => clip.id === clipId)?.warp).toEqual({
       enabled: false,
@@ -187,8 +186,7 @@ describe('useProjectAudioAssets', () => {
       };
     }>();
     assetStore.loadAsset.mockReturnValueOnce(pendingAsset.promise);
-    audioImport.resolveAudioAnalysis.mockResolvedValue({ detectBpm: vi.fn() });
-    audioImport.analyzeAudioTags.mockReturnValue({ bpm: 128 });
+    analysisClient.analyzeAudioTagsInWorker.mockResolvedValue({ bpm: 128 });
     const assets = useProjectAudioAssets({
       closeProjectMenu: vi.fn(),
       renderInfo,
@@ -236,8 +234,7 @@ describe('useProjectAudioAssets', () => {
       };
     }>();
     assetStore.loadAsset.mockReturnValueOnce(pendingAsset.promise);
-    audioImport.resolveAudioAnalysis.mockResolvedValue({ detectBpm: vi.fn() });
-    audioImport.analyzeAudioTags.mockReturnValue({ bpm: 128 });
+    analysisClient.analyzeAudioTagsInWorker.mockResolvedValue({ bpm: 128 });
     const assets = useProjectAudioAssets({
       closeProjectMenu: vi.fn(),
       renderInfo,

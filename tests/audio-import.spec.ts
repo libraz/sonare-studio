@@ -1,12 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAudioAssetCache, loadAsset } from '@/persistence/assets';
 import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
-import {
-  analyzeAudioTags,
-  decodeAndIngest,
-  ingestAudioBuffer,
-  mixdownToMono,
-} from '@/project/audio-import';
+import { decodeAndIngest, ingestAudioBuffer, mixdownToMono } from '@/project/audio-import';
+import { analyzeAudioTags } from '@/project/audio-tags';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
@@ -18,6 +14,11 @@ vi.mock('@/lib/wasm', async () => {
 /** A short stereo test signal (distinct per channel). */
 function stereo(): Float32Array[] {
   return [new Float32Array([1, 0, -1, 0]), new Float32Array([0, 1, 0, -1])];
+}
+
+/** The mono mixdown of {@link stereo}, as the analyzers receive it. */
+function mono(): Float32Array {
+  return mixdownToMono(stereo());
 }
 
 describe('ingestAudioBuffer', () => {
@@ -54,7 +55,7 @@ describe('ingestAudioBuffer', () => {
     expect(meta.tags).toEqual({ bpm: 123.5, key: 'Am', lufs: -14.2 });
     // Analysis sees a mono mixdown at the asset rate.
     expect(detectBpm).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
-    expect(detectKey).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
+    expect(detectKey).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100, { tuning: 'auto' });
     expect(lufs).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
   });
 
@@ -87,45 +88,35 @@ describe('ingestAudioBuffer', () => {
     expect((await loadAsset(meta.id)).meta.tags).toEqual(meta.tags);
   });
 
-  it('stores unified analyze dynamics and timbre tags for the asset inspector', async () => {
-    const analyze = vi.fn(() => ({
-      bpm: 118,
-      bpmConfidence: 0.91,
-      key: { name: 'C major', shortName: 'C', confidence: 0.8 },
-      timeSignature: { numerator: 4, denominator: 4, confidence: 0.7 },
-      rhythm: {
-        syncopation: 0.42,
-        grooveType: 'straight',
-        patternRegularity: 0.86,
-        tempoStability: 0.93,
+  it('stores rhythm, dynamics and timbre tags for the asset inspector', async () => {
+    const meta = await ingestAudioBuffer(stereo(), 44100, 'Detailed analysis', {
+      analysis: {
+        analyzeRhythm: () => ({
+          timeSignature: { numerator: 4, denominator: 4, confidence: 0.7 },
+          syncopation: 0.42,
+          grooveType: 'straight',
+          patternRegularity: 0.86,
+          tempoStability: 0.93,
+        }),
+        analyzeDynamics: () => ({
+          dynamicRangeDb: 9.5,
+          peakDb: -1.2,
+          rmsDb: -15.4,
+          crestFactor: 14.2,
+          loudnessRangeDb: 5.1,
+          isCompressed: false,
+        }),
+        analyzeTimbre: () => ({
+          brightness: 0.61,
+          warmth: 0.33,
+          density: 0.74,
+          roughness: 0.12,
+          complexity: 0.47,
+        }),
       },
-      dynamics: {
-        dynamicRangeDb: 9.5,
-        peakDb: -1.2,
-        rmsDb: -15.4,
-        crestFactor: 14.2,
-        loudnessRangeDb: 5.1,
-        isCompressed: false,
-      },
-      timbre: {
-        brightness: 0.61,
-        warmth: 0.33,
-        density: 0.74,
-        roughness: 0.12,
-        complexity: 0.47,
-      },
-      form: 'verse-chorus',
-    }));
-
-    const meta = await ingestAudioBuffer(stereo(), 44100, 'Unified analysis', {
-      analysis: { analyze },
     });
 
     expect(meta.tags).toEqual({
-      bpm: 118,
-      bpmConfidence: 0.91,
-      key: 'C',
-      keyConfidence: 0.8,
       timeSignature: '4/4',
       timeSignatureConfidence: 0.7,
       syncopation: 0.42,
@@ -143,40 +134,25 @@ describe('ingestAudioBuffer', () => {
       density: 0.74,
       roughness: 0.12,
       complexity: 0.47,
-      form: 'verse-chorus',
     });
-    expect(analyze).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100, { tuning: 'auto' });
     clearAudioAssetCache();
     expect((await loadAsset(meta.id)).meta.tags).toEqual(meta.tags);
   });
 
-  it('asks the analyzer to measure an off-pitch recording on its own pitch grid', () => {
-    const analyze = vi.fn(() => ({}));
-    analyzeAudioTags(stereo(), 44100, { analyze });
-    expect(analyze).toHaveBeenLastCalledWith(expect.any(Float32Array), 44100, { tuning: 'auto' });
-  });
-
-  it('lets dedicated dynamics and timbre analyzers refine unified analysis tags', () => {
-    expect(
-      analyzeAudioTags(stereo(), 44100, {
-        analyze: () => ({
-          dynamics: { dynamicRangeDb: 6 },
-          timbre: { brightness: 0.2 },
-        }),
-        analyzeDynamics: () => ({ dynamicRangeDb: 10, isCompressed: true }),
-        analyzeTimbre: () => ({ brightness: 0.8, warmth: 0.4 }),
-      }),
-    ).toEqual({
-      dynamicRangeDb: 10,
-      isCompressed: true,
-      brightness: 0.8,
-      warmth: 0.4,
+  it('reports progress after every step, ending at one', async () => {
+    const fractions: number[] = [];
+    await ingestAudioBuffer(stereo(), 44100, 'Progress', {
+      analysis: { detectBpm: () => 120 },
+      onProgress: (fraction) => fractions.push(fraction),
     });
+    expect(fractions).toHaveLength(6);
+    expect(fractions).toEqual([...fractions].sort((a, b) => a - b));
+    expect(fractions.at(-1)).toBe(1);
   });
 
   it('falls back to rhythm bpm when no tempo detector succeeds', () => {
     expect(
-      analyzeAudioTags(stereo(), 44100, {
+      analyzeAudioTags(mono(), 44100, {
         analyzeBpm: () => {
           throw new Error('boom');
         },
@@ -198,27 +174,25 @@ describe('ingestAudioBuffer', () => {
   it('persists rhythm, dynamics, timbre and caller tags without bpm/key/lufs', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Untuned one-shot', {
       analysis: {
-        analyze: () => ({
-          rhythm: {
-            timeSignature: { numerator: 5, denominator: 8, confidence: 0.73 },
-            syncopation: 0.58,
-            grooveType: 'broken',
-          },
-          dynamics: {
-            dynamicRangeDb: 12.4,
-            peakDb: -0.8,
-            rmsDb: -16.2,
-            crestFactor: 11.1,
-            loudnessRangeDb: 4.6,
-            isCompressed: false,
-          },
-          timbre: {
-            brightness: 0.68,
-            warmth: 0.21,
-            density: 0.76,
-            roughness: 0.19,
-            complexity: 0.49,
-          },
+        analyzeRhythm: () => ({
+          timeSignature: { numerator: 5, denominator: 8, confidence: 0.73 },
+          syncopation: 0.58,
+          grooveType: 'broken',
+        }),
+        analyzeDynamics: () => ({
+          dynamicRangeDb: 12.4,
+          peakDb: -0.8,
+          rmsDb: -16.2,
+          crestFactor: 11.1,
+          loudnessRangeDb: 4.6,
+          isCompressed: false,
+        }),
+        analyzeTimbre: () => ({
+          brightness: 0.68,
+          warmth: 0.21,
+          density: 0.76,
+          roughness: 0.19,
+          complexity: 0.49,
         }),
       },
       tags: { form: 'custom-one-shot', grooveType: 'custom-groove' },
@@ -254,14 +228,10 @@ describe('ingestAudioBuffer', () => {
     expect(meta.tags).toEqual({ bpm: 95 });
   });
 
-  it('persists the default wasm loudness analysis (no bpm/key detector exposed)', async () => {
-    // The mocked wasm module (fake-wasm) exposes lufs() but no detectBpm/detectKey,
-    // so the default import path stores a loudness-only tag.
+  it('leaves the asset untagged when the analysis worker cannot run', async () => {
+    // jsdom has no Worker, so the default path fails to start and imports anyway.
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Plain');
-    expect(meta.tags?.bpm).toBeUndefined();
-    expect(meta.tags?.key).toBeUndefined();
-    expect(meta.tags?.lufs).toBeTypeOf('number');
-    expect(Number.isFinite(meta.tags?.lufs)).toBe(true);
+    expect(meta.tags).toBeUndefined();
   });
 
   it('tolerates throwing or useless detectors', async () => {
@@ -300,31 +270,30 @@ describe('decodeAndIngest', () => {
 
 describe('analyzeAudioTags', () => {
   it('returns empty tags without analysis functions or audio', () => {
-    expect(analyzeAudioTags(stereo(), 44100, null)).toEqual({});
-    expect(analyzeAudioTags([], 44100, { detectBpm: () => 120 })).toEqual({});
-    expect(analyzeAudioTags([new Float32Array(0)], 44100, { detectBpm: () => 120 })).toEqual({});
+    expect(analyzeAudioTags(mono(), 44100, null)).toEqual({});
+    expect(analyzeAudioTags(new Float32Array(0), 44100, { detectBpm: () => 120 })).toEqual({});
   });
 
   it('drops non-finite or non-positive bpm results', () => {
-    expect(analyzeAudioTags(stereo(), 44100, { detectBpm: () => 0 })).toEqual({});
-    expect(analyzeAudioTags(stereo(), 44100, { detectBpm: () => Number.NaN })).toEqual({});
+    expect(analyzeAudioTags(mono(), 44100, { detectBpm: () => 0 })).toEqual({});
+    expect(analyzeAudioTags(mono(), 44100, { detectBpm: () => Number.NaN })).toEqual({});
   });
 
   it('prefers the key shortName and falls back to name', () => {
     expect(
-      analyzeAudioTags(stereo(), 44100, { detectKey: () => ({ name: 'C major', shortName: 'C' }) }),
+      analyzeAudioTags(mono(), 44100, { detectKey: () => ({ name: 'C major', shortName: 'C' }) }),
     ).toEqual({ key: 'C' });
-    expect(analyzeAudioTags(stereo(), 44100, { detectKey: () => ({ name: 'C major' }) })).toEqual({
+    expect(analyzeAudioTags(mono(), 44100, { detectKey: () => ({ name: 'C major' }) })).toEqual({
       key: 'C major',
     });
   });
 
   it('stores a finite integrated loudness and drops a silent -Infinity', () => {
-    expect(analyzeAudioTags(stereo(), 44100, { lufs: () => ({ integratedLufs: -14.2 }) })).toEqual({
+    expect(analyzeAudioTags(mono(), 44100, { lufs: () => ({ integratedLufs: -14.2 }) })).toEqual({
       lufs: -14.2,
     });
     expect(
-      analyzeAudioTags(stereo(), 44100, {
+      analyzeAudioTags(mono(), 44100, {
         lufs: () => ({ integratedLufs: Number.NEGATIVE_INFINITY }),
       }),
     ).toEqual({});

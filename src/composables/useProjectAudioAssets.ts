@@ -3,12 +3,8 @@ import { confirmDialog } from '@/composables/useDialogs';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
-import {
-  analyzeAudioTags,
-  decodeAndIngest,
-  decodeAudioFile,
-  resolveAudioAnalysis,
-} from '@/project/audio-import';
+import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
+import { decodeAndIngest, decodeAudioFile, mixdownToMono } from '@/project/audio-import';
 import {
   addAudioClip,
   addBouncedClip,
@@ -212,8 +208,6 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       const isCurrent = (): boolean => tempoDetectionOperations.isCurrent(token, identity());
       const asset = await loadAsset(assetId);
       if (!isCurrent()) return;
-      const analysis = await resolveAudioAnalysis();
-      if (!isCurrent()) return;
       const channels = sliceAudioClipWindow(
         asset.channels,
         asset.meta.sampleRate,
@@ -221,7 +215,11 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
         clip.lengthPpq,
         clip.warp?.sourceBpm ?? store.tempoBpm,
       );
-      const tags = analyzeAudioTags(channels, asset.meta.sampleRate, analysis);
+      const tags = await analyzeAudioTagsInWorker(
+        mixdownToMono(channels),
+        asset.meta.sampleRate,
+      ).catch(() => ({ bpm: undefined }));
+      if (!isCurrent()) return;
       if (tags.bpm === undefined) {
         renderInfo.value = t.value.dialogs.prompts.tempoDetectionFailed;
         return;
