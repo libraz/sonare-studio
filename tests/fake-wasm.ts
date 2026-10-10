@@ -1179,7 +1179,7 @@ export const FAKE_INSERT_PARAM_INFO: Record<
       type: 'number',
       unit: 'ms',
       min: 0,
-      uiMin: 0,
+      uiMin: 0.1,
       uiMax: 200,
       scale: 'log',
     },
@@ -1190,7 +1190,7 @@ export const FAKE_INSERT_PARAM_INFO: Record<
       type: 'number',
       unit: 'ms',
       min: 0,
-      uiMin: 0,
+      uiMin: 0.1,
       uiMax: 2000,
       scale: 'log',
     },
@@ -2107,7 +2107,8 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
       sampleRate?: number;
       platforms?: Array<{ name: string; targetLufs: number; ceilingDb: number }>;
     }) => fakeStreamingPreviewJson(request.platforms ?? [], FAKE_STEREO_LUFS),
-    masteringPairAnalyze: (name: string) => {
+    masteringPairAnalyze: (request: string | { analysisName: string }) => {
+      const name = typeof request === 'string' ? request : request.analysisName;
       if (name === 'match.matchEqCurve') {
         return JSON.stringify({ frequencies: [100, 1000], gainDb: [1, -2] });
       }

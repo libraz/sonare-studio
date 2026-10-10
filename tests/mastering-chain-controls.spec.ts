@@ -20,7 +20,7 @@ const COMPRESSOR_INFO = [
     min: 0,
     max: null,
     default: 10,
-    uiMin: 0,
+    uiMin: 0.1,
     uiMax: 200,
     scale: 'log',
   },
@@ -31,7 +31,7 @@ const COMPRESSOR_INFO = [
     min: 0,
     max: null,
     default: 100,
-    uiMin: 0,
+    uiMin: 0.1,
     uiMax: 2000,
     scale: 'log',
   },
@@ -67,13 +67,13 @@ describe('mastering chain controls', () => {
     });
     expect(controls.find((c) => c.id === 'attackMs')).toMatchObject({
       value: 10,
-      min: 0.2,
+      min: 0.1,
       max: 200,
       scale: 'log',
       unit: 'ms',
     });
     expect(controls.find((c) => c.id === 'releaseMs')).toMatchObject({
-      min: 2,
+      min: 0.1,
       max: 2000,
       scale: 'log',
       unit: 'ms',
@@ -125,6 +125,6 @@ describe('mastering chain controls', () => {
     );
 
     expect(clampControlValue(control, 900)).toBe(200);
-    expect(clampControlValue(control, -5)).toBe(0.2);
+    expect(clampControlValue(control, -5)).toBe(0.1);
   });
 });

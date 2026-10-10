@@ -166,7 +166,7 @@ describe('quick controls', () => {
       });
       expect(controls.find((c) => c.id === 'ratio')).toMatchObject({ min: 1, max: 20, value: 4 });
       expect(controls.find((c) => c.id === 'attackMs')).toMatchObject({
-        min: 0.2,
+        min: 0.1,
         max: 200,
         scale: 'log',
         unit: 'ms',

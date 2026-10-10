@@ -42,15 +42,15 @@ describe('insert descriptor drives the controls', () => {
     expect(clampToAccepted(control, -30)).toBe(-24);
   });
 
-  it('draws a log axis from a positive floor and keeps a positive floor as declared', () => {
+  it('draws a log axis from the declared positive display floor', () => {
     expect(numberControl('voice.changer', 'eqHighpassHz')).toMatchObject({
       min: 20,
       max: 300,
       scale: 'log',
     });
-    // Compressor attack declares log with a zero floor.
+    // Compressor attack accepts zero; its log axis starts at the declared uiMin.
     expect(numberControl('dynamics.compressor', 'attackMs')).toMatchObject({
-      min: 0.2,
+      min: 0.1,
       max: 200,
       scale: 'log',
     });
@@ -80,9 +80,9 @@ describe('insert descriptor drives the controls', () => {
     expect(control.max).toBeLessThan(8000);
   });
 
-  it('holds hopLength to the live nFft', () => {
+  it('holds hopLength to half the live nFft', () => {
     const next = editedProcessorParams('repair.denoiseClassical', { nFft: 256 }, 'hopLength', 512);
-    expect(next.hopLength).toBe(256);
+    expect(next.hopLength).toBe(128);
     const dflt = editedProcessorParams('repair.denoiseClassical', {}, 'hopLength', 512);
     expect(dflt.hopLength).toBe(512);
   });

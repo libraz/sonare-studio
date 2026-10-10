@@ -196,8 +196,6 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
   { test: /Ms$/i, min: 0, max: 5000, unit: 'ms', defaultValue: 10 },
   { test: /Hz$/i, min: 20, max: 20000, scale: 'log', unit: 'Hz', defaultValue: 1000 },
   { test: /^q$|Q$/u, min: 0.1, max: 18, scale: 'log', defaultValue: Math.SQRT1_2 },
-  // Power-of-two FFT size: the descriptor publishes no bounds for it.
-  { test: /^nFft$/u, min: 128, max: 8192, scale: 'log', unit: 'smp', defaultValue: 1024 },
 ];
 
 /** Readout suffix of each descriptor unit; '' shows a bare number. */
@@ -211,6 +209,7 @@ const UNIT_LABELS: Readonly<Record<MasteringInsertParamUnit, string>> = {
   samples: 'smp',
   m: 'm',
   cm: 'cm',
+  mm: 'mm',
   deg: '°',
   percent: '%',
   degC: '°C',
@@ -331,17 +330,12 @@ function clampToBounds(value: number, min: number | null, max: number | null): n
 /** Share of the display span a control stays clear of an exclusive bound by. */
 const EXCLUSIVE_INSET = 1e-3;
 
-/** Lowest log-axis end for a range that reaches zero: 20 Hz, else three decades under the top. */
-function logFloor(unit: string | null | undefined, max: number): number {
-  return unit === 'Hz' && max > 200 ? 20 : max / 1000;
-}
-
 /**
  * Resolves a numeric range. The window starts from the hand rules (a name
  * heuristic, else the catalog bounds when both are finite), the descriptor's
  * uiMin/uiMax replace its ends, and the result is narrowed to the accepted
  * bounds. An end sitting on an exclusive bound is moved just inside it, and a
- * log axis whose range reaches zero starts at a positive floor. The default
+ * range reaching zero is drawn linear. The default
  * is the catalog's when it publishes one.
  */
 export function processorNumberSpec(
@@ -380,8 +374,7 @@ export function processorNumberSpec(
   const unit = declaredUnit ?? ((hasDomain ? domain.unit : '') || rule?.unit);
   let scale = info?.scale === 'log' || (info?.scale === undefined && rule?.scale === 'log');
   if (scale && min <= 0) {
-    if (max > 0) min = logFloor(info?.unit, max);
-    else scale = false;
+    scale = false;
   } else if (info?.minExclusive && hardMin !== null && min === hardMin) {
     min += (max - min) * EXCLUSIVE_INSET;
   }
@@ -751,8 +744,9 @@ export function clampToAccepted(
   if (accepts?.min != null) lo = accepts.min + (accepts.minExclusive ? inset : 0);
   if (accepts?.max != null) hi = accepts.max - (accepts.maxExclusive ? inset : 0);
   for (const dependency of control.dependsOn ?? []) {
-    const other = sibling(dependency.key);
-    if (other === undefined) continue;
+    const live = sibling(dependency.key);
+    if (live === undefined) continue;
+    const other = live * (dependency.factor ?? 1);
     const strict = dependency.relation === 'lt' || dependency.relation === 'gt';
     const margin = strict ? (Number.isInteger(other) ? 1 : inset) : 0;
     if (dependency.relation === 'le' || dependency.relation === 'lt')
