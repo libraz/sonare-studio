@@ -145,7 +145,7 @@ function makeHandle(): {
     setStripInsertBypassed: ReturnType<typeof vi.fn>;
     setTrackBuses: ReturnType<typeof vi.fn>;
     setBusGain: ReturnType<typeof vi.fn>;
-    setSends: ReturnType<typeof vi.fn>;
+    setTrackSends: ReturnType<typeof vi.fn>;
     setTrackOutputBus: ReturnType<typeof vi.fn>;
     setBusSidechain: ReturnType<typeof vi.fn>;
     setMasterSidechain: ReturnType<typeof vi.fn>;
@@ -169,7 +169,7 @@ function makeHandle(): {
     setStripInsertBypassed: vi.fn(),
     setTrackBuses: vi.fn(),
     setBusGain: vi.fn(),
-    setSends: vi.fn(),
+    setTrackSends: vi.fn(),
     setTrackOutputBus: vi.fn(),
     setBusSidechain: vi.fn(),
     setMasterSidechain: vi.fn(),
@@ -938,10 +938,12 @@ describe('createStripSync', () => {
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
     expect(engine.setTrackBuses).toHaveBeenCalledTimes(1);
     expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: 0 }]);
-    expect(engine.setSends).toHaveBeenCalledTimes(1);
-    expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 1, levelDb: -12, enabled: true }]);
+    expect(engine.setTrackSends).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
+      { busId: 1, levelDb: -12, enabled: true },
+    ]);
     expect(engine.setTrackBuses.mock.invocationCallOrder[0]).toBeLessThan(
-      engine.setSends.mock.invocationCallOrder[0],
+      engine.setTrackSends.mock.invocationCallOrder[0],
     );
     clearCalls(engine);
 
@@ -1100,7 +1102,9 @@ describe('createStripSync', () => {
     // is a separate tap and stays.
     expect(engine.setTrackOutputBus).toHaveBeenCalledWith(1, 4);
     expect(engine.setTrackOutputBus).toHaveBeenCalledWith(3, 4);
-    expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 1, levelDb: -6, enabled: true }]);
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
+      { busId: 1, levelDb: -6, enabled: true },
+    ]);
   });
 
   it('restores normal routing when the return solo is released', () => {
@@ -1132,7 +1136,7 @@ describe('createStripSync', () => {
 
     sync.sync([track], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
     // Pre-fader carries sendTiming; post-fader (the engine default) stays absent.
-    expect(engine.setSends).toHaveBeenCalledWith(1, [
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
       { busId: 1, levelDb: -6, enabled: true, sendTiming: 'preFader' },
       { busId: 2, levelDb: -12, enabled: true },
     ]);
@@ -1144,8 +1148,10 @@ describe('createStripSync', () => {
       makeStrip({ sends: [{ busId: 'A', levelDb: -6, enabled: true }] }),
     );
     sync.sync([flipped], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
-    expect(engine.setSends).toHaveBeenCalledTimes(1);
-    expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 1, levelDb: -6, enabled: true }]);
+    expect(engine.setTrackSends).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
+      { busId: 1, levelDb: -6, enabled: true },
+    ]);
   });
 
   it('prunes sends to a removed bus before re-declaring and compacts bus numbers', () => {
@@ -1154,16 +1160,18 @@ describe('createStripSync', () => {
     const track = makeTrack(1, makeStrip({ sends: [{ busId: 'B', levelDb: -6, enabled: true }] }));
 
     sync.sync([track], makeMixer({ buses: [makeBus('A'), makeBus('B')] }));
-    expect(engine.setSends).toHaveBeenCalledWith(1, [{ busId: 2, levelDb: -6, enabled: true }]);
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
+      { busId: 2, levelDb: -6, enabled: true },
+    ]);
     clearCalls(engine);
 
     // Removing the referenced bus prunes the send first, then re-declares.
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
-    expect(engine.setSends).toHaveBeenCalledTimes(1);
-    expect(engine.setSends).toHaveBeenCalledWith(1, []);
+    expect(engine.setTrackSends).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, []);
     expect(engine.setTrackBuses).toHaveBeenCalledTimes(1);
     expect(engine.setTrackBuses).toHaveBeenCalledWith([{ busId: 1, gainDb: 0 }]);
-    expect(engine.setSends.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(engine.setTrackSends.mock.invocationCallOrder[0]).toBeLessThan(
       engine.setTrackBuses.mock.invocationCallOrder[0],
     );
     clearCalls(engine);
@@ -1189,7 +1197,7 @@ describe('createStripSync', () => {
     );
 
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
-    expect(engine.setSends).toHaveBeenCalledWith(1, [
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
       { busId: 1, levelDb: -6, enabled: true, sendTiming: 'preFader' },
     ]);
     clearCalls(engine);
@@ -1197,16 +1205,16 @@ describe('createStripSync', () => {
     // Deleting the track (its lane is only muted) must clear its lingering
     // pre-fader send before setTrackBuses runs, or it keeps feeding the bus.
     sync.sync([], makeMixer({ buses: [makeBus('A')] }));
-    expect(engine.setSends).toHaveBeenCalledTimes(1);
-    expect(engine.setSends).toHaveBeenCalledWith(1, []);
-    expect(engine.setSends.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(engine.setTrackSends).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, []);
+    expect(engine.setTrackSends.mock.invocationCallOrder[0]).toBeLessThan(
       engine.setTrackBuses.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
     clearCalls(engine);
 
     // The stale send memory is dropped: a later sync does not re-clear it.
     sync.sync([], makeMixer({ buses: [makeBus('A')] }));
-    expect(engine.setSends).not.toHaveBeenCalled();
+    expect(engine.setTrackSends).not.toHaveBeenCalled();
   });
 
   it('keeps replacement buses inside the engine bus telemetry range', () => {
@@ -1231,7 +1239,7 @@ describe('createStripSync', () => {
     expect(engine.setTrackBuses).toHaveBeenCalledWith(
       replacementBuses.map((_, index) => ({ busId: index + 1, gainDb: 0 })),
     );
-    expect(engine.setSends).toHaveBeenCalledWith(1, [
+    expect(engine.setTrackSends).toHaveBeenCalledWith(1, [
       { busId: MAX_ENGINE_BUSES, levelDb: -9, enabled: true },
     ]);
   });
@@ -1305,7 +1313,7 @@ describe('createStripSync', () => {
 
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
     sync.sync([track], makeMixer({ buses: [makeBus('A')] }));
-    expect(engine.setSends).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSends).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -2063,15 +2071,15 @@ describe('createStripSync output-bus routing', () => {
     // B moves from numeric id 2 to 1 while id 2 is reused by C. Do not let
     // the old numeric send alias C during setTrackBuses.
     sync.sync([track], makeMixer({ buses: [makeBus('B'), makeBus('C')] }));
-    expect(engine.setSends).toHaveBeenNthCalledWith(1, 1, []);
-    expect(engine.setSends).toHaveBeenNthCalledWith(2, 1, [
+    expect(engine.setTrackSends).toHaveBeenNthCalledWith(1, 1, []);
+    expect(engine.setTrackSends).toHaveBeenNthCalledWith(2, 1, [
       { busId: 1, levelDb: -6, enabled: true },
     ]);
-    expect(engine.setSends.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(engine.setTrackSends.mock.invocationCallOrder[0]).toBeLessThan(
       engine.setTrackBuses.mock.invocationCallOrder[0],
     );
     expect(engine.setTrackBuses.mock.invocationCallOrder[0]).toBeLessThan(
-      engine.setSends.mock.invocationCallOrder[1],
+      engine.setTrackSends.mock.invocationCallOrder[1],
     );
   });
 

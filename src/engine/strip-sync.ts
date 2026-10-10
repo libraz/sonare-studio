@@ -874,7 +874,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       // logical bus; clear before set_buses and replay from the store below.
       for (const [trackId, json] of lastSendsByTrack) {
         if (json === '[]') continue;
-        handle.engine.setSends(trackId, []);
+        handle.engine.setTrackSends(trackId, []);
         lastSendsByTrack.set(trackId, '[]');
       }
       busMappingGeneration += 1;
@@ -1003,7 +1003,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     for (const trackId of [...lastSendsByTrack.keys()]) {
       if (presentTrackIds.has(trackId)) continue;
       if (lastSendsByTrack.get(trackId) !== '[]') {
-        handle.engine.setSends(trackId, []);
+        handle.engine.setTrackSends(trackId, []);
         replayMasterState = true;
       }
       lastSendsByTrack.delete(trackId);
@@ -1045,7 +1045,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       const lastSends = JSON.parse(lastJson) as EngineTrackSend[];
       if (lastSends.some((send) => !newBusIdSet.has(send.busId))) {
         const pruned = lastSends.filter((send) => newBusIdSet.has(send.busId));
-        handle.engine.setSends(track.id, pruned);
+        handle.engine.setTrackSends(track.id, pruned);
         replayMasterState = true;
         lastSendsByTrack.set(track.id, JSON.stringify(pruned));
       }
@@ -1101,7 +1101,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       const desired = engineBusSends(track.mixer?.sends, resolveBusId);
       const json = JSON.stringify(desired);
       if ((lastSendsByTrack.get(track.id) ?? '[]') !== json) {
-        handle.engine.setSends(track.id, desired);
+        handle.engine.setTrackSends(track.id, desired);
         replayMasterState = true;
         lastSendsByTrack.set(track.id, json);
       }

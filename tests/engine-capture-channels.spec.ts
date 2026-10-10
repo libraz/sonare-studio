@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { init, SonareRealtimeEngineWorkletProcessor } from '@/wasm/worklet.js';
-
-/** C-ABI version the vendored glue checks a module factory against in init(). */
-const WASM_ABI_VERSION = 0x04030207;
+import {
+  EXPECTED_ABI_VERSION,
+  init,
+  SonareRealtimeEngineWorkletProcessor,
+} from '@/wasm/worklet.js';
 
 /**
  * Capture-width spike: determines how many channels the bundled engine's input
@@ -89,7 +90,7 @@ describe('engine input-capture channel width', () => {
   it('ingests only channelCount input channels regardless of the requested capture width', async () => {
     await init({
       moduleFactory: () => ({
-        abiVersion: () => WASM_ABI_VERSION,
+        abiVersion: () => EXPECTED_ABI_VERSION,
         RealtimeEngine: FakeNativeEngine,
         engineAbiVersion: () => 3,
       }),

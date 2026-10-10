@@ -194,7 +194,10 @@ const DECAYED_TAIL_LEVEL = 1e-5;
  * Cuts the trailing frames after `floorFrame` that stay below
  * {@link DECAYED_TAIL_LEVEL} on every channel; frames before it are kept.
  */
-export function trimDecayedTail(channels: Float32Array[], floorFrame: number): Float32Array[] {
+export function trimDecayedTail<T extends readonly Float32Array[]>(
+  channels: T,
+  floorFrame: number,
+): T {
   const length = channels[0]?.length ?? 0;
   let end = length;
   while (
@@ -203,7 +206,9 @@ export function trimDecayedTail(channels: Float32Array[], floorFrame: number): F
   ) {
     end -= 1;
   }
-  return end === length ? channels : channels.map((channel) => channel.slice(0, end));
+  return end === length
+    ? channels
+    : (channels.map((channel) => channel.slice(0, end)) as unknown as T);
 }
 
 /**
