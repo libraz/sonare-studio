@@ -6,7 +6,6 @@ export const shellMixing = {
     noTrack: 'トラックなし',
     empty: 'デバイスを編集するトラックを選択してください。',
     changeInstrument: 'インストゥルメントを変更',
-    instrumentGateHint: 'インストゥルメント変更は再生停止時に適用されます。',
     instrumentPicker: 'インストゥルメントピッカー',
     presets: 'プリセット',
     gm: 'GM',

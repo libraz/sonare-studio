@@ -90,12 +90,6 @@
   box-shadow: none;
 }
 
-.instrument-gate-hint {
-  margin: var(--sp-2) 0 0;
-  font-size: var(--fs-2xs);
-  color: var(--text-3);
-}
-
 /* Caption and audition share one line under the picker: a block button of its
  * own would compete with the picker for the slot's visual weight. */
 .instrument-meta {
@@ -213,6 +207,14 @@
   gap: var(--sp-3);
   max-height: 14rem;
   overflow: auto;
+  /* Tab swap fade; opacity only so nested select menus keep their anchor. */
+  animation: picker-body-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes picker-body-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .gm-hint {
@@ -472,6 +474,14 @@
   font-size: var(--fs-2xs);
   line-height: 1.35;
   padding: 3px var(--sp-2);
+}
+
+.fonts-loading {
+  align-self: flex-start;
+}
+
+.sf2-manifest-status.loading {
+  display: flex;
 }
 
 .sf2-manifest-status.sf2 {

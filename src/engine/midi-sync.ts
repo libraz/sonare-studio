@@ -633,8 +633,13 @@ export interface MidiSync {
   nativeSynthDestination(trackId: number): number | undefined;
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
-  /** Replays the current bank/program/expression state after a seek or parked play. */
-  restoreStateAtPpq(ppq: number, renderFrame?: number): void;
+  /**
+   * Replays the current bank/program/expression state after a seek, a parked
+   * play or an instrument swap; `destinationIds` limits it to those destinations.
+   */
+  restoreStateAtPpq(ppq: number, renderFrame?: number, destinationIds?: ReadonlySet<number>): void;
+  /** Destinations whose instrument the latest sync bound; a swap starts from default channel state. */
+  reboundDestinations?(): ReadonlySet<number>;
   /** Missing/unreadable SoundFonts encountered during the latest sync. */
   mediaIssues?(): readonly MediaCompletenessIssue[];
 }
@@ -663,6 +668,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let nativeSynthDestinations = new Map<number, number>();
   let lastGsSetupSysexKey: string | undefined;
   let lastBoundSf2Destinations = new Map<number, string>();
+  let reboundDestinations = new Set<number>();
   let lastStateSource:
     | {
         tracks: ReadonlyArray<EditorTrack>;
@@ -830,6 +836,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
 
     const nextNativeSynthDestinations = new Map<number, number>();
     const nextBoundSf2Destinations = new Map<number, string>();
+    reboundDestinations = new Set<number>();
     for (const track of tracks) {
       if (track.kind !== 'midi') continue;
       // A frozen track plays from its baked asset; loading its instrument (and,
@@ -856,6 +863,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       }
       if (lastInstrumentKeyByDestination.has(destinationId) && destinationId !== track.id) continue;
       const sf2Bound = bindInstrument(track, destinationId, instrument, soundFontReady);
+      reboundDestinations.add(destinationId);
       if (sf2Bound) nextBoundSf2Destinations.set(destinationId, instrumentKey);
       // external-midi: no internal instrument is bound; the engine routes the
       // track's MIDI to the external output queue (drained by useWebMidiOutput).
@@ -931,7 +939,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   return {
     sync,
     scheduledClipCount: () => clipCount,
-    restoreStateAtPpq: (ppq, renderFrame) => {
+    restoreStateAtPpq: (ppq, renderFrame, destinationIds) => {
       if (!lastStateSource) return;
       const events = midiStateAtPpq(
         lastStateSource.tracks,
@@ -942,9 +950,12 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         lastStateSource.projectExternalMidi,
         (track) => lastStateSource?.destinationByTrack.get(track.id) ?? track.id,
       );
-      for (const event of events)
+      for (const event of events) {
+        if (destinationIds && !destinationIds.has(event.destinationId)) continue;
         handle.engine.pushMidiUmp(event.destinationId, event.word0, renderFrame);
+      }
     },
+    reboundDestinations: () => reboundDestinations,
     mediaIssues: () => currentMediaIssues.map((issue) => ({ ...issue })),
     nativeSynthDestination: (trackId) => nativeSynthDestinations.get(trackId),
   };

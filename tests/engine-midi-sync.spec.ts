@@ -927,6 +927,39 @@ describe('createMidiSync', () => {
     expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, pitchBendWord(0, 4096), 1234);
   });
 
+  it('reports only swapped destinations and replays state to them alone', async () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMidiSync(handle, { loadFont: async () => new Uint8Array([1]) });
+    const clips = [
+      makeClip(1, 1, {
+        notes: [],
+        programChangeLanes: [{ channel: 0, points: [{ ppq: 1, program: 12 }] }],
+      }),
+      makeClip(2, 2, {
+        notes: [],
+        programChangeLanes: [{ channel: 0, points: [{ ppq: 1, program: 30 }] }],
+      }),
+    ];
+    const lead = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
+    const bass = makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
+
+    await sync.sync([lead, bass], clips, TEMPO_120);
+    expect([...(sync.reboundDestinations?.() ?? [])]).toEqual([1, 2]);
+
+    const swapped = makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'square-bass' } });
+    await sync.sync([lead, swapped], clips, TEMPO_120);
+    const rebound = sync.reboundDestinations?.() ?? new Set<number>();
+    expect([...rebound]).toEqual([2]);
+
+    engine.pushMidiUmp.mockClear();
+    sync.restoreStateAtPpq(2, undefined, rebound);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(2, pcWord(0, 30), undefined);
+    expect(engine.pushMidiUmp).not.toHaveBeenCalledWith(1, expect.anything(), undefined);
+
+    await sync.sync([lead, swapped], clips, TEMPO_120);
+    expect(sync.reboundDestinations?.().size).toBe(0);
+  });
+
   it('binds the default synth preset to instrument-less midi tracks only', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);

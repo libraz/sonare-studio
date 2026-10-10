@@ -123,6 +123,56 @@ describe('useEngineProjectSync', () => {
     scope.stop();
   });
 
+  it('replays channel state to swapped instruments only while playing', async () => {
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    store.tracks = [track(1)];
+    store.clips = [clip(1)];
+    const rebound = new Set([1]);
+    const restoreStateAtPpq = vi.fn();
+    const midiSync: MidiSync = {
+      sync: vi.fn(async () => {}),
+      scheduledClipCount: () => 1,
+      restoreStateAtPpq,
+      reboundDestinations: () => rebound,
+      nativeSynthDestination: () => undefined,
+    };
+    const isPlaying = ref(false);
+    const scope = effectScope();
+    const projectSync = scope.run(() =>
+      useEngineProjectSync({
+        bridge: shallowRef(null),
+        scope: shallowRef(null),
+        errorMessage: ref(''),
+        handle: shallowRef(null),
+        transport: {
+          setTempoMap: vi.fn(),
+          setTempo: vi.fn(),
+          isPlaying,
+          positionPpq: ref(24),
+        } as never,
+      }),
+    );
+    if (!projectSync) throw new Error('effect scope did not run');
+    projectSync.setEngineSyncHandles({
+      mixerSync: null,
+      stripSync: null,
+      automationSync: null,
+      midiSync,
+      transportSync: null,
+      webMidiOutput: null,
+    } as never);
+
+    await projectSync.syncMidiState();
+    expect(restoreStateAtPpq).not.toHaveBeenCalled();
+
+    isPlaying.value = true;
+    await projectSync.syncMidiState();
+    expect(restoreStateAtPpq).toHaveBeenCalledWith(24, undefined, rebound);
+    scope.stop();
+  });
+
   it('reports no meter/scope source for lanes past the meter target range', () => {
     const laneTrackIds = Array.from({ length: 33 }, (_, i) => i + 1);
     const mixerSync: MixerSync = {

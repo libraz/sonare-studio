@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DeviceInsertChain from '@/components/devices/DeviceInsertChain.vue';
 import Sf2ChannelMap from '@/components/devices/Sf2ChannelMap.vue';
+import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
@@ -1160,9 +1161,6 @@ const instrumentSourceCaption = computed(() => {
             {{ t.shell.devicesPanel.normalizeAudition }}
           </label>
         </div>
-        <p v-if="transportPlaying" class="instrument-gate-hint">
-          {{ t.shell.devicesPanel.instrumentGateHint }}
-        </p>
 
         <Transition name="pop">
         <div
@@ -1287,10 +1285,10 @@ const instrumentSourceCaption = computed(() => {
           </div>
 
           <div v-else-if="pickerTab === 'sf2'" class="picker-body">
-            <EmptyState
+            <BusyIndicator
               v-if="fontsLoading"
-              variant="inline"
-              :message="t.shell.devicesPanel.loadingFonts"
+              class="fonts-loading"
+              :label="t.shell.devicesPanel.loadingFonts"
             />
             <EmptyState
               v-else-if="fonts.length === 0"
@@ -1406,8 +1404,13 @@ const instrumentSourceCaption = computed(() => {
                 <span class="sf2-current-label">{{ t.shell.devicesPanel.selectedProgram }}</span>
                 <strong>{{ sf2Selection.program }} · {{ sf2ProgramName }}</strong>
               </div>
+              <BusyIndicator
+                v-if="sf2ManifestProbe.state === 'loading'"
+                class="sf2-manifest-status loading"
+                :label="sf2ManifestProbe.text"
+              />
               <p
-                v-if="sf2ManifestProbe.text"
+                v-else-if="sf2ManifestProbe.text"
                 class="sf2-manifest-status"
                 :class="sf2ManifestProbe.state"
               >

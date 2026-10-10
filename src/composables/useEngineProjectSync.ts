@@ -351,6 +351,12 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.projectExternalMidi,
         clipArticulations(store.scoreAnnotations),
       );
+      // A swapped instrument starts from default channel state; while playing,
+      // resend the program/bank/controllers in effect at the playhead.
+      const rebound = m.reboundDestinations?.();
+      if (rebound && rebound.size > 0 && transport.isPlaying.value) {
+        m.restoreStateAtPpq(transport.positionPpq.value, undefined, rebound);
+      }
       // Instrument automation ids resolve only once an instrument is bound.
       syncAutomationState();
       midiMediaIssues = (m.mediaIssues?.() ?? []).map((issue) => ({
