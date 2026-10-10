@@ -33,6 +33,7 @@ import {
   defaultControlSurfaceSettings,
   sanitizeControlSurfaceSettings,
 } from './control-surface';
+import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from './document-schema';
 import { normalizeGenerationSeed } from './generation';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
@@ -75,7 +76,6 @@ import {
   setHistoryResetHook,
   setWasmModule,
 } from './runtime';
-import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from './serialization';
 import {
   applyDocumentClipMetadata,
   hydrateProjectFromDocument,
