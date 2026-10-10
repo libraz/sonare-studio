@@ -87,13 +87,6 @@ export function beamGroupLengthsPpq(timeSig: NotatedTimeSig): number[] {
   return groups.map((beats) => beats * beatLen);
 }
 
-/** Returns the conventional beat length used by tempo and roll analysis. */
-export function beatGroupPpq(timeSig: NotatedTimeSig): number {
-  const beatLen = 4 / timeSig.beatUnit;
-  const compound = timeSig.beatUnit >= 8 && timeSig.beats % 3 === 0;
-  return compound ? beatLen * 3 : beatLen;
-}
-
 /** Returns true for additive beam-group boundaries after the measure start. */
 export function isBeamGroupBoundary(
   ppq: number,

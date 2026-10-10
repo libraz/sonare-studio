@@ -18,6 +18,7 @@ import type {
 } from '@/project/annotations';
 import { staffForMeanPitch } from './grand-staff';
 import {
+  beatGroupPpq,
   measureHasMultiRestStructure,
   type NotatedBarlineStyle,
   type NotatedChordSymbol,
@@ -58,7 +59,7 @@ import {
   type LyricIndex,
   slurPlacement,
 } from './musicxml-annotation-index';
-import { type BeamIndex, beamXml, beatGroupPpq, buildBeamIndex } from './musicxml-beams';
+import { type BeamIndex, beamXml, buildBeamIndex } from './musicxml-beams';
 import { groupChordSymbolsByMeasure, harmonyXml } from './musicxml-harmony';
 import {
   eventUsesPercussionMap,

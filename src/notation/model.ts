@@ -137,6 +137,17 @@ export function timeSigLengthPpq(timeSig: NotatedTimeSig): number {
 }
 
 /**
+ * Beat-group length used for split/rest boundaries: the denominator beat
+ * (4 / beatUnit) for simple meters; three of them (the dotted beat) for
+ * compound meters (beatUnit >= 8 with beats divisible by 3, e.g. 6/8 -> 1.5).
+ */
+export function beatGroupPpq(timeSig: NotatedTimeSig): number {
+  const beatLen = 4 / timeSig.beatUnit;
+  const compound = timeSig.beatUnit >= 8 && timeSig.beats % 3 === 0;
+  return compound ? beatLen * 3 : beatLen;
+}
+
+/**
  * Converts a PPQ position or duration to integral MusicXML divisions.
  *
  * @param ppq Value in PPQ (quarter note = 1.0).

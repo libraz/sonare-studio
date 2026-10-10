@@ -33,6 +33,7 @@
 import { estimateFingeringForUnits } from '@/notation/fingering';
 import { assignGrandStaffUnits } from '@/notation/grand-staff';
 import {
+  beatGroupPpq,
   DEFAULT_DIVISIONS,
   NOTE_VALUE_BASES,
   type NotatedClef,
@@ -579,17 +580,6 @@ function assignVoiceUnits(
   }
   assignments.sort((a, b) => a.voice - b.voice);
   return assignments;
-}
-
-/**
- * Beat-group length used for split/rest boundaries: the denominator beat
- * (4 / beatUnit) for simple meters; three of them (the dotted beat) for
- * compound meters (beatUnit >= 8 with beats divisible by 3, e.g. 6/8 -> 1.5).
- */
-function beatGroupPpq(timeSig: NotatedTimeSig): number {
-  const beatLen = 4 / timeSig.beatUnit;
-  const compound = timeSig.beatUnit >= 8 && timeSig.beats % 3 === 0;
-  return compound ? beatLen * 3 : beatLen;
 }
 
 /** First beat-group boundary strictly after `ppq` within a measure. */
