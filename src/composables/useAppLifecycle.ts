@@ -50,11 +50,14 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
     // blocks boot — a denied or unsupported grant just leaves storage default.
     void requestPersistentStorage();
     try {
-      const wasm = await ensureWasm();
-      options.version.value = wasm.version();
+      // Boot does not wait for the module here: it lists saved projects first,
+      // so the launcher shows its rows while the wasm is still loading.
       const bootPromise = options.bootProject();
       options.setBootPromise(bootPromise);
-      await bootPromise;
+      const versionReady = ensureWasm().then((wasm) => {
+        options.version.value = wasm.version();
+      });
+      await Promise.all([versionReady, bootPromise]);
     } catch (err) {
       options.errorMessage.value = describeError(err);
     }

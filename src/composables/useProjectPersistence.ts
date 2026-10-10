@@ -131,7 +131,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const midiImportInput = ref<HTMLInputElement | null>(null);
   const newDialogOpen = ref(false);
   const openDialogOpen = ref(false);
-  const startScreenOpen = ref(false);
+  // The launcher covers the shell from first paint; `booting` keeps its actions
+  // inert until the empty project and the saved-project list are ready.
+  const startScreenOpen = ref(true);
+  const booting = ref(true);
   const hasAutosave = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
   /** Named revisions of the project the document is saved under. */
@@ -311,10 +314,16 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
    * landing in an unfamiliar project they never created.
    */
   async function bootProject(): Promise<void> {
-    await replaceProjectDocument(createTemplate('empty'));
-    savedProjectSlot.value = null;
-    savedProjectRevision.value = null;
-    await markClean();
+    try {
+      await loadBootProject();
+    } finally {
+      booting.value = false;
+    }
+  }
+
+  async function loadBootProject(): Promise<void> {
+    // List saved projects before the wasm load so the launcher shows its
+    // final rows (including "continue") while the engine is still loading.
     let autosavePresent = false;
     if (isOpfsAvailable()) {
       try {
@@ -327,6 +336,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       }
     }
     hasAutosave.value = autosavePresent;
+    await replaceProjectDocument(createTemplate('empty'));
+    savedProjectSlot.value = null;
+    savedProjectRevision.value = null;
+    await markClean();
     startScreenOpen.value = true;
   }
 
@@ -1052,6 +1065,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     restoreRevision,
     deleteRevision,
     startScreenOpen,
+    booting,
     hasAutosave,
     storedProjects,
     recentMenuNames,

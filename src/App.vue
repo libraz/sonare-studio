@@ -410,6 +410,7 @@ const {
   restoreRevision,
   deleteRevision,
   startScreenOpen,
+  booting,
   hasAutosave,
   storedProjects,
   recentMenuNames,
@@ -1602,6 +1603,7 @@ onMounted(installLaunchQueueConsumer);
 
     <StartScreen
       :open="startScreenOpen"
+      :booting="booting"
       :busy="busy"
       :opfs-available="opfsAvailable"
       :has-autosave="hasAutosave"

@@ -32,6 +32,8 @@ const props = defineProps<{
   storedProjects: StoredProjectInfo[];
   /** A launcher action (open, import, demo) is in flight. */
   busy?: boolean;
+  /** The app is still loading; the actions stay visible but cannot be used yet. */
+  booting?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -87,9 +89,9 @@ function projectMeta(info: StoredProjectInfo): string {
     :dismissable="false"
     :close-on-overlay="false"
   >
-    <div class="ss-content" :aria-busy="props.busy === true">
+    <div class="ss-content" :aria-busy="props.busy === true || props.booting === true">
         <Transition name="fade">
-          <div v-if="props.busy" class="ss-busy progress-indeterminate" aria-hidden="true" />
+          <div v-if="props.busy || props.booting" class="ss-busy progress-indeterminate" aria-hidden="true" />
         </Transition>
         <header class="ss-head">
           <BrandMark size="lg" />
@@ -98,7 +100,7 @@ function projectMeta(info: StoredProjectInfo): string {
 
         <PwaUpdateBanner />
 
-        <div class="ss-body">
+        <div class="ss-body" :class="{ booting: props.booting }" :inert="props.booting || undefined">
           <button v-if="props.hasAutosave" type="button" class="ss-action"
             :class="{ primary: primaryAction === 'continue' }" data-testid="start-continue"
             @click="emit('continueSession')">
@@ -240,6 +242,16 @@ function projectMeta(info: StoredProjectInfo): string {
   right: 0;
   left: 0;
   z-index: 1;
+}
+
+/* Loading: the rows hold their place, dimmed and inert, so the launcher does
+ * not resize when they become usable. */
+.ss-body.booting {
+  opacity: 0.5;
+}
+
+.ss-body {
+  transition: opacity var(--dur-2) var(--ease-out);
 }
 
 /* Entrance: the action rows settle in one after another, top to bottom. The

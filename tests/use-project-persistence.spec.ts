@@ -197,6 +197,24 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
   return { autosave, confirmAction, downloadBlobFile, errorMessage, persistence };
 }
 
+describe('useProjectPersistence boot', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    useProjectStore().dispose();
+  });
+
+  it('covers the shell with the launcher before boot finishes', async () => {
+    const { persistence } = setup();
+    expect(persistence.startScreenOpen.value).toBe(true);
+    expect(persistence.booting.value).toBe(true);
+
+    await persistence.bootProject();
+
+    expect(persistence.startScreenOpen.value).toBe(true);
+    expect(persistence.booting.value).toBe(false);
+  });
+});
+
 describe('useProjectPersistence autosave refresh after load', () => {
   beforeEach(async () => {
     setActivePinia(createPinia());

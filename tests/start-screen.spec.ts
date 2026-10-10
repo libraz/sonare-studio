@@ -6,9 +6,10 @@ import { dismissPwaUpdateNotice, requestPwaAssetRecovery } from '@/pwa';
 
 let wrapper: VueWrapper | null = null;
 
-function open(): VueWrapper {
+function open(extra: { booting?: boolean } = {}): VueWrapper {
   wrapper = mount(StartScreen, {
     props: {
+      ...extra,
       open: true,
       opfsAvailable: true,
       hasAutosave: false,
@@ -43,6 +44,15 @@ describe('StartScreen', () => {
     buttons?.[1].click();
     await nextTick();
     expect(dialog?.querySelector('.pwa-update')).toBeNull();
+  });
+
+  it('keeps the actions in place but inert while the app boots', async () => {
+    const w = open({ booting: true });
+    const body = (): HTMLElement | null => q('.ss-body');
+    expect(body()?.hasAttribute('inert')).toBe(true);
+    expect(q('.ss-busy')).not.toBeNull();
+    await w.setProps({ booting: false });
+    expect(body()?.hasAttribute('inert')).toBe(false);
   });
 
   it('renders through the shared modal shell', () => {
