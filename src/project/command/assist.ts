@@ -14,7 +14,7 @@ import { validatePpq } from './utils';
  * NOT YET PERSISTED: serializeProject()/.szd save-load do not round-trip
  * sidecars, so they live only on the in-memory wasm Project and are lost on
  * reload. The first feature to write sidecars MUST add serialization support
- * (see src/project/serialization.ts) before relying on them surviving a save.
+ * (see src/project/document-schema.ts) before relying on them surviving a save.
  */
 
 /** One stored assist sidecar (mirrors the wasm `ProjectAssistSidecar`). */

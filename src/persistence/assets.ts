@@ -11,7 +11,7 @@
  * hash of the samples (plus sample rate and channel count) is used, so saving
  * the same audio twice yields the same id and a single stored copy. Project
  * documents reference assets by id only; the PCM bytes never enter the
- * project archive (see src/project/serialization.ts).
+ * project archive (see src/project/document-schema.ts).
  */
 
 import { bytesEqual, isNotFoundError } from './fs-utils';
