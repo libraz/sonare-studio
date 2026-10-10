@@ -3,7 +3,6 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import TranscribeDialog from '@/components/arrangement/TranscribeDialog.vue';
-import { MAX_POLYPHONIC_SECONDS } from '@/project/audio-transcription';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
 
@@ -91,6 +90,7 @@ describe('TranscribeDialog', () => {
     expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
       polyphonic: true,
       signal: expect.any(AbortSignal),
+      tidy: false,
     });
     expect(w.emitted('close')).toHaveLength(1);
   });
@@ -114,6 +114,7 @@ describe('TranscribeDialog', () => {
     expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
       polyphonic: false,
       signal: expect.any(AbortSignal),
+      tidy: false,
       minNoteDivision: 16,
     });
   });
@@ -143,6 +144,7 @@ describe('TranscribeDialog', () => {
     expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
       polyphonic: false,
       signal: expect.any(AbortSignal),
+      tidy: false,
       referenceHz: 'auto',
       onTuning: expect.any(Function),
     });
@@ -157,11 +159,34 @@ describe('TranscribeDialog', () => {
     expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledTimes(1);
   });
 
-  it('disables polyphonic mode and explains the split action for long clips', () => {
-    open((MAX_POLYPHONIC_SECONDS + 1) * (store.tempoBpm / 60));
+  it('keeps polyphonic mode available for a clip longer than one detector request', () => {
+    open(600 * (store.tempoBpm / 60));
     const poly = document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]')[1];
-    expect(poly?.hasAttribute('disabled')).toBe(true);
-    expect(document.body.textContent).toContain('Split');
+    expect(poly?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('passes the tidy choice and resets it when reopened', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    const w = open();
+    const choices = [
+      ...document.body.querySelectorAll<HTMLElement>('.transcribe-tidy [role="radio"]'),
+    ];
+    expect(choices.map((el) => el.getAttribute('aria-checked'))).toEqual(['true', 'false']);
+    choices[0]?.focus();
+    choices[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await nextTick();
+    expect(document.activeElement).toBe(choices[1]);
+    expect(choices[1]?.getAttribute('aria-checked')).toBe('true');
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await nextTick();
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ tidy: true }),
+    );
+    await w.setProps({ open: false });
+    await w.setProps({ open: true });
+    const reopened = document.body.querySelectorAll<HTMLElement>('.transcribe-tidy [role="radio"]');
+    expect(reopened[0]?.getAttribute('aria-checked')).toBe('true');
   });
 
   it('cancels the active request and leaves a reopened dialog busy state intact', async () => {

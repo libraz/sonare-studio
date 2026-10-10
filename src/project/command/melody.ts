@@ -1,3 +1,4 @@
+import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
@@ -32,6 +33,8 @@ export interface TranscribeAudioClipToMidiOptions {
   referenceHz?: number | 'auto';
   /** Shortest note kept, as a `1/n` note at the clip's tempo; omitted keeps the library default. */
   minNoteDivision?: number;
+  /** `true` re-times the result by harmony, meter and phrase before it is written. */
+  tidy?: boolean;
   /** Receives the tuning the notes were measured against, in fractions of a semitone. */
   onTuning?: (tuning: number) => void;
   /** Injectable adapter for command tests and host integrations. */
@@ -307,7 +310,19 @@ export async function transcribeAudioClipToMidi(
     const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
     const startPpq = clip.startPpq;
     const lengthPpq = clip.lengthPpq;
-    const events = notesToProjectEvents(notes);
+    const events = notesToProjectEvents(
+      options.tidy === true
+        ? tidyNotes(
+            notes.map((note) => ({ ...note, startPpq: note.startPpq + startPpq })),
+            {
+              gridPpq: tidyGridPpq(store),
+              timeSignatures: store.timeSignatures,
+              chords: store.chords,
+              endPpq: startPpq + lengthPpq,
+            },
+          ).map((note) => ({ ...note, startPpq: note.startPpq - startPpq }))
+        : notes,
+    );
 
     // addTrack (1) + addClip/midi (1) + setMidiEvents (1) = 3 Project edits.
     return executeAtomic((edit) => {

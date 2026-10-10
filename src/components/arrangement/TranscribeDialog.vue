@@ -3,10 +3,8 @@ import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref,
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { ensureWasm } from '@/lib/wasm';
-import { MAX_POLYPHONIC_SECONDS } from '@/project/audio-transcription';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
 import { isAudioClip } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
 
@@ -30,6 +28,7 @@ const { t } = useI18n();
 const mode = ref<'melody' | 'polyphonic'>('melody');
 const tuningMode = ref<TuningMode>('concert');
 const shortestNote = ref<ShortestNote>('auto');
+const tidy = ref(false);
 const detectedReference = ref('');
 const busy = ref(false);
 const error = ref('');
@@ -43,17 +42,12 @@ const tuningButtons: Record<TuningMode, HTMLButtonElement | null> = {
   auto: null,
 };
 const shortestButtons = new Map<ShortestNote, HTMLButtonElement>();
+const tidyButtons: Record<'off' | 'on', HTMLButtonElement | null> = { off: null, on: null };
 
 const copy = computed(() => t.value.shell.arrangement.transcribe);
 const clip = computed(() =>
   props.clipId === null ? null : (store.clips.find((entry) => entry.id === props.clipId) ?? null),
 );
-const clipSeconds = computed(() => {
-  const current = clip.value;
-  if (!current || !isAudioClip(current)) return 0;
-  const map = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
-  return ppqDurationSeconds(map, current.startPpq, current.lengthPpq);
-});
 const clipRevision = computed(() => {
   const current = clip.value;
   if (!current || !isAudioClip(current)) return null;
@@ -74,12 +68,6 @@ const clipRevision = computed(() => {
     warp: current.warp,
   });
 });
-const polyphonicUnavailable = computed(() => clipSeconds.value > MAX_POLYPHONIC_SECONDS);
-const polyphonicHint = computed(() =>
-  polyphonicUnavailable.value
-    ? copy.value.polyphonicLongClip.replace('{seconds}', String(MAX_POLYPHONIC_SECONDS))
-    : '',
-);
 
 watch(
   () => props.open,
@@ -91,6 +79,7 @@ watch(
     mode.value = 'melody';
     tuningMode.value = 'concert';
     shortestNote.value = 'auto';
+    tidy.value = false;
     detectedReference.value = '';
     busy.value = false;
     error.value = '';
@@ -124,7 +113,7 @@ function close(): void {
 }
 
 function chooseMode(next: 'melody' | 'polyphonic'): void {
-  if (busy.value || (next === 'polyphonic' && polyphonicUnavailable.value)) return;
+  if (busy.value) return;
   mode.value = next;
   error.value = '';
 }
@@ -195,6 +184,29 @@ function setShortestButton(
   else shortestButtons.delete(name);
 }
 
+function chooseTidy(next: boolean): void {
+  if (busy.value) return;
+  tidy.value = next;
+  error.value = '';
+}
+
+function onTidyKeydown(event: KeyboardEvent, current: boolean): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const next = event.key === 'ArrowRight';
+  if (next !== current) {
+    chooseTidy(next);
+    if (tidy.value === next) void nextTick(() => tidyButtons[next ? 'on' : 'off']?.focus());
+  }
+}
+
+function setTidyButton(
+  name: 'off' | 'on',
+  element: Element | ComponentPublicInstance | null,
+): void {
+  tidyButtons[name] = element instanceof HTMLButtonElement ? element : null;
+}
+
 function shortestLabel(note: ShortestNote): string {
   return note === 'auto' ? copy.value.shortestAuto : `1/${note}`;
 }
@@ -206,7 +218,6 @@ function isAbortError(value: unknown): boolean {
 async function run(): Promise<void> {
   const id = props.clipId;
   if (id === null || busy.value) return;
-  if (mode.value === 'polyphonic' && polyphonicUnavailable.value) return;
   error.value = '';
   detectedReference.value = '';
   busy.value = true;
@@ -219,6 +230,7 @@ async function run(): Promise<void> {
       polyphonic: mode.value === 'polyphonic',
       signal: currentController.signal,
       ...(shortestNote.value !== 'auto' ? { minNoteDivision: shortestNote.value } : {}),
+      tidy: tidy.value,
       ...(detect
         ? {
             referenceHz: 'auto' as const,
@@ -294,8 +306,7 @@ onBeforeUnmount(abort);
           :aria-checked="mode === 'polyphonic'"
           :tabindex="mode === 'polyphonic' ? 0 : -1"
           :ref="(element) => setModeButton('polyphonic', element)"
-          :disabled="busy || polyphonicUnavailable"
-          :title="polyphonicUnavailable ? polyphonicHint : undefined"
+          :disabled="busy"
           @click="chooseMode('polyphonic')"
           @keydown="onModeKeydown($event, 'polyphonic')"
         >
@@ -361,7 +372,41 @@ onBeforeUnmount(abort);
         </div>
       </div>
 
-      <p v-if="polyphonicHint" class="transcribe-hint">{{ polyphonicHint }}</p>
+      <div class="transcribe-setting transcribe-tidy">
+        <span class="transcribe-setting-label">{{ copy.tidyLabel }}</span>
+        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.tidyLabel">
+          <button
+            type="button"
+            class="transcribe-setting-option"
+            :class="{ active: !tidy }"
+            role="radio"
+            :aria-checked="!tidy"
+            :tabindex="tidy ? -1 : 0"
+            :ref="(element) => setTidyButton('off', element)"
+            :disabled="busy"
+            @click="chooseTidy(false)"
+            @keydown="onTidyKeydown($event, false)"
+          >
+            {{ copy.tidyOff }}
+          </button>
+          <button
+            type="button"
+            class="transcribe-setting-option"
+            :class="{ active: tidy }"
+            role="radio"
+            :aria-checked="tidy"
+            :tabindex="tidy ? 0 : -1"
+            :ref="(element) => setTidyButton('on', element)"
+            :disabled="busy"
+            :title="copy.tidyOnTitle"
+            @click="chooseTidy(true)"
+            @keydown="onTidyKeydown($event, true)"
+          >
+            {{ copy.tidyOn }}
+          </button>
+        </div>
+      </div>
+
       <div class="transcribe-status">
         <BusyIndicator v-if="busy" :label="copy.transcribing" />
         <p v-else-if="detectedReference" class="transcribe-result" role="status">
@@ -382,7 +427,7 @@ onBeforeUnmount(abort);
         <button
           type="button"
           class="primary"
-          :disabled="busy || clip === null || !isAudioClip(clip) || polyphonicUnavailable && mode === 'polyphonic'"
+          :disabled="busy || clip === null || !isAudioClip(clip)"
           @click="run"
         >
           {{ busy ? copy.transcribing : copy.run }}
@@ -402,7 +447,6 @@ onBeforeUnmount(abort);
 }
 
 .transcribe-description,
-.transcribe-hint,
 .transcribe-result,
 .dialog-error {
   margin: 0;
@@ -426,14 +470,6 @@ onBeforeUnmount(abort);
 .transcribe-result,
 .dialog-error {
   animation: view-enter var(--dur-2) var(--ease-out);
-}
-
-.transcribe-hint {
-  padding: var(--sp-2) var(--sp-3);
-  color: var(--text-2);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
 }
 
 .transcribe-mode {

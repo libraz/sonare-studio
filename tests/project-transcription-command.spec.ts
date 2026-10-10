@@ -82,6 +82,27 @@ describe('transcribeAudioClipToMidi', () => {
     expect(store.clips).toHaveLength(beforeClips);
   });
 
+  it('re-times the result by theory only when asked to tidy', async () => {
+    const clipId = await sourceClip();
+    const fragments = (): RawNote[] => [
+      { ...note(72), velocity: 100 },
+      { ...note(72), startPpq: 1, velocity: 70 },
+      { ...note(74), startPpq: 2 },
+    ];
+    const durations = (id: number) =>
+      store.clips.find((clip) => clip.id === id)?.notes.map((entry) => entry.durationPpq);
+
+    const raw = await transcribeAudioClipToMidi(clipId, { transcribe: async () => fragments() });
+    const tidied = await transcribeAudioClipToMidi(clipId, {
+      transcribe: async () => fragments(),
+      tidy: true,
+    });
+
+    expect(durations(raw)).toEqual([1, 1, 1]);
+    expect(durations(tidied)?.[0]).toBe(2);
+    expect(durations(tidied)).toHaveLength(2);
+  });
+
   it('does not commit when the source identity changes while the adapter runs', async () => {
     const clipId = await sourceClip();
     const pending = deferred<RawNote[]>();

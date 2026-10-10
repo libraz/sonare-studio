@@ -391,8 +391,6 @@ export const shellArrangement = {
       melodyDescription: 'Follow one prominent line.',
       polyphonic: 'Polyphonic',
       polyphonicDescription: 'Keep notes that overlap in a chord.',
-      polyphonicLongClip:
-        'Polyphonic mode supports clips up to {seconds} seconds. Split the clip to continue.',
       run: 'Transcribe',
       transcribing: 'Transcribing…',
       cancel: 'Cancel',
@@ -404,8 +402,11 @@ export const shellArrangement = {
       detectedReference: 'Detected tuning: A4 = {hz} Hz',
       shortestLabel: 'Shortest note',
       shortestAuto: 'Auto',
-      shortestAutoTitle:
-        'Melody keeps notes from 30 ms; polyphonic from a 32nd note at the clip tempo (30–60 ms)',
+      shortestAutoTitle: 'Melody keeps notes from 30 ms; polyphonic from 60 ms',
+      tidyLabel: 'After transcription',
+      tidyOff: 'Keep as detected',
+      tidyOn: 'Tidy by theory',
+      tidyOnTitle: 'Re-times notes by harmony, meter and phrase; pitches never change',
     },
     splitStems: 'Split stems',
     splitStemsTitle:

@@ -388,8 +388,6 @@ export const shellArrangement = {
       melodyDescription: '主旋律を 1 本追跡します。',
       polyphonic: 'ポリフォニック',
       polyphonicDescription: 'コードで重なる音も保持します。',
-      polyphonicLongClip:
-        'ポリフォニックは {seconds} 秒以内に対応します。続けるにはクリップを分割してください。',
       run: '採譜する',
       transcribing: '採譜中…',
       cancel: 'キャンセル',
@@ -401,8 +399,11 @@ export const shellArrangement = {
       detectedReference: '検出したチューニング: A4 = {hz} Hz',
       shortestLabel: '最短の音符',
       shortestAuto: '自動',
-      shortestAutoTitle:
-        'メロディは 30 ms 以上、ポリフォニックはクリップのテンポでの 32 分音符（30〜60 ms）以上を残します',
+      shortestAutoTitle: 'メロディは 30 ms 以上、ポリフォニックは 60 ms 以上の音を残します',
+      tidyLabel: '採譜後の整形',
+      tidyOff: 'そのまま',
+      tidyOn: '音楽理論で整える',
+      tidyOnTitle: '和声・拍・フレーズから音価を整えます。音高は変えません',
     },
     splitStems: 'ステム分離',
     splitStemsTitle:
