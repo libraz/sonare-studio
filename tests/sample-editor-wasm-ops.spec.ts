@@ -89,6 +89,7 @@ describe('wasmOpAvailability', () => {
       matchEq: false,
       matchEqAnalyze: false,
       roomMorph: false,
+      roomMorphStereo: false,
       synthesizeRir: false,
       estimateRoom: false,
       analyzeImpulseResponse: false,
@@ -167,6 +168,7 @@ describe('wasmOpAvailability', () => {
       matchEqAnalyze: false,
       // roomMorph is absent in this module.
       roomMorph: false,
+      roomMorphStereo: false,
       synthesizeRir: false,
       estimateRoom: false,
       analyzeImpulseResponse: true,
@@ -194,19 +196,25 @@ describe('wasmOpAvailability', () => {
 });
 
 describe('matchEqToReference', () => {
+  type PairRequest = {
+    processorName: string;
+    source: Float32Array;
+    reference: Float32Array;
+    sampleRate?: number;
+    referenceSampleRate?: number;
+  };
+
   it('matches each channel against the same mono reference over the range', () => {
     const reference = new Float32Array([0.5, 0.25]);
-    const masteringPairProcess = vi.fn(
-      (name: string, source: Float32Array, ref: Float32Array, sampleRate?: number) => {
-        expect(name).toBe('match.applyMatchEq');
-        expect([...ref]).toEqual([0.5, 0.25]);
-        expect(sampleRate).toBe(48000);
-        // Return a recognizable transform: scale the source by 2.
-        return { samples: source.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
-      },
-    );
+    const masteringPairProcess = vi.fn((request: PairRequest) => {
+      expect(request.processorName).toBe('match.applyMatchEq');
+      expect([...request.reference]).toEqual([0.5, 0.25]);
+      expect(request.sampleRate).toBe(48000);
+      // Return a recognizable transform: scale the source by 2.
+      return { samples: request.source.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
+    });
     const out = matchEqToReference(
-      { masteringPairProcess },
+      { masteringPairProcess } as SampleEditorWasmOps,
       ch([1, 2, 3, 4], [5, 6, 7, 8]),
       48000,
       reference,
@@ -223,12 +231,12 @@ describe('matchEqToReference', () => {
   });
 
   it('defaults to the whole file without a range', () => {
-    const masteringPairProcess = vi.fn((_name, source: Float32Array) => ({
-      samples: source.map((v) => -v) as Float32Array,
+    const masteringPairProcess = vi.fn((request: PairRequest) => ({
+      samples: request.source.map((v) => -v) as Float32Array,
       sampleRate: 48000,
     }));
     const out = matchEqToReference(
-      { masteringPairProcess },
+      { masteringPairProcess } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       new Float32Array([1]),
@@ -240,25 +248,31 @@ describe('matchEqToReference', () => {
     // applyMatchEq doubles the source; abCrossfade linearly mixes a -> b by mix.
     const masteringPairProcess = vi.fn(
       (
-        name: string,
-        a: Float32Array,
-        b: Float32Array,
+        nameOrRequest: string | PairRequest,
+        a?: Float32Array,
+        b?: Float32Array,
         _sampleRate?: number,
         params?: { mix?: number },
       ) => {
-        if (name === 'match.applyMatchEq') {
-          return { samples: a.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
+        if (typeof nameOrRequest !== 'string') {
+          expect(nameOrRequest.processorName).toBe('match.applyMatchEq');
+          return {
+            samples: nameOrRequest.source.map((v) => v * 2) as Float32Array,
+            sampleRate: 48000,
+          };
         }
-        expect(name).toBe('match.abCrossfade');
+        expect(nameOrRequest).toBe('match.abCrossfade');
         const mix = params?.mix ?? 0;
         return {
-          samples: a.map((v, i) => v * (1 - mix) + b[i] * mix) as Float32Array,
+          samples: (a as Float32Array).map(
+            (v, i) => v * (1 - mix) + (b as Float32Array)[i] * mix,
+          ) as Float32Array,
           sampleRate: 48000,
         };
       },
     );
     const out = matchEqToReference(
-      { masteringPairProcess },
+      { masteringPairProcess } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       new Float32Array([1]),
@@ -277,12 +291,12 @@ describe('matchEqToReference', () => {
   });
 
   it('returns the dry segment without matching when amount is 0', () => {
-    const masteringPairProcess = vi.fn((_name, source: Float32Array) => ({
-      samples: source.map((v) => v * 2) as Float32Array,
+    const masteringPairProcess = vi.fn((request: PairRequest) => ({
+      samples: request.source.map((v) => v * 2) as Float32Array,
       sampleRate: 48000,
     }));
     const out = matchEqToReference(
-      { masteringPairProcess },
+      { masteringPairProcess } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       new Float32Array([1]),
@@ -293,59 +307,74 @@ describe('matchEqToReference', () => {
     expect(masteringPairProcess).not.toHaveBeenCalled();
   });
 
-  it('resamples a different-rate reference before matching', () => {
-    const masteringPairProcess = vi.fn(
-      (_name: string, source: Float32Array, reference: Float32Array) => {
-        expect(reference).toHaveLength(480);
-        expect(reference[0]).toBe(0);
-        expect(reference[reference.length - 1]).toBe(440);
-        return { samples: source.slice(), sampleRate: 48000 };
-      },
-    );
+  it('hands the reference and its rate to the library unresampled', () => {
+    const reference = Float32Array.from({ length: 441 }, (_, index) => index);
+    const masteringPairProcess = vi.fn((request: PairRequest) => ({
+      samples: request.source.slice(),
+      sampleRate: 48000,
+    }));
 
     matchEqToReference(
-      { masteringPairProcess },
+      { masteringPairProcess } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
-      Float32Array.from({ length: 441 }, (_, index) => index),
+      reference,
       null,
       1,
       44100,
     );
 
     expect(masteringPairProcess).toHaveBeenCalledOnce();
+    const request = masteringPairProcess.mock.calls[0][0];
+    expect(request.reference).toBe(reference);
+    expect(request.sampleRate).toBe(48000);
+    expect(request.referenceSampleRate).toBe(44100);
   });
 
-  it('throws when unavailable, the sample rate is invalid, or the reference is empty', () => {
+  it('throws when unavailable, a sample rate is invalid, or the reference is empty', () => {
     expect(() => matchEqToReference({}, ch([1]), 48000, new Float32Array([1]))).toThrow(
       /unavailable/,
     );
     const mod: SampleEditorWasmOps = {
-      masteringPairProcess: (_name, source) => ({ samples: source, sampleRate: 48000 }),
+      masteringPairProcess: (({ source }: PairRequest) => ({
+        samples: source,
+        sampleRate: 48000,
+      })) as SampleEditorWasmOps['masteringPairProcess'],
     };
     expect(() => matchEqToReference(mod, ch([1]), 0, new Float32Array([1]))).toThrow(RangeError);
+    expect(() =>
+      matchEqToReference(mod, ch([1]), 48000, new Float32Array([1]), null, 1, 0),
+    ).toThrow(RangeError);
     expect(() => matchEqToReference(mod, ch([1]), 48000, new Float32Array())).toThrow(/empty/);
   });
 });
 
 describe('analyzeMatchEqToReference', () => {
+  type AnalyzeRequest = {
+    analysisName: string;
+    source: Float32Array;
+    reference: Float32Array;
+    sampleRate?: number;
+    referenceSampleRate?: number;
+  };
+
   it('downmixes the range to mono and parses the three analyses', () => {
     const reference = new Float32Array([0.5, 0.25]);
-    const masteringPairAnalyze = vi.fn(
-      (name: string, source: Float32Array, ref: Float32Array, sampleRate?: number) => {
-        // The source is the channel average over the [1, 3) range: (2+6)/2, (3+7)/2.
-        expect([...source]).toEqual([4, 5]);
-        expect([...ref]).toEqual([0.5, 0.25]);
-        expect(sampleRate).toBe(48000);
-        if (name === 'match.matchEqCurve') return '{"frequencies":[100,1000],"gainDb":[1,-1]}';
-        if (name === 'match.tonalBalance') {
-          return '{"bands":[{"lowHz":20,"highHz":200,"sourceDb":-10,"referenceDb":-12,"deviationDb":2}]}';
-        }
-        return '{"sourceLufs":-14,"referenceLufs":-9,"gainToMatchDb":5}';
-      },
-    );
+    const masteringPairAnalyze = vi.fn((request: AnalyzeRequest) => {
+      // The source is the channel average over the [1, 3) range: (2+6)/2, (3+7)/2.
+      expect([...request.source]).toEqual([4, 5]);
+      expect([...request.reference]).toEqual([0.5, 0.25]);
+      expect(request.sampleRate).toBe(48000);
+      if (request.analysisName === 'match.matchEqCurve') {
+        return '{"frequencies":[100,1000],"gainDb":[1,-1]}';
+      }
+      if (request.analysisName === 'match.tonalBalance') {
+        return '{"bands":[{"lowHz":20,"highHz":200,"sourceDb":-10,"referenceDb":-12,"deviationDb":2}]}';
+      }
+      return '{"sourceLufs":-14,"referenceLufs":-9,"gainToMatchDb":5}';
+    });
     const analysis = analyzeMatchEqToReference(
-      { masteringPairAnalyze },
+      { masteringPairAnalyze } as unknown as SampleEditorWasmOps,
       ch([1, 2, 3, 4], [5, 6, 7, 8]),
       48000,
       reference,
@@ -359,28 +388,29 @@ describe('analyzeMatchEqToReference', () => {
     expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
   });
 
-  it('resamples a different-rate reference before every pair analysis', () => {
-    const masteringPairAnalyze = vi.fn(
-      (name: string, _source: Float32Array, reference: Float32Array) => {
-        expect(reference).toHaveLength(441);
-        expect(reference[0]).toBe(0);
-        expect(reference[reference.length - 1]).toBe(479);
-        if (name === 'match.matchEqCurve') return '{"frequencies":[],"gainDb":[]}';
-        if (name === 'match.tonalBalance') return '{"bands":[]}';
-        return '{"sourceLufs":-12,"referenceLufs":-12,"gainToMatchDb":0}';
-      },
-    );
+  it('hands the reference and its rate to every pair analysis unresampled', () => {
+    const reference = Float32Array.from({ length: 480 }, (_, index) => index);
+    const masteringPairAnalyze = vi.fn((request: AnalyzeRequest) => {
+      if (request.analysisName === 'match.matchEqCurve') return '{"frequencies":[],"gainDb":[]}';
+      if (request.analysisName === 'match.tonalBalance') return '{"bands":[]}';
+      return '{"sourceLufs":-12,"referenceLufs":-12,"gainToMatchDb":0}';
+    });
 
     analyzeMatchEqToReference(
-      { masteringPairAnalyze },
+      { masteringPairAnalyze } as unknown as SampleEditorWasmOps,
       ch([1, 2]),
       44100,
-      Float32Array.from({ length: 480 }, (_, index) => index),
+      reference,
       null,
       48000,
     );
 
     expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
+    for (const [request] of masteringPairAnalyze.mock.calls) {
+      expect(request.reference).toBe(reference);
+      expect(request.sampleRate).toBe(44100);
+      expect(request.referenceSampleRate).toBe(48000);
+    }
   });
 
   it('throws when unavailable, the sample rate is invalid, the reference is empty, or the range is empty', () => {
@@ -1431,6 +1461,57 @@ describe('roomMorphChannels', () => {
     roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, -1);
     roomMorphChannels({ roomMorph }, ch([1]), 48000, preset, Number.NaN);
     expect(seen).toEqual([1, 0, 0.35]);
+  });
+
+  it('renders a stereo pair through roomMorphStereo and keeps the channels planar', () => {
+    const diagnostic: RirDiagnostic = {
+      code: 'acoustic.rir_tail_truncated',
+      message: 'tail truncated',
+      severity: 'warning',
+    };
+    const roomMorph = vi.fn((samples: Float32Array) => morphed(samples));
+    const roomMorphStereo = vi.fn(
+      (request: { left: Float32Array; right: Float32Array; sampleRate?: number }) => ({
+        left: new Float32Array([...request.left, 0, 0]),
+        right: new Float32Array([...request.right, 0]),
+        sampleRate: 48000,
+        diagnostics: [diagnostic],
+      }),
+    );
+    const out = roomMorphChannels(
+      { roomMorph, roomMorphStereo },
+      ch([1, 2], [3, 4]),
+      48000,
+      preset,
+      0.5,
+      true,
+    );
+    expect(roomMorph).not.toHaveBeenCalled();
+    expect(roomMorphStereo).toHaveBeenCalledOnce();
+    expect(roomMorphStereo.mock.calls[0][0]).toMatchObject({
+      sampleRate: 48000,
+      lengthM: 4,
+      widthM: 3,
+      heightM: 2.6,
+      materialPreset: 'wood',
+      wet: 0.5,
+      airAbsorptionEnabled: true,
+    });
+    expect(plain(out.channels)).toEqual([
+      [1, 2, 0],
+      [3, 4, 0],
+    ]);
+    expect(out.diagnostics).toEqual([diagnostic]);
+  });
+
+  it('keeps mono roomMorph for one channel and per-channel roomMorph beyond two', () => {
+    const roomMorph = vi.fn((samples: Float32Array) => morphed(samples));
+    const roomMorphStereo = vi.fn();
+    const ops = { roomMorph, roomMorphStereo } as unknown as SampleEditorWasmOps;
+    roomMorphChannels(ops, ch([1]), 48000, preset, 0.5);
+    roomMorphChannels(ops, ch([1], [2], [3]), 48000, preset, 0.5);
+    expect(roomMorph).toHaveBeenCalledTimes(4);
+    expect(roomMorphStereo).not.toHaveBeenCalled();
   });
 
   it('throws when unavailable, the sample rate is invalid, or there are no channels', () => {

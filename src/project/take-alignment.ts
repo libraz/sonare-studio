@@ -17,7 +17,6 @@ import {
   type AudibleAudioClipFields,
   audioClipWindowFrames,
   renderAudibleAudioClipWindow,
-  resampleChannelsLinear,
 } from './scheduling';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
@@ -104,7 +103,7 @@ export async function alignClipWarp(
   const sampleRate = asset.meta.sampleRate;
   const clipStartSeconds = ppqToSeconds(tempo, clip.startPpq);
   const windowSeconds = ppqToSeconds(tempo, clip.startPpq + clip.lengthPpq) - clipStartSeconds;
-  const windowFrames = Math.round(windowSeconds * sampleRate);
+  const takeWindowFrames = Math.round(windowSeconds * sampleRate);
 
   const warpedStart = warpSegments(clip)[0]?.sourceStartSeconds;
   const takeStart =
@@ -120,7 +119,7 @@ export async function alignClipWarp(
         ).start;
   const takeEnd = Math.min(
     asset.channels[0]?.length ?? 0,
-    takeStart + Math.round(windowFrames * (1 + TAKE_OVERRUN)),
+    takeStart + Math.round(takeWindowFrames * (1 + TAKE_OVERRUN)),
   );
   if (takeEnd - takeStart <= 0) return 'take-empty';
   const take = mixdownToMono(asset.channels.map((channel) => channel.subarray(takeStart, takeEnd)));
@@ -129,22 +128,21 @@ export async function alignClipWarp(
     renderWarp: deps.renderWarp,
   });
   if (!rendered) return 'reference-short';
-  const referenceAtRate = resampleChannelsLinear(
-    rendered.channels,
-    rendered.sampleRate,
-    sampleRate,
-  );
+  // The reference stays at its rendered rate; the anchors come back in samples at that rate.
+  const referenceRate = rendered.sampleRate;
+  const windowFrames = Math.round(windowSeconds * referenceRate);
   const offset = Math.round(
-    (clipStartSeconds - ppqToSeconds(tempo, reference.startPpq)) * sampleRate,
+    (clipStartSeconds - ppqToSeconds(tempo, reference.startPpq)) * referenceRate,
   );
-  const referenceMono = mixdownToMono(referenceAtRate);
+  const referenceMono = mixdownToMono(rendered.channels);
   if (offset < 0 || offset + windowFrames > referenceMono.length) return 'reference-short';
   const referenceWindow = referenceMono.subarray(offset, offset + windowFrames);
 
   const result = deps.align({
     reference: referenceWindow,
     take,
-    sampleRate,
+    sampleRate: referenceRate,
+    takeSampleRate: sampleRate,
     hopLength: ALIGN_HOP_FRAMES,
   });
   const anchors = thinAnchors(result.anchors, ALIGN_HOP_FRAMES);
@@ -157,12 +155,12 @@ export async function alignClipWarp(
       ? (last.sourceSample - previous.sourceSample) / (last.warpSample - previous.warpSample)
       : 1;
   const endSource = last.sourceSample + Math.max(0, windowFrames - last.warpSample) * tailRate;
-  const sourceStartSeconds = (takeStart + first.sourceSample) / sampleRate;
+  const sourceStartSeconds = takeStart / sampleRate + first.sourceSample / referenceRate;
   const interior: WarpAnchor[] = anchors.slice(1).flatMap((anchor) => {
     const ppq =
-      secondsToPpq(tempo, clipStartSeconds + anchor.warpSample / sampleRate) - clip.startPpq;
+      secondsToPpq(tempo, clipStartSeconds + anchor.warpSample / referenceRate) - clip.startPpq;
     return ppq > 0 && ppq < clip.lengthPpq
-      ? [{ ppq, sourceSeconds: (anchor.sourceSample - first.sourceSample) / sampleRate }]
+      ? [{ ppq, sourceSeconds: (anchor.sourceSample - first.sourceSample) / referenceRate }]
       : [];
   });
   return {
@@ -170,7 +168,7 @@ export async function alignClipWarp(
       enabled: true,
       sourceBpm: clip.warp?.sourceBpm ?? 60 / (windowSeconds / clip.lengthPpq),
       sourceStartSeconds,
-      sourceEndSeconds: (takeStart + endSource) / sampleRate,
+      sourceEndSeconds: takeStart / sampleRate + endSource / referenceRate,
       ...(interior.length > 0 ? { anchors: interior } : {}),
     },
     meanResidualFrames: result.alignment.meanResidualFrames,

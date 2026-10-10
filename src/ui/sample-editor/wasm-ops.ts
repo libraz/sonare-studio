@@ -65,6 +65,7 @@ export type SampleEditorWasmOps = Partial<
     | 'noteSegments'
     | 'noteMove'
     | 'roomMorph'
+    | 'roomMorphStereo'
     | 'synthesizeRir'
     | 'estimateRoom'
     | 'analyzeImpulseResponse'
@@ -112,6 +113,7 @@ export interface WasmOpAvailability {
   matchEq: boolean;
   matchEqAnalyze: boolean;
   roomMorph: boolean;
+  roomMorphStereo: boolean;
   synthesizeRir: boolean;
   estimateRoom: boolean;
   analyzeImpulseResponse: boolean;
@@ -170,6 +172,7 @@ export function wasmOpAvailability(
     matchEq: typeof ops?.masteringPairProcess === 'function',
     matchEqAnalyze: typeof ops?.masteringPairAnalyze === 'function',
     roomMorph: typeof ops?.roomMorph === 'function',
+    roomMorphStereo: typeof ops?.roomMorphStereo === 'function',
     synthesizeRir: typeof ops?.synthesizeRir === 'function',
     estimateRoom: typeof ops?.estimateRoom === 'function',
     analyzeImpulseResponse: typeof ops?.analyzeImpulseResponse === 'function',
@@ -1127,39 +1130,6 @@ const MATCH_EQ_PROCESSOR = 'match.applyMatchEq';
 /** Pair processor id that linearly crossfades two equal-length signals. */
 const MATCH_EQ_CROSSFADE_PROCESSOR = 'match.abCrossfade';
 
-/** Resamples a mono reference so pair DSP sees one shared frequency axis. */
-export function resampleMatchEqReference(
-  reference: Float32Array,
-  referenceSampleRate: number,
-  targetSampleRate: number,
-): Float32Array {
-  if (!Number.isFinite(referenceSampleRate) || referenceSampleRate <= 0) {
-    throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
-  }
-  if (!Number.isFinite(targetSampleRate) || targetSampleRate <= 0) {
-    throw new RangeError(`targetSampleRate must be > 0, got ${targetSampleRate}`);
-  }
-  if (referenceSampleRate === targetSampleRate || reference.length <= 1) return reference;
-  const outputFrames = Math.max(
-    1,
-    Math.round((reference.length * targetSampleRate) / referenceSampleRate),
-  );
-  const output = new Float32Array(outputFrames);
-  if (outputFrames === 1) {
-    output[0] = reference[0];
-    return output;
-  }
-  const step = (reference.length - 1) / (outputFrames - 1);
-  for (let index = 0; index < outputFrames; index += 1) {
-    const position = index * step;
-    const before = Math.floor(position);
-    const after = Math.min(reference.length - 1, before + 1);
-    const amount = position - before;
-    output[index] = reference[before] + (reference[after] - reference[before]) * amount;
-  }
-  return output;
-}
-
 /**
  * EQ-matches the range to a reference signal's tonal balance: each source
  * channel is matched against the same (mono) reference and spliced back. The
@@ -1179,7 +1149,7 @@ export function resampleMatchEqReference(
  * @param range Range to match (whole file when omitted).
  * @param amount Match strength in [0, 1] (defaults to 1 = fully matched);
  *   non-finite values are treated as 1.
- * @param referenceSampleRate Reference rate; resampled to `sampleRate` before DSP.
+ * @param referenceSampleRate Reference rate; the library resamples it to `sampleRate`.
  * @throws Error when the module does not provide masteringPairProcess.
  * @throws RangeError on a non-positive sample rate or an empty reference.
  */
@@ -1202,11 +1172,19 @@ export function matchEqToReference(
   if (reference.length === 0) {
     throw new RangeError('Reference audio is empty');
   }
-  const rateMatchedReference = resampleMatchEqReference(reference, referenceSampleRate, sampleRate);
+  if (!Number.isFinite(referenceSampleRate) || referenceSampleRate <= 0) {
+    throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
+  }
   const mix = Number.isFinite(amount) ? Math.min(Math.max(amount, 0), 1) : 1;
   return applyToRange(channels, range, (segment) => {
     if (mix <= 0) return segment;
-    const matched = fn(MATCH_EQ_PROCESSOR, segment, rateMatchedReference, sampleRate).samples;
+    const matched = fn({
+      processorName: MATCH_EQ_PROCESSOR,
+      source: segment,
+      reference,
+      sampleRate,
+      referenceSampleRate,
+    }).samples;
     if (mix >= 1) return matched;
     // Parallel match: blend the dry segment (mix=0) with the matched version
     // (mix=1). abCrossfade requires equal-length operands, which holds because
@@ -1232,7 +1210,7 @@ const MATCH_REFERENCE_LOUDNESS = 'match.referenceLoudness';
  * @param sampleRate Source sample rate in Hz (> 0).
  * @param reference Mono reference samples (non-empty).
  * @param range Range to analyze (whole file when omitted).
- * @param referenceSampleRate Reference rate; resampled to `sampleRate` before analysis.
+ * @param referenceSampleRate Reference rate; the library resamples it to `sampleRate`.
  * @throws Error when the module does not provide masteringPairAnalyze.
  * @throws RangeError on a non-positive sample rate, an empty reference or an
  *   empty range.
@@ -1255,7 +1233,9 @@ export function analyzeMatchEqToReference(
   if (reference.length === 0) {
     throw new RangeError('Reference audio is empty');
   }
-  const rateMatchedReference = resampleMatchEqReference(reference, referenceSampleRate, sampleRate);
+  if (!Number.isFinite(referenceSampleRate) || referenceSampleRate <= 0) {
+    throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
+  }
   const resolved = resolveRange(channels, range);
   if (resolved.endFrame <= resolved.startFrame) {
     throw new RangeError('Cannot analyze an empty range');
@@ -1263,14 +1243,11 @@ export function analyzeMatchEqToReference(
   const source = downmixToMono(
     channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
   );
+  const pair = { source, reference, sampleRate, referenceSampleRate };
   return {
-    curve: parseMatchEqCurve(fn(MATCH_EQ_CURVE, source, rateMatchedReference, sampleRate)),
-    tonalBalance: parseTonalBalance(
-      fn(MATCH_TONAL_BALANCE, source, rateMatchedReference, sampleRate),
-    ),
-    loudness: parseReferenceLoudness(
-      fn(MATCH_REFERENCE_LOUDNESS, source, rateMatchedReference, sampleRate),
-    ),
+    curve: parseMatchEqCurve(fn({ analysisName: MATCH_EQ_CURVE, ...pair })),
+    tonalBalance: parseTonalBalance(fn({ analysisName: MATCH_TONAL_BALANCE, ...pair })),
+    loudness: parseReferenceLoudness(fn({ analysisName: MATCH_REFERENCE_LOUDNESS, ...pair })),
   };
 }
 
@@ -1300,7 +1277,9 @@ export interface RoomMorphPreset {
  * reverb is a whole-signal effect whose impulse response runs past the input,
  * so this always processes the full channel (no sub-range) and returns
  * latency-compensated, tail-extended buffers that are longer than the input.
- * Each channel is convolved against the same room; results are trimmed to the
+ * A stereo pair is heard by a spaced receiver pair (when the module has
+ * roomMorphStereo) so the room differs between the channels; other layouts
+ * convolve each channel against the same room. Results are trimmed to the
  * shortest to stay planar.
  *
  * @param ops Wasm op surface (must provide roomMorph).
@@ -1340,6 +1319,20 @@ export function roomMorphChannels(
     wet: Number.isFinite(wet) ? Math.min(Math.max(wet, 0), 1) : 0.35,
     ...(airAbsorption ? { airAbsorptionEnabled: true } : {}),
   };
+  const stereo = ops.roomMorphStereo;
+  if (channels.length === 2 && typeof stereo === 'function') {
+    const { left, right, diagnostics } = stereo({
+      left: channels[0],
+      right: channels[1],
+      sampleRate,
+      ...options,
+    });
+    const frames = Math.min(left.length, right.length);
+    return {
+      channels: [left.slice(0, frames), right.slice(0, frames)],
+      diagnostics,
+    };
+  }
   const processed = channels.map((channel) => fn(channel, sampleRate, options));
   const minFrames = Math.min(...processed.map((result) => result.audio.length));
   return {
