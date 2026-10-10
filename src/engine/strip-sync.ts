@@ -34,7 +34,6 @@ import {
   effectiveTrackMute,
   type InsertSlot,
   laneGainDb,
-  type MasteringChainState,
   type MixerChannelLayout,
   type MixerStrip,
   mixerChannelLayoutCode,
@@ -44,8 +43,6 @@ import {
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { catalogParamInfo, isConstructionOnlyParam } from '@/project/processor-controls';
-import { currentWasmModule } from '@/project/runtime';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
@@ -58,6 +55,17 @@ import {
   engineMasterPannerHasDsp,
   stripSceneFieldsHaveDsp,
 } from './engine-declaration';
+import {
+  busStripDspKey,
+  hasRemovedPatchableRootParam,
+  insertNumericParams,
+  insertParamStructure,
+  syncInsertNumericParams,
+} from './insert-param-patching';
+import { busSceneJson, liveMasterStrip, stripSceneJson } from './strip-scene';
+
+export type { BusSceneJsonOptions } from './strip-scene';
+export { busSceneJson, liveMasterStrip, stripSceneJson };
 
 /** Maximum number of mixer buses the realtime engine supports. */
 export const MAX_ENGINE_BUSES = 8;
@@ -71,72 +79,6 @@ export interface StripSyncOptions {
   insertCatalog?: ReadonlySet<string> | null;
 }
 
-export interface BusSceneJsonOptions {
-  /** Include bus EQ metadata for engines that expose the bus-EQ ABI. */
-  includeEq?: boolean;
-  /** Channel layout of the bus; absent keeps the stereo default. */
-  channelLayout?: MixerChannelLayout;
-}
-
-/**
- * Builds the scene JSON declaring one BUS strip's insert chain (group
- * tracks; exported for tests). Mirrors {@link stripSceneJson} but emits the
- * scene's buses list, which setBusStripJson consumes.
- */
-export function busSceneJson(
-  busId: number,
-  strip: MixerStrip | undefined,
-  insertCatalog?: ReadonlySet<string> | null,
-  options: BusSceneJsonOptions = {},
-): string {
-  const inserts = (strip?.inserts ?? []).map((slot) => {
-    if (insertCatalog && !insertCatalog.has(slot.processor)) {
-      throw new Error(`Unsupported insert processor: ${slot.processor}`);
-    }
-    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } };
-  });
-  // The bus carries the same output trim/width/polarity stages a strip exposes;
-  // each is emitted only when non-default so an unshaped bus stays byte-identical.
-  const bus: {
-    id: string;
-    role: string;
-    inserts: typeof inserts;
-    layout?: MixerChannelLayout;
-    inputTrimDb?: number;
-    width?: number;
-    polarityInvertLeft?: boolean;
-    polarityInvertRight?: boolean;
-    pan?: number;
-    panMode?: number;
-    dualPanLeft?: number;
-    dualPanRight?: number;
-    panLaw?: number;
-    eq?: { enabled: true; bands: EqBand[] };
-  } = { id: `bus-${busId}`, role: 'submix', inserts };
-  const channelLayout = options.channelLayout;
-  const surroundBus = channelLayout === '5.1' || channelLayout === '7.1';
-  if (channelLayout !== undefined && channelLayout !== 'stereo') {
-    bus.layout = channelLayout;
-  }
-  const inputTrimDb = strip?.inputTrimDb ?? 0;
-  if (inputTrimDb !== 0) bus.inputTrimDb = inputTrimDb;
-  const width = strip?.width ?? 1;
-  if (!surroundBus && width !== 1) bus.width = width;
-  if (strip?.polarityInvertLeft === true) bus.polarityInvertLeft = true;
-  if (strip?.polarityInvertRight === true) bus.polarityInvertRight = true;
-  const pan = engineBusPanState(strip);
-  if (!surroundBus) {
-    if (pan.pan !== 0) bus.pan = pan.pan;
-    if (pan.panMode !== 0) bus.panMode = pan.panMode;
-    if (pan.dualPanLeft !== -1) bus.dualPanLeft = pan.dualPanLeft;
-    if (pan.dualPanRight !== 1) bus.dualPanRight = pan.dualPanRight;
-    if (pan.panLaw !== 0) bus.panLaw = pan.panLaw;
-  }
-  const eqBands = options.includeEq ? engineEqBands(strip) : [];
-  if (eqBands.length > 0) bus.eq = { enabled: true, bands: eqBands };
-  return JSON.stringify({ version: 1, strips: [], buses: [bus], connections: [] });
-}
-
 /**
  * Combined audible gain of a group track in dB: track volume and strip gain
  * stacked (mixer-sync lane semantics), muted groups floored to silence, the
@@ -146,227 +88,6 @@ export function groupBusGainDb(track: EditorTrack, vcaOffset = 0, muted = track.
   if (muted) return -120;
   const combined = laneGainDb(track.volume, track.mixer?.gainDb, vcaOffset);
   return Math.min(24, Math.max(-120, combined));
-}
-
-/**
- * Builds the scene JSON declaring one strip's insert chain (exported for
- * tests). Track strips leave faderDb/pan on the mixer lane. Master strip JSON
- * repeats its current fader/pan because replacing the master scene resets
- * those scalars in libsonare. EQ is edited per band after the JSON send. Each insert's
- * "params" value is embedded as an object, the form the engine writes.
- *
- * @param target Track id, or 'master' for the master strip.
- * @param strip Store strip (undefined = neutral, declares an empty strip).
- * @param insertCatalog Known processor names; a non-null catalog rejects
- *   unknown processors instead of silently dropping them.
- * @returns The scene JSON string for setTrackStripJson/setMasterStripJson.
- */
-export function stripSceneJson(
-  target: number | 'master',
-  strip: MixerStrip | undefined,
-  insertCatalog?: ReadonlySet<string> | null,
-): string {
-  const inserts = (strip?.inserts ?? []).map((slot) => {
-    if (insertCatalog && !insertCatalog.has(slot.processor)) {
-      throw new Error(`Unsupported insert processor: ${slot.processor}`);
-    }
-    return { slot: 'pre', processor: slot.processor, params: { ...slot.params } };
-  });
-  const id = target === 'master' ? 'master' : `track-${target}`;
-  const sceneStrip: Record<string, unknown> = { id, inserts };
-  if (target === 'master') {
-    if ((strip?.gainDb ?? 0) !== 0) sceneStrip.faderDb = strip?.gainDb;
-    if ((strip?.pan ?? 0) !== 0) sceneStrip.pan = strip?.pan;
-  }
-  const inputTrimDb = strip?.inputTrimDb ?? 0;
-  if (inputTrimDb !== 0) sceneStrip.inputTrimDb = inputTrimDb;
-  const width = strip?.width ?? 1;
-  if (width !== 1) sceneStrip.width = width;
-  if (strip?.polarityInvertLeft === true) sceneStrip.polarityInvertLeft = true;
-  if (strip?.polarityInvertRight === true) sceneStrip.polarityInvertRight = true;
-  if (strip?.sourceLayout !== undefined && strip.sourceLayout !== 'stereo') {
-    sceneStrip.sourceLayout = strip.sourceLayout;
-  }
-  const surroundPan = strip?.surroundPan;
-  if (
-    surroundPan &&
-    (surroundPan.azimuth !== DEFAULT_SURROUND_PAN.azimuth ||
-      surroundPan.elevation !== DEFAULT_SURROUND_PAN.elevation ||
-      surroundPan.divergence !== DEFAULT_SURROUND_PAN.divergence ||
-      surroundPan.lfe !== DEFAULT_SURROUND_PAN.lfe ||
-      surroundPan.distance !== DEFAULT_SURROUND_PAN.distance)
-  ) {
-    sceneStrip.surroundPan = { ...surroundPan };
-  }
-  if (target === 'master') {
-    const panner = engineBusPanState(strip);
-    if (panner.panLaw !== 0) sceneStrip.panLaw = panner.panLaw;
-    if (panner.panMode !== 0) sceneStrip.panMode = panner.panMode;
-    if (panner.dualPanLeft !== -1) sceneStrip.dualPanLeft = panner.dualPanLeft;
-    if (panner.dualPanRight !== 1) sceneStrip.dualPanRight = panner.dualPanRight;
-  }
-  return JSON.stringify({ version: 1, strips: [sceneStrip], buses: [], connections: [] });
-}
-
-type InsertParamKind = 'structural' | 'patchableRoot' | 'patchableConditional';
-
-/**
- * Classifies one insert parameter for strip structure and realtime updates.
- *
- * The catalog is the authority for whether a key has a realtime target and
- * whether its value belongs to a conditional insert slot. A missing catalog
- * is possible during engine startup, so retain the historical construction
- * check as a compatibility fallback. Once a processor has catalog metadata,
- * an unlisted saved key is structural: sending it through the realtime setter
- * would otherwise leave the engine and the persisted strip out of sync.
- */
-function insertParamKind(slot: InsertSlot, key: string, value: unknown): InsertParamKind {
-  if (typeof value !== 'number') return 'structural';
-  // A preset changes the entire amplifier configuration. Even on older WASM
-  // catalogs that do not describe presetIndex, patching one numeric parameter
-  // cannot replace the active rig: the insert must be constructed again.
-  if (slot.processor === 'saturation.ampSim' && key === 'presetIndex') return 'structural';
-
-  const entries = catalogParamInfo(slot.processor);
-  const info = entries.find((entry) => entry.name === key);
-  if (info !== undefined) {
-    if (info.id === null || info.rtSafe === false) return 'structural';
-    return info.slot === null ? 'patchableRoot' : 'patchableConditional';
-  }
-
-  // Before the catalog is initialized, preserve the previous behaviour for
-  // known construction-only checks. An initialized catalog makes unknown
-  // keys structural so a saved extra cannot be mistaken for a live target.
-  if (
-    currentWasmModule() === null &&
-    entries.length === 0 &&
-    !isConstructionOnlyParam(slot.processor, key)
-  ) {
-    return 'patchableRoot';
-  }
-  return 'structural';
-}
-
-/** True for a numeric insert param the engine can patch without rebuilding. */
-function isPatchableParam(slot: InsertSlot, key: string, value: unknown): value is number {
-  const kind = insertParamKind(slot, key, value);
-  return kind === 'patchableRoot' || kind === 'patchableConditional';
-}
-
-/**
- * Insert params that affect scene structure: every value the engine reads only
- * while building the insert. Patchable numeric values are masked out.
- */
-function insertParamStructure(slot: InsertSlot): Record<string, number | boolean | null> {
-  const entries: Array<[string, number | boolean | null]> = [];
-  for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
-    const kind = insertParamKind(slot, key, value);
-    // A top-level realtime value does not affect construction, so its
-    // presence must not turn a knob drag into a full strip replacement.
-    if (kind === 'patchableRoot') continue;
-    // Conditional values need a stable presence marker. Adding/removing the
-    // first key creates/destroys the nested processor state and must rebuild.
-    entries.push([key, kind === 'patchableConditional' ? null : value]);
-  }
-  return Object.fromEntries(entries);
-}
-
-/** Patchable numeric insert params last seen by the engine, keyed by insert index. */
-function insertNumericParams(inserts: ReadonlyArray<InsertSlot>): Array<Record<string, number>> {
-  return inserts.map((slot) =>
-    Object.fromEntries(
-      Object.entries(slot.params)
-        .filter((entry): entry is [string, number] => isPatchableParam(slot, entry[0], entry[1]))
-        .sort(([a], [b]) => a.localeCompare(b)),
-    ),
-  );
-}
-
-/** Replays changed numeric insert params without replacing the whole strip scene. */
-function syncInsertNumericParams(
-  previous: ReadonlyArray<Record<string, number>>,
-  next: ReadonlyArray<Record<string, number>>,
-  sendInsertParam: (insertIndex: number, paramName: string, value: number) => void,
-): void {
-  for (let insertIndex = 0; insertIndex < next.length; insertIndex += 1) {
-    const previousParams = previous[insertIndex] ?? {};
-    for (const [paramName, value] of Object.entries(next[insertIndex])) {
-      if (previousParams[paramName] !== value) sendInsertParam(insertIndex, paramName, value);
-    }
-  }
-}
-
-/** True when a previously applied root realtime key was removed from a slot. */
-function hasRemovedPatchableRootParam(
-  previous: ReadonlyArray<Record<string, number>>,
-  next: ReadonlyArray<Record<string, number>>,
-  inserts: ReadonlyArray<InsertSlot>,
-): boolean {
-  for (let insertIndex = 0; insertIndex < previous.length; insertIndex += 1) {
-    const slot = inserts[insertIndex];
-    if (!slot) continue;
-    const nextParams = next[insertIndex] ?? {};
-    for (const [paramName, value] of Object.entries(previous[insertIndex] ?? {})) {
-      if (paramName in nextParams) continue;
-      if (insertParamKind(slot, paramName, value) === 'patchableRoot') return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Change-detection key for a bus strip's audible DSP. Folds the insert structure
- * together with the output trim/width/polarity stages so a change in any of them
- * re-sends the bus scene (the insert structure alone would miss a trim/width/
- * polarity edit that touched no insert). Numeric insert values are excluded so
- * knob drags can use the realtime param setter instead of replacing the scene.
- */
-function busStripDspKey(
-  strip: MixerStrip | undefined,
-  includeEnabled: boolean,
-  includePan: boolean,
-  channelLayout?: MixerChannelLayout,
-): string {
-  return JSON.stringify({
-    ...(channelLayout !== undefined && channelLayout !== 'stereo' ? { channelLayout } : {}),
-    inserts: (strip?.inserts ?? []).map((slot) => ({
-      processor: slot.processor,
-      params: insertParamStructure(slot),
-      ...(includeEnabled ? { enabled: slot.enabled } : {}),
-    })),
-    inputTrimDb: strip?.inputTrimDb ?? 0,
-    width: strip?.width ?? 1,
-    polarityInvertLeft: strip?.polarityInvertLeft === true,
-    polarityInvertRight: strip?.polarityInvertRight === true,
-    ...(includePan ? { pan: engineBusPanState(strip) } : {}),
-  });
-}
-
-/**
- * Live playback has no separate post-master mastering-chain node. Mirror the
- * realtime-safe processor slots by appending them to the master strip scene;
- * the opaque preset and offline-only processors remain export-only.
- */
-export function liveMasterStrip(
-  master: MixerStrip,
-  chain: MasteringChainState | undefined,
-  insertCatalog?: ReadonlySet<string> | null,
-): MixerStrip {
-  const realtimeProcessors = (chain?.processors ?? []).filter(
-    (slot) => slot.enabled && (!insertCatalog || insertCatalog.has(slot.processor)),
-  );
-  if (realtimeProcessors.length === 0) return master;
-  return {
-    ...master,
-    inserts: [
-      ...master.inserts,
-      ...realtimeProcessors.map((slot) => ({
-        processor: slot.processor,
-        params: { ...slot.params },
-        enabled: true,
-      })),
-    ],
-  };
 }
 
 /** What was last sent for one strip target, kept for change detection. */
