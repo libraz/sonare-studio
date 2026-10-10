@@ -1,6 +1,6 @@
-import { midiCcBindingsKey } from '@/ui/midi/midi-learn';
 import { mixerSnapshotSlotsKey } from './command/mixer-snapshots';
 import { canonicalJson, fnv1a32Hex } from './hash';
+import { midiCcBindingsKey } from './midi-learn-targets';
 import type { useProjectStore } from './store';
 
 type ProjectStore = ReturnType<typeof useProjectStore>;

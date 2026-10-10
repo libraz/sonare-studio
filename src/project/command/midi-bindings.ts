@@ -1,4 +1,4 @@
-import type { MidiCcBinding } from '@/ui/midi/midi-learn';
+import type { MidiCcBinding } from '../midi-learn-targets';
 import { useProjectStore } from '../store';
 import { executeApp } from './history';
 

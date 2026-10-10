@@ -1,6 +1,6 @@
-import { parseMidiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { busAutomationTarget } from '../automation';
 import { assertKnownBusDestination, assertValidMixerBusId } from '../bus-topology';
+import { parseMidiLearnBusStripControlTargetId } from '../midi-learn-targets';
 import {
   assertCanAddEngineBus,
   canRouteReturnSolo,

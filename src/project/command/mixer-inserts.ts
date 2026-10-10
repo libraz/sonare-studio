@@ -1,4 +1,3 @@
-import { parseMidiLearnInsertTargetId } from '@/ui/midi/midi-learn';
 import { parseInsertAutomationParam } from '../automation';
 import {
   assertKnownBusDestination,
@@ -6,6 +5,7 @@ import {
   groupBusTopologyId,
   mixerBusTopology,
 } from '../bus-topology';
+import { parseMidiLearnInsertTargetId } from '../midi-learn-targets';
 import {
   cloneStrip,
   createProcessorId,

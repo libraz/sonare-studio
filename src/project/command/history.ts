@@ -1,10 +1,10 @@
 import { shallowReactive, shallowRef } from 'vue';
-import type { MidiCcBinding } from '@/ui/midi/midi-learn';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import type { EditorChordSymbol } from '../chords';
 import { cloneInstrument, type ExternalMidiInstrument } from '../instrument';
 import { cloneCcLanes } from '../midi-cc';
+import type { MidiCcBinding } from '../midi-learn-targets';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
 import { getProject, PROJECT_MAX_UNDO_DEPTH, setHistoryResetHook, useProjectStore } from '../store';
 import type {

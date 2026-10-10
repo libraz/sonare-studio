@@ -3,13 +3,6 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import { detectScaleHighlightFromTracks } from '@/compose/key';
 import { ensureWasm } from '@/lib/wasm';
 import {
-  type MidiCcBinding,
-  midiLearnTargetScope,
-  migrateMidiLearnTargetToProcessorId,
-  sanitizeMidiCcBindings,
-  withMidiLearnTargetScope,
-} from '@/ui/midi/midi-learn';
-import {
   createDefaultScoreDisplaySettings,
   DISPLAY_TRANSPOSE_MAX,
   DISPLAY_TRANSPOSE_MIN,
@@ -37,6 +30,13 @@ import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from './documen
 import { normalizeGenerationSeed } from './generation';
 import type { GrooveTemplate } from './groove';
 import { cloneInstrument, type ExternalMidiInstrument } from './instrument';
+import {
+  type MidiCcBinding,
+  midiLearnTargetScope,
+  migrateMidiLearnTargetToProcessorId,
+  sanitizeMidiCcBindings,
+  withMidiLearnTargetScope,
+} from './midi-learn-targets';
 import {
   cloneMixerState,
   createDefaultMixerState,

@@ -1,12 +1,3 @@
-import {
-  type MidiCcBinding,
-  type MidiLearnScope,
-  midiLearnInsertTargetId,
-  midiLearnMasteringTargetId,
-  midiLearnTargetScope,
-  parseMidiLearnInsertTargetId,
-  parseMidiLearnMasteringTargetId,
-} from '@/ui/midi/midi-learn';
 import type { AutomationLaneState } from './automation';
 import {
   migrateAutomationLanesToProcessorIds,
@@ -15,6 +6,15 @@ import {
   remapMasteringLanesAfterRemoval,
   remapMasteringLanesAfterReorder,
 } from './automation-insert';
+import {
+  type MidiCcBinding,
+  type MidiLearnScope,
+  midiLearnInsertTargetId,
+  midiLearnMasteringTargetId,
+  midiLearnTargetScope,
+  parseMidiLearnInsertTargetId,
+  parseMidiLearnMasteringTargetId,
+} from './midi-learn-targets';
 import { cloneStrip, type MixerStrip, type ProjectMixerState } from './mixer';
 import type { useProjectStore } from './store';
 import type { EditorTrack } from './types';

@@ -9,7 +9,7 @@
  * which track a slot points at.
  */
 
-import { MAX_CONTROL_SURFACE_SLOTS } from '@/ui/midi/midi-learn';
+import { MAX_CONTROL_SURFACE_SLOTS } from './midi-learn-targets';
 
 /**
  * Native protocol spoken by the surface. `none` leaves the surface to the
