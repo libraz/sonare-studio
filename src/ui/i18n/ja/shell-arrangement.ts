@@ -399,6 +399,10 @@ export const shellArrangement = {
       tuningConcert: 'A4 = 440 Hz',
       tuningAuto: '音源から検出',
       detectedReference: '検出したチューニング: A4 = {hz} Hz',
+      shortestLabel: '最短の音符',
+      shortestAuto: '自動',
+      shortestAutoTitle:
+        'メロディは 30 ms 以上、ポリフォニックはクリップのテンポでの 32 分音符（30〜60 ms）以上を残します',
     },
     splitStems: 'ステム分離',
     splitStemsTitle:

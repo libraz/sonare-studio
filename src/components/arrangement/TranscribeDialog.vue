@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
+import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { ensureWasm } from '@/lib/wasm';
 import { MAX_POLYPHONIC_SECONDS } from '@/project/audio-transcription';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
@@ -10,6 +11,10 @@ import { isAudioClip } from '@/project/types';
 import { useI18n } from '@/ui/i18n';
 
 type TuningMode = 'concert' | 'auto';
+/** Shortest kept note as a `1/n` division; 'auto' keeps the library default. */
+type ShortestNote = 'auto' | 8 | 16 | 32;
+
+const SHORTEST_NOTES: readonly ShortestNote[] = ['auto', 8, 16, 32];
 
 const props = defineProps<{
   open: boolean;
@@ -24,6 +29,7 @@ const store = useProjectStore();
 const { t } = useI18n();
 const mode = ref<'melody' | 'polyphonic'>('melody');
 const tuningMode = ref<TuningMode>('concert');
+const shortestNote = ref<ShortestNote>('auto');
 const detectedReference = ref('');
 const busy = ref(false);
 const error = ref('');
@@ -36,6 +42,7 @@ const tuningButtons: Record<TuningMode, HTMLButtonElement | null> = {
   concert: null,
   auto: null,
 };
+const shortestButtons = new Map<ShortestNote, HTMLButtonElement>();
 
 const copy = computed(() => t.value.shell.arrangement.transcribe);
 const clip = computed(() =>
@@ -83,6 +90,7 @@ watch(
     }
     mode.value = 'melody';
     tuningMode.value = 'concert';
+    shortestNote.value = 'auto';
     detectedReference.value = '';
     busy.value = false;
     error.value = '';
@@ -162,6 +170,35 @@ function setTuningButton(
   tuningButtons[name] = element instanceof HTMLButtonElement ? element : null;
 }
 
+function chooseShortest(next: ShortestNote): void {
+  if (busy.value) return;
+  shortestNote.value = next;
+  error.value = '';
+}
+
+function onShortestKeydown(event: KeyboardEvent, current: ShortestNote): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const index = SHORTEST_NOTES.indexOf(current) + (event.key === 'ArrowLeft' ? -1 : 1);
+  const next = SHORTEST_NOTES[Math.min(SHORTEST_NOTES.length - 1, Math.max(0, index))];
+  if (next !== current) {
+    chooseShortest(next);
+    if (shortestNote.value === next) void nextTick(() => shortestButtons.get(next)?.focus());
+  }
+}
+
+function setShortestButton(
+  name: ShortestNote,
+  element: Element | ComponentPublicInstance | null,
+): void {
+  if (element instanceof HTMLButtonElement) shortestButtons.set(name, element);
+  else shortestButtons.delete(name);
+}
+
+function shortestLabel(note: ShortestNote): string {
+  return note === 'auto' ? copy.value.shortestAuto : `1/${note}`;
+}
+
 function isAbortError(value: unknown): boolean {
   return value instanceof Error && value.name === 'AbortError';
 }
@@ -181,6 +218,7 @@ async function run(): Promise<void> {
     const newClipId = await transcribeAudioClipToMidi(id, {
       polyphonic: mode.value === 'polyphonic',
       signal: currentController.signal,
+      ...(shortestNote.value !== 'auto' ? { minNoteDivision: shortestNote.value } : {}),
       ...(detect
         ? {
             referenceHz: 'auto' as const,
@@ -266,12 +304,12 @@ onBeforeUnmount(abort);
         </button>
       </div>
 
-      <div class="transcribe-tuning">
-        <span class="transcribe-tuning-label">{{ copy.tuningLabel }}</span>
-        <div class="transcribe-tuning-options" role="radiogroup" :aria-label="copy.tuningLabel">
+      <div class="transcribe-setting transcribe-tuning">
+        <span class="transcribe-setting-label">{{ copy.tuningLabel }}</span>
+        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.tuningLabel">
           <button
             type="button"
-            class="transcribe-tuning-option"
+            class="transcribe-setting-option"
             :class="{ active: tuningMode === 'concert' }"
             role="radio"
             :aria-checked="tuningMode === 'concert'"
@@ -285,7 +323,7 @@ onBeforeUnmount(abort);
           </button>
           <button
             type="button"
-            class="transcribe-tuning-option"
+            class="transcribe-setting-option"
             :class="{ active: tuningMode === 'auto' }"
             role="radio"
             :aria-checked="tuningMode === 'auto'"
@@ -300,9 +338,37 @@ onBeforeUnmount(abort);
         </div>
       </div>
 
+      <div class="transcribe-setting transcribe-shortest">
+        <span class="transcribe-setting-label">{{ copy.shortestLabel }}</span>
+        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.shortestLabel">
+          <button
+            v-for="note in SHORTEST_NOTES"
+            :key="note"
+            type="button"
+            class="transcribe-setting-option"
+            :class="{ active: shortestNote === note }"
+            role="radio"
+            :aria-checked="shortestNote === note"
+            :tabindex="shortestNote === note ? 0 : -1"
+            :ref="(element) => setShortestButton(note, element)"
+            :disabled="busy"
+            :title="note === 'auto' ? copy.shortestAutoTitle : undefined"
+            @click="chooseShortest(note)"
+            @keydown="onShortestKeydown($event, note)"
+          >
+            {{ shortestLabel(note) }}
+          </button>
+        </div>
+      </div>
+
       <p v-if="polyphonicHint" class="transcribe-hint">{{ polyphonicHint }}</p>
-      <p v-if="detectedReference" class="transcribe-result" role="status">{{ detectedReference }}</p>
-      <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
+      <div class="transcribe-status">
+        <BusyIndicator v-if="busy" :label="copy.transcribing" />
+        <p v-else-if="detectedReference" class="transcribe-result" role="status">
+          {{ detectedReference }}
+        </p>
+        <p v-if="error" class="dialog-error" role="alert">{{ error }}</p>
+      </div>
     </div>
 
     <template #actions>
@@ -347,6 +413,21 @@ onBeforeUnmount(abort);
   color: var(--text-3);
 }
 
+/* Pinned to the bottom with a reserved line, so busy/result/error swaps never
+ * resize the dialog. */
+.transcribe-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-top: auto;
+  min-block-size: 1.5rem;
+}
+
+.transcribe-result,
+.dialog-error {
+  animation: view-enter var(--dur-2) var(--ease-out);
+}
+
 .transcribe-hint {
   padding: var(--sp-2) var(--sp-3);
   color: var(--text-2);
@@ -361,24 +442,24 @@ onBeforeUnmount(abort);
   width: 100%;
 }
 
-.transcribe-tuning {
+.transcribe-setting {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
 }
 
-.transcribe-tuning-label {
+.transcribe-setting-label {
   color: var(--text-3);
   font-size: var(--fs-xs);
 }
 
-.transcribe-tuning-options {
+.transcribe-setting-options {
   display: flex;
   gap: var(--sp-2);
   width: 100%;
 }
 
-.transcribe-tuning-option {
+.transcribe-setting-option {
   flex: 1 1 0;
   padding: var(--sp-2) var(--sp-3);
   color: var(--text-2);
@@ -386,20 +467,25 @@ onBeforeUnmount(abort);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: none;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
 }
 
-.transcribe-tuning-option:hover:not(:disabled) {
+.transcribe-setting-option:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text-1);
 }
 
-.transcribe-tuning-option.active {
+.transcribe-setting-option.active {
   color: var(--text-1);
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-.transcribe-tuning-option:disabled {
+.transcribe-setting-option:disabled {
   cursor: default;
   opacity: 0.56;
 }
@@ -423,6 +509,11 @@ onBeforeUnmount(abort);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: none;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
 }
 
 .transcribe-mode-option:hover:not(:disabled) {

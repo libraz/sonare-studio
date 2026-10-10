@@ -245,6 +245,17 @@
   animation: view-enter var(--dur-2) var(--ease-out);
 }
 
+/* Opacity-only variant, for content whose position must not move (re-keyed
+ * readouts, rows under a fixed highlight, copy inside a gliding card). */
+@keyframes fade-once {
+  from {
+    opacity: 0;
+  }
+}
+.fade-once {
+  animation: fade-once var(--dur-2) var(--ease-out);
+}
+
 /* --- One-shot pop entrance --------------------------------------------
  * A spring scale-in for badges, chips and status pills that mount in response
  * to a state change, so they assert themselves rather than blink into place. */
@@ -260,6 +271,16 @@
 }
 .animate-pop {
   animation: pop-in var(--dur-2) var(--ease-spring);
+}
+
+/* --- Toggle latch: engage spring ---------------------------------------
+ * A latching toggle (mute, solo, power, automation mode) springs in once when
+ * it engages. Starting scale via --latch-from: ~0.6 for small dots, 0.82 for
+ * strip buttons, closer to 1 for wide keys. */
+@keyframes toggle-latch {
+  from {
+    transform: scale(var(--latch-from, 0.82));
+  }
 }
 
 /* --- Loading shimmer ---------------------------------------------------
@@ -301,9 +322,106 @@
   animation: pulse-soft 1.6s var(--ease-out) infinite;
 }
 
+/* --- Spinner: busy-state ring -----------------------------------------
+ * A thin currentColor arc for work in flight (rendering, analysis, decoding).
+ * Size through --spinner-size; colour follows the surrounding text. Prefer the
+ * BusyIndicator component, which pairs it with a live-region label. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner {
+  display: inline-block;
+  flex: none;
+  width: var(--spinner-size, 14px);
+  height: var(--spinner-size, 14px);
+  border-radius: var(--radius-full);
+  border: 1.5px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-top-color: currentColor;
+  animation: spin 0.8s linear infinite;
+}
+
+/* --- Indeterminate progress bar ----------------------------------------
+ * A hairline track with a sweeping segment, for long jobs that report no
+ * fraction. Sits flush along an edge (top of a panel, under a toolbar). */
+@keyframes progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.progress-indeterminate {
+  position: relative;
+  overflow: hidden;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.progress-indeterminate::after {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--accent);
+  border-radius: var(--radius-full);
+  animation: progress-sweep 1.2s var(--ease-out) infinite;
+}
+
+/* --- Live glow: running-state halo -------------------------------------
+ * A slow breathing ring for controls that are actively running (play while
+ * the transport rolls, a listening MIDI-learn target). Colour via
+ * --live-color; distinct from the hard blink reserved for recording. */
+@keyframes live-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--live-color, var(--success)) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--live-color, var(--success)) 26%, transparent);
+  }
+}
+.live-glow {
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+/* --- Press feedback ----------------------------------------------------
+ * A short tactile dip for hardware-like keys (transport, toggles, pads). */
+.press-feedback {
+  transition-property: background-color, color, box-shadow, border-color, transform;
+  transition-duration: var(--dur-1);
+  transition-timing-function: var(--ease-out);
+}
+.press-feedback:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+/* --- Value flash -------------------------------------------------------
+ * One-shot accent wash for a readout whose value just changed from outside
+ * (an undo, automation, a remote edit). Re-trigger by re-keying the element. */
+@keyframes value-flash {
+  from {
+    background-color: var(--accent-muted);
+  }
+}
+.value-flash {
+  animation: value-flash calc(var(--dur-3) * 2) var(--ease-out);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .shimmer,
-  .pulse-soft {
+  .pulse-soft,
+  .live-glow,
+  .progress-indeterminate::after {
     animation: none;
+  }
+  /* A spinner still has to signal work in flight; slow it rather than freeze. */
+  .spinner {
+    animation-duration: 2.4s;
+  }
+  .progress-indeterminate::after {
+    width: 100%;
+    opacity: 0.5;
   }
 }

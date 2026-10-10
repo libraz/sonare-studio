@@ -402,6 +402,10 @@ export const shellArrangement = {
       tuningConcert: 'A4 = 440 Hz',
       tuningAuto: 'Detect from audio',
       detectedReference: 'Detected tuning: A4 = {hz} Hz',
+      shortestLabel: 'Shortest note',
+      shortestAuto: 'Auto',
+      shortestAutoTitle:
+        'Melody keeps notes from 30 ms; polyphonic from a 32nd note at the clip tempo (30–60 ms)',
     },
     splitStems: 'Split stems',
     splitStemsTitle:

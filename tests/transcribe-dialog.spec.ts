@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import TranscribeDialog from '@/components/arrangement/TranscribeDialog.vue';
+import { MAX_POLYPHONIC_SECONDS } from '@/project/audio-transcription';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
 
@@ -94,6 +95,29 @@ describe('TranscribeDialog', () => {
     expect(w.emitted('close')).toHaveLength(1);
   });
 
+  it('passes the chosen shortest note and omits it on Auto', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    open();
+    const notes = [
+      ...document.body.querySelectorAll<HTMLElement>('.transcribe-shortest [role="radio"]'),
+    ];
+    expect(notes.map((el) => el.textContent?.trim())).toEqual(['Auto', '1/8', '1/16', '1/32']);
+    expect(notes[0]?.getAttribute('aria-checked')).toBe('true');
+    notes[0]?.focus();
+    notes[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await nextTick();
+    expect(document.activeElement).toBe(notes[1]);
+    notes[2]?.click();
+    await nextTick();
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await nextTick();
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
+      polyphonic: false,
+      signal: expect.any(AbortSignal),
+      minNoteDivision: 16,
+    });
+  });
+
   it('measures the tuning when detection is chosen and reports the reference pitch', async () => {
     commands.transcribeAudioClipToMidi.mockImplementation(
       async (_id: number, options: { onTuning?: (tuning: number) => void }) => {
@@ -134,7 +158,7 @@ describe('TranscribeDialog', () => {
   });
 
   it('disables polyphonic mode and explains the split action for long clips', () => {
-    open(31 * 4);
+    open((MAX_POLYPHONIC_SECONDS + 1) * (store.tempoBpm / 60));
     const poly = document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]')[1];
     expect(poly?.hasAttribute('disabled')).toBe(true);
     expect(document.body.textContent).toContain('Split');
