@@ -1832,4 +1832,12 @@ describe('importDawproject', () => {
     const zip = zipSync({ 'metadata.xml': strToU8('<MetaData/>') });
     expect(() => importDawproject(zip)).toThrow('missing project.xml');
   });
+
+  it('rejects unreadable archives and archives without project.xml on the worker path', async () => {
+    await expect(importDawprojectWithMediaResult(new Uint8Array([1, 2, 3]))).rejects.toThrow(
+      'not a readable zip',
+    );
+    const zip = zipSync({ 'metadata.xml': strToU8('<MetaData/>') });
+    await expect(importDawprojectWithMediaResult(zip)).rejects.toThrow('missing project.xml');
+  });
 });

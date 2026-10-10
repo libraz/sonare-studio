@@ -76,6 +76,7 @@ import { audioContentOriginPpq, audioContentPpqToSeconds } from './audio-time';
 import {
   createSonareDawprojectMetadata,
   SONARE_DAWPROJECT_METADATA_ENTRY,
+  SONARE_DEVICE_VENDOR,
 } from './sonare-metadata';
 import { serializeXml, type XmlElement } from './xml';
 
@@ -105,9 +106,6 @@ const TIME_SIGNATURE_PARAMETER_ID = 'time-signature';
 
 /** Id of the master channel (regular channels name it as their destination). */
 const MASTER_CHANNEL_ID = 'master-channel';
-
-/** Vendor marker used for generic BuiltinDevice insert round-trips. */
-const SONARE_DEVICE_VENDOR = 'sonare-studio';
 
 /** Vendor-scoped Target prefix for automation DAWproject cannot name natively. */
 const SONARE_AUTOMATION_PARAMETER_PREFIX = 'sonare-automation:';

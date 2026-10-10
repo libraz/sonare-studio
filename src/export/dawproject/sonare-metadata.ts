@@ -10,6 +10,8 @@ import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
 
+/** Vendor marker used for generic BuiltinDevice insert round-trips. */
+export const SONARE_DEVICE_VENDOR = 'sonare-studio';
 export const SONARE_DAWPROJECT_METADATA_ENTRY = 'sonare-studio.json';
 /** Dedicated bound for the optional vendor extension, below generic ZIP limits. */
 export const MAX_SONARE_DAWPROJECT_METADATA_BYTES = 4 * 1024 * 1024;

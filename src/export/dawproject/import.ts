@@ -63,6 +63,7 @@ import {
 import {
   parseSonareDawprojectMetadata,
   SONARE_DAWPROJECT_METADATA_ENTRY,
+  SONARE_DEVICE_VENDOR,
   type SonareDawprojectMetadata,
 } from './sonare-metadata';
 import { boolAttr, children, numberAttr } from './xml-read';
@@ -70,7 +71,6 @@ import { boolAttr, children, numberAttr } from './xml-read';
 const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_TEMPO = 120;
 const DEFAULT_METER: DocumentTimeSignature = { startPpq: 0, numerator: 4, denominator: 4 };
-const SONARE_DEVICE_VENDOR = 'sonare-studio';
 
 export class DawprojectImportError extends Error {
   constructor(message: string) {
@@ -948,6 +948,38 @@ export function importDawproject(bytes: Uint8Array): ProjectDocument {
   return importDawprojectParsed(bytes, new Map());
 }
 
+const ARCHIVE_LIMITS = {
+  maxCompressedBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
+  maxEntries: 10_000,
+  maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
+  maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
+};
+
+/** Maps an unzip failure to an import error; an aborted signal rethrows its reason instead. */
+function toArchiveImportError(error: unknown, signal?: AbortSignal): Error {
+  if (signal?.aborted) signal.throwIfAborted();
+  if (error instanceof ArchivePreflightError) {
+    return new DawprojectImportError(`Invalid DAWproject archive: ${error.message}`);
+  }
+  return new DawprojectImportError('Invalid DAWproject archive: not a readable zip');
+}
+
+function parseArchiveEntries(entries: Record<string, Uint8Array>): {
+  entries: Record<string, Uint8Array>;
+  project: Document;
+  metadata: Document | null;
+} {
+  const projectBytes = entries['project.xml'];
+  if (!projectBytes) {
+    throw new DawprojectImportError('Invalid DAWproject archive: missing project.xml');
+  }
+  const project = parseXml(projectBytes, 'project.xml');
+  const metadata = entries['metadata.xml']
+    ? parseXml(entries['metadata.xml'], 'metadata.xml')
+    : null;
+  return { entries, project, metadata };
+}
+
 function parseArchive(
   bytes: Uint8Array,
   signal?: AbortSignal,
@@ -959,36 +991,13 @@ function parseArchive(
 } {
   let entries: Record<string, Uint8Array>;
   try {
-    entries = preflightAndUnzip(
-      bytes,
-      {
-        maxCompressedBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
-        maxEntries: 10_000,
-        maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
-        maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
-      },
-      signal,
-    ).entries;
+    entries = preflightAndUnzip(bytes, ARCHIVE_LIMITS, signal).entries;
   } catch (error) {
-    if (signal?.aborted) signal.throwIfAborted();
-    if (error instanceof ArchivePreflightError) {
-      throw new DawprojectImportError(`Invalid DAWproject archive: ${error.message}`);
-    }
-    throw new DawprojectImportError('Invalid DAWproject archive: not a readable zip');
+    throw toArchiveImportError(error, signal);
   }
-  const projectBytes = entries['project.xml'];
-  if (!projectBytes) {
-    throw new DawprojectImportError('Invalid DAWproject archive: missing project.xml');
-  }
-
-  const project = parseXml(projectBytes, 'project.xml');
-  const metadata = entries['metadata.xml']
-    ? parseXml(entries['metadata.xml'], 'metadata.xml')
-    : null;
+  const parsed = parseArchiveEntries(entries);
   return {
-    entries,
-    project,
-    metadata,
+    ...parsed,
     sonareMetadata: parseSonareDawprojectMetadata(entries[SONARE_DAWPROJECT_METADATA_ENTRY]),
   };
 }
@@ -1003,34 +1012,11 @@ async function parseArchiveInWorker(
 }> {
   let entries: Record<string, Uint8Array>;
   try {
-    entries = (
-      await preflightAndUnzipInWorker(
-        bytes,
-        {
-          maxCompressedBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
-          maxEntries: 10_000,
-          maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
-          maxUncompressedBytes: MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
-        },
-        signal,
-      )
-    ).entries;
+    entries = (await preflightAndUnzipInWorker(bytes, ARCHIVE_LIMITS, signal)).entries;
   } catch (error) {
-    if (signal?.aborted) signal.throwIfAborted();
-    if (error instanceof ArchivePreflightError) {
-      throw new DawprojectImportError(`Invalid DAWproject archive: ${error.message}`);
-    }
-    throw new DawprojectImportError('Invalid DAWproject archive: not a readable zip');
+    throw toArchiveImportError(error, signal);
   }
-  const projectBytes = entries['project.xml'];
-  if (!projectBytes) {
-    throw new DawprojectImportError('Invalid DAWproject archive: missing project.xml');
-  }
-  const project = parseXml(projectBytes, 'project.xml');
-  const metadata = entries['metadata.xml']
-    ? parseXml(entries['metadata.xml'], 'metadata.xml')
-    : null;
-  return { entries, project, metadata };
+  return parseArchiveEntries(entries);
 }
 
 function importDawprojectParsed(
