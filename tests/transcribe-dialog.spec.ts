@@ -1,4 +1,4 @@
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
@@ -11,6 +11,9 @@ const commands = vi.hoisted(() => ({
   transcribeAudioClipToMidi: vi.fn(),
 }));
 vi.mock('@/project/commands', () => commands);
+
+const dialogs = vi.hoisted(() => ({ confirmDialog: vi.fn() }));
+vi.mock('@/composables/useDialogs', () => dialogs);
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -51,6 +54,7 @@ describe('TranscribeDialog', () => {
     store.clips = [audioClip(4)];
     commands.transcribeAudioClipToMidi.mockReset();
     commands.setActiveClip.mockReset();
+    dialogs.confirmDialog.mockReset();
   });
 
   afterEach(() => {
@@ -91,6 +95,7 @@ describe('TranscribeDialog', () => {
       polyphonic: true,
       signal: expect.any(AbortSignal),
       tidy: false,
+      matchTempo: false,
     });
     expect(w.emitted('close')).toHaveLength(1);
   });
@@ -115,6 +120,7 @@ describe('TranscribeDialog', () => {
       polyphonic: false,
       signal: expect.any(AbortSignal),
       tidy: false,
+      matchTempo: false,
       minNoteDivision: 16,
     });
   });
@@ -145,6 +151,7 @@ describe('TranscribeDialog', () => {
       polyphonic: false,
       signal: expect.any(AbortSignal),
       tidy: false,
+      matchTempo: false,
       referenceHz: 'auto',
       onTuning: expect.any(Function),
     });
@@ -163,6 +170,56 @@ describe('TranscribeDialog', () => {
     open(600 * (store.tempoBpm / 60));
     const poly = document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]')[1];
     expect(poly?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('matches the tempo on request, asking first when other clips would move', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    dialogs.confirmDialog.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    open();
+    store.clips = [...store.clips, { ...audioClip(4), id: 5, assetId: 'audio-2' }];
+    const choices = document.body.querySelectorAll<HTMLElement>('.transcribe-tempo [role="radio"]');
+    choices[1]?.click();
+    await nextTick();
+    expect(choices[1]?.getAttribute('aria-checked')).toBe('true');
+    const run = document.body.querySelector<HTMLButtonElement>('button.primary');
+
+    run?.click();
+    await flushPromises();
+    expect(dialogs.confirmDialog).toHaveBeenCalledTimes(1);
+    expect(commands.transcribeAudioClipToMidi).not.toHaveBeenCalled();
+
+    run?.click();
+    await flushPromises();
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ matchTempo: true }),
+    );
+  });
+
+  it('runs a tempo match without asking when nothing else would move', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    open();
+    document.body.querySelectorAll<HTMLElement>('.transcribe-tempo [role="radio"]')[1]?.click();
+    await nextTick();
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await flushPromises();
+    expect(dialogs.confirmDialog).not.toHaveBeenCalled();
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ matchTempo: true }),
+    );
+  });
+
+  it('offers no tempo match for a warped clip', () => {
+    store.clips = [{ ...audioClip(4), warp: { enabled: true, sourceBpm: 100 } }];
+    wrapper = mount(TranscribeDialog, {
+      props: { open: true, clipId: 1 },
+      attachTo: document.body,
+    });
+    const match = document.body.querySelectorAll<HTMLElement>(
+      '.transcribe-tempo [role="radio"]',
+    )[1];
+    expect(match?.hasAttribute('disabled')).toBe(true);
   });
 
   it('passes the tidy choice and resets it when reopened', async () => {

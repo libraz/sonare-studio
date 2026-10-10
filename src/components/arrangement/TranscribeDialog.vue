@@ -2,6 +2,7 @@
 import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
+import { confirmDialog } from '@/composables/useDialogs';
 import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
@@ -29,6 +30,7 @@ const mode = ref<'melody' | 'polyphonic'>('melody');
 const tuningMode = ref<TuningMode>('concert');
 const shortestNote = ref<ShortestNote>('auto');
 const tidy = ref(false);
+const matchTempo = ref(false);
 const detectedReference = ref('');
 const busy = ref(false);
 const error = ref('');
@@ -43,10 +45,25 @@ const tuningButtons: Record<TuningMode, HTMLButtonElement | null> = {
 };
 const shortestButtons = new Map<ShortestNote, HTMLButtonElement>();
 const tidyButtons: Record<'off' | 'on', HTMLButtonElement | null> = { off: null, on: null };
+const tempoButtons: Record<'keep' | 'match', HTMLButtonElement | null> = {
+  keep: null,
+  match: null,
+};
 
 const copy = computed(() => t.value.shell.arrangement.transcribe);
 const clip = computed(() =>
   props.clipId === null ? null : (store.clips.find((entry) => entry.id === props.clipId) ?? null),
+);
+/** A warped clip already plays at the project tempo, so there is nothing to match. */
+const clipWarped = computed(() => {
+  const current = clip.value;
+  return current !== null && isAudioClip(current) && current.warp?.enabled === true;
+});
+/** Other material whose timing a new project tempo would move. */
+const otherContent = computed(() =>
+  store.clips.some(
+    (entry) => entry.id !== props.clipId && (isAudioClip(entry) || (entry.notes?.length ?? 0) > 0),
+  ),
 );
 const clipRevision = computed(() => {
   const current = clip.value;
@@ -80,6 +97,7 @@ watch(
     tuningMode.value = 'concert';
     shortestNote.value = 'auto';
     tidy.value = false;
+    matchTempo.value = false;
     detectedReference.value = '';
     busy.value = false;
     error.value = '';
@@ -207,6 +225,31 @@ function setTidyButton(
   tidyButtons[name] = element instanceof HTMLButtonElement ? element : null;
 }
 
+function chooseTempo(next: boolean): void {
+  if (busy.value || (next && clipWarped.value)) return;
+  matchTempo.value = next;
+  error.value = '';
+}
+
+function onTempoKeydown(event: KeyboardEvent, current: boolean): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const next = event.key === 'ArrowRight';
+  if (next !== current) {
+    chooseTempo(next);
+    if (matchTempo.value === next) {
+      void nextTick(() => tempoButtons[next ? 'match' : 'keep']?.focus());
+    }
+  }
+}
+
+function setTempoButton(
+  name: 'keep' | 'match',
+  element: Element | ComponentPublicInstance | null,
+): void {
+  tempoButtons[name] = element instanceof HTMLButtonElement ? element : null;
+}
+
 function shortestLabel(note: ShortestNote): string {
   return note === 'auto' ? copy.value.shortestAuto : `1/${note}`;
 }
@@ -218,6 +261,15 @@ function isAbortError(value: unknown): boolean {
 async function run(): Promise<void> {
   const id = props.clipId;
   if (id === null || busy.value) return;
+  const match = matchTempo.value && !clipWarped.value;
+  if (match && otherContent.value) {
+    const confirmed = await confirmDialog({
+      title: copy.value.tempoConfirmTitle,
+      message: copy.value.tempoConfirmMessage,
+      confirmLabel: copy.value.tempoConfirmAction,
+    });
+    if (!confirmed || busy.value) return;
+  }
   error.value = '';
   detectedReference.value = '';
   busy.value = true;
@@ -231,6 +283,7 @@ async function run(): Promise<void> {
       signal: currentController.signal,
       ...(shortestNote.value !== 'auto' ? { minNoteDivision: shortestNote.value } : {}),
       tidy: tidy.value,
+      matchTempo: match,
       ...(detect
         ? {
             referenceHz: 'auto' as const,
@@ -368,6 +421,41 @@ onBeforeUnmount(abort);
             @keydown="onShortestKeydown($event, note)"
           >
             {{ shortestLabel(note) }}
+          </button>
+        </div>
+      </div>
+
+      <div class="transcribe-setting transcribe-tempo">
+        <span class="transcribe-setting-label">{{ copy.tempoLabel }}</span>
+        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.tempoLabel">
+          <button
+            type="button"
+            class="transcribe-setting-option"
+            :class="{ active: !matchTempo }"
+            role="radio"
+            :aria-checked="!matchTempo"
+            :tabindex="matchTempo ? -1 : 0"
+            :ref="(element) => setTempoButton('keep', element)"
+            :disabled="busy"
+            @click="chooseTempo(false)"
+            @keydown="onTempoKeydown($event, false)"
+          >
+            {{ copy.tempoKeep }}
+          </button>
+          <button
+            type="button"
+            class="transcribe-setting-option"
+            :class="{ active: matchTempo }"
+            role="radio"
+            :aria-checked="matchTempo"
+            :tabindex="matchTempo ? 0 : -1"
+            :ref="(element) => setTempoButton('match', element)"
+            :disabled="busy || clipWarped"
+            :title="clipWarped ? copy.tempoWarpedTitle : copy.tempoMatchTitle"
+            @click="chooseTempo(true)"
+            @keydown="onTempoKeydown($event, true)"
+          >
+            {{ copy.tempoMatch }}
           </button>
         </div>
       </div>

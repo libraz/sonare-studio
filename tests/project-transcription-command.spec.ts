@@ -82,6 +82,73 @@ describe('transcribeAudioClipToMidi', () => {
     expect(store.clips).toHaveLength(beforeClips);
   });
 
+  it('matches the project tempo and bar lines to the recording in one undoable edit', async () => {
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-1', lengthPpq: 32, name: 'Take' });
+    assetStore.loadAsset.mockResolvedValue({
+      meta: {
+        id: 'asset-1',
+        name: 'Take',
+        sampleRate: 48_000,
+        numChannels: 1,
+        numFrames: 48_000 * 16,
+      },
+      channels: [new Float32Array(48_000 * 16).fill(0.1)],
+    });
+    const beforeTempo = store.tempoBpm;
+    const beforeClips = store.clips.length;
+    // A 128 BPM take whose first downbeat is 0.3 s in, onsets 0.05 beat late.
+    const beats = Array.from({ length: 30 }, (_, index) => 0.3 + (index * 60) / 128);
+    const downbeatBeats = (0.3 * 128) / 60;
+    let tempoSeen: number | undefined;
+
+    const newClipId = await transcribeAudioClipToMidi(clipId, {
+      matchTempo: true,
+      detectBeats: async () => ({ beats, downbeats: [beats[0], beats[4], beats[8]] }),
+      transcribe: async (_clip, tempoBpm) => {
+        tempoSeen = tempoBpm;
+        return Array.from({ length: 16 }, (_, index) => ({
+          ...note(60 + (index % 5)),
+          startPpq: downbeatBeats + index * 0.5 + 0.05,
+          durationPpq: 0.4,
+        }));
+      },
+    });
+
+    expect(tempoSeen).toBeCloseTo(128, 3);
+    expect(store.tempoSegments).toEqual([{ startPpq: 0, bpm: 128 }]);
+    const audio = store.clips.find((entry) => entry.id === clipId);
+    const midi = store.clips.find((entry) => entry.id === newClipId);
+    // The music's downbeat (0.69 beat into the clip) lands on the bar at 4.
+    expect(audio?.startPpq).toBeCloseTo(4 - (downbeatBeats + 0.05), 6);
+    expect(midi?.startPpq).toBe(audio?.startPpq);
+    const firstOnset =
+      (midi?.startPpq ?? 0) + Math.min(...(midi?.notes ?? []).map((n) => n.startPpq));
+    expect(firstOnset).toBeCloseTo(4, 6);
+
+    expect(undo()).toBe(true);
+    expect(store.tempoBpm).toBe(beforeTempo);
+    expect(store.clips).toHaveLength(beforeClips);
+    expect(store.clips.find((entry) => entry.id === clipId)?.startPpq).toBe(0);
+  });
+
+  it('leaves the tempo alone for a warped clip', async () => {
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({ trackId, assetId: 'asset-1', lengthPpq: 8, name: 'Take' });
+    store.clips = store.clips.map((entry) =>
+      entry.id === clipId ? { ...entry, warp: { enabled: true, sourceBpm: 100 } } : entry,
+    );
+    const detectBeats = vi.fn();
+    const before = store.tempoSegments;
+    await transcribeAudioClipToMidi(clipId, {
+      matchTempo: true,
+      detectBeats,
+      transcribe: async () => [note()],
+    });
+    expect(detectBeats).not.toHaveBeenCalled();
+    expect(store.tempoSegments).toEqual(before);
+  });
+
   it('re-times the result by theory only when asked to tidy', async () => {
     const clipId = await sourceClip();
     const fragments = (): RawNote[] => [

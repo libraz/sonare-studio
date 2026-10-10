@@ -493,8 +493,12 @@ export function detectSectionsFromArrangement(unitBars?: number): DetectedSectio
  * @param segments Non-empty tempo segments sorted by ascending startPpq.
  */
 export function setTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
-  const store = useProjectStore();
-  const project = getProject();
+  validateTempoSegments(segments);
+  executeAtomic((edit) => applyTempoSegments(edit, segments));
+}
+
+/** Throws RangeError unless the map is non-empty, finite and strictly ascending. */
+export function validateTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
   if (segments.length === 0) throw new RangeError('Tempo map must contain at least one segment');
   segments.forEach((segment, index) => {
     validatePpq(segment.startPpq, 'Tempo segment startPpq');
@@ -505,28 +509,39 @@ export function setTempoSegments(segments: ReadonlyArray<TempoSegment>): void {
       throw new RangeError('Tempo segments must have strictly ascending startPpq');
     }
   });
+}
+
+/**
+ * Writes a validated tempo map inside an enclosing atomic edit: the Project
+ * map, every warped clip re-installed against it, and frozen renders dropped
+ * when the tempo changed.
+ */
+export function applyTempoSegments(
+  edit: AtomicProjectEdit,
+  segments: ReadonlyArray<TempoSegment>,
+): void {
+  const store = useProjectStore();
+  const project = getProject();
   const invalidatesFrozenTracks = tempoSegmentChanged(store.tempoSegments, segments);
-  executeAtomic((edit) => {
-    edit(1, () =>
-      project.setTempoSegments(
-        segments.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
-      ),
-    );
-    const tempo = normalizeTempoMap(segments);
-    for (const clip of store.clips) {
-      if (clip.warp === undefined) continue;
-      installProjectClipWarp(project, clip, tempo, (mutation) => edit(1, mutation));
-    }
-    store.refresh();
-    if (invalidatesFrozenTracks) {
-      store.tracks = store.tracks.map((track) => {
-        if (track.frozen === undefined) return track;
-        const next = { ...track };
-        delete next.frozen;
-        return next;
-      });
-    }
-  });
+  edit(1, () =>
+    project.setTempoSegments(
+      segments.map((s) => ({ startPpq: s.startPpq, bpm: s.bpm, endBpm: s.endBpm ?? 0 })),
+    ),
+  );
+  const tempo = normalizeTempoMap(segments);
+  for (const clip of store.clips) {
+    if (clip.warp === undefined) continue;
+    installProjectClipWarp(project, clip, tempo, (mutation) => edit(1, mutation));
+  }
+  store.refresh();
+  if (invalidatesFrozenTracks) {
+    store.tracks = store.tracks.map((track) => {
+      if (track.frozen === undefined) return track;
+      const next = { ...track };
+      delete next.frozen;
+      return next;
+    });
+  }
 }
 
 /**

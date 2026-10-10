@@ -67,7 +67,7 @@ import {
 /** Keep ordinary edits from creating new overlaps after a crossfade enables
  * the native project's global overlap policy. Existing crossfade pairs may
  * still be moved or trimmed together. */
-function assertNoNewClipOverlaps(
+export function assertNoNewClipOverlaps(
   clips: readonly EditorClip[],
   changes: ReadonlyArray<{ clipId: number; startPpq: number; lengthPpq: number; trackId: number }>,
 ): void {

@@ -125,17 +125,23 @@ function snapToGrid(value: number, grid: number): number {
   return Math.round(value / grid) * grid;
 }
 
-function quantizeNotes(
+/**
+ * Snaps clip-relative notes to a rhythm grid whose lines fall on `originPpq`
+ * (clip-relative) and every grid step from it, keeping every note inside the clip.
+ */
+export function quantizeNotes(
   notes: ReadonlyArray<RawNote>,
   grid: number | undefined,
   clipLengthPpq: number,
+  originPpq = 0,
 ): RawNote[] {
   if (!(grid !== undefined && Number.isFinite(grid) && grid > 0)) {
     return notes.map((note) => ({ ...note }));
   }
+  const snap = (ppq: number): number => originPpq + snapToGrid(ppq - originPpq, grid);
   return notes.flatMap((note) => {
-    const start = Math.max(0, Math.min(clipLengthPpq, snapToGrid(note.startPpq, grid)));
-    let end = Math.max(start + grid, snapToGrid(note.startPpq + note.durationPpq, grid));
+    const start = Math.max(0, Math.min(clipLengthPpq, snap(note.startPpq)));
+    let end = Math.max(start + grid, snap(note.startPpq + note.durationPpq));
     end = Math.min(clipLengthPpq, end);
     if (!(end > start)) return [];
     return [{ ...note, startPpq: start, durationPpq: end - start }];

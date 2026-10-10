@@ -2,22 +2,31 @@ import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
+import { type DetectedBeats, detectBeatsInWorker } from '../audio-analysis-client';
 import {
   type AudioMelodyAnalyzer,
   type AudioMelodyDeps,
   analyzeAudioClipMelody,
 } from '../audio-melody';
-import { type AudioTranscriptionOptions, transcribeAudioClip } from '../audio-transcription';
+import { detectAudioClipBeatGrid, quarterBeatsPerBar } from '../audio-tempo';
+import {
+  type AudioTranscriptionOptions,
+  quantizeNotes,
+  transcribeAudioClip,
+} from '../audio-transcription';
+import { type BeatGrid, gridTempoSegments, onsetPhaseOffsetBeats } from '../beat-grid';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
   StaleProjectOperationError,
 } from '../operation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
+import { meterBarLengthPpq, snapPpqToMeterGrid, timeSignatureAt } from '../time-signature';
 import { transcribeAudioInWorker } from '../transcribe-client';
-import { clipKind, TRACK_COLOR_PALETTE } from '../types';
+import { clipKind, type TempoSegment, TRACK_COLOR_PALETTE } from '../types';
+import { assertNoNewClipOverlaps } from './clips-editing';
 import { executeAtomic } from './history';
+import { applyTempoSegments, validateTempoSegments } from './timeline';
 import { requireClip } from './utils';
 
 const melodyAnalysisOperations = new OperationGeneration();
@@ -35,6 +44,14 @@ export interface TranscribeAudioClipToMidiOptions {
   minNoteDivision?: number;
   /** `true` re-times the result by harmony, meter and phrase before it is written. */
   tidy?: boolean;
+  /**
+   * `true` sets the project tempo to the recording's and moves the clip so its
+   * first downbeat sits on a bar line, in the same undoable edit. Ignored for a
+   * warped clip, which already plays at the project tempo.
+   */
+  matchTempo?: boolean;
+  /** Injectable beat tracker for command tests; defaults to the analysis worker. */
+  detectBeats?: (mono: Float32Array, sampleRate: number) => Promise<DetectedBeats>;
   /** Receives the tuning the notes were measured against, in fractions of a semitone. */
   onTuning?: (tuning: number) => void;
   /** Injectable adapter for command tests and host integrations. */
@@ -274,23 +291,52 @@ export async function transcribeAudioClipToMidi(
         ? meterBarLengthPpq(timeSignatureAt(store.timeSignatures, clip.startPpq))
         : 4 / store.snapDivision
       : undefined;
+    const loadAudioAsset = async (assetId: string) => {
+      const asset = await loadAsset(assetId);
+      assertCurrent();
+      return asset;
+    };
+
+    // The recording's own grid, when the project tempo is to follow it. The
+    // notes are read against it before anything in the project changes.
+    const beatsPerBar = quarterBeatsPerBar(store.timeSignatures, clip.startPpq);
+    let grid: BeatGrid | null = null;
+    let tempoSegments: TempoSegment[] = store.tempoSegments.length
+      ? store.tempoSegments
+      : [{ startPpq: 0, bpm: store.tempoBpm }];
+    let gridDownbeatPpq = 0;
+    if (options.matchTempo === true && clip.warp?.enabled !== true) {
+      const detectBeats =
+        options.detectBeats ??
+        ((mono: Float32Array, sampleRate: number) =>
+          detectBeatsInWorker(mono, sampleRate, { signal: linked.signal }));
+      grid = await detectAudioClipBeatGrid(clip, tempoSegments, beatsPerBar, {
+        loadAudioAsset,
+        detectBeats,
+      });
+      throwIfSignalAborted(linked.signal);
+      assertCurrent();
+      if (grid) {
+        gridDownbeatPpq =
+          clip.startPpq + (grid.downbeatSeconds * (grid.barBpms[0] ?? grid.bpm)) / 60;
+        tempoSegments = gridTempoSegments(grid, gridDownbeatPpq, beatsPerBar);
+      }
+    }
+
     const transcriptionOptions: AudioTranscriptionOptions = {
       polyphonic: options.polyphonic === true,
       signal: linked.signal,
-      rhythmQuantizePpq,
+      // A matched grid is only known once the onsets are read, so it snaps below.
+      rhythmQuantizePpq: grid ? undefined : rhythmQuantizePpq,
       referenceHz: options.referenceHz,
       minNoteDivision: options.minNoteDivision,
       onTuning: options.onTuning,
     };
-    const notes = await (options.transcribe ?? transcribeAudioClip)(
+    let notes = await (options.transcribe ?? transcribeAudioClip)(
       clip,
-      store.tempoBpm,
+      grid ? tempoSegments[0].bpm : store.tempoBpm,
       {
-        loadAudioAsset: async (assetId) => {
-          const asset = await loadAsset(assetId);
-          assertCurrent();
-          return asset;
-        },
+        loadAudioAsset,
         loadAudioAssetMeta: async (assetId) => {
           const meta = await loadAssetMeta(assetId);
           assertCurrent();
@@ -299,16 +345,41 @@ export async function transcribeAudioClipToMidi(
         transcribe: transcribeAudioInWorker,
       },
       transcriptionOptions,
-      store.tempoSegments,
+      grid ? tempoSegments : store.tempoSegments,
     );
     throwIfSignalAborted(linked.signal);
     assertCurrent();
     if (notes.length === 0) return -1;
 
+    let startPpq = clip.startPpq;
+    if (grid) {
+      // The detector's onsets sit a constant fraction of a beat off the
+      // tracked beats; the music's downbeat is where the onsets put it.
+      const relativeDownbeat = gridDownbeatPpq - clip.startPpq;
+      const musicalDownbeat =
+        relativeDownbeat +
+        onsetPhaseOffsetBeats(
+          notes.map((note) => note.startPpq - relativeDownbeat),
+          notes.map((note) => note.velocity),
+        );
+      const absoluteDownbeat = clip.startPpq + musicalDownbeat;
+      let barLine = snapPpqToMeterGrid(store.timeSignatures, absoluteDownbeat, 'bar');
+      if (barLine - musicalDownbeat < 0)
+        barLine += meterBarLengthPpq(timeSignatureAt(store.timeSignatures, barLine));
+      startPpq = barLine - musicalDownbeat;
+      tempoSegments = gridTempoSegments(grid, barLine, beatsPerBar);
+      validateTempoSegments(tempoSegments);
+      notes = quantizeNotes(notes, rhythmQuantizePpq, clip.lengthPpq, musicalDownbeat);
+      if (getProject().getOverlapPolicy() === 1) {
+        assertNoNewClipOverlaps(store.clips, [
+          { clipId, startPpq, lengthPpq: clip.lengthPpq, trackId: clip.trackId },
+        ]);
+      }
+    }
+
     const project = getProject();
     const trackName = `${clip.name} ${options.polyphonic === true ? 'polyphonic' : 'melody'}`;
     const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
-    const startPpq = clip.startPpq;
     const lengthPpq = clip.lengthPpq;
     const events = notesToProjectEvents(
       options.tidy === true
@@ -324,8 +395,15 @@ export async function transcribeAudioClipToMidi(
         : notes,
     );
 
-    // addTrack (1) + addClip/midi (1) + setMidiEvents (1) = 3 Project edits.
+    // [tempo + clip move when matched] + addTrack + addClip/midi + setMidiEvents.
     return executeAtomic((edit) => {
+      if (grid) {
+        applyTempoSegments(edit, tempoSegments);
+        if (startPpq !== clip.startPpq) {
+          edit(1, () => project.moveClip(clipId, startPpq));
+          store.refresh();
+        }
+      }
       const trackId = edit(1, () => project.addTrack({ kind: 'midi', name: trackName }));
       store.tracks = [
         ...store.tracks,
