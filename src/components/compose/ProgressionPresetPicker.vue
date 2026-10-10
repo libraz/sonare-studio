@@ -78,6 +78,14 @@ const presetDetailNotation = computed(() => {
   return preset ? presetNotation(preset, props.style, props.keyScale) : '';
 });
 
+/** Index of the active style, driving the sliding selection thumb. */
+const styleIndex = computed(() =>
+  Math.max(
+    0,
+    STYLES.findIndex((option) => option.id === props.style),
+  ),
+);
+
 /** Switching style narrows the preset pool; a selection outside it resets to auto. */
 function onStyleChange(style: ProgStyle): void {
   emit('update:style', style);
@@ -90,7 +98,14 @@ function onStyleChange(style: ProgStyle): void {
 <template>
   <div class="preset-picker">
     <span class="field-label">{{ g.style }}</span>
-    <div class="segmented style-select" role="radiogroup" v-radiogroup :aria-label="g.style">
+    <div
+      class="segmented style-select"
+      role="radiogroup"
+      v-radiogroup
+      :aria-label="g.style"
+      :style="{ '--segment-count': STYLES.length, '--segment-index': styleIndex }"
+    >
+      <span class="style-thumb" aria-hidden="true" />
       <button
         v-for="option in STYLES"
         :key="option.id"
@@ -115,7 +130,7 @@ function onStyleChange(style: ProgStyle): void {
         @update:model-value="emit('update:presetId', $event)"
       />
     </div>
-    <p v-if="presetDetail" class="preset-detail">
+    <p v-if="presetDetail" :key="props.presetId" class="preset-detail">
       {{ presetDetail }}
       <span v-if="presetDetailNotation" class="preset-notation">· {{ presetDetailNotation }}</span>
     </p>
@@ -141,7 +156,34 @@ function onStyleChange(style: ProgStyle): void {
   gap: var(--sp-2);
 }
 
+/* Sliding selection thumb: the active segment's raised surface glides between
+ * the equal-width segments instead of jumping. */
+.style-select {
+  position: relative;
+  isolation: isolate;
+}
+
+.style-thumb {
+  position: absolute;
+  inset-block: 2px;
+  inset-inline-start: 2px;
+  z-index: -1;
+  width: calc((100% - 4px - (var(--segment-count) - 1) * 2px) / var(--segment-count));
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  box-shadow: var(--control-edge), var(--shadow-1);
+  transform: translateX(calc(var(--segment-index) * (100% + 2px)));
+  transition: transform var(--dur-2) var(--ease-out);
+}
+
+.style-select .segment.active:not(:focus-visible) {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Re-keyed per preset, so the role text settles in on each selection. */
 .preset-detail {
+  animation: view-enter var(--dur-2) var(--ease-out);
   margin: calc(-1 * var(--sp-3)) 0 0;
   font-size: var(--fs-xs);
   color: var(--text-3);

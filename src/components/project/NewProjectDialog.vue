@@ -154,7 +154,7 @@ function templateDescription(name: TemplateName): string {
             variant="inline"
             :message="t.dialogs.newProject.noTracks"
           />
-          <ul v-else class="preview-tracks">
+          <ul v-else :key="selected" class="preview-tracks view-enter">
             <li v-for="track in preview.tracks" :key="track.name" class="preview-track">
               <span class="track-color" :style="{ background: track.color }" />
               {{ track.name }}

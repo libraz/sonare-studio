@@ -9,6 +9,8 @@ import { formatTimestamp } from '@/ui/shell/format';
 
 defineProps<{
   autosaveLastSavedAt: Date | null;
+  /** An app-level action is in flight; shows the hairline progress along the bar. */
+  busy?: boolean;
   canRedo: boolean;
   canUndo: boolean;
   canInstallPwa: boolean;
@@ -77,7 +79,7 @@ const { locale, t } = useI18n();
       {{ projectName }}
       <span
         v-if="dirty"
-        class="dirty-dot"
+        class="dirty-dot animate-pop"
         v-tooltip="t.shell.project.unsavedChanges"
         aria-hidden="true"
       ></span>
@@ -116,7 +118,11 @@ const { locale, t } = useI18n();
       </button>
     </div>
 
-    <span v-if="autosaveLastSavedAt" class="autosave-state">
+    <span
+      v-if="autosaveLastSavedAt"
+      :key="autosaveLastSavedAt.getTime()"
+      class="autosave-state"
+    >
       {{
         formatMessage(t.shell.savedAt, {
           time: formatTimestamp(autosaveLastSavedAt, locale, 'time'),
@@ -159,8 +165,16 @@ const { locale, t } = useI18n();
       "
       @click="emit('toggleTheme')"
     >
-      <TransportIcon :name="resolvedTheme === 'dark' ? 'sun' : 'moon'" />
+      <TransportIcon
+        :key="resolvedTheme"
+        class="theme-icon"
+        :name="resolvedTheme === 'dark' ? 'sun' : 'moon'"
+      />
     </button>
+
+    <Transition name="fade">
+      <div v-if="busy" class="header-busy progress-indeterminate" aria-hidden="true" />
+    </Transition>
   </header>
 </template>
 

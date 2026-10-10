@@ -738,9 +738,21 @@ onBeforeUnmount(() => {
   cursor: pointer;
   box-shadow: var(--control-edge);
   transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
 }
+
+.toggle:active {
+  transform: scale(0.9);
+}
+
+/* Engaging a latch springs it in so the state change reads at a glance. */
+.toggle.on {
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
+}
+
 
 .toggle.mute.on {
   color: var(--warning-text);
@@ -774,12 +786,24 @@ onBeforeUnmount(() => {
   padding: 0 4px;
   cursor: pointer;
   box-shadow: var(--control-edge);
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
 }
 
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
 .track-state-midi-learn.armed {
+  --live-color: var(--accent);
   color: var(--accent-active);
   background: var(--accent-soft);
   box-shadow: none;
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-state-midi-learn.armed {
+    animation: none;
+  }
 }
 
 .track-state-midi-learn.bound {

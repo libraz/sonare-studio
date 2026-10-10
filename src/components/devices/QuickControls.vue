@@ -615,8 +615,24 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px var(--accent-muted), var(--inset-well);
 }
 
+/* Listening for a MIDI message: the ring breathes until a control arrives. */
 .qc-knob-armed {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 1px var(--accent);
+  animation: qc-listen 1.8s var(--ease-out) infinite;
+}
+
+@keyframes qc-listen {
+  50% {
+    box-shadow:
+      inset 0 0 0 1px var(--accent),
+      0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qc-knob-armed {
+    animation: none;
+  }
 }
 
 .qc-toggle {
@@ -629,6 +645,9 @@ onBeforeUnmount(() => {
   box-shadow: var(--control-lift);
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
 }
 
 .qc-toggle.on {

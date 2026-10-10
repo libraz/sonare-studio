@@ -111,6 +111,14 @@ watch(
      card's visible bounds. */
   --theory-card-reach: 12px;
   isolation: isolate;
+  /* Opacity only: hosts own the card's position. */
+  animation: theory-card-in var(--dur-1) var(--ease-out);
+}
+
+@keyframes theory-card-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .theory-card::before {
@@ -173,6 +181,7 @@ watch(
 /* The ⓘ affordance: a borderless ghost glyph that only gains weight when its
    definition is open, so it stays quiet until the reader reaches for it. */
 .theory-card-info {
+  transition: color var(--dur-1) var(--ease-out);
   flex: none;
   border: none;
   background: none;
@@ -189,6 +198,7 @@ watch(
 }
 
 .theory-card-glossary {
+  animation: view-enter var(--dur-2) var(--ease-out);
   position: relative;
   z-index: 1;
   margin: 2px 0 3px;

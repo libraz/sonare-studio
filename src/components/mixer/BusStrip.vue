@@ -581,6 +581,20 @@ onBeforeUnmount(() => {
   line-height: 1;
   cursor: pointer;
   box-shadow: var(--control-lift);
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.bus-toggle:active:not(:disabled),
+.bus-auto-button:active {
+  transform: scale(0.9);
+}
+
+.bus-toggle.on,
+.bus-auto-button.on {
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 
 .bus-toggle.mute.on {
@@ -599,8 +613,9 @@ onBeforeUnmount(() => {
   cursor: pointer;
   box-shadow: var(--control-lift);
   transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
 }
 
 .bus-auto-button.on {

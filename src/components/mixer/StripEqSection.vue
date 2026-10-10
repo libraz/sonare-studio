@@ -653,6 +653,11 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   gap: 2px;
 }
 
+.eq-graph,
+.eq-band-label {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
 .eq-section.off .eq-graph,
 .eq-section.off .eq-band-label {
   opacity: 0.4;
@@ -674,10 +679,13 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   box-shadow: var(--control-edge);
   padding: 0;
   cursor: pointer;
+  transition: background var(--dur-2) var(--ease-out);
 }
 
 .eq-power.on {
   background: var(--success);
+  --latch-from: 0.6;
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 
 .eq-title {

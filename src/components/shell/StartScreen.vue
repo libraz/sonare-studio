@@ -30,6 +30,8 @@ const props = defineProps<{
   hasAutosave: boolean;
   /** Saved projects to list (autosave slot excluded by the caller). */
   storedProjects: StoredProjectInfo[];
+  /** A launcher action (open, import, demo) is in flight. */
+  busy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -85,7 +87,10 @@ function projectMeta(info: StoredProjectInfo): string {
     :dismissable="false"
     :close-on-overlay="false"
   >
-    <div class="ss-content">
+    <div class="ss-content" :aria-busy="props.busy === true">
+        <Transition name="fade">
+          <div v-if="props.busy" class="ss-busy progress-indeterminate" aria-hidden="true" />
+        </Transition>
         <header class="ss-head">
           <BrandMark size="lg" />
           <p class="ss-subtitle">{{ t.shell.startScreen.subtitle }}</p>
@@ -224,7 +229,39 @@ function projectMeta(info: StoredProjectInfo): string {
 
 <style scoped>
 .ss-content {
+  position: relative;
   overflow: hidden auto;
+}
+
+/* Hairline along the launcher's top edge while the chosen project loads. */
+.ss-busy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 1;
+}
+
+/* Entrance: the action rows settle in one after another, top to bottom. The
+ * stagger is a multiple of a motion token, so it collapses under reduced motion. */
+.ss-body > * {
+  animation: view-enter var(--dur-3) var(--ease-out) both;
+}
+
+.ss-body > :nth-child(2) {
+  animation-delay: calc(var(--dur-1) * 0.5);
+}
+
+.ss-body > :nth-child(3) {
+  animation-delay: var(--dur-1);
+}
+
+.ss-body > :nth-child(4) {
+  animation-delay: calc(var(--dur-1) * 1.5);
+}
+
+.ss-body > :nth-child(n + 5) {
+  animation-delay: calc(var(--dur-1) * 2);
 }
 
 .ss-head {
@@ -344,11 +381,14 @@ function projectMeta(info: StoredProjectInfo): string {
   width: 18px;
   height: 18px;
   color: var(--text-4);
-  transition: color var(--dur-1) var(--ease-out);
+  transition:
+    color var(--dur-1) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
 }
 
 .ss-action:hover .ss-action-arrow {
   color: var(--text-3);
+  transform: translateX(2px);
 }
 
 .ss-action.primary .ss-action-arrow {

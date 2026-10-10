@@ -168,7 +168,7 @@ function onMidiForget(): void {
   <div class="knob-wrap">
     <div
       class="knob"
-      :class="{ disabled: props.disabled, dragging }"
+      :class="{ disabled: props.disabled, dragging, learning: props.midiLearnState === 'armed' }"
       :style="{ width: `${props.size}px`, height: `${props.size}px` }"
       role="slider"
       :tabindex="props.disabled ? -1 : 0"
@@ -259,7 +259,9 @@ function onMidiForget(): void {
   cursor: ns-resize;
   touch-action: none;
   flex: none;
-  transition: border-color var(--dur-1) var(--ease-out);
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
 }
 
 .knob:focus-visible {
@@ -270,6 +272,19 @@ function onMidiForget(): void {
 .knob.dragging {
   border-color: var(--accent);
   box-shadow: var(--ring);
+}
+
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
+.knob.learning {
+  --live-color: var(--accent);
+  border-color: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knob.learning {
+    animation: none;
+  }
 }
 
 .knob.disabled {

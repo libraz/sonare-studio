@@ -114,6 +114,9 @@
   cursor: pointer;
   user-select: none;
   transition: background var(--dur-1) var(--ease-out);
+  /* One-shot opacity entrance for newly mounted rows; no transform, since rows
+     stay pixel-aligned with the arrangement canvas. */
+  animation: fade-once var(--dur-2) var(--ease-out);
 }
 
 .track-headers .track-header:has(.track-overflow-panel:popover-open) {
@@ -530,6 +533,55 @@
   box-shadow: none;
 }
 
+/* Engaging a toggle lands with a brief brighter wash that settles to the
+   steady tint, so the state change reads even at a glance. */
+.track-headers .toggle:is(.arm, .mute, .solo, .automation, .takes, .freeze).on {
+  animation: track-toggle-engage calc(var(--dur-3) * 1.5) var(--ease-out);
+}
+
+@keyframes track-toggle-engage {
+  from {
+    background-color: color-mix(in srgb, var(--track-on-color) 45%, var(--surface-field));
+    color: var(--text-1);
+  }
+}
+
+/* An armed track reads live: a tint layer over its R segment breathes.
+   Opacity on a pseudo-element keeps the loop off the paint path. */
+.track-headers .toggle.arm.on {
+  position: relative;
+}
+
+.track-headers .toggle.arm.on::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--track-on-color) 22%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: track-arm-live 2.4s ease-in-out calc(var(--dur-3) * 1.5) infinite;
+}
+
+@keyframes track-arm-live {
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Freeze/bounce renders in flight. */
+.track-headers .toggle.freeze.busy,
+.track-headers .track-bounce.busy {
+  animation: pulse-soft 1.6s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-headers .toggle.arm.on::after,
+  .track-headers .toggle.freeze.busy,
+  .track-headers .track-bounce.busy {
+    animation: none;
+  }
+}
+
 .track-headers .track-primary-controls .toggle.on:not(:first-child) {
   border-left-color: var(--border-subtle);
 }
@@ -690,6 +742,7 @@
   flex: none;
   border-top: 1px solid var(--border-subtle);
   cursor: default;
+  animation: fade-once var(--dur-2) var(--ease-out);
 }
 
 .track-headers .take-label-row {
@@ -729,6 +782,7 @@
   border-top: 1px solid var(--border-subtle);
   cursor: default;
   flex: 1;
+  animation: fade-once var(--dur-2) var(--ease-out);
 }
 
 .track-headers .automation-label {

@@ -65,6 +65,9 @@
   font-size: var(--fs-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition:
+    border-color var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
 }
 
 .amp-bypass:hover,

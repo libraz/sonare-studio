@@ -4,6 +4,7 @@
   font: var(--fs-2xs) var(--font-sans);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 .targets-table th {

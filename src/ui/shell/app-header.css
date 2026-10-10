@@ -159,6 +159,8 @@
   font-size: var(--fs-xs);
   color: var(--text-4);
   white-space: nowrap;
+  /* Re-keyed per save, so each fresh timestamp fades in rather than snapping. */
+  animation: fade-once var(--dur-3) var(--ease-out);
 }
 
 .bar-spacer {
@@ -190,6 +192,11 @@
   font: var(--fw-semibold) var(--fs-xs) var(--font-sans);
   line-height: 1;
   white-space: nowrap;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
 }
 
 .header-tool:disabled {
@@ -221,6 +228,27 @@
 .theme-toggle {
   width: 28px;
   padding: 0;
+}
+
+/* The sun/moon glyph turns in as the theme flips. */
+.theme-icon {
+  animation: theme-icon-in var(--dur-3) var(--ease-out);
+}
+
+@keyframes theme-icon-in {
+  from {
+    opacity: 0;
+    transform: rotate(-60deg) scale(0.8);
+  }
+}
+
+/* Hairline progress flush with the bar's bottom edge; out of flow, so no shift. */
+.header-busy {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  pointer-events: none;
 }
 
 .icon-tool {

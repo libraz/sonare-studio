@@ -167,7 +167,7 @@ function renameLayout(name: string): void {
         {{ t.settings.layouts.saveCurrent }}
       </button>
     </div>
-    <p v-if="layoutError !== ''" class="layout-error" role="alert">{{ layoutError }}</p>
+    <p v-if="layoutError !== ''" class="layout-error view-enter" role="alert">{{ layoutError }}</p>
   </div>
 </template>
 

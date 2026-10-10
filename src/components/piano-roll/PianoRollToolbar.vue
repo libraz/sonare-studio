@@ -121,7 +121,9 @@ function onLegendClick(trackId: number): void {
         size="sm"
       />
       <div class="tool-readout" :title="activeTool.hint" aria-live="polite">
-        <span class="tool-readout__glyph" aria-hidden="true">{{ activeTool.glyph }}</span>
+        <span :key="activeTool.id" class="tool-readout__glyph animate-pop" aria-hidden="true">{{
+          activeTool.glyph
+        }}</span>
         <span>{{ activeTool.label }}</span>
       </div>
       <SelectMenu
@@ -339,18 +341,24 @@ function onLegendClick(trackId: number): void {
         {{ t.shell.pianoRoll.guide }}
       </button>
     </div>
-    <GuidanceLegend v-if="legendOpen" @close="legendOpen = false" />
-    <MidiFxPanel
-      v-if="fxPanelOpen && canTransform"
-      :clip-id="clipId"
-      :note-count="noteCount"
-      @close="fxPanelOpen = false"
-    />
-    <OrnamentPanel
-      v-if="ornamentOpen && canTransform"
-      :clip-id="clipId"
-      @close="ornamentOpen = false"
-    />
+    <Transition name="pop">
+      <GuidanceLegend v-if="legendOpen" @close="legendOpen = false" />
+    </Transition>
+    <Transition name="pop">
+      <MidiFxPanel
+        v-if="fxPanelOpen && canTransform"
+        :clip-id="clipId"
+        :note-count="noteCount"
+        @close="fxPanelOpen = false"
+      />
+    </Transition>
+    <Transition name="pop">
+      <OrnamentPanel
+        v-if="ornamentOpen && canTransform"
+        :clip-id="clipId"
+        @close="ornamentOpen = false"
+      />
+    </Transition>
   </div>
 </template>
 
@@ -396,6 +404,8 @@ function onLegendClick(trackId: number): void {
 }
 
 .tool-readout__glyph {
+  /* Re-keyed per tool so the glyph pops on a tool switch; inline-block lets it scale. */
+  display: inline-block;
   color: var(--accent);
 }
 

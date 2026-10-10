@@ -275,8 +275,8 @@ onBeforeUnmount(() => {
       @keydown="onKeydown"
     >
       <p class="tour-progress">{{ stepNumber }} / {{ stepCount }}</p>
-      <h2 class="tour-title">{{ step.title }}</h2>
-      <p class="tour-body">{{ step.body }}</p>
+      <h2 :key="`title-${step.id}`" class="tour-title fade-once">{{ step.title }}</h2>
+      <p :key="`body-${step.id}`" class="tour-body fade-once">{{ step.body }}</p>
       <div class="tour-actions">
         <button type="button" class="tour-skip" @click="onSkip">
           {{ t.shell.tour.skip }}

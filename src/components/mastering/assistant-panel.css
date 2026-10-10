@@ -12,6 +12,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: var(--control-edge), var(--raise-hi);
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 .assist-section {

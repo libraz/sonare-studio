@@ -93,7 +93,16 @@ const autoMode = computed(() => automationStripMode(props.target));
   cursor: pointer;
   box-shadow: var(--control-lift);
   transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.toggle:active {
+  transform: scale(0.9);
+}
+
+.toggle.on {
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 </style>

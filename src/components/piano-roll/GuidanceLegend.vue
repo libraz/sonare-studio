@@ -212,6 +212,8 @@ function setProfile(next: GuidanceProfile): void {
 <style scoped>
 .guidance-legend {
   position: absolute;
+  /* The shared pop entrance grows from the right-docked anchor. */
+  transform-origin: top right;
   box-sizing: border-box;
   top: calc(100% + 4px);
   right: 0.5rem;

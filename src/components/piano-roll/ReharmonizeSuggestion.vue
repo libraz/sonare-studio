@@ -81,6 +81,15 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
   font: var(--fs-xs)/1.4 var(--font-sans);
   color: var(--text-2);
   white-space: nowrap;
+  animation: reharm-chip-in var(--dur-2) var(--ease-spring);
+}
+
+/* The pop entrance, composed with the chip's centring translate. */
+@keyframes reharm-chip-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px) scale(0.97);
+  }
 }
 
 .chip-label {

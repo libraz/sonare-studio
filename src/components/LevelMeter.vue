@@ -227,16 +227,24 @@ watch(
 </script>
 
 <template>
-  <canvas
-    ref="canvasRef"
-    class="level-meter"
-    :aria-label="clipped ? t.shell.mixer.meter.clipped : t.shell.meters.stereo"
-    role="img"
-    @click="onClick"
-  />
+  <span class="level-meter-wrap" :class="{ clipped }">
+    <canvas
+      ref="canvasRef"
+      class="level-meter"
+      :aria-label="clipped ? t.shell.mixer.meter.clipped : t.shell.meters.stereo"
+      role="img"
+      @click="onClick"
+    />
+    <span class="clip-flash" aria-hidden="true" />
+  </span>
 </template>
 
 <style scoped>
+.level-meter-wrap {
+  position: relative;
+  display: block;
+}
+
 /* Same recessed framing as the per-strip meter, so the two read as one
    instrument family rather than two differently-mounted widgets. */
 .level-meter {
@@ -245,5 +253,30 @@ watch(
   border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
   cursor: pointer;
+}
+
+/* One-shot burst over the canvas clip LED when the latch trips; the canvas
+   keeps the latched state, so only the onset animates. */
+.clip-flash {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 22px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--meter-red);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--meter-red) 70%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.clipped .clip-flash {
+  animation: clip-trip calc(var(--dur-3) * 2.5) var(--ease-out);
+}
+
+@keyframes clip-trip {
+  from {
+    opacity: 1;
+  }
 }
 </style>

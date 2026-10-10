@@ -697,7 +697,7 @@ describe('ExportDialog', () => {
     control.progress()?.(0.5, 'clip:0:0');
     await flushPromises();
     expect(q('.progress-stage')?.textContent).toBe('clip:0:0');
-    expect(q('.progress-fill')?.getAttribute('style')).toContain('width: 50%');
+    expect(q('.progress-fill')?.getAttribute('style')).toContain('transform: scaleX(0.5)');
 
     const result = makeResult({
       report: {

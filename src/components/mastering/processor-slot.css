@@ -6,7 +6,12 @@
   border-radius: var(--radius-xs);
   box-shadow: var(--control-edge), var(--raise-hi);
   padding: 2px 4px;
-  transition: box-shadow var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out);
+  transition:
+    box-shadow var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+  /* Plays on insert, and again when a reorder re-inserts the node. */
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 .chain-slot.dragging {
@@ -47,11 +52,16 @@
   box-shadow: none;
   padding: 0;
   cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
 }
 
 .chain-power.on {
   background: var(--success);
   border-color: var(--success);
+  --latch-from: 0.6;
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 
 .chain-name {
@@ -68,6 +78,7 @@
   box-shadow: none;
   padding: 1px 0;
   cursor: pointer;
+  transition: color var(--dur-2) var(--ease-out);
 }
 
 .chain-name.expanded {
@@ -160,6 +171,14 @@
   border-radius: var(--radius-xs);
   box-shadow: var(--inset-well);
   padding: 4px 2px;
+  /* Opacity only: a transform here would re-anchor the knobs' fixed menus. */
+  animation: chain-params-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes chain-params-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .chain-param-control {
@@ -190,9 +209,18 @@
   box-shadow: var(--control-lift);
 }
 
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
 .chain-param-midi-learn.armed {
+  --live-color: var(--accent);
   color: var(--surface-0);
   background: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chain-param-midi-learn.armed {
+    animation: none;
+  }
 }
 
 .chain-param-midi-learn.bound {

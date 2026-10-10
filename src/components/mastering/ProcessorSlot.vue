@@ -325,6 +325,9 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
   box-shadow: var(--control-lift);
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
 }
 
 .chain-param-toggle.on {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
+import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
 import { ensureWasm } from '@/lib/wasm';
 import { applyMixerSceneJson } from '@/project/commands';
@@ -161,10 +162,10 @@ function onApply(): void {
 
     <div class="suggest-mix">
       <p class="suggest-mix-description">{{ s.description }}</p>
-      <p v-if="analyzing" class="suggest-mix-status" role="status">{{ s.analyzing }}</p>
+      <BusyIndicator v-if="analyzing" class="suggest-mix-status" :label="s.analyzing" />
 
       <template v-if="result">
-        <table class="suggest-mix-tracks">
+        <table class="suggest-mix-tracks view-enter">
           <thead>
             <tr>
               <th scope="col">{{ s.track }}</th>
@@ -183,7 +184,7 @@ function onApply(): void {
             </tr>
           </tbody>
         </table>
-        <section class="suggest-mix-reasons">
+        <section class="suggest-mix-reasons view-enter">
           <h3>{{ s.reasons }}</h3>
           <ul>
             <li v-for="(line, index) in reasons" :key="index">{{ line }}</li>
@@ -212,11 +213,14 @@ function onApply(): void {
   min-height: min(420px, 60vh);
 }
 
-.suggest-mix-description,
-.suggest-mix-status {
+.suggest-mix-description {
   margin: 0;
   font-size: var(--fs-sm);
   color: var(--text-3);
+}
+
+.suggest-mix-status {
+  align-self: flex-start;
 }
 
 .suggest-mix-tracks {

@@ -141,7 +141,7 @@ const layoutOpen = ref(false);
       <button type="button" aria-haspopup="true" :aria-expanded="layoutOpen" @click="layoutOpen = !layoutOpen">
         {{ t.shell.score.layout }}
       </button>
-      <Transition name="popover">
+      <Transition name="pop">
         <LayoutPopover
           v-if="layoutOpen"
           v-model:page-format="pageFormat"

@@ -29,7 +29,7 @@ function toolHint(id: EditorToolId): string {
       v-for="def in EDITOR_TOOL_DEFS"
       :key="def.id"
       type="button"
-      class="tool-button"
+      class="tool-button press-feedback"
       :class="{ active: tool === def.id }"
       :aria-pressed="tool === def.id"
       :aria-label="formatMessage(t.shell.tools.toolLabel, { name: toolName(def.id) })"

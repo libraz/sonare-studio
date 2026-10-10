@@ -91,6 +91,7 @@ function formatAttenuation(value: number): string {
   <div class="preview-pane">
     <div class="preview-controls">
       <button type="button" class="preview-button" :disabled="rendering" @click="emit('preview')">
+        <span v-if="rendering" class="spinner button-spinner" aria-hidden="true" />
         {{ t.shell.mastering.preview }}
       </button>
       <button v-if="rendering" type="button" class="preview-cancel" @click="emit('cancel')">
@@ -146,11 +147,17 @@ function formatAttenuation(value: number): string {
           {{ formatAttenuation(bypassedLevelMatchDb) }}
         </template>
       </span>
-      <button type="button" class="play-button" :disabled="!canPlay" @click="emit('toggle-play')">
+      <button
+        type="button"
+        class="play-button"
+        :class="{ playing: isPlaying }"
+        :disabled="!canPlay"
+        @click="emit('toggle-play')"
+      >
         <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
         <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>
       </button>
-      <span v-if="stale" class="preview-stale" v-tooltip="t.shell.mastering.staleTitle">
+      <span v-if="stale" class="preview-stale animate-pop" v-tooltip="t.shell.mastering.staleTitle">
         {{ t.shell.mastering.stale }}
       </span>
       <button
@@ -160,6 +167,7 @@ function formatAttenuation(value: number): string {
         v-tooltip="t.shell.mastering.streaming.title"
         @click="emit('check-targets')"
       >
+        <span v-if="checkingTargets" class="spinner button-spinner" aria-hidden="true" />
         {{ checkingTargets ? t.shell.mastering.streaming.checking : t.shell.mastering.streaming.check }}
       </button>
     </div>
@@ -238,7 +246,7 @@ function formatAttenuation(value: number): string {
     </div>
     <div v-if="rendering" class="preview-progress">
       <div class="progress-track">
-        <div class="progress-fill" :style="{ width: `${Math.round(progress * 100)}%` }" />
+        <div class="progress-fill" :style="{ transform: `scaleX(${Math.min(1, Math.max(0, progress))})` }" />
       </div>
       <span class="progress-stage">{{ stage }}</span>
     </div>
@@ -253,7 +261,7 @@ function formatAttenuation(value: number): string {
     />
     <section
       v-if="monoCompatibility"
-      class="mono-compat"
+      class="mono-compat view-enter"
       :class="{ risk: !monoCompatibility.compatible }"
       :aria-label="t.shell.mastering.monoCompatibility.title"
     >

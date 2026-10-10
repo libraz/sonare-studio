@@ -184,7 +184,7 @@ function onRetuneInput(event: Event): void {
     <div class="transport-cluster" role="group" :aria-label="t.shell.transport.label">
       <button
         type="button"
-        class="transport-nav"
+        class="transport-nav press-feedback"
         :disabled="!handle"
         :aria-label="t.shell.transport.goToStart"
         v-tooltip="t.shell.transport.goToStartTitle"
@@ -194,7 +194,7 @@ function onRetuneInput(event: Event): void {
       </button>
       <button
         type="button"
-        class="transport-nav"
+        class="transport-nav press-feedback"
         :disabled="!handle"
         :aria-label="t.shell.transport.nudgeBack"
         v-tooltip="t.shell.transport.nudgeBackTitle"
@@ -204,7 +204,7 @@ function onRetuneInput(event: Event): void {
       </button>
       <button
         type="button"
-        class="transport-nav"
+        class="transport-nav press-feedback"
         :disabled="!handle"
         :aria-label="t.shell.transport.nudgeForward"
         v-tooltip="t.shell.transport.nudgeForwardTitle"
@@ -214,7 +214,7 @@ function onRetuneInput(event: Event): void {
       </button>
       <button
         type="button"
-        class="transport-nav"
+        class="transport-nav press-feedback"
         :disabled="!handle"
         :aria-label="t.shell.transport.goToEnd"
         v-tooltip="t.shell.transport.goToEndTitle"
@@ -225,7 +225,7 @@ function onRetuneInput(event: Event): void {
       <span class="cluster-divider" aria-hidden="true" />
       <button
         type="button"
-        class="transport-key cycle"
+        class="transport-key cycle press-feedback"
         :class="{ active: loopEnabled }"
         :disabled="!handle"
         :aria-label="t.shell.transport.cycle"
@@ -237,7 +237,7 @@ function onRetuneInput(event: Event): void {
       </button>
       <button
         type="button"
-        class="transport-key stop"
+        class="transport-key stop press-feedback"
         :disabled="!handle || !isPlaying"
         :aria-label="t.shell.transport.stop"
         v-tooltip="t.shell.transport.stopTitle"
@@ -247,8 +247,8 @@ function onRetuneInput(event: Event): void {
       </button>
       <button
         type="button"
-        class="transport-key play"
-        :class="{ active: isPlaying }"
+        class="transport-key play press-feedback"
+        :class="{ active: isPlaying, 'live-glow': isPlaying }"
         :disabled="!storeInitialized"
         :aria-label="t.shell.transport.play"
         :aria-pressed="isPlaying"
@@ -264,7 +264,7 @@ function onRetuneInput(event: Event): void {
       >
         <button
           type="button"
-          class="transport-key record-button"
+          class="transport-key record-button press-feedback"
           :class="{
             recording: isRecording,
             'counting-in': isCountingIn,
@@ -288,7 +288,7 @@ function onRetuneInput(event: Event): void {
         </button>
         <button
           type="button"
-          class="record-settings"
+          class="record-settings press-feedback"
           :aria-label="t.shell.transport.recordingSettings"
           aria-haspopup="true"
           :aria-expanded="recordMenuOpen"
@@ -297,143 +297,147 @@ function onRetuneInput(event: Event): void {
         >
           <TransportIcon name="chevron-down" />
         </button>
-        <div
-          v-if="recordMenuOpen"
-          class="menu-pop record-pop record-pop-up"
-          role="group"
-          :aria-label="t.shell.transport.recordingSettings"
-        >
-          <label class="bar-field">
-            {{ t.shell.transport.recordSource }}
-            <SelectMenu
-              :model-value="recording.captureSource.value"
-              :options="recordingSourceOptions"
-              size="sm"
-              :disabled="recording.isRecording.value"
-              :aria-label="t.shell.transport.recordSource"
-              @change="emit('recordSourceChange', $event === 'output' ? 'output' : 'input')"
-            />
-          </label>
-          <label class="bar-field">
-            {{ t.shell.transport.inputDevice }}
-            <SelectMenu
-              :model-value="recording.inputDeviceId.value"
-              :options="recordingInputDeviceOptions"
-              size="sm"
-              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
-              :aria-label="t.shell.transport.inputDevice"
-              @change="emit('recordInputDeviceChange', String($event))"
-            />
-          </label>
-          <ToggleButton
-            :model-value="recording.monitorEnabled.value"
-            :label="t.shell.transport.monitorInput"
-            size="sm"
-            :disabled="recording.captureSource.value === 'output'"
-            @update:model-value="recording.setMonitor($event)"
-          />
-          <label class="bar-field">
-            {{ t.shell.transport.countIn }}
-            <SelectMenu
-              :model-value="recording.countInBars.value"
-              :options="countInOptions"
-              size="sm"
-              :aria-label="t.shell.transport.countIn"
-              @change="emit('countInChange', $event)"
-            />
-          </label>
-          <label class="bar-field">
-            {{ t.shell.transport.midiInputQuantize }}
-            <SelectMenu
-              :model-value="midiRecording.inputQuantizeDenominator.value"
-              :options="midiInputQuantizeOptions"
-              size="sm"
-              :disabled="midiRecording.isRecording.value"
-              :aria-label="t.shell.transport.midiInputQuantize"
-              @change="emit('midiInputQuantizeChange', Number($event))"
-            />
-          </label>
-          <label class="bar-field">
-            {{ t.shell.transport.midiCycleRecordMode }}
-            <SelectMenu
-              :model-value="midiCycleRecordMode"
-              :options="midiCycleRecordModeOptions"
-              size="sm"
-              :disabled="midiRecording.isRecording.value"
-              :aria-label="t.shell.transport.midiCycleRecordMode"
-              @change="setMidiCycleRecordMode($event)"
-            />
-          </label>
-          <label class="bar-field">
-            {{ t.shell.transport.voiceChanger }}
-            <SelectMenu
-              :model-value="voiceChangerSelectValue"
-              :options="voiceChangerOptions"
-              size="sm"
-              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
-              :aria-label="t.shell.transport.voiceChanger"
-              @change="onVoiceChangerChange"
-            />
-          </label>
-          <div v-if="showCustomVoiceEditor" class="voice-json-field">
-            <label>
-              {{ t.shell.transport.voiceChangerJson }}
-              <textarea
-                v-model="customVoiceJson"
-                rows="5"
-                spellcheck="false"
-                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
-                :aria-label="t.shell.transport.voiceChangerJson"
+        <Transition name="pop">
+          <div
+            v-if="recordMenuOpen"
+            class="menu-pop record-pop record-pop-up"
+            role="group"
+            :aria-label="t.shell.transport.recordingSettings"
+          >
+            <label class="bar-field">
+              {{ t.shell.transport.recordSource }}
+              <SelectMenu
+                :model-value="recording.captureSource.value"
+                :options="recordingSourceOptions"
+                size="sm"
+                :disabled="recording.isRecording.value"
+                :aria-label="t.shell.transport.recordSource"
+                @change="emit('recordSourceChange', $event === 'output' ? 'output' : 'input')"
               />
             </label>
-            <button
-              type="button"
-              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
-              @click="onApplyCustomVoicePreset"
-            >
-              {{ t.shell.transport.voiceChangerApply }}
-            </button>
-            <p v-if="customVoiceError" class="voice-json-error" role="alert">
-              {{ customVoiceError }}
-            </p>
-          </div>
-          <label class="bar-field">
-            {{ t.shell.transport.retune }}
-            <input
-              class="num"
-              type="number"
-              min="-24"
-              max="24"
-              step="1"
-              :value="recording.streamingRetuneSemitones.value"
-              :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
-              :aria-label="t.shell.transport.retune"
-              @change="onRetuneInput"
+            <label class="bar-field">
+              {{ t.shell.transport.inputDevice }}
+              <SelectMenu
+                :model-value="recording.inputDeviceId.value"
+                :options="recordingInputDeviceOptions"
+                size="sm"
+                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :aria-label="t.shell.transport.inputDevice"
+                @change="emit('recordInputDeviceChange', String($event))"
+              />
+            </label>
+            <ToggleButton
+              :model-value="recording.monitorEnabled.value"
+              :label="t.shell.transport.monitorInput"
+              size="sm"
+              :disabled="recording.captureSource.value === 'output'"
+              @update:model-value="recording.setMonitor($event)"
             />
-          </label>
-          <ToggleButton
-            :model-value="autoPunchEnabled"
-            :label="t.shell.transport.autoPunch"
-            size="sm"
-            :disabled="!hasLocatorWindow"
-            :title="
-              hasLocatorWindow
-                ? t.shell.transport.autoPunchReadyTitle
-                : t.shell.transport.autoPunchNeedsWindowTitle
-            "
-            @update:model-value="emit('toggleAutoPunch')"
-          />
-        </div>
-        <span
-          v-if="recording.armedTrackId.value !== null"
-          class="input-level"
-          v-tooltip="t.shell.transport.inputLevel"
-        >
+            <label class="bar-field">
+              {{ t.shell.transport.countIn }}
+              <SelectMenu
+                :model-value="recording.countInBars.value"
+                :options="countInOptions"
+                size="sm"
+                :aria-label="t.shell.transport.countIn"
+                @change="emit('countInChange', $event)"
+              />
+            </label>
+            <label class="bar-field">
+              {{ t.shell.transport.midiInputQuantize }}
+              <SelectMenu
+                :model-value="midiRecording.inputQuantizeDenominator.value"
+                :options="midiInputQuantizeOptions"
+                size="sm"
+                :disabled="midiRecording.isRecording.value"
+                :aria-label="t.shell.transport.midiInputQuantize"
+                @change="emit('midiInputQuantizeChange', Number($event))"
+              />
+            </label>
+            <label class="bar-field">
+              {{ t.shell.transport.midiCycleRecordMode }}
+              <SelectMenu
+                :model-value="midiCycleRecordMode"
+                :options="midiCycleRecordModeOptions"
+                size="sm"
+                :disabled="midiRecording.isRecording.value"
+                :aria-label="t.shell.transport.midiCycleRecordMode"
+                @change="setMidiCycleRecordMode($event)"
+              />
+            </label>
+            <label class="bar-field">
+              {{ t.shell.transport.voiceChanger }}
+              <SelectMenu
+                :model-value="voiceChangerSelectValue"
+                :options="voiceChangerOptions"
+                size="sm"
+                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :aria-label="t.shell.transport.voiceChanger"
+                @change="onVoiceChangerChange"
+              />
+            </label>
+            <div v-if="showCustomVoiceEditor" class="voice-json-field view-enter">
+              <label>
+                {{ t.shell.transport.voiceChangerJson }}
+                <textarea
+                  v-model="customVoiceJson"
+                  rows="5"
+                  spellcheck="false"
+                  :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                  :aria-label="t.shell.transport.voiceChangerJson"
+                />
+              </label>
+              <button
+                type="button"
+                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                @click="onApplyCustomVoicePreset"
+              >
+                {{ t.shell.transport.voiceChangerApply }}
+              </button>
+              <p v-if="customVoiceError" class="voice-json-error" role="alert">
+                {{ customVoiceError }}
+              </p>
+            </div>
+            <label class="bar-field">
+              {{ t.shell.transport.retune }}
+              <input
+                class="num"
+                type="number"
+                min="-24"
+                max="24"
+                step="1"
+                :value="recording.streamingRetuneSemitones.value"
+                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :aria-label="t.shell.transport.retune"
+                @change="onRetuneInput"
+              />
+            </label>
+            <ToggleButton
+              :model-value="autoPunchEnabled"
+              :label="t.shell.transport.autoPunch"
+              size="sm"
+              :disabled="!hasLocatorWindow"
+              :title="
+                hasLocatorWindow
+                  ? t.shell.transport.autoPunchReadyTitle
+                  : t.shell.transport.autoPunchNeedsWindowTitle
+              "
+              @update:model-value="emit('toggleAutoPunch')"
+            />
+          </div>
+        </Transition>
+        <Transition name="fade">
           <span
-            class="input-level-fill"
-            :style="{ width: `${Math.min(1, recording.inputLevel.value) * 100}%` }"
-          />
-        </span>
+            v-if="recording.armedTrackId.value !== null"
+            class="input-level"
+            v-tooltip="t.shell.transport.inputLevel"
+          >
+            <span
+              class="input-level-fill"
+              :style="{ width: `${Math.min(1, recording.inputLevel.value) * 100}%` }"
+            />
+          </span>
+        </Transition>
       </div>
     </div>
 
@@ -455,7 +459,7 @@ function onRetuneInput(event: Event): void {
       </label>
       <button
         type="button"
-        class="click-toggle"
+        class="click-toggle press-feedback"
         :class="{ active: metronomeEnabled }"
         :disabled="!handle"
         :aria-label="t.shell.transport.metronome"
@@ -484,7 +488,7 @@ function onRetuneInput(event: Event): void {
       <div class="locator-group">
         <button
           type="button"
-          class="transport-nav locator"
+          class="transport-nav locator press-feedback"
           :disabled="!handle"
           :aria-label="t.shell.transport.setLeftLocator"
           v-tooltip="shortcutTitle(t.shell.transport.setLeftLocatorTitle, 'transport.setLeftLocator')"
@@ -494,7 +498,7 @@ function onRetuneInput(event: Event): void {
         </button>
         <button
           type="button"
-          class="transport-nav locator"
+          class="transport-nav locator press-feedback"
           :disabled="!handle"
           :aria-label="t.shell.transport.setRightLocator"
           v-tooltip="
@@ -508,7 +512,7 @@ function onRetuneInput(event: Event): void {
       <button
         v-if="autoPunchEnabled"
         type="button"
-        class="punch-indicator"
+        class="punch-indicator animate-pop"
         :aria-label="t.shell.transport.autoPunchArmed"
         v-tooltip="t.shell.transport.autoPunchArmedTitle"
         @click="emit('toggleAutoPunch')"
@@ -519,7 +523,7 @@ function onRetuneInput(event: Event): void {
 
     <span class="bar-spacer" />
 
-    <div class="time-display" :class="{ playing: isPlaying }">
+    <div class="time-display" :class="{ playing: isPlaying, recording: isRecording }">
       <div class="time-register time-primary">
         <span class="time-cap">{{ t.shell.transport.bars }}</span>
         <input

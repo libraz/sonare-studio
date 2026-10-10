@@ -13,6 +13,8 @@
   gap: 0.5rem;
   border-radius: var(--radius-sm);
   transition: box-shadow var(--dur-1) var(--ease-out);
+  /* Keyed by name, so a newly saved or renamed project fades into the list. */
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 /* Selection uses a tinted face on the row's load button. */

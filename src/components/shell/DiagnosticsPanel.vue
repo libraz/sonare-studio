@@ -228,7 +228,7 @@ watch(
             {{ t.shell.diagnostics.renderOffline }}
           </button>
         </div>
-        <p v-if="renderInfo" class="diag-render-info">{{ renderInfo }}</p>
+        <p v-if="renderInfo" class="diag-render-info view-enter">{{ renderInfo }}</p>
         <p class="diag-hint">{{ t.shell.diagnostics.shortcuts }}</p>
       </section>
     </div>

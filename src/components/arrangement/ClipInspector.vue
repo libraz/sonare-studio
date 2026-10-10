@@ -84,7 +84,7 @@ function onLoopToggle(): void {
 <template>
   <Transition name="fade">
   <div v-if="props.clip" class="clip-inspector" :aria-label="t.shell.arrangement.clipInspector.label">
-    <span class="ci-name" v-tooltip="props.clip.name">{{ props.clip.name }}</span>
+    <span :key="props.clip.id" class="ci-name" v-tooltip="props.clip.name">{{ props.clip.name }}</span>
 
     <button
       v-if="props.frozen"
@@ -183,6 +183,14 @@ function onLoopToggle(): void {
   text-overflow: ellipsis;
   font-weight: var(--fw-semibold);
   color: var(--text-1);
+  /* Re-keyed per clip: the name fades in to mark the inspector retargeting. */
+  animation: ci-name-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes ci-name-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .ci-field {

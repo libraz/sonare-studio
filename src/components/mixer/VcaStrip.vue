@@ -319,12 +319,23 @@ async function onRename(): Promise<void> {
   color: var(--text-3);
   font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   line-height: 1;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.vca-toggle:active {
+  transform: scale(0.94);
 }
 
 .vca-toggle-active {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--text-1);
+  --latch-from: 0.94;
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 
 .vca-midi-learn,
@@ -342,9 +353,18 @@ async function onRename(): Promise<void> {
   box-shadow: var(--control-lift);
 }
 
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
 .vca-midi-learn.armed {
+  --live-color: var(--accent);
   color: var(--surface-0);
   background: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vca-midi-learn.armed {
+    animation: none;
+  }
 }
 
 .vca-midi-learn.bound {

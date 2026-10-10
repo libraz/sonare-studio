@@ -229,6 +229,9 @@ function channelLabel(channel: number): string {
   padding: 0.3rem 0.4rem;
   border: 1px solid transparent;
   border-radius: 6px;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
 }
 
 .sf2-channel-row.active {

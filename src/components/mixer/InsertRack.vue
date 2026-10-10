@@ -778,6 +778,8 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 3px;
+  /* Index-keyed rows: only a newly appended slot mounts, so only it animates. */
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 /* Explicit landing line above the hovered slot during a reorder drag. */
@@ -821,10 +823,15 @@ onBeforeUnmount(() => {
   box-shadow: var(--control-edge);
   padding: 0;
   cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
 }
 
 .insert-power.on {
   background: var(--success);
+  --latch-from: 0.6;
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 
 .insert-name {
@@ -841,6 +848,7 @@ onBeforeUnmount(() => {
   box-shadow: none;
   padding: 1px 0;
   cursor: pointer;
+  transition: color var(--dur-2) var(--ease-out);
 }
 
 .insert-name.expanded {
@@ -905,6 +913,14 @@ onBeforeUnmount(() => {
   border-radius: 3px;
   padding: var(--sp-2) var(--sp-1);
   box-shadow: var(--inset-well);
+  /* Opacity only: a transform here would re-anchor the knobs' fixed menus. */
+  animation: insert-params-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes insert-params-in {
+  from {
+    opacity: 0;
+  }
 }
 
 .insert-param-toggle {
@@ -917,6 +933,9 @@ onBeforeUnmount(() => {
   box-shadow: var(--control-lift);
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   cursor: pointer;
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out);
 }
 
 .insert-param-toggle.on {
@@ -965,9 +984,18 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
 .insert-param-midi-learn.armed {
+  --live-color: var(--accent);
   color: var(--accent);
   border-color: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .insert-param-midi-learn.armed {
+    animation: none;
+  }
 }
 
 .insert-param-midi-learn.bound {

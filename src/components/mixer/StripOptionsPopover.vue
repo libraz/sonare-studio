@@ -768,9 +768,18 @@ onBeforeUnmount(() => {
   box-shadow: var(--control-lift);
 }
 
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
 .strip-midi-learn.armed {
+  --live-color: var(--accent);
   color: var(--surface-0);
   background: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .strip-midi-learn.armed {
+    animation: none;
+  }
 }
 
 .strip-midi-learn.bound {
@@ -796,12 +805,18 @@ onBeforeUnmount(() => {
   cursor: pointer;
   box-shadow: var(--control-lift);
   transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out);
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.toggle:active {
+  transform: scale(0.9);
 }
 
 .toggle.on {
   color: var(--surface-0);
   background: var(--accent);
+  animation: toggle-latch var(--dur-3) var(--ease-spring);
 }
 </style>

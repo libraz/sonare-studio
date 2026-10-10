@@ -1087,6 +1087,7 @@ onBeforeUnmount(() => {
         v-tooltip="t.shell.mastering.assistant.title"
         @click="onAutoSuggest"
       >
+        <span v-if="suggesting" class="spinner button-spinner" aria-hidden="true" />
         {{ suggesting ? t.shell.mastering.assistant.analyzing : t.shell.mastering.assistant.suggest }}
       </button>
       <span class="toolbar-spacer" />
@@ -1300,10 +1301,11 @@ onBeforeUnmount(() => {
               :disabled="!referenceAudio || analyzingReference"
               @click="onCompareReference"
             >
+              <span v-if="analyzingReference" class="spinner button-spinner" aria-hidden="true" />
               {{ analyzingReference ? t.shell.mastering.reference.analyzing : t.shell.mastering.reference.compare }}
             </button>
           </div>
-          <div v-if="referenceAnalysis" class="mastering-reference-results" role="status">
+          <div v-if="referenceAnalysis" class="mastering-reference-results view-enter" role="status">
             <span v-if="referenceAnalysis.loudness">
               {{ referenceAnalysis.loudness.sourceLufs.toFixed(1) }} →
               {{ referenceAnalysis.loudness.referenceLufs.toFixed(1) }} LUFS

@@ -129,6 +129,8 @@ function segmentTitle(segment: StripSegment): string {
   /* Only the segments take pointer input; the grid stays fully editable in
    * the gaps and past the last chord. */
   pointer-events: none;
+  /* Opacity only: segments are column-aligned with the note grid. */
+  animation: fade-once var(--dur-2) var(--ease-out);
 }
 
 .lock-segment {
@@ -178,6 +180,7 @@ function segmentTitle(segment: StripSegment): string {
   flex: none;
   width: 9px;
   height: 9px;
+  animation: pop-in var(--dur-2) var(--ease-spring);
 }
 
 .lock-name {

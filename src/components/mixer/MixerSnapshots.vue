@@ -118,7 +118,10 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
   padding: 2px var(--sp-2);
   cursor: pointer;
   box-shadow: var(--control-lift);
-  transition: background var(--dur-1) var(--ease-out);
+  transition:
+    background var(--dur-2) var(--ease-out),
+    color var(--dur-2) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
 }
 
 .snapshot-recall {

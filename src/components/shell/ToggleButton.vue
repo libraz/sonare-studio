@@ -69,7 +69,8 @@ function toggle(): void {
   transition:
     background-color var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
 }
 
 .toggle-pill.is-sm {

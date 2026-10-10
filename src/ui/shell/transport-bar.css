@@ -110,6 +110,16 @@
   background: var(--accent-active);
 }
 
+/* Rolling: the play key breathes in the accent so running reads at a glance. */
+.transport-key.play.live-glow {
+  --live-color: var(--accent);
+}
+
+/* The breathing halo animates box-shadow, so drop it while the focus ring shows. */
+.transport-key.play.live-glow:focus-visible {
+  animation: none;
+}
+
 .transport-key:focus-visible,
 .transport-nav:focus-visible,
 .click-toggle:focus-visible {
@@ -121,6 +131,18 @@
   color: var(--accent);
   background: var(--accent-muted);
   box-shadow: none;
+}
+
+/* Engaging cycle turns the glyph once, echoing the loop it now describes. */
+.transport-key.cycle.active .t-icon {
+  animation: cycle-engage var(--dur-3) var(--ease-out);
+}
+
+@keyframes cycle-engage {
+  from {
+    opacity: 0.5;
+    transform: rotate(-120deg);
+  }
 }
 
 .transport-key.play.active:focus-visible,
@@ -177,13 +199,22 @@
   animation: record-blink 1s steps(2, start) infinite;
 }
 
+/* Count-in is armed-but-waiting: an outlined key with a smooth breathe, kept
+ * distinct from the filled blink of a live take (and under 3 flashes/s). */
 .record-button.counting-in {
-  animation: record-blink 0.25s steps(2, start) infinite;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 60%, transparent);
+  animation: record-count-in 0.5s var(--ease-out) infinite alternate;
 }
 
 @keyframes record-blink {
   50% {
     color: color-mix(in srgb, var(--danger) 55%, transparent);
+  }
+}
+
+@keyframes record-count-in {
+  to {
+    color: color-mix(in srgb, var(--danger) 40%, transparent);
   }
 }
 
@@ -204,6 +235,11 @@
 .record-settings .t-icon {
   width: 10px;
   height: 10px;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+.record-settings[aria-expanded='true'] .t-icon {
+  transform: rotate(180deg);
 }
 
 .menu-pop {
@@ -231,6 +267,16 @@
 .record-pop-up {
   top: auto;
   bottom: calc(100% + 4px);
+}
+
+/* The settings popover opens upward, so it grows from its bottom anchor. */
+.record-pop-up.pop-enter-active,
+.record-pop-up.pop-leave-active {
+  transform-origin: bottom left;
+}
+
+.record-pop-up.pop-enter-from {
+  transform: translateY(4px) scale(0.97);
 }
 
 .bar-field {
@@ -346,7 +392,8 @@
   transition:
     background-color var(--dur-1) var(--ease-out),
     color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
+    box-shadow var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
 }
 
 .click-toggle:hover:not(:disabled) {
@@ -437,6 +484,11 @@
   line-height: 1.05;
   text-align: left;
   transition: color var(--dur-2) var(--ease-out);
+}
+
+.time-display.recording {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  box-shadow: inset 0 0 0 1px var(--danger-surface);
 }
 
 .time-display.playing .position-bbt {

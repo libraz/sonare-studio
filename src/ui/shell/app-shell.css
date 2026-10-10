@@ -274,17 +274,25 @@
   height: 9px;
   border-radius: var(--radius-full);
   background: var(--text-4);
-  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+  transition: background var(--dur-2) var(--ease-out), box-shadow var(--dur-2) var(--ease-out);
 }
 
+/* Settling into "on" (boot, or a finished bounce) seats the dot with one pop. */
 .engine-status-on .engine-status-dot {
   background: var(--success);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 28%, transparent);
+  animation: pop-in var(--dur-3) var(--ease-spring);
 }
 
 .engine-status-pending .engine-status-dot {
   background: var(--warning);
   animation: engine-status-pulse 1s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .engine-status-pending .engine-status-dot {
+    animation: none;
+  }
 }
 
 @keyframes engine-status-pulse {

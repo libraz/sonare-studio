@@ -80,6 +80,7 @@ function onApply(): void {
           :key="proposal.startPpq"
           class="key-change-row"
           :class="{ checked: checked[index] }"
+          :style="{ '--row-index': Math.min(index, 6) }"
         >
           <input v-model="checked[index]" type="checkbox" />
           <span class="key-change-label">
@@ -152,6 +153,9 @@ function onApply(): void {
   transition:
     background var(--dur-1) var(--ease-out),
     border-color var(--dur-1) var(--ease-out);
+  /* Detected changes settle in top-down; the stagger is capped so long lists stay quick. */
+  animation: view-enter var(--dur-2) var(--ease-out) backwards;
+  animation-delay: calc(var(--dur-1) + var(--row-index, 0) * 30ms);
 }
 
 .key-change-row.checked {
@@ -166,6 +170,7 @@ function onApply(): void {
 }
 
 .dialog-error {
+  animation: view-enter var(--dur-2) var(--ease-out);
   margin: 0;
   color: var(--danger-text);
   font-size: var(--fs-sm);

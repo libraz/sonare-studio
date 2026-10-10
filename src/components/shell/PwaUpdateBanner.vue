@@ -33,25 +33,28 @@ async function reload(): Promise<void> {
 </script>
 
 <template>
-  <aside v-if="pwaUpdateNotice" class="pwa-update" role="status" aria-live="polite">
-    <div class="pwa-update-message">
-      <span>{{ message }}</span>
-      <span v-if="pwaUpdateFailure" class="pwa-update-error" role="alert">
-        {{ t.shell.pwaUpdate.autosaveFailed }}
-      </span>
-    </div>
-    <button type="button" :disabled="applying" @click="reload">
-      {{ applying ? t.shell.pwaUpdate.applying : t.shell.pwaUpdate.reload }}
-    </button>
-    <button
-      type="button"
-      class="pwa-update-dismiss"
-      :aria-label="t.shell.pwaUpdate.later"
-      @click="dismissPwaUpdateNotice"
-    >
-      {{ t.shell.pwaUpdate.later }}
-    </button>
-  </aside>
+  <Transition name="slide-down">
+    <aside v-if="pwaUpdateNotice" class="pwa-update" role="status" aria-live="polite">
+      <div class="pwa-update-message">
+        <span>{{ message }}</span>
+        <span v-if="pwaUpdateFailure" class="pwa-update-error" role="alert">
+          {{ t.shell.pwaUpdate.autosaveFailed }}
+        </span>
+      </div>
+      <button type="button" class="pwa-update-reload" :disabled="applying" @click="reload">
+        <span v-if="applying" class="spinner" aria-hidden="true" />
+        {{ applying ? t.shell.pwaUpdate.applying : t.shell.pwaUpdate.reload }}
+      </button>
+      <button
+        type="button"
+        class="pwa-update-dismiss"
+        :aria-label="t.shell.pwaUpdate.later"
+        @click="dismissPwaUpdateNotice"
+      >
+        {{ t.shell.pwaUpdate.later }}
+      </button>
+    </aside>
+  </Transition>
 </template>
 
 <style scoped>
@@ -80,6 +83,13 @@ async function reload(): Promise<void> {
 
 .pwa-update button {
   flex: none;
+}
+
+.pwa-update-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  --spinner-size: 11px;
 }
 
 .pwa-update-dismiss {

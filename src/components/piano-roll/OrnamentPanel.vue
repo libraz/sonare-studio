@@ -152,6 +152,8 @@ function apply(): void {
 <style scoped>
 .ornament-panel {
   position: absolute;
+  /* The shared pop entrance grows from the right-docked anchor. */
+  transform-origin: top right;
   top: calc(100% + var(--sp-2));
   right: var(--sp-3);
   z-index: 40;

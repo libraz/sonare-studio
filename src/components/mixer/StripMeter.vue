@@ -287,7 +287,7 @@ watch(
 </script>
 
 <template>
-  <div class="strip-meter-wrap">
+  <div class="strip-meter-wrap" :class="{ clipped }">
     <canvas
       ref="canvasRef"
       class="strip-meter"
@@ -296,6 +296,12 @@ watch(
       :aria-label="t.shell.mixer.meter.strip"
       v-tooltip="title"
       @click="onClick"
+    />
+    <span
+      v-if="!props.placeholder"
+      class="clip-flash"
+      :style="{ width: `${props.width}px`, height: `${CLIP_LED_H - 2}px` }"
+      aria-hidden="true"
     />
     <span class="strip-meter-peak">{{ peakHoldDisplay }}</span>
   </div>
@@ -310,11 +316,35 @@ watch(
   cursor: pointer;
 }
 
-.strip-meter-wrap { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.strip-meter-wrap { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .strip-meter-peak { font: var(--fw-medium) var(--fs-2xs) var(--font-mono); color: var(--text-4); }
 
 .strip-meter.placeholder {
   cursor: default;
   opacity: 0.6;
+}
+
+/* One-shot burst over the canvas clip LED when the latch trips; the canvas
+   keeps the latched state, so only the onset animates. */
+.clip-flash {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  translate: -50% 0;
+  border-radius: 1px;
+  background: var(--meter-red);
+  box-shadow: 0 0 6px 1px color-mix(in srgb, var(--meter-red) 70%, transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.clipped .clip-flash {
+  animation: clip-trip calc(var(--dur-3) * 2.5) var(--ease-out);
+}
+
+@keyframes clip-trip {
+  from {
+    opacity: 1;
+  }
 }
 </style>

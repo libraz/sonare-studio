@@ -110,7 +110,7 @@ onBeforeUnmount(stopCapture);
     role="tabpanel"
     :aria-label="t.settings.tabs.shortcuts"
   >
-    <p v-if="shortcuts.conflicts.value.length > 0" class="conflict-banner" role="alert">
+    <p v-if="shortcuts.conflicts.value.length > 0" class="conflict-banner view-enter" role="alert">
       {{ t.settings.shortcuts.conflict }}
     </p>
     <div class="shortcut-filters">

@@ -1140,7 +1140,7 @@ function onKeydown(event: KeyboardEvent): void {
           aria-valuemax="100"
           :aria-label="progressStageLabel"
         >
-          <div class="progress-fill" :style="{ width: `${Math.round(progress * 100)}%` }" />
+          <div class="progress-fill" :style="{ transform: `scaleX(${progress})` }" />
         </div>
         <span class="progress-stage">{{ progressStageLabel }}</span>
         <button type="button" class="cancel-render" @click="onCancelRender">
@@ -1308,6 +1308,14 @@ function onKeydown(event: KeyboardEvent): void {
   color: var(--warning-text);
 }
 
+.export-progress,
+.export-cancelled,
+.export-report,
+.dialog-errors,
+.dialog-error {
+  animation: view-enter var(--dur-2) var(--ease-out);
+}
+
 .export-progress {
   display: flex;
   align-items: center;
@@ -1323,10 +1331,12 @@ function onKeydown(event: KeyboardEvent): void {
   overflow: hidden;
 }
 
+/* Scaled rather than sized so each progress tick composites without layout. */
 .progress-fill {
   height: 100%;
   background: var(--accent);
-  transition: width var(--dur-1) linear;
+  transform-origin: left center;
+  transition: transform var(--dur-3) var(--ease-out);
 }
 
 .progress-stage {

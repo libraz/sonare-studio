@@ -44,6 +44,8 @@ type Mode = 'progression' | 'harmonize';
 const mode = ref<Mode>('progression');
 const phase = ref<'edit' | 'done'>('edit');
 const error = ref<string | null>(null);
+/** Set by a mode switch so the swapped body settles in; the modal's own entrance covers the open. */
+const modeSwitched = ref(false);
 
 const MODES: ReadonlyArray<{ id: Mode; labelKey: 'modeProgression' | 'modeHarmonize' }> = [
   { id: 'progression', labelKey: 'modeProgression' },
@@ -57,6 +59,7 @@ watch(
     if (open) {
       phase.value = 'edit';
       error.value = null;
+      modeSwitched.value = false;
     }
   },
 );
@@ -223,6 +226,7 @@ function onGenerate(): void {
 }
 
 function onSelectMode(next: Mode): void {
+  if (next !== mode.value) modeSwitched.value = true;
   mode.value = next;
   error.value = null;
 }
@@ -246,6 +250,10 @@ function onKeydown(event: KeyboardEvent): void {
     <template #title>{{ g.title }}</template>
 
     <div v-if="phase === 'done'" class="chord-done">
+      <svg class="done-badge animate-pop" viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="9" />
+        <path d="M6 10.4l2.6 2.6L14 7.6" />
+      </svg>
       <p class="done-title">{{ g.doneTitle }}</p>
     </div>
 
@@ -273,7 +281,7 @@ function onKeydown(event: KeyboardEvent): void {
         <span class="seed-caption">{{ g.projectSeedCaption }}</span>
       </div>
 
-      <div class="mode-body">
+      <div :key="mode" class="mode-body" :class="{ 'view-enter': modeSwitched }">
         <template v-if="mode === 'progression'">
           <p class="key-context">
             {{ g.keyContext }}: <strong>{{ keyReadout }}</strong>
@@ -618,11 +626,25 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .chord-done {
+  animation: view-enter var(--dur-2) var(--ease-out);
   display: flex;
   flex-direction: column;
   justify-content: center;
+  gap: var(--sp-3);
   min-width: 20rem;
   min-height: min(22rem, 52vh);
+}
+
+/* Completion mark: springs in once so the finished state reads as an event. */
+.done-badge {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  fill: color-mix(in srgb, var(--success) 14%, transparent);
+  stroke: var(--success);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .done-title {
@@ -633,6 +655,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .dialog-error {
+  animation: view-enter var(--dur-2) var(--ease-out);
   color: var(--danger-text);
   font-size: var(--fs-sm);
   margin: 0;

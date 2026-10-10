@@ -188,6 +188,8 @@ function onKeydown(event: KeyboardEvent): void {
   box-shadow: none;
   color: var(--text-1);
   text-align: left;
+  /* Rows keyed by command id: only rows a query newly reveals fade in. */
+  animation: fade-once var(--dur-2) var(--ease-out);
 }
 
 .command-row.active,
@@ -214,6 +216,7 @@ function onKeydown(event: KeyboardEvent): void {
 }
 
 .command-empty {
+  animation: fade-once var(--dur-2) var(--ease-out);
   margin: 0;
   padding: var(--sp-5);
   color: var(--text-3);

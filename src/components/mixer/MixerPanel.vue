@@ -260,23 +260,25 @@ onBeforeUnmount(() => {
         >
           {{ t.shell.mixer.scenes.button }} ▾
         </button>
-        <div v-if="sceneMenuOpen" class="view-menu scene-menu" role="menu">
-          <div class="view-menu-section">{{ t.shell.mixer.scenes.title }}</div>
-          <button
-            v-for="preset in sceneCatalog"
-            :key="preset"
-            type="button"
-            role="menuitem"
-            class="view-menu-action"
-            @click="onApplyScenePreset(preset)"
-          >
-            {{ humanizeMixerScenePreset(preset) }}
-          </button>
-          <div class="view-menu-separator" role="separator" />
-          <button type="button" role="menuitem" class="view-menu-action" @click="openSuggestMix">
-            {{ t.shell.mixer.scenes.suggest }}
-          </button>
-        </div>
+        <Transition name="pop">
+          <div v-if="sceneMenuOpen" class="view-menu scene-menu" role="menu">
+            <div class="view-menu-section">{{ t.shell.mixer.scenes.title }}</div>
+            <button
+              v-for="preset in sceneCatalog"
+              :key="preset"
+              type="button"
+              role="menuitem"
+              class="view-menu-action"
+              @click="onApplyScenePreset(preset)"
+            >
+              {{ humanizeMixerScenePreset(preset) }}
+            </button>
+            <div class="view-menu-separator" role="separator" />
+            <button type="button" role="menuitem" class="view-menu-action" @click="openSuggestMix">
+              {{ t.shell.mixer.scenes.suggest }}
+            </button>
+          </div>
+        </Transition>
       </div>
       <button
         type="button"
@@ -306,27 +308,29 @@ onBeforeUnmount(() => {
         >
           {{ t.shell.mixer.view }} ▾
         </button>
-        <div v-if="menuOpen" class="view-menu" role="menu">
-          <div class="view-menu-section">{{ t.shell.mixer.tracks }}</div>
-          <label v-for="track in store.tracks" :key="track.id" class="view-menu-track">
-            <input
-              type="checkbox"
-              :checked="!hiddenTrackIds.has(track.id)"
-              @change="toggleTrackVisible(track.id)"
-            />
-            <span class="view-menu-swatch" :style="{ background: track.color }" />
-            <span class="view-menu-name">{{ track.name }}</span>
-          </label>
-          <button
-            v-if="hiddenCount > 0"
-            type="button"
-            role="menuitem"
-            class="view-menu-action"
-            @click="showAllTracks"
-          >
-            {{ t.shell.mixer.showAll }}
-          </button>
-        </div>
+        <Transition name="pop">
+          <div v-if="menuOpen" class="view-menu" role="menu">
+            <div class="view-menu-section">{{ t.shell.mixer.tracks }}</div>
+            <label v-for="track in store.tracks" :key="track.id" class="view-menu-track">
+              <input
+                type="checkbox"
+                :checked="!hiddenTrackIds.has(track.id)"
+                @change="toggleTrackVisible(track.id)"
+              />
+              <span class="view-menu-swatch" :style="{ background: track.color }" />
+              <span class="view-menu-name">{{ track.name }}</span>
+            </label>
+            <button
+              v-if="hiddenCount > 0"
+              type="button"
+              role="menuitem"
+              class="view-menu-action"
+              @click="showAllTracks"
+            >
+              {{ t.shell.mixer.showAll }}
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
     <p v-if="error" class="mixer-error" role="alert">{{ error }}</p>

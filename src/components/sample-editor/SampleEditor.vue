@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
@@ -1322,10 +1323,15 @@ onBeforeUnmount(() => {
       @wheel.prevent="onWheel"
     >
       <canvas ref="canvasRef" class="wave-canvas" role="img" :aria-label="t.shell.sampleEditor.waveform" />
-      <div v-if="busy || loading" class="busy">
-        {{ busy ? t.shell.sampleEditor.processing : t.shell.sampleEditor.loading }}
-      </div>
-      <EmptyState v-else-if="!asset" :message="t.shell.sampleEditor.emptyMessage" />
+      <Transition name="fade">
+        <BusyIndicator
+          v-if="busy || loading"
+          variant="overlay"
+          size="md"
+          :label="busy ? t.shell.sampleEditor.processing : t.shell.sampleEditor.loading"
+        />
+      </Transition>
+      <EmptyState v-if="!busy && !loading && !asset" :message="t.shell.sampleEditor.emptyMessage" />
     </div>
     <div class="history">
       <span class="history-title">{{ t.shell.sampleEditor.history }}</span>
@@ -1569,6 +1575,14 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 
+/* Status lines and analysis cards mount in response to a finished job. */
+.error,
+.notice,
+.result-status,
+.match-eq-analysis {
+  animation: view-enter var(--dur-2) var(--ease-out);
+}
+
 .repair-channels {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1694,15 +1708,6 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
-.busy {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--scrim);
-  color: var(--text-1);
-}
 
 .history {
   display: flex;

@@ -6,20 +6,6 @@
   border-top: 1px solid var(--border-strong);
 }
 
-/* Entrance / exit for the annotation palette: a gentle fade with a short rise.
-   Durations collapse to 0 under reduced-motion. */
-.popover-enter-active,
-.popover-leave-active {
-  transition: opacity var(--dur-2) var(--ease-out),
-    transform var(--dur-2) var(--ease-out);
-}
-
-.popover-enter-from,
-.popover-leave-to {
-  opacity: 0;
-  transform: translateY(-2px) scale(0.98);
-}
-
 .score-error {
   margin: 0;
   background: var(--danger-surface);
@@ -37,6 +23,11 @@
   color: var(--text-3);
   padding: 0.35rem 0.75rem;
   font-size: var(--fs-sm);
+}
+
+.score-error,
+.score-notice {
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 .score-marker-tools {
@@ -298,41 +289,19 @@
   min-width: 1.8rem;
 }
 
+/* Re-engraving keeps the score interactive beneath the busy overlay. */
 .score-loading {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--sp-4);
-  font-size: var(--fs-md);
-  color: var(--text-3);
   pointer-events: none;
 }
 
-.score-loading {
-  background: color-mix(in srgb, var(--surface-1), transparent 25%);
+/* Page navigation fades the incoming page in. Opacity only: the playhead
+   overlay measures note positions from the live SVG. */
+.score-page-turn > :deep(svg) {
+  animation: score-page-in var(--dur-3) var(--ease-out);
 }
 
-/* Breathe the "Engraving..." label so the wait reads as active, not stalled.
-   Collapses to a static label under prefers-reduced-motion. */
-.score-loading .score-state-text {
-  animation: score-loading-pulse 1.4s var(--ease-out) infinite;
-}
-
-@keyframes score-loading-pulse {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .score-loading .score-state-text {
-    animation: none;
+@keyframes score-page-in {
+  from {
+    opacity: 0;
   }
 }

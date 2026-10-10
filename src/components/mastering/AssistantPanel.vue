@@ -38,7 +38,7 @@ function formatValue(value: number | boolean | undefined): string {
   <section class="assist-result" :aria-label="t.shell.mastering.assistant.recommended">
     <div class="assist-section">
       <div class="assist-heading">{{ t.shell.mastering.assistant.recommended }}</div>
-      <span class="assist-chip active" role="status">
+      <span :key="preset ?? ''" class="assist-chip active animate-pop" role="status">
         <span class="assist-chip-name">{{ humanizePresetName(preset ?? 'streaming') }}</span>
       </span>
     </div>

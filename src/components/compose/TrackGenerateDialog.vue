@@ -897,6 +897,10 @@ function toggleExpanded(part: TrackPart): void {
         <span v-else class="chord-summary-bars">{{ g.noChordsSummary }}</span>
       </div>
       <div class="done-message">
+        <svg class="done-badge animate-pop" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="9" />
+          <path d="M6 10.4l2.6 2.6L14 7.6" />
+        </svg>
         <p class="done-title">{{ g.doneTitle }}</p>
         <p class="done-body">{{ hasChords ? g.doneBody : g.doneBodyNoChords }}</p>
       </div>
@@ -1349,6 +1353,7 @@ function toggleExpanded(part: TrackPart): void {
 }
 
 .track-done {
+  animation: view-enter var(--dur-2) var(--ease-out);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
@@ -1362,6 +1367,18 @@ function toggleExpanded(part: TrackPart): void {
   flex-direction: column;
   justify-content: center;
   gap: var(--sp-2);
+}
+
+/* Completion mark: springs in once so the finished state reads as an event. */
+.done-badge {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  fill: color-mix(in srgb, var(--success) 14%, transparent);
+  stroke: var(--success);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .done-title {
@@ -1612,6 +1629,7 @@ function toggleExpanded(part: TrackPart): void {
 }
 
 .part-params {
+  animation: view-enter var(--dur-2) var(--ease-out);
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -1690,6 +1708,7 @@ function toggleExpanded(part: TrackPart): void {
 }
 
 .collision-inline {
+  animation: view-enter var(--dur-2) var(--ease-out);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -1727,6 +1746,7 @@ function toggleExpanded(part: TrackPart): void {
 }
 
 .dialog-error {
+  animation: view-enter var(--dur-2) var(--ease-out);
   color: var(--danger-text);
   font-size: var(--fs-sm);
   margin: 0;

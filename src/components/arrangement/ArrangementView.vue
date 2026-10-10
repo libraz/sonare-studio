@@ -1683,6 +1683,11 @@ onBeforeUnmount(() => {
   font: var(--fs-sm)/1.4 var(--font-sans);
 }
 
+.arrangement-error,
+.arrangement-notice {
+  animation: fade-once var(--dur-2) var(--ease-out);
+}
+
 .arrangement-grid {
   flex: 1;
   min-height: 0;

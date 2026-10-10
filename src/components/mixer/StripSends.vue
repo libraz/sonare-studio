@@ -356,6 +356,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
   box-shadow: none;
   padding: 0;
   cursor: pointer;
+  transition: color var(--dur-2) var(--ease-out);
 }
 
 .send-name.off {
@@ -384,6 +385,9 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
   padding: 0 3px;
   line-height: 1.4;
   cursor: pointer;
+  transition:
+    color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
 }
 
 .send-timing.pre {
@@ -406,9 +410,18 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
   box-shadow: var(--control-lift);
 }
 
+/* Listening for a MIDI message: a breathing halo until a control arrives. */
 .send-midi-learn.armed {
+  --live-color: var(--accent);
   color: var(--surface-0);
   background: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-midi-learn.armed {
+    animation: none;
+  }
 }
 
 .send-midi-learn.bound {

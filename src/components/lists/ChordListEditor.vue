@@ -888,6 +888,11 @@ function clearAll(): void {
   background: var(--surface-2);
 }
 
+/* The candidate palette drops in under its chord row. */
+.reharm-row > td > * {
+  animation: view-enter var(--dur-2) var(--ease-out);
+}
+
 .reharm-palette {
   display: flex;
   flex-wrap: wrap;
@@ -966,6 +971,8 @@ function clearAll(): void {
   padding: var(--sp-3) var(--sp-4);
   background: var(--surface-2);
   border-radius: var(--radius-md);
+  /* Opacity only: the preset picker inside anchors floating menus. */
+  animation: fade-once var(--dur-2) var(--ease-out);
 }
 
 .selection-summary {
@@ -997,4 +1004,5 @@ function clearAll(): void {
   display: flex;
   gap: var(--sp-3);
 }
+
 </style>

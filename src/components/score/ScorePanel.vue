@@ -10,6 +10,7 @@ import {
 } from '@/components/lists/key-modes';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
+import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
@@ -758,6 +759,23 @@ watch(
   },
 );
 
+/** True while a freshly swapped-in page SVG plays its page-turn fade. */
+const pageTurning = ref(false);
+let pageTurnPending = false;
+
+// Only a page navigation fades the new page in; edit re-engravings swap silently.
+watch([() => notation.page.value, () => notation.svg.value], ([page, svg], [prevPage, prevSvg]) => {
+  if (page !== prevPage) pageTurnPending = true;
+  if (svg !== prevSvg && svg && pageTurnPending) {
+    pageTurnPending = false;
+    pageTurning.value = true;
+  }
+});
+
+function onScoreAnimationEnd(event: AnimationEvent): void {
+  if ((event.target as Element | null)?.parentElement === svgHost.value) pageTurning.value = false;
+}
+
 let resizeObserver: ResizeObserver | null = null;
 
 function updateScoreFitHeight(): void {
@@ -897,6 +915,7 @@ onBeforeUnmount(() => {
       <div
         ref="svgHost"
         class="score-body"
+        :class="{ 'score-page-turn': pageTurning }"
         tabindex="0"
         role="img"
         :aria-label="t.shell.score.engravedScore"
@@ -909,6 +928,7 @@ onBeforeUnmount(() => {
         @click="interactions.onSvgClick"
         @dblclick.prevent="interactions.onSvgDoubleClick"
         @keydown="onScoreKeyDown"
+        @animationend="onScoreAnimationEnd"
         v-html="notation.svg.value"
       />
       <AccessibleObjectNavigator
@@ -932,10 +952,19 @@ onBeforeUnmount(() => {
         }"
         @hold="cardHold.onHold"
       />
-      <div v-if="notation.loading.value" class="score-loading">
-        <span class="score-state-text">{{ t.shell.score.engraving }}</span>
-      </div>
-      <EmptyState v-else-if="!notation.svg.value" :message="t.shell.score.empty">
+      <Transition name="fade">
+        <BusyIndicator
+          v-if="notation.loading.value"
+          class="score-loading"
+          variant="overlay"
+          size="md"
+          :label="t.shell.score.engraving"
+        />
+      </Transition>
+      <EmptyState
+        v-if="!notation.loading.value && !notation.svg.value"
+        :message="t.shell.score.empty"
+      >
         <template #icon>
           <svg viewBox="0 0 24 36" width="40" height="60" aria-hidden="true">
             <!-- Five-line staff with a stylised treble clef as a visual anchor. -->
@@ -949,7 +978,7 @@ onBeforeUnmount(() => {
           </svg>
         </template>
       </EmptyState>
-      <Transition name="popover">
+      <Transition name="pop">
         <ScoreAnnotationPalette
           v-if="annotateEnabled && annotationNoteId !== null"
           :annotation="annotationCurrent"
