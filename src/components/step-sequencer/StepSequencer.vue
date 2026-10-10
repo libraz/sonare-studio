@@ -5,7 +5,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
-import { audibleMidiSourceWindow } from '@/project/midi-projection';
+import { audibleMidiSourceWindow, midiTimelinePpqToSource } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -36,7 +36,7 @@ import {
   withSwing,
 } from '@/ui/step-sequencer/pattern';
 import { jitterVelocities, sparseFill } from '@/ui/step-sequencer/randomize';
-import { patternLengthPpq } from '@/ui/step-sequencer/timing';
+import { patternLengthPpq, stepIndexAtPpq } from '@/ui/step-sequencer/timing';
 import StepGrid from './StepGrid.vue';
 import StepParamLane from './StepParamLane.vue';
 
@@ -48,6 +48,13 @@ import StepParamLane from './StepParamLane.vue';
  * back onto the grid. Pattern edits themselves never touch the project, so
  * only Apply shows up in the undo history.
  */
+
+const props = defineProps<{
+  /** True while the transport is rolling. */
+  isPlaying?: boolean;
+  /** Reactive transport position getter, in timeline PPQ. */
+  positionPpq?: () => number;
+}>();
 
 const emit = defineEmits<{
   /** Fired after a successful Apply with the number of baked notes. */
@@ -136,6 +143,20 @@ type OverflowPolicy = 'resize' | 'loop' | 'trim';
 const overflowPolicy = ref<OverflowPolicy>('trim');
 
 const activeClip = computed(() => store.clips.find((clip) => clip.id === store.clipId) ?? null);
+
+/**
+ * Step under the playhead while the transport rolls through the active clip.
+ * Reads the position every frame but only changes value per step, so the grid
+ * re-renders at step rate.
+ */
+const playingStep = computed<number | null>(() => {
+  const clip = activeClip.value;
+  if (!props.isPlaying || !props.positionPpq || !clip || clipKind(clip) !== 'midi') return null;
+  const sourcePpq = midiTimelinePpqToSource(clip, props.positionPpq());
+  if (sourcePpq === null) return null;
+  const { stepCount, resolution } = pattern.value;
+  return stepIndexAtPpq(sourcePpq, clip.sourceOffsetPpq, stepCount, resolution);
+});
 
 /** True when the active clip exists and holds MIDI content. */
 const canTargetClip = computed(() => {
@@ -654,6 +675,7 @@ defineExpose({
     <StepGrid
       :pattern="pattern"
       :selected-row="selectedRow"
+      :playing-step="playingStep"
       @set-step="onSetStep"
       @set-velocity="onSetStepVelocity"
       @select-row="selectedRow = $event"
@@ -815,6 +837,7 @@ defineExpose({
   color: var(--text-3);
   background: var(--surface-inset);
   border-bottom: 1px solid var(--border-strong);
+  animation: view-enter var(--dur-2) var(--ease-out);
 }
 
 /* Neutral information keeps the muted toolbar color. */
@@ -853,7 +876,7 @@ defineExpose({
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   letter-spacing: 0.08em;
   cursor: pointer;
-  transition: color var(--dur-1) var(--ease-out);
+  transition: color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
 .param-tab:hover {

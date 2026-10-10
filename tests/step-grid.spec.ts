@@ -32,6 +32,16 @@ async function pointerDown(
 }
 
 describe('StepGrid', () => {
+  it('marks the playhead column on every row', async () => {
+    const pattern = createDrumPattern(8);
+    const wrapper = mountGrid(pattern);
+    expect(wrapper.findAll('.cell-playing')).toHaveLength(0);
+    await wrapper.setProps({ playingStep: 3 });
+    const playing = wrapper.findAll('.cell-playing');
+    expect(playing).toHaveLength(pattern.rows.length);
+    expect(playing.every((c) => c.attributes('data-step') === '3')).toBe(true);
+  });
+
   it('renders one cell per row and step', () => {
     const pattern = createDrumPattern(8);
     const wrapper = mountGrid(pattern);

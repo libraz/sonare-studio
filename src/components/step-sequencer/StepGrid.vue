@@ -16,6 +16,8 @@ const props = defineProps<{
   pattern: StepPattern;
   /** Index of the row whose parameters are edited in the lane below. */
   selectedRow: number;
+  /** Step under the transport playhead, or null when not playing through it. */
+  playingStep?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -240,6 +242,7 @@ watch(
             :class="{
               'cell-active': step.active,
               'cell-accent': stepIndex % groupSize === 0,
+              'cell-playing': stepIndex === props.playingStep,
             }"
             :data-row="rowIndex"
             :data-step="stepIndex"
@@ -377,6 +380,7 @@ watch(
   box-shadow: var(--inset-well);
   border: 0;
   padding: 0;
+  transition: background-color var(--dur-3) var(--ease-out);
 }
 
 .grid-cell:focus-visible {
@@ -400,10 +404,43 @@ watch(
   background: var(--accent);
   border-radius: 2px 2px 0 0;
   transition: background var(--dur-1) var(--ease-out);
+  /* A newly set step grows up from the cell floor. */
+  transform-origin: bottom;
+  animation: cell-fill-in var(--dur-2) var(--ease-spring);
+}
+
+@keyframes cell-fill-in {
+  from {
+    transform: scaleY(0.3);
+    opacity: 0.4;
+  }
 }
 
 .cell-active {
   box-shadow: none;
+}
+
+/* Playhead column: lights instantly, then fades out behind the moving step. */
+.grid-cell.cell-playing {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-inset));
+  transition: none;
+}
+
+/* A step that fires flashes and settles back to its velocity fill. */
+.grid-row:not(.row-muted) .cell-active.cell-playing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent-text);
+  opacity: 0;
+  pointer-events: none;
+  animation: cell-trigger var(--dur-3) var(--ease-out);
+}
+
+@keyframes cell-trigger {
+  from {
+    opacity: 0.45;
+  }
 }
 
 .step-velocity-accessible,

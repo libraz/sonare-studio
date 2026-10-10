@@ -4,6 +4,7 @@ import {
   nearestStepForPpq,
   patternLengthPpq,
   stepDurationPpq,
+  stepIndexAtPpq,
   stepStartPpq,
   swingShiftPpq,
 } from '@/ui/step-sequencer/timing';
@@ -110,5 +111,20 @@ describe('patternLengthPpq', () => {
     expect(patternLengthPpq(16, '1/16')).toBe(4);
     expect(patternLengthPpq(8, '1/8')).toBe(4);
     expect(patternLengthPpq(12, '1/8T')).toBeCloseTo(4, 12);
+  });
+});
+
+describe('stepIndexAtPpq', () => {
+  it('floors a source position onto the straight step grid from the base', () => {
+    expect(stepIndexAtPpq(8, 8, 16, '1/16')).toBe(0);
+    expect(stepIndexAtPpq(8.24, 8, 16, '1/16')).toBe(0);
+    expect(stepIndexAtPpq(8.25, 8, 16, '1/16')).toBe(1);
+    expect(stepIndexAtPpq(11.99, 8, 16, '1/16')).toBe(15);
+  });
+
+  it('returns null outside the pattern span', () => {
+    expect(stepIndexAtPpq(7.99, 8, 16, '1/16')).toBeNull();
+    expect(stepIndexAtPpq(12, 8, 16, '1/16')).toBeNull();
+    expect(stepIndexAtPpq(Number.NaN, 0, 16, '1/16')).toBeNull();
   });
 });

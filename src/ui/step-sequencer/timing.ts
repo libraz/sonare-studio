@@ -121,6 +121,22 @@ export function nearestStepForPpq(
   return best;
 }
 
+/**
+ * Step sounding at a clip-source position, for the playback highlight. Swing is
+ * ignored so the highlight advances on the straight grid.
+ *
+ * @returns The step index, or null outside the pattern span.
+ */
+export function stepIndexAtPpq(
+  sourcePpq: number,
+  basePpq: number,
+  stepCount: number,
+  resolution: StepResolution,
+): number | null {
+  const step = Math.floor((sourcePpq - basePpq) / stepDurationPpq(resolution));
+  return Number.isFinite(step) && step >= 0 && step < stepCount ? step : null;
+}
+
 /** Total pattern span in PPQ (without swing or offsets). */
 export function patternLengthPpq(stepCount: number, resolution: StepResolution): number {
   return stepCount * stepDurationPpq(resolution);
