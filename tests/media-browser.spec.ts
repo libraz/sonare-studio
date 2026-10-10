@@ -240,7 +240,9 @@ describe('MediaBrowser', () => {
     await flushPromises();
 
     expect(decodeAndIngestMock).toHaveBeenCalledTimes(2);
-    expect(decodeAndIngestMock).toHaveBeenCalledWith(good);
+    expect(decodeAndIngestMock).toHaveBeenCalledWith(good, {
+      onProgress: expect.any(Function),
+    });
     const errors = wrapper.find('.import-errors');
     expect(errors.text()).toContain('bad.xyz');
     expect(errors.text()).toContain('Unsupported codec');
@@ -255,8 +257,31 @@ describe('MediaBrowser', () => {
     const file = new File([new Uint8Array(4)], 'drop.wav', { type: 'audio/wav' });
     await wrapper.trigger('drop', { dataTransfer: { types: ['Files'], files: [file] } });
     await flushPromises();
-    expect(decodeAndIngestMock).toHaveBeenCalledWith(file);
+    expect(decodeAndIngestMock).toHaveBeenCalledWith(file, { onProgress: expect.any(Function) });
     expect(assetStore.listAssets).toHaveBeenCalledTimes(2);
+  });
+
+  it("fills the import bar with the current file's analysis progress", async () => {
+    const wrapper = await mountBrowser();
+    let finish!: () => void;
+    decodeAndIngestMock.mockImplementation(
+      (_file: File, options: { onProgress: (fraction: number) => void }) =>
+        new Promise((resolve) => {
+          options.onProgress(0.5);
+          finish = () => resolve(meta());
+        }),
+    );
+    const files = ['a.wav', 'b.wav'].map((name) => new File([new Uint8Array(4)], name));
+    await wrapper.trigger('drop', { dataTransfer: { types: ['Files'], files } });
+    await flushPromises();
+    const fill = () => wrapper.find<HTMLElement>('.import-progress-fill').element.style.transform;
+    expect(fill()).toBe('scaleX(0.25)');
+    finish();
+    await flushPromises();
+    expect(fill()).toBe('scaleX(0.75)');
+    finish();
+    await flushPromises();
+    expect(wrapper.find('.import-progress').exists()).toBe(false);
   });
 
   it('ignores drops that carry no files', async () => {

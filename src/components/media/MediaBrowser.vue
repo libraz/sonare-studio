@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
@@ -146,7 +147,8 @@ function protectedAssetIds(): Set<string> {
 // --- Import ----------------------------------------------------------------
 
 const fileInput = ref<HTMLInputElement | null>(null);
-const importProgress = ref<{ done: number; total: number } | null>(null);
+/** Files finished, and the share of the current file's tag analysis done. */
+const importProgress = ref<{ done: number; total: number; current: number } | null>(null);
 const importErrors = ref<Array<{ name: string; message: string }>>([]);
 const dragOver = ref(false);
 
@@ -154,17 +156,22 @@ const dragOver = ref(false);
 async function importFiles(files: ReadonlyArray<File>): Promise<void> {
   if (files.length === 0 || importProgress.value) return;
   importErrors.value = [];
-  importProgress.value = { done: 0, total: files.length };
+  importProgress.value = { done: 0, total: files.length, current: 0 };
   for (const file of files) {
     try {
-      await decodeAndIngest(file);
+      await decodeAndIngest(file, {
+        onProgress: (fraction) => {
+          if (importProgress.value)
+            importProgress.value = { ...importProgress.value, current: fraction };
+        },
+      });
     } catch (error) {
       importErrors.value = [
         ...importErrors.value,
         { name: file.name, message: errorMessage(error) },
       ];
     }
-    importProgress.value = { done: importProgress.value.done + 1, total: files.length };
+    importProgress.value = { done: importProgress.value.done + 1, total: files.length, current: 0 };
   }
   importProgress.value = null;
   await refresh();
@@ -209,6 +216,8 @@ function onDrop(event: DragEvent): void {
 
 const playingId = ref<string | null>(null);
 const previewError = ref<string | null>(null);
+/** Asset whose preview buffer is still being read/stretched. */
+const previewLoadingId = ref<string | null>(null);
 const syncToTempo = ref(false);
 const timeStretchFn = shallowRef<TimeStretchFunction | null>(null);
 let disposed = false;
@@ -231,6 +240,7 @@ async function togglePreview(asset: AudioAssetMeta): Promise<void> {
   }
   previewError.value = null;
   const generation = ++previewGeneration;
+  previewLoadingId.value = asset.id;
   try {
     const loadedAsset = await loadAsset(asset.id);
     if (disposed || generation !== previewGeneration) return;
@@ -247,6 +257,8 @@ async function togglePreview(asset: AudioAssetMeta): Promise<void> {
   } catch (error) {
     if (disposed || generation !== previewGeneration) return;
     previewError.value = errorMessage(error);
+  } finally {
+    if (previewLoadingId.value === asset.id) previewLoadingId.value = null;
   }
 }
 
@@ -417,14 +429,24 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <p v-if="importProgress" class="import-progress" role="status">
-      {{
-        formatMessage(t.shell.media.importing, {
-          done: String(Math.min(importProgress.done + 1, importProgress.total)),
-          total: String(importProgress.total),
-        })
-      }}
-    </p>
+    <div v-if="importProgress" class="import-progress">
+      <BusyIndicator
+        :label="
+          formatMessage(t.shell.media.importing, {
+            done: String(Math.min(importProgress.done + 1, importProgress.total)),
+            total: String(importProgress.total),
+          })
+        "
+      />
+      <div class="import-progress-track" aria-hidden="true">
+        <div
+          class="import-progress-fill"
+          :style="{
+            transform: `scaleX(${(importProgress.done + importProgress.current) / importProgress.total})`,
+          }"
+        />
+      </div>
+    </div>
     <ul v-if="importErrors.length > 0" class="import-errors" role="alert">
       <li v-for="(entry, index) in importErrors" :key="`${entry.name}-${index}`">
         <span class="error-file">{{ entry.name }}</span>: {{ entry.message }}
@@ -463,7 +485,11 @@ onBeforeUnmount(() => {
       variant="inline"
       :message="t.shell.media.noMatches"
     />
-    <ul v-else class="asset-list">
+    <ul v-else class="asset-list" :aria-busy="!loaded">
+      <li v-for="n in loaded ? 0 : 3" :key="`skeleton-${n}`" class="asset-skeleton" aria-hidden="true">
+        <span class="asset-skeleton-bar shimmer" />
+        <span class="asset-skeleton-bar is-short shimmer" />
+      </li>
       <li
         v-for="asset in displayedAssets"
         :key="asset.id"
@@ -482,7 +508,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="preview-button"
-          :class="{ playing: playingId === asset.id }"
+          :class="{ playing: playingId === asset.id, loading: previewLoadingId === asset.id }"
           v-tooltip="playingId === asset.id ? t.shell.media.stopPreview : t.shell.media.preview"
           :aria-label="
             playingId === asset.id
@@ -491,8 +517,10 @@ onBeforeUnmount(() => {
           "
           @click="togglePreview(asset)"
         >
+          <span v-if="previewLoadingId === asset.id" class="spinner preview-spinner" aria-hidden="true" />
           <svg
-            v-if="playingId === asset.id"
+            v-else-if="playingId === asset.id"
+            class="animate-pop"
             viewBox="0 0 12 12"
             width="9"
             height="9"
@@ -620,8 +648,25 @@ onBeforeUnmount(() => {
 }
 
 .import-progress {
-  margin: 0;
-  color: var(--text-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.import-progress-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--surface-inset);
+  box-shadow: var(--inset-well);
+}
+
+/* Scaled rather than resized so each file tick glides without layout. */
+.import-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform var(--dur-3) var(--ease-out);
 }
 
 .import-errors {
@@ -713,8 +758,50 @@ onBeforeUnmount(() => {
 }
 
 .preview-button.playing {
+  --live-color: var(--accent);
   background: var(--surface-selected);
   color: var(--accent);
+  animation: live-glow 1.8s var(--ease-out) infinite;
+}
+
+.preview-spinner {
+  --spinner-size: 9px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-button.playing {
+    animation: none;
+  }
+}
+
+/* Placeholder rows while the asset list is read; held back briefly so a fast
+   read never flashes them. */
+.asset-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+  opacity: 0;
+  animation: asset-skeleton-in var(--dur-2) var(--ease-out) 300ms forwards;
+}
+
+.asset-skeleton-bar {
+  display: block;
+  height: 8px;
+  width: 60%;
+  border-radius: var(--radius-xs);
+  background-color: var(--surface-3);
+}
+
+.asset-skeleton-bar.is-short {
+  width: 35%;
+}
+
+@keyframes asset-skeleton-in {
+  to {
+    opacity: 1;
+  }
 }
 
 .asset-info {
