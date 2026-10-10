@@ -216,6 +216,7 @@ export const shellEditors = {
       legato: 'Legato to next',
       merge: 'Merge overlaps',
       cleanupOverlaps: 'Clean up overlaps',
+      tidy: 'Tidy by theory',
       transposeUpOctave: 'Transpose +1 octave',
       transposeDownOctave: 'Transpose -1 octave',
       diatonicUp: 'Diatonic step up',

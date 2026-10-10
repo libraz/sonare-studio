@@ -110,6 +110,7 @@ import {
   snapSelectionToScale,
   splitClip,
   splitNote,
+  tidySelection,
   transposeSelection,
   transposeSelectionDiatonic,
   trimClip,
@@ -1771,6 +1772,23 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(
         store.notes.find((note) => note.pitch === 64 && note.startPpq === 0)?.durationPpq,
       ).toBe(2);
+    });
+
+    it('tidies only the selection by theory as one undoable edit', () => {
+      const held = addNote({ pitch: 72, startPpq: 0, durationPpq: 1, velocity: 100 });
+      const decay = addNote({ pitch: 72, startPpq: 1, durationPpq: 1, velocity: 70 });
+      const next = addNote({ pitch: 74, startPpq: 2, durationPpq: 1 });
+      const untouched = addNote({ pitch: 48, startPpq: 0.1, durationPpq: 0.3 });
+      setSelection([held, decay, next]);
+
+      tidySelection();
+      expect(noteById(decay)).toBeUndefined();
+      expect(noteById(held)?.durationPpq).toBe(2);
+      expect(noteById(untouched)).toMatchObject({ startPpq: 0.1, durationPpq: 0.3 });
+      expect([...store.selection].sort()).toEqual([held, next].sort());
+
+      undo();
+      expect(store.notes).toHaveLength(4);
     });
 
     it('nudges and clamps selection velocity', () => {

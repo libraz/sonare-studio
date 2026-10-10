@@ -1,3 +1,4 @@
+import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
 import {
   applyGrooveToPosition,
   DEFAULT_GROOVE_STEPS,
@@ -512,6 +513,38 @@ export function cleanupOverlaps(): void {
     .map((note) => updates.get(note.id) ?? { ...note });
   commit(next, { writeNotes: true });
   setSelection([...store.selection].filter((id) => !drop.has(id)));
+}
+
+/**
+ * Re-times the selected notes by harmony, meter and phrase as one undoable
+ * edit (see {@link tidyNotes}): fragments are joined, ghosts dropped, and
+ * melody, bass and inner voices take their own lengths. Pitches never change.
+ */
+export function tidySelection(): void {
+  const store = useProjectStore();
+  const selected = selectedNotes();
+  if (selected.length === 0) return;
+  const clip = requireEditableClip(store, store.clipId);
+  const offset = midiSourcePpqToTimeline(clip, 0);
+  const tidied = tidyNotes(
+    selected.map((note) => ({ ...note, startPpq: note.startPpq + offset })),
+    {
+      gridPpq: tidyGridPpq(store),
+      timeSignatures: store.timeSignatures,
+      chords: store.chords,
+      endPpq: midiSourcePpqToTimeline(clip, clip.sourceOffsetPpq + clip.lengthPpq),
+    },
+  );
+  const byId = new Map(
+    tidied.map((note) => [note.id, { ...note, startPpq: Math.max(0, note.startPpq - offset) }]),
+  );
+  const next = store.notes.flatMap((note) => {
+    if (!store.selection.has(note.id)) return [{ ...note }];
+    const kept = byId.get(note.id);
+    return kept ? [kept] : [];
+  });
+  commit(next, { writeNotes: true });
+  setSelection(byId.keys());
 }
 
 /**

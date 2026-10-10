@@ -248,6 +248,7 @@ export {
   setSelection,
   snapSelectionToScale,
   splitNote,
+  tidySelection,
   transposeSelection,
   transposeSelectionDiatonic,
   updateNotes,

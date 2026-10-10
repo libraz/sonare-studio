@@ -216,6 +216,7 @@ export const shellEditors = {
       legato: '次ノートまでレガート',
       merge: '重なりを結合',
       cleanupOverlaps: '重なりを整理',
+      tidy: '音楽理論で整える',
       transposeUpOctave: '1オクターブ上げる',
       transposeDownOctave: '1オクターブ下げる',
       diatonicUp: 'スケール内で上へ',
