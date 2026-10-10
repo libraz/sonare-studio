@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TrackHeaderList from '@/components/arrangement/TrackHeaderList.vue';
+import { dialogQueue } from '@/composables/useDialogs';
 import { addTrack, clearHistory, setTrackLeadFollow, setTrackPercussion } from '@/project/commands';
 import { PITCH_RANGE_PRESETS } from '@/project/pitch-range';
 import { useProjectStore } from '@/project/store';
@@ -179,5 +180,44 @@ describe('track header menus (pitch range, lead follow)', () => {
       const items = await openMenuFor(wrapper, trackId);
       expect(leadFollowItem(items)?.disabled).toBeFalsy();
     });
+  });
+});
+
+describe('track header delete', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    await store.init();
+    addTrack({ name: 'Doomed' });
+    clearHistory();
+    dialogQueue.splice(0);
+  });
+
+  afterEach(() => {
+    dialogQueue.splice(0);
+  });
+
+  /** Clicks the delete button of the named track and answers its confirmation. */
+  async function deleteWithAnswer(answer: boolean): Promise<string[]> {
+    const store = useProjectStore();
+    const wrapper = mountHeaders();
+    const index = store.tracks.findIndex((track) => track.name === 'Doomed');
+    await wrapper.findAll('.track-delete')[index].trigger('click');
+    expect(dialogQueue).toHaveLength(1);
+    expect(dialogQueue[0].kind).toBe('confirm');
+    expect(store.tracks.some((track) => track.name === 'Doomed')).toBe(true);
+    dialogQueue[0].resolve(answer);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    wrapper.unmount();
+    return store.tracks.map((track) => track.name);
+  }
+
+  it('keeps the track when the confirmation is cancelled', async () => {
+    expect(await deleteWithAnswer(false)).toContain('Doomed');
+  });
+
+  it('removes the track once the confirmation is accepted', async () => {
+    expect(await deleteWithAnswer(true)).not.toContain('Doomed');
   });
 });

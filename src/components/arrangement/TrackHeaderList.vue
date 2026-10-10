@@ -4,7 +4,8 @@ import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue
 import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { promptDialog } from '@/composables/useDialogs';
+import { useAppSettings } from '@/composables/useAppSettings';
+import { confirmDialog, promptDialog } from '@/composables/useDialogs';
 import { isDrumTrack } from '@/compose/tracks';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { isOpfsAvailable } from '@/persistence/opfs';
@@ -179,6 +180,7 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
+const appSettings = useAppSettings();
 const displayTracks = computed(() => props.tracks ?? store.tracks);
 
 /** Position the native popover inside the visible header viewport. The top
@@ -378,8 +380,22 @@ function trackPan(track: EditorTrack): number {
   return track.mixer?.pan ?? track.pan;
 }
 
-function onDelete(track: EditorTrack): void {
+async function onDelete(track: EditorTrack): Promise<void> {
   const ids = selectedTrackIds(track.id);
+  const labels = t.value.shell.arrangement.trackHeader;
+  if (
+    appSettings.settings.confirmDestructive &&
+    !(await confirmDialog({
+      title: labels.deleteTrack,
+      message:
+        ids.length === 1
+          ? formatMessage(labels.deleteTrackConfirmMessage, { name: track.name })
+          : formatMessage(labels.deleteTracksConfirmMessage, { count: ids.length }),
+      danger: true,
+      confirmLabel: labels.deleteTrackConfirm,
+    }))
+  )
+    return;
   if (ids.length === 1) removeTrack(track.id);
   else removeTracks(ids);
 }
@@ -1091,7 +1107,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       id: 'delete',
       label: t.value.shell.arrangement.trackHeader.removeTrack,
       danger: true,
-      run: () => onDelete(track),
+      run: () => void onDelete(track),
     },
   );
   openContextMenu(event.clientX, event.clientY, items);
@@ -1206,7 +1222,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                       name: track.name,
                     })
                   "
-                  @click.stop="onDelete(track)"
+                  @click.stop="void onDelete(track)"
                 >
                   ×
                 </button>
