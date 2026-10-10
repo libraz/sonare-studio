@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import {
-  MAX_POLYPHONIC_SAMPLES,
-  MAX_POLYPHONIC_SECONDS,
-  transcribeAudioClip,
-} from '@/project/audio-transcription';
+import { MAX_POLYPHONIC_SECONDS, transcribeAudioClip } from '@/project/audio-transcription';
 import type { WarpedClipSource } from '@/project/warp';
 import type { TranscribeResult } from '@/wasm/index.js';
 
@@ -325,34 +321,76 @@ describe('transcribeAudioClip', () => {
     expect(transcribeCalled).toBe(false);
   });
 
-  it('rejects oversized polyphonic windows before slicing or dispatch', async () => {
-    let transcribeCalled = false;
-    let loadCalled = false;
-    const source = asset(48_000, MAX_POLYPHONIC_SAMPLES + 1);
-    await expect(
-      transcribeAudioClip(
-        {
-          assetId: 'test-audio',
-          startPpq: 0,
-          lengthPpq: MAX_POLYPHONIC_SECONDS + 1,
-          sourceOffsetPpq: 0,
+  it('splits a long polyphonic window into overlapping chunks without doubling notes', async () => {
+    const rate = 1_000;
+    const seconds = 2 * MAX_POLYPHONIC_SECONDS + 10;
+    const source = asset(rate, seconds * rate, 1);
+    source.channels[0] = Float32Array.from({ length: seconds * rate }, (_, frame) => frame);
+    // Absolute onsets, including one inside the overlap read by two chunks.
+    const cut = seconds / Math.ceil(seconds / (MAX_POLYPHONIC_SECONDS - 4));
+    const onsets = [50, Math.round(cut) + 1, Math.round(2 * cut) - 1, seconds - 20];
+    const calls: Array<{ from: number; length: number; referenceHz?: number | 'auto' }> = [];
+    const tunings: number[] = [];
+
+    const notes = await transcribeAudioClip(
+      { assetId: 'test-audio', startPpq: 0, lengthPpq: seconds, sourceOffsetPpq: 0 },
+      60,
+      {
+        loadAudioAsset: async () => source,
+        transcribe: async (samples, _sampleRate, _polyphonic, options) => {
+          const from = samples[0] / rate;
+          calls.push({ from, length: samples.length / rate, referenceHz: options?.referenceHz });
+          const inside = onsets.filter((at) => at >= from && at < from + samples.length / rate);
+          return {
+            ...result(
+              inside.flatMap((at) => [
+                noteEvent(at - from, 0x9, 60, 90),
+                noteEvent(at - from + 1, 0x8, 60, 0),
+              ]),
+            ),
+            tuning: 0.1,
+          };
         },
-        60,
-        {
-          loadAudioAsset: async () => {
-            loadCalled = true;
-            return source;
-          },
-          transcribe: async () => {
-            transcribeCalled = true;
-            return result([]);
-          },
+      },
+      { polyphonic: true, referenceHz: 'auto', onTuning: (tuning) => tunings.push(tuning) },
+    );
+
+    expect(calls.length).toBe(3);
+    for (const call of calls) expect(call.length).toBeLessThanOrEqual(MAX_POLYPHONIC_SECONDS);
+    expect(notes.map((note) => Math.round(note.startPpq))).toEqual(onsets);
+    expect(notes.every((note) => Math.round(note.durationPpq) === 1)).toBe(true);
+    expect(calls[0]?.referenceHz).toBe('auto');
+    expect(calls.slice(1).every((call) => call.referenceHz === 440 * 2 ** (0.1 / 12))).toBe(true);
+    expect(tunings).toEqual([0.1]);
+  });
+
+  it('cuts a long stereo window to the preparation budget, not only the detector limit', async () => {
+    const rate = 48_000;
+    const seconds = 220;
+    expect(seconds).toBeLessThan(MAX_POLYPHONIC_SECONDS);
+    const frames = seconds * rate;
+    const stereo: LoadedAudioAsset = {
+      meta: { id: 'long', name: 'long', sampleRate: rate, numChannels: 2, numFrames: frames },
+      channels: [new Float32Array(frames).fill(0.1), new Float32Array(frames).fill(-0.1)],
+    };
+    const lengths: number[] = [];
+
+    await transcribeAudioClip(
+      { assetId: 'long', startPpq: 0, lengthPpq: seconds, sourceOffsetPpq: 0 },
+      60,
+      {
+        loadAudioAsset: async () => stereo,
+        transcribe: async (samples) => {
+          lengths.push(samples.length / rate);
+          return result([]);
         },
-        { polyphonic: true },
-      ),
-    ).rejects.toThrow(`limited to ${MAX_POLYPHONIC_SECONDS} seconds`);
-    expect(loadCalled).toBe(false);
-    expect(transcribeCalled).toBe(false);
+      },
+      { polyphonic: true },
+    );
+
+    expect(lengths.length).toBeGreaterThan(1);
+    expect(lengths.reduce((sum, length) => sum + length, 0)).toBeGreaterThanOrEqual(seconds);
+    for (const length of lengths) expect(length).toBeLessThan(seconds);
   });
 
   it('keeps overlapping notes and aborts before worker dispatch', async () => {

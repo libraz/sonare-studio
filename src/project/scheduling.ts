@@ -547,6 +547,12 @@ export async function renderAudioClipSegment(
 /** Clip fields needed to render the complete audible clip-local window. */
 export type AudibleAudioClipFields = SegmentRenderableAudioClip & CompableClipFields;
 
+/** A frame range of the clip-local buffer, so a long clip can be rendered a piece at a time. */
+export interface AudibleClipFrameWindow {
+  startFrame: number;
+  frameCount: number;
+}
+
 /** Complete, transform-baked clip content ready for clip-level offline DSP. */
 export interface RenderedAudibleAudioClip {
   channels: Float32Array[];
@@ -569,13 +575,14 @@ function audioSpanSamples(
  * clip-local buffer. This is the clip-DSP seam shared with live/export:
  * take/comp selection, loop occurrences, warp, source windows, fades and the
  * project tempo map all flow through `audioClipSegments` and
- * `renderAudioClipSegment` before the segments are summed.
+ * `renderAudioClipSegment` before the segments are summed. `window` limits the
+ * output buffer to a frame range of that same clip-local timeline.
  */
 export async function renderAudibleAudioClipWindow(
   clip: AudibleAudioClipFields,
   tempo: AudioClipSliceTempo,
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>,
-  options: { renderWarp?: WarpRenderFn } = {},
+  options: { renderWarp?: WarpRenderFn; window?: AudibleClipFrameWindow } = {},
 ): Promise<RenderedAudibleAudioClip | null> {
   if (!(clip.lengthPpq > 0) || (typeof tempo === 'number' && !(tempo > 0))) return null;
   const tempoMap =
@@ -587,24 +594,33 @@ export async function renderAudibleAudioClipWindow(
   );
   const sampleRate = renderedAssets[0]?.asset.meta.sampleRate ?? 0;
   if (!(sampleRate > 0)) return null;
-  const frames = audioSpanSamples(tempo, clip.startPpq, clip.lengthPpq, sampleRate);
+  const clipFrames = audioSpanSamples(tempo, clip.startPpq, clip.lengthPpq, sampleRate);
+  const windowStart = Math.min(clipFrames, Math.max(0, options.window?.startFrame ?? 0));
+  const frames = Math.min(clipFrames - windowStart, options.window?.frameCount ?? clipFrames);
   const channelCount = renderedAssets.reduce(
     (count, entry) => Math.max(count, entry.asset.channels.length),
     0,
   );
-  if (frames === 0 || channelCount === 0) return null;
+  if (frames <= 0 || channelCount === 0) return null;
   const channels = Array.from({ length: channelCount }, () => new Float32Array(frames));
   let renderedAnyFrames = false;
 
   for (const { segment, asset } of renderedAssets) {
+    const destinationStart =
+      audioSpanSamples(tempo, clip.startPpq, segment.offsetPpq, sampleRate) - windowStart;
+    const segmentEnd =
+      destinationStart +
+      audioSpanSamples(tempo, clip.startPpq + segment.offsetPpq, segment.lengthPpq, sampleRate);
+    // A segment wholly outside the window is never rendered.
+    if (destinationStart >= frames || segmentEnd <= 0) continue;
     let segmentChannels = await renderAudioClipSegment(asset, clip, segment, tempo, tempo, options);
     segmentChannels = resampleChannelsLinear(segmentChannels, asset.meta.sampleRate, sampleRate);
-    const destinationStart = audioSpanSamples(tempo, clip.startPpq, segment.offsetPpq, sampleRate);
+    const firstFrame = Math.max(0, -destinationStart);
     const available = Math.max(
       0,
       Math.min(segmentChannels[0]?.length ?? 0, frames - destinationStart),
     );
-    if (available === 0) continue;
+    if (available <= firstFrame) continue;
     renderedAnyFrames = true;
     for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
       const source =
@@ -612,7 +628,7 @@ export async function renderAudibleAudioClipWindow(
         (segmentChannels.length === 1 ? segmentChannels[0] : undefined);
       if (!source) continue;
       const destination = channels[channelIndex];
-      for (let frame = 0; frame < available; frame += 1) {
+      for (let frame = firstFrame; frame < available; frame += 1) {
         destination[destinationStart + frame] += source[frame] ?? 0;
       }
     }

@@ -19,10 +19,12 @@ import type { TranscribeWorkerOptions } from './transcribe-client';
 import type { ClipCompSegment, ClipTake, ClipWarp, TempoSegment } from './types';
 import type { WarpRenderFn } from './warp';
 
-/** Polyphonic transcription's maximum source duration; working memory grows about 3 MB per second. */
-export const MAX_POLYPHONIC_SECONDS = 120;
-/** Polyphonic transcription's maximum detector input size at 48 kHz. */
-export const MAX_POLYPHONIC_SAMPLES = 5_760_000;
+/** Longest span one polyphonic detector request reads; working memory grows about 1.1 MB per second. */
+export const MAX_POLYPHONIC_SECONDS = 300;
+/** A polyphonic chunk reads this far past each cut, so a note crossing it keeps its onset and length. */
+const POLYPHONIC_CHUNK_OVERLAP_SECONDS = 2;
+/** Shortest chunk worth reading; a budget that cannot hold one refuses the clip. */
+const MIN_POLYPHONIC_CHUNK_SECONDS = 30;
 /** The detector receives at most this sample rate. */
 export const MAX_TRANSCRIPTION_SAMPLE_RATE = 48_000;
 /** Conservative preparation budget for decoded/rendered/transferred PCM. */
@@ -193,17 +195,24 @@ async function preflightTranscription(
 ): Promise<{
   segments: ReturnType<typeof audioClipSegments>;
   metadata: Map<string, AudioAssetMeta>;
+  /** Sample rate the clip window renders at; 0 when nothing is audible. */
+  renderRate: number;
+  /** Longest window one detector request may read. */
+  requestSeconds: number;
+  audibleSeconds: number;
 }> {
   const segments = audioClipSegments(clip, { tempoMap: map, clipStartPpq: clip.startPpq });
-  if (segments.length === 0) return { segments, metadata: new Map() };
+  const empty = {
+    segments,
+    metadata: new Map(),
+    renderRate: 0,
+    requestSeconds: 0,
+    audibleSeconds: 0,
+  };
+  if (segments.length === 0) return empty;
   const startSeconds = ppqToSeconds(map, clip.startPpq);
   const endSeconds = ppqToSeconds(map, clip.startPpq + clip.lengthPpq);
   const audibleSeconds = Math.max(0, endSeconds - startSeconds);
-  if (polyphonic && audibleSeconds > MAX_POLYPHONIC_SECONDS) {
-    throw new RangeError(
-      `Polyphonic transcription is limited to ${MAX_POLYPHONIC_SECONDS} seconds at ${MAX_TRANSCRIPTION_SAMPLE_RATE} Hz`,
-    );
-  }
 
   const assetIds = [...new Set(segments.map((segment) => segment.assetId))];
   const metadata = new Map<string, AudioAssetMeta>();
@@ -215,16 +224,9 @@ async function preflightTranscription(
     metadata.set(assetId, meta);
   }
   const firstMeta = metadata.get(segments[0]?.assetId ?? '');
-  if (!firstMeta) return { segments, metadata };
+  if (!firstMeta) return { ...empty, metadata };
   const renderRate = firstMeta.sampleRate;
   const targetRate = Math.min(renderRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
-  const renderedFrames = Math.max(0, Math.round(audibleSeconds * renderRate));
-  const targetFrames = Math.max(0, Math.round(audibleSeconds * targetRate));
-  if (polyphonic && targetFrames > MAX_POLYPHONIC_SAMPLES) {
-    throw new RangeError(
-      `Polyphonic transcription is limited to ${MAX_POLYPHONIC_SECONDS} seconds at ${MAX_TRANSCRIPTION_SAMPLE_RATE} Hz`,
-    );
-  }
   const sourceBytes = addSafeBytes(
     assetIds.map((assetId) => {
       const meta = metadata.get(assetId);
@@ -235,27 +237,84 @@ async function preflightTranscription(
     1,
     ...assetIds.map((assetId) => metadata.get(assetId)?.numChannels ?? 0),
   );
-  const renderedBytes = safePcmBytes(renderedFrames, renderedChannels);
-  const monoBytes = safePcmBytes(renderedFrames, 1);
-  const workerResampledBytes = safePcmBytes(targetFrames, 1);
-  const requiredBytes = addSafeBytes([
+  const framesOf = (seconds: number, rate: number): number =>
+    Math.max(0, Math.round(seconds * rate));
+  const fixedBytes = addSafeBytes([
     sourceBytes,
-    renderedBytes,
-    monoBytes,
-    // transcribe-client copies the mono buffer before transferring it.
-    monoBytes,
-    workerResampledBytes,
-    // The warp renderer may retain both its source and output while rendering.
-    clip.warp?.enabled === true ? renderedBytes : 0,
+    // The warp renderer produces each warped segment whole, whatever the window.
+    clip.warp?.enabled === true
+      ? safePcmBytes(framesOf(audibleSeconds, renderRate), renderedChannels)
+      : 0,
   ]);
-  if (requiredBytes > DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES) {
+  // One request holds its rendered window, the mono mixdown, the copy
+  // transcribe-client transfers, and the worker's resampled input.
+  const requestBytes = (seconds: number): number =>
+    addSafeBytes([
+      safePcmBytes(framesOf(seconds, renderRate), renderedChannels),
+      safePcmBytes(framesOf(seconds, renderRate), 1),
+      safePcmBytes(framesOf(seconds, renderRate), 1),
+      safePcmBytes(framesOf(seconds, targetRate), 1),
+    ]);
+  const fits = (seconds: number): boolean =>
+    addSafeBytes([fixedBytes, requestBytes(seconds)]) <= DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES;
+  let requestSeconds = audibleSeconds;
+  if (polyphonic) {
+    const perSecond = requestBytes(1);
+    const budgetSeconds =
+      perSecond > 0
+        ? (DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES - fixedBytes) / perSecond
+        : Number.POSITIVE_INFINITY;
+    requestSeconds = Math.min(audibleSeconds, MAX_POLYPHONIC_SECONDS, Math.floor(budgetSeconds));
+    if (requestSeconds < audibleSeconds) {
+      requestSeconds = Math.max(requestSeconds, MIN_POLYPHONIC_CHUNK_SECONDS);
+    }
+  }
+  if (!fits(requestSeconds)) {
     throw new PayloadMemoryLimitError(
       'Audio transcription',
-      requiredBytes,
+      addSafeBytes([fixedBytes, requestBytes(requestSeconds)]),
       DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES,
     );
   }
-  return { segments, metadata };
+  return { segments, metadata, renderRate, requestSeconds, audibleSeconds };
+}
+
+/** One detector request: the seconds it reads, and the onsets it is the authority for. */
+interface DetectorSpan {
+  readFrom: number;
+  readTo: number;
+  ownFrom: number;
+  ownTo: number;
+}
+
+/**
+ * Cuts a window into detector requests no longer than `requestSeconds`. A
+ * longer window is split into equal chunks that each read past their cuts, and
+ * keep only the onsets inside their own span.
+ */
+function detectorSpans(seconds: number, requestSeconds: number): DetectorSpan[] {
+  const whole = [
+    {
+      readFrom: 0,
+      readTo: seconds,
+      ownFrom: Number.NEGATIVE_INFINITY,
+      ownTo: Number.POSITIVE_INFINITY,
+    },
+  ];
+  if (seconds <= requestSeconds) return whole;
+  const owned = requestSeconds - 2 * POLYPHONIC_CHUNK_OVERLAP_SECONDS;
+  const count = Math.ceil(seconds / owned);
+  const length = seconds / count;
+  return Array.from({ length: count }, (_, index) => {
+    const ownFrom = index * length;
+    const ownTo = index === count - 1 ? seconds : (index + 1) * length;
+    return {
+      readFrom: Math.max(0, ownFrom - POLYPHONIC_CHUNK_OVERLAP_SECONDS),
+      readTo: Math.min(seconds, ownTo + POLYPHONIC_CHUNK_OVERLAP_SECONDS),
+      ownFrom: index === 0 ? Number.NEGATIVE_INFINITY : ownFrom,
+      ownTo: index === count - 1 ? Number.POSITIVE_INFINITY : ownTo,
+    };
+  });
 }
 
 /**
@@ -291,7 +350,7 @@ export async function transcribeAudioClip(
   const loadMeta =
     deps.loadAudioAssetMeta ??
     (async (assetId: string): Promise<AudioAssetMeta> => (await loadAudioAsset(assetId)).meta);
-  await preflightTranscription(clip, map, polyphonic, loadMeta, options.signal);
+  const plan = await preflightTranscription(clip, map, polyphonic, loadMeta, options.signal);
   throwIfAborted(options.signal);
   const renderWarp = deps.renderWarp
     ? async (...args: Parameters<WarpRenderFn>): ReturnType<WarpRenderFn> => {
@@ -301,41 +360,64 @@ export async function transcribeAudioClip(
         return rendered ?? [];
       }
     : undefined;
-  const window = await renderAudibleAudioClipWindow(clip, map, loadAudioAsset, {
-    renderWarp,
-  });
-  throwIfAborted(options.signal);
-  if (!window) return [];
-  const { channels, sampleRate: sourceRate } = window;
-  const mono = mixdownToMono(channels);
-  const windowFrames = channels[0]?.length ?? 0;
-  if (windowFrames === 0) return [];
-  const targetRate = Math.min(sourceRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
-  if (mono.length === 0) return [];
-  throwIfAborted(options.signal);
   const gridTempoBpm = tempoAtPpq(map, clip.startPpq);
-  const result = await deps.transcribe(mono, targetRate, polyphonic, {
-    signal: options.signal,
-    tempoBpm: gridTempoBpm,
-    ...(sourceRate !== targetRate ? { sourceSampleRate: sourceRate } : {}),
-    ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
-    ...(options.minNoteDivision !== undefined ? { minNoteDivision: options.minNoteDivision } : {}),
-  });
-  throwIfAborted(options.signal);
-  validateResult(result);
-  if (finite(result.tuning)) options.onTuning?.(result.tuning);
-
-  // Detector PPQ sits on a constant grid at the reported tempo; take it to
-  // elapsed seconds, through the project's map and back to the clip's origin.
-  const secondsPerBeat = 60 / result.tempoBpm;
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
-  const beatsToClipPpq = (beats: number): number =>
-    secondsToPpq(map, clipStartSeconds + Math.max(0, beats) * secondsPerBeat) - clip.startPpq;
-  const notes = eventNotes(result.events).flatMap((note) => {
-    const startPpq = Math.max(0, Math.min(clip.lengthPpq, beatsToClipPpq(note.startPpq)));
-    const endPpq = Math.min(clip.lengthPpq, beatsToClipPpq(note.startPpq + note.durationPpq));
-    if (!(endPpq > startPpq)) return [];
-    return [{ ...note, startPpq, durationPpq: endPpq - startPpq }];
-  });
+  const secondsToClipPpq = (seconds: number): number =>
+    secondsToPpq(map, clipStartSeconds + Math.max(0, seconds)) - clip.startPpq;
+  const spans = detectorSpans(plan.audibleSeconds, plan.requestSeconds);
+  const notes: RawNote[] = [];
+  let referenceHz = options.referenceHz;
+  let tuningReported = false;
+  for (const span of spans) {
+    // Each request renders only its own window, so a long clip never holds
+    // more than one request's PCM at a time.
+    const startFrame = Math.round(span.readFrom * plan.renderRate);
+    const window = await renderAudibleAudioClipWindow(clip, map, loadAudioAsset, {
+      renderWarp,
+      ...(spans.length > 1
+        ? {
+            window: {
+              startFrame,
+              frameCount: Math.round(span.readTo * plan.renderRate) - startFrame,
+            },
+          }
+        : {}),
+    });
+    throwIfAborted(options.signal);
+    if (!window) continue;
+    const samples = mixdownToMono(window.channels);
+    if (samples.length === 0) continue;
+    const sourceRate = window.sampleRate;
+    const targetRate = Math.min(sourceRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
+    const result = await deps.transcribe(samples, targetRate, polyphonic, {
+      signal: options.signal,
+      tempoBpm: gridTempoBpm,
+      ...(sourceRate !== targetRate ? { sourceSampleRate: sourceRate } : {}),
+      ...(referenceHz !== undefined ? { referenceHz } : {}),
+      ...(options.minNoteDivision !== undefined
+        ? { minNoteDivision: options.minNoteDivision }
+        : {}),
+    });
+    throwIfAborted(options.signal);
+    validateResult(result);
+    if (!tuningReported && finite(result.tuning)) {
+      tuningReported = true;
+      options.onTuning?.(result.tuning);
+      // Later chunks reuse the first chunk's measurement, so one take keeps one pitch grid.
+      if (referenceHz === 'auto') referenceHz = 440 * 2 ** (result.tuning / 12);
+    }
+
+    // Detector PPQ sits on a constant grid at the reported tempo; take it to
+    // elapsed seconds, through the project's map and back to the clip's origin.
+    const secondsPerBeat = 60 / result.tempoBpm;
+    for (const note of eventNotes(result.events)) {
+      const onsetSeconds = span.readFrom + Math.max(0, note.startPpq) * secondsPerBeat;
+      if (onsetSeconds < span.ownFrom || onsetSeconds >= span.ownTo) continue;
+      const releaseSeconds = span.readFrom + (note.startPpq + note.durationPpq) * secondsPerBeat;
+      const startPpq = Math.max(0, Math.min(clip.lengthPpq, secondsToClipPpq(onsetSeconds)));
+      const endPpq = Math.min(clip.lengthPpq, secondsToClipPpq(releaseSeconds));
+      if (endPpq > startPpq) notes.push({ ...note, startPpq, durationPpq: endPpq - startPpq });
+    }
+  }
   return quantizeNotes(notes, options.rhythmQuantizePpq, clip.lengthPpq);
 }

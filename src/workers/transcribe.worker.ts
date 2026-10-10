@@ -2,7 +2,7 @@ import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 
 /** Keep the worker boundary safe even when called outside the project adapter. */
-const MAX_POLYPHONIC_SAMPLES = 5_760_000;
+const MAX_POLYPHONIC_SAMPLES = 14_400_000;
 
 /** One disposable worker request. */
 export interface TranscribeWorkerRequest {
