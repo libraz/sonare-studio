@@ -15,27 +15,33 @@ const scorePanel = readFileSync(
   'utf8',
 );
 
+const playheadFollow = readFileSync(
+  resolve(process.cwd(), 'src/ui/arrangement/use-playhead-follow.ts'),
+  'utf8',
+);
+
 describe('playhead follow preference wiring', () => {
+  it('keeps the follow loop in the shared composable', () => {
+    expect(playheadFollow).toContain('function tick');
+    expect(playheadFollow).toContain('anchoredPlayheadFollowStart(range, ppq, anchorLocalX)');
+    expect(playheadFollow).toContain('() => [options.isPlaying(), options.followEnabled()]');
+  });
+
   it('wires the arrangement view to the scroll-follow setting', () => {
-    expect(arrangementView).toContain('appSettings.settings.scrollFollowPlayhead');
-    expect(arrangementView).toContain('function followPlayheadTick');
+    expect(arrangementView).toContain('usePlayheadFollow({');
     expect(arrangementView).toContain(
-      'anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X)',
+      'followEnabled: () => appSettings.settings.scrollFollowPlayhead',
     );
-    expect(arrangementView).toContain(
-      '() => [props.isPlaying, appSettings.settings.scrollFollowPlayhead]',
-    );
+    expect(arrangementView).not.toContain('function followPlayheadTick');
   });
 
   it('wires the piano roll to the scroll-follow setting', () => {
-    expect(pianoRollEditor).toContain('appSettings.settings.scrollFollowPlayhead');
-    expect(pianoRollEditor).toContain('function followPlayheadTick');
+    expect(pianoRollEditor).toContain('usePlayheadFollow({');
     expect(pianoRollEditor).toContain(
-      'anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X)',
+      'followEnabled: () => appSettings.settings.scrollFollowPlayhead',
     );
-    expect(pianoRollEditor).toContain(
-      '() => [props.isPlaying, appSettings.settings.scrollFollowPlayhead]',
-    );
+    expect(pianoRollEditor).toContain('playheadFollow.restart()');
+    expect(pianoRollEditor).not.toContain('function followPlayheadTick');
   });
 
   it('wires the score panel to the scroll-follow setting independently from highlighting', () => {

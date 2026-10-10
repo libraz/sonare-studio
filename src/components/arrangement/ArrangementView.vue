@@ -75,11 +75,6 @@ import {
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 import { visibleGroupRows } from '@/ui/arrangement/group-rows';
-import {
-  anchoredPlayheadFollowStart,
-  PLAYHEAD_FOLLOW_ANCHOR_X,
-  revealPlayheadStart,
-} from '@/ui/arrangement/playhead-follow';
 import { barRangeAt } from '@/ui/arrangement/ruler';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import {
@@ -87,6 +82,7 @@ import {
   useClipInteractions,
 } from '@/ui/arrangement/use-clip-interactions';
 import { useCommonTakeSilence } from '@/ui/arrangement/use-common-take-silence';
+import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -407,17 +403,6 @@ const VERTICAL_ZOOM_STEP = 1.2;
 /** Bounds that keep compact overviews useful without making clips illegible. */
 const MIN_LANE_HEIGHT_PX = 28;
 const MAX_LANE_HEIGHT_PX = 112;
-
-/** Per-frame horizontal follow interpolation for arrangement playback. */
-const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
-/** Small PPQ threshold below which snapping avoids endless tiny repaints. */
-const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
-/** Follow scrolling redraws the full arrangement base layer, so cap it below display refresh. */
-const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
-/** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
-const PLAYHEAD_FOLLOW_MIN_PX = 1;
-/** Local column the playhead is pinned to while following (past the header). */
-const PLAYHEAD_ANCHOR_LOCAL_X = Math.max(0, PLAYHEAD_FOLLOW_ANCHOR_X - TRACK_HEADER_WIDTH_PX);
 
 // The TimelineRange and painter are plain (non-reactive) objects; views are
 // invalidated through the `revision` counter after every range mutation.
@@ -789,58 +774,14 @@ function onCanvasResize(): void {
   bump();
 }
 
-let followRaf: number | null = null;
-let lastFollowFrameMs = 0;
-
-function stopPlayheadFollow(): void {
-  if (followRaf !== null) cancelAnimationFrame(followRaf);
-  followRaf = null;
-}
-
-// Following pins the playhead at the right margin and then scrolls every frame
-// to keep it there. Each scroll bumps `revision`, which repaints the whole base
-// layer (lanes, grid, every clip waveform, take and automation sublanes, ruler)
-// — far too costly at display refresh. Throttle the scroll to ~30 Hz, smooth it,
-// and skip sub-pixel moves so the base repaint stays affordable; the overlay
-// playhead still tracks every frame on its own cheap layer.
-function followPlayheadTick(now = performance.now()): void {
-  followRaf = null;
-  if (!props.isPlaying || !appSettings.settings.scrollFollowPlayhead) return;
-  if (now - lastFollowFrameMs < PLAYHEAD_FOLLOW_INTERVAL_MS) {
-    followRaf = requestAnimationFrame(followPlayheadTick);
-    return;
-  }
-  lastFollowFrameMs = now;
-  const ppq = props.positionPpq?.();
-  if (ppq !== undefined) {
-    const nextStart = anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
-    if (nextStart !== null) {
-      const delta = nextStart - range.startPpq;
-      if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
-        const smoothed =
-          Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
-            ? nextStart
-            : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
-        range.setStartPpq(smoothed);
-        bump();
-      }
-    }
-  }
-  followRaf = requestAnimationFrame(followPlayheadTick);
-}
-
-function startPlayheadFollow(): void {
-  if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
-  lastFollowFrameMs = 0;
-  followRaf = requestAnimationFrame(followPlayheadTick);
-}
-
-/** Local column the overlay pins the playhead to while following, else null. */
-function followAnchorLocalX(): number | null {
-  return props.isPlaying && appSettings.settings.scrollFollowPlayhead
-    ? PLAYHEAD_ANCHOR_LOCAL_X
-    : null;
-}
+const { followAnchorLocalX } = usePlayheadFollow({
+  range,
+  bump,
+  isPlaying: () => props.isPlaying === true,
+  followEnabled: () => appSettings.settings.scrollFollowPlayhead,
+  positionPpq: () => props.positionPpq?.(),
+  leadingColumnWidthPx: TRACK_HEADER_WIDTH_PX,
+});
 
 function onSeek(ppq: number): void {
   emit('seek', ppq);
@@ -1416,31 +1357,7 @@ watch(
   },
 );
 
-watch(
-  () => [props.isPlaying, appSettings.settings.scrollFollowPlayhead],
-  ([playing, follow]) => {
-    if (playing && follow) startPlayheadFollow();
-    else stopPlayheadFollow();
-  },
-);
-
-// A seek while stopped nudges nothing else horizontally, so scroll the sought
-// position back into view when it lands outside the viewport. During playback
-// the follow loop owns scrolling, so skip it there.
-watch(
-  () => props.positionPpq?.(),
-  (ppq) => {
-    if (props.isPlaying || ppq === undefined) return;
-    const nextStart = revealPlayheadStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
-    if (nextStart !== null) {
-      range.setStartPpq(nextStart);
-      bump();
-    }
-  },
-);
-
 onMounted(async () => {
-  if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
   try {
     await store.init();
   } catch (err) {
@@ -1449,7 +1366,6 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  stopPlayheadFollow();
   painter.dispose();
 });
 </script>

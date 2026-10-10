@@ -33,12 +33,8 @@ import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-
 import { useProjectStore } from '@/project/store';
 import { measureRangeAt, snapPpqToMeterGrid } from '@/project/time-signature';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
-import {
-  anchoredPlayheadFollowStart,
-  PLAYHEAD_FOLLOW_ANCHOR_X,
-  revealPlayheadStart,
-} from '@/ui/arrangement/playhead-follow';
 import { localizeMeter } from '@/ui/arrangement/ruler';
+import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
@@ -112,23 +108,11 @@ const keyMap = computed(() => buildKeyMap(store.scaleHighlight, store.markers));
 /** Whether the MIDI-FX transform popover is open. */
 const fxPanelOpen = ref(false);
 
-/** Per-frame horizontal follow interpolation for piano-roll playback. */
-const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
-/** Small PPQ threshold below which snapping avoids endless tiny repaints. */
-const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
-/** Follow scrolling redraws the full piano-roll base layer, so cap it below display refresh. */
-const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
-/** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
-const PLAYHEAD_FOLLOW_MIN_PX = 1;
-/** Local column the playhead is pinned to while following (past the keyboard). */
-const PLAYHEAD_ANCHOR_LOCAL_X = Math.max(0, PLAYHEAD_FOLLOW_ANCHOR_X - KEYBOARD_COLUMN_WIDTH_PX);
-
 const viewport = usePianoRollViewport({
   // A transform targets a specific clip; close the popover on clip change.
   onClipChange: () => {
     fxPanelOpen.value = false;
-    stopPlayheadFollow();
-    if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
+    playheadFollow.restart();
   },
 });
 const { range, painter, revision, error, gridPpq, root, gridCell, hTrack, vTrack, bump } = viewport;
@@ -761,83 +745,15 @@ function onRootPointerDown(): void {
   root.value?.focus();
 }
 
-let followRaf: number | null = null;
-let lastFollowFrameMs = 0;
-
-function stopPlayheadFollow(): void {
-  if (followRaf !== null) cancelAnimationFrame(followRaf);
-  followRaf = null;
-}
-
-function followPlayheadTick(now = performance.now()): void {
-  followRaf = null;
-  if (!props.isPlaying || !appSettings.settings.scrollFollowPlayhead) return;
-  if (now - lastFollowFrameMs < PLAYHEAD_FOLLOW_INTERVAL_MS) {
-    followRaf = requestAnimationFrame(followPlayheadTick);
-    return;
-  }
-  lastFollowFrameMs = now;
-  if (props.positionPpq) {
-    const ppq = localPositionPpq();
-    const nextStart = anchoredPlayheadFollowStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
-    if (nextStart !== null) {
-      const delta = nextStart - range.startPpq;
-      if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
-        const smoothed =
-          Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
-            ? nextStart
-            : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
-        range.setStartPpq(smoothed);
-        bump();
-      }
-    }
-  }
-  followRaf = requestAnimationFrame(followPlayheadTick);
-}
-
-function startPlayheadFollow(): void {
-  if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
-  lastFollowFrameMs = 0;
-  followRaf = requestAnimationFrame(followPlayheadTick);
-}
-
-/** Local column the overlay pins the playhead to while following, else null. */
-function followAnchorLocalX(): number | null {
-  return props.isPlaying && appSettings.settings.scrollFollowPlayhead
-    ? PLAYHEAD_ANCHOR_LOCAL_X
-    : null;
-}
-
-watch(
-  () => [props.isPlaying, appSettings.settings.scrollFollowPlayhead],
-  ([playing, follow]) => {
-    if (playing && follow) startPlayheadFollow();
-    else stopPlayheadFollow();
-  },
-);
-
-// A seek while stopped nudges nothing else horizontally, so scroll the sought
-// position back into view when it lands outside the viewport. During playback
-// the follow loop owns scrolling, so skip it there.
-watch(
-  () => (props.positionPpq ? localPositionPpq() : undefined),
-  (ppq) => {
-    if (props.isPlaying || ppq === undefined) return;
-    const nextStart = revealPlayheadStart(range, ppq, PLAYHEAD_ANCHOR_LOCAL_X);
-    if (nextStart !== null) {
-      range.setStartPpq(nextStart);
-      bump();
-    }
-  },
-);
-
-onMounted(() => {
-  if (props.isPlaying && appSettings.settings.scrollFollowPlayhead) startPlayheadFollow();
+const playheadFollow = usePlayheadFollow({
+  range,
+  bump,
+  isPlaying: () => props.isPlaying === true,
+  followEnabled: () => appSettings.settings.scrollFollowPlayhead,
+  positionPpq: () => (props.positionPpq ? localPositionPpq() : undefined),
+  leadingColumnWidthPx: KEYBOARD_COLUMN_WIDTH_PX,
 });
-
-onBeforeUnmount(() => {
-  stopPlayheadFollow();
-});
+const { followAnchorLocalX } = playheadFollow;
 </script>
 
 <template>
