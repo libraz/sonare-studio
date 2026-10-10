@@ -69,6 +69,26 @@ function assertStereoBusStageAllowed(
   }
 }
 
+/** Rejects a bus route to an unknown or own destination, or one that closes a routing cycle. */
+function assertBusRouteAllowed(
+  store: ReturnType<typeof useProjectStore>,
+  sourceBusId: string,
+  destinationBusId: string,
+): void {
+  const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
+  assertKnownBusDestination(destinationBusId, knownBusIds, sourceBusId);
+  assertNoBusRoutingCycle(
+    mixerBusTopology(
+      store.mixer,
+      store.tracks
+        .filter((track) => track.kind === 'group')
+        .map((track) => ({ id: track.id, mixer: track.mixer })),
+    ),
+    sourceBusId,
+    destinationBusId,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Instrument / mixer commands (app-level metadata, execute(0)-style)
 // ---------------------------------------------------------------------------
@@ -330,18 +350,7 @@ export function setSend(
     const sourceBusId = isMixerBusStripTarget(target)
       ? mixerBusIdFromTarget(target)
       : groupBusTopologyId(target as number);
-    const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
-    assertKnownBusDestination(busId, knownBusIds, sourceBusId);
-    assertNoBusRoutingCycle(
-      mixerBusTopology(
-        store.mixer,
-        store.tracks
-          .filter((track) => track.kind === 'group')
-          .map((track) => ({ id: track.id, mixer: track.mixer })),
-      ),
-      sourceBusId,
-      busId,
-    );
+    assertBusRouteAllowed(store, sourceBusId, busId);
   }
   if (send !== null && !Number.isFinite(send.levelDb)) {
     throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
@@ -551,18 +560,7 @@ export function setStripOutputBus(target: MixerStripTarget, busId: string | null
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }
   if (busId !== null && sourceBusId !== undefined) {
-    const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
-    assertKnownBusDestination(busId, knownBusIds, sourceBusId);
-    assertNoBusRoutingCycle(
-      mixerBusTopology(
-        store.mixer,
-        store.tracks
-          .filter((track) => track.kind === 'group')
-          .map((track) => ({ id: track.id, mixer: track.mixer })),
-      ),
-      sourceBusId,
-      busId,
-    );
+    assertBusRouteAllowed(store, sourceBusId, busId);
   }
   const strip = currentStrip(store, target);
   if ((strip.outputBusId ?? null) === busId) return;
