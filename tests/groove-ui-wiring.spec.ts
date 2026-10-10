@@ -5,7 +5,7 @@ import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
 
 const pianoRoll = readFileSync(
-  resolve(process.cwd(), 'src/components/piano-roll/PianoRollEditor.vue'),
+  resolve(process.cwd(), 'src/components/piano-roll/use-piano-roll-note-menu.ts'),
   'utf8',
 );
 const arrangementView = readFileSync(

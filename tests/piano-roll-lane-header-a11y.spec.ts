@@ -7,6 +7,11 @@ const pianoRollEditor = readFileSync(
   'utf8',
 );
 
+const pianoRollEditorStyles = readFileSync(
+  resolve(process.cwd(), 'src/components/piano-roll/piano-roll-editor.css'),
+  'utf8',
+);
+
 describe('piano roll lane header accessibility', () => {
   it('groups the lane parameter selects instead of claiming an empty tablist', () => {
     // The lane header holds SelectMenu comboboxes, not tabs; a role="tablist"
@@ -21,6 +26,7 @@ describe('piano roll lane header accessibility', () => {
     expect(pianoRollEditor).not.toContain('centerActiveLaneTab');
     expect(pianoRollEditor).not.toContain('lane-tab-active');
     expect(pianoRollEditor).not.toContain('.lane-tab ');
+    expect(pianoRollEditorStyles).not.toContain('.lane-tab ');
   });
 
   it('does not route form-control keyboard events into note editing shortcuts', () => {

@@ -1,0 +1,215 @@
+.piano-roll-editor {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  background: var(--surface-1);
+  color: var(--text-2);
+  outline: none;
+}
+
+/* The editor auto-focuses on click, so a full accent frame would show on every
+ * interaction and read as a heavy border. Keep only a faint hint. */
+.piano-roll-editor:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-muted);
+}
+
+.piano-roll-error {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  font: var(--fs-sm)/1.4 var(--font-sans);
+}
+
+.piano-roll-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* Columns are set inline from KEYBOARD_COLUMN_WIDTH_PX so the keyboard width
+     and the playhead follow anchor stay derived from one source. */
+  /* The parameter lane yields space to the note grid on shorter screens. A
+     fixed 132px lane collapses the playable grid entirely at 720px height. */
+  grid-template-rows: 18px 24px 18px minmax(0, 1fr) clamp(48px, 25%, 132px) 12px 22px;
+}
+
+/* Collapse the parameter-lane row when the user hides the block; the grid and
+ * scrollbars keep the full remaining height. The lane cells are removed from
+ * layout so their canvases stop sizing/painting while hidden. */
+.piano-roll-layout.lane-hidden {
+  grid-template-rows: 18px 24px 18px 1fr 0 12px 22px;
+}
+
+.piano-roll-layout.lane-hidden .cell-velocity-label,
+.piano-roll-layout.lane-hidden .cell-velocity,
+.piano-roll-layout.lane-hidden .cell-corner {
+  display: none;
+}
+
+.cell-minimap {
+  grid-area: 1 / 1 / 2 / 4;
+}
+
+.cell-ruler-corner {
+  grid-area: 2 / 1;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.cell-ruler {
+  grid-area: 2 / 2;
+}
+
+.cell-chord-corner {
+  grid-area: 3 / 1;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-2);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  font: var(--fw-semibold) var(--fs-chrome-md) var(--font-sans);
+  letter-spacing: 0.06em;
+  color: var(--text-4);
+  overflow: hidden;
+}
+
+.cell-chords {
+  grid-area: 3 / 2;
+  min-width: 0;
+}
+
+.cell-chord-spacer {
+  grid-area: 3 / 3;
+  background: var(--surface-2);
+}
+
+.cell-keyboard {
+  grid-area: 4 / 1;
+}
+
+.cell-grid {
+  grid-area: 4 / 2;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cell-vscroll {
+  grid-area: 4 / 3;
+}
+
+.cell-velocity-label {
+  grid-area: 5 / 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 2px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-strong);
+  /* Each tab keeps a legible fixed height; when the full set of note + CC
+   * lanes does not fit the column scrolls rather than crushing the labels. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+
+.lane-divider {
+  flex: none;
+  height: 1px;
+  margin: 1px 4px;
+  background: var(--border);
+}
+
+/* Keep the channel picker from stretching as a flex item in the lane column;
+ * the frosted trigger carries its own surface, padding and typography. */
+.lane-channel,
+.lane-curve {
+  flex: none;
+  min-height: 0;
+}
+
+.lane-mode-select {
+  flex: none;
+  min-width: 0;
+}
+
+.mpe-unsupported-note {
+  margin: 2px 3px;
+  color: var(--text-3);
+  font: var(--fs-2xs) var(--font-sans);
+  line-height: 1.25;
+}
+
+.cell-velocity {
+  grid-area: 5 / 2;
+  border-top: 1px solid var(--border-strong);
+}
+
+.cell-corner {
+  grid-area: 5 / 3;
+  background: var(--surface-2);
+}
+
+.cell-hscroll-spacer {
+  grid-area: 6 / 1;
+  background: var(--surface-2);
+}
+
+.cell-hscroll {
+  grid-area: 6 / 2;
+}
+
+.cell-corner-br {
+  grid-area: 6 / 3;
+  background: var(--surface-2);
+}
+
+.cell-status {
+  grid-area: 7 / 1 / 8 / 4;
+  display: flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  border-top: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font: var(--fs-xs) / 1.2 var(--font-sans);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scroll-track {
+  position: relative;
+  background: var(--surface-2);
+  box-shadow: var(--inset-well);
+  touch-action: none;
+}
+
+.scroll-thumb {
+  position: absolute;
+  /* Lift the resting fill toward text-4 so the thumb is legible against the
+   * inset track even before hover; brightens on hover, darkens while grabbing. */
+  background: color-mix(in srgb, var(--text-4) 55%, var(--surface-4));
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.scroll-thumb:hover {
+  background: var(--text-4);
+}
+
+.scroll-track:active .scroll-thumb {
+  background: var(--text-3);
+}
+
+.scroll-thumb-v {
+  left: 1px;
+  right: 1px;
+}
+
+.scroll-thumb-h {
+  top: 1px;
+  bottom: 1px;
+}
