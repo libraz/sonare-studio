@@ -10,21 +10,13 @@
  * on any particular whitespace beyond well-formedness.
  */
 
-import {
-  chordSuffix,
-  normalizedChordExtensions,
-  normalizedChordOmissions,
-} from '@/compose/chord-quality';
 import type {
-  GlissandoLineType,
   NoteArticulation,
   NoteDynamics,
-  NoteHairpin,
   NoteLineSpan,
   NoteOrnament,
-  PedalLineSpanStyle,
 } from '@/project/annotations';
-import { scoreAnnotationLineSpans } from '@/project/annotations';
+import { staffForMeanPitch } from './grand-staff';
 import {
   measureHasMultiRestStructure,
   type NotatedBarlineStyle,
@@ -58,7 +50,16 @@ import {
   type PitchSpellingIndex,
   pitchXml,
 } from './musicxml-accidentals';
+import {
+  type AnnotationIndex,
+  buildAnnotationIndex,
+  buildLyricIndex,
+  type LineSpanRender,
+  type LyricIndex,
+  slurPlacement,
+} from './musicxml-annotation-index';
 import { type BeamIndex, beamXml, beatGroupPpq, buildBeamIndex } from './musicxml-beams';
+import { groupChordSymbolsByMeasure, harmonyXml } from './musicxml-harmony';
 import {
   eventUsesPercussionMap,
   GM_PERCUSSION_CHANNEL,
@@ -78,34 +79,11 @@ import {
   appendScoreHeader,
   escapeXml,
 } from './musicxml-xml';
-import { type Step, spellChordPitchClass, spellPitchInKeySignature } from './pitch-spelling';
-import { staffForMeanPitch } from './quantize';
+import { type Step, spellPitchInKeySignature } from './pitch-spelling';
 import { scoreNoteXmlId } from './source-identity';
 
 /** MIDI split point between the staves of a grand staff (middle C / C4). */
 const GRAND_STAFF_SPLIT_MIDI = 60;
-
-/**
- * MusicXML `<kind>` values for libsonare audio-domain `ChordQuality`
- * ordinals (Major = 0, Minor = 1, ...). Qualities without a standard
- * MusicXML kind (Add9, MinorAdd9, Sus2Add4, Unknown) are absent and fall
- * back to `<kind text="...">other</kind>`.
- */
-const CHORD_QUALITY_KIND: ReadonlyMap<number, string> = new Map([
-  [0, 'major'],
-  [1, 'minor'],
-  [2, 'diminished'],
-  [3, 'augmented'],
-  [4, 'dominant'],
-  [5, 'major-seventh'],
-  [6, 'minor-seventh'],
-  [7, 'suspended-second'],
-  [8, 'suspended-fourth'],
-  [12, 'diminished-seventh'],
-  [13, 'half-diminished'],
-  [14, 'major-ninth'],
-  [15, 'dominant-ninth'],
-]);
 
 /**
  * MusicXML articulation element name per annotation marking.
@@ -121,265 +99,6 @@ const ARTICULATION_ELEMENT: Readonly<Partial<Record<NoteArticulation, string>>> 
   tenuto: 'tenuto',
   marcato: 'strong-accent',
 };
-
-/** Highest `<slur>` number-level allowed by MusicXML. */
-const MAX_SLUR_NUMBER = 16;
-
-/**
- * Display annotations resolved onto engraved events. Built once per
- * serialization from {@link NotatedScore.noteAnnotations}: each annotated
- * editor note id is mapped to its "attack" event (the first piece of a tie
- * chain carrying the id in `sourceIds`); ids without an attack event
- * (deleted notes, notes outside the notated window) are silently ignored.
- */
-interface AnnotationIndex {
-  /** Engraving-only staff overrides without mutating the source event model. */
-  staffOverrides: Map<NotatedEvent, StaffNumber>;
-  /** Dynamics marking to emit as a `<direction>` right before the event. */
-  dynamics: Map<NotatedEvent, NoteDynamics>;
-  /** Articulation to emit inside the event's `<notations>`. */
-  articulations: Map<NotatedEvent, NoteArticulation>;
-  /** Ornament to emit inside the event's `<notations>`. */
-  ornaments: Map<NotatedEvent, NoteOrnament>;
-  /** Slur numbers starting on the event. */
-  slurStarts: Map<NotatedEvent, number[]>;
-  /** Slur placement attributes keyed by start event and slur number. */
-  slurStartPlacements: Map<NotatedEvent, Map<number, string>>;
-  /** Slur numbers stopping on the event. */
-  slurStops: Map<NotatedEvent, number[]>;
-  /** Hairpin wedges starting on the event. */
-  hairpinStarts: Map<NotatedEvent, Array<{ number: number; type: NoteHairpin }>>;
-  /** Hairpin wedge numbers stopping on the event. */
-  hairpinStops: Map<NotatedEvent, number[]>;
-  /** Other line/span markings starting on the event. */
-  lineSpanStarts: Map<NotatedEvent, LineSpanRender[]>;
-  /** Other line/span markings stopping on the event. */
-  lineSpanStops: Map<NotatedEvent, LineSpanRender[]>;
-}
-
-interface LineSpanRender {
-  number: number;
-  type: NoteLineSpan;
-  pedalStyle?: PedalLineSpanStyle;
-  glissandoLineType?: GlissandoLineType;
-  glissandoText?: string;
-}
-
-/** Lyric syllables resolved onto note attack events. */
-type LyricIndex = ReadonlyMap<NotatedEvent, ReadonlyArray<NotatedLyric>>;
-
-/** Appends a value to a keyed list inside a map. */
-function pushMapped<K>(map: Map<K, number[]>, key: K, value: number): void {
-  const list = map.get(key);
-  if (list === undefined) map.set(key, [value]);
-  else list.push(value);
-}
-
-/**
- * Resolves score annotations onto events (see {@link AnnotationIndex}).
- *
- * Slurs are validated here: the target must resolve to a different event
- * that starts strictly after the source, otherwise the slur is dropped.
- * Overlapping slurs receive distinct MusicXML number-levels so start/stop
- * pairs match unambiguously.
- */
-function buildAnnotationIndex(score: NotatedScore): AnnotationIndex {
-  const index: AnnotationIndex = {
-    staffOverrides: new Map(),
-    dynamics: new Map(),
-    articulations: new Map(),
-    ornaments: new Map(),
-    slurStarts: new Map(),
-    slurStartPlacements: new Map(),
-    slurStops: new Map(),
-    hairpinStarts: new Map(),
-    hairpinStops: new Map(),
-    lineSpanStarts: new Map(),
-    lineSpanStops: new Map(),
-  };
-  const annotations = score.noteAnnotations;
-  if (annotations === undefined) return index;
-  const attackByNoteId = new Map<number, NotatedEvent>();
-  const eventsByNoteId = new Map<number, NotatedEvent[]>();
-  for (const part of score.parts) {
-    for (const measure of part.measures) {
-      for (const voice of measure.voices) {
-        for (const event of voice.events) {
-          if (event.kind !== 'note' || event.sourceIds === undefined) continue;
-          for (const id of event.sourceIds) {
-            const events = eventsByNoteId.get(id) ?? [];
-            events.push(event);
-            eventsByNoteId.set(id, events);
-            if (!event.tieStop && !attackByNoteId.has(id)) attackByNoteId.set(id, event);
-          }
-        }
-      }
-    }
-  }
-  const slurs: Array<{ start: NotatedEvent; stop: NotatedEvent }> = [];
-  const hairpins: Array<{ start: NotatedEvent; stop: NotatedEvent; type: NoteHairpin }> = [];
-  const lineSpans: Array<
-    { start: NotatedEvent; stop: NotatedEvent } & Omit<LineSpanRender, 'number'>
-  > = [];
-  for (const [idKey, annotation] of Object.entries(annotations)) {
-    const event = attackByNoteId.get(Number(idKey));
-    if (event === undefined) continue; // Orphaned annotation: ignore.
-    if (annotation.staffOverride === 1 || annotation.staffOverride === 2) {
-      for (const sourceEvent of eventsByNoteId.get(Number(idKey)) ?? []) {
-        index.staffOverrides.set(sourceEvent, annotation.staffOverride);
-      }
-    }
-    if (annotation.dynamics !== undefined) index.dynamics.set(event, annotation.dynamics);
-    if (annotation.articulation !== undefined) {
-      index.articulations.set(event, annotation.articulation);
-    }
-    if (annotation.ornament !== undefined) index.ornaments.set(event, annotation.ornament);
-    if (annotation.slurToNoteId !== undefined) {
-      const target = attackByNoteId.get(annotation.slurToNoteId);
-      if (
-        target !== undefined &&
-        target !== event &&
-        target.startPpq > event.startPpq + PPQ_EPSILON
-      ) {
-        slurs.push({ start: event, stop: target });
-      }
-    }
-    if (annotation.hairpin !== undefined && annotation.hairpinToNoteId !== undefined) {
-      const target = attackByNoteId.get(annotation.hairpinToNoteId);
-      if (
-        target !== undefined &&
-        target !== event &&
-        target.startPpq > event.startPpq + PPQ_EPSILON
-      ) {
-        hairpins.push({ start: event, stop: target, type: annotation.hairpin });
-      }
-    }
-    for (const span of scoreAnnotationLineSpans(annotation)) {
-      const target = attackByNoteId.get(span.lineSpanToNoteId);
-      if (
-        target !== undefined &&
-        target !== event &&
-        target.startPpq > event.startPpq + PPQ_EPSILON
-      ) {
-        lineSpans.push({
-          start: event,
-          stop: target,
-          type: span.lineSpan,
-          ...(span.pedalStyle !== undefined ? { pedalStyle: span.pedalStyle } : {}),
-          ...(span.glissandoLineType !== undefined
-            ? { glissandoLineType: span.glissandoLineType }
-            : {}),
-          ...(span.glissandoText !== undefined ? { glissandoText: span.glissandoText } : {}),
-        });
-      }
-    }
-  }
-  slurs.sort((a, b) => a.start.startPpq - b.start.startPpq || a.stop.startPpq - b.stop.startPpq);
-  const active: Array<{ endPpq: number; number: number }> = [];
-  for (const slur of slurs) {
-    for (let i = active.length - 1; i >= 0; i--) {
-      if (active[i].endPpq <= slur.start.startPpq + PPQ_EPSILON) active.splice(i, 1);
-    }
-    let number = 1;
-    while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
-    active.push({ endPpq: slur.stop.startPpq, number });
-    pushMapped(index.slurStarts, slur.start, number);
-    const placements = index.slurStartPlacements.get(slur.start) ?? new Map<number, string>();
-    placements.set(number, slurPlacement(slur.start));
-    index.slurStartPlacements.set(slur.start, placements);
-    pushMapped(index.slurStops, slur.stop, number);
-  }
-  hairpins.sort((a, b) => a.start.startPpq - b.start.startPpq || a.stop.startPpq - b.stop.startPpq);
-  active.length = 0;
-  for (const hairpin of hairpins) {
-    for (let i = active.length - 1; i >= 0; i--) {
-      if (active[i].endPpq <= hairpin.start.startPpq + PPQ_EPSILON) active.splice(i, 1);
-    }
-    let number = 1;
-    while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
-    active.push({ endPpq: hairpin.stop.startPpq, number });
-    const starts = index.hairpinStarts.get(hairpin.start) ?? [];
-    starts.push({ number, type: hairpin.type });
-    index.hairpinStarts.set(hairpin.start, starts);
-    pushMapped(index.hairpinStops, hairpin.stop, number);
-  }
-  lineSpans.sort(
-    (a, b) => a.start.startPpq - b.start.startPpq || a.stop.startPpq - b.stop.startPpq,
-  );
-  active.length = 0;
-  for (const lineSpan of lineSpans) {
-    for (let i = active.length - 1; i >= 0; i--) {
-      if (active[i].endPpq <= lineSpan.start.startPpq + PPQ_EPSILON) active.splice(i, 1);
-    }
-    let number = 1;
-    while (active.some((entry) => entry.number === number) && number < MAX_SLUR_NUMBER) number++;
-    active.push({ endPpq: lineSpan.stop.startPpq, number });
-    const render: LineSpanRender = {
-      number,
-      type: lineSpan.type,
-      ...(lineSpan.pedalStyle !== undefined ? { pedalStyle: lineSpan.pedalStyle } : {}),
-      ...(lineSpan.glissandoLineType !== undefined
-        ? { glissandoLineType: lineSpan.glissandoLineType }
-        : {}),
-      ...(lineSpan.glissandoText !== undefined ? { glissandoText: lineSpan.glissandoText } : {}),
-    };
-    const starts = index.lineSpanStarts.get(lineSpan.start) ?? [];
-    starts.push(render);
-    index.lineSpanStarts.set(lineSpan.start, starts);
-    const stops = index.lineSpanStops.get(lineSpan.stop) ?? [];
-    stops.push(render);
-    index.lineSpanStops.set(lineSpan.stop, stops);
-  }
-  return index;
-}
-
-/** Resolves score-level lyric entries onto the nearest matching note attack. */
-function buildLyricIndex(score: NotatedScore): LyricIndex {
-  const lyrics = score.lyrics;
-  if (lyrics === undefined || lyrics.length === 0) return new Map();
-  const events: Array<{ partId: string; event: NotatedEvent }> = [];
-  for (const part of score.parts) {
-    for (const measure of part.measures) {
-      for (const voice of measure.voices) {
-        for (const event of voice.events) {
-          if (event.kind === 'note' && !event.tieStop) events.push({ partId: part.id, event });
-        }
-      }
-    }
-  }
-  const index = new Map<NotatedEvent, NotatedLyric[]>();
-  for (const lyric of [...lyrics].sort(compareLyrics)) {
-    const text = lyric.text.trim();
-    if (text === '') continue;
-    const candidates = events.filter(
-      ({ partId }) => lyric.partId === undefined || lyric.partId === partId,
-    );
-    const match = candidates.reduce<(typeof candidates)[number] | undefined>(
-      (nearest, candidate) => {
-        if (nearest === undefined) return candidate;
-        return Math.abs(candidate.event.startPpq - lyric.ppq) <
-          Math.abs(nearest.event.startPpq - lyric.ppq)
-          ? candidate
-          : nearest;
-      },
-      undefined,
-    );
-    if (match === undefined) continue;
-    const list = index.get(match.event) ?? [];
-    list.push({ ...lyric, text });
-    index.set(match.event, list);
-  }
-  return index;
-}
-
-function compareLyrics(a: NotatedLyric, b: NotatedLyric): number {
-  return a.ppq - b.ppq || (a.verse ?? 1) - (b.verse ?? 1) || a.text.localeCompare(b.text);
-}
-
-/** Default slur placement by voice direction. */
-function slurPlacement(event: NotatedEvent): string {
-  return event.voice === 1 || event.voice === 3 ? 'above' : 'below';
-}
 
 /**
  * Serializes a {@link NotatedScore} to a MusicXML 4.0 `score-partwise`
@@ -1524,195 +1243,6 @@ function ornamentXml(ornament: NoteOrnament): string {
     case 'fermata':
       return '<fermata type="upright"/>';
   }
-}
-
-/**
- * Builds MusicXML `<harmony>` elements for a chord symbol. The primary entry
- * remains a pop/jazz root-based symbol; Roman numeral text is preserved as an
- * alternate functional harmony when present.
- */
-function harmonyXml(
-  symbol: NotatedChordSymbol,
-  measure: NotatedMeasure,
-  score: NotatedScore,
-  keyFifths: number,
-): string[] {
-  if (!isPitchClass(symbol.rootPc)) {
-    return [];
-  }
-  const root = spellChordPitchClass(symbol.rootPc, keyFifths);
-  const rootAlter = root.alter === 0 ? '' : `<root-alter>${root.alter}</root-alter>`;
-  const rootXml = `<root><root-step>${root.step}</root-step>${rootAlter}</root>`;
-  const kindXml = chordKindXml(symbol);
-  const degreeXml = chordDegreeXml(symbol);
-  let bassXml = '';
-  if (isPitchClass(symbol.bassPc)) {
-    const bass = spellChordPitchClass(symbol.bassPc, keyFifths);
-    const bassAlter = bass.alter === 0 ? '' : `<bass-alter>${bass.alter}</bass-alter>`;
-    bassXml = `<bass><bass-step>${bass.step}</bass-step>${bassAlter}</bass>`;
-  }
-  const offset = ppqToDivisions(symbol.ppq - measure.startPpq, score.divisions);
-  const offsetXml = offset === 0 ? '' : `<offset>${offset}</offset>`;
-  const harmonies = [`<harmony>${rootXml}${kindXml}${bassXml}${degreeXml}${offsetXml}</harmony>`];
-  const romanNumeral = symbol.romanNumeral?.trim();
-  if (romanNumeral !== undefined && romanNumeral !== '') {
-    harmonies.push(
-      `<harmony type="alternate"><function>${escapeXml(romanNumeral)}</function>${kindXml}${degreeXml}${offsetXml}</harmony>`,
-    );
-  }
-  return harmonies;
-}
-
-/** Builds a MusicXML chord kind while preserving compact display suffixes. */
-function chordKindXml(symbol: NotatedChordSymbol): string {
-  const quality = symbol.quality;
-  const add9BaseKind = quality === 10 ? 'major' : quality === 11 ? 'minor' : undefined;
-  const kindName =
-    add9BaseKind ?? (quality === undefined ? undefined : CHORD_QUALITY_KIND.get(quality));
-  if (kindName === undefined) {
-    return `<kind text="${escapeXml(symbol.text)}">other</kind>`;
-  }
-  const text =
-    quality === undefined ? undefined : chordKindText(quality, symbol.extensions, symbol.omissions);
-  const textXml = text === undefined ? '' : ` text="${escapeXml(text)}"`;
-  return `<kind${textXml}>${kindName}</kind>`;
-}
-
-/**
- * Visible `<kind text>` suffix for a base quality plus its added and omitted
- * tones, taken from the shared chord naming so the exported text matches the
- * score view and the chord track. A plain major carries no text attribute.
- */
-function chordKindText(
-  quality: number,
-  extensions: ReadonlyArray<number> | undefined,
-  omissions?: ReadonlyArray<number>,
-): string | undefined {
-  const suffix = chordSuffix(quality, extensions, omissions);
-  return suffix === '' ? undefined : suffix;
-}
-
-/** One MusicXML `<degree>` element. */
-function chordDegreeElement(value: number, alter: number, type: 'add' | 'subtract'): string {
-  return `<degree><degree-value>${value}</degree-value><degree-alter>${alter}</degree-alter><degree-type>${type}</degree-type></degree>`;
-}
-
-/**
- * Adds explicit MusicXML degree data for the tones the printed kind does not
- * already imply: `add` for non-intrinsic chord tones, `subtract` for intrinsic
- * ones the chord leaves out.
- */
-function chordDegreeXml(symbol: NotatedChordSymbol): string {
-  const extensions = new Set(normalizedChordExtensions(symbol.quality, symbol.extensions));
-  // add9 and minAdd9 export as a plain major/minor kind, so their ninth is
-  // intrinsic to the editor quality but still needs an explicit degree.
-  if (symbol.quality === 10 || symbol.quality === 11) extensions.add(2);
-  const added = [...extensions]
-    .map((extension) => chordDegreeForExtension(extension, symbol.quality))
-    .filter((degree): degree is { value: number; alter: number } => degree !== undefined)
-    .map(({ value, alter }) => chordDegreeElement(value, alter, 'add'));
-  const subtracted = normalizedChordOmissions(symbol.quality, symbol.omissions)
-    .map((omission) => chordDegreeForOmission(omission))
-    .filter((degree): degree is { value: number; alter: number } => degree !== undefined)
-    .map(({ value, alter }) => chordDegreeElement(value, alter, 'subtract'));
-  return [...added, ...subtracted].join('');
-}
-
-/**
- * Maps an omitted intrinsic pitch class to the chord degree it occupies. The
- * degree names the position, so a minor and a major third both subtract the
- * third; the alteration follows the interval that was there.
- */
-function chordDegreeForOmission(omission: number): { value: number; alter: number } | undefined {
-  switch (omission) {
-    case 2:
-      return { value: 2, alter: 0 };
-    case 3:
-      return { value: 3, alter: -1 };
-    case 4:
-      return { value: 3, alter: 0 };
-    case 5:
-      return { value: 4, alter: 0 };
-    case 6:
-      return { value: 5, alter: -1 };
-    case 7:
-      return { value: 5, alter: 0 };
-    case 8:
-      return { value: 5, alter: 1 };
-    case 9:
-      return { value: 6, alter: 0 };
-    case 10:
-      return { value: 7, alter: -1 };
-    case 11:
-      return { value: 7, alter: 0 };
-    default:
-      return undefined;
-  }
-}
-
-/** Maps a root-relative extension pitch class to a conventional chord degree. */
-function chordDegreeForExtension(
-  extension: number,
-  quality: number | undefined,
-): { value: number; alter: number } | undefined {
-  switch (extension) {
-    case 1:
-      return { value: 9, alter: -1 };
-    case 2:
-      return { value: 9, alter: 0 };
-    case 3:
-      return { value: 9, alter: 1 };
-    case 5:
-      return { value: 11, alter: 0 };
-    case 6:
-      return { value: 11, alter: 1 };
-    case 8:
-      return { value: 13, alter: -1 };
-    case 9:
-      return { value: quality === 0 || quality === 1 ? 6 : 13, alter: 0 };
-    case 10:
-      return { value: 7, alter: -1 };
-    case 11:
-      return { value: 7, alter: 0 };
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Narrows an optional pitch-class field to a valid 0-11 value (the libsonare
- * 255 "unknown" sentinel and any other out-of-range value fail).
- */
-function isPitchClass(pc: number | undefined): pc is number {
-  return pc !== undefined && Number.isInteger(pc) && pc >= 0 && pc <= 11;
-}
-
-/**
- * Groups chord symbols by the index of the measure containing them; symbols
- * outside the measure grid are dropped.
- */
-function groupChordSymbolsByMeasure(
-  symbols: ReadonlyArray<NotatedChordSymbol>,
-  measures: ReadonlyArray<NotatedMeasure>,
-): Map<number, NotatedChordSymbol[]> {
-  const byMeasure = new Map<number, NotatedChordSymbol[]>();
-  for (const symbol of symbols) {
-    const measure = measures.find(
-      (m) =>
-        symbol.ppq >= m.startPpq - PPQ_EPSILON &&
-        symbol.ppq < m.startPpq + m.lengthPpq - PPQ_EPSILON,
-    );
-    if (measure === undefined) {
-      continue;
-    }
-    const list = byMeasure.get(measure.index);
-    if (list === undefined) {
-      byMeasure.set(measure.index, [symbol]);
-    } else {
-      list.push(symbol);
-    }
-  }
-  return byMeasure;
 }
 
 /**
