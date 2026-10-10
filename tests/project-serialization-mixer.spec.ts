@@ -51,7 +51,7 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
-describe('project serialization with instruments and mixer (schema v3)', () => {
+describe('project serialization with instruments and mixer (schema v4)', () => {
   let store: ReturnType<typeof useProjectStore>;
 
   beforeEach(async () => {
@@ -62,9 +62,9 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     await store.init();
   });
 
-  it('writes schema version 3', () => {
-    expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBe(3);
-    expect(serializeProject().schemaVersion).toBe(3);
+  it('writes schema version 4', () => {
+    expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBe(4);
+    expect(serializeProject().schemaVersion).toBe(4);
   });
 
   it('omits instrument/mixer fields while everything is default', () => {
@@ -634,14 +634,26 @@ describe('project serialization with instruments and mixer (schema v3)', () => {
     }
 
     await loadProjectDocument(v2);
-    expect(store.tracks[0].instrument).toBeUndefined();
+    // Pre-v4 files keep the e-piano they were written against.
+    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'e-piano' });
     expect(store.tracks[0].mixer).toBeUndefined();
     expect(store.mixer).toEqual({
       master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
       buses: [],
     });
     // Re-serializing upgrades to the current schema.
-    expect(serializeProject().schemaVersion).toBe(3);
+    expect(serializeProject().schemaVersion).toBe(4);
+  });
+
+  it('leaves current documents on the current default instrument', async () => {
+    const doc = serializeProject();
+    for (const track of doc.tracks) delete track.instrument;
+    const before = JSON.stringify(doc);
+
+    await loadProjectDocument(doc);
+
+    expect(JSON.stringify(doc)).toBe(before);
+    expect(store.tracks[0].instrument).toBeUndefined();
   });
 
   it('loading a mixer-less document resets a previously loaded mixer', async () => {
@@ -658,7 +670,7 @@ describe('template instrument assignment', () => {
     const byName = new Map(createTemplate('band').tracks.map((t) => [t.name, t.instrument]));
     expect(byName.get('Drums')).toEqual({ kind: 'synth-preset', preset: 'drum-kit' });
     expect(byName.get('Bass')).toEqual({ kind: 'synth-preset', preset: 'sub-bass' });
-    expect(byName.get('Piano')).toEqual({ kind: 'synth-preset', preset: 'e-piano' });
+    expect(byName.get('Piano')).toEqual({ kind: 'synth-preset', preset: 'acoustic-piano' });
     expect(byName.get('Guitar')).toEqual({ kind: 'synth-preset', preset: 'electric-guitar' });
   });
 

@@ -107,7 +107,7 @@ describe('DeviceRack.vue', () => {
   it('captions the default instrument of the active MIDI track', () => {
     const wrapper = mount(DeviceRack);
     expect(wrapper.find('.rack-track').text()).toBe(store.tracks[0].name);
-    expect(wrapper.find('.instrument-name').text()).toBe('e-piano');
+    expect(wrapper.find('.instrument-name').text()).toBe('acoustic-piano');
     expect(wrapper.find('.instrument-kind').text()).toBe('Preset');
     expect(wrapper.find('.instrument-source').text()).toBe('Built-in NativeSynth fallback preset');
   });
@@ -118,7 +118,7 @@ describe('DeviceRack.vue', () => {
     await flushPromises();
 
     expect(auditionMock.play).toHaveBeenCalledWith(
-      { kind: 'synth-preset', preset: 'e-piano' },
+      { kind: 'synth-preset', preset: 'acoustic-piano' },
       undefined,
       undefined,
       { normalize: true },
@@ -212,7 +212,7 @@ describe('DeviceRack.vue', () => {
 
     expect(store.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'e-piano',
+      preset: 'acoustic-piano',
       useGmPrograms: true,
       gmBank: 0,
       gmProgram: 24,
@@ -230,14 +230,14 @@ describe('DeviceRack.vue', () => {
       .findAll('.picker-tab')
       .find((tab) => tab.text() === 'GM')
       ?.trigger('click');
-    expect(selectValueText(wrapper, '.gm-field .select-menu')).toBe('005 · Electric Piano 1');
+    expect(selectValueText(wrapper, '.gm-field .select-menu')).toBe('001 · Acoustic Grand Piano');
     await selectOption(wrapper, '.gm-field .select-menu', '025 · Nylon Guitar');
     await selectOption(wrapper, '.gm-field + .gm-field .select-menu', '1 · Ukulele');
     await wrapper.find('.gm-use').trigger('click');
 
     expect(store.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'e-piano',
+      preset: 'acoustic-piano',
       useGmPrograms: true,
       gmBank: 128,
       gmProgram: 24,

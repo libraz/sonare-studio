@@ -1932,7 +1932,11 @@ describe('renderProjectWithEngine', () => {
     expect(lanes.has(0x4d58ff01)).toBe(false);
 
     // Instruments and MIDI schedules reach the engine.
-    expect(engine.named('setSynthInstrument')[0]).toEqual(['setSynthInstrument', 'e-piano', 1]);
+    expect(engine.named('setSynthInstrument')[0]).toEqual([
+      'setSynthInstrument',
+      'acoustic-piano',
+      1,
+    ]);
     const midi = engine.named('setMidiClips')[0][1] as unknown[];
     expect(midi.length).toBe(1);
 

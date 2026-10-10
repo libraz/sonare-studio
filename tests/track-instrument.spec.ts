@@ -88,7 +88,13 @@ const wasmMock = vi.hoisted(() => {
   const bounceWithSf2Instrument = vi.fn(() => new Float32Array([0.2, -0.2, 0.4, -0.4]));
   const loadSoundFont = vi.fn();
   const setMidiEvents = vi.fn();
-  const synthPresetNames = vi.fn(() => ['sine', 'saw-lead', 'e-piano', 'drum-kit']);
+  const synthPresetNames = vi.fn(() => [
+    'sine',
+    'saw-lead',
+    'e-piano',
+    'acoustic-piano',
+    'drum-kit',
+  ]);
 
   class MockProject {
     setSampleRate = vi.fn();
@@ -294,7 +300,7 @@ describe('midiClipCacheKey with instruments', () => {
     ).toBe(midiClipCacheKey(NOTES, { ...OPTS, preset: 'saw-lead' }));
   });
 
-  it('defaults to the e-piano preset identity', () => {
+  it('defaults to the default preset identity', () => {
     expect(midiClipCacheKey(NOTES, OPTS)).toBe(
       midiClipCacheKey(NOTES, { ...OPTS, instrument: defaultTrackInstrument() }),
     );
@@ -326,7 +332,7 @@ describe('midiClipCacheKey with instruments', () => {
 
 describe('instrument helpers', () => {
   it('trackInstrument falls back to the default preset', () => {
-    expect(trackInstrument({})).toEqual({ kind: 'synth-preset', preset: 'e-piano' });
+    expect(trackInstrument({})).toEqual({ kind: 'synth-preset', preset: 'acoustic-piano' });
     const explicit: TrackInstrument = { kind: 'synth-preset', preset: 'sine' };
     expect(trackInstrument({ instrument: explicit })).toBe(explicit);
   });
@@ -584,7 +590,7 @@ describe('prerenderMidiClip per instrument kind', () => {
 
   it('degrades unknown preset names to the default preset via the catalog', async () => {
     await prerenderMidiClip(NOTES, { ...OPTS, preset: 'no-such-preset' });
-    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toBe('e-piano');
+    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toBe('acoustic-piano');
   });
 
   it('keeps catalog-listed preset names as-is', async () => {

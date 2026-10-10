@@ -11,6 +11,7 @@ import {
   peakAmplitude,
   prerenderMidiClip,
 } from '@/engine/instruments';
+import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 
 const wasmMock = vi.hoisted(() => {
   const bounceWithSynthInstrument = vi.fn(
@@ -94,8 +95,8 @@ describe('midiClipCacheKey', () => {
     }
   });
 
-  it('uses defaults equal to explicit tempo 120 and preset e-piano', () => {
-    expect(midiClipCacheKey(NOTES, { ...OPTS, tempoBpm: 120, preset: 'e-piano' })).toBe(
+  it('uses defaults equal to explicit tempo 120 and the default preset', () => {
+    expect(midiClipCacheKey(NOTES, { ...OPTS, tempoBpm: 120, preset: DEFAULT_SYNTH_PRESET })).toBe(
       midiClipCacheKey(NOTES, OPTS),
     );
   });

@@ -75,7 +75,7 @@ describe('PatchEditor.vue', () => {
 
   it('seeds the draft from the preset base values of the track instrument', () => {
     const wrapper = mountOpen();
-    expect(wrapper.find('.patch-base').text()).toBe('based on e-piano');
+    expect(wrapper.find('.patch-base').text()).toBe('based on acoustic-piano');
     // fakeSynthPresetPatch reports cutoffHz 12000 / ampSustain 0.6.
     expect((wrapper.find('[data-field="cutoffHz"]').element as HTMLInputElement).value).toBe(
       '12000',
@@ -109,7 +109,7 @@ describe('PatchEditor.vue', () => {
       patch: { preset?: string; cutoffHz?: number; ampSustain?: number; lfo2RateHz?: number };
     };
     expect(instrument.kind).toBe('synth-patch');
-    expect(instrument.patch.preset).toBe('e-piano');
+    expect(instrument.patch.preset).toBe('acoustic-piano');
     expect(instrument.patch.cutoffHz).toBe(800);
     expect(instrument.patch.lfo2RateHz).toBe(4.5);
     // Untouched base values travel explicitly with the draft.

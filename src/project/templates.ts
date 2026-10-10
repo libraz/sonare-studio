@@ -25,7 +25,7 @@ import { TRACK_COLOR_PALETTE } from './types';
 const PRESET = {
   drums: 'drum-kit',
   bass: 'sub-bass',
-  ePiano: 'e-piano',
+  piano: 'acoustic-piano',
   guitar: 'electric-guitar',
   pad: 'warm-pad',
   lead: 'saw-lead',
@@ -209,7 +209,7 @@ export function createTemplate(name: TemplateName): ProjectDocument {
         tracksFrom([
           ['Drums', '#f87171', PRESET.drums],
           ['Bass', '#fbbf24', PRESET.bass],
-          ['Piano', '#60a5fa', PRESET.ePiano],
+          ['Piano', '#60a5fa', PRESET.piano],
           ['Guitar', '#34d399', PRESET.guitar],
           ['Vocal', '#f472b6', PRESET.pad],
         ]),
@@ -226,7 +226,7 @@ export function createTemplate(name: TemplateName): ProjectDocument {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
             pitchRange: PITCH_RANGE_PRESETS.bass,
           }),
-          midiTrack('Backing', '#60a5fa', PRESET.ePiano, {
+          midiTrack('Backing', '#60a5fa', PRESET.piano, {
             clipLengthPpq: JPOP_CLIP_LENGTH_PPQ,
           }),
           midiTrack('Lead', '#f472b6', PRESET.lead, {

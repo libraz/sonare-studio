@@ -34,6 +34,7 @@ import {
 } from '@/project/fonts';
 import type { Sf2ChannelProgram } from '@/project/instrument';
 import {
+  DEFAULT_SYNTH_PRESET,
   type ExternalMidiInstrument,
   effectiveTrackInstrument,
   gmProgramForPreset,
@@ -382,7 +383,7 @@ function useGmInstrument(): void {
   const track = activeTrack.value;
   if (!track) return;
   const current = instrument.value;
-  const preset = current?.kind === 'synth-preset' ? current.preset : 'e-piano';
+  const preset = current?.kind === 'synth-preset' ? current.preset : DEFAULT_SYNTH_PRESET;
   run(() =>
     setTrackInstrument(track.id, {
       kind: 'synth-preset',

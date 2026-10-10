@@ -203,9 +203,9 @@ export type TrackInstrument =
   | ExternalMidiInstrument;
 
 /** Preset rendered when a track carries no explicit instrument. */
-export const DEFAULT_SYNTH_PRESET = 'e-piano';
+export const DEFAULT_SYNTH_PRESET = 'acoustic-piano';
 
-/** Builds the default instrument (the historical 'e-piano' synth preset). */
+/** Builds the default instrument (the {@link DEFAULT_SYNTH_PRESET} synth preset). */
 export function defaultTrackInstrument(): SynthPresetInstrument {
   return { kind: 'synth-preset', preset: DEFAULT_SYNTH_PRESET };
 }

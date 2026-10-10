@@ -49,7 +49,7 @@ describe('quick controls', () => {
     it('resolves preset base values through the resolver seam', () => {
       const resolvePresetPatch = vi.fn(() => ({ cutoffHz: 1234, gain: 0.5 }));
       const controls = listQuickControls({ type: 'instrument', trackId }, { resolvePresetPatch });
-      expect(resolvePresetPatch).toHaveBeenCalledWith('e-piano');
+      expect(resolvePresetPatch).toHaveBeenCalledWith('acoustic-piano');
       expect(controls.find((c) => c.id === 'cutoffHz')?.value).toBe(1234);
       expect(controls.find((c) => c.id === 'gain')?.value).toBe(0.5);
       // Unresolved fields fall back to the documented defaults.
@@ -342,7 +342,7 @@ describe('quick controls', () => {
       setQuickControl({ type: 'instrument', trackId }, 'cutoffHz', 800);
       expect(store.tracks[0].instrument).toEqual({
         kind: 'synth-patch',
-        patch: { preset: 'e-piano', cutoffHz: 800 },
+        patch: { preset: 'acoustic-piano', cutoffHz: 800 },
       });
     });
 
@@ -359,7 +359,7 @@ describe('quick controls', () => {
       setQuickControl({ type: 'instrument', trackId }, 'ampSustain', 0);
       expect(store.tracks[0].instrument).toEqual({
         kind: 'synth-patch',
-        patch: { preset: 'e-piano', ampSustain: 0 },
+        patch: { preset: 'acoustic-piano', ampSustain: 0 },
       });
     });
 

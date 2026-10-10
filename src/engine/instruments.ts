@@ -42,7 +42,7 @@ export interface PrerenderMidiClipOptions {
   sampleRate: number;
   /** Constant tempo in BPM used for the bounce (default 120). */
   tempoBpm?: number;
-  /** NativeSynth preset name rendered via bounceWithSynthInstrument (default 'e-piano'). */
+  /** NativeSynth preset name rendered via bounceWithSynthInstrument (default {@link DEFAULT_SYNTH_PRESET}). */
   preset?: string;
   /**
    * Full instrument descriptor (preset, editable synth patch, or SoundFont).

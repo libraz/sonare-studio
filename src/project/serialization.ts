@@ -40,7 +40,7 @@ import type {
   DocumentTrack,
   ProjectDocument,
 } from './document-schema';
-import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './document-schema';
+import { PROJECT_DOCUMENT_SCHEMA_VERSION, upgradeProjectDocument } from './document-schema';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -501,8 +501,9 @@ export function serializeProject(): ProjectDocument {
  *
  * @param doc Document from {@link serializeProject} or a template.
  */
-export async function loadProjectDocument(doc: ProjectDocument): Promise<void> {
+export async function loadProjectDocument(input: ProjectDocument): Promise<void> {
   const store = useProjectStore();
+  const doc = upgradeProjectDocument(input);
   if (doc.externalMidiDefault !== undefined) {
     validateTrackInstrument(doc.externalMidiDefault);
     if (doc.externalMidiDefault.kind !== 'external-midi') {

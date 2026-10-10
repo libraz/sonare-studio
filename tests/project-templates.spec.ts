@@ -91,7 +91,7 @@ describe('project templates', () => {
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
       { kind: 'synth-preset', preset: 'drum-kit' },
       { kind: 'synth-preset', preset: 'sub-bass' },
-      { kind: 'synth-preset', preset: 'e-piano' },
+      { kind: 'synth-preset', preset: 'acoustic-piano' },
       { kind: 'synth-preset', preset: 'saw-lead' },
     ]);
     expect(doc.tracks[0].percussion).toBe(true);

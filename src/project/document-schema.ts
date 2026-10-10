@@ -110,10 +110,40 @@ import type {
  *   positional index (see `groupIndex`) and carrying its stashed notes. Both
  *   are omitted when absent, so documents written before them load unchanged.
  *
+ * Version 4: the default instrument of a MIDI track without one became
+ * `acoustic-piano`. Older documents are read through
+ * {@link upgradeProjectDocument}, which pins such tracks to the `e-piano`
+ * they were written against so they keep sounding the same.
+ *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
  */
-export const PROJECT_DOCUMENT_SCHEMA_VERSION = 3;
+export const PROJECT_DOCUMENT_SCHEMA_VERSION = 4;
+
+/** Default synth preset of documents written before schema version 4. */
+const PRE_V4_DEFAULT_SYNTH_PRESET = 'e-piano';
+
+/**
+ * Brings an older document's implicit defaults up to the current schema.
+ * Returns the input unchanged when nothing needs pinning; never mutates it.
+ *
+ * @param doc Document of any supported schema version.
+ * @returns A document whose implicit values mean the same as when it was written.
+ */
+export function upgradeProjectDocument(doc: ProjectDocument): ProjectDocument {
+  if (doc.schemaVersion >= 4) return doc;
+  if (!doc.tracks.some((track) => track.kind === 'midi' && track.instrument === undefined)) {
+    return doc;
+  }
+  return {
+    ...doc,
+    tracks: doc.tracks.map((track) =>
+      track.kind === 'midi' && track.instrument === undefined
+        ? { ...track, instrument: { kind: 'synth-preset', preset: PRE_V4_DEFAULT_SYNTH_PRESET } }
+        : track,
+    ),
+  };
+}
 
 /** One note inside a document clip (an {@link EditorNote} without its id). */
 export type DocumentNote = Omit<EditorNote, 'id'>;
@@ -257,7 +287,7 @@ export interface DocumentTrack {
   pan: number;
   /** Clips on this track, ordered by timeline start. */
   clips: DocumentClip[];
-  /** Track instrument; absent (schema < 3) = the default synth preset. */
+  /** Track instrument; absent = the default synth preset (see {@link upgradeProjectDocument}). */
   instrument?: TrackInstrument;
   /** External MIDI route source; absent = use this track's own instrument. */
   externalMidiMode?: 'project';
