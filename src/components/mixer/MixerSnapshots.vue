@@ -10,6 +10,7 @@ import {
   recallMixerSnapshot,
   saveMixerSnapshot,
 } from '@/project/commands';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -35,10 +36,15 @@ const filled = computed<Record<MixerSnapshotSlot, boolean>>(
 );
 
 function recallTitle(slot: MixerSnapshotSlot): string {
-  const key = filled.value[slot]
-    ? t.value.shell.mixer.snapshots.recall
-    : t.value.shell.mixer.snapshots.empty;
-  return formatMessage(key, { slot });
+  return formatMessage(t.value.shell.mixer.snapshots.recall, { slot });
+}
+
+/** An empty slot has nothing to recall until the current mix is stored in it. */
+function recallBlocked(slot: MixerSnapshotSlot): string | null {
+  return firstBlock([
+    !filled.value[slot],
+    formatMessage(t.value.shell.mixer.snapshots.empty, { slot }),
+  ]);
 }
 
 function storeTitle(slot: MixerSnapshotSlot): string {
@@ -65,14 +71,16 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
 
 <template>
   <div class="snapshots" role="group" :aria-label="t.shell.mixer.snapshots.region">
-    <span class="snapshots-label">{{ t.shell.mixer.snapshots.label }}</span>
+    <span class="snapshots-label" v-tooltip="t.shell.mixer.snapshots.hint">
+      {{ t.shell.mixer.snapshots.label }}
+    </span>
     <span v-for="slot in SLOTS" :key="slot" class="snapshot-slot">
       <button
         type="button"
         class="snapshot-recall"
         :class="{ active: active === slot, filled: filled[slot] }"
-        :disabled="!filled[slot]"
-        v-tooltip="recallTitle(slot)"
+        :disabled="!!recallBlocked(slot)"
+        v-tooltip="{ text: recallTitle(slot), reason: recallBlocked(slot) }"
         :aria-label="recallTitle(slot)"
         @click="recallMixerSnapshot(slot)"
       >
@@ -108,6 +116,8 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
 .snapshot-slot {
   display: inline-flex;
   align-items: center;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--control-lift);
 }
 
 .snapshot-recall,
@@ -115,9 +125,9 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
   font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
   color: var(--text-2);
   background: var(--surface-3);
+  border: none;
   padding: 2px var(--sp-2);
   cursor: pointer;
-  box-shadow: var(--control-lift);
   transition:
     background var(--dur-2) var(--ease-out),
     color var(--dur-2) var(--ease-out),
@@ -131,17 +141,17 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
 
 .snapshot-store {
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  color: var(--text-4);
+  border-left: 1px solid var(--border-subtle);
+  color: var(--text-3);
 }
 
 .snapshot-recall:hover:not(:disabled),
 .snapshot-store:hover {
   background: var(--surface-4);
-  box-shadow: var(--control-lift-hover);
 }
 
 .snapshot-recall:disabled {
-  opacity: 0.45;
+  color: var(--text-4);
   cursor: default;
 }
 

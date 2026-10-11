@@ -7,6 +7,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { applyMixerSceneJson } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { derivePreviewRange } from '@/ui/mastering/preview-range';
 import {
@@ -44,6 +45,14 @@ const s = computed(() => t.value.shell.mixer.suggestMix);
 const analyzing = ref(false);
 const error = ref<string | null>(null);
 const result = shallowRef<MixAssistantResult | null>(null);
+
+const againBlocked = computed(() =>
+  firstBlock([analyzing.value, t.value.shell.mixer.reasons.measuring]),
+);
+const applyBlocked = computed(() =>
+  firstBlock(againBlocked.value, [!result.value, t.value.shell.mixer.reasons.noSuggestion]),
+);
+
 /** Track ids the suggestion was measured from, by the strip id it names them with. */
 const measuredTracks = shallowRef<ReadonlyMap<string, { id: number; name: string }>>(new Map());
 let handle: ExportRenderHandle | null = null;
@@ -197,8 +206,21 @@ function onApply(): void {
 
     <template #actions>
       <button type="button" @click="emit('close')">{{ s.cancel }}</button>
-      <button type="button" :disabled="analyzing" @click="analyze">{{ s.again }}</button>
-      <button type="button" class="primary" :disabled="analyzing || !result" @click="onApply">
+      <button
+        type="button"
+        :disabled="!!againBlocked"
+        v-tooltip="{ reason: againBlocked }"
+        @click="analyze"
+      >
+        {{ s.again }}
+      </button>
+      <button
+        type="button"
+        class="primary"
+        :disabled="!!applyBlocked"
+        v-tooltip="{ reason: applyBlocked }"
+        @click="onApply"
+      >
         {{ s.apply }}
       </button>
     </template>

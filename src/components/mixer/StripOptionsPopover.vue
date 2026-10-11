@@ -33,6 +33,7 @@ import {
   type PanModeId,
 } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type MidiLearnBusStripControlParam,
@@ -76,6 +77,11 @@ const isSurroundBus = computed(() => {
   const bus = store.mixer.buses.find((entry) => entry.id === mixerBusIdFromTarget(target));
   return bus?.channelLayout === '5.1' || bus?.channelLayout === '7.1';
 });
+
+/** Surround buses have no stereo panner, so stereo shaping is unavailable on them. */
+const stereoBlocked = computed(() =>
+  firstBlock([isSurroundBus.value, t.value.shell.mixer.strip.stereoControlsUnavailable]),
+);
 
 /** Pan law/mode controls are available on track/group and return-bus strips. */
 const canPannerOptions = computed(() => props.target !== 'master');
@@ -325,7 +331,8 @@ onBeforeUnmount(() => {
           </button>
         </span>
       </label>
-      <label class="strip-options-row" :class="{ 'is-disabled': isSurroundBus }">
+      <label class="strip-options-row" :class="{ 'is-disabled': !!stereoBlocked }"
+        v-tooltip="{ reason: stereoBlocked, placement: 'end' }">
         <span class="strip-options-label">{{ t.shell.mixer.strip.width }}</span>
         <span class="strip-options-field">
           <input
@@ -335,7 +342,7 @@ onBeforeUnmount(() => {
             :step="0.01"
             :value="stripWidth"
             :aria-label="t.shell.mixer.strip.width"
-            :disabled="isSurroundBus"
+            :disabled="!!stereoBlocked"
             @input="onWidthInput($event, false)"
             @change="onWidthInput($event, true)"
           />
@@ -347,7 +354,7 @@ onBeforeUnmount(() => {
             :step="0.01"
             :display="stripWidth.toFixed(2)"
             :ariaLabel="t.shell.mixer.strip.width"
-            :disabled="isSurroundBus"
+            :reason="stereoBlocked"
             @change="onWidthValue"
           />
           <button
@@ -495,7 +502,8 @@ onBeforeUnmount(() => {
       <div
         v-if="canPannerOptions"
         class="strip-options-row"
-        :class="{ 'is-disabled': isSurroundBus }"
+        :class="{ 'is-disabled': !!stereoBlocked }"
+        v-tooltip="{ reason: stereoBlocked, placement: 'end' }"
       >
         <span class="strip-options-label">{{ t.shell.mixer.strip.panLaw }}</span>
         <span class="strip-options-field">
@@ -503,7 +511,7 @@ onBeforeUnmount(() => {
             :model-value="panLaw"
             size="sm"
             :options="panLawOptions"
-            :disabled="isSurroundBus"
+            :reason="stereoBlocked"
             :aria-label="t.shell.mixer.strip.panLaw"
             @change="onPanLawChange"
           />
@@ -537,7 +545,8 @@ onBeforeUnmount(() => {
       <div
         v-if="canPannerOptions"
         class="strip-options-row"
-        :class="{ 'is-disabled': isSurroundBus }"
+        :class="{ 'is-disabled': !!stereoBlocked }"
+        v-tooltip="{ reason: stereoBlocked, placement: 'end' }"
       >
         <span class="strip-options-label">{{ t.shell.mixer.strip.panMode }}</span>
         <span class="strip-options-field">
@@ -545,7 +554,7 @@ onBeforeUnmount(() => {
             :model-value="panMode"
             size="sm"
             :options="panModeOptions"
-            :disabled="isSurroundBus"
+            :reason="stereoBlocked"
             :aria-label="t.shell.mixer.strip.panMode"
             @change="onPanModeChange"
           />
@@ -577,7 +586,8 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <template v-if="canPannerOptions && panMode === 'dualPan'">
-        <label class="strip-options-row" :class="{ 'is-disabled': isSurroundBus }">
+        <label class="strip-options-row" :class="{ 'is-disabled': !!stereoBlocked }"
+        v-tooltip="{ reason: stereoBlocked, placement: 'end' }">
           <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanLeft }}</span>
           <span class="strip-options-field">
             <input
@@ -587,7 +597,7 @@ onBeforeUnmount(() => {
               step="0.01"
               :value="dualPanLeft"
               :aria-label="t.shell.mixer.strip.dualPanLeft"
-              :disabled="isSurroundBus"
+              :disabled="!!stereoBlocked"
               @input="onDualPanInput('left', $event, false)"
               @change="onDualPanInput('left', $event, true)"
             />
@@ -619,7 +629,8 @@ onBeforeUnmount(() => {
             </button>
           </span>
         </label>
-        <label class="strip-options-row" :class="{ 'is-disabled': isSurroundBus }">
+        <label class="strip-options-row" :class="{ 'is-disabled': !!stereoBlocked }"
+        v-tooltip="{ reason: stereoBlocked, placement: 'end' }">
           <span class="strip-options-label">{{ t.shell.mixer.strip.dualPanRight }}</span>
           <span class="strip-options-field">
             <input
@@ -629,7 +640,7 @@ onBeforeUnmount(() => {
               step="0.01"
               :value="dualPanRight"
               :aria-label="t.shell.mixer.strip.dualPanRight"
-              :disabled="isSurroundBus"
+              :disabled="!!stereoBlocked"
               @input="onDualPanInput('right', $event, false)"
               @change="onDualPanInput('right', $event, true)"
             />

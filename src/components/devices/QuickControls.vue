@@ -34,7 +34,7 @@ import {
   knobValueForDrag,
   valueAtControlPercent,
 } from '@/ui/devices/knob-math';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { midiLearnInsertTargetId, midiLearnInstrumentTargetId } from '@/ui/midi/midi-learn';
 import {
   type AutomationWriteGesture,
@@ -435,6 +435,12 @@ onBeforeUnmount(() => {
           }"
           :data-control="control.kind === 'number' ? undefined : control.id"
           :aria-label="control.name"
+          v-tooltip="
+            formatMessage(t.shell.devicesPanel.quickControlTitle, {
+              name: control.name,
+              value: controlDisplay(control),
+            })
+          "
           @contextmenu="onKnobContextMenu(control, $event)"
         >
           <div v-if="control.kind === 'number'" class="qc-knob" role="slider" tabindex="0"
@@ -456,7 +462,7 @@ onBeforeUnmount(() => {
             :aria-label="control.name"
             @click="onBooleanToggle(control)"
           >
-            {{ control.value ? 'On' : 'Off' }}
+            {{ control.value ? t.shell.devicesPanel.toggleOn : t.shell.devicesPanel.toggleOff }}
           </button>
           <SelectMenu
             v-else

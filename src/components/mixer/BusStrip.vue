@@ -30,6 +30,7 @@ import {
   type MixerChannelLayout,
 } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type AutomationWriteGesture,
@@ -168,11 +169,16 @@ function isOutputBusAllowed(busId: string): boolean {
 
 const outputBusOptions = computed(() => [
   { value: '', label: t.value.shell.mixer.strip.master },
-  ...store.mixer.buses.map((bus) => ({
-    value: bus.id,
-    label: bus.name,
-    disabled: !isOutputBusAllowed(bus.id),
-  })),
+  ...store.mixer.buses.map((bus) =>
+    isOutputBusAllowed(bus.id)
+      ? { value: bus.id, label: bus.name }
+      : {
+          value: bus.id,
+          label: bus.name,
+          disabled: true,
+          detail: t.value.shell.mixer.reasons.busLoop,
+        },
+  ),
 ]);
 
 const channelLayoutOptions = computed(() =>
@@ -191,8 +197,19 @@ const channelLayoutOptions = computed(() =>
   }),
 );
 /** A return solo parks the silenced direct outputs on one extra engine bus. */
-const canSolo = computed(
-  () => soloed.value || canRouteReturnSolo(store.mixer.buses.length, store.tracks),
+const soloBlocked = computed(() =>
+  firstBlock([
+    !soloed.value && !canRouteReturnSolo(store.mixer.buses.length, store.tracks),
+    t.value.shell.mixer.returnSoloUnavailable,
+  ]),
+);
+/** Surround buses have no stereo panner. */
+const panBlocked = computed(() =>
+  firstBlock([isSurroundBus.value, t.value.shell.mixer.strip.stereoControlsUnavailable]),
+);
+/** A fader that follows its lane in read mode cannot also be moved by hand. */
+const faderBlocked = computed(() =>
+  firstBlock([followsFader.value, t.value.shell.mixer.reasons.automationRead]),
 );
 
 function beginWriteGesture(): AutomationWriteGesture {
@@ -309,6 +326,7 @@ onBeforeUnmount(() => {
           :model-value="outputBusValue"
           size="sm"
           :options="outputBusOptions"
+          :title="t.shell.mixer.strip.outputTitle"
           :aria-label="formatMessage(t.shell.mixer.strip.outputBus, { name: props.bus.name })"
           @change="onOutputBusChange"
         />
@@ -332,8 +350,7 @@ onBeforeUnmount(() => {
     </div>
     <div
       class="bus-pan"
-      :class="{ disabled: isSurroundBus }"
-      v-tooltip="isSurroundBus ? t.shell.mixer.strip.stereoControlsUnavailable : undefined"
+      :class="{ disabled: !!panBlocked }"
     >
       <div class="bus-pan-knob">
         <MixerKnob
@@ -344,7 +361,7 @@ onBeforeUnmount(() => {
           :label="t.shell.mixer.strip.pan"
           :display="formatPan(pan)"
           :size="24"
-          :disabled="isSurroundBus"
+          :reason="panBlocked"
           @change="onPanChange"
         />
         <NumericReadout
@@ -354,7 +371,7 @@ onBeforeUnmount(() => {
           :step="0.01"
           :display="formatPan(pan)"
           :ariaLabel="t.shell.mixer.strip.pan"
-          :disabled="isSurroundBus"
+          :reason="panBlocked"
           @change="(value) => onPanChange(value, true)"
         />
       </div>
@@ -378,8 +395,8 @@ onBeforeUnmount(() => {
         type="button"
         class="bus-toggle solo"
         :class="{ on: soloed }"
-        :disabled="!canSolo"
-        v-tooltip="canSolo ? t.shell.mixer.strip.solo : t.shell.mixer.returnSoloUnavailable"
+        :disabled="!!soloBlocked"
+        v-tooltip="{ text: soloed ? t.shell.mixer.strip.unsolo : t.shell.mixer.strip.solo, reason: soloBlocked }"
         :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name: props.bus.name })"
         :aria-pressed="soloed"
         @click="setMixerBusSolo(props.bus.id, !soloed)"
@@ -423,7 +440,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
     <div class="bus-fader-row">
-      <MixerFader :value-db="gainDb" :height="120" @change="onFaderChange" />
+      <MixerFader :value-db="gainDb" :height="120" :reason="faderBlocked" @change="onFaderChange" />
       <StripMeter
         :bridge="props.bridge"
         :placeholder="!props.bridge"
@@ -439,7 +456,7 @@ onBeforeUnmount(() => {
       :display="formatDb(gainDb)"
       unit="dB"
       :ariaLabel="t.shell.mixer.controls.stripGain"
-      :disabled="followsFader"
+      :reason="faderBlocked"
       @change="(value) => onFaderChange(value, true)"
     />
     <StripGrMeter :bridge="props.bridge" :visible="props.visible" />

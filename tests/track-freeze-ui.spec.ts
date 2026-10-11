@@ -17,7 +17,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
-import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
+import { closeContextMenu, isItemDisabled, useContextMenuState } from '@/ui/menu/context-menu';
 import { dbToFaderPosition } from '@/ui/mixer/db-scale';
 import { selectOption, selectValueText } from './helpers/select-menu';
 
@@ -410,7 +410,8 @@ describe('track freeze / bounce UI', () => {
       await headers.find('.track-name').trigger('dblclick');
       expect(headers.find('.track-name-input').exists()).toBe(false);
       await headers.find('.track-header').trigger('contextmenu', { clientX: 10, clientY: 10 });
-      expect(useContextMenuState().items.find((item) => item.id === 'rename')?.disabled).toBe(true);
+      const rename = useContextMenuState().items.find((item) => item.id === 'rename');
+      expect(rename && isItemDisabled(rename)).toBe(true);
       expect(useContextMenuState().items.find((item) => item.id === 'regenerate')?.disabled).toBe(
         true,
       );
@@ -418,7 +419,8 @@ describe('track freeze / bounce UI', () => {
       closeContextMenu();
       const strip = mount(ChannelStrip, { props: { target: trackId }, shallow: true });
       await strip.find('.channel-strip').trigger('contextmenu', { clientX: 10, clientY: 10 });
-      expect(useContextMenuState().items.find((item) => item.id === 'rename')?.disabled).toBe(true);
+      const stripRename = useContextMenuState().items.find((item) => item.id === 'rename');
+      expect(stripRename && isItemDisabled(stripRename)).toBe(true);
     });
   });
 });

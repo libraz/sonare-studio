@@ -29,6 +29,7 @@ import {
 import { createDefaultStrip, MAX_VCA_GROUPS, type MixerStrip } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { type MidiLearnTrackStateParam, midiLearnTrackStateTargetId } from '@/ui/midi/midi-learn';
@@ -199,11 +200,16 @@ function isOutputBusAllowed(busId: string): boolean {
 /** Output-bus options: the master mix plus every valid send-bus destination. */
 const outputBusOptions = computed(() => [
   { value: '', label: t.value.shell.mixer.strip.master },
-  ...store.mixer.buses.map((bus) => ({
-    value: bus.id,
-    label: bus.name,
-    disabled: !isOutputBusAllowed(bus.id),
-  })),
+  ...store.mixer.buses.map((bus) =>
+    isOutputBusAllowed(bus.id)
+      ? { value: bus.id, label: bus.name }
+      : {
+          value: bus.id,
+          label: bus.name,
+          disabled: true,
+          detail: t.value.shell.mixer.reasons.busLoop,
+        },
+  ),
 ]);
 
 /** Selected output bus id, or '' for the master mix. */
@@ -228,7 +234,7 @@ function onContextMenu(event: MouseEvent): void {
     items.push({
       id: 'rename',
       label: t.value.shell.mixer.strip.rename,
-      disabled: currentTrack.frozen !== undefined,
+      disabledReason: firstBlock([currentTrack.frozen !== undefined, t.value.reasons.trackFrozen]),
       run: async () => {
         const next = await promptDialog({
           title: t.value.shell.mixer.strip.renameTitle,
@@ -289,13 +295,15 @@ function onContextMenu(event: MouseEvent): void {
         run: () => setTrackVca(currentTrack.id, assigned ? null : group.id),
       });
     }
-    if (groups.length < MAX_VCA_GROUPS) {
-      items.push({
-        id: 'vca-new',
-        label: t.value.shell.mixer.strip.newVcaGroup,
-        run: () => setTrackVca(currentTrack.id, addVcaGroup()),
-      });
-    }
+    items.push({
+      id: 'vca-new',
+      label: t.value.shell.mixer.strip.newVcaGroup,
+      disabledReason: firstBlock([
+        groups.length >= MAX_VCA_GROUPS,
+        formatMessage(t.value.shell.mixer.reasons.vcaLimit, { max: String(MAX_VCA_GROUPS) }),
+      ]),
+      run: () => setTrackVca(currentTrack.id, addVcaGroup()),
+    });
   }
   openContextMenu(event.clientX, event.clientY, items);
 }
@@ -334,6 +342,14 @@ function onPanChange(pan: number, commit: boolean): void {
 
 /** Group automation state must never override the audible bus pan display. */
 const panValue = computed(() => (isGroup.value ? strip.value.pan : displayedPan.value));
+
+/** A control that follows its automation lane cannot also be moved by hand. */
+const faderBlocked = computed(() =>
+  firstBlock([followsFader.value, t.value.shell.mixer.reasons.automationRead]),
+);
+const panBlocked = computed(() =>
+  firstBlock([!isGroup.value && followsPan.value, t.value.shell.mixer.reasons.automationRead]),
+);
 
 function learnTrackStateId(param: MidiLearnTrackStateParam): string {
   return typeof props.target === 'number' ? midiLearnTrackStateTargetId(props.target, param) : '';
@@ -418,6 +434,7 @@ onBeforeUnmount(() => {
         :model-value="outputBusValue"
         size="sm"
         :options="outputBusOptions"
+        :title="t.shell.mixer.strip.outputTitle"
         :aria-label="formatMessage(t.shell.mixer.strip.outputBus, { name })"
         @change="onOutputBusChange"
       />
@@ -435,7 +452,7 @@ onBeforeUnmount(() => {
           :label="t.shell.mixer.strip.pan"
           :display="formatPan(panValue)"
           :size="24"
-          :disabled="isGroup ? false : followsPan"
+          :reason="panBlocked"
           @change="onPanChange"
         />
         <NumericReadout
@@ -445,85 +462,88 @@ onBeforeUnmount(() => {
           :step="0.01"
           :display="formatPan(panValue)"
           :ariaLabel="t.shell.mixer.strip.pan"
-          :disabled="isGroup ? false : followsPan"
+          :reason="panBlocked"
           @change="(value) => onPanChange(value, true)"
         />
         <StripOptionsPopover :target="props.target" :name="name" />
       </div>
       <div v-if="track" class="strip-toggles">
-        <button
-          type="button"
-          class="toggle mute"
-          :class="{ on: track.mute }"
-          v-tooltip="t.shell.mixer.strip.mute"
-          :aria-label="formatMessage(t.shell.mixer.strip.muteNamed, { name })"
-          :aria-pressed="track.mute"
-          @click="setTrackMute(track.id, !track.mute)"
-        >
-          M
-        </button>
-        <button
-          v-if="learnTrackState('mute')"
-          type="button"
-          class="track-state-midi-learn"
-          :class="learnTrackState('mute')"
-          v-tooltip="
-            learnTrackState('mute') === 'armed'
-              ? t.shell.mixer.controls.midiLearnListening
-              : t.shell.mixer.controls.midiLearn
-          "
-          :aria-label="t.shell.mixer.controls.midiLearn"
-          @click="onMidiLearnTrackState('mute')"
-        >
-          MIDI
-        </button>
-        <button
-          v-if="learnTrackState('mute') === 'bound'"
-          type="button"
-          class="track-state-midi-forget"
-          v-tooltip="t.shell.mixer.controls.midiForget"
-          :aria-label="t.shell.mixer.controls.midiForget"
-          @click="onMidiForgetTrackState('mute')"
-        >
-          ×
-        </button>
-        <button
-          v-if="!isGroup"
-          type="button"
-          class="toggle solo"
-          :class="{ on: track.solo, safe: isSoloSafe }"
-          v-tooltip="isSoloSafe ? t.shell.mixer.strip.soloSafeTitle : t.shell.mixer.strip.solo"
-          :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name })"
-          :aria-pressed="track.solo"
-          @click="onSoloClick(track, $event)"
-        >
-          S
-        </button>
-        <button
-          v-if="!isGroup && learnTrackState('solo')"
-          type="button"
-          class="track-state-midi-learn"
-          :class="learnTrackState('solo')"
-          v-tooltip="
-            learnTrackState('solo') === 'armed'
-              ? t.shell.mixer.controls.midiLearnListening
-              : t.shell.mixer.controls.midiLearn
-          "
-          :aria-label="t.shell.mixer.controls.midiLearn"
-          @click="onMidiLearnTrackState('solo')"
-        >
-          MIDI
-        </button>
-        <button
-          v-if="!isGroup && learnTrackState('solo') === 'bound'"
-          type="button"
-          class="track-state-midi-forget"
-          v-tooltip="t.shell.mixer.controls.midiForget"
-          :aria-label="t.shell.mixer.controls.midiForget"
-          @click="onMidiForgetTrackState('solo')"
-        >
-          ×
-        </button>
+        <span class="toggle-row">
+          <button
+            type="button"
+            class="toggle mute"
+            :class="{ on: track.mute }"
+            v-tooltip="track.mute ? t.shell.mixer.strip.unmute : t.shell.mixer.strip.mute"
+            :aria-label="formatMessage(t.shell.mixer.strip.muteNamed, { name })"
+            :aria-pressed="track.mute"
+            @click="setTrackMute(track.id, !track.mute)"
+          >
+            M
+          </button>
+          <button
+            v-if="learnTrackState('mute')"
+            type="button"
+            class="track-state-midi-learn"
+            :class="learnTrackState('mute')"
+            v-tooltip="
+              learnTrackState('mute') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearnMute
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearnTrackState('mute')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnTrackState('mute') === 'bound'"
+            type="button"
+            class="track-state-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForgetTrackState('mute')"
+          >
+            ×
+          </button>
+        </span>
+        <span v-if="!isGroup" class="toggle-row">
+          <button
+            type="button"
+            class="toggle solo"
+            :class="{ on: track.solo, safe: isSoloSafe }"
+            v-tooltip="isSoloSafe ? t.shell.mixer.strip.soloSafeTitle : t.shell.mixer.strip.soloTitle"
+            :aria-label="formatMessage(t.shell.mixer.strip.soloNamed, { name })"
+            :aria-pressed="track.solo"
+            @click="onSoloClick(track, $event)"
+          >
+            S
+          </button>
+          <button
+            v-if="learnTrackState('solo')"
+            type="button"
+            class="track-state-midi-learn"
+            :class="learnTrackState('solo')"
+            v-tooltip="
+              learnTrackState('solo') === 'armed'
+                ? t.shell.mixer.controls.midiLearnListening
+                : t.shell.mixer.controls.midiLearnSolo
+            "
+            :aria-label="t.shell.mixer.controls.midiLearn"
+            @click="onMidiLearnTrackState('solo')"
+          >
+            MIDI
+          </button>
+          <button
+            v-if="learnTrackState('solo') === 'bound'"
+            type="button"
+            class="track-state-midi-forget"
+            v-tooltip="t.shell.mixer.controls.midiForget"
+            :aria-label="t.shell.mixer.controls.midiForget"
+            @click="onMidiForgetTrackState('solo')"
+          >
+            ×
+          </button>
+        </span>
       </div>
     </div>
 
@@ -531,7 +551,7 @@ onBeforeUnmount(() => {
       <MixerFader
         :value-db="displayedGainDb"
         :height="132"
-        :disabled="followsFader"
+        :reason="faderBlocked"
         @change="onGainChange"
       />
       <StripMeter
@@ -551,7 +571,7 @@ onBeforeUnmount(() => {
       :display="formatDb(displayedGainDb)"
       unit="dB"
       :ariaLabel="t.shell.mixer.controls.stripGain"
-      :disabled="followsFader"
+      :reason="faderBlocked"
       @change="(value) => onGainChange(value, true)"
     />
 
@@ -724,6 +744,22 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
+}
+
+/* The strip is too narrow for side-by-side chips; each toggle keeps its column slot. */
+.toggle-row {
+  display: contents;
+}
+
+/* An unbound MIDI-learn chip stays out of the way until the strip is in use. */
+.track-state-midi-learn.unbound {
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+.channel-strip:hover .track-state-midi-learn.unbound,
+.channel-strip:focus-within .track-state-midi-learn.unbound {
+  opacity: 1;
 }
 
 .toggle {

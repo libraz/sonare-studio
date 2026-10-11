@@ -26,6 +26,7 @@ import type { ProcessorControlValue } from '@/project/processor-controls';
 import { formatProcessorControlValue } from '@/project/processor-controls';
 import { listQuickControls, type QuickControl, setQuickControl } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatLevel } from '@/ui/mastering/loudness';
 import { openContextMenu } from '@/ui/menu/context-menu';
@@ -304,7 +305,10 @@ function onSlotContextMenu(index: number, event: MouseEvent): void {
     {
       id: 'paste-insert',
       label: t.value.shell.inserts.paste,
-      disabled: insertClipboard === null,
+      disabledReason: firstBlock([
+        insertClipboard === null,
+        t.value.shell.mixer.reasons.noInsertCopied,
+      ]),
       run: () => pasteSlot(index),
     },
   ]);
@@ -664,7 +668,7 @@ onBeforeUnmount(() => {
               :class="{ on: control.value }"
               :aria-label="control.name"
               :aria-pressed="control.value"
-              :title="`${control.name}: ${controlDisplay(control)}`"
+              v-tooltip="`${control.name}: ${controlDisplay(control)}`"
               :data-control="control.id"
               @click="onBooleanToggle(control)"
             >
@@ -675,6 +679,11 @@ onBeforeUnmount(() => {
                 type="button"
                 class="insert-param-midi-learn"
                 :class="learnState(control)"
+                v-tooltip="
+                  learnState(control) === 'armed'
+                    ? t.shell.mixer.controls.midiLearnListening
+                    : t.shell.mixer.controls.midiLearn
+                "
                 :aria-label="t.shell.mixer.controls.midiLearn"
                 @click="onMidiLearn(control)"
               >
@@ -684,6 +693,7 @@ onBeforeUnmount(() => {
                 v-if="learnState(control) === 'bound'"
                 type="button"
                 class="insert-param-midi-forget"
+                v-tooltip="t.shell.mixer.controls.midiForget"
                 :aria-label="t.shell.mixer.controls.midiForget"
                 @click="onMidiForget(control)"
               >
@@ -707,6 +717,11 @@ onBeforeUnmount(() => {
                 type="button"
                 class="insert-param-midi-learn"
                 :class="learnState(control)"
+                v-tooltip="
+                  learnState(control) === 'armed'
+                    ? t.shell.mixer.controls.midiLearnListening
+                    : t.shell.mixer.controls.midiLearn
+                "
                 :aria-label="t.shell.mixer.controls.midiLearn"
                 @click="onMidiLearn(control)"
               >
@@ -716,6 +731,7 @@ onBeforeUnmount(() => {
                 v-if="learnState(control) === 'bound'"
                 type="button"
                 class="insert-param-midi-forget"
+                v-tooltip="t.shell.mixer.controls.midiForget"
                 :aria-label="t.shell.mixer.controls.midiForget"
                 @click="onMidiForget(control)"
               >

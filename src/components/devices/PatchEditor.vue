@@ -30,6 +30,7 @@ import {
   wasmEngineParamInfo,
 } from '@/ui/devices/patch-draft';
 import { resolveSynthEnums, SYNTH_RETRIGGER_OPTIONS } from '@/ui/devices/synth-enums';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
@@ -63,6 +64,12 @@ const { t } = useI18n();
 
 const draft = ref<StoredSynthPatch>({});
 const modRows = ref<ModMatrixRow[]>([]);
+const addRoutingBlocked = computed(() =>
+  firstBlock([
+    modRows.value.length >= MAX_MOD_ROUTINGS,
+    formatMessage(t.value.shell.patchEditor.routingLimit, { max: String(MAX_MOD_ROUTINGS) }),
+  ]),
+);
 const enums = ref<SynthEnumTables>(resolveSynthEnums(null));
 const error = ref('');
 const dialogRef = ref<HTMLElement | null>(null);
@@ -754,7 +761,8 @@ function onKeydown(event: KeyboardEvent): void {
           <button
             type="button"
             class="mod-add"
-            :disabled="modRows.length >= MAX_MOD_ROUTINGS"
+            :disabled="!!addRoutingBlocked"
+            v-tooltip="{ reason: addRoutingBlocked }"
             @click="addModRow"
           >
             {{ t.shell.patchEditor.addRouting }}
@@ -763,7 +771,12 @@ function onKeydown(event: KeyboardEvent): void {
       </div>
 
       <footer class="patch-actions">
-        <button type="button" class="audition" @click="onAudition">
+        <button
+          type="button"
+          class="audition"
+          v-tooltip="t.shell.devicesPanel.auditionTitle"
+          @click="onAudition"
+        >
           {{ t.shell.patchEditor.audition }}
         </button>
         <span class="actions-spacer" />

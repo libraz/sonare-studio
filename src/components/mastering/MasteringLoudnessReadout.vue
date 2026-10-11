@@ -27,7 +27,7 @@ const { t } = useI18n();
       <span class="loudness-col">{{ t.shell.mastering.loudness.bBypass }}</span>
     </div>
     <div v-for="row in rows" :key="row.label" class="loudness-row">
-      <span class="loudness-label">{{ row.label }}</span>
+      <span class="loudness-label" v-tooltip="row.hint">{{ row.label }}</span>
       <span class="loudness-cell">
         <span class="loudness-bar">
           <span

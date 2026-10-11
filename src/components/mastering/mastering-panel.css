@@ -287,16 +287,80 @@
   flex-wrap: wrap;
 }
 
-.mastering-reference-title { font: var(--fw-bold) var(--fs-2xs) var(--font-sans); color: var(--text-2); }
-.mastering-reference-note { font: var(--fs-2xs) var(--font-sans); color: var(--text-4); }
-.mastering-reference-file,
-.mastering-reference-compare { font: var(--fs-2xs) var(--font-sans); color: var(--text-3); }
-.mastering-reference-file input { max-width: 190px; }
-.mastering-reference-compare { cursor: pointer; }
-.mastering-reference-results { font: var(--fs-2xs) var(--font-mono); color: var(--accent); }
+.mastering-reference-head {
+  align-items: baseline;
+  gap: var(--sp-3);
+}
 
-.preset-overrides.disabled {
-  opacity: 0.72;
+.mastering-reference-title {
+  font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
+  color: var(--text-2);
+}
+
+.mastering-reference-note {
+  font: var(--fs-2xs) var(--font-sans);
+  color: var(--text-4);
+}
+
+.mastering-reference-file {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  cursor: pointer;
+}
+
+/* The native picker stays in the tree for keyboard and tests but is drawn as a button. */
+.mastering-reference-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mastering-reference-file-button,
+.mastering-reference-compare {
+  font: var(--fw-semibold) var(--fs-2xs) var(--font-sans);
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  box-shadow: var(--control-lift);
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
+}
+
+.mastering-reference-file:hover .mastering-reference-file-button,
+.mastering-reference-compare:hover:not(:disabled) {
+  background: var(--surface-4);
+  box-shadow: var(--control-lift-hover);
+}
+
+.mastering-reference-file:focus-within .mastering-reference-file-button {
+  box-shadow: var(--control-lift), var(--ring);
+}
+
+.mastering-reference-compare:disabled {
+  color: var(--text-4);
+  cursor: default;
+}
+
+.mastering-reference-name {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--fs-2xs) var(--font-sans);
+  color: var(--text-2);
+}
+
+.mastering-reference-results {
+  font: var(--fs-2xs) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
 }
 
 .preset-overrides-head {
@@ -321,39 +385,49 @@
   color: var(--text-4);
 }
 
-.preset-overrides-preview-note {
+/* Empty state: says which control unlocks the form below it. */
+.preset-overrides-empty {
   margin: 0;
-  color: var(--text-4);
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-2);
   font: var(--fs-2xs) var(--font-sans);
+}
+
+.preset-control-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 340px));
+  gap: var(--sp-2) var(--sp-5);
+  align-items: start;
 }
 
 .preset-control-section {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: 1px;
+  min-width: 0;
 }
 
 .preset-control-section-title {
-  margin: 0;
+  margin: 0 0 2px;
+  padding-left: 5px;
   font: var(--fw-bold) var(--fs-2xs) var(--font-sans);
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
-.preset-control-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 3px var(--sp-3);
-}
-
+/* Fixed label | value | unit | reset columns so every row lines up. */
 .preset-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) 78px 36px 20px;
   align-items: center;
   gap: var(--sp-2);
   min-width: 0;
-  padding: 2px 3px 2px 5px;
+  min-height: 22px;
+  padding: 1px 3px 1px 5px;
   border-radius: var(--radius-xs);
 }
 
@@ -366,37 +440,51 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--text-2);
   font: var(--fs-2xs) var(--font-sans);
 }
 
+.preset-control.blocked .preset-control-label,
+.preset-control.blocked .preset-control-unit {
+  color: var(--text-4);
+}
+
 .preset-control-input {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 3px;
+  justify-content: flex-end;
   min-width: 0;
 }
 
 .preset-control-input input[type='number'],
 .preset-control-input select {
-  width: 78px;
+  width: 100%;
   min-width: 0;
   box-sizing: border-box;
   font: var(--fs-2xs) var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
   color: var(--text-2);
   background: var(--surface-2);
   border: none;
   border-radius: var(--radius-xs);
   box-shadow: var(--control-edge), var(--inset-well);
-  padding: 3px 6px;
+  padding: 2px 6px;
 }
 
 .preset-control-input select {
-  width: 67px;
   padding-right: 2px;
 }
 
+.preset-control-input input:disabled,
+.preset-control-input select:disabled {
+  color: var(--text-4);
+  box-shadow: var(--control-edge);
+  cursor: default;
+}
+
 .preset-control-input input[type='checkbox'] {
+  margin: 0;
   accent-color: var(--accent);
 }
 
@@ -407,8 +495,8 @@
 }
 
 .preset-control-unit {
-  color: var(--text-4);
-  font: var(--fs-2xs) var(--font-mono);
+  color: var(--text-3);
+  font: var(--fs-2xs) var(--font-sans);
   white-space: nowrap;
 }
 
@@ -430,6 +518,7 @@
 }
 
 .preset-control-reset {
+  grid-column: 4;
   width: 20px;
   padding: 2px 0;
   color: var(--accent);

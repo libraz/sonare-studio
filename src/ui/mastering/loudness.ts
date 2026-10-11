@@ -14,6 +14,8 @@ export const RANGE_BAR_MAX_DB = 20;
 /** One A/B loudness readout row and the scale used by its comparison bars. */
 export interface LoudnessRow {
   label: string;
+  /** What an abbreviated label measures; empty when the label says it. */
+  hint?: string;
   unit: string;
   a: number | undefined;
   b: number | undefined;

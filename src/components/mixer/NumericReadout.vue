@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
+import { useI18n } from '@/ui/i18n';
 
 /**
  * Compact value readout that becomes a bounded number input when clicked.
@@ -24,9 +25,14 @@ const props = withDefaults(
     ariaLabel: string;
     /** Prevents starting or committing an edit. */
     disabled?: boolean;
+    /** Why the value is locked; a non-empty reason also disables it. */
+    reason?: string | null;
   }>(),
-  { step: 0.1, unit: '', disabled: false },
+  { step: 0.1, unit: '', disabled: false, reason: null },
 );
+
+const { t } = useI18n();
+const locked = computed(() => props.disabled || !!props.reason);
 
 const emit = defineEmits<{
   /** A finite, clamped value committed by Enter or focus loss. */
@@ -42,7 +48,7 @@ function clamp(value: number): number {
 }
 
 function startEditing(): void {
-  if (props.disabled) return;
+  if (locked.value) return;
   draft.value = String(props.value);
   editing.value = true;
   void nextTick(() => {
@@ -54,7 +60,7 @@ function startEditing(): void {
 function finish(commit: boolean): void {
   if (!editing.value) return;
   editing.value = false;
-  if (!commit || props.disabled) return;
+  if (!commit || locked.value) return;
   const text = String(draft.value).trim();
   const value = text === '' ? Number.NaN : Number(text);
   if (Number.isFinite(value)) emit('change', clamp(value));
@@ -82,7 +88,7 @@ function onKeyDown(event: KeyboardEvent): void {
     :max="props.max"
     :step="props.step"
     :aria-label="props.ariaLabel"
-    :disabled="props.disabled"
+    :disabled="locked"
     @blur="finish(true)"
     @keydown="onKeyDown"
   />
@@ -90,8 +96,9 @@ function onKeyDown(event: KeyboardEvent): void {
     v-else
     type="button"
     class="numeric-readout"
-    :disabled="props.disabled"
+    :disabled="locked"
     :aria-label="props.ariaLabel"
+    v-tooltip="{ text: t.shell.mixer.controls.typeValue, reason: props.reason }"
     @click.stop="startEditing"
   >
     {{ props.unit ? `${props.display} ${props.unit}` : props.display }}

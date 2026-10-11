@@ -160,7 +160,7 @@ defineExpose({ addMenuEl });
             <span
               class="catalog-item-scope"
               :class="`scope-${processorRuntimeFor(processor.id)}`"
-              :title="processorRuntimeLabel(processorRuntimeFor(processor.id))"
+              v-tooltip="processorRuntimeLabel(processorRuntimeFor(processor.id))"
               :aria-label="processorRuntimeLabel(processorRuntimeFor(processor.id))"
             >
               {{ processorRuntimeBadge(processorRuntimeFor(processor.id)) }}

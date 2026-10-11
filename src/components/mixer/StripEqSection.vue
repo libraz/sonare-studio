@@ -8,6 +8,7 @@ import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands
 import { setStripEq } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripEq } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { type MidiLearnEqParam, midiLearnEqTargetId } from '@/ui/midi/midi-learn';
@@ -234,6 +235,23 @@ function scopeSpectrumPath(frame: ScopeFrame | null, sampleRate: number | undefi
 
 const spectrumPath = computed(() =>
   scopeSpectrumPath(scopeFrame.value, props.scope?.available ? props.scope.sampleRate : undefined),
+);
+
+/** Bands are edited only while the EQ runs; a bypassed EQ would hide every change. */
+const bandsBlocked = computed(() =>
+  firstBlock([eq.value?.enabled !== true, t.value.shell.mixer.reasons.eqOff]),
+);
+const addBandBlocked = computed(() =>
+  firstBlock(bandsBlocked.value, [
+    (eq.value?.bands.length ?? 0) >= MAX_BANDS,
+    formatMessage(t.value.shell.mixer.reasons.bandLimit, { max: String(MAX_BANDS) }),
+  ]),
+);
+const matchFlatBlocked = computed(() =>
+  firstBlock(
+    [props.scope?.available !== true, t.value.shell.mixer.meter.noLive],
+    [!canMatchFlat.value, t.value.shell.mixer.reasons.noSpectrum],
+  ),
 );
 
 const canMatchFlat = computed(() => {
@@ -479,15 +497,14 @@ function openBandMenu(index: number, event: MouseEvent): void {
       run: () => setBandDynamicMode(index, 'up'),
     },
   );
-  if (currentBands().length > 1) {
-    items.push({ id: 'sep', separator: true });
-    items.push({
-      id: 'remove',
-      label: t.value.shell.mixer.eq.removeBand,
-      danger: true,
-      run: () => removeBand(index),
-    });
-  }
+  items.push({ id: 'sep', separator: true });
+  items.push({
+    id: 'remove',
+    label: t.value.shell.mixer.eq.removeBand,
+    danger: true,
+    disabledReason: firstBlock([currentBands().length <= 1, t.value.shell.mixer.reasons.lastBand]),
+    run: () => removeBand(index),
+  });
   appendMidiLearnItems(items, index, band);
   openContextMenu(event.clientX, event.clientY, items);
 }
@@ -558,23 +575,23 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
         :aria-pressed="eq?.enabled === true"
         @click="onTogglePower"
       />
-      <span class="eq-title">EQ</span>
+      <span class="eq-title" v-tooltip="t.shell.mixer.eq.sectionTitle">EQ</span>
       <span class="eq-head-spacer" />
       <button
         type="button"
         class="eq-match"
-        :disabled="!canMatchFlat"
-        v-tooltip="canMatchFlat ? t.shell.mixer.eq.matchFlatTitle : t.shell.mixer.meter.noLive"
+        :disabled="!!matchFlatBlocked"
+        v-tooltip="{ text: t.shell.mixer.eq.matchFlatTitle, reason: matchFlatBlocked }"
         :aria-label="t.shell.mixer.eq.matchFlat"
         @click="onMatchFlat"
       >
         ≈
       </button>
       <button
-        v-if="eq && eq.bands.length < MAX_BANDS"
         type="button"
         class="eq-add"
-        v-tooltip="t.shell.mixer.eq.addTitle"
+        :disabled="!!addBandBlocked"
+        v-tooltip="{ text: t.shell.mixer.eq.addTitle, reason: addBandBlocked }"
         :aria-label="t.shell.mixer.eq.add"
         @click="addBand"
       >
@@ -614,7 +631,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           :default-value="defaultFreq(band)"
           :display="`${formatHz(band.frequencyHz ?? 1000)} Hz`"
           :size="18"
-          :disabled="!eq.enabled"
+          :reason="bandsBlocked"
           @change="(value, commit) => onFreqChange(index, value, commit)"
         />
         <MixerKnob
@@ -626,7 +643,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           :default-value="0"
           :display="`${formatDb(band.gainDb ?? 0)} dB`"
           :size="18"
-          :disabled="!eq.enabled"
+          :reason="bandsBlocked"
           @change="(value, commit) => onGainChange(index, value, commit)"
         />
         <MixerKnob
@@ -638,7 +655,7 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           :default-value="defaultQ(band)"
           :display="`Q ${(band.q ?? 0.7).toFixed(2)}`"
           :size="18"
-          :disabled="!eq.enabled"
+          :reason="bandsBlocked"
           @change="(value, commit) => onQChange(index, value, commit)"
         />
       </div>
@@ -720,12 +737,13 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
   font-size: var(--fs-chrome-lg);
 }
 
-.eq-add:hover,
+.eq-add:hover:not(:disabled),
 .eq-match:hover:not(:disabled) {
   color: var(--text-1);
   box-shadow: var(--control-lift-hover);
 }
 
+.eq-add:disabled,
 .eq-match:disabled {
   opacity: 0.45;
   cursor: default;

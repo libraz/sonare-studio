@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject } from 'vue';
+import { computed, inject } from 'vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import CloseIcon from '@/components/shell/CloseIcon.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
@@ -8,6 +8,7 @@ import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { InsertSlot } from '@/project/mixer';
 import type { ProcessorControlValue } from '@/project/processor-controls';
 import { formatProcessorControlValue } from '@/project/processor-controls';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MasteringControl } from '@/ui/mastering/chain-controls';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
@@ -61,6 +62,13 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const moveUpBlocked = computed(() =>
+  firstBlock([!props.canMoveUp, t.value.shell.mastering.reasons.alreadyFirst]),
+);
+const moveDownBlocked = computed(() =>
+  firstBlock([!props.canMoveDown, t.value.shell.mastering.reasons.alreadyLast]),
+);
 const midiLearn = inject(MIDI_LEARN_KEY, null);
 
 function processorCategory(processor: string): string {
@@ -199,7 +207,7 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
     <span
       class="chain-runtime"
       :class="`runtime-${processorRuntime}`"
-      :title="processorRuntimeLabel(processorRuntime)"
+      v-tooltip="processorRuntimeLabel(processorRuntime)"
       :aria-label="processorRuntimeLabel(processorRuntime)"
     >
       {{ processorRuntimeBadge(processorRuntime) }}
@@ -207,7 +215,8 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
     <button
       type="button"
       class="chain-move"
-      :disabled="!canMoveUp"
+      :disabled="!!moveUpBlocked"
+      v-tooltip="{ text: t.shell.mastering.moveUpTitle, reason: moveUpBlocked }"
       :aria-label="formatMessage(t.shell.mastering.moveUp, { name: humanizeInsertName(slot.processor) })"
       @click="emit('move', index, -1)"
     >
@@ -216,7 +225,8 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
     <button
       type="button"
       class="chain-move"
-      :disabled="!canMoveDown"
+      :disabled="!!moveDownBlocked"
+      v-tooltip="{ text: t.shell.mastering.moveDownTitle, reason: moveDownBlocked }"
       :aria-label="formatMessage(t.shell.mastering.moveDown, { name: humanizeInsertName(slot.processor) })"
       @click="emit('move', index, 1)"
     >
@@ -264,7 +274,7 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
         :data-control="control.id"
         :aria-label="control.name"
         :aria-pressed="control.value"
-        :title="`${control.name}: ${controlDisplay(control)}`"
+        v-tooltip="`${control.name}: ${controlDisplay(control)}`"
         @click="emitBooleanChange(control)"
       >
         <span class="chain-param-label">{{ control.name }}</span>
@@ -277,7 +287,7 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
           :model-value="enumControl(control).value"
           :options="enumControl(control).options"
           :aria-label="control.name"
-          :title="`${control.name}: ${controlDisplay(control)}`"
+          v-tooltip="`${control.name}: ${controlDisplay(control)}`"
           size="sm"
           @change="(value) => emitEnumChange(enumControl(control), value)"
         />

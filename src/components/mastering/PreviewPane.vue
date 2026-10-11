@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessReadout.vue';
 import StreamingTargetsTable from '@/components/mastering/StreamingTargetsTable.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { formatLevel, type LoudnessRow } from '@/ui/mastering/loudness';
 import type { MonoCompatibilityReport } from '@/ui/mastering/stereo-analysis';
@@ -15,7 +17,7 @@ import type { StreamingPlatformConfig, StreamingTarget } from '@/ui/mastering/st
  * are owned by the panel, which this pane drives through emitted intents.
  */
 
-defineProps<{
+const props = defineProps<{
   /** True while a preview render is in flight. */
   rendering: boolean;
   /** Render progress over both variants (0..1). */
@@ -81,6 +83,27 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
+const reasons = computed(() => t.value.shell.mastering.reasons);
+const hasRenders = computed(() => props.hasProcessed && props.hasBypassed);
+const previewBlocked = computed(() => firstBlock([props.rendering, reasons.value.rendering]));
+const processedBlocked = computed(() => firstBlock([!props.hasProcessed, reasons.value.noPreview]));
+const bypassedBlocked = computed(() => firstBlock([!props.hasBypassed, reasons.value.noPreview]));
+const playBlocked = computed(() => firstBlock([!props.canPlay, reasons.value.noPreview]));
+/** Why level matching is not applied while it is switched on. */
+const levelMatchReason = computed(() =>
+  props.levelMatchEnabled && !props.levelMatchAvailable
+    ? firstBlock(
+        [!hasRenders.value, reasons.value.noPreview],
+        [props.stale, reasons.value.previewStale],
+        [true, reasons.value.noLoudness],
+      )
+    : null,
+);
+const checkBlocked = computed(() => firstBlock([props.checkingTargets, reasons.value.checking]));
+const removeTargetBlocked = computed(() =>
+  firstBlock([props.streamingPlatforms.length <= 1, reasons.value.lastTarget]),
+);
+
 function formatAttenuation(value: number): string {
   const db = Math.abs(value) < 0.05 ? 0 : value;
   return `${db.toFixed(1)} dB`;
@@ -90,160 +113,188 @@ function formatAttenuation(value: number): string {
 <template>
   <div class="preview-pane">
     <div class="preview-controls">
-      <button type="button" class="preview-button" :disabled="rendering" @click="emit('preview')">
-        <span v-if="rendering" class="spinner button-spinner" aria-hidden="true" />
-        {{ t.shell.mastering.preview }}
-      </button>
-      <button v-if="rendering" type="button" class="preview-cancel" @click="emit('cancel')">
-        {{ t.shell.mastering.cancel }}
-      </button>
-      <div class="ab-toggle" role="group" :aria-label="t.shell.mastering.abComparison">
+      <div class="preview-group">
         <button
           type="button"
-          class="ab-button"
-          :class="{ active: variant === 'processed' }"
-          :disabled="!hasProcessed"
-          v-tooltip="t.shell.mastering.withChain"
-          :aria-label="t.shell.mastering.previewWithChain"
-          :aria-pressed="variant === 'processed'"
-          @click="emit('select-variant', 'processed')"
+          class="preview-button"
+          :disabled="!!previewBlocked"
+          v-tooltip="{ text: t.shell.mastering.previewTitle, reason: previewBlocked }"
+          @click="emit('preview')"
         >
-          A
+          <span v-if="rendering" class="spinner button-spinner" aria-hidden="true" />
+          {{ t.shell.mastering.preview }}
         </button>
         <button
+          v-if="rendering"
           type="button"
-          class="ab-button"
-          :class="{ active: variant === 'bypassed' }"
-          :disabled="!hasBypassed"
-          v-tooltip="t.shell.mastering.chainBypassed"
-          :aria-label="t.shell.mastering.previewBypassed"
-          :aria-pressed="variant === 'bypassed'"
-          @click="emit('select-variant', 'bypassed')"
+          class="preview-cancel"
+          v-tooltip="t.shell.mastering.cancelTitle"
+          @click="emit('cancel')"
         >
-          B
+          {{ t.shell.mastering.cancel }}
+        </button>
+        <span v-if="stale" class="preview-stale animate-pop" v-tooltip="t.shell.mastering.staleTitle">
+          {{ t.shell.mastering.stale }}
+        </span>
+      </div>
+      <div class="preview-group">
+        <div class="ab-toggle" role="group" :aria-label="t.shell.mastering.abComparison">
+          <button
+            type="button"
+            class="ab-button"
+            :class="{ active: variant === 'processed' }"
+            :disabled="!!processedBlocked"
+            v-tooltip="{ text: t.shell.mastering.withChain, reason: processedBlocked }"
+            :aria-label="t.shell.mastering.previewWithChain"
+            :aria-pressed="variant === 'processed'"
+            @click="emit('select-variant', 'processed')"
+          >
+            A
+          </button>
+          <button
+            type="button"
+            class="ab-button"
+            :class="{ active: variant === 'bypassed' }"
+            :disabled="!!bypassedBlocked"
+            v-tooltip="{ text: t.shell.mastering.chainBypassed, reason: bypassedBlocked }"
+            :aria-label="t.shell.mastering.previewBypassed"
+            :aria-pressed="variant === 'bypassed'"
+            @click="emit('select-variant', 'bypassed')"
+          >
+            B
+          </button>
+        </div>
+        <button
+          type="button"
+          class="play-button"
+          :class="{ playing: isPlaying }"
+          :disabled="!!playBlocked"
+          v-tooltip="{ text: t.shell.mastering.playTitle, reason: playBlocked }"
+          @click="emit('toggle-play')"
+        >
+          <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
+          <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>
         </button>
       </div>
-      <label class="level-match-toggle">
-        <input
-          type="checkbox"
-          :checked="levelMatchEnabled"
-          :aria-label="t.shell.mastering.levelMatch"
-          @change="emit('toggle-level-match', ($event.target as HTMLInputElement).checked)"
-        />
-        <span>{{ t.shell.mastering.levelMatch }}</span>
-      </label>
-      <span
-        class="level-match-status"
-        :class="{ unavailable: levelMatchEnabled && !levelMatchAvailable }"
-        role="status"
-        :aria-label="t.shell.mastering.levelMatchStatus"
-      >
-        <template v-if="!levelMatchEnabled">{{ t.shell.mastering.levelMatchOff }}</template>
-        <template v-else-if="!levelMatchAvailable">
-          {{ t.shell.mastering.levelMatchUnavailable }}
-        </template>
-        <template v-else>
-          A {{ formatAttenuation(processedLevelMatchDb) }} · B
-          {{ formatAttenuation(bypassedLevelMatchDb) }}
-        </template>
-      </span>
-      <button
-        type="button"
-        class="play-button"
-        :class="{ playing: isPlaying }"
-        :disabled="!canPlay"
-        @click="emit('toggle-play')"
-      >
-        <TransportIcon :name="isPlaying ? 'stop' : 'play'" class="play-icon" />
-        <span>{{ isPlaying ? t.shell.mastering.stop : t.shell.mastering.play }}</span>
-      </button>
-      <span v-if="stale" class="preview-stale animate-pop" v-tooltip="t.shell.mastering.staleTitle">
-        {{ t.shell.mastering.stale }}
-      </span>
+      <div class="preview-group">
+        <label class="level-match-toggle" v-tooltip="t.shell.mastering.levelMatchTitle">
+          <input
+            type="checkbox"
+            :checked="levelMatchEnabled"
+            :aria-label="t.shell.mastering.levelMatch"
+            @change="emit('toggle-level-match', ($event.target as HTMLInputElement).checked)"
+          />
+          <span>{{ t.shell.mastering.levelMatch }}</span>
+        </label>
+        <span
+          class="level-match-status"
+          :class="{ unavailable: !!levelMatchReason && hasRenders }"
+          role="status"
+          :aria-label="t.shell.mastering.levelMatchStatus"
+          v-tooltip="{ text: t.shell.mastering.levelMatchStatus, reason: levelMatchReason }"
+        >
+          <template v-if="!levelMatchEnabled">{{ t.shell.mastering.levelMatchOff }}</template>
+          <template v-else-if="!levelMatchAvailable">
+            {{ t.shell.mastering.levelMatchUnavailable }}
+          </template>
+          <template v-else>
+            A {{ formatAttenuation(processedLevelMatchDb) }} · B
+            {{ formatAttenuation(bypassedLevelMatchDb) }}
+          </template>
+        </span>
+      </div>
       <button
         type="button"
         class="targets-button"
-        :disabled="checkingTargets"
-        v-tooltip="t.shell.mastering.streaming.title"
+        :disabled="!!checkBlocked"
+        v-tooltip="{ text: t.shell.mastering.streaming.title, reason: checkBlocked }"
         @click="emit('check-targets')"
       >
         <span v-if="checkingTargets" class="spinner button-spinner" aria-hidden="true" />
         {{ checkingTargets ? t.shell.mastering.streaming.checking : t.shell.mastering.streaming.check }}
       </button>
     </div>
-    <div class="targets-editor" :aria-label="t.shell.mastering.streaming.targets">
-      <div class="targets-editor-head">
-        <span>{{ t.shell.mastering.streaming.targets }}</span>
-        <button
-          type="button"
-          class="targets-add"
-          v-tooltip="t.shell.mastering.streaming.add"
-          :aria-label="t.shell.mastering.streaming.add"
-          @click="emit('add-streaming-platform')"
+    <details class="targets-editor">
+      <summary class="targets-editor-summary">
+        {{ t.shell.mastering.streaming.targets }}
+        <span class="targets-editor-count">{{ streamingPlatforms.length }}</span>
+      </summary>
+      <div class="targets-editor-body">
+        <div class="targets-editor-head">
+          <span>{{ t.shell.mastering.streaming.platform }}</span>
+          <span class="targets-editor-num">{{ t.shell.mastering.streaming.targetLufs }}</span>
+          <span class="targets-editor-num">{{ t.shell.mastering.streaming.ceiling }}</span>
+          <button
+            type="button"
+            class="targets-add"
+            v-tooltip="t.shell.mastering.streaming.add"
+            :aria-label="t.shell.mastering.streaming.add"
+            @click="emit('add-streaming-platform')"
+          >
+            +
+          </button>
+        </div>
+        <div
+          v-for="(platform, index) in streamingPlatforms"
+          :key="`${platform.name}:${index}`"
+          class="targets-editor-row"
         >
-          +
-        </button>
+          <input
+            class="targets-name-input"
+            :aria-label="t.shell.mastering.streaming.platform"
+            :value="platform.name"
+            @input="
+              emit(
+                'update-streaming-platform',
+                index,
+                'name',
+                ($event.target as HTMLInputElement).value,
+              )
+            "
+          />
+          <input
+            class="targets-number-input"
+            type="number"
+            step="0.1"
+            :aria-label="t.shell.mastering.streaming.targetLufs"
+            :value="platform.targetLufs"
+            @input="
+              emit(
+                'update-streaming-platform',
+                index,
+                'targetLufs',
+                ($event.target as HTMLInputElement).value,
+              )
+            "
+          />
+          <input
+            class="targets-number-input"
+            type="number"
+            step="0.1"
+            :aria-label="t.shell.mastering.streaming.ceiling"
+            :value="platform.ceilingDb"
+            @input="
+              emit(
+                'update-streaming-platform',
+                index,
+                'ceilingDb',
+                ($event.target as HTMLInputElement).value,
+              )
+            "
+          />
+          <button
+            type="button"
+            class="targets-remove"
+            v-tooltip="{ text: t.shell.mastering.streaming.remove, reason: removeTargetBlocked }"
+            :aria-label="t.shell.mastering.streaming.remove"
+            :disabled="!!removeTargetBlocked"
+            @click="emit('remove-streaming-platform', index)"
+          >
+            ×
+          </button>
+        </div>
       </div>
-      <div
-        v-for="(platform, index) in streamingPlatforms"
-        :key="`${platform.name}:${index}`"
-        class="targets-editor-row"
-      >
-        <input
-          class="targets-name-input"
-          :aria-label="t.shell.mastering.streaming.platform"
-          :value="platform.name"
-          @input="
-            emit(
-              'update-streaming-platform',
-              index,
-              'name',
-              ($event.target as HTMLInputElement).value,
-            )
-          "
-        />
-        <input
-          class="targets-number-input"
-          type="number"
-          step="0.1"
-          :aria-label="t.shell.mastering.streaming.targetLufs"
-          :value="platform.targetLufs"
-          @input="
-            emit(
-              'update-streaming-platform',
-              index,
-              'targetLufs',
-              ($event.target as HTMLInputElement).value,
-            )
-          "
-        />
-        <input
-          class="targets-number-input"
-          type="number"
-          step="0.1"
-          :aria-label="t.shell.mastering.streaming.ceiling"
-          :value="platform.ceilingDb"
-          @input="
-            emit(
-              'update-streaming-platform',
-              index,
-              'ceilingDb',
-              ($event.target as HTMLInputElement).value,
-            )
-          "
-        />
-        <button
-          type="button"
-          class="targets-remove"
-          v-tooltip="t.shell.mastering.streaming.remove"
-          :aria-label="t.shell.mastering.streaming.remove"
-          :disabled="streamingPlatforms.length <= 1"
-          @click="emit('remove-streaming-platform', index)"
-        >
-          ×
-        </button>
-      </div>
-    </div>
+    </details>
     <div v-if="rendering" class="preview-progress">
       <div class="progress-track">
         <div class="progress-fill" :style="{ transform: `scaleX(${Math.min(1, Math.max(0, progress))})` }" />

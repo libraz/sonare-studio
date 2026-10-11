@@ -5,6 +5,7 @@ import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import { insertAutomationParam } from '@/project/automation';
 import { setAutomationLanePoints, setInsertEnabled, setInsertParam } from '@/project/commands';
 import { getWasmModule, useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import {
   type AutomationWriteGesture,
@@ -279,6 +280,14 @@ function parameterAvailable(param: AmpParameterKey): boolean {
   return resolvedParameter(param).value !== undefined;
 }
 
+/** An inherited control whose preset value never loaded has nothing to edit. */
+function parameterBlocked(param: AmpParameterKey): string | null {
+  return firstBlock([
+    !parameterAvailable(param),
+    t.value.shell.devicesPanel.reasons.ampValueUnavailable,
+  ]);
+}
+
 function numberValue(param: AmpNumberKey): number | null {
   const value = resolvedParameter(param).value;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -491,7 +500,7 @@ onBeforeUnmount(() => {
           :class="{ active: !isBypassed }"
           :aria-pressed="isBypassed"
           :aria-label="t.shell.inserts.bypass"
-          :title="isBypassed ? t.shell.inserts.enable : t.shell.inserts.bypass"
+          v-tooltip="isBypassed ? t.shell.inserts.enable : t.shell.inserts.bypass"
           @click="toggleBypass"
         >
           {{ isBypassed ? t.shell.inserts.enable : t.shell.inserts.bypass }}
@@ -544,7 +553,8 @@ onBeforeUnmount(() => {
             max="1"
             step="0.01"
             :value="numberInputValue('drive')"
-            :disabled="!parameterAvailable('drive')"
+            :disabled="!!parameterBlocked('drive')"
+            v-tooltip="{ reason: parameterBlocked('drive') }"
             :aria-label="t.shell.devicesPanel.ampDrive"
             @input="onRangeInput('drive', $event)"
             @change="onRangeChange('drive', $event)"
@@ -571,7 +581,8 @@ onBeforeUnmount(() => {
             max="12"
             step="0.5"
             :value="numberInputValue(control.id as AmpNumberKey)"
-            :disabled="!parameterAvailable(control.id as AmpNumberKey)"
+            :disabled="!!parameterBlocked(control.id as AmpNumberKey)"
+            v-tooltip="{ reason: parameterBlocked(control.id as AmpNumberKey) }"
             :aria-label="control.label"
             @input="onRangeInput(control.id, $event)"
             @change="onRangeChange(control.id, $event)"
@@ -596,7 +607,8 @@ onBeforeUnmount(() => {
           max="24"
           step="0.5"
           :value="numberInputValue('inputDb')"
-          :disabled="!parameterAvailable('inputDb')"
+          :disabled="!!parameterBlocked('inputDb')"
+          v-tooltip="{ reason: parameterBlocked('inputDb') }"
           :aria-label="t.shell.devicesPanel.ampInput"
           @input="onRangeInput('inputDb', $event)"
           @change="onRangeChange('inputDb', $event)"
@@ -617,7 +629,8 @@ onBeforeUnmount(() => {
           max="24"
           step="0.5"
           :value="numberInputValue('levelDb')"
-          :disabled="!parameterAvailable('levelDb')"
+          :disabled="!!parameterBlocked('levelDb')"
+          v-tooltip="{ reason: parameterBlocked('levelDb') }"
           :aria-label="t.shell.devicesPanel.ampLevel"
           @input="onRangeInput('levelDb', $event)"
           @change="onRangeChange('levelDb', $event)"
@@ -631,13 +644,15 @@ onBeforeUnmount(() => {
           <button
             type="button"
             :aria-pressed="cabEnabled === true"
-            :disabled="!parameterAvailable('cab')"
+            :disabled="!!parameterBlocked('cab')"
+            v-tooltip="{ reason: parameterBlocked('cab') }"
             @click="apply('cab', true)"
           >{{ t.shell.devicesPanel.ampCabOn }}</button>
           <button
             type="button"
             :aria-pressed="cabEnabled === false"
-            :disabled="!parameterAvailable('cab')"
+            :disabled="!!parameterBlocked('cab')"
+            v-tooltip="{ reason: parameterBlocked('cab') }"
             @click="apply('cab', false)"
           >{{ t.shell.devicesPanel.ampCabOff }}</button>
         </div>
@@ -658,7 +673,8 @@ onBeforeUnmount(() => {
           </span>
           <select
             :value="modelValue('ampModel')"
-            :disabled="!parameterAvailable('ampModel')"
+            :disabled="!!parameterBlocked('ampModel')"
+            v-tooltip="{ reason: parameterBlocked('ampModel') }"
             :aria-label="t.shell.devicesPanel.ampModel"
             @change="onModelChange('ampModel', $event)"
           >
@@ -674,7 +690,8 @@ onBeforeUnmount(() => {
           </span>
           <select
             :value="modelValue('cabModel')"
-            :disabled="!parameterAvailable('cabModel')"
+            :disabled="!!parameterBlocked('cabModel')"
+            v-tooltip="{ reason: parameterBlocked('cabModel') }"
             :aria-label="t.shell.devicesPanel.ampCabModel"
             @change="onModelChange('cabModel', $event)"
           >
@@ -690,7 +707,8 @@ onBeforeUnmount(() => {
           </span>
           <select
             :value="modelValue('micModel')"
-            :disabled="!parameterAvailable('micModel')"
+            :disabled="!!parameterBlocked('micModel')"
+            v-tooltip="{ reason: parameterBlocked('micModel') }"
             :aria-label="t.shell.devicesPanel.ampMicModel"
             @change="onModelChange('micModel', $event)"
           >
@@ -721,7 +739,8 @@ onBeforeUnmount(() => {
             :max="control.max"
             :step="control.step"
             :value="numberInputValue(control.id as AmpNumberKey)"
-            :disabled="!parameterAvailable(control.id as AmpNumberKey)"
+            :disabled="!!parameterBlocked(control.id as AmpNumberKey)"
+            v-tooltip="{ reason: parameterBlocked(control.id as AmpNumberKey) }"
             :aria-label="control.label"
             @input="onRangeInput(control.id, $event)"
             @change="onRangeChange(control.id, $event)"

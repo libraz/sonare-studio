@@ -29,8 +29,12 @@ function signedGain(value: number): string {
       <tr>
         <th class="targets-name">{{ t.shell.mastering.streaming.platform }}</th>
         <th>{{ t.shell.mastering.streaming.lufs }}</th>
-        <th>{{ t.shell.mastering.streaming.gain }}</th>
-        <th>{{ t.shell.mastering.streaming.peak }}</th>
+        <th v-tooltip="t.shell.mastering.streaming.gainTitle">
+          {{ t.shell.mastering.streaming.gain }}
+        </th>
+        <th v-tooltip="t.shell.mastering.streaming.peakTitle">
+          {{ t.shell.mastering.streaming.peak }}
+        </th>
       </tr>
     </thead>
     <tbody>

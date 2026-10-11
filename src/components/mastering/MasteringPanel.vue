@@ -25,6 +25,7 @@ import { createDefaultMasteringChain, type MasteringChainState } from '@/project
 import { getWasmModule } from '@/project/runtime';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   type MasteringSuggestion,
@@ -51,6 +52,7 @@ import {
   type PresetControlDescriptor,
   type PresetControlKey,
   parsePresetControlValue,
+  presetControlEnabledKey,
   presetControlOverridesForEdit,
   presetControlOverridesForReset,
   resolvePresetControlValue,
@@ -232,6 +234,8 @@ const presetParams = computed<Readonly<Record<string, unknown>>>(() => {
   }
 });
 
+const PRESET_SECTIONS = ['output', 'restoration'] as const;
+
 const presetControlSections = computed(() => ({
   output: PRESET_CONTROL_DESCRIPTORS.filter((descriptor) => descriptor.section === 'output'),
   restoration: PRESET_CONTROL_DESCRIPTORS.filter(
@@ -275,6 +279,50 @@ function presetControlLabel(key: PresetControlKey): string {
   }
   return key;
 }
+
+function presetControlHint(key: PresetControlKey): string {
+  const hints = t.value.shell.mastering.presetOverrides.hints;
+  switch (key) {
+    case 'loudness.enabled':
+      return hints.loudnessEnabled;
+    case 'loudness.targetLufs':
+      return hints.targetLufs;
+    case 'loudness.ceilingDb':
+      return hints.ceilingDb;
+    case 'loudness.truePeakOversample':
+      return hints.truePeakOversample;
+    case 'loudness.releaseMs':
+      return hints.releaseMs;
+    case 'loudness.maxLimiterGainReductionDb':
+      return hints.maxLimiterGainReductionDb;
+    case 'repair.denoise.enabled':
+      return hints.denoiseEnabled;
+    case 'repair.denoise.reductionDb':
+      return hints.denoiseReductionDb;
+  }
+  return '';
+}
+
+/** Every preset control needs a selected preset to override. */
+const presetBlocked = computed(() =>
+  firstBlock([!chain.value.preset, t.value.shell.mastering.reasons.needsPreset]),
+);
+
+/** A stage parameter only matters while its stage switch is on. */
+const presetControlBlocked = computed<Record<PresetControlKey, string | null>>(() => {
+  const reasons = t.value.shell.mastering.reasons;
+  const out = {} as Record<PresetControlKey, string | null>;
+  for (const descriptor of PRESET_CONTROL_DESCRIPTORS) {
+    const enabledKey = presetControlEnabledKey(descriptor.key);
+    const enabledDescriptor = enabledKey ? getPresetControlDescriptor(enabledKey) : undefined;
+    const stageOff = enabledDescriptor !== undefined && !presetControlValue(enabledDescriptor);
+    out[descriptor.key] = firstBlock(presetBlocked.value, [
+      stageOff,
+      enabledKey === 'loudness.enabled' ? reasons.loudnessOff : reasons.denoiseOff,
+    ]);
+  }
+  return out;
+});
 
 function presetControlUnit(descriptor: PresetControlDescriptor): string {
   if (descriptor.key === 'loudness.truePeakOversample') {
@@ -712,6 +760,10 @@ function onDocumentPointerDown(event: PointerEvent): void {
   if (!presetMenuEl?.contains(event.target)) presetMenuOpen.value = false;
 }
 
+const suggestBlocked = computed(() =>
+  firstBlock([suggesting.value, t.value.shell.mastering.reasons.analyzing]),
+);
+
 const anyMenuOpen = computed(() => addMenuOpen.value || presetMenuOpen.value);
 
 watch(anyMenuOpen, (open) => {
@@ -921,6 +973,7 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
     },
     {
       label: t.value.shell.mastering.loudness.lra,
+      hint: t.value.shell.mastering.loudness.lraHint,
       unit: 'LU',
       a: a?.loudnessRange,
       b: b?.loudnessRange,
@@ -928,6 +981,7 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
     },
     {
       label: t.value.shell.mastering.loudness.dynamicRange,
+      hint: t.value.shell.mastering.loudness.dynamicRangeHint,
       unit: 'dB',
       a: a?.dynamicRangeDb,
       b: b?.dynamicRangeDb,
@@ -970,6 +1024,13 @@ const targetLimited = computed(() => {
 const referenceAudio = shallowRef<MasteringReferenceAudio | null>(null);
 const referenceAnalysis = ref<MatchEqAnalysis | null>(null);
 const analyzingReference = ref(false);
+
+const compareBlocked = computed(() =>
+  firstBlock(
+    [!referenceAudio.value, t.value.shell.mastering.reasons.noReference],
+    [analyzingReference.value, t.value.shell.mastering.reasons.comparing],
+  ),
+);
 
 async function onReferenceFile(event: Event): Promise<void> {
   const file = (event.target as HTMLInputElement).files?.[0];
@@ -1083,8 +1144,8 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="assist-button"
-        :disabled="suggesting"
-        v-tooltip="t.shell.mastering.assistant.title"
+        :disabled="!!suggestBlocked"
+        v-tooltip="{ text: t.shell.mastering.assistant.title, reason: suggestBlocked }"
         @click="onAutoSuggest"
       >
         <span v-if="suggesting" class="spinner button-spinner" aria-hidden="true" />
@@ -1124,35 +1185,41 @@ onBeforeUnmount(() => {
           :preset="chain.preset"
           :adjustments="suggestionAdjustments"
         />
-        <section class="preset-overrides" :class="{ disabled: !chain.preset }">
+        <section class="preset-overrides">
           <div class="preset-overrides-head">
             <span class="preset-overrides-title">
               {{ t.shell.mastering.presetOverrides.title }}
             </span>
-            <span class="preset-overrides-note">
-              {{
-                chain.preset
-                  ? t.shell.mastering.presetOverrides.note
-                  : t.shell.mastering.presetOverrides.needsPreset
-              }}
+            <span v-if="!presetBlocked" class="preset-overrides-note">
+              {{ t.shell.mastering.presetOverrides.note }}
             </span>
           </div>
-          <p v-if="chain.preset" class="preset-overrides-preview-note">
-            {{ t.shell.mastering.presetOverrides.previewOnly }}
+          <p v-if="presetBlocked" class="preset-overrides-empty">
+            {{ t.shell.mastering.presetOverrides.needsPreset }}
           </p>
-          <div class="preset-control-section">
-            <h3 class="preset-control-section-title">
-              {{ t.shell.mastering.presetOverrides.output }}
-            </h3>
-            <div class="preset-control-grid">
+          <div class="preset-control-sections">
+            <div
+              v-for="section in PRESET_SECTIONS"
+              :key="section"
+              class="preset-control-section"
+            >
+              <h3 class="preset-control-section-title">
+                {{ t.shell.mastering.presetOverrides[section] }}
+              </h3>
               <div
-                v-for="descriptor in presetControlSections.output"
+                v-for="descriptor in presetControlSections[section]"
                 :key="descriptor.key"
                 class="preset-control"
                 :class="{
                   overridden: hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {}),
+                  blocked: !!presetControlBlocked[descriptor.key],
                 }"
                 :data-preset-control="descriptor.key"
+                v-tooltip="{
+                  text: presetControlHint(descriptor.key),
+                  reason: presetControlBlocked[descriptor.key],
+                  placement: 'end',
+                }"
               >
                 <span class="preset-control-label">{{ presetControlLabel(descriptor.key) }}</span>
                 <span class="preset-control-input">
@@ -1160,19 +1227,19 @@ onBeforeUnmount(() => {
                     v-if="descriptor.kind === 'boolean'"
                     type="checkbox"
                     :checked="Boolean(presetControlValue(descriptor))"
-                    :disabled="!chain.preset"
+                    :disabled="!!presetControlBlocked[descriptor.key]"
                     :aria-label="presetControlLabel(descriptor.key)"
                     @change="onPresetControlInput(descriptor.key, $event)"
                   />
                   <select
                     v-else-if="descriptor.kind === 'enum'"
                     :value="presetControlValue(descriptor)"
-                    :disabled="!chain.preset"
+                    :disabled="!!presetControlBlocked[descriptor.key]"
                     :aria-label="presetControlLabel(descriptor.key)"
                     @change="onPresetControlInput(descriptor.key, $event)"
                   >
                     <option v-for="option in descriptor.options" :key="option" :value="option">
-                      {{ option }}{{ presetControlUnit(descriptor) }}
+                      {{ option }}
                     </option>
                   </select>
                   <input
@@ -1182,14 +1249,12 @@ onBeforeUnmount(() => {
                     :min="presetControlMin(descriptor)"
                     :max="presetControlMax(descriptor)"
                     :step="presetControlStep(descriptor)"
-                    :disabled="!chain.preset"
+                    :disabled="!!presetControlBlocked[descriptor.key]"
                     :aria-label="presetControlLabel(descriptor.key)"
                     @change="onPresetControlInput(descriptor.key, $event)"
                   />
-                  <span v-if="presetControlUnit(descriptor)" class="preset-control-unit">
-                    {{ presetControlUnit(descriptor) }}
-                  </span>
                 </span>
+                <span class="preset-control-unit">{{ presetControlUnit(descriptor) }}</span>
                 <button
                   v-if="hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {})"
                   type="button"
@@ -1199,61 +1264,13 @@ onBeforeUnmount(() => {
                       label: presetControlLabel(descriptor.key),
                     })
                   "
-                  :disabled="!chain.preset"
-                  @click="onResetPresetControl(descriptor.key)"
-                >
-                  ↺
-                </button>
-              </div>
-            </div>
-          </div>
-          <div class="preset-control-section">
-            <h3 class="preset-control-section-title">
-              {{ t.shell.mastering.presetOverrides.restoration }}
-            </h3>
-            <div class="preset-control-grid">
-              <div
-                v-for="descriptor in presetControlSections.restoration"
-                :key="descriptor.key"
-                class="preset-control"
-                :class="{
-                  overridden: hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {}),
-                }"
-                :data-preset-control="descriptor.key"
-                >
-                  <span class="preset-control-label">{{ presetControlLabel(descriptor.key) }}</span>
-                  <span class="preset-control-input">
-                    <input
-                      v-if="descriptor.kind === 'boolean'"
-                      type="checkbox"
-                      :checked="Boolean(presetControlValue(descriptor))"
-                      :disabled="!chain.preset"
-                      :aria-label="presetControlLabel(descriptor.key)"
-                      @change="onPresetControlInput(descriptor.key, $event)"
-                    />
-                    <input
-                      v-else
-                      type="number"
-                      :value="presetControlValue(descriptor)"
-                      :min="presetControlMin(descriptor)"
-                      :max="presetControlMax(descriptor)"
-                      :step="presetControlStep(descriptor)"
-                      :disabled="!chain.preset"
-                      :aria-label="presetControlLabel(descriptor.key)"
-                      @change="onPresetControlInput(descriptor.key, $event)"
-                    />
-                    <span class="preset-control-unit">{{ presetControlUnit(descriptor) }}</span>
-                  </span>
-                <button
-                  v-if="hasPresetControlOverride(descriptor.key, chain.presetOverrides ?? {})"
-                  type="button"
-                  class="preset-control-reset"
-                  :aria-label="
-                    formatMessage(t.shell.mastering.presetOverrides.reset, {
+                  v-tooltip="{
+                    text: formatMessage(t.shell.mastering.presetOverrides.reset, {
                       label: presetControlLabel(descriptor.key),
-                    })
-                  "
-                  :disabled="!chain.preset"
+                    }),
+                    reason: presetBlocked,
+                  }"
+                  :disabled="!!presetBlocked"
                   @click="onResetPresetControl(descriptor.key)"
                 >
                   ↺
@@ -1291,14 +1308,32 @@ onBeforeUnmount(() => {
             <span class="mastering-reference-note">{{ t.shell.mastering.reference.note }}</span>
           </div>
           <div class="mastering-reference-controls">
-            <label class="mastering-reference-file">
-              <span>{{ referenceAudio?.name ?? t.shell.mastering.reference.choose }}</span>
-              <input type="file" accept="audio/*" @change="onReferenceFile" />
+            <label
+              class="mastering-reference-file"
+              v-tooltip="
+                referenceAudio
+                  ? t.shell.mastering.reference.changeTitle
+                  : t.shell.mastering.reference.chooseTitle
+              "
+            >
+              <input
+                class="mastering-reference-input"
+                type="file"
+                accept="audio/*"
+                @change="onReferenceFile"
+              />
+              <span class="mastering-reference-file-button">
+                {{ t.shell.mastering.reference.choose }}
+              </span>
+              <span v-if="referenceAudio" class="mastering-reference-name">
+                {{ referenceAudio.name }}
+              </span>
             </label>
             <button
               type="button"
               class="mastering-reference-compare"
-              :disabled="!referenceAudio || analyzingReference"
+              :disabled="!!compareBlocked"
+              v-tooltip="{ text: t.shell.mastering.reference.compareTitle, reason: compareBlocked }"
               @click="onCompareReference"
             >
               <span v-if="analyzingReference" class="spinner button-spinner" aria-hidden="true" />

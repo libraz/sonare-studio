@@ -190,9 +190,10 @@ describe('MixerPanel.vue', () => {
     });
 
     expect(busWrapper.find('.bus-pan').classes()).toContain('disabled');
-    expect(busWrapper.findComponent({ name: 'MixerKnob' }).props('disabled')).toBe(true);
-    expect(busWrapper.findAllComponents({ name: 'NumericReadout' })[0]?.props('disabled')).toBe(
-      true,
+    const stereoOnly = 'Stereo pan and width are unavailable on surround buses';
+    expect(busWrapper.findComponent({ name: 'MixerKnob' }).props('reason')).toBe(stereoOnly);
+    expect(busWrapper.findAllComponents({ name: 'NumericReadout' })[0]?.props('reason')).toBe(
+      stereoOnly,
     );
     expect(busWrapper.find('.bus-pan-note').text()).toBe('Stereo only');
 
@@ -207,7 +208,7 @@ describe('MixerPanel.vue', () => {
     expect(ranges[1]?.attributes('disabled')).toBeDefined();
     const pannerSelects = optionsWrapper.findAllComponents(SelectMenu);
     expect(pannerSelects).toHaveLength(2);
-    expect(pannerSelects.every((select) => select.props('disabled') === true)).toBe(true);
+    expect(pannerSelects.every((select) => select.props('reason') === stereoOnly)).toBe(true);
     optionsWrapper.unmount();
   });
 

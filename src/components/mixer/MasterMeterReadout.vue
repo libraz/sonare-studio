@@ -105,31 +105,44 @@ watch(
 <template>
   <div v-if="levels" class="master-meter" :aria-label="t.shell.mixer.loudness.region">
     <div class="mm-lufs">
-      <div class="mm-cell">
+      <div class="mm-cell" v-tooltip="t.shell.mixer.loudness.momentaryHint">
         <span class="mm-label">{{ t.shell.mixer.loudness.momentary }}</span>
         <span class="mm-value">{{ formatLevel(levels.momentaryLufs) }}</span>
       </div>
-      <div class="mm-cell">
+      <div class="mm-cell" v-tooltip="t.shell.mixer.loudness.shortTermHint">
         <span class="mm-label">{{ t.shell.mixer.loudness.shortTerm }}</span>
         <span class="mm-value">{{ formatLevel(levels.shortTermLufs) }}</span>
       </div>
-      <div class="mm-cell">
+      <div class="mm-cell" v-tooltip="t.shell.mixer.loudness.integratedHint">
         <span class="mm-label">{{ t.shell.mixer.loudness.integrated }}</span>
         <span class="mm-value">{{ formatLevel(levels.integratedLufs) }}</span>
       </div>
     </div>
     <div class="mm-unit">{{ t.shell.mixer.loudness.lufs }}</div>
-    <div v-if="loudnessDelta !== null" class="mm-target" :class="{ over: overTarget }">
+    <div
+      v-if="loudnessDelta !== null"
+      class="mm-target"
+      :class="{ over: overTarget }"
+      v-tooltip="t.shell.mixer.loudness.targetHint"
+    >
       <span class="mm-label">{{ formatMessage(t.shell.mixer.loudness.target, { target: String(props.targetLufs) }) }}</span>
       <span class="mm-value">{{ loudnessDeltaText }}</span>
       <span class="mm-unit-inline">{{ t.shell.mixer.loudness.lu }}</span>
     </div>
-    <div class="mm-tp" :class="{ risk: isClippingRisk(maxTruePeakDb(levels)) }">
+    <div
+      class="mm-tp"
+      :class="{ risk: isClippingRisk(maxTruePeakDb(levels)) }"
+      v-tooltip="t.shell.mixer.loudness.truePeakHint"
+    >
       <span class="mm-label">{{ t.shell.mixer.loudness.truePeak }}</span>
       <span class="mm-value">{{ formatLevel(maxTruePeakDb(levels)) }}</span>
       <span class="mm-unit-inline">{{ t.shell.mixer.loudness.dbtp }}</span>
     </div>
-    <div v-if="gainReduction !== null" class="mm-gr">
+    <div
+      v-if="gainReduction !== null"
+      class="mm-gr"
+      v-tooltip="t.shell.mixer.loudness.gainReductionHint"
+    >
       <span class="mm-label">{{ t.shell.mixer.loudness.gainReduction }}</span>
       <span class="mm-gr-track">
         <span class="mm-gr-fill" :style="{ width: `${gainReductionFraction(gainReduction) * 100}%` }" />
@@ -140,6 +153,7 @@ watch(
       class="mm-corr"
       role="meter"
       :aria-label="t.shell.mixer.loudness.correlation"
+      v-tooltip="t.shell.mixer.loudness.correlation"
       :aria-valuenow="Number(levels.correlation.toFixed(2))"
       aria-valuemin="-1"
       aria-valuemax="1"

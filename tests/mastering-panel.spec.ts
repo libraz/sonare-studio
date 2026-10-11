@@ -171,22 +171,24 @@ describe('MasteringPanel.vue', () => {
       expect(runtimeBadges).toHaveLength(2);
       expect(runtimeBadges[0].classes()).toContain('runtime-live-export');
       expect(runtimeBadges[0].text()).toBe('Live');
-      expect(runtimeBadges[0].attributes('title')).toBe('Live + export');
+      expect(runtimeBadges[0].attributes('aria-label')).toBe('Live + export');
       expect(runtimeBadges[1].classes()).toContain('runtime-preview-export');
       expect(runtimeBadges[1].text()).toBe('Render');
-      expect(runtimeBadges[1].attributes('title')).toBe('Preview / export');
+      expect(runtimeBadges[1].attributes('aria-label')).toBe('Preview / export');
 
       await wrapper.find('.chain-add').trigger('click');
       const catalogItems = wrapper.findAll('.catalog-item');
       expect(catalogItems[0]?.find('.catalog-item-scope').text()).toBe('Live');
-      expect(catalogItems[0]?.find('.catalog-item-scope').attributes('title')).toBe(
+      expect(catalogItems[0]?.find('.catalog-item-scope').attributes('aria-label')).toBe(
         'Live + export',
       );
       const offlineItem = catalogItems.find(
         (item) => item.find('.catalog-item-label').text() === 'Dereverb Classical',
       );
       expect(offlineItem?.find('.catalog-item-scope').text()).toBe('Render');
-      expect(offlineItem?.find('.catalog-item-scope').attributes('title')).toBe('Preview / export');
+      expect(offlineItem?.find('.catalog-item-scope').attributes('aria-label')).toBe(
+        'Preview / export',
+      );
       wrapper.unmount();
     } finally {
       wasm.masteringProcessorCatalog = originalCatalog;
@@ -321,12 +323,15 @@ describe('MasteringPanel.vue', () => {
     const reduction = wrapper.get('[data-preset-control="repair.denoise.reductionDb"] input');
     const enabled = wrapper.get('[data-preset-control="repair.denoise.enabled"] input');
 
+    // The reduction field is gated on the denoise stage, so it is edited while enabled.
+    expect((reduction.element as HTMLInputElement).disabled).toBe(true);
+    await enabled.setValue(true);
+    expect((reduction.element as HTMLInputElement).disabled).toBe(false);
     await reduction.setValue(80);
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.enabled': false,
+      'repair.denoise.enabled': true,
       'repair.denoise.reductionDb': 80,
     });
-    await enabled.setValue(true);
     await wrapper
       .get('[data-preset-control="repair.denoise.enabled"] .preset-control-reset')
       .trigger('click');
@@ -400,6 +405,25 @@ describe('MasteringPanel.vue', () => {
     expect(advanced.text()).toContain('Saved by an older version');
     await advanced.get('.preset-override-remove').trigger('click');
     expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+  });
+
+  it('gates loudness parameters on the loudness stage switch', async () => {
+    setMasteringPreset('streaming');
+    const wrapper = mount(MasteringPanel);
+    const enabled = wrapper.get<HTMLInputElement>('[data-preset-control="loudness.enabled"] input');
+    const target = wrapper.get<HTMLInputElement>(
+      '[data-preset-control="loudness.targetLufs"] input',
+    );
+    expect(enabled.element.checked).toBe(true);
+    expect(target.element.disabled).toBe(false);
+
+    await enabled.setValue(false);
+    expect(target.element.disabled).toBe(true);
+    expect(wrapper.get('[data-preset-control="loudness.ceilingDb"] input').element).toHaveProperty(
+      'disabled',
+      true,
+    );
+    expect(enabled.element.disabled).toBe(false);
   });
 
   it('keeps preset override controls disabled until a preset is selected', async () => {

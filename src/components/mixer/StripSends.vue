@@ -10,6 +10,7 @@ import {
 } from '@/project/commands';
 import { createDefaultStrip, type MixerStrip, type StripSend } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { midiLearnSendTargetId } from '@/ui/midi/midi-learn';
 import { formatDb } from '@/ui/mixer/db-scale';
@@ -108,6 +109,16 @@ function onLevelChange(busId: string, value: number, commit: boolean): void {
   setSend(props.target, busId, { levelDb: value, enabled: existing?.enabled ?? true });
 }
 
+/** Why a send's level cannot be set: the route would close a bus loop. */
+function routeBlocked(busId: string): string | null {
+  return firstBlock([!isSendDestinationAllowed(busId), t.value.shell.mixer.sends.blockedTitle]);
+}
+
+/** Muting needs an existing send on an allowed route. */
+function muteBlocked(busId: string): string | null {
+  return firstBlock(routeBlocked(busId), [!sendFor(busId), t.value.shell.mixer.sends.unsetTitle]);
+}
+
 function onToggleEnabled(busId: string): void {
   if (!isSendDestinationAllowed(busId)) return;
   const existing = sendFor(busId);
@@ -163,12 +174,11 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 </script>
 
 <template>
-  <div
-    v-if="buses.length > 0"
-    class="sends"
-    v-tooltip="isMaster ? t.shell.mixer.sends.masterTitle : t.shell.mixer.sends.stripTitle"
-  >
-    <span class="sends-title">
+  <div v-if="buses.length > 0" class="sends">
+    <span
+      class="sends-title"
+      v-tooltip="isMaster ? t.shell.mixer.sends.masterTitle : t.shell.mixer.sends.stripTitle"
+    >
       {{ t.shell.mixer.sends.title }}
       <span v-if="isMaster" class="sends-note"> · {{ t.shell.mixer.sends.routingOnly }}</span>
     </span>
@@ -182,15 +192,13 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
           unset: !sendFor(bus.id),
           blocked: !isSendDestinationAllowed(bus.id),
         }"
-        v-tooltip="
-          !isSendDestinationAllowed(bus.id)
-            ? t.shell.mixer.sends.blockedTitle
-            : sendFor(bus.id)
-            ? sendFor(bus.id)?.enabled === false
-              ? t.shell.mixer.sends.mutedTitle
-              : t.shell.mixer.sends.activeTitle
-            : t.shell.mixer.sends.unsetTitle
-        "
+        :disabled="!!muteBlocked(bus.id)"
+        v-tooltip="{
+          text: sendFor(bus.id)?.enabled === false
+            ? t.shell.mixer.sends.mutedTitle
+            : t.shell.mixer.sends.activeTitle,
+          reason: muteBlocked(bus.id),
+        }"
         @click="onToggleEnabled(bus.id)"
       >
         {{ bus.name }}
@@ -263,7 +271,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
         :max="SEND_MAX_DB"
         :display="`${formatDb(levelFor(bus.id))} dB`"
         :size="18"
-        :disabled="!isSendDestinationAllowed(bus.id)"
+        :reason="routeBlocked(bus.id)"
         :midi-learn-state="learnState(bus.id)"
         @change="(value, commit) => onLevelChange(bus.id, value, commit)"
         @midi-learn="onMidiLearn(bus.id)"
@@ -277,7 +285,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
         :display="formatDb(levelFor(bus.id))"
         unit="dB"
         :ariaLabel="`${bus.name} ${t.shell.mixer.sends.title}`"
-        :disabled="!isSendDestinationAllowed(bus.id)"
+        :reason="routeBlocked(bus.id)"
         @change="(value) => onLevelChange(bus.id, value, true)"
       />
       <button
@@ -285,6 +293,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
         type="button"
         class="send-remove"
         v-tooltip="t.shell.mixer.sends.remove"
+        :aria-label="t.shell.mixer.sends.remove"
         @click="onRemove(bus.id)"
       >
         ×
@@ -366,6 +375,7 @@ function onMidiForget(busId: string, param: 'level' | 'enabled' | 'timing' = 'le
 
 .send-name.unset {
   color: var(--text-4);
+  cursor: default;
 }
 
 .send-name.blocked {

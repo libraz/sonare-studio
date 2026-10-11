@@ -35,6 +35,8 @@ const props = withDefaults(
     size?: number;
     /** Disables all interaction. */
     disabled?: boolean;
+    /** Why the knob is locked; a non-empty reason also disables it. */
+    reason?: string | null;
     /**
      * MIDI-learn affordance shown in the right-click menu: 'unbound' offers
      * "MIDI Learn", 'armed' shows it listening, 'bound' adds a "Forget"
@@ -50,9 +52,12 @@ const props = withDefaults(
     display: '',
     size: 26,
     disabled: false,
+    reason: null,
     midiLearnState: undefined,
   },
 );
+
+const locked = computed(() => props.disabled || !!props.reason);
 
 const emit = defineEmits<{
   /** New value; commit=false while dragging, true when the gesture ends. */
@@ -99,7 +104,7 @@ const displayText = computed(() => props.display || `${props.value}`);
 
 /** Nudges the value by one normalized step in the given direction (commit). */
 function nudge(direction: 1 | -1, fine: boolean): void {
-  if (props.disabled) return;
+  if (locked.value) return;
   const step = (fine ? FINE_FACTOR : 1) / NUDGE_DIVISIONS;
   emit('change', fromNorm(toNorm(props.value) + direction * step), true);
 }
@@ -110,11 +115,11 @@ const interactions = useControlInteractions({
   commit: (value) => emit('change', value, true),
   nudge,
   getDefault: () => props.defaultValue,
-  isDisabled: () => props.disabled,
+  isDisabled: () => locked.value,
 });
 
 function onPointerDown(event: PointerEvent): void {
-  if (props.disabled || event.button !== 0) return;
+  if (locked.value || event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   dragging.value = true;
   dragNorm = toNorm(props.value);
@@ -139,12 +144,12 @@ function onPointerUp(): void {
 }
 
 function onDoubleClick(): void {
-  if (props.disabled || props.defaultValue === undefined) return;
+  if (locked.value || props.defaultValue === undefined) return;
   emit('change', props.defaultValue, true);
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (props.disabled) return;
+  if (locked.value) return;
   if (event.key === 'ArrowUp' || event.key === 'ArrowRight') nudge(1, event.shiftKey);
   else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') nudge(-1, event.shiftKey);
   else return;
@@ -168,16 +173,19 @@ function onMidiForget(): void {
   <div class="knob-wrap">
     <div
       class="knob"
-      :class="{ disabled: props.disabled, dragging, learning: props.midiLearnState === 'armed' }"
+      :class="{ disabled: locked, dragging, learning: props.midiLearnState === 'armed' }"
       :style="{ width: `${props.size}px`, height: `${props.size}px` }"
       role="slider"
-      :tabindex="props.disabled ? -1 : 0"
+      :tabindex="locked ? -1 : 0"
       :aria-label="props.ariaLabel || props.label || t.shell.mixer.controls.knob"
       :aria-valuemin="props.min"
       :aria-valuemax="props.max"
       :aria-valuenow="props.value"
       :aria-valuetext="displayText"
-      v-tooltip="`${props.label ? `${props.label} ` : ''}${displayText}`"
+      v-tooltip="{
+        text: `${props.label ? `${props.label} ` : ''}${displayText}`,
+        reason: props.reason,
+      }"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
@@ -212,6 +220,10 @@ function onMidiForget(): void {
         type="button"
         role="menuitem"
         :disabled="!interactions.canPaste()"
+        v-tooltip="{
+          reason: interactions.canPaste() ? null : t.shell.mixer.reasons.nothingToPaste,
+          placement: 'end',
+        }"
         @click="interactions.pasteValue"
       >
         {{ t.shell.mixer.controls.pasteValue }}

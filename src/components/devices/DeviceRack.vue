@@ -60,6 +60,7 @@ import {
   MAX_SF2_POLYPHONY,
   MIN_SF2_POLYPHONY,
 } from '@/ui/devices/sf2-model';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
@@ -323,20 +324,27 @@ const gmProgramOptions = computed(() => {
     const name = gmIsDrums.value
       ? catalog?.synthGsDrumKitName?.(program)
       : catalog?.Project?.gmInstrumentName?.(program);
-    return name === null || name === undefined
-      ? null
-      : {
-          value: program,
-          label: `${String(program + 1).padStart(3, '0')} · ${name}`,
-          disabled:
-            gmIsDrums.value && program !== 0
-              ? catalog?.synthGsDrumKitIsVoicedApart?.(program) === false
-              : false,
-        };
+    if (name === null || name === undefined) return null;
+    const sameAsStandard =
+      gmIsDrums.value && program !== 0
+        ? catalog?.synthGsDrumKitIsVoicedApart?.(program) === false
+        : false;
+    const option: { value: number; label: string; disabled: boolean; detail?: string } = {
+      value: program,
+      label: `${String(program + 1).padStart(3, '0')} · ${name}`,
+      disabled: sameAsStandard,
+    };
+    if (sameAsStandard) option.detail = t.value.shell.devicesPanel.reasons.kitSameAsStandard;
+    return option;
   }).filter(
-    (option): option is { value: number; label: string; disabled: boolean } => option !== null,
+    (option): option is { value: number; label: string; disabled: boolean; detail?: string } =>
+      option !== null,
   );
 });
+
+const gmUseBlocked = computed(() =>
+  firstBlock([gmProgramOptions.value.length === 0, t.value.shell.devicesPanel.reasons.noGmCatalog]),
+);
 const gmBankOptions = computed(() => {
   const catalog = gmCatalog();
   const options: { value: number; label: string }[] = [
@@ -530,11 +538,20 @@ function fontIsReferenced(fontId: string): boolean {
   );
 }
 
+/** A SoundFont a track plays from cannot be deleted from storage. */
+function fontRemoveBlocked(fontId: string): string | null {
+  return firstBlock([fontIsReferenced(fontId), t.value.shell.devicesPanel.reasons.fontInUse]);
+}
+
+const useSf2Blocked = computed(() =>
+  firstBlock([sf2Selection.value.fontId === null, t.value.shell.devicesPanel.reasons.noFont]),
+);
+
 async function removeFont(fontId: string): Promise<void> {
   try {
     const removed = await deleteFontGuarded(fontId, () => fontIsReferenced(fontId));
     if (!removed) {
-      error.value = 'This SoundFont is still used by a project.';
+      error.value = t.value.shell.devicesPanel.reasons.fontInUse;
       return;
     }
     if (sf2Selection.value.fontId === fontId) {
@@ -893,6 +910,13 @@ const externalSelection = ref<ExternalSelection>({
   sendClock: false,
 });
 
+const externalBlocked = computed(() =>
+  firstBlock([
+    externalSelection.value.outputPortId.length === 0,
+    t.value.shell.devicesPanel.reasons.noMidiPort,
+  ]),
+);
+
 /** Output ports as SelectMenu options (empty placeholder while none chosen). */
 const externalPortOptions = computed<{ value: string; label: string }[]>(() => [
   { value: '', label: t.value.shell.devicesPanel.externalMidiPort },
@@ -1154,10 +1178,15 @@ const instrumentSourceCaption = computed(() => {
         </button>
         <div class="instrument-meta">
           <p class="instrument-source">{{ instrumentSourceCaption }}</p>
-          <button type="button" class="instrument-audition" @click="auditionInstrument">
+          <button
+            type="button"
+            class="instrument-audition"
+            v-tooltip="t.shell.devicesPanel.auditionTitle"
+            @click="auditionInstrument"
+          >
             {{ t.shell.patchEditor.audition }}
           </button>
-          <label class="audition-normalize">
+          <label class="audition-normalize" v-tooltip="t.shell.devicesPanel.normalizeAuditionHint">
             <input v-model="normalizeAudition" type="checkbox" />
             {{ t.shell.devicesPanel.normalizeAudition }}
           </label>
@@ -1177,6 +1206,7 @@ const instrumentSourceCaption = computed(() => {
               role="tab"
               :aria-selected="pickerTab === 'presets'"
               :class="{ active: pickerTab === 'presets' }"
+              v-tooltip="t.shell.devicesPanel.sourceBuiltinPreset"
               @click="openTab('presets')"
             >
               {{ t.shell.devicesPanel.presets }}
@@ -1187,6 +1217,7 @@ const instrumentSourceCaption = computed(() => {
               role="tab"
               :aria-selected="pickerTab === 'gm'"
               :class="{ active: pickerTab === 'gm' }"
+              v-tooltip="t.shell.devicesPanel.sourceGm"
               @click="openTab('gm')"
             >
               {{ t.shell.devicesPanel.gm }}
@@ -1197,6 +1228,7 @@ const instrumentSourceCaption = computed(() => {
               role="tab"
               :aria-selected="pickerTab === 'sf2'"
               :class="{ active: pickerTab === 'sf2' }"
+              v-tooltip="t.shell.devicesPanel.sourceSf2"
               @click="openTab('sf2')"
             >
               {{ t.shell.devicesPanel.sf2 }}
@@ -1207,6 +1239,7 @@ const instrumentSourceCaption = computed(() => {
               role="tab"
               :aria-selected="pickerTab === 'patch'"
               :class="{ active: pickerTab === 'patch' }"
+              v-tooltip="t.shell.devicesPanel.sourceBuiltinPatch"
               @click="openTab('patch')"
             >
               {{ t.shell.devicesPanel.patch }}
@@ -1217,6 +1250,7 @@ const instrumentSourceCaption = computed(() => {
               role="tab"
               :aria-selected="pickerTab === 'external'"
               :class="{ active: pickerTab === 'external' }"
+              v-tooltip="t.shell.devicesPanel.sourceExternalMidi"
               @click="openTab('external')"
             >
               {{ t.shell.devicesPanel.externalMidi }}
@@ -1280,7 +1314,13 @@ const instrumentSourceCaption = computed(() => {
                 :aria-label="t.shell.devicesPanel.gmVariation"
               />
             </label>
-            <button type="button" class="gm-use primary" :disabled="gmProgramOptions.length === 0" @click="useGmInstrument">
+            <button
+              type="button"
+              class="gm-use primary"
+              :disabled="!!gmUseBlocked"
+              v-tooltip="{ reason: gmUseBlocked }"
+              @click="useGmInstrument"
+            >
               {{ t.shell.devicesPanel.useGm }}
             </button>
           </div>
@@ -1317,8 +1357,12 @@ const instrumentSourceCaption = computed(() => {
                 <button
                   type="button"
                   class="font-remove"
-                  :disabled="fontIsReferenced(font.id)"
-                  :aria-label="`Remove ${font.name}`"
+                  :disabled="!!fontRemoveBlocked(font.id)"
+                  v-tooltip="{
+                    text: formatMessage(t.shell.devicesPanel.removeFont, { name: font.name }),
+                    reason: fontRemoveBlocked(font.id),
+                  }"
+                  :aria-label="formatMessage(t.shell.devicesPanel.removeFont, { name: font.name })"
                   @click="removeFont(font.id)"
                 >
                   ×
@@ -1503,7 +1547,8 @@ const instrumentSourceCaption = computed(() => {
               <button
                 type="button"
                 class="use-sf2 primary"
-                :disabled="sf2Selection.fontId === null"
+                :disabled="!!useSf2Blocked"
+                v-tooltip="{ reason: useSf2Blocked }"
                 @click="useSf2"
               >
                 {{ t.shell.devicesPanel.useSoundFont }}
@@ -1565,7 +1610,8 @@ const instrumentSourceCaption = computed(() => {
                 <button
                   type="button"
                   class="save-external-default"
-                  :disabled="externalSelection.outputPortId.length === 0"
+                  :disabled="!!externalBlocked"
+                  v-tooltip="{ reason: externalBlocked }"
                   @click="saveProjectExternalMidi"
                 >
                   {{ t.shell.devicesPanel.saveExternalMidiDefault }}
@@ -1573,7 +1619,8 @@ const instrumentSourceCaption = computed(() => {
                 <button
                   type="button"
                   class="use-project-external primary"
-                  :disabled="externalSelection.outputPortId.length === 0"
+                  :disabled="!!externalBlocked"
+                  v-tooltip="{ reason: externalBlocked }"
                   @click="useProjectExternalMidi"
                 >
                   {{ t.shell.devicesPanel.useProjectExternalMidi }}
@@ -1581,7 +1628,8 @@ const instrumentSourceCaption = computed(() => {
                 <button
                   type="button"
                   class="use-project-external-all"
-                  :disabled="externalSelection.outputPortId.length === 0"
+                  :disabled="!!externalBlocked"
+                  v-tooltip="{ reason: externalBlocked }"
                   @click="useProjectExternalMidiForAll"
                 >
                   {{ t.shell.devicesPanel.useProjectExternalMidiForAll }}
@@ -1589,7 +1637,8 @@ const instrumentSourceCaption = computed(() => {
                 <button
                   type="button"
                   class="use-external"
-                  :disabled="externalSelection.outputPortId.length === 0"
+                  :disabled="!!externalBlocked"
+                  v-tooltip="{ reason: externalBlocked }"
                   @click="useExternalMidi"
                 >
                   {{ t.shell.devicesPanel.useExternalMidi }}

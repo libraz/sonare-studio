@@ -16,6 +16,7 @@ import {
 import { MAX_VCA_GROUPS, type MixerSoloMode, normalizeMixerSoloMode } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import {
@@ -165,7 +166,12 @@ function onAddBus(): void {
 }
 
 /** True while another VCA group can be created (the UI cap is reached). */
-const canAddVca = computed(() => (store.mixer.vcaGroups?.length ?? 0) < MAX_VCA_GROUPS);
+const addVcaBlocked = computed(() =>
+  firstBlock([
+    (store.mixer.vcaGroups?.length ?? 0) >= MAX_VCA_GROUPS,
+    formatMessage(t.value.shell.mixer.reasons.vcaLimit, { max: String(MAX_VCA_GROUPS) }),
+  ]),
+);
 
 function onAddVca(): void {
   try {
@@ -232,6 +238,7 @@ onBeforeUnmount(() => {
       </span>
       <span class="toolbar-spacer" />
       <MixerSnapshots />
+      <span class="toolbar-sep" aria-hidden="true" />
       <button
         v-if="hasSolo"
         type="button"
@@ -247,8 +254,9 @@ onBeforeUnmount(() => {
         size="sm"
         :options="soloModeOptions"
         :aria-label="t.shell.mixer.soloMode.title"
-        :title="t.shell.mixer.soloMode.title"
+        v-tooltip="t.shell.mixer.soloMode.hint"
       />
+      <span class="toolbar-sep" aria-hidden="true" />
       <div ref="sceneMenuEl" class="view-menu-wrap">
         <button
           type="button"
@@ -291,12 +299,13 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="toolbar-button"
-        v-tooltip="t.shell.mixer.addVcaTitle"
-        :disabled="!canAddVca"
+        v-tooltip="{ text: t.shell.mixer.addVcaTitle, reason: addVcaBlocked }"
+        :disabled="!!addVcaBlocked"
         @click="onAddVca"
       >
         {{ t.shell.mixer.addVca }}
       </button>
+      <span class="toolbar-sep" aria-hidden="true" />
       <div ref="menuEl" class="view-menu-wrap">
         <button
           type="button"
@@ -427,6 +436,13 @@ onBeforeUnmount(() => {
 .mixer-hidden-note {
   font: var(--fs-chrome-lg) var(--font-sans);
   color: var(--text-3);
+}
+
+.toolbar-sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  background: var(--border);
 }
 
 .toolbar-spacer {

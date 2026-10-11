@@ -27,9 +27,13 @@ const props = withDefaults(
     height?: number;
     /** Disables all interaction. */
     disabled?: boolean;
+    /** Why the fader is locked; a non-empty reason also disables it. */
+    reason?: string | null;
   }>(),
-  { height: 132, disabled: false },
+  { height: 132, disabled: false, reason: null },
 );
+
+const locked = computed(() => props.disabled || !!props.reason);
 
 const emit = defineEmits<{
   /** New gain in dB; commit=false while dragging, true at gesture end. */
@@ -70,7 +74,7 @@ function clampDb(db: number): number {
 
 /** Nudges the gain by one step in the given direction (commit). */
 function nudge(direction: 1 | -1, fine: boolean): void {
-  if (props.disabled) return;
+  if (locked.value) return;
   const step = fine ? FINE_NUDGE_DB : NUDGE_DB;
   emit('change', clampDb(props.valueDb + direction * step), true);
 }
@@ -81,11 +85,11 @@ const interactions = useControlInteractions({
   commit: (value) => emit('change', value, true),
   nudge,
   getDefault: () => 0,
-  isDisabled: () => props.disabled,
+  isDisabled: () => locked.value,
 });
 
 function onPointerDown(event: PointerEvent): void {
-  if (props.disabled || event.button !== 0) return;
+  if (locked.value || event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   dragging.value = true;
   relativeGrab = event.target instanceof Element && event.target.closest('.fader-thumb') !== null;
@@ -117,12 +121,12 @@ function onPointerUp(): void {
 }
 
 function onDoubleClick(): void {
-  if (props.disabled) return;
+  if (locked.value) return;
   emit('change', 0, true);
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (props.disabled) return;
+  if (locked.value) return;
   if (event.key === 'ArrowUp' || event.key === 'ArrowRight') nudge(1, event.shiftKey);
   else if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') nudge(-1, event.shiftKey);
   else return;
@@ -151,7 +155,7 @@ function tickTopPx(db: number): number {
     <div
       ref="trackEl"
       class="fader-track"
-      :class="{ disabled: props.disabled, dragging }"
+      :class="{ disabled: locked, dragging }"
       role="slider"
       :aria-label="t.shell.mixer.controls.stripGain"
       aria-orientation="vertical"
@@ -159,8 +163,11 @@ function tickTopPx(db: number): number {
       :aria-valuemax="FADER_MAX_DB"
       :aria-valuenow="props.valueDb"
       :aria-valuetext="`${formatDb(props.valueDb)} dB`"
-      :tabindex="props.disabled ? -1 : 0"
-      v-tooltip="formatMessage(t.shell.mixer.controls.gainTitle, { value: formatDb(props.valueDb) })"
+      :tabindex="locked ? -1 : 0"
+      v-tooltip="{
+        text: formatMessage(t.shell.mixer.controls.gainTitle, { value: formatDb(props.valueDb) }),
+        reason: props.reason,
+      }"
       @pointerdown="onPointerDown"
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
@@ -191,6 +198,10 @@ function tickTopPx(db: number): number {
         type="button"
         role="menuitem"
         :disabled="!interactions.canPaste()"
+        v-tooltip="{
+          reason: interactions.canPaste() ? null : t.shell.mixer.reasons.nothingToPaste,
+          placement: 'end',
+        }"
         @click="interactions.pasteValue"
       >
         {{ t.shell.mixer.controls.pasteValue }}
