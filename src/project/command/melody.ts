@@ -42,6 +42,8 @@ export interface TranscribeAudioClipToMidiOptions {
   referenceHz?: number | 'auto';
   /** Shortest note kept, as a `1/n` note at the clip's tempo; omitted keeps the library default. */
   minNoteDivision?: number;
+  /** Polyphonic only: most notes one frame may hold, `1..64`; omitted keeps the library default. */
+  maxPolyphony?: number;
   /** `true` re-times the result by harmony, meter and phrase before it is written. */
   tidy?: boolean;
   /**
@@ -330,6 +332,7 @@ export async function transcribeAudioClipToMidi(
       rhythmQuantizePpq: grid ? undefined : rhythmQuantizePpq,
       referenceHz: options.referenceHz,
       minNoteDivision: options.minNoteDivision,
+      maxPolyphony: options.maxPolyphony,
       onTuning: options.onTuning,
     };
     let notes = await (options.transcribe ?? transcribeAudioClip)(

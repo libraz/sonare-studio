@@ -400,6 +400,12 @@ export const shellArrangement = {
       shortestLabel: '最短の音符',
       shortestAuto: '自動',
       shortestAutoTitle: 'メロディは 30 ms 以上、ポリフォニックは 60 ms 以上の音を残します',
+      voicesLabel: '同時に鳴る音の数',
+      voicesAuto: '自動',
+      voicesAutoTitle: '同時に最大 10 音まで残します',
+      voicesMelodyTitle: 'メロディは一度に 1 音を追います',
+      voicesTitle:
+        '同時に鳴る音を最大 {n} 音に抑えます。少なくすると倍音が余計な音符になりにくくなります',
       tempoLabel: 'テンポ',
       tempoKeep: 'プロジェクトのまま',
       tempoMatch: '曲に合わせる',

@@ -403,6 +403,12 @@ export const shellArrangement = {
       shortestLabel: 'Shortest note',
       shortestAuto: 'Auto',
       shortestAutoTitle: 'Melody keeps notes from 30 ms; polyphonic from 60 ms',
+      voicesLabel: 'Notes at once',
+      voicesAuto: 'Auto',
+      voicesAutoTitle: 'Keeps up to 10 notes sounding together',
+      voicesMelodyTitle: 'Melody follows one note at a time',
+      voicesTitle:
+        'Keeps at most {n} notes sounding together; fewer drops overtones heard as extra notes',
       tempoLabel: 'Tempo',
       tempoKeep: 'Keep project tempo',
       tempoMatch: 'Match the recording',

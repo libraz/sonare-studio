@@ -71,8 +71,27 @@ describe('transcribeAudioClip', () => {
     expect(notes).toEqual([{ pitch: 60, velocity: 37, startPpq: 0, durationPpq: 2, channel: 0 }]);
   });
 
+  it('withholds the voice limit from a melody transcription', async () => {
+    let options: { maxPolyphony?: number } | undefined;
+    await transcribeAudioClip(
+      { assetId: 'test-audio', startPpq: 0, lengthPpq: 4, sourceOffsetPpq: 0 },
+      60,
+      {
+        loadAudioAsset: async () => asset(1_000, 8_000, 1),
+        transcribe: async (_samples, _sampleRate, _polyphonic, workerOptions) => {
+          options = workerOptions;
+          return result([]);
+        },
+      },
+      { polyphonic: false, maxPolyphony: 4 },
+    );
+
+    expect(options).toBeDefined();
+    expect(options?.maxPolyphony).toBeUndefined();
+  });
+
   it('transcribes on the tempo at the clip start and places notes from that grid', async () => {
-    let options: { tempoBpm?: number; minNoteDivision?: number } | undefined;
+    let options: { tempoBpm?: number; minNoteDivision?: number; maxPolyphony?: number } | undefined;
     const notes = await transcribeAudioClip(
       { assetId: 'test-audio', startPpq: 4, lengthPpq: 8, sourceOffsetPpq: 0 },
       60,
@@ -87,7 +106,7 @@ describe('transcribeAudioClip', () => {
           };
         },
       },
-      { polyphonic: true, minNoteDivision: 16 },
+      { polyphonic: true, minNoteDivision: 16, maxPolyphony: 4 },
       [
         { startPpq: 0, bpm: 60 },
         { startPpq: 4, bpm: 120 },
@@ -96,6 +115,7 @@ describe('transcribeAudioClip', () => {
 
     expect(options?.tempoBpm).toBe(120);
     expect(options?.minNoteDivision).toBe(16);
+    expect(options?.maxPolyphony).toBe(4);
     expect(notes).toEqual([{ pitch: 64, velocity: 90, startPpq: 1, durationPpq: 2, channel: 0 }]);
   });
 

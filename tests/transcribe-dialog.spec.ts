@@ -125,6 +125,60 @@ describe('TranscribeDialog', () => {
     });
   });
 
+  it('limits polyphonic voices only in polyphonic mode and omits the limit on Auto', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    open();
+    const voices = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.transcribe-voices [role="radio"]'),
+    ];
+    expect(voices.map((el) => el.textContent?.trim())).toEqual(['Auto', '2', '4', '6']);
+    expect(voices.every((el) => el.disabled)).toBe(true);
+    expect(voices.every((el) => el.getAttribute('aria-checked') === 'false')).toBe(true);
+
+    document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]')[1]?.click();
+    await nextTick();
+    expect(voices.some((el) => el.disabled)).toBe(false);
+    expect(voices[0]?.getAttribute('aria-checked')).toBe('true');
+    voices[0]?.focus();
+    voices[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await nextTick();
+    expect(document.activeElement).toBe(voices[1]);
+    voices[2]?.click();
+    await nextTick();
+    expect(voices[2]?.getAttribute('aria-checked')).toBe('true');
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await nextTick();
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
+      polyphonic: true,
+      signal: expect.any(AbortSignal),
+      tidy: false,
+      matchTempo: false,
+      maxPolyphony: 4,
+    });
+  });
+
+  it('drops a chosen voice limit when switched back to melody', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    open();
+    const modes = [
+      ...document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]'),
+    ];
+    modes[1]?.click();
+    await nextTick();
+    document.body.querySelectorAll<HTMLElement>('.transcribe-voices [role="radio"]')[1]?.click();
+    await nextTick();
+    modes[0]?.click();
+    await nextTick();
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await nextTick();
+    expect(commands.transcribeAudioClipToMidi).toHaveBeenCalledWith(1, {
+      polyphonic: false,
+      signal: expect.any(AbortSignal),
+      tidy: false,
+      matchTempo: false,
+    });
+  });
+
   it('measures the tuning when detection is chosen and reports the reference pitch', async () => {
     commands.transcribeAudioClipToMidi.mockImplementation(
       async (_id: number, options: { onTuning?: (tuning: number) => void }) => {

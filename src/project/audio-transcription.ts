@@ -73,6 +73,8 @@ export interface AudioTranscriptionOptions {
   referenceHz?: number | 'auto';
   /** Shortest note kept, as a `1/n` note at the clip's tempo; omitted keeps the library default. */
   minNoteDivision?: number;
+  /** Polyphonic only: most notes one frame may hold, `1..64`; omitted keeps the library default. */
+  maxPolyphony?: number;
   /** Receives the tuning the notes were measured against, in fractions of a semitone. */
   onTuning?: (tuning: number) => void;
 }
@@ -402,6 +404,9 @@ export async function transcribeAudioClip(
       ...(referenceHz !== undefined ? { referenceHz } : {}),
       ...(options.minNoteDivision !== undefined
         ? { minNoteDivision: options.minNoteDivision }
+        : {}),
+      ...(polyphonic && options.maxPolyphony !== undefined
+        ? { maxPolyphony: options.maxPolyphony }
         : {}),
     });
     throwIfAborted(options.signal);

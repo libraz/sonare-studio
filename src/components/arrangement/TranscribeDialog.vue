@@ -14,6 +14,10 @@ type TuningMode = 'concert' | 'auto';
 type ShortestNote = 'auto' | 8 | 16 | 32;
 
 const SHORTEST_NOTES: readonly ShortestNote[] = ['auto', 8, 16, 32];
+/** Most notes one polyphonic frame keeps; 'auto' keeps the library default. */
+type MaxVoices = 'auto' | 2 | 4 | 6;
+
+const MAX_VOICES: readonly MaxVoices[] = ['auto', 2, 4, 6];
 
 const props = defineProps<{
   open: boolean;
@@ -29,6 +33,7 @@ const { t } = useI18n();
 const mode = ref<'melody' | 'polyphonic'>('melody');
 const tuningMode = ref<TuningMode>('concert');
 const shortestNote = ref<ShortestNote>('auto');
+const maxVoices = ref<MaxVoices>('auto');
 const tidy = ref(false);
 const matchTempo = ref(false);
 const detectedReference = ref('');
@@ -44,6 +49,7 @@ const tuningButtons: Record<TuningMode, HTMLButtonElement | null> = {
   auto: null,
 };
 const shortestButtons = new Map<ShortestNote, HTMLButtonElement>();
+const voicesButtons = new Map<MaxVoices, HTMLButtonElement>();
 const tidyButtons: Record<'off' | 'on', HTMLButtonElement | null> = { off: null, on: null };
 const tempoButtons: Record<'keep' | 'match', HTMLButtonElement | null> = {
   keep: null,
@@ -96,6 +102,7 @@ watch(
     mode.value = 'melody';
     tuningMode.value = 'concert';
     shortestNote.value = 'auto';
+    maxVoices.value = 'auto';
     tidy.value = false;
     matchTempo.value = false;
     detectedReference.value = '';
@@ -202,6 +209,35 @@ function setShortestButton(
   else shortestButtons.delete(name);
 }
 
+function chooseVoices(next: MaxVoices): void {
+  if (busy.value || mode.value !== 'polyphonic') return;
+  maxVoices.value = next;
+  error.value = '';
+}
+
+function onVoicesKeydown(event: KeyboardEvent, current: MaxVoices): void {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+  event.preventDefault();
+  const index = MAX_VOICES.indexOf(current) + (event.key === 'ArrowLeft' ? -1 : 1);
+  const next = MAX_VOICES[Math.min(MAX_VOICES.length - 1, Math.max(0, index))];
+  if (next !== current) {
+    chooseVoices(next);
+    if (maxVoices.value === next) void nextTick(() => voicesButtons.get(next)?.focus());
+  }
+}
+
+function setVoicesButton(name: MaxVoices, element: Element | ComponentPublicInstance | null): void {
+  if (element instanceof HTMLButtonElement) voicesButtons.set(name, element);
+  else voicesButtons.delete(name);
+}
+
+function voicesTitle(voices: MaxVoices): string {
+  if (mode.value !== 'polyphonic') return copy.value.voicesMelodyTitle;
+  return voices === 'auto'
+    ? copy.value.voicesAutoTitle
+    : copy.value.voicesTitle.replace('{n}', String(voices));
+}
+
 function chooseTidy(next: boolean): void {
   if (busy.value) return;
   tidy.value = next;
@@ -277,11 +313,13 @@ async function run(): Promise<void> {
   controller.value = currentController;
   try {
     const detect = tuningMode.value === 'auto';
+    const polyphonic = mode.value === 'polyphonic';
     let measured: number | undefined;
     const newClipId = await transcribeAudioClipToMidi(id, {
-      polyphonic: mode.value === 'polyphonic',
+      polyphonic,
       signal: currentController.signal,
       ...(shortestNote.value !== 'auto' ? { minNoteDivision: shortestNote.value } : {}),
+      ...(polyphonic && maxVoices.value !== 'auto' ? { maxPolyphony: maxVoices.value } : {}),
       tidy: tidy.value,
       matchTempo: match,
       ...(detect
@@ -421,6 +459,29 @@ onBeforeUnmount(abort);
             @keydown="onShortestKeydown($event, note)"
           >
             {{ shortestLabel(note) }}
+          </button>
+        </div>
+      </div>
+
+      <div class="transcribe-setting transcribe-voices">
+        <span class="transcribe-setting-label">{{ copy.voicesLabel }}</span>
+        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.voicesLabel">
+          <button
+            v-for="voices in MAX_VOICES"
+            :key="voices"
+            type="button"
+            class="transcribe-setting-option"
+            :class="{ active: mode === 'polyphonic' && maxVoices === voices }"
+            role="radio"
+            :aria-checked="mode === 'polyphonic' && maxVoices === voices"
+            :tabindex="maxVoices === voices ? 0 : -1"
+            :ref="(element) => setVoicesButton(voices, element)"
+            :disabled="busy || mode !== 'polyphonic'"
+            :title="voicesTitle(voices)"
+            @click="chooseVoices(voices)"
+            @keydown="onVoicesKeydown($event, voices)"
+          >
+            {{ voices === 'auto' ? copy.voicesAuto : voices }}
           </button>
         </div>
       </div>

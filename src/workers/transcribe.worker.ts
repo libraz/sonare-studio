@@ -18,6 +18,8 @@ export interface TranscribeWorkerRequest {
   tempoBpm?: number;
   /** Shortest note kept, as a `1/n` note at `tempoBpm`; omitted keeps the library default. */
   minNoteDivision?: number;
+  /** Polyphonic only: most notes one frame may hold, `1..64`. */
+  maxPolyphony?: number;
 }
 
 /** Result sent back by the transcription worker. */
@@ -72,7 +74,12 @@ function validRequest(value: unknown): value is TranscribeWorkerRequest {
     (request.minNoteDivision === undefined ||
       (Number.isInteger(request.minNoteDivision) &&
         request.minNoteDivision >= 1 &&
-        request.minNoteDivision <= 128))
+        request.minNoteDivision <= 128)) &&
+    (request.maxPolyphony === undefined ||
+      (request.polyphonic === true &&
+        Number.isInteger(request.maxPolyphony) &&
+        request.maxPolyphony >= 1 &&
+        request.maxPolyphony <= 64))
   );
 }
 
@@ -130,6 +137,7 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
         ...(request.minNoteDivision !== undefined
           ? { minNoteDivision: request.minNoteDivision }
           : {}),
+        ...(request.maxPolyphony !== undefined ? { maxPolyphony: request.maxPolyphony } : {}),
       });
       if (!validResult(result)) {
         throw new Error('Transcription worker returned an invalid result');

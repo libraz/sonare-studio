@@ -20,6 +20,8 @@ export interface TranscribeWorkerOptions {
   tempoBpm?: number;
   /** Shortest note kept, as a `1/n` note at the grid tempo; omitted keeps the library default. */
   minNoteDivision?: number;
+  /** Polyphonic only: most notes one frame may hold, `1..64`; omitted keeps the library default. */
+  maxPolyphony?: number;
 }
 
 function createWorker(): Worker {
@@ -173,6 +175,7 @@ export function transcribeAudioInWorker(
         ...(options.minNoteDivision !== undefined
           ? { minNoteDivision: options.minNoteDivision }
           : {}),
+        ...(options.maxPolyphony !== undefined ? { maxPolyphony: options.maxPolyphony } : {}),
       };
       worker.addEventListener('message', onMessage as EventListener);
       worker.addEventListener('error', onError as EventListener);
