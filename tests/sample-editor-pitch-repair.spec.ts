@@ -122,7 +122,9 @@ describe('SampleEditor auto-tune, repair session and formant mode', () => {
     expect(panel.find('dd').text()).toContain('Clicks 4');
     expect(panel.findAll('toggle-button-stub')).toHaveLength(2);
 
-    await button(wrapper, 'Repair').trigger('click');
+    // Scoped to the panel: the Repair tab carries the same label.
+    const applyRepair = panel.findAll('button').find((candidate) => candidate.text() === 'Repair');
+    await applyRepair?.trigger('click');
     await flushPromises();
 
     expect(apply).toHaveBeenCalledTimes(1);

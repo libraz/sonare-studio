@@ -1,7 +1,9 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ref } from 'vue';
 import MidiLearnPanel from '@/components/shell/MidiLearnPanel.vue';
+import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
 import { useProjectStore } from '@/project/store';
 import { en } from '@/ui/i18n/en';
@@ -151,6 +153,27 @@ describe('MidiLearnPanel', () => {
 
     document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     expect((wrapper as VueWrapper).emitted('close')).toHaveLength(2);
+  });
+});
+
+describe('MidiLearnPanel availability', () => {
+  it('disables learning until a MIDI input is connected', async () => {
+    const learn = useMidiLearn();
+    const surface = {
+      available: ref<boolean | null>(true),
+      inputs: ref<Array<{ id: string; name: string }>>([]),
+      outputs: ref([]),
+    } as unknown as ControlSurfaceHandle;
+    wrapper = mount(MidiLearnPanel, {
+      attachTo: document.body,
+      props: { learn, tracks: TRACKS, surface },
+    });
+    const bind = () => (wrapper as VueWrapper).find('.ml-bind');
+
+    expect(bind().attributes('disabled')).toBeDefined();
+    surface.inputs.value = [{ id: 'in-1', name: 'Keys' }];
+    await (wrapper as VueWrapper).vm.$nextTick();
+    expect(bind().attributes('disabled')).toBeUndefined();
   });
 });
 

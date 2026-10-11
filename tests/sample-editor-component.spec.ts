@@ -144,6 +144,23 @@ describe('SampleEditor async loading', () => {
     expect(trim?.attributes('disabled')).toBeDefined();
   });
 
+  it('blocks Trim and Delete when the selection already spans the whole file', async () => {
+    assetStore.loadAsset.mockResolvedValue(asset('asset-a', 'Whole sample'));
+    const wrapper = mountEditor();
+    await flushPromises();
+    const button = (label: string) =>
+      wrapper.findAll('button').find((candidate) => candidate.text() === label);
+
+    await wrapper.find('.selection-start').setValue('2');
+    await wrapper.find('.selection-end').setValue('10');
+    expect(button('Trim')?.attributes('disabled')).toBeUndefined();
+    expect(button('Delete')?.attributes('disabled')).toBeUndefined();
+
+    await wrapper.find('.wave-wrap').trigger('keydown', { key: 'a', ctrlKey: true });
+    expect(button('Trim')?.attributes('disabled')).toBeDefined();
+    expect(button('Delete')?.attributes('disabled')).toBeDefined();
+  });
+
   it('consumes waveform-focused undo and redo so they cannot reach project history', async () => {
     assetStore.loadAsset.mockResolvedValue(asset('asset-a', 'Undo sample'));
     const wrapper = mountEditor();

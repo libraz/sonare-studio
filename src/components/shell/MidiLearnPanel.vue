@@ -11,6 +11,7 @@ import {
   previousBankOffset,
 } from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   formatMidiCcBinding,
@@ -79,6 +80,35 @@ const PARAMS: ReadonlyArray<{ param: MidiLearnParam; labelKey: 'volume' | 'pan' 
   { param: 'gain', labelKey: 'volume' },
   { param: 'pan', labelKey: 'pan' },
 ];
+
+/**
+ * Why learning cannot capture a CC right now. Without a surface handle the host
+ * gave no MIDI status, so learning stays available.
+ */
+const learnBlocked = computed(() => {
+  const surface = props.surface;
+  if (!surface) return null;
+  return firstBlock(
+    [surface.available.value === false, t.value.reasons.noWebMidi],
+    [surface.inputs.value.length === 0, t.value.reasons.noMidiAccess],
+  );
+});
+
+/** Tooltip of a learn button: what a click does now, plus any blocking reason. */
+function bindTip(armed: boolean) {
+  return {
+    text: armed ? t.value.shell.midiLearn.listeningTitle : t.value.shell.midiLearn.bindTitle,
+    reason: learnBlocked.value,
+  };
+}
+
+/** Tooltip of a clear button whose row may have nothing bound yet. */
+function clearTip(bound: boolean) {
+  return {
+    text: t.value.shell.midiLearn.clearBinding,
+    reason: bound ? null : t.value.shell.midiLearn.reasons.noBinding,
+  };
+}
 
 /** Short caption for a target's button: its binding, listening, or a dash. */
 function caption(param: MidiLearnParam, scope: MidiLearnScope): string {
@@ -207,6 +237,44 @@ const bankRange = computed(() => {
   });
 });
 
+/** Port and feedback settings only take effect under a surface protocol. */
+const surfacePortBlocked = computed(() =>
+  firstBlock([
+    surfaceSettings.value.protocol === 'none',
+    t.value.shell.midiLearn.reasons.noProtocol,
+  ]),
+);
+const feedbackBlocked = computed(() =>
+  firstBlock([!props.surface, t.value.reasons.noWebMidi], surfacePortBlocked.value, [
+    surfaceSettings.value.outputPortId === null,
+    t.value.shell.midiLearn.reasons.noOutput,
+  ]),
+);
+
+const bankPrevBlocked = computed(() =>
+  firstBlock(
+    [props.tracks.length === 0, t.value.reasons.noTrack],
+    [surfaceSettings.value.bankOffset <= 0, t.value.shell.midiLearn.reasons.firstBank],
+  ),
+);
+const bankNextBlocked = computed(() => {
+  const { bankOffset, bankSize } = surfaceSettings.value;
+  return firstBlock(
+    [props.tracks.length === 0, t.value.reasons.noTrack],
+    [
+      nextBankOffset(bankOffset, props.tracks.length, bankSize) === bankOffset,
+      t.value.shell.midiLearn.reasons.lastBank,
+    ],
+  );
+});
+
+const clearAllBlocked = computed(() =>
+  firstBlock([
+    props.learn.bindings.size === 0 && props.learn.armed.value === null,
+    t.value.shell.midiLearn.reasons.nothingToClear,
+  ]),
+);
+
 function moveBank(action: 'prev' | 'next' | 'home'): void {
   const { bankOffset, bankSize } = surfaceSettings.value;
   const total = props.tracks.length;
@@ -272,6 +340,7 @@ function clearAll(): void {
         type="button"
         class="ml-close"
         :aria-label="t.shell.midiLearn.close"
+        v-tooltip="t.shell.midiLearn.closeTitle"
         @click="close"
       >
         ×
@@ -296,6 +365,8 @@ function clearAll(): void {
               'ml-bind-armed': learn.isArmed(col.param, 'master'),
               'ml-bind-set': !!learn.bindingFor(col.param, 'master'),
             }"
+            :disabled="!!learnBlocked"
+            v-tooltip="bindTip(learn.isArmed(col.param, 'master'))"
             @click="learn.arm(col.param, 'master')"
           >
             {{ caption(col.param, 'master') }}
@@ -305,6 +376,7 @@ function clearAll(): void {
             type="button"
             class="ml-clear"
             :aria-label="t.shell.midiLearn.clearBinding"
+            v-tooltip="t.shell.midiLearn.clearBinding"
             @click="learn.clear(col.param, 'master')"
           >
             ×
@@ -325,6 +397,8 @@ function clearAll(): void {
               'ml-bind-armed': learn.isArmed(col.param, track.id),
               'ml-bind-set': !!learn.bindingFor(col.param, track.id),
             }"
+            :disabled="!!learnBlocked"
+            v-tooltip="bindTip(learn.isArmed(col.param, track.id))"
             @click="learn.arm(col.param, track.id)"
           >
             {{ caption(col.param, track.id) }}
@@ -334,6 +408,7 @@ function clearAll(): void {
             type="button"
             class="ml-clear"
             :aria-label="t.shell.midiLearn.clearBinding"
+            v-tooltip="t.shell.midiLearn.clearBinding"
             @click="learn.clear(col.param, track.id)"
           >
             ×
@@ -345,7 +420,7 @@ function clearAll(): void {
         <div class="ml-row-head ml-devices-head">
           <span class="ml-col-head">{{ t.shell.midiLearn.surface }}</span>
         </div>
-        <label class="ml-field">
+        <label class="ml-field" v-tooltip="t.shell.midiLearn.surfaceProtocolTitle">
           <span>{{ t.shell.midiLearn.surfaceProtocol }}</span>
           <select
             class="ml-select"
@@ -362,10 +437,14 @@ function clearAll(): void {
           </select>
         </label>
         <template v-if="surface">
-          <label class="ml-field">
+          <label
+            class="ml-field"
+            v-tooltip="{ text: t.shell.midiLearn.surfaceInputTitle, reason: surfacePortBlocked }"
+          >
             <span>{{ t.shell.midiLearn.surfaceInput }}</span>
             <select
               class="ml-select ml-surface-input"
+              :disabled="!!surfacePortBlocked"
               :value="surfaceSettings.inputPortId ?? ''"
               @change="
                 updateSurface({
@@ -379,10 +458,14 @@ function clearAll(): void {
               </option>
             </select>
           </label>
-          <label class="ml-field">
+          <label
+            class="ml-field"
+            v-tooltip="{ text: t.shell.midiLearn.surfaceOutputTitle, reason: surfacePortBlocked }"
+          >
             <span>{{ t.shell.midiLearn.surfaceOutput }}</span>
             <select
               class="ml-select ml-surface-output"
+              :disabled="!!surfacePortBlocked"
               :value="surfaceSettings.outputPortId ?? ''"
               @change="
                 updateSurface({
@@ -397,16 +480,20 @@ function clearAll(): void {
             </select>
           </label>
         </template>
-        <label class="ml-field ml-field-check" :title="t.shell.midiLearn.surfaceFeedbackTitle">
+        <label
+          class="ml-field ml-field-check"
+          v-tooltip="{ text: t.shell.midiLearn.surfaceFeedbackTitle, reason: feedbackBlocked }"
+        >
           <input
             type="checkbox"
             class="ml-surface-feedback"
+            :disabled="!!feedbackBlocked"
             :checked="surfaceSettings.feedback"
             @change="updateSurface({ feedback: ($event.target as HTMLInputElement).checked })"
           />
           <span>{{ t.shell.midiLearn.surfaceFeedback }}</span>
         </label>
-        <label class="ml-field">
+        <label class="ml-field" v-tooltip="t.shell.midiLearn.surfaceBankSizeTitle">
           <span>{{ t.shell.midiLearn.surfaceBankSize }}</span>
           <input
             type="number"
@@ -425,6 +512,8 @@ function clearAll(): void {
             type="button"
             class="ml-btn ml-bank-step"
             :aria-label="t.shell.midiLearn.surfaceBankPrev"
+            :disabled="!!bankPrevBlocked"
+            v-tooltip="{ text: t.shell.midiLearn.surfaceBankPrev, reason: bankPrevBlocked }"
             @click="moveBank('prev')"
           >
             ◀
@@ -433,6 +522,8 @@ function clearAll(): void {
             type="button"
             class="ml-btn ml-bank-step"
             :aria-label="t.shell.midiLearn.surfaceBankNext"
+            :disabled="!!bankNextBlocked"
+            v-tooltip="{ text: t.shell.midiLearn.surfaceBankNext, reason: bankNextBlocked }"
             @click="moveBank('next')"
           >
             ▶
@@ -465,6 +556,8 @@ function clearAll(): void {
               class="ml-bind ml-bind-bank"
               :class="{ 'ml-bind-armed': learn.isArmedId(midiLearnBankTargetId(slot, param)) }"
               :aria-pressed="learn.isArmedId(midiLearnBankTargetId(slot, param))"
+              :disabled="!!learnBlocked"
+              v-tooltip="bindTip(learn.isArmedId(midiLearnBankTargetId(slot, param)))"
               @click="learn.armId(midiLearnBankTargetId(slot, param))"
             >
               {{ bankCaption(slot, param) }}
@@ -474,6 +567,7 @@ function clearAll(): void {
               class="ml-clear"
               :disabled="!learn.bindingForId(midiLearnBankTargetId(slot, param))"
               :aria-label="t.shell.midiLearn.clearBinding"
+              v-tooltip="clearTip(!!learn.bindingForId(midiLearnBankTargetId(slot, param)))"
               @click="learn.clearId(midiLearnBankTargetId(slot, param))"
             >
               ×
@@ -487,6 +581,8 @@ function clearAll(): void {
             class="ml-bind ml-bind-bank-nav"
             :class="{ 'ml-bind-armed': learn.isArmedId(row.id) }"
             :aria-pressed="learn.isArmedId(row.id)"
+            :disabled="!!learnBlocked"
+            v-tooltip="bindTip(learn.isArmedId(row.id))"
             @click="learn.armId(row.id)"
           >
             {{ row.binding ? formatMidiCcBinding(row.binding) : t.shell.midiLearn.learn }}
@@ -496,6 +592,7 @@ function clearAll(): void {
             class="ml-clear"
             :disabled="!row.binding"
             :aria-label="t.shell.midiLearn.clearBinding"
+            v-tooltip="clearTip(!!row.binding)"
             @click="learn.clearId(row.id)"
           >
             ×
@@ -514,6 +611,8 @@ function clearAll(): void {
             class="ml-bind ml-bind-transport"
             :class="{ 'ml-bind-armed': learn.isArmedId(row.id) }"
             :aria-pressed="learn.isArmedId(row.id)"
+            :disabled="!!learnBlocked"
+            v-tooltip="bindTip(learn.isArmedId(row.id))"
             @click="learn.armId(row.id)"
           >
             {{ row.binding ? formatMidiCcBinding(row.binding) : t.shell.midiLearn.learn }}
@@ -523,6 +622,7 @@ function clearAll(): void {
             class="ml-clear"
             :disabled="!row.binding"
             :aria-label="t.shell.midiLearn.clearBinding"
+            v-tooltip="clearTip(!!row.binding)"
             @click="learn.clearId(row.id)"
           >
             ×
@@ -541,6 +641,7 @@ function clearAll(): void {
             type="button"
             class="ml-clear"
             :aria-label="t.shell.midiLearn.clearBinding"
+            v-tooltip="t.shell.midiLearn.clearBinding"
             @click="learn.clearId(row.id)"
           >
             ×
@@ -555,7 +656,8 @@ function clearAll(): void {
       <button
         type="button"
         class="ml-btn"
-        :disabled="learn.bindings.size === 0 && learn.armed.value === null"
+        :disabled="!!clearAllBlocked"
+        v-tooltip="{ text: t.shell.midiLearn.clearAllButtonTitle, reason: clearAllBlocked }"
         @click="clearAll"
       >
         {{ t.shell.midiLearn.clearAll }}
@@ -618,6 +720,12 @@ function clearAll(): void {
   flex: 2;
   text-align: right;
   color: var(--text-4);
+  font-variant-numeric: tabular-nums;
+}
+
+.ml-bank-step:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .ml-surface-note {
@@ -764,12 +872,18 @@ function clearAll(): void {
   box-shadow: var(--control-lift);
 }
 
-.ml-bind:hover {
+.ml-bind:hover:not(:disabled) {
   color: var(--text-1);
   box-shadow: var(--control-lift-hover);
 }
 
-.ml-bind:active {
+.ml-bind:disabled {
+  color: var(--text-4);
+  box-shadow: var(--control-edge);
+  cursor: default;
+}
+
+.ml-bind:active:not(:disabled) {
   box-shadow: var(--control-edge), var(--inset-well);
 }
 
@@ -832,8 +946,19 @@ function clearAll(): void {
   transition: color var(--dur-1) var(--ease-out);
 }
 
-.ml-clear:hover {
+.ml-clear:hover:not(:disabled) {
   color: var(--danger-text);
+}
+
+/* An empty row keeps its clear slot for alignment but drops out of sight. */
+.ml-clear:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ml-select:disabled,
+.ml-field-check input:disabled {
+  opacity: 0.5;
 }
 
 .ml-foot {

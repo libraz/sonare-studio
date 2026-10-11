@@ -115,11 +115,16 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
     commitWarp({ anchors: warpAnchors.value.filter((_, i) => i !== index) });
   }
 
-  function onAddAnchor(): void {
+  /** Anchor Add anchor would insert, or null when no gap can hold one. */
+  const nextWarpAnchor = computed(() => {
     const clip = warpClip.value;
-    if (!clip) return;
+    if (!clip) return null;
     const sourceBpm = clip.warp?.sourceBpm ?? project.tempoBpm;
-    const anchor = defaultWarpAnchor(warpAnchors.value, clip.lengthPpq, sourceBpm);
+    return defaultWarpAnchor(warpAnchors.value, clip.lengthPpq, sourceBpm);
+  });
+
+  function onAddAnchor(): void {
+    const anchor = nextWarpAnchor.value;
     if (!anchor) return;
     commitWarp({ anchors: [...warpAnchors.value, anchor] });
   }
@@ -212,6 +217,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
     warpAnchors,
     warpRatioHint,
     warpBpmInput,
+    nextWarpAnchor,
     onToggleWarp,
     onWarpBpmChange,
     onAnchorEdit,
