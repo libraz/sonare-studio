@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import TrackHeaderList from '@/components/arrangement/TrackHeaderList.vue';
 import ChannelStrip from '@/components/mixer/ChannelStrip.vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import {
   addAudioTrack,
   addGroupTrack,
@@ -19,6 +20,7 @@ import { useProjectStore } from '@/project/store';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { closeContextMenu, isItemDisabled, useContextMenuState } from '@/ui/menu/context-menu';
 import { dbToFaderPosition } from '@/ui/mixer/db-scale';
+import { vTooltip } from '@/ui/tooltip';
 import { selectOption, selectValueText } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -50,6 +52,7 @@ function mountHeaders(loop?: { enabled: boolean; startPpq: number; endPpq: numbe
         ? { loopEnabled: loop.enabled, loopStartPpq: loop.startPpq, loopEndPpq: loop.endPpq }
         : {}),
     },
+    global: { directives: { tooltip: vTooltip } },
   });
 }
 
@@ -164,10 +167,18 @@ describe('track freeze / bounce UI', () => {
       expect(store.tracks.find((track) => track.id === trackId)?.groupId).toBe(group);
       expect(store.tracks.find((track) => track.id === second)?.groupId).toBe(group);
 
-      await headers[0].trigger('contextmenu', { clientX: 10, clientY: 10 });
-      const remove = useContextMenuState().items.find((item) => item.id === 'delete');
-      remove?.run?.();
-      expect(store.tracks.map((track) => track.id)).toEqual([group]);
+      // Deletion asks for confirmation by default; this test covers the batch, not the dialog.
+      const appSettings = useAppSettings();
+      const confirmDestructive = appSettings.settings.confirmDestructive;
+      appSettings.set('confirmDestructive', false);
+      try {
+        await headers[0].trigger('contextmenu', { clientX: 10, clientY: 10 });
+        const remove = useContextMenuState().items.find((item) => item.id === 'delete');
+        await remove?.run?.();
+        expect(store.tracks.map((track) => track.id)).toEqual([group]);
+      } finally {
+        appSettings.set('confirmDestructive', confirmDestructive);
+      }
     });
 
     it('collapses group members and can select a group as one batch', async () => {
@@ -403,6 +414,13 @@ describe('track freeze / bounce UI', () => {
       expect(wrapper.find('.strip-frozen-tag').exists()).toBe(false);
     });
 
+    it('refuses to arm a frozen track and says why', () => {
+      setTrackFrozen(trackId, { assetId: 'frozen-asset' });
+      const arm = mountHeaders().find<HTMLButtonElement>('.toggle.arm');
+      expect(arm.element.disabled).toBe(true);
+      expect(arm.attributes('aria-description')).toContain('This track is frozen.');
+    });
+
     it('disables frozen track rename from both header and mixer menus', async () => {
       renameTrack(trackId, 'Drums');
       setTrackFrozen(trackId, { assetId: 'frozen-asset' });
@@ -412,9 +430,8 @@ describe('track freeze / bounce UI', () => {
       await headers.find('.track-header').trigger('contextmenu', { clientX: 10, clientY: 10 });
       const rename = useContextMenuState().items.find((item) => item.id === 'rename');
       expect(rename && isItemDisabled(rename)).toBe(true);
-      expect(useContextMenuState().items.find((item) => item.id === 'regenerate')?.disabled).toBe(
-        true,
-      );
+      const regenerate = useContextMenuState().items.find((item) => item.id === 'regenerate');
+      expect(regenerate && isItemDisabled(regenerate)).toBe(true);
 
       closeContextMenu();
       const strip = mount(ChannelStrip, { props: { target: trackId }, shallow: true });

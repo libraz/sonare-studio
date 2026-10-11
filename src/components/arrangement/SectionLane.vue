@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { duplicateTime, setSections } from '@/project/commands';
+import { partForTrack } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { type EditorSection, TRACK_COLOR_PALETTE } from '@/project/types';
 import { barRangeAt, nearestBarPpq } from '@/ui/arrangement/ruler';
 import { clampSectionEdge, newSectionSpan, sectionIndexAt } from '@/ui/arrangement/sections';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { openContextMenu } from '@/ui/menu/context-menu';
 import { colorWithAlpha } from './theme';
@@ -176,12 +178,26 @@ function onBandClick(band: SectionBand, event: MouseEvent): void {
   emit('seek', Math.max(0, band.startPpq));
 }
 
+/** Mirrors the host's drum-track lookup so the menu says why it cannot vary drums. */
+const drumsBlocked = computed(() =>
+  firstBlock([
+    !store.tracks.some(
+      (track) =>
+        track.kind === 'midi' &&
+        track.frozen === undefined &&
+        (partForTrack(track) === 'drums' || track.percussion === true),
+    ),
+    t.value.shell.arrangement.regenerateSectionDrumsNoTrack,
+  ]),
+);
+
 function onBandContextMenu(band: SectionBand, event: MouseEvent): void {
   event.preventDefault();
   openContextMenu(event.clientX, event.clientY, [
     {
       id: 'regenerate-section-drums',
       label: t.value.shell.arrangement.regenerateSectionDrums,
+      disabledReason: drumsBlocked.value,
       run: () => emit('regenerateDrums', band.id),
     },
     {
@@ -268,6 +284,7 @@ function onLaneDoubleClick(event: MouseEvent): void {
       @click="onBandClick(band, $event)"
       @contextmenu="onBandContextMenu(band, $event)"
       @dblclick.stop="startRename(band)"
+      v-tooltip="editingSectionId === band.id ? null : t.shell.arrangement.sectionBandTitle"
     >
       <input
         v-if="editingSectionId === band.id"
@@ -283,6 +300,9 @@ function onLaneDoubleClick(event: MouseEvent): void {
       />
       <span v-else class="section-name">{{ band.name }}</span>
     </div>
+    <span v-if="store.sections.length === 0" class="section-hint">
+      {{ t.shell.arrangement.sectionEmptyHint }}
+    </span>
   </div>
 </template>
 
@@ -333,5 +353,17 @@ function onLaneDoubleClick(event: MouseEvent): void {
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   padding: 0 2px;
+}
+.section-hint {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--sp-2);
+  display: flex;
+  align-items: center;
+  font: var(--fs-2xs) var(--font-sans);
+  color: var(--text-4);
+  white-space: nowrap;
+  pointer-events: none;
 }
 </style>

@@ -39,8 +39,11 @@ import {
 import { grooveTemplateIsUsable } from '@/project/groove';
 import { midiSourcePpqToTimeline } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
+import { shortcutHint } from '@/ui/settings/shortcut-hint';
 
 /** Pointer payload of a right-click on the note grid. */
 export interface NoteContextPayload {
@@ -76,6 +79,8 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
   const { contentReadOnly, gridPpq, snapPpq } = options;
   const store = useProjectStore();
   const { t } = useI18n();
+  /** Edits are refused on a frozen track; every editing item carries this reason. */
+  const frozen = (): string | null => (contentReadOnly.value ? t.value.reasons.trackFrozen : null);
 
   /** Maximum per-note random velocity jitter applied by the Humanize action. */
   const HUMANIZE_VELOCITY_AMOUNT = 12;
@@ -95,12 +100,12 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
       {
         id: 'edit-submenu',
         label: t.value.shell.pianoRoll.context.edit,
-        disabled: contentReadOnly.value,
+        disabledReason: frozen(),
         children: [
           {
             id: 'duplicate-grid',
             label: t.value.shell.pianoRoll.context.duplicateByGrid,
-            hint: '⌥→',
+            hint: formatKeyCombo('alt+arrowright', detectPlatform()),
             run: () => duplicateSelection(selectionSpanPpq()),
           },
           {
@@ -134,12 +139,12 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
       {
         id: 'quantize-submenu',
         label: t.value.shell.pianoRoll.context.quantize,
-        disabled: contentReadOnly.value,
+        disabledReason: frozen(),
         children: [
           {
             id: 'quantize',
             label: t.value.shell.pianoRoll.context.quantizeStarts,
-            hint: 'Q',
+            hint: shortcutHint('edit.quantizeSelection'),
             run: () => quantizeSelection(),
           },
           {
@@ -181,10 +186,11 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
           },
           {
             id: 'groove-apply',
-            label: grooveTemplateIsUsable(store.grooveTemplate)
-              ? t.value.shell.pianoRoll.context.grooveApply
-              : `${t.value.shell.pianoRoll.context.grooveApply} — ${t.value.shell.pianoRoll.context.grooveEmpty}`,
-            disabled: !grooveTemplateIsUsable(store.grooveTemplate),
+            label: t.value.shell.pianoRoll.context.grooveApply,
+            disabledReason: firstBlock(frozen(), [
+              !grooveTemplateIsUsable(store.grooveTemplate),
+              t.value.shell.editor.reasons.noGroove,
+            ]),
             run: () => {
               const groove = store.grooveTemplate;
               if (groove) applyGrooveToSelection(groove, store.quantizeStrength);
@@ -193,7 +199,10 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
           {
             id: 'groove-clear',
             label: t.value.shell.pianoRoll.context.grooveClear,
-            disabled: store.grooveTemplate === null,
+            disabledReason: firstBlock([
+              store.grooveTemplate === null,
+              t.value.shell.editor.reasons.noGroove,
+            ]),
             run: () => {
               store.grooveTemplate = null;
             },
@@ -203,18 +212,18 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
       {
         id: 'transpose-submenu',
         label: t.value.shell.pianoRoll.context.transpose,
-        disabled: contentReadOnly.value,
+        disabledReason: frozen(),
         children: [
           {
             id: 'transpose-up',
             label: t.value.shell.pianoRoll.context.transposeUpOctave,
-            hint: '⇧⌘↑',
+            hint: shortcutHint('edit.transposeOctaveUp'),
             run: () => transposeSelection(12),
           },
           {
             id: 'transpose-down',
             label: t.value.shell.pianoRoll.context.transposeDownOctave,
-            hint: '⇧⌘↓',
+            hint: shortcutHint('edit.transposeOctaveDown'),
             run: () => transposeSelection(-12),
           },
           { id: 'sep-transpose', separator: true },
@@ -238,7 +247,7 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
       {
         id: 'velocity-submenu',
         label: t.value.shell.pianoRoll.context.velocity,
-        disabled: contentReadOnly.value,
+        disabledReason: frozen(),
         children: [
           {
             id: 'humanize',
@@ -325,29 +334,32 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
           {
             id: 'split',
             label: t.value.shell.pianoRoll.context.splitHere,
-            hint: '3',
-            disabled: contentReadOnly.value || !canSplit,
+            hint: shortcutHint('tool.split'),
+            disabledReason: firstBlock(frozen(), [
+              !canSplit,
+              t.value.shell.editor.reasons.splitOutsideNote,
+            ]),
             run: () => setSelection([splitNote(note.id, splitPpq)]),
           },
           { id: 'sep-clipboard', separator: true },
           {
             id: 'copy',
             label: t.value.shell.pianoRoll.context.copy,
-            hint: '⌘C',
+            hint: shortcutHint('edit.copy'),
             run: () => copySelectedNotes(),
           },
           {
             id: 'cut',
             label: t.value.shell.pianoRoll.context.cut,
-            hint: '⌘X',
-            disabled: contentReadOnly.value,
+            hint: shortcutHint('edit.cut'),
+            disabledReason: frozen(),
             run: () => cutSelectedNotes(),
           },
           {
             id: 'paste',
             label: t.value.shell.pianoRoll.context.paste,
-            hint: '⌘V',
-            disabled: contentReadOnly.value,
+            hint: shortcutHint('edit.paste'),
+            disabledReason: frozen(),
             run: pasteAtCursor,
           },
           { id: 'sep-selection', separator: true },
@@ -357,8 +369,8 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
             id: 'delete',
             label: t.value.shell.pianoRoll.context.delete,
             danger: true,
-            hint: 'Del',
-            disabled: contentReadOnly.value,
+            hint: shortcutHint('edit.deleteSelectedNotes'),
+            disabledReason: frozen(),
             run: () => deleteNotes([note.id]),
           },
         );
@@ -368,21 +380,21 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
         {
           id: 'copy',
           label: t.value.shell.pianoRoll.context.copy,
-          hint: '⌘C',
+          hint: shortcutHint('edit.copy'),
           run: () => copySelectedNotes(),
         },
         {
           id: 'cut',
           label: t.value.shell.pianoRoll.context.cut,
-          hint: '⌘X',
-          disabled: contentReadOnly.value,
+          hint: shortcutHint('edit.cut'),
+          disabledReason: frozen(),
           run: () => cutSelectedNotes(),
         },
         {
           id: 'paste',
           label: t.value.shell.pianoRoll.context.paste,
-          hint: '⌘V',
-          disabled: contentReadOnly.value,
+          hint: shortcutHint('edit.paste'),
+          disabledReason: frozen(),
           run: pasteAtCursor,
         },
         { id: 'sep-selection', separator: true },
@@ -392,8 +404,8 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
       items.push({
         id: 'paste',
         label: t.value.shell.pianoRoll.context.paste,
-        hint: '⌘V',
-        disabled: contentReadOnly.value,
+        hint: shortcutHint('edit.paste'),
+        disabledReason: frozen(),
         run: pasteAtCursor,
       });
     }

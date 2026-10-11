@@ -18,6 +18,7 @@ import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds, secondsToPpq } from '@/project/tempo-map';
 import { isFourFourBarRange } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -249,9 +250,16 @@ const hasEditableMidiClip = computed(() =>
 const hasGeneratorSource = computed(() => hasChords.value || hasEditableMidiClip.value);
 const counterAvailable = computed(() => counterBars.value !== null);
 
+/** Why a part cannot be generated right now, or null when it can. */
+function partBlocked(part: TrackPart): string | null {
+  return firstBlock(
+    [!hasChords.value && (part === 'bass' || part === 'backing'), g.value.chordsRequired],
+    [part === 'counter' && !counterAvailable.value, g.value.counterUnavailable],
+  );
+}
+
 function isPartAvailable(part: TrackPart): boolean {
-  if (!hasChords.value && (part === 'bass' || part === 'backing')) return false;
-  return part !== 'counter' || counterAvailable.value;
+  return partBlocked(part) === null;
 }
 
 // --- Part parameters -----------------------------------------------------------
@@ -702,6 +710,17 @@ const selectedCount = computed(
   () => PART_IDS.filter((id) => parts[id].checked && isPartAvailable(id)).length,
 );
 
+/** Why Generate cannot run: nothing ticked, a run in flight, or an invalid field. */
+const generateBlocked = computed(() =>
+  firstBlock(
+    [selectedCount.value === 0, g.value.noPartSelected],
+    [generating.value, t.value.reasons.busy],
+    partBarsError.value,
+    appliesWholeLength.value ? wholeLengthError.value : null,
+    parts.drums.checked ? drumRangeValidation.value : null,
+  ),
+);
+
 const partBarsError = computed(() => {
   const invalid = (bars: number) => !Number.isInteger(bars) || bars < 1 || bars > 256;
   if (parts.motif.checked && isPartAvailable('motif') && invalid(motifBars.value)) {
@@ -970,11 +989,25 @@ function toggleExpanded(part: TrackPart): void {
       <div class="preset-row">
         <span class="field-label">{{ g.presetsLabel }}</span>
         <div class="preset-buttons">
-          <button type="button" class="preset-chip" @click="presetAccompaniment">
+          <button
+            type="button"
+            class="preset-chip"
+            v-tooltip="g.presetAccompanimentTitle"
+            @click="presetAccompaniment"
+          >
             {{ g.presetAccompaniment }}
           </button>
-          <button type="button" class="preset-chip" @click="presetAll">{{ g.presetAll }}</button>
-          <button type="button" class="preset-chip" @click="presetClear">{{ g.presetClear }}</button>
+          <button type="button" class="preset-chip" v-tooltip="g.presetAllTitle" @click="presetAll">
+            {{ g.presetAll }}
+          </button>
+          <button
+            type="button"
+            class="preset-chip"
+            v-tooltip="g.presetClearTitle"
+            @click="presetClear"
+          >
+            {{ g.presetClear }}
+          </button>
         </div>
       </div>
 
@@ -986,7 +1019,11 @@ function toggleExpanded(part: TrackPart): void {
           :class="{ checked: parts[part].checked }"
         >
           <div class="part-head">
-            <label class="part-check" :class="{ disabled: !isPartAvailable(part) }">
+            <label
+              class="part-check"
+              :class="{ disabled: !isPartAvailable(part) }"
+              v-tooltip="{ reason: partBlocked(part) }"
+            >
               <input
                 v-model="parts[part].checked"
                 type="checkbox"
@@ -1004,6 +1041,7 @@ function toggleExpanded(part: TrackPart): void {
               v-model="parts[part].target"
               class="part-target"
               :disabled="!isPartAvailable(part)"
+              v-tooltip="{ text: g.targetTitle, reason: partBlocked(part) }"
               @change="onTargetChanged(part)"
             >
               <option v-for="option in targetOptions(part)" :key="option.value" :value="option.value">
@@ -1015,6 +1053,7 @@ function toggleExpanded(part: TrackPart): void {
               class="part-expand"
               :aria-expanded="parts[part].expanded"
               :disabled="!isPartAvailable(part)"
+              v-tooltip="{ text: g.detailsTitle, reason: partBlocked(part) }"
               @click="toggleExpanded(part)"
             >
               {{ g.details }}
@@ -1025,7 +1064,7 @@ function toggleExpanded(part: TrackPart): void {
             :id="`part-disabled-${part}`"
             class="part-disabled-hint"
           >
-            {{ part === 'counter' ? g.counterUnavailable : g.chordsRequired }}
+            {{ partBlocked(part) }}
           </p>
 
           <div v-if="parts[part].expanded" class="part-params">
@@ -1062,7 +1101,12 @@ function toggleExpanded(part: TrackPart): void {
                 </label>
                 <div class="reroll-field">
                   <span class="field-label">{{ g.variation }}</span>
-                  <button type="button" class="reroll-button" @click="reroll('motif')">
+                  <button
+                    type="button"
+                    class="reroll-button"
+                    v-tooltip="g.rerollTitle"
+                    @click="reroll('motif')"
+                  >
                     {{ g.reroll }}
                   </button>
                   <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.motif.reroll + 1 }) }}</span>
@@ -1190,11 +1234,23 @@ function toggleExpanded(part: TrackPart): void {
                 </label>
                 <label class="number-field">
                   <span class="field-label">{{ g.density }}</span>
-                  <input v-model.number="drumDensity" type="number" min="0" max="1" step="0.1" />
+                  <input
+                    v-model.number="drumDensity"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    v-tooltip="g.densityTitle"
+                  />
                 </label>
                 <div class="reroll-field">
                   <span class="field-label">{{ g.variation }}</span>
-                  <button type="button" class="reroll-button" @click="reroll('drums')">
+                  <button
+                    type="button"
+                    class="reroll-button"
+                    v-tooltip="g.rerollTitle"
+                    @click="reroll('drums')"
+                  >
                     {{ g.reroll }}
                   </button>
                   <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.drums.reroll + 1 }) }}</span>
@@ -1224,7 +1280,12 @@ function toggleExpanded(part: TrackPart): void {
               </div>
               <div class="reroll-field">
                 <span class="field-label">{{ g.variation }}</span>
-                <button type="button" class="reroll-button" @click="reroll('bass')">
+                <button
+                    type="button"
+                    class="reroll-button"
+                    v-tooltip="g.rerollTitle"
+                    @click="reroll('bass')"
+                  >
                   {{ g.reroll }}
                 </button>
                 <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.bass.reroll + 1 }) }}</span>
@@ -1280,7 +1341,12 @@ function toggleExpanded(part: TrackPart): void {
               </div>
               <div class="reroll-field">
                 <span class="field-label">{{ g.variation }}</span>
-                <button type="button" class="reroll-button" @click="reroll('counter')">
+                <button
+                    type="button"
+                    class="reroll-button"
+                    v-tooltip="g.rerollTitle"
+                    @click="reroll('counter')"
+                  >
                   {{ g.reroll }}
                 </button>
                 <span class="reroll-count">{{ formatMessage(g.variationIndex, { index: parts.counter.reroll + 1 }) }}</span>
@@ -1325,7 +1391,8 @@ function toggleExpanded(part: TrackPart): void {
         <button
           type="button"
           class="primary generate-confirm"
-          :disabled="selectedCount === 0 || generating || partBarsError !== null || (appliesWholeLength && wholeLengthError !== null) || (parts.drums.checked && drumRangeValidation !== null)"
+          :disabled="!!generateBlocked"
+          v-tooltip="{ reason: generateBlocked }"
           @click="onGenerate"
         >
           {{

@@ -7,6 +7,7 @@ import { buildKeyMap } from '@/compose/key-map';
 import { buildVoiceLines } from '@/compose/voice-context';
 import { applyKeyChangeMarkers } from '@/project/command/key-changes';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -49,6 +50,12 @@ watch(
 );
 
 const selectedCount = computed(() => checked.value.filter(Boolean).length);
+const applyBlocked = computed(() =>
+  firstBlock(
+    [proposals.value.length === 0, g.value.empty],
+    [selectedCount.value === 0, g.value.noneSelected],
+  ),
+);
 
 function onCancel(): void {
   emit('close');
@@ -102,7 +109,8 @@ function onApply(): void {
       <button
         type="button"
         class="primary"
-        :disabled="selectedCount === 0"
+        :disabled="!!applyBlocked"
+        v-tooltip="{ reason: applyBlocked }"
         @click="onApply"
       >
         {{ selectedCount > 0 ? formatMessage(g.apply, { count: selectedCount }) : g.applyEmpty }}

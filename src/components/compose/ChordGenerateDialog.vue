@@ -11,6 +11,7 @@ import { normalizeGenerationSeed, partSeed } from '@/project/generation';
 import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -162,6 +163,13 @@ const harmTranspose = ref(false);
 /** True when the harmonize form has no melody to work from. */
 const harmonizeBlocked = computed(() => mode.value === 'harmonize' && !hasMelody.value);
 
+/** Why Generate cannot run for the current mode and fields, or null. */
+const generateBlocked = computed(() => {
+  if (mode.value === 'harmonize') return firstBlock([!hasMelody.value, g.value.harmonizeEmpty]);
+  const bars = Math.round(progBars.value);
+  return firstBlock([!Number.isFinite(bars) || bars <= 0, g.value.invalidBars]);
+});
+
 function onCancel(): void {
   emit('close');
 }
@@ -213,7 +221,7 @@ function runGenerator(): number | null {
 }
 
 function onGenerate(): void {
-  if (harmonizeBlocked.value) return;
+  if (generateBlocked.value) return;
   error.value = null;
   try {
     const written = runGenerator();
@@ -285,7 +293,12 @@ function onKeydown(event: KeyboardEvent): void {
         <template v-if="mode === 'progression'">
           <p class="key-context">
             {{ g.keyContext }}: <strong>{{ keyReadout }}</strong>
-            <button type="button" class="key-change" @click="emit('openKey')">
+            <button
+              type="button"
+              class="key-change"
+              v-tooltip="g.keyChangeTitle"
+              @click="emit('openKey')"
+            >
               {{ g.keyChange }}
             </button>
           </p>
@@ -310,7 +323,12 @@ function onKeydown(event: KeyboardEvent): void {
             </label>
             <div class="reroll-field">
               <span class="field-label">{{ g.variation }}</span>
-              <button type="button" class="reroll-button" @click="reroll('progression')">
+              <button
+                type="button"
+                class="reroll-button"
+                v-tooltip="g.rerollTitle"
+                @click="reroll('progression')"
+              >
                 {{ g.reroll }}
               </button>
               <span class="reroll-count">{{
@@ -330,6 +348,7 @@ function onKeydown(event: KeyboardEvent): void {
                   type="button"
                   class="repeat-chip"
                   :aria-label="formatMessage(g.repeatSet, { multiplier: n })"
+                  v-tooltip="formatMessage(g.repeatSet, { multiplier: n })"
                   @click="setRepeatCount(n)"
                 >
                   ×{{ n }}
@@ -399,7 +418,12 @@ function onKeydown(event: KeyboardEvent): void {
             <div class="number-row">
               <div class="reroll-field">
                 <span class="field-label">{{ g.variation }}</span>
-                <button type="button" class="reroll-button" @click="reroll('harmonize')">
+                <button
+                  type="button"
+                  class="reroll-button"
+                  v-tooltip="g.rerollTitle"
+                  @click="reroll('harmonize')"
+                >
                   {{ g.reroll }}
                 </button>
                 <span class="reroll-count">{{
@@ -426,7 +450,8 @@ function onKeydown(event: KeyboardEvent): void {
         <button
           type="button"
           class="primary generate-confirm"
-          :disabled="harmonizeBlocked"
+          :disabled="!!generateBlocked"
+          v-tooltip="{ reason: generateBlocked }"
           @click="onGenerate"
         >
           {{ g.generate }}

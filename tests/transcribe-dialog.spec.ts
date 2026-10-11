@@ -5,6 +5,7 @@ import { nextTick } from 'vue';
 import TranscribeDialog from '@/components/arrangement/TranscribeDialog.vue';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
+import { vTooltip } from '@/ui/tooltip';
 
 const commands = vi.hoisted(() => ({
   setActiveClip: vi.fn(),
@@ -123,6 +124,25 @@ describe('TranscribeDialog', () => {
       matchTempo: false,
       minNoteDivision: 16,
     });
+  });
+
+  it('explains why the note-count picker waits for polyphonic mode', async () => {
+    store.clips = [audioClip(4)];
+    wrapper = mount(TranscribeDialog, {
+      props: { open: true, clipId: 1 },
+      attachTo: document.body,
+      global: { directives: { tooltip: vTooltip } },
+    });
+    const voices = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.transcribe-voices [role="radio"]'),
+    ];
+    expect(voices[1]?.disabled).toBe(true);
+    expect(voices[1]?.getAttribute('aria-description')).toContain('Choose Polyphonic');
+
+    document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]')[1]?.click();
+    await nextTick();
+    expect(voices[1]?.disabled).toBe(false);
+    expect(voices[1]?.getAttribute('aria-description')).not.toContain('Choose Polyphonic');
   });
 
   it('limits polyphonic voices only in polyphonic mode and omits the limit on Auto', async () => {

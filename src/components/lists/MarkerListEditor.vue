@@ -103,6 +103,7 @@ function onSeek(marker: EditorMarker): void {
             <button
               type="button"
               class="row-button"
+              v-tooltip="t.shell.lists.common.seekTitle"
               :aria-label="formatMessage(t.shell.lists.markers.seekTo, { name: marker.name })"
               @click.stop="onSeek(marker)"
             >
@@ -123,7 +124,7 @@ function onSeek(marker: EditorMarker): void {
           <td>
             <input
               :value="marker.name"
-              class="cell-input"
+              class="cell-input cell-name"
               type="text"
               :aria-label="formatMessage(t.shell.lists.markers.nameOf, { name: marker.name })"
               @click.stop
@@ -134,6 +135,7 @@ function onSeek(marker: EditorMarker): void {
             <button
               type="button"
               class="row-button"
+              v-tooltip="t.shell.lists.common.deleteTitle"
               :aria-label="formatMessage(t.shell.lists.markers.delete, { name: marker.name })"
               @click.stop="onDelete(marker)"
             >
@@ -173,7 +175,7 @@ function onSeek(marker: EditorMarker): void {
   color: var(--accent);
 }
 
-.cell-position {
-  width: 5.5rem;
+.cell-name {
+  width: 18rem;
 }
 </style>

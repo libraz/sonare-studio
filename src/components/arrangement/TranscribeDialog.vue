@@ -7,6 +7,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 
 type TuningMode = 'concert' | 'auto';
@@ -64,6 +65,25 @@ const clip = computed(() =>
 const clipWarped = computed(() => {
   const current = clip.value;
   return current !== null && isAudioClip(current) && current.warp?.enabled === true;
+});
+/** Every choice is frozen while a transcription runs. */
+const runningBlocked = computed(() => firstBlock([busy.value, copy.value.reasons.running]));
+/** A note-count limit only applies to polyphonic reading. */
+const voicesBlocked = computed(() =>
+  firstBlock(runningBlocked.value, [
+    mode.value !== 'polyphonic',
+    copy.value.reasons.polyphonicOnly,
+  ]),
+);
+const matchTempoBlocked = computed(() =>
+  firstBlock(runningBlocked.value, [clipWarped.value, copy.value.reasons.clipWarped]),
+);
+const runBlocked = computed(() => {
+  const current = clip.value;
+  return firstBlock(runningBlocked.value, [
+    current === null || !isAudioClip(current),
+    t.value.reasons.noAudioClip,
+  ]);
 });
 /** Other material whose timing a new project tempo would move. */
 const otherContent = computed(() =>
@@ -210,7 +230,7 @@ function setShortestButton(
 }
 
 function chooseVoices(next: MaxVoices): void {
-  if (busy.value || mode.value !== 'polyphonic') return;
+  if (voicesBlocked.value) return;
   maxVoices.value = next;
   error.value = '';
 }
@@ -232,7 +252,6 @@ function setVoicesButton(name: MaxVoices, element: Element | ComponentPublicInst
 }
 
 function voicesTitle(voices: MaxVoices): string {
-  if (mode.value !== 'polyphonic') return copy.value.voicesMelodyTitle;
   return voices === 'auto'
     ? copy.value.voicesAutoTitle
     : copy.value.voicesTitle.replace('{n}', String(voices));
@@ -262,7 +281,7 @@ function setTidyButton(
 }
 
 function chooseTempo(next: boolean): void {
-  if (busy.value || (next && clipWarped.value)) return;
+  if (runningBlocked.value || (next && matchTempoBlocked.value)) return;
   matchTempo.value = next;
   error.value = '';
 }
@@ -290,13 +309,19 @@ function shortestLabel(note: ShortestNote): string {
   return note === 'auto' ? copy.value.shortestAuto : `1/${note}`;
 }
 
+function shortestTitle(note: ShortestNote): string {
+  return note === 'auto'
+    ? copy.value.shortestAutoTitle
+    : copy.value.shortestTitle.replace('{n}', String(note));
+}
+
 function isAbortError(value: unknown): boolean {
   return value instanceof Error && value.name === 'AbortError';
 }
 
 async function run(): Promise<void> {
   const id = props.clipId;
-  if (id === null || busy.value) return;
+  if (id === null || runBlocked.value) return;
   const match = matchTempo.value && !clipWarped.value;
   if (match && otherContent.value) {
     const confirmed = await confirmDialog({
@@ -382,7 +407,8 @@ onBeforeUnmount(abort);
           :aria-checked="mode === 'melody'"
           :tabindex="mode === 'melody' ? 0 : -1"
           :ref="(element) => setModeButton('melody', element)"
-          :disabled="busy"
+          :disabled="!!runningBlocked"
+          v-tooltip="{ reason: runningBlocked }"
           @click="chooseMode('melody')"
           @keydown="onModeKeydown($event, 'melody')"
         >
@@ -397,7 +423,8 @@ onBeforeUnmount(abort);
           :aria-checked="mode === 'polyphonic'"
           :tabindex="mode === 'polyphonic' ? 0 : -1"
           :ref="(element) => setModeButton('polyphonic', element)"
-          :disabled="busy"
+          :disabled="!!runningBlocked"
+          v-tooltip="{ reason: runningBlocked }"
           @click="chooseMode('polyphonic')"
           @keydown="onModeKeydown($event, 'polyphonic')"
         >
@@ -417,7 +444,8 @@ onBeforeUnmount(abort);
             :aria-checked="tuningMode === 'concert'"
             :tabindex="tuningMode === 'concert' ? 0 : -1"
             :ref="(element) => setTuningButton('concert', element)"
-            :disabled="busy"
+            :disabled="!!runningBlocked"
+            v-tooltip="{ text: copy.tuningConcertTitle, reason: runningBlocked }"
             @click="chooseTuning('concert')"
             @keydown="onTuningKeydown($event, 'concert')"
           >
@@ -431,7 +459,8 @@ onBeforeUnmount(abort);
             :aria-checked="tuningMode === 'auto'"
             :tabindex="tuningMode === 'auto' ? 0 : -1"
             :ref="(element) => setTuningButton('auto', element)"
-            :disabled="busy"
+            :disabled="!!runningBlocked"
+            v-tooltip="{ text: copy.tuningAutoTitle, reason: runningBlocked }"
             @click="chooseTuning('auto')"
             @keydown="onTuningKeydown($event, 'auto')"
           >
@@ -453,8 +482,8 @@ onBeforeUnmount(abort);
             :aria-checked="shortestNote === note"
             :tabindex="shortestNote === note ? 0 : -1"
             :ref="(element) => setShortestButton(note, element)"
-            :disabled="busy"
-            :title="note === 'auto' ? copy.shortestAutoTitle : undefined"
+            :disabled="!!runningBlocked"
+            v-tooltip="{ text: shortestTitle(note), reason: runningBlocked }"
             @click="chooseShortest(note)"
             @keydown="onShortestKeydown($event, note)"
           >
@@ -476,8 +505,8 @@ onBeforeUnmount(abort);
             :aria-checked="mode === 'polyphonic' && maxVoices === voices"
             :tabindex="maxVoices === voices ? 0 : -1"
             :ref="(element) => setVoicesButton(voices, element)"
-            :disabled="busy || mode !== 'polyphonic'"
-            :title="voicesTitle(voices)"
+            :disabled="!!voicesBlocked"
+            v-tooltip="{ text: voicesTitle(voices), reason: voicesBlocked }"
             @click="chooseVoices(voices)"
             @keydown="onVoicesKeydown($event, voices)"
           >
@@ -497,7 +526,8 @@ onBeforeUnmount(abort);
             :aria-checked="!matchTempo"
             :tabindex="matchTempo ? -1 : 0"
             :ref="(element) => setTempoButton('keep', element)"
-            :disabled="busy"
+            :disabled="!!runningBlocked"
+            v-tooltip="{ text: copy.tempoKeepTitle, reason: runningBlocked }"
             @click="chooseTempo(false)"
             @keydown="onTempoKeydown($event, false)"
           >
@@ -511,8 +541,8 @@ onBeforeUnmount(abort);
             :aria-checked="matchTempo"
             :tabindex="matchTempo ? 0 : -1"
             :ref="(element) => setTempoButton('match', element)"
-            :disabled="busy || clipWarped"
-            :title="clipWarped ? copy.tempoWarpedTitle : copy.tempoMatchTitle"
+            :disabled="!!matchTempoBlocked"
+            v-tooltip="{ text: copy.tempoMatchTitle, reason: matchTempoBlocked }"
             @click="chooseTempo(true)"
             @keydown="onTempoKeydown($event, true)"
           >
@@ -532,7 +562,8 @@ onBeforeUnmount(abort);
             :aria-checked="!tidy"
             :tabindex="tidy ? -1 : 0"
             :ref="(element) => setTidyButton('off', element)"
-            :disabled="busy"
+            :disabled="!!runningBlocked"
+            v-tooltip="{ text: copy.tidyOffTitle, reason: runningBlocked }"
             @click="chooseTidy(false)"
             @keydown="onTidyKeydown($event, false)"
           >
@@ -546,8 +577,8 @@ onBeforeUnmount(abort);
             :aria-checked="tidy"
             :tabindex="tidy ? 0 : -1"
             :ref="(element) => setTidyButton('on', element)"
-            :disabled="busy"
-            :title="copy.tidyOnTitle"
+            :disabled="!!runningBlocked"
+            v-tooltip="{ text: copy.tidyOnTitle, reason: runningBlocked }"
             @click="chooseTidy(true)"
             @keydown="onTidyKeydown($event, true)"
           >
@@ -576,7 +607,8 @@ onBeforeUnmount(abort);
         <button
           type="button"
           class="primary"
-          :disabled="busy || clip === null || !isAudioClip(clip)"
+          :disabled="!!runBlocked"
+          v-tooltip="{ reason: runBlocked }"
           @click="run"
         >
           {{ busy ? copy.transcribing : copy.run }}

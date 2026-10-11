@@ -204,7 +204,7 @@ describe('crossfade entry point', () => {
   it('offers the action from the clip context menu with the blocking reason', () => {
     expect(arrangementView).toContain("id: 'crossfade'");
     expect(arrangementView).toContain(
-      'disabled: frozen || crossfade.partnerId === null || crossfade.reason !== null',
+      '[crossfade.partnerId === null, actions.crossfadeNoPartner],',
     );
     expect(arrangementView).toContain('crossfadeReasonText(crossfade.reason)');
   });

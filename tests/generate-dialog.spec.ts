@@ -12,6 +12,7 @@ import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';
+import { vTooltip } from '@/ui/tooltip';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -451,6 +452,22 @@ describe('TrackGenerateDialog', () => {
     clearParts();
     await nextTick();
     expect(confirm()?.disabled).toBe(true);
+  });
+
+  it('explains why generate is disabled with nothing selected', async () => {
+    setProjectChords(FOUR_CHORDS);
+    wrapper = mount(TrackGenerateDialog, {
+      props: { open: true, openWith: null },
+      attachTo: document.body,
+      global: { directives: { tooltip: vTooltip } },
+    });
+    await nextTick();
+    clearParts();
+    await nextTick();
+    expect(confirm()?.disabled).toBe(true);
+    expect(confirm()?.getAttribute('aria-description')).toContain(
+      'Tick at least one part to generate.',
+    );
   });
 
   it('does not generate when the only requested part lacks a source melody', async () => {

@@ -65,6 +65,7 @@ watch(
         :class="{ active: activeTab === tab.id }"
         role="tab"
         :aria-selected="activeTab === tab.id"
+        v-tooltip="t.shell.lists.tabTitles[tab.id]"
         @click="activeTab = tab.id"
       >
         {{ t.shell.lists.tabs[tab.id] }}

@@ -29,18 +29,17 @@ const { t } = useI18n();
       :model-value="param"
       :options="options"
       :aria-label="formatMessage(t.shell.arrangement.automation.parameter, { name: track.name })"
+      :title="t.shell.arrangement.automation.parameterTitle"
       @change="emit('paramChange', track, $event)"
     />
     <ToggleButton
       class="automation-enable"
       size="sm"
       :model-value="lane?.enabled ?? false"
-      :disabled="lane === null"
+      :reason="lane === null ? t.shell.arrangement.automation.noPoints : null"
       :label="t.shell.arrangement.automation.on"
       :aria-label="formatMessage(t.shell.arrangement.automation.enable, { name: track.name })"
-      :title="
-        lane ? t.shell.arrangement.automation.applyTitle : t.shell.arrangement.automation.emptyTitle
-      "
+      :title="t.shell.arrangement.automation.applyTitle"
       @update:model-value="emit('enabledChange', track, $event)"
     />
   </div>

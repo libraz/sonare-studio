@@ -2,6 +2,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ClipInspector from '@/components/arrangement/ClipInspector.vue';
 import type { EditorClip } from '@/project/types';
+import { vTooltip } from '@/ui/tooltip';
 
 const setClipGain = vi.fn();
 const setClipFades = vi.fn();
@@ -52,6 +53,19 @@ describe('ClipInspector', () => {
   it('renders nothing without a clip', () => {
     wrapper = mount(ClipInspector, { props: { clip: null } });
     expect(wrapper.find('.clip-inspector').exists()).toBe(false);
+  });
+
+  it('disables every field on a frozen track and says why', () => {
+    wrapper = mount(ClipInspector, {
+      props: { clip: audioClip(), frozen: true },
+      global: { directives: { tooltip: vTooltip } },
+    });
+    const gain = wrapper.find<HTMLInputElement>('input[aria-label="Clip gain in decibels"]');
+    expect(gain.element.disabled).toBe(true);
+    expect(gain.attributes('aria-description')).toContain('This track is frozen.');
+    const loop = wrapper.find<HTMLButtonElement>('.ci-loop');
+    expect(loop.element.disabled).toBe(true);
+    expect(loop.attributes('aria-description')).toContain('This track is frozen.');
   });
 
   it('converts the gain field from dB to linear', async () => {

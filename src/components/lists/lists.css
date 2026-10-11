@@ -62,13 +62,22 @@ input.cell-input:focus {
   width: 5.5rem;
 }
 
+input.cell-number {
+  text-align: right;
+}
+
+.cell-position {
+  width: 6rem;
+}
+
 .cell-seek {
   width: 1.6rem;
 }
 
+/* The trailing actions column absorbs the slack, so fields keep their own widths and the row buttons sit beside them. */
 .cell-actions {
-  width: 1.6rem;
-  text-align: right;
+  width: 100%;
+  white-space: nowrap;
 }
 
 /* The delete affordance tints red on hover; the canonical .row-button face lives in controls.css. */

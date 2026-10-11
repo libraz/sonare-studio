@@ -17,7 +17,7 @@ import {
   planClipCrossfade,
 } from '@/project/clip-crossfade';
 import { clipSplitBlockReason } from '@/project/clip-split';
-import { canPasteClipAt } from '@/project/command/clips-clipboard';
+import { canPasteClipAt, hasCopiedClip } from '@/project/command/clips-clipboard';
 import {
   addMidiClip,
   alignClipToReference,
@@ -86,8 +86,10 @@ import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { createPainter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { shortcutHint } from '@/ui/settings/shortcut-hint';
 import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';
 import type { NoteTargetUnmatchedPolicy } from '@/wasm/index.js';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
@@ -207,6 +209,27 @@ const hasContent = computed(() =>
 
 /** Whether any clip carries written notes the form could be read from. */
 const hasWrittenNotes = computed(() => store.clips.some((clip) => clip.notes.length > 0));
+
+const viewReasons = computed(() => t.value.shell.arrangement.reasons);
+
+/** Shared prerequisite of every audio-clip action: an active audio clip with media. */
+const audioClipBlocked = computed(() =>
+  firstBlock([detectableAudioClip.value === null, t.value.reasons.noAudioClip]),
+);
+const detectSectionsBlocked = computed(() =>
+  firstBlock(audioClipBlocked.value, [isDetectingSections.value, t.value.reasons.busy]),
+);
+const sectionsFromNotesBlocked = computed(() =>
+  firstBlock([!hasWrittenNotes.value, viewReasons.value.noWrittenNotes]),
+);
+const transcribeBlocked = computed(() => audioClipBlocked.value);
+/** A running components split stays clickable: the button then cancels it. */
+const splitStemsBlocked = computed(() =>
+  firstBlock(audioClipBlocked.value, [
+    isSplittingStems.value && componentSplitAbort.value === null,
+    t.value.reasons.busy,
+  ]),
+);
 
 /**
  * Reads the song form from the written notes across the whole arrangement and
@@ -340,16 +363,53 @@ function onSplitStemsClick(event: MouseEvent): void {
 /** MIDI tracks a clip can be tuned to. */
 const midiTracks = computed(() => store.tracks.filter((track) => track.kind === 'midi'));
 
+/** Mirrors the refusals of the tuning command so the button says why before it is pressed. */
+const tuneToMidiBlocked = computed(() => {
+  const clip = detectableAudioClip.value;
+  const refused = t.value.shell.arrangement.tuneToMidiRefused;
+  return firstBlock(
+    audioClipBlocked.value,
+    [isTrackFrozen(clip?.trackId), t.value.reasons.trackFrozen],
+    [clip?.warp?.enabled === true, refused.warped],
+    [clip?.loopEnabled === true, refused.looped],
+    [(clip?.takes?.length ?? 0) > 0, refused.comped],
+    [midiTracks.value.length === 0, viewReasons.value.noMidiTrack],
+    [isTuningToMidi.value, t.value.reasons.busy],
+  );
+});
+
+/** True when a MIDI track holds a MIDI clip overlapping the clip's window. */
+function midiTrackOverlaps(trackId: number, clip: EditorClip): boolean {
+  const end = clip.startPpq + clip.lengthPpq;
+  return store.clips.some(
+    (entry) =>
+      entry.trackId === trackId &&
+      clipKind(entry) === 'midi' &&
+      entry.notes.length > 0 &&
+      entry.startPpq < end &&
+      entry.startPpq + entry.lengthPpq > clip.startPpq,
+  );
+}
+
+function isTrackFrozen(trackId: number | undefined): boolean {
+  return store.tracks.find((track) => track.id === trackId)?.frozen !== undefined;
+}
+
 /** Unmatched-note policies offered per reference track, safest first. */
 const TUNE_POLICIES: ReadonlyArray<NoteTargetUnmatchedPolicy> = ['leave', 'mute', 'nearest'];
 
 /** Opens the reference-track menu for tuning the active audio clip to MIDI. */
 function openTuneToMidiMenu(event: MouseEvent): void {
   const clip = detectableAudioClip.value;
-  if (!clip || isTuningToMidi.value) return;
+  if (!clip || tuneToMidiBlocked.value) return;
   const items: ContextMenuItem[] = midiTracks.value.map((track) => ({
     id: `tune-${track.id}`,
     label: track.name,
+    disabledReason: midiTrackOverlaps(track.id, clip)
+      ? null
+      : formatMessage(t.value.shell.arrangement.tuneToMidiRefused['no-notes'], {
+          track: track.name,
+        }),
     children: TUNE_POLICIES.map((policy) => ({
       id: `tune-${track.id}-${policy}`,
       label: t.value.shell.arrangement.tuneToMidiPolicy[policy],
@@ -1040,7 +1100,7 @@ function onClipContext(payload: {
       {
         id: 'paste',
         label: t.value.shell.arrangement.clipActions.paste,
-        hint: '⌘V',
+        hint: shortcutHint('edit.paste'),
         run: () => pasteClipAt(trackId, pastePpq),
       },
     ]);
@@ -1050,11 +1110,20 @@ function onClipContext(payload: {
   const end = clip.startPpq + clip.lengthPpq;
   const splitPpq = snapArrangementPpq(payload.ppq);
   const pastePpq = splitPpq;
-  const splitBlocked = clipSplitBlockReason(clip, splitPpq);
   const glueIds = glueClusterClipIds(clip.id);
   const consolidateIds = audioConsolidateClipIds(clip.id);
-  const frozen = store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined;
+  const frozen = isTrackFrozen(clip.trackId);
   const crossfade = crossfadeStateFor(clip.id);
+  const r = t.value.reasons;
+  const why = viewReasons.value;
+  const actions = t.value.shell.arrangement.clipActions;
+  const frozenBlock = firstBlock([frozen, r.trackFrozen]);
+  const audio = isAudioClip(clip);
+  const sliceBlocked = firstBlock(
+    frozenBlock,
+    [!audio, why.audioClipsOnly],
+    [clip.loopEnabled, why.loopOn],
+  );
   const items: ContextMenuItem[] = [
     ...(frozen
       ? [
@@ -1068,55 +1137,68 @@ function onClipContext(payload: {
       : []),
     {
       id: 'split',
-      label:
-        splitBlocked === 'loop'
-          ? `${t.value.shell.arrangement.splitHere} — ${t.value.shell.arrangement.loopSplitUnavailable}`
-          : t.value.shell.arrangement.splitHere,
-      hint: '3',
-      disabled: frozen || splitBlocked !== null,
+      label: t.value.shell.arrangement.splitHere,
+      hint: shortcutHint('tool.split'),
+      disabledReason: firstBlock(frozenBlock, [
+        clipSplitBlockReason(clip, splitPpq) !== null,
+        t.value.shell.arrangement.loopSplitUnavailable,
+      ]),
       run: () => setActiveClip(splitClip(clip.id, splitPpq)),
     },
     {
       id: 'duplicate',
-      label: t.value.shell.arrangement.clipActions.duplicate,
-      disabled: frozen,
+      label: actions.duplicate,
+      hint: shortcutHint('arrange.duplicateClip'),
+      disabledReason: frozenBlock,
       run: () => setActiveClip(duplicateClip(clip.id, end)),
     },
     { id: 'sep-clipboard', separator: true },
     {
       id: 'copy',
-      label: t.value.shell.arrangement.clipActions.copy,
-      hint: '⌘C',
+      label: actions.copy,
+      hint: shortcutHint('edit.copy'),
       run: () => copyActiveClip(),
     },
     {
       id: 'cut',
-      label: t.value.shell.arrangement.clipActions.cut,
-      hint: '⌘X',
-      disabled: frozen,
+      label: actions.cut,
+      hint: shortcutHint('edit.cut'),
+      disabledReason: frozenBlock,
       run: () => cutActiveClip(),
     },
     {
       id: 'paste',
-      label: t.value.shell.arrangement.clipActions.paste,
-      hint: '⌘V',
-      disabled: frozen || !canPasteClipAt(clip.trackId, pastePpq),
+      label: actions.paste,
+      hint: shortcutHint('edit.paste'),
+      disabledReason: firstBlock(
+        frozenBlock,
+        [!hasCopiedClip(), r.nothingToPaste],
+        [!canPasteClipAt(clip.trackId, pastePpq), r.noRoomToPaste],
+      ),
       run: () => pasteClipAt(clip.trackId, pastePpq),
     },
     { id: 'sep-clip-edit', separator: true },
     {
       id: 'glue',
-      label: t.value.shell.arrangement.clipActions.glue,
-      disabled: frozen || glueIds.length < 2,
+      label: actions.glue,
+      disabledReason: firstBlock(
+        frozenBlock,
+        [audio, why.midiClipsOnly],
+        [glueIds.length < 2, why.nothingToJoin],
+      ),
       run: () => setActiveClip(glueMidiClips(glueIds)),
     },
     {
       id: 'consolidate-audio',
-      label: t.value.shell.arrangement.clipActions.consolidateAudio,
-      disabled: frozen || consolidateIds.length < 2,
+      label: actions.consolidateAudio,
+      disabledReason: firstBlock(
+        frozenBlock,
+        [!audio, why.audioClipsOnly],
+        [consolidateIds.length < 2, why.nothingToJoin],
+      ),
       run: () => consolidateAudioCluster(consolidateIds),
     },
-    ...(isAudioClip(clip)
+    ...(audio
       ? (() => {
           const references = alignmentReferences(clip);
           const trackName = (trackId: number): string =>
@@ -1124,11 +1206,11 @@ function onClipContext(payload: {
           return [
             {
               id: 'align-to',
-              label:
-                references.length > 0
-                  ? t.value.shell.arrangement.alignTo
-                  : `${t.value.shell.arrangement.alignTo} — ${t.value.shell.arrangement.alignToNone}`,
-              disabled: frozen || references.length === 0,
+              label: t.value.shell.arrangement.alignTo,
+              disabledReason: firstBlock(frozenBlock, [
+                references.length === 0,
+                t.value.shell.arrangement.alignToNone,
+              ]),
               children: references.map((reference) => ({
                 id: `align-to-${reference.id}`,
                 label: `${trackName(reference.trackId)} · ${reference.name}`,
@@ -1140,37 +1222,36 @@ function onClipContext(payload: {
       : []),
     {
       id: 'slice-transients',
-      label: t.value.shell.arrangement.clipActions.sliceTransients,
-      disabled: frozen || !isAudioClip(clip) || clip.loopEnabled,
+      label: actions.sliceTransients,
+      disabledReason: sliceBlocked,
       run: () => runTransientSlice(clip.id, false),
     },
     {
       id: 'slice-transients-quantize',
-      label: t.value.shell.arrangement.clipActions.sliceTransientsQuantize,
-      disabled: frozen || !isAudioClip(clip) || clip.loopEnabled,
+      label: actions.sliceTransientsQuantize,
+      disabledReason: sliceBlocked,
       run: () => runTransientSlice(clip.id, true),
     },
     {
       id: 'crossfade',
-      label:
-        crossfade.reason === null
-          ? t.value.shell.arrangement.clipActions.crossfade
-          : `${t.value.shell.arrangement.clipActions.crossfade} — ${crossfadeReasonText(crossfade.reason)}`,
-      disabled: frozen || crossfade.partnerId === null || crossfade.reason !== null,
+      label: actions.crossfade,
+      disabledReason: firstBlock(
+        frozenBlock,
+        [crossfade.partnerId === null, actions.crossfadeNoPartner],
+        crossfade.reason === null ? null : crossfadeReasonText(crossfade.reason),
+      ),
       run: () => runCrossfade(clip.id),
     },
     {
       id: 'rename',
-      label: t.value.shell.arrangement.clipActions.rename,
-      disabled: frozen,
+      label: actions.rename,
+      disabledReason: frozenBlock,
       run: () => renameClipFromPrompt(clip.id, clip.name),
     },
     {
       id: 'loop',
-      label: clip.loopEnabled
-        ? t.value.shell.arrangement.clipActions.disableLoop
-        : t.value.shell.arrangement.clipActions.enableLoop,
-      disabled: frozen,
+      label: clip.loopEnabled ? actions.disableLoop : actions.enableLoop,
+      disabledReason: frozenBlock,
       run: () => setClipLoop(clip.id, !clip.loopEnabled),
     },
   ];
@@ -1179,17 +1260,18 @@ function onClipContext(payload: {
       { id: 'sep-groove', separator: true },
       {
         id: 'groove-capture',
-        label: t.value.shell.arrangement.clipActions.grooveCapture,
+        label: actions.grooveCapture,
         run: () => {
           store.grooveTemplate = captureGrooveFromActiveClip();
         },
       },
       {
         id: 'groove-apply',
-        label: grooveTemplateIsUsable(store.grooveTemplate)
-          ? t.value.shell.arrangement.clipActions.grooveApply
-          : `${t.value.shell.arrangement.clipActions.grooveApply} — ${t.value.shell.pianoRoll.context.grooveEmpty}`,
-        disabled: frozen || !grooveTemplateIsUsable(store.grooveTemplate),
+        label: actions.grooveApply,
+        disabledReason: firstBlock(frozenBlock, [
+          !grooveTemplateIsUsable(store.grooveTemplate),
+          t.value.shell.editor.reasons.noGroove,
+        ]),
         run: () => {
           const groove = store.grooveTemplate;
           if (groove) applyGrooveToActiveClip(groove, store.quantizeStrength);
@@ -1197,7 +1279,7 @@ function onClipContext(payload: {
       },
       {
         id: 'export-midi',
-        label: t.value.shell.arrangement.clipActions.exportMidi,
+        label: actions.exportMidi,
         run: () => exportClipToSmf(clip.id),
       },
     );
@@ -1206,9 +1288,10 @@ function onClipContext(payload: {
     { id: 'sep-1', separator: true },
     {
       id: 'delete',
-      label: t.value.shell.arrangement.clipActions.delete,
+      label: actions.delete,
+      hint: shortcutHint('arrange.deleteClip'),
       danger: true,
-      disabled: frozen,
+      disabledReason: frozenBlock,
       run: () => deleteClip(clip.id),
     },
   );
@@ -1382,6 +1465,7 @@ onBeforeUnmount(() => {
           size="sm"
           :options="SNAP_CHOICES"
           :aria-label="t.shell.editor.snap"
+          :title="t.shell.arrangement.snapTitle"
         />
         <span class="arrangement-zoom" role="group" :aria-label="t.shell.arrangement.verticalZoom">
           <button
@@ -1404,12 +1488,18 @@ onBeforeUnmount(() => {
           </button>
         </span>
       </div>
-      <div class="arrangement-process-controls">
+      <div class="arrangement-process-group" role="group" :aria-label="t.shell.arrangement.sectionsGroup">
+        <span class="arrangement-group-label" aria-hidden="true">{{
+          t.shell.arrangement.sectionsGroup
+        }}</span>
         <button
           type="button"
           class="section-detect"
-          :disabled="detectableAudioClip === null || isDetectingSections"
-          v-tooltip="t.shell.arrangement.detectSectionsTitle"
+          :disabled="!!detectSectionsBlocked"
+          v-tooltip="{
+            text: t.shell.arrangement.detectSectionsTitle,
+            reason: detectSectionsBlocked,
+          }"
           @click="detectSections"
         >
           {{ t.shell.arrangement.detectSections }}
@@ -1417,17 +1507,25 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="section-detect"
-          :disabled="!hasWrittenNotes"
-          v-tooltip="t.shell.arrangement.sectionsFromNotesTitle"
+          :disabled="!!sectionsFromNotesBlocked"
+          v-tooltip="{
+            text: t.shell.arrangement.sectionsFromNotesTitle,
+            reason: sectionsFromNotesBlocked,
+          }"
           @click="sectionsFromNotes"
         >
           {{ t.shell.arrangement.sectionsFromNotes }}
         </button>
+      </div>
+      <div class="arrangement-process-group" role="group" :aria-label="t.shell.arrangement.audioGroup">
+        <span class="arrangement-group-label" aria-hidden="true">{{
+          t.shell.arrangement.audioGroup
+        }}</span>
         <button
           type="button"
           class="section-detect"
-          :disabled="detectableAudioClip === null"
-          v-tooltip="t.shell.arrangement.extractMelodyTitle"
+          :disabled="!!transcribeBlocked"
+          v-tooltip="{ text: t.shell.arrangement.extractMelodyTitle, reason: transcribeBlocked }"
           @click="openTranscribeDialog"
         >
           {{ t.shell.arrangement.extractMelody }}
@@ -1435,10 +1533,14 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="section-detect"
-          :disabled="
-            detectableAudioClip === null || (isSplittingStems && componentSplitAbort === null)
-          "
-          v-tooltip="t.shell.arrangement.splitStemsTitle"
+          :class="{ 'is-running': componentSplitAbort !== null }"
+          :disabled="!!splitStemsBlocked"
+          v-tooltip="{
+            text: componentSplitAbort
+              ? t.shell.arrangement.cancelSplitTitle
+              : t.shell.arrangement.splitStemsTitle,
+            reason: splitStemsBlocked,
+          }"
           @click="onSplitStemsClick"
         >
           {{ componentSplitAbort ? t.shell.arrangement.cancelSplit : t.shell.arrangement.splitStems }}
@@ -1446,8 +1548,8 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="section-detect"
-          :disabled="detectableAudioClip === null || midiTracks.length === 0 || isTuningToMidi"
-          v-tooltip="t.shell.arrangement.tuneToMidiTitle"
+          :disabled="!!tuneToMidiBlocked"
+          v-tooltip="{ text: t.shell.arrangement.tuneToMidiTitle, reason: tuneToMidiBlocked }"
           @click="openTuneToMidiMenu"
         >
           {{ t.shell.arrangement.tuneToMidi }}
@@ -1476,6 +1578,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="section-detect"
+          :class="{ 'is-suggested': store.chords.length === 0 }"
           v-tooltip="t.shell.arrangement.generateChordsTitle"
           @click="emit('generate')"
         >
@@ -1493,6 +1596,7 @@ onBeforeUnmount(() => {
         show-hints
         @seek="onSeek"
         @open-chords="emit('openChords')"
+        @generate="emit('generate')"
       />
       <TrackHeaderList
         class="cell-headers"
@@ -1627,16 +1731,24 @@ onBeforeUnmount(() => {
 }
 
 .arrangement-view-controls,
-.arrangement-process-controls {
+.arrangement-process-group {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
   flex: none;
 }
 
-.arrangement-process-controls {
+.arrangement-process-group {
   padding-left: var(--sp-5);
   border-left: 1px solid var(--border);
+}
+
+.arrangement-group-label {
+  margin-right: var(--sp-1);
+  font: var(--fw-semibold) var(--fs-chrome-lg) var(--font-sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-4);
 }
 
 .cell-corner {
@@ -1718,6 +1830,15 @@ onBeforeUnmount(() => {
 .section-detect:focus-visible {
   outline: none;
   box-shadow: var(--ring);
+}
+
+.section-detect.is-running {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.section-detect.is-suggested {
+  color: var(--accent);
 }
 
 .section-detect:disabled {

@@ -9,6 +9,7 @@ import type { MotifRelationship, TrackMotifs } from '@/compose/motifs';
 import type { RankedCadence } from '@/compose/phrases';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -26,7 +27,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  *
  * The analysis sweeps every track, so it is expensive; it runs only from the
  * Analyze button — never as a live watcher — and the button is disabled while
- * the transport is playing. Clicking a conflict or a cadence activates the clip
+ * the transport is playing or no notes are written. Clicking a conflict or a cadence activates the clip
  * under it (best effort) and asks the host to move the playhead there; the
  * popover stays open so several can be visited in sequence.
  */
@@ -87,8 +88,19 @@ function toggleResults(): void {
   else openPopover();
 }
 
+/** The sweep reads written notes and is too heavy to run under playback. */
+const analyzeBlocked = computed(() =>
+  firstBlock(
+    [props.isPlaying === true, t.value.reasons.playing],
+    [
+      !store.clips.some((clip) => clip.notes.length > 0),
+      t.value.shell.arrangement.reasons.noWrittenNotes,
+    ],
+  ),
+);
+
 function runAnalysis(): void {
-  if (props.isPlaying) return;
+  if (analyzeBlocked.value) return;
   openPopover();
   analyze();
 }
@@ -225,6 +237,7 @@ function relationLabel(relation: MotifRelationship): string {
         type="button"
         class="ap-toggle"
         :aria-expanded="open"
+        v-tooltip="t.shell.arrangementAnalysis.toggleTitle"
         @click="toggleResults"
       >
         <svg class="ap-chevron" :class="{ 'is-open': open }" viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
@@ -235,7 +248,8 @@ function relationLabel(relation: MotifRelationship): string {
       <button
         type="button"
         class="ap-analyze"
-        :disabled="props.isPlaying"
+        :disabled="!!analyzeBlocked"
+        v-tooltip="{ text: t.shell.arrangementAnalysis.analyzeTitle, reason: analyzeBlocked }"
         @click="runAnalysis"
       >
         {{ t.shell.arrangementAnalysis.analyze }}
@@ -311,7 +325,7 @@ function relationLabel(relation: MotifRelationship): string {
                 <span
                   class="ap-dot"
                   :class="conflict.safety === NoteSafety.Dissonant ? 'is-dissonant' : 'is-warning'"
-                  :title="severityLabel(conflict)"
+                  v-tooltip="severityLabel(conflict)"
                   :aria-label="severityLabel(conflict)"
                 />
                 <span class="ap-pos">{{ positionLabel(conflict.ppq) }}</span>

@@ -17,6 +17,7 @@ import {
   undo,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { vTooltip } from '@/ui/tooltip';
 import { chooseOption, selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -485,6 +486,49 @@ describe('project list editors', () => {
       });
       // The selection clears after applying.
       expect(wrapper.find('.selection-toolbar').exists()).toBe(false);
+      wrapper.unmount();
+    });
+  });
+
+  describe('unavailable actions', () => {
+    const global = { directives: { tooltip: vTooltip } };
+
+    it('names the missing audio clip and the clean draft on the tempo footer', () => {
+      const wrapper = mount(TempoMapEditor, { global });
+      const detect = buttonByText(wrapper, 'Detect from clip');
+      expect(detect.attributes('disabled')).toBeDefined();
+      expect(detect.attributes('aria-description')).toContain(
+        'Select an audio clip in the arrangement first.',
+      );
+      const apply = buttonByText(wrapper, 'Apply');
+      expect(apply.attributes('disabled')).toBeDefined();
+      expect(apply.attributes('aria-description')).toContain('No unapplied edits.');
+      wrapper.unmount();
+    });
+
+    it('gates odd meters on the meter detection it configures', () => {
+      const wrapper = mount(TimeSignatureEditor, { global });
+      const odd = wrapper.find('.option-check');
+      expect(odd.find('input').attributes('disabled')).toBeDefined();
+      expect(odd.attributes('aria-description')).toContain(
+        'Select an audio clip in the arrangement first.',
+      );
+      wrapper.unmount();
+    });
+
+    it('explains an empty Clear and a reharmonize palette without the key highlight', async () => {
+      const empty = mount(ChordListEditor, { global });
+      const clear = buttonByText(empty, 'Clear');
+      expect(clear.attributes('disabled')).toBeDefined();
+      expect(clear.attributes('aria-description')).toContain('There are no chords to clear.');
+      empty.unmount();
+
+      store.scaleHighlight = { ...store.scaleHighlight, enabled: false };
+      setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+      const wrapper = mount(ChordListEditor, { global });
+      const reharm = wrapper.find('button[aria-label="Reharmonize chord C"]');
+      expect(reharm.attributes('disabled')).toBeDefined();
+      expect(reharm.attributes('aria-description')).toContain('Turn on Highlight in the Key tab');
       wrapper.unmount();
     });
   });

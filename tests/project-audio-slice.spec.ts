@@ -196,7 +196,10 @@ describe('transient slice entry points', () => {
   it('offers plain and quantizing slicing for unlooped audio clips', () => {
     expect(arrangementView).toContain("id: 'slice-transients'");
     expect(arrangementView).toContain("id: 'slice-transients-quantize'");
-    expect(arrangementView).toContain('disabled: frozen || !isAudioClip(clip) || clip.loopEnabled');
+    expect(arrangementView).toContain(
+      'const sliceBlocked = firstBlock(\n    frozenBlock,\n    [!audio, why.audioClipsOnly],\n    [clip.loopEnabled, why.loopOn],\n  );',
+    );
+    expect(arrangementView).toContain('disabledReason: sliceBlocked,');
     expect(arrangementView).toContain('runTransientSlice(clip.id, true)');
   });
 

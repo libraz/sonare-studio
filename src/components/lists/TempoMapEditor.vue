@@ -5,6 +5,7 @@ import { detectActiveAudioClipTempo, detectActiveAudioClipTempoMap } from '@/pro
 import { setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip, type TempoSegment } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
@@ -47,6 +48,16 @@ const detectableAudioClip = computed(() => {
   const clip = store.activeClip;
   return clip && isAudioClip(clip) && clip.assetId !== undefined ? clip : null;
 });
+
+const detectBlocked = computed(() =>
+  firstBlock(
+    [detectableAudioClip.value === null, t.value.reasons.noAudioClip],
+    [isDetecting.value, t.value.reasons.busy],
+  ),
+);
+const draftBlocked = computed(() =>
+  firstBlock([!dirty.value, t.value.shell.lists.reasons.noEdits]),
+);
 
 /** Formats a BPM value without floating-point noise. */
 function formatBpm(bpm: number): string {
@@ -238,7 +249,7 @@ function apply(): void {
           <td>
             <input
               v-model="row.position"
-              class="cell-input"
+              class="cell-input cell-position"
               type="text"
               inputmode="decimal"
               :aria-label="
@@ -282,6 +293,7 @@ function apply(): void {
             <button
               type="button"
               class="row-button"
+              v-tooltip="t.shell.lists.common.deleteTitle"
               :aria-label="formatMessage(t.shell.lists.tempo.deleteEntry, { row: index + 1 })"
               @click="deleteRow(index)"
             >
@@ -297,25 +309,36 @@ function apply(): void {
       <button type="button" @click="addRow">{{ t.shell.lists.tempo.add }}</button>
       <button
         type="button"
-        :disabled="detectableAudioClip === null || isDetecting"
-        v-tooltip="t.shell.lists.tempo.detectFromClipTitle"
+        :disabled="!!detectBlocked"
+        v-tooltip="{ text: t.shell.lists.tempo.detectFromClipTitle, reason: detectBlocked }"
         @click="detectFromClip"
       >
         {{ t.shell.lists.tempo.detectFromClip }}
       </button>
       <button
         type="button"
-        :disabled="detectableAudioClip === null || isDetecting"
-        v-tooltip="t.shell.lists.tempo.detectMapFromClipTitle"
+        :disabled="!!detectBlocked"
+        v-tooltip="{ text: t.shell.lists.tempo.detectMapFromClipTitle, reason: detectBlocked }"
         @click="detectMapFromClip"
       >
         {{ t.shell.lists.tempo.detectMapFromClip }}
       </button>
       <span class="list-spacer" />
-      <button type="button" :disabled="!dirty" @click="revert">
+      <button
+        type="button"
+        :disabled="!!draftBlocked"
+        v-tooltip="{ text: t.shell.lists.common.revertTitle, reason: draftBlocked }"
+        @click="revert"
+      >
         {{ t.shell.lists.common.revert }}
       </button>
-      <button type="button" class="primary" :disabled="!dirty" @click="apply">
+      <button
+        type="button"
+        class="primary"
+        :disabled="!!draftBlocked"
+        v-tooltip="{ text: t.shell.lists.common.applyTitle, reason: draftBlocked }"
+        @click="apply"
+      >
         {{ t.shell.lists.common.apply }}
       </button>
     </div>

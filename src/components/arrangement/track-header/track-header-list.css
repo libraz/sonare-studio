@@ -485,14 +485,14 @@
 
 .track-headers .toggle:hover:not(:disabled),
 .track-headers .track-bounce:hover:not(:disabled),
-.track-headers .takes-flatten:hover {
+.track-headers .takes-flatten:hover:not(:disabled) {
   color: var(--text-1);
   background: var(--surface-4);
 }
 
 .track-headers .toggle:active:not(:disabled),
 .track-headers .track-bounce:active:not(:disabled),
-.track-headers .takes-flatten:active {
+.track-headers .takes-flatten:active:not(:disabled) {
   background: var(--surface-1);
 }
 
@@ -594,6 +594,12 @@
 .track-headers .track-bounce:disabled {
   opacity: 0.5;
   cursor: wait;
+}
+
+.track-headers .toggle.arm:disabled,
+.track-headers .takes-flatten:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .track-headers .track-bounce,

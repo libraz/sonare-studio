@@ -10,6 +10,7 @@ import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import {
   type ContextMenuItem,
   closeContextMenu,
+  isItemDisabled,
   useContextMenuState,
 } from '@/ui/menu/context-menu';
 
@@ -162,7 +163,9 @@ describe('track header menus (pitch range, lead follow)', () => {
       addTrack({ name: 'Lead' });
       const wrapper = mountHeaders();
       const items = await openMenuFor(wrapper, trackId);
-      expect(leadFollowItem(items)?.disabled).toBe(true);
+      expect(leadFollowItem(items)?.disabledReason).toBe(
+        'Percussion tracks do not follow a melody.',
+      );
     });
 
     it('disables the "Follow melody" item when the track already leads a follower', async () => {
@@ -171,14 +174,15 @@ describe('track header menus (pitch range, lead follow)', () => {
 
       const wrapper = mountHeaders();
       const items = await openMenuFor(wrapper, trackId);
-      expect(leadFollowItem(items)?.disabled).toBe(true);
+      expect(leadFollowItem(items)?.disabledReason).toBe('Another track already follows this one.');
     });
 
     it('leaves the "Follow melody" item enabled for an ordinary melody track', async () => {
       addTrack({ name: 'Lead' });
       const wrapper = mountHeaders();
       const items = await openMenuFor(wrapper, trackId);
-      expect(leadFollowItem(items)?.disabled).toBeFalsy();
+      const item = leadFollowItem(items);
+      expect(item && isItemDisabled(item)).toBe(false);
     });
   });
 });

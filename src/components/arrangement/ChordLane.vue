@@ -71,6 +71,8 @@ const emit = defineEmits<{
   seek: [ppq: number];
   /** Request to reveal the chord list editor. */
   openChords: [];
+  /** Request to open the progression generator (empty-state action). */
+  generate: [];
 }>();
 
 const { t } = useI18n();
@@ -424,6 +426,15 @@ onBeforeUnmount(() => {
     </div>
     <span v-if="props.showHints && props.chords.length === 0" class="chord-hint">
       {{ t.shell.arrangement.chordEmptyHint }}
+      <button
+        type="button"
+        class="chord-hint-action"
+        v-tooltip="t.shell.arrangement.generateChordsTitle"
+        @click.stop="emit('generate')"
+        @dblclick.stop
+      >
+        {{ t.shell.arrangement.chordEmptyAction }}
+      </button>
     </span>
     <span
       v-else-if="tracksHintLeftPx !== null"
@@ -565,5 +576,27 @@ onBeforeUnmount(() => {
   color: var(--text-4);
   white-space: nowrap;
   pointer-events: none;
+}
+
+.chord-hint-action {
+  margin-left: var(--sp-2);
+  padding: 1px var(--sp-3);
+  font: var(--fw-medium) var(--fs-2xs) var(--font-sans);
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.chord-hint-action:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.chord-hint-action:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 </style>

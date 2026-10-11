@@ -30,6 +30,8 @@ import {
 } from '@/project/commands';
 import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
+import { clipKind } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barLengthPpq, formatBarBeat, fractionalBarsBetween, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
@@ -133,6 +135,24 @@ const detectKind = computed<'midi' | 'audio' | null>(() => {
   return null;
 });
 
+const listReasons = computed(() => t.value.shell.lists.reasons);
+const detectBlocked = computed(() =>
+  firstBlock(
+    [detectKind.value === null, listReasons.value.noDetectableClip],
+    [isDetecting.value, t.value.reasons.busy],
+  ),
+);
+/** The estimate reads notes across every track, so it needs at least one MIDI clip. */
+const estimateBlocked = computed(() =>
+  firstBlock(
+    [!store.clips.some((clip) => clipKind(clip) === 'midi'), t.value.reasons.noMidiClipInProject],
+    [isEstimating.value, t.value.reasons.busy],
+  ),
+);
+const clearBlocked = computed(() =>
+  firstBlock([store.chords.length === 0, listReasons.value.noChordsToClear]),
+);
+
 /** Bar length in PPQ at a position, from the active time signature. */
 function barLengthAt(ppq: number): number {
   let signature = { numerator: 4, denominator: 4 };
@@ -214,6 +234,10 @@ function insertDominantTooltip(chord: EditorChordSymbol): string {
   return formatMessage(t.value.shell.lists.chords.insertDominantTitle, { label });
 }
 
+function insertDominantBlocked(chord: EditorChordSymbol): string | null {
+  return firstBlock([!canTonicizeWithSecondaryDominant(chord), listReasons.value.notTonicizable]);
+}
+
 /** Inserts the secondary dominant of a chord before it (see {@link insertSecondaryDominantBefore}). */
 function onInsertDominant(index: number): void {
   if (!canTonicizeWithSecondaryDominant(store.chords[index])) return;
@@ -226,6 +250,10 @@ function onInsertDominant(index: number): void {
 /** Whether a key is set; roman numerals and reharmonization need one to be meaningful. */
 const keySet = computed(() => store.scaleHighlight.enabled);
 const chordKeyFifths = computed(() => keyFifthsForScaleHighlight(store.scaleHighlight));
+/** Substitutes are chosen relative to the key, so the palette needs the key highlight on. */
+const reharmBlocked = computed(() =>
+  firstBlock([!keySet.value, listReasons.value.keyHighlightOff]),
+);
 
 /** Formats symbols with the same accidental convention as the score. */
 function chordName(chord: EditorChordSymbol): string {
@@ -612,6 +640,7 @@ function clearAll(): void {
             <button
               type="button"
               class="row-button"
+              v-tooltip="t.shell.lists.common.seekTitle"
               :aria-label="
                 formatMessage(t.shell.lists.chords.seekTo, { name: chordName(item.chord) })
               "
@@ -671,11 +700,14 @@ function clearAll(): void {
             <button
               type="button"
               class="row-button"
-              v-tooltip="insertDominantTooltip(item.chord)"
+              v-tooltip="{
+                text: insertDominantTooltip(item.chord),
+                reason: insertDominantBlocked(item.chord),
+              }"
               :aria-label="
                 formatMessage(t.shell.lists.chords.insertDominant, { name: chordName(item.chord) })
               "
-              :disabled="!canTonicizeWithSecondaryDominant(item.chord)"
+              :disabled="!!insertDominantBlocked(item.chord)"
               @click="onInsertDominant(item.index)"
             >
               <ListIcon name="insertDominant" />
@@ -685,7 +717,8 @@ function clearAll(): void {
               class="row-button"
               :class="{ active: reharmIndex === item.index }"
               :aria-expanded="reharmIndex === item.index"
-              v-tooltip="t.shell.lists.chords.reharmonizeTitle"
+              v-tooltip="{ text: t.shell.lists.chords.reharmonizeTitle, reason: reharmBlocked }"
+              :disabled="!!reharmBlocked && reharmIndex !== item.index"
               :aria-label="
                 formatMessage(t.shell.lists.chords.reharmonize, { name: chordName(item.chord) })
               "
@@ -696,6 +729,7 @@ function clearAll(): void {
             <button
               type="button"
               class="row-button"
+              v-tooltip="t.shell.lists.common.deleteTitle"
               :aria-label="
                 formatMessage(t.shell.lists.chords.delete, { name: chordName(item.chord) })
               "
@@ -759,16 +793,16 @@ function clearAll(): void {
       <button type="button" @click="addAtPlayhead">{{ t.shell.lists.common.addAtPlayhead }}</button>
       <button
         type="button"
-        :disabled="detectKind === null || isDetecting"
-        v-tooltip="t.shell.lists.chords.detectFromClipTitle"
+        :disabled="!!detectBlocked"
+        v-tooltip="{ text: t.shell.lists.chords.detectFromClipTitle, reason: detectBlocked }"
         @click="detectFromClip"
       >
         {{ t.shell.lists.chords.detectFromClip }}
       </button>
       <button
         type="button"
-        :disabled="isEstimating"
-        v-tooltip="t.shell.lists.chords.estimateFromNotesTitle"
+        :disabled="!!estimateBlocked"
+        v-tooltip="{ text: t.shell.lists.chords.estimateFromNotesTitle, reason: estimateBlocked }"
         @click="estimateProgression"
       >
         {{ t.shell.lists.chords.estimateFromNotes }}
@@ -776,7 +810,8 @@ function clearAll(): void {
       <button
         type="button"
         class="clear-button"
-        :disabled="store.chords.length === 0"
+        :disabled="!!clearBlocked"
+        v-tooltip="{ text: t.shell.lists.chords.clearTitle, reason: clearBlocked }"
         @click="clearAll"
       >
         {{ t.shell.lists.common.clear }}

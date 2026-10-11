@@ -113,7 +113,7 @@ const modeOptions = computed(() => {
             <SelectMenu
               v-model="modeId"
               :options="modeOptions"
-              class="cell-input"
+              class="cell-input cell-mode"
               :aria-label="t.shell.lists.key.mode"
               size="sm"
             />
@@ -122,6 +122,7 @@ const modeOptions = computed(() => {
             <ToggleButton
               v-model="enabled"
               :label="t.shell.lists.columns.highlight"
+              :title="t.shell.lists.key.highlight"
               :aria-label="t.shell.lists.key.highlight"
               size="sm"
             />
@@ -141,8 +142,13 @@ const modeOptions = computed(() => {
   width: 4.5rem;
 }
 
+.cell-mode {
+  width: 13rem;
+}
+
+/* The last column absorbs the slack so the pickers keep their own widths. */
 .cell-toggle {
-  width: 4.5rem;
+  width: 100%;
 }
 
 .list-readout {

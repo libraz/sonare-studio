@@ -1,6 +1,5 @@
 import type { Directive, DirectiveBinding } from 'vue';
-import { useShortcuts } from '@/composables/useShortcuts';
-import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
+import { shortcutHint } from '@/ui/settings/shortcut-hint';
 
 /**
  * `v-tooltip` — a native-app replacement for the browser's `title` tooltip.
@@ -60,9 +59,7 @@ function normalize(value: unknown): TooltipContent {
 
 /** First effective key binding of a shortcut action, formatted for display. */
 function keyLabel(actionId: string): string {
-  if (!actionId) return '';
-  const combo = useShortcuts().keysFor(actionId)[0];
-  return combo ? formatKeyCombo(combo, detectPlatform()) : '';
+  return actionId ? (shortcutHint(actionId) ?? '') : '';
 }
 
 /** Plain-text form of the content, used for the accessible name. */

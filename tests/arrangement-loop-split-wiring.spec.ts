@@ -16,9 +16,9 @@ describe('arrangement loop split entry-point wiring', () => {
   });
 
   it('disables the context action with a visible reason', () => {
-    expect(arrangementView).toContain('const splitBlocked = clipSplitBlockReason(clip, splitPpq);');
-    expect(arrangementView).toContain('disabled: frozen || splitBlocked !== null');
-    expect(arrangementView).toContain('t.value.shell.arrangement.loopSplitUnavailable}`');
+    expect(arrangementView).toContain(
+      'disabledReason: firstBlock(frozenBlock, [\n        clipSplitBlockReason(clip, splitPpq) !== null,\n        t.value.shell.arrangement.loopSplitUnavailable,\n      ]),',
+    );
   });
 
   it('rejects the playhead shortcut with the same localized reason', () => {

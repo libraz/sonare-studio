@@ -21,10 +21,10 @@ describe('groove template entry points', () => {
   });
 
   it('disables apply until a template can move something', () => {
-    expect(pianoRoll).toContain('disabled: !grooveTemplateIsUsable(store.grooveTemplate)');
-    expect(arrangementView).toContain(
-      'disabled: frozen || !grooveTemplateIsUsable(store.grooveTemplate)',
-    );
+    for (const source of [pianoRoll, arrangementView]) {
+      expect(source).toContain('!grooveTemplateIsUsable(store.grooveTemplate),');
+      expect(source).toContain('t.value.shell.editor.reasons.noGroove,');
+    }
   });
 
   it('offers whole-clip capture and apply on MIDI clips only', () => {
@@ -38,7 +38,7 @@ describe('groove template entry points', () => {
       expect(bundle.shell.pianoRoll.context.grooveCapture.length).toBeGreaterThan(0);
       expect(bundle.shell.pianoRoll.context.grooveApply.length).toBeGreaterThan(0);
       expect(bundle.shell.pianoRoll.context.grooveClear.length).toBeGreaterThan(0);
-      expect(bundle.shell.pianoRoll.context.grooveEmpty.length).toBeGreaterThan(0);
+      expect(bundle.shell.editor.reasons.noGroove.length).toBeGreaterThan(0);
       expect(bundle.shell.arrangement.clipActions.grooveCapture.length).toBeGreaterThan(0);
       expect(bundle.shell.arrangement.clipActions.grooveApply.length).toBeGreaterThan(0);
     }

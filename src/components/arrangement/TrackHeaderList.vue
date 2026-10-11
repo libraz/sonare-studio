@@ -86,9 +86,11 @@ import {
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
 import { patchFieldSpec } from '@/ui/devices/patch-draft';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
+import { shortcutHint } from '@/ui/settings/shortcut-hint';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -668,16 +670,6 @@ function matchesPitchRangePreset(track: EditorTrack, id: PitchRangePresetId): bo
   return range !== undefined && range.low === preset.low && range.high === preset.high;
 }
 
-/**
- * True when `track` cannot take part in lead following at all: percussion
- * tracks neither follow nor lead, and a track already followed by another
- * would form a chain if it started following something itself.
- */
-function leadFollowUnavailable(track: EditorTrack): boolean {
-  if (isDrumTrack(track, notesOfTrack(track))) return true;
-  return store.tracks.some((entry) => entry.leadFollow?.leadTrackId === track.id);
-}
-
 /** Tracks `track` may follow: not itself, not percussion, not already following another. */
 function leadFollowCandidates(track: EditorTrack): EditorTrack[] {
   return store.tracks.filter(
@@ -687,6 +679,54 @@ function leadFollowCandidates(track: EditorTrack): EditorTrack[] {
       !isDrumTrack(entry, notesOfTrack(entry)),
   );
 }
+
+const headerReasons = computed(() => t.value.shell.arrangement.trackHeader.reasons);
+
+function frozenReason(track: EditorTrack): string | null {
+  return firstBlock([track.frozen !== undefined, t.value.reasons.trackFrozen]);
+}
+
+/** Arming a frozen track would record into silenced clips; disarming stays possible. */
+function armBlocked(track: EditorTrack): string | null {
+  return isArmed(track) ? null : frozenReason(track);
+}
+
+function freezeBlocked(track: EditorTrack): string | null {
+  return firstBlock([isFreezing(track), t.value.reasons.busy]);
+}
+
+function bounceBlocked(track: EditorTrack): string | null {
+  return firstBlock([isBouncing(track), t.value.reasons.busy]);
+}
+
+function flattenBlocked(track: EditorTrack): string | null {
+  return frozenReason(track);
+}
+
+/**
+ * Why `track` cannot take part in lead following: percussion neither follows
+ * nor leads, and a track already followed would form a chain by following.
+ */
+function leadFollowBlocked(track: EditorTrack): string | null {
+  return firstBlock(
+    [isDrumTrack(track, notesOfTrack(track)), headerReasons.value.percussionNoLeadFollow],
+    [
+      store.tracks.some((entry) => entry.leadFollow?.leadTrackId === track.id),
+      headerReasons.value.alreadyLead,
+    ],
+  );
+}
+
+/** Saved presets live in OPFS, so every preset action needs it. */
+const presetStorageBlocked = computed(() =>
+  firstBlock([!isOpfsAvailable(), t.value.reasons.noStorage]),
+);
+const savedPresetsBlocked = computed(() =>
+  firstBlock(presetStorageBlocked.value, [
+    savedTrackPresets.value.length === 0,
+    headerReasons.value.noSavedPresets,
+  ]),
+);
 
 /**
  * PPQ range a bounce covers: the transport loop region when enabled and
@@ -862,7 +902,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
     {
       id: 'rename',
       label: t.value.shell.arrangement.trackHeader.rename,
-      disabled: track.frozen !== undefined,
+      disabledReason: frozenReason(track),
       run: () => startRename(track),
     },
     { id: 'sep-1', separator: true },
@@ -871,6 +911,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       label: track.mute
         ? t.value.shell.arrangement.trackHeader.unmute
         : t.value.shell.arrangement.trackHeader.mute,
+      hint: shortcutHint('track.toggleMute'),
       run: () => setTrackMute(track.id, !track.mute),
     },
     {
@@ -878,6 +919,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       label: track.solo
         ? t.value.shell.arrangement.trackHeader.unsolo
         : t.value.shell.arrangement.trackHeader.solo,
+      hint: shortcutHint('track.toggleSolo'),
       run: () => setTrackSolo(track.id, !track.solo),
     },
   ];
@@ -887,6 +929,8 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       label: isArmed(track)
         ? t.value.shell.arrangement.trackHeader.disarmRecording
         : t.value.shell.arrangement.trackHeader.recordEnable,
+      hint: shortcutHint('track.toggleArm'),
+      disabledReason: armBlocked(track),
       run: () => onToggleArm(track),
     });
   }
@@ -971,7 +1015,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       {
         id: 'lead-follow',
         label: header.leadFollow,
-        disabled: leadFollowUnavailable(track),
+        disabledReason: leadFollowBlocked(track),
         children: [
           {
             id: 'lead-follow-off',
@@ -997,7 +1041,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
     items.push({
       id: 'select-group-members',
       label: t.value.shell.arrangement.trackHeader.selectGroupMembers,
-      disabled: memberIds.length === 0,
+      disabledReason: firstBlock([memberIds.length === 0, headerReasons.value.noGroupMembers]),
       run: () => setTrackSelection([track.id, ...memberIds], track.id),
     });
   }
@@ -1011,17 +1055,22 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
     {
       id: 'paste-channel-settings',
       label: t.value.shell.arrangement.trackHeader.pasteChannelSettings,
-      disabled: !hasCopiedTrackChannelPreset(),
+      disabledReason: firstBlock([
+        !hasCopiedTrackChannelPreset(),
+        headerReasons.value.noCopiedChannel,
+      ]),
       run: () => pasteTrackChannelPreset(track.id),
     },
     {
       id: 'save-channel-preset',
       label: t.value.shell.arrangement.trackHeader.savePreset,
+      disabledReason: presetStorageBlocked.value,
       run: () => savePreset(track),
     },
     {
       id: 'apply-channel-preset',
       label: t.value.shell.arrangement.trackHeader.applyPreset,
+      disabledReason: savedPresetsBlocked.value,
       children: savedTrackPresets.value.map((preset) => ({
         id: `apply-channel-preset-${preset.name}`,
         label: preset.name,
@@ -1031,6 +1080,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
     {
       id: 'delete-channel-preset',
       label: t.value.shell.arrangement.trackHeader.deletePreset,
+      disabledReason: savedPresetsBlocked.value,
       children: savedTrackPresets.value.map((preset) => ({
         id: `delete-channel-preset-${preset.name}`,
         label: preset.name,
@@ -1053,7 +1103,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       label: track.frozen
         ? t.value.shell.arrangement.trackHeader.unfreeze
         : t.value.shell.arrangement.trackHeader.freeze,
-      disabled: isFreezing(track),
+      disabledReason: freezeBlocked(track),
       run: () => {
         void onToggleFreeze(track);
       },
@@ -1062,7 +1112,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       items.push({
         id: 'bounce',
         label: t.value.shell.arrangement.trackHeader.bounceInPlace,
-        disabled: isBouncing(track),
+        disabledReason: bounceBlocked(track),
         run: () => {
           void onBounce(track);
         },
@@ -1096,7 +1146,7 @@ function onContextMenu(track: EditorTrack, event: MouseEvent): void {
       {
         id: 'regenerate',
         label: t.value.shell.arrangement.trackHeader.regenerate,
-        disabled: track.frozen !== undefined,
+        disabledReason: frozenReason(track),
         run: () => emit('regenerateTrack', track.id, generatedPart),
       },
     );
@@ -1210,7 +1260,15 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   @keydown.escape.prevent="cancelRename"
                   @blur="commitRename"
                 />
-                <span v-else class="track-name" @dblclick.stop="startRename(track)">
+                <span
+                  v-else
+                  class="track-name"
+                  v-tooltip="{
+                    text: t.shell.arrangement.trackHeader.renameHint,
+                    reason: frozenReason(track),
+                  }"
+                  @dblclick.stop="startRename(track)"
+                >
                   {{ track.name }}
                 </span>
                 <button
@@ -1234,7 +1292,12 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                     type="button"
                     class="toggle arm"
                     :class="{ on: isArmed(track) }"
-                    v-tooltip="t.shell.arrangement.trackHeader.recordArm"
+                    :disabled="!!armBlocked(track)"
+                    v-tooltip="{
+                      text: t.shell.arrangement.trackHeader.recordArm,
+                      shortcut: 'track.toggleArm',
+                      reason: armBlocked(track),
+                    }"
                     :aria-label="
                       formatMessage(t.shell.arrangement.trackHeader.recordArmNamed, {
                         name: track.name,
@@ -1249,7 +1312,10 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                     type="button"
                     class="toggle mute"
                     :class="{ on: track.mute }"
-                    v-tooltip="t.shell.arrangement.trackHeader.mute"
+                    v-tooltip="{
+                      text: t.shell.arrangement.trackHeader.muteTitle,
+                      shortcut: 'track.toggleMute',
+                    }"
                     :aria-label="
                       formatMessage(t.shell.arrangement.trackHeader.muteNamed, { name: track.name })
                     "
@@ -1262,7 +1328,10 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                     type="button"
                     class="toggle solo"
                     :class="{ on: track.solo }"
-                    v-tooltip="t.shell.arrangement.trackHeader.solo"
+                    v-tooltip="{
+                      text: t.shell.arrangement.trackHeader.soloTitle,
+                      shortcut: 'track.toggleSolo',
+                    }"
                     :aria-label="
                       formatMessage(t.shell.arrangement.trackHeader.soloNamed, { name: track.name })
                     "
@@ -1399,12 +1468,13 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                         type="button"
                         class="toggle freeze"
                         :class="{ on: track.frozen !== undefined, busy: isFreezing(track) }"
-                        :disabled="isFreezing(track)"
-                        v-tooltip="
-                          track.frozen
+                        :disabled="!!freezeBlocked(track)"
+                        v-tooltip="{
+                          text: track.frozen
                             ? t.shell.arrangement.trackHeader.unfreezeTitle
-                            : t.shell.arrangement.trackHeader.freezeTitle
-                        "
+                            : t.shell.arrangement.trackHeader.freezeTitle,
+                          reason: freezeBlocked(track),
+                        }"
                         :aria-label="
                           formatMessage(t.shell.arrangement.trackHeader.freezeNamed, {
                             name: track.name,
@@ -1420,8 +1490,11 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                         type="button"
                         class="track-bounce"
                         :class="{ busy: isBouncing(track) }"
-                        :disabled="isBouncing(track)"
-                        v-tooltip="t.shell.arrangement.trackHeader.bounceTitle"
+                        :disabled="!!bounceBlocked(track)"
+                        v-tooltip="{
+                          text: t.shell.arrangement.trackHeader.bounceTitle,
+                          reason: bounceBlocked(track),
+                        }"
                         :aria-label="
                           formatMessage(t.shell.arrangement.trackHeader.bounceNamed, {
                             name: track.name,
@@ -1451,7 +1524,11 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                         v-if="takeRowCount(track) > 0 && isTakesExpanded(track)"
                         type="button"
                         class="takes-flatten"
-                        v-tooltip="t.shell.arrangement.trackHeader.flattenTitle"
+                        :disabled="!!flattenBlocked(track)"
+                        v-tooltip="{
+                          text: t.shell.arrangement.trackHeader.flattenTitle,
+                          reason: flattenBlocked(track),
+                        }"
                         :aria-label="
                           formatMessage(t.shell.arrangement.trackHeader.flattenNamed, {
                             name: track.name,

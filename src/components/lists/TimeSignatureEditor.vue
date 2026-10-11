@@ -10,6 +10,7 @@ import {
 import { setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip, type TimeSignatureSegment } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
@@ -65,6 +66,18 @@ const detectableAudioClip = computed(() => {
   const clip = store.activeClip;
   return clip && isAudioClip(clip) && clip.assetId !== undefined ? clip : null;
 });
+
+const detectBlocked = computed(() =>
+  firstBlock(
+    [detectableAudioClip.value === null, t.value.reasons.noAudioClip],
+    [isDetecting.value, t.value.reasons.busy],
+  ),
+);
+/** Odd meters is an option of Detect, so it shares Detect's gate. */
+const oddMetersBlocked = computed(() => firstBlock(detectBlocked.value));
+const draftBlocked = computed(() =>
+  firstBlock([!dirty.value, t.value.shell.lists.reasons.noEdits]),
+);
 
 /** Rebuilds the draft from the store mirror. */
 function rowsFromStore(): DraftRow[] {
@@ -254,7 +267,7 @@ function apply(): void {
           <td>
             <input
               v-model="row.position"
-              class="cell-input"
+              class="cell-input cell-position"
               type="text"
               inputmode="decimal"
               :aria-label="formatMessage(t.shell.lists.meter.entryPosition, { row: index + 1 })"
@@ -303,6 +316,7 @@ function apply(): void {
             <button
               type="button"
               class="row-button"
+              v-tooltip="t.shell.lists.common.deleteTitle"
               :aria-label="formatMessage(t.shell.lists.meter.deleteEntry, { row: index + 1 })"
               @click="deleteRow(index)"
             >
@@ -318,21 +332,36 @@ function apply(): void {
       <button type="button" @click="addRow">{{ t.shell.lists.meter.add }}</button>
       <button
         type="button"
-        :disabled="detectableAudioClip === null || isDetecting"
-        v-tooltip="t.shell.lists.meter.detectFromClipTitle"
+        :disabled="!!detectBlocked"
+        v-tooltip="{ text: t.shell.lists.meter.detectFromClipTitle, reason: detectBlocked }"
         @click="detectFromClip"
       >
         {{ t.shell.lists.meter.detectFromClip }}
       </button>
-      <label v-tooltip="t.shell.lists.meter.oddMetersTitle">
-        <input v-model="detectOddMeters" type="checkbox" :disabled="isDetecting" />
+      <label
+        class="option-check"
+        :class="{ 'is-disabled': !!oddMetersBlocked }"
+        v-tooltip="{ text: t.shell.lists.meter.oddMetersTitle, reason: oddMetersBlocked }"
+      >
+        <input v-model="detectOddMeters" type="checkbox" :disabled="!!oddMetersBlocked" />
         {{ t.shell.lists.meter.oddMeters }}
       </label>
       <span class="list-spacer" />
-      <button type="button" :disabled="!dirty" @click="revert">
+      <button
+        type="button"
+        :disabled="!!draftBlocked"
+        v-tooltip="{ text: t.shell.lists.common.revertTitle, reason: draftBlocked }"
+        @click="revert"
+      >
         {{ t.shell.lists.common.revert }}
       </button>
-      <button type="button" class="primary" :disabled="!dirty" @click="apply">
+      <button
+        type="button"
+        class="primary"
+        :disabled="!!draftBlocked"
+        v-tooltip="{ text: t.shell.lists.common.applyTitle, reason: draftBlocked }"
+        @click="apply"
+      >
         {{ t.shell.lists.common.apply }}
       </button>
     </div>
@@ -340,3 +369,19 @@ function apply(): void {
 </template>
 
 <style scoped src="./lists.css"></style>
+
+<style scoped>
+.cell-grouping {
+  width: 7rem;
+}
+
+.option-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.option-check.is-disabled {
+  color: var(--text-4);
+}
+</style>
