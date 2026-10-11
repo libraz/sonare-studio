@@ -10,20 +10,15 @@
 .bar-field {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  font-size: var(--fs-sm);
+  gap: var(--sp-3);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
 .midi-learn-anchor {
   position: relative;
   display: inline-flex;
-}
-
-.midi-learn-toggle-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-text);
 }
 
 /* The error banner's own styles live in ErrorBanner.vue. */
@@ -213,9 +208,9 @@
 .editor-toolbar {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--sp-4);
   min-height: 34px;
-  padding: 0.4rem 0.75rem;
+  padding: var(--sp-2) var(--sp-5);
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-strong);
   /* Never wrap to a second row (which would steal piano-roll height). The left
@@ -232,7 +227,7 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: var(--sp-4);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -240,17 +235,74 @@
 
 .editor-toolbar > .midi-learn-anchor,
 .editor-toolbar > .engine-status,
+.editor-toolbar > .tb-sep,
 .editor-toolbar > button {
   flex: none;
 }
 
-/* Toolbar actions share the dense, square control sizing. */
-.editor-toolbar-scroll > button,
-.editor-toolbar > .midi-learn-anchor > button {
+/* Controls of one purpose sit tight; purposes are split by a hairline. */
+.tb-group {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.tb-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
+/* One-shot actions carry a hairline face; borderless pills are on/off settings. */
+.tb-action {
+  flex: none;
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  box-shadow: inset 0 0 0 1px var(--border);
+  white-space: nowrap;
+}
+
+.tb-action:hover:not(:disabled) {
+  background: var(--control-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.tb-action:disabled {
+  background: transparent;
+}
+
+/* Popover trigger: label plus caret, lit while its popover is open. */
+.tb-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   font-size: var(--fs-xs);
   padding: var(--sp-1) var(--sp-3);
   border-radius: var(--radius-sm);
   white-space: nowrap;
+}
+
+.tb-menu.is-open {
+  background: var(--surface-selection);
+  color: var(--accent);
+}
+
+.tb-caret {
+  flex: none;
+  opacity: 0.6;
+}
+
+.tb-select {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+.tb-range {
+  width: 4.5rem;
 }
 
 .step-cursor {

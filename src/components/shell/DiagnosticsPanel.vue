@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import type { EngineHandle } from '@/engine/engine';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { formatSize } from '@/ui/shell/format';
 
@@ -38,6 +39,10 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const actionBlocked = computed(() =>
+  firstBlock([!props.handle, t.value.reasons.engineOff], [props.busy, t.value.reasons.busy]),
+);
 
 type PerformanceWithMemory = Performance & {
   memory?: {
@@ -221,10 +226,20 @@ watch(
       <section class="diag-section">
         <h3 class="diag-heading">{{ t.shell.diagnostics.actionsHeading }}</h3>
         <div class="diag-actions">
-          <button type="button" :disabled="busy || !handle" @click="emit('testTone')">
+          <button
+            type="button"
+            :disabled="!!actionBlocked"
+            v-tooltip="{ reason: actionBlocked }"
+            @click="emit('testTone')"
+          >
             {{ t.shell.diagnostics.testTone }}
           </button>
-          <button type="button" :disabled="busy || !handle" @click="emit('renderOffline')">
+          <button
+            type="button"
+            :disabled="!!actionBlocked"
+            v-tooltip="{ reason: actionBlocked }"
+            @click="emit('renderOffline')"
+          >
             {{ t.shell.diagnostics.renderOffline }}
           </button>
         </div>

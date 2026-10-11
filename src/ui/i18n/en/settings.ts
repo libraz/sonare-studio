@@ -100,6 +100,10 @@ export const settings = {
     rename: 'Rename',
     delete: 'Delete',
     saveCurrent: 'Save current layout',
+    saveCurrentTitle: 'Save the current panel arrangement under this name',
+    reasons: {
+      noWorkspace: 'The workspace has not finished loading.',
+    },
   },
   close: 'Close',
 } as const;

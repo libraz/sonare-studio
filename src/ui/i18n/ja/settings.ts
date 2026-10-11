@@ -100,6 +100,10 @@ export const settings = {
     rename: '名前変更',
     delete: '削除',
     saveCurrent: '現在のレイアウトを保存',
+    saveCurrentTitle: '現在のパネル配置をこの名前で保存',
+    reasons: {
+      noWorkspace: 'ワークスペースの読み込みが終わっていません。',
+    },
   },
   close: '閉じる',
 } as const;

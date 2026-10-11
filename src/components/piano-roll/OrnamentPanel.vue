@@ -141,6 +141,9 @@ function apply(): void {
         type="button"
         class="orn-btn orn-btn-primary"
         :disabled="plan.marks.length === 0"
+        v-tooltip="{
+          reason: plan.marks.length === 0 ? t.shell.pianoRoll.ornament.previewNone : null,
+        }"
         @click="apply"
       >
         {{ t.shell.pianoRoll.ornament.apply }}

@@ -9,6 +9,7 @@ import type { useRecording } from '@/composables/useRecording';
 import type { RecordingInputDeviceOption } from '@/composables/useRecordingControls';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 
@@ -35,7 +36,6 @@ const props = defineProps<{
   recordingInputDeviceOptions: readonly RecordingInputDeviceOption[];
   midiRecording: MidiRecording;
   recordMenuOpen: boolean;
-  shortcutTitle: (base: string, actionId: string) => string;
   storeInitialized: boolean;
   tempoInput: number;
 }>();
@@ -69,6 +69,51 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const recordingOperationState = computed(
   () => props.recording.state?.value ?? (props.recording.isRecording.value ? 'recording' : 'idle'),
+);
+
+const loadBlocked = computed(() =>
+  firstBlock([!props.storeInitialized, t.value.reasons.projectLoading]),
+);
+const engineBlocked = computed(() =>
+  firstBlock(loadBlocked.value, [!props.handle, t.value.reasons.engineOff]),
+);
+const stopBlocked = computed(() =>
+  firstBlock(engineBlocked.value, [!props.isPlaying, t.value.shell.transport.reasons.notPlaying]),
+);
+const recordBlocked = computed(() => {
+  if (props.isRecording) return engineBlocked.value;
+  const state = recordingOperationState.value;
+  return firstBlock(
+    engineBlocked.value,
+    [state !== 'idle' && state !== 'recording', t.value.shell.transport.reasons.recorderBusy],
+    [state === 'idle' && !props.canRecord, t.value.reasons.noArmedTrack],
+  );
+});
+const metronomeVolumeBlocked = computed(() =>
+  firstBlock(engineBlocked.value, [
+    !props.metronomeEnabled,
+    t.value.shell.transport.reasons.metronomeOff,
+  ]),
+);
+
+// Recording settings: audio-take options lock while a take runs; input-only options cascade from Source.
+const audioTakeBlocked = computed(() =>
+  firstBlock([props.recording.isRecording.value, t.value.reasons.recording]),
+);
+const inputOnlyReason = computed(() =>
+  firstBlock([
+    props.recording.captureSource.value === 'output',
+    t.value.shell.transport.reasons.outputSource,
+  ]),
+);
+const inputSettingBlocked = computed(() =>
+  firstBlock(audioTakeBlocked.value, inputOnlyReason.value),
+);
+const midiTakeBlocked = computed(() =>
+  firstBlock([props.midiRecording.isRecording.value, t.value.reasons.recording]),
+);
+const autoPunchBlocked = computed(() =>
+  firstBlock([!props.hasLocatorWindow, t.value.reasons.noLocators]),
 );
 
 const countInOptions = computed(() =>
@@ -185,9 +230,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!handle"
+        :disabled="!!engineBlocked"
         :aria-label="t.shell.transport.goToStart"
-        v-tooltip="t.shell.transport.goToStartTitle"
+        v-tooltip="{ text: t.shell.transport.goToStartTitle, shortcut: 'transport.toStart', reason: engineBlocked }"
         @click="emit('seekToStart')"
       >
         <TransportIcon name="to-start" />
@@ -195,9 +240,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!handle"
+        :disabled="!!engineBlocked"
         :aria-label="t.shell.transport.nudgeBack"
-        v-tooltip="t.shell.transport.nudgeBackTitle"
+        v-tooltip="{ text: t.shell.transport.nudgeBackTitle, shortcut: 'transport.nudgeBack', reason: engineBlocked }"
         @click="emit('nudgeByBar', -1)"
       >
         <TransportIcon name="rewind" />
@@ -205,9 +250,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!handle"
+        :disabled="!!engineBlocked"
         :aria-label="t.shell.transport.nudgeForward"
-        v-tooltip="t.shell.transport.nudgeForwardTitle"
+        v-tooltip="{ text: t.shell.transport.nudgeForwardTitle, shortcut: 'transport.nudgeForward', reason: engineBlocked }"
         @click="emit('nudgeByBar', 1)"
       >
         <TransportIcon name="forward" />
@@ -215,9 +260,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!handle"
+        :disabled="!!engineBlocked"
         :aria-label="t.shell.transport.goToEnd"
-        v-tooltip="t.shell.transport.goToEndTitle"
+        v-tooltip="{ text: t.shell.transport.goToEndTitle, shortcut: 'transport.toEnd', reason: engineBlocked }"
         @click="emit('seekToEnd')"
       >
         <TransportIcon name="to-end" />
@@ -227,10 +272,14 @@ function onRetuneInput(event: Event): void {
         type="button"
         class="transport-key cycle press-feedback"
         :class="{ active: loopEnabled }"
-        :disabled="!handle"
+        :disabled="!!engineBlocked"
         :aria-label="t.shell.transport.cycle"
         :aria-pressed="loopEnabled"
-        v-tooltip="shortcutTitle(t.shell.transport.cycleTitle, 'transport.toggleLoop')"
+        v-tooltip="{
+          text: t.shell.transport.cycleTitle,
+          shortcut: 'transport.toggleLoop',
+          reason: engineBlocked,
+        }"
         @click="emit('toggleLoop')"
       >
         <TransportIcon name="cycle" />
@@ -238,9 +287,13 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-key stop press-feedback"
-        :disabled="!handle || !isPlaying"
+        :disabled="!!stopBlocked"
         :aria-label="t.shell.transport.stop"
-        v-tooltip="t.shell.transport.stopTitle"
+        v-tooltip="{
+          text: t.shell.transport.stopTitle,
+          shortcut: 'transport.togglePlayback',
+          reason: stopBlocked,
+        }"
         @click="emit('stopPlayback')"
       >
         <TransportIcon name="stop" />
@@ -249,10 +302,14 @@ function onRetuneInput(event: Event): void {
         type="button"
         class="transport-key play press-feedback"
         :class="{ active: isPlaying, 'live-glow': isPlaying }"
-        :disabled="!storeInitialized"
+        :disabled="!!loadBlocked"
         :aria-label="t.shell.transport.play"
         :aria-pressed="isPlaying"
-        v-tooltip="t.shell.transport.playTitle"
+        v-tooltip="{
+          text: handle ? t.shell.transport.playTitle : t.shell.transport.playBootTitle,
+          shortcut: 'transport.togglePlayback',
+          reason: loadBlocked,
+        }"
         @click="emit('startPlayback')"
       >
         <TransportIcon name="play" />
@@ -271,17 +328,14 @@ function onRetuneInput(event: Event): void {
           }"
           :aria-label="t.shell.transport.record"
           :aria-pressed="isRecording"
-          :disabled="
-            !handle ||
-            (!isRecording &&
-              ((recordingOperationState !== 'idle' && recordingOperationState !== 'recording') ||
-                (recordingOperationState === 'idle' && !canRecord)))
-          "
-          v-tooltip="
-            isRecording
+          :disabled="!!recordBlocked"
+          v-tooltip="{
+            text: isRecording
               ? t.shell.transport.recordStopTitle
-              : t.shell.transport.recordStartTitle
-          "
+              : t.shell.transport.recordStartTitle,
+            shortcut: 'transport.toggleRecord',
+            reason: recordBlocked,
+          }"
           @click="emit('toggleRecord')"
         >
           <TransportIcon name="record" />
@@ -310,7 +364,8 @@ function onRetuneInput(event: Event): void {
                 :model-value="recording.captureSource.value"
                 :options="recordingSourceOptions"
                 size="sm"
-                :disabled="recording.isRecording.value"
+                :title="t.shell.transport.recordSourceTitle"
+                :reason="audioTakeBlocked"
                 :aria-label="t.shell.transport.recordSource"
                 @change="emit('recordSourceChange', $event === 'output' ? 'output' : 'input')"
               />
@@ -321,7 +376,7 @@ function onRetuneInput(event: Event): void {
                 :model-value="recording.inputDeviceId.value"
                 :options="recordingInputDeviceOptions"
                 size="sm"
-                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :reason="inputSettingBlocked"
                 :aria-label="t.shell.transport.inputDevice"
                 @change="emit('recordInputDeviceChange', String($event))"
               />
@@ -330,7 +385,8 @@ function onRetuneInput(event: Event): void {
               :model-value="recording.monitorEnabled.value"
               :label="t.shell.transport.monitorInput"
               size="sm"
-              :disabled="recording.captureSource.value === 'output'"
+              :title="t.shell.transport.monitorInputTitle"
+              :reason="inputOnlyReason"
               @update:model-value="recording.setMonitor($event)"
             />
             <label class="bar-field">
@@ -339,6 +395,7 @@ function onRetuneInput(event: Event): void {
                 :model-value="recording.countInBars.value"
                 :options="countInOptions"
                 size="sm"
+                :title="t.shell.transport.countInTitle"
                 :aria-label="t.shell.transport.countIn"
                 @change="emit('countInChange', $event)"
               />
@@ -349,7 +406,8 @@ function onRetuneInput(event: Event): void {
                 :model-value="midiRecording.inputQuantizeDenominator.value"
                 :options="midiInputQuantizeOptions"
                 size="sm"
-                :disabled="midiRecording.isRecording.value"
+                :title="t.shell.transport.midiInputQuantizeTitle"
+                :reason="midiTakeBlocked"
                 :aria-label="t.shell.transport.midiInputQuantize"
                 @change="emit('midiInputQuantizeChange', Number($event))"
               />
@@ -360,7 +418,8 @@ function onRetuneInput(event: Event): void {
                 :model-value="midiCycleRecordMode"
                 :options="midiCycleRecordModeOptions"
                 size="sm"
-                :disabled="midiRecording.isRecording.value"
+                :title="t.shell.transport.midiCycleRecordModeTitle"
+                :reason="midiTakeBlocked"
                 :aria-label="t.shell.transport.midiCycleRecordMode"
                 @change="setMidiCycleRecordMode($event)"
               />
@@ -371,7 +430,8 @@ function onRetuneInput(event: Event): void {
                 :model-value="voiceChangerSelectValue"
                 :options="voiceChangerOptions"
                 size="sm"
-                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :title="t.shell.transport.voiceChangerTitle"
+                :reason="inputSettingBlocked"
                 :aria-label="t.shell.transport.voiceChanger"
                 @change="onVoiceChangerChange"
               />
@@ -383,13 +443,15 @@ function onRetuneInput(event: Event): void {
                   v-model="customVoiceJson"
                   rows="5"
                   spellcheck="false"
-                  :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                  :disabled="!!inputSettingBlocked"
                   :aria-label="t.shell.transport.voiceChangerJson"
+                  v-tooltip="{ reason: inputSettingBlocked }"
                 />
               </label>
               <button
                 type="button"
-                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :disabled="!!inputSettingBlocked"
+                v-tooltip="{ reason: inputSettingBlocked }"
                 @click="onApplyCustomVoicePreset"
               >
                 {{ t.shell.transport.voiceChangerApply }}
@@ -407,8 +469,9 @@ function onRetuneInput(event: Event): void {
                 max="24"
                 step="1"
                 :value="recording.streamingRetuneSemitones.value"
-                :disabled="recording.isRecording.value || recording.captureSource.value === 'output'"
+                :disabled="!!inputSettingBlocked"
                 :aria-label="t.shell.transport.retune"
+                v-tooltip="{ text: t.shell.transport.retuneTitle, reason: inputSettingBlocked }"
                 @change="onRetuneInput"
               />
             </label>
@@ -416,12 +479,8 @@ function onRetuneInput(event: Event): void {
               :model-value="autoPunchEnabled"
               :label="t.shell.transport.autoPunch"
               size="sm"
-              :disabled="!hasLocatorWindow"
-              :title="
-                hasLocatorWindow
-                  ? t.shell.transport.autoPunchReadyTitle
-                  : t.shell.transport.autoPunchNeedsWindowTitle
-              "
+              :title="t.shell.transport.autoPunchReadyTitle"
+              :reason="autoPunchBlocked"
               @update:model-value="emit('toggleAutoPunch')"
             />
           </div>
@@ -443,7 +502,7 @@ function onRetuneInput(event: Event): void {
 
     <div class="transport-module" role="group" :aria-label="t.shell.transport.tempoGroup">
       <span class="module-cap">{{ t.shell.transport.tempo }}</span>
-      <label class="tempo-field" :aria-label="t.shell.transport.tempoLabel">
+      <label class="tempo-field">
         <input
           :value="tempoInput"
           type="number"
@@ -451,7 +510,9 @@ function onRetuneInput(event: Event): void {
           max="300"
           step="1"
           class="tempo-input"
-          :disabled="!storeInitialized"
+          :disabled="!!loadBlocked"
+          :aria-label="t.shell.transport.tempoLabel"
+          v-tooltip="{ text: t.shell.transport.tempoTitle, reason: loadBlocked }"
           @input="emit('updateTempoInput', Number(($event.target as HTMLInputElement).value))"
           @change="emit('applyTempo')"
         />
@@ -461,15 +522,15 @@ function onRetuneInput(event: Event): void {
         type="button"
         class="click-toggle press-feedback"
         :class="{ active: metronomeEnabled }"
-        :disabled="!handle"
+        :disabled="!!engineBlocked"
         :aria-label="t.shell.transport.metronome"
         :aria-pressed="metronomeEnabled"
-        v-tooltip="t.shell.transport.metronome"
+        v-tooltip="{ text: t.shell.transport.metronomeTitle, reason: engineBlocked }"
         @click="emit('toggleMetronome')"
       >
         <TransportIcon name="metronome" />
       </button>
-      <label class="metronome-volume" :aria-label="t.shell.transport.metronomeVolume">
+      <label class="metronome-volume">
         <input
           class="metronome-volume-input"
           :value="metronomeVolume"
@@ -477,7 +538,9 @@ function onRetuneInput(event: Event): void {
           min="0"
           max="1"
           step="0.01"
-          :disabled="!handle"
+          :disabled="!!metronomeVolumeBlocked"
+          :aria-label="t.shell.transport.metronomeVolume"
+          v-tooltip="{ text: t.shell.transport.metronomeVolume, reason: metronomeVolumeBlocked }"
           @input="emit('metronomeVolumeChange', Number(($event.target as HTMLInputElement).value))"
         />
       </label>
@@ -489,9 +552,13 @@ function onRetuneInput(event: Event): void {
         <button
           type="button"
           class="transport-nav locator press-feedback"
-          :disabled="!handle"
+          :disabled="!!engineBlocked"
           :aria-label="t.shell.transport.setLeftLocator"
-          v-tooltip="shortcutTitle(t.shell.transport.setLeftLocatorTitle, 'transport.setLeftLocator')"
+          v-tooltip="{
+            text: t.shell.transport.setLeftLocatorTitle,
+            shortcut: 'transport.setLeftLocator',
+            reason: engineBlocked,
+          }"
           @click="emit('setLeftLocator')"
         >
           L
@@ -499,11 +566,13 @@ function onRetuneInput(event: Event): void {
         <button
           type="button"
           class="transport-nav locator press-feedback"
-          :disabled="!handle"
+          :disabled="!!engineBlocked"
           :aria-label="t.shell.transport.setRightLocator"
-          v-tooltip="
-            shortcutTitle(t.shell.transport.setRightLocatorTitle, 'transport.setRightLocator')
-          "
+          v-tooltip="{
+            text: t.shell.transport.setRightLocatorTitle,
+            shortcut: 'transport.setRightLocator',
+            reason: engineBlocked,
+          }"
           @click="emit('setRightLocator')"
         >
           R
@@ -541,7 +610,7 @@ function onRetuneInput(event: Event): void {
           @blur="emit('bbtBlur')"
         />
       </div>
-      <div class="time-register time-secondary">
+      <div class="time-register time-secondary" v-tooltip="t.shell.transport.timeTitle">
         <span class="time-cap">{{ t.shell.transport.time }}</span>
         <span class="position-seconds">{{ positionSeconds.toFixed(2) }}s</span>
       </div>

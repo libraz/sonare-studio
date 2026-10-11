@@ -13,6 +13,7 @@ import { isOpfsAvailable } from '@/persistence/opfs';
 import { decodeAndIngest } from '@/project/audio-import';
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { setAssetDragData } from '@/ui/media/asset-drag';
 import {
@@ -134,6 +135,11 @@ const displayedAssets = computed(() =>
 const referencedIds = computed(() => referencedAssetIds(store.clips, store.tracks));
 
 /** Includes snapshots reachable through undo/redo, not only the live mirror. */
+/** Why an asset cannot be deleted: clips still play it. */
+function deleteBlocked(assetId: string): string | null {
+  return firstBlock([isReferenced(assetId), t.value.shell.media.deleteBlocked]);
+}
+
 function isReferenced(assetId: string): boolean {
   return (
     referencedIds.value.has(assetId) || collectHistoryReferencedMediaIds().assetIds.has(assetId)
@@ -149,6 +155,13 @@ function protectedAssetIds(): Set<string> {
 const fileInput = ref<HTMLInputElement | null>(null);
 /** Files finished, and the share of the current file's tag analysis done. */
 const importProgress = ref<{ done: number; total: number; current: number } | null>(null);
+const importBlocked = computed(() =>
+  firstBlock([importProgress.value !== null, t.value.shell.media.reasons.importing]),
+);
+// Filters and sorting have nothing to act on until the library holds an asset.
+const filterBlocked = computed(() =>
+  firstBlock([loaded.value && assets.value.length === 0, t.value.shell.media.reasons.noAssets]),
+);
 const importErrors = ref<Array<{ name: string; message: string }>>([]);
 const dragOver = ref(false);
 
@@ -379,12 +392,15 @@ onBeforeUnmount(() => {
         class="filter-text"
         :placeholder="t.shell.media.filterByName"
         :aria-label="t.shell.media.filterAssetsByName"
+        :disabled="!!filterBlocked"
+        v-tooltip="{ reason: filterBlocked }"
       />
       <SelectMenu
         v-model="filterKey"
         :options="keyFilterOptions"
         class="filter-key"
         :aria-label="t.shell.media.filterByKey"
+        :reason="filterBlocked"
         size="sm"
       />
       <input
@@ -394,12 +410,15 @@ onBeforeUnmount(() => {
         type="text"
         :placeholder="t.shell.media.bpmPlaceholder"
         :aria-label="t.shell.media.filterByBpm"
+        :disabled="!!filterBlocked"
+        v-tooltip="{ text: t.shell.media.filterByBpmTitle, reason: filterBlocked }"
       />
       <SelectMenu
         v-model="sortKey"
         :options="sortOptions"
         class="sort-key"
         :aria-label="t.shell.media.sortAssets"
+        :reason="filterBlocked"
         size="sm"
       />
       <ToggleButton
@@ -407,12 +426,14 @@ onBeforeUnmount(() => {
         v-model="syncToTempo"
         class="sync-toggle"
         :label="t.shell.media.syncTempo"
+        :title="t.shell.media.syncTempoTitle"
         size="sm"
       />
       <button
         type="button"
         class="import-button"
-        :disabled="importProgress !== null"
+        :disabled="!!importBlocked"
+        v-tooltip="{ text: t.shell.media.importFilesTitle, reason: importBlocked }"
         @click="onImportClick"
       >
         {{ t.shell.media.importFiles }}
@@ -460,6 +481,11 @@ onBeforeUnmount(() => {
       v-if="loaded && displayedAssets.length === 0 && assets.length === 0"
       :message="t.shell.media.empty"
     >
+      <template #action>
+        <button type="button" class="empty-import" :disabled="!!importBlocked" @click="onImportClick">
+          {{ t.shell.media.importFiles }}
+        </button>
+      </template>
       <template #icon>
         <svg viewBox="0 0 48 48" width="48" height="48">
           <path
@@ -544,18 +570,19 @@ onBeforeUnmount(() => {
           <button type="button" @click="cancelDelete">{{ t.shell.media.cancel }}</button>
         </div>
         <div v-else class="row-actions">
-          <button type="button" class="add-button" @click="onAdd(asset.id)">
+          <button
+            type="button"
+            class="add-button"
+            v-tooltip="t.shell.media.addTitle"
+            @click="onAdd(asset.id)"
+          >
             {{ t.shell.media.add }}
           </button>
           <button
             type="button"
             class="delete-button"
-            :disabled="isReferenced(asset.id)"
-            v-tooltip="
-              isReferenced(asset.id)
-                ? t.shell.media.deleteBlocked
-                : t.shell.media.deleteAsset
-            "
+            :disabled="!!deleteBlocked(asset.id)"
+            v-tooltip="{ text: t.shell.media.deleteAsset, reason: deleteBlocked(asset.id) }"
             :aria-label="formatMessage(t.shell.media.deleteAssetNamed, { name: asset.name })"
             @click="requestDelete(asset.id)"
           >

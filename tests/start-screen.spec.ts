@@ -6,12 +6,12 @@ import { dismissPwaUpdateNotice, requestPwaAssetRecovery } from '@/pwa';
 
 let wrapper: VueWrapper | null = null;
 
-function open(extra: { booting?: boolean } = {}): VueWrapper {
+function open(extra: { booting?: boolean; opfsAvailable?: boolean } = {}): VueWrapper {
   wrapper = mount(StartScreen, {
     props: {
-      ...extra,
       open: true,
       opfsAvailable: true,
+      ...extra,
       hasAutosave: false,
       storedProjects: [{ name: 'Song', size: 1024, lastModified: 0 }],
     },
@@ -87,5 +87,14 @@ describe('StartScreen', () => {
 
     expect(w.emitted('importBackup')).toHaveLength(1);
     expect(w.emitted('exportBackup')).toHaveLength(1);
+  });
+
+  it('keeps storage-backed actions visible but disabled without OPFS', () => {
+    open({ opfsAvailable: false });
+    for (const id of ['start-import', 'start-import-backup', 'start-export-backup']) {
+      const button = q<HTMLButtonElement>(`[data-testid="${id}"]`);
+      expect(button?.disabled).toBe(true);
+    }
+    expect(q<HTMLButtonElement>('[data-testid="start-import-midi"]')?.disabled).toBe(false);
   });
 });

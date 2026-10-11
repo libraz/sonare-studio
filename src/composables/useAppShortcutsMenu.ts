@@ -32,6 +32,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
 import { isEditableTarget } from '@/ui/keyboard';
@@ -357,22 +358,17 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     return combo ? formatKeyCombo(combo, menuPlatform) : undefined;
   }
 
-  function shortcutTitle(base: string, actionId: string): string {
-    const hint = hintFor(actionId);
-    return hint ? `${base} (${hint})` : base;
-  }
-
   /** Menu row that runs a registered shortcut action (and shows its key hint). */
   function actionItem(
     actionId: string,
     label: string,
-    extra: { disabled?: boolean; checked?: boolean } = {},
+    extra: { reason?: string | null; checked?: boolean } = {},
   ): MenuBarItem {
     return {
       id: actionId,
       label,
       hint: hintFor(actionId),
-      disabled: extra.disabled,
+      disabledReason: extra.reason,
       checked: extra.checked,
       run: () => {
         runMenuAction(() => runShortcutAction(actionId));
@@ -385,13 +381,13 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     id: string,
     label: string,
     run: () => void,
-    extra: { disabled?: boolean; checked?: boolean; hintFor?: string } = {},
+    extra: { reason?: string | null; checked?: boolean; hintFor?: string } = {},
   ): MenuBarItem {
     return {
       id,
       label,
       hint: extra.hintFor ? hintFor(extra.hintFor) : undefined,
-      disabled: extra.disabled,
+      disabledReason: extra.reason,
       checked: extra.checked,
       run: () => runMenuAction(run),
     };
@@ -402,27 +398,30 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
 
   function fileItems(): MenuBarItem[] {
     const m = t.value.shell.project;
-    const noOpfs = !options.opfsAvailable;
-    const noMidiClip = !store.clips.some((clip) => clipKind(clip) === 'midi');
+    const r = t.value.reasons;
+    const noOpfs = options.opfsAvailable ? null : r.noStorage;
+    const noMidiClip = store.clips.some((clip) => clipKind(clip) === 'midi')
+      ? null
+      : r.noMidiClipInProject;
     const items: MenuBarItem[] = [
       commandItem('file.startScreen', m.startScreen, options.openStartScreen),
       commandItem('file.new', m.new, options.openNewDialog),
       commandItem('file.open', m.open, options.openOpenDialog, {
-        disabled: noOpfs,
+        reason: noOpfs,
         hintFor: 'project.open',
       }),
       commandItem('file.openDemo', m.openDemo, options.openDemo),
       sep('file.sep-save'),
       commandItem('file.save', m.save, options.saveProjectAction, {
-        disabled: noOpfs,
+        reason: noOpfs,
         hintFor: 'project.save',
       }),
       commandItem('file.saveAs', m.saveAs, options.saveProjectAsAction, {
-        disabled: noOpfs,
+        reason: noOpfs,
         hintFor: 'project.saveAs',
       }),
       commandItem('file.revisions', m.revisions, options.openRevisionsDialog, {
-        disabled: noOpfs,
+        reason: noOpfs,
       }),
     ];
     const recent = options.recentNames.value;
@@ -431,7 +430,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       for (const name of recent) {
         items.push(
           commandItem(`file.recent.${name}`, name, () => options.openRecentProject(name), {
-            disabled: noOpfs,
+            reason: noOpfs,
           }),
         );
       }
@@ -444,17 +443,17 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       commandItem('file.importDawproject', m.importDawproject, options.importDawproject),
       commandItem('file.importMusicXml', m.importMusicXml, options.importMusicXml),
       commandItem('file.importBackup', m.importBackup, options.importBrowserBackup, {
-        disabled: noOpfs,
+        reason: noOpfs,
       }),
       sep('file.sep-export'),
       commandItem('file.exportSzd', m.exportSzd, options.exportSzd),
       commandItem('file.exportBackup', m.exportBackup, options.exportBrowserBackup, {
-        disabled: noOpfs,
+        reason: noOpfs,
       }),
       commandItem('file.exportSmf', m.exportSmf, options.exportSmf),
       commandItem('file.exportMidi2', m.exportMidi2, options.exportMidi2),
       commandItem('file.exportMusicXml', m.exportMusicXml, options.exportMusicXml, {
-        disabled: noMidiClip,
+        reason: noMidiClip,
       }),
       commandItem('file.exportAudio', m.exportAudio, options.openExportDialog),
       commandItem('file.exportDawproject', m.exportDawproject, options.exportDawproject),
@@ -468,46 +467,56 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     // reactive after a copy made by a keyboard shortcut or another surface.
     void clipClipboardVersion.value;
     const arrangementFocus = focusZone.value === 'arrange';
-    const noSelection = arrangementFocus ? !store.activeClip : store.selection.size === 0;
-    const noClip = !store.activeClip;
-    const readOnly = activeContentReadOnly();
+    const r = t.value.reasons;
+    const noSelection = arrangementFocus
+      ? firstBlock([!store.activeClip, r.noClipSelection])
+      : firstBlock([store.selection.size === 0, r.noNoteSelection]);
+    const noClip = firstBlock([!store.activeClip, r.noClipSelection]);
+    const readOnly = firstBlock([activeContentReadOnly(), r.trackFrozen]);
     const pasteUnavailable = arrangementFocus
-      ? !hasCopiedClip() ||
-        !canPasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0))
+      ? firstBlock(
+          [!hasCopiedClip(), r.nothingToPaste],
+          [
+            !canPasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0)),
+            r.noRoomToPaste,
+          ],
+        )
       : noClip;
+    const editSelection = firstBlock(readOnly, noSelection);
+    const editClip = firstBlock(readOnly, noClip);
     return [
-      actionItem('edit.undo', a['edit.undo'], { disabled: !canUndo() }),
-      actionItem('edit.redo', a['edit.redo'], { disabled: !canRedo() }),
-      actionItem('edit.copy', a['edit.copy'], { disabled: noSelection }),
-      actionItem('edit.cut', a['edit.cut'], { disabled: readOnly || noSelection }),
-      actionItem('edit.paste', a['edit.paste'], { disabled: readOnly || pasteUnavailable }),
+      actionItem('edit.undo', a['edit.undo'], { reason: canUndo() ? null : r.nothingToUndo }),
+      actionItem('edit.redo', a['edit.redo'], { reason: canRedo() ? null : r.nothingToRedo }),
+      actionItem('edit.copy', a['edit.copy'], { reason: noSelection }),
+      actionItem('edit.cut', a['edit.cut'], { reason: editSelection }),
+      actionItem('edit.paste', a['edit.paste'], { reason: firstBlock(readOnly, pasteUnavailable) }),
       sep('edit.sep-select'),
       actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
       actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], {
-        disabled: readOnly || noSelection,
+        reason: editSelection,
       }),
       actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
-        disabled: readOnly || noSelection,
+        reason: editSelection,
       }),
       heading('edit.transpose', t.value.shortcuts.menu.transpose),
-      actionItem('edit.transposeUp', a['edit.transposeUp'], { disabled: readOnly || noSelection }),
+      actionItem('edit.transposeUp', a['edit.transposeUp'], { reason: editSelection }),
       actionItem('edit.transposeDown', a['edit.transposeDown'], {
-        disabled: readOnly || noSelection,
+        reason: editSelection,
       }),
       actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp'], {
-        disabled: readOnly || noSelection,
+        reason: editSelection,
       }),
       actionItem('edit.transposeOctaveDown', a['edit.transposeOctaveDown'], {
-        disabled: readOnly || noSelection,
+        reason: editSelection,
       }),
       heading('edit.clip', t.value.shortcuts.menu.clip),
       actionItem('arrange.duplicateClip', a['arrange.duplicateClip'], {
-        disabled: readOnly || noClip,
+        reason: editClip,
       }),
       actionItem('arrange.splitClipAtPlayhead', a['arrange.splitClipAtPlayhead'], {
-        disabled: readOnly || noClip,
+        reason: editClip,
       }),
-      actionItem('arrange.deleteClip', a['arrange.deleteClip'], { disabled: readOnly || noClip }),
+      actionItem('arrange.deleteClip', a['arrange.deleteClip'], { reason: editClip }),
     ];
   }
 
@@ -548,12 +557,16 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
 
   function transportItems(): MenuBarItem[] {
     const a = t.value.shortcuts.actions;
-    const engineReady = Boolean(options.handle.value);
-    const canRecord =
-      engineReady &&
-      (options.canRecord?.value ??
+    const r = t.value.reasons;
+    const engineOff = options.handle.value ? null : r.engineOff;
+    const recordBlocked = firstBlock(engineOff, [
+      !(
+        options.canRecord?.value ??
         (options.recording.armedTrackId.value !== null ||
-          options.midiRecording.armedTrackId.value !== null));
+          options.midiRecording.armedTrackId.value !== null)
+      ),
+      r.noArmedTrack,
+    ]);
     return [
       actionItem(
         'transport.togglePlayback',
@@ -563,17 +576,17 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         checked: options.loopEnabled.value,
       }),
       actionItem('transport.toggleRecord', a['transport.toggleRecord'], {
-        disabled: !canRecord,
+        reason: recordBlocked,
         checked:
           options.isRecording?.value ??
           (options.recording.isRecording.value ||
             options.midiRecording.isRecording?.value === true),
       }),
       sep('transport.sep-nav'),
-      actionItem('transport.toStart', a['transport.toStart'], { disabled: !engineReady }),
-      actionItem('transport.toEnd', a['transport.toEnd'], { disabled: !engineReady }),
-      actionItem('transport.nudgeBack', a['transport.nudgeBack'], { disabled: !engineReady }),
-      actionItem('transport.nudgeForward', a['transport.nudgeForward'], { disabled: !engineReady }),
+      actionItem('transport.toStart', a['transport.toStart'], { reason: engineOff }),
+      actionItem('transport.toEnd', a['transport.toEnd'], { reason: engineOff }),
+      actionItem('transport.nudgeBack', a['transport.nudgeBack'], { reason: engineOff }),
+      actionItem('transport.nudgeForward', a['transport.nudgeForward'], { reason: engineOff }),
       heading('transport.locators', t.value.shortcuts.menu.locators),
       actionItem('transport.setLeftLocator', a['transport.setLeftLocator']),
       actionItem('transport.setRightLocator', a['transport.setRightLocator']),
@@ -617,16 +630,16 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
 
   function generateItems(): MenuBarItem[] {
     const g = t.value.shell.generate;
-    const noProject = !store.initialized;
+    const noProject = store.initialized ? null : t.value.reasons.projectLoading;
     return [
       commandItem('generate.progression', g.progression, options.openChordGenerateDialog, {
-        disabled: noProject,
+        reason: noProject,
       }),
       commandItem('generate.tracks', g.tracks, options.openTrackGenerateDialog, {
-        disabled: noProject,
+        reason: noProject,
       }),
       commandItem('generate.keyChanges', g.keyChanges, options.openKeyChangeDialog, {
-        disabled: noProject,
+        reason: noProject,
       }),
     ];
   }
@@ -706,6 +719,5 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     layoutMenu,
     menuBarModel,
     onGlobalKeyDown,
-    shortcutTitle,
   };
 }

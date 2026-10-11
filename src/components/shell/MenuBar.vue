@@ -16,7 +16,7 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
-import { cleanMenuItems, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
+import { cleanMenuItems, isItemDisabled, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 const props = withDefaults(
@@ -27,6 +27,8 @@ const props = withDefaults(
     align?: 'start' | 'end';
     /** Shows a disclosure chevron on triggers (used by picker-style menus). */
     chevron?: boolean;
+    /** Tooltip shown on the triggers while their menu is closed. */
+    triggerTitle?: string;
   }>(),
   { align: 'start', chevron: false },
 );
@@ -247,6 +249,7 @@ onBeforeUnmount(detach);
         role="menuitem"
         :aria-expanded="openId === menu.id"
         :aria-controls="openId === menu.id ? panelDomId(menu.id) : undefined"
+        v-tooltip="openId === menu.id ? '' : triggerTitle"
         @click="toggle(menu.id)"
         @pointerenter="onTriggerHover(menu.id)"
       >
@@ -292,7 +295,8 @@ onBeforeUnmount(detach);
                 active: activeRowId === item.id,
               }"
               :role="item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'"
-              :disabled="item.disabled"
+              :disabled="isItemDisabled(item)"
+              v-tooltip="{ reason: item.disabledReason, placement: 'end' }"
               :aria-checked="item.checked === undefined ? undefined : item.checked"
               @click="activate(item.id)"
               @pointermove="activeRowId = item.id"

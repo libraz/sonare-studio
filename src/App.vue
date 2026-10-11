@@ -100,6 +100,7 @@ import { isAudioClip } from '@/project/types';
 import { installPwaReloadPreparation } from '@/pwa';
 import { installPwaLaunchQueue, type PwaLaunchQueue } from '@/pwa-launch';
 import { clearAudioClipData } from '@/ui/arrangement/audio-clip-data';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useContextMenuState } from '@/ui/menu/context-menu';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
@@ -255,6 +256,22 @@ const applyStateText = computed(() => {
   if (applyPending.value) return t.value.shell.editor.pending;
   return formatMessage(t.value.shell.editor.clipCount, { count: String(scheduledCount.value) });
 });
+
+/** Quantize edits the selected notes of the active track. */
+const quantizeBlocked = computed(() =>
+  firstBlock(
+    [store.selection.size === 0, t.value.reasons.noNoteSelection],
+    [store.activeTrack?.frozen !== undefined, t.value.reasons.trackFrozen],
+  ),
+);
+
+/** Apply bounces through a live engine into a loaded project. */
+const applyBlocked = computed(() =>
+  firstBlock(
+    [!handle.value, t.value.reasons.engineOff],
+    [!store.initialized, t.value.reasons.projectLoading],
+  ),
+);
 
 /** Engine status dot state: off (no engine), pending (bouncing), or running. */
 const engineStatusState = computed(() => {
@@ -638,6 +655,19 @@ const {
   trackMeterSource,
   runAction,
 });
+/** Web MIDI exists in this browser unless a connect attempt has proven otherwise. */
+const webMidiSupported = computed(
+  () =>
+    typeof navigator !== 'undefined' &&
+    'requestMIDIAccess' in navigator &&
+    webMidi.available.value !== false,
+);
+const connectMidiBlocked = computed(() =>
+  firstBlock(
+    [!webMidiSupported.value, t.value.reasons.noWebMidi],
+    [busy.value, t.value.reasons.busy],
+  ),
+);
 
 function stepInputBack(): void {
   stepInput.back();
@@ -825,7 +855,6 @@ const {
   layoutMenu,
   menuBarModel,
   onGlobalKeyDown,
-  shortcutTitle,
 } = useAppShortcutsMenu({
   commandPaletteOpen,
   canRecord,
@@ -1060,6 +1089,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'roll'"
               :aria-controls="dockPanelId('roll')"
+              :aria-label="t.shell.editor.tabs.pianoRoll"
+              v-tooltip="t.shell.editor.tabTitles.pianoRoll"
               @click="selectDockTab('roll')"
             >
               {{ t.shell.editor.tabs.pianoRoll }}
@@ -1072,6 +1103,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'mixer'"
               :aria-controls="dockPanelId('mixer')"
+              :aria-label="t.shell.editor.tabs.mixer"
+              v-tooltip="t.shell.editor.tabTitles.mixer"
               @click="selectDockTab('mixer')"
             >
               {{ t.shell.editor.tabs.mixer }}
@@ -1084,6 +1117,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'mastering'"
               :aria-controls="dockPanelId('mastering')"
+              :aria-label="t.shell.editor.tabs.mastering"
+              v-tooltip="t.shell.editor.tabTitles.mastering"
               @click="selectDockTab('mastering')"
             >
               {{ t.shell.editor.tabs.mastering }}
@@ -1096,6 +1131,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'steps'"
               :aria-controls="dockPanelId('steps')"
+              :aria-label="t.shell.editor.tabs.steps"
+              v-tooltip="t.shell.editor.tabTitles.steps"
               @click="selectDockTab('steps')"
             >
               {{ t.shell.editor.tabs.steps }}
@@ -1108,6 +1145,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'lists'"
               :aria-controls="dockPanelId('lists')"
+              :aria-label="t.shell.editor.tabs.lists"
+              v-tooltip="t.shell.editor.tabTitles.lists"
               @click="selectDockTab('lists')"
             >
               {{ t.shell.editor.tabs.lists }}
@@ -1120,6 +1159,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'media'"
               :aria-controls="dockPanelId('media')"
+              :aria-label="t.shell.editor.tabs.media"
+              v-tooltip="t.shell.editor.tabTitles.media"
               @click="selectDockTab('media')"
             >
               {{ t.shell.editor.tabs.media }}
@@ -1132,6 +1173,8 @@ onMounted(installLaunchQueueConsumer);
               role="tab"
               :aria-selected="dockTab === 'sample'"
               :aria-controls="dockPanelId('sample')"
+              :aria-label="t.shell.editor.tabs.sample"
+              v-tooltip="t.shell.editor.tabTitles.sample"
               @click="selectDockTab('sample')"
             >
               {{ t.shell.editor.tabs.sample }}
@@ -1142,7 +1185,7 @@ onMounted(installLaunchQueueConsumer);
             class="dock-tab dock-tab-toggle dock-tab-score"
             :class="{ active: scoreVisible }"
             :aria-pressed="scoreVisible"
-            v-tooltip="t.shell.editor.toggleScoreTitle"
+            v-tooltip="{ text: t.shell.editor.toggleScoreTitle, shortcut: 'view.toggleScorePanel' }"
             @click="toggleScorePanel"
           >
             {{ t.shell.editor.tabs.score }}
@@ -1168,120 +1211,157 @@ onMounted(installLaunchQueueConsumer);
         >
           <div class="editor-toolbar">
             <div class="editor-toolbar-scroll">
-              <label class="bar-field">
-                {{ t.shell.editor.snap }}
+              <div class="tb-group" role="group" :aria-label="t.shell.editor.groupGrid">
+                <ToggleButton
+                  v-model="store.snapEnabled"
+                  size="sm"
+                  :label="t.shell.editor.snap"
+                  :title="t.shell.editor.snapToggleTitle"
+                  shortcut="view.toggleSnap"
+                />
                 <SelectMenu
                   v-model="snapChoice"
+                  class="tb-select"
                   :options="SNAP_CHOICES"
                   size="sm"
                   :aria-label="t.shell.editor.snap"
+                  :title="t.shell.editor.snapGridTitle"
                 />
-              </label>
-            <ToggleButton
-              v-model="store.snapEnabled"
-              size="sm"
-              :label="t.shell.editor.snapOn"
-              :title="t.shell.editor.snapToggleTitle"
-            />
-            <button
-              type="button"
-              :disabled="store.selection.size === 0 || store.activeTrack?.frozen !== undefined"
-              v-tooltip="t.shell.editor.quantizeTitle"
-              @click="quantizeSelection()"
-            >
-              {{ t.shell.editor.quantize }}
-            </button>
-            <label class="bar-field">
-              {{ t.shell.editor.quantizeStrength }}
-              <input
-                v-model.number="store.quantizeStrength"
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                :aria-label="t.shell.editor.quantizeStrength"
-              />
-            </label>
-            <label class="bar-field">
-              {{ t.shell.editor.swing }}
-              <input
-                v-model.number="store.quantizeSwing"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                :aria-label="t.shell.editor.swing"
-              />
-            </label>
-            <ToggleButton
-              v-model="store.scaleHighlight.enabled"
-              size="sm"
-              :label="t.shell.editor.scaleHighlight"
-            />
-            <ToggleButton
-              :model-value="musicTyping.enabled.value"
-              size="sm"
-              :label="t.shell.editor.musicTyping"
-              :title="t.shell.editor.musicTypingTitle"
-              @update:model-value="toggleMusicTyping"
-            />
-            <ToggleButton
-              :model-value="stepInput.armed.value"
-              size="sm"
-              :label="t.shell.editor.stepInput"
-              :title="t.shell.editor.stepInputTitle"
-              @update:model-value="toggleStepInput"
-            />
-            <span v-if="stepInput.armed.value" class="step-cursor">
-              @ {{ formatBarBeatTick(stepInput.cursorPpq.value, store.timeSignatures) }}
-            </span>
-            <button
-              v-if="stepInput.armed.value"
-              type="button"
-              v-tooltip="t.shell.editor.stepBackTitle"
-              @click="stepInputBack"
-            >
-              {{ t.shell.editor.stepBack }}
-            </button>
-            <button
-              v-if="stepInput.armed.value"
-              type="button"
-              v-tooltip="t.shell.editor.stepCursorToPlayheadTitle"
-              @click="stepInputCursorToPlayhead"
-            >
-              {{ t.shell.editor.stepCursorToPlayhead }}
-            </button>
-            <label class="bar-field">
-              {{ t.shell.editor.midiIn }}
-              <SelectMenu
-                v-model="midiInputSelection"
-                :options="midiInputChoices"
-                size="sm"
-                :aria-label="t.shell.editor.midiIn"
-              />
-            </label>
-            <button
-              v-if="!webMidi.connected.value"
-              type="button"
-              :disabled="busy"
-              @click="connectWebMidi"
-            >
-              {{ t.shell.editor.connectMidi }}
-            </button>
-            <button v-else type="button" @click="webMidi.disconnect()">
-              {{ t.shell.editor.disconnectMidi }}
-            </button>
+                <ToggleButton
+                  v-model="store.scaleHighlight.enabled"
+                  size="sm"
+                  :label="t.shell.editor.scaleHighlight"
+                  :title="t.shell.editor.scaleHighlightTitle"
+                />
+              </div>
+              <span class="tb-sep" aria-hidden="true" />
+              <div class="tb-group">
+                <button
+                  type="button"
+                  class="tb-action"
+                  :disabled="!!quantizeBlocked"
+                  v-tooltip="{
+                    text: t.shell.editor.quantizeTitle,
+                    shortcut: 'edit.quantizeSelection',
+                    reason: quantizeBlocked,
+                  }"
+                  @click="quantizeSelection()"
+                >
+                  {{ t.shell.editor.quantize }}
+                </button>
+                <label class="bar-field" v-tooltip="t.shell.editor.quantizeStrengthTitle">
+                  {{ t.shell.editor.quantizeStrength }}
+                  <input
+                    v-model.number="store.quantizeStrength"
+                    class="tb-range"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    :aria-label="t.shell.editor.quantizeStrength"
+                  />
+                </label>
+                <label class="bar-field" v-tooltip="t.shell.editor.swingTitle">
+                  {{ t.shell.editor.swing }}
+                  <input
+                    v-model.number="store.quantizeSwing"
+                    class="tb-range"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    :aria-label="t.shell.editor.swing"
+                  />
+                </label>
+              </div>
+              <span class="tb-sep" aria-hidden="true" />
+              <div class="tb-group" role="group" :aria-label="t.shell.editor.groupInput">
+                <ToggleButton
+                  :model-value="musicTyping.enabled.value"
+                  size="sm"
+                  :label="t.shell.editor.musicTyping"
+                  :title="t.shell.editor.musicTypingTitle"
+                  @update:model-value="toggleMusicTyping"
+                />
+                <ToggleButton
+                  :model-value="stepInput.armed.value"
+                  size="sm"
+                  :label="t.shell.editor.stepInput"
+                  :title="t.shell.editor.stepInputTitle"
+                  @update:model-value="toggleStepInput"
+                />
+                <template v-if="stepInput.armed.value">
+                  <span class="step-cursor" v-tooltip="t.shell.editor.stepCursorTitle">
+                    @ {{ formatBarBeatTick(stepInput.cursorPpq.value, store.timeSignatures) }}
+                  </span>
+                  <button
+                    type="button"
+                    class="tb-action"
+                    v-tooltip="t.shell.editor.stepBackTitle"
+                    @click="stepInputBack"
+                  >
+                    {{ t.shell.editor.stepBack }}
+                  </button>
+                  <button
+                    type="button"
+                    class="tb-action"
+                    v-tooltip="t.shell.editor.stepCursorToPlayheadTitle"
+                    @click="stepInputCursorToPlayhead"
+                  >
+                    {{ t.shell.editor.stepCursorToPlayhead }}
+                  </button>
+                </template>
+              </div>
+              <span class="tb-sep" aria-hidden="true" />
+              <div class="tb-group" role="group" :aria-label="t.shell.editor.groupMidi">
+                <!-- The input list fills only once access is granted, so it shows when connected. -->
+                <span v-if="webMidi.connected.value" class="bar-field">
+                  {{ t.shell.editor.midiIn }}
+                  <SelectMenu
+                    v-model="midiInputSelection"
+                    class="tb-select"
+                    :options="midiInputChoices"
+                    size="sm"
+                    :aria-label="t.shell.editor.midiIn"
+                    :title="t.shell.editor.midiInTitle"
+                  />
+                </span>
+                <button
+                  v-if="!webMidi.connected.value"
+                  type="button"
+                  class="tb-action"
+                  :disabled="!!connectMidiBlocked"
+                  v-tooltip="{ text: t.shell.editor.connectMidiTitle, reason: connectMidiBlocked }"
+                  @click="connectWebMidi"
+                >
+                  {{ t.shell.editor.connectMidi }}
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="tb-action"
+                  v-tooltip="t.shell.editor.disconnectMidiTitle"
+                  @click="webMidi.disconnect()"
+                >
+                  {{ t.shell.editor.disconnectMidi }}
+                </button>
+              </div>
             </div>
             <span class="midi-learn-anchor">
               <button
                 type="button"
-                class="midi-learn-toggle"
-                :class="{ 'midi-learn-toggle-active': midiLearnOpen }"
+                class="tb-menu"
+                :class="{ 'is-open': midiLearnOpen }"
+                aria-haspopup="dialog"
                 :aria-expanded="midiLearnOpen"
                 v-tooltip="t.shell.editor.midiLearnTitle"
                 @click="midiLearnOpen = !midiLearnOpen"
               >
                 {{ t.shell.editor.midiLearn }}
+                <svg class="tb-caret" viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">
+                  <path d="M2 3.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
               </button>
               <Transition name="pop">
                 <MidiLearnPanel
@@ -1293,10 +1373,12 @@ onMounted(installLaunchQueueConsumer);
                 />
               </Transition>
             </span>
+            <span class="tb-sep" aria-hidden="true" />
             <button
               type="button"
-              :disabled="!handle || !store.initialized"
-              v-tooltip="t.shell.editor.applyTitle"
+              class="tb-action"
+              :disabled="!!applyBlocked"
+              v-tooltip="{ text: t.shell.editor.applyTitle, reason: applyBlocked }"
               @click="applyNow"
             >
               {{ t.shell.editor.apply }}
@@ -1305,7 +1387,8 @@ onMounted(installLaunchQueueConsumer);
               class="engine-status"
               :class="`engine-status-${engineStatusState}`"
               role="status"
-              v-tooltip="`${t.shell.editor.engineStatus}: ${applyStateText}`"
+              tabindex="0"
+              v-tooltip="applyStateText"
               :aria-label="`${t.shell.editor.engineStatus}: ${applyStateText}`"
             >
               <span class="engine-status-dot" aria-hidden="true" />
@@ -1451,7 +1534,22 @@ onMounted(installLaunchQueueConsumer);
             v-else
             :title="t.shell.sampleEditor.title"
             :message="t.shell.sampleEditor.emptyMessage"
-          />
+          >
+            <template #action>
+              <button
+                type="button"
+                class="tb-action"
+                :disabled="busy"
+                v-tooltip="{
+                  text: t.shell.editor.importAudioTitle,
+                  reason: busy ? t.reasons.busy : null,
+                }"
+                @click="importAudioAction"
+              >
+                {{ t.shell.editor.importAudio }}
+              </button>
+            </template>
+          </HintCard>
         </section>
       </section>
       </div>
@@ -1486,7 +1584,6 @@ onMounted(installLaunchQueueConsumer);
       :recording-input-device-options="recordingInputDeviceOptions"
       :midi-recording="midiRecording"
       :record-menu-open="recordMenuOpen"
-      :shortcut-title="shortcutTitle"
       :store-initialized="store.initialized"
       :tempo-input="tempoInput"
       @apply-tempo="applyTempo"

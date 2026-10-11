@@ -159,6 +159,8 @@
   font-size: var(--fs-xs);
   color: var(--text-4);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
   /* Re-keyed per save, so each fresh timestamp fades in rather than snapping. */
   animation: fade-once var(--dur-3) var(--ease-out);
 }

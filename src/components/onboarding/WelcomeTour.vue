@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import { hasNativeEnterBehavior } from '@/ui/accessibility/keyboard';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
@@ -44,6 +45,7 @@ const step = ref<TourStep | null>(null);
 const stepNumber = ref(0);
 const stepCount = ref(0);
 const hasBack = ref(false);
+const backBlocked = computed(() => firstBlock([!hasBack.value, t.value.shell.tour.firstStep]));
 const isLast = ref(false);
 const anchorRect = ref<AnchorRect | null>(null);
 const placement = ref<TooltipPlacement>({ left: 0, top: 0, side: 'bottom' });
@@ -282,7 +284,12 @@ onBeforeUnmount(() => {
           {{ t.shell.tour.skip }}
         </button>
         <span class="tour-spacer" />
-        <button type="button" :disabled="!hasBack" @click="onBack">
+        <button
+          type="button"
+          :disabled="!!backBlocked"
+          v-tooltip="{ reason: backBlocked }"
+          @click="onBack"
+        >
           {{ t.shell.tour.back }}
         </button>
         <button type="button" class="primary" @click="onNext">

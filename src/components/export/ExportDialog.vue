@@ -73,6 +73,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { masteringChainIsActive } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
+import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
@@ -235,7 +236,46 @@ const errors = computed<string[]>(() =>
   }),
 );
 
-const canExport = computed(() => !busy.value && errors.value.length === 0);
+const busyReason = computed(() =>
+  firstBlock([busy.value, t.value.dialogs.exportAudio.reasons.rendering]),
+);
+const exportBlocked = computed(() => firstBlock(busyReason.value, errors.value[0]));
+const canExport = computed(() => exportBlocked.value === null);
+const loopRangeBlocked = computed(() =>
+  firstBlock(busyReason.value, [!props.hasLoop, t.value.reasons.noLocators]),
+);
+const stemOptionBlocked = computed(() =>
+  firstBlock(busyReason.value, [
+    model.value.mode !== 'stems',
+    t.value.dialogs.exportAudio.reasons.stemsOnly,
+  ]),
+);
+const releaseTailBlocked = computed(() =>
+  firstBlock(busyReason.value, [
+    model.value.range !== 'project',
+    t.value.dialogs.exportAudio.reasons.wholeProjectOnly,
+  ]),
+);
+const wavDitherBlocked = computed(() =>
+  firstBlock(busyReason.value, [
+    model.value.wavBitDepth !== 16,
+    t.value.dialogs.exportAudio.reasons.ditherNeeds16Bit,
+  ]),
+);
+const flacDitherBlocked = computed(() =>
+  firstBlock(busyReason.value, [
+    model.value.flacBitDepth !== 16,
+    t.value.dialogs.exportAudio.reasons.ditherNeeds16Bit,
+  ]),
+);
+
+/** Why an extra format checkbox is unavailable: the main format is always exported. */
+function additionalFormatBlocked(encoderId: string): string | null {
+  return firstBlock(busyReason.value, [
+    encoderId === model.value.encoderId,
+    t.value.dialogs.exportAudio.reasons.isMainFormat,
+  ]);
+}
 
 /** Full output filename shown next to the base-name field. */
 const filenamePreview = computed(() => {
@@ -857,7 +897,8 @@ function onKeydown(event: KeyboardEvent): void {
             v-model="model.encoderId"
             class="format-select"
             :options="encoderOptions"
-            :disabled="busy"
+            :title="t.dialogs.exportAudio.formatTitle"
+            :reason="busyReason"
             :aria-label="t.dialogs.exportAudio.format"
           />
           <div class="additional-format-list" :aria-label="t.dialogs.exportAudio.additionalFormats">
@@ -865,14 +906,18 @@ function onKeydown(event: KeyboardEvent): void {
               v-for="encoder in encoderList"
               :key="encoder.id"
               class="check-label additional-format"
-              :class="{ disabled: encoder.id === model.encoderId }"
+              :class="{ disabled: !!additionalFormatBlocked(encoder.id) }"
+              v-tooltip="{
+                text: t.dialogs.exportAudio.additionalFormatTitle,
+                reason: additionalFormatBlocked(encoder.id),
+              }"
             >
               <input
                 class="additional-format-input"
                 :data-encoder-id="encoder.id"
                 type="checkbox"
                 :checked="selectedEncoderIds.includes(encoder.id)"
-                :disabled="busy || encoder.id === model.encoderId"
+                :disabled="!!additionalFormatBlocked(encoder.id)"
                 @change="toggleAdditionalEncoder(encoder.id, ($event.target as HTMLInputElement).checked)"
               />
               {{ encoder.label }}
@@ -891,7 +936,8 @@ function onKeydown(event: KeyboardEvent): void {
               class="wav-bit-depth"
               size="sm"
               :options="WAV_BIT_DEPTH_OPTIONS"
-              :disabled="busy"
+              :title="t.dialogs.exportAudio.wavBitDepthTitle"
+              :reason="busyReason"
               :aria-label="t.dialogs.exportAudio.bitDepth"
             />
             <ToggleButton
@@ -899,7 +945,8 @@ function onKeydown(event: KeyboardEvent): void {
               class="wav-dither"
               size="sm"
               :label="t.dialogs.exportAudio.dither"
-              :disabled="busy || model.wavBitDepth !== 16"
+              :title="t.dialogs.exportAudio.ditherTitle"
+              :reason="wavDitherBlocked"
             />
           </div>
           <div
@@ -911,7 +958,8 @@ function onKeydown(event: KeyboardEvent): void {
               class="flac-bit-depth"
               size="sm"
               :options="FLAC_BIT_DEPTH_OPTIONS"
-              :disabled="busy"
+              :title="t.dialogs.exportAudio.flacBitDepthTitle"
+              :reason="busyReason"
               :aria-label="t.dialogs.exportAudio.bitDepth"
             />
             <ToggleButton
@@ -919,7 +967,8 @@ function onKeydown(event: KeyboardEvent): void {
               class="flac-dither"
               size="sm"
               :label="t.dialogs.exportAudio.dither"
-              :disabled="busy || model.flacBitDepth !== 16"
+              :title="t.dialogs.exportAudio.ditherTitle"
+              :reason="flacDitherBlocked"
             />
           </div>
           <div
@@ -931,7 +980,8 @@ function onKeydown(event: KeyboardEvent): void {
               class="mp3-bitrate"
               size="sm"
               :options="mp3BitrateOptions"
-              :disabled="busy"
+              :title="t.dialogs.exportAudio.mp3BitrateTitle"
+              :reason="busyReason"
               :aria-label="t.dialogs.exportAudio.bitrate"
             />
           </div>
@@ -944,7 +994,8 @@ function onKeydown(event: KeyboardEvent): void {
               class="compressed-bitrate"
               size="sm"
               :options="compressedBitrateOptions"
-              :disabled="busy"
+              :title="t.dialogs.exportAudio.compressedBitrateTitle"
+              :reason="busyReason"
               :aria-label="t.dialogs.exportAudio.bitrate"
             />
           </div>
@@ -958,7 +1009,8 @@ function onKeydown(event: KeyboardEvent): void {
             v-model="model.sampleRate"
             class="sample-rate-select"
             :options="sampleRateOptions"
-            :disabled="busy"
+            :title="t.dialogs.exportAudio.sampleRateTitle"
+            :reason="busyReason"
             :aria-label="t.dialogs.exportAudio.sampleRate"
           />
         </div>
@@ -971,7 +1023,8 @@ function onKeydown(event: KeyboardEvent): void {
             v-model="model.memoryBudgetMiB"
             class="memory-budget-select"
             :options="memoryBudgetOptions"
-            :disabled="busy"
+            :title="t.dialogs.exportAudio.memoryBudgetTitle"
+            :reason="busyReason"
             :aria-label="t.dialogs.exportAudio.memoryBudget"
           />
         </div>
@@ -989,7 +1042,8 @@ function onKeydown(event: KeyboardEvent): void {
             :class="{ active: model.range === 'project' }"
             role="radio"
             :aria-checked="model.range === 'project'"
-            :disabled="busy"
+            :disabled="!!busyReason"
+            v-tooltip="{ text: t.dialogs.exportAudio.wholeProjectTitle, reason: busyReason }"
             @click="model.range = 'project'"
           >
             {{ t.dialogs.exportAudio.wholeProject }}
@@ -1000,7 +1054,8 @@ function onKeydown(event: KeyboardEvent): void {
             :class="{ active: model.range === 'loop' }"
             role="radio"
             :aria-checked="model.range === 'loop'"
-            :disabled="busy || !props.hasLoop"
+            :disabled="!!loopRangeBlocked"
+            v-tooltip="{ text: t.dialogs.exportAudio.loopRegionTitle, reason: loopRangeBlocked }"
             @click="model.range = 'loop'"
           >
             {{ t.dialogs.exportAudio.loopRegion }}
@@ -1020,7 +1075,8 @@ function onKeydown(event: KeyboardEvent): void {
             :class="{ active: model.mode === 'mixdown' }"
             role="radio"
             :aria-checked="model.mode === 'mixdown'"
-            :disabled="busy"
+            :disabled="!!busyReason"
+            v-tooltip="{ text: t.dialogs.exportAudio.mixdownTitle, reason: busyReason }"
             @click="model.mode = 'mixdown'"
           >
             {{ t.dialogs.exportAudio.mixdown }}
@@ -1031,7 +1087,8 @@ function onKeydown(event: KeyboardEvent): void {
             :class="{ active: model.mode === 'stems' }"
             role="radio"
             :aria-checked="model.mode === 'stems'"
-            :disabled="busy"
+            :disabled="!!busyReason"
+            v-tooltip="{ text: t.dialogs.exportAudio.stemsTitle, reason: busyReason }"
             @click="model.mode = 'stems'"
           >
             {{ t.dialogs.exportAudio.stems }}
@@ -1045,7 +1102,7 @@ function onKeydown(event: KeyboardEvent): void {
             class="include-master-chain"
             size="sm"
             :label="t.dialogs.exportAudio.includeMasterChain"
-            :disabled="busy"
+            :reason="busyReason"
           />
         </div>
 
@@ -1056,14 +1113,16 @@ function onKeydown(event: KeyboardEvent): void {
             class="include-master-stem"
             size="sm"
             :label="t.dialogs.exportAudio.includeMasterStem"
-            :disabled="busy || model.mode !== 'stems'"
+            :title="t.dialogs.exportAudio.includeMasterStemTitle"
+            :reason="stemOptionBlocked"
           />
           <ToggleButton
             v-model="model.includeBusStems"
             class="include-bus-stems"
             size="sm"
             :label="t.dialogs.exportAudio.includeBusStems"
-            :disabled="busy || model.mode !== 'stems'"
+            :title="t.dialogs.exportAudio.includeBusStemsTitle"
+            :reason="stemOptionBlocked"
           />
         </div>
 
@@ -1074,7 +1133,8 @@ function onKeydown(event: KeyboardEvent): void {
             class="normalize-loudness"
             size="sm"
             :label="normalizeLoudnessLabel"
-            :disabled="busy"
+            :title="t.dialogs.exportAudio.normalizeLoudnessTitle"
+            :reason="busyReason"
           />
           <p
             v-if="model.mode === 'stems' && model.normalizeLoudness"
@@ -1096,7 +1156,8 @@ function onKeydown(event: KeyboardEvent): void {
             min="0"
             max="120"
             step="0.5"
-            :disabled="busy || model.range !== 'project'"
+            :disabled="!!releaseTailBlocked"
+            v-tooltip="{ text: t.dialogs.exportAudio.releaseTailTitle, reason: releaseTailBlocked }"
           />
           <span>{{ t.dialogs.exportAudio.seconds }}</span>
         </div>
@@ -1110,7 +1171,7 @@ function onKeydown(event: KeyboardEvent): void {
             v-model="model.baseName"
             type="text"
             class="filename-input"
-            :disabled="busy"
+            :disabled="!!busyReason"
             spellcheck="false"
           />
           <span class="filename-preview">{{ filenamePreview }}</span>
@@ -1187,10 +1248,22 @@ function onKeydown(event: KeyboardEvent): void {
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
     </div>
     <template #actions>
-      <button type="button" class="close-button" :disabled="busy" @click="onClose">
+      <button
+        type="button"
+        class="close-button"
+        :disabled="!!busyReason"
+        v-tooltip="{ reason: busyReason }"
+        @click="onClose"
+      >
         {{ t.dialogs.exportAudio.close }}
       </button>
-      <button type="button" class="primary export-button" :disabled="!canExport" @click="onExport">
+      <button
+        type="button"
+        class="primary export-button"
+        :disabled="!canExport"
+        v-tooltip="{ reason: exportBlocked }"
+        @click="onExport"
+      >
         {{ t.dialogs.exportAudio.export }}
       </button>
     </template>

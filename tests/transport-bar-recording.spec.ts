@@ -60,7 +60,6 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
       ],
       midiRecording: makeMidiRecording(),
       recordMenuOpen: true,
-      shortcutTitle: (base: string) => base,
       storeInitialized: true,
       tempoInput: 120,
       ...props,
@@ -100,10 +99,27 @@ describe('TransportBar recording settings', () => {
   });
 
   it('emits metronome-volume changes from the transport control', async () => {
-    const wrapper = mountBar();
+    const wrapper = mountBar({ metronomeEnabled: true });
     await wrapper.find('.metronome-volume-input').setValue('0.6');
 
     expect(wrapper.emitted('metronomeVolumeChange')).toEqual([[0.6]]);
+  });
+
+  it('disables the metronome volume while the click is off', () => {
+    const wrapper = mountBar({ metronomeEnabled: false });
+    expect(wrapper.get('.metronome-volume-input').attributes('disabled')).toBeDefined();
+  });
+
+  it('disables engine-bound transport controls until the engine boots', () => {
+    const wrapper = mountBar({ handle: null });
+    expect(wrapper.get('.record-button').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.transport-key.cycle').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.transport-key.play').attributes('disabled')).toBeUndefined();
+  });
+
+  it('disables record without an armed track', () => {
+    const wrapper = mountBar({ canRecord: false });
+    expect(wrapper.get('.record-button').attributes('disabled')).toBeDefined();
   });
 
   it('updates the recording capture source from the recording settings', async () => {

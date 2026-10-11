@@ -46,7 +46,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
     <button
       type="button"
       class="chip-apply"
-      :title="t.shell.pianoRoll.reharmonize.applyTitle"
+      v-tooltip="t.shell.pianoRoll.reharmonize.applyTitle"
       @click="emit('apply')"
     >
       {{ t.shell.pianoRoll.reharmonize.apply }}
@@ -55,6 +55,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
       type="button"
       class="chip-dismiss"
       :aria-label="t.shell.pianoRoll.reharmonize.dismiss"
+      v-tooltip="t.shell.pianoRoll.reharmonize.dismiss"
       @click="emit('dismiss')"
     >
       ✕

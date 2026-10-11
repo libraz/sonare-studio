@@ -93,6 +93,7 @@ const { locale, t } = useI18n();
       :aria-label="t.shell.layout.menuLabel"
       align="end"
       chevron
+      :trigger-title="t.shell.layout.title"
     />
 
     <div class="history-tools" :aria-label="t.shell.menus.edit">
@@ -101,7 +102,11 @@ const { locale, t } = useI18n();
         class="header-tool icon-tool undo-toggle"
         :aria-label="t.shortcuts.actions['edit.undo']"
         :disabled="!canUndo"
-        v-tooltip="t.shortcuts.actions['edit.undo']"
+        v-tooltip="{
+          text: t.shortcuts.actions['edit.undo'],
+          shortcut: 'edit.undo',
+          reason: canUndo ? null : t.reasons.nothingToUndo,
+        }"
         @click="emit('undo')"
       >
         <TransportIcon name="undo" />
@@ -111,7 +116,11 @@ const { locale, t } = useI18n();
         class="header-tool icon-tool redo-toggle"
         :aria-label="t.shortcuts.actions['edit.redo']"
         :disabled="!canRedo"
-        v-tooltip="t.shortcuts.actions['edit.redo']"
+        v-tooltip="{
+          text: t.shortcuts.actions['edit.redo'],
+          shortcut: 'edit.redo',
+          reason: canRedo ? null : t.reasons.nothingToRedo,
+        }"
         @click="emit('redo')"
       >
         <TransportIcon name="redo" />
@@ -122,6 +131,7 @@ const { locale, t } = useI18n();
       v-if="autosaveLastSavedAt"
       :key="autosaveLastSavedAt.getTime()"
       class="autosave-state"
+      v-tooltip="t.shell.savedAtTitle"
     >
       {{
         formatMessage(t.shell.savedAt, {

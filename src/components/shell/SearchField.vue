@@ -79,6 +79,7 @@ function clear(): void {
         type="button"
         class="search-clear"
         :aria-label="localizedClearLabel"
+        v-tooltip="localizedClearLabel"
         @click="clear"
       >
         <svg viewBox="0 0 14 14" width="11" height="11" aria-hidden="true">

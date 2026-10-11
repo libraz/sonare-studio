@@ -4,6 +4,7 @@ import AppModal from '@/components/shell/AppModal.vue';
 import BrandMark from '@/components/shell/BrandMark.vue';
 import PwaUpdateBanner from '@/components/shell/PwaUpdateBanner.vue';
 import type { StoredProjectInfo } from '@/persistence/opfs';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSize, formatTimestamp } from '@/ui/shell/format';
 
@@ -66,6 +67,13 @@ const LIBSONARE_URL = 'https://github.com/libraz/libsonare';
  */
 const primaryAction = computed<'continue' | 'new'>(() => (props.hasAutosave ? 'continue' : 'new'));
 
+/** A launcher action already in flight blocks every other one. */
+const actionBlocked = computed(() => firstBlock([props.busy === true, t.value.reasons.busy]));
+/** Import / backup actions also need browser project storage. */
+const storageBlocked = computed(() =>
+  firstBlock(actionBlocked.value, [!props.opfsAvailable, t.value.reasons.noStorage]),
+);
+
 /** Localized last-modified date for a stored project, or an empty string. */
 function projectDate(info: StoredProjectInfo): string {
   if (info.lastModified === undefined) return '';
@@ -96,6 +104,9 @@ function projectMeta(info: StoredProjectInfo): string {
         <header class="ss-head">
           <BrandMark size="lg" />
           <p class="ss-subtitle">{{ t.shell.startScreen.subtitle }}</p>
+          <p v-if="props.booting" class="ss-status" role="status">
+            {{ t.shell.startScreen.booting }}
+          </p>
         </header>
 
         <PwaUpdateBanner />
@@ -103,6 +114,7 @@ function projectMeta(info: StoredProjectInfo): string {
         <div class="ss-body" :class="{ booting: props.booting }" :inert="props.booting || undefined">
           <button v-if="props.hasAutosave" type="button" class="ss-action"
             :class="{ primary: primaryAction === 'continue' }" data-testid="start-continue"
+            :disabled="!!actionBlocked" v-tooltip="{ reason: actionBlocked }"
             @click="emit('continueSession')">
             <span class="ss-action-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -123,7 +135,8 @@ function projectMeta(info: StoredProjectInfo): string {
           </button>
 
           <button type="button" class="ss-action" :class="{ primary: primaryAction === 'new' }"
-            data-testid="start-new" @click="emit('newProject')">
+            data-testid="start-new" :disabled="!!actionBlocked"
+            v-tooltip="{ reason: actionBlocked }" @click="emit('newProject')">
             <span class="ss-action-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                 stroke-linecap="round" stroke-linejoin="round">
@@ -142,7 +155,8 @@ function projectMeta(info: StoredProjectInfo): string {
             </svg>
           </button>
 
-          <button type="button" class="ss-action" data-testid="start-demo" @click="emit('demo')">
+          <button type="button" class="ss-action" data-testid="start-demo"
+            :disabled="!!actionBlocked" v-tooltip="{ reason: actionBlocked }" @click="emit('demo')">
             <span class="ss-action-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                 stroke-linecap="round" stroke-linejoin="round">
@@ -165,7 +179,8 @@ function projectMeta(info: StoredProjectInfo): string {
             <div class="ss-divider"><span>{{ t.shell.startScreen.openHeading }}</span></div>
             <div class="ss-projects">
               <button v-for="info in props.storedProjects" :key="info.name" type="button"
-                class="ss-project" @click="emit('openProject', info.name)">
+                class="ss-project" :disabled="!!actionBlocked"
+                v-tooltip="{ reason: actionBlocked }" @click="emit('openProject', info.name)">
                 <span class="ss-project-name">{{ info.name }}</span>
                 <span class="ss-project-meta">{{ projectMeta(info) }}</span>
               </button>
@@ -173,8 +188,8 @@ function projectMeta(info: StoredProjectInfo): string {
           </template>
 
           <div class="ss-imports">
-            <button v-if="props.opfsAvailable" type="button" class="ss-import"
-              data-testid="start-import" @click="emit('importProject')">
+            <button type="button" class="ss-import" :disabled="!!storageBlocked"
+              v-tooltip="{ reason: storageBlocked }" data-testid="start-import" @click="emit('importProject')">
               <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M12 3v11" />
@@ -183,8 +198,8 @@ function projectMeta(info: StoredProjectInfo): string {
               </svg>
               <span class="ss-import-label">{{ t.shell.startScreen.importFromFile }}</span>
             </button>
-            <button v-if="props.opfsAvailable" type="button" class="ss-import"
-              data-testid="start-import-backup" @click="emit('importBackup')">
+            <button type="button" class="ss-import" :disabled="!!storageBlocked"
+              v-tooltip="{ reason: storageBlocked }" data-testid="start-import-backup" @click="emit('importBackup')">
               <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 8.5h16V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" />
@@ -193,8 +208,8 @@ function projectMeta(info: StoredProjectInfo): string {
               </svg>
               <span class="ss-import-label">{{ t.shell.startScreen.restoreBackup }}</span>
             </button>
-            <button v-if="props.opfsAvailable" type="button" class="ss-import"
-              data-testid="start-export-backup" @click="emit('exportBackup')">
+            <button type="button" class="ss-import" :disabled="!!storageBlocked"
+              v-tooltip="{ reason: storageBlocked }" data-testid="start-export-backup" @click="emit('exportBackup')">
               <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 8.5h16V19a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 19Z" />
@@ -204,7 +219,7 @@ function projectMeta(info: StoredProjectInfo): string {
               <span class="ss-import-label">{{ t.shell.startScreen.exportBackup }}</span>
             </button>
             <button type="button" class="ss-import" data-testid="start-import-midi"
-              @click="emit('importMidi')">
+              :disabled="!!actionBlocked" v-tooltip="{ reason: actionBlocked }" @click="emit('importMidi')">
               <svg class="ss-import-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M8 16V6.5l9-1.6V14" />
@@ -291,6 +306,20 @@ function projectMeta(info: StoredProjectInfo): string {
   color: var(--text-3);
 }
 
+.ss-status {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* Unavailable actions stay in place, dimmed, and explain themselves on hover. */
+.ss-action:disabled,
+.ss-import:disabled,
+.ss-project:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .ss-body {
   display: flex;
   flex-direction: column;
@@ -317,11 +346,11 @@ function projectMeta(info: StoredProjectInfo): string {
     border-color var(--dur-1) var(--ease-out);
 }
 
-.ss-action:hover {
+.ss-action:hover:not(:disabled) {
   background: var(--surface-3);
 }
 
-.ss-action:active {
+.ss-action:active:not(:disabled) {
   background: var(--surface-4);
 }
 
@@ -451,7 +480,7 @@ function projectMeta(info: StoredProjectInfo): string {
     border-color var(--dur-1) var(--ease-out);
 }
 
-.ss-project:hover {
+.ss-project:hover:not(:disabled) {
   background: var(--surface-4);
 }
 
@@ -519,16 +548,16 @@ function projectMeta(info: StoredProjectInfo): string {
   white-space: nowrap;
 }
 
-.ss-import:hover {
+.ss-import:hover:not(:disabled) {
   color: var(--text-1);
   background: var(--surface-4);
 }
 
-.ss-import:hover .ss-import-icon {
+.ss-import:hover:not(:disabled) .ss-import-icon {
   color: var(--accent);
 }
 
-.ss-import:active {
+.ss-import:active:not(:disabled) {
   background: var(--surface-1);
 }
 

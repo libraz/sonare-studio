@@ -31,6 +31,7 @@ defineProps<{
     </span>
     <p class="empty-state-message"><slot>{{ message }}</slot></p>
     <p v-if="hint" class="empty-state-hint">{{ hint }}</p>
+    <div v-if="$slots.action" class="empty-state-action"><slot name="action" /></div>
   </div>
 </template>
 
@@ -74,6 +75,10 @@ defineProps<{
   margin: 0;
   font-size: var(--fs-xs);
   color: var(--text-4);
+}
+
+.empty-state-action {
+  margin-top: var(--sp-4);
 }
 
 @keyframes empty-state-in {

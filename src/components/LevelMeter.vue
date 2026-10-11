@@ -233,6 +233,7 @@ watch(
       class="level-meter"
       :aria-label="clipped ? t.shell.mixer.meter.clipped : t.shell.meters.stereo"
       role="img"
+      v-tooltip="t.shell.meters.resetTitle"
       @click="onClick"
     />
     <span class="clip-flash" aria-hidden="true" />

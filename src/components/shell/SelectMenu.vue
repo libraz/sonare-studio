@@ -30,6 +30,10 @@ const props = withDefaults(
     disabled?: boolean;
     /** Accessible label for the trigger. */
     ariaLabel?: string;
+    /** Tooltip text for the trigger. */
+    title?: string;
+    /** Why the menu is unavailable; a non-empty reason also disables it. */
+    reason?: string | null;
     /** Compact trigger height. */
     size?: 'sm' | 'md';
   }>(),
@@ -41,6 +45,7 @@ const emit = defineEmits<{
   change: [value: T];
 }>();
 
+const isDisabled = computed(() => props.disabled || !!props.reason);
 const open = ref(false);
 useShortcutBlockingOverlay(open);
 const triggerRef = ref<HTMLButtonElement | null>(null);
@@ -83,7 +88,7 @@ function reposition(): void {
 }
 
 function openMenu(): void {
-  if (props.disabled) return;
+  if (isDisabled.value) return;
   open.value = true;
   activeIndex.value = Math.max(
     0,
@@ -243,13 +248,14 @@ onBeforeUnmount(() => {
       type="button"
       class="select-trigger"
       :class="[`is-${props.size}`, { 'is-open': open }]"
-      :disabled="props.disabled"
+      :disabled="isDisabled"
       role="combobox"
       :aria-label="props.ariaLabel"
       aria-haspopup="listbox"
       :aria-expanded="open"
       :aria-controls="open ? listboxId : undefined"
       :aria-activedescendant="activeDescendantId"
+      v-tooltip="{ text: props.title, reason: props.reason }"
       @click="toggle"
       @keydown="onKeydown"
     >

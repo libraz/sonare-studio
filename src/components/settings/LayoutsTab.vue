@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog, promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type LayoutBindings, localizedLayoutName } from '@/ui/settings/layouts';
 
@@ -28,6 +29,16 @@ const { t } = useI18n();
 
 const newLayoutName = ref('');
 const layoutError = ref('');
+
+const applyBlocked = computed(() =>
+  firstBlock([props.layoutBindings === null, t.value.settings.layouts.reasons.noWorkspace]),
+);
+const saveBlocked = computed(() =>
+  firstBlock(applyBlocked.value, [
+    newLayoutName.value.trim() === '',
+    t.value.settings.layouts.enterName,
+  ]),
+);
 
 function applyLayout(name: string): void {
   if (props.layoutBindings === null) return;
@@ -107,7 +118,8 @@ function renameLayout(name: string): void {
             <button
               type="button"
               class="small"
-              :disabled="props.layoutBindings === null"
+              :disabled="!!applyBlocked"
+              v-tooltip="{ reason: applyBlocked }"
               @click="applyLayout(layout.name)"
             >
               {{ t.settings.layouts.apply }}
@@ -135,7 +147,8 @@ function renameLayout(name: string): void {
             <button
               type="button"
               class="small"
-              :disabled="props.layoutBindings === null"
+              :disabled="!!applyBlocked"
+              v-tooltip="{ reason: applyBlocked }"
               @click="applyLayout(layout.name)"
             >
               {{ t.settings.layouts.apply }}
@@ -161,7 +174,8 @@ function renameLayout(name: string): void {
       />
       <button
         type="button"
-        :disabled="props.layoutBindings === null"
+        :disabled="!!saveBlocked"
+        v-tooltip="{ text: t.settings.layouts.saveCurrentTitle, reason: saveBlocked }"
         @click="saveCurrentLayout"
       >
         {{ t.settings.layouts.saveCurrent }}

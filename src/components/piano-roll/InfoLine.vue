@@ -4,6 +4,7 @@ import { useNoteNames } from '@/composables/useNoteNames';
 import { updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
 /**
@@ -31,6 +32,14 @@ const anchorNote = computed<EditorNote | null>(() => {
 });
 
 const selectionCount = computed(() => store.selection.size);
+
+/** One gate for the whole line: every field edits the same selection. */
+const blocked = computed(() =>
+  firstBlock(
+    [anchorNote.value === null, t.value.reasons.noNoteSelection],
+    [store.activeTrack?.frozen !== undefined, t.value.reasons.trackFrozen],
+  ),
+);
 
 /** Clamps a value into [min, max]. */
 function clamp(value: number, min: number, max: number): number {
@@ -173,8 +182,8 @@ function buildUpdates(key: FieldKey, value: number, anchor: EditorNote): EditorN
 function onCommit(field: FieldDef, event: Event): void {
   const input = event.target as HTMLInputElement;
   const anchor = anchorNote.value;
-  if (!anchor) {
-    input.value = '';
+  if (!anchor || blocked.value) {
+    input.value = anchor ? field.display(anchor) : '';
     return;
   }
   const parsed = field.parse(input.value);
@@ -206,7 +215,12 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 
 <template>
   <div class="info-line" role="group" :aria-label="t.shell.pianoRoll.info.label">
-    <label v-for="field in fields" :key="field.key" class="info-line__field" v-tooltip="field.title">
+    <label
+      v-for="field in fields"
+      :key="field.key"
+      class="info-line__field"
+      v-tooltip="{ text: field.title, reason: blocked }"
+    >
       <span class="info-line__label">{{ field.label }}</span>
       <input
         class="info-line__input"
@@ -214,7 +228,7 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
         spellcheck="false"
         autocomplete="off"
         :value="anchorNote ? field.display(anchorNote) : ''"
-        :disabled="!anchorNote"
+        :disabled="!!blocked"
         :placeholder="anchorNote ? '' : '—'"
         :aria-label="field.title"
         @change="onCommit(field, $event)"
@@ -223,7 +237,8 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
         @keydown.stop
       />
     </label>
-    <span v-if="selectionCount > 1" class="info-line__count">
+    <span v-if="blocked" class="info-line__count">{{ blocked }}</span>
+    <span v-else-if="selectionCount > 1" class="info-line__count">
       {{ formatMessage(t.shell.pianoRoll.info.count, { count: selectionCount }) }}
     </span>
   </div>
@@ -234,7 +249,10 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
   display: flex;
   align-items: center;
   gap: var(--sp-5);
+  min-width: 0;
   padding: var(--sp-2) var(--sp-4);
+  overflow-x: auto;
+  scrollbar-width: none;
   background: var(--surface-3);
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
@@ -245,6 +263,7 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 .info-line__field {
   display: flex;
   align-items: center;
+  flex: none;
   gap: var(--sp-2);
 }
 
@@ -256,7 +275,7 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 }
 
 .info-line__input {
-  width: 4.5rem;
+  width: 4rem;
   padding: var(--sp-1) var(--sp-2);
   background: var(--surface-inset);
   border: none;
@@ -279,6 +298,10 @@ function onEscape(field: FieldDef, event: KeyboardEvent): void {
 
 .info-line__count {
   margin-left: auto;
+  flex: none;
   color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 </style>

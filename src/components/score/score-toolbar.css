@@ -1,7 +1,7 @@
 .score-toolbar {
   display: flex;
   align-items: center;
-  gap: var(--sp-4);
+  gap: var(--sp-3) var(--sp-4);
   padding: var(--sp-3) var(--sp-5);
   background: var(--surface-1);
   border-bottom: 1px solid var(--border-strong);
@@ -77,4 +77,55 @@
 
 .layout-host {
   position: relative;
+}
+
+/* Related controls sit tight; groups are split by a hairline instead of gaps. */
+.tb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.tb-sep {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+
+/* One-shot actions carry a hairline face; borderless pills are on/off settings. */
+.score-toolbar .tb-action {
+  padding: var(--sp-1) var(--sp-4);
+  font-size: var(--fs-xs);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+  white-space: nowrap;
+}
+
+.score-toolbar .tb-action:hover:not(:disabled) {
+  background: var(--control-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.score-toolbar .tb-action:disabled {
+  background: transparent;
+}
+
+/* Popover trigger: label plus caret, lit while its popover is open. */
+.tb-menu {
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-sm);
+}
+
+.tb-menu.is-open {
+  background: var(--surface-selection);
+  color: var(--accent);
+}
+
+.tb-caret {
+  opacity: 0.7;
 }

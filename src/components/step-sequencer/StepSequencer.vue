@@ -2,12 +2,14 @@
 import { deriveSeed } from '@libraz/libcantus';
 import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
 import { audibleMidiSourceWindow, midiTimelinePpqToSource } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
+import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   bakePattern,
@@ -171,7 +173,16 @@ const contentReadOnly = computed(() => {
     clip !== null && store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined
   );
 });
-const canApplyToClip = computed(() => canTargetClip.value && !contentReadOnly.value);
+const pullBlocked = computed(() => firstBlock([!canTargetClip.value, t.value.reasons.noMidiClip]));
+const applyBlocked = computed(() =>
+  firstBlock(pullBlocked.value, [contentReadOnly.value, t.value.reasons.trackFrozen]),
+);
+const undoBlocked = computed(() =>
+  firstBlock([undoStack.value.length === 0, t.value.reasons.nothingToUndo]),
+);
+const redoBlocked = computed(() =>
+  firstBlock([redoStack.value.length === 0, t.value.reasons.nothingToRedo]),
+);
 
 const selectedRowSteps = computed(() => pattern.value.rows[selectedRow.value]?.steps ?? []);
 const selectedRowMuted = computed(() => pattern.value.rows[selectedRow.value]?.muted === true);
@@ -467,7 +478,8 @@ defineExpose({
           type="button"
           class="tool-button"
           data-test="pattern-undo"
-          :disabled="undoStack.length === 0"
+          :disabled="!!undoBlocked"
+          v-tooltip="{ text: t.shell.stepSequencer.undoTitle, reason: undoBlocked }"
           @click="undoPattern"
         >
           {{ t.shortcuts.actions['edit.undo'] }}
@@ -476,7 +488,8 @@ defineExpose({
           type="button"
           class="tool-button"
           data-test="pattern-redo"
-          :disabled="redoStack.length === 0"
+          :disabled="!!redoBlocked"
+          v-tooltip="{ text: t.shell.stepSequencer.redoTitle, reason: redoBlocked }"
           @click="redoPattern"
         >
           {{ t.shortcuts.actions['edit.redo'] }}
@@ -488,6 +501,7 @@ defineExpose({
           :model-value="pattern.mode"
           :options="MODE_OPTIONS"
           :aria-label="t.shell.stepSequencer.rowMode"
+          :title="t.shell.stepSequencer.rowModeTitle"
           size="sm"
           @change="setMode"
         />
@@ -499,16 +513,16 @@ defineExpose({
           max="115"
           :value="rootPitch"
           :aria-label="t.shell.stepSequencer.rootPitch"
+          v-tooltip="t.shell.stepSequencer.rootPitchTitle"
           @change="onRootPitchChange"
         />
-      </div>
-      <div class="tool-group">
-        <label class="tool-label">{{ t.shell.stepSequencer.steps }}</label>
+        <span class="tool-label">{{ t.shell.stepSequencer.steps }}</span>
         <SelectMenu
           class="tool-select"
           :model-value="pattern.stepCount"
           :options="stepCountOptions"
           :aria-label="t.shell.stepSequencer.patternLength"
+          :title="t.shell.stepSequencer.patternLengthTitle"
           size="sm"
           @change="onStepCountChange"
         />
@@ -517,32 +531,47 @@ defineExpose({
           :model-value="pattern.resolution"
           :options="resolutionOptions"
           :aria-label="t.shell.stepSequencer.stepResolution"
+          :title="t.shell.stepSequencer.stepResolutionTitle"
           size="sm"
           @change="onResolutionChange"
         />
-        <label class="tool-label">{{ t.shell.stepSequencer.swing }}</label>
-        <input
-          class="tool-number"
-          type="number"
-          min="0"
-          max="100"
-          :value="pattern.swing"
-          :aria-label="t.shell.stepSequencer.swingPercent"
-          @change="onSwingChange"
-        />
+        <label class="tool-label" v-tooltip="t.shell.stepSequencer.swingTitle">
+          {{ t.shell.stepSequencer.swing }}
+          <input
+            class="tool-number"
+            type="number"
+            min="0"
+            max="100"
+            :value="pattern.swing"
+            :aria-label="t.shell.stepSequencer.swingPercent"
+            @change="onSwingChange"
+          />
+        </label>
       </div>
       <div class="tool-group">
-        <button type="button" class="tool-button" data-test="row-mute" @click="toggleRowMute">
-          {{ selectedRowMuted ? t.shell.stepSequencer.unmute : t.shell.stepSequencer.mute }}
-        </button>
-        <button type="button" class="tool-button" data-test="row-clear" @click="clearSelectedRow">
+        <ToggleButton
+          :model-value="selectedRowMuted"
+          size="sm"
+          data-test="row-mute"
+          :label="t.shell.stepSequencer.mute"
+          :title="t.shell.stepSequencer.muteTitle"
+          @update:model-value="toggleRowMute"
+        />
+        <button
+          type="button"
+          class="tool-button"
+          data-test="row-clear"
+          v-tooltip="t.shell.stepSequencer.clearTitle"
+          @click="clearSelectedRow"
+        >
           {{ t.shell.stepSequencer.clear }}
         </button>
         <button
           type="button"
-          class="tool-button"
+          class="tool-button tool-icon"
           data-test="row-shift-left"
           :aria-label="t.shell.stepSequencer.shiftLeft"
+          v-tooltip="t.shell.stepSequencer.shiftLeft"
           @click="shiftSelectedRow(-1)"
         >
           <svg class="tool-glyph" viewBox="0 0 16 16" aria-hidden="true">
@@ -551,9 +580,10 @@ defineExpose({
         </button>
         <button
           type="button"
-          class="tool-button"
+          class="tool-button tool-icon"
           data-test="row-shift-right"
           :aria-label="t.shell.stepSequencer.shiftRight"
+          v-tooltip="t.shell.stepSequencer.shiftRight"
           @click="shiftSelectedRow(1)"
         >
           <svg class="tool-glyph" viewBox="0 0 16 16" aria-hidden="true">
@@ -563,11 +593,18 @@ defineExpose({
         <div class="euclid-anchor">
           <button
             type="button"
-            class="tool-button"
+            class="tool-menu"
+            :class="{ 'is-open': euclidOpen }"
             data-test="euclid-toggle"
+            aria-haspopup="dialog"
+            :aria-expanded="euclidOpen"
+            v-tooltip="t.shell.stepSequencer.euclidTitle"
             @click="euclidOpen = !euclidOpen"
           >
             {{ t.shell.stepSequencer.euclid }}
+            <svg class="tool-caret" viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">
+              <path d="M2 3.5l3 3 3-3" />
+            </svg>
           </button>
           <Transition name="pop">
           <div v-if="euclidOpen" class="euclid-popover">
@@ -599,36 +636,56 @@ defineExpose({
         </div>
       </div>
       <div class="tool-group">
-        <label class="tool-label">{{ t.shell.stepSequencer.seed }}</label>
-        <input
-          class="tool-number"
-          type="number"
-          :value="pattern.seed"
-          :aria-label="t.shell.stepSequencer.randomSeed"
-          @change="onSeedChange"
-        />
-        <input
-          v-model.number="jitterAmount"
-          class="tool-number"
-          type="number"
-          min="0"
-          max="64"
-          :aria-label="t.shell.stepSequencer.velocityJitter"
-        />
-        <button type="button" class="tool-button" data-test="jitter" @click="applyJitter">
-          {{ t.shell.stepSequencer.jitter }}
-        </button>
-        <input
-          v-model.number="fillDensity"
-          class="tool-number"
-          type="number"
-          min="0"
-          max="100"
-          :aria-label="t.shell.stepSequencer.fillDensity"
-        />
-        <button type="button" class="tool-button" data-test="fill" @click="applyFill">
-          {{ t.shell.stepSequencer.fill }}
-        </button>
+        <label class="tool-label" v-tooltip="t.shell.stepSequencer.seedTitle">
+          {{ t.shell.stepSequencer.seed }}
+          <input
+            class="tool-number"
+            type="number"
+            :value="pattern.seed"
+            :aria-label="t.shell.stepSequencer.randomSeed"
+            @change="onSeedChange"
+          />
+        </label>
+        <span class="tool-pair">
+          <input
+            v-model.number="jitterAmount"
+            class="tool-number tool-number-short"
+            type="number"
+            min="0"
+            max="64"
+            :aria-label="t.shell.stepSequencer.velocityJitter"
+            v-tooltip="t.shell.stepSequencer.velocityJitter"
+          />
+          <button
+            type="button"
+            class="tool-button"
+            data-test="jitter"
+            v-tooltip="t.shell.stepSequencer.jitterTitle"
+            @click="applyJitter"
+          >
+            {{ t.shell.stepSequencer.jitter }}
+          </button>
+        </span>
+        <span class="tool-pair">
+          <input
+            v-model.number="fillDensity"
+            class="tool-number tool-number-short"
+            type="number"
+            min="0"
+            max="100"
+            :aria-label="t.shell.stepSequencer.fillDensity"
+            v-tooltip="t.shell.stepSequencer.fillDensity"
+          />
+          <button
+            type="button"
+            class="tool-button"
+            data-test="fill"
+            v-tooltip="t.shell.stepSequencer.fillTitle"
+            @click="applyFill"
+          >
+            {{ t.shell.stepSequencer.fill }}
+          </button>
+        </span>
       </div>
       <div class="tool-group tool-group-apply">
         <SelectMenu
@@ -636,13 +693,15 @@ defineExpose({
           class="tool-select"
           :options="overflowPolicyOptions"
           :aria-label="t.shell.stepSequencer.overflow.policy"
+          :title="t.shell.stepSequencer.overflow.policyTitle"
           size="sm"
         />
         <button
           type="button"
           class="tool-button primary"
           data-test="apply"
-          :disabled="!canApplyToClip"
+          :disabled="!!applyBlocked"
+          v-tooltip="{ text: t.shell.stepSequencer.applyToClipTitle, reason: applyBlocked }"
           @click="applyToClip"
         >
           {{ t.shell.stepSequencer.applyToClip }}
@@ -651,7 +710,8 @@ defineExpose({
           type="button"
           class="tool-button"
           data-test="pull"
-          :disabled="!canTargetClip"
+          :disabled="!!pullBlocked"
+          v-tooltip="{ text: t.shell.stepSequencer.pullFromClipTitle, reason: pullBlocked }"
           @click="pullFromClip"
         >
           {{ t.shell.stepSequencer.pullFromClip }}
@@ -690,6 +750,7 @@ defineExpose({
         :class="{ 'param-tab-active': paramTab === kind }"
         :aria-selected="paramTab === kind"
         :data-test="`param-tab-${kind}`"
+        v-tooltip="t.shell.stepSequencer.accessibility.paramNames[kind]"
         @click="paramTab = kind"
       >
         {{ t.shell.stepSequencer.params[kind] }}
@@ -742,8 +803,20 @@ defineExpose({
   gap: var(--sp-2);
 }
 
+.tool-group + .tool-group {
+  padding-left: var(--sp-5);
+  box-shadow: inset 1px 0 0 var(--border);
+}
+
 .tool-group-apply {
   margin-left: auto;
+}
+
+/* A number field and the action that consumes it read as one unit. */
+.tool-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
 }
 
 .tool-label {
@@ -766,6 +839,10 @@ defineExpose({
   width: 3.5rem;
 }
 
+.tool-number-short {
+  width: 2.75rem;
+}
+
 .tool-number:focus {
   outline: none;
   box-shadow: inset 0 0 0 1px var(--accent), var(--inset-well), var(--ring);
@@ -781,7 +858,7 @@ defineExpose({
   background: var(--surface-3);
   color: var(--text-2);
   font: inherit;
-  box-shadow: var(--control-lift);
+  box-shadow: inset 0 0 0 1px var(--border);
   cursor: pointer;
   white-space: nowrap;
   transition: background var(--dur-1) var(--ease-out);
@@ -789,12 +866,43 @@ defineExpose({
 
 .tool-button:hover:not(:disabled) {
   background: var(--surface-4);
-  box-shadow: var(--control-lift-hover);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .tool-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Popover trigger: borderless like a toggle, with a caret; lit while open. */
+.tool-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  white-space: nowrap;
+}
+
+.tool-menu.is-open {
+  background: var(--surface-selection);
+  color: var(--accent);
+}
+
+.tool-caret {
+  width: 8px;
+  height: 8px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.6;
+}
+
+.tool-icon {
+  padding-inline: var(--sp-2);
 }
 
 /* Crisp inline chevron for the row-shift buttons; inherits the label color. */

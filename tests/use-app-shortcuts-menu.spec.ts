@@ -288,7 +288,7 @@ describe('useAppShortcutsMenu', () => {
 
     const transportMenu = menu.menuBarModel.value.find((entry) => entry.id === 'transport');
     const recordItem = transportMenu?.items.find((item) => item.id === 'transport.toggleRecord');
-    expect(recordItem?.disabled).toBe(false);
+    expect(recordItem?.disabledReason).toBeNull();
     expect(menu.commandPaletteItems.value.map((item) => item.id)).toContain(
       'transport.transport.toggleRecord',
     );
@@ -365,14 +365,14 @@ describe('useAppShortcutsMenu', () => {
       menu.menuBarModel.value.find((entry) => entry.id === 'edit')?.items ?? [];
     const item = (id: string) => editItems().find((entry) => entry.id === id);
 
-    expect(item('edit.copy')?.disabled).toBe(false);
-    expect(item('edit.cut')?.disabled).toBe(false);
-    expect(item('edit.paste')?.disabled).toBe(true);
+    expect(item('edit.copy')?.disabledReason).toBeNull();
+    expect(item('edit.cut')?.disabledReason).toBeNull();
+    expect(item('edit.paste')?.disabledReason).toBeTruthy();
     item('edit.copy')?.run?.();
     item('edit.cut')?.run?.();
 
     expect(store.activeClip).toBeNull();
-    expect(item('edit.paste')?.disabled).toBe(false);
+    expect(item('edit.paste')?.disabledReason).toBeNull();
     item('edit.paste')?.run?.();
     expect(store.activeClip?.startPpq).toBe(positionPpq.value);
     store.dispose();

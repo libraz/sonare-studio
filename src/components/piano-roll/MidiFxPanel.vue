@@ -337,7 +337,13 @@ function pct(value: number): string {
       <button type="button" class="fx-btn" @click="reset">
         {{ t.shell.pianoRoll.midiTransform.reset }}
       </button>
-      <button type="button" class="fx-btn fx-btn-primary" :disabled="noop" @click="apply">
+      <button
+        type="button"
+        class="fx-btn fx-btn-primary"
+        :disabled="noop"
+        v-tooltip="{ reason: noop ? t.shell.pianoRoll.midiTransform.noopReason : null }"
+        @click="apply"
+      >
         {{ t.shell.pianoRoll.midiTransform.apply }}
       </button>
     </footer>

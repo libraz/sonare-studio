@@ -338,6 +338,7 @@ describe('SettingsDialog', () => {
     if (!nameInput) throw new Error('layout name input not found');
     nameInput.value = 'Keep me';
     nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    await nextTick();
     q('.layout-save button')?.click();
     await nextTick();
 
