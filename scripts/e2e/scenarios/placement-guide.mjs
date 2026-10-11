@@ -451,7 +451,7 @@ export async function run(ctx) {
   // (the roll may have wheel-scrolled since it was first found) and hover
   // well clear of its row so the crosshair guide line — still drawn
   // regardless of the toggle — cannot land in a sampled pixel.
-  await page.click('.roll-toolbar .toggle-pill:has-text("Placement")');
+  await togglePlacementGuide(page);
   box = await canvas.boundingBox();
   const g4MelodyRecheck = await locateRow(page, box, cellX, 67);
   const awayY =
@@ -469,7 +469,7 @@ export async function run(ctx) {
   }
 
   // Leave the shared editor state as found.
-  await page.click('.roll-toolbar .toggle-pill:has-text("Placement")');
+  await togglePlacementGuide(page);
   await page.click('.select-trigger[aria-label="Snap"]');
   await page.click('.select-list [role="option"][data-value="16"]');
   await page.click('.tool-palette button[aria-label="Select tool"]');
@@ -483,4 +483,12 @@ export async function run(ctx) {
     finalArrangeBox.y + finalArrangeBox.height / 2,
   );
   await page.mouse.wheel(0, -100000);
+}
+
+/** Flips the Placement toggle, which lives in the piano-roll toolbar's View popover. */
+async function togglePlacementGuide(page) {
+  await page.click('.roll-toolbar .tb-menu:has-text("View")');
+  await page.click('.view-popover .toggle-pill:has-text("Placement")');
+  await page.click('.roll-toolbar .tb-menu:has-text("View")');
+  await page.locator('.view-popover').waitFor({ state: 'hidden' });
 }

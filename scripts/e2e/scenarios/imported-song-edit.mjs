@@ -119,13 +119,27 @@ async function canvasRows(page) {
   });
 }
 
+/** Sets the Row tint toggle, which lives in the View popover, then closes the popover. */
+async function setRowTint(page, on) {
+  const view = page.locator('.roll-toolbar .tb-menu').filter({ hasText: /^\s*View\s*$/ });
+  await view.click();
+  const toggle = page.locator('.view-popover button[aria-label="Row tint"]');
+  // Drum tracks have no harmony, so the toggle is disabled there and left as is.
+  if (
+    (await toggle.isEnabled()) &&
+    ((await toggle.getAttribute('aria-pressed')) === 'true') !== on
+  ) {
+    await toggle.click();
+  }
+  await view.click();
+  await page.locator('.view-popover').waitFor({ state: 'hidden' });
+  await page.waitForTimeout(120);
+}
+
 async function guidanceDeltas(page) {
-  const toggle = page.locator('.roll-toolbar button[aria-label="Row tint"]');
-  if ((await toggle.getAttribute('aria-pressed')) === 'true') await toggle.click();
-  await page.waitForTimeout(120);
+  await setRowTint(page, false);
   const off = await canvasRows(page);
-  await toggle.click();
-  await page.waitForTimeout(120);
+  await setRowTint(page, true);
   const on = await canvasRows(page);
   return on.map((row, index) => row.map((value, channel) => value - off[index][channel]));
 }
@@ -181,8 +195,8 @@ export async function run({ page, baseUrl, fail }) {
   console.info(`estimated chords from imported parts: ${estimated.join('–')}`);
 
   await page.click('.dock-tabs button:has-text("Piano Roll")');
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').first().click();
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').nth(1).click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').first().click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').nth(1).click();
   const leadDeltas = await guidanceDeltas(page);
   const changed = leadDeltas.filter(
     ([red, green, blue]) => Math.abs(red) + Math.abs(green) + Math.abs(blue) >= 5,
@@ -223,8 +237,8 @@ export async function run({ page, baseUrl, fail }) {
     .locator('.legend-chip')
     .filter({ hasText: /^Drums$/ })
     .click();
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').first().click();
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').nth(1).click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').first().click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').nth(1).click();
   const drumDeltas = await guidanceDeltas(page);
   if (
     drumDeltas.some(([red, green, blue]) => Math.abs(red) + Math.abs(green) + Math.abs(blue) >= 5)

@@ -294,7 +294,7 @@ async function importMelody(page) {
 
 async function transcribeMelody(page, sourceClip) {
   await selectClip(page, sourceClip.id);
-  const processButton = page.locator('.arrangement-process-controls button', {
+  const processButton = page.locator('.arrangement-process-group[aria-label="Audio clip"] button', {
     hasText: /^To MIDI$/,
   });
   await processButton.waitFor({ state: 'visible' });
@@ -339,7 +339,7 @@ async function openPianoRoll(page, clipId) {
     .filter({ hasText: /^Piano Roll$/ })
     .click();
   await page.locator('.note-grid canvas').first().waitFor({ state: 'visible', timeout: 15000 });
-  const fitNotes = page.locator('.zoom-cluster .fit-btn').nth(1);
+  const fitNotes = page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').nth(1);
   if (await fitNotes.isVisible()) await fitNotes.click();
 }
 

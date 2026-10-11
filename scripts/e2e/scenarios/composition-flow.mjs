@@ -78,7 +78,7 @@ export async function run({ page, baseUrl, fail }) {
   // A fresh project can inherit the prior workspace's scroll and tool. Set
   // the editor up as a returning user would before drawing the melody.
   await page.locator('.tool-palette .tool-button').nth(1).click();
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').first().click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').first().click();
   const canvas = page.locator('.note-grid canvas').first();
   await canvas.waitFor({ state: 'visible' });
   const box = await canvas.boundingBox();

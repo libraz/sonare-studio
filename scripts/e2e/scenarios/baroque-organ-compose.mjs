@@ -160,8 +160,11 @@ export async function run({ page, baseUrl, fail }) {
     // switch and note explanation must work on the organ's own voice tracks.
     await page.locator('.dock-tabs button:has-text("Piano Roll")').click();
     await page.locator('.legend-chip').filter({ hasText: 'Manual I Alto' }).click();
-    await page.locator('.zoom-cluster .fit-pair .fit-btn').nth(1).click();
-    await page.locator('.fx-toggle[aria-expanded]').last().click();
+    await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').nth(1).click();
+    await page
+      .locator('.roll-toolbar .tb-menu')
+      .filter({ hasText: /^\s*Guide\s*$/ })
+      .click();
     await page.locator('.guidance-legend').waitFor({ state: 'visible' });
     await page
       .locator('.guidance-legend [role="radiogroup"]')

@@ -104,7 +104,10 @@ async function cancelEditedAudioPrompt(page) {
 }
 
 async function reverseAndCancelAutoApply(page, expectedHistoryLength) {
-  const reverse = page.getByRole('button', { name: 'Reverse', exact: true });
+  await page.getByRole('tab', { name: 'Edit', exact: true }).click();
+  const reverse = page
+    .getByRole('tabpanel', { name: 'Edit', exact: true })
+    .getByRole('button', { name: 'Reverse', exact: true });
   await reverse.click();
   await page.waitForFunction(
     (count) => document.querySelectorAll('.sample-editor .history-entry').length === count + 1,

@@ -60,7 +60,7 @@ async function importChord(page) {
 
 async function openTranscribe(page, clipId) {
   await page.evaluate((id) => window.__sonareDebug.selectClip(id), clipId);
-  const processButton = page.locator('.arrangement-process-controls button', {
+  const processButton = page.locator('.arrangement-process-group[aria-label="Audio clip"] button', {
     hasText: /^To MIDI$/,
   });
   await processButton.waitFor({ state: 'visible' });

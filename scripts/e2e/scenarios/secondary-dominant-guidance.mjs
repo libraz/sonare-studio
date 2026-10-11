@@ -63,10 +63,14 @@ export async function run({ page, fail }) {
     .locator('.legend-chip')
     .filter({ hasText: /^Lead$/ })
     .click();
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').first().click();
-  await page.locator('.zoom-cluster .fit-pair .fit-btn').nth(1).click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').first().click();
+  await page.locator('.roll-toolbar .tb-segmented[role="group"] .tb-seg').nth(1).click();
+  const view = page.locator('.roll-toolbar .tb-menu').filter({ hasText: /^\s*View\s*$/ });
+  await view.click();
   await page.getByRole('combobox', { name: 'Ghost note overlay scope' }).click();
   await page.getByRole('option', { name: 'No ghosts' }).click();
+  await view.click();
+  await page.locator('.view-popover').waitFor({ state: 'hidden' });
   await page.locator('.tool-palette .tool-button').first().click();
   const originalCount = await page.evaluate(() => window.__sonareDebug.activeNotes().length);
   const oldNotePoint = await pointForNote(page, 64, 6.3);

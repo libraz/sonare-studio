@@ -48,14 +48,16 @@ async function editSample(page) {
   await page.evaluate((id) => window.__sonareDebug.selectClip(id), clip.id);
   await page.getByRole('tab', { name: 'Sample', exact: true }).click();
   await page.locator('.sample-editor .wave-wrap').waitFor();
+  await page.getByRole('tab', { name: 'Edit', exact: true }).click();
+  const editPanel = page.getByRole('tabpanel', { name: 'Edit', exact: true });
   for (const [index, operation] of ['reverse', 'normalize'].entries()) {
     const button =
       operation === 'reverse'
-        ? page.getByRole('button', { name: 'Reverse', exact: true })
-        : page
-            .locator('.sample-editor .ops > button')
-            .filter({ hasText: /^Apply$/ })
-            .nth(1);
+        ? editPanel.getByRole('button', { name: 'Reverse', exact: true })
+        : editPanel
+            .locator('.op-cluster')
+            .filter({ hasText: 'Normalize' })
+            .getByRole('button', { name: 'Apply', exact: true });
     await button.click();
     await page.waitForFunction(
       (count) => document.querySelectorAll('.sample-editor .history-entry').length === count,

@@ -63,33 +63,23 @@ export async function run(ctx) {
   const reductionDb = page.locator(
     '.mastering-panel [data-preset-control="repair.denoise.reductionDb"] input',
   );
-  await reductionDb.fill('80');
-  await reductionDb.press('Tab');
-  if (await denoiseEnabled.isChecked()) {
-    fail('editing denoise reduction implicitly enabled the stage');
-  }
-  const presetReductionOnly = await page.evaluate(
-    (range) => window.__sonareDebug.exportProbe(true, range),
-    presetProbeRange,
-  );
-  if (presetBefore.hash !== presetReductionOnly.hash) {
-    fail(
-      `disabled denoise reduction changed rendered WAV: ${presetBefore.hash} vs ${presetReductionOnly.hash}`,
-    );
-  } else {
-    console.info('disabled denoise reduction kept the rendered WAV unchanged');
+  // The reduction field is gated on the stage switch, so it cannot be edited while off.
+  if (!(await reductionDb.isDisabled())) {
+    fail('denoise reduction is editable while the denoise stage is off');
   }
   await denoiseEnabled.check();
   if (!(await denoiseEnabled.isChecked())) fail('denoise enable control did not persist');
+  await reductionDb.fill('80');
+  await reductionDb.press('Tab');
   const presetEnabled = await page.evaluate(
     (range) => window.__sonareDebug.exportProbe(true, range),
     presetProbeRange,
   );
-  if (presetEnabled.hash === presetReductionOnly.hash) {
+  if (presetEnabled.hash === presetBefore.hash) {
     fail(`enabling denoise did not change rendered WAV: ${presetEnabled.hash}`);
   } else {
     console.info(
-      `denoise changed rendered WAV after enable: ${presetReductionOnly.hash} vs ${presetEnabled.hash}`,
+      `denoise changed rendered WAV after enable: ${presetBefore.hash} vs ${presetEnabled.hash}`,
     );
   }
   // Resetting the stage switch must not let the remaining reduction override
@@ -106,10 +96,12 @@ export async function run(ctx) {
     (range) => window.__sonareDebug.exportProbe(true, range),
     presetProbeRange,
   );
-  if (presetEnableReset.hash !== presetReductionOnly.hash) {
+  if (presetEnableReset.hash !== presetBefore.hash) {
     fail(
-      `resetting denoise enable left the stage active: ${presetReductionOnly.hash} vs ${presetEnableReset.hash}`,
+      `resetting denoise enable left the stage active: ${presetBefore.hash} vs ${presetEnableReset.hash}`,
     );
+  } else {
+    console.info('disabled denoise with a stored reduction kept the rendered WAV unchanged');
   }
   await denoiseEnabled.check();
   await targetLufs.fill('-9');
@@ -121,13 +113,13 @@ export async function run(ctx) {
   }
   if (
     presetBefore.riff !== 'RIFF' ||
-    presetReductionOnly.riff !== 'RIFF' ||
+    presetEnableReset.riff !== 'RIFF' ||
     presetEnabled.riff !== 'RIFF' ||
     presetBefore.totalFrames <= 0 ||
     !(presetBefore.peakDb > -40)
   ) {
     fail(
-      `preset controls did not produce an audible WAV: ${JSON.stringify({ presetBefore, presetReductionOnly, presetEnabled })}`,
+      `preset controls did not produce an audible WAV: ${JSON.stringify({ presetBefore, presetEnableReset, presetEnabled })}`,
     );
   }
   await page.click('.dock-tabs button:has-text("Mixer")');
