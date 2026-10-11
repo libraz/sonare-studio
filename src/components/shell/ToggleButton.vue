@@ -9,6 +9,8 @@
  * Exposes `aria-pressed` for assistive tech.
  */
 
+import { computed } from 'vue';
+
 const model = defineModel<boolean>({ required: true });
 
 const props = withDefaults(
@@ -17,19 +19,25 @@ const props = withDefaults(
     label?: string;
     /** Accessible label for the trigger (defaults to `label`). */
     ariaLabel?: string;
-    /** Tooltip/title text for the trigger. */
+    /** Tooltip text for the trigger. */
     title?: string;
+    /** Shortcut action id whose key binding the tooltip shows. */
+    shortcut?: string;
     /** Disable the control. */
     disabled?: boolean;
+    /** Why the toggle is unavailable; a non-empty reason also disables it. */
+    reason?: string | null;
     /** Compact height for dense toolbars. */
     size?: 'sm' | 'md';
   }>(),
   { disabled: false, size: 'md' },
 );
 
+const isDisabled = computed(() => props.disabled || !!props.reason);
+
 /** Flips the bound flag unless disabled. */
 function toggle(): void {
-  if (props.disabled) return;
+  if (isDisabled.value) return;
   model.value = !model.value;
 }
 </script>
@@ -39,10 +47,10 @@ function toggle(): void {
     type="button"
     class="toggle-pill"
     :class="[`is-${props.size}`, { 'is-on': model }]"
-    :disabled="props.disabled"
+    :disabled="isDisabled"
     :aria-pressed="model"
     :aria-label="props.ariaLabel ?? props.label"
-    :title="props.title"
+    v-tooltip="{ text: props.title, shortcut: props.shortcut, reason: props.reason }"
     @click="toggle"
   >
     <span class="toggle-label"><slot>{{ props.label }}</slot></span>

@@ -36,3 +36,35 @@
   opacity: 1;
   transform: translateY(0) scale(1);
 }
+
+.app-tooltip__text,
+.app-tooltip__reason {
+  display: block;
+}
+
+.app-tooltip__keys {
+  display: inline-block;
+  margin-inline-start: var(--sp-1);
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: var(--control-bg);
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: inherit;
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+/* Why the control is unavailable: quieter than the label, separated by a hairline. */
+.app-tooltip__reason {
+  color: var(--text-2);
+  font-weight: var(--fw-normal);
+}
+
+.app-tooltip__text + .app-tooltip__reason {
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-1);
+  border-top: 1px solid var(--border);
+}

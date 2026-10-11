@@ -174,8 +174,8 @@ describe('ChordLane harmonic annotation', () => {
     const labels = wrapper.findAll('.key-span-label');
     expect(labels[0].classes()).not.toContain('key-span-moved');
     expect(labels[1].classes()).toContain('key-span-moved');
-    // The tooltip directive publishes its text as the anchor's accessible name.
-    const title = labels[1].attributes('aria-label') ?? '';
+    // The label is named by its text, so the tooltip publishes as its description.
+    const title = labels[1].attributes('aria-description') ?? '';
     expect(title).toContain('I = IV');
     // The alternatives are the other shared chords, never the one already used.
     expect(title).toContain('iii = vi');
@@ -195,7 +195,9 @@ describe('ChordLane harmonic annotation', () => {
     });
 
     const labels = wrapper.findAll('.key-span-label');
-    expect(labels[1].attributes('aria-label')).toContain(MESSAGES.en.harmony.modulation.direct);
+    expect(labels[1].attributes('aria-description')).toContain(
+      MESSAGES.en.harmony.modulation.direct,
+    );
     // No named relation holds between C major and E flat major.
     expect(wrapper.findAll('.key-span-move')).toHaveLength(0);
   });

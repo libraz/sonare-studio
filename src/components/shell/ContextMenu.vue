@@ -9,6 +9,7 @@ import { computed, nextTick, reactive, ref, watch } from 'vue';
 import {
   type ContextMenuItem,
   closeContextMenu,
+  isItemDisabled,
   reportContextMenuError,
   restoreContextMenuFocus,
   useContextMenuState,
@@ -82,7 +83,7 @@ function focusEdge(root: HTMLElement | null, edge: 'first' | 'last'): void {
 }
 
 function run(item: ContextMenuItem): void {
-  if (item.disabled || item.separator || !item.run) return;
+  if (isItemDisabled(item) || item.separator || !item.run) return;
   const action = item.run;
   // An action can synchronously remove the control that opened the menu (for
   // example Delete track). Defer focus restoration until that DOM mutation has
@@ -106,7 +107,7 @@ function hasSubmenu(item: ContextMenuItem): boolean {
 }
 
 async function openSubmenu(item: ContextMenuItem, target: HTMLElement): Promise<void> {
-  if (!hasSubmenu(item) || item.disabled || !item.children) {
+  if (!hasSubmenu(item) || isItemDisabled(item) || !item.children) {
     activeSubmenuId.value = null;
     submenu.open = false;
     submenu.items = [];
@@ -226,7 +227,8 @@ function onMenuKeydown(event: KeyboardEvent, root: HTMLElement | null): void {
           'has-submenu': hasSubmenu(item),
           'submenu-open': activeSubmenuId === item.id,
         }"
-        :disabled="item.disabled"
+        :disabled="isItemDisabled(item)"
+        v-tooltip="{ reason: item.disabledReason, placement: 'end' }"
         :aria-checked="item.checked === undefined ? undefined : item.checked"
         :aria-haspopup="hasSubmenu(item) ? 'menu' : undefined"
         :aria-expanded="hasSubmenu(item) ? activeSubmenuId === item.id : undefined"
@@ -259,7 +261,8 @@ function onMenuKeydown(event: KeyboardEvent, root: HTMLElement | null): void {
           class="context-menu-item"
           :data-menu-item-id="child.id"
           :class="{ danger: child.danger }"
-          :disabled="child.disabled"
+          :disabled="isItemDisabled(child)"
+          v-tooltip="{ reason: child.disabledReason, placement: 'end' }"
           :aria-checked="child.checked === undefined ? undefined : child.checked"
           @click="run(child)"
         >

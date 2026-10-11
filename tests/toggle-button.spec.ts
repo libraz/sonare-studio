@@ -1,6 +1,9 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { vTooltip } from '@/ui/tooltip';
+
+const withTooltip = { global: { directives: { tooltip: vTooltip } } };
 
 describe('ToggleButton', () => {
   it('renders pressed state from v-model and emits the flipped value on click', async () => {
@@ -16,7 +19,7 @@ describe('ToggleButton', () => {
     const button = wrapper.get('button');
     expect(button.text()).toBe('Snap');
     expect(button.attributes('aria-pressed')).toBe('false');
-    expect(button.attributes('title')).toBe('Toggle snapping');
+    expect(button.attributes('title')).toBeUndefined();
 
     await button.trigger('click');
 
@@ -40,6 +43,24 @@ describe('ToggleButton', () => {
     expect(button.attributes('disabled')).toBeDefined();
     expect(button.attributes('aria-pressed')).toBe('true');
     expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+
+  it('disables itself and describes why when a reason is given', async () => {
+    const wrapper = mount(ToggleButton, {
+      ...withTooltip,
+      props: { modelValue: false, label: 'Step input', reason: 'Select a MIDI clip first' },
+    });
+
+    const button = wrapper.get('button');
+    await button.trigger('click');
+
+    expect(button.attributes('disabled')).toBeDefined();
+    expect(button.attributes('aria-description')).toBe('Select a MIDI clip first');
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+
+    await wrapper.setProps({ reason: null });
+    expect(button.attributes('disabled')).toBeUndefined();
+    expect(button.attributes('aria-description')).toBeUndefined();
   });
 
   it('uses slotted text as the visible label when no label prop is supplied', () => {

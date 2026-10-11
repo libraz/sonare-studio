@@ -22,6 +22,8 @@ export interface MenuBarItem {
   checked?: boolean;
   /** Greys the item out and ignores activation. */
   disabled?: boolean;
+  /** Why the item is unavailable, shown on hover; a non-empty reason also disables it. */
+  disabledReason?: string | null;
   /** Renders the item with destructive styling. */
   danger?: boolean;
   /** Renders a divider line instead of an action row. */
@@ -44,9 +46,14 @@ export interface MenuBarMenu {
   items: MenuBarItem[];
 }
 
+/** True when the item is greyed out, by flag or by a stated reason. */
+export function isItemDisabled(item: MenuBarItem): boolean {
+  return Boolean(item.disabled || item.disabledReason);
+}
+
 /** True when an item can receive keyboard focus / be activated. */
 export function isNavigable(item: MenuBarItem): boolean {
-  return !item.separator && !item.heading && !item.disabled && Boolean(item.run);
+  return !item.separator && !item.heading && !isItemDisabled(item) && Boolean(item.run);
 }
 
 /**

@@ -29,10 +29,17 @@ export interface ContextMenuItem {
   children?: ContextMenuItem[];
   /** Greys the item out and ignores clicks. */
   disabled?: boolean;
+  /** Why the item is unavailable, shown on hover; a non-empty reason also disables it. */
+  disabledReason?: string | null;
   /** Renders the item with destructive styling. */
   danger?: boolean;
   /** True renders a divider line instead of an action item. */
   separator?: boolean;
+}
+
+/** True when the item is greyed out, by flag or by a stated reason. */
+export function isItemDisabled(item: ContextMenuItem): boolean {
+  return Boolean(item.disabled || item.disabledReason);
 }
 
 /** Reactive state backing the singleton ContextMenu component. */
