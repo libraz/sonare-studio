@@ -487,6 +487,11 @@ function finiteEngineParams(raw: unknown): Record<string, number> {
   return out;
 }
 
+/** A descriptor's base value in the patch's numeric form: a switch as 0/1. */
+export function engineParamDefault(info: SynthParamInfo): number {
+  return typeof info.default === 'boolean' ? Number(info.default) : info.default;
+}
+
 /** Clamps one value to a descriptor: booleans to 0/1, integers rounded, closed ranges enforced. */
 export function clampEngineParam(info: SynthParamInfo, value: number): number {
   if (info.type === 'boolean') return value !== 0 ? 1 : 0;

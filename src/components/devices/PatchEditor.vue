@@ -15,6 +15,7 @@ import {
   createModMatrixRow,
   createPatchDraft,
   type EnumPatchField,
+  engineParamDefault,
   engineParamStep,
   humanizeEngineParamName,
   MAX_MOD_ROUTINGS,
@@ -231,7 +232,7 @@ function engineIsSet(info: SynthParamInfo): boolean {
 
 /** The patch's value, or the engine's base value while the key is unset. */
 function engineValue(info: SynthParamInfo): number {
-  return draft.value.engineParams?.[info.name] ?? info.default;
+  return draft.value.engineParams?.[info.name] ?? engineParamDefault(info);
 }
 
 function engineLabel(info: SynthParamInfo): string {
@@ -707,7 +708,7 @@ function onKeydown(event: KeyboardEvent): void {
                   formatMessage(t.shell.patchEditor.engineModel.reset, { name: engineLabel(info) }) +
                   ' (' +
                   formatMessage(t.shell.patchEditor.engineModel.base, {
-                    value: formatControlValue(info.default, engineUnit(info)),
+                    value: formatControlValue(engineParamDefault(info), engineUnit(info)),
                   }) +
                   ')'
                 "
