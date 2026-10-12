@@ -340,7 +340,7 @@ async function run(): Promise<void> {
     const detect = tuningMode.value === 'auto';
     const polyphonic = mode.value === 'polyphonic';
     let measured: number | undefined;
-    const newClipId = await transcribeAudioClipToMidi(id, {
+    const outcome = await transcribeAudioClipToMidi(id, {
       polyphonic,
       signal: currentController.signal,
       ...(shortestNote.value !== 'auto' ? { minNoteDivision: shortestNote.value } : {}),
@@ -357,11 +357,11 @@ async function run(): Promise<void> {
         : {}),
     });
     if (currentController.signal.aborted) return;
-    if (newClipId < 0) {
-      error.value = copy.value.noNotes;
+    if (!outcome.created) {
+      error.value = copy.value.refused[outcome.reason];
       return;
     }
-    setActiveClip(newClipId);
+    setActiveClip(outcome.clipId);
     if (detect && measured !== undefined) {
       // Stay open so the measured reference can be read.
       const wasm = await ensureWasm();

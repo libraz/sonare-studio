@@ -41,7 +41,7 @@ describe('transcribeAudioClip', () => {
     const calls: Array<{ samples: Float32Array; sampleRate: number; polyphonic: boolean }> = [];
     const source = asset(1_000, 3_000, 1);
     source.channels[0] = Float32Array.from({ length: 3_000 }, (_, frame) => frame);
-    const notes = await transcribeAudioClip(
+    const { notes } = await transcribeAudioClip(
       { assetId: 'test-audio', startPpq: 4, lengthPpq: 4, sourceOffsetPpq: 1 },
       60,
       {
@@ -92,7 +92,7 @@ describe('transcribeAudioClip', () => {
 
   it('transcribes on the tempo at the clip start and places notes from that grid', async () => {
     let options: { tempoBpm?: number; minNoteDivision?: number; maxPolyphony?: number } | undefined;
-    const notes = await transcribeAudioClip(
+    const { notes } = await transcribeAudioClip(
       { assetId: 'test-audio', startPpq: 4, lengthPpq: 8, sourceOffsetPpq: 0 },
       60,
       {
@@ -128,7 +128,7 @@ describe('transcribeAudioClip', () => {
           sourceSampleRate?: number;
         }
       | undefined;
-    const notes = await transcribeAudioClip(
+    const { notes, peak } = await transcribeAudioClip(
       { assetId: 'test-audio', startPpq: 0, lengthPpq: 1, sourceOffsetPpq: 0 },
       60,
       {
@@ -142,6 +142,8 @@ describe('transcribeAudioClip', () => {
     );
 
     expect(notes).toEqual([]);
+    // The level reported is the detector's own input, so a silent clip is told from an unread one.
+    expect(peak).toBeCloseTo(0.6, 6);
     expect(call?.sampleRate).toBe(48_000);
     expect(call?.samples.length).toBe(96_000);
     expect(call?.sourceSampleRate).toBe(96_000);
@@ -352,7 +354,7 @@ describe('transcribeAudioClip', () => {
     const calls: Array<{ from: number; length: number; referenceHz?: number | 'auto' }> = [];
     const tunings: number[] = [];
 
-    const notes = await transcribeAudioClip(
+    const { notes } = await transcribeAudioClip(
       { assetId: 'test-audio', startPpq: 0, lengthPpq: seconds, sourceOffsetPpq: 0 },
       60,
       {

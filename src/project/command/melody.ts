@@ -1,4 +1,5 @@
 import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
+import { peakDb } from '@/lib/db';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
@@ -31,6 +32,17 @@ import { requireClip } from './utils';
 
 const melodyAnalysisOperations = new OperationGeneration();
 const transcriptionOperations = new OperationGeneration();
+
+/** The detector drops everything under this input level, so an empty result under it means silence. */
+const SILENT_INPUT_DB = -80;
+
+/** Why a transcription created no clip. */
+export type TranscribeClipRefusal = 'silent' | 'no-notes' | 'stale';
+
+/** Outcome of transcribing an audio clip to a new MIDI clip. */
+export type TranscribeClipOutcome =
+  | { created: true; clipId: number }
+  | { created: false; reason: TranscribeClipRefusal };
 
 /** Options for the canonical mono/polyphonic audio-to-MIDI command. */
 export interface TranscribeAudioClipToMidiOptions {
@@ -259,13 +271,12 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
  * immediately before that entry, so replacing the project or editing the
  * source clip while the worker runs cannot create stale MIDI content.
  *
- * @returns The new MIDI clip id, or -1 when no notes were detected or the
- *   operation became stale.
+ * @returns The new MIDI clip id, or why none was created.
  */
 export async function transcribeAudioClipToMidi(
   clipId: number,
   options: TranscribeAudioClipToMidiOptions = {},
-): Promise<number> {
+): Promise<TranscribeClipOutcome> {
   const store = useProjectStore();
   const clip = requireClip(store, clipId);
   if (clipKind(clip) !== 'audio') {
@@ -335,7 +346,7 @@ export async function transcribeAudioClipToMidi(
       maxPolyphony: options.maxPolyphony,
       onTuning: options.onTuning,
     };
-    let notes = await (options.transcribe ?? transcribeAudioClip)(
+    const transcription = await (options.transcribe ?? transcribeAudioClip)(
       clip,
       grid ? tempoSegments[0].bpm : store.tempoBpm,
       {
@@ -352,7 +363,11 @@ export async function transcribeAudioClipToMidi(
     );
     throwIfSignalAborted(linked.signal);
     assertCurrent();
-    if (notes.length === 0) return -1;
+    let notes = transcription.notes;
+    if (notes.length === 0) {
+      const silent = peakDb(transcription.peak) < SILENT_INPUT_DB;
+      return { created: false, reason: silent ? 'silent' : 'no-notes' };
+    }
 
     let startPpq = clip.startPpq;
     if (grid) {
@@ -442,14 +457,16 @@ export async function transcribeAudioClipToMidi(
       ];
       edit(1, () => project.setMidiEvents(newClipId, events));
       store.refresh();
-      return newClipId;
+      return { created: true, clipId: newClipId };
     });
   } catch (error) {
-    if (error instanceof StaleProjectOperationError) return -1;
-    // A superseded project operation is a silent stale result. User aborts
-    // remain errors so the dialog can clear its busy state without surfacing
-    // a misleading analysis failure.
-    if (operation.token.signal.aborted && !options.signal?.aborted) return -1;
+    if (error instanceof StaleProjectOperationError) return { created: false, reason: 'stale' };
+    // A superseded project operation is a stale result. User aborts remain
+    // errors so the dialog can clear its busy state without surfacing a
+    // misleading analysis failure.
+    if (operation.token.signal.aborted && !options.signal?.aborted) {
+      return { created: false, reason: 'stale' };
+    }
     throw error;
   } finally {
     linked.dispose();

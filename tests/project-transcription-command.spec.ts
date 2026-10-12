@@ -1,11 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AudioAssetMeta } from '@/persistence/assets';
-import type { AudioTranscriptionClip } from '@/project/audio-transcription';
+import type { AudioTranscription, AudioTranscriptionClip } from '@/project/audio-transcription';
 import {
   addAudioClip,
   addAudioTrack,
   clearHistory,
+  type TranscribeClipOutcome,
   transcribeAudioClipToMidi,
   undo,
 } from '@/project/commands';
@@ -35,6 +36,15 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 
 function note(pitch = 60): RawNote {
   return { pitch, startPpq: 0, durationPpq: 1, velocity: 100, channel: 0 };
+}
+
+function read(notes: RawNote[], peak = 0.5): AudioTranscription {
+  return { notes, peak };
+}
+
+function createdClipId(outcome: TranscribeClipOutcome): number {
+  if (!outcome.created) throw new Error(`No clip created: ${outcome.reason}`);
+  return outcome.clipId;
 }
 
 describe('transcribeAudioClipToMidi', () => {
@@ -67,10 +77,10 @@ describe('transcribeAudioClipToMidi', () => {
     const beforeClips = store.clips.length;
     const transcribe = vi.fn(async (clip: AudioTranscriptionClip) => {
       expect(clip.assetId).toBe('asset-1');
-      return [note()];
+      return read([note()]);
     });
 
-    const newClipId = await transcribeAudioClipToMidi(clipId, { transcribe });
+    const newClipId = createdClipId(await transcribeAudioClipToMidi(clipId, { transcribe }));
 
     expect(newClipId).toBeGreaterThan(0);
     expect(transcribe).toHaveBeenCalledTimes(1);
@@ -102,18 +112,21 @@ describe('transcribeAudioClipToMidi', () => {
     const downbeatBeats = (0.3 * 128) / 60;
     let tempoSeen: number | undefined;
 
-    const newClipId = await transcribeAudioClipToMidi(clipId, {
+    const outcome = await transcribeAudioClipToMidi(clipId, {
       matchTempo: true,
       detectBeats: async () => ({ beats, downbeats: [beats[0], beats[4], beats[8]] }),
       transcribe: async (_clip, tempoBpm) => {
         tempoSeen = tempoBpm;
-        return Array.from({ length: 16 }, (_, index) => ({
-          ...note(60 + (index % 5)),
-          startPpq: downbeatBeats + index * 0.5 + 0.05,
-          durationPpq: 0.4,
-        }));
+        return read(
+          Array.from({ length: 16 }, (_, index) => ({
+            ...note(60 + (index % 5)),
+            startPpq: downbeatBeats + index * 0.5 + 0.05,
+            durationPpq: 0.4,
+          })),
+        );
       },
     });
+    const newClipId = createdClipId(outcome);
 
     expect(tempoSeen).toBeCloseTo(128, 3);
     expect(store.tempoSegments).toEqual([{ startPpq: 0, bpm: 128 }]);
@@ -143,7 +156,7 @@ describe('transcribeAudioClipToMidi', () => {
     await transcribeAudioClipToMidi(clipId, {
       matchTempo: true,
       detectBeats,
-      transcribe: async () => [note()],
+      transcribe: async () => read([note()]),
     });
     expect(detectBeats).not.toHaveBeenCalled();
     expect(store.tempoSegments).toEqual(before);
@@ -159,49 +172,66 @@ describe('transcribeAudioClipToMidi', () => {
     const durations = (id: number) =>
       store.clips.find((clip) => clip.id === id)?.notes.map((entry) => entry.durationPpq);
 
-    const raw = await transcribeAudioClipToMidi(clipId, { transcribe: async () => fragments() });
-    const tidied = await transcribeAudioClipToMidi(clipId, {
-      transcribe: async () => fragments(),
-      tidy: true,
-    });
+    const raw = createdClipId(
+      await transcribeAudioClipToMidi(clipId, { transcribe: async () => read(fragments()) }),
+    );
+    const tidied = createdClipId(
+      await transcribeAudioClipToMidi(clipId, {
+        transcribe: async () => read(fragments()),
+        tidy: true,
+      }),
+    );
 
     expect(durations(raw)).toEqual([1, 1, 1]);
     expect(durations(tidied)?.[0]).toBe(2);
     expect(durations(tidied)).toHaveLength(2);
   });
 
+  it('tells a silent clip from one whose notes could not be read', async () => {
+    const clipId = await sourceClip();
+    const beforeTracks = store.tracks.length;
+
+    await expect(
+      transcribeAudioClipToMidi(clipId, { transcribe: async () => read([], 0) }),
+    ).resolves.toEqual({ created: false, reason: 'silent' });
+    await expect(
+      transcribeAudioClipToMidi(clipId, { transcribe: async () => read([], 0.1) }),
+    ).resolves.toEqual({ created: false, reason: 'no-notes' });
+    expect(store.tracks).toHaveLength(beforeTracks);
+  });
+
   it('does not commit when the source identity changes while the adapter runs', async () => {
     const clipId = await sourceClip();
-    const pending = deferred<RawNote[]>();
+    const pending = deferred<AudioTranscription>();
     const transcribe = vi.fn(() => pending.promise);
     const beforeTracks = store.tracks.length;
     const operation = transcribeAudioClipToMidi(clipId, { transcribe });
     store.clips = store.clips.map((clip) =>
       clip.id === clipId ? { ...clip, assetId: 'replacement-asset' } : clip,
     );
-    pending.resolve([note(64)]);
+    pending.resolve(read([note(64)]));
 
-    await expect(operation).resolves.toBe(-1);
+    await expect(operation).resolves.toEqual({ created: false, reason: 'stale' });
     expect(store.tracks).toHaveLength(beforeTracks);
   });
 
   it('does not commit when the time-signature map changes while snapping is pending', async () => {
     const clipId = await sourceClip();
-    const pending = deferred<RawNote[]>();
+    const pending = deferred<AudioTranscription>();
     const transcribe = vi.fn(() => pending.promise);
     const beforeTracks = store.tracks.length;
     const operation = transcribeAudioClipToMidi(clipId, { transcribe });
     store.timeSignatures = [{ startPpq: 0, numerator: 3, denominator: 4 }];
-    pending.resolve([note(65)]);
+    pending.resolve(read([note(65)]));
 
-    await expect(operation).resolves.toBe(-1);
+    await expect(operation).resolves.toEqual({ created: false, reason: 'stale' });
     expect(store.tracks).toHaveLength(beforeTracks);
   });
 
   it('propagates user cancellation and leaves the project unchanged', async () => {
     const clipId = await sourceClip();
     const controller = new AbortController();
-    const pending = deferred<RawNote[]>();
+    const pending = deferred<AudioTranscription>();
     const transcribe = vi.fn(
       (
         _clip: AudioTranscriptionClip,
@@ -209,7 +239,7 @@ describe('transcribeAudioClipToMidi', () => {
         _deps: unknown,
         options: { signal?: AbortSignal },
       ) => {
-        options.signal?.addEventListener('abort', () => pending.resolve([note(67)]), {
+        options.signal?.addEventListener('abort', () => pending.resolve(read([note(67)])), {
           once: true,
         });
         return pending.promise;

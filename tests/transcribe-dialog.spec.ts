@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import TranscribeDialog from '@/components/arrangement/TranscribeDialog.vue';
+import type { TranscribeClipOutcome } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
 import { vTooltip } from '@/ui/tooltip';
@@ -74,7 +75,7 @@ describe('TranscribeDialog', () => {
   }
 
   it('exposes equal-width accessible melody and polyphonic modes', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     const w = open();
     const modes = [
       ...document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]'),
@@ -101,8 +102,21 @@ describe('TranscribeDialog', () => {
     expect(w.emitted('close')).toHaveLength(1);
   });
 
+  it('says why no clip was created and stays open', async () => {
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: false, reason: 'silent' });
+    const w = open();
+    document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(
+        'The active clip is silent, so there is nothing to transcribe.',
+      ),
+    );
+    expect(commands.setActiveClip).not.toHaveBeenCalled();
+    expect(w.emitted('close')).toBeUndefined();
+  });
+
   it('passes the chosen shortest note and omits it on Auto', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     open();
     const notes = [
       ...document.body.querySelectorAll<HTMLElement>('.transcribe-shortest [role="radio"]'),
@@ -146,7 +160,7 @@ describe('TranscribeDialog', () => {
   });
 
   it('limits polyphonic voices only in polyphonic mode and omits the limit on Auto', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     open();
     const voices = [
       ...document.body.querySelectorAll<HTMLButtonElement>('.transcribe-voices [role="radio"]'),
@@ -178,7 +192,7 @@ describe('TranscribeDialog', () => {
   });
 
   it('drops a chosen voice limit when switched back to melody', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     open();
     const modes = [
       ...document.body.querySelectorAll<HTMLElement>('.transcribe-mode [role="radio"]'),
@@ -203,7 +217,7 @@ describe('TranscribeDialog', () => {
     commands.transcribeAudioClipToMidi.mockImplementation(
       async (_id: number, options: { onTuning?: (tuning: number) => void }) => {
         options.onTuning?.(-0.2);
-        return 2;
+        return { created: true, clipId: 2 };
       },
     );
     const w = open();
@@ -247,7 +261,7 @@ describe('TranscribeDialog', () => {
   });
 
   it('matches the tempo on request, asking first when other clips would move', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     dialogs.confirmDialog.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     open();
     store.clips = [...store.clips, { ...audioClip(4), id: 5, assetId: 'audio-2' }];
@@ -271,7 +285,7 @@ describe('TranscribeDialog', () => {
   });
 
   it('runs a tempo match without asking when nothing else would move', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     open();
     document.body.querySelectorAll<HTMLElement>('.transcribe-tempo [role="radio"]')[1]?.click();
     await nextTick();
@@ -297,7 +311,7 @@ describe('TranscribeDialog', () => {
   });
 
   it('passes the tidy choice and resets it when reopened', async () => {
-    commands.transcribeAudioClipToMidi.mockResolvedValue(2);
+    commands.transcribeAudioClipToMidi.mockResolvedValue({ created: true, clipId: 2 });
     const w = open();
     const choices = [
       ...document.body.querySelectorAll<HTMLElement>('.transcribe-tidy [role="radio"]'),
@@ -321,10 +335,13 @@ describe('TranscribeDialog', () => {
   });
 
   it('cancels the active request and leaves a reopened dialog busy state intact', async () => {
-    const pending: Array<{ resolve: (value: number) => void; signal: AbortSignal }> = [];
+    const pending: Array<{
+      resolve: (value: TranscribeClipOutcome) => void;
+      signal: AbortSignal;
+    }> = [];
     commands.transcribeAudioClipToMidi.mockImplementation(
       (_id: number, options: { signal: AbortSignal }) => {
-        return new Promise<number>((resolve) => {
+        return new Promise<TranscribeClipOutcome>((resolve) => {
           pending.push({ resolve, signal: options.signal });
         });
       },
@@ -350,10 +367,10 @@ describe('TranscribeDialog', () => {
     document.body.querySelector<HTMLButtonElement>('button.primary')?.click();
     await nextTick();
     expect(document.body.textContent).toContain('Transcribing');
-    pending[0]?.resolve(-1);
+    pending[0]?.resolve({ created: false, reason: 'stale' });
     await nextTick();
     expect(document.body.textContent).toContain('Transcribing');
-    pending[1]?.resolve(2);
+    pending[1]?.resolve({ created: true, clipId: 2 });
     await nextTick();
   });
 });

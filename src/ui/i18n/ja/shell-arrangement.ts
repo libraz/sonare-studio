@@ -436,7 +436,11 @@ export const shellArrangement = {
       transcribing: '採譜中…',
       cancel: 'キャンセル',
       close: '閉じる',
-      noNotes: 'アクティブクリップから音符を検出できませんでした。',
+      refused: {
+        silent: 'アクティブクリップが無音のため、採譜できません。',
+        'no-notes': 'アクティブクリップから音符を検出できませんでした。',
+        stale: '採譜中にクリップが変わりました。もう一度実行してください。',
+      },
       tuningLabel: 'チューニング',
       tuningConcert: 'A4 = 440 Hz',
       tuningAuto: '音源から検出',

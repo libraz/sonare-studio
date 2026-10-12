@@ -63,6 +63,13 @@ export interface AudioTranscriptionDeps {
   renderWarp?: WarpRenderFn;
 }
 
+/** Notes read from one clip, with the level of the input they were read from. */
+export interface AudioTranscription {
+  notes: RawNote[];
+  /** Largest absolute sample of the mono input the detector received; 0 when nothing rendered. */
+  peak: number;
+}
+
 /** Options controlling one audio-to-MIDI analysis. */
 export interface AudioTranscriptionOptions {
   polyphonic?: boolean;
@@ -338,8 +345,10 @@ export async function transcribeAudioClip(
   deps: AudioTranscriptionDeps,
   options: AudioTranscriptionOptions = {},
   tempoSegments: ReadonlyArray<TempoSegment> = [],
-): Promise<RawNote[]> {
-  if ((clip.assetId === undefined && (clip.takes?.length ?? 0) === 0) || !(tempoBpm > 0)) return [];
+): Promise<AudioTranscription> {
+  if ((clip.assetId === undefined && (clip.takes?.length ?? 0) === 0) || !(tempoBpm > 0)) {
+    return { notes: [], peak: 0 };
+  }
   throwIfAborted(options.signal);
   const map = normalizeTempoMap(tempoSegments, tempoBpm);
   const polyphonic = options.polyphonic === true;
@@ -374,6 +383,7 @@ export async function transcribeAudioClip(
     secondsToPpq(map, clipStartSeconds + Math.max(0, seconds)) - clip.startPpq;
   const spans = detectorSpans(plan.audibleSeconds, plan.requestSeconds);
   const notes: RawNote[] = [];
+  let peak = 0;
   let referenceHz = options.referenceHz;
   let tuningReported = false;
   for (const span of spans) {
@@ -395,6 +405,7 @@ export async function transcribeAudioClip(
     if (!window) continue;
     const samples = mixdownToMono(window.channels);
     if (samples.length === 0) continue;
+    for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
     const sourceRate = window.sampleRate;
     const targetRate = Math.min(sourceRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
     const result = await deps.transcribe(samples, targetRate, polyphonic, {
@@ -430,5 +441,5 @@ export async function transcribeAudioClip(
       if (endPpq > startPpq) notes.push({ ...note, startPpq, durationPpq: endPpq - startPpq });
     }
   }
-  return quantizeNotes(notes, options.rhythmQuantizePpq, clip.lengthPpq);
+  return { notes: quantizeNotes(notes, options.rhythmQuantizePpq, clip.lengthPpq), peak };
 }

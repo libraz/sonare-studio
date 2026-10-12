@@ -438,7 +438,11 @@ export const shellArrangement = {
       transcribing: 'Transcribing…',
       cancel: 'Cancel',
       close: 'Close',
-      noNotes: 'No notes were detected in the active clip.',
+      refused: {
+        silent: 'The active clip is silent, so there is nothing to transcribe.',
+        'no-notes': 'No notes were detected in the active clip.',
+        stale: 'The clip changed while transcribing. Run it again.',
+      },
       tuningLabel: 'Tuning',
       tuningConcert: 'A4 = 440 Hz',
       tuningAuto: 'Detect from audio',

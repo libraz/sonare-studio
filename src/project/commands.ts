@@ -128,7 +128,11 @@ export {
   setMasteringPreset,
   setMasteringPresetOverride,
 } from './command/mastering';
-export type { TranscribeAudioClipToMidiOptions } from './command/melody';
+export type {
+  TranscribeAudioClipToMidiOptions,
+  TranscribeClipOutcome,
+  TranscribeClipRefusal,
+} from './command/melody';
 export {
   extractMelodyFromAudioClip,
   transcribeAudioClipToMidi,
