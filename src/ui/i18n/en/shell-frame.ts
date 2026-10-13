@@ -28,6 +28,7 @@ export const shellFrame = {
     saveTitle: 'Save to browser storage',
     saveAs: 'Save As...',
     revisions: 'Revisions...',
+    sampleRate: 'Project sample rate',
     saveAsTitle: 'Save under a new name',
     recent: 'Recent',
     openRecent: 'Open {name}',

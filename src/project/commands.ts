@@ -284,6 +284,7 @@ export {
   insertTime,
   removeMarker,
   setMarker,
+  setProjectSampleRate,
   setSections,
   setTempoSegments,
   setTimeSignatures,

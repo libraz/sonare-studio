@@ -249,6 +249,8 @@ export const useProjectStore = defineStore('project', () => {
   const notes = shallowRef<EditorNote[]>([]);
   /** Ids of currently selected notes (within the active clip). */
   const selection = ref<Set<number>>(new Set());
+  /** Project (document) sample rate in Hz; the audio device's rate is separate. */
+  const sampleRate = ref(DEFAULT_SAMPLE_RATE);
   /** Project tempo in BPM (first tempo segment). */
   const tempoBpm = ref(DEFAULT_TEMPO_BPM);
   /** Full tempo map mirror. */
@@ -438,6 +440,10 @@ export const useProjectStore = defineStore('project', () => {
     if (!live) return;
     const doc = JSON.parse(live.toJson()) as SerializedProjectDoc;
 
+    if (typeof doc.sample_rate === 'number' && doc.sample_rate > 0) {
+      sampleRate.value = doc.sample_rate;
+    }
+
     // Tempo and meter mirrors.
     const tempoMeter = refreshTempoMeter(doc, timeSignatures.value);
     tempoSegments.value = tempoMeter.tempoSegments;
@@ -619,6 +625,7 @@ export const useProjectStore = defineStore('project', () => {
         clipLengthPpq: clipLengthPpq.value,
         notes: notes.value,
         selection: selection.value,
+        sampleRate: sampleRate.value,
         tempoBpm: tempoBpm.value,
         tempoSegments: tempoSegments.value,
         timeSignatures: timeSignatures.value,
@@ -655,6 +662,7 @@ export const useProjectStore = defineStore('project', () => {
         clipLengthPpq.value = previousState.clipLengthPpq;
         notes.value = previousState.notes;
         selection.value = previousState.selection;
+        sampleRate.value = previousState.sampleRate;
         tempoBpm.value = previousState.tempoBpm;
         tempoSegments.value = previousState.tempoSegments;
         timeSignatures.value = previousState.timeSignatures;
@@ -915,6 +923,7 @@ export const useProjectStore = defineStore('project', () => {
     clipLengthPpq.value = 0;
     notes.value = [];
     selection.value = new Set();
+    sampleRate.value = DEFAULT_SAMPLE_RATE;
     tempoBpm.value = DEFAULT_TEMPO_BPM;
     tempoSegments.value = [];
     timeSignatures.value = [];
@@ -955,6 +964,7 @@ export const useProjectStore = defineStore('project', () => {
     clipLengthPpq,
     notes,
     selection,
+    sampleRate,
     tempoBpm,
     tempoSegments,
     timeSignatures,

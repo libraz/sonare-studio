@@ -103,12 +103,20 @@ const FALLBACK_BASE_NAME = 'project';
 /** Fixed zip timestamp so identical inputs produce identical archives. */
 const STEMS_ZIP_MTIME = '2000-01-01T12:00:00Z';
 
-/** Creates the dialog defaults: 24-bit WAV mixdown of the whole project. */
-export function createDefaultExportOptions(projectName = FALLBACK_BASE_NAME): ExportOptionsModel {
+/**
+ * Creates the dialog defaults: 24-bit WAV mixdown of the whole project, at the
+ * project's sample rate when it is selectable and 48 kHz otherwise.
+ */
+export function createDefaultExportOptions(
+  projectName = FALLBACK_BASE_NAME,
+  projectSampleRate = 48000,
+): ExportOptionsModel {
   return {
     encoderId: WAV_ENCODER_ID,
     additionalEncoderIds: [],
-    sampleRate: 48000,
+    sampleRate: (EXPORT_SAMPLE_RATES as ReadonlyArray<number>).includes(projectSampleRate)
+      ? (projectSampleRate as ExportSampleRate)
+      : 48000,
     range: 'project',
     mode: 'mixdown',
     includeBusStems: true,

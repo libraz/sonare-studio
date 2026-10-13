@@ -96,6 +96,7 @@ interface FakeWarpMap {
 
 /** Complete native-history state, including the allocator cursors. */
 interface FakeState {
+  sampleRate: number;
   overlapPolicy: number;
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
@@ -173,6 +174,7 @@ function trackKindOrdinal(kind: unknown): number {
 
 function cloneState(state: FakeState): FakeState {
   return {
+    sampleRate: state.sampleRate,
     overlapPolicy: state.overlapPolicy,
     tempoSegments: state.tempoSegments.map((s) => ({ ...s })),
     timeSignatures: state.timeSignatures.map((s) => ({ ...s })),
@@ -195,8 +197,8 @@ function cloneState(state: FakeState): FakeState {
 
 /** In-memory Project stand-in; see the module doc comment for fidelity notes. */
 export class FakeProject {
-  private sampleRate = 48000;
   private state: FakeState = {
+    sampleRate: 48000,
     overlapPolicy: 0,
     tempoSegments: [],
     timeSignatures: [],
@@ -324,12 +326,12 @@ export class FakeProject {
 
   setSampleRate(sampleRate: number): void {
     this.edit(() => {
-      this.sampleRate = sampleRate;
+      this.state.sampleRate = sampleRate;
     });
   }
 
   getSampleRate(): number {
-    return this.sampleRate;
+    return this.state.sampleRate;
   }
 
   setOverlapPolicy(policy: number): void {
@@ -997,7 +999,7 @@ export class FakeProject {
 
   toJson(): string {
     return JSON.stringify({
-      sample_rate: this.sampleRate,
+      sample_rate: this.state.sampleRate,
       tempo_segments: this.state.tempoSegments.map((s) => ({
         start_ppq: s.startPpq,
         bpm: s.bpm,

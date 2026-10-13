@@ -75,6 +75,7 @@ import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
+import { formatSampleRate } from '@/ui/media/asset-list';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
 /**
@@ -107,6 +108,8 @@ const props = withDefaults(
     getDocument: () => ProjectDocument;
     /** Seed for the filename field (default 'project'). */
     projectName?: string;
+    /** Project sample rate, the default output rate when it is selectable. */
+    projectSampleRate?: number;
     /** Whether a transport loop region exists (enables the loop range). */
     hasLoop?: boolean;
     /** Transport loop window, required to export the loop range. */
@@ -120,6 +123,7 @@ const props = withDefaults(
   }>(),
   {
     projectName: 'project',
+    projectSampleRate: 48000,
     hasLoop: false,
     loopRegion: null,
     render: null,
@@ -142,7 +146,9 @@ registerBrowserMediaEncoders();
 
 const { t } = useI18n();
 const appSettings = useAppSettings();
-const model = ref<ExportOptionsModel>(createDefaultExportOptions(props.projectName));
+const model = ref<ExportOptionsModel>(
+  createDefaultExportOptions(props.projectName, props.projectSampleRate),
+);
 const encoderList = ref<AudioEncoder[]>(resolveEncoders());
 const busy = ref(false);
 const progress = ref(0);
@@ -197,7 +203,7 @@ watch(
     if (!open) return;
     // Fresh state per session: new defaults seeded from the project name.
     // Focus, the trap and restoration are owned by AppModal.
-    model.value = createDefaultExportOptions(props.projectName);
+    model.value = createDefaultExportOptions(props.projectName, props.projectSampleRate);
     encoderList.value = resolveEncoders();
     normalizeSelectedEncoder();
     errorMessage.value = '';
@@ -366,7 +372,7 @@ const compressedBitrateOptions = COMPRESSED_EXPORT_BITRATES.map((bitrate) => ({
 /** Sample-rate options, labelled in kHz. */
 const sampleRateOptions = EXPORT_SAMPLE_RATES.map((rate) => ({
   value: rate,
-  label: `${(rate / 1000).toLocaleString('en-US')} kHz`,
+  label: formatSampleRate(rate),
 }));
 
 const memoryBudgetOptions = EXPORT_MEMORY_BUDGET_MIB.map((mib) => ({

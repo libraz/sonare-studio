@@ -29,6 +29,7 @@ export const shellFrame = {
     saveTitle: 'ブラウザストレージに保存',
     saveAs: '別名で保存...',
     revisions: 'リビジョン…',
+    sampleRate: 'プロジェクトのサンプルレート',
     saveAsTitle: '新しい名前で保存',
     recent: '最近使った項目',
     openRecent: '{name} を開く',

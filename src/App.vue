@@ -1639,6 +1639,7 @@ onMounted(installLaunchQueueConsumer);
       :open="exportDialogOpen"
       :get-document="serializeProject"
       :project-name="store.projectName"
+      :project-sample-rate="store.sampleRate"
       :has-loop="exportLoopRegion !== null"
       :loop-region="exportLoopRegion"
       :download="downloadBlobFile"

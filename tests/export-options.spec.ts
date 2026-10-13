@@ -51,6 +51,12 @@ describe('createDefaultExportOptions', () => {
     });
     expect(createDefaultExportOptions().baseName).toBe('project');
   });
+
+  it('defaults to the project sample rate when it is a selectable output rate', () => {
+    expect(createDefaultExportOptions('Song', 44100).sampleRate).toBe(44100);
+    expect(createDefaultExportOptions('Song', 96000).sampleRate).toBe(96000);
+    expect(createDefaultExportOptions('Song', 22050).sampleRate).toBe(48000);
+  });
 });
 
 describe('validateExportOptions', () => {

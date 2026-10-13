@@ -63,6 +63,7 @@ export interface SerializedClip {
 
 /** Minimal slice of the Project JSON document this store reads. */
 export interface SerializedProjectDoc {
+  sample_rate?: number;
   midi_content?: Record<string, unknown>;
   tempo_segments?: SerializedTempoSegment[];
   time_signatures?: SerializedTimeSignature[];

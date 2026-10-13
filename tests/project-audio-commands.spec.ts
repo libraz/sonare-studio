@@ -18,6 +18,7 @@ import {
   setClipFades,
   setClipLoop,
   setClipWarp,
+  setProjectSampleRate,
   setTempoSegments,
   setTrackRecordInputChannel,
   splitAudioClipToComponents,
@@ -255,6 +256,45 @@ describe('audio track and clip commands', () => {
 
     expect(getProject().toJson()).toBe(before);
     expect(store.clips).toHaveLength(clipCount);
+  });
+
+  it('changes the project sample rate as one undoable edit that rescales warp anchors', async () => {
+    const trackId = addAudioTrack({ name: 'Audio' });
+    const clipId = await addAudioClip({
+      trackId,
+      assetId: 'warped-asset',
+      lengthPpq: 8,
+      warp: { enabled: true, sourceBpm: 96, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
+    });
+    const before = getProject().toJson();
+    const anchorsAt = () => readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors ?? [];
+    const anchorsBefore = anchorsAt();
+    expect(anchorsBefore.length).toBeGreaterThan(0);
+
+    setProjectSampleRate(96000);
+
+    expect(store.sampleRate).toBe(96000);
+    expect(getProject().getSampleRate()).toBe(96000);
+    expect(anchorsAt()).toEqual(
+      anchorsBefore.map((anchor) => ({
+        warpSample: anchor.warpSample * 2,
+        sourceSample: anchor.sourceSample * 2,
+      })),
+    );
+
+    expect(undo()).toBe(true);
+    expect(getProject().toJson()).toBe(before);
+    expect(store.sampleRate).toBe(48000);
+    expect(redo()).toBe(true);
+    expect(store.sampleRate).toBe(96000);
+  });
+
+  it('refuses rates the Project cannot hold and records nothing for the current rate', () => {
+    for (const rate of [44100.5, 4000, 1_000_000, Number.NaN]) {
+      expect(() => setProjectSampleRate(rate)).toThrow(RangeError);
+    }
+    setProjectSampleRate(store.sampleRate);
+    expect(undo()).toBe(false);
   });
 
   it('addAudioClip can seed preserved audio clip attributes when rebasing an asset', async () => {

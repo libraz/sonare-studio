@@ -486,6 +486,36 @@ export function detectSectionsFromArrangement(unitBars?: number): DetectedSectio
   return { count: report.sections.length, excludedTrackNames: report.excludedTrackNames };
 }
 
+/** Sample-rate range the Project accepts, in whole hertz. */
+const PROJECT_SAMPLE_RATE_RANGE = { min: 8000, max: 384000 } as const;
+
+/**
+ * Changes the project's document sample rate as one undoable edit. Native
+ * warp anchors are counted in project samples, so every warp map is rebuilt
+ * at the new rate in the same edit.
+ *
+ * @param sampleRate Whole hertz within {@link PROJECT_SAMPLE_RATE_RANGE}.
+ */
+export function setProjectSampleRate(sampleRate: number): void {
+  if (
+    !Number.isInteger(sampleRate) ||
+    sampleRate < PROJECT_SAMPLE_RATE_RANGE.min ||
+    sampleRate > PROJECT_SAMPLE_RATE_RANGE.max
+  ) {
+    throw new RangeError(
+      `Sample rate must be a whole number of hertz in [${PROJECT_SAMPLE_RATE_RANGE.min}, ${PROJECT_SAMPLE_RATE_RANGE.max}], got ${sampleRate}`,
+    );
+  }
+  const store = useProjectStore();
+  if (store.sampleRate === sampleRate) return;
+  const project = getProject();
+  executeAtomic((edit) => {
+    edit(1, () => project.setSampleRate(sampleRate));
+    reinstallTimelineWarps(edit);
+    store.refresh();
+  });
+}
+
 /**
  * Replaces the project's tempo map as one undoable edit (delegates to
  * Project.setTempoSegments).

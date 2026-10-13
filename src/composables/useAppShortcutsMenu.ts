@@ -3,6 +3,7 @@ import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
 import type { useShortcuts } from '@/composables/useShortcuts';
 import type { EngineHandle } from '@/engine/engine';
+import { EXPORT_SAMPLE_RATES } from '@/export/options';
 import { describeError } from '@/lib/errors';
 import {
   canPasteClipAt,
@@ -24,6 +25,7 @@ import {
   quantizeSelection,
   redo,
   setActiveClip,
+  setProjectSampleRate,
   setSelection,
   setTrackMute,
   setTrackSolo,
@@ -36,6 +38,7 @@ import { firstBlock } from '@/ui/disabled-reason';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
 import { isEditableTarget } from '@/ui/keyboard';
+import { formatSampleRate } from '@/ui/media/asset-list';
 import {
   cleanMenuItems,
   isNavigable,
@@ -423,7 +426,23 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       commandItem('file.revisions', m.revisions, options.openRevisionsDialog, {
         reason: noOpfs,
       }),
+      sep('file.sep-sample-rate'),
+      heading('file.sampleRate', m.sampleRate),
     ];
+    // A loaded document may carry a rate outside the standard set; list it too.
+    const rates = (EXPORT_SAMPLE_RATES as ReadonlyArray<number>).includes(store.sampleRate)
+      ? EXPORT_SAMPLE_RATES
+      : [...EXPORT_SAMPLE_RATES, store.sampleRate].sort((a, b) => a - b);
+    for (const rate of rates) {
+      items.push(
+        commandItem(
+          `file.sampleRate.${rate}`,
+          formatSampleRate(rate),
+          () => setProjectSampleRate(rate),
+          { checked: store.sampleRate === rate },
+        ),
+      );
+    }
     const recent = options.recentNames.value;
     if (recent.length > 0) {
       items.push(sep('file.sep-recent'), heading('file.recent', m.recent));

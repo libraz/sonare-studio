@@ -378,6 +378,36 @@ describe('useAppShortcutsMenu', () => {
     store.dispose();
   });
 
+  it('sets the project sample rate from the File menu, checking the current one', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const { menu } = harness({ value: false });
+    const rateItems = () =>
+      (menu.menuBarModel.value.find((entry) => entry.id === 'file')?.items ?? []).filter((entry) =>
+        entry.id.startsWith('file.sampleRate.'),
+      );
+
+    expect(rateItems().map((entry) => [entry.label, entry.checked])).toEqual([
+      ['44.1 kHz', false],
+      ['48 kHz', true],
+      ['96 kHz', false],
+    ]);
+    rateItems()[0].run?.();
+    expect(getProject().getSampleRate()).toBe(44100);
+    expect(rateItems().find((entry) => entry.checked)?.label).toBe('44.1 kHz');
+
+    // A loaded document's non-standard rate is listed so it stays visible.
+    getProject().setSampleRate(22050);
+    store.refresh();
+    expect(rateItems().map((entry) => entry.label)).toEqual([
+      '22.05 kHz',
+      '44.1 kHz',
+      '48 kHz',
+      '96 kHz',
+    ]);
+    store.dispose();
+  });
+
   it('keeps the project unchanged and surfaces a raw WASM duplicate failure from both entry points', async () => {
     const store = useProjectStore();
     await store.init();
