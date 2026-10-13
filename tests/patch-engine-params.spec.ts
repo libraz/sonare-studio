@@ -10,6 +10,7 @@ import { setWasmModule } from '@/project/runtime';
 import {
   clampEngineParams,
   createPatchDraft,
+  engineParamBlockers,
   engineParamStep,
   humanizeEngineParamName,
   PATCH_FIELD_SPECS,
@@ -180,5 +181,43 @@ describe('engineParams', () => {
     expect(
       engineParamStep({ name: 'x', type: 'number', min: 0, max: 1, default: 0, unit: 'none' }),
     ).toBe(0.001);
+  });
+});
+
+describe('engine fields that do not reach the voice', () => {
+  const engine = (mode: string) => wasm.synthEngineParamInfo(mode as never);
+  const field = (mode: string, name: string) => {
+    const info = engine(mode).find((entry) => entry.name === name);
+    if (!info) throw new Error(`${mode} lists no ${name}`);
+    return info;
+  };
+  const patchInfo = () => wasm.synthPatchParamInfo();
+
+  it('names every unmet condition, base values included', () => {
+    const info = field('percussion', 'noiseBurstCount');
+    expect(engineParamBlockers(info, {}, engine('percussion'), patchInfo())).toEqual([
+      expect.objectContaining({ key: 'gmKit', relation: 'eq', value: false }),
+      expect.objectContaining({ key: 'noiseGain', relation: 'gt', value: 0 }),
+    ]);
+    const kitOff: StoredSynthPatch = { engineParams: { gmKit: 0 } };
+    expect(engineParamBlockers(info, kitOff, engine('percussion'), patchInfo())).toEqual([
+      expect.objectContaining({ key: 'noiseGain' }),
+    ]);
+    const custom: StoredSynthPatch = { engineParams: { gmKit: 0, noiseGain: 0.5 } };
+    expect(engineParamBlockers(info, custom, engine('percussion'), patchInfo())).toBeNull();
+  });
+
+  it('reads patch fields and their defaults for a patch-scoped condition', () => {
+    const info = field('bowed-string', 'corpusScale');
+    const blocked = engineParamBlockers(info, {}, engine('bowed-string'), patchInfo());
+    expect(blocked?.map((condition) => condition.key)).toEqual(['body', 'bodyMix']);
+    const violin: StoredSynthPatch = { body: 'violin', bodyMix: 0.5 } as StoredSynthPatch;
+    expect(engineParamBlockers(info, violin, engine('bowed-string'), patchInfo())).toBeNull();
+  });
+
+  it('leaves an ungated field active', () => {
+    const info = engine('bowed-string').find((entry) => entry.activeWhen === undefined);
+    expect(info).toBeDefined();
+    if (info) expect(engineParamBlockers(info, {}, engine('bowed-string'), patchInfo())).toBeNull();
   });
 });

@@ -251,6 +251,11 @@ export const shellMixing = {
     engineModel: {
       base: 'ベース {value}',
       reset: '{name} をベースに戻す',
+      inactive: '{conditions} のときだけ効きます。',
+      conditionJoin: '、',
+      conditionOn: '{name} がオン',
+      conditionOff: '{name} がオフ',
+      conditionIs: '{name} が {value}',
     },
     modSource: 'モジュレーションソース {row}',
     modDestination: 'モジュレーション先 {row}',

@@ -15,6 +15,7 @@ import {
   createModMatrixRow,
   createPatchDraft,
   type EnumPatchField,
+  engineParamBlockers,
   engineParamDefault,
   engineParamStep,
   humanizeEngineParamName,
@@ -29,6 +30,7 @@ import {
   patchFieldsForSection,
   sanitizePatchDraft,
   wasmEngineParamInfo,
+  wasmPatchParamInfo,
 } from '@/ui/devices/patch-draft';
 import { resolveSynthEnums, SYNTH_RETRIGGER_OPTIONS } from '@/ui/devices/synth-enums';
 import { firstBlock } from '@/ui/disabled-reason';
@@ -36,7 +38,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import { TOKENS } from '@/ui/theme/tokens';
-import type { SynthEnumTables, SynthParamInfo } from '@/wasm/index.js';
+import type { SynthEnumTables, SynthParamCondition, SynthParamInfo } from '@/wasm/index.js';
 
 /**
  * Modal NativeSynth patch editor. The dialog edits a local draft seeded from
@@ -225,6 +227,47 @@ function setEngineParams(patch: StoredSynthPatch, params: Record<string, number>
   if (Object.keys(params).length > 0) patch.engineParams = params;
   else delete patch.engineParams;
 }
+
+const RELATION_SIGNS = { eq: '=', ne: '≠', gt: '>', ge: '≥', lt: '<', le: '≤' } as const;
+
+/** Patch-level descriptors, read for the defaults an engine condition compares against. */
+const patchFieldInfo = wasmPatchParamInfo();
+
+function conditionKeyLabel(condition: SynthParamCondition): string {
+  if (condition.scope === 'engine') return humanizeEngineParamName(condition.key);
+  const { fields, enumLabels } = t.value.shell.patchEditor;
+  return (
+    fields[condition.key as keyof typeof fields] ??
+    enumLabels[condition.key as keyof typeof enumLabels] ??
+    humanizeEngineParamName(condition.key)
+  );
+}
+
+function conditionText(condition: SynthParamCondition): string {
+  const copy = t.value.shell.patchEditor.engineModel;
+  const name = conditionKeyLabel(condition);
+  if (typeof condition.value === 'boolean') {
+    const on = condition.value === (condition.relation === 'eq');
+    return formatMessage(on ? copy.conditionOn : copy.conditionOff, { name });
+  }
+  if (typeof condition.value === 'string' && condition.relation === 'eq') {
+    return formatMessage(copy.conditionIs, { name, value: condition.value });
+  }
+  return `${name} ${RELATION_SIGNS[condition.relation]} ${condition.value}`;
+}
+
+/** Why each engine field does not reach the voice under the draft, keyed by field name. */
+const engineInactive = computed(() => {
+  const copy = t.value.shell.patchEditor.engineModel;
+  const reasons = new Map<string, string>();
+  for (const info of engineFields.value) {
+    const blockers = engineParamBlockers(info, draft.value, engineFields.value, patchFieldInfo);
+    if (blockers === null) continue;
+    const conditions = blockers.map(conditionText).join(copy.conditionJoin);
+    reasons.set(info.name, formatMessage(copy.inactive, { conditions }));
+  }
+  return reasons;
+});
 
 function engineIsSet(info: SynthParamInfo): boolean {
   return draft.value.engineParams?.[info.name] !== undefined;
@@ -660,14 +703,18 @@ function onKeydown(event: KeyboardEvent): void {
               v-for="info in engineFields"
               :key="info.name"
               class="engine-row"
-              :class="{ 'is-base': !engineIsSet(info) }"
+              :class="{ 'is-base': !engineIsSet(info), 'is-inactive': engineInactive.has(info.name) }"
             >
-              <label class="engine-control">
-                <span class="field-label" v-tooltip="info.name">{{ engineLabel(info) }}</span>
+              <label
+                class="engine-control"
+                v-tooltip="{ text: info.name, reason: engineInactive.get(info.name) }"
+              >
+                <span class="field-label">{{ engineLabel(info) }}</span>
                 <input
                   v-if="info.type === 'boolean'"
                   type="checkbox"
                   :data-engine-param="info.name"
+                  :disabled="engineInactive.has(info.name)"
                   :checked="engineValue(info) !== 0"
                   @change="onEngineInput(info, $event)"
                 />
@@ -676,6 +723,7 @@ function onKeydown(event: KeyboardEvent): void {
                     v-if="engineHasRange(info)"
                     type="range"
                     :data-engine-param="info.name"
+                    :disabled="engineInactive.has(info.name)"
                     :min="info.min"
                     :max="info.max"
                     :step="engineParamStep(info)"
@@ -687,6 +735,7 @@ function onKeydown(event: KeyboardEvent): void {
                     type="number"
                     class="engine-number"
                     :data-engine-param="info.name"
+                    :disabled="engineInactive.has(info.name)"
                     :min="info.min"
                     :max="info.max"
                     :step="engineParamStep(info)"
@@ -1011,6 +1060,11 @@ function onKeydown(event: KeyboardEvent): void {
 
 /* A key the patch leaves unset shows the engine's base value, dimmed. */
 .engine-row.is-base .field-value {
+  color: var(--text-4);
+}
+
+.engine-row.is-inactive .field-label,
+.engine-row.is-inactive .field-value {
   color: var(--text-4);
 }
 

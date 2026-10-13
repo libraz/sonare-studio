@@ -8,6 +8,7 @@ import {
   resetShortcutBlockingOverlaysForTest,
   shortcutBlockingOverlayOpen,
 } from '@/ui/overlay-registry';
+import { vTooltip } from '@/ui/tooltip';
 import { openSelect, selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -287,6 +288,43 @@ describe('PatchEditor.vue engine model', () => {
     expect(track?.instrument).toMatchObject({
       patch: { engineParams: { elastoPlastic: 1 } },
     });
+    wrapper.unmount();
+    delete (getWasmModule() as unknown as Record<string, unknown>).synthEngineParamInfo;
+  });
+
+  it('disables a field its conditions hold off and says which condition', async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    const trackId = store.tracks[0].id;
+    const { getWasmModule } = await import('@/project/store');
+    (getWasmModule() as unknown as Record<string, unknown>).synthEngineParamInfo = () => [
+      { name: 'elastoPlastic', type: 'boolean', default: false, unit: 'none' },
+      {
+        name: 'stribeck',
+        type: 'number',
+        min: 0,
+        max: 1,
+        default: 0.5,
+        unit: 'none',
+        activeWhen: [[{ key: 'elastoPlastic', scope: 'engine', relation: 'eq', value: true }]],
+      },
+    ];
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { engineMode: 'bowed-string' } });
+    const wrapper = mount(PatchEditor, {
+      props: { open: true, trackId },
+      global: { directives: { tooltip: vTooltip } },
+    });
+    const stribeck = () => wrapper.find('[data-engine-param="stribeck"]');
+    expect(stribeck().attributes('disabled')).toBeDefined();
+    expect(stribeck().element.closest('label')?.getAttribute('aria-description')).toContain(
+      'Takes effect only when Elasto Plastic is on.',
+    );
+
+    await wrapper.find('[data-engine-param="elastoPlastic"]').setValue(true);
+    expect(stribeck().attributes('disabled')).toBeUndefined();
     wrapper.unmount();
     delete (getWasmModule() as unknown as Record<string, unknown>).synthEngineParamInfo;
   });

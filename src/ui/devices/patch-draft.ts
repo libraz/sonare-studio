@@ -10,7 +10,7 @@
 
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { getWasmModule } from '@/project/runtime';
-import type { SynthModRouting, SynthParamInfo } from '@/wasm/index.js';
+import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@/wasm/index.js';
 import { FALLBACK_SYNTH_ENUMS } from './synth-enums';
 
 /** Editor section a patch field renders under. */
@@ -490,6 +490,79 @@ function finiteEngineParams(raw: unknown): Record<string, number> {
 /** A descriptor's base value in the patch's numeric form: a switch as 0/1. */
 export function engineParamDefault(info: SynthParamInfo): number {
   return typeof info.default === 'boolean' ? Number(info.default) : info.default;
+}
+
+/** The value a condition reads: a set key, else its base (engine keys) or patch default. */
+function conditionSubject(
+  condition: SynthParamCondition,
+  patch: StoredSynthPatch,
+  engineInfo: ReadonlyArray<SynthParamInfo>,
+  patchInfo: ReadonlyArray<SynthParamInfo>,
+): unknown {
+  if (condition.scope === 'engine') {
+    const set = patch.engineParams?.[condition.key];
+    if (set !== undefined) return set;
+    const info = engineInfo.find((entry) => entry.name === condition.key);
+    return info ? engineParamDefault(info) : undefined;
+  }
+  const set = (patch as Record<string, unknown>)[condition.key];
+  if (set !== undefined) return set;
+  return patchInfo.find((entry) => entry.name === condition.key)?.default;
+}
+
+function conditionHolds(condition: SynthParamCondition, subject: unknown): boolean {
+  if (typeof condition.value === 'string') {
+    return condition.relation === 'ne' ? subject !== condition.value : subject === condition.value;
+  }
+  if (typeof subject !== 'number' && typeof subject !== 'boolean') return false;
+  const left = Number(subject);
+  const right = Number(condition.value);
+  switch (condition.relation) {
+    case 'eq':
+      return left === right;
+    case 'ne':
+      return left !== right;
+    case 'gt':
+      return left > right;
+    case 'ge':
+      return left >= right;
+    case 'lt':
+      return left < right;
+    case 'le':
+      return left <= right;
+  }
+}
+
+/**
+ * The conditions keeping an engine field from reaching the voice, or null when
+ * it reaches it. Of several alternatives, the one closest to holding is named.
+ */
+export function engineParamBlockers(
+  info: SynthParamInfo,
+  patch: StoredSynthPatch,
+  engineInfo: ReadonlyArray<SynthParamInfo>,
+  patchInfo: ReadonlyArray<SynthParamInfo>,
+): SynthParamCondition[] | null {
+  if (info.activeWhen === undefined) return null;
+  let closest: SynthParamCondition[] | null = null;
+  for (const alternative of info.activeWhen) {
+    const failing = alternative.filter(
+      (condition) =>
+        !conditionHolds(condition, conditionSubject(condition, patch, engineInfo, patchInfo)),
+    );
+    if (failing.length === 0) return null;
+    if (closest === null || failing.length < closest.length) closest = failing;
+  }
+  return closest;
+}
+
+/** Patch-level field descriptors from the loaded wasm; empty before init. */
+export function wasmPatchParamInfo(): SynthParamInfo[] {
+  try {
+    return getWasmModule().synthPatchParamInfo();
+  } catch {
+    return [];
+  }
 }
 
 /** Clamps one value to a descriptor: booleans to 0/1, integers rounded, closed ranges enforced. */

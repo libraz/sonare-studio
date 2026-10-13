@@ -246,6 +246,11 @@ export const shellMixing = {
     engineModel: {
       base: 'Base {value}',
       reset: 'Reset {name} to base',
+      inactive: 'Takes effect only when {conditions}.',
+      conditionJoin: ' and ',
+      conditionOn: '{name} is on',
+      conditionOff: '{name} is off',
+      conditionIs: '{name} is {value}',
     },
     modSource: 'Mod source {row}',
     modDestination: 'Mod destination {row}',
