@@ -35,7 +35,7 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
   // Custom built-in waves are discovered from the WASM catalog. There is no
   // stable static list to offer before it is loaded.
   builtinWaveforms: [],
-  filterModels: ['default', 'svf', 'moog-ladder', 'diode-ladder', 'sallen-key'],
+  filterModels: ['default', 'svf', 'transistor-ladder', 'diode-ladder', 'sallen-key'],
   filterOutputs: ['default', 'lowpass', 'bandpass', 'highpass'],
   bodyTypes: ['default', 'none', 'guitar', 'violin', 'wood-tube', 'brass-bell', 'vocal'],
   modSources: [

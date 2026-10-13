@@ -8,7 +8,7 @@ import { sanitizeCompSegments } from './comping';
 import { sanitizeExpressionMap } from './expression-map';
 import { isExternalStemRole } from './external-stems';
 import { sanitizeProvenance } from './generation';
-import { cloneInstrument } from './instrument';
+import { loadInstrument } from './instrument';
 import {
   isValidChannel,
   isValidController,
@@ -540,7 +540,7 @@ export function hydrateProjectFromDocument(
     }
     // Instrument and mixer strip are app metadata introduced by schema
     // version 3; older documents simply have neither (defaults apply).
-    if (track.instrument !== undefined) mirrorEntry.instrument = cloneInstrument(track.instrument);
+    if (track.instrument !== undefined) mirrorEntry.instrument = loadInstrument(track.instrument);
     if (track.externalMidiMode === 'project') mirrorEntry.externalMidiMode = 'project';
     // Restore the live MIDI-FX transform; drop a no-op so an identity entry
     // never lingers in the mirror or re-serializes.

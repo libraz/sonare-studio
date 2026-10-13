@@ -358,6 +358,22 @@ export function cloneInstrument(instrument: TrackInstrument): TrackInstrument {
   return JSON.parse(JSON.stringify(instrument)) as TrackInstrument;
 }
 
+/**
+ * Deep-copies a persisted instrument, rewriting retired enum spellings to the
+ * names the engine catalog reports so editor selects find their option.
+ *
+ * @param instrument Instrument read from a document or track preset.
+ * @returns A fresh instrument in current spelling.
+ */
+export function loadInstrument(instrument: TrackInstrument): TrackInstrument {
+  const out = cloneInstrument(instrument);
+  // The engine still accepts 'moog-ladder' but reports 'transistor-ladder'.
+  if (out.kind === 'synth-patch' && (out.patch.filterModel as string) === 'moog-ladder') {
+    out.patch.filterModel = 'transistor-ladder';
+  }
+  return out;
+}
+
 /** Structural equality on instruments (field order insensitive). */
 export function instrumentEquals(a: TrackInstrument, b: TrackInstrument): boolean {
   return canonicalJson(a) === canonicalJson(b);

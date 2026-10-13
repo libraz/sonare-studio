@@ -7,7 +7,12 @@
  * when the destination project does not contain them.
  */
 
-import { cloneInstrument, type TrackInstrument, validateTrackInstrument } from './instrument';
+import {
+  cloneInstrument,
+  loadInstrument,
+  type TrackInstrument,
+  validateTrackInstrument,
+} from './instrument';
 import { isMidiFxNoop, type MidiFxConfig, sanitizeMidiFxConfig } from './midi-fx';
 import {
   cloneStrip,
@@ -138,7 +143,7 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
   if (raw.instrument === null) preset.instrument = null;
   else if (raw.instrument !== undefined) {
     validateTrackInstrument(raw.instrument as TrackInstrument);
-    preset.instrument = cloneInstrument(raw.instrument as TrackInstrument);
+    preset.instrument = loadInstrument(raw.instrument as TrackInstrument);
   }
   if (raw.midiFx && typeof raw.midiFx === 'object' && !Array.isArray(raw.midiFx)) {
     const midiFx = sanitizeMidiFxConfig(raw.midiFx as Partial<MidiFxConfig>);

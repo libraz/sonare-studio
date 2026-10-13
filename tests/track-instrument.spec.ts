@@ -13,6 +13,7 @@ import {
   instrumentDedupeKey,
   instrumentEquals,
   isDefaultInstrument,
+  loadInstrument,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -344,6 +345,21 @@ describe('instrument helpers', () => {
     const copy = cloneInstrument(a);
     expect(copy).not.toBe(a);
     expect(instrumentEquals(copy, a)).toBe(true);
+  });
+
+  it('loadInstrument rewrites the retired moog-ladder filter model and detaches', () => {
+    const legacy = {
+      kind: 'synth-patch',
+      patch: { filterModel: 'moog-ladder', cutoffHz: 800 },
+    } as unknown as TrackInstrument;
+    const loaded = loadInstrument(legacy);
+    expect(loaded).toEqual({
+      kind: 'synth-patch',
+      patch: { filterModel: 'transistor-ladder', cutoffHz: 800 },
+    });
+    expect((legacy as { patch: { filterModel: string } }).patch.filterModel).toBe('moog-ladder');
+    const current: TrackInstrument = { kind: 'synth-patch', patch: { filterModel: 'svf' } };
+    expect(loadInstrument(current)).toEqual(current);
   });
 
   it('isDefaultInstrument only accepts the default preset', () => {
