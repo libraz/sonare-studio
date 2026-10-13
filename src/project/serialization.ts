@@ -510,6 +510,9 @@ export async function loadProjectDocument(input: ProjectDocument): Promise<void>
       throw new RangeError('Project externalMidiDefault must be an external-midi instrument');
     }
   }
+  for (const track of doc.tracks) {
+    if (track.instrument !== undefined) validateTrackInstrument(track.instrument);
+  }
   // Parse post-load registries before publishing the staged native Project.
   // Positional ids are sufficient for validation; the state is parsed again
   // against the real session ids after the atomic document swap succeeds.

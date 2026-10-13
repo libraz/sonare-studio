@@ -178,6 +178,14 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     expect(saved.match(/"eq\.steppedProportionalQ"/g)?.length).toBe(2);
   });
 
+  it('rejects a track instrument the instrument commands would refuse', async () => {
+    const doc = serializeProject();
+    doc.tracks[0].instrument = { kind: 'synth-patch', patch: { gain: 5 } };
+    await expect(loadProjectDocument(doc)).rejects.toThrow(/gain must be a finite number/);
+    doc.tracks[0].instrument = { kind: 'sf2', fontId: 'gm-font', program: 128 };
+    await expect(loadProjectDocument(doc)).rejects.toThrow(/SF2 program/);
+  });
+
   it('rejects group pan automation commands', () => {
     const groupId = addGroupTrack({ name: 'Group' });
     expect(() => setAutomationLanePoints(groupId, 'pan', [{ ppq: 0, value: 0.5 }])).toThrow(
