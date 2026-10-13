@@ -4158,11 +4158,12 @@ describe('renderProjectWithEngine offline mixer parity', () => {
     expect(offlineDelays.get(2)).toBe(128);
   });
 
-  it('uses the shared -12 dB PFL gain and suppresses fader/pan automation', async () => {
+  it('renders the program output in PFL mode, leaving the solo cue out', async () => {
     const doc = makeDoc();
     doc.mixer!.soloMode = 'pfl';
+    doc.mixer!.vcaGroups = [{ id: 'vca-1', name: 'VCA 1', gainDb: 0, solo: true }];
     doc.tracks[0].solo = true;
-    doc.tracks[1].mute = true;
+    doc.tracks[1].vcaId = 'vca-1';
     doc.tracks[0].automation = [
       { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: 6 }] },
       { param: 'pan', enabled: true, points: [{ ppq: 0, value: 1 }] },
@@ -4171,18 +4172,23 @@ describe('renderProjectWithEngine offline mixer parity', () => {
 
     await renderProjectWithEngine(doc, renderOptions(engine));
 
+    expect(engine.named('setSoloMute').every(([, , solo]) => solo === false)).toBe(true);
     expect(engine.named('setParameter')).toContainEqual([
+      'setParameter',
+      0x4d580001,
+      linearToDb(0.5),
+    ]);
+    expect(engine.named('setParameter')).not.toContainEqual([
       'setParameter',
       0x4d580001,
       PFL_AUDITION_GAIN_DB,
     ]);
-    expect(engine.named('setParameter')).toContainEqual(['setParameter', 0x4d580002, 0]);
-    expect(engine.named('setAutomationLane')).not.toContainEqual([
+    expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       0x4d580001,
       expect.anything(),
     ]);
-    expect(engine.named('setAutomationLane')).not.toContainEqual([
+    expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       0x4d580002,
       expect.anything(),

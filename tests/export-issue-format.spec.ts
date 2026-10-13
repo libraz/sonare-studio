@@ -19,7 +19,6 @@ const STRINGS: ExportIssueStrings = {
       'Release tail is {current}s, but active reverb/delay settings suggest at least {suggested}s',
     soloActive: 'Solo is active for: {tracks}. The export omits other tracks.',
     returnSoloActive: 'A return bus is soloed: {buses}. The export contains only that return.',
-    pflModeActive: 'PFL solo mode is active.',
     silentMixdown: 'The export will be silent.',
   },
   label: {

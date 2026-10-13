@@ -217,8 +217,6 @@ export const dialogs = {
         soloActive: 'ソロが有効です: {tracks}。他のトラックは書き出しに含まれません。',
         returnSoloActive:
           'リターンバスがソロです: {buses}。書き出しにはそのリターンだけが含まれます。',
-        pflModeActive:
-          'PFL ソロモードが有効です。ソロ中トラックはモニター用のゲイン／センターパンで書き出されます。',
         silentMixdown: '可聴トラックがありません。書き出し結果は無音です。',
       },
       label: {

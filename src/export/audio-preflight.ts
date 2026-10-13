@@ -7,12 +7,13 @@ import {
 } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
 import { effectiveTrackInstrument } from '@/project/instrument';
-import { type InsertSlot, normalizeMixerSoloMode, tracksWithVcaSolo } from '@/project/mixer';
+import { type InsertSlot, tracksWithVcaSolo } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import {
   documentAudibleTrackIndices,
   ppqSpanIntersectsRange,
+  programOutputDocument,
   type RenderPpqRange,
 } from './engine-render-context';
 import { MAX_RELEASE_TAIL_SECONDS } from './engine-render-types';
@@ -34,7 +35,6 @@ export type AudioExportWarning =
   | { kind: 'release-tail-short'; currentSeconds: number; suggestedSeconds: number }
   | { kind: 'solo-active'; tracks: string[] }
   | { kind: 'return-solo-active'; buses: string[] }
-  | { kind: 'pfl-mode-active' }
   | { kind: 'silent-mixdown' };
 
 export interface AudioExportPreflightResult {
@@ -266,9 +266,10 @@ function trackTimelineIntersectsRange(
  * responsible for its worker-side decode.
  */
 export async function audioExportPreflight(
-  doc: ProjectDocument,
+  input: ProjectDocument,
   options: AudioExportPreflightOptions,
 ): Promise<AudioExportPreflightResult> {
+  const doc = programOutputDocument(input);
   const blockers: AudioExportBlocker[] = [];
   const warnings: AudioExportWarning[] = [];
   const range = resolvePreflightRange(options);
@@ -278,9 +279,6 @@ export async function audioExportPreflight(
   const soloTracks = tracksWithVcaSolo(doc.tracks, vcaControls).filter((track) => track.solo);
   if (soloTracks.length > 0) {
     warnings.push({ kind: 'solo-active', tracks: soloTracks.map((track) => track.name) });
-    if (normalizeMixerSoloMode(doc.mixer?.soloMode) === 'pfl') {
-      warnings.push({ kind: 'pfl-mode-active' });
-    }
   }
   const soloBuses = (doc.mixer?.buses ?? []).filter((bus) => bus.solo === true);
   if (soloBuses.length > 0) {

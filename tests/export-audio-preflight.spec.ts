@@ -162,7 +162,7 @@ describe('audioExportPreflight', () => {
     expect(load).toHaveBeenCalledWith('ok');
   });
 
-  it('warns before exporting an active solo, PFL monitor mix, or silent project', async () => {
+  it('warns before exporting an active solo or silent project, but not a PFL cue', async () => {
     const source = doc();
     source.tracks.push({
       name: 'Lead',
@@ -174,11 +174,6 @@ describe('audioExportPreflight', () => {
       pan: 0,
       clips: [],
     });
-    source.mixer = {
-      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
-      buses: [],
-      soloMode: 'pfl',
-    };
     const soloed = await audioExportPreflight(source, {
       range: 'project',
       releaseTailSeconds: 10,
@@ -188,7 +183,18 @@ describe('audioExportPreflight', () => {
       kind: 'solo-active',
       tracks: [source.tracks[0].name],
     });
-    expect(soloed.warnings).toContainEqual({ kind: 'pfl-mode-active' });
+
+    source.mixer = {
+      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+      buses: [],
+      soloMode: 'pfl',
+    };
+    const pfl = await audioExportPreflight(source, {
+      range: 'project',
+      releaseTailSeconds: 10,
+      loadAudioAsset: async (id) => loaded(id),
+    });
+    expect(pfl.warnings).toEqual([]);
 
     source.tracks[0].solo = false;
     source.tracks[0].mute = true;

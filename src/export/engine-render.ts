@@ -53,7 +53,6 @@ import {
   pushGsSetupSysex,
 } from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
-import { PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { busSceneJson, MAX_ENGINE_BUSES, stripSceneJson } from '@/engine/strip-sync';
 import {
   estimatedTailSeconds,
@@ -111,7 +110,6 @@ import {
   laneGainDb,
   type MixerStrip,
   masteringChainIsActive,
-  normalizeMixerSoloMode,
   returnSoloRouting,
   stripHasDsp,
   tracksWithVcaSolo,
@@ -132,6 +130,7 @@ import {
   documentAudibleTrackIndices,
   documentRenderContributorIndices,
   preloadSoundFonts,
+  programOutputDocument,
   resolveRenderWindow,
 } from './engine-render-context';
 import { buildReport } from './engine-render-report';
@@ -220,9 +219,10 @@ export function trimDecayedTail<T extends readonly Float32Array[]>(
  * @throws MixdownCancelledError when options.shouldCancel returns true.
  */
 export async function renderProjectWithEngine(
-  doc: ProjectDocument,
+  input: ProjectDocument,
   options: EngineRenderOptions = {},
 ): Promise<MixdownResult> {
+  const doc = programOutputDocument(input);
   const sampleRate = options.sampleRate ?? doc.sampleRate;
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`Render sample rate must be finite and > 0, got ${sampleRate}`);
@@ -733,13 +733,6 @@ export async function renderProjectWithEngine(
     // pass instead isolates one lane by muting every other one (solo would
     // also keep the document's own soloed tracks audible).
     const soloStates = expandedSoloStates(tracksForSolo, documentSoloExpansion);
-    const auditionSoloStates =
-      normalizeMixerSoloMode(doc.mixer?.soloMode) === 'pfl'
-        ? expandedSoloStates(
-            tracksForSolo.map((track) => ({ ...track, soloSafe: false })),
-            documentSoloExpansion,
-          )
-        : [];
     doc.tracks.forEach((track, index) => {
       const strip = track.mixer;
       const trackId = trackIds[index];
@@ -807,19 +800,16 @@ export async function renderProjectWithEngine(
         engine.setParameter(trackLaneParamId(engine, trackId, 'faderDb'), 0);
         engine.setParameter(trackLaneParamId(engine, trackId, 'pan'), 0);
       } else {
-        const pflAudition = pass.stemIndices === null && auditionSoloStates[index] === true;
         // Lane fader includes the strip trim and the track's VCA group offset,
         // so a VCA-attenuated track exports at the level it plays back at.
         engine.setParameter(
           trackLaneParamId(engine, trackId, 'faderDb'),
-          pflAudition
-            ? PFL_AUDITION_GAIN_DB
-            : laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
+          laneGainDb(track.volume, strip?.gainDb, vcaOffsetDb(track.vcaId, vcaGainDbById)),
         );
         // MixerStrip.pan is canonical. Fall back to DocumentTrack.pan so
         // pre-migration projects and freshly imported foreign documents pan
         // identically before and after a save/load cycle.
-        const pan = pflAudition ? 0 : clampPan(strip?.pan ?? track.pan ?? 0);
+        const pan = clampPan(strip?.pan ?? track.pan ?? 0);
         engine.setParameter(trackLaneParamId(engine, trackId, 'pan'), pan);
         // Pan law / mode / dual-pan / channel-delay shape the lane exactly as
         // live mixer-sync does; emit only the non-defaults to keep the command
@@ -828,9 +818,7 @@ export async function renderProjectWithEngine(
         if (panLaw !== DEFAULT_PAN_LAW) engine.setTrackStripPanLaw(trackId, panLaw);
         const panMode = strip?.panMode ?? DEFAULT_PAN_MODE;
         if (panMode !== DEFAULT_PAN_MODE) engine.setTrackStripPanMode(trackId, panMode);
-        if (pflAudition) {
-          engine.setTrackStripDualPan(trackId, 0, 0);
-        } else if (strip?.dualPan) {
+        if (strip?.dualPan) {
           engine.setTrackStripDualPan(
             trackId,
             clampPan(strip.dualPan.left),
@@ -960,11 +948,7 @@ export async function renderProjectWithEngine(
       const usesPreRenderedSf2 = pass.usePreRenderedSf2 && conflictingSf2TrackIndices.has(index);
       for (const lane of track.automation ?? []) {
         if (!lane.enabled || lane.points.length === 0) continue;
-        const pflAudition = pass.stemIndices === null && auditionSoloStates[index] === true;
-        if (
-          (pass.freezeIndex === index || pflAudition) &&
-          (lane.param === 'faderDb' || lane.param === 'pan')
-        ) {
+        if (pass.freezeIndex === index && (lane.param === 'faderDb' || lane.param === 'pan')) {
           continue;
         }
         const points =

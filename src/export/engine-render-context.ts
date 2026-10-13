@@ -12,6 +12,7 @@ import { annotationsFromDocument, type NoteArticulation } from '@/project/annota
 import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   effectiveTrackMute,
+  normalizeMixerSoloMode,
   returnSoloRouting,
   type StripSend,
   tracksWithVcaSolo,
@@ -72,11 +73,30 @@ export function ppqSpanIntersectsRange(
 }
 
 /**
- * Computes the shared effective audible track set (mute/solo/solo-safe,
- * groups and VCA controls). Preflight and rendering use this same projection
- * so media that cannot reach the requested mix never blocks export.
+ * The document an offline render hears. PFL solo is a monitor cue, not part
+ * of the program output, so in PFL mode track and VCA solos are cleared.
  */
-export function documentAudibleTrackIndices(doc: ProjectDocument): Set<number> {
+export function programOutputDocument(doc: ProjectDocument): ProjectDocument {
+  if (normalizeMixerSoloMode(doc.mixer?.soloMode) !== 'pfl') return doc;
+  const tracks = doc.tracks.map((track) => (track.solo ? { ...track, solo: false } : track));
+  const vcaGroups = doc.mixer?.vcaGroups?.map((group) =>
+    group.solo === true ? { ...group, solo: false } : group,
+  );
+  return {
+    ...doc,
+    tracks,
+    ...(doc.mixer ? { mixer: { ...doc.mixer, ...(vcaGroups ? { vcaGroups } : {}) } } : {}),
+  };
+}
+
+/**
+ * Computes the shared effective audible track set (mute/solo/solo-safe,
+ * groups and VCA controls) of the program output. Preflight and rendering use
+ * this same projection so media that cannot reach the requested mix never
+ * blocks export.
+ */
+export function documentAudibleTrackIndices(input: ProjectDocument): Set<number> {
+  const doc = programOutputDocument(input);
   const vcaControlsById: Map<string, VcaControlState> = new Map(
     (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group]),
   );
