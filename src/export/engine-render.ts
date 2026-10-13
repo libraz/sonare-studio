@@ -139,8 +139,6 @@ import {
   BLOCKS_PER_CHECKPOINT,
   busFaderParamId,
   DEFAULT_TEMPO_BPM,
-  ENGINE_MIXER_PARAM_FADER_DB,
-  ENGINE_MIXER_PARAM_PAN,
   type EngineClipSpec,
   type EngineRenderOptions,
   MAX_PREROLL_SECONDS,
@@ -953,8 +951,8 @@ export async function renderProjectWithEngine(
       });
     }
     if (pass.masterLevels) {
-      engine.setParameter(masterParamId(ENGINE_MIXER_PARAM_FADER_DB), master?.gainDb ?? 0);
-      engine.setParameter(masterParamId(ENGINE_MIXER_PARAM_PAN), clampPan(master?.pan ?? 0));
+      engine.setParameter(masterParamId(engine, 'faderDb'), master?.gainDb ?? 0);
+      engine.setParameter(masterParamId(engine, 'pan'), clampPan(master?.pan ?? 0));
     }
 
     // Automation lanes (track entries + master), enabled lanes only.
@@ -1047,8 +1045,7 @@ export async function renderProjectWithEngine(
         }
         if (parseMasteringAutomationParam(lane.param)) continue;
         if (lane.param !== 'faderDb' && lane.param !== 'pan') continue;
-        const kind = lane.param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-        engine.setAutomationLane(masterParamId(kind), points);
+        engine.setAutomationLane(masterParamId(engine, lane.param), points);
       }
     }
     for (const bus of doc.mixer?.buses ?? []) {

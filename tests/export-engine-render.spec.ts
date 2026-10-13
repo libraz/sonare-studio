@@ -91,6 +91,11 @@ class FakeEngine implements OfflineRenderEngine {
     if (!this.declaredBusIds.has(busId)) return -1;
     return ENGINE_MIXER_TARGET_BASE | ((254 - busId) << 8) | ENGINE_MIXER_PARAM_FADER_DB;
   }
+  resolveMasterAutomationId(paramName: 'faderDb' | 'pan' | 'width'): number {
+    if (paramName === 'width') return -1;
+    const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
+    return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | kind;
+  }
   setTrackStripJson(trackId: number, json: string): void {
     this.record('setTrackStripJson', trackId, json);
   }

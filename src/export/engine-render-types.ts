@@ -1,7 +1,6 @@
 /**
  * Shared types, constants and parameter-id helpers for the engine-backed
- * offline export renderer (see engine-render.ts). The reserved engine mixer
- * parameter namespace mirrors the facade encoding the live sync layers use.
+ * offline export renderer (see engine-render.ts).
  */
 
 import type { InsertTailResolver } from '@/export/audio-preflight';
@@ -17,15 +16,6 @@ import type {
   PanMode,
   RealtimeEngine,
 } from '@/wasm/index.js';
-
-/** Reserved engine mixer parameter namespace (mirrors the facade encoding). */
-export const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
-/** Lane byte addressing the master strip in the reserved namespace. */
-export const ENGINE_MIXER_LANE_MASTER = 0xff;
-/** Parameter kind: lane/master fader gain in dB. */
-export const ENGINE_MIXER_PARAM_FADER_DB = 1;
-/** Parameter kind: lane/master stereo pan in [-1, 1]. */
-export const ENGINE_MIXER_PARAM_PAN = 2;
 
 /** Frames processed per offline block. */
 export const RENDER_BLOCK_FRAMES = 1024;
@@ -75,6 +65,7 @@ export type OfflineRenderEngine = Pick<
   | 'setParameter'
   | 'resolveTrackLaneAutomationId'
   | 'resolveBusAutomationId'
+  | 'resolveMasterAutomationId'
   | 'resolveTrackInsertAutomationId'
   | 'resolveMasterInsertAutomationId'
   | 'resolveBusInsertAutomationId'
@@ -326,9 +317,18 @@ export function trackLaneParamId(
   return id;
 }
 
-/** Reserved engine parameter id for one master strip parameter. */
-export function masterParamId(kind: number): number {
-  return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | (kind & 0xff);
+/**
+ * Engine parameter id of the master fader or pan.
+ *
+ * @throws Error when the engine does not resolve the parameter.
+ */
+export function masterParamId(
+  engine: Pick<OfflineRenderEngine, 'resolveMasterAutomationId'>,
+  param: 'faderDb' | 'pan',
+): number {
+  const id = engine.resolveMasterAutomationId(param);
+  if (id < 0) throw new Error(`Engine has no master ${param} parameter`);
+  return id;
 }
 
 /**

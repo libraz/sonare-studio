@@ -4,12 +4,6 @@ import type { EngineHandle } from '@/engine/engine';
 import { createStripSync } from '@/engine/strip-sync';
 import { type OfflineRenderEngine, renderProjectWithEngine } from '@/export/engine-render';
 import {
-  ENGINE_MIXER_PARAM_FADER_DB,
-  ENGINE_MIXER_PARAM_PAN,
-  ENGINE_MIXER_TARGET_BASE,
-  masterParamId,
-} from '@/export/engine-render-types';
-import {
   type AutomationLaneState,
   busAutomationTarget,
   insertAutomationParam,
@@ -21,10 +15,21 @@ import type { EqBand } from '@/wasm/index.js';
 
 type EngineCall = [string, ...unknown[]];
 
+const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
+const ENGINE_MIXER_LANE_MASTER = 0xff;
+const ENGINE_MIXER_PARAM_FADER_DB = 1;
+const ENGINE_MIXER_PARAM_PAN = 2;
+
 /** Stub track fader/pan id; both declaration paths must resolve the same one. */
 function stubTrackParamId(trackId: number, param: 'faderDb' | 'pan'): number {
   const kind = param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
   return ENGINE_MIXER_TARGET_BASE | ((trackId - 1) << 8) | kind;
+}
+
+/** Stub master fader/pan id; both declaration paths must resolve the same one. */
+function stubMasterParamId(param: 'faderDb' | 'pan'): number {
+  const kind = param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
+  return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | kind;
 }
 
 /** Stub bus fader id. */
@@ -96,12 +101,14 @@ class DeclarationRecorder implements OfflineRenderEngine {
   }
   automationParamId(target: number | 'master', param: 'faderDb' | 'pan'): number {
     this.record('automationParamId', target, param);
-    const kind = param === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-    if (target === 'master') return masterParamId(kind);
+    if (target === 'master') return stubMasterParamId(param);
     return stubTrackParamId(target, param);
   }
   resolveTrackLaneAutomationId(trackId: number, param: 'faderDb' | 'pan'): number {
     return stubTrackParamId(trackId, param);
+  }
+  resolveMasterAutomationId(param: 'faderDb' | 'pan' | 'width'): number {
+    return param === 'width' ? -1 : stubMasterParamId(param);
   }
   resolveBusAutomationId(busId: number, _param: 'faderDb'): number {
     return stubBusParamId(busId);
