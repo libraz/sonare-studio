@@ -76,12 +76,17 @@ describe('project store', () => {
     ]);
   });
 
-  it('updates the Project sample rate when init is called after engine startup', async () => {
-    expect(JSON.parse(getProject().toJson()).sample_rate).toBe(48000);
+  it('leaves a live Project and its native undo untouched when init runs again', async () => {
+    const project = getProject();
+    const nativeBefore = project.toJson();
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
 
-    await store.init({ sampleRate: 44100 });
+    await store.init();
 
-    expect(JSON.parse(getProject().toJson()).sample_rate).toBe(44100);
+    expect(getProject()).toBe(project);
+    expect(undo()).toBe(true);
+    expect(project.toJson()).toBe(nativeBefore);
+    expect(JSON.parse(nativeBefore).sample_rate).toBe(48000);
   });
 
   it('addNote writes a note-on/note-off pair through to the Project', () => {

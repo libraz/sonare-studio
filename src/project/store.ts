@@ -498,27 +498,18 @@ export const useProjectStore = defineStore('project', () => {
    * of 120 BPM and one MIDI track holding one empty 8-bar clip. Safe to call
    * more than once; later calls are no-ops while a Project is alive.
    *
-   * @param options Optional overrides (sampleRate defaults to 48000 Hz).
+   * The Project sample rate is document state, fixed at creation and load; the
+   * audio device's rate belongs to the engine session and never rewrites it.
    */
-  function applySampleRateIfProvided(options: { sampleRate?: number }): boolean {
-    const current = currentProject();
-    if (!current) return false;
-    if (options.sampleRate !== undefined && options.sampleRate > 0) {
-      current.setSampleRate(options.sampleRate);
-    }
-    return true;
-  }
-
-  async function init(options: { sampleRate?: number } = {}): Promise<void> {
-    if (applySampleRateIfProvided(options)) return;
+  async function init(): Promise<void> {
+    if (currentProject()) return;
     const mod = await ensureWasm();
-    // Another init() call may have won the race while awaiting; still apply
-    // the caller's concrete hardware rate when provided.
-    if (applySampleRateIfProvided(options)) return;
+    // Another init() call may have won the race while awaiting.
+    if (currentProject()) return;
     setWasmModule(mod);
     const created = new mod.Project();
     created.setMaxUndoDepth(PROJECT_MAX_UNDO_DEPTH);
-    created.setSampleRate(options.sampleRate ?? DEFAULT_SAMPLE_RATE);
+    created.setSampleRate(DEFAULT_SAMPLE_RATE);
     created.setTempoSegments([{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }]);
     const trackId = created.addTrack({ kind: 'midi', name: DEFAULT_TRACK_NAME });
     const newClipId = created.addClip({

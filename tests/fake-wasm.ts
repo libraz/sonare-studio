@@ -10,7 +10,7 @@
  *   registration + clip add), and addMidiClip pushes one transaction for its
  *   track, source and clip.
  *   setClipSource,
- *   setClipFade and setAudioSourceMetadata push one entry each.
+ *   setClipFade, setAudioSourceMetadata and setSampleRate push one entry each.
  * - splitClip partitions MIDI events between the halves and tracks source
  *   offsets the way the real Project does.
  * - addClip registers one source per call (inline audio fields or a
@@ -323,7 +323,9 @@ export class FakeProject {
   }
 
   setSampleRate(sampleRate: number): void {
-    this.sampleRate = sampleRate;
+    this.edit(() => {
+      this.sampleRate = sampleRate;
+    });
   }
 
   getSampleRate(): number {

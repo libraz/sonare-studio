@@ -277,7 +277,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           await bootPromise;
           assertActive();
         }
-        await store.init({ sampleRate: stagedHandle.ctx.sampleRate });
+        await store.init();
         setProcessingSampleRate(stagedHandle.ctx.sampleRate);
         assertActive();
         const insertCatalog =
