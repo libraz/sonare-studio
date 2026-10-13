@@ -392,6 +392,14 @@ describe('instrument helpers', () => {
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', program: 128 })).toThrow(
       RangeError,
     );
+    for (const gain of [-0.1, 4.01, Number.NaN]) {
+      expect(() => validateTrackInstrument({ kind: 'synth-patch', patch: { gain } })).toThrow(
+        RangeError,
+      );
+    }
+    for (const gain of [0, 4]) {
+      expect(() => validateTrackInstrument({ kind: 'synth-patch', patch: { gain } })).not.toThrow();
+    }
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: '' })).toThrow(RangeError);
     expect(() => validateTrackInstrument({ kind: 'sf2', fontId: 'gm', program: 5 })).not.toThrow();
     // Zero gain is valid (mute): the UI allows it and sf2PlaybackConfig maps it

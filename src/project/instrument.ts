@@ -437,6 +437,14 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       if (instrument.patch.oneShot !== undefined && typeof instrument.patch.oneShot !== 'boolean') {
         throw new RangeError('Synth patch oneShot must be a boolean when present');
       }
+      if (
+        instrument.patch.gain !== undefined &&
+        (!Number.isFinite(instrument.patch.gain) ||
+          instrument.patch.gain < 0 ||
+          instrument.patch.gain > 4)
+      ) {
+        throw new RangeError('Synth patch gain must be a finite number in [0, 4] when present');
+      }
       validateEngineParams(instrument.patch.engineParams);
       return;
     case 'sf2': {
