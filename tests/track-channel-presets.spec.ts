@@ -15,7 +15,7 @@ import {
   undo,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { trackChannelPresetFromTrack } from '@/project/track-preset';
+import { normalizeTrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -67,6 +67,24 @@ describe('track channel presets', () => {
     const restored = store.tracks.find((track) => track.id === targetId)!;
     expect(restored.instrument).toBeUndefined();
     expect(restored.mixer).toBeUndefined();
+  });
+
+  it('reads saved presets in current spelling for retired processor ids and filter models', () => {
+    addInsert(sourceId, 'eq.passiveTube');
+    setTrackInstrument(sourceId, { kind: 'synth-patch', patch: { filterModel: 'svf' } });
+    const saved = JSON.parse(
+      JSON.stringify(trackChannelPresetFromTrack(store.tracks[0], 'Legacy'))
+        .replace('"eq.passiveTube"', '"eq.pultec"')
+        .replace('"svf"', '"moog-ladder"'),
+    );
+
+    const preset = normalizeTrackChannelPreset(saved);
+
+    expect(preset.strip.inserts[0].processor).toBe('eq.passiveTube');
+    expect(preset.instrument).toEqual({
+      kind: 'synth-patch',
+      patch: { filterModel: 'transistor-ladder' },
+    });
   });
 
   it('drops routing and sidechain references that do not exist in the destination project', () => {

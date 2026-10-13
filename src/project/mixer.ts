@@ -108,6 +108,29 @@ export const DEFAULT_SURROUND_PAN: SurroundPan = {
   distance: 1,
 };
 
+/** Retired processor ids the engine still reads, mapped to the catalog id it reports. */
+const RENAMED_PROCESSORS: Readonly<Record<string, string>> = {
+  'eq.pultec': 'eq.passiveTube',
+  'eq.apiStyle': 'eq.steppedProportionalQ',
+};
+
+/** Rewrites retired processor ids in one strip/chain to their current catalog id. */
+export function renameRetiredProcessors(slots: InsertSlot[]): void {
+  for (const slot of slots) {
+    const current = RENAMED_PROCESSORS[slot.processor];
+    if (current !== undefined) slot.processor = current;
+  }
+}
+
+/** Rewrites retired processor ids throughout a project mixer state. */
+export function renameRetiredMixerProcessors(state: ProjectMixerState): void {
+  renameRetiredProcessors(state.master.inserts);
+  for (const bus of state.buses) {
+    if (bus.strip) renameRetiredProcessors(bus.strip.inserts);
+  }
+  if (state.masteringChain) renameRetiredProcessors(state.masteringChain.processors);
+}
+
 let nextProcessorId = 1;
 
 /** Creates a collision-resistant, document-persisted processor identity. */

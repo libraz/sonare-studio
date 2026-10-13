@@ -23,6 +23,7 @@
  */
 
 import { getWasmModule } from '@/project/store';
+import type { SoloProcessor } from '@/wasm/index.js';
 
 /** Processor classification from the wasm catalog (subset used by the popover). */
 export type InsertProcessorKind = 'realtime' | 'offline' | 'pair';
@@ -97,7 +98,7 @@ const CATEGORY_LABELS: ReadonlyArray<readonly [string, string]> = [
  * entries are members of the typed SoloProcessor union, so they are valid
  * offline-strip processors.
  */
-export const FALLBACK_INSERT_CATALOG: readonly string[] = [
+export const FALLBACK_INSERT_CATALOG: readonly SoloProcessor[] = [
   'dynamics.compressor',
   'dynamics.gate',
   'dynamics.expander',
@@ -110,7 +111,7 @@ export const FALLBACK_INSERT_CATALOG: readonly string[] = [
   'eq.parametric',
   'eq.shelving',
   'eq.tilt',
-  'eq.pultec',
+  'eq.passiveTube',
   'multiband.compressor',
   'multiband.saturation',
   'saturation.tape',

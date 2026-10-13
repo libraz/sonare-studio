@@ -46,6 +46,8 @@ import {
   MAX_MIXER_BUSES,
   normalizeMixerSoloMode,
   type ProjectMixerState,
+  renameRetiredMixerProcessors,
+  renameRetiredProcessors,
 } from './mixer';
 import {
   adoptProject,
@@ -713,8 +715,11 @@ export const useProjectStore = defineStore('project', () => {
         );
       }
       ensureMixerProcessorIds(mixer.value);
+      renameRetiredMixerProcessors(mixer.value);
       for (const track of trackMirror) {
-        if (track.mixer) ensureProcessorIds(track.mixer.inserts);
+        if (!track.mixer) continue;
+        ensureProcessorIds(track.mixer.inserts);
+        renameRetiredProcessors(track.mixer.inserts);
       }
       projectExternalMidi.value = doc.externalMidiDefault
         ? (cloneInstrument(doc.externalMidiDefault) as ExternalMidiInstrument)

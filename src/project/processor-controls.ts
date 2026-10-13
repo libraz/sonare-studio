@@ -156,7 +156,7 @@ const CHOICE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   adaa2: 'ADAA 2',
   oversample4x: '4x Oversampling',
   firLinearPhase: 'FIR Linear Phase',
-  eqp1aWdf: 'EQP-1A (WDF)',
+  wdfCircuit: 'WDF Circuit',
   guitar4x12: 'Guitar 4x12',
   bass8x10: 'Bass 8x10',
 };

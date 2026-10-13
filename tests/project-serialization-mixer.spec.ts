@@ -6,6 +6,7 @@ import {
   addAudioTrack,
   addGroupTrack,
   addInsert,
+  addMasteringProcessor,
   addMixerBus,
   addVcaGroup,
   clearHistory,
@@ -152,6 +153,29 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     const saved = serializeProject();
     expect(saved.tracks[0]).toMatchObject({ pan: -0.6, mixer: { pan: -0.6 } });
     expect(saved.tracks[1]).toMatchObject({ pan: 0.8, mixer: { gainDb: -3, pan: 0.8 } });
+  });
+
+  it('loads retired processor ids under their current catalog id everywhere they are stored', async () => {
+    const trackId = store.tracks[0].id;
+    addInsert(trackId, 'eq.passiveTube');
+    addInsert('master', 'eq.steppedProportionalQ');
+    addMasteringProcessor('eq.passiveTube');
+    saveMixerSnapshot('A');
+    const legacy = JSON.parse(
+      JSON.stringify(serializeProject())
+        .replaceAll('"eq.passiveTube"', '"eq.pultec"')
+        .replaceAll('"eq.steppedProportionalQ"', '"eq.apiStyle"'),
+    ) as ProjectDocument;
+    expect(JSON.stringify(legacy)).toContain('"eq.pultec"');
+
+    await loadProjectDocument(legacy);
+
+    const saved = JSON.stringify(serializeProject());
+    expect(saved).not.toContain('"eq.pultec"');
+    expect(saved).not.toContain('"eq.apiStyle"');
+    expect(store.tracks[0].mixer?.inserts[0].processor).toBe('eq.passiveTube');
+    expect(saved.match(/"eq\.passiveTube"/g)?.length).toBe(4);
+    expect(saved.match(/"eq\.steppedProportionalQ"/g)?.length).toBe(2);
   });
 
   it('rejects group pan automation commands', () => {

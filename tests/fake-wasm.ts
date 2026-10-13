@@ -1348,7 +1348,7 @@ export const FAKE_AMP_PRESET_CATALOG = [
   },
   {
     index: 3,
-    name: 'tweedGrind',
+    name: 'vintageGrind',
     params: {
       drive: 0.62,
       bassDb: 3,
@@ -1369,7 +1369,7 @@ export const FAKE_AMP_PRESET_CATALOG = [
   },
   {
     index: 4,
-    name: 'britStack',
+    name: 'crunchStack',
     params: {
       drive: 0.7,
       bassDb: -1,
@@ -1410,7 +1410,7 @@ export const FAKE_AMP_PRESET_CATALOG = [
   },
   {
     index: 6,
-    name: 'rectifierChug',
+    name: 'heavyChug',
     params: {
       drive: 0.85,
       bassDb: 5,
@@ -1581,11 +1581,11 @@ const FAKE_AMP_PARAM_DEFAULTS: FakeAmpParamInfo[] = [
     'ampModel',
     [
       { name: 'classicCrunch', value: 0 },
-      { name: 'fenderClean', value: 1 },
+      { name: 'cleanCombo', value: 1 },
       { name: 'modernHiGain', value: 2 },
-      { name: 'tweed', value: 3 },
-      { name: 'voxChime', value: 4 },
-      { name: 'rectifier', value: 5 },
+      { name: 'vintageCombo', value: 3 },
+      { name: 'classAChime', value: 4 },
+      { name: 'heavyHiGain', value: 5 },
     ],
     0,
   ),

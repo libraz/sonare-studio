@@ -22,7 +22,14 @@ import type {
   DocumentMixerState,
   DocumentTrack,
 } from './document-schema';
-import { cloneMixerState, cloneStrip, type MixerStrip, type ProjectMixerState } from './mixer';
+import {
+  cloneMixerState,
+  cloneStrip,
+  type MixerStrip,
+  type ProjectMixerState,
+  renameRetiredMixerProcessors,
+  renameRetiredProcessors,
+} from './mixer';
 import type { TrackKind } from './types';
 
 /** Converts track-scoped insert sidechain ids to document track indices. */
@@ -315,16 +322,19 @@ export function fromDocumentMixerSnapshotSlots(
     const snapshot = docSlots.slots[slot];
     if (!snapshot) continue;
     const mixer = cloneMixerState(snapshot.mixer);
+    renameRetiredMixerProcessors(mixer);
     resolveMixerSidechainSourceIds(mixer, tracks);
     snapshots[slot] = {
       mixer,
       tracks: snapshot.tracks.flatMap((entry) => {
         const track = tracks[entry.trackIndex];
         if (!track) return [];
+        const trackMixer = stripWithSidechainSourceIds(entry.mixer, tracks, true);
+        renameRetiredProcessors(trackMixer.inserts);
         return [
           {
             id: track.id,
-            mixer: stripWithSidechainSourceIds(entry.mixer, tracks, true),
+            mixer: trackMixer,
             mute: entry.mute,
             solo: entry.solo,
             ...(entry.volume !== undefined ? { volume: entry.volume } : {}),

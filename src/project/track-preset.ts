@@ -20,6 +20,7 @@ import {
   MAX_STRIP_GAIN_DB,
   MIN_STRIP_GAIN_DB,
   type MixerStrip,
+  renameRetiredProcessors,
 } from './mixer';
 import type { EditorTrack } from './types';
 
@@ -122,6 +123,7 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
       }
     }
   }
+  renameRetiredProcessors(strip.inserts);
   for (const send of strip.sends) {
     if (
       !send ||
