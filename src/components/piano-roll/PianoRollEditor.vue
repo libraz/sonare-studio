@@ -14,6 +14,7 @@ import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import {
   addNote,
   addNotes,
+  addNotesInNewClip,
   deleteNotes,
   redo,
   setActiveClip,
@@ -32,6 +33,7 @@ import {
 import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { measureRangeAt, snapPpqToMeterGrid } from '@/project/time-signature';
+import type { NewEditorNote } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { localizeMeter } from '@/ui/arrangement/ruler';
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
@@ -555,6 +557,17 @@ const timeSignatureOriginPpq = computed(() => {
   return clip ? clip.startPpq - clip.sourceOffsetPpq : 0;
 });
 
+// Leaving the clip-less timeline frame for a clip's source frame keeps the same
+// timeline region in view, so a note drawn into a fresh clip stays put.
+watch(
+  () => (store.activeClip ? timeSignatureOriginPpq.value : null),
+  (origin, previous) => {
+    if (previous !== null || !origin) return;
+    range.setStartPpq(range.startPpq - origin);
+    bump();
+  },
+);
+
 /** Maps a clip-source ruler seek back to an absolute transport PPQ. */
 function onRulerSeek(localPpq: number): void {
   emit('seek', Math.max(0, localPpq + timeSignatureOriginPpq.value));
@@ -597,6 +610,11 @@ function resolveScalePitch(pitch: number): number {
   return pitch;
 }
 
+/** Without an open clip, drawn notes land in a new clip spanning the visible bars. */
+function addDrawnNotes(inputs: ReadonlyArray<NewEditorNote>): number[] {
+  return store.activeClip ? addNotes(inputs) : addNotesInNewClip(inputs, range.startPpq);
+}
+
 const interactions = useNoteInteractions({
   view: range,
   getNotes: () => audibleSourceNotes.value,
@@ -608,11 +626,19 @@ const interactions = useNoteInteractions({
   getTool: () => tool.value,
   isReadOnly: () => contentReadOnly.value,
   getMinPpq: () => sourceWindowStartPpq.value,
-  getMaxPpq: () => sourceWindowEndPpq.value,
+  // With no clip open, a draw creates one around the note, so nothing bounds it.
+  getMaxPpq: () => (store.activeClip ? sourceWindowEndPpq.value : Number.POSITIVE_INFINITY),
   resolveCreatedPitch: resolveScalePitch,
   resolveEditedPitch: resolveScalePitch,
   getCreatedChannel: () => preferredNoteChannel(store.activeTrack, activeTrackNotes.value),
-  commands: { addNote, addNotes, updateNotes, deleteNotes, setSelection, splitNote },
+  commands: {
+    addNote: (input) => addDrawnNotes([input])[0],
+    addNotes: addDrawnNotes,
+    updateNotes,
+    deleteNotes,
+    setSelection,
+    splitNote,
+  },
   auditionDuringDrag: () => auditionDrag.value,
   ...(props.audition ? { onAudition: props.audition } : {}),
 });

@@ -222,6 +222,7 @@ export type { NoteEditPlan } from './command/notes';
 export {
   addNote,
   addNotes,
+  addNotesInNewClip,
   applyGrooveToActiveClip,
   applyGrooveToSelection,
   applyNoteEdits,

@@ -1491,6 +1491,39 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
       expect(undo()).toBe(true);
       expect(store.notes).toEqual([]);
     });
+
+    it('creates a bar-aligned clip when notes are added to a MIDI track without one', () => {
+      const trackId = addTrack({ name: 'Empty' });
+      setActiveTrack(trackId);
+      expect(store.clipId).toBe(-1);
+
+      const ids = addNotes([
+        { pitch: 60, startPpq: 9.5, durationPpq: 1 },
+        { pitch: 64, startPpq: 11.5, durationPpq: 1 },
+      ]);
+
+      const clip = store.clips.find((c) => c.trackId === trackId);
+      expect(clip).toMatchObject({ startPpq: 8, lengthPpq: 8 });
+      expect(store.clipId).toBe(clip?.id);
+      expect(store.notes.map((note) => [note.id, note.startPpq])).toEqual([
+        [ids[0], 1.5],
+        [ids[1], 3.5],
+      ]);
+
+      expect(undo()).toBe(true);
+      expect(store.clips.some((c) => c.trackId === trackId)).toBe(false);
+      expect(store.clipId).toBe(-1);
+      expect(store.activeTrackId).toBe(trackId);
+    });
+
+    it('still refuses note additions on a clip-less audio track', () => {
+      const trackId = addTrack({ name: 'Audio', kind: 'audio' });
+      setActiveTrack(trackId);
+      expect(() => addNote({ pitch: 60, startPpq: 0, durationPpq: 1 })).toThrow(
+        'No active clip to edit',
+      );
+      expect(store.clips.some((c) => c.trackId === trackId)).toBe(false);
+    });
   });
 
   describe('selection note operations', () => {

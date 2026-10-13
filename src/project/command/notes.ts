@@ -14,13 +14,14 @@ import {
   useProjectStore,
 } from '../store';
 import {
+  measureRangeAt,
   snapPpqToMeterGrid,
   snapPpqToSwingMeterGrid,
   timeSignatureSegmentAt,
 } from '../time-signature';
 import { clipKind, type EditorNote, type EditorNoteUpdate, type NewEditorNote } from '../types';
 import { cloneNotes, executeAtomic } from './history';
-import { requireEditableClip } from './utils';
+import { requireEditableClip, requireEditableTrack } from './utils';
 
 /** Default note-on velocity for newly created notes. */
 const DEFAULT_VELOCITY = 96;
@@ -202,7 +203,7 @@ export interface NoteEditPlan {
  */
 export function applyNoteEdits(plan: NoteEditPlan): number[] {
   const store = useProjectStore();
-  if (store.clipId < 0) throw new Error('No active clip to edit');
+  if (store.clipId < 0) return addNotesInNewClip(plan.additions ?? []);
   const clip = requireEditableClip(store, store.clipId);
   const lengthPpq = plan.clipWindow?.lengthPpq;
   if (lengthPpq !== undefined && (!Number.isFinite(lengthPpq) || lengthPpq <= 0)) {
@@ -261,6 +262,52 @@ export function applyNoteEdits(plan: NoteEditPlan): number[] {
         }),
   });
   return additions.map((note) => note.id);
+}
+
+/**
+ * Writes additions into a new MIDI clip on the active track, which has none.
+ * Without an open clip the piano roll's frame is the timeline, so addition
+ * positions are timeline PPQ; the clip spans the bars they touch.
+ *
+ * @param additions Notes positioned in timeline PPQ.
+ * @param fromPpq Timeline position the clip should also reach back to, so a
+ *   view's visible span becomes the clip; omitted to start at the first note.
+ * @returns Editor ids allocated for the additions, in input order.
+ */
+export function addNotesInNewClip(
+  additions: ReadonlyArray<NewEditorNote>,
+  fromPpq?: number,
+): number[] {
+  const store = useProjectStore();
+  if (store.activeTrackId < 0) throw new Error('No active clip to edit');
+  const track = requireEditableTrack(store, store.activeTrackId);
+  if (track.kind !== 'midi') throw new Error('No active clip to edit');
+  const drafts = additions.map(newNoteDraft);
+  if (drafts.length === 0) return [];
+  const firstStart = Math.min(...drafts.map((note) => note.startPpq));
+  const lastEnd = Math.max(...drafts.map((note) => note.startPpq + note.durationPpq));
+  const startPpq = measureRangeAt(
+    store.timeSignatures,
+    Math.max(0, Math.min(firstStart, fromPpq ?? firstStart)),
+  ).startPpq;
+  const lastBar = measureRangeAt(store.timeSignatures, Math.max(firstStart, lastEnd - 1e-6));
+  const lengthPpq = lastBar.startPpq + lastBar.lengthPpq - startPpq;
+  const notes = drafts.map((draft) => ({
+    ...draft,
+    id: allocateNoteId(),
+    startPpq: draft.startPpq - startPpq,
+  }));
+  const project = getProject();
+  executeAtomic((edit) => {
+    const clipId = edit(1, () =>
+      project.addClip({ trackId: track.id, isMidi: true, startPpq, lengthPpq }),
+    );
+    edit(1, () => project.setMidiEvents(clipId, notesToProjectEvents(notes)));
+    store.clipId = clipId;
+    store.clipSelection = new Set([clipId]);
+    store.refresh(notes);
+  });
+  return notes.map((note) => note.id);
 }
 
 /** Adds several notes in one validation/commit/undo transaction. */
