@@ -238,6 +238,7 @@ export {
   legatoSelection,
   mergeSelection,
   normalizeSelectionVelocity,
+  noteEndLimitPpq,
   nudgeSelectionVelocity,
   pasteNotesAt,
   quantizeSelection,

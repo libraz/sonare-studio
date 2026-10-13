@@ -50,6 +50,7 @@ import {
   moveClip,
   moveClips,
   normalizeSelectionVelocity,
+  noteEndLimitPpq,
   nudgeSelectionVelocity,
   pasteClipAt,
   pasteNotesAt,
@@ -115,6 +116,7 @@ import {
   transposeSelectionDiatonic,
   trimClip,
   undo,
+  updateNotes,
 } from '@/project/commands';
 import { sanitizeMidiFxConfig } from '@/project/midi-fx';
 import { getProject, PROJECT_MAX_UNDO_DEPTH, useProjectStore } from '@/project/store';
@@ -1465,6 +1467,34 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
     });
   });
 
+  describe('clip growth on note edits', () => {
+    it('grows the clip to the bar holding a note stretched past its end, in one undo', () => {
+      const clip = store.activeClip;
+      if (!clip) throw new Error('expected an active clip');
+      const length = clip.lengthPpq;
+      const id = addNote({ pitch: 60, startPpq: length - 1, durationPpq: 1 });
+      updateNotes([{ id, durationPpq: 2.5 }]);
+      expect(store.activeClip?.lengthPpq).toBe(length + 4);
+      expect(store.notes.find((n) => n.id === id)?.durationPpq).toBe(2.5);
+
+      expect(undo()).toBe(true);
+      expect(store.activeClip?.lengthPpq).toBe(length);
+      expect(store.notes.find((n) => n.id === id)?.durationPpq).toBe(1);
+    });
+
+    it('stops growing at the next clip on the same track', () => {
+      const clip = store.activeClip;
+      if (!clip) throw new Error('expected an active clip');
+      const length = clip.lengthPpq;
+      addMidiClip({ trackId: clip.trackId, startPpq: clip.startPpq + length + 2, lengthPpq: 4 });
+      setActiveClip(clip.id);
+      expect(noteEndLimitPpq(clip)).toBe(clip.sourceOffsetPpq + length + 2);
+      const id = addNote({ pitch: 60, startPpq: length - 1, durationPpq: 1 });
+      updateNotes([{ id, durationPpq: 3 }]);
+      expect(store.activeClip?.lengthPpq).toBe(length + 2);
+    });
+  });
+
   describe('note edit atomicity', () => {
     it('rolls back a clip resize when the note write throws in the same transaction', () => {
       const clipId = store.clipId;
@@ -1772,7 +1802,7 @@ describe('project commands (tracks, clips, markers, sections, tempo)', () => {
           offVelocity: 45,
         }),
       ]);
-      expect(store.activeClip?.lengthPpq).toBeCloseTo(38.5, 8);
+      expect(store.activeClip?.lengthPpq).toBe(40);
     });
 
     it('cuts only after copying the selected notes and leaves the clipboard pasteable', () => {

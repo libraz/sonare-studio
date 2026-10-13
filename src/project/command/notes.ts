@@ -5,7 +5,7 @@ import {
   extractGrooveTemplate,
   type GrooveTemplate,
 } from '../groove';
-import { midiSourcePpqToTimeline } from '../midi-projection';
+import { audibleMidiSourceWindow, midiSourcePpqToTimeline } from '../midi-projection';
 import {
   allocateNoteId,
   getProject,
@@ -19,7 +19,13 @@ import {
   snapPpqToSwingMeterGrid,
   timeSignatureSegmentAt,
 } from '../time-signature';
-import { clipKind, type EditorNote, type EditorNoteUpdate, type NewEditorNote } from '../types';
+import {
+  clipKind,
+  type EditorClip,
+  type EditorNote,
+  type EditorNoteUpdate,
+  type NewEditorNote,
+} from '../types';
 import { cloneNotes, executeAtomic } from './history';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
@@ -57,8 +63,41 @@ function validateNote(note: Omit<EditorNote, 'id'>): void {
   }
 }
 
+/** Clip-source PPQ a note in the clip may reach to: the clip grows up to the next clip on its track. */
+export function noteEndLimitPpq(clip: EditorClip): number {
+  if (clip.loopEnabled) return audibleMidiSourceWindow(clip).endPpq;
+  const nextStart = nextClipStartPpq(clip);
+  return nextStart === undefined
+    ? Number.POSITIVE_INFINITY
+    : nextStart - clip.startPpq + clip.sourceOffsetPpq;
+}
+
+function nextClipStartPpq(clip: EditorClip): number | undefined {
+  const end = clip.startPpq + clip.lengthPpq;
+  let next: number | undefined;
+  for (const other of useProjectStore().clips) {
+    if (other.id === clip.id || other.trackId !== clip.trackId) continue;
+    if (other.startPpq >= end - 1e-9 && (next === undefined || other.startPpq < next)) {
+      next = other.startPpq;
+    }
+  }
+  return next;
+}
+
+/** Clip length reaching the bar holding the last note end; undefined when the clip already covers it. */
+function grownClipLengthPpq(clip: EditorClip, notes: readonly EditorNote[]): number | undefined {
+  if (clip.loopEnabled || notes.length === 0) return undefined;
+  const lastEnd = Math.max(...notes.map((note) => note.startPpq + note.durationPpq));
+  const endPpq = midiSourcePpqToTimeline(clip, lastEnd);
+  if (endPpq <= clip.startPpq + clip.lengthPpq + 1e-9) return undefined;
+  const bar = measureRangeAt(useProjectStore().timeSignatures, endPpq - 1e-6);
+  const nextStart = nextClipStartPpq(clip) ?? Number.POSITIVE_INFINITY;
+  return Math.min(bar.startPpq + bar.lengthPpq, nextStart) - clip.startPpq;
+}
+
 /**
  * Applies a new note list and optional clip-window change as one undoable edit.
+ * Without an explicit length, a non-looped clip grows to keep every note audible.
  */
 function commit(
   nextNotes: EditorNote[],
@@ -73,9 +112,10 @@ function commit(
   if (store.clipId < 0) throw new Error('No active clip to edit');
   const clip = requireEditableClip(store, store.clipId);
   for (const note of nextNotes) validateNote(note);
-  const resize =
-    options.resizeLengthPpq !== undefined &&
-    Math.abs(options.resizeLengthPpq - clip.lengthPpq) > 1e-9;
+  const resizeLengthPpq =
+    options.resizeLengthPpq ??
+    (options.writeNotes ? grownClipLengthPpq(clip, nextNotes) : undefined);
+  const resize = resizeLengthPpq !== undefined && Math.abs(resizeLengthPpq - clip.lengthPpq) > 1e-9;
   const loopChange =
     options.loop !== undefined &&
     (clip.loopEnabled !== options.loop.enabled ||
@@ -85,9 +125,7 @@ function commit(
   if (projectEdits === 0) return;
   executeAtomic((edit) => {
     if (resize) {
-      edit(1, () =>
-        project.trimClip(store.clipId, clip.startPpq, options.resizeLengthPpq as number),
-      );
+      edit(1, () => project.trimClip(store.clipId, clip.startPpq, resizeLengthPpq as number));
     }
     if (loopChange) {
       edit(1, () => {
@@ -138,7 +176,7 @@ export function cutSelectedNotes(): boolean {
 
 /**
  * Pastes the copied notes with their selection origin aligned to a timeline
- * PPQ position. The active MIDI clip grows to keep every pasted note audible.
+ * PPQ position. The active MIDI clip grows to the bar holding the last pasted note.
  *
  * @returns Editor ids assigned to the pasted notes; empty when no MIDI clip or
  * clipboard content is available.
@@ -154,12 +192,7 @@ export function pasteNotesAt(positionPpq: number): number[] {
     ...note,
     startPpq: sourceStartPpq + note.startPpq,
   }));
-  const finalEndPpq = Math.max(...additions.map((note) => note.startPpq + note.durationPpq));
-  const requiredLengthPpq = Math.max(clip.lengthPpq, finalEndPpq - clip.sourceOffsetPpq);
-  const ids = applyNoteEdits({
-    additions,
-    ...(requiredLengthPpq > clip.lengthPpq ? { clipWindow: { lengthPpq: requiredLengthPpq } } : {}),
-  });
+  const ids = applyNoteEdits({ additions });
   setSelection(ids);
   return ids;
 }

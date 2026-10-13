@@ -16,6 +16,7 @@ import {
   addNotes,
   addNotesInNewClip,
   deleteNotes,
+  noteEndLimitPpq,
   redo,
   setActiveClip,
   setSelection,
@@ -376,6 +377,10 @@ const sourceWindowEndPpq = computed(() => {
   const clip = store.activeClip;
   return clip ? audibleMidiSourceWindow(clip).endPpq : store.clipLengthPpq;
 });
+// Edits may run past the clip end: the commit grows the clip. Without a clip, a draw creates one.
+const noteEndLimit = computed(() =>
+  store.activeClip ? noteEndLimitPpq(store.activeClip) : Number.POSITIVE_INFINITY,
+);
 
 /** Left edge in the same source-coordinate frame as editable notes/curves. */
 const sourceWindowStartPpq = computed(() => {
@@ -626,8 +631,7 @@ const interactions = useNoteInteractions({
   getTool: () => tool.value,
   isReadOnly: () => contentReadOnly.value,
   getMinPpq: () => sourceWindowStartPpq.value,
-  // With no clip open, a draw creates one around the note, so nothing bounds it.
-  getMaxPpq: () => (store.activeClip ? sourceWindowEndPpq.value : Number.POSITIVE_INFINITY),
+  getMaxPpq: () => noteEndLimit.value,
   resolveCreatedPitch: resolveScalePitch,
   resolveEditedPitch: resolveScalePitch,
   getCreatedChannel: () => preferredNoteChannel(store.activeTrack, activeTrackNotes.value),
@@ -703,7 +707,7 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
           ? -step
           : step;
     const delta = Math.min(
-      sourceWindowEndPpq.value - maxEnd,
+      noteEndLimit.value - maxEnd,
       Math.max(sourceWindowStartPpq.value - minStart, requestedDelta),
     );
     if (event.altKey) {
@@ -729,7 +733,7 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
     updates = selected.map((note) => ({
       id: note.id,
       durationPpq: Math.min(
-        sourceWindowEndPpq.value - note.startPpq,
+        noteEndLimit.value - note.startPpq,
         Math.max(0.0625, note.durationPpq + delta),
       ),
     }));
