@@ -92,6 +92,7 @@ import {
   type InsertCatalogGroup,
   loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
+import { insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
 import { analyzeMatchEqToReference, type SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
@@ -661,7 +662,7 @@ function onParamChange(
       setMasteringParam(index, control.id, next, { commit: true });
       error.value = '';
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = insertEditErrorMessage(err, t.value);
     }
     return;
   }
@@ -685,7 +686,7 @@ function onParamChange(
     }
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = insertEditErrorMessage(err, t.value);
   }
 }
 

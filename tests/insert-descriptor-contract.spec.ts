@@ -36,10 +36,16 @@ function numberControl(processor: string, key: string, raw?: number) {
 
 describe('insert descriptor drives the controls', () => {
   it('uses uiMin/uiMax as the display range and keeps the accepted range for typed values', () => {
-    const control = numberControl('voice.changer', 'retuneSemitones');
-    expect(control).toMatchObject({ min: -12, max: 12, unit: 'st' });
+    const control = numberControl('voice.changer', 'inputGainDb');
+    expect(control).toMatchObject({ min: -12, max: 12, unit: 'dB' });
     expect(clampToAccepted(control, 30)).toBe(24);
     expect(clampToAccepted(control, -30)).toBe(-24);
+  });
+
+  it('leaves a coupled key to the engine instead of its bounds at the siblings defaults', () => {
+    const control = numberControl('voice.changer', 'retuneSemitones');
+    expect(control).toMatchObject({ min: -12, max: 12, coupledWith: ['formantMode'] });
+    expect(clampToAccepted(control, 30)).toBe(30);
   });
 
   it('draws a log axis from the declared positive display floor', () => {

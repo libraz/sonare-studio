@@ -839,9 +839,12 @@ export function executeApp<T>(action: () => T, gesture?: { key: string; commit: 
   if (gesture && pendingGesture.value && pendingGesture.value.key === gesture.key) {
     const before = pendingGesture.value.before;
     pendingGesture.value = null;
-    const result = action();
-    pushHistory(historyEntry(before, captureSnapshot(store, before), 0));
-    return result;
+    try {
+      return action();
+    } finally {
+      // A refused final value still leaves the gesture's accepted steps to undo.
+      pushHistory(historyEntry(before, captureSnapshot(store, before), 0));
+    }
   }
   return execute(0, action);
 }

@@ -414,6 +414,7 @@ export const shellMixing = {
     },
     controls: {
       knob: 'Knob',
+      coupledNote: 'Range moves with {related}',
       stripGain: 'Strip gain',
       gainTitle: 'Gain {value} dB',
       reset: 'Reset',

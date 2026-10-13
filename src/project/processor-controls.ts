@@ -59,6 +59,8 @@ export interface NumberProcessorControl extends ProcessorControlBase {
   accepts?: NumberAcceptance;
   /** Siblings whose live value bounds this one, read as `this <relation> sibling`. */
   dependsOn?: ReadonlyArray<MasteringInsertParamDependency>;
+  /** Siblings whose value moves this one's accepted range; the engine judges the combination. */
+  coupledWith?: ReadonlyArray<string>;
 }
 
 /** Accepted range of a numeric parameter; null ends are unbounded. */
@@ -111,6 +113,7 @@ export type ProcessorParamInfo = Pick<
       | 'minExclusive'
       | 'maxExclusive'
       | 'dependsOn'
+      | 'coupledWith'
     >
   >;
 
@@ -123,6 +126,7 @@ interface NumberControlSpec {
   defaultValue: number;
   accepts?: NumberAcceptance;
   dependsOn?: ReadonlyArray<MasteringInsertParamDependency>;
+  coupledWith?: ReadonlyArray<string>;
 }
 
 interface BooleanControlSpec {
@@ -384,8 +388,11 @@ export function processorNumberSpec(
   const fallbackDefault = rule?.defaultValue ?? DEFAULT_PARAM_RANGE.defaultValue;
   const catalogDefault =
     typeof info?.default === 'number' && Number.isFinite(info.default) ? info.default : undefined;
+  const coupledWith =
+    info?.coupledWith && info.coupledWith.length > 0 ? info.coupledWith : undefined;
+  // A coupled key's bounds hold only at its siblings' defaults, so they draw the knob but do not clamp.
   const accepts: NumberAcceptance | undefined =
-    info && (hardMin !== null || hardMax !== null)
+    info && !coupledWith && (hardMin !== null || hardMax !== null)
       ? {
           min: hardMin,
           max: hardMax,
@@ -403,6 +410,7 @@ export function processorNumberSpec(
     defaultValue: Math.min(max, Math.max(min, catalogDefault ?? fallbackDefault)),
     ...(accepts ? { accepts } : {}),
     ...(dependsOn ? { dependsOn } : {}),
+    ...(coupledWith ? { coupledWith } : {}),
   };
 }
 
@@ -498,6 +506,7 @@ export function processorControl(
     ...(spec.unit !== undefined ? { unit: spec.unit } : {}),
     ...(spec.accepts ? { accepts: spec.accepts } : {}),
     ...(spec.dependsOn ? { dependsOn: spec.dependsOn } : {}),
+    ...(spec.coupledWith ? { coupledWith: spec.coupledWith } : {}),
   };
 }
 
@@ -545,6 +554,7 @@ export function editedProcessorParams<T extends Readonly<Record<string, unknown>
 ): T {
   const bounded =
     typeof value === 'number' ? withinSiblings(processor, params, param, value) : value;
+  assertCoupledKeysAccepted(processor, { ...params, [param]: bounded }, param);
   if (!CROSSOVER_CUTOFF.test(param)) return { ...params, [param]: bounded };
   const kept = Object.fromEntries(
     cutoffsInEffect(catalogParamInfo(processor), params).map((cutoff) => [
@@ -553,6 +563,88 @@ export function editedProcessorParams<T extends Readonly<Record<string, unknown>
     ]),
   );
   return { ...kept, ...params, [param]: bounded };
+}
+
+/** An insert edit the engine refuses in combination with the coupled keys' current values. */
+export class InsertConfigurationRefusedError extends Error {
+  constructor(
+    readonly processor: string,
+    readonly param: string,
+    /** The keys coupled to the edited one. */
+    readonly related: ReadonlyArray<string>,
+    detail: string,
+  ) {
+    super(`${processor} refuses ${param} with ${related.join(', ')}: ${detail}`);
+    this.name = 'InsertConfigurationRefusedError';
+  }
+}
+
+/** Rate an insert is built at to judge a configuration; a refused combination does not depend on it. */
+const CONFIGURATION_CHECK_SAMPLE_RATE = 48000;
+
+/** The always-read keys bounding one another with `param` through coupledWith/dependsOn, `param` first. */
+function coupledGroup(info: ReadonlyArray<MasteringInsertParamInfo>, param: string): string[] {
+  const touches = (entry: MasteringInsertParamInfo, key: string): boolean =>
+    entry.coupledWith?.includes(key) === true ||
+    entry.dependsOn?.some((dependency) => dependency.key === key) === true;
+  const coupled = info.some(
+    (entry) =>
+      (entry.name === param && (entry.coupledWith?.length ?? 0) > 0) ||
+      entry.coupledWith?.includes(param) === true,
+  );
+  if (!coupled) return [];
+  const group = [param];
+  for (let index = 0; index < group.length; index += 1) {
+    const key = group[index];
+    const own = info.find((entry) => entry.name === key);
+    const neighbours = [
+      ...(own?.coupledWith ?? []),
+      ...(own?.dependsOn ?? []).map((dependency) => dependency.key),
+      ...info.filter((entry) => touches(entry, key)).map((entry) => entry.name),
+    ];
+    for (const next of neighbours) if (!group.includes(next)) group.push(next);
+  }
+  return group.filter((key) => info.find((entry) => entry.name === key)?.slot === null);
+}
+
+/**
+ * Asks the engine whether the coupled keys of an edited insert build. Only
+ * those keys are sent: the engine refuses a key it would not read, such as a
+ * band slot the configuration leaves out.
+ *
+ * @throws InsertConfigurationRefusedError when the engine refuses them.
+ */
+function assertCoupledKeysAccepted(
+  processor: string,
+  params: Readonly<Record<string, unknown>>,
+  param: string,
+): void {
+  const info = catalogParamInfo(processor);
+  const group = coupledGroup(info, param);
+  if (group.length < 2) return;
+  const wasm = getWasmModule();
+  const subset: Record<string, number | boolean> = {};
+  for (const key of group) {
+    const value = params[key];
+    if (typeof value === 'number' || typeof value === 'boolean') subset[key] = value;
+  }
+  try {
+    wasm.masteringInsertTiming(
+      processor,
+      subset,
+      processingSampleRate ?? CONFIGURATION_CHECK_SAMPLE_RATE,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const own = info.find((entry) => entry.name === param)?.coupledWith ?? [];
+    const related = [
+      ...own,
+      ...info
+        .filter((entry) => entry.coupledWith?.includes(param) && !own.includes(entry.name))
+        .map((entry) => entry.name),
+    ];
+    throw new InsertConfigurationRefusedError(processor, param, related, detail);
+  }
 }
 
 /** A value held to the live value of each sibling its key depends on. */

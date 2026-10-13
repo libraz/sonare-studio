@@ -37,6 +37,7 @@ import {
   type InsertCatalogGroup,
   loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
+import { coupledKeyList, insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
 import { type InsertChainKind, insertGainReductionBySlot } from '@/ui/mixer/insert-gain-reduction';
 import {
   addInsertSlot,
@@ -214,8 +215,16 @@ function onParamChange(control: QuickControl, value: ProcessorControlValue, comm
     }
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = insertEditErrorMessage(err, t.value);
   }
+}
+
+/** Tooltip remark for a knob whose accepted range moves with sibling keys. */
+function coupledNote(control: QuickControl): string {
+  if (control.kind !== 'number' || !control.coupledWith) return '';
+  return formatMessage(t.value.shell.mixer.controls.coupledNote, {
+    related: coupledKeyList(control.coupledWith),
+  });
 }
 
 /** Formatted knob value with the control's unit. */
@@ -654,6 +663,7 @@ onBeforeUnmount(() => {
             :default-value="control.defaultValue"
             :label="control.name"
             :display="controlDisplay(control)"
+            :note="coupledNote(control)"
             :size="22"
             :midi-learn-state="learnState(control)"
             @change="(value, commit) => onParamChange(control, value, commit)"

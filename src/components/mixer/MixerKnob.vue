@@ -37,6 +37,8 @@ const props = withDefaults(
     disabled?: boolean;
     /** Why the knob is locked; a non-empty reason also disables it. */
     reason?: string | null;
+    /** A standing remark appended to the tooltip (e.g. which siblings move the range). */
+    note?: string;
     /**
      * MIDI-learn affordance shown in the right-click menu: 'unbound' offers
      * "MIDI Learn", 'armed' shows it listening, 'bound' adds a "Forget"
@@ -53,6 +55,7 @@ const props = withDefaults(
     size: 26,
     disabled: false,
     reason: null,
+    note: '',
     midiLearnState: undefined,
   },
 );
@@ -183,7 +186,7 @@ function onMidiForget(): void {
       :aria-valuenow="props.value"
       :aria-valuetext="displayText"
       v-tooltip="{
-        text: `${props.label ? `${props.label} ` : ''}${displayText}`,
+        text: `${props.label ? `${props.label} ` : ''}${displayText}${props.note ? ` · ${props.note}` : ''}`,
         reason: props.reason,
       }"
       @pointerdown="onPointerDown"

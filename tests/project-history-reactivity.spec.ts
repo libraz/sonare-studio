@@ -69,4 +69,26 @@ describe('project history availability reactivity', () => {
     await loadProjectDocument(createTemplate('empty'));
     expect([undoAvailable.value, redoAvailable.value]).toEqual([false, false]);
   });
+
+  it('keeps a gesture undoable when its final step is refused', () => {
+    const before = store.tracks[0].color;
+    executeApp(
+      () => {
+        store.tracks[0].color = '#abcdef';
+      },
+      { key: 'track-color', commit: false },
+    );
+    expect(() =>
+      executeApp(
+        () => {
+          throw new RangeError('refused');
+        },
+        { key: 'track-color', commit: true },
+      ),
+    ).toThrow('refused');
+
+    expect(canUndo()).toBe(true);
+    expect(undo()).toBe(true);
+    expect(store.tracks[0].color).toBe(before);
+  });
 });

@@ -4,6 +4,7 @@ import {
   catalogParamInfo,
   catalogSlots,
   editedProcessorParams,
+  InsertConfigurationRefusedError,
   processorControls,
 } from '@/project/processor-controls';
 import * as wasm from '@/wasm/index.js';
@@ -112,5 +113,48 @@ describe('editedProcessorParams', () => {
     expect(editedProcessorParams('multiband.compressor', {}, 'band0.ratio', 3)).toEqual({
       'band0.ratio': 3,
     });
+  });
+});
+
+describe('coupled keys', () => {
+  const room = 'effects.reverb.room';
+
+  it('lets the engine judge a room size its placement allows', () => {
+    const placed = editedProcessorParams(
+      room,
+      { sourceX: 1, sourceY: 1, listenerX: 2 },
+      'listenerY',
+      2,
+    );
+    // Under the bound measured with the default placement, but the moved placement fits.
+    expect(editedProcessorParams(room, placed, 'lengthM', 3)).toMatchObject({ lengthM: 3 });
+  });
+
+  it('refuses a value the engine rejects with its coupled keys', () => {
+    const small = { lengthM: 5.2, widthM: 4.3 };
+    let refused: unknown;
+    try {
+      editedProcessorParams(room, small, 'receiverSpacingM', 2.5);
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused).toBeInstanceOf(InsertConfigurationRefusedError);
+    expect((refused as InsertConfigurationRefusedError).related).toContain('lengthM');
+  });
+
+  it('does not send keys a configuration leaves unread', () => {
+    const withUnusedBand = { 'band3.ratio': 2 };
+    expect(editedProcessorParams('multiband.compressor', withUnusedBand, 'mode', 3)).toMatchObject({
+      mode: 3,
+    });
+  });
+
+  it('draws a coupled key from its stated bounds without clamping to them', () => {
+    const length = rack(room, {}).find((control) => control.id === 'lengthM');
+    expect(length).toMatchObject({
+      kind: 'number',
+      coupledWith: expect.arrayContaining(['listenerX']),
+    });
+    expect(length && 'accepts' in length ? length.accepts : undefined).toBeUndefined();
   });
 });

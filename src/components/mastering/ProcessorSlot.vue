@@ -13,6 +13,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MasteringControl } from '@/ui/mastering/chain-controls';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
 import { categoryLabel, humanizeInsertName } from '@/ui/mixer/insert-catalog';
+import { coupledKeyList } from '@/ui/mixer/insert-edit-error';
 
 /**
  * One mastering processor slot: a drag-reorderable row (power, name, category
@@ -62,6 +63,14 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+/** Tooltip remark for a knob whose accepted range moves with sibling keys. */
+function coupledNote(control: MasteringControl): string {
+  if (control.kind !== 'number' || !control.coupledWith) return '';
+  return formatMessage(t.value.shell.mixer.controls.coupledNote, {
+    related: coupledKeyList(control.coupledWith),
+  });
+}
 
 const moveUpBlocked = computed(() =>
   firstBlock([!props.canMoveUp, t.value.shell.mastering.reasons.alreadyFirst]),
@@ -262,6 +271,7 @@ function processorRuntimeBadge(runtime: 'live-export' | 'preview-export' | 'unkn
           :default-value="numberControl(control).defaultValue"
           :label="control.name"
           :display="controlDisplay(control)"
+          :note="coupledNote(control)"
           :size="22"
           @change="(value, commit) => emit('param-change', index, control, value, commit)"
         />

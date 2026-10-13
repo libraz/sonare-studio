@@ -21,4 +21,5 @@ export const reasons = {
   noStorage: 'This browser does not provide project storage (OPFS).',
   noMidiAccess: 'Connect a MIDI device first.',
   noWebMidi: 'This browser does not support Web MIDI.',
+  coupledValue: '{name} cannot take this value with the current {related}.',
 } as const;

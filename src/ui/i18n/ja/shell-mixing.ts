@@ -419,6 +419,7 @@ export const shellMixing = {
     },
     controls: {
       knob: 'ノブ',
+      coupledNote: '{related} に応じて範囲が変わります',
       stripGain: 'ストリップゲイン',
       gainTitle: 'ゲイン {value} dB',
       reset: 'リセット',
