@@ -123,7 +123,12 @@ export const shellMixing = {
       '4': 'Class A Chime',
       '5': 'Heavy High Gain',
     },
-    ampCabModels: { '0': 'Guitar 4×12', '1': 'Bass 8×10' },
+    ampCabModels: {
+      '0': 'Guitar 4×12',
+      '1': 'Bass 8×10',
+      '2': 'Guitar 1×12 Combo',
+      '3': 'Guitar 2×12 Open-Back',
+    },
     ampMicModels: { '0': 'Cabinet voicing', '1': 'Dynamic', '2': 'Ribbon', '3': 'Condenser' },
     ampPresets: {
       cleanCombo: 'Clean Combo',

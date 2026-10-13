@@ -159,6 +159,8 @@ const CHOICE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   wdfCircuit: 'WDF Circuit',
   guitar4x12: 'Guitar 4x12',
   bass8x10: 'Bass 8x10',
+  guitar1x12Combo: 'Guitar 1x12 Combo',
+  guitar2x12Open: 'Guitar 2x12 Open-Back',
 };
 
 /** Display label of a catalog choice name ('db24PerOct' -> '24 dB/oct'). */

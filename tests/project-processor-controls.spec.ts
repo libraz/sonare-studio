@@ -144,6 +144,8 @@ describe('choiceLabel', () => {
     expect(choiceLabel('lr4')).toBe('LR4');
     expect(choiceLabel('lowShelf')).toBe('Low Shelf');
     expect(choiceLabel('veryHigh')).toBe('Very High');
+    expect(choiceLabel('guitar1x12Combo')).toBe('Guitar 1x12 Combo');
+    expect(choiceLabel('guitar2x12Open')).toBe('Guitar 2x12 Open-Back');
   });
 });
 
