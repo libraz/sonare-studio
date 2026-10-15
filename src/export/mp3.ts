@@ -159,7 +159,7 @@ function infoFrame(audio: Uint8Array, inputFrames: number): Uint8Array {
   }
   out.set([0x49, 0x6e, 0x66, 0x6f], infoOffset); // Info (CBR Xing header)
   writeUint32Be(out, infoOffset + 4, 0x00000003); // frame count + byte count
-  writeUint32Be(out, infoOffset + 8, mpegFrameCount(audio) + 1);
+  writeUint32Be(out, infoOffset + 8, mpegFrameCount(audio));
   writeUint32Be(out, infoOffset + 12, audio.length + out.length);
   out.set(new TextEncoder().encode('LAME3.100'), lameOffset);
   const delay = LAME_ENCODER_DELAY;

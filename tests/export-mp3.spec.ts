@@ -134,6 +134,14 @@ describe('encodeMp3', () => {
     const delay = (bytes[lameOffset + 21] << 4) | (bytes[lameOffset + 22] >> 4);
     const padding = ((bytes[lameOffset + 22] & 0xf) << 8) | bytes[lameOffset + 23];
     expect(delay).toBe(576);
+    // Frame count excludes the Info frame; frames minus delay and padding is the input length.
+    const frameCount =
+      ((bytes[infoOffset + 8] << 24) |
+        (bytes[infoOffset + 9] << 16) |
+        (bytes[infoOffset + 10] << 8) |
+        bytes[infoOffset + 11]) >>>
+      0;
+    expect(frameCount * 1152 - delay - padding).toBe(input[0].length);
     expect(padding).toBeGreaterThanOrEqual(576);
     expect(padding).toBeLessThanOrEqual(1728);
     const tags = new TextDecoder().decode(bytes.slice(10, audioOffset));
