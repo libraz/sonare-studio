@@ -5,10 +5,12 @@
  * renderer (engine-render.ts) replays their output onto fresh engines.
  */
 
+import { engineBusGraph, MAX_ENGINE_BUSES } from '@/engine/bus-graph';
 import { buildMidiClipSchedules, type ScheduledMidiClip } from '@/engine/midi-sync';
-import { engineBusSends, groupBusGainDb, MAX_ENGINE_BUSES } from '@/engine/strip-sync';
+import { groupBusGainDb } from '@/engine/strip-sync';
 import { SILENCE_DB } from '@/lib/db';
 import { annotationsFromDocument, type NoteArticulation } from '@/project/annotations';
+import { groupBusTopologyId } from '@/project/bus-topology';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   effectiveTrackMute,
@@ -234,87 +236,57 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   // them with the rest — matching live mixer-sync.
   const anySolo = tracksForSolo.some((track) => track.solo);
 
-  // Buses first (sends must reference declared buses): the document's send
-  // buses in order, then one bus per group track (matching live strip-sync).
-  const busNumberById = new Map<string, number>();
-  // A soloed return auditions alone: direct outputs are parked on a silent
-  // discard bus and every other bus is floored, exactly as live strip-sync
-  // does, so an export made while a return is soloed sounds like the audition.
+  // Buses, outputs and sends come from the same graph live strip-sync
+  // replays, keyed by document track index. A soloed return auditions alone:
+  // direct outputs park on a silent discard bus and every other bus is floored.
   const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
-  const buses: EngineBus[] = (doc.mixer?.buses ?? []).map((bus, index) => {
-    busNumberById.set(bus.id, index + 1);
-    return { busId: index + 1, gainDb: returnSolo.busGainDb(bus) };
+  const groupTrackIndices = doc.tracks.flatMap((track, index) =>
+    track.kind === 'group' ? [index] : [],
+  );
+  const graph = engineBusGraph({
+    buses: doc.mixer?.buses ?? [],
+    returnSolo,
+    groups: groupTrackIndices.map((index) => {
+      const track = doc.tracks[index];
+      return {
+        ref: index,
+        strip: track.mixer,
+        gainDb: returnSolo.active
+          ? SILENCE_DB
+          : groupBusGainDb(
+              {
+                volume: track.volume,
+                mute: effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
+                ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+              } as Parameters<typeof groupBusGainDb>[0],
+              vcaOffsetDb(track.vcaId, vcaGainDbById),
+            ),
+      };
+    }),
   });
-  const groupBusByTrackIndex = new Map<number, number>();
-  doc.tracks.forEach((track, index) => {
-    if (track.kind !== 'group') return;
-    const busId = buses.length + 1;
-    groupBusByTrackIndex.set(index, busId);
-    buses.push({
-      busId,
-      gainDb: returnSolo.active
-        ? SILENCE_DB
-        : groupBusGainDb(
-            {
-              volume: track.volume,
-              mute: effectiveTrackMute(track.mute, track.vcaId, vcaControlsById),
-              ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-            } as Parameters<typeof groupBusGainDb>[0],
-            vcaOffsetDb(track.vcaId, vcaGainDbById),
-          ),
-    });
-  });
-  // One extra silent bus parks the direct outputs during a return solo. The
-  // command layer refuses to solo a return when no engine bus slot is free, so
-  // a document that overflows the limit here simply keeps its normal routing.
-  const discardBusId =
-    returnSolo.active && buses.length < MAX_ENGINE_BUSES ? buses.length + 1 : undefined;
-  if (discardBusId !== undefined) buses.push({ busId: discardBusId, gainDb: SILENCE_DB });
-  // The return bus and group bus share the engine's bus graph. Resolve their
-  // main outputs and auxiliary sends only after every bus has a numeric ID.
-  const resolveBus = (storeBusId: string) => busNumberById.get(storeBusId);
-  for (const bus of doc.mixer?.buses ?? []) {
-    const busId = busNumberById.get(bus.id);
-    if (busId === undefined) continue;
-    const entry = buses[busId - 1];
-    const layout = bus.channelLayout ?? 'stereo';
-    if (layout !== 'stereo') {
-      entry.channelLayout = { mono: 0, stereo: 1, '5.1': 2, '7.1': 3 }[layout];
-    }
-    const outputBusId = bus.strip?.outputBusId
-      ? busNumberById.get(bus.strip.outputBusId)
-      : undefined;
-    if (outputBusId !== undefined) entry.outputBusId = outputBusId;
-    const sends = engineBusSends(bus.strip?.sends, resolveBus, busId);
-    if (sends.length > 0) entry.sends = sends;
-  }
-  for (const [trackIndex, busId] of groupBusByTrackIndex) {
-    const strip = doc.tracks[trackIndex]?.mixer;
-    const entry = buses[busId - 1];
-    const outputBusId = strip?.outputBusId ? busNumberById.get(strip.outputBusId) : undefined;
-    if (outputBusId !== undefined) entry.outputBusId = outputBusId;
-    const sends = engineBusSends(strip?.sends, resolveBus, busId);
-    if (sends.length > 0) entry.sends = sends;
-  }
+  const busNumberById = new Map(
+    (doc.mixer?.buses ?? []).map((bus) => [bus.id, graph.busNumberByKey.get(bus.id) as number]),
+  );
+  const groupBusByTrackIndex = new Map(
+    groupTrackIndices.map((index) => [
+      index,
+      graph.busNumberByKey.get(groupBusTopologyId(index)) as number,
+    ]),
+  );
+  const buses: EngineBus[] = graph.declarations;
+  const discardBusId = graph.discardBusId;
   const lanes = doc.tracks.map((track, index) => {
-    const sends: SendSpec[] = engineBusSends(track.mixer?.sends, resolveBus);
-    // Output bus: group routing wins; otherwise an explicit per-track output
-    // bus (non-group tracks only), resolved to its engine bus number and
-    // honored only when the bus was actually declared (matches live
-    // strip-sync, which the engine requires).
-    let outputBus: number | undefined;
-    if (discardBusId !== undefined && track.kind !== 'group') {
-      outputBus = discardBusId;
-    } else if (track.groupIndex !== undefined) {
-      outputBus = groupBusByTrackIndex.get(track.groupIndex);
-    } else if (track.kind !== 'group' && track.mixer?.outputBusId !== undefined) {
-      const busNumber = busNumberById.get(track.mixer.outputBusId);
-      if (busNumber !== undefined) outputBus = busNumber;
-    }
+    const routed = {
+      kind: track.kind,
+      ...(track.groupIndex !== undefined ? { groupRef: track.groupIndex } : {}),
+      ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+    };
+    const sends: SendSpec[] = graph.trackSends(routed);
+    const outputBus = graph.trackOutputBus(routed);
     return {
       trackId: trackIds[index],
       ...(sends.length > 0 ? { sends } : {}),
-      ...(outputBus !== undefined ? { outputBusId: outputBus } : {}),
+      ...(outputBus !== 0 ? { outputBusId: outputBus } : {}),
     };
   });
 

@@ -36,15 +36,19 @@ import {
   laneGainDb,
   type MixerChannelLayout,
   type MixerStrip,
-  mixerChannelLayoutCode,
   type ProjectMixerState,
   returnSoloRouting,
-  type StripSend,
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
+import {
+  type EngineBusDeclaration,
+  engineBusGraph,
+  engineBusSends,
+  MAX_ENGINE_BUSES,
+} from './bus-graph';
 import type { EngineHandle } from './engine';
 import {
   engineBusInsertAutomationIndex,
@@ -66,13 +70,7 @@ import { createRetryTimer } from './retry-timer';
 import { busSceneJson, liveMasterStrip, stripSceneJson } from './strip-scene';
 
 export type { BusSceneJsonOptions } from './strip-scene';
-export { busSceneJson, liveMasterStrip, stripSceneJson };
-
-/** Maximum number of mixer buses the realtime engine supports. */
-export const MAX_ENGINE_BUSES = 8;
-
-/** Bus-map key of the silent bus that parks direct outputs during a return solo. */
-const RETURN_SOLO_DISCARD_BUS_KEY = 'return-solo-discard';
+export { busSceneJson, engineBusSends, liveMasterStrip, MAX_ENGINE_BUSES, stripSceneJson };
 
 /** Options for {@link createStripSync}. */
 export interface StripSyncOptions {
@@ -120,15 +118,6 @@ type BusPanEngine = {
   setBusStripDualPan?: (busId: number, leftPan: number, rightPan: number) => void;
 };
 
-/** The current realtime bus declaration, including routing metadata. */
-interface EngineBusDeclaration {
-  busId: number;
-  gainDb: number;
-  channelLayout?: number;
-  outputBusId?: number;
-  sends?: EngineTrackSend[];
-}
-
 type SidechainSourceKind = 'track' | 'bus';
 
 interface SidechainBinding {
@@ -149,32 +138,6 @@ type SidechainEngine = {
     sourceId: number,
   ) => void;
 };
-
-/** Maps a persisted strip send list to the engine's numeric bus ids. */
-export function engineBusSends(
-  sends: ReadonlyArray<StripSend> | undefined,
-  resolveBus: (storeBusId: string) => number | undefined,
-  ownBusId?: number,
-): EngineTrackSend[] {
-  const mapped: EngineTrackSend[] = [];
-  const seen = new Set<number>();
-  for (const send of sends ?? []) {
-    const busId = resolveBus(send.busId);
-    // A stale destination can survive an older document migration. The
-    // engine rejects it, so omit it until the project points at a declared
-    // bus again. Self-sends are invalid in the engine graph as well.
-    if (busId === undefined || busId === ownBusId || seen.has(busId)) continue;
-    seen.add(busId);
-    const entry: EngineTrackSend = {
-      busId,
-      levelDb: send.levelDb,
-      enabled: send.enabled,
-    };
-    if (send.timing === 'preFader') entry.sendTiming = 'preFader';
-    mapped.push(entry);
-  }
-  return mapped;
-}
 
 type SidechainSlotFields = {
   sidechainSourceBusId?: unknown;
@@ -599,9 +562,24 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     // A soloed return needs one spare engine bus to park the silenced direct
     // outputs on; the command layer refuses to solo when none is free.
     const returnSolo = returnSoloRouting(mixer.buses);
-    const soloDiscardBus =
-      returnSolo.active && mixer.buses.length + groupTracks.length < MAX_ENGINE_BUSES;
-    if (mixer.buses.length + groupTracks.length + (soloDiscardBus ? 1 : 0) > MAX_ENGINE_BUSES) {
+    const graph = engineBusGraph({
+      buses: mixer.buses,
+      returnSolo,
+      groups: groupTracks.map((group) => ({
+        ref: group.id,
+        strip: group.mixer,
+        // A soloed return auditions alone, so group submixes fall silent with
+        // the direct outputs of their members.
+        gainDb: returnSolo.active
+          ? SILENCE_DB
+          : groupBusGainDb(
+              group,
+              vcaOffsetDb(group.vcaId, vcaGainDb),
+              effectiveTrackMute(group.mute, group.vcaId, vcaControls),
+            ),
+      })),
+    });
+    if (graph.keys.length > MAX_ENGINE_BUSES) {
       throw new Error(
         `Too many mixer buses for the engine: ${mixer.buses.length} send buses + ` +
           `${groupTracks.length} group tracks > ${MAX_ENGINE_BUSES}`,
@@ -610,11 +588,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     busStripsByStoreId = new Map(mixer.buses.map((bus) => [bus.id, bus.strip]));
     groupStripsByTrackId = new Map(groupTracks.map((track) => [track.id, track.mixer]));
 
-    const busKeys = [
-      ...mixer.buses.map((bus) => bus.id),
-      ...groupTracks.map((group) => `group:${group.id}`),
-      ...(soloDiscardBus ? [RETURN_SOLO_DISCARD_BUS_KEY] : []),
-    ];
+    const busKeys = graph.keys;
     const hadBusMapping = busNumberByStoreId.size > 0;
     const busMappingChanged =
       busNumberByStoreId.size !== busKeys.length ||
@@ -648,76 +622,17 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     // EQ from the bus formerly using that number cannot remain in the worklet.
     const reapplyBusScenes = hadBusMapping && busMappingChanged;
     const groupBusByTrackId = new Map(
-      groupTracks.map((group) => [group.id, busNumberByStoreId.get(`group:${group.id}`) as number]),
+      groupTracks.map((group) => [
+        group.id,
+        graph.busNumberByKey.get(`group:${group.id}`) as number,
+      ]),
     );
-    const discardBusNumber = soloDiscardBus
-      ? (busNumberByStoreId.get(RETURN_SOLO_DISCARD_BUS_KEY) as number)
-      : undefined;
-    const newBusIds = [
-      ...mixer.buses.map((bus) => busNumberByStoreId.get(bus.id) as number),
-      ...groupTracks.map((group) => groupBusByTrackId.get(group.id) as number),
-      ...(discardBusNumber === undefined ? [] : [discardBusNumber]),
-    ];
+    const busDeclarations: EngineBusDeclaration[] = graph.declarations;
+    const newBusIds = busDeclarations.map((entry) => entry.busId);
     const newBusIdSet = new Set(newBusIds);
-    // The project keeps bus-to-bus routing on the return/group strip. Resolve
-    // both ordinary store ids and the synthetic `group:<trackId>` ids before
-    // declaring the buses, then omit stale destinations that the engine would
-    // reject. Bus topology is compared separately from gain so fader moves can
+    // Bus topology is compared separately from gain so fader moves can
     // continue using the smoothed setBusGain path.
-    const resolveBusId = (storeBusId: string): number | undefined =>
-      busNumberByStoreId.get(storeBusId) ?? busNumberByStoreId.get(`group:${storeBusId}`);
-    const busDeclaration = (
-      busId: number,
-      gainDb: number,
-      strip: MixerStrip | undefined,
-      outputBusIdStore?: string,
-      channelLayout?: MixerChannelLayout,
-    ): EngineBusDeclaration => {
-      const declaration: EngineBusDeclaration = { busId, gainDb };
-      if (channelLayout !== undefined && channelLayout !== 'stereo') {
-        declaration.channelLayout = mixerChannelLayoutCode(channelLayout);
-      }
-      const outputBusIdSource = outputBusIdStore ?? strip?.outputBusId;
-      const outputBusId =
-        outputBusIdSource === undefined ? undefined : resolveBusId(outputBusIdSource);
-      if (outputBusId !== undefined && outputBusId !== busId) {
-        declaration.outputBusId = outputBusId;
-      }
-      const sends = engineBusSends(strip?.sends, resolveBusId, busId);
-      if (sends.length > 0) declaration.sends = sends;
-      return declaration;
-    };
-    const busDeclarations: EngineBusDeclaration[] = [
-      ...mixer.buses.map((bus) =>
-        busDeclaration(
-          busNumberByStoreId.get(bus.id) as number,
-          returnSolo.busGainDb(bus),
-          bus.strip,
-          bus.strip?.outputBusId,
-          bus.channelLayout,
-        ),
-      ),
-      ...groupTracks.map((group) =>
-        busDeclaration(
-          groupBusByTrackId.get(group.id) as number,
-          // A soloed return auditions alone, so group submixes fall silent with
-          // the direct outputs of their members.
-          returnSolo.active
-            ? SILENCE_DB
-            : groupBusGainDb(
-                group,
-                vcaOffsetDb(group.vcaId, vcaGainDb),
-                effectiveTrackMute(group.mute, group.vcaId, vcaControls),
-              ),
-          group.mixer,
-          undefined,
-          undefined,
-        ),
-      ),
-      ...(discardBusNumber === undefined
-        ? []
-        : [busDeclaration(discardBusNumber, SILENCE_DB, undefined)]),
-    ];
+    const resolveBusId = graph.resolve;
     const busTopologyKey = JSON.stringify(
       busDeclarations.map(({ busId, channelLayout, outputBusId, sends }) => ({
         busId,
@@ -731,23 +646,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       newBusIds.some((busId, i) => busId !== lastBusList[i]) ||
       busTopologyKey !== lastBusTopologyKey;
 
-    const desiredTrackOutputBus = (track: EditorTrack): number => {
-      if (discardBusNumber !== undefined && track.kind !== 'group') {
-        // Park the direct output on the silent bus during return solo.
-        return discardBusNumber;
-      }
-      if (track.groupId !== undefined) {
-        return groupBusByTrackId.get(track.groupId) ?? 0;
-      }
-      if (track.kind !== 'group') {
-        const userBusId = track.mixer?.outputBusId;
-        if (userBusId !== undefined) {
-          const busNumber = resolveBusId(userBusId);
-          if (busNumber !== undefined && newBusIdSet.has(busNumber)) return busNumber;
-        }
-      }
-      return 0;
-    };
+    const desiredTrackOutputBus = (track: EditorTrack): number =>
+      graph.trackOutputBus({ kind: track.kind, groupRef: track.groupId, mixer: track.mixer });
 
     // A deleted track keeps its (now muted) engine lane, but muting only
     // silences the fader path: a pre-fader send would keep feeding its bus, and
@@ -858,7 +758,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     // Final per-track sends (deduped; an absent entry means "no sends sent",
     // which matches the engine's initial state).
     for (const track of tracks) {
-      const desired = engineBusSends(track.mixer?.sends, resolveBusId);
+      const desired = graph.trackSends(track);
       const json = JSON.stringify(desired);
       if ((lastSendsByTrack.get(track.id) ?? '[]') !== json) {
         handle.engine.setTrackSends(track.id, desired);
