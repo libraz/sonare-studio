@@ -4,8 +4,11 @@ export interface XmlLimits {
   maxDepth: number;
 }
 
+/** Largest XML or SVG document the app hands to DOMParser, in bytes. */
+export const MAX_XML_DOCUMENT_BYTES = 32 * 1024 * 1024;
+
 export const DEFAULT_XML_LIMITS: XmlLimits = Object.freeze({
-  maxBytes: 32 * 1024 * 1024,
+  maxBytes: MAX_XML_DOCUMENT_BYTES,
   maxElements: 250_000,
   maxDepth: 128,
 });

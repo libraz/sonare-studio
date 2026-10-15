@@ -39,7 +39,7 @@ import { strToU8 } from 'fflate';
 import { SECTION_MARKER_PREFIX } from '@/export/constants';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
-import { createStreamingZipWriter } from '@/lib/streaming-zip';
+import { createStreamingZipWriter, DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import {
   MAX_DAWPROJECT_ARCHIVE_BYTES,
@@ -96,9 +96,6 @@ const APPLICATION_NAME = 'sonare-studio';
 
 /** Default application version (override via options.applicationVersion). */
 const DEFAULT_APPLICATION_VERSION = '0.1.0';
-
-/** Fixed zip-entry timestamp keeping the archive bytes deterministic. */
-const ZIP_MTIME = '2000-01-01T12:00:00Z';
 
 /** Tempo assumed when the document carries no tempo segment. */
 const DEFAULT_TEMPO_BPM = 120;
@@ -315,7 +312,7 @@ async function buildDawprojectZip(
   entries: Iterable<readonly [string, Uint8Array]>,
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
-  const zip = createStreamingZipWriter({ mtime: ZIP_MTIME, signal });
+  const zip = createStreamingZipWriter({ mtime: DETERMINISTIC_ZIP_MTIME, signal });
   try {
     for (const [name, bytes] of entries) {
       await zip.add(name, bytes);

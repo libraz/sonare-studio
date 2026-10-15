@@ -10,8 +10,8 @@
  * positions. Side-effect-free and dependency-injected.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { mixdownToMono } from './audio-import';
 import { sliceAudioClipWindow } from './scheduling';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { ClipTake } from './types';
@@ -58,7 +58,7 @@ export async function commonTakeSilence(
 
   const originPpq = clip.startPpq - clip.sourceOffsetPpq;
   const signals = assets.map((asset) =>
-    mixdownToMono(
+    downmixToMono(
       sliceAudioClipWindow(
         asset.channels,
         sampleRate,

@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MAX_PROJECT_ARCHIVE_ENTRIES } from '@/persistence/resource-limits';
 import {
   decodeSzd,
@@ -315,6 +315,21 @@ describe('szd encode/decode', () => {
       'meta.json': strToU8('not json'),
     });
     expect(decodeSzd(badMeta)).toEqual(doc);
+  });
+});
+
+describe('szd pre-serialized document', () => {
+  it('reuses the caller-supplied JSON instead of stringifying the document again', () => {
+    const doc = makeDocument();
+    const documentJson = JSON.stringify(doc);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      const bytes = encodeSzd(doc, { documentJson });
+      expect(stringify.mock.calls.filter(([value]) => value === doc)).toHaveLength(0);
+      expect(decodeSzd(bytes)).toEqual(doc);
+    } finally {
+      stringify.mockRestore();
+    }
   });
 });
 

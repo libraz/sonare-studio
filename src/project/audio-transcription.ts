@@ -7,10 +7,10 @@
  * contract and one set of memory guards.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
-import { mixdownToMono } from './audio-import';
 import { audioClipSegments } from './comping';
 import { pairEventsIntoNotes, type RawNote, type SerializedMidiEvent } from './midi-events';
 import { renderAudibleAudioClipWindow } from './scheduling';
@@ -403,7 +403,7 @@ export async function transcribeAudioClip(
     });
     throwIfAborted(options.signal);
     if (!window) continue;
-    const samples = mixdownToMono(window.channels);
+    const samples = downmixToMono(window.channels, { copy: true });
     if (samples.length === 0) continue;
     for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
     const sourceRate = window.sampleRate;

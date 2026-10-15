@@ -114,6 +114,24 @@ describe('useAutosave', () => {
     );
   });
 
+  it('serializes the project document once per save', async () => {
+    const autosave = createAutosave();
+    const stringify = vi.spyOn(JSON, 'stringify');
+    try {
+      await autosave.saveNow();
+      const projectDocuments = stringify.mock.calls.filter(
+        ([value]) =>
+          typeof value === 'object' &&
+          value !== null &&
+          'schemaVersion' in value &&
+          'tracks' in value,
+      );
+      expect(projectDocuments).toHaveLength(1);
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
   it('leaves the autosave slot untouched on page exit and update while the launcher is open', async () => {
     const autosave = createAutosave();
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });

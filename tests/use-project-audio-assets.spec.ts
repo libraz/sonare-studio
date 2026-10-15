@@ -23,7 +23,6 @@ vi.mock('@/persistence/assets', () => assetStore);
 const audioImport = vi.hoisted(() => ({
   decodeAndIngest: vi.fn(),
   decodeAudioFile: vi.fn(),
-  mixdownToMono: (channels: Float32Array[]) => new Float32Array(channels[0]),
 }));
 vi.mock('@/project/audio-import', () => audioImport);
 

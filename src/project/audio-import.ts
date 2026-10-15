@@ -9,6 +9,7 @@
  *   downmix) and forwards to ingestAudioBuffer.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import { type AudioAssetMeta, type AudioAssetTags, saveAsset } from '@/persistence/assets';
 import {
   MAX_AUDIO_CHANNELS,
@@ -70,24 +71,10 @@ function preflightDecodedAudio(decoded: AudioBuffer): void {
 }
 
 /**
- * Mixes planar channels down to one mono buffer (equal-weight average).
- * Used for analysis only; stored assets keep their full channel count.
- *
- * @param channels Planar channel buffers of equal length.
- * @returns A new mono buffer (empty for empty input).
+ * Alias kept for the sample editor's warp composable until it imports
+ * {@link downmixToMono} directly.
  */
-export function mixdownToMono(channels: ReadonlyArray<Float32Array>): Float32Array {
-  if (channels.length === 0) return new Float32Array(0);
-  if (channels.length === 1) return new Float32Array(channels[0]);
-  const frames = channels[0].length;
-  const out = new Float32Array(frames);
-  for (const channel of channels) {
-    for (let i = 0; i < frames; i++) out[i] += channel[i];
-  }
-  const scale = 1 / channels.length;
-  for (let i = 0; i < frames; i++) out[i] *= scale;
-  return out;
-}
+export { downmixToMono as mixdownToMono };
 
 /** Tags are best effort: a worker that cannot start or load leaves the asset untagged. */
 async function detectTags(
@@ -96,7 +83,7 @@ async function detectTags(
   options: IngestAudioOptions,
 ): Promise<AudioAssetTags> {
   if (options.analysis === null) return {};
-  const mono = mixdownToMono(channels);
+  const mono = downmixToMono(channels, { copy: true });
   if (options.analysis !== undefined) {
     return analyzeAudioTags(mono, sampleRate, options.analysis, options.onProgress);
   }

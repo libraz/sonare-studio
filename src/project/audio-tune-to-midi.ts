@@ -13,6 +13,7 @@
  * command/tune.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   NOTE_DETECT_FRAME,
@@ -28,7 +29,6 @@ import type {
   NoteTargetUnmatchedPolicy,
   RenderNotesRequest,
 } from '@/wasm/index.js';
-import { mixdownToMono } from './audio-import';
 import { projectMidiNoteOccurrences } from './midi-projection';
 import { type NormalizedTempoMap, ppqToSeconds } from './tempo-map';
 import type { EditorClip } from './types';
@@ -118,7 +118,7 @@ export async function tuneAudioClipToMidi(
   const targets = midiNoteTargets(midiClips, tempo, clip.startPpq - clip.sourceOffsetPpq);
   if (targets.length === 0) throw new TuneToMidiRefusedError('no-notes');
 
-  const mono = mixdownToMono(asset.channels);
+  const mono = downmixToMono(asset.channels);
   const contour = deps.pitchPyin(mono, sampleRate, NOTE_DETECT_FRAME, NOTE_DETECT_HOP);
   const notes = deps.extractNotes({
     samples: mono,

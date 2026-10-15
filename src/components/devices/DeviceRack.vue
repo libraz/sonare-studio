@@ -31,12 +31,13 @@ import {
   type SoundFontMeta,
   saveFont,
 } from '@/project/fonts';
-import type { Sf2ChannelProgram } from '@/project/instrument';
 import {
   DEFAULT_SYNTH_PRESET,
   type ExternalMidiInstrument,
   effectiveTrackInstrument,
+  GM2_DRUM_BANK,
   gmProgramForPreset,
+  type Sf2ChannelProgram,
 } from '@/project/instrument';
 import type { QuickControlTarget } from '@/project/quick-controls';
 import {
@@ -380,7 +381,7 @@ function useGmInstrument(): void {
       kind: 'synth-preset',
       preset,
       useGmPrograms: true,
-      gmBank: gmIsDrums.value ? 120 << 7 : gmBank.value,
+      gmBank: gmIsDrums.value ? GM2_DRUM_BANK : gmBank.value,
       gmProgram: gmProgram.value,
     }),
   );

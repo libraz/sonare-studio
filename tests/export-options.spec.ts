@@ -1,10 +1,9 @@
-import { strFromU8, unzipSync } from 'fflate';
+import { unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { WAV_ENCODER_ID } from '@/export/codecs';
 import { FLAC_ENCODER_ID } from '@/export/flac';
 import { MP3_ENCODER_ID } from '@/export/mp3';
 import {
-  buildStemsZip,
   createDefaultExportOptions,
   createStemsZipWriter,
   type EXPORT_SAMPLE_RATES,
@@ -14,7 +13,7 @@ import {
   normalizeMixdownLoudness,
   sanitizeFileBaseName,
   selectedEncoderIds,
-  stemEntryNames,
+  stemEntryName,
   stemsZipFileName,
   toRenderOptions,
   validateExportOptions,
@@ -388,40 +387,23 @@ describe('filename derivation', () => {
   });
 
   it('numbers stem entries and keeps duplicates unique', () => {
-    expect(stemEntryNames(['Drums', 'Bass', 'Bass'], '.wav')).toEqual([
+    const names = ['Drums', 'Bass', 'Bass'];
+    expect(names.map((name, i) => stemEntryName(name, i, names.length, '.wav'))).toEqual([
       '01 Drums.wav',
       '02 Bass.wav',
       '03 Bass.wav',
     ]);
-    expect(stemEntryNames(['a:b', ''], '.mp3')).toEqual(['01 a_b.mp3', '02 Track.mp3']);
+    expect(stemEntryName('a:b', 0, 2, '.mp3')).toBe('01 a_b.mp3');
+    expect(stemEntryName('', 1, 2, '.mp3')).toBe('02 Track.mp3');
   });
 
   it('widens the ordinal padding for large track counts', () => {
-    const names = stemEntryNames(new Array<string>(120).fill('T'), '.wav');
-    expect(names[0]).toBe('001 T.wav');
-    expect(names[119]).toBe('120 T.wav');
-  });
-});
-
-describe('buildStemsZip', () => {
-  it('packs entries into a zip that round-trips through unzipSync', () => {
-    const zip = buildStemsZip([
-      { name: '01 Drums.wav', bytes: new Uint8Array([1, 2, 3]) },
-      { name: '02 Bass.wav', bytes: strToBytes('bass') },
-    ]);
-    const entries = unzipSync(zip);
-    expect(Object.keys(entries).sort()).toEqual(['01 Drums.wav', '02 Bass.wav']);
-    expect(entries['01 Drums.wav']).toEqual(new Uint8Array([1, 2, 3]));
-    expect(strFromU8(entries['02 Bass.wav'])).toBe('bass');
+    expect(stemEntryName('T', 0, 120, '.wav')).toBe('001 T.wav');
+    expect(stemEntryName('T', 119, 120, '.wav')).toBe('120 T.wav');
   });
 
-  it('is deterministic for identical inputs', () => {
-    const entries = [{ name: '01 T.wav', bytes: new Uint8Array([9, 9, 9]) }];
-    expect(buildStemsZip(entries)).toEqual(buildStemsZip(entries));
-  });
-
-  it('rejects an empty entry list', () => {
-    expect(() => buildStemsZip([])).toThrow(RangeError);
+  it('rejects an ordinal outside the stem count', () => {
+    expect(() => stemEntryName('T', 3, 3, '.wav')).toThrow(RangeError);
   });
 });
 
@@ -459,8 +441,3 @@ describe('createStemsZipWriter', () => {
     await expect(writer.close()).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
-
-/** Encodes ASCII text to bytes (test helper). */
-function strToBytes(text: string): Uint8Array {
-  return new TextEncoder().encode(text);
-}

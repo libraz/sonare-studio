@@ -6,8 +6,8 @@
  * and {@link audioClipWindowFrames}.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { mixdownToMono } from './audio-import';
 import {
   type AudibleAudioClipFields,
   audioClipWindowFrames,
@@ -43,7 +43,7 @@ export async function renderAudibleClipMono(
   const map = normalizeTempoMap(tempoSegments, tempoBpm);
   const rendered = await renderAudibleAudioClipWindow(clip, map, loadAudioAsset);
   if (!rendered) return null;
-  const mono = mixdownToMono(rendered.channels);
+  const mono = downmixToMono(rendered.channels, { copy: true });
   return mono.length === 0 ? null : { mono, sampleRate: rendered.sampleRate, map };
 }
 

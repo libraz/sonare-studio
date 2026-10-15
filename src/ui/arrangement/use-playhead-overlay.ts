@@ -12,6 +12,7 @@ import { onBeforeUnmount, onMounted, type Ref } from 'vue';
 import type { ARRANGEMENT_COLORS } from '@/components/arrangement/theme';
 import { getCanvasContext } from '@/components/piano-roll/theme';
 import type { Painter } from '@/ui/canvas/painter';
+import { playheadX } from '@/ui/canvas/playhead-x';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 
 type ArrangementColors = typeof ARRANGEMENT_COLORS;
@@ -56,18 +57,6 @@ export interface PlayheadOverlay {
 export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOverlay {
   const { canvas, painter, layerId, range, positionPpq, anchoredLocalX, colors } = options;
 
-  /**
-   * Line column: the live PPQ column, capped at the follow anchor while
-   * following. Before the playhead reaches the anchor (e.g. right after playback
-   * starts left of it) the line moves normally from its real position; once it
-   * reaches the anchor the cap pins it there while the content scrolls under it.
-   */
-  function playheadX(view: TimelineRange, getter: () => number): number {
-    const raw = view.ppqToX(getter());
-    const anchor = anchoredLocalX?.() ?? null;
-    return anchor === null ? raw : Math.min(raw, anchor);
-  }
-
   function drawOverlay(): void {
     const el = canvas.value;
     if (!el) return;
@@ -79,7 +68,7 @@ export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOve
     ctx.clearRect(0, 0, w, h);
     const getter = positionPpq();
     if (getter) {
-      const x = playheadX(view, getter);
+      const x = playheadX(view, getter(), anchoredLocalX?.() ?? null);
       if (x >= 0 && x <= w) {
         ctx.fillStyle = colors.playhead;
         ctx.fillRect(Math.round(x), 0, 1.5, h);
@@ -100,7 +89,7 @@ export function usePlayheadOverlay(options: PlayheadOverlayOptions): PlayheadOve
     if (getter) {
       // Redraw only when the line's column actually moved; once pinned at the
       // anchor this stays put until the position or anchor state changes.
-      const x = playheadX(range(), getter);
+      const x = playheadX(range(), getter(), anchoredLocalX?.() ?? null);
       if (x !== lastPlayheadX) {
         lastPlayheadX = x;
         scheduleOverlay();

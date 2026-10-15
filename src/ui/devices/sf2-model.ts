@@ -4,13 +4,14 @@
  * variant.
  */
 
-import type {
-  Sf2ChannelProgram,
-  Sf2EfxRealization,
-  Sf2Instrument,
-  TrackInstrument,
+import {
+  GM2_DRUM_BANK_MSB,
+  type Sf2ChannelProgram,
+  type Sf2EfxRealization,
+  type Sf2Instrument,
+  type TrackInstrument,
 } from '@/project/instrument';
-import { GM2_DRUM_BANK_MSB, gm2DrumBank } from '@/ui/step-sequencer/drum-map';
+import { gm2DrumBank } from '@/ui/step-sequencer/drum-map';
 
 /** Highest MIDI bank number (MSB * 128 + LSB). */
 export const MAX_SF2_BANK = 16383;

@@ -1,7 +1,7 @@
 /**
  * Printing and PDF export for rendered notation pages.
  *
- * Both entry points take pre-rendered SVG page strings (one per physical
+ * Both page writers consume pre-rendered SVG page strings (one per physical
  * page). Verovio embeds every glyph as SVG path data, so the pages are fully
  * self-contained: no font embedding or external resources are needed for
  * either the print pipeline or the generated PDF.
@@ -9,6 +9,7 @@
 
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { PayloadMemoryMeter, type PayloadMemorySample, utf8ByteLength } from '@/lib/payload-memory';
+import { MAX_XML_DOCUMENT_BYTES } from '@/lib/xml-preflight';
 
 /** Physical page size in millimetres. */
 export interface PageLayout {
@@ -33,12 +34,11 @@ export interface PdfMetadata {
   onMemorySample?: (sample: PayloadMemorySample) => void;
 }
 
-/** Points per millimetre (72 pt per inch / 25.4 mm per inch). */
-const PT_PER_MM = 72 / 25.4;
-
 /** Conservative margin used for PDF-only headers and footers. */
 const PDF_OVERLAY_MARGIN_MM = 7;
-export const MAX_SCORE_PAGE_SVG_BYTES = 32 * 1024 * 1024;
+
+/** Most pages a score print or PDF export accepts. */
+const MAX_SCORE_PAGES = 500;
 
 /**
  * Unicode code points that jsPDF maps to glyphs in its built-in WinAnsi core
@@ -117,26 +117,6 @@ export interface PrintPageWriter {
   print(): void;
 }
 
-/**
- * Converts millimetres to PostScript points.
- *
- * @param mm Length in millimetres.
- * @returns Length in points (1 pt = 1/72 inch).
- */
-export function mmToPt(mm: number): number {
-  return mm * PT_PER_MM;
-}
-
-/**
- * Converts PostScript points to millimetres.
- *
- * @param pt Length in points (1 pt = 1/72 inch).
- * @returns Length in millimetres.
- */
-export function ptToMm(pt: number): number {
-  return pt / PT_PER_MM;
-}
-
 /** Class name of the transient container injected for printing. */
 export const PRINT_ROOT_CLASS = 'sonare-print-root';
 
@@ -188,8 +168,8 @@ export function buildPrintPageCss(layout: PageLayout): string {
  * @throws Error when the markup is not well-formed SVG.
  */
 function parseSvgPage(svg: string): Element {
-  if (utf8ByteLength(svg) > MAX_SCORE_PAGE_SVG_BYTES) {
-    throw new Error(`SVG page exceeds the ${MAX_SCORE_PAGE_SVG_BYTES}-byte limit`);
+  if (utf8ByteLength(svg) > MAX_XML_DOCUMENT_BYTES) {
+    throw new Error(`SVG page exceeds the ${MAX_XML_DOCUMENT_BYTES}-byte limit`);
   }
   const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml');
   if (parsed.getElementsByTagName('parsererror').length > 0) {
@@ -199,25 +179,6 @@ function parseSvgPage(svg: string): Element {
     throw new Error('Invalid SVG page markup');
   }
   return parsed.documentElement;
-}
-
-/**
- * Prints rendered notation pages via the browser print dialog.
- *
- * A hidden container (one wrapper div per SVG page) and a print stylesheet
- * are injected into the document; `@media print` rules hide the rest of the
- * app and show the container one page per sheet. The DOM is restored after
- * `window.print()` returns.
- *
- * @param svgPages Self-contained SVG markup, one string per page.
- * @param layout Physical page size matching the rendered pages.
- */
-export function printScore(svgPages: string[], layout: PageLayout): void {
-  const writer = createPrintPageWriter(svgPages.length, layout);
-  for (let index = 0; index < svgPages.length; index++) {
-    writer.addPage(svgPages[index], index + 1);
-  }
-  writer.print();
 }
 
 /** Creates a print sink that releases each SVG string after parsing it into detached DOM. */
@@ -232,7 +193,9 @@ export function createPrintPageWriter(
   if (!Number.isInteger(pageCount) || pageCount <= 0) {
     throw new TypeError('Print page writer requires at least one page');
   }
-  if (pageCount > 500) throw new RangeError('Score print page count exceeds limit 500');
+  if (pageCount > MAX_SCORE_PAGES) {
+    throw new RangeError(`Score print page count exceeds limit ${MAX_SCORE_PAGES}`);
+  }
   const style = document.createElement('style');
   style.textContent = buildPrintPageCss(layout);
 
@@ -300,31 +263,6 @@ export function createPrintPageWriter(
   };
 }
 
-/**
- * Renders notation pages to a PDF document.
- *
- * jspdf and svg2pdf.js are imported lazily so the PDF stack stays out of the
- * main bundle; importing svg2pdf.js registers `jsPDF.prototype.svg`. Each SVG
- * page is vector-rendered to fill one PDF page of the given size.
- *
- * @param svgPages Self-contained SVG markup, one string per page.
- * @param layout Physical page size in millimetres.
- * @returns The finished PDF as a Blob (hand to {@link downloadBlob}).
- * @throws TypeError when svgPages is empty.
- */
-export async function exportPdf(
-  svgPages: string[],
-  layout: PageLayout,
-  metadata: PdfMetadata = {},
-): Promise<Blob> {
-  if (svgPages.length === 0) throw new TypeError('exportPdf requires at least one SVG page');
-  const writer = await createPdfPageWriter(svgPages.length, layout, metadata);
-  for (let i = 0; i < svgPages.length; i++) {
-    await writer.addPage(svgPages[i], i + 1);
-  }
-  return writer.close();
-}
-
 /** Creates a PDF sink that renders and releases one SVG string at a time. */
 export async function createPdfPageWriter(
   pageCount: number,
@@ -334,7 +272,9 @@ export async function createPdfPageWriter(
   if (!Number.isInteger(pageCount) || pageCount <= 0) {
     throw new TypeError('PDF page writer requires at least one page');
   }
-  if (pageCount > 500) throw new RangeError('Score PDF page count exceeds limit 500');
+  if (pageCount > MAX_SCORE_PAGES) {
+    throw new RangeError(`Score PDF page count exceeds limit ${MAX_SCORE_PAGES}`);
+  }
   metadata.signal?.throwIfAborted();
   const [{ jsPDF }] = await Promise.all([import('jspdf'), import('svg2pdf.js')]);
   metadata.signal?.throwIfAborted();

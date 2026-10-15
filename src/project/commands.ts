@@ -110,6 +110,7 @@ export {
   clearHistory,
   collectHistoryReferencedMediaIds,
   configureHistoryByteBudget,
+  editRevision,
   executeAtomic,
   historyBudgetStats,
   redo,

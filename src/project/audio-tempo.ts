@@ -15,11 +15,11 @@
  * and asset loader from the running app.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { type DetectedBeats, detectBeatsInWorker } from './audio-analysis-client';
-import { mixdownToMono } from './audio-import';
 import { type BeatGrid, fitBeatGrid } from './beat-grid';
 import { type AudibleAudioClipFields, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
@@ -59,7 +59,7 @@ export async function detectAudioClipBeatGrid(
     deps.loadAudioAsset,
   );
   if (!window) return null;
-  const mono = mixdownToMono(window.channels);
+  const mono = downmixToMono(window.channels, { copy: true });
   if (mono.length === 0) return null;
   const { beats, downbeats } = await deps.detectBeats(mono, window.sampleRate);
   return fitBeatGrid(beats, downbeats, beatsPerBar);

@@ -17,6 +17,7 @@ import type {
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import { MIN_NOTE_WIDTH_PX } from '@/ui/canvas/hit-test';
 import type { Painter } from '@/ui/canvas/painter';
+import { playheadX } from '@/ui/canvas/playhead-x';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -729,9 +730,7 @@ function drawOverlay(): void {
     // While following, the line moves normally until it reaches the anchor, then
     // the cap pins it there and the notes scroll under it, keeping it aligned
     // with the arrangement's playhead.
-    const raw = props.range.ppqToX(props.positionPpq());
-    const anchor = props.anchoredLocalX?.() ?? null;
-    const x = anchor === null ? raw : Math.min(raw, anchor);
+    const x = playheadX(props.range, props.positionPpq(), props.anchoredLocalX?.() ?? null);
     if (x >= 0 && x <= w) {
       ctx.fillStyle = COLORS.playhead;
       ctx.fillRect(Math.round(x), 0, 1.5, h);
@@ -746,9 +745,7 @@ let lastPlayheadX = Number.NaN;
 function playheadTick(): void {
   const getter = props.positionPpq;
   if (getter) {
-    const raw = props.range.ppqToX(getter());
-    const anchor = props.anchoredLocalX?.() ?? null;
-    const x = anchor === null ? raw : Math.min(raw, anchor);
+    const x = playheadX(props.range, getter(), props.anchoredLocalX?.() ?? null);
     if (x !== lastPlayheadX) {
       lastPlayheadX = x;
       scheduleOverlay();

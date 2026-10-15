@@ -18,7 +18,7 @@
 import { SaxesParser } from 'saxes';
 import { keyMarkerName } from '@/compose/key-name';
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
-import { preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
+import { MAX_XML_DOCUMENT_BYTES, preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
   type DocumentClip,
   type DocumentMarker,
@@ -65,7 +65,7 @@ export interface MusicXmlImportLimits {
 }
 
 export const DEFAULT_MUSICXML_IMPORT_LIMITS: Readonly<MusicXmlImportLimits> = Object.freeze({
-  maxBytes: 32 * 1024 * 1024,
+  maxBytes: MAX_XML_DOCUMENT_BYTES,
   // A normal detailed score uses roughly 9--15 XML elements per note. Keep
   // this comfortably above the documented note limit while the byte limit
   // remains the primary protection against hostile input.

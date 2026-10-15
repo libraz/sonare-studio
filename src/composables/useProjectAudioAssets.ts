@@ -1,11 +1,12 @@
 import { computed, getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { downmixToMono } from '@/lib/audio-channels';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { clipSourceWindowFrames } from '@/project/audible-clip-window';
 import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
-import { decodeAndIngest, decodeAudioFile, mixdownToMono } from '@/project/audio-import';
+import { decodeAndIngest, decodeAudioFile } from '@/project/audio-import';
 import { clipsCollidingWith } from '@/project/command/clip-lane';
 import {
   addAudioClip,
@@ -213,7 +214,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
         store.tempoSegments,
       );
       const tags = await analyzeAudioTagsInWorker(
-        mixdownToMono(asset.channels.map((channel) => channel.slice(window.start, window.end))),
+        downmixToMono(asset.channels.map((channel) => channel.slice(window.start, window.end))),
         asset.meta.sampleRate,
       ).catch(() => ({ bpm: undefined }));
       if (!isCurrent()) return;

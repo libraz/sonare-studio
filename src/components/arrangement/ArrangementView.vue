@@ -501,9 +501,12 @@ const visibleTracks = computed(() => {
   return visibleGroupRows(store.tracks, new Set(collapsedGroupIds.value));
 });
 
+/** Ids of the visible tracks in row order. */
+const visibleTrackIds = computed(() => visibleTracks.value.map((track) => track.id));
+
 /** Clips drawn and hit-tested in the currently visible track rows. */
 const visibleClips = computed(() => {
-  const ids = new Set(visibleTracks.value.map((track) => track.id));
+  const ids = new Set(visibleTrackIds.value);
   return store.clips.filter((clip) => ids.has(clip.trackId));
 });
 
@@ -646,6 +649,9 @@ function trackIdAtPoint(point: { x: number; y: number }): number | null {
   return visibleTracks.value[hit.index]?.id ?? null;
 }
 
+/** Normalized project tempo map, rebuilt only when the tempo state changes. */
+const tempoMap = computed(() => normalizeTempoMap(store.tempoSegments, store.tempoBpm));
+
 /**
  * Trim bounds of a non-looping audio clip against its backing asset; null
  * (unbounded) for MIDI clips, looping clips and assets not yet loaded.
@@ -658,7 +664,7 @@ function sourceBoundsFor(clipId: number) {
   const assetPpq = assetLengthPpq(
     asset.meta.numFrames,
     asset.meta.sampleRate,
-    normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+    tempoMap.value,
     clip.startPpq - clip.sourceOffsetPpq,
   );
   return audioClipSourceBounds(clip, assetPpq);
@@ -669,7 +675,7 @@ const { tool } = useEditorTool();
 const interactions = useClipInteractions({
   view: laneView,
   getClips: () => visibleClips.value,
-  getTrackIds: () => visibleTracks.value.map((track) => track.id),
+  getTrackIds: () => visibleTrackIds.value,
   canMoveClipToTrack: (clipId, trackId) => {
     const clip = store.clips.find((entry) => entry.id === clipId);
     const track = store.tracks.find((entry) => entry.id === trackId);
@@ -750,7 +756,7 @@ const automation = useAutomationInteractions({
 const takeSilence = useCommonTakeSilence({
   clips: () => store.clips,
   expandedTrackIds: () => takesExpandedIds.value,
-  tempo: () => normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+  tempo: () => tempoMap.value,
   deps: async () => {
     const wasm = await ensureWasm();
     return {
@@ -917,8 +923,7 @@ function glueClusterClipIds(clipId: number): number[] {
   if (!source || isAudioClip(source)) return [];
   const candidates = store.clips
     .filter(
-      (clip) =>
-        clip.trackId === source.trackId && !isAudioClip(clip) && (clip.kind ?? 'midi') === 'midi',
+      (clip) => clip.trackId === source.trackId && !isAudioClip(clip) && clipKind(clip) === 'midi',
     )
     .sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
   const sourceIndex = candidates.findIndex((clip) => clip.id === clipId);

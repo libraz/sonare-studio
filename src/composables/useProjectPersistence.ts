@@ -764,7 +764,10 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     const doc = serializeProject();
     doc.name = documentName;
     const documentKey = JSON.stringify(doc);
-    const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
+    const bytes = encodeSzd(doc, {
+      savedAt: new Date().toISOString(),
+      documentJson: documentKey,
+    });
     const revision = await saveProjectChecked(name, bytes, expectedRevision);
     rememberRecentProject(slot);
     return { documentKey, revision, slot };

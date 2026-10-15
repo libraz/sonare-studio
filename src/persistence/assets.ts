@@ -14,6 +14,7 @@
  * project archive (see src/project/document-schema.ts).
  */
 
+import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a';
 import {
   bytesEqual,
   isNotFoundError,
@@ -332,16 +333,6 @@ function validateAssetId(id: string): string {
   return id;
 }
 
-/** 32-bit FNV-1a hash over bytes, with a configurable seed. */
-function fnv1a32Bytes(bytes: Uint8Array, seed: number): number {
-  let hash = seed >>> 0;
-  for (let i = 0; i < bytes.length; i++) {
-    hash ^= bytes[i];
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
 /**
  * Computes the deterministic content id of an audio buffer: two seeded
  * 32-bit FNV-1a passes over the raw sample bytes plus a header covering
@@ -361,8 +352,8 @@ export function computeAssetId(
     `f32|sr=${sampleRate}|ch=${numChannels}|n=${interleaved.length}|`,
   );
   const body = new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength);
-  const a = fnv1a32Bytes(body, fnv1a32Bytes(header, 0x811c9dc5));
-  const b = fnv1a32Bytes(body, fnv1a32Bytes(header, 0x01234567));
+  const a = fnv1a32Bytes(body, fnv1a32Bytes(header, FNV1A_OFFSET_BASIS));
+  const b = fnv1a32Bytes(body, fnv1a32Bytes(header, FNV1A_SECOND_SEED));
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
 

@@ -128,7 +128,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
         const doc = serializeProject();
         const documentKey = JSON.stringify(doc);
         const savedAt = new Date().toISOString();
-        const bytes = encodeSzd(doc, { savedAt });
+        const bytes = encodeSzd(doc, { savedAt, documentJson: documentKey });
         await saveProject(slotName, bytes);
         if (slotName === DEFAULT_SLOT_NAME) {
           await saveAutosaveSessionRevision(bytes, documentKey, savedAt);

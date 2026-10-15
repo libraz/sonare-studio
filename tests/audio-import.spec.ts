@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { downmixToMono } from '@/lib/audio-channels';
 import { clearAudioAssetCache, loadAsset } from '@/persistence/assets';
 import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
-import { decodeAndIngest, ingestAudioBuffer, mixdownToMono } from '@/project/audio-import';
+import { decodeAndIngest, ingestAudioBuffer } from '@/project/audio-import';
 import { analyzeAudioTags } from '@/project/audio-tags';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
@@ -18,7 +19,7 @@ function stereo(): Float32Array[] {
 
 /** The mono mixdown of {@link stereo}, as the analyzers receive it. */
 function mono(): Float32Array {
-  return mixdownToMono(stereo());
+  return downmixToMono(stereo());
 }
 
 describe('ingestAudioBuffer', () => {
@@ -54,9 +55,9 @@ describe('ingestAudioBuffer', () => {
     });
     expect(meta.tags).toEqual({ bpm: 123.5, key: 'Am', lufs: -14.2 });
     // Analysis sees a mono mixdown at the asset rate.
-    expect(detectBpm).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
-    expect(detectKey).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100, { tuning: 'auto' });
-    expect(lufs).toHaveBeenCalledWith(mixdownToMono(stereo()), 44100);
+    expect(detectBpm).toHaveBeenCalledWith(downmixToMono(stereo()), 44100);
+    expect(detectKey).toHaveBeenCalledWith(downmixToMono(stereo()), 44100, { tuning: 'auto' });
+    expect(lufs).toHaveBeenCalledWith(downmixToMono(stereo()), 44100);
   });
 
   it('uses detailed analyzeBpm, key candidates and rhythm tags when available', async () => {
@@ -297,18 +298,6 @@ describe('analyzeAudioTags', () => {
         lufs: () => ({ integratedLufs: Number.NEGATIVE_INFINITY }),
       }),
     ).toEqual({});
-  });
-});
-
-describe('mixdownToMono', () => {
-  it('averages channels and copies mono input', () => {
-    const mono = mixdownToMono(stereo());
-    expect(mono).toEqual(new Float32Array([0.5, 0.5, -0.5, -0.5]));
-    const single = new Float32Array([1, 2]);
-    const copy = mixdownToMono([single]);
-    expect(copy).toEqual(single);
-    expect(copy).not.toBe(single);
-    expect(mixdownToMono([])).toEqual(new Float32Array(0));
   });
 });
 

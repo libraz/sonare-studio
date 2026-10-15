@@ -14,6 +14,7 @@ import {
   addMasteringProcessor,
   applyMasteringPresetWithOverrides,
   type CommandGestureOptions,
+  editRevision,
   removeMasteringProcessor,
   reorderMasteringProcessor,
   setMasteringEnabled,
@@ -808,17 +809,16 @@ const previewRevision = ref<number | null>(null);
 
 watch(
   [
-    () => store.mixer,
-    () => store.tracks,
-    () => store.clips,
-    () => store.tempoSegments,
-    () => store.timeSignatures,
-    () => [props.loopEnabled, props.loopStartPpq, props.loopEndPpq, props.previewBars],
+    editRevision,
+    () => store.documentGeneration,
+    () => props.loopEnabled,
+    () => props.loopStartPpq,
+    () => props.loopEndPpq,
+    () => props.previewBars,
   ],
   () => {
     projectRevision.value += 1;
   },
-  { deep: true },
 );
 
 const previewStale = computed(

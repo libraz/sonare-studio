@@ -3,6 +3,10 @@ import { PayloadMemoryLimitError, type PayloadMemoryOperation } from '@/lib/payl
 export const MEBIBYTE = 1024 * 1024;
 export const DEFAULT_EXPORT_MEMORY_BUDGET_BYTES = 1024 * MEBIBYTE;
 export const DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES = 256 * MEBIBYTE;
+/** Encoder container/header slack added on top of the PCM size. */
+const ENCODER_SLACK_BYTES = 64 * 1024;
+/** Working buffers the MP3 encoder holds beyond its input and output. */
+const MP3_SCRATCH_BYTES = 64 * 1024;
 
 export interface RenderPayloadMemoryEstimate {
   totalFrames: number;
@@ -145,7 +149,7 @@ export function estimateCodecPayloadMemory(options: {
   const inputGenerations = mediaRecorder ? 2 : 1;
   const encodedGenerations = mediaRecorder || options.encoderId === 'flac' ? 2 : 1;
   const encodedOneGenerationBytes = safePayloadBytes(
-    inputBytes + 64 * 1024,
+    inputBytes + ENCODER_SLACK_BYTES,
     'Encoded audio',
     'audio-encoding',
   );
@@ -161,7 +165,11 @@ export function estimateCodecPayloadMemory(options: {
   const codecScratchBytes =
     (inputGenerations - 1) * inputBytes +
     workerInputCopyBytes +
-    (options.encoderId === 'flac' ? 16 * MEBIBYTE : options.encoderId === 'mp3' ? 64 * 1024 : 0);
+    (options.encoderId === 'flac'
+      ? 16 * MEBIBYTE
+      : options.encoderId === 'mp3'
+        ? MP3_SCRATCH_BYTES
+        : 0);
   const peakPayloadBytes = safePayloadBytes(
     retainedBytes + inputBytes + outputUpperBoundBytes + codecScratchBytes,
     'Audio encoding',

@@ -9,6 +9,12 @@
 import { AsyncZipDeflate, Zip } from 'fflate';
 import type { PayloadMemoryMeter } from './payload-memory';
 
+/**
+ * Fixed entry timestamp so identical inputs produce byte-identical archives
+ * (zip DOS times only cover 1980-2099, so the Unix epoch cannot serve).
+ */
+export const DETERMINISTIC_ZIP_MTIME = '2000-01-01T12:00:00Z';
+
 export interface StreamingZipLimits {
   maxEntries?: number;
   maxEntryBytes?: number;
@@ -35,12 +41,12 @@ export interface StreamingZipWriterOptions extends StreamingZipLimits {
 /** A sequential streaming ZIP writer that collects the final archive bytes. */
 export interface StreamingZipWriter {
   add(name: string, bytes: Uint8Array): Promise<void>;
-  close(): Promise<Uint8Array>;
+  close(): Promise<Uint8Array<ArrayBuffer>>;
   abort(reason?: unknown): void;
   stats(): StreamingZipStats;
 }
 
-function concatenate(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array {
+function concatenate(chunks: readonly Uint8Array[], totalBytes: number): Uint8Array<ArrayBuffer> {
   const output = new Uint8Array(totalBytes);
   let offset = 0;
   for (const chunk of chunks) {
@@ -66,9 +72,9 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
   let compressedBytes = 0;
   let closed = false;
   let settled = false;
-  let resolveResult!: (bytes: Uint8Array) => void;
+  let resolveResult!: (bytes: Uint8Array<ArrayBuffer>) => void;
   let rejectResult!: (error: unknown) => void;
-  const result = new Promise<Uint8Array>((resolve, reject) => {
+  const result = new Promise<Uint8Array<ArrayBuffer>>((resolve, reject) => {
     resolveResult = resolve;
     rejectResult = reject;
   });
@@ -203,7 +209,7 @@ export function createStreamingZipWriter(options: StreamingZipWriterOptions): St
       );
       return completion;
     },
-    async close(): Promise<Uint8Array> {
+    async close(): Promise<Uint8Array<ArrayBuffer>> {
       if (closed) return result;
       closed = true;
       try {

@@ -5,14 +5,13 @@
  * unit-testable in isolation; the dialog component is a thin view over it.
  */
 
-import { zipSync } from 'fflate';
 import { MAX_RELEASE_TAIL_SECONDS } from '@/export/engine-render-types';
 import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES, MEBIBYTE } from '@/export/memory-budget';
 import type { MixdownRangePpq, MixdownReport } from '@/export/mixdown';
 import { dbToLinear } from '@/lib/db';
 import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
 import { PayloadMemoryMeter, type PayloadMemorySample } from '@/lib/payload-memory';
-import { createStreamingZipWriter } from '@/lib/streaming-zip';
+import { createStreamingZipWriter, DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 import { isBrowserMediaEncoderId } from './browser-media';
 import { WAV_ENCODER_ID } from './codecs';
@@ -99,9 +98,6 @@ export interface ExportOptionsModel {
 
 /** Fallback base name when the project name sanitizes to nothing. */
 const FALLBACK_BASE_NAME = 'project';
-
-/** Fixed zip timestamp so identical inputs produce identical archives. */
-const STEMS_ZIP_MTIME = '2000-01-01T12:00:00Z';
 
 /**
  * Creates the dialog defaults: 24-bit WAV mixdown of the whole project, at the
@@ -334,14 +330,9 @@ export function sanitizeFileBaseName(name: string, fallback = FALLBACK_BASE_NAME
   return sanitizeFilenameBase(name, fallback);
 }
 
-/** Appends an extension unless the name already ends with it. */
-function withExtension(name: string, extension: string): string {
-  return ensureFileExtension(name, extension);
-}
-
 /** Derives the mixdown download filename (sanitized base + extension). */
 export function exportFileName(baseName: string, extension: string): string {
-  return withExtension(sanitizeFileBaseName(baseName), extension);
+  return ensureFileExtension(sanitizeFileBaseName(baseName), extension);
 }
 
 /** Derives the stems archive filename: '<base> stems.zip'. */
@@ -350,15 +341,10 @@ export function stemsZipFileName(baseName: string): string {
 }
 
 /**
- * Derives the zip entry names for a list of stems: a 1-based zero-padded
- * index prefix keeps entries ordered and unique even when track names
- * collide (e.g. '01 Drums.wav').
+ * Derives one deterministic zip entry name: a 1-based zero-padded index prefix
+ * keeps entries ordered and unique even when track names collide
+ * (e.g. '01 Drums.wav').
  */
-export function stemEntryNames(stemNames: ReadonlyArray<string>, extension: string): string[] {
-  return stemNames.map((name, index) => stemEntryName(name, index, stemNames.length, extension));
-}
-
-/** Derives one deterministic entry name without retaining the other stem names. */
 export function stemEntryName(
   stemName: string,
   index: number,
@@ -370,32 +356,15 @@ export function stemEntryName(
   }
   const width = Math.max(2, String(total).length);
   const ordinal = String(index + 1).padStart(width, '0');
-  return withExtension(`${ordinal} ${sanitizeFileBaseName(stemName, 'Track')}`, extension);
+  return ensureFileExtension(`${ordinal} ${sanitizeFileBaseName(stemName, 'Track')}`, extension);
 }
 
 /** One file inside the stems archive. */
 export interface StemsZipEntry {
-  /** Zip entry name (see {@link stemEntryNames}). */
+  /** Zip entry name (see {@link stemEntryName}). */
   name: string;
   /** Encoded file bytes. */
   bytes: Uint8Array;
-}
-
-/**
- * Packs encoded stem files into a zip archive (stored with a fixed
- * timestamp, so identical inputs produce byte-identical archives).
- *
- * @throws RangeError when no entries are given.
- */
-export function buildStemsZip(entries: ReadonlyArray<StemsZipEntry>): Uint8Array {
-  if (entries.length === 0) {
-    throw new RangeError('Stems zip requires at least one entry');
-  }
-  const files: Record<string, Uint8Array> = {};
-  for (const entry of entries) {
-    files[entry.name] = entry.bytes;
-  }
-  return zipSync(files, { mtime: STEMS_ZIP_MTIME });
 }
 
 /** Incremental ZIP sink: each encoded stem is compressed and released before the next. */
@@ -422,7 +391,7 @@ export function createStemsZipWriter(
       onSample: memory.onSample,
     });
   const writer = createStreamingZipWriter({
-    mtime: STEMS_ZIP_MTIME,
+    mtime: DETERMINISTIC_ZIP_MTIME,
     signal,
     meter,
   });
@@ -436,9 +405,7 @@ export function createStemsZipWriter(
       }
       const bytes = await writer.close();
       const releasePublishPeak = meter.retain(bytes.byteLength, 'ZIP Blob publish');
-      const publish = new Uint8Array(bytes.byteLength);
-      publish.set(bytes);
-      const blob = new Blob([publish], { type: 'application/zip' });
+      const blob = new Blob([bytes], { type: 'application/zip' });
       releasePublishPeak();
       return blob;
     },

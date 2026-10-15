@@ -11,6 +11,7 @@
  * descriptor leaves open.
  */
 
+import { isSwitchOn } from '@/lib/midi';
 import { formatControlValue } from '@/ui/devices/knob-math';
 import type {
   MasteringInsertParamDependency,
@@ -863,7 +864,7 @@ export function processorControlValueFromMidi(
     }
     return control.min + (cc / 127) * (control.max - control.min);
   }
-  if (control.kind === 'boolean') return cc >= 64;
+  if (control.kind === 'boolean') return isSwitchOn(cc);
   const index = Math.min(
     control.options.length - 1,
     Math.floor((cc / 128) * control.options.length),

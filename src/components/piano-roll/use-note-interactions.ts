@@ -10,6 +10,7 @@
 
 import { type Ref, ref, shallowRef } from 'vue';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/types';
+import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import {
   hitTestNote,
   type MarqueeRect,
@@ -21,9 +22,6 @@ import { MAX_PITCH, MIN_PITCH, snapPpqToStep } from '@/ui/canvas/timeline-range'
 import type { EditorToolId } from '@/ui/editor/tools';
 import { clampMoveDelta } from './nudge-bounds';
 import { visibleNotesInWindow } from './visible-notes';
-
-/** Px a pointer must travel from its down point before a drag gesture starts. */
-export const DEFAULT_DRAG_THRESHOLD_PX = 3;
 
 /** Smallest note duration a resize can produce (a sixty-fourth note in PPQ). */
 export const DEFAULT_MIN_DURATION_PPQ = 0.0625;
@@ -110,7 +108,7 @@ export interface UseNoteInteractionsOptions {
   getDrawVelocity?(): number;
   /** Mutation commands invoked when gestures commit. */
   commands: InteractionCommands;
-  /** Drag start threshold in px. Default {@link DEFAULT_DRAG_THRESHOLD_PX}. */
+  /** Drag start threshold in px. Default {@link DRAG_THRESHOLD_PX}. */
   dragThresholdPx?: number;
   /** Minimum note duration kept by resize, in PPQ. Default {@link DEFAULT_MIN_DURATION_PPQ}. */
   minDurationPpq?: number;
@@ -271,7 +269,7 @@ function unionIds(base: ReadonlyArray<number>, extra: ReadonlyArray<number>): nu
  */
 export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteInteractions {
   const { view, commands } = options;
-  const threshold = options.dragThresholdPx ?? DEFAULT_DRAG_THRESHOLD_PX;
+  const threshold = options.dragThresholdPx ?? DRAG_THRESHOLD_PX;
   const minDuration = options.minDurationPpq ?? DEFAULT_MIN_DURATION_PPQ;
 
   /** See the matching arrangement gesture helper: viewport scrolling is movement. */

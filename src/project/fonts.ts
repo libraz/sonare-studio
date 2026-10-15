@@ -13,6 +13,7 @@
  * (TrackInstrument 'sf2' variant); the bytes never enter the project archive.
  */
 
+import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a';
 import {
   bytesEqual,
   isNotFoundError,
@@ -269,16 +270,6 @@ function validateSoundFontData(data: Uint8Array): void {
   }
 }
 
-/** 32-bit FNV-1a hash over bytes, with a configurable seed. */
-function fnv1a32Bytes(bytes: Uint8Array, seed: number): number {
-  let hash = seed >>> 0;
-  for (let i = 0; i < bytes.length; i++) {
-    hash ^= bytes[i];
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
 /**
  * Computes the deterministic content id of a SoundFont: two seeded 32-bit
  * FNV-1a passes over the raw bytes, rendered as 16 hex characters.
@@ -287,8 +278,8 @@ function fnv1a32Bytes(bytes: Uint8Array, seed: number): number {
  * @returns A stable 16-character hex id.
  */
 export function computeFontId(data: Uint8Array): string {
-  const a = fnv1a32Bytes(data, 0x811c9dc5);
-  const b = fnv1a32Bytes(data, 0x01234567);
+  const a = fnv1a32Bytes(data, FNV1A_OFFSET_BASIS);
+  const b = fnv1a32Bytes(data, FNV1A_SECOND_SEED);
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
 

@@ -30,9 +30,6 @@ import {
   hitTestClip,
 } from './clip-hit';
 
-/** Alias of {@link DRAG_THRESHOLD_PX} for callers outside the arrangement. */
-export const DEFAULT_CLIP_DRAG_THRESHOLD_PX = DRAG_THRESHOLD_PX;
-
 /** Smallest clip length a trim can produce, in PPQ (a sixteenth note). */
 export const DEFAULT_MIN_CLIP_LENGTH_PPQ = 0.25;
 

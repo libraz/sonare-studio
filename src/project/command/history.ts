@@ -1,4 +1,4 @@
-import { shallowReactive, shallowRef } from 'vue';
+import { type Ref, ref, shallowReactive, shallowRef } from 'vue';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import type { EditorChordSymbol } from '../chords';
@@ -186,6 +186,15 @@ export interface HistoryReferencedMediaIds {
 const undoStack = shallowReactive<HistoryEntry[]>([]);
 const redoStack = shallowReactive<HistoryEntry[]>([]);
 let lastSnapshot: MirrorSnapshot | null = null;
+
+const editRevisionCounter = ref(0);
+
+/**
+ * Monotonic count of committed document changes (execute, atomic execute,
+ * app-level commands, gesture steps, undo and redo). Watch it instead of
+ * deep-watching the mirror to learn that the document changed.
+ */
+export const editRevision: Readonly<Ref<number>> = editRevisionCounter;
 
 function deepEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
@@ -637,6 +646,7 @@ function clearRedoStack(): void {
 
 function pushHistory(entry: HistoryEntry): void {
   validateProjectEditCount(entry.projectEdits);
+  editRevisionCounter.value += 1;
   clearRedoStack();
   undoStack.push(entry);
   historyBytes += entry.byteSize;
@@ -834,6 +844,7 @@ export function executeApp<T>(action: () => T, gesture?: { key: string; commit: 
     }
     // The mirror diverges from the last committed entry, so redo is stale.
     clearRedoStack();
+    editRevisionCounter.value += 1;
     return action();
   }
   if (gesture && pendingGesture.value && pendingGesture.value.key === gesture.key) {
@@ -868,6 +879,7 @@ export function undo(): boolean {
   const view = resolveView(store, entry.before, entry.after, entry.before);
   for (let i = 0; i < entry.projectEdits; i++) project.undo();
   restoreSnapshot(store, entry.before, view);
+  editRevisionCounter.value += 1;
   return true;
 }
 
@@ -888,6 +900,7 @@ export function redo(): boolean {
   const view = resolveView(store, entry.before, entry.after, entry.after);
   for (let i = 0; i < entry.projectEdits; i++) project.redo();
   restoreSnapshot(store, entry.after, view);
+  editRevisionCounter.value += 1;
   return true;
 }
 

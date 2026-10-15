@@ -2,14 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureFileExtension, exportMusicXml } from '@/notation/io';
 import {
   buildPrintPageCss,
+  createPdfPageWriter,
+  createPrintPageWriter,
   downloadBlob,
-  exportPdf,
-  mmToPt,
+  type PageLayout,
+  type PdfMetadata,
   PRINT_CLEANUP_FALLBACK_MS,
   PRINT_PAGE_CLASS,
   PRINT_ROOT_CLASS,
-  printScore,
-  ptToMm,
 } from '@/notation/print';
 
 /** Captures every jsPDF instance the mocked module creates. */
@@ -90,16 +90,25 @@ const A4 = { pageWidthMm: 210, pageHeightMm: 297 };
 const SVG_PAGE =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M0 0h10"/></svg>';
 
-describe('mm/pt conversion', () => {
-  it('converts one inch worth of millimetres to 72 points', () => {
-    expect(mmToPt(25.4)).toBeCloseTo(72, 10);
+/** Drives a print writer through every page and opens the print dialog. */
+function printScore(svgPages: string[], layout: PageLayout): void {
+  const writer = createPrintPageWriter(svgPages.length, layout);
+  svgPages.forEach((svg, index) => {
+    writer.addPage(svg, index + 1);
   });
+  writer.print();
+}
 
-  it('round-trips through ptToMm', () => {
-    expect(ptToMm(mmToPt(210))).toBeCloseTo(210, 10);
-    expect(ptToMm(72)).toBeCloseTo(25.4, 10);
-  });
-});
+/** Drives a PDF writer through every page and returns the finished Blob. */
+async function exportPdf(
+  svgPages: string[],
+  layout: PageLayout,
+  metadata: PdfMetadata = {},
+): Promise<Blob> {
+  const writer = await createPdfPageWriter(svgPages.length, layout, metadata);
+  for (let i = 0; i < svgPages.length; i++) await writer.addPage(svgPages[i], i + 1);
+  return writer.close();
+}
 
 describe('buildPrintPageCss', () => {
   it('emits the @page size for the layout', () => {

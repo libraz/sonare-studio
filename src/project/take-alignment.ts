@@ -10,9 +10,9 @@
  * dependency-injected; the command wires the wasm call and the undoable edit.
  */
 
+import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import type { AlignTakeToReferenceRequest, AlignTakeToReferenceResult } from '@/wasm/index.js';
-import { mixdownToMono } from './audio-import';
 import {
   type AudibleAudioClipFields,
   audioClipWindowFrames,
@@ -122,7 +122,10 @@ export async function alignClipWarp(
     takeStart + Math.round(takeWindowFrames * (1 + TAKE_OVERRUN)),
   );
   if (takeEnd - takeStart <= 0) return 'take-empty';
-  const take = mixdownToMono(asset.channels.map((channel) => channel.subarray(takeStart, takeEnd)));
+  const take = downmixToMono(
+    asset.channels.map((channel) => channel.subarray(takeStart, takeEnd)),
+    { copy: true },
+  );
 
   const rendered = await renderAudibleAudioClipWindow(reference, tempo, deps.loadAudioAsset, {
     renderWarp: deps.renderWarp,
@@ -134,7 +137,7 @@ export async function alignClipWarp(
   const offset = Math.round(
     (clipStartSeconds - ppqToSeconds(tempo, reference.startPpq)) * referenceRate,
   );
-  const referenceMono = mixdownToMono(rendered.channels);
+  const referenceMono = downmixToMono(rendered.channels);
   if (offset < 0 || offset + windowFrames > referenceMono.length) return 'reference-short';
   const referenceWindow = referenceMono.subarray(offset, offset + windowFrames);
 

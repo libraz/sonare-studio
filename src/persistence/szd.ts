@@ -7,7 +7,7 @@
  */
 
 import { strFromU8, strToU8, zipSync } from 'fflate';
-import { createStreamingZipWriter } from '@/lib/streaming-zip';
+import { createStreamingZipWriter, DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import {
   type ArchiveLimits,
   ArchivePreflightError,
@@ -42,17 +42,12 @@ const ASSETS_PREFIX = 'assets/';
 /** Zip directory holding bundled SoundFont payloads + sidecars. */
 const FONTS_PREFIX = 'fonts/';
 
-/**
- * Fixed zip-entry timestamp used when the caller provides no savedAt, keeping
- * encoding deterministic (zip DOS times only cover 1980-2099, so the Unix
- * epoch cannot serve as the neutral value).
- */
-const DEFAULT_ZIP_MTIME = '2000-01-01T12:00:00Z';
-
 /** Caller-provided metadata for {@link encodeSzd} (the encoder reads no clock). */
 export interface SzdEncodeMeta {
   /** Save timestamp as an ISO 8601 string; omitted when the caller has none. */
   savedAt?: string;
+  /** `JSON.stringify(doc)` the caller already computed; reused instead of serializing again. */
+  documentJson?: string;
 }
 
 /** One bundled audio asset: its sidecar JSON bytes and raw PCM payload. */
@@ -170,7 +165,7 @@ function szdEntries(
   };
   if (meta.savedAt !== undefined) metaDoc.savedAt = meta.savedAt;
   const entries: Record<string, Uint8Array> = {
-    [PROJECT_ENTRY]: strToU8(JSON.stringify(doc)),
+    [PROJECT_ENTRY]: strToU8(meta.documentJson ?? JSON.stringify(doc)),
     [META_ENTRY]: strToU8(JSON.stringify(metaDoc)),
   };
   for (const asset of bundle?.assets ?? []) {
@@ -253,7 +248,7 @@ export function encodeSzd(
   // a potentially huge compressed archive. The compressed-size ceiling still
   // needs the completed archive and is checked immediately afterwards.
   assertSzdEncodeBudget(entries);
-  const archive = zipSync(entries, { mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME });
+  const archive = zipSync(entries, { mtime: meta.savedAt ?? DETERMINISTIC_ZIP_MTIME });
   assertSzdEncodeBudget(entries, archive.byteLength);
   return archive;
 }
@@ -275,7 +270,7 @@ export async function encodeSzdStreaming(
   // over-limit archive to the compressor.
   assertSzdEncodeBudget(entries);
   const writer = createStreamingZipWriter({
-    mtime: meta.savedAt ?? DEFAULT_ZIP_MTIME,
+    mtime: meta.savedAt ?? DETERMINISTIC_ZIP_MTIME,
     signal,
     maxEntries: MAX_PROJECT_ARCHIVE_ENTRIES,
     maxEntryBytes: MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
