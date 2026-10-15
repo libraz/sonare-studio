@@ -18,7 +18,7 @@ import {
 } from '@/project/commands';
 import { isAutomatableSynthParam } from '@/project/instrument';
 import type { NumberProcessorControl, ProcessorControlValue } from '@/project/processor-controls';
-import { formatProcessorControlValue } from '@/project/processor-controls';
+import { formatProcessorControlValue, isConstructionOnlyParam } from '@/project/processor-controls';
 import {
   isAmpConstructionOnlyParam,
   listQuickControls,
@@ -122,7 +122,15 @@ function automationParamToken(controlId: string): AutomationParam | null {
         ? store.tracks.find((track) => track.id === stripTarget)?.mixer
         : store.mixer.buses.find((bus) => bus.id === mixerBusIdFromTarget(stripTarget))?.strip;
   const slot = strip?.inserts[props.target.index];
-  if (!slot || isAmpConstructionOnlyParam(slot.processor, controlId)) return null;
+  // A construction-only key has no engine id: a lane for it would be inert, so
+  // the drag falls through to the parameter edit instead.
+  if (
+    !slot ||
+    isConstructionOnlyParam(slot.processor, controlId) ||
+    isAmpConstructionOnlyParam(slot.processor, controlId)
+  ) {
+    return null;
+  }
   return insertAutomationParam(slot.id ?? props.target.index, controlId);
 }
 

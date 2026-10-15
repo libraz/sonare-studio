@@ -215,6 +215,28 @@ describe('QuickControls.vue', () => {
     ]);
   });
 
+  it('applies a construction-only insert key in a write mode instead of recording an inert lane', async () => {
+    addInsert(trackId, 'dynamics.limiter');
+    setAutomationStripMode(trackId, 'latch');
+    const wrapper = mount(QuickControls, {
+      props: {
+        target: { type: 'insert', trackId, index: 0 },
+        positionPpq: () => 0,
+        isPlaying: true,
+        scheduleAutomationWrite: vi.fn(),
+      },
+    });
+    const knob = wrapper.find('[data-control="lookaheadMs"]');
+    expect(knob.exists()).toBe(true);
+    firePointer(knob, 'pointerdown', { button: 0, pointerId: 7, clientY: 100 });
+    firePointer(knob, 'pointermove', { pointerId: 7, clientY: 40 });
+    firePointer(knob, 'pointerup', { pointerId: 7, clientY: 40 });
+    await wrapper.vm.$nextTick();
+
+    expect(store.tracks[0].mixer?.inserts[0].params.lookaheadMs).toEqual(expect.any(Number));
+    expect(store.automationLanes).toHaveLength(0);
+  });
+
   it('still drives the insert parameter manually when no write mode is armed', async () => {
     addInsert(trackId, 'dynamics.compressor');
     const wrapper = mount(QuickControls, {
