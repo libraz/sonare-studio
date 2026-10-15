@@ -46,6 +46,16 @@ describe('project persisted-state key', () => {
     expect(persistedProjectStateKey(store)).not.toBe(configuredKey);
   });
 
+  it('changes when the generation seed or the project sample rate alone changes', () => {
+    const before = persistedProjectStateKey(store);
+    store.generationSeed = store.generationSeed + 1;
+    const afterSeed = persistedProjectStateKey(store);
+    expect(afterSeed).not.toBe(before);
+
+    store.sampleRate = store.sampleRate === 48000 ? 44100 : 48000;
+    expect(persistedProjectStateKey(store)).not.toBe(afterSeed);
+  });
+
   it('round-trips the configured surface, including bankOffset', async () => {
     addTrack({ name: 'Second track' });
     store.controlSurface = {

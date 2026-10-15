@@ -15,6 +15,8 @@ export function persistedProjectStateKey(store: ProjectStore) {
   return fnv1a32Hex(
     canonicalJson({
       name: store.projectName,
+      sampleRate: store.sampleRate,
+      generationSeed: store.generationSeed,
       tracks: store.tracks,
       clips: store.clips,
       markers: store.markers,
@@ -31,6 +33,8 @@ export function persistedProjectStateKey(store: ProjectStore) {
       displayTransposeSemitones: store.displayTransposeSemitones,
       scoreDisplaySettings: store.scoreDisplaySettings,
       scaleHighlight: store.scaleHighlight,
+      // An estimated key is not written, so the flag decides what is saved.
+      scaleHighlightEstimated: store.scaleHighlightEstimated,
       pickupLengthPpq: store.pickupLengthPpq,
       automationLanes: store.automationLanes,
       chords: store.chords,
