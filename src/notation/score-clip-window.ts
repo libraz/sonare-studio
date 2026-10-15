@@ -1,6 +1,7 @@
 import { measureRangeAt, timeSignatureAt } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { type NotatedTimeSig, timeSigLengthPpq } from './model';
+import { PPQ_EPSILON } from './musicxml-shared';
 
 /** Inputs that determine the notated window for a clip-based score. */
 export interface ScoreClipWindowInput {
@@ -16,9 +17,6 @@ export interface ScoreClipWindow {
   measureLenPpq: number;
   clipLengthPpq: number;
 }
-
-/** Tolerance for a clip end sitting exactly on a barline. */
-const BARLINE_EPSILON_PPQ = 1e-9;
 
 /**
  * Resolves the clip-start meter and extends a score window to the next project
@@ -42,8 +40,7 @@ export function scoreClipWindow(input: ScoreClipWindowInput): ScoreClipWindow {
   }
   const clipEndPpq = input.clipStartPpq + input.clipLengthPpq;
   const endBar = measureRangeAt(input.timeSignatures, clipEndPpq);
-  const onBarline =
-    clipEndPpq > input.clipStartPpq && clipEndPpq - endBar.startPpq <= BARLINE_EPSILON_PPQ;
+  const onBarline = clipEndPpq > input.clipStartPpq && clipEndPpq - endBar.startPpq <= PPQ_EPSILON;
   const windowEndPpq = onBarline ? clipEndPpq : endBar.startPpq + endBar.lengthPpq;
   const clipLengthPpq = windowEndPpq - input.clipStartPpq;
 

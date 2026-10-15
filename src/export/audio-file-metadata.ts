@@ -2,6 +2,7 @@
 
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
+import { PRODUCER_NAME, SECTION_MARKER_PREFIX } from './constants';
 
 /** A named sample position in an encoded audio file. */
 export interface AudioFileMarker {
@@ -46,7 +47,10 @@ export function audioFileMetadataForDocument(
   const startSample = ppqToSamples(map, startPpq, options.sampleRate);
   const cuePoints = [
     ...doc.markers.map((marker) => ({ ppq: marker.ppq, name: marker.name })),
-    ...doc.sections.map((section) => ({ ppq: section.startPpq, name: `Section: ${section.name}` })),
+    ...doc.sections.map((section) => ({
+      ppq: section.startPpq,
+      name: `${SECTION_MARKER_PREFIX}${section.name}`,
+    })),
   ]
     .filter(
       (marker) => Number.isFinite(marker.ppq) && marker.ppq >= startPpq && marker.ppq <= endPpq,
@@ -59,7 +63,7 @@ export function audioFileMetadataForDocument(
     .sort((a, b) => a.sampleOffset - b.sampleOffset || a.name.localeCompare(b.name));
   return {
     title: doc.name,
-    originator: 'Sonare Studio',
+    originator: PRODUCER_NAME,
     originatorReference: doc.name,
     ...localBwfTimestamp(options.now ?? new Date()),
     timeReference: 0,

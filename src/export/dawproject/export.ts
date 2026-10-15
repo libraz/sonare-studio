@@ -36,6 +36,7 @@
  */
 
 import { strToU8 } from 'fflate';
+import { SECTION_MARKER_PREFIX } from '@/export/constants';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
 import { createStreamingZipWriter } from '@/lib/streaming-zip';
@@ -71,9 +72,12 @@ import type {
 } from '@/project/serialization';
 import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
 import { translateTempoMapForExport } from '@/project/tempo-map-export';
+import { DEFAULT_TIME_SIGNATURE } from '@/project/time-signature';
 import type { TempoSegment, TimeSignatureSegment } from '@/project/types';
 import { sanitizeWarpAnchors } from '@/project/warp';
 import { audioContentOriginPpq, audioContentPpqToSeconds } from './audio-time';
+import { exportedWarp, hexColor, isGroupPanAutomation, vcaGainDbByGroupId } from './export-rules';
+import { busChannelId, MASTER_CHANNEL_ID, SONARE_AUTOMATION_PARAMETER_PREFIX } from './format';
 import {
   createSonareDawprojectMetadata,
   SONARE_DAWPROJECT_METADATA_ENTRY,
@@ -104,12 +108,6 @@ const TEMPO_PARAMETER_ID = 'tempo';
 
 /** Id of the Transport time-signature parameter. */
 const TIME_SIGNATURE_PARAMETER_ID = 'time-signature';
-
-/** Id of the master channel (regular channels name it as their destination). */
-const MASTER_CHANNEL_ID = 'master-channel';
-
-/** Vendor-scoped Target prefix for automation DAWproject cannot name natively. */
-const SONARE_AUTOMATION_PARAMETER_PREFIX = 'sonare-automation:';
 
 /** Options for {@link exportDawproject}. */
 export interface DawprojectExportOptions {
@@ -198,11 +196,6 @@ function clamp01(value: number): number {
 function xmlIdSegment(value: string): string {
   const clean = value.replace(/[^A-Za-z0-9._-]/g, '_');
   return clean.length > 0 ? clean : 'param';
-}
-
-/** Returns a CSS color when it is hex-formatted (the format DAWproject uses). */
-function hexColor(color: string): string | undefined {
-  return /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color) ? color : undefined;
 }
 
 /** True when the clip carries audio content. */
@@ -470,11 +463,9 @@ function structureElement(doc: ProjectDocument): XmlElement {
   // A VCA carries no audio of its own; DAWproject has no VCA concept, so its
   // per-member dB offset is folded into each assigned track's channel volume
   // (matching the realtime mixer's per-member gain delta).
-  const vcaGainDbById = new Map(
-    (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
-  );
+  const vcaGainDbById = vcaGainDbByGroupId(doc);
   const busChannelIdByBusId = new Map(
-    (doc.mixer?.buses ?? []).map((bus, index) => [bus.id, `bus-channel-${index}`]),
+    (doc.mixer?.buses ?? []).map((bus, index) => [bus.id, busChannelId(index)]),
   );
   const trackElements: XmlElement[] = doc.tracks.map((track, index): XmlElement => {
     const strip = track.mixer ?? NEUTRAL_STRIP;
@@ -530,7 +521,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
   });
   const busTracks = (doc.mixer?.buses ?? []).map((bus, index): XmlElement => {
     const strip = bus.strip ?? NEUTRAL_STRIP;
-    const channelId = busChannelIdByBusId.get(bus.id) ?? `bus-channel-${index}`;
+    const channelId = busChannelIdByBusId.get(bus.id) ?? busChannelId(index);
     return {
       name: 'Track',
       attributes: {
@@ -584,7 +575,7 @@ function structureElement(doc: ProjectDocument): XmlElement {
 /** Builds the Transport element (first tempo segment + first time signature). */
 function transportElement(doc: ProjectDocument): XmlElement {
   const bpm = doc.tempoSegments[0]?.bpm ?? DEFAULT_TEMPO_BPM;
-  const signature = doc.timeSignatures[0] ?? { numerator: 4, denominator: 4 };
+  const signature = doc.timeSignatures[0] ?? DEFAULT_TIME_SIGNATURE;
   return {
     name: 'Transport',
     children: [
@@ -744,7 +735,7 @@ function markersElement(doc: ProjectDocument): XmlElement | null {
     ...doc.markers.map((marker) => ({ time: marker.ppq, name: marker.name })),
     ...doc.sections.map((section) => ({
       time: section.startPpq,
-      name: `Section: ${section.name}`,
+      name: `${SECTION_MARKER_PREFIX}${section.name}`,
     })),
   ].sort((a, b) => a.time - b.time);
   if (markers.length === 0) return null;
@@ -816,7 +807,7 @@ function audioClipElement(
   trackIndex: number,
   clipIndex: number,
 ): XmlElement {
-  const enabledWarp = clip.warp?.enabled === true && clip.warp.sourceBpm > 0 ? clip.warp : null;
+  const enabledWarp = exportedWarp(clip);
   const contentOriginPpq = audioContentOriginPpq(clip.startPpq, clip.sourceOffsetPpq);
   const attributes: Record<string, string | number | boolean | undefined> = {
     time: clip.startPpq,
@@ -915,9 +906,7 @@ function arrangementElement(
   assets: Map<string, AudioAssetEntry>,
   tempoMap: NormalizedTempoMap,
 ): XmlElement {
-  const vcaGainDbById = new Map(
-    (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
-  );
+  const vcaGainDbById = vcaGainDbByGroupId(doc);
   const children: XmlElement[] = [];
   const translated = translateTempoMapForExport(doc.tempoSegments, doc.timeSignatures);
   if (doc.timeSignatures.length > 1) {
@@ -931,7 +920,7 @@ function arrangementElement(
 
   const trackLanes = doc.tracks.map((track, trackIndex): XmlElement => {
     const automation = (track.automation ?? [])
-      .filter((lane) => !(track.kind === 'group' && lane.param === 'pan'))
+      .filter((lane) => !isGroupPanAutomation(track.kind, lane))
       .map((lane) =>
         channelAutomationPointsElement(
           lane,
@@ -974,7 +963,7 @@ function arrangementElement(
     const strip = bus.strip ?? NEUTRAL_STRIP;
     const automation = (bus.automation ?? [])
       .map((lane) =>
-        channelAutomationPointsElement(lane, `bus-${busIndex}`, `bus-channel-${busIndex}`, strip),
+        channelAutomationPointsElement(lane, `bus-${busIndex}`, busChannelId(busIndex), strip),
       )
       .filter((element): element is XmlElement => element !== null);
     return automation.length > 0

@@ -10,6 +10,7 @@
  */
 
 import { strFromU8 } from 'fflate';
+import { SECTION_MARKER_PREFIX } from '@/export/constants';
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import {
@@ -52,8 +53,14 @@ import {
   type ProjectDocument,
 } from '@/project/serialization';
 import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
+import { DEFAULT_TIME_SIGNATURE } from '@/project/time-signature';
 import { TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
 import { audioFileRef, flattenClipLeaves, readAudioClip, readMidiClip } from './clip-import';
+import {
+  IMPORTED_SAMPLE_RATE,
+  MIN_IMPORTED_LENGTH_PPQ,
+  SONARE_AUTOMATION_PARAMETER_PREFIX,
+} from './format';
 import {
   hasMidiExpressionLanes,
   isPotentialMidiExpressionPoints,
@@ -69,9 +76,7 @@ import {
 } from './sonare-metadata';
 import { boolAttr, children, numberAttr } from './xml-read';
 
-const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_TEMPO = 120;
-const DEFAULT_METER: DocumentTimeSignature = { startPpq: 0, numerator: 4, denominator: 4 };
 
 export class DawprojectImportError extends Error {
   constructor(message: string) {
@@ -473,6 +478,7 @@ function readTracks(
   losses: DawprojectImportLoss[],
 ): ImportedTrack[] {
   const tracks: ImportedTrack[] = [];
+  const sidechainSources = new Map(Object.entries(sonareMetadata.sidechainSources ?? {}));
   let fallbackIndex = 0;
 
   function visit(track: Element, parentGroupIndex?: number): void {
@@ -522,16 +528,10 @@ function readTracks(
         : {}),
       // Group channels use the same bus panner as other mixer channels.
       // The imported channel pan is promoted into MixerStrip.pan on load.
-      pan: pan === null ? 0 : Math.min(1, Math.max(-1, pan * 2 - 1)),
+      pan: pan === null ? 0 : panFromNormalized(pan),
       clips: [],
       sendRefs: readSendRefs(channel),
-      inserts: readInsertDevices(
-        channel,
-        name,
-        losses,
-        kind !== 'group',
-        new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),
-      ),
+      inserts: readInsertDevices(channel, name, losses, kind !== 'group', sidechainSources),
       automation: [],
       automationRefs: readAutomationParameterRefs(channel, vcaOffsetDb),
       ...(groupIndex !== undefined ? { groupIndex } : {}),
@@ -562,7 +562,7 @@ function readMaster(
   const volume = numberAttr(children(masterChannel, 'Volume')[0], 'value');
   if (volume !== null) strip.gainDb = linearToDb(Math.max(0, volume));
   const pan = numberAttr(children(masterChannel, 'Pan')[0], 'value');
-  if (pan !== null) strip.pan = Math.min(1, Math.max(-1, pan * 2 - 1));
+  if (pan !== null) strip.pan = panFromNormalized(pan);
   strip.inserts = readInsertDevices(
     masterChannel,
     masterTrack?.getAttribute('name') || 'Master',
@@ -753,11 +753,14 @@ function readTempo(project: Document): DocumentTempoSegment[] {
     else grouped.set(point.time, [point]);
   }
 
+  // `points` is sorted, so the first point after a group is the next distinct time.
+  let nextIndex = 0;
   return [...grouped.entries()].map(([time, group]) => {
     const point = group[group.length - 1];
+    nextIndex += group.length;
     const segment: DocumentTempoSegment = { startPpq: time, bpm: point.value };
     if (point.interpolation === 'linear') {
-      const end = points.find((candidate) => candidate.time > time);
+      const end = points[nextIndex];
       if (end) segment.endBpm = end.value;
     }
     return segment;
@@ -787,8 +790,8 @@ function readTimeSignatures(project: Document): DocumentTimeSignature[] {
   return [
     {
       startPpq: 0,
-      numerator: numberAttr(transport, 'numerator') ?? DEFAULT_METER.numerator,
-      denominator: numberAttr(transport, 'denominator') ?? DEFAULT_METER.denominator,
+      numerator: numberAttr(transport, 'numerator') ?? DEFAULT_TIME_SIGNATURE.numerator,
+      denominator: numberAttr(transport, 'denominator') ?? DEFAULT_TIME_SIGNATURE.denominator,
     },
   ];
 }
@@ -844,7 +847,7 @@ function readArrangementMidiExpressionClip(
   track: ImportedTrack,
   losses: DawprojectImportLoss[],
 ): DocumentClip | null {
-  let lengthPpq = 0.0001;
+  let lengthPpq = MIN_IMPORTED_LENGTH_PPQ;
   for (const point of children(points)) {
     if (point.tagName === 'Target') continue;
     const time = numberAttr(point, 'time');
@@ -1017,11 +1020,10 @@ function readAutomationLane(
 
 /** Restores vendor-scoped instrument/mastering automation emitted by sonare. */
 function sonareAutomationParameterRef(parameter: string): AutomationParameterRef | undefined {
-  const prefix = 'sonare-automation:';
-  if (!parameter.startsWith(prefix)) return undefined;
+  if (!parameter.startsWith(SONARE_AUTOMATION_PARAMETER_PREFIX)) return undefined;
   let param: string;
   try {
-    param = decodeURIComponent(parameter.slice(prefix.length));
+    param = decodeURIComponent(parameter.slice(SONARE_AUTOMATION_PARAMETER_PREFIX.length));
   } catch {
     return undefined;
   }
@@ -1242,7 +1244,7 @@ function importDawprojectDocuments(
   const doc: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: readTitle(project, metadata),
-    sampleRate: DEFAULT_SAMPLE_RATE,
+    sampleRate: IMPORTED_SAMPLE_RATE,
     tempoSegments,
     timeSignatures: readTimeSignatures(project),
     tracks: documentTracks.map((track) => ({
@@ -1267,7 +1269,8 @@ function importDawprojectDocuments(
       (marker) =>
         !sections.some(
           (section) =>
-            marker.ppq === section.startPpq && marker.name === `Section: ${section.name}`,
+            marker.ppq === section.startPpq &&
+            marker.name === `${SECTION_MARKER_PREFIX}${section.name}`,
         ),
     ),
     sections,

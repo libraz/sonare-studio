@@ -11,6 +11,7 @@ import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
 import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from '@/project/smf';
 import type { SmfSysExPacket } from '@/project/types';
+import { busChannelId, MASTER_CHANNEL_ID } from './format';
 
 /** Vendor marker used for generic BuiltinDevice insert round-trips. */
 export const SONARE_DEVICE_VENDOR = 'sonare-studio';
@@ -132,14 +133,14 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
   (doc.mixer?.buses ?? []).forEach((bus, index) => {
     collectSidechains(
       sidechainSources,
-      `bus-channel-${index}`,
+      busChannelId(index),
       bus.strip?.inserts ?? [],
       doc.tracks.length,
     );
   });
   collectSidechains(
     sidechainSources,
-    'master-channel',
+    MASTER_CHANNEL_ID,
     doc.mixer?.master?.inserts ?? [],
     doc.tracks.length,
   );

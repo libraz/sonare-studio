@@ -29,6 +29,8 @@ import {
   type ProjectDocument,
 } from '@/project/serialization';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
+import { NOTE_VALUE_BASE_PPQ } from './model';
+import { GM_PERCUSSION_CHANNEL } from './musicxml-percussion';
 
 /** Sample rate assigned to imported projects (matches the SMF importer). */
 const DEFAULT_SAMPLE_RATE = 48000;
@@ -45,9 +47,6 @@ const DEFAULT_VELOCITY = 96;
  * fallback only guards malformed input so durations still map to a sane PPQ.
  */
 const FALLBACK_DIVISIONS = 480;
-
-/** General MIDI percussion channel (0-based; MIDI channel 10). */
-const GM_PERCUSSION_CHANNEL = 9;
 
 /** Minimum clip length in PPQ. */
 const MIN_CLIP_LENGTH_PPQ = 1;
@@ -101,16 +100,7 @@ const STEP_SEMITONES: Readonly<Record<string, number>> = {
 };
 
 /** Quarter-note length of a metronome beat unit, before augmentation dots. */
-const BEAT_UNIT_QUARTERS: Readonly<Record<string, number>> = {
-  breve: 8,
-  whole: 4,
-  half: 2,
-  quarter: 1,
-  eighth: 0.5,
-  '16th': 0.25,
-  '32nd': 0.125,
-  '64th': 0.0625,
-};
+const BEAT_UNIT_QUARTERS: Readonly<Record<string, number>> = { ...NOTE_VALUE_BASE_PPQ, breve: 8 };
 
 /** Raised when a MusicXML document cannot be parsed or is not a supported score. */
 export class MusicXmlImportError extends Error {

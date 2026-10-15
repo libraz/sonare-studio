@@ -12,7 +12,9 @@
 
 import { utf8ByteLength } from '@/lib/payload-memory';
 import type { AudioFileMetadata } from './audio-file-metadata';
+import { PRODUCER_NAME } from './constants';
 import { quantizePcmSample } from './pcm-quantize';
+import { assertPlanarChannels } from './planar-channels';
 
 /** Output sample format: integer bit depth, or '32f' for IEEE float. */
 export type WavBitDepth = 16 | 24 | '32f';
@@ -36,6 +38,15 @@ function bytesPerSample(bitDepth: WavBitDepth): number {
 
 /** Largest value representable by a classic RIFF/WAVE 32-bit chunk-size field. */
 export const WAV_RIFF_SIZE_MAX = 0xffff_ffff;
+
+/** Size of the BWF `bext` payload this writer emits. */
+const BEXT_PAYLOAD_BYTES = 602;
+
+/** `bext` payload plus its eight-byte RIFF chunk header. */
+const BEXT_CHUNK_BYTES = 8 + BEXT_PAYLOAD_BYTES;
+
+const WAV_SIZE_LIMIT_MESSAGE =
+  'WAV exceeds the classic RIFF 4 GiB limit; shorten the range, lower the sample rate, or export stems.';
 
 /** Fully resolved RIFF chunk geometry shared by sizing and encoding. */
 export interface WavLayout {
@@ -77,9 +88,7 @@ export function wavLayout(frames: number, numChannels: number, bitDepth: WavBitD
     !Number.isSafeInteger(riffSize) ||
     riffSize > WAV_RIFF_SIZE_MAX
   ) {
-    throw new RangeError(
-      'WAV exceeds the classic RIFF 4 GiB limit; shorten the range, lower the sample rate, or export stems.',
-    );
+    throw new RangeError(WAV_SIZE_LIMIT_MESSAGE);
   }
   return {
     sampleBytes,
@@ -91,11 +100,6 @@ export function wavLayout(frames: number, numChannels: number, bitDepth: WavBitD
     riffSize,
     fileSize: 8 + riffSize,
   };
-}
-
-/** Returns the complete classic RIFF/WAVE file size. */
-export function wavFileSize(frames: number, numChannels: number, bitDepth: WavBitDepth): number {
-  return wavLayout(frames, numChannels, bitDepth).fileSize;
 }
 
 /** Returns the encoded PCM byte count for one interleaved WAV stream block. */
@@ -139,10 +143,10 @@ function writeBext(
 ): number {
   if (!metadata) return offset;
   writeTag(view, offset, 'bext');
-  view.setUint32(offset + 4, 602, true);
+  view.setUint32(offset + 4, BEXT_PAYLOAD_BYTES, true);
   const payloadOffset = offset + 8;
   writeAscii(view, payloadOffset, metadata.title ?? '', 256);
-  writeAscii(view, payloadOffset + 256, metadata.originator ?? 'Sonare Studio', 32);
+  writeAscii(view, payloadOffset + 256, metadata.originator ?? PRODUCER_NAME, 32);
   writeAscii(view, payloadOffset + 288, metadata.originatorReference ?? '', 32);
   writeAscii(view, payloadOffset + 320, metadata.originationDate ?? '', 10);
   writeAscii(view, payloadOffset + 330, metadata.originationTime ?? '', 8);
@@ -150,7 +154,7 @@ function writeBext(
   view.setUint32(payloadOffset + 338, reference >>> 0, true);
   view.setUint32(payloadOffset + 342, Math.floor(reference / 0x1_0000_0000), true);
   view.setUint16(payloadOffset + 346, 2, true); // BWF v2
-  return offset + 610;
+  return offset + BEXT_CHUNK_BYTES;
 }
 
 function isWavMarker(marker: { sampleOffset: number }): boolean {
@@ -163,9 +167,9 @@ function isWavMarker(marker: { sampleOffset: number }): boolean {
 
 /** Bytes occupied by the optional BWF chunk that precedes the WAV data payload. */
 function wavLeadingMetadataByteLength(metadata: AudioFileMetadata | undefined): number {
-  // `bextChunk()` always emits a 602-byte payload plus its eight-byte RIFF
-  // chunk header when metadata was requested, even if every field is empty.
-  return metadata === undefined ? 0 : 610;
+  // The `bext` chunk is always emitted in full when metadata was requested,
+  // even if every field is empty.
+  return metadata === undefined ? 0 : BEXT_CHUNK_BYTES;
 }
 
 /**
@@ -287,13 +291,12 @@ export function wavHeader(
   const isFloat = bitDepth === '32f';
   let offset = 0;
   writeTag(view, offset, 'RIFF');
-  view.setUint32(
-    offset + 4,
+  const riffSize =
     layout.riffSize +
-      wavLeadingMetadataByteLength(options.metadata) +
-      wavTrailingMetadataByteLength(options.metadata),
-    true,
-  );
+    wavLeadingMetadataByteLength(options.metadata) +
+    wavTrailingMetadataByteLength(options.metadata);
+  if (riffSize > WAV_RIFF_SIZE_MAX) throw new RangeError(WAV_SIZE_LIMIT_MESSAGE);
+  view.setUint32(offset + 4, riffSize, true);
   writeTag(view, offset + 8, 'WAVE');
   offset += 12;
   writeTag(view, offset, 'fmt ');
@@ -319,42 +322,51 @@ export function wavHeader(
   return header;
 }
 
+/** Interleaves `channels` into `out` at `offset` as little-endian samples; returns the end offset. */
+function writeSamples(
+  out: Uint8Array,
+  offset: number,
+  channels: ReadonlyArray<Float32Array>,
+  bitDepth: WavBitDepth,
+  options: EncodeWavOptions,
+): number {
+  const frames = channels[0].length;
+  const sampleBytes = bytesPerSample(bitDepth);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  const dither = options.dither === true && bitDepth === 16;
+  const random = options.random ?? Math.random;
+  let cursor = offset;
+  for (let i = 0; i < frames; i++) {
+    for (const channel of channels) {
+      const sample = channel[i];
+      if (bitDepth === '32f') view.setFloat32(cursor, Number.isFinite(sample) ? sample : 0, true);
+      else if (bitDepth === 16) {
+        view.setInt16(
+          cursor,
+          quantizePcmSample(sample, 0x7fff, 0x8000, dither ? random() - random() : 0),
+          true,
+        );
+      } else {
+        const value = quantizePcmSample(sample, 0x7fffff, 0x800000);
+        view.setUint8(cursor, value & 0xff);
+        view.setUint8(cursor + 1, (value >> 8) & 0xff);
+        view.setUint8(cursor + 2, (value >> 16) & 0xff);
+      }
+      cursor += sampleBytes;
+    }
+  }
+  return cursor;
+}
+
 /** Encodes a PCM block for a WAV stream (no RIFF header). */
 export function encodeWavChunk(
   channels: ReadonlyArray<Float32Array>,
   bitDepth: WavBitDepth,
   options: EncodeWavOptions = {},
 ): Uint8Array {
-  if (channels.length === 0) throw new RangeError('WAV encoding requires at least one channel');
-  const frames = channels[0].length;
-  if (channels.some((channel) => channel.length !== frames)) {
-    throw new RangeError('All WAV channels must have the same length');
-  }
-  const sampleBytes = bytesPerSample(bitDepth);
-  const out = new Uint8Array(frames * channels.length * sampleBytes);
-  const view = new DataView(out.buffer);
-  const dither = options.dither === true && bitDepth === 16;
-  const random = options.random ?? Math.random;
-  let offset = 0;
-  for (let i = 0; i < frames; i++) {
-    for (const channel of channels) {
-      const sample = channel[i];
-      if (bitDepth === '32f') view.setFloat32(offset, Number.isFinite(sample) ? sample : 0, true);
-      else if (bitDepth === 16) {
-        view.setInt16(
-          offset,
-          quantizePcmSample(sample, 0x7fff, 0x8000, dither ? random() - random() : 0),
-          true,
-        );
-      } else {
-        const value = quantizePcmSample(sample, 0x7fffff, 0x800000);
-        view.setUint8(offset, value & 0xff);
-        view.setUint8(offset + 1, (value >> 8) & 0xff);
-        view.setUint8(offset + 2, (value >> 16) & 0xff);
-      }
-      offset += sampleBytes;
-    }
-  }
+  const frames = assertPlanarChannels(channels, 'WAV');
+  const out = new Uint8Array(frames * channels.length * bytesPerSample(bitDepth));
+  writeSamples(out, 0, channels, bitDepth, options);
   return out;
 }
 
@@ -380,15 +392,7 @@ export function encodeWav(
   if (!Number.isInteger(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`WAV sample rate must be a positive integer, got ${sampleRate}`);
   }
-  if (channels.length === 0) {
-    throw new RangeError('WAV encoding requires at least one channel');
-  }
-  const frames = channels[0].length;
-  for (const channel of channels) {
-    if (channel.length !== frames) {
-      throw new RangeError('All WAV channels must have the same length');
-    }
-  }
+  const frames = assertPlanarChannels(channels, 'WAV');
 
   const numChannels = channels.length;
   const layout = wavLayout(frames, numChannels, bitDepth);
@@ -396,28 +400,7 @@ export function encodeWav(
   const trailing = wavTrailingMetadata(options.metadata);
   const out = new Uint8Array(header.length + layout.dataSize + layout.dataPad + trailing.length);
   out.set(header);
-  const view = new DataView(out.buffer);
-  let offset = header.length;
-
-  const dither = options.dither === true && bitDepth === 16;
-  const random = options.random ?? Math.random;
-  for (let i = 0; i < frames; i++) {
-    for (let c = 0; c < numChannels; c++) {
-      const sample = channels[c][i];
-      if (bitDepth === '32f') {
-        view.setFloat32(offset, Number.isFinite(sample) ? sample : 0, true);
-      } else if (bitDepth === 16) {
-        const v = quantizePcmSample(sample, 0x7fff, 0x8000, dither ? random() - random() : 0);
-        view.setInt16(offset, v, true);
-      } else {
-        const v = quantizePcmSample(sample, 0x7fffff, 0x800000);
-        view.setUint8(offset, v & 0xff);
-        view.setUint8(offset + 1, (v >> 8) & 0xff);
-        view.setUint8(offset + 2, (v >> 16) & 0xff);
-      }
-      offset += layout.sampleBytes;
-    }
-  }
+  const offset = writeSamples(out, header.length, channels, bitDepth, options);
   // The optional pad byte is already zero-initialized.
   out.set(trailing, offset + layout.dataPad);
   return out;

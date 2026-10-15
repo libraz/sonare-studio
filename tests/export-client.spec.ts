@@ -426,3 +426,45 @@ describe('ExportClient', () => {
     await expect(client.renderMixdown(makeDoc()).result).rejects.toThrow('disposed');
   });
 });
+
+describe('ExportClient streamed payloads without a consumer', () => {
+  afterEach(() => disposeExportClient());
+
+  it('rejects and cancels the worker when a stem arrives without a consumer', async () => {
+    const worker = new FakeWorker();
+    const client = new ExportClient(worker as unknown as Worker);
+    const handle = client.renderMixdown(makeDoc());
+    worker.emit({
+      id: 1,
+      type: 'stem',
+      index: 0,
+      total: 1,
+      stem: {
+        trackIndex: 0,
+        name: 'Drums',
+        left: new Float32Array(1),
+        right: new Float32Array(1),
+      },
+    });
+    await expect(handle.result).rejects.toThrow('without a consumer');
+    expect(worker.posted[1]).toMatchObject({ type: 'cancel', targetId: 1 });
+    client.dispose();
+  });
+
+  it('rejects and cancels the worker when mixdown PCM arrives without a consumer', async () => {
+    const worker = new FakeWorker();
+    const client = new ExportClient(worker as unknown as Worker);
+    const handle = client.renderMixdown(makeDoc());
+    worker.emit({
+      id: 1,
+      type: 'mixdown-chunk',
+      left: new Float32Array(1),
+      right: new Float32Array(1),
+      offsetFrames: 0,
+      totalFrames: 1,
+    });
+    await expect(handle.result).rejects.toThrow('without a consumer');
+    expect(worker.posted[1]).toMatchObject({ type: 'cancel', targetId: 1 });
+    client.dispose();
+  });
+});

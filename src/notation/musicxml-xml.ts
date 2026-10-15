@@ -4,42 +4,14 @@
  * the music being written.
  */
 
+import { escapeXmlMarkup } from '@/export/xml-escape';
 import type { ScoreMetadata } from './model';
-/** Replacement table for XML-reserved characters. */
-export const XML_ESCAPES: Readonly<Record<string, string>> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&apos;',
-};
 
 /**
- * Escapes the five XML-reserved characters in text or attribute content.
- *
- * @param text Raw text.
- * @returns Escaped text safe for element and attribute content.
+ * Escapes the five XML-reserved characters in text or attribute content and
+ * replaces code points XML 1.0 forbids.
  */
-export function escapeXml(text: string): string {
-  return sanitizeXml10(text).replace(/[&<>"']/g, (ch) => XML_ESCAPES[ch]);
-}
-
-/** Replaces code points forbidden by XML 1.0 with the replacement character. */
-export function sanitizeXml10(text: string): string {
-  let out = '';
-  for (const character of text) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    const valid =
-      codePoint === 0x9 ||
-      codePoint === 0xa ||
-      codePoint === 0xd ||
-      (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
-      (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
-      (codePoint >= 0x10000 && codePoint <= 0x10ffff);
-    out += valid ? character : '\ufffd';
-  }
-  return out;
-}
+export const escapeXml = escapeXmlMarkup;
 
 /** Software credit written into the MusicXML `<encoding>` block. */
 export const ENCODING_SOFTWARE = 'sonare studio';

@@ -31,7 +31,11 @@ import {
 } from '@/project/automation';
 import { masteringIndexForAutomationRef } from '@/project/automation-insert';
 import type { MasteringChainState, MixerStrip } from '@/project/mixer';
-import { type OfflineRenderEngine, RENDER_BLOCK_FRAMES } from './engine-render-types';
+import {
+  BLOCKS_PER_CHECKPOINT,
+  type OfflineRenderEngine,
+  RENDER_BLOCK_FRAMES,
+} from './engine-render-types';
 
 /** What the engine catalog says one mastering processor can do. */
 export interface MasteringProcessorCapability {
@@ -270,7 +274,7 @@ export interface MasteringEnginePassContext {
   tempoSegments: ReadonlyArray<{ startPpq: number; bpm: number; endBpm?: number }>;
   /** Throws to abort the pass between blocks. */
   checkCancel?: () => void;
-  /** Awaited between blocks so a worker can observe cancel messages. */
+  /** Awaited every checkpoint of blocks so a worker can observe cancel messages. */
   yieldBetweenBlocks?: () => Promise<void>;
 }
 
@@ -356,6 +360,7 @@ export async function runMasteringEnginePass(
     const outRight = new Float32Array(frames);
     const renderFrames = frames + latency;
     let done = 0;
+    let blocksSinceYield = 0;
     while (done < renderFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, renderFrames - done);
       const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
@@ -371,7 +376,10 @@ export async function runMasteringEnginePass(
       }
       done += blockFrames;
       ctx.checkCancel?.();
-      if (ctx.yieldBetweenBlocks) await ctx.yieldBetweenBlocks();
+      if (++blocksSinceYield >= BLOCKS_PER_CHECKPOINT) {
+        blocksSinceYield = 0;
+        if (ctx.yieldBetweenBlocks) await ctx.yieldBetweenBlocks();
+      }
     }
     engine.stop();
     return { left: outLeft, right: outRight };

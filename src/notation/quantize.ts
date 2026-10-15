@@ -46,6 +46,7 @@ import {
   type NoteValue,
   noteValueToPpq,
 } from '@/notation/model';
+import { GM_PERCUSSION_CHANNEL } from '@/notation/musicxml-percussion';
 import { type AssignedVoiceUnits, EPSILON, meanPitch, type VoiceUnit } from '@/notation/voice-unit';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
 import { clipMeasureGrid } from '@/project/time-signature';
@@ -60,9 +61,6 @@ export type { VoiceUnit } from '@/notation/voice-unit';
 
 /** Editor note accepted by score quantization with optional composite identity. */
 export type ScoreInputNote = EditorNote & { scoreSourceIdentity?: MidiSourceIdentity };
-
-/** General MIDI percussion channel (MIDI channel 10, stored as 0-based 9). */
-const GM_PERCUSSION_CHANNEL = 9;
 
 /** Duration of a 64th note in PPQ — the finest representable display value. */
 const SIXTY_FOURTH_PPQ = 0.0625;

@@ -23,6 +23,7 @@ import { chordSuffix } from '@/compose/chord-quality';
 import { editorNotesToNoteEvents } from '@/compose/notes-io';
 import { ensureWasm } from '@/lib/wasm';
 import type { NotatedChordSymbol } from '@/notation/model';
+import { PPQ_EPSILON } from '@/notation/musicxml-shared';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
 import type { EditorNote } from '@/project/types';
 
@@ -54,9 +55,6 @@ interface ChordWindow {
   start: number;
   end: number;
 }
-
-/** Onset tolerance when deciding which notes sound at a region boundary. */
-const PRESENCE_EPSILON = 1e-9;
 
 function chordWindows(options: ChordEstimateOptions): ChordWindow[] {
   const { clipStartPpq, clipLengthPpq, measureLengthPpq } = options;
@@ -122,12 +120,12 @@ function regionBassPc(notes: ReadonlyArray<EditorNote>, start: number, end: numb
     const overlap =
       Math.min(note.startPpq + note.durationPpq, end) - Math.max(note.startPpq, start);
     if (overlap <= 0) continue;
-    if (note.startPpq <= start + PRESENCE_EPSILON) {
+    if (note.startPpq <= start + PPQ_EPSILON) {
       bassAtStart = Math.min(bassAtStart, note.pitch);
-    } else if (note.startPpq < firstOnset - PRESENCE_EPSILON) {
+    } else if (note.startPpq < firstOnset - PPQ_EPSILON) {
       firstOnset = note.startPpq;
       bassAtFirstOnset = note.pitch;
-    } else if (Math.abs(note.startPpq - firstOnset) <= PRESENCE_EPSILON) {
+    } else if (Math.abs(note.startPpq - firstOnset) <= PPQ_EPSILON) {
       bassAtFirstOnset = Math.min(bassAtFirstOnset, note.pitch);
     }
   }

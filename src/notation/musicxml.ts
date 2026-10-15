@@ -367,6 +367,7 @@ function serializePart(
       lines,
       measure,
       score,
+      part.id,
       prevTimeSig,
       measureClef,
       prevClef,
@@ -404,6 +405,7 @@ function serializeMeasure(
   lines: string[],
   measure: NotatedMeasure,
   score: NotatedScore,
+  partId: string,
   prevTimeSig: NotatedTimeSig | undefined,
   measureClef: NotatedClef,
   prevClef: NotatedClef | undefined,
@@ -503,6 +505,7 @@ function serializeMeasure(
         voice,
         measure,
         score,
+        partId,
         staffMap,
         annotations,
         lyrics,
@@ -748,6 +751,7 @@ function serializeVoice(
   voice: NotatedVoice,
   measure: NotatedMeasure,
   score: NotatedScore,
+  partId: string,
   staffMap: ReadonlyMap<NotatedEvent, StaffNumber> | undefined,
   annotations: AnnotationIndex,
   lyrics: LyricIndex,
@@ -818,6 +822,7 @@ function serializeVoice(
         event,
         measure,
         score,
+        partId,
         staff,
         annotations,
         lyrics,
@@ -971,6 +976,7 @@ function pushNoteEvent(
   event: NotatedEvent,
   measure: NotatedMeasure,
   score: NotatedScore,
+  partId: string,
   staff: StaffNumber | undefined,
   annotations: AnnotationIndex,
   lyrics: LyricIndex,
@@ -997,9 +1003,9 @@ function pushNoteEvent(
     const chord = pitchIndex > 0 ? '<chord/>' : '';
     const display = eventPercussion ? percussionDisplay(midi) : undefined;
     const instrument = eventPercussion
-      ? `<instrument id="${percussionInstrumentId(scorePartIdForEvent(score, event), midi)}"/>`
+      ? `<instrument id="${percussionInstrumentId(partId, midi)}"/>`
       : pitchedChannel !== undefined
-        ? `<instrument id="${pitchedInstrumentId(scorePartIdForEvent(score, event), pitchedChannel)}"/>`
+        ? `<instrument id="${pitchedInstrumentId(partId, pitchedChannel)}"/>`
         : '';
     const pitch = eventPercussion
       ? unpitchedXml(display ?? percussionDisplay(midi))
@@ -1048,18 +1054,6 @@ function lyricsXml(lyrics: ReadonlyArray<NotatedLyric>): string {
 function timeModificationXml(value: NoteValue): string {
   if (!value.tuplet) return '';
   return `<time-modification><actual-notes>${value.tuplet.actual}</actual-notes><normal-notes>${value.tuplet.normal}</normal-notes></time-modification>`;
-}
-
-/** Finds the owning part id for an event. */
-function scorePartIdForEvent(score: NotatedScore, event: NotatedEvent): string {
-  for (const part of score.parts) {
-    for (const measure of part.measures) {
-      for (const voice of measure.voices) {
-        if (voice.events.includes(event)) return part.id;
-      }
-    }
-  }
-  return score.parts[0]?.id ?? 'P1';
 }
 
 /** Builds a stem direction for multi-voice measures, leaving single voices to engraver defaults. */

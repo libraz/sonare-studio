@@ -32,6 +32,8 @@ import type {
   DocumentTrack,
   ProjectDocument,
 } from '@/project/serialization';
+import { exportedWarp, hexColor, isGroupPanAutomation } from './export-rules';
+import { IMPORTED_SAMPLE_RATE } from './format';
 
 /** Every class the DAWproject export loss dialog can list, in dialog order. */
 export const DAWPROJECT_EXPORT_LOSS_KINDS = [
@@ -81,9 +83,6 @@ export const DAWPROJECT_EXPORT_LOSS_KINDS = [
 
 export type DawprojectExportLossKind = (typeof DAWPROJECT_EXPORT_LOSS_KINDS)[number];
 
-/** Sample rate the importer assigns, since project.xml has no project rate. */
-const IMPORTED_SAMPLE_RATE = 48000;
-
 interface ExportContext {
   trackCount: number;
 }
@@ -98,8 +97,13 @@ function hasSidechainKey(slot: InsertSlot): boolean {
   return keyed.sidechainSourceTrackId !== undefined || keyed.sidechainSourceIndex !== undefined;
 }
 
-function isAutomationLaneExported(lane: DocumentAutomationLane, strip?: MixerStrip): boolean {
+function isAutomationLaneExported(
+  lane: DocumentAutomationLane,
+  strip?: MixerStrip,
+  trackKind?: DocumentTrack['kind'],
+): boolean {
   if (!lane.enabled || lane.points.length === 0) return false;
+  if (trackKind !== undefined && isGroupPanAutomation(trackKind, lane)) return false;
   if (lane.param === 'faderDb' || lane.param === 'pan') return true;
   if (
     parseInstrumentAutomationParam(lane.param) !== undefined ||
@@ -118,8 +122,9 @@ function isAutomationLaneExported(lane: DocumentAutomationLane, strip?: MixerStr
 function unexportedLanes(
   lanes: ReadonlyArray<DocumentAutomationLane> | undefined,
   strip: MixerStrip | undefined,
+  trackKind?: DocumentTrack['kind'],
 ): number {
-  return (lanes ?? []).filter((lane) => !isAutomationLaneExported(lane, strip)).length;
+  return (lanes ?? []).filter((lane) => !isAutomationLaneExported(lane, strip, trackKind)).length;
 }
 
 const advanced = (changed: boolean): number => (changed ? 1 : 0);
@@ -225,7 +230,7 @@ const TRACK_FIELDS: FieldDispositions<DocumentTrack, DawprojectExportLossKind, E
   musicXmlPartId: { lost: 'musicXmlPartIds' },
   color: {
     lost: 'trackColors',
-    count: (color) => advanced(!/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(color)),
+    count: (color) => advanced(hexColor(color) === undefined),
   },
   kind: 'written',
   mute: 'written',
@@ -239,7 +244,7 @@ const TRACK_FIELDS: FieldDispositions<DocumentTrack, DawprojectExportLossKind, E
   mixer: 'written',
   automation: {
     lost: 'automationLanes',
-    count: (lanes, track) => unexportedLanes(lanes, track.mixer),
+    count: (lanes, track) => unexportedLanes(lanes, track.mixer, track.kind),
   },
   groupIndex: 'written',
   soloSafe: { lost: 'soloSafeTracks' },
@@ -289,10 +294,11 @@ const CLIP_FIELDS: FieldDispositions<DocumentClip, DawprojectExportLossKind, Exp
   midiTakes: { lost: 'midiTakes' },
   midiActiveTakeIndex: 'derived',
   midiCompSegments: { lost: 'midiCompSegments' },
-  // Enabled warps are written as standard Warps; a disabled one is dropped.
+  // Enabled warps with a source tempo are written as standard Warps; others are dropped.
   warp: {
     lost: 'warpedAudioClips',
-    count: (warp, clip) => advanced(clip.kind === 'audio' && warp !== undefined && !warp.enabled),
+    count: (warp, clip) =>
+      advanced(clip.kind === 'audio' && warp !== undefined && exportedWarp(clip) === null),
   },
   ccLanes: 'sidecar',
   pitchBendLanes: 'sidecar',

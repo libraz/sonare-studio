@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  escapeXmlAttribute,
-  escapeXmlText,
-  serializeXml,
-  type XmlElement,
-} from '@/export/dawproject/xml';
+import { serializeXml, type XmlElement } from '@/export/dawproject/xml';
+import { escapeXmlAttribute, escapeXmlText } from '@/export/xml-escape';
 
 describe('escapeXmlText', () => {
   it('escapes markup characters', () => {
@@ -15,8 +11,10 @@ describe('escapeXmlText', () => {
     expect(escapeXmlText(`"quoted" and 'single'`)).toBe(`"quoted" and 'single'`);
   });
 
-  it('removes XML 1.0-invalid controls while preserving tab and line breaks', () => {
-    expect(escapeXmlText('a\u0000b\u0008c\t d\ne\rf\u001f')).toBe('abc\t d\ne\rf');
+  it('replaces XML 1.0-invalid controls while preserving tab and line breaks', () => {
+    expect(escapeXmlText('a\u0000b\u0008c\t d\ne\rf\u001f')).toBe(
+      'a\ufffdb\ufffdc\t d\ne\rf\ufffd',
+    );
   });
 });
 

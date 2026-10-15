@@ -15,7 +15,9 @@ import {
   listEncoders,
   registerEncoder,
 } from './codecs';
+import { PRODUCER_NAME } from './constants';
 import { quantizePcmSample } from './pcm-quantize';
+import { assertPlanarChannels } from './planar-channels';
 
 export const FLAC_ENCODER_ID = 'flac';
 
@@ -40,43 +42,75 @@ const LPC_QLP_PRECISION = 15;
 const LPC_QLP_SHIFT = 12;
 
 class BitWriter {
-  private readonly bytes: number[] = [];
+  private bytes = new Uint8Array(256);
+  private length = 0;
   private current = 0;
   private bitCount = 0;
 
-  writeBits(value: number | bigint, count: number): void {
-    const big = BigInt(value);
-    for (let bit = count - 1; bit >= 0; bit -= 1) {
-      this.current = (this.current << 1) | Number((big >> BigInt(bit)) & 1n);
-      this.bitCount += 1;
-      if (this.bitCount === 8) {
-        this.bytes.push(this.current);
-        this.current = 0;
-        this.bitCount = 0;
-      }
+  /** Writes the low `count` (at most 32) bits of `value`, most significant first. */
+  writeBits(value: number, count: number): void {
+    let remaining = count;
+    while (remaining > 0) {
+      const take = Math.min(remaining, 8 - this.bitCount);
+      remaining -= take;
+      const bits = (value >>> remaining) & ((1 << take) - 1);
+      this.current = (this.current << take) | bits;
+      this.bitCount += take;
+      if (this.bitCount === 8) this.pushByte(this.current);
     }
+  }
+
+  /** Writes `count` zero bits. */
+  writeZeros(count: number): void {
+    let remaining = count;
+    if (this.bitCount !== 0 && remaining > 0) {
+      const take = Math.min(remaining, 8 - this.bitCount);
+      this.current <<= take;
+      this.bitCount += take;
+      remaining -= take;
+      if (this.bitCount === 8) this.pushByte(this.current);
+    }
+    const wholeBytes = remaining >>> 3;
+    if (wholeBytes > 0) {
+      this.reserve(wholeBytes);
+      this.length += wholeBytes; // the buffer is zero-filled
+    }
+    if ((remaining & 7) !== 0) this.writeBits(0, remaining & 7);
   }
 
   writeByte(value: number): void {
     if (this.bitCount !== 0) throw new Error('Byte writes require byte alignment');
-    this.bytes.push(value & 0xff);
+    this.pushByte(value & 0xff);
   }
 
   writeBytes(values: Uint8Array | readonly number[]): void {
     if (this.bitCount !== 0) throw new Error('Byte writes require byte alignment');
-    for (const value of values) this.bytes.push(value & 0xff);
+    for (const value of values) this.pushByte(value & 0xff);
   }
 
   alignZero(): void {
     if (this.bitCount === 0) return;
-    this.bytes.push(this.current << (8 - this.bitCount));
-    this.current = 0;
-    this.bitCount = 0;
+    this.pushByte(this.current << (8 - this.bitCount));
   }
 
   toUint8Array(): Uint8Array {
     if (this.bitCount !== 0) this.alignZero();
-    return new Uint8Array(this.bytes);
+    return this.bytes.slice(0, this.length);
+  }
+
+  private pushByte(value: number): void {
+    this.reserve(1);
+    this.bytes[this.length] = value;
+    this.length += 1;
+    this.current = 0;
+    this.bitCount = 0;
+  }
+
+  private reserve(extra: number): void {
+    if (this.length + extra <= this.bytes.length) return;
+    const grown = new Uint8Array(Math.max(this.bytes.length * 2, this.length + extra));
+    grown.set(this.bytes.subarray(0, this.length));
+    this.bytes = grown;
   }
 }
 
@@ -175,41 +209,36 @@ function rotateLeft(value: number, count: number): number {
   return ((value << count) | (value >>> (32 - count))) >>> 0;
 }
 
-function assertPlanar(channels: ReadonlyArray<Float32Array>): number {
-  if (channels.length < 1 || channels.length > 8) {
-    throw new RangeError(`FLAC encoding supports 1 to 8 channels, got ${channels.length}`);
-  }
-  const frames = channels[0].length;
-  if (channels.some((channel) => channel.length !== frames)) {
-    throw new RangeError('FLAC channel buffers must have equal lengths');
-  }
-  return frames;
-}
-
 function chooseBlockSize(frames: number, requestedBlockSize: number): number {
   if (frames === 0) return requestedBlockSize;
   return Math.max(FLAC_MIN_BLOCK_SIZE, Math.min(frames, requestedBlockSize));
 }
 
+const CRC8_TABLE = Uint8Array.from({ length: 256 }, (_, byte) => {
+  let crc = byte;
+  for (let bit = 0; bit < 8; bit += 1) {
+    crc = (crc & 0x80) !== 0 ? ((crc << 1) ^ 0x07) & 0xff : (crc << 1) & 0xff;
+  }
+  return crc;
+});
+
+const CRC16_TABLE = Uint16Array.from({ length: 256 }, (_, byte) => {
+  let crc = byte << 8;
+  for (let bit = 0; bit < 8; bit += 1) {
+    crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x8005) & 0xffff : (crc << 1) & 0xffff;
+  }
+  return crc;
+});
+
 function crc8(bytes: Uint8Array | readonly number[]): number {
   let crc = 0;
-  for (const byte of bytes) {
-    crc ^= byte & 0xff;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc & 0x80) !== 0 ? ((crc << 1) ^ 0x07) & 0xff : (crc << 1) & 0xff;
-    }
-  }
+  for (const byte of bytes) crc = CRC8_TABLE[crc ^ (byte & 0xff)]!;
   return crc;
 }
 
 function crc16(bytes: Uint8Array | readonly number[]): number {
   let crc = 0;
-  for (const byte of bytes) {
-    crc ^= (byte & 0xff) << 8;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x8005) & 0xffff : (crc << 1) & 0xffff;
-    }
-  }
+  for (const byte of bytes) crc = ((crc << 8) & 0xffff) ^ CRC16_TABLE[(crc >>> 8) ^ (byte & 0xff)]!;
   return crc;
 }
 
@@ -229,7 +258,7 @@ function flacMetadataBlock(type: number, payload: Uint8Array, last: boolean): Ui
 
 function vorbisComment(metadata: AudioFileMetadata): Uint8Array {
   const encode = (value: string) => new TextEncoder().encode(value);
-  const vendor = encode('Sonare Studio');
+  const vendor = encode(PRODUCER_NAME);
   const comments = [
     ...(metadata.title ? [`TITLE=${metadata.title}`] : []),
     ...(metadata.originator ? [`ORIGINATOR=${metadata.originator}`] : []),
@@ -337,7 +366,7 @@ function foldResidual(value: number): number {
 function writeRiceSigned(writer: BitWriter, residual: number, riceParam: number): void {
   const folded = foldResidual(residual);
   const quotient = folded >>> riceParam;
-  for (let bit = 0; bit < quotient; bit += 1) writer.writeBits(0, 1);
+  writer.writeZeros(quotient);
   writer.writeBits(1, 1);
   if (riceParam > 0) writer.writeBits(folded & ((1 << riceParam) - 1), riceParam);
 }
@@ -786,7 +815,7 @@ export function encodeFlac(
   options: EncodeFlacOptions = {},
   onProgress?: FlacProgress,
 ): Uint8Array {
-  const frames = assertPlanar(channels);
+  const frames = assertPlanarChannels(channels, 'FLAC', 8);
   if (!Number.isInteger(sampleRate) || sampleRate <= 0 || sampleRate > 0xfffff) {
     throw new RangeError(`FLAC sample rate must be an integer in [1, 1048575], got ${sampleRate}`);
   }

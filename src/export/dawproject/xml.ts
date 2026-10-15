@@ -7,6 +7,8 @@
  * is escaped, element/attribute names are validated.
  */
 
+import { escapeXmlAttribute, escapeXmlText } from '@/export/xml-escape';
+
 /** Attribute value: strings pass through escaped, numbers must be finite. */
 export type XmlAttributeValue = string | number | boolean;
 
@@ -28,28 +30,6 @@ export interface XmlElement {
  * so the restriction never bites in practice; it guards against bugs.
  */
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]*$/;
-
-function isXml10Control(char: string): boolean {
-  const code = char.charCodeAt(0);
-  return (code >= 0 && code <= 8) || code === 11 || code === 12 || (code >= 14 && code <= 31);
-}
-
-/** Escapes a string for use as XML text content. */
-export function escapeXmlText(value: string): string {
-  // XML 1.0 forbids C0 controls other than TAB, LF and CR. Drop them rather
-  // than emitting an archive that downstream XML parsers cannot open.
-  return [...value]
-    .filter((char) => !isXml10Control(char))
-    .join('')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-/** Escapes a string for use inside a double-quoted XML attribute. */
-export function escapeXmlAttribute(value: string): string {
-  return escapeXmlText(value).replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
 
 /** Validates an element or attribute name. */
 function checkName(name: string, kind: 'element' | 'attribute'): void {

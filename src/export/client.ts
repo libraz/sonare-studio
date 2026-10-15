@@ -53,18 +53,33 @@ export interface ExportRenderHandle {
   cancel(): void;
 }
 
+/** Receives one streamed stem; the worker waits for it to settle before sending the next. */
+export type MixdownStemConsumer = (
+  stem: MixdownStem,
+  index: number,
+  total: number,
+) => Promise<void> | void;
+
+/** Receives one streamed mixdown PCM block; the worker waits for it to settle. */
+export type MixdownChunkConsumer = (
+  channels: readonly [Float32Array, Float32Array],
+  offsetFrames: number,
+  totalFrames: number,
+) => Promise<void> | void;
+
 interface PendingRequest {
   resolve: (response: ExportResponse) => void;
   reject: (error: Error) => void;
   onProgress?: MixdownProgressFn;
-  onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void;
-  onMixdownChunk?: (
-    channels: readonly [Float32Array, Float32Array],
-    offsetFrames: number,
-    totalFrames: number,
-  ) => Promise<void> | void;
+  onStem?: MixdownStemConsumer;
+  onMixdownChunk?: MixdownChunkConsumer;
   cancelRequested: boolean;
 }
+
+/** Acknowledgement the worker waits for after a streamed payload has been consumed. */
+type StreamAcknowledgement =
+  | { type: 'stem-consumed'; index: number }
+  | { type: 'mixdown-consumed'; offsetFrames: number };
 
 function toMixdownStem(stem: ExportWorkerStem): MixdownStem {
   return {
@@ -143,12 +158,8 @@ export class ExportClient {
     doc: ProjectDocument,
     options: ExportRenderOptions = {},
     onProgress?: MixdownProgressFn,
-    onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
-    onMixdownChunk?: (
-      channels: readonly [Float32Array, Float32Array],
-      offsetFrames: number,
-      totalFrames: number,
-    ) => Promise<void> | void,
+    onStem?: MixdownStemConsumer,
+    onMixdownChunk?: MixdownChunkConsumer,
   ): ExportRenderHandle {
     if (this.disposed) {
       return {
@@ -229,71 +240,30 @@ export class ExportClient {
       return;
     }
     if (response.type === 'stem') {
-      if (!entry.onStem) {
-        this.pending.delete(response.id);
-        entry.reject(new Error('Export worker streamed a stem without a consumer'));
-        return;
-      }
-      void Promise.resolve(
-        entry.onStem(toMixdownStem(response.stem), response.index, response.total),
-      )
-        .then(() => {
-          if (this.disposed) return;
-          const acknowledgement: ExportRequest = {
-            id: this.nextId++,
-            type: 'stem-consumed',
-            targetId: response.id,
-            index: response.index,
-          };
-          this.worker.postMessage(acknowledgement);
-        })
-        .catch((error: unknown) => {
-          if (this.pending.get(response.id) !== entry) return;
-          this.pending.delete(response.id);
-          entry.reject(error instanceof Error ? error : new Error(String(error)));
-          const cancelRequest: ExportRequest = {
-            id: this.nextId++,
-            type: 'cancel',
-            targetId: response.id,
-          };
-          this.worker.postMessage(cancelRequest);
-        });
+      this.deliverStreamed(
+        response.id,
+        entry,
+        entry.onStem &&
+          (() => entry.onStem!(toMixdownStem(response.stem), response.index, response.total)),
+        'Export worker streamed a stem without a consumer',
+        () => ({ type: 'stem-consumed', index: response.index }),
+      );
       return;
     }
     if (response.type === 'mixdown-chunk') {
-      if (!entry.onMixdownChunk) {
-        this.pending.delete(response.id);
-        entry.reject(new Error('Export worker streamed mixdown PCM without a consumer'));
-        return;
-      }
-      void Promise.resolve(
-        entry.onMixdownChunk(
-          [response.left, response.right],
-          response.offsetFrames,
-          response.totalFrames,
-        ),
-      )
-        .then(() => {
-          if (this.disposed) return;
-          const acknowledgement: ExportRequest = {
-            id: this.nextId++,
-            type: 'mixdown-consumed',
-            targetId: response.id,
-            offsetFrames: response.offsetFrames,
-          };
-          this.worker.postMessage(acknowledgement);
-        })
-        .catch((error: unknown) => {
-          if (this.pending.get(response.id) !== entry) return;
-          this.pending.delete(response.id);
-          entry.reject(error instanceof Error ? error : new Error(String(error)));
-          const cancelRequest: ExportRequest = {
-            id: this.nextId++,
-            type: 'cancel',
-            targetId: response.id,
-          };
-          this.worker.postMessage(cancelRequest);
-        });
+      this.deliverStreamed(
+        response.id,
+        entry,
+        entry.onMixdownChunk &&
+          (() =>
+            entry.onMixdownChunk!(
+              [response.left, response.right],
+              response.offsetFrames,
+              response.totalFrames,
+            )),
+        'Export worker streamed mixdown PCM without a consumer',
+        () => ({ type: 'mixdown-consumed', offsetFrames: response.offsetFrames }),
+      );
       return;
     }
     this.pending.delete(response.id);
@@ -303,6 +273,38 @@ export class ExportClient {
       entry.resolve(response);
     }
   };
+
+  /**
+   * Hands one streamed payload to its consumer and acknowledges it once the
+   * consumer settles. A missing or failing consumer rejects the render and
+   * cancels the worker.
+   */
+  private deliverStreamed(
+    id: number,
+    entry: PendingRequest,
+    consume: (() => Promise<void> | void) | undefined,
+    missingConsumerMessage: string,
+    acknowledgement: () => StreamAcknowledgement,
+  ): void {
+    const fail = (error: Error): void => {
+      if (this.pending.get(id) !== entry) return;
+      this.pending.delete(id);
+      entry.reject(error);
+      const cancelRequest: ExportRequest = { id: this.nextId++, type: 'cancel', targetId: id };
+      this.worker.postMessage(cancelRequest);
+    };
+    if (!consume) {
+      fail(new Error(missingConsumerMessage));
+      return;
+    }
+    void Promise.resolve(consume())
+      .then(() => {
+        if (this.disposed) return;
+        const message: ExportRequest = { id: this.nextId++, targetId: id, ...acknowledgement() };
+        this.worker.postMessage(message);
+      })
+      .catch((error: unknown) => fail(error instanceof Error ? error : new Error(String(error))));
+  }
 
   private readonly handleWorkerError = (event: ErrorEvent): void => {
     // A worker-level script error is fatal for all in-flight renders.
@@ -353,12 +355,8 @@ export function renderMixdownInWorker(
   doc: ProjectDocument,
   options: ExportRenderOptions = {},
   onProgress?: MixdownProgressFn,
-  onStem?: (stem: MixdownStem, index: number, total: number) => Promise<void> | void,
-  onMixdownChunk?: (
-    channels: readonly [Float32Array, Float32Array],
-    offsetFrames: number,
-    totalFrames: number,
-  ) => Promise<void> | void,
+  onStem?: MixdownStemConsumer,
+  onMixdownChunk?: MixdownChunkConsumer,
 ): ExportRenderHandle {
   return getExportClient().renderMixdown(doc, options, onProgress, onStem, onMixdownChunk);
 }

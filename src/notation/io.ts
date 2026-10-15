@@ -6,8 +6,8 @@
  * module deliberately stays focused on MusicXML and filename handling.
  */
 
+import { downloadBlob } from '@/lib/download';
 import { ensureFileExtension } from '@/lib/filename';
-import { downloadBlob } from './print';
 
 export {
   importMusicXml,

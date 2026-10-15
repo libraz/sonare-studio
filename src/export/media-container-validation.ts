@@ -756,16 +756,36 @@ function validateWebm(bytes: Uint8Array): boolean {
     .some((cluster) => validateWebmCluster(bytes, cluster, audioTracks));
 }
 
+const OGG_CRC_TABLE = (() => {
+  const table = new Int32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let crc = index << 24;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = crc & 0x80000000 ? (crc << 1) ^ 0x04c11db7 : crc << 1;
+    }
+    table[index] = crc;
+  }
+  return table;
+})();
+
 function oggCrc(bytes: Uint8Array, start: number, end: number): number {
   let crc = 0;
   for (let offset = start; offset < end; offset += 1) {
     const byte = offset >= start + 22 && offset < start + 26 ? 0 : bytes[offset]!;
-    crc ^= byte << 24;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = crc & 0x80000000 ? (crc << 1) ^ 0x04c11db7 : crc << 1;
-    }
+    crc = (crc << 8) ^ OGG_CRC_TABLE[((crc >>> 24) ^ byte) & 0xff]!;
   }
   return crc >>> 0;
+}
+
+function concatChunks(chunks: readonly Uint8Array[], length: number): Uint8Array {
+  if (chunks.length === 1) return chunks[0]!;
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
 }
 
 function validateOpusHead(packet: Uint8Array): boolean {
@@ -798,11 +818,15 @@ function validateOpusTags(packet: Uint8Array): boolean {
 }
 
 function validateOgg(bytes: Uint8Array): boolean {
-  const packets: Uint8Array[] = [];
+  // Only the Opus header packets are inspected; later packets just need to exist.
+  const headerPackets: Uint8Array[] = [];
+  let packetCount = 0;
+  let sawAudioData = false;
   let offset = 0;
   let serial: number | null = null;
   let sequence = 0;
-  let continuedPacket: number[] = [];
+  let continuedChunks: Uint8Array[] = [];
+  let continuedLength = 0;
   let sawBos = false;
   let sawEos = false;
   let eosGranulePosition: number | null = null;
@@ -832,24 +856,26 @@ function validateOgg(bytes: Uint8Array): boolean {
     if (offset === 0) {
       if ((headerType & 0x02) === 0 || (headerType & 0x01) !== 0) return false;
       sawBos = true;
-    } else if (((headerType & 0x01) !== 0) !== continuedPacket.length > 0) {
+    } else if (((headerType & 0x01) !== 0) !== continuedLength > 0) {
       return false;
     }
     let payloadOffset = segmentTableEnd;
     for (let index = 0; index < segmentCount; index += 1) {
       const segmentLength = bytes[offset + 27 + index]!;
-      for (let byte = 0; byte < segmentLength; byte += 1) {
-        continuedPacket.push(bytes[payloadOffset + byte]!);
-      }
+      continuedChunks.push(bytes.subarray(payloadOffset, payloadOffset + segmentLength));
+      continuedLength += segmentLength;
       payloadOffset += segmentLength;
       if (segmentLength < 255) {
-        if (continuedPacket.length === 0) return false;
-        packets.push(Uint8Array.from(continuedPacket));
-        continuedPacket = [];
+        if (continuedLength === 0) return false;
+        if (packetCount < 2) headerPackets.push(concatChunks(continuedChunks, continuedLength));
+        else sawAudioData = true;
+        packetCount += 1;
+        continuedChunks = [];
+        continuedLength = 0;
       }
     }
     if ((headerType & 0x04) !== 0) {
-      if (pageEnd !== bytes.length || continuedPacket.length > 0) return false;
+      if (pageEnd !== bytes.length || continuedLength > 0) return false;
       sawEos = true;
       eosGranulePosition = readUint64Le(bytes, offset + 6);
     }
@@ -860,11 +886,11 @@ function validateOgg(bytes: Uint8Array): boolean {
     !sawEos ||
     eosGranulePosition === null ||
     eosGranulePosition <= 0 ||
-    packets.length < 3
+    packetCount < 3
   )
     return false;
-  if (!validateOpusHead(packets[0]!) || !validateOpusTags(packets[1]!)) return false;
-  return packets.slice(2).some((packet) => packet.length > 0);
+  if (!validateOpusHead(headerPackets[0]!) || !validateOpusTags(headerPackets[1]!)) return false;
+  return sawAudioData;
 }
 
 export function hasStructurallyCompleteMedia(bytes: Uint8Array, mimeType: string): boolean {

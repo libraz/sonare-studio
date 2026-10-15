@@ -6,6 +6,7 @@ import {
   audioContentSecondsToPpq,
   audioFadeSecondsToPpq,
 } from './audio-time';
+import { DEFAULT_IMPORTED_CLIP_LENGTH_PPQ, MIN_IMPORTED_LENGTH_PPQ } from './format';
 import type { DawprojectImportLoss, FlattenedClipLeaf, FlattenedClipPlacement } from './import';
 import { clampInt, readMidiExpressionPoints } from './midi-expression-import';
 import { boolAttr, children, numberAttr } from './xml-read';
@@ -62,7 +63,10 @@ export function flattenClipLeaves(
     return [];
   }
   const rootStart = numberAttr(root, 'time') ?? 0;
-  const rootLength = Math.max(0.0001, numberAttr(root, 'duration') ?? 4);
+  const rootLength = Math.max(
+    MIN_IMPORTED_LENGTH_PPQ,
+    numberAttr(root, 'duration') ?? DEFAULT_IMPORTED_CLIP_LENGTH_PPQ,
+  );
   const rootName = root.getAttribute('name') || 'Audio clip';
   const rootUnit = root.getAttribute('contentTimeUnit')?.trim() || 'beats';
   const rootLoop = clipLoopState(root);
@@ -110,7 +114,10 @@ export function flattenClipLeaves(
         return [];
       }
       const childTime = numberAttr(child, 'time') ?? 0;
-      const childLength = Math.max(0.0001, numberAttr(child, 'duration') ?? placement.lengthPpq);
+      const childLength = Math.max(
+        MIN_IMPORTED_LENGTH_PPQ,
+        numberAttr(child, 'duration') ?? placement.lengthPpq,
+      );
       const visibleStart = Math.max(windowStart, childTime);
       const visibleEnd = Math.min(windowEnd, childTime + childLength);
       if (!(visibleEnd > visibleStart)) return [];
@@ -145,7 +152,12 @@ export function readMidiClip(
   const out: DocumentClip = {
     name: placement?.name ?? clip.getAttribute('name') ?? 'MIDI clip',
     startPpq: placement?.startPpq ?? numberAttr(clip, 'time') ?? 0,
-    lengthPpq: placement?.lengthPpq ?? Math.max(0.0001, numberAttr(clip, 'duration') ?? 4),
+    lengthPpq:
+      placement?.lengthPpq ??
+      Math.max(
+        MIN_IMPORTED_LENGTH_PPQ,
+        numberAttr(clip, 'duration') ?? DEFAULT_IMPORTED_CLIP_LENGTH_PPQ,
+      ),
     sourceOffsetPpq: playStart,
     gain: 1,
     loopEnabled:
@@ -160,7 +172,7 @@ export function readMidiClip(
         pitch: clampInt(numberAttr(note, 'key') ?? 60, 0, 127),
         velocity: normalizedVelocity(numberAttr(note, 'vel')),
         startPpq: Math.max(0, numberAttr(note, 'time') ?? 0),
-        durationPpq: Math.max(0.0001, numberAttr(note, 'duration') ?? 1),
+        durationPpq: Math.max(MIN_IMPORTED_LENGTH_PPQ, numberAttr(note, 'duration') ?? 1),
         channel: clampInt(numberAttr(note, 'channel') ?? 0, 0, 15),
         // Only materialize a release velocity when the note declares one, so an
         // absent 'rel' stays absent instead of defaulting to a fixed value.
@@ -251,7 +263,12 @@ export function readAudioClip(
 ): DocumentClip {
   const file = audioFileRef(clip);
   const startPpq = placement?.startPpq ?? numberAttr(clip, 'time') ?? 0;
-  const lengthPpq = placement?.lengthPpq ?? Math.max(0.0001, numberAttr(clip, 'duration') ?? 4);
+  const lengthPpq =
+    placement?.lengthPpq ??
+    Math.max(
+      MIN_IMPORTED_LENGTH_PPQ,
+      numberAttr(clip, 'duration') ?? DEFAULT_IMPORTED_CLIP_LENGTH_PPQ,
+    );
   const contentTimeUnit = reportUnknownTimeUnit(
     clip,
     'contentTimeUnit',

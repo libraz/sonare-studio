@@ -1300,9 +1300,9 @@ export async function renderProjectWithEngine(
     return [left ?? new Float32Array(0), right ?? new Float32Array(0)];
   };
 
-  /** Runs one configured pass on a fresh engine, destroying it afterwards. */
   /** Most warped clips any pass played repitched for want of a stretch voice. */
   let warpOverflows = 0;
+  /** Runs one configured pass on a fresh engine, destroying it afterwards. */
   const runPass = async (
     pass: RenderPass,
     stage: string,

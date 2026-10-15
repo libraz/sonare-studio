@@ -13,6 +13,7 @@ import {
   registerEncoder,
 } from './codecs';
 import { hasStructurallyCompleteMedia } from './media-container-validation';
+import { assertPlanarChannels } from './planar-channels';
 
 export const AAC_ENCODER_ID = 'aac';
 export const OPUS_WEBM_ENCODER_ID = 'opus-webm';
@@ -67,15 +68,9 @@ const MEDIA_RECORDER_COMPLETION_GRACE_MS = 5_000;
 const AUDIO_CONTEXT_RESUME_TIMEOUT_MS = 5_000;
 
 function assertPlanar(channels: ReadonlyArray<Float32Array>): number {
-  if (channels.length !== 1 && channels.length !== 2) {
-    throw new RangeError(`Browser media encoding supports 1 or 2 channels, got ${channels.length}`);
-  }
-  const frames = channels[0]?.length ?? 0;
+  const frames = assertPlanarChannels(channels, 'Browser media', 2);
   if (frames === 0) {
     throw new RangeError('Browser media encoding requires at least one audio frame');
-  }
-  if (channels.some((channel) => channel.length !== frames)) {
-    throw new RangeError('Browser media encoder channel buffers must have equal lengths');
   }
   return frames;
 }
@@ -300,22 +295,22 @@ export async function encodeBrowserMedia(
         Math.ceil(durationSeconds * 1000) + MEDIA_RECORDER_COMPLETION_GRACE_MS,
       );
     });
-    recorder.start();
-    source.start(context.currentTime);
-    onProgress?.(0);
-    if (durationSeconds > 0 && Number.isFinite(context.currentTime)) {
-      progressTimer = setInterval(() => {
-        onProgress?.(Math.min(0.99, Math.max(0, context.currentTime / durationSeconds)));
-      }, 100);
-    }
-    if (signal?.aborted) {
-      try {
-        source.stop();
-      } catch {
-        // Source already stopped.
-      }
-    }
     try {
+      recorder.start();
+      source.start(context.currentTime);
+      onProgress?.(0);
+      if (durationSeconds > 0 && Number.isFinite(context.currentTime)) {
+        progressTimer = setInterval(() => {
+          onProgress?.(Math.min(0.99, Math.max(0, context.currentTime / durationSeconds)));
+        }, 100);
+      }
+      if (signal?.aborted) {
+        try {
+          source.stop();
+        } catch {
+          // Source already stopped.
+        }
+      }
       return await done;
     } finally {
       cleanupRecorderListeners();

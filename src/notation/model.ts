@@ -13,6 +13,7 @@
 
 import type { ScoreNoteAnnotation } from '@/project/annotations';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
+import { PPQ_EPSILON } from './musicxml-shared';
 
 /** Base (undotted) note duration, from whole note down to 64th note. */
 export type NoteValueBase = 'whole' | 'half' | 'quarter' | 'eighth' | '16th' | '32nd' | '64th';
@@ -68,9 +69,6 @@ export const NOTE_VALUE_BASES: ReadonlyArray<NoteValueBase> = [
  * by 3 (leaving headroom for future triplet support).
  */
 export const DEFAULT_DIVISIONS = 960;
-
-/** Comparison tolerance for PPQ arithmetic on IEEE doubles. */
-const PPQ_EPSILON = 1e-9;
 
 /**
  * Returns the exact duration of a note value in PPQ (quarter note = 1.0).
@@ -470,10 +468,10 @@ export function measureHasMultiRestStructure(
   const endPpq = measure.startPpq + measure.lengthPpq;
   return (
     score.chordSymbols?.some(
-      (symbol) => symbol.ppq >= measure.startPpq - 1e-9 && symbol.ppq < endPpq - 1e-9,
+      (symbol) => symbol.ppq >= measure.startPpq - PPQ_EPSILON && symbol.ppq < endPpq - PPQ_EPSILON,
     ) === true ||
     score.lyrics?.some(
-      (lyric) => lyric.ppq >= measure.startPpq - 1e-9 && lyric.ppq < endPpq - 1e-9,
+      (lyric) => lyric.ppq >= measure.startPpq - PPQ_EPSILON && lyric.ppq < endPpq - PPQ_EPSILON,
     ) === true
   );
 }

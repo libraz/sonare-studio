@@ -18,6 +18,7 @@ import {
   registerEncoder,
 } from './codecs';
 import { quantizePcmSample } from './pcm-quantize';
+import { assertPlanarChannels } from './planar-channels';
 
 /** Registry id of the MP3 encoder. */
 export const MP3_ENCODER_ID = 'mp3';
@@ -39,6 +40,9 @@ const ENCODE_BLOCK_FRAMES = 1152;
 
 /** libmp3lame's fixed encode delay used by the bundled lamejs port. */
 const LAME_ENCODER_DELAY = 576;
+
+/** Smallest end padding the LAME tag advertises: one granule, half an MPEG frame. */
+const MIN_END_PADDING_FRAMES = ENCODE_BLOCK_FRAMES / 2;
 
 /** Returns whether a value is one of the selectable MP3 bitrates. */
 export function isMp3Bitrate(value: unknown): value is Mp3Bitrate {
@@ -135,7 +139,7 @@ function mpegFrameCount(bytes: Uint8Array): number {
 
 function encoderPadding(inputFrames: number): number {
   let padding = ENCODE_BLOCK_FRAMES - ((inputFrames + LAME_ENCODER_DELAY) % ENCODE_BLOCK_FRAMES);
-  if (padding < 576) padding += ENCODE_BLOCK_FRAMES;
+  if (padding < MIN_END_PADDING_FRAMES) padding += ENCODE_BLOCK_FRAMES;
   return padding;
 }
 
@@ -194,13 +198,7 @@ export async function encodeMp3(
   sampleRate: number,
   options: EncodeMp3Options = {},
 ): Promise<Uint8Array> {
-  if (channels.length !== 1 && channels.length !== 2) {
-    throw new RangeError(`MP3 encoding supports 1 or 2 channels, got ${channels.length}`);
-  }
-  const frames = channels[0].length;
-  if (channels.some((channel) => channel.length !== frames)) {
-    throw new RangeError('MP3 channel buffers must have equal lengths');
-  }
+  const frames = assertPlanarChannels(channels, 'MP3', 2);
   if (!isMp3SampleRate(sampleRate)) {
     throw new RangeError(
       `MP3 encoding supports ${MP3_SAMPLE_RATES.join('/')} Hz input, got ${sampleRate}`,
@@ -226,20 +224,21 @@ export async function encodeMp3(
   const tail = encoder.flush();
   if (tail.length > 0) chunks.push(tail);
 
-  let total = 0;
-  for (const chunk of chunks) total += chunk.length;
-  const audio = new Uint8Array(total);
-  let cursor = 0;
+  let audioLength = 0;
+  for (const chunk of chunks) audioLength += chunk.length;
+  const id3 = id3Tag(options.metadata);
+  // The Info frame is one MPEG frame long, so the first audio frame header sizes it. lamejs hands
+  // back signed bytes; `Uint8Array.from` normalises them.
+  const infoLength = audioLength === 0 ? 0 : mpegFrameSize(Uint8Array.from(chunks[0]), 0);
+  const audioStart = id3.length + infoLength;
+  const out = new Uint8Array(audioStart + audioLength);
+  out.set(id3);
+  let cursor = audioStart;
   for (const chunk of chunks) {
-    audio.set(chunk, cursor);
+    out.set(chunk, cursor);
     cursor += chunk.length;
   }
-  const info = infoFrame(audio, frames);
-  const id3 = id3Tag(options.metadata);
-  const out = new Uint8Array(id3.length + info.length + audio.length);
-  out.set(id3);
-  out.set(info, id3.length);
-  out.set(audio, id3.length + info.length);
+  out.set(infoFrame(out.subarray(audioStart), frames), id3.length);
   return out;
 }
 
