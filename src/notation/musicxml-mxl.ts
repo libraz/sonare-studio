@@ -4,9 +4,10 @@ import {
   DEFAULT_XML_LIMITS,
   preflightXmlBytes,
   preflightXmlMarkupDepth,
+  XmlPreflightError,
 } from '@/lib/xml-preflight';
 import { preflightAndUnzip } from '@/persistence/archive-preflight';
-import { MusicXmlImportError } from './musicxml-import';
+import { DEFAULT_MUSICXML_IMPORT_LIMITS, MusicXmlImportError } from './musicxml-import';
 
 const MXL_CONTAINER_PATH = 'META-INF/container.xml';
 const MXL_LIMITS = {
@@ -20,11 +21,22 @@ const MXL_LIMITS = {
   maxPathLength: 512,
 } as const;
 
+/** Applies the same size, element and depth limits as an uncompressed MusicXML import. */
 function xmlText(bytes: Uint8Array, label: string): string {
-  preflightXmlBytes(bytes.byteLength, label);
-  const text = new TextDecoder().decode(bytes);
-  preflightXmlMarkupDepth(text, label);
-  return text;
+  const limits = {
+    maxBytes: DEFAULT_MUSICXML_IMPORT_LIMITS.maxBytes,
+    maxElements: DEFAULT_MUSICXML_IMPORT_LIMITS.maxElements,
+    maxDepth: DEFAULT_MUSICXML_IMPORT_LIMITS.maxDepth,
+  };
+  try {
+    preflightXmlBytes(bytes.byteLength, label, limits);
+    const text = new TextDecoder().decode(bytes);
+    preflightXmlMarkupDepth(text, label, limits);
+    return text;
+  } catch (error) {
+    if (error instanceof XmlPreflightError) throw new MusicXmlImportError(error.message);
+    throw error;
+  }
 }
 
 /**

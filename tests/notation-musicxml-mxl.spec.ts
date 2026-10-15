@@ -38,4 +38,24 @@ describe('extractMusicXmlFromMxl', () => {
 
     expect(extractMusicXmlFromMxl(archive)).toBe(score);
   });
+
+  it('applies the MusicXML element limit rather than the generic XML one', () => {
+    const score = `<score-partwise version="4.0"><part-list/>${'<a/>'.repeat(300_000)}</score-partwise>`;
+    const archive = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'score.xml': strToU8(score),
+    });
+
+    expect(extractMusicXmlFromMxl(archive)).toBe(score);
+  });
+
+  it('reports a too-deep score as a MusicXmlImportError', () => {
+    const score = `<score-partwise version="4.0">${'<a>'.repeat(200)}${'</a>'.repeat(200)}</score-partwise>`;
+    const archive = zipSync({
+      'META-INF/container.xml': strToU8(CONTAINER),
+      'score.xml': strToU8(score),
+    });
+
+    expect(() => extractMusicXmlFromMxl(archive)).toThrow(MusicXmlImportError);
+  });
 });
