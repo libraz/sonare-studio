@@ -450,6 +450,7 @@ export class FakeProject {
     if (desc.isMidi === false && (desc.audio === undefined || desc.audio.length === 0)) {
       throw new Error('audio clip requires non-empty inline audio data');
     }
+    this.assertLaneFree(desc.trackId, desc.startPpq ?? 0, desc.lengthPpq);
     // The real binding registers the source and adds the clip in one native
     // transaction, so one undo restores both together.
     return this.edit(() => {
@@ -564,6 +565,43 @@ export class FakeProject {
     });
   }
 
+  private strictLanes = false;
+
+  /**
+   * Opts this project into the engine's lane rule: under the disallow overlap
+   * policy a track holds clips that abut but never overlap, and addClip,
+   * moveClip, trimClip and duplicateClip refuse a placement that breaks it.
+   * Off by default because many fixtures stack clips at one position.
+   */
+  enforceClipLanes(enabled = true): void {
+    this.strictLanes = enabled;
+  }
+
+  private assertLaneFree(
+    trackId: number,
+    startPpq: number,
+    lengthPpq: number,
+    ignoreClipId?: number,
+  ): void {
+    if (!this.strictLanes || this.state.overlapPolicy !== 0) return;
+    const eps = 1e-9;
+    const clash = this.state.clips.some(
+      (c) =>
+        c.id !== ignoreClipId &&
+        c.track_id === trackId &&
+        startPpq < c.start_ppq + c.length_ppq - eps &&
+        c.start_ppq < startPpq + lengthPpq - eps,
+    );
+    if (clash) throw new Error('Invalid state: clip would overlap another clip on the track');
+  }
+
+  /** Mirrors the engine: a clip bound to a warp map cannot be trimmed or split. */
+  private assertNotWarped(clip: FakeClip): void {
+    if (clip.warp_ref_id !== undefined && clip.warp_ref_id > 0) {
+      throw new Error('Invalid state: clip is bound to a warp map');
+    }
+  }
+
   private requireClip(clipId: number): FakeClip {
     const clip = this.state.clips.find((c) => c.id === clipId);
     if (!clip) throw new Error(`unknown clip ${clipId}`);
@@ -579,6 +617,8 @@ export class FakeProject {
   }
 
   moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void {
+    const moving = this.requireClip(clipId);
+    this.assertLaneFree(newTrackId ?? moving.track_id, newStartPpq, moving.length_ppq, clipId);
     this.edit(() => {
       const clip = this.requireClip(clipId);
       clip.start_ppq = newStartPpq;
@@ -587,6 +627,9 @@ export class FakeProject {
   }
 
   trimClip(clipId: number, newStartPpq: number, newLengthPpq: number): void {
+    const trimmed = this.requireClip(clipId);
+    this.assertNotWarped(trimmed);
+    this.assertLaneFree(trimmed.track_id, newStartPpq, newLengthPpq, clipId);
     this.edit(() => {
       const clip = this.requireClip(clipId);
       clip.source_offset_ppq += newStartPpq - clip.start_ppq;
@@ -600,6 +643,7 @@ export class FakeProject {
     if (source.loop_mode !== 0) {
       throw new Error('Turn Loop off before splitting this clip.');
     }
+    this.assertNotWarped(source);
     return this.edit(() => {
       const clip = this.requireClip(clipId);
       const id = this.nextClipId++;
@@ -636,6 +680,8 @@ export class FakeProject {
   }
 
   duplicateClip(clipId: number, newStartPpq: number): number {
+    const original = this.requireClip(clipId);
+    this.assertLaneFree(original.track_id, newStartPpq, original.length_ppq);
     return this.edit(() => {
       const clip = this.requireClip(clipId);
       const id = this.nextClipId++;

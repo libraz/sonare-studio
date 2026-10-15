@@ -12,6 +12,7 @@ import {
 import { normalizeTempoMap } from '../tempo-map';
 import { canTrackContainClip, clipKind, type EditorClip } from '../types';
 import { installProjectClipWarp } from '../warp';
+import { clipsCollidingWith } from './clip-lane';
 import { deleteClip } from './clips-editing';
 import { executeAtomic } from './history';
 import { requireEditableTrack, validatePpq } from './utils';
@@ -77,11 +78,8 @@ export function canPasteClipAt(trackId: number, startPpq = 0): boolean {
   if (clipKind(clipClipboard.clip) === 'audio' && !clipClipboard.clip.assetId) return false;
   const endPpq = startPpq + clipClipboard.clip.lengthPpq;
   if (!Number.isFinite(endPpq)) return false;
-  return !store.clips.some(
-    (clip) =>
-      clip.trackId === trackId &&
-      clip.startPpq < endPpq &&
-      startPpq < clip.startPpq + clip.lengthPpq,
+  return (
+    clipsCollidingWith(store.clips, trackId, startPpq, clipClipboard.clip.lengthPpq).length === 0
   );
 }
 

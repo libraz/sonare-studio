@@ -5,6 +5,7 @@ import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
 import { decodeAndIngest, decodeAudioFile, mixdownToMono } from '@/project/audio-import';
+import { clipsCollidingWith } from '@/project/command/clip-lane';
 import {
   addAudioClip,
   addBouncedClip,
@@ -52,12 +53,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       const durationSeconds = meta.numFrames / meta.sampleRate;
       const lengthPpq = secondsToPpq(tempoMap, startSeconds + durationSeconds) - startPpq;
       const overlaps = (trackId: number): boolean =>
-        store.clips.some(
-          (clip) =>
-            clip.trackId === trackId &&
-            clip.startPpq < startPpq + lengthPpq &&
-            startPpq < clip.startPpq + clip.lengthPpq,
-        );
+        clipsCollidingWith(store.clips, trackId, startPpq, lengthPpq).length > 0;
       const audioTrack = store.tracks.find(
         (track) => track.kind === 'audio' && !overlaps(track.id),
       );

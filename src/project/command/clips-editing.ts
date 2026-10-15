@@ -53,6 +53,7 @@ import {
   type WarpRenderFn,
   warpedClipSource,
 } from '../warp';
+import { assertNoNewClipOverlaps, moveClipsWithin, replaceClipsWithin } from './clip-lane';
 import { moveClipWithin, splitClipWithin, trimClipWithin } from './clips-internal';
 import { execute, executeAtomic } from './history';
 import {
@@ -62,43 +63,9 @@ import {
   withDerivedClipMetadata,
 } from './utils';
 
-// ---------------------------------------------------------------------------
+export { assertNoNewClipOverlaps };
 
-/** Keep ordinary edits from creating new overlaps after a crossfade enables
- * the native project's global overlap policy. Existing crossfade pairs may
- * still be moved or trimmed together. */
-export function assertNoNewClipOverlaps(
-  clips: readonly EditorClip[],
-  changes: ReadonlyArray<{ clipId: number; startPpq: number; lengthPpq: number; trackId: number }>,
-): void {
-  const byId = new Map(changes.map((change) => [change.clipId, change]));
-  const overlaps = (aStart: number, aLength: number, bStart: number, bLength: number): boolean =>
-    aStart < bStart + bLength && bStart < aStart + aLength;
-  for (let i = 0; i < clips.length; i += 1) {
-    const a = clips[i];
-    const nextA = byId.get(a.id);
-    for (let j = i + 1; j < clips.length; j += 1) {
-      const b = clips[j];
-      const nextB = byId.get(b.id);
-      if (!nextA && !nextB) continue;
-      const aTrack = nextA?.trackId ?? a.trackId;
-      const bTrack = nextB?.trackId ?? b.trackId;
-      if (aTrack !== bTrack) continue;
-      if (
-        !overlaps(
-          nextA?.startPpq ?? a.startPpq,
-          nextA?.lengthPpq ?? a.lengthPpq,
-          nextB?.startPpq ?? b.startPpq,
-          nextB?.lengthPpq ?? b.lengthPpq,
-        )
-      )
-        continue;
-      if (a.trackId === b.trackId && overlaps(a.startPpq, a.lengthPpq, b.startPpq, b.lengthPpq))
-        continue;
-      throw new RangeError(`Clip edit would overlap clip ${nextA ? b.id : a.id}`);
-    }
-  }
-}
+// ---------------------------------------------------------------------------
 // Clip structural-editing commands
 // ---------------------------------------------------------------------------
 
@@ -216,12 +183,14 @@ export function moveClips(
     );
   }
   executeAtomic((edit) => {
-    for (const move of moves) {
-      edit(1, () => {
-        if (move.newTrackId === undefined) project.moveClip(move.clipId, move.newStartPpq);
-        else project.moveClip(move.clipId, move.newStartPpq, move.newTrackId);
-      });
-    }
+    moveClipsWithin(
+      edit,
+      moves.map((move) => ({
+        clipId: move.clipId,
+        startPpq: move.newStartPpq,
+        ...(move.newTrackId === undefined ? {} : { trackId: move.newTrackId }),
+      })),
+    );
     store.refresh();
   });
 }
@@ -244,6 +213,8 @@ export function duplicateClip(clipId: number, newStartPpq: number): number {
   const sourceMeta = { ...source };
   return executeAtomic((edit) => {
     const copyId = edit(1, () => project.duplicateClip(clipId, newStartPpq));
+    // The engine copies the warp link, so the copy would share the source's map.
+    clearProjectClipWarp(project, copyId, (mutation) => edit(1, mutation));
     store.refresh();
     store.clips = store.clips.map((c) =>
       c.id === copyId ? withDerivedClipMetadata({ ...c, name }, sourceMeta) : c,
@@ -529,13 +500,16 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
   const notes = joinedNotes(occurrences);
   const name = ordered[0].name;
   return executeAtomic((edit) => {
+    const sourceAnnotations = store.scoreAnnotations;
     // Project.addClip registers its backing source and clip in one native
     // transaction, so it contributes one Project history entry.
-    const newClipId = edit(1, () =>
-      project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
-    );
-    edit(1, () => project.setMidiEvents(newClipId, notesToProjectEvents(notes)));
-    for (const id of uniqueIds) edit(1, () => project.removeClip(id));
+    const newClipId = replaceClipsWithin(edit, uniqueIds, () => {
+      const createdId = edit(1, () =>
+        project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
+      );
+      edit(1, () => project.setMidiEvents(createdId, notesToProjectEvents(notes)));
+      return createdId;
+    });
     store.refresh();
     store.clips = store.clips.map((clip) => {
       if (clip.id !== newClipId) return clip;
@@ -559,9 +533,8 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
     });
     const joined = store.clips.find((clip) => clip.id === newClipId);
     const nextAnnotations = { ...store.scoreAnnotations };
-    for (const id of uniqueIds) delete nextAnnotations[id];
     if (joined !== undefined) {
-      const annotations = joinedScoreAnnotations(occurrences, joined.notes, store.scoreAnnotations);
+      const annotations = joinedScoreAnnotations(occurrences, joined.notes, sourceAnnotations);
       if (Object.keys(annotations).length > 0) nextAnnotations[newClipId] = annotations;
     }
     store.scoreAnnotations = nextAnnotations;
@@ -866,24 +839,23 @@ export async function consolidateAudioClips(
       const sourceId = getAudioSourceId(assetId);
       let registeredSourceId: number | null = null;
       const newClipId = executeAtomic((edit) => {
-        const createdClipId = edit(1, () =>
-          project.addClip({
-            trackId,
-            isMidi: false,
-            startPpq,
-            lengthPpq,
-            sourceOffsetPpq: 0,
-            gain: 1,
-            ...placeholderSourceAudio(),
-            ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
-          }),
-        );
-        if (sourceId === undefined) registeredSourceId = project.sourceCount();
-        else edit(1, () => project.setClipSource(createdClipId, sourceId));
-        for (const id of uniqueIds) {
-          clearProjectClipWarp(project, id, (mutation) => edit(1, mutation));
-          edit(1, () => project.removeClip(id));
-        }
+        const createdClipId = replaceClipsWithin(edit, uniqueIds, () => {
+          const createdId = edit(1, () =>
+            project.addClip({
+              trackId,
+              isMidi: false,
+              startPpq,
+              lengthPpq,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              ...placeholderSourceAudio(),
+              ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
+            }),
+          );
+          if (sourceId === undefined) registeredSourceId = project.sourceCount();
+          else edit(1, () => project.setClipSource(createdId, sourceId));
+          return createdId;
+        });
         store.clips = [
           ...store.clips.filter((clip) => !uniqueIds.includes(clip.id)),
           {

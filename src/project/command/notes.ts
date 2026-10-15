@@ -26,6 +26,7 @@ import {
   type EditorNoteUpdate,
   type NewEditorNote,
 } from '../types';
+import { CLIP_LANE_EPSILON, laneGapAround } from './clip-lane';
 import { cloneNotes, executeAtomic } from './history';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
@@ -84,6 +85,20 @@ function nextClipStartPpq(clip: EditorClip): number | undefined {
   return next;
 }
 
+/** Notes that are new or whose span differs from the same-id note in `previous`. */
+function addedOrRespannedNotes(
+  previous: readonly EditorNote[],
+  next: readonly EditorNote[],
+): EditorNote[] {
+  const before = new Map(previous.map((note) => [note.id, note]));
+  return next.filter((note) => {
+    const old = before.get(note.id);
+    return (
+      old === undefined || old.startPpq !== note.startPpq || old.durationPpq !== note.durationPpq
+    );
+  });
+}
+
 /** Clip length reaching the bar holding the last note end; undefined when the clip already covers it. */
 function grownClipLengthPpq(clip: EditorClip, notes: readonly EditorNote[]): number | undefined {
   if (clip.loopEnabled || notes.length === 0) return undefined;
@@ -114,7 +129,10 @@ function commit(
   for (const note of nextNotes) validateNote(note);
   const resizeLengthPpq =
     options.resizeLengthPpq ??
-    (options.writeNotes ? grownClipLengthPpq(clip, nextNotes) : undefined);
+    (options.writeNotes
+      ? // Notes hidden past a trimmed end stay untouched, so only edited ones can regrow the clip.
+        grownClipLengthPpq(clip, addedOrRespannedNotes(clip.notes, nextNotes))
+      : undefined);
   const resize = resizeLengthPpq !== undefined && Math.abs(resizeLengthPpq - clip.lengthPpq) > 1e-9;
   const loopChange =
     options.loop !== undefined &&
@@ -319,16 +337,25 @@ export function addNotesInNewClip(
   if (drafts.length === 0) return [];
   const firstStart = Math.min(...drafts.map((note) => note.startPpq));
   const lastEnd = Math.max(...drafts.map((note) => note.startPpq + note.durationPpq));
-  const startPpq = measureRangeAt(
-    store.timeSignatures,
-    Math.max(0, Math.min(firstStart, fromPpq ?? firstStart)),
-  ).startPpq;
+  // The lane may already hold clips on either side: the new clip fills only the gap around the first note.
+  const gap = laneGapAround(store.clips, track.id, firstStart);
+  if (gap === null) throw new RangeError('Cannot draw a new clip over an existing clip');
+  const startPpq = Math.max(
+    gap.startPpq,
+    measureRangeAt(store.timeSignatures, Math.max(0, Math.min(firstStart, fromPpq ?? firstStart)))
+      .startPpq,
+  );
   const lastBar = measureRangeAt(store.timeSignatures, Math.max(firstStart, lastEnd - 1e-6));
-  const lengthPpq = lastBar.startPpq + lastBar.lengthPpq - startPpq;
+  const endPpq = Math.min(lastBar.startPpq + lastBar.lengthPpq, gap.endPpq);
+  const lengthPpq = endPpq - startPpq;
+  if (drafts.some((draft) => draft.startPpq >= endPpq - CLIP_LANE_EPSILON)) {
+    throw new RangeError('Cannot draw a new clip across an existing clip');
+  }
   const notes = drafts.map((draft) => ({
     ...draft,
     id: allocateNoteId(),
     startPpq: draft.startPpq - startPpq,
+    durationPpq: Math.min(draft.durationPpq, endPpq - draft.startPpq),
   }));
   const project = getProject();
   executeAtomic((edit) => {

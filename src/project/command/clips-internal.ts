@@ -114,10 +114,18 @@ export function trimClipWithin(
   }
 }
 
-/** Moves a clip start; app metadata is position-independent. */
-export function moveClipWithin(edit: AtomicProjectEdit, clipId: number, newStartPpq: number): void {
+/** Moves a clip start, optionally to another track; app metadata is position-independent. */
+export function moveClipWithin(
+  edit: AtomicProjectEdit,
+  clipId: number,
+  newStartPpq: number,
+  newTrackId?: number,
+): void {
   const project = getProject();
-  edit(1, () => project.moveClip(clipId, newStartPpq));
+  edit(1, () => {
+    if (newTrackId === undefined) project.moveClip(clipId, newStartPpq);
+    else project.moveClip(clipId, newStartPpq, newTrackId);
+  });
 }
 
 /** Removes a clip, first releasing any native warp map it owns. */

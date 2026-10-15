@@ -7,6 +7,7 @@ import {
   useProjectStore,
 } from '../store';
 import type { ClipTake } from '../types';
+import { makeRoomForRecordingWithin } from './clip-lane';
 import { executeAtomic } from './history';
 import { requireEditableTrack, validatePpq } from './utils';
 
@@ -50,9 +51,11 @@ function prepareInput(input: AddRecordedAudioClipInput): PreparedRecordedAudioCl
 /**
  * Publishes every route of one audio recording as one atomic undo entry.
  *
- * All inputs are validated first. If any later native placement or mirror
- * update fails, executeAtomic reverses every completed Project edit and
- * restores the exact pre-recording mirror snapshot.
+ * Under the disallow overlap policy, clips already under a recorded range are
+ * split around it and their covered part removed, so the take always lands. All inputs are validated first. If
+ * any later native placement or mirror update fails, executeAtomic reverses
+ * every completed Project edit and restores the exact pre-recording mirror
+ * snapshot.
  */
 export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput[]): number[] {
   if (inputs.length === 0) return [];
@@ -62,6 +65,16 @@ export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput
 
   return executeAtomic((edit) => {
     const clipIds: number[] = [];
+    // Make room on every destination before the first clip lands so the
+    // mirror stays in step.
+    for (const input of prepared) {
+      makeRoomForRecordingWithin(
+        edit,
+        input.trackId,
+        input.startPpq,
+        input.startPpq + input.lengthPpq,
+      );
+    }
     for (const input of prepared) {
       const known = getAudioSourceId(input.assetId);
       const sourceId =

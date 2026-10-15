@@ -10,6 +10,7 @@ import {
   installProjectClipWarp,
   sanitizeClipWarp,
 } from '../warp';
+import { trimClipWithin } from './clips-internal';
 import { execute, executeAtomic } from './history';
 import { requireClip, requireEditableClip, requireTrack } from './utils';
 
@@ -220,7 +221,7 @@ export function crossfadeClips(
       if (project.getOverlapPolicy() === 0) {
         edit(1, () => project.setOverlapPolicy(1));
       }
-      edit(1, () => project.trimClip(left.id, left.startPpq, plan.leftLengthPpq));
+      trimClipWithin(edit, left.id, left.startPpq, plan.leftLengthPpq, true);
     }
     edit(1, () =>
       project.setClipFade(left.id, { lengthPpq: leftFadeIn }, { lengthPpq: plan.lengthPpq }),

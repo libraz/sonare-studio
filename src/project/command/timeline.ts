@@ -41,7 +41,8 @@ import {
   type TimeSignatureSegment,
   TRACK_COLOR_PALETTE,
 } from '../types';
-import { installProjectClipWarp } from '../warp';
+import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
+import { type LaneMove, moveClipsWithin } from './clip-lane';
 import {
   moveClipWithin,
   removeClipWithin,
@@ -250,6 +251,9 @@ function duplicateClipWindowForTimeline(
   } catch (error) {
     throw new Error(`Could not duplicate ${clipKind(source)} clip ${source.id}: ${String(error)}`);
   }
+  // The engine copies the warp link and refuses to trim a warped clip; the
+  // copy's own map is reinstalled by the timeline warp pass.
+  clearProjectClipWarp(project, copyId, (mutation) => edit(1, mutation));
   edit(1, () => project.trimClip(copyId, parkingStartPpq + windowOffsetPpq, windowLengthPpq));
   store.refresh();
   store.clips = store.clips.map((clip) =>
@@ -633,15 +637,17 @@ export function insertTime(atPpq: number, lengthPpq: number): void {
     clip.startPpq < atPpq && clip.startPpq + clip.lengthPpq > atPpq ? [atPpq] : [],
   );
   executeAtomic((edit) => {
+    const moves: LaneMove[] = [];
     for (const clip of clips) {
       const endPpq = clip.startPpq + clip.lengthPpq;
       if (clip.startPpq >= atPpq) {
-        moveClipWithin(edit, clip.id, clip.startPpq + lengthPpq);
+        moves.push({ clipId: clip.id, startPpq: clip.startPpq + lengthPpq });
       } else if (endPpq > atPpq) {
         const rightId = splitClipWithin(edit, clip.id, atPpq);
-        moveClipWithin(edit, rightId, atPpq + lengthPpq);
+        moves.push({ clipId: rightId, startPpq: atPpq + lengthPpq });
       }
     }
+    moveClipsWithin(edit, moves);
     applyTimelineMetadata(edit, 'insert', atPpq, lengthPpq);
     applyChordTimeline(edit, nextChords);
     store.refresh();
@@ -705,15 +711,17 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
 
     // Ripple only original clips; temporary copies stay parked until the gap
     // is clear. They are moved into it after the timeline metadata is updated.
+    const rippleMoves: LaneMove[] = [];
     for (const clip of originalClips) {
       const end = clip.startPpq + clip.lengthPpq;
       if (clip.startPpq >= endPpq) {
-        moveClipWithin(edit, clip.id, clip.startPpq + lengthPpq);
+        rippleMoves.push({ clipId: clip.id, startPpq: clip.startPpq + lengthPpq });
       } else if (end > endPpq) {
         const rightId = splitClipWithin(edit, clip.id, endPpq);
-        moveClipWithin(edit, rightId, endPpq + lengthPpq);
+        rippleMoves.push({ clipId: rightId, startPpq: endPpq + lengthPpq });
       }
     }
+    moveClipsWithin(edit, rippleMoves);
     applyTimelineMetadata(edit, 'insert', endPpq, lengthPpq);
     store.markers = [
       ...store.markers,
@@ -777,7 +785,10 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
         })),
       ),
     );
-    for (const copy of copies) moveClipWithin(edit, copy.id, copy.targetStartPpq);
+    moveClipsWithin(
+      edit,
+      copies.map((copy) => ({ clipId: copy.id, startPpq: copy.targetStartPpq })),
+    );
     applyChordTimeline(edit, nextChords);
     store.refresh();
     reinstallTimelineWarps(edit);
@@ -817,7 +828,8 @@ export function deleteTime(startPpq: number, endPpq: number): void {
     return clip.startPpq < startPpq && end > endPpq ? [startPpq] : [];
   });
   executeAtomic((edit) => {
-    for (const clip of clips) {
+    // Leftward ripple: earlier clips settle first so a later one never lands on them.
+    for (const clip of [...clips].sort((a, b) => a.startPpq - b.startPpq)) {
       const clipEndPpq = clip.startPpq + clip.lengthPpq;
       if (clipEndPpq <= startPpq) continue;
       if (clip.startPpq >= endPpq) {
