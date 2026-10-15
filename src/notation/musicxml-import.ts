@@ -17,6 +17,7 @@
 
 import { SaxesParser } from 'saxes';
 import { keyMarkerName } from '@/compose/key-name';
+import { type LossReport, LossTally } from '@/export/loss-descriptor';
 import { preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
   type DocumentClip,
@@ -119,28 +120,29 @@ export class MusicXmlImportError extends Error {
   }
 }
 
-export type MusicXmlLossFeature =
-  | 'harmony'
-  | 'lyrics'
-  | 'repeats'
-  | 'fingering'
-  | 'annotations'
-  | 'grace-notes'
-  | 'figured-bass'
-  | 'tempo-conflicts';
+/** Every class the MusicXML import loss dialog can list, in dialog order. */
+export const MUSICXML_IMPORT_LOSS_KINDS = [
+  'harmony',
+  'lyrics',
+  'repeats',
+  'jumps',
+  'dynamics',
+  'fingering',
+  'fermatas',
+  'arpeggios',
+  'annotations',
+  'grace-notes',
+  'figured-bass',
+  'extra-instruments',
+  'tempo-conflicts',
+  'other-notation',
+] as const;
 
-export interface MusicXmlLossIssue {
-  feature: MusicXmlLossFeature;
-  count: number;
-}
-
-export interface MusicXmlImportReport {
-  issues: MusicXmlLossIssue[];
-}
+export type MusicXmlImportLossKind = (typeof MUSICXML_IMPORT_LOSS_KINDS)[number];
 
 export interface MusicXmlImportResult {
   document: ProjectDocument;
-  report: MusicXmlImportReport;
+  report: LossReport<MusicXmlImportLossKind>;
 }
 
 /** Percussion instrument mapping declared in the `<part-list>`. */
@@ -456,30 +458,199 @@ function dynamicsFromDirection(element: XmlElement, maxNumericAbs: number): numb
   return dynamicsPercentToVelocity(sound?.attributes.dynamics, maxNumericAbs);
 }
 
-function collectLossReport(root: XmlElement, tempoConflictCount = 0): MusicXmlImportReport {
-  const definitions: ReadonlyArray<{
-    feature: MusicXmlLossFeature;
-    tags: ReadonlyArray<string>;
-  }> = [
-    { feature: 'harmony', tags: ['harmony'] },
-    { feature: 'lyrics', tags: ['lyric'] },
-    { feature: 'repeats', tags: ['repeat', 'ending'] },
-    { feature: 'fingering', tags: ['fingering'] },
-    {
-      feature: 'annotations',
-      tags: ['articulations', 'ornaments', 'slur', 'wedge', 'octave-shift', 'pedal', 'glissando'],
-    },
-    { feature: 'grace-notes', tags: ['grace'] },
-    { feature: 'figured-bass', tags: ['figured-bass'] },
-  ];
-  const issues = definitions.flatMap(({ feature, tags }) => {
-    const count = tags.reduce((total, tag) => total + descendants(root, tag).length, 0);
-    return count > 0 ? [{ feature, count }] : [];
-  });
-  if (tempoConflictCount > 0) {
-    issues.push({ feature: 'tempo-conflicts', count: tempoConflictCount });
+/**
+ * How the importer treats each element it can meet inside a measure:
+ * `realized` feeds the document, `presentation` is engraving-only, a loss kind
+ * is counted. An element missing from its table is counted as other notation,
+ * so the report never omits a class the importer ignores.
+ */
+type ElementDisposition = 'realized' | 'presentation' | 'walk' | MusicXmlImportLossKind;
+
+const MEASURE_ELEMENTS: Readonly<Record<string, ElementDisposition>> = {
+  attributes: 'realized',
+  note: 'walk',
+  backup: 'realized',
+  forward: 'realized',
+  direction: 'walk',
+  sound: 'walk',
+  harmony: 'harmony',
+  'figured-bass': 'figured-bass',
+  barline: 'walk',
+  print: 'presentation',
+  grouping: 'presentation',
+  link: 'presentation',
+  bookmark: 'presentation',
+  listening: 'presentation',
+};
+
+const BARLINE_ELEMENTS: Readonly<Record<string, ElementDisposition>> = {
+  'bar-style': 'presentation',
+  repeat: 'repeats',
+  ending: 'repeats',
+  segno: 'jumps',
+  coda: 'jumps',
+  fermata: 'fermatas',
+  'wavy-line': 'annotations',
+  footnote: 'presentation',
+  level: 'presentation',
+};
+
+const DIRECTION_ELEMENTS: Readonly<Record<string, ElementDisposition>> = {
+  'direction-type': 'walk',
+  offset: 'realized',
+  sound: 'walk',
+  staff: 'presentation',
+  voice: 'presentation',
+  footnote: 'presentation',
+  level: 'presentation',
+  listening: 'presentation',
+};
+
+const DIRECTION_TYPE_ELEMENTS: Readonly<Record<string, ElementDisposition>> = {
+  metronome: 'realized',
+  // Realized only through a sound dynamics attribute; checked by the walker.
+  dynamics: 'dynamics',
+  segno: 'jumps',
+  coda: 'jumps',
+  words: 'presentation',
+  rehearsal: 'presentation',
+  symbol: 'presentation',
+  dashes: 'presentation',
+  bracket: 'presentation',
+  image: 'presentation',
+  'staff-divide': 'presentation',
+  wedge: 'annotations',
+  pedal: 'annotations',
+  'octave-shift': 'annotations',
+  'harp-pedals': 'annotations',
+  damp: 'annotations',
+  'damp-all': 'annotations',
+  eyeglasses: 'annotations',
+  'string-mute': 'annotations',
+  scordatura: 'annotations',
+  'principal-voice': 'annotations',
+  percussion: 'annotations',
+  'accordion-registration': 'annotations',
+  'other-direction': 'annotations',
+};
+
+const NOTE_ELEMENTS: Readonly<Record<string, ElementDisposition>> = {
+  grace: 'grace-notes',
+  cue: 'realized',
+  chord: 'realized',
+  pitch: 'realized',
+  unpitched: 'realized',
+  rest: 'realized',
+  duration: 'realized',
+  tie: 'realized',
+  instrument: 'realized',
+  voice: 'realized',
+  staff: 'realized',
+  type: 'presentation',
+  dot: 'presentation',
+  accidental: 'presentation',
+  'time-modification': 'presentation',
+  stem: 'presentation',
+  notehead: 'presentation',
+  'notehead-text': 'presentation',
+  beam: 'presentation',
+  footnote: 'presentation',
+  level: 'presentation',
+  play: 'presentation',
+  listen: 'presentation',
+  notations: 'walk',
+  lyric: 'lyrics',
+};
+
+const NOTATIONS_ELEMENTS: Readonly<Record<string, ElementDisposition>> = {
+  tied: 'presentation',
+  tuplet: 'presentation',
+  'accidental-mark': 'presentation',
+  footnote: 'presentation',
+  level: 'presentation',
+  technical: 'walk',
+  dynamics: 'dynamics',
+  fermata: 'fermatas',
+  arpeggiate: 'arpeggios',
+  'non-arpeggiate': 'arpeggios',
+  slur: 'annotations',
+  glissando: 'annotations',
+  slide: 'annotations',
+  ornaments: 'annotations',
+  articulations: 'annotations',
+  'other-notation': 'annotations',
+};
+
+/** `<sound>` attributes that restructure playback order, which import never applies. */
+const SOUND_JUMP_ATTRIBUTES = ['dacapo', 'dalsegno', 'segno', 'coda', 'tocoda', 'fine'] as const;
+
+/** Records what the importer does not realize while it walks a part. */
+class ImportLossWalker {
+  private readonly otherTags = new Set<string>();
+
+  constructor(readonly loss: LossTally<MusicXmlImportLossKind>) {}
+
+  private count(element: XmlElement, table: Readonly<Record<string, ElementDisposition>>): void {
+    const disposition = table[element.tagName];
+    if (disposition === 'realized' || disposition === 'presentation' || disposition === 'walk') {
+      return;
+    }
+    if (disposition !== undefined) {
+      this.loss.add(disposition);
+      return;
+    }
+    const detail = this.otherTags.has(element.tagName) ? undefined : element.tagName;
+    this.otherTags.add(element.tagName);
+    this.loss.add('other-notation', 1, detail);
   }
-  return { issues };
+
+  measureChild(element: XmlElement): void {
+    this.count(element, MEASURE_ELEMENTS);
+    if (element.tagName === 'barline') {
+      for (const child of element.children) this.count(child, BARLINE_ELEMENTS);
+    } else if (element.tagName === 'sound') {
+      this.sound(element);
+    }
+  }
+
+  direction(direction: XmlElement, dynamicsRealized: boolean): void {
+    for (const child of direction.children) {
+      this.count(child, DIRECTION_ELEMENTS);
+      if (child.tagName === 'sound') this.sound(child);
+      if (child.tagName !== 'direction-type') continue;
+      for (const type of child.children) {
+        if (type.tagName === 'dynamics' && dynamicsRealized) continue;
+        this.count(type, DIRECTION_TYPE_ELEMENTS);
+      }
+    }
+  }
+
+  note(note: XmlElement): void {
+    for (const child of note.children) {
+      this.count(child, NOTE_ELEMENTS);
+      if (child.tagName !== 'notations') continue;
+      for (const notation of child.children) {
+        this.count(notation, NOTATIONS_ELEMENTS);
+        if (notation.tagName !== 'technical') continue;
+        for (const technical of notation.children) {
+          this.loss.add(technical.tagName === 'fingering' ? 'fingering' : 'annotations');
+        }
+      }
+    }
+  }
+
+  private sound(sound: XmlElement): void {
+    if (SOUND_JUMP_ATTRIBUTES.some((name) => sound.attributes[name] !== undefined)) {
+      this.loss.add('jumps');
+    }
+  }
+}
+
+/** Extra `<midi-instrument>` programs a part declares beyond the one its track plays. */
+function extraInstrumentCount(part: PartInfo): number {
+  const [primary, ...rest] = [...part.instruments.values()];
+  return rest.filter((entry) => entry.program !== undefined && entry.program !== primary?.program)
+    .length;
 }
 
 /** Global tempo / time-signature / key-signature events shared by all parts. */
@@ -616,7 +787,10 @@ function importNote(
   const durationDivisions = childInt(noteEl, 'duration', maxNumericAbs) ?? 0;
   const durationPpq = durationDivisions / state.divisions;
   const advance = isChord ? 0 : durationPpq;
-  if (childElements(noteEl, 'rest').length > 0) return advance;
+  // Cue notes are engraved for orientation and advance the voice, but never sound.
+  if (childElements(noteEl, 'rest').length > 0 || childElements(noteEl, 'cue').length > 0) {
+    return advance;
+  }
 
   const voice = childInt(noteEl, 'voice', maxNumericAbs) ?? 1;
   const staff = childInt(noteEl, 'staff', maxNumericAbs) ?? 1;
@@ -676,6 +850,7 @@ function importPartNotes(
   tempoConflicts: Set<string>,
   partId: string,
   maxNumericAbs: number,
+  lossWalker: ImportLossWalker,
 ): { notes: DocumentNote[]; endPpq: number } {
   const notes: DocumentNote[] = [];
   const ties = new TieTracker();
@@ -691,11 +866,13 @@ function importPartNotes(
     let measureMaxPpq = state.measureStartPpq;
     let chordHeadPpq = state.measureStartPpq;
     for (const element of childElements(measure)) {
+      lossWalker.measureChild(element);
       switch (element.tagName) {
         case 'attributes':
           applyAttributes(element, state, global, captureGlobal, maxNumericAbs);
           break;
         case 'note': {
+          lossWalker.note(element);
           const isChord = childElements(element, 'chord').length > 0;
           const onset = isChord ? chordHeadPpq : cursorPpq;
           const advance = importNote(
@@ -741,6 +918,7 @@ function importPartNotes(
           }
           const dynamics = dynamicsFromDirection(element, maxNumericAbs);
           if (dynamics !== null) state.velocity = dynamics;
+          if (element.tagName === 'direction') lossWalker.direction(element, dynamics !== null);
           break;
         }
       }
@@ -895,6 +1073,8 @@ export function importMusicXmlWithReport(
   const tracks: ProjectDocument['tracks'] = [];
   const partElements = childElements(root, 'part');
   const tempoConflicts = new Set<string>();
+  const loss = new LossTally(MUSICXML_IMPORT_LOSS_KINDS);
+  const lossWalker = new ImportLossWalker(loss);
   let canonicalTempos: DocumentTempoSegment[] | null = null;
   partElements.forEach((partEl, index) => {
     const id = partEl.attributes.id ?? `P${index + 1}`;
@@ -908,9 +1088,11 @@ export function importMusicXmlWithReport(
       tempoConflicts,
       id,
       resolved.maxNumericAbs,
+      lossWalker,
     );
     if (index === 0) canonicalTempos = tempoSegments(global.tempos);
     const name = info.name || `Part ${index + 1}`;
+    loss.add('extra-instruments', extraInstrumentCount(info), name);
     const primaryInstrument = info.instruments.values().next().value as
       | InstrumentMapping
       | undefined;
@@ -949,7 +1131,8 @@ export function importMusicXmlWithReport(
     sections: [],
     ...(global.pickupLengthPpq !== undefined ? { pickupLengthPpq: global.pickupLengthPpq } : {}),
   };
-  return { document, report: collectLossReport(root, tempoConflicts.size) };
+  loss.add('tempo-conflicts', tempoConflicts.size);
+  return { document, report: loss.report() };
 }
 
 /** Compatibility API for callers that do not need the structured loss report. */

@@ -22,14 +22,6 @@ export const dialogs = {
     restoreBackupMediaSkippedMessage:
       'バックアップは復元されましたが、次の不正または不完全なメディアは復元できませんでした。\n{items}',
     restoreBackupMediaSkippedConfirm: 'OK',
-    exportSmfLossTitle: 'SMF 書き出しで空の構造が失われます',
-    exportSmfLossMessage:
-      'SMF は空の MIDI クリップ {clips} 件を表現できず、空の MIDI トラック {tracks} 件を省略する場合があり、MIDI トラック {mutedTracks} 件の mute を保持できません。残りの MIDI イベントを書き出しますか？',
-    exportSmfLossConfirm: 'SMFを書き出し',
-    exportMidi2LossTitle: 'MIDI 2.0クリップ書き出しでアプリ側のMIDIデータが失われます',
-    exportMidi2LossMessage:
-      'この書き出しでは表現レーン {expressionLanes} 件と SysEx パケット {sysExPackets} 件が含まれません。残りのノートデータを書き出しますか？',
-    exportMidi2LossConfirm: 'MIDI 2.0クリップファイルを書き出し',
     saveRevisionTitle: 'リビジョンを保存',
     saveRevisionMessage: 'あとで戻れるように、このリビジョンに名前を付けます。',
     revisionLabelPlaceholder: 'リビジョン名',
@@ -39,7 +31,10 @@ export const dialogs = {
     saveProjectOverwriteMessage:
       '「{name}」という保存済みプロジェクトが存在します。置き換えますか？',
     projectNamePlaceholder: 'プロジェクト名',
+    projectNameInvalid: '空、「.」、「..」以外のプロジェクト名を入力してください。',
     projectNameReserved: 'プロジェクト名「autosave」は内部復旧データ用に予約されています。',
+    saveRestoredSlotMessage:
+      'ブラウザーバックアップの復元で「{name}」の保存内容が置き換えられています。開いているプロジェクトで置き換えますか？',
     save: '保存',
     saveLayoutTitle: 'レイアウトを保存',
     saveLayoutMessage: '現在のパネル配置に名前を付けて保存します。',
@@ -178,6 +173,14 @@ export const dialogs = {
     clippingWarningMessage:
       'ピークは {peak} dBFS です。整数エンコードではハードクリップされます。続行しますか？',
     clippingWarningContinue: 'クリップした音声を書き出す',
+    metadataLoss: {
+      title: 'オーディオ書き出しの制限',
+      message: '選択した形式では以下が省略されます:\n{items}\n\n書き出しを続行しますか？',
+      confirm: '省略して書き出す',
+      items: {
+        markers: '{count}件のマーカーとセクション開始位置（{details}は保存できません）',
+      },
+    },
     clippingReport: '整数エンコード中にクリップが発生しました。',
     clippingCensus: '{samples} サンプル（{percent}%）が {regions} 箇所でクリップ。最初は {time}。',
     preflightBlocked: '次のメディア問題を解消するまで書き出しを開始できません:',

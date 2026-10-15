@@ -10,6 +10,7 @@ import {
 } from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
+import { confirmLossReport } from '@/composables/useLossConfirm';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
 import { describeError } from '@/lib/errors';
 import { preflightXmlBytes } from '@/lib/xml-preflight';
@@ -42,6 +43,7 @@ import {
 } from '@/persistence/local-file';
 import {
   deleteProject,
+  InvalidProjectNameError,
   isAutosaveProjectName,
   isOpfsAvailable,
   isReservedProjectName,
@@ -125,6 +127,16 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   // or imported document has no named slot until Save/Save As succeeds.
   const savedProjectSlot = ref<string | null>(null);
   const savedProjectRevision = ref<string | null>(null);
+  /** Open slot a browser-backup restore replaced since it was last loaded or saved. */
+  const restoreReplacedSlot = ref<string | null>(null);
+  // Any new baseline (open, save, revision restore) supersedes the replacement.
+  watch(
+    savedProjectRevision,
+    () => {
+      restoreReplacedSlot.value = null;
+    },
+    { flush: 'sync' },
+  );
   const opfsAvailable = isOpfsAvailable();
   const projectMenuOpen = ref(false);
   const projectMenuRoot = ref<HTMLElement | null>(null);
@@ -492,6 +504,21 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     });
   }
 
+  /** Sanitized slot for a user-entered name; rejects unusable names with localized text. */
+  function projectSlotName(name: string): string {
+    let slot: string;
+    try {
+      slot = sanitizeProjectName(name);
+    } catch (error) {
+      if (error instanceof InvalidProjectNameError) {
+        throw new Error(t.value.dialogs.prompts.projectNameInvalid);
+      }
+      throw error;
+    }
+    if (isReservedProjectName(slot)) throw new Error(t.value.dialogs.prompts.projectNameReserved);
+    return slot;
+  }
+
   async function renameStoredProject(name: string): Promise<void> {
     const next = await promptDialog({
       title: t.value.dialogs.openProject.renameTitle,
@@ -501,12 +528,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       confirmLabel: t.value.dialogs.openProject.rename,
     });
     if (next === null) return;
-    const safeName = sanitizeProjectName(next);
-    if (safeName === '') return;
-    if (isReservedProjectName(safeName)) {
-      throw new RangeError(`${safeName} is reserved`);
-    }
     void runAction(async () => {
+      const safeName = projectSlotName(next);
       await renameProject(name, safeName);
       if (sanitizeProjectName(name) === savedProjectSlot.value) {
         savedProjectSlot.value = safeName;
@@ -611,23 +634,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       });
       if (!picked) return;
       const imported = await importMusicXmlInWorker(picked.text, picked.name);
-      if (imported.report.issues.length > 0) {
-        const items = imported.report.issues
-          .map((issue) =>
-            formatMessage(t.value.shell.project.musicXmlLoss.items[issue.feature], {
-              count: issue.count,
-            }),
-          )
-          .map((item) => `• ${item}`)
-          .join('\n');
-        const confirmed = await confirmLossAction(
-          formatMessage(t.value.shell.project.musicXmlLoss.message, { items }),
-          {
-            title: t.value.shell.project.musicXmlLoss.title,
-            confirmLabel: t.value.shell.project.musicXmlLoss.confirm,
-          },
-        );
-        if (!confirmed) return;
+      if (
+        !(await confirmLossReport(
+          imported.report,
+          t.value.shell.project.musicXmlLoss,
+          confirmLossAction,
+        ))
+      ) {
+        return;
       }
       await replaceProjectDocument(imported.document);
       savedProjectSlot.value = null;
@@ -699,6 +713,17 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const imported = await importDawprojectWithMediaResult(picked.bytes, {
         resolveExternalAudio: createExternalAudioResolver(),
       });
+      if (
+        !(await confirmLossReport(
+          imported.loss,
+          t.value.shell.project.dawprojectImportLoss,
+          confirmLossAction,
+        ))
+      ) {
+        // Media ingested for the declined import is referenced by nothing.
+        await reclaimUnusedMedia();
+        return;
+      }
       await replaceProjectDocument(imported.document);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
@@ -706,32 +731,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       await markClean(documentKey);
       openDialogOpen.value = false;
       startScreenOpen.value = false;
-      if (imported.media.issues.length > 0) {
-        const paths = imported.media.issues.slice(0, 3).map((issue) => issue.path);
-        errorMessage.value = formatMessage(t.value.shell.project.importDawprojectMediaIssues, {
-          count: imported.media.issues.length,
-          paths: paths.join(', '),
-        });
-      } else if (imported.losses.length > 0) {
-        const details = imported.losses.slice(0, 3).map((loss) => {
-          if (loss.kind === 'unsupported-time-unit') return `${loss.attribute}=${loss.unit}`;
-          if (loss.kind === 'unsupported-warp') return `${loss.clipName}: warp ${loss.reason}`;
-          if (loss.kind === 'disabled-clip') return `${loss.clipName}: disabled clip skipped`;
-          return `${loss.clipName}: nested clip ${loss.reason}`;
-        });
-        const onlyTimeUnits = imported.losses.every(
-          (loss) => loss.kind === 'unsupported-time-unit',
-        );
-        errorMessage.value = onlyTimeUnits
-          ? formatMessage(t.value.shell.project.importDawprojectTimeUnitIssues, {
-              count: imported.losses.length,
-              details: details.join(', '),
-            })
-          : formatMessage(t.value.shell.project.importDawprojectStructureIssues, {
-              count: imported.losses.length,
-              details: details.join(', '),
-            });
-      }
     });
   }
 
@@ -761,15 +760,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     documentName: string,
     expectedRevision: string | null,
   ): Promise<{ documentKey: string; revision: string; slot: string }> {
-    if (isReservedProjectName(name)) {
-      throw new Error(t.value.dialogs.prompts.projectNameReserved);
-    }
+    const slot = projectSlotName(name);
     const doc = serializeProject();
     doc.name = documentName;
     const documentKey = JSON.stringify(doc);
     const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
     const revision = await saveProjectChecked(name, bytes, expectedRevision);
-    const slot = sanitizeProjectName(name);
     rememberRecentProject(slot);
     return { documentKey, revision, slot };
   }
@@ -781,9 +777,31 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     await reclaimUnusedMedia();
   }
 
+  /**
+   * Baseline for overwriting the open slot after a backup restore replaced it:
+   * the restored copy's revision once the user agrees to replace it, or
+   * undefined when they decline.
+   */
+  async function confirmReplacingRestoredSlot(slot: string): Promise<string | null | undefined> {
+    const revision = (await loadProjectWithRevision(slot)).revision;
+    const confirmed = await confirmAction(
+      formatMessage(t.value.dialogs.prompts.saveRestoredSlotMessage, { name: slot }),
+      {
+        title: t.value.dialogs.prompts.saveProjectOverwriteTitle,
+        confirmLabel: t.value.dialogs.prompts.save,
+      },
+    );
+    return confirmed ? revision : undefined;
+  }
+
   async function saveToOpfs(name: string): Promise<void> {
-    const slot = sanitizeProjectName(name);
+    const slot = projectSlotName(name);
     let expectedRevision = slot === savedProjectSlot.value ? savedProjectRevision.value : null;
+    if (slot === savedProjectSlot.value && restoreReplacedSlot.value === slot) {
+      const confirmed = await confirmReplacingRestoredSlot(slot);
+      if (confirmed === undefined) return;
+      expectedRevision = confirmed;
+    }
     // A new/imported document has no loaded revision. Saving it under an
     // existing name is an intentional overwrite, not a cross-tab conflict;
     // use the same explicit confirmation path as Save As.
@@ -826,7 +844,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       });
       if (!name) return;
       void runAction(async () => {
-        const slot = sanitizeProjectName(name);
+        const slot = projectSlotName(name);
         const exists = (await listProjects()).some((project) => project.name === slot);
         let expectedRevision: string | null = null;
         if (exists && slot !== savedProjectSlot.value) {
@@ -840,7 +858,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
           );
           if (!confirmed) return;
         }
-        if (slot === savedProjectSlot.value) expectedRevision = savedProjectRevision.value;
+        if (slot === savedProjectSlot.value) {
+          expectedRevision = savedProjectRevision.value;
+          if (restoreReplacedSlot.value === slot) {
+            const confirmed = await confirmReplacingRestoredSlot(slot);
+            if (confirmed === undefined) return;
+            expectedRevision = confirmed;
+          }
+        }
         const saved = await writeProjectToOpfs(slot, name, expectedRevision);
         store.projectName = name;
         savedProjectSlot.value = saved.slot;
@@ -968,6 +993,13 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       const picked = await pickAndReadBrowserBackup();
       if (!picked) return;
       const restored = await restoreBrowserBackup(picked.bytes);
+      // The restore may have replaced the open project's slot. Saving must then
+      // ask before overwriting the restored copy rather than report a conflict.
+      const slot = savedProjectSlot.value;
+      if (slot !== null && (await listProjects()).some((project) => project.name === slot)) {
+        const { revision } = await loadProjectWithRevision(slot);
+        if (revision !== savedProjectRevision.value) restoreReplacedSlot.value = slot;
+      }
       await refreshStoredProjects();
       await reclaimUnusedMedia();
       const skipped = [
@@ -992,20 +1024,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     closeProjectMenu();
     void runAction(async () => {
       const result = await exportProjectSmf();
-      const loss = result.smfLoss;
+      const copy = t.value.shell.project.midiExportLoss;
       if (
-        loss !== undefined &&
-        (loss.emptyMidiClips > 0 || loss.emptyMidiTracks > 0 || loss.mutedMidiTracks > 0) &&
-        !(await confirmLossAction(
-          formatMessage(t.value.dialogs.prompts.exportSmfLossMessage, {
-            clips: String(loss.emptyMidiClips),
-            tracks: String(loss.emptyMidiTracks),
-            mutedTracks: String(loss.mutedMidiTracks),
-          }),
-          {
-            title: t.value.dialogs.prompts.exportSmfLossTitle,
-            confirmLabel: t.value.dialogs.prompts.exportSmfLossConfirm,
-          },
+        !(await confirmLossReport(
+          result.loss,
+          { ...copy.smf, items: copy.items },
+          confirmLossAction,
         ))
       ) {
         return;
@@ -1021,19 +1045,12 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     closeProjectMenu();
     void runAction(async () => {
       const result = exportProjectClipFile();
-      const loss = result.midi2ClipLoss;
+      const copy = t.value.shell.project.midiExportLoss;
       if (
-        loss !== undefined &&
-        (loss.expressionLanes > 0 || loss.sysExPackets > 0) &&
-        !(await confirmLossAction(
-          formatMessage(t.value.dialogs.prompts.exportMidi2LossMessage, {
-            expressionLanes: String(loss.expressionLanes),
-            sysExPackets: String(loss.sysExPackets),
-          }),
-          {
-            title: t.value.dialogs.prompts.exportMidi2LossTitle,
-            confirmLabel: t.value.dialogs.prompts.exportMidi2LossConfirm,
-          },
+        !(await confirmLossReport(
+          result.loss,
+          { ...copy.midi2, items: copy.items },
+          confirmLossAction,
         ))
       ) {
         return;

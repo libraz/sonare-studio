@@ -10,6 +10,7 @@
  */
 
 import { strFromU8 } from 'fflate';
+import { type LossReport, LossTally } from '@/export/loss-descriptor';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import {
   preflightXmlBytes,
@@ -115,6 +116,8 @@ export interface DawprojectImportResult {
     issues: DawprojectMediaIssue[];
   };
   losses: DawprojectImportLoss[];
+  /** Media issues and losses together, as the pre-replace dialog lists them. */
+  loss: LossReport<DawprojectImportLossKind>;
 }
 
 /** A DAWproject value that could not be interpreted without a lossy fallback. */
@@ -122,7 +125,7 @@ export type DawprojectImportLoss =
   | {
       kind: 'unsupported-time-unit';
       clipName: string;
-      attribute: 'contentTimeUnit' | 'fadeTimeUnit';
+      attribute: 'contentTimeUnit' | 'fadeTimeUnit' | 'timeUnit';
       unit: string;
     }
   | {
@@ -162,7 +165,84 @@ export type DawprojectImportLoss =
         | 'non-midi-track'
         /** A timeline-level expression did not identify the Structure track it targets. */
         | 'missing-track';
+    }
+  | {
+      /** A plugin or non-Sonare device; its state cannot be reproduced. */
+      kind: 'foreign-device';
+      trackName: string;
+      device: string;
+    }
+  | {
+      /** Parameter automation whose target has no Sonare parameter. */
+      kind: 'unmapped-automation';
+      trackName: string;
+      parameter: string;
+    }
+  | {
+      /** A send whose destination is not an effect channel Sonare imports as a bus. */
+      kind: 'unmapped-send';
+      trackName: string;
+      destination: string;
+    }
+  | {
+      /** An arrangement lane addressing no imported track. */
+      kind: 'orphan-lane';
+      track: string;
     };
+
+/** Every class the DAWproject import loss dialog can list, in dialog order. */
+export const DAWPROJECT_IMPORT_LOSS_KINDS = [
+  'missing-media',
+  'unreadable-media',
+  'foreign-device',
+  'unmapped-automation',
+  'unmapped-send',
+  'orphan-lane',
+  'unsupported-time-unit',
+  'unsupported-warp',
+  'unsupported-nested-clip',
+  'disabled-clip',
+  'unsupported-midi-expression',
+] as const satisfies ReadonlyArray<
+  DawprojectImportLoss['kind'] | 'missing-media' | 'unreadable-media'
+>;
+
+export type DawprojectImportLossKind = (typeof DAWPROJECT_IMPORT_LOSS_KINDS)[number];
+
+function lossDetail(loss: DawprojectImportLoss): string {
+  switch (loss.kind) {
+    case 'unsupported-time-unit':
+      return `${loss.clipName}: ${loss.attribute}=${loss.unit}`;
+    case 'unsupported-warp':
+    case 'unsupported-nested-clip':
+      return `${loss.clipName}: ${loss.reason}`;
+    case 'disabled-clip':
+      return loss.clipName;
+    case 'unsupported-midi-expression':
+      return `${loss.clipName}: ${loss.expression}`;
+    case 'foreign-device':
+      return `${loss.trackName}: ${loss.device}`;
+    case 'unmapped-automation':
+      return `${loss.trackName}: ${loss.parameter}`;
+    case 'unmapped-send':
+      return `${loss.trackName}: ${loss.destination}`;
+    case 'orphan-lane':
+      return loss.track;
+  }
+}
+
+/** Combines media issues and parser losses into the dialog report. */
+export function dawprojectImportLossReport(
+  losses: ReadonlyArray<DawprojectImportLoss>,
+  mediaIssues: ReadonlyArray<DawprojectMediaIssue>,
+): LossReport<DawprojectImportLossKind> {
+  const tally = new LossTally(DAWPROJECT_IMPORT_LOSS_KINDS);
+  for (const issue of mediaIssues) {
+    tally.add(issue.reason === 'missing' ? 'missing-media' : 'unreadable-media', 1, issue.path);
+  }
+  for (const loss of losses) tally.add(loss.kind, 1, lossDetail(loss));
+  return tally.report();
+}
 
 function parseXml(bytes: Uint8Array, entryName: string): Document {
   let doc: Document;
@@ -263,15 +343,22 @@ function readSendRefs(channel: Element | null | undefined): DawprojectSendRef[] 
 
 function readInsertDevices(
   channel: Element | null | undefined,
+  trackName: string,
+  losses: DawprojectImportLoss[],
   allowSidechain = true,
   sidechainSources: ReadonlyMap<string, number> = new Map(),
 ): InsertSlot[] {
   return children(children(channel, 'Devices')[0])
     .map((device): InsertSlot | null => {
-      if (device.tagName !== 'BuiltinDevice') return null;
-      if (device.getAttribute('deviceVendor') !== SONARE_DEVICE_VENDOR) return null;
       const processor = device.getAttribute('deviceName')?.trim();
-      if (!processor) return null;
+      if (
+        device.tagName !== 'BuiltinDevice' ||
+        device.getAttribute('deviceVendor') !== SONARE_DEVICE_VENDOR ||
+        !processor
+      ) {
+        losses.push({ kind: 'foreign-device', trackName, device: processor || device.tagName });
+        return null;
+      }
       const params: Record<string, number | boolean> = {};
       for (const parameter of children(children(device, 'Parameters')[0])) {
         const name = parameter.getAttribute('name')?.trim();
@@ -381,8 +468,9 @@ function readAutomationParameterRefs(
 
 function readTracks(
   project: Document,
-  vcaGainDbById: ReadonlyMap<string, number> = new Map(),
-  sonareMetadata: SonareDawprojectMetadata = { schemaVersion: 1 },
+  vcaGainDbById: ReadonlyMap<string, number>,
+  sonareMetadata: SonareDawprojectMetadata,
+  losses: DawprojectImportLoss[],
 ): ImportedTrack[] {
   const tracks: ImportedTrack[] = [];
   let fallbackIndex = 0;
@@ -413,11 +501,12 @@ function readTracks(
     const vcaOffsetDb = vcaId === undefined ? 0 : (vcaGainDbById.get(vcaId) ?? 0);
     const sonareVolume = extension?.volume ?? numberAttr(track, 'sonareVolume');
     const sonareStripGainDb = extension?.stripGainDb ?? numberAttr(track, 'sonareStripGainDb');
+    const name = track.getAttribute('name') || `Track ${tracks.length + 1}`;
     tracks.push({
       id: track.getAttribute('id') || `track-${index}`,
       channelId: channel?.getAttribute('id') || `channel-${index}`,
       destination: channel?.getAttribute('destination') ?? null,
-      name: track.getAttribute('name') || `Track ${tracks.length + 1}`,
+      name,
       kind,
       role: role ?? 'regular',
       isEffectBus: role === 'effect' && sonareTrackKind !== 'aux',
@@ -438,6 +527,8 @@ function readTracks(
       sendRefs: readSendRefs(channel),
       inserts: readInsertDevices(
         channel,
+        name,
+        losses,
         kind !== 'group',
         new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),
       ),
@@ -458,7 +549,11 @@ function readTracks(
   return tracks;
 }
 
-function readMaster(project: Document, sonareMetadata: SonareDawprojectMetadata): ImportedMaster {
+function readMaster(
+  project: Document,
+  sonareMetadata: SonareDawprojectMetadata,
+  losses: DawprojectImportLoss[],
+): ImportedMaster {
   const masterTrack = Array.from(project.querySelectorAll('Structure Track')).find((track) => {
     return children(track, 'Channel')[0]?.getAttribute('role') === 'master';
   });
@@ -470,6 +565,8 @@ function readMaster(project: Document, sonareMetadata: SonareDawprojectMetadata)
   if (pan !== null) strip.pan = Math.min(1, Math.max(-1, pan * 2 - 1));
   strip.inserts = readInsertDevices(
     masterChannel,
+    masterTrack?.getAttribute('name') || 'Master',
+    losses,
     true,
     new Map(Object.entries(sonareMetadata.sidechainSources ?? {})),
   );
@@ -555,6 +652,7 @@ function applyMixerRouting(
   tracks: ImportedTrack[],
   master: ReturnType<typeof createDefaultStrip>,
   vcaGroups: VcaGroup[],
+  losses: DawprojectImportLoss[],
 ): ProjectDocument['mixer'] | undefined {
   const buses: MixerBus[] = [];
   const busByChannelId = new Map<string, string>();
@@ -572,6 +670,18 @@ function applyMixerRouting(
       gainDb: linearToDb(track.volume),
       ...(track.pan !== 0 || track.inserts.length > 0 ? { strip } : {}),
     });
+  }
+  // Bus strips carry no sends, and a send must address an imported bus.
+  for (const track of tracks) {
+    for (const send of track.sendRefs) {
+      if (track.isEffectBus || !busByChannelId.has(send.destination)) {
+        losses.push({
+          kind: 'unmapped-send',
+          trackName: track.name,
+          destination: send.destination,
+        });
+      }
+    }
   }
   const hasMasterState = master.inserts.length > 0 || master.gainDb !== 0 || master.pan !== 0;
   if (buses.length === 0 && !hasMasterState && vcaGroups.length === 0) return undefined;
@@ -701,6 +811,12 @@ function assertBeatBasedArrangement(project: Document): void {
   }
 }
 
+/** The element's own non-beat `timeUnit`, or null when it is beat-based. */
+function nonBeatTimeUnit(element: Element | undefined): string | null {
+  const unit = element?.getAttribute('timeUnit')?.trim();
+  return unit && unit !== 'beats' ? unit : null;
+}
+
 export interface FlattenedClipPlacement {
   startPpq: number;
   lengthPpq: number;
@@ -753,22 +869,51 @@ function attachArrangementClips(
   project: Document,
   tracks: ImportedTrack[],
   tempoMap: NormalizedTempoMap,
-  mediaAssets: ReadonlyMap<string, string> = new Map(),
-  losses: DawprojectImportLoss[] = [],
+  mediaAssets: ReadonlyMap<string, string>,
+  losses: DawprojectImportLoss[],
 ): void {
   const byId = new Map(tracks.map((track) => [track.id, track]));
   const arrangementLanes = project.querySelector('Arrangement > Lanes');
   for (const lane of children(arrangementLanes, 'Lanes')) {
-    const track = byId.get(lane.getAttribute('track') ?? '');
-    if (!track) continue;
-    const clips = children(children(lane, 'Clips')[0], 'Clip');
+    const trackId = lane.getAttribute('track') ?? '';
+    const track = byId.get(trackId);
+    const clipsTimeline = children(lane, 'Clips')[0];
+    const clips = children(clipsTimeline, 'Clip');
+    if (!track) {
+      if (clips.length > 0) losses.push({ kind: 'orphan-lane', track: trackId || 'Lanes' });
+      continue;
+    }
+    const clipsUnit = nonBeatTimeUnit(clipsTimeline);
+    if (clipsUnit !== null && clips.length > 0) {
+      losses.push({
+        kind: 'unsupported-time-unit',
+        clipName: track.name,
+        attribute: 'timeUnit',
+        unit: clipsUnit,
+      });
+      continue;
+    }
     for (const clip of clips) {
       for (const leaf of flattenClipLeaves(clip, losses)) {
         const points = children(leaf.element, 'Points');
         const hasMidiContent =
           children(leaf.element, 'Notes').length > 0 ||
           (points.length > 0 && track.kind === 'midi');
-        if (hasMidiContent) {
+        const contentUnit =
+          leaf.placement.contentTimeUnit !== 'beats' ? leaf.placement.contentTimeUnit : null;
+        const timelineUnit = [...children(leaf.element, 'Notes'), ...points]
+          .map(nonBeatTimeUnit)
+          .find((unit) => unit !== null);
+        if (hasMidiContent && (contentUnit !== null || timelineUnit !== undefined)) {
+          // MIDI note and expression times are read as beats; any other unit
+          // would land them at the wrong position.
+          losses.push({
+            kind: 'unsupported-time-unit',
+            clipName: leaf.placement.name,
+            attribute: contentUnit !== null ? 'contentTimeUnit' : 'timeUnit',
+            unit: contentUnit ?? timelineUnit ?? '',
+          });
+        } else if (hasMidiContent) {
           // The official schema makes Clip content a choice: an expression
           // clip contains Points *instead of* Notes. A notes-only predicate
           // therefore misclassified valid MIDI expression clips as audio.
@@ -821,6 +966,16 @@ function attachArrangementMidiExpressions(
       '';
     const track = byId.get(trackId);
     const name = midiExpressionName(points);
+    const unit = nonBeatTimeUnit(points);
+    if (unit !== null) {
+      losses.push({
+        kind: 'unsupported-time-unit',
+        clipName: track?.name ?? name,
+        attribute: 'timeUnit',
+        unit,
+      });
+      continue;
+    }
     if (!track) {
       midiExpressionLoss({ name: 'MIDI expression' }, name, 'missing-track', losses);
       continue;
@@ -884,6 +1039,7 @@ function attachArrangementAutomation(
   tracks: ImportedTrack[],
   mixer: ProjectDocument['mixer'] | undefined,
   master: ImportedMaster,
+  losses: DawprojectImportLoss[],
 ): DocumentAutomationLane[] {
   const byId = new Map(tracks.map((track) => [track.id, track]));
   const masterAutomation: DocumentAutomationLane[] = [];
@@ -896,11 +1052,30 @@ function attachArrangementAutomation(
     const points = children(lane, 'Points');
     for (const entry of points) {
       const laneTrackId = entry.getAttribute('track') ?? lane?.getAttribute('track') ?? '';
-      if (!laneTrackId) continue;
+      if (!laneTrackId || isPotentialMidiExpressionPoints(entry)) continue;
+      const parameter = entry.querySelector('Target')?.getAttribute('parameter')?.trim() ?? '';
+      const hasPoints = children(entry, 'RealPoint').length > 0;
       const track = byId.get(laneTrackId);
+      const unit = nonBeatTimeUnit(entry);
+      if (unit !== null) {
+        if (hasPoints) {
+          losses.push({
+            kind: 'unsupported-time-unit',
+            clipName: track?.name ?? laneTrackId,
+            attribute: 'timeUnit',
+            unit,
+          });
+        }
+        continue;
+      }
       if (track) {
         const automation = readAutomationLane(entry, track.automationRefs);
-        if (automation === null || (track.kind === 'group' && automation.param === 'pan')) continue;
+        if (automation === null || (track.kind === 'group' && automation.param === 'pan')) {
+          if (hasPoints) {
+            losses.push({ kind: 'unmapped-automation', trackName: track.name, parameter });
+          }
+          continue;
+        }
         if (track.mixerBusId) {
           const bus = mixer?.buses.find((entry) => entry.id === track.mixerBusId);
           if (bus) bus.automation = [...(bus.automation ?? []), automation];
@@ -912,6 +1087,11 @@ function attachArrangementAutomation(
       if (laneTrackId === master.trackId) {
         const automation = readAutomationLane(entry, master.automationRefs);
         if (automation) masterAutomation.push(automation);
+        else if (hasPoints) {
+          losses.push({ kind: 'unmapped-automation', trackName: 'Master', parameter });
+        }
+      } else if (hasPoints) {
+        losses.push({ kind: 'orphan-lane', track: laneTrackId });
       }
     }
   }
@@ -926,8 +1106,11 @@ function attachSonareMidiExpressions(
   for (const track of tracks) {
     track.clips.forEach((clip, clipIndex) => {
       if (clip.kind === 'audio') return;
-      const expression = sonareMetadata.midiExpressions?.[`${track.id}-clip-${clipIndex}`];
+      const key = `${track.id}-clip-${clipIndex}`;
+      const expression = sonareMetadata.midiExpressions?.[key];
       if (expression) Object.assign(clip, expression);
+      const sysEx = sonareMetadata.midiSysEx?.[key];
+      if (sysEx) clip.smfSysEx = sysEx;
     });
   }
 }
@@ -1037,16 +1220,16 @@ function importDawprojectDocuments(
   const losses: DawprojectImportLoss[] = [];
   const vcaGroups = readSonareVcaGroups(project, sonareMetadata);
   const vcaGainDbById = new Map(vcaGroups.map((group) => [group.id, group.gainDb]));
-  const tracks = readTracks(project, vcaGainDbById, sonareMetadata);
-  const master = readMaster(project, sonareMetadata);
+  const tracks = readTracks(project, vcaGainDbById, sonareMetadata, losses);
+  const master = readMaster(project, sonareMetadata, losses);
   rebindImportedSidechainSourceIndexes(tracks, master.strip);
   scrubImportedSidechainSourceIndexes(tracks, master.strip);
-  const mixer = applyMixerRouting(tracks, master.strip, vcaGroups);
+  const mixer = applyMixerRouting(tracks, master.strip, vcaGroups, losses);
   const tempoSegments = readTempo(project);
   attachArrangementClips(project, tracks, normalizeTempoMap(tempoSegments), mediaAssets, losses);
   attachArrangementMidiExpressions(project, tracks, losses);
   attachSonareMidiExpressions(tracks, sonareMetadata);
-  const masterAutomation = attachArrangementAutomation(project, tracks, mixer, master);
+  const masterAutomation = attachArrangementAutomation(project, tracks, mixer, master, losses);
   const documentTracks = tracks.filter((track) => !track.isEffectBus);
   const sections = sonareMetadata.sections ?? [];
   const documentIndexByImportedIndex = new Map<number, number>();
@@ -1089,6 +1272,9 @@ function importDawprojectDocuments(
     ),
     sections,
     ...(sonareMetadata.chords?.length ? { chords: sonareMetadata.chords } : {}),
+    ...(sonareMetadata.pickupLengthPpq !== undefined
+      ? { pickupLengthPpq: sonareMetadata.pickupLengthPpq }
+      : {}),
   };
   if (mixer) doc.mixer = mixer;
   if (masterAutomation.length > 0) doc.masterAutomation = masterAutomation;
@@ -1192,5 +1378,6 @@ export async function importDawprojectWithMediaResult(
     document: parsed.document,
     media: { imported: media.imported, issues: media.issues },
     losses: parsed.losses,
+    loss: dawprojectImportLossReport(parsed.losses, media.issues),
   };
 }

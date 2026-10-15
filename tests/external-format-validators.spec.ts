@@ -412,7 +412,7 @@ describe.skipIf(!ENABLED)('external format schema release gate', () => {
       const imported = importMusicXmlWithReport(roundTripped, 'notation-cli-output.musicxml');
       expect(imported.document.tracks).toHaveLength(1);
       expect(imported.document.tracks[0].clips[0].notes).toHaveLength(1);
-      expect(imported.report.issues).toEqual([]);
+      expect(imported.report.entries).toEqual([]);
     },
   );
 });

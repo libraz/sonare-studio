@@ -4,14 +4,15 @@
  * performance lanes) is not lost.
  */
 
+import type { LossReport } from '@/export/loss-descriptor';
 import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
+import { inspectMidi2ClipExportLoss } from './midi2-export-loss';
 import {
   type DocumentClip,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
-  type ProjectDocument,
   serializeProject,
 } from './serialization';
-import { inspectSmfExportLoss, projectDocumentToSmf, type SmfExportLossReport } from './smf';
+import { type MidiExportLossKind, projectDocumentToSmfWithLoss } from './smf';
 import { getProject, useProjectStore } from './store';
 
 /** Bytes plus suggested filename produced by the export commands. */
@@ -20,40 +21,8 @@ export interface MidiExportResult {
   bytes: Uint8Array;
   /** Suggested filename including the extension. */
   filename: string;
-  /** SMF structure losses that require explicit user confirmation. */
-  smfLoss?: SmfExportLossReport;
-  /** App-level MIDI data omitted by the native SMF2CLIP exporter. */
-  midi2ClipLoss?: Midi2ClipExportLossReport;
-}
-
-/**
- * MIDI data retained by Sonare's document but unavailable to the native
- * SMF2CLIP export ABI.
- */
-export interface Midi2ClipExportLossReport {
-  /** Expression lanes omitted from the exported clip file. */
-  expressionLanes: number;
-  /** Opaque SMF SysEx packets omitted from the exported clip file. */
-  sysExPackets: number;
-}
-
-/** Counts document MIDI data that Project.exportClipFile cannot receive. */
-export function inspectMidi2ClipExportLoss(document: ProjectDocument): Midi2ClipExportLossReport {
-  let expressionLanes = 0;
-  let sysExPackets = 0;
-  for (const track of document.tracks) {
-    for (const clip of track.clips) {
-      if ((clip.kind ?? 'midi') !== 'midi') continue;
-      expressionLanes +=
-        (clip.ccLanes?.length ?? 0) +
-        (clip.pitchBendLanes?.length ?? 0) +
-        (clip.programChangeLanes?.length ?? 0) +
-        (clip.channelPressureLanes?.length ?? 0) +
-        (clip.polyPressureLanes?.length ?? 0);
-      sysExPackets += clip.smfSysEx?.length ?? 0;
-    }
-  }
-  return { expressionLanes, sysExPackets };
+  /** Document features the file does not carry; confirm before saving it. */
+  loss: LossReport<MidiExportLossKind>;
 }
 
 /** Replaces characters that are unsafe in filenames and trims whitespace. */
@@ -76,12 +45,8 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
 export async function exportProjectSmf(baseName?: string): Promise<MidiExportResult> {
   const store = useProjectStore();
   const name = sanitizeBaseName(baseName ?? store.projectName, 'project');
-  const document = serializeProject();
-  return {
-    bytes: await projectDocumentToSmf(document),
-    filename: ensureFileExtension(name, '.mid'),
-    smfLoss: inspectSmfExportLoss(document),
-  };
+  const exported = await projectDocumentToSmfWithLoss(serializeProject());
+  return { ...exported, filename: ensureFileExtension(name, '.mid') };
 }
 
 /**
@@ -98,7 +63,7 @@ export function exportProjectClipFile(baseName?: string): MidiExportResult {
   return {
     bytes: copyBytes(project.exportClipFile()),
     filename: ensureFileExtension(name, '.midi2'),
-    midi2ClipLoss: inspectMidi2ClipExportLoss(serializeProject()),
+    loss: inspectMidi2ClipExportLoss(serializeProject()),
   };
 }
 
@@ -171,29 +136,27 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
   }
 
   const name = sanitizeBaseName(baseName ?? clip.name, 'clip');
-  return {
-    bytes: await projectDocumentToSmf({
-      schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
-      name,
-      sampleRate: 48000,
-      tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
-      timeSignatures: store.timeSignatures.map((signature) => ({ ...signature })),
-      tracks: [
-        {
-          name: track.name,
-          color: track.color,
-          kind: 'midi',
-          mute: false,
-          solo: false,
-          volume: 1,
-          pan: 0,
-          ...(track.instrument ? { instrument: track.instrument } : {}),
-          clips: [documentClip],
-        },
-      ],
-      markers: [],
-      sections: [],
-    }),
-    filename: ensureFileExtension(name, '.mid'),
-  };
+  const exported = await projectDocumentToSmfWithLoss({
+    schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
+    name,
+    sampleRate: 48000,
+    tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
+    timeSignatures: store.timeSignatures.map((signature) => ({ ...signature })),
+    tracks: [
+      {
+        name: track.name,
+        color: track.color,
+        kind: 'midi',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
+        ...(track.instrument ? { instrument: track.instrument } : {}),
+        clips: [documentClip],
+      },
+    ],
+    markers: [],
+    sections: [],
+  });
+  return { ...exported, filename: ensureFileExtension(name, '.mid') };
 }

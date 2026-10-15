@@ -156,6 +156,7 @@ describe('useProjectExport', () => {
     const store = useProjectStore();
     const midiTrackId = addTrack({ name: 'MIDI source', kind: 'midi' });
     store.scoreDisplaySettings = { ...store.scoreDisplaySettings, fullScoreEnabled: true };
+    vi.mocked(confirmDialog).mockResolvedValueOnce(true);
     const { downloadBlobFile, projectExport } = setup();
 
     const availability = projectExport.exportMusicXmlAction();
@@ -164,6 +165,10 @@ describe('useProjectExport', () => {
     expect(availability).toEqual({ available: true, mode: 'full-score', reason: null });
     expect(store.tracks.some((track) => track.id === midiTrackId && track.kind === 'midi')).toBe(
       true,
+    );
+    // The score cannot carry the audio track, so the export lists it first.
+    expect(vi.mocked(confirmDialog).mock.calls[0][0].message).toContain(
+      '1 audio or group track(s) with clips (Keys)',
     );
     expect(downloadBlobFile).toHaveBeenCalledTimes(1);
   });
@@ -319,7 +324,7 @@ describe('useProjectExport', () => {
     store.clips[0].gain = 0.5;
     store.clips[0].takes = [{ assetId: 'take-2', name: 'Take 2' }];
     store.clips[0].compSegments = [{ startPpq: 0, takeIndex: 0, crossfadePpq: 0.02 }];
-    store.clips[0].warp = { enabled: true, sourceBpm: 96 };
+    store.clips[0].warp = { enabled: false, sourceBpm: 96 };
     store.tracks[0].instrument = { kind: 'synth-preset', preset: 'bright-piano' };
     store.tracks[0].midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
     store.projectExternalMidi = {
@@ -399,7 +404,7 @@ describe('useProjectExport', () => {
 
     expect(confirmDialog).toHaveBeenCalledTimes(1);
     const prompt = vi.mocked(confirmDialog).mock.calls[0][0];
-    expect(prompt.message).toContain('audio clip warp');
+    expect(prompt.message).toContain('disabled audio clip warp');
     expect(prompt.message).toContain('per-clip gain');
     expect(prompt.message).toContain('audio clip media reference');
     expect(prompt.message).toContain('alternate audio take');
@@ -409,7 +414,9 @@ describe('useProjectExport', () => {
     expect(prompt.message).toContain('non-hex track color');
     expect(prompt.message).not.toContain('legacy track pan');
     expect(prompt.message).toContain('external MIDI route');
-    expect(prompt.message).toContain('arrangement section');
+    // Sections round-trip through the Sonare sidecar and are not listed as omitted.
+    expect(prompt.message).not.toContain('arrangement section');
+    expect(prompt.message).toContain('section starts as markers');
     expect(prompt.message).not.toContain('chord track symbol');
     expect(prompt.message).toContain('score display setting');
     expect(prompt.message).toContain('MIDI learn CC binding');
@@ -424,6 +431,29 @@ describe('useProjectExport', () => {
     expect(prompt.message).toContain('channel strip EQ');
     expect(prompt.message).toContain('advanced channel strip DSP');
     expect(prompt.message).not.toContain('insert sidechain key');
+    expect(downloadBlobFile).not.toHaveBeenCalled();
+  });
+
+  it('asks before a MusicXML export that moves off-grid notes and drops expression', async () => {
+    const doc = makeDoc('midi');
+    doc.tracks[0].clips[0].notes = [
+      { pitch: 60, velocity: 100, startPpq: 0.1, durationPpq: 1, channel: 0 },
+    ];
+    doc.tracks[0].clips[0].ccLanes = [
+      { controller: 1, channel: 0, points: [{ ppq: 0, value: 64 }] },
+    ];
+    await loadProjectDocument(doc);
+    vi.mocked(confirmDialog).mockResolvedValueOnce(false);
+    const { downloadBlobFile, projectExport } = setup();
+
+    projectExport.exportMusicXmlAction();
+    await flushPromises();
+
+    expect(confirmDialog).toHaveBeenCalledTimes(1);
+    const prompt = vi.mocked(confirmDialog).mock.calls[0][0];
+    expect(prompt.title).toBe('MusicXML export limitations');
+    expect(prompt.message).toContain('1 note position(s) or length(s) moved to the display grid');
+    expect(prompt.message).toContain('1 MIDI expression lane(s)');
     expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 

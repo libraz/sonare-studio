@@ -22,14 +22,6 @@ export const dialogs = {
     restoreBackupMediaSkippedMessage:
       'The backup was restored, but these invalid or incomplete media entries could not be recovered:\n{items}',
     restoreBackupMediaSkippedConfirm: 'OK',
-    exportSmfLossTitle: 'SMF export omits empty structure',
-    exportSmfLossMessage:
-      'SMF cannot represent {clips} empty MIDI clip(s), may omit {tracks} empty MIDI track(s), and cannot preserve mute on {mutedTracks} MIDI track(s). Export the remaining MIDI events?',
-    exportSmfLossConfirm: 'Export SMF',
-    exportMidi2LossTitle: 'MIDI 2.0 clip export omits app-level MIDI data',
-    exportMidi2LossMessage:
-      'This export omits {expressionLanes} expression lane(s) and {sysExPackets} SysEx packet(s). Export the remaining note data?',
-    exportMidi2LossConfirm: 'Export MIDI 2.0 clip file',
     saveRevisionTitle: 'Save revision',
     saveRevisionMessage: 'Name this revision so you can return to it later.',
     revisionLabelPlaceholder: 'Revision name',
@@ -38,7 +30,10 @@ export const dialogs = {
     saveProjectOverwriteTitle: 'Replace saved project?',
     saveProjectOverwriteMessage: 'A saved project named “{name}” already exists. Replace it?',
     projectNamePlaceholder: 'Project name',
+    projectNameInvalid: 'Enter a project name that is not empty, "." or "..".',
     projectNameReserved: 'The project name "autosave" is reserved for internal recovery data.',
+    saveRestoredSlotMessage:
+      'A browser-backup restore replaced the stored copy of “{name}”. Replace it with the open project?',
     save: 'Save',
     saveLayoutTitle: 'Save layout',
     saveLayoutMessage: 'Save the current panel arrangement under a name.',
@@ -175,6 +170,14 @@ export const dialogs = {
     clippingWarningTitle: 'Clipping in integer export',
     clippingWarningMessage: 'Peak is {peak} dBFS. Integer encoding will hard-clip it. Continue?',
     clippingWarningContinue: 'Export clipped audio',
+    metadataLoss: {
+      title: 'Audio export limitations',
+      message: 'The selected format will omit:\n{items}\n\nContinue export?',
+      confirm: 'Export without them',
+      items: {
+        markers: '{count} marker(s) and section start(s) ({details} cannot store them)',
+      },
+    },
     clippingReport: 'Clipping occurred during integer encoding.',
     clippingCensus: '{samples} samples ({percent}%) clipped in {regions} run(s), first at {time}.',
     preflightBlocked: 'Audio export cannot start until these media problems are fixed:',

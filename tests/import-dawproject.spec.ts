@@ -1827,6 +1827,107 @@ describe('importDawproject', () => {
     ]);
   });
 
+  it('reports foreign devices, unmapped sends, unmapped automation and orphan lanes', async () => {
+    const exported = await exportDawproject(makeDoc(), { includeAudio: false });
+    const rewritten = rewriteProjectXml(exported, (project) => {
+      const channel = project.querySelector('Track[id="track-0"] > Channel');
+      if (!channel) throw new Error('missing channel');
+      let devices = Array.from(channel.children).find((child) => child.tagName === 'Devices');
+      if (!devices) {
+        devices = project.createElement('Devices');
+        channel.appendChild(devices);
+      }
+      const plugin = project.createElement('Vst3Plugin');
+      plugin.setAttribute('deviceName', 'Pro-Q');
+      devices.appendChild(plugin);
+      let sends = Array.from(channel.children).find((child) => child.tagName === 'Sends');
+      if (!sends) {
+        sends = project.createElement('Sends');
+        channel.appendChild(sends);
+      }
+      const send = project.createElement('Send');
+      send.setAttribute('destination', 'nowhere');
+      sends.appendChild(send);
+      const trackLanes = project.querySelector('Arrangement > Lanes > Lanes[track="track-0"]');
+      const points = project.createElement('Points');
+      const target = project.createElement('Target');
+      target.setAttribute('parameter', 'plugin-param-7');
+      const point = project.createElement('RealPoint');
+      point.setAttribute('time', '0');
+      point.setAttribute('value', '0.5');
+      points.append(target, point);
+      trackLanes?.appendChild(points);
+      const orphan = project.createElement('Lanes');
+      orphan.setAttribute('track', 'ghost');
+      const orphanPoints = points.cloneNode(true) as Element;
+      orphan.appendChild(orphanPoints);
+      project.querySelector('Arrangement > Lanes')?.appendChild(orphan);
+    });
+
+    const result = await importDawprojectWithMediaResult(rewritten);
+
+    expect(result.loss.entries).toEqual([
+      { kind: 'foreign-device', count: 1, details: ['Keys: Pro-Q'] },
+      { kind: 'unmapped-automation', count: 1, details: ['Keys: plugin-param-7'] },
+      { kind: 'unmapped-send', count: 1, details: ['Keys: nowhere'] },
+      { kind: 'orphan-lane', count: 1, details: ['ghost'] },
+    ]);
+  });
+
+  it('reports MIDI content and automation timed in seconds instead of reading them as beats', async () => {
+    const exported = await exportDawproject(
+      makeDoc({
+        tracks: [
+          makeTrack([makeMidiClip()], {
+            automation: [
+              {
+                param: 'pan',
+                enabled: true,
+                points: [{ ppq: 4, value: 0.5, curve: 'linear' }],
+              },
+            ],
+          }),
+        ],
+      }),
+      { includeAudio: false },
+    );
+    const rewritten = rewriteProjectXml(exported, (project) => {
+      project.querySelector('Arrangement Clip')?.setAttribute('contentTimeUnit', 'seconds');
+      for (const points of Array.from(project.querySelectorAll('Arrangement Points'))) {
+        if (points.closest('Clip')) continue;
+        points.setAttribute('timeUnit', 'seconds');
+      }
+    });
+
+    const result = await importDawprojectWithMediaResult(rewritten);
+
+    expect(result.document.tracks[0].clips).toEqual([]);
+    expect(result.document.tracks[0].automation).toBeUndefined();
+    expect(result.loss.entries).toEqual([
+      {
+        kind: 'unsupported-time-unit',
+        count: 2,
+        details: ['Phrase: contentTimeUnit=seconds', 'Keys: timeUnit=seconds'],
+      },
+    ]);
+  });
+
+  it('round-trips the pickup length and SMF SysEx through the Sonare sidecar', async () => {
+    const sysEx = [{ ppq: 0, status: 0xf0 as const, data: [0x41, 0x10, 0x42, 0xf7] }];
+    const exported = await exportDawproject(
+      makeDoc({
+        pickupLengthPpq: 1,
+        tracks: [makeTrack([makeMidiClip({ smfSysEx: sysEx })])],
+      }),
+      { includeAudio: false },
+    );
+
+    const imported = importDawproject(exported);
+
+    expect(imported.pickupLengthPpq).toBe(1);
+    expect(imported.tracks[0].clips[0].smfSysEx).toEqual(sysEx);
+  });
+
   it('rejects unreadable archives and archives without project.xml', () => {
     expect(() => importDawproject(new Uint8Array([1, 2, 3]))).toThrow('not a readable zip');
     const zip = zipSync({ 'metadata.xml': strToU8('<MetaData/>') });

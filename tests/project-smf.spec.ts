@@ -2,9 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProjectDocument } from '@/project/serialization';
 import {
   extractSmfSysEx,
-  inspectSmfExportLoss,
+  gmVolumeCc,
   inspectSmfSysEx,
   projectDocumentToSmf,
+  projectDocumentToSmfWithLoss,
   SMF_TEMPO_RAMP_MAX_ERROR_BPM,
   sampleTempoRampsForSmf,
   smfToProjectDocument,
@@ -107,61 +108,212 @@ describe('smfToProjectDocument', () => {
     expect(sampled).toEqual([{ startPpq: 0, bpm: 120 }]);
   });
 
-  it('reports empty MIDI clips and tracks before a lossy SMF export', () => {
-    expect(
-      inspectSmfExportLoss({
-        schemaVersion: 3,
-        name: 'Empty structures',
-        sampleRate: 48000,
-        tempoSegments: [{ startPpq: 0, bpm: 120 }],
-        timeSignatures: [],
-        tracks: [
-          {
-            name: 'Empty track',
-            color: '#000',
-            kind: 'midi',
-            mute: false,
-            solo: false,
-            volume: 1,
-            pan: 0,
-            clips: [],
-          },
-          {
-            name: 'Mixed',
-            color: '#111',
-            kind: 'midi',
-            mute: false,
-            solo: false,
-            volume: 1,
-            pan: 0,
-            clips: [
-              {
-                name: 'Empty clip',
-                startPpq: 0,
-                lengthPpq: 1,
-                sourceOffsetPpq: 0,
-                gain: 1,
-                loopEnabled: false,
-                loopLengthPpq: 0,
-                notes: [],
-              },
-              {
-                name: 'Eventful',
-                startPpq: 1,
-                lengthPpq: 1,
-                sourceOffsetPpq: 0,
-                gain: 1,
-                loopEnabled: false,
-                loopLengthPpq: 0,
-                notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
-              },
-            ],
-          },
-        ],
-        markers: [],
-        sections: [],
-      }),
-    ).toEqual({ emptyMidiClips: 1, emptyMidiTracks: 1, mutedMidiTracks: 0 });
+  it('reports empty MIDI clips and tracks before a lossy SMF export', async () => {
+    const { loss } = await projectDocumentToSmfWithLoss({
+      schemaVersion: 3,
+      name: 'Empty structures',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [],
+      tracks: [
+        {
+          name: 'Empty track',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [],
+        },
+        {
+          name: 'Mixed',
+          color: '#111',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              name: 'Empty clip',
+              startPpq: 0,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              notes: [],
+            },
+            {
+              name: 'Eventful',
+              startPpq: 1,
+              lengthPpq: 1,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+    });
+    expect(loss.entries).toEqual([
+      { kind: 'emptyMidiTracks', count: 1, details: ['Empty track'] },
+      { kind: 'emptyMidiClips', count: 1, details: ['Empty clip'] },
+    ]);
+  });
+
+  it('writes no notes for a silenced clip and reports what SMF cannot carry', async () => {
+    const midiClip = (name: string, gain: number) => ({
+      name,
+      startPpq: 0,
+      lengthPpq: 4,
+      sourceOffsetPpq: 0,
+      gain,
+      loopEnabled: false,
+      loopLengthPpq: 0,
+      kind: 'midi' as const,
+      notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+    });
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Losses',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [],
+      tracks: [
+        {
+          name: 'Silenced',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [
+            {
+              ...midiClip('Muted clip', 0),
+              ccLanes: [{ controller: 1, channel: 0, points: [{ ppq: 0, value: 10 }] }],
+            },
+          ],
+        },
+        {
+          name: 'Lead',
+          color: '#111',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          midiFx: {
+            transposeSemitones: 12,
+            quantizeStrength: 0,
+            quantizeGrid: 0.25,
+            velocityScale: 1,
+            velocityOffset: 0,
+            velocityGamma: 1,
+          } as NonNullable<ProjectDocument['tracks'][number]['midiFx']>,
+          automation: [
+            { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: -6, curve: 'linear' }] },
+          ],
+          expressionMap: { entries: [] },
+          clips: [{ ...midiClip('Lead', 0.5), fadeInPpq: 1 }],
+        },
+        {
+          name: 'Drums audio',
+          color: '#222',
+          kind: 'audio',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          clips: [{ ...midiClip('Loop', 1), kind: 'audio', assetId: 'asset-1', notes: [] }],
+        },
+      ],
+      markers: [],
+      sections: [],
+    };
+
+    const { bytes, loss } = await projectDocumentToSmfWithLoss(source);
+    const roundTrip = await smfToProjectDocument(bytes, 'losses.mid');
+
+    // Only the audible clip's note survives; the silenced clip keeps its CC lane.
+    const notes = roundTrip.tracks.flatMap((track) => track.clips.flatMap((clip) => clip.notes));
+    expect(notes).toHaveLength(1);
+    const lanes = roundTrip.tracks.flatMap((track) => track.clips.flatMap((c) => c.ccLanes ?? []));
+    expect(lanes.some((lane) => lane.controller === 1)).toBe(true);
+    expect(loss.entries.map((entry) => [entry.kind, entry.count])).toEqual([
+      ['nonMidiTracks', 1],
+      ['clipGains', 1],
+      ['clipFades', 1],
+      ['midiFxTracks', 1],
+      ['expressionMaps', 1],
+      ['automationLanes', 1],
+    ]);
+  });
+
+  it('writes CC7 on the General MIDI volume curve including the VCA offset', async () => {
+    expect(gmVolumeCc(10 ** (-6 / 20))).toBe(90);
+    expect(gmVolumeCc(1)).toBe(127);
+    expect(gmVolumeCc(2)).toBe(127);
+    const source: ProjectDocument = {
+      schemaVersion: 3,
+      name: 'Levels',
+      sampleRate: 48000,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+      timeSignatures: [],
+      tracks: [
+        {
+          name: 'Boosted',
+          color: '#000',
+          kind: 'midi',
+          mute: false,
+          solo: false,
+          volume: 1,
+          pan: 0,
+          mixer: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+          vcaId: 'vca-1',
+          clips: [
+            {
+              name: 'Boosted',
+              startPpq: 0,
+              lengthPpq: 4,
+              sourceOffsetPpq: 0,
+              gain: 1,
+              loopEnabled: false,
+              loopLengthPpq: 0,
+              kind: 'midi',
+              notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+            },
+          ],
+        },
+      ],
+      markers: [],
+      sections: [],
+      mixer: {
+        master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+        buses: [],
+        vcaGroups: [{ id: 'vca-1', name: 'VCA', gainDb: -6 }],
+      },
+    };
+    const { bytes, loss } = await projectDocumentToSmfWithLoss(source);
+    const roundTrip = await smfToProjectDocument(bytes, 'levels.mid');
+    expect(roundTrip.tracks[0].clips[0].ccLanes).toContainEqual({
+      controller: 7,
+      channel: 0,
+      points: [{ ppq: 0, value: 90 }],
+    });
+    expect(loss.entries).toEqual([]);
+
+    source.mixer!.vcaGroups = [{ id: 'vca-1', name: 'VCA', gainDb: 6 }];
+    const boosted = await projectDocumentToSmfWithLoss(source);
+    expect(boosted.loss.entries).toEqual([
+      { kind: 'clampedTrackGains', count: 1, details: ['Boosted'] },
+    ]);
   });
 
   it('writes sampled tempo events that survive an SMF round trip', async () => {
@@ -613,7 +765,7 @@ describe('smfToProjectDocument', () => {
     ]);
     expect(roundTrip.tracks[0].clips[0].ccLanes).toEqual(
       expect.arrayContaining([
-        { controller: 7, channel: 0, points: [{ ppq: 0, value: 64 }] },
+        { controller: 7, channel: 0, points: [{ ppq: 0, value: 90 }] },
         { controller: 10, channel: 0, points: [{ ppq: 0, value: 32 }] },
       ]),
     );

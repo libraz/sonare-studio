@@ -907,6 +907,58 @@ describe('ExportDialog', () => {
     expect(download.mock.calls[0][1]).toBe('My Song.flac');
   });
 
+  it('lists markers a format cannot store before rendering, and cancels when declined', async () => {
+    const control = makeRender();
+    const encode = vi.fn(() => new Uint8Array([4, 5, 6]));
+    const { download } = mountDialog(control, {
+      getDocument: () => ({
+        ...makeDocument(),
+        markers: [{ ppq: 0, name: 'Intro' }],
+        sections: [{ name: 'Verse', color: '#123456', startPpq: 4, endPpq: 8 }],
+      }),
+      encoders: [
+        { id: 'flac', label: 'FLAC (lossless)', extension: '.flac', mime: 'audio/flac', encode },
+      ],
+    });
+
+    await clickExport();
+    await flushPromises();
+
+    expect(control.render).not.toHaveBeenCalled();
+    expect(dialogQueue[0]?.title).toBe('Audio export limitations');
+    expect(dialogQueue[0]?.message).toContain(
+      '2 marker(s) and section start(s) (FLAC (lossless) cannot store them)',
+    );
+    resolveDialog(dialogQueue[0].id, false);
+    await flushPromises();
+    expect(control.render).not.toHaveBeenCalled();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('confirms before writing stems that clip in integer encoding', async () => {
+    const control = makeRender();
+    const { download } = mountDialog(control);
+    await checkRadio('.mode-stems');
+    await clickExport();
+    const loud = {
+      trackIndex: 0,
+      name: 'Drums',
+      channels: [new Float32Array([1.5, 0.2]), new Float32Array([0.3, 0.4])] as [
+        Float32Array,
+        Float32Array,
+      ],
+    };
+    control.resolve(makeResult({ stems: [loud] }));
+    await flushPromises();
+
+    expect(dialogQueue[0]?.title).toBe('Clipping in integer export');
+    expect(dialogQueue[0]?.message).toContain('3.5 dBFS');
+    expect(download).not.toHaveBeenCalled();
+    resolveDialog(dialogQueue[0].id, false);
+    await flushPromises();
+    expect(download).not.toHaveBeenCalled();
+  });
+
   it('normalizes mixdown loudness to the app target before encoding', async () => {
     const control = makeRender();
     const encode = vi.fn(() => new Uint8Array([1]));

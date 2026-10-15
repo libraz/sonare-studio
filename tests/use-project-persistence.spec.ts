@@ -32,9 +32,13 @@ import {
   addNote,
   clearMixerSnapshots,
   saveMixerSnapshot,
+  setAutomationLanePoints,
   setClipCcLane,
   setProjectExternalMidiDefault,
+  setTrackMidiFx,
+  setTrackMute,
 } from '@/project/commands';
+import { DEFAULT_MIDI_FX_CONFIG } from '@/project/midi-fx';
 import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
@@ -49,6 +53,7 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 vi.mock('@/persistence/opfs', () => ({
+  InvalidProjectNameError: class InvalidProjectNameError extends Error {},
   deleteProject: vi.fn(),
   isOpfsAvailable: () => true,
   isReservedProjectName: vi.fn(() => false),
@@ -105,6 +110,7 @@ vi.mock('@/export/dawproject', () => ({
     },
     media: { imported: [], issues: [] },
     losses: [],
+    loss: { entries: [] },
   })),
 }));
 
@@ -441,59 +447,59 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(useProjectStore().projectName).toBe('DAWproject Import');
   });
 
-  it('surfaces unsupported DAWproject time units after a successful import', async () => {
+  it('lists every DAWproject media issue and loss before replacing the project', async () => {
+    const store = useProjectStore();
+    await store.init();
+    store.projectName = 'Current Project';
     vi.mocked(pickAndReadDawproject).mockResolvedValue({
       name: 'odd-units.dawproject',
       bytes: new Uint8Array([1, 2, 3]),
     });
-    vi.mocked(importDawprojectWithMediaResult).mockResolvedValueOnce({
+    const imported = {
       document: makeDocument('Odd Units'),
-      media: { imported: [], issues: [] },
+      media: {
+        imported: [],
+        issues: [{ path: 'audio/vox.wav', external: false, reason: 'missing' as const }],
+      },
       losses: [
         {
-          kind: 'unsupported-time-unit',
-          clipName: 'Vox',
-          attribute: 'contentTimeUnit',
-          unit: 'samples',
+          kind: 'unsupported-midi-expression' as const,
+          clipName: 'Keys',
+          expression: 'channelPressure',
+          reason: 'malformed-point' as const,
         },
       ],
-    });
-    const { errorMessage, persistence } = setup();
+      loss: {
+        entries: [
+          { kind: 'missing-media' as const, count: 1, details: ['audio/vox.wav'] },
+          {
+            kind: 'unsupported-midi-expression' as const,
+            count: 1,
+            details: ['Keys: channelPressure'],
+          },
+        ],
+      },
+    };
+    vi.mocked(importDawprojectWithMediaResult).mockResolvedValue(imported);
+    const { autosave, confirmAction, persistence } = setup();
+    await persistence.markClean();
+    confirmAction.mockResolvedValue(false);
 
     await persistence.importDawprojectAction();
     await flushPromises();
 
-    expect(useProjectStore().projectName).toBe('Odd Units');
-    expect(errorMessage.value).toContain('1 unsupported time unit');
-    expect(errorMessage.value).toContain('contentTimeUnit=samples');
-  });
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringMatching(/1 missing audio file.+audio\/vox\.wav.+1 MIDI expression lane.+Keys/s),
+      expect.objectContaining({ title: 'DAWproject import limitations' }),
+    );
+    expect(store.projectName).toBe('Current Project');
+    expect(autosave.saveNow).not.toHaveBeenCalled();
 
-  it('surfaces unsupported nested DAWproject structures after a successful import', async () => {
-    vi.mocked(pickAndReadDawproject).mockResolvedValue({
-      name: 'nested-warp.dawproject',
-      bytes: new Uint8Array([1, 2, 3]),
-    });
-    vi.mocked(importDawprojectWithMediaResult).mockResolvedValueOnce({
-      document: makeDocument('Nested Warp'),
-      media: { imported: [], issues: [] },
-      losses: [
-        {
-          kind: 'unsupported-warp',
-          clipName: 'Drum Loop',
-          reason: 'time-units',
-          timeUnit: 'seconds',
-          contentTimeUnit: 'beats',
-        },
-      ],
-    });
-    const { errorMessage, persistence } = setup();
-
+    confirmAction.mockResolvedValue(true);
     await persistence.importDawprojectAction();
     await flushPromises();
 
-    expect(useProjectStore().projectName).toBe('Nested Warp');
-    expect(errorMessage.value).toContain('1 unsupported structure');
-    expect(errorMessage.value).toContain('Drum Loop: warp time-units');
+    expect(store.projectName).toBe('Odd Units');
   });
 
   it('shows a structured MusicXML loss report and keeps the project when declined', async () => {
@@ -507,10 +513,10 @@ describe('useProjectPersistence autosave refresh after load', () => {
     vi.mocked(importMusicXmlInWorker).mockResolvedValue({
       document: makeDocument('Imported MusicXML'),
       report: {
-        issues: [
-          { feature: 'lyrics', count: 2 },
-          { feature: 'harmony', count: 1 },
-          { feature: 'tempo-conflicts', count: 1 },
+        entries: [
+          { kind: 'lyrics', count: 2, details: [] },
+          { kind: 'harmony', count: 1, details: [] },
+          { kind: 'tempo-conflicts', count: 1, details: [] },
         ],
       },
     });
@@ -940,6 +946,96 @@ describe('useProjectPersistence autosave refresh after load', () => {
     // slot that no longer exists.
     expect(saveProjectChecked).toHaveBeenCalled();
     expect(vi.mocked(saveProjectChecked).mock.calls.at(-1)?.[2]).toBeNull();
+  });
+
+  it('shows a localized error when a rename is empty or reserved', async () => {
+    const opfs = await import('@/persistence/opfs');
+    const { errorMessage, persistence } = setup();
+    vi.mocked(promptDialog).mockResolvedValueOnce('autosave');
+    vi.mocked(isReservedProjectName).mockReturnValueOnce(true);
+
+    await persistence.renameStoredProject('Stored Project');
+    await flushPromises();
+
+    expect(errorMessage.value).toBe(
+      'The project name "autosave" is reserved for internal recovery data.',
+    );
+    expect(renameProject).not.toHaveBeenCalled();
+
+    const sanitize = vi.spyOn(opfs, 'sanitizeProjectName').mockImplementationOnce(() => {
+      throw new opfs.InvalidProjectNameError('..');
+    });
+    vi.mocked(promptDialog).mockResolvedValueOnce('..');
+    await persistence.renameStoredProject('Stored Project');
+    await flushPromises();
+
+    expect(errorMessage.value).toBe('Enter a project name that is not empty, "." or "..".');
+    expect(renameProject).not.toHaveBeenCalled();
+    sanitize.mockRestore();
+  });
+
+  it('asks before saving over a slot a backup restore replaced', async () => {
+    const store = useProjectStore();
+    await store.init();
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Stored Project')),
+      revision: 'revision-1',
+    });
+    vi.mocked(listProjects).mockResolvedValue([
+      { name: 'Stored Project', size: 1, lastModified: 0 },
+    ] as Awaited<ReturnType<typeof listProjects>>);
+    vi.mocked(saveProjectChecked).mockResolvedValue('revision-3');
+    const { confirmAction, persistence } = setup();
+    await persistence.openStoredProject('Stored Project');
+    await flushPromises();
+    vi.mocked(pickAndReadBrowserBackup).mockResolvedValue({
+      name: 'backup.sonare-backup',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(restoreBrowserBackup).mockResolvedValue({ projects: 1, assets: 0, fonts: 0 });
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Stored Project')),
+      revision: 'revision-2',
+    });
+    persistence.importBrowserBackupAction();
+    await flushPromises();
+    confirmAction.mockClear();
+    confirmAction.mockResolvedValue(false);
+
+    persistence.saveProjectAction();
+    await flushPromises();
+
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringContaining('A browser-backup restore replaced the stored copy'),
+      expect.any(Object),
+    );
+    expect(saveProjectChecked).not.toHaveBeenCalled();
+
+    confirmAction.mockResolvedValue(true);
+    persistence.saveProjectAction();
+    await flushPromises();
+
+    expect(vi.mocked(saveProjectChecked).mock.calls.at(-1)?.[2]).toBe('revision-2');
+  });
+
+  it('lists every SMF loss before writing the file', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const trackId = store.tracks[0].id;
+    setTrackMidiFx(trackId, { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 });
+    setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: 0.5, curve: 'linear' }]);
+    setTrackMute(trackId, true);
+    const { confirmAction, downloadBlobFile, persistence } = setup();
+    confirmAction.mockResolvedValue(false);
+
+    persistence.exportSmfAction();
+    await flushPromises();
+
+    expect(confirmAction).toHaveBeenCalledWith(
+      expect.stringMatching(/1 track mute.+1 MIDI FX transform.+1 automation lane/s),
+      expect.objectContaining({ title: 'SMF export limitations' }),
+    );
+    expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 
   it('renames a saved project through the persistence UI action', async () => {

@@ -1163,7 +1163,12 @@ describe('MIDI export commands', () => {
     const result = exportProjectClipFile('demo');
     expect(result.filename).toBe('demo.midi2');
     expect(result.bytes.length).toBeGreaterThan(0);
-    expect(result.midi2ClipLoss).toEqual({ expressionLanes: 1, sysExPackets: 1 });
+    expect(result.loss.entries).toEqual(
+      expect.arrayContaining([
+        { kind: 'expressionLanes', count: 1, details: [] },
+        { kind: 'sysExPackets', count: 1, details: [] },
+      ]),
+    );
   });
 
   it('exportClipSmf preserves one clip with app-level MIDI metadata', async () => {

@@ -154,7 +154,7 @@ describe('importMusicXml error handling', () => {
     );
   });
 
-  it('collects nested loss-report elements without recursive traversal', () => {
+  it('reports a deeply nested unknown element without recursive traversal', () => {
     const wrappers = '<wrapper>'.repeat(100);
     const closes = '</wrapper>'.repeat(100);
     const xml =
@@ -162,9 +162,10 @@ describe('importMusicXml error handling', () => {
       `${wrappers}<harmony/>${closes}` +
       '</direction></measure></part></score-partwise>';
 
-    expect(importMusicXmlWithReport(xml).report.issues).toContainEqual({
-      feature: 'harmony',
+    expect(importMusicXmlWithReport(xml).report.entries).toContainEqual({
+      kind: 'other-notation',
       count: 1,
+      details: ['wrapper'],
     });
   });
 });
@@ -418,13 +419,13 @@ describe('importMusicXml global maps', () => {
       tempoScore(tempoPart('P1', 90) + tempoPart('P2', 140)),
     );
     expect(p1First.document.tempoSegments).toEqual([{ startPpq: 0, bpm: 90 }]);
-    expect(p1First.report.issues).toEqual([{ feature: 'tempo-conflicts', count: 1 }]);
+    expect(p1First.report.entries).toEqual([{ kind: 'tempo-conflicts', count: 1, details: [] }]);
 
     const p2First = importMusicXmlWithReport(
       tempoScore(tempoPart('P2', 140) + tempoPart('P1', 90)),
     );
     expect(p2First.document.tempoSegments).toEqual([{ startPpq: 0, bpm: 140 }]);
-    expect(p2First.report.issues).toEqual([{ feature: 'tempo-conflicts', count: 1 }]);
+    expect(p2First.report.entries).toEqual([{ kind: 'tempo-conflicts', count: 1, details: [] }]);
   });
 
   it('deduplicates equal later-part tempo and preserves offset timing', () => {
@@ -435,7 +436,7 @@ describe('importMusicXml global maps', () => {
       { startPpq: 0, bpm: 90 },
       { startPpq: 1.5, bpm: 100 },
     ]);
-    expect(imported.report.issues).toEqual([]);
+    expect(imported.report.entries).toEqual([]);
   });
 
   it('reports but does not apply a later-part mid-measure tempo conflict', () => {
@@ -446,7 +447,7 @@ describe('importMusicXml global maps', () => {
       { startPpq: 0, bpm: 90 },
       { startPpq: 1.5, bpm: 100 },
     ]);
-    expect(imported.report.issues).toEqual([{ feature: 'tempo-conflicts', count: 1 }]);
+    expect(imported.report.entries).toEqual([{ kind: 'tempo-conflicts', count: 1, details: [] }]);
   });
 
   it('records the key signature as a marker', () => {
@@ -600,13 +601,13 @@ describe('importMusicXml round-trip with the serializer', () => {
       '<notations><articulations><accent/></articulations><technical><fingering>2</fingering></technical></notations>' +
       '<lyric><text>la</text></lyric></note>' +
       '<barline><repeat direction="backward"/></barline></measure></part></score-partwise>';
-    expect(importMusicXmlWithReport(xml).report.issues).toEqual([
-      { feature: 'harmony', count: 1 },
-      { feature: 'lyrics', count: 1 },
-      { feature: 'repeats', count: 1 },
-      { feature: 'fingering', count: 1 },
-      { feature: 'annotations', count: 1 },
-      { feature: 'grace-notes', count: 1 },
+    expect(importMusicXmlWithReport(xml).report.entries).toEqual([
+      { kind: 'harmony', count: 1, details: [] },
+      { kind: 'lyrics', count: 1, details: [] },
+      { kind: 'repeats', count: 1, details: [] },
+      { kind: 'fingering', count: 1, details: [] },
+      { kind: 'annotations', count: 1, details: [] },
+      { kind: 'grace-notes', count: 1, details: [] },
     ]);
   });
 
@@ -717,5 +718,70 @@ describe('importMusicXml round-trip with the serializer', () => {
     const doc = importMusicXml(xml);
     expect(doc.pickupLengthPpq).toBe(1);
     expect(trackNotes(doc, 0).map((event) => event.startPpq)).toEqual([0, 1]);
+  });
+});
+
+describe('importMusicXml loss report', () => {
+  const part = (body: string, partList = '<score-part id="P1"/>') =>
+    `<score-partwise><part-list>${partList}</part-list><part id="P1"><measure>` +
+    `<attributes><divisions>1</divisions></attributes>${body}</measure></part></score-partwise>`;
+  const quarter = (step: string, extra = '') =>
+    `<note>${extra}<pitch><step>${step}</step><octave>4</octave></pitch><duration>1</duration></note>`;
+
+  it('reports dynamics marks that carry no playback level', () => {
+    const marked = importMusicXmlWithReport(
+      part(
+        `<direction><direction-type><dynamics><f/></dynamics></direction-type></direction>${quarter('C')}`,
+      ),
+    );
+    expect(marked.report.entries).toEqual([{ kind: 'dynamics', count: 1, details: [] }]);
+
+    const sounding = importMusicXmlWithReport(
+      part(
+        '<direction><direction-type><dynamics><f/></dynamics></direction-type><sound dynamics="100"/></direction>' +
+          quarter('C'),
+      ),
+    );
+    expect(sounding.report.entries).toEqual([]);
+  });
+
+  it('imports only sounding notes from a cue passage while keeping the voice cursor', () => {
+    const imported = importMusicXmlWithReport(part(quarter('C', '<cue/>') + quarter('D')));
+    expect(trackNotes(imported.document, 0)).toEqual([
+      { pitch: 62, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0 },
+    ]);
+    expect(imported.report.entries).toEqual([]);
+  });
+
+  it('counts additional part instrument programs', () => {
+    const imported = importMusicXmlWithReport(
+      part(
+        quarter('C'),
+        '<score-part id="P1"><part-name>Winds</part-name>' +
+          '<midi-instrument id="I1"><midi-program>74</midi-program></midi-instrument>' +
+          '<midi-instrument id="I2"><midi-program>72</midi-program></midi-instrument></score-part>',
+      ),
+    );
+    expect(imported.report.entries).toEqual([
+      { kind: 'extra-instruments', count: 1, details: ['Winds'] },
+    ]);
+  });
+
+  it('reports jumps, fermatas and arpeggios the import never applies', () => {
+    const imported = importMusicXmlWithReport(
+      part(
+        quarter('C', '').replace(
+          '</note>',
+          '<notations><fermata/><arpeggiate/></notations></note>',
+        ) +
+          '<direction><direction-type><segno/></direction-type></direction>' +
+          '<sound dacapo="yes"/>',
+      ),
+    );
+    expect(imported.report.entries).toEqual([
+      { kind: 'jumps', count: 2, details: [] },
+      { kind: 'fermatas', count: 1, details: [] },
+      { kind: 'arpeggios', count: 1, details: [] },
+    ]);
   });
 });

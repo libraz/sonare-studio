@@ -9,6 +9,8 @@
 import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
+import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from '@/project/smf';
+import type { SmfSysExPacket } from '@/project/types';
 
 /** Vendor marker used for generic BuiltinDevice insert round-trips. */
 export const SONARE_DEVICE_VENDOR = 'sonare-studio';
@@ -40,6 +42,10 @@ export interface SonareDawprojectMetadata {
   chords?: EditorChordSymbol[];
   /** MIDI expression is vendor data: DAWproject has no portable clip lane. */
   midiExpressions?: Record<string, SonareMidiExpression>;
+  /** Imported SMF SysEx per clip; DAWproject has no SysEx event. */
+  midiSysEx?: Record<string, SmfSysExPacket[]>;
+  /** Anacrusis length; DAWproject has no pickup-measure concept. */
+  pickupLengthPpq?: number;
 }
 
 function finite(value: number | undefined): number | undefined {
@@ -93,6 +99,7 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
   const tracks: Record<string, SonareTrackMetadata> = {};
   const sidechainSources: Record<string, number> = {};
   const midiExpressions: Record<string, SonareMidiExpression> = {};
+  const midiSysEx: Record<string, SmfSysExPacket[]> = {};
   doc.tracks.forEach((track, index) => {
     const strip = track.mixer;
     tracks[`track-${index}`] = {
@@ -113,6 +120,13 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
       if (clip.kind === 'audio') return;
       const expression = midiExpression(clip);
       if (expression) midiExpressions[`track-${index}-clip-${clipIndex}`] = expression;
+      if (clip.smfSysEx?.length) {
+        midiSysEx[`track-${index}-clip-${clipIndex}`] = clip.smfSysEx.map((packet) => ({
+          ppq: packet.ppq,
+          status: packet.status,
+          data: [...packet.data],
+        }));
+      }
     });
   });
   (doc.mixer?.buses ?? []).forEach((bus, index) => {
@@ -137,6 +151,10 @@ export function createSonareDawprojectMetadata(doc: ProjectDocument): SonareDawp
     ...(doc.sections.length > 0 ? { sections: doc.sections } : {}),
     ...(doc.chords?.length ? { chords: doc.chords.map((chord) => ({ ...chord })) } : {}),
     ...(Object.keys(midiExpressions).length ? { midiExpressions } : {}),
+    ...(Object.keys(midiSysEx).length ? { midiSysEx } : {}),
+    ...(finite(doc.pickupLengthPpq) !== undefined && (doc.pickupLengthPpq ?? 0) > 0
+      ? { pickupLengthPpq: doc.pickupLengthPpq }
+      : {}),
   };
 }
 
@@ -300,6 +318,40 @@ function midiExpressions(value: unknown): Record<string, SonareMidiExpression> {
   );
 }
 
+function sysExPackets(value: unknown, budget: { packets: number; bytes: number }) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): SmfSysExPacket[] => {
+    const packet = object(item);
+    const ppq = optionalFinite(packet?.ppq);
+    const status = packet?.status;
+    const data = packet?.data;
+    if (
+      ppq === undefined ||
+      ppq < 0 ||
+      (status !== 0xf0 && status !== 0xf7) ||
+      !Array.isArray(data) ||
+      !data.every((byte) => integer(byte, 0, 0xff) !== undefined) ||
+      budget.packets + 1 > MAX_SMF_SYSEX_PACKETS ||
+      budget.bytes + data.length > MAX_SMF_SYSEX_BYTES
+    ) {
+      return [];
+    }
+    budget.packets += 1;
+    budget.bytes += data.length;
+    return [{ ppq, status, data: data as number[] }];
+  });
+}
+
+function midiSysEx(value: unknown): Record<string, SmfSysExPacket[]> {
+  const budget = { packets: 0, bytes: 0 };
+  return Object.fromEntries(
+    boundedEntries(object(value) ?? {}).flatMap(([id, packets]) => {
+      const parsed = sysExPackets(packets, budget);
+      return parsed.length ? [[id, parsed]] : [];
+    }),
+  );
+}
+
 /** Parses an untrusted extension entry; malformed fields are discarded. */
 export function parseSonareDawprojectMetadata(
   bytes: Uint8Array | undefined,
@@ -362,6 +414,8 @@ export function parseSonareDawprojectMetadata(
     const parsedSections = sections(root.sections);
     const parsedChords = chords(root.chords);
     const parsedMidiExpressions = midiExpressions(root.midiExpressions);
+    const parsedMidiSysEx = midiSysEx(root.midiSysEx);
+    const pickupLengthPpq = optionalFinite(root.pickupLengthPpq);
     return {
       schemaVersion: 1,
       ...(Object.keys(tracks).length ? { tracks } : {}),
@@ -372,6 +426,8 @@ export function parseSonareDawprojectMetadata(
       ...(Object.keys(parsedMidiExpressions).length
         ? { midiExpressions: parsedMidiExpressions }
         : {}),
+      ...(Object.keys(parsedMidiSysEx).length ? { midiSysEx: parsedMidiSysEx } : {}),
+      ...(pickupLengthPpq !== undefined && pickupLengthPpq > 0 ? { pickupLengthPpq } : {}),
     };
   } catch {
     return { schemaVersion: 1 };

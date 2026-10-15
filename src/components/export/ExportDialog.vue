@@ -5,7 +5,9 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
+import { confirmLossReport } from '@/composables/useLossConfirm';
 import { audioFileMetadataForDocument } from '@/export/audio-file-metadata';
+import { inspectAudioExportLoss } from '@/export/audio-metadata-loss';
 import { audioExportPreflight } from '@/export/audio-preflight';
 import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
 import {
@@ -409,6 +411,21 @@ function isIntegerPcmExport(encoderId: string, model: ExportOptionsModel): boole
   );
 }
 
+/** Sample peak of a rendered stem in dBFS, including its metered true peak. */
+function stemPeakDb(stem: MixdownStem): number {
+  let peak = 0;
+  for (const channel of stem.channels) {
+    for (const sample of channel) {
+      const magnitude = Math.abs(sample);
+      if (magnitude > peak) peak = magnitude;
+    }
+  }
+  return Math.max(
+    peak > 0 ? 20 * Math.log10(peak) : -Infinity,
+    stem.report?.truePeakDb ?? -Infinity,
+  );
+}
+
 /** Default download seam: transient anchor around an object URL. */
 function downloadViaAnchor(blob: Blob, filename: string): void {
   downloadBlob(blob, filename);
@@ -565,6 +582,25 @@ async function onExport(): Promise<void> {
       }
       controller.signal.throwIfAborted();
     }
+    const range =
+      exportModel.range === 'loop' && props.loopRegion
+        ? props.loopRegion
+        : { startPpq: 0, endPpq: Number.POSITIVE_INFINITY };
+    const metadataLoss = inspectAudioExportLoss(
+      audioFileMetadataForDocument(doc, {
+        sampleRate: exportModel.sampleRate,
+        startPpq: range.startPpq,
+        endPpq: range.endPpq,
+      }),
+      encoders,
+    );
+    if (metadataLoss.entries.length > 0) {
+      if (!(await confirmLossReport(metadataLoss, t.value.dialogs.exportAudio.metadataLoss))) {
+        cancelled.value = true;
+        return;
+      }
+      controller.signal.throwIfAborted();
+    }
     if (memoryBudgetBytes > DEFAULT_EXPORT_MEMORY_BUDGET_BYTES) {
       const proceed = await confirmDialog({
         title: t.value.dialogs.exportAudio.memoryBudgetWarningTitle,
@@ -580,10 +616,6 @@ async function onExport(): Promise<void> {
       }
       controller.signal.throwIfAborted();
     }
-    const range =
-      exportModel.range === 'loop' && props.loopRegion
-        ? props.loopRegion
-        : { startPpq: 0, endPpq: Number.POSITIVE_INFINITY };
     const targets = encoders.map((encoder) => {
       const targetModel = { ...exportModel, encoderId: encoder.id };
       const encodeOptions = encodeOptionsForModel(targetModel, {
@@ -637,6 +669,7 @@ async function onExport(): Promise<void> {
       });
     }
     let consumedStemCount = 0;
+    let stemsPeakDb = -Infinity;
     const consumeStem = async (
       stem: MixdownStem,
       index: number,
@@ -646,6 +679,7 @@ async function onExport(): Promise<void> {
       meter: PayloadMemoryMeter,
     ): Promise<void> => {
       controller.signal.throwIfAborted();
+      stemsPeakDb = Math.max(stemsPeakDb, stemPeakDb(stem));
       const rawBytes = stem.channels[0].byteLength + stem.channels[1].byteLength;
       assertCodecPayloadMemory(
         estimateCodecPayloadMemory({
@@ -725,12 +759,13 @@ async function onExport(): Promise<void> {
       exportModel.mode === 'mixdown' && exportModel.normalizeLoudness
         ? normalizeMixdownLoudness(result.channels, result.report, targetLufs)
         : result.report;
-    const clippingPeak = Math.max(
-      normalizedReport.peakDb,
-      normalizedReport.truePeakDb ?? -Infinity,
-    );
+    // Stems not consumed while rendering are measured here, before any is encoded.
+    for (const stem of result.stems ?? []) stemsPeakDb = Math.max(stemsPeakDb, stemPeakDb(stem));
+    const clippingPeak =
+      exportModel.mode === 'mixdown'
+        ? Math.max(normalizedReport.peakDb, normalizedReport.truePeakDb ?? -Infinity)
+        : stemsPeakDb;
     if (
-      exportModel.mode === 'mixdown' &&
       targets.some((target) => isIntegerPcmExport(target.encoder.id, exportModel)) &&
       clippingPeak > 0
     ) {
@@ -741,7 +776,7 @@ async function onExport(): Promise<void> {
       // The census is what makes the choice answerable: continuing past one
       // stray overshoot is not the same decision as continuing past a passage.
       const census = formatClippingCensus(
-        normalizedReport.clipping,
+        exportModel.mode === 'mixdown' ? normalizedReport.clipping : undefined,
         result.sampleRate,
         t.value.dialogs.exportAudio.clippingCensus,
       );
