@@ -324,6 +324,28 @@ describe('createWebMidiOutput', () => {
     bridge.dispose();
   });
 
+  it('stamps releases no earlier than the latest queued note-on on route change and dispose', async () => {
+    const port = fakePort('p1');
+    const { handle, emit } = setup([port]);
+    const bridge = createWebMidiOutput(handle);
+    await bridge.start();
+    bridge.setRoutes([{ destinationId: 2, outputPortId: 'p1', channel: 0 }]);
+    // renderFrame 96000 maps 1 s past the output anchor (performance 6000).
+    emit([{ destinationId: 2, renderFrame: 96000, bytes: [0x90, 60, 100] }] as never);
+    const noteOnAt = port.timestamps[0] as number;
+
+    bridge.setRoutes([]);
+    expect(port.sent[1]).toEqual([0x80, 60, 0]);
+    expect(port.timestamps[1]).toBeGreaterThanOrEqual(noteOnAt);
+
+    bridge.setRoutes([{ destinationId: 3, outputPortId: 'p1', channel: 1 }]);
+    port.sent.length = 0;
+    port.timestamps.length = 0;
+    bridge.dispose();
+    expect(port.sent).toEqual([[0xb1, 123, 0]]);
+    expect(port.timestamps[0]).toBeGreaterThanOrEqual(noteOnAt);
+  });
+
   it('stops delivering after dispose', async () => {
     const port = fakePort('p1');
     const { handle, emit } = setup([port]);

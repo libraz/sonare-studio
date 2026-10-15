@@ -164,6 +164,9 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
   const routeByDestination = new Map<number, ExternalMidiRoute>();
   const activeNotesByDestination = new Map<number, Set<number>>();
   let clockPortIds: string[] = [];
+  // Latest timestamp already handed to each port. Releases are stamped no
+  // earlier, so a queued future note-on can never sound after its note-off.
+  const latestTimestampByPort = new Map<string, number>();
 
   const rebuildRouteIndex = (): void => {
     routeByDestination.clear();
@@ -197,14 +200,21 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     try {
       if (timestampMs === undefined) port.send(bytes);
       else port.send(bytes, timestampMs);
+      if (timestampMs !== undefined && timestampMs > (latestTimestampByPort.get(port.id) ?? 0)) {
+        latestTimestampByPort.set(port.id, timestampMs);
+      }
       return true;
     } catch {
       return false;
     }
   };
 
+  const sendRelease = (port: MidiOutputLike | undefined, bytes: number[]): void => {
+    sendToPort(port, bytes, port ? latestTimestampByPort.get(port.id) : undefined);
+  };
+
   const sendAllNotesOff = (route: ExternalMidiRoute): void => {
-    sendToPort(access?.outputs.get(route.outputPortId), [
+    sendRelease(access?.outputs.get(route.outputPortId), [
       0xb0 | (route.channel & 0x0f),
       MIDI_CC_ALL_NOTES_OFF,
       0,
@@ -237,7 +247,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     if (notes && notes.size > 0) {
       const port = access?.outputs.get(route.outputPortId);
       for (const pitch of notes) {
-        sendToPort(port, [0x80 | (route.channel & 0x0f), pitch, 0]);
+        sendRelease(port, [0x80 | (route.channel & 0x0f), pitch, 0]);
       }
     } else if (!routeKeyStillShared) {
       // A route that owns its physical channel alone may still contain notes
