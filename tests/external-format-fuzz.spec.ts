@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { strToU8, zipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { exportDawproject, importDawproject } from '@/export/dawproject';
+import { DawprojectImportError, exportDawproject, importDawproject } from '@/export/dawproject';
 import type { NotatedScore } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { importMusicXml, MusicXmlImportError } from '@/notation/musicxml-import';
@@ -14,6 +14,7 @@ import {
 import { decodeSzd, encodeSzd, SzdFormatError } from '@/persistence/szd';
 import type { ProjectDocument } from '@/project/serialization';
 import { projectDocumentToSmf, smfToProjectDocument } from '@/project/smf';
+import { isSonareError } from '@/wasm/index.js';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
@@ -158,27 +159,45 @@ function boundedCorpus(seed: Uint8Array): Uint8Array[] {
   return corpus;
 }
 
+type ErrorClass = abstract new (...args: never[]) => Error;
+type ErrorMatcher = ErrorClass | ((error: unknown) => boolean);
+
+function matchesError(error: unknown, matcher: ErrorMatcher): boolean {
+  return matcher.prototype instanceof Error || matcher === Error
+    ? error instanceof (matcher as ErrorClass)
+    : (matcher as (error: unknown) => boolean)(error);
+}
+
+/**
+ * Parses the seed and every mutation. The unmodified seed must parse; every
+ * rejection must be one of the format's typed errors with a readable message,
+ * and at least one mutation must actually be rejected.
+ */
 async function exerciseCorpus(
   seed: Uint8Array,
   parse: (bytes: Uint8Array) => unknown | Promise<unknown>,
+  allowed: ErrorMatcher[],
 ): Promise<void> {
   const corpus = boundedCorpus(seed);
   expect(corpus).toHaveLength(MUTATIONS_PER_FORMAT + 1);
   expect(Math.max(...corpus.map((bytes) => bytes.byteLength))).toBeLessThanOrEqual(
     MAX_FUZZ_INPUT_BYTES,
   );
-  for (const bytes of corpus) {
+  await expect(Promise.resolve().then(() => parse(seed))).resolves.toBeDefined();
+  let rejected = 0;
+  for (const bytes of corpus.slice(1)) {
     try {
       await parse(bytes);
     } catch (error) {
-      // A rejection must be a real, readable Error (never a bare string, an
-      // object, or an empty-message throw): garbage in yields a diagnosable
-      // failure, not an opaque one.
-      expect(error).toBeInstanceOf(Error);
-      expect(typeof (error as Error).message).toBe('string');
+      rejected += 1;
+      expect(
+        allowed.some((matcher) => matchesError(error, matcher)),
+        `untyped rejection: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`,
+      ).toBe(true);
       expect((error as Error).message.length).toBeGreaterThan(0);
     }
   }
+  expect(rejected).toBeGreaterThan(0);
 }
 
 describe('bounded external-format fuzz corpus', () => {
@@ -187,7 +206,7 @@ describe('bounded external-format fuzz corpus', () => {
 
   it('keeps .szd and browser-backup mutations inside the resource cap', async () => {
     const doc = projectFixture();
-    await exerciseCorpus(encodeSzd(doc), (bytes) => decodeSzd(bytes));
+    await exerciseCorpus(encodeSzd(doc), (bytes) => decodeSzd(bytes), [SzdFormatError]);
     const backup = zipSync({
       'meta.json': strToU8(
         JSON.stringify({
@@ -201,21 +220,28 @@ describe('bounded external-format fuzz corpus', () => {
         }),
       ),
     });
-    await exerciseCorpus(backup, (bytes) => restoreBrowserBackup(bytes));
+    await exerciseCorpus(backup, (bytes) => restoreBrowserBackup(bytes), [ArchivePreflightError]);
   });
 
   it('keeps DAWproject and SMF mutations inside the resource cap', async () => {
     const doc = projectFixture();
-    await exerciseCorpus(await exportDawproject(doc, { includeAudio: false }), (bytes) =>
-      importDawproject(bytes),
+    await exerciseCorpus(
+      await exportDawproject(doc, { includeAudio: false }),
+      (bytes) => importDawproject(bytes),
+      [DawprojectImportError],
     );
-    await exerciseCorpus(await projectDocumentToSmf(doc), (bytes) => smfToProjectDocument(bytes));
+    await exerciseCorpus(await projectDocumentToSmf(doc), (bytes) => smfToProjectDocument(bytes), [
+      RangeError,
+      isSonareError,
+    ]);
   });
 
   it('keeps MusicXML mutations inside byte/element/depth limits', async () => {
     const seed = new TextEncoder().encode(serializeMusicXml(scoreFixture()));
-    await exerciseCorpus(seed, (bytes) =>
-      importMusicXml(new TextDecoder().decode(bytes), 'fuzz.musicxml'),
+    await exerciseCorpus(
+      seed,
+      (bytes) => importMusicXml(new TextDecoder().decode(bytes), 'fuzz.musicxml'),
+      [MusicXmlImportError],
     );
   });
 });

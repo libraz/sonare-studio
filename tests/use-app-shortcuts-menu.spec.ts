@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref, shallowRef } from 'vue';
+import { nextTick, ref, shallowRef } from 'vue';
 import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
 import { addMidiClip, addNote } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
@@ -113,11 +113,22 @@ describe('useAppShortcutsMenu', () => {
     expect(togglePlayback).not.toHaveBeenCalled();
   });
 
-  it('runs global shortcuts again after the blocking overlay closes', () => {
-    const blocked = { value: false };
-    const { match, menu, togglePlayback } = harness(blocked);
-    const event = new KeyboardEvent('keydown', { key: ' ', cancelable: true });
+  it('runs global shortcuts again after the blocking overlay closes', async () => {
+    const { match, menu, togglePlayback } = harness({ value: false });
+    const open = ref(true);
+    useShortcutBlockingOverlay(open);
+    expect(shortcutBlockingOverlayOpen.value).toBe(true);
 
+    const blockedEvent = new KeyboardEvent('keydown', { key: ' ', cancelable: true });
+    menu.onGlobalKeyDown(blockedEvent);
+    expect(match).not.toHaveBeenCalled();
+    expect(togglePlayback).not.toHaveBeenCalled();
+
+    open.value = false;
+    await nextTick();
+    expect(shortcutBlockingOverlayOpen.value).toBe(false);
+
+    const event = new KeyboardEvent('keydown', { key: ' ', cancelable: true });
     menu.onGlobalKeyDown(event);
 
     expect(match).toHaveBeenCalledWith(event, 'editor');

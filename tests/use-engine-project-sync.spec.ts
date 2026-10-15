@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, nextTick, ref, shallowRef } from 'vue';
 import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
 import type { MidiSync } from '@/engine/midi-sync';
@@ -62,6 +62,10 @@ function clip(trackId: number): EditorClip {
 }
 
 describe('useEngineProjectSync', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     setActivePinia(createPinia());
     resetAutomationStripModes();

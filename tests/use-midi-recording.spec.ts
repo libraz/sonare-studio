@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, ref } from 'vue';
 import { useMidiRecording } from '@/composables/useMidiRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
@@ -72,6 +72,10 @@ function setup(
 
 describe('useMidiRecording', () => {
   let store: ReturnType<typeof useProjectStore>;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   beforeEach(async () => {
     setActivePinia(createPinia());
