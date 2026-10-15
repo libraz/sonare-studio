@@ -1,4 +1,5 @@
 import { clampClipFadePpq } from '@/project/clip-fades';
+import { MIN_CLIP_WIDTH_PX } from './clip-hit';
 
 /**
  * Fade handle geometry for audio clips on the arrangement canvas: handle
@@ -24,7 +25,7 @@ const MIN_FADE_HANDLE_CLIP_WIDTH_PX = FADE_HANDLE_SIZE_PX * 2;
 
 /** Width of an arrangement clip as used by the canvas renderer. */
 export function clipRenderWidthPx(lengthPpq: number, pxPerPpq: number): number {
-  return Math.max(2, lengthPpq * pxPerPpq - 1);
+  return Math.max(MIN_CLIP_WIDTH_PX, lengthPpq * pxPerPpq - 1);
 }
 
 /** Top edge of an arrangement clip's rendered rectangle for a lane top. */

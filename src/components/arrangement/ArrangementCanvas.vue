@@ -161,6 +161,11 @@ const barPpq = computed(() => {
   return segment ? barLengthPpq(segment) : 4;
 });
 
+/** Tempo map for audio source mapping, rebuilt only when its inputs change. */
+const tempoMap = computed(() =>
+  normalizeTempoMap(props.tempoSegments ?? [], props.tempoBpm ?? 120),
+);
+
 const activeClip = computed(() => props.clips.find((clip) => clip.id === props.activeClipId));
 
 const liveStatus = computed(() => {
@@ -187,15 +192,14 @@ const liveStatus = computed(() => {
 });
 
 const accessibleClips = computed<AccessibleObjectItem[]>(() => {
-  const maximumEnd = Math.max(
-    props.range.endPpq,
-    ...props.clips.map((clip) => clip.startPpq + clip.lengthPpq),
-  );
+  let maximumEnd = props.range.endPpq;
+  for (const clip of props.clips) maximumEnd = Math.max(maximumEnd, clip.startPpq + clip.lengthPpq);
+  const trackById = new Map(props.tracks.map((item) => [item.id, item]));
   const step = Math.max(0.0625, props.gridPpq ?? 0.25);
   return [...props.clips]
     .sort((a, b) => a.startPpq - b.startPpq || a.trackId - b.trackId || a.id - b.id)
     .map((clip) => {
-      const track = props.tracks.find((item) => item.id === clip.trackId);
+      const track = trackById.get(clip.trackId);
       const values = {
         name: clip.name,
         track: track?.name ?? String(clip.trackId),
@@ -285,7 +289,7 @@ function clipRenderContext(): ClipRenderContext {
     laneHeight: props.laneHeight,
     laneTop: laneTopFor,
     barPpq: barPpq.value,
-    tempoMap: normalizeTempoMap(props.tempoSegments ?? [], props.tempoBpm ?? 120),
+    tempoMap: tempoMap.value,
     interactions: props.interactions,
     scheduleBase,
     colors: COLORS,
@@ -423,6 +427,9 @@ watch(
     props.loopStartPpq,
     props.loopEndPpq,
     props.tempoBpm,
+    props.tempoSegments,
+    props.laneHeight,
+    props.rowLayout,
     props.interactions.previewClip.value,
     props.interactions.previewClips?.value,
     props.interactions.previewMarquee?.value,

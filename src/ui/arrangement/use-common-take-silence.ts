@@ -32,15 +32,30 @@ export interface CommonTakeSilence {
   snapEdge(clipId: number, ppq: number): number;
 }
 
+// Serialized by content, memoized by identity: edits replace the takes array and
+// the tempo map, so an unchanged object is never re-serialized.
+const takesKeys = new WeakMap<object, string>();
+const tempoKeys = new WeakMap<NormalizedTempoMap, string>();
+
+function memoJson<K extends object>(cache: WeakMap<K, string>, value: K): string {
+  let key = cache.get(value);
+  if (key === undefined) {
+    key = JSON.stringify(value);
+    cache.set(value, key);
+  }
+  return key;
+}
+
 function scanKey(clip: EditorClip, tempo: NormalizedTempoMap): string {
-  return JSON.stringify([
-    clip.takes,
+  const takes = clip.takes ? memoJson(takesKeys, clip.takes) : '';
+  return [
+    takes,
     clip.startPpq,
     clip.lengthPpq,
     clip.sourceOffsetPpq,
     clip.loopEnabled,
-    tempo,
-  ]);
+    memoJson(tempoKeys, tempo),
+  ].join('|');
 }
 
 export function useCommonTakeSilence(options: UseCommonTakeSilenceOptions): CommonTakeSilence {
@@ -67,11 +82,11 @@ export function useCommonTakeSilence(options: UseCommonTakeSilenceOptions): Comm
     const deps = await options.deps();
     if (!deps || current !== generation) return;
     const tempo = options.tempo();
-    const keys = new Set(clips.map((clip) => scanKey(clip, tempo)));
+    const keyed = clips.map((clip) => ({ clip, key: scanKey(clip, tempo) }));
+    const keys = new Set(keyed.map((entry) => entry.key));
     for (const key of cache.keys()) if (!keys.has(key)) cache.delete(key);
     const entries = await Promise.all(
-      clips.map(async (clip): Promise<[number, PpqSpan[]]> => {
-        const key = scanKey(clip, tempo);
+      keyed.map(async ({ clip, key }): Promise<[number, PpqSpan[]]> => {
         let scan = cache.get(key);
         if (!scan) {
           scan = commonTakeSilence(clip, tempo, deps).catch(() => []);

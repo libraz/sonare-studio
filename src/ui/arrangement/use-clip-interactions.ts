@@ -11,6 +11,7 @@
 
 import { type Ref, ref } from 'vue';
 import { type ClipSplitBlockReason, clipSplitBlockReason } from '@/project/clip-split';
+import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import { snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 import {
@@ -29,8 +30,8 @@ import {
   hitTestClip,
 } from './clip-hit';
 
-/** Px a pointer must travel from its down point before a drag gesture starts. */
-export const DEFAULT_CLIP_DRAG_THRESHOLD_PX = 3;
+/** Alias of {@link DRAG_THRESHOLD_PX} for callers outside the arrangement. */
+export const DEFAULT_CLIP_DRAG_THRESHOLD_PX = DRAG_THRESHOLD_PX;
 
 /** Smallest clip length a trim can produce, in PPQ (a sixteenth note). */
 export const DEFAULT_MIN_CLIP_LENGTH_PPQ = 0.25;
@@ -139,7 +140,7 @@ export interface UseClipInteractionsOptions {
    * clip's backing asset extent), or null for unbounded trimming.
    */
   getSourceBounds?(clipId: number): ClipSourceBounds | null;
-  /** Drag start threshold in px. Default {@link DEFAULT_CLIP_DRAG_THRESHOLD_PX}. */
+  /** Drag start threshold in px. Default {@link DRAG_THRESHOLD_PX}. */
   dragThresholdPx?: number;
   /** Px distance from a clip edge treated as a trim handle. */
   trimTolerancePx?: number;
@@ -293,7 +294,7 @@ type Gesture =
  */
 export function useClipInteractions(options: UseClipInteractionsOptions): ClipInteractions {
   const { view, commands } = options;
-  const threshold = options.dragThresholdPx ?? DEFAULT_CLIP_DRAG_THRESHOLD_PX;
+  const threshold = options.dragThresholdPx ?? DRAG_THRESHOLD_PX;
   const minLength = options.minLengthPpq ?? DEFAULT_MIN_CLIP_LENGTH_PPQ;
 
   const previewClip = ref<ClipDragPreview | null>(null);
@@ -379,12 +380,37 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
       : { trimTolerancePx: options.trimTolerancePx };
   }
 
+  // Lane lookup keyed on the track-id contents (getTrackIds may allocate per call).
+  let laneCache: { ids: ReadonlyArray<number>; map: Map<number, number> } | null = null;
+
+  function laneByTrack(): Map<number, number> {
+    const ids = options.getTrackIds();
+    const hit = laneCache;
+    if (hit && hit.ids.length === ids.length && ids.every((id, i) => id === hit.ids[i])) {
+      return hit.map;
+    }
+    const map = new Map(ids.map((id, index) => [id, index]));
+    laneCache = { ids: [...ids], map };
+    return map;
+  }
+
+  // Hit-test rectangles keyed on the clip array identity (edits replace the array).
+  let rectsCache: {
+    clips: ReadonlyArray<ArrangeClip>;
+    lanes: Map<number, number>;
+    rects: ArrangeClipRect[];
+  } | null = null;
+
   /** Projects the clips into lane-indexed rectangles for the hit-test. */
   function toRects(): ArrangeClipRect[] {
-    const laneByTrack = new Map(options.getTrackIds().map((id, index) => [id, index]));
+    const lanes = laneByTrack();
+    const clips = options.getClips();
+    if (rectsCache && rectsCache.clips === clips && rectsCache.lanes === lanes) {
+      return rectsCache.rects;
+    }
     const rects: ArrangeClipRect[] = [];
-    for (const clip of options.getClips()) {
-      const laneIndex = laneByTrack.get(clip.trackId);
+    for (const clip of clips) {
+      const laneIndex = lanes.get(clip.trackId);
       if (laneIndex === undefined) continue;
       rects.push({
         id: clip.id,
@@ -393,6 +419,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
         lengthPpq: clip.lengthPpq,
       });
     }
+    rectsCache = { clips, lanes, rects };
     return rects;
   }
 
@@ -402,11 +429,11 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const right = Math.max(start.x, end.x);
     const top = Math.min(start.y, end.y);
     const bottom = Math.max(start.y, end.y);
-    const laneByTrack = new Map(options.getTrackIds().map((id, index) => [id, index]));
+    const lanes = laneByTrack();
     return options
       .getClips()
       .filter((clip) => {
-        const lane = laneByTrack.get(clip.trackId);
+        const lane = lanes.get(clip.trackId);
         if (lane === undefined) return false;
         const clipLeft = view.ppqToX(clip.startPpq);
         const clipRight = view.ppqToX(clip.startPpq + clip.lengthPpq);
@@ -443,13 +470,13 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
    */
   function fadeHandleHit(point: ClipPoint): { clip: ArrangeClip; edge: FadeEdge } | null {
     if (!commands.setClipFades) return null;
-    const laneByTrack = new Map(options.getTrackIds().map((id, index) => [id, index]));
+    const lanes = laneByTrack();
     const clips = options.getClips();
     for (let i = clips.length - 1; i >= 0; i--) {
       const clip = clips[i];
       if (clip.kind !== 'audio') continue;
       if (options.canEditClip?.(clip.id) === false) continue;
-      const laneIndex = laneByTrack.get(clip.trackId);
+      const laneIndex = lanes.get(clip.trackId);
       if (laneIndex === undefined) continue;
       const left = view.ppqToX(clip.startPpq);
       const pxPerPpq =
@@ -538,11 +565,12 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const primary = moveTarget(g, point, modifiers);
     const horizontalDelta = primary.startPpq - g.origin.startPpq;
     const trackIds = options.getTrackIds();
-    const sourceLane = trackIds.indexOf(g.origin.trackId);
-    const targetLane = trackIds.indexOf(primary.trackId);
+    const lanes = laneByTrack();
+    const sourceLane = lanes.get(g.origin.trackId) ?? -1;
+    const targetLane = lanes.get(primary.trackId) ?? -1;
     const laneDelta = g.duplicate || sourceLane < 0 || targetLane < 0 ? 0 : targetLane - sourceLane;
     const canMoveAllLanes = g.origins.every((origin) => {
-      const originLane = trackIds.indexOf(origin.trackId);
+      const originLane = lanes.get(origin.trackId) ?? -1;
       const destination = trackIds[originLane + laneDelta];
       return (
         destination !== undefined &&
@@ -554,7 +582,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     const minStart = Math.min(...g.origins.map((origin) => origin.startPpq));
     const effectiveHorizontalDelta = Math.max(-minStart, horizontalDelta);
     return g.origins.map((origin) => {
-      const originLane = trackIds.indexOf(origin.trackId);
+      const originLane = lanes.get(origin.trackId) ?? -1;
       const destination = trackIds[originLane + effectiveLaneDelta] ?? origin.trackId;
       return {
         clipId: origin.id,
@@ -738,9 +766,9 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     if (gesture.kind === 'move') {
       const move = gesture;
       const targets = moveTargets(move, point, modifiers);
-      previewClips.value = targets.map((target) => {
-        const origin =
-          move.origins.find((candidate) => candidate.id === target.clipId) ?? move.origin;
+      // Targets are index-aligned with the group's origins.
+      previewClips.value = targets.map((target, i) => {
+        const origin = move.origins[i];
         return {
           clipId: target.clipId,
           trackId: target.newTrackId ?? origin.trackId,

@@ -104,6 +104,8 @@ interface DensityCacheEntry {
   windowLengthPpq: number;
   bucketPpq: number;
   densities: number[];
+  /** Fill strings per track color, filled lazily for the buckets that were drawn. */
+  fills: Map<string, Array<string | undefined>>;
 }
 const densityBucketsCache = new WeakMap<ReadonlyArray<ClipNoteSpan>, DensityCacheEntry>();
 
@@ -112,7 +114,7 @@ function cachedDensityBuckets(
   windowStartPpq: number,
   windowLengthPpq: number,
   bucketPpq: number,
-): number[] {
+): DensityCacheEntry {
   const hit = densityBucketsCache.get(notes);
   if (
     hit &&
@@ -120,11 +122,17 @@ function cachedDensityBuckets(
     hit.windowLengthPpq === windowLengthPpq &&
     hit.bucketPpq === bucketPpq
   ) {
-    return hit.densities;
+    return hit;
   }
-  const densities = densityBuckets(notes, windowStartPpq, windowLengthPpq, bucketPpq);
-  densityBucketsCache.set(notes, { windowStartPpq, windowLengthPpq, bucketPpq, densities });
-  return densities;
+  const entry: DensityCacheEntry = {
+    windowStartPpq,
+    windowLengthPpq,
+    bucketPpq,
+    densities: densityBuckets(notes, windowStartPpq, windowLengthPpq, bucketPpq),
+    fills: new Map(),
+  };
+  densityBucketsCache.set(notes, entry);
+  return entry;
 }
 
 interface ArrangementNoteSpanCacheEntry {
@@ -271,11 +279,23 @@ export function drawClip(
         );
       }
     } else {
-      const buckets = cachedDensityBuckets(noteSpans, 0, source.lengthPpq, barPpq);
+      const { densities: buckets, fills: fillsByColor } = cachedDensityBuckets(
+        noteSpans,
+        0,
+        source.lengthPpq,
+        barPpq,
+      );
+      let fills = fillsByColor.get(track.color);
+      if (!fills) {
+        fills = new Array<string | undefined>(buckets.length);
+        fillsByColor.set(track.color, fills);
+      }
       const bucketW = barPpq * range.pxPerPpq;
-      for (let i = 0; i < buckets.length; i++) {
+      const firstBucket = Math.max(0, Math.floor(-x / bucketW));
+      const lastBucket = Math.min(buckets.length - 1, Math.ceil((range.widthPx - x) / bucketW));
+      for (let i = firstBucket; i <= lastBucket; i++) {
         if (buckets[i] <= 0) continue;
-        ctx.fillStyle = colorWithAlpha(track.color, 0.12 + 0.5 * buckets[i]);
+        ctx.fillStyle = fills[i] ??= colorWithAlpha(track.color, 0.12 + 0.5 * buckets[i]);
         const bx = x + i * bucketW;
         ctx.fillRect(bx, contentTop, Math.min(bucketW, x + wPx - bx), contentH);
       }

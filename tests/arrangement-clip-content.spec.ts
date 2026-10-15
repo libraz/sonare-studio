@@ -6,7 +6,6 @@ import {
   densityBuckets,
   MIN_MINI_NOTE_PITCH_SPAN,
   MINI_NOTES_MIN_PX_PER_BEAT,
-  miniNoteRects,
   visibleMiniNoteRects,
 } from '@/ui/arrangement/clip-content';
 
@@ -24,6 +23,16 @@ describe('clipContentMode', () => {
     expect(clipContentMode(0)).toBe('density');
   });
 });
+
+/** Rects for a window with the whole window visible. */
+const miniNoteRects = (notes: ClipNoteSpan[], windowStartPpq: number, windowLengthPpq: number) =>
+  visibleMiniNoteRects(
+    notes,
+    windowStartPpq,
+    windowLengthPpq,
+    windowStartPpq,
+    windowStartPpq + windowLengthPpq,
+  );
 
 describe('miniNoteRects', () => {
   it('maps note time into window-relative unit coordinates', () => {

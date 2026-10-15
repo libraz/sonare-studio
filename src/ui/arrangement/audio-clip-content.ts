@@ -211,13 +211,13 @@ export function warpedWaveformColumns(
   }
   const durationSeconds = numFrames / sampleRate;
   const result: WaveformColumn[] = new Array(columnCount);
+  let seconds0 = warpSourceSecondsAt(clip, startLocalPpq);
   for (let column = 0; column < columnCount; column += 1) {
-    const ppq0 = startLocalPpq + ((endLocalPpq - startLocalPpq) * column) / columnCount;
     const ppq1 = startLocalPpq + ((endLocalPpq - startLocalPpq) * (column + 1)) / columnCount;
-    const seconds0 = warpSourceSecondsAt(clip, ppq0);
     const seconds1 = warpSourceSecondsAt(clip, ppq1);
     if (seconds0 === null || seconds1 === null) return [];
     result[column] = waveformColumn(peaks, seconds0 / durationSeconds, seconds1 / durationSeconds);
+    seconds0 = seconds1;
   }
   return result;
 }

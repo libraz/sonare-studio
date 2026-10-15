@@ -72,42 +72,6 @@ export function revealPlayheadStart(
 }
 
 /**
- * Returns the viewport start that would keep the playhead inside the follow
- * window, or null when no scroll is needed.
- */
-export function nextPlayheadFollowStart(
-  range: Pick<TimelineRange, 'startPpq' | 'widthPx' | 'pxPerPpq' | 'ppqToX'>,
-  playheadPpq: number,
-  margins: PlayheadFollowMargins = DEFAULT_PLAYHEAD_FOLLOW_MARGINS,
-): number | null {
-  if (
-    !Number.isFinite(playheadPpq) ||
-    range.widthPx <= 0 ||
-    range.pxPerPpq <= 0 ||
-    margins.left < 0 ||
-    margins.right <= margins.left ||
-    margins.right > 1
-  ) {
-    return null;
-  }
-
-  const x = range.ppqToX(playheadPpq);
-  const leftPx = range.widthPx * margins.left;
-  if (x < leftPx) {
-    const start = Math.max(0, playheadPpq - leftPx / range.pxPerPpq);
-    return start === range.startPpq ? null : start;
-  }
-
-  const rightPx = range.widthPx * margins.right;
-  if (x > rightPx) {
-    const start = Math.max(0, playheadPpq - rightPx / range.pxPerPpq);
-    return start === range.startPpq ? null : start;
-  }
-
-  return null;
-}
-
-/**
  * Returns the scrollLeft that keeps an item's horizontal bounds inside the
  * follow window, or null when no DOM scroll is needed.
  */

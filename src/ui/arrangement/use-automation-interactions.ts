@@ -12,6 +12,7 @@
 
 import { type Ref, ref } from 'vue';
 import type { AutomationCurve, AutomationParam, AutomationPoint } from '@/project/automation';
+import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import { snapPpqToStep } from '@/ui/canvas/timeline-range';
 import {
   type AutomationValueDomain,
@@ -19,7 +20,7 @@ import {
   automationYToValue,
 } from './automation-rows';
 import type { ClipPoint } from './clip-hit';
-import { type ClipModifiers, DEFAULT_CLIP_DRAG_THRESHOLD_PX } from './use-clip-interactions';
+import type { ClipModifiers } from './use-clip-interactions';
 
 /** Px radius around a breakpoint center that counts as a hit. */
 export const AUTOMATION_POINT_HIT_RADIUS_PX = 6;
@@ -74,7 +75,7 @@ export interface UseAutomationInteractionsOptions {
   snapPpq?(ppq: number): number;
   /** Mutation commands invoked when gestures commit. */
   commands: AutomationInteractionCommands;
-  /** Drag start threshold in px. Default {@link DEFAULT_CLIP_DRAG_THRESHOLD_PX}. */
+  /** Drag start threshold in px. Default {@link DRAG_THRESHOLD_PX}. */
   dragThresholdPx?: number;
 }
 
@@ -151,7 +152,7 @@ export function useAutomationInteractions(
   options: UseAutomationInteractionsOptions,
 ): AutomationInteractions {
   const { view, commands } = options;
-  const threshold = options.dragThresholdPx ?? DEFAULT_CLIP_DRAG_THRESHOLD_PX;
+  const threshold = options.dragThresholdPx ?? DRAG_THRESHOLD_PX;
 
   const preview = ref<AutomationDragPreview | null>(null);
   const hover = ref<AutomationHover | null>(null);
@@ -259,7 +260,15 @@ export function useAutomationInteractions(
     }
     const points = options.getLanePoints(sublane.trackId, sublane.param);
     const index = hitPointIndex(points, sublane, point);
-    hover.value = index >= 0 ? { trackId: sublane.trackId, param: sublane.param, index } : null;
+    const current = hover.value;
+    if (index < 0) hover.value = null;
+    else if (
+      current?.trackId !== sublane.trackId ||
+      current.param !== sublane.param ||
+      current.index !== index
+    ) {
+      hover.value = { trackId: sublane.trackId, param: sublane.param, index };
+    }
     cursor.value = index >= 0 ? 'pointer' : 'crosshair';
     return true;
   }

@@ -175,37 +175,6 @@ export function visibleMiniNoteRects(
 }
 
 /**
- * Computes mini-note rectangles for the notes audible in a clip window.
- *
- * Notes are clipped to the window and mapped into unit coordinates: u spans
- * the window, v spans the pitch range of the audible notes (padded to at
- * least {@link MIN_MINI_NOTE_PITCH_SPAN} semitones and centered), with higher
- * pitches towards v = 0.
- *
- * @param notes - Source-relative note spans.
- * @param windowStartPpq - Window start in source-relative PPQ.
- * @param windowLengthPpq - Window length in PPQ (> 0).
- * @param visibleStartPpq - Optional visible sub-window start; defaults to the window start.
- * @param visibleEndPpq - Optional visible sub-window end; defaults to the window end.
- * @returns One rect per selected note, in input order.
- */
-export function miniNoteRects(
-  notes: ReadonlyArray<ClipNoteSpan>,
-  windowStartPpq: number,
-  windowLengthPpq: number,
-  visibleStartPpq: number = windowStartPpq,
-  visibleEndPpq: number = windowStartPpq + windowLengthPpq,
-): UnitRect[] {
-  return visibleMiniNoteRects(
-    notes,
-    windowStartPpq,
-    windowLengthPpq,
-    visibleStartPpq,
-    visibleEndPpq,
-  );
-}
-
-/**
  * Buckets the notes audible in a clip window into fixed-size time slots and
  * returns per-bucket densities normalized to [0, 1] (peak bucket = 1).
  *

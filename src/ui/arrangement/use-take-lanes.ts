@@ -18,6 +18,7 @@ import { fillRoundRect, strokeRoundRect } from '@/components/piano-roll/theme';
 import { sanitizeCompSegments } from '@/project/comping';
 import type { PpqSpan } from '@/project/take-silence';
 import type { EditorClip, EditorTrack } from '@/project/types';
+import { clipRenderWidthPx } from '@/ui/arrangement/audio-fades';
 import { TAKE_LANE_HEIGHT_PX, trackTakeRowCount } from '@/ui/arrangement/automation-rows';
 import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -112,7 +113,7 @@ export function drawClipTakeBlocks(
   const { range, takes, colors } = context;
   const clipTakes = clip.takes ?? clip.midiTakes ?? [];
   const x = range.ppqToX(clip.startPpq);
-  const wPx = Math.max(2, clip.lengthPpq * range.pxPerPpq - 1);
+  const wPx = clipRenderWidthPx(clip.lengthPpq, range.pxPerPpq);
   if (x + wPx < 0 || x > range.widthPx) return;
   const selection =
     clip.midiTakes !== undefined

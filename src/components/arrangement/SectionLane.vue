@@ -6,6 +6,7 @@ import { useProjectStore } from '@/project/store';
 import { type EditorSection, TRACK_COLOR_PALETTE } from '@/project/types';
 import { barRangeAt, nearestBarPpq } from '@/ui/arrangement/ruler';
 import { clampSectionEdge, newSectionSpan, sectionIndexAt } from '@/ui/arrangement/sections';
+import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
@@ -40,8 +41,6 @@ const wrapper = ref<HTMLDivElement | null>(null);
 
 /** Px distance from a band edge treated as a resize handle. */
 const EDGE_TOLERANCE_PX = 5;
-/** Px a pointer must travel before an edge press becomes a resize drag. */
-const DRAG_THRESHOLD_PX = 3;
 /** Bars a new section spans when no section follows it. */
 const DEFAULT_SECTION_BARS = 4;
 
