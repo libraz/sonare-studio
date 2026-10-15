@@ -560,6 +560,14 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     }
   }
 
+  /** True for button targets that act once per press, with no gesture to commit. */
+  function isEdgeTriggered(id: string): boolean {
+    if (parseMidiLearnTransportTargetId(id) !== null) return true;
+    if (parseMidiLearnBankActionTargetId(id) !== null) return true;
+    const slot = parseMidiLearnBankTargetId(id);
+    return slot !== null && (slot.param === 'arm' || slot.param === 'select');
+  }
+
   /** Applies a CC value to a bound target, coalescing the gesture's commit. */
   function apply(id: string, value: number): void {
     if (!dispatch(id, value, false)) {
@@ -570,6 +578,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
       return;
     }
     clearTimer(id);
+    if (isEdgeTriggered(id)) return;
     commitTimers.set(
       id,
       setTimeout(() => {

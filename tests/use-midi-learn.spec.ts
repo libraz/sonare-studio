@@ -341,6 +341,29 @@ describe('useMidiLearn', () => {
     expect(selectTrack).toHaveBeenCalledWith(103);
   });
 
+  it('runs a held button action once however long the press lasts', () => {
+    const store = useProjectStore();
+    store.tracks = trackList(20);
+    store.controlSurface = { ...store.controlSurface, bankSize: 8, bankOffset: 0 };
+    const play = vi.fn();
+    const toggleTrackArm = vi.fn();
+    const learn = useMidiLearn({ transport: { play }, toggleTrackArm });
+
+    learn.armId(midiLearnTransportTargetId('play'));
+    learn.handleCc({ channel: 0, controller: 118, value: 127 });
+    learn.armId(midiLearnBankActionTargetId('next'));
+    learn.handleCc({ channel: 0, controller: 47, value: 127 });
+    learn.armId(midiLearnBankTargetId(1, 'arm'));
+    learn.handleCc({ channel: 0, controller: 60, value: 127 });
+    learn.applyTarget(midiLearnBankTargetId(1, 'arm'), 127);
+    vi.advanceTimersByTime(300);
+
+    expect(play).toHaveBeenCalledTimes(1);
+    expect(store.controlSurface.bankOffset).toBe(8);
+    // The learning press and the explicit apply each toggle exactly once.
+    expect(toggleTrackArm).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps a transport binding when no handler is wired', () => {
     const learn = useMidiLearn();
     learn.armId(midiLearnTransportTargetId('record'));

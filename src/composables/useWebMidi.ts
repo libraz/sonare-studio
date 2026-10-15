@@ -166,8 +166,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
 
   let binding: WebMidiBinding | null = null;
   let boundEngine: RealtimeEngine | null = null;
-  // Survives disconnect so a rebind can be driven by a port becoming musical
-  // again, which is the one transition that starts from a closed binding.
+  // Survives an internal release so a rebind can be driven by a port becoming
+  // musical again; a user disconnect clears it.
   let lastEngine: RealtimeEngine | null = null;
   // Exclusion set the in-flight or current binding was built for. Recorded
   // synchronously so the watcher below cannot restart a connect that is already
@@ -255,7 +255,8 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     }
   }
 
-  function disconnect(): void {
+  /** Closes the binding but keeps the engine, so the exclusion watcher may rebind. */
+  function release(): void {
     generation += 1;
     removeNoteListeners();
     const previous = binding;
@@ -268,6 +269,12 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
       boundEngine = null;
       connected.value = false;
     }
+  }
+
+  /** User-initiated disconnect: nothing rebinds until `connect` is called again. */
+  function disconnect(): void {
+    lastEngine = null;
+    release();
   }
 
   /** Stable key of the current exclusion set, for change detection. */
@@ -307,7 +314,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     error.value = null;
     lastEngine = engine;
     boundExclusionKey = exclusionKey();
-    disconnect();
+    release();
     const connectGeneration = generation;
     const selectedId = selectedInputId.value;
     const active = (): boolean =>
@@ -357,7 +364,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     } catch (err) {
       if (!active()) return false;
       error.value = err instanceof Error ? err.message : String(err);
-      disconnect();
+      release();
       return false;
     }
   }
@@ -380,7 +387,6 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
   if (getCurrentScope()) {
     onScopeDispose(() => {
       disposed = true;
-      lastEngine = null;
       disconnect();
     });
   }

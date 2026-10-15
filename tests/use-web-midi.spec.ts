@@ -337,6 +337,23 @@ describe('useWebMidi', () => {
     expect(onNoteOn).toHaveBeenCalledTimes(1);
   });
 
+  it('stays disconnected after the user disconnects when the exclusion set changes', async () => {
+    (navigator as unknown as Record<string, unknown>).requestMIDIAccess = async () => ({
+      inputs: new Map([['input-1', wasmMock.input as FakeMidiInput]]),
+    });
+    const webMidi = useWebMidi();
+    await webMidi.connect({} as never);
+    webMidi.excludedInputIds.value = ['surface-1'];
+    await vi.waitFor(() => expect(wasmMock.bindWebMidi).toHaveBeenCalledTimes(2));
+
+    webMidi.disconnect();
+    webMidi.excludedInputIds.value = ['surface-2'];
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(wasmMock.bindWebMidi).toHaveBeenCalledTimes(2);
+    expect(webMidi.connected.value).toBe(false);
+  });
+
   it('binds nothing rather than everything when the surface owns the only port', async () => {
     (navigator as unknown as Record<string, unknown>).requestMIDIAccess = async () => ({
       inputs: new Map([['input-1', wasmMock.input as FakeMidiInput]]),
