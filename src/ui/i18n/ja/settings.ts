@@ -68,7 +68,6 @@ export const settings = {
     resetKeys: '{action} のキーをリセット',
     clearKeys: '{action} のキーを解除',
     edit: '編集',
-    cancel: 'キャンセル',
     clear: '解除',
     reset: 'リセット',
     resetAll: 'すべてのショートカットをリセット',
@@ -96,14 +95,11 @@ export const settings = {
     myLayouts: 'マイレイアウト',
     noSaved: '保存済みレイアウトはまだありません。',
     newLayoutName: '新しいレイアウト名',
-    apply: '適用',
     rename: '名前変更',
-    delete: '削除',
     saveCurrent: '現在のレイアウトを保存',
     saveCurrentTitle: '現在のパネル配置をこの名前で保存',
     reasons: {
       noWorkspace: 'ワークスペースの読み込みが終わっていません。',
     },
   },
-  close: '閉じる',
 } as const;

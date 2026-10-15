@@ -177,7 +177,6 @@ export const shellMixing = {
     sampleBankRequired: 'Requires a sample bank',
     label: 'Patch editor',
     basedOn: 'based on {preset}',
-    close: 'Close',
     sections: {
       oscillator: 'Oscillator',
       osc: 'OSC',
@@ -264,7 +263,6 @@ export const shellMixing = {
     addRouting: '+ Routing',
     routingLimit: 'All {max} modulation routings are in use.',
     audition: 'Audition',
-    apply: 'Apply',
   },
   inserts: {
     title: 'Inserts',
@@ -500,7 +498,6 @@ export const shellMixing = {
       stale: 'The tracks changed while measuring. Suggest again before applying.',
       again: 'Suggest again',
       apply: 'Apply suggestion',
-      cancel: 'Cancel',
       classes: {
         unknown: 'Unclassified',
         kick: 'Kick',
@@ -667,7 +664,6 @@ export const shellMixing = {
     },
     preview: 'Preview',
     previewTitle: 'Render the loop (or the opening bars) with and without the chain',
-    cancel: 'Cancel',
     cancelTitle: 'Stop rendering the preview',
     abComparison: 'A/B comparison',
     withChain: 'With mastering chain',

@@ -50,7 +50,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
       v-tooltip="t.shell.pianoRoll.reharmonize.applyTitle"
       @click="emit('apply')"
     >
-      {{ t.shell.pianoRoll.reharmonize.apply }}
+      {{ t.common.apply }}
     </button>
     <button
       type="button"

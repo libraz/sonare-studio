@@ -72,7 +72,7 @@ const builtAt = computed(() => formatBuildTime(BUILD_TIME, locale.value));
 
     <template #actions>
       <button type="button" class="primary" @click="emit('close')">
-        {{ t.dialogs.about.close }}
+        {{ t.common.close }}
       </button>
     </template>
   </AppModal>

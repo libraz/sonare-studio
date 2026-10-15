@@ -206,7 +206,7 @@ function onApply(): void {
     </div>
 
     <template #actions>
-      <button type="button" @click="emit('close')">{{ s.cancel }}</button>
+      <button type="button" @click="emit('close')">{{ t.common.cancel }}</button>
       <button
         type="button"
         :disabled="!!againBlocked"

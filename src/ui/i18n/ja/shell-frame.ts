@@ -333,8 +333,6 @@ export const shellFrame = {
     stopAsset: '{name} を停止',
     previewAsset: '{name} をプレビュー',
     deleteConfirm: '削除しますか？',
-    delete: '削除',
-    cancel: 'キャンセル',
     add: '追加',
     addTitle: '再生ヘッドの位置にクリップとして配置',
     deleteBlocked: 'プロジェクト内のクリップで使用中です。先にそのクリップを削除してください。',
@@ -394,7 +392,6 @@ export const shellFrame = {
     shortcuts:
       'ショートカット: ? で一覧を表示できます。キーは 設定 > ショートカット で変更できます。',
     unknown: '不明',
-    close: '閉じる',
   },
   settingsButton: {
     label: '設定',

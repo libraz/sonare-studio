@@ -110,8 +110,8 @@ function onKeydown(event: KeyboardEvent): void {
               v-if="props.dismissable"
               type="button"
               class="modal-close"
-              :aria-label="t.settings.close"
-              v-tooltip="t.settings.close"
+              :aria-label="t.common.close"
+              v-tooltip="t.common.close"
               @click="emit('close')"
             >
               <CloseIcon />

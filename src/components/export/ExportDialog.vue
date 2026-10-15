@@ -1266,7 +1266,7 @@ function onKeydown(event: KeyboardEvent): void {
         </div>
         <span class="progress-stage">{{ progressStageLabel }}</span>
         <button type="button" class="cancel-render" @click="onCancelRender">
-          {{ t.dialogs.exportAudio.cancel }}
+          {{ t.common.cancel }}
         </button>
       </div>
 
@@ -1316,7 +1316,7 @@ function onKeydown(event: KeyboardEvent): void {
         v-tooltip="{ reason: busyReason }"
         @click="onClose"
       >
-        {{ t.dialogs.exportAudio.close }}
+        {{ t.common.close }}
       </button>
       <button
         type="button"

@@ -68,7 +68,6 @@ export const settings = {
     resetKeys: 'Reset keys for {action}',
     clearKeys: 'Clear keys for {action}',
     edit: 'Edit',
-    cancel: 'Cancel',
     clear: 'Clear',
     reset: 'Reset',
     resetAll: 'Reset all shortcuts',
@@ -96,14 +95,11 @@ export const settings = {
     myLayouts: 'My layouts',
     noSaved: 'No saved layouts yet.',
     newLayoutName: 'New layout name',
-    apply: 'Apply',
     rename: 'Rename',
-    delete: 'Delete',
     saveCurrent: 'Save current layout',
     saveCurrentTitle: 'Save the current panel arrangement under this name',
     reasons: {
       noWorkspace: 'The workspace has not finished loading.',
     },
   },
-  close: 'Close',
 } as const;

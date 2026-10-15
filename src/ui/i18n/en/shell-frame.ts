@@ -332,8 +332,6 @@ export const shellFrame = {
     stopAsset: 'Stop {name}',
     previewAsset: 'Preview {name}',
     deleteConfirm: 'Delete?',
-    delete: 'Delete',
-    cancel: 'Cancel',
     add: 'Add',
     addTitle: 'Place the asset as a clip at the playhead',
     deleteBlocked: 'Clips in the project use this asset. Remove those clips first.',
@@ -393,7 +391,6 @@ export const shellFrame = {
     shortcuts:
       'Shortcuts: press ? for the full cheatsheet. Keys are remappable in Settings (gear) > Shortcuts.',
     unknown: 'unknown',
-    close: 'Close',
   },
   settingsButton: {
     label: 'Settings',

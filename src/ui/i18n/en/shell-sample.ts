@@ -22,7 +22,6 @@ export const shellSample = {
     useInProjectTitle: "Replace the selected clip's audio with this version",
     useInProject: 'Use in project',
     gain: 'Gain',
-    apply: 'Apply',
     normalize: 'Normalize',
     normalizeTarget: 'Normalize target',
     fadeIn: 'Fade in',
@@ -32,7 +31,6 @@ export const shellSample = {
     trimTitle: 'Crop to the selection',
     trim: 'Trim',
     deleteTitle: 'Remove the selection and close the gap, crossfading the join',
-    delete: 'Delete',
     duplicateTitle: 'Repeat the selection right after itself, crossfading both joins',
     duplicate: 'Duplicate',
     pitch: 'Pitch',
@@ -309,7 +307,6 @@ export const shellSample = {
   midiLearn: {
     label: 'MIDI learn',
     title: 'MIDI Learn',
-    close: 'Close',
     strip: 'Strip',
     master: 'Master',
     volume: 'Vol',

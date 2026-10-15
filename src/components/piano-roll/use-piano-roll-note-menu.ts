@@ -367,7 +367,7 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
           { id: 'sep-1', separator: true },
           {
             id: 'delete',
-            label: t.value.shell.pianoRoll.context.delete,
+            label: t.value.common.delete,
             danger: true,
             hint: shortcutHint('edit.deleteSelectedNotes'),
             disabledReason: frozen(),

@@ -600,11 +600,11 @@ onBeforeUnmount(abort);
 
     <template #actions>
       <button v-if="detectedReference" type="button" class="primary" @click="close">
-        {{ copy.close }}
+        {{ t.common.close }}
       </button>
       <template v-else>
         <button type="button" @click="close">
-          {{ busy ? copy.cancel : copy.close }}
+          {{ busy ? t.common.cancel : t.common.close }}
         </button>
         <button
           type="button"

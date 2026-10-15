@@ -1414,19 +1414,19 @@ function toggleExpanded(part: TrackPart): void {
 
     <template #actions>
       <template v-if="!hasGeneratorSource">
-        <button type="button" @click="onCancel">{{ g.gateCancel }}</button>
+        <button type="button" @click="onCancel">{{ t.common.cancel }}</button>
         <button type="button" class="primary gate-create" @click="emit('openChords')">
           {{ g.gateCreate }}
         </button>
       </template>
       <template v-else-if="done">
-        <button type="button" @click="onCancel">{{ g.close }}</button>
+        <button type="button" @click="onCancel">{{ t.common.close }}</button>
         <button type="button" class="primary compose-lead" @click="onComposeLead">
           {{ g.composeLead }}
         </button>
       </template>
       <template v-else>
-        <button type="button" @click="onCancel">{{ g.cancel }}</button>
+        <button type="button" @click="onCancel">{{ t.common.cancel }}</button>
         <button
           type="button"
           class="primary generate-confirm"

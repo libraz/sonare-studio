@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
       <LayoutsTab v-else :layout-bindings="props.layoutBindings" />
     </div>
     <template #actions>
-      <button type="button" class="primary" @click="close">{{ t.settings.close }}</button>
+      <button type="button" class="primary" @click="close">{{ t.common.close }}</button>
     </template>
   </AppModal>
 </template>

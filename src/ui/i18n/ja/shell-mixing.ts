@@ -182,7 +182,6 @@ export const shellMixing = {
     sampleBankRequired: 'サンプルバンクが必要です',
     label: 'パッチエディター',
     basedOn: '{preset} ベース',
-    close: '閉じる',
     sections: {
       oscillator: 'オシレーター',
       osc: 'OSC',
@@ -269,7 +268,6 @@ export const shellMixing = {
     addRouting: '+ ルーティング',
     routingLimit: 'モジュレーションのルーティングは{max}件までです。',
     audition: '試聴',
-    apply: '適用',
   },
   inserts: {
     title: 'インサート',
@@ -506,7 +504,6 @@ export const shellMixing = {
       stale: '測定中にトラックが変わりました。適用する前にもう一度提案してください。',
       again: 'もう一度提案',
       apply: '提案を適用',
-      cancel: 'キャンセル',
       classes: {
         unknown: '未分類',
         kick: 'キック',
@@ -674,7 +671,6 @@ export const shellMixing = {
     },
     preview: 'プレビュー',
     previewTitle: 'ループ範囲（なければ冒頭の数小節）をチェーンあり・なしでレンダーします',
-    cancel: 'キャンセル',
     cancelTitle: 'プレビューのレンダーを中止します',
     abComparison: 'A/B比較',
     withChain: 'マスタリングチェーンあり',

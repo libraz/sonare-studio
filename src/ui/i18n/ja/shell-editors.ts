@@ -201,7 +201,6 @@ export const shellEditors = {
       toggle: '自動コード',
       toggleTitle: '編集に合わせて旋律に沿うコード変更を提案',
       suggestionLabel: '旋律に合わせますか？',
-      apply: '適用',
       applyTitle: 'コードを旋律に合わせて更新',
       dismiss: '閉じる',
       lock: '{name} をリハーモナイズから保護',
@@ -275,7 +274,6 @@ export const shellEditors = {
       copy: 'コピー',
       cut: 'カット',
       paste: 'ペースト',
-      delete: '削除',
     },
     info: {
       label: 'ノート情報',
@@ -298,7 +296,6 @@ export const shellEditors = {
       title: 'MIDI変換',
       preview: 'プレビューノート',
       previewNoop: 'プレビュー: ノート変更なし',
-      close: '閉じる',
       transpose: '移調',
       quantize: 'クオンタイズ',
       quantizeGrid: 'クオンタイズグリッド',
@@ -318,20 +315,17 @@ export const shellEditors = {
       noopReason: '設定を変更してください。今の設定ではノートは変わりません。',
       hint: '破壊的 - 取り消し可能',
       reset: 'リセット',
-      apply: '適用',
     },
     ornamentTitle: 'クリップに奏法を付ける',
     ornamentToggle: '奏法',
     ornament: {
       label: 'クリップに奏法を付ける',
       title: '奏法',
-      close: '閉じる',
       markGroup: '奏法',
       amount: '量',
       preview: '{total}音中 {marked}音に付きます',
       previewNone: 'この奏法が乗る音がありません',
       hint: '記譜の記号のみ追加',
-      apply: '適用',
     },
   },
   stepSequencer: {
@@ -403,7 +397,6 @@ export const shellEditors = {
       confirmTitle: 'パターンがクリップ範囲を超えています',
       confirmMessage:
         'パターンは {pattern} PPQ、再生対象のクリップ範囲は {clip} PPQです。「{policy}」で適用しますか？',
-      confirmApply: '適用',
       cancelled: 'パターンの適用をキャンセルしました。',
     },
     replace: {

@@ -113,7 +113,7 @@ function pct(value: number): string {
       <button
         type="button"
         class="fx-close"
-        :aria-label="t.shell.pianoRoll.midiTransform.close"
+        :aria-label="t.common.close"
         @click="emit('close')"
       >
         <CloseIcon />
@@ -337,7 +337,7 @@ function pct(value: number): string {
         v-tooltip="{ reason: noop ? t.shell.pianoRoll.midiTransform.noopReason : null }"
         @click="apply"
       >
-        {{ t.shell.pianoRoll.midiTransform.apply }}
+        {{ t.common.apply }}
       </button>
     </footer>
   </div>

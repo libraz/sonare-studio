@@ -135,7 +135,7 @@ function onKeydown(event: KeyboardEvent): void {
             v-tooltip="formatMessage(t.dialogs.openProject.deleteProject, { name: info.name })"
             @click="emit('deleteProject', info.name)"
           >
-            {{ t.dialogs.openProject.delete }}
+            {{ t.common.delete }}
           </button>
         </li>
         <li v-if="storedProjects.length === 0" class="stored-empty">
@@ -147,7 +147,7 @@ function onKeydown(event: KeyboardEvent): void {
         {{ t.dialogs.openProject.importSzd }}
       </button>
       <span class="bar-spacer" />
-      <button type="button" @click="emit('close')">{{ t.dialogs.openProject.close }}</button>
+      <button type="button" @click="emit('close')">{{ t.common.close }}</button>
     </template>
   </AppModal>
 </template>

@@ -392,7 +392,7 @@ async function onDelete(track: EditorTrack): Promise<void> {
         ids.length === 1
           ? formatMessage(labels.deleteTrackConfirmMessage, { name: track.name })
           : formatMessage(labels.deleteTracksConfirmMessage, { count: ids.length }),
-      confirmLabel: labels.deleteTrackConfirm,
+      confirmLabel: t.value.common.delete,
     }))
   )
     return;

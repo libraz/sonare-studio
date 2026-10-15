@@ -261,7 +261,7 @@ watch(
 
     <template #actions>
       <button type="button" class="primary" @click="emit('close')">
-        {{ t.shell.diagnostics.close }}
+        {{ t.common.close }}
       </button>
     </template>
   </AppModal>

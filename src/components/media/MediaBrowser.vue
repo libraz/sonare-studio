@@ -569,9 +569,9 @@ onBeforeUnmount(() => {
         <div v-if="pendingDeleteId === asset.id" class="row-actions confirm">
           <span class="confirm-label">{{ t.shell.media.deleteConfirm }}</span>
           <button type="button" class="danger" @click="confirmDelete(asset.id)">
-            {{ t.shell.media.delete }}
+            {{ t.common.delete }}
           </button>
-          <button type="button" @click="cancelDelete">{{ t.shell.media.cancel }}</button>
+          <button type="button" @click="cancelDelete">{{ t.common.cancel }}</button>
         </div>
         <div v-else class="row-actions">
           <button

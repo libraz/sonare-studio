@@ -65,7 +65,7 @@ function deleteLayout(name: string): void {
       !(await confirmDestructive({
         title: t.value.settings.layouts.deleteTitle,
         message: formatMessage(t.value.settings.layouts.deleteMessage, { name }),
-        confirmLabel: t.value.settings.layouts.delete,
+        confirmLabel: t.value.common.delete,
       }))
     )
       return;
@@ -118,7 +118,7 @@ function renameLayout(name: string): void {
               v-tooltip="{ reason: applyBlocked }"
               @click="applyLayout(layout.name)"
             >
-              {{ t.settings.layouts.apply }}
+              {{ t.common.apply }}
             </button>
           </span>
         </div>
@@ -147,13 +147,13 @@ function renameLayout(name: string): void {
               v-tooltip="{ reason: applyBlocked }"
               @click="applyLayout(layout.name)"
             >
-              {{ t.settings.layouts.apply }}
+              {{ t.common.apply }}
             </button>
             <button type="button" class="small" @click="renameLayout(layout.name)">
               {{ t.settings.layouts.rename }}
             </button>
             <button type="button" class="small" @click="deleteLayout(layout.name)">
-              {{ t.settings.layouts.delete }}
+              {{ t.common.delete }}
             </button>
           </span>
         </div>

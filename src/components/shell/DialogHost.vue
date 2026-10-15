@@ -63,7 +63,7 @@ function onPromptKeydown(event: KeyboardEvent): void {
   <AppModal
     :open="current !== undefined"
     size="sm"
-    :aria-label="current?.title ?? t.dialogs.common.dialog"
+    :aria-label="current?.title ?? t.common.dialog"
     @close="onCancel"
   >
     <template v-if="current?.title" #title>{{ current.title }}</template>

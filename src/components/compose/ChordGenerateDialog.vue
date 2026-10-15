@@ -460,13 +460,13 @@ function onKeydown(event: KeyboardEvent): void {
 
     <template #actions>
       <template v-if="phase === 'done'">
-        <button type="button" @click="onCancel">{{ g.close }}</button>
+        <button type="button" @click="onCancel">{{ t.common.close }}</button>
         <button type="button" class="primary continue-tracks" @click="emit('generateTracks')">
           {{ g.continueToTracks }}
         </button>
       </template>
       <template v-else>
-        <button type="button" @click="onCancel">{{ g.cancel }}</button>
+        <button type="button" @click="onCancel">{{ t.common.cancel }}</button>
         <button
           type="button"
           class="primary generate-confirm"

@@ -201,7 +201,6 @@ export const shellEditors = {
       toggle: 'Auto-chords',
       toggleTitle: 'Suggest chord changes that follow the melody as you edit',
       suggestionLabel: 'Follow the melody?',
-      apply: 'Apply',
       applyTitle: 'Update the chords to follow the melody',
       dismiss: 'Dismiss',
       lock: 'Lock {name} against reharmonization',
@@ -275,7 +274,6 @@ export const shellEditors = {
       copy: 'Copy',
       cut: 'Cut',
       paste: 'Paste',
-      delete: 'Delete',
     },
     info: {
       label: 'Note info',
@@ -298,7 +296,6 @@ export const shellEditors = {
       title: 'MIDI Transform',
       preview: 'Preview notes',
       previewNoop: 'Preview: no note changes',
-      close: 'Close',
       transpose: 'Transpose',
       quantize: 'Quantize',
       quantizeGrid: 'Quantize grid',
@@ -318,20 +315,17 @@ export const shellEditors = {
       noopReason: 'Change a setting first; this transform leaves the notes unchanged.',
       hint: 'Destructive - undoable',
       reset: 'Reset',
-      apply: 'Apply',
     },
     ornamentTitle: 'Decorate the clip with a playing technique',
     ornamentToggle: 'Decorate',
     ornament: {
       label: 'Decorate clip',
       title: 'Decorate',
-      close: 'Close',
       markGroup: 'Playing technique',
       amount: 'Amount',
       preview: 'Marks {marked} of {total} notes',
       previewNone: 'Nothing this technique can sit on here',
       hint: 'Adds score marks only',
-      apply: 'Apply',
     },
   },
   stepSequencer: {
@@ -403,7 +397,6 @@ export const shellEditors = {
       confirmTitle: 'Pattern exceeds clip window',
       confirmMessage:
         'The pattern spans {pattern} PPQ, but the audible clip window is {clip} PPQ. Apply using “{policy}”?',
-      confirmApply: 'Apply',
       cancelled: 'Pattern apply was cancelled.',
     },
     replace: {

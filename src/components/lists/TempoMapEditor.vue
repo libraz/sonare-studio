@@ -249,7 +249,7 @@ function apply(): void {
         v-tooltip="{ text: t.shell.lists.common.applyTitle, reason: draftBlocked }"
         @click="apply"
       >
-        {{ t.shell.lists.common.apply }}
+        {{ t.common.apply }}
       </button>
     </div>
   </div>

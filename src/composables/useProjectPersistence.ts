@@ -473,7 +473,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     if (
       !(await confirmAction(formatMessage(t.value.dialogs.prompts.deleteProjectMessage, { name }), {
         title: t.value.dialogs.prompts.deleteProjectTitle,
-        confirmLabel: t.value.dialogs.prompts.delete,
+        confirmLabel: t.value.common.delete,
       }))
     )
       return;
@@ -1016,7 +1016,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
           }),
           {
             title: t.value.dialogs.prompts.restoreBackupMediaSkippedTitle,
-            confirmLabel: t.value.dialogs.prompts.restoreBackupMediaSkippedConfirm,
+            confirmLabel: t.value.common.ok,
           },
         );
       }

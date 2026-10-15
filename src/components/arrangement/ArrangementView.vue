@@ -1288,7 +1288,7 @@ function onClipContext(payload: {
     { id: 'sep-1', separator: true },
     {
       id: 'delete',
-      label: actions.delete,
+      label: t.value.common.delete,
       hint: shortcutHint('arrange.deleteClip'),
       danger: true,
       disabledReason: frozenBlock,
@@ -1383,7 +1383,7 @@ function rippleTimeFromPrompt(mode: 'insert' | 'delete', ppq: number): void {
       placeholder: t.value.shell.arrangement.clipActions.timeLength,
       confirmLabel: isInsert
         ? t.value.shell.arrangement.clipActions.insertTimeConfirm
-        : t.value.shell.arrangement.clipActions.deleteTimeConfirm,
+        : t.value.common.delete,
     });
     if (lengthText === null) return;
     const lengthPpq = Number(lengthText);

@@ -161,7 +161,7 @@ function templateInfo(name: TemplateName): { label: string; description: string 
       </div>
     </div>
     <template #actions>
-      <button type="button" @click="onCancel">{{ t.dialogs.newProject.cancel }}</button>
+      <button type="button" @click="onCancel">{{ t.common.cancel }}</button>
       <button type="button" class="primary" @click="onCreate">
         {{ t.dialogs.newProject.create }}
       </button>

@@ -96,7 +96,7 @@ function apply(): void {
       <button
         type="button"
         class="orn-close"
-        :aria-label="t.shell.pianoRoll.ornament.close"
+        :aria-label="t.common.close"
         @click="emit('close')"
       >
         <CloseIcon />
@@ -139,7 +139,7 @@ function apply(): void {
         }"
         @click="apply"
       >
-        {{ t.shell.pianoRoll.ornament.apply }}
+        {{ t.common.apply }}
       </button>
     </footer>
   </div>

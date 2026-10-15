@@ -527,7 +527,7 @@ function onKeydown(event: KeyboardEvent): void {
             {{ formatMessage(t.shell.patchEditor.basedOn, { preset: draft.preset }) }}
           </span>
         </h2>
-        <button type="button" class="patch-close" v-tooltip="t.shell.patchEditor.close" @click="onClose">
+        <button type="button" class="patch-close" v-tooltip="t.common.close" @click="onClose">
           ×
         </button>
       </header>
@@ -832,8 +832,8 @@ function onKeydown(event: KeyboardEvent): void {
           {{ t.shell.patchEditor.audition }}
         </button>
         <span class="actions-spacer" />
-        <button type="button" @click="onClose">{{ t.shell.patchEditor.close }}</button>
-        <button type="button" class="primary" @click="onApply">{{ t.shell.patchEditor.apply }}</button>
+        <button type="button" @click="onClose">{{ t.common.close }}</button>
+        <button type="button" class="primary" @click="onApply">{{ t.common.apply }}</button>
       </footer>
     </div>
   </div>

@@ -1,10 +1,5 @@
 /** Modal dialogs: prompts, confirmations and the export sheets. */
 export const dialogs = {
-  common: {
-    ok: 'OK',
-    cancel: 'キャンセル',
-    dialog: 'ダイアログ',
-  },
   prompts: {
     restoreSessionTitle: 'セッションを復元',
     restoreSessionMessage: '前回セッションの自動保存プロジェクトを復元しますか？',
@@ -14,14 +9,12 @@ export const dialogs = {
     discard: '破棄',
     deleteProjectTitle: 'プロジェクトを削除',
     deleteProjectMessage: '保存済みプロジェクト「{name}」を削除しますか？',
-    delete: '削除',
     restoreBackupTitle: 'ブラウザバックアップを復元',
     restoreBackupMessage:
       'バックアップから名前付きプロジェクト、オーディオアセット、SoundFontを復元しますか？同名プロジェクトは置き換えられますが、現在開いているプロジェクトとローカルの自動保存リカバリーは変更しません。内容が異なるmedia IDがある場合は保存済みデータを変更せず復元を中止します。',
     restoreBackupMediaSkippedTitle: '一部のバックアップメディアを復元できませんでした',
     restoreBackupMediaSkippedMessage:
       'バックアップは復元されましたが、次の不正または不完全なメディアは復元できませんでした。\n{items}',
-    restoreBackupMediaSkippedConfirm: 'OK',
     saveRevisionTitle: 'リビジョンを保存',
     saveRevisionMessage: 'あとで戻れるように、このリビジョンに名前を付けます。',
     revisionLabelPlaceholder: 'リビジョン名',
@@ -55,7 +48,6 @@ export const dialogs = {
     noTracks: 'トラックなし',
     warning:
       '現在のプロジェクトには未保存の変更があります。新規プロジェクトを作成すると破棄されます。',
-    cancel: 'キャンセル',
     create: '作成',
     templateInfo: {
       empty: {
@@ -94,24 +86,20 @@ export const dialogs = {
     list: '保存済みリビジョン',
     restore: '{name} を復元',
     deleteRevision: '{name} を削除',
-    delete: '削除',
     empty: 'このプロジェクトのリビジョンはまだありません。',
     saveCurrent: '現在の状態を保存…',
-    close: '閉じる',
   },
   openProject: {
     title: 'プロジェクトを開く',
     projectsList: '保存済みプロジェクト',
     loadProject: '{name} を読み込む',
     deleteProject: '{name} を削除',
-    delete: '削除',
     rename: '名前を変更',
     renameProject: '{name} の名前を変更',
     renameTitle: '保存済みプロジェクトの名前を変更',
     renameMessage: '{name} の新しい名前を入力してください。',
     empty: '保存済みプロジェクトはありません。',
     importSzd: '.szdを読み込み...',
-    close: '閉じる',
   },
   exportAudio: {
     title: 'オーディオを書き出し',
@@ -158,7 +146,6 @@ export const dialogs = {
     releaseTailTitle: 'リバーブやディレイの余韻のため、最後のクリップの後に足す時間',
     seconds: '秒',
     filename: 'ファイル名',
-    cancel: 'キャンセル',
     cancelled: '書き出しをキャンセルしました。',
     workerError: '書き出し処理が予期せず停止しました。もう一度書き出してください。',
     masteringBufferLimit:
@@ -243,7 +230,6 @@ export const dialogs = {
           'ワープしたクリップが同時に 64 本を超えたため、超えた分は音程ごとテンポに合わせて再生されました',
       },
     },
-    close: '閉じる',
     export: '書き出し',
     stage: {
       preflight: '事前検証',
@@ -262,7 +248,6 @@ export const dialogs = {
   },
   shortcutsHelp: {
     title: 'キーボードショートカット',
-    close: '閉じる',
     emptyKeys: '-',
     scopes: {
       global: '全体',
@@ -280,6 +265,5 @@ export const dialogs = {
     audioEngine: 'オーディオエンジン',
     available: '利用可能',
     unavailable: '利用不可',
-    close: '閉じる',
   },
 } as const;

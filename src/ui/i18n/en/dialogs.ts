@@ -1,10 +1,5 @@
 /** Modal dialogs: prompts, confirmations and the export sheets. */
 export const dialogs = {
-  common: {
-    ok: 'OK',
-    cancel: 'Cancel',
-    dialog: 'Dialog',
-  },
   prompts: {
     restoreSessionTitle: 'Restore session',
     restoreSessionMessage: 'Restore the autosaved project from your last session?',
@@ -14,14 +9,12 @@ export const dialogs = {
     discard: 'Discard',
     deleteProjectTitle: 'Delete project',
     deleteProjectMessage: 'Delete the saved project "{name}"?',
-    delete: 'Delete',
     restoreBackupTitle: 'Restore browser backup',
     restoreBackupMessage:
       'Restore all named projects, audio assets and SoundFonts from a browser backup? Existing project names are replaced; the open project and local autosave recovery remain unchanged. A conflicting media id cancels the restore without changing stored data.',
     restoreBackupMediaSkippedTitle: 'Some backup media was skipped',
     restoreBackupMediaSkippedMessage:
       'The backup was restored, but these invalid or incomplete media entries could not be recovered:\n{items}',
-    restoreBackupMediaSkippedConfirm: 'OK',
     saveRevisionTitle: 'Save revision',
     saveRevisionMessage: 'Name this revision so you can return to it later.',
     revisionLabelPlaceholder: 'Revision name',
@@ -53,7 +46,6 @@ export const dialogs = {
     tracks: 'Tracks',
     noTracks: 'No tracks',
     warning: 'The current project has unsaved changes. Creating a new project will discard them.',
-    cancel: 'Cancel',
     create: 'Create',
     templateInfo: {
       empty: {
@@ -92,24 +84,20 @@ export const dialogs = {
     list: 'Saved revisions',
     restore: 'Restore {name}',
     deleteRevision: 'Delete {name}',
-    delete: 'Delete',
     empty: 'No revisions saved for this project.',
     saveCurrent: 'Save current state...',
-    close: 'Close',
   },
   openProject: {
     title: 'Open project',
     projectsList: 'Saved projects',
     loadProject: 'Load {name}',
     deleteProject: 'Delete {name}',
-    delete: 'Delete',
     rename: 'Rename',
     renameProject: 'Rename {name}',
     renameTitle: 'Rename saved project',
     renameMessage: 'Enter a new name for {name}.',
     empty: 'No saved projects.',
     importSzd: 'Import .szd...',
-    close: 'Close',
   },
   exportAudio: {
     title: 'Export audio',
@@ -156,7 +144,6 @@ export const dialogs = {
     releaseTailTitle: 'Extra time after the last clip so reverb and delay can ring out',
     seconds: 'seconds',
     filename: 'Filename',
-    cancel: 'Cancel',
     cancelled: 'Export cancelled.',
     workerError: 'The export worker stopped unexpectedly. Please try exporting again.',
     masteringBufferLimit:
@@ -238,7 +225,6 @@ export const dialogs = {
           'More than 64 warped clips played at once; the extra ones followed the tempo by changing pitch',
       },
     },
-    close: 'Close',
     export: 'Export',
     stage: {
       preflight: 'preflight',
@@ -257,7 +243,6 @@ export const dialogs = {
   },
   shortcutsHelp: {
     title: 'Keyboard shortcuts',
-    close: 'Close',
     emptyKeys: '-',
     scopes: {
       global: 'Everywhere',
@@ -275,6 +260,5 @@ export const dialogs = {
     audioEngine: 'Audio engine',
     available: 'available',
     unavailable: 'unavailable',
-    close: 'Close',
   },
 } as const;

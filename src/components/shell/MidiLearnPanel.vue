@@ -334,7 +334,7 @@ function clearAll(): void {
       <button
         type="button"
         class="ml-close"
-        :aria-label="t.shell.midiLearn.close"
+        :aria-label="t.common.close"
         v-tooltip="t.shell.midiLearn.closeTitle"
         @click="close"
       >

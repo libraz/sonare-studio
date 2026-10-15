@@ -383,7 +383,7 @@ async function applyToClip(): Promise<void> {
         clip: sourceWindow.lengthPpq,
         policy: policyLabel ?? overflowPolicy.value,
       }),
-      confirmLabel: t.value.shell.stepSequencer.overflow.confirmApply,
+      confirmLabel: t.value.common.apply,
     });
     if (!proceed) {
       status.value = t.value.shell.stepSequencer.overflow.cancelled;

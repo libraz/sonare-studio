@@ -5,6 +5,7 @@
  * own file; the shape is held identical across locales by the message parity
  * test, which compares the assembled trees rather than these parts.
  */
+import { common } from './common';
 import { dialogs } from './dialogs';
 import { harmony } from './harmony';
 import { notices } from './notices';
@@ -20,6 +21,7 @@ import { shortcuts } from './shortcuts';
 import { theory } from './theory';
 
 export const en = {
+  common,
   settings,
   shell: {
     ...shellFrame,

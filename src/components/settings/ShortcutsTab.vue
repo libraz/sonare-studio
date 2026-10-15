@@ -170,7 +170,7 @@ onBeforeUnmount(stopCapture);
               >
                 {{
                   capturingId === action.id
-                    ? t.settings.shortcuts.cancel
+                    ? t.common.cancel
                     : t.settings.shortcuts.edit
                 }}
               </button>

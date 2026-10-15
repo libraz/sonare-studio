@@ -93,7 +93,7 @@ function close(): void {
     </div>
     <template #actions>
       <button type="button" class="primary" @click="close">
-        {{ t.dialogs.shortcutsHelp.close }}
+        {{ t.common.close }}
       </button>
     </template>
   </AppModal>

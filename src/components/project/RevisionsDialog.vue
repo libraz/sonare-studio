@@ -53,7 +53,7 @@ const { locale, t } = useI18n();
           v-tooltip="formatMessage(t.dialogs.revisions.deleteRevision, { name: revision.label })"
           @click="emit('deleteRevision', revision.slot)"
         >
-          {{ t.dialogs.revisions.delete }}
+          {{ t.common.delete }}
         </button>
       </li>
       <li v-if="revisions.length === 0" class="stored-empty">
@@ -65,7 +65,7 @@ const { locale, t } = useI18n();
         {{ t.dialogs.revisions.saveCurrent }}
       </button>
       <span class="bar-spacer" />
-      <button type="button" @click="emit('close')">{{ t.dialogs.revisions.close }}</button>
+      <button type="button" @click="emit('close')">{{ t.common.close }}</button>
     </template>
   </AppModal>
 </template>

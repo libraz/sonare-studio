@@ -132,7 +132,7 @@ function formatAttenuation(value: number): string {
           v-tooltip="t.shell.mastering.cancelTitle"
           @click="emit('cancel')"
         >
-          {{ t.shell.mastering.cancel }}
+          {{ t.common.cancel }}
         </button>
         <span v-if="stale" class="preview-stale animate-pop" v-tooltip="t.shell.mastering.staleTitle">
           {{ t.shell.mastering.stale }}

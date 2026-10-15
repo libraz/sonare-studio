@@ -105,7 +105,7 @@ function onApply(): void {
     </div>
 
     <template #actions>
-      <button type="button" @click="onCancel">{{ g.cancel }}</button>
+      <button type="button" @click="onCancel">{{ t.common.cancel }}</button>
       <button
         type="button"
         class="primary"

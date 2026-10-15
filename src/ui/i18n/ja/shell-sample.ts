@@ -22,7 +22,6 @@ export const shellSample = {
     useInProjectTitle: '選択中のクリップのオーディオをこのバージョンに置き換えます',
     useInProject: 'プロジェクトで使用',
     gain: 'ゲイン',
-    apply: '適用',
     normalize: 'ノーマライズ',
     normalizeTarget: 'ノーマライズ目標',
     fadeIn: 'フェードイン',
@@ -32,7 +31,6 @@ export const shellSample = {
     trimTitle: '選択範囲へクロップ',
     trim: 'トリム',
     deleteTitle: '選択範囲を削除して詰める（継ぎ目はクロスフェード）',
-    delete: '削除',
     duplicateTitle: '選択範囲を直後に複製（両方の継ぎ目をクロスフェード）',
     duplicate: '複製',
     pitch: 'ピッチ',
@@ -302,7 +300,6 @@ export const shellSample = {
   midiLearn: {
     label: 'MIDI Learn',
     title: 'MIDI Learn',
-    close: '閉じる',
     strip: 'ストリップ',
     master: 'マスター',
     volume: 'Vol',

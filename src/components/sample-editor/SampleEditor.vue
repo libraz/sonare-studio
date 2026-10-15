@@ -723,7 +723,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.gainTitle, reason: editBlocked }"
             @click="onGain"
           >
-            {{ se.apply }}
+            {{ t.common.apply }}
           </button>
         </div>
         <div class="op-cluster">
@@ -744,7 +744,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.normalizeTitle, reason: editBlocked }"
             @click="onNormalize"
           >
-            {{ se.apply }}
+            {{ t.common.apply }}
           </button>
         </div>
         <div class="op-cluster">
@@ -824,7 +824,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.deleteTitle, reason: deleteBlocked }"
             @click="onDelete"
           >
-            {{ se.delete }}
+            {{ t.common.delete }}
           </button>
           <button
             type="button"
@@ -856,7 +856,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.pitchTitle, reason: opBlocked.pitchShift }"
             @click="onPitchShift"
           >
-            {{ se.apply }}
+            {{ t.common.apply }}
           </button>
         </div>
         <div class="op-cluster">
@@ -875,7 +875,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.tuneTitle, reason: opBlocked.pitchCorrect }"
             @click="onPitchCorrect"
           >
-            {{ se.apply }}
+            {{ t.common.apply }}
           </button>
           <button
             type="button"
@@ -920,7 +920,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.tuneScaleTitle, reason: opBlocked.scaleCorrect }"
             @click="onScaleCorrect"
           >
-            {{ se.apply }}
+            {{ t.common.apply }}
           </button>
         </div>
         <div class="op-cluster">
@@ -975,7 +975,7 @@ onBeforeUnmount(() => {
             v-tooltip="{ text: se.stretchTitle, reason: opBlocked.timeStretch }"
             @click="onTimeStretch"
           >
-            {{ se.apply }}
+            {{ t.common.apply }}
           </button>
           <button
             type="button"
