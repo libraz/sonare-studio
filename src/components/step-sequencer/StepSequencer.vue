@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { useGestureTransaction } from '@/composables/useGestureTransaction';
 import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
 import { audibleMidiSourceWindow, midiTimelinePpqToSource } from '@/project/midi-projection';
@@ -83,12 +84,24 @@ function snapshot(value: StepPattern): StepPattern {
   return JSON.parse(JSON.stringify(value)) as StepPattern;
 }
 
-function setPattern(next: StepPattern, previousRootPitch = rootPitch.value): void {
-  undoStack.value = [
-    ...undoStack.value.slice(-(MAX_PATTERN_HISTORY - 1)),
-    { pattern: snapshot(pattern.value), rootPitch: previousRootPitch },
-  ];
+function pushHistory(entry: PatternHistoryEntry): void {
+  undoStack.value = [...undoStack.value.slice(-(MAX_PATTERN_HISTORY - 1)), entry];
   redoStack.value = [];
+}
+
+/** A pointer drag or paint stroke records one history entry, however many cells it writes. */
+const gesture = useGestureTransaction<PatternHistoryEntry>({ commit: pushHistory });
+
+function beginPointerGesture(): void {
+  gesture.begin({ pattern: snapshot(pattern.value), rootPitch: rootPitch.value });
+}
+
+function setPattern(next: StepPattern, previousRootPitch = rootPitch.value): void {
+  if (gesture.active) {
+    gesture.markDirty();
+  } else {
+    pushHistory({ pattern: snapshot(pattern.value), rootPitch: previousRootPitch });
+  }
   pattern.value = next;
 }
 
@@ -294,6 +307,8 @@ function onSetStepVelocity(rowIndex: number, stepIndex: number, velocity: number
 }
 
 function onSetParamValue(stepIndex: number, value: number): void {
+  const current = pattern.value.rows[selectedRow.value]?.steps[stepIndex];
+  if (!current || current[paramTab.value] === value) return;
   const patch =
     paramTab.value === 'velocity'
       ? { velocity: value }
@@ -471,7 +486,12 @@ defineExpose({
 </script>
 
 <template>
-  <div class="step-sequencer">
+  <div
+    class="step-sequencer"
+    @pointerdown.capture="beginPointerGesture"
+    @pointerup="gesture.end()"
+    @pointercancel="gesture.end()"
+  >
     <div class="seq-toolbar">
       <div class="tool-group">
         <button

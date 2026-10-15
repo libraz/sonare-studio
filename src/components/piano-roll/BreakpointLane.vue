@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { useGestureTransaction } from '@/composables/useGestureTransaction';
 import { isClipExpressionCurve } from '@/project/midi-cc';
 import type { ClipCcPoint, ClipExpressionCurve } from '@/project/types';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
@@ -95,6 +96,13 @@ let heightPx = 0;
 type DragState = { mode: 'move'; index: number } | { mode: 'draw' };
 
 let drag: DragState | null = null;
+/** One undo step per gesture: a press without a drag leaves the points untouched. */
+const gesture = useGestureTransaction<ClipCcPoint[]>({
+  commit: (before) => {
+    const result = preview.value;
+    if (result && !pointsEqual(result, before)) props.commit(result);
+  },
+});
 /** Last pointer value of the running gesture, for the corner readout. */
 let dragValue: number | null = null;
 
@@ -260,15 +268,13 @@ function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0) return;
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
 
+  gesture.begin(props.points, point.x, point.y);
   if (hit >= 0) {
-    const ppq = ppqFromX(point.x);
-    const working = props.points.map((p) => ({ ...p }));
-    working[hit] = pointWithCurve(ppq, value, working[hit].curve);
-    preview.value = working;
     drag = { mode: 'move', index: hit };
   } else {
     drag = { mode: 'draw' };
     applyDraw(ppqFromX(point.x), value);
+    gesture.markDirty();
   }
   dragValue = value;
   schedule();
@@ -277,6 +283,7 @@ function onPointerDown(event: PointerEvent): void {
 function onPointerMove(event: PointerEvent): void {
   if (!drag) return;
   const point = localPoint(event);
+  if (drag.mode === 'move' && !gesture.move(point.x, point.y)) return;
   const value = valueFromY(point.y);
   const ppq = ppqFromX(point.x);
   if (drag.mode === 'move') {
@@ -286,6 +293,7 @@ function onPointerMove(event: PointerEvent): void {
   } else {
     applyDraw(ppq, value);
   }
+  gesture.markDirty();
   dragValue = value;
   schedule();
 }
@@ -303,17 +311,15 @@ function pointsEqual(a: ReadonlyArray<ClipCcPoint>, b: ReadonlyArray<ClipCcPoint
 
 function onPointerUp(): void {
   if (!drag) return;
-  const result = preview.value;
+  gesture.end();
   drag = null;
   dragValue = null;
   preview.value = null;
-  if (result && !pointsEqual(result, props.points)) {
-    props.commit(result);
-  }
   schedule();
 }
 
 function onPointerCancel(): void {
+  gesture.cancel();
   drag = null;
   dragValue = null;
   preview.value = null;
