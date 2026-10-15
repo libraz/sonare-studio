@@ -77,7 +77,12 @@ import {
 import { catalogParamInfo } from '@/project/processor-controls';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
-import { type EditorTrack, TRACK_COLOR_PALETTE, type TrackKind } from '@/project/types';
+import {
+  type EditorClip,
+  type EditorTrack,
+  TRACK_COLOR_PALETTE,
+  type TrackKind,
+} from '@/project/types';
 import {
   type ArrangementRowLayout,
   AUTOMATION_LANE_HEIGHT_PX,
@@ -586,14 +591,32 @@ function isTakesExpanded(track: EditorTrack): boolean {
   return props.takesExpandedIds?.includes(track.id) ?? false;
 }
 
+/** Take-row facts per track id, derived once per clip change instead of per render. */
+const takeRowsByTrack = computed(() => {
+  const clipsByTrack = new Map<number, EditorClip[]>();
+  for (const clip of store.clips) {
+    const list = clipsByTrack.get(clip.trackId);
+    if (list) list.push(clip);
+    else clipsByTrack.set(clip.trackId, [clip]);
+  }
+  const facts = new Map<number, { count: number; active: number }>();
+  for (const [trackId, clips] of clipsByTrack) {
+    facts.set(trackId, {
+      count: trackTakeRowCount(clips, trackId),
+      active: trackActiveTakeIndex(clips, trackId),
+    });
+  }
+  return facts;
+});
+
 /** Number of take sub-rows the track shows when expanded (0 = no comped clips). */
 function takeRowCount(track: EditorTrack): number {
-  return trackTakeRowCount(store.clips, track.id);
+  return takeRowsByTrack.value.get(track.id)?.count ?? 0;
 }
 
 /** Live/comped take row index for the track, or -1 when none is unambiguous. */
 function activeTakeIndex(track: EditorTrack): number {
-  return trackActiveTakeIndex(store.clips, track.id);
+  return takeRowsByTrack.value.get(track.id)?.active ?? -1;
 }
 
 function onToggleTakes(track: EditorTrack): void {
