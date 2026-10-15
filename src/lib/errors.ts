@@ -28,7 +28,11 @@ export function describeError(err: unknown, copy: ErrorCopy): string {
       budget: Math.floor(err.budgetBytes / MIB),
     });
   }
-  if (err instanceof Error) return err.message;
   if (typeof err === 'number') return fill(copy.engineRejected, { code: err });
-  return String(err);
+  return errorMessage(err);
+}
+
+/** Message of a thrown value for logs and non-localized surfaces. */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

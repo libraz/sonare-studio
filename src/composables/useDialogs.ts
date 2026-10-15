@@ -9,6 +9,7 @@
  */
 
 import { reactive } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { useI18n } from '@/ui/i18n';
 
 /** Shared option bag for the confirm / alert variants. */
@@ -82,6 +83,15 @@ export function confirmDialog(options: ConfirmOptions): Promise<boolean> {
       resolve: (value) => resolve(value === true),
     });
   });
+}
+
+/**
+ * Confirms a destructive action as a danger dialog, resolving true without
+ * asking when the user turned destructive confirmations off.
+ */
+export function confirmDestructive(options: ConfirmOptions): Promise<boolean> {
+  if (!useAppSettings().settings.confirmDestructive) return Promise.resolve(true);
+  return confirmDialog({ ...options, danger: options.danger ?? true });
 }
 
 /**

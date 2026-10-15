@@ -312,11 +312,7 @@ watch(autosave.lastError, (error) => {
 });
 const { downloadBlobFile, lastDownload } = useFileDownloads();
 
-const { confirmAction, confirmLossAction, runAction } = useActionGuards({
-  appSettings,
-  busy,
-  errorMessage,
-});
+const { confirmAction, confirmLossAction, runAction } = useActionGuards({ busy, errorMessage });
 const commandPaletteOpen = ref(false);
 const chordGenerateDialogOpen = ref(false);
 const trackGenerateDialogOpen = ref(false);

@@ -7,6 +7,7 @@ const downloadMocks = vi.hoisted(() => ({
 
 const dialogMocks = vi.hoisted(() => ({
   confirmDialog: vi.fn<(options: unknown) => Promise<boolean>>(),
+  confirmDestructive: vi.fn<(options: unknown) => Promise<boolean>>(),
   promptDialog: vi.fn<(options: unknown) => Promise<string | null>>(),
 }));
 
@@ -52,6 +53,7 @@ beforeEach(() => {
   vi.stubEnv('DEV', true);
   downloadMocks.downloadBlob.mockReset();
   dialogMocks.confirmDialog.mockReset();
+  dialogMocks.confirmDestructive.mockReset();
   dialogMocks.promptDialog.mockReset();
   layoutMocks.apply.mockReset();
   layoutMocks.isPreset.mockReset();
@@ -99,20 +101,20 @@ describe('useOutsidePopovers', () => {
 });
 
 describe('useActionGuards', () => {
-  it('honors the destructive-action preference and reports failed actions', async () => {
+  it('routes destructive confirmations through the shared gate and reports failed actions', async () => {
     const busy = ref(false);
     const errorMessage = ref('old error');
-    const appSettings = { settings: { confirmDestructive: true } };
-    dialogMocks.confirmDialog.mockResolvedValue(true);
-    const guards = useActionGuards({ appSettings: appSettings as never, busy, errorMessage });
+    dialogMocks.confirmDestructive.mockResolvedValue(true);
+    const guards = useActionGuards({ busy, errorMessage });
 
     await expect(guards.confirmAction('Delete', { confirmLabel: 'Remove' })).resolves.toBe(true);
-    expect(dialogMocks.confirmDialog).toHaveBeenCalledWith({
+    expect(dialogMocks.confirmDestructive).toHaveBeenCalledWith({
       title: undefined,
       message: 'Delete',
-      danger: true,
+      danger: undefined,
       confirmLabel: 'Remove',
     });
+    expect(dialogMocks.confirmDialog).not.toHaveBeenCalled();
 
     await guards.runAction(async () => {
       throw new Error('write failed');
@@ -120,12 +122,8 @@ describe('useActionGuards', () => {
     expect(errorMessage.value).toContain('write failed');
     expect(busy.value).toBe(false);
 
-    (appSettings.settings as { confirmDestructive: boolean }).confirmDestructive = false;
-    await expect(guards.confirmAction('Skip dialog')).resolves.toBe(true);
-    expect(dialogMocks.confirmDialog).toHaveBeenCalledTimes(1);
-
+    dialogMocks.confirmDialog.mockResolvedValue(true);
     await expect(guards.confirmLossAction('Explain a lossy export')).resolves.toBe(true);
-    expect(dialogMocks.confirmDialog).toHaveBeenCalledTimes(2);
     expect(dialogMocks.confirmDialog).toHaveBeenLastCalledWith({
       title: undefined,
       message: 'Explain a lossy export',
@@ -138,11 +136,7 @@ describe('useActionGuards', () => {
     const busy = ref(true);
     const action = vi.fn(async () => {});
     const errorMessage = ref('');
-    const guards = useActionGuards({
-      appSettings: { settings: { confirmDestructive: false } } as never,
-      busy,
-      errorMessage,
-    });
+    const guards = useActionGuards({ busy, errorMessage });
 
     await guards.runAction(action);
     expect(action).not.toHaveBeenCalled();

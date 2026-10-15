@@ -23,8 +23,8 @@
 
 import type { TempoSegment } from './types';
 
-/** Tempo used when the input has no usable segments and no fallback is given. */
-const DEFAULT_FALLBACK_BPM = 120;
+/** Project tempo used when a document or input carries no usable tempo. */
+export const DEFAULT_TEMPO_BPM = 120;
 
 /** Engine-side BPM floor; every BPM value is clamped to it. */
 const BPM_FLOOR = 1e-6;
@@ -99,10 +99,10 @@ function lowerSegmentIndex(
  */
 export function normalizeTempoMap(
   segments: ReadonlyArray<TempoSegment>,
-  fallbackBpm: number = DEFAULT_FALLBACK_BPM,
+  fallbackBpm: number = DEFAULT_TEMPO_BPM,
 ): NormalizedTempoMap {
   const fallback =
-    Number.isFinite(fallbackBpm) && fallbackBpm > 0 ? clampBpm(fallbackBpm) : DEFAULT_FALLBACK_BPM;
+    Number.isFinite(fallbackBpm) && fallbackBpm > 0 ? clampBpm(fallbackBpm) : DEFAULT_TEMPO_BPM;
   const sorted = segments
     .filter((segment) => Number.isFinite(segment.startPpq))
     .map((segment) => ({
