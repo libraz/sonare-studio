@@ -41,9 +41,19 @@ function harness() {
     return true;
   });
 
-  const recording = { armedTrackId, isRecording, record, stopRecord } as unknown as Parameters<
-    typeof useTransportControls
-  >[0]['recording'];
+  // Ppq the recorder keeps capture open past the right locator (latency lead).
+  const captureExtensionPpq = ref(0);
+  const capturePunchOutPpq = vi.fn(() =>
+    isRecording.value ? loopEndPpq.value + captureExtensionPpq.value : null,
+  );
+
+  const recording = {
+    armedTrackId,
+    isRecording,
+    record,
+    stopRecord,
+    capturePunchOutPpq,
+  } as unknown as Parameters<typeof useTransportControls>[0]['recording'];
 
   const transport = {
     play: vi.fn(),
@@ -84,6 +94,7 @@ function harness() {
     positionPpq,
     armedTrackId,
     isRecording,
+    captureExtensionPpq,
     record,
     stopRecord,
   };
@@ -132,6 +143,18 @@ describe('useTransportControls auto-punch', () => {
     await nextTick();
     expect(h.isRecording.value).toBe(true);
     h.positionPpq.value = 32; // hits the right locator
+    await nextTick();
+    expect(h.stopRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps capturing until the latency-extended boundary past the right locator', async () => {
+    h.captureExtensionPpq.value = 2;
+    h.positionPpq.value = 20;
+    await nextTick();
+    h.positionPpq.value = 32;
+    await nextTick();
+    expect(h.stopRecord).not.toHaveBeenCalled();
+    h.positionPpq.value = 34;
     await nextTick();
     expect(h.stopRecord).toHaveBeenCalledTimes(1);
   });

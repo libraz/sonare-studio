@@ -125,6 +125,11 @@ export interface UseRecordingReturn {
   /** Last user-facing error message, or null. Cleared by the next action. */
   error: Ref<string | null>;
   /**
+   * The latency-extended capture punch-out of the take in progress in PPQ,
+   * or null when no take is capturing.
+   */
+  capturePunchOutPpq(): number | null;
+  /**
    * Requests microphone access for the current engine.
    *
    * @returns True on success; false with `error` set otherwise.
@@ -146,7 +151,10 @@ export interface UseRecordingReturn {
   setVoiceChangerPreset(preset: RecordingVoiceChangerPreset): void;
   /** Sets StreamingRetune semitone shift for microphone recording/monitoring. */
   setStreamingRetuneSemitones(semitones: number): void;
-  /** Sets the source captured by the next recording take. */
+  /**
+   * Sets the source captured by the next recording take. A change requested
+   * during an operation is held and applied once the operation ends.
+   */
   setCaptureSource(source: RecordingCaptureSource): void;
   /** Sets the microphone input device used by the next input capture binding. */
   setInputDeviceId(deviceId: string): void;
@@ -465,6 +473,8 @@ export function useRecording(
     ensureRecorder()?.setMonitor(enabled, gain);
   };
 
+  let pendingCaptureSource: RecordingCaptureSource | null = null;
+
   const resetRecorderBinding = (): void => {
     if (!recorder) return;
     unsubscribeLevel?.();
@@ -512,6 +522,12 @@ export function useRecording(
     resetRecorderBinding();
   };
 
+  const applyCaptureSource = (source: RecordingCaptureSource): void => {
+    if (captureSource.value === source) return;
+    captureSource.value = source;
+    resetRecorderBinding();
+  };
+
   const setCaptureSource = (source: RecordingCaptureSource): void => {
     error.value = null;
     if (source !== 'input' && source !== 'output') {
@@ -519,12 +535,12 @@ export function useRecording(
       return;
     }
     if (state.value !== 'idle') {
+      pendingCaptureSource = source;
       error.value = 'Recording source changes will apply to the next take.';
       return;
     }
-    if (captureSource.value === source) return;
-    captureSource.value = source;
-    resetRecorderBinding();
+    pendingCaptureSource = null;
+    applyCaptureSource(source);
   };
 
   const setInputDeviceId = (deviceId: string): void => {
@@ -979,8 +995,22 @@ export function useRecording(
     { flush: 'sync' },
   );
 
+  // A source change requested mid-operation lands once the state is idle.
+  const stopWatchingPendingSource = watch(
+    state,
+    (current) => {
+      if (current !== 'idle' || pendingCaptureSource === null) return;
+      const next = pendingCaptureSource;
+      pendingCaptureSource = null;
+      applyCaptureSource(next);
+    },
+    { flush: 'sync' },
+  );
+
   const dispose = (): void => {
     if (recordingOperations.disposed) return;
+    stopWatchingPendingSource();
+    pendingCaptureSource = null;
     recordingOperations.dispose(new DOMException('Recording disposed.', 'AbortError'));
     microphoneOperations.dispose(new DOMException('Recording disposed.', 'AbortError'));
     activeOperation = null;
@@ -1025,6 +1055,7 @@ export function useRecording(
     setStreamingRetuneSemitones,
     setCaptureSource,
     setInputDeviceId,
+    capturePunchOutPpq: () => recorder?.capturePunchOutPpq() ?? null,
     record,
     stopRecord,
     dispose,

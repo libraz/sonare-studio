@@ -650,7 +650,7 @@ describe('createRecorder capture', () => {
     ).rejects.toBeInstanceOf(RangeError);
   });
 
-  it('trims the latency offset from the head and returns the rest', async () => {
+  it('passes the latency offset to the engine and returns the captured frames unshifted', async () => {
     const { handle, setStatus, setAudio } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
@@ -668,12 +668,13 @@ describe('createRecorder capture', () => {
     expect(result?.sampleRate).toBe(100);
     expect(result?.channels).toHaveLength(1);
     const channel = result?.channels[0] as Float32Array;
-    expect(channel.length).toBe(20);
-    expect(channel[0]).toBe(10);
-    expect(channel[19]).toBe(29);
+    // The engine owns the shift; the host keeps frame 0 as captured.
+    expect(channel.length).toBe(30);
+    expect(channel[0]).toBe(0);
+    expect(channel[29]).toBe(29);
   });
 
-  it('extends an auto-punch by the latency offset so the trimmed take keeps its tail', async () => {
+  it('sends the punch window unextended because the engine compensates the record offset', async () => {
     const { handle, configureCapture, punch, setStatus, setAudio } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
@@ -681,23 +682,47 @@ describe('createRecorder capture', () => {
     recorder.arm(7);
 
     await recorder.start({ startPpq: 0, endPpq: 1, tempoBpm: 120, recordOffsetSamples: 10 });
-    // One PPQ at 120 BPM is 50 frames; capture ten lead-in frames as well.
+    // One PPQ at 120 BPM is 50 frames; the engine reads the window in compensated time.
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 60, recordOffsetSamples: 10 }),
+      expect.objectContaining({ bufferFrames: 50, recordOffsetSamples: 10 }),
     );
-    expect(punch).toHaveBeenLastCalledWith(0, 1.2);
-    setStatus({ capturedFrames: 60 });
-    setAudio([Float32Array.from({ length: 60 }, (_, index) => index)]);
+    expect(punch).toHaveBeenLastCalledWith(0, 1);
+    setStatus({ capturedFrames: 50 });
+    setAudio([Float32Array.from({ length: 50 }, (_, index) => index)]);
 
     const result = await recorder.stop();
-    expect(Array.from(result?.channels[0] ?? [])).toEqual(
-      Array.from({ length: 50 }, (_, index) => index + 10),
+    expect(Array.from(result?.channels[0] ?? [])).toEqual(Array.from({ length: 50 }, (_, i) => i));
+    expect(recorder.capturePunchOutPpq()).toBeNull();
+  });
+
+  it('exposes the render position at which the punch window is fully captured', async () => {
+    const { handle } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(7);
+    expect(recorder.capturePunchOutPpq()).toBeNull();
+    await recorder.start({ startPpq: 0, endPpq: 1, tempoBpm: 120, recordOffsetSamples: 10 });
+    expect(recorder.capturePunchOutPpq()).toBeCloseTo(1.2);
+  });
+
+  it('fails the take when the engine refuses the punch window', async () => {
+    const { handle, punch, armRecord } = makeHandle(100);
+    punch.mockReturnValueOnce(false);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(7);
+    await expect(recorder.start({ startPpq: 0, tempoBpm: 120 })).rejects.toBeInstanceOf(
+      RecorderStateError,
     );
+    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
+    expect(recorder.isRecording()).toBe(false);
   });
 
   it('derives the default latency offset from the context latency', async () => {
-    // baseLatency 0.1 s at 100 Hz = 10 frames trimmed.
-    const { handle, setStatus, setAudio } = makeHandle(100, 0.1);
+    // baseLatency 0.1 s at 100 Hz = 10 frames of engine-side offset.
+    const { handle, configureCapture, setStatus, setAudio } = makeHandle(100, 0.1);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -705,9 +730,12 @@ describe('createRecorder capture', () => {
     await recorder.start({ startPpq: 0, tempoBpm: 120 });
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 30 });
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ recordOffsetSamples: 10 }),
+    );
     const channel = (await recorder.stop())?.channels[0] as Float32Array;
-    expect(channel.length).toBe(20);
-    expect(channel[0]).toBe(10);
+    expect(channel.length).toBe(30);
+    expect(channel[0]).toBe(0);
   });
 
   it('adds the device input latency to the default offset', async () => {
@@ -727,8 +755,8 @@ describe('createRecorder capture', () => {
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 30 });
     const channel = (await recorder.stop())?.channels[0] as Float32Array;
-    expect(channel.length).toBe(15);
-    expect(channel[0]).toBe(15);
+    expect(channel.length).toBe(30);
+    expect(channel[0]).toBe(0);
   });
 
   it('adds project playback PDC to the device record offset', async () => {
@@ -745,8 +773,8 @@ describe('createRecorder capture', () => {
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 50 });
     const channel = (await recorder.stop())?.channels[0] as Float32Array;
-    expect(channel.length).toBe(11);
-    expect(channel[0]).toBe(39);
+    expect(channel.length).toBe(50);
+    expect(channel[0]).toBe(0);
   });
 
   it('preserves stereo channels independently', async () => {
@@ -764,7 +792,7 @@ describe('createRecorder capture', () => {
     expect(Array.from(result?.channels[1] ?? [])).toEqual([0, 2, 4, 6]);
   });
 
-  it('returns null when the capture is shorter than the latency offset', async () => {
+  it('returns null when nothing was captured', async () => {
     const { handle, armRecord, setStatus, setAudio, resetCapture, configureCapture } =
       makeHandle(100);
     const { deps } = makeDeps();
@@ -773,7 +801,7 @@ describe('createRecorder capture', () => {
     recorder.arm(1);
     await recorder.start({ startPpq: 4, tempoBpm: 120, recordOffsetSamples: 10 });
     setAudio(rampChannels(1, 100));
-    setStatus({ capturedFrames: 10 }); // nothing beyond the trimmed head
+    setStatus({ capturedFrames: 0 });
     expect(await recorder.stop()).toBeNull();
     expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
     // The engine capture is still reset and the idle config restored.
@@ -1135,18 +1163,30 @@ describe('createRecorder multi-device merge', () => {
       disconnect: ReturnType<typeof vi.fn>;
     }> = [];
     const createChannelMerger = vi.fn(() => merger);
+    const splitters: Array<{ connect: ReturnType<typeof vi.fn> }> = [];
+    const createChannelSplitter = vi.fn(() => {
+      const splitter = { connect: vi.fn() };
+      splitters.push(splitter);
+      return splitter;
+    });
     const createMediaStreamSource = vi.fn(() => {
       const source = { connect: vi.fn(), disconnect: vi.fn() };
       sources.push(source);
       return source;
     });
-    Object.assign(handle.ctx, { createChannelMerger, createMediaStreamSource });
+    Object.assign(handle.ctx, {
+      createChannelMerger,
+      createChannelSplitter,
+      createMediaStreamSource,
+    });
     return {
       handle,
       configureCapture,
       merger,
       sources,
+      splitters,
       createChannelMerger,
+      createChannelSplitter,
       createMediaStreamSource,
     };
   }
@@ -1157,7 +1197,9 @@ describe('createRecorder multi-device merge', () => {
       configureCapture,
       merger,
       sources,
+      splitters,
       createChannelMerger,
+      createChannelSplitter,
       createMediaStreamSource,
     } = makeMergeHandle();
     const streams = new Map([
@@ -1179,9 +1221,12 @@ describe('createRecorder multi-device merge', () => {
     expect(getUserMedia).toHaveBeenCalledTimes(2);
     expect(createChannelMerger).toHaveBeenCalledWith(2);
     expect(createMediaStreamSource).toHaveBeenCalledTimes(2);
-    // Device i feeds merger input i, and the merger drives the engine node.
-    expect(sources[0].connect).toHaveBeenCalledWith(merger, 0, 0);
-    expect(sources[1].connect).toHaveBeenCalledWith(merger, 0, 1);
+    // Device i's first channel (one-output splitter) feeds merger input i.
+    expect(createChannelSplitter).toHaveBeenCalledWith(1);
+    expect(sources[0].connect).toHaveBeenCalledWith(splitters[0]);
+    expect(sources[1].connect).toHaveBeenCalledWith(splitters[1]);
+    expect(splitters[0].connect).toHaveBeenCalledWith(merger, 0, 0);
+    expect(splitters[1].connect).toHaveBeenCalledWith(merger, 0, 1);
     expect(merger.connect).toHaveBeenCalledWith(handle.engine.node);
     // The capture width follows the merged channel count, not a hardcoded 2.
     expect(configureCapture).toHaveBeenCalledWith(

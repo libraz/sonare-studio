@@ -9,10 +9,10 @@
  * the punch window — a half-open PPQ range [in, out) converted engine-side at
  * the current tempo map — and only runs while the transport plays, so a
  * count-in pre-roll (transport seeked earlier than the punch-in) is excluded
- * from the take without any host-side frame skipping. The engine treats
- * recordOffsetSamples as metadata only and never shifts captured samples;
- * record-latency compensation is sent to the engine and also applied here by
- * trimming the head of the take in stop().
+ * from the take without any host-side frame skipping. The engine itself
+ * delays captured samples by recordOffsetSamples (record-latency
+ * compensation) and reads the punch window in that compensated time, so
+ * the host applies no further shift and the take spans exactly the window.
  *
  * Input monitoring is engine-side: the capture config's inputMonitor switch
  * controls whether the microphone input is also mixed into the engine output.
@@ -161,10 +161,10 @@ export interface StartRecordingOptions {
    */
   tempoMap?: NormalizedTempoMap;
   /**
-   * Record-latency compensation in samples (>= 0): the first that many
-   * captured frames are dropped when the take is assembled. A sound played
-   * at timeline position T reaches the capture input roughly this many
-   * samples late, so trimming the head re-aligns the take to `startPpq`.
+   * Record-latency compensation in samples (>= 0), handed to the engine,
+   * which delays capture by that many samples. A sound played at timeline
+   * position T reaches the capture input roughly this many samples late, so
+   * the shift re-aligns the take to `startPpq`.
    * Defaults to {@link defaultRecordOffsetSamples} of the engine context plus
    * the device's reported input latency ({@link inputLatencySamples}).
    */
@@ -317,12 +317,18 @@ export interface Recorder {
    * Disarms the engine record path, reads the captured take, resets the
    * engine capture and restores the idle capture config.
    *
-   * @returns The recorded frames (head-trimmed by the record-latency
-   *   offset), or null when nothing usable was captured (for example when
-   *   stopped during the count-in).
+   * @returns The recorded frames, or null when nothing usable was captured
+   *   (for example when stopped during the count-in).
    * @throws RecorderStateError When no recording is in progress.
    */
   stop(): Promise<RecordingResult | null>;
+  /**
+   * The render position, in PPQ, at which the engine has captured the whole
+   * punch window of the take in progress (punch-out plus the record offset),
+   * or null when idle. Callers that close capture themselves (auto-punch)
+   * must wait for this rather than the bare musical punch-out.
+   */
+  capturePunchOutPpq(): number | null;
   /**
    * Releases everything: disarms an in-flight recording (discarding frames),
    * unsubscribes from engine meters and stops the microphone tracks. Safe to
@@ -442,8 +448,8 @@ function attachAllTrackEndedListeners(
 interface ActiveTake {
   trackId: number;
   startPpq: number;
-  /** Record-latency head trim applied when the take is assembled. */
-  offsetSamples: number;
+  /** Render position in PPQ at which the punch window is fully captured. */
+  capturePunchOutPpq: number;
   /** Capture sample rate at start time. */
   sampleRate: number;
 }
@@ -520,9 +526,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
    * (Re)sends the engine capture config. Input capture uses the raw microphone
    * source and current monitor state; output capture records the master output
    * and keeps input monitoring disabled. Re-sending preserves armed state and
-   * buffered audio. recordOffsetSamples is also applied host-side in stop()
-   * so stored takes stay aligned even on engines that only treat it as
-   * monitor/capture metadata.
+   * buffered audio. The engine applies recordOffsetSamples as a capture delay.
    */
   const sendCaptureConfig = (bufferFrames: number, recordOffsetSamples = 0): void => {
     captureBufferFrames = bufferFrames;
@@ -647,10 +651,13 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       const ctx = handle.ctx;
       merger = ctx.createChannelMerger(used.length);
       for (const stream of streams) sources.push(ctx.createMediaStreamSource(stream));
-      // Each device's first channel feeds one merger input, so merged channel i
-      // carries device i (the order recordingChannelRoutes demuxes onto tracks).
+      // A one-output discrete splitter keeps only each device's first channel
+      // (a direct connect would down-mix it), so merged channel i carries
+      // device i (the order recordingChannelRoutes demuxes onto tracks).
       sources.forEach((source, index) => {
-        source.connect(merger as ChannelMergerNode, 0, index);
+        const splitter = ctx.createChannelSplitter(1);
+        source.connect(splitter);
+        splitter.connect(merger as ChannelMergerNode, 0, index);
       });
       merger.connect(handle.engine.node);
       const readyMerger = merger;
@@ -934,14 +941,16 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         ? secondsToPpq(startOptions.tempoMap, startSeconds + maxDurationSeconds)
         : startPpq + (maxDurationSeconds * tempoBpm) / 60);
     const requestedPunchDurationSeconds = ppqToCaptureSeconds(requestedPunchOutPpq);
-    // Capture must remain open for the latency lead-in beyond the musical
-    // punch boundary. We trim that lead-in on stop; closing at the requested
-    // boundary would therefore discard the same number of real tail frames.
-    const captureDurationSeconds =
-      Math.max(maxDurationSeconds, requestedPunchDurationSeconds) + offsetSamples / sampleRate;
-    const capturePunchOutPpq = startOptions.tempoMap
+    const captureDurationSeconds = Math.max(maxDurationSeconds, requestedPunchDurationSeconds);
+    const punchOutPpq = startOptions.tempoMap
       ? secondsToPpq(startOptions.tempoMap, startSeconds + captureDurationSeconds)
       : startPpq + (captureDurationSeconds * tempoBpm) / 60;
+    // The punch window is in compensated time, so the render position passes
+    // its end `offsetSamples` before the engine has captured the tail.
+    const captureCompleteSeconds = captureDurationSeconds + offsetSamples / sampleRate;
+    const capturePunchOutPpq = startOptions.tempoMap
+      ? secondsToPpq(startOptions.tempoMap, startSeconds + captureCompleteSeconds)
+      : startPpq + (captureCompleteSeconds * tempoBpm) / 60;
     const trackId = armedTrack;
     const generation = ++operationGeneration;
     let engineArmed = false;
@@ -957,8 +966,10 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
       // earlier as needed. The half-open window keeps any count-in pre-roll out
       // of the buffer and lets auto-punch close sample-accurately at R.
-      handle.engine.punch(startPpq, capturePunchOutPpq);
-      take = { trackId, startPpq, offsetSamples, sampleRate };
+      if (!handle.engine.punch(startPpq, punchOutPpq)) {
+        throw new RecorderStateError('The engine rejected the capture punch window');
+      }
+      take = { trackId, startPpq, capturePunchOutPpq, sampleRate };
       phase = 'recording';
     } catch (error) {
       if (engineArmed) handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
@@ -1010,12 +1021,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     // capturedFrames samples of each channel are valid.
     let frames = status.capturedFrames;
     for (const channel of captured) frames = Math.min(frames, channel.length);
-    // The first offsetSamples frames are input-latency lead-in: a sound at
-    // timeline position T reaches the input about that many samples late, so
-    // dropping them re-aligns the take to startPpq.
-    const kept = frames - active.offsetSamples;
-    if (kept <= 0 || captured.length === 0) return null;
-    const channels = captured.map((channel) => channel.slice(active.offsetSamples, frames));
+    if (frames <= 0 || captured.length === 0) return null;
+    const channels = captured.map((channel) => channel.slice(0, frames));
     return {
       channels,
       sampleRate: active.sampleRate,
@@ -1084,6 +1091,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     },
     start,
     stop,
+    capturePunchOutPpq: () => (phase === 'recording' && take ? take.capturePunchOutPpq : null),
     dispose,
   };
 }

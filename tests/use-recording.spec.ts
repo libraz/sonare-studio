@@ -100,6 +100,7 @@ function makeFakeRecorder() {
     }),
     armedTrackId: () => armed,
     isRecording: () => recording,
+    capturePunchOutPpq: () => null,
     setMonitor: vi.fn(),
     monitorEnabled: () => false,
     setVoiceChangerPreset: vi.fn(() => true),
@@ -599,6 +600,26 @@ describe('useRecording', () => {
     await recording.record();
     expect(factory).toHaveBeenCalledTimes(2);
     expect(fake.rec.start).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies a capture source requested during a take to the next take', async () => {
+    const { recording, factory } = setup();
+    const trackId = addAudioTrack({ name: 'Vox' });
+    recording.arm(trackId);
+
+    await recording.record();
+    recording.setCaptureSource('output');
+    expect(recording.captureSource.value).toBe('input');
+    expect(recording.error.value).toBe('Recording source changes will apply to the next take.');
+
+    await expect(recording.stopRecord()).resolves.not.toBeNull();
+    expect(recording.captureSource.value).toBe('output');
+
+    await recording.record();
+    expect(factory).toHaveBeenLastCalledWith(
+      fakeHandle,
+      expect.objectContaining({ captureSource: 'output' }),
+    );
   });
 
   it('keeps default and explicit armed-track devices as separate capture routes', async () => {

@@ -206,7 +206,10 @@ export function useTransportControls(options: TransportControlsOptions) {
     if (!autoPunchEnabled.value || !options.isPlaying.value) return;
     if (options.recording.armedTrackId.value === null || !hasLocatorWindow.value) return;
     if (options.recording.isRecording.value) {
-      if (ppq >= options.loopEndPpq.value) void options.recording.stopRecord();
+      // Close on the recorder's latency-extended boundary: render position
+      // reaches the right locator `offset` samples before capture does.
+      const closeAtPpq = options.recording.capturePunchOutPpq();
+      if (closeAtPpq !== null && ppq >= closeAtPpq) void options.recording.stopRecord();
       return;
     }
     if (autoPunchArming || ppq >= options.loopEndPpq.value) return;
