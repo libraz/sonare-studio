@@ -6,18 +6,19 @@ import {
   validateAssetPayload,
 } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
+import { loadFont } from '@/project/fonts';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import { type InsertSlot, tracksWithVcaSolo } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import {
-  documentAudibleTrackIndices,
   ppqSpanIntersectsRange,
   programOutputDocument,
   type RenderPpqRange,
 } from './engine-render-context';
 import { MAX_RELEASE_TAIL_SECONDS } from './engine-render-types';
 import type { MixdownRangePpq } from './mixdown';
+import { documentTempoSegments, planExportRender } from './render-plan';
 
 /** Structured reference to what pulled an asset into the export (localized at the UI). */
 export type AudioAssetLabel =
@@ -27,7 +28,8 @@ export type AudioAssetLabel =
 /** A condition that must be fixed before rendering (localized at the UI). */
 export type AudioExportBlocker =
   | { kind: 'audio-clip-no-media'; clip: string; track: string }
-  | { kind: 'media-missing'; labels: AudioAssetLabel[]; assetId: string; reason: string };
+  | { kind: 'media-missing'; labels: AudioAssetLabel[]; assetId: string; reason: string }
+  | { kind: 'soundfont-missing'; fontId: string; reason: string };
 
 /** A fidelity limitation the user may explicitly accept (localized at the UI). */
 export type AudioExportWarning =
@@ -55,6 +57,8 @@ export interface AudioExportPreflightOptions {
   insertTail?: InsertTailResolver;
   /** Injectable payload validation seam; defaults to an OPFS size/sidecar check. */
   validateAudioAssetPayload?: (assetId: string) => Promise<AudioAssetMeta>;
+  /** Injectable SoundFont loader; defaults to the project font store. */
+  loadFont?: (fontId: string) => Promise<Uint8Array>;
   /** @deprecated Payload validation is required; retained only as a test seam. */
   loadAudioAssetMeta?: (assetId: string) => Promise<AudioAssetMeta>;
   /** @deprecated Use loadAudioAssetMeta; retained for callers that need a custom seam. */
@@ -273,8 +277,27 @@ export async function audioExportPreflight(
   const blockers: AudioExportBlocker[] = [];
   const warnings: AudioExportWarning[] = [];
   const range = resolvePreflightRange(options);
-  const tempoMap = normalizeTempoMap(doc.tempoSegments);
-  const audibleTrackIndices = documentAudibleTrackIndices(doc);
+  const tempoMap = normalizeTempoMap(documentTempoSegments(doc));
+  // Inserts only matter for the tail (and preroll) when some track can carry one.
+  const everyTrack = new Set(doc.tracks.map((_, index) => index));
+  const anyInserts = activeInsertStages(doc, everyTrack, {});
+  const resolveTail = [
+    ...anyInserts.lanes,
+    ...anyInserts.buses,
+    anyInserts.master,
+    anyInserts.mastering,
+  ].some((chain) => chain.length > 0)
+    ? (options.insertTail ?? (await wasmInsertTailResolver(doc.sampleRate)))
+    : null;
+  const plan = planExportRender({
+    doc,
+    sampleRate: doc.sampleRate,
+    tempoMap,
+    range,
+    estimateTailSeconds: (contributors) =>
+      resolveTail ? estimatedTailSeconds(doc, contributors, resolveTail) : 0,
+  });
+  const { audibleTrackIndices, contributorTrackIndices, contributionRange } = plan;
   const vcaControls = new Map((doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group]));
   const soloTracks = tracksWithVcaSolo(doc.tracks, vcaControls).filter((track) => track.solo);
   if (soloTracks.length > 0) {
@@ -296,10 +319,10 @@ export async function audioExportPreflight(
 
   for (let trackIndex = 0; trackIndex < doc.tracks.length; trackIndex += 1) {
     options.signal?.throwIfAborted();
-    if (!audibleTrackIndices.has(trackIndex)) continue;
+    if (!contributorTrackIndices.has(trackIndex)) continue;
     const track = doc.tracks[trackIndex];
     if (track.frozen !== undefined) {
-      if (trackTimelineIntersectsRange(track, range)) {
+      if (trackTimelineIntersectsRange(track, contributionRange)) {
         addUse(track.frozen.assetId, { kind: 'frozen-track', name: track.name });
       }
       continue;
@@ -307,6 +330,7 @@ export async function audioExportPreflight(
 
     const instrument = effectiveTrackInstrument(track, doc.externalMidiDefault);
     if (
+      audibleTrackIndices.has(trackIndex) &&
       track.kind === 'midi' &&
       instrument.kind === 'external-midi' &&
       track.clips.some(
@@ -322,7 +346,7 @@ export async function audioExportPreflight(
 
     for (const clip of track.clips) {
       if ((clip.kind ?? 'midi') !== 'audio' || clip.gain <= 0 || clip.lengthPpq <= 0) continue;
-      if (!ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, range)) continue;
+      if (!ppqSpanIntersectsRange(clip.startPpq, clip.lengthPpq, contributionRange)) continue;
       const segments = audioClipSegments(clip, { tempoMap, clipStartPpq: clip.startPpq });
       if (segments.length === 0) {
         blockers.push({ kind: 'audio-clip-no-media', clip: clip.name, track: track.name });
@@ -330,7 +354,8 @@ export async function audioExportPreflight(
       }
       for (const segment of segments) {
         const segmentStartPpq = clip.startPpq + segment.offsetPpq;
-        if (!ppqSpanIntersectsRange(segmentStartPpq, segment.lengthPpq, range)) continue;
+        if (!ppqSpanIntersectsRange(segmentStartPpq, segment.lengthPpq, contributionRange))
+          continue;
         addUse(segment.assetId, { kind: 'audio-clip', name: clip.name });
       }
     }
@@ -357,15 +382,23 @@ export async function audioExportPreflight(
     }
   }
 
+  const readFont = options.loadFont ?? loadFont;
+  for (const fontId of plan.soundFontUsage.fontIds) {
+    options.signal?.throwIfAborted();
+    try {
+      await readFont(fontId);
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      blockers.push({
+        kind: 'soundfont-missing',
+        fontId,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   if (options.range === 'project') {
-    const stages = activeInsertStages(doc, audibleTrackIndices, {});
-    const hasInserts = [...stages.lanes, ...stages.buses, stages.master, stages.mastering].some(
-      (chain) => chain.length > 0,
-    );
-    const resolveTail = hasInserts
-      ? (options.insertTail ?? (await wasmInsertTailResolver(doc.sampleRate)))
-      : null;
-    const tail = resolveTail ? estimatedTailSeconds(doc, audibleTrackIndices, resolveTail) : 0;
+    const tail = resolveTail ? estimatedTailSeconds(doc, contributorTrackIndices, resolveTail) : 0;
     if (tail > options.releaseTailSeconds) {
       warnings.push({
         kind: 'release-tail-short',

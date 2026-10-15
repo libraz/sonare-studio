@@ -151,7 +151,7 @@ type SidechainEngine = {
 };
 
 /** Maps a persisted strip send list to the engine's numeric bus ids. */
-function engineBusSends(
+export function engineBusSends(
   sends: ReadonlyArray<StripSend> | undefined,
   resolveBus: (storeBusId: string) => number | undefined,
   ownBusId?: number,

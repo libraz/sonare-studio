@@ -6,15 +6,15 @@
  */
 
 import { buildMidiClipSchedules, type ScheduledMidiClip } from '@/engine/midi-sync';
-import { groupBusGainDb, MAX_ENGINE_BUSES } from '@/engine/strip-sync';
+import { engineBusSends, groupBusGainDb, MAX_ENGINE_BUSES } from '@/engine/strip-sync';
 import { SILENCE_DB } from '@/lib/db';
 import { annotationsFromDocument, type NoteArticulation } from '@/project/annotations';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   effectiveTrackMute,
+  type MixerStrip,
   normalizeMixerSoloMode,
   returnSoloRouting,
-  type StripSend,
   tracksWithVcaSolo,
   type VcaControlState,
   vcaOffsetDb,
@@ -272,12 +272,7 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
   if (discardBusId !== undefined) buses.push({ busId: discardBusId, gainDb: SILENCE_DB });
   // The return bus and group bus share the engine's bus graph. Resolve their
   // main outputs and auxiliary sends only after every bus has a numeric ID.
-  const busSend = (send: StripSend): SendSpec => ({
-    busId: busNumberById.get(send.busId) as number,
-    levelDb: send.levelDb,
-    enabled: send.enabled,
-    ...(send.timing === 'preFader' ? { sendTiming: 'preFader' as const } : {}),
-  });
+  const resolveBus = (storeBusId: string) => busNumberById.get(storeBusId);
   for (const bus of doc.mixer?.buses ?? []) {
     const busId = busNumberById.get(bus.id);
     if (busId === undefined) continue;
@@ -290,9 +285,7 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
       ? busNumberById.get(bus.strip.outputBusId)
       : undefined;
     if (outputBusId !== undefined) entry.outputBusId = outputBusId;
-    const sends = (bus.strip?.sends ?? [])
-      .filter((send) => busNumberById.has(send.busId))
-      .map(busSend);
+    const sends = engineBusSends(bus.strip?.sends, resolveBus, busId);
     if (sends.length > 0) entry.sends = sends;
   }
   for (const [trackIndex, busId] of groupBusByTrackIndex) {
@@ -300,20 +293,11 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
     const entry = buses[busId - 1];
     const outputBusId = strip?.outputBusId ? busNumberById.get(strip.outputBusId) : undefined;
     if (outputBusId !== undefined) entry.outputBusId = outputBusId;
-    const sends = (strip?.sends ?? []).filter((send) => busNumberById.has(send.busId)).map(busSend);
+    const sends = engineBusSends(strip?.sends, resolveBus, busId);
     if (sends.length > 0) entry.sends = sends;
   }
   const lanes = doc.tracks.map((track, index) => {
-    const sends: SendSpec[] = (track.mixer?.sends ?? [])
-      .filter((send) => busNumberById.has(send.busId))
-      .map((send) => ({
-        busId: busNumberById.get(send.busId) as number,
-        levelDb: send.levelDb,
-        enabled: send.enabled,
-        // Pre-fader is the only non-default tap; post-fader stays absent so the
-        // engine keeps its historical default (matches live strip-sync).
-        ...(send.timing === 'preFader' ? { sendTiming: 'preFader' as const } : {}),
-      }));
+    const sends: SendSpec[] = engineBusSends(track.mixer?.sends, resolveBus);
     // Output bus: group routing wins; otherwise an explicit per-track output
     // bus (non-group tracks only), resolved to its engine bus number and
     // honored only when the bus was actually declared (matches live
@@ -344,6 +328,59 @@ export function buildBusRouting(doc: ProjectDocument, trackIds: number[]): BusRo
     lanes,
     discardBusId,
   };
+}
+
+/** Why return/bus stems cannot be rendered for a document. */
+export type BusStemsBlock = 'bus-graph-full' | 'nested-routing';
+
+/**
+ * Decides whether return/bus stems can be rendered for a document that
+ * declares return buses; null when they can (or no return bus exists).
+ * The renderer throws on a non-null result and the export dialog gates its
+ * Bus stems option on the same call.
+ *
+ * - `bus-graph-full`: every engine bus is taken, leaving none as the silent
+ *   sink that isolates direct outputs.
+ * - `nested-routing`: a return or group bus feeds another bus or keys a
+ *   sidechain from one, so separate per-bus passes would not re-sum to the mix.
+ *
+ * @param doc Program-output document.
+ * @param routing Bus declarations and discard sink from {@link buildBusRouting}.
+ */
+export function busStemsBlock(
+  doc: ProjectDocument,
+  routing: Pick<BusRouting, 'buses' | 'discardBusId'>,
+): BusStemsBlock | null {
+  if ((doc.mixer?.buses ?? []).length === 0) return null;
+  if (routing.buses.length >= MAX_ENGINE_BUSES && routing.discardBusId === undefined) {
+    return 'bus-graph-full';
+  }
+  const routesElsewhere = (strip: MixerStrip | undefined): boolean =>
+    strip?.outputBusId !== undefined ||
+    (strip?.sends.length ?? 0) > 0 ||
+    (strip?.inserts.some(
+      (slot) =>
+        slot.sidechainSourceBusId !== undefined ||
+        (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex !==
+          undefined,
+    ) ??
+      false);
+  const nested =
+    (doc.mixer?.buses ?? []).some((bus) => routesElsewhere(bus.strip)) ||
+    doc.tracks.some((track) => track.kind === 'group' && routesElsewhere(track.mixer));
+  return nested ? 'nested-routing' : null;
+}
+
+/** {@link busStemsBlock} for a raw document, building the bus routing itself. */
+export function documentBusStemsBlock(input: ProjectDocument): BusStemsBlock | null {
+  const doc = programOutputDocument(input);
+  return busStemsBlock(
+    doc,
+    buildBusRouting(
+      doc,
+      doc.tracks.map((_, index) => index + 1),
+    ),
+  );
 }
 
 /**

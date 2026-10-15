@@ -12,6 +12,7 @@ const STRINGS: ExportIssueStrings = {
   blocker: {
     audioClipNoMedia: 'Audio clip "{clip}" on "{track}" has no media reference',
     mediaMissing: '{labels} references missing or unreadable media "{id}": {reason}',
+    soundFontMissing: 'SoundFont "{id}" is missing or unreadable: {reason}',
   },
   warning: {
     externalMidiSilent: 'External MIDI track "{track}" is silent in audio export',

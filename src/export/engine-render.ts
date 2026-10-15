@@ -53,7 +53,7 @@ import {
   pushGsSetupSysex,
 } from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
-import { busSceneJson, MAX_ENGINE_BUSES, stripSceneJson } from '@/engine/strip-sync';
+import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import {
   estimatedTailSeconds,
   type InsertTailCatalogEntry,
@@ -117,18 +117,12 @@ import {
 } from '@/project/mixer';
 import { DEFAULT_WARP_VOICES, expandedSoloStates, MAX_WARP_VOICES } from '@/project/scheduling';
 import type { ProjectDocument } from '@/project/serialization';
-import {
-  collectActiveSoundFontUsage,
-  hasSoundFontSlotConflict,
-} from '@/project/soundfont-conflicts';
-import { normalizeTempoMap, ppqToSamples, samplesToPpq } from '@/project/tempo-map';
+import { hasSoundFontSlotConflict } from '@/project/soundfont-conflicts';
+import { normalizeTempoMap, samplesToPpq } from '@/project/tempo-map';
 import { buildAudioClips, preflightAudioClipMemory } from './engine-render-clips';
 import {
-  activeMidiTrackIndicesForRange,
   buildBusRouting,
-  buildMidiSchedules,
-  documentAudibleTrackIndices,
-  documentRenderContributorIndices,
+  busStemsBlock,
   preloadSoundFonts,
   programOutputDocument,
   resolveRenderWindow,
@@ -137,20 +131,18 @@ import { buildReport } from './engine-render-report';
 import {
   BLOCKS_PER_CHECKPOINT,
   busFaderParamId,
-  DEFAULT_TEMPO_BPM,
   type EngineClipSpec,
   type EngineRenderOptions,
-  MAX_PREROLL_SECONDS,
   MAX_RELEASE_TAIL_SECONDS,
   masterParamId,
   type OfflineRenderEngine,
-  PREROLL_SECONDS,
   RELEASE_TAIL_SECONDS,
   RENDER_BLOCK_FRAMES,
   type RenderPass,
   resolveRange,
   trackLaneParamId,
 } from './engine-render-types';
+import { documentTempoSegments, planExportRender } from './render-plan';
 
 export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-types';
 
@@ -242,8 +234,7 @@ export async function renderProjectWithEngine(
     if (options.shouldCancel?.()) throw new MixdownCancelledError();
   };
 
-  const tempoSegments =
-    doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
+  const tempoSegments = documentTempoSegments(doc);
   const tempoMap = normalizeTempoMap(tempoSegments);
   const range = resolveRange(options);
 
@@ -316,52 +307,29 @@ export async function renderProjectWithEngine(
     groupKey: (_track: ProjectDocument['tracks'][number], index: number) => index,
     memberGroupKey: (track: ProjectDocument['tracks'][number]) => track.groupIndex,
   };
-  const audibleTrackIndices = documentAudibleTrackIndices(doc);
-  if (options.freezeTrackIndex !== undefined) audibleTrackIndices.add(options.freezeTrackIndex);
-  const renderContributorIndices = documentRenderContributorIndices(doc, audibleTrackIndices);
-  const prerollSeconds = Math.min(
-    MAX_PREROLL_SECONDS,
-    Math.max(
-      PREROLL_SECONDS,
-      estimatedTailSeconds(doc, renderContributorIndices, resolveInsertTail, {
+  const renderPlan = planExportRender({
+    doc,
+    sampleRate,
+    tempoMap,
+    range,
+    freezeTrackIndex: options.freezeTrackIndex,
+    estimateTailSeconds: (contributors) =>
+      estimatedTailSeconds(doc, contributors, resolveInsertTail, {
         includeMaster: includeMasterChain,
         includeMastering: includeMasterChain,
       }),
-    ),
-  );
-  // The capture range remains the user-selected window. Audio scheduling and
-  // metadata preflight additionally cover exactly the stateful-DSP preroll
-  // which is rendered and discarded before capture begins.
-  const renderStartSample = ppqToSamples(tempoMap, range.startPpq, sampleRate);
-  const prerollFrames = Math.min(renderStartSample, Math.round(prerollSeconds * sampleRate));
-  const contributionRange = {
-    startPpq: samplesToPpq(tempoMap, renderStartSample - prerollFrames, sampleRate),
-    endPpq: range.endPpq,
-  };
-
-  // Build the MIDI program before loading any SoundFont. Exact compiled note
-  // intervals plus the shared audible/range plan determine which fonts can
-  // actually contribute to this render.
-  const midiSchedules = buildMidiSchedules(doc, trackIds, tempoSegments, sampleRate);
-  const midiRangeStartSample = renderStartSample - prerollFrames;
-  const midiRangeEndSample =
-    range.endPpq === null
-      ? Number.POSITIVE_INFINITY
-      : ppqToSamples(tempoMap, range.endPpq, sampleRate);
-  const activeMidiTrackIndices = activeMidiTrackIndicesForRange(
+  });
+  const {
+    audibleTrackIndices,
+    contributorTrackIndices: renderContributorIndices,
+    prerollSeconds,
+    contributionRange,
     midiSchedules,
-    trackIds,
-    renderContributorIndices,
-    midiRangeStartSample,
-    midiRangeEndSample,
-  );
+    activeMidiTrackIndices,
+    soundFontUsage,
+  } = renderPlan;
   const effectiveInstruments = doc.tracks.map((track) =>
     track.kind === 'midi' ? effectiveTrackInstrument(track, doc.externalMidiDefault) : undefined,
-  );
-  const soundFontUsage = collectActiveSoundFontUsage(
-    doc.tracks
-      .map((track, index) => ({ ...track, instrument: effectiveInstruments[index] }))
-      .filter((_track, index) => activeMidiTrackIndices.has(index)),
   );
   const activeSf2TrackIndices = new Set(
     doc.tracks.flatMap((track, index) =>
@@ -446,40 +414,11 @@ export async function renderProjectWithEngine(
           })
       : [];
   if (stemBuses.length > 0) {
-    // A return-stem pass needs one silent bus for direct outputs. With a full
-    // bus graph there is no safe existing bus to reuse as that sink.
-    if (buses.length >= MAX_ENGINE_BUSES && discardBusId === undefined) {
+    const block = busStemsBlock(doc, { buses, discardBusId });
+    if (block === 'bus-graph-full') {
       throw new RangeError('Return stems require one free engine bus for isolation');
     }
-    // A downstream return or bus-key source can collect signals from several
-    // return domains. Rendering those domains in separate passes changes the
-    // input to nonlinear processors, so such stems cannot be re-summed to the
-    // document mix. Keep the full mix export available and reject this stem
-    // mode explicitly until the engine exposes per-bus capture.
-    const nestedReturn = (doc.mixer?.buses ?? []).some(
-      (bus) =>
-        bus.strip?.outputBusId !== undefined ||
-        (bus.strip?.sends.length ?? 0) > 0 ||
-        bus.strip?.inserts.some(
-          (slot) =>
-            slot.sidechainSourceBusId !== undefined ||
-            (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex !==
-              undefined,
-        ),
-    );
-    const nestedGroup = doc.tracks.some(
-      (track) =>
-        track.kind === 'group' &&
-        (track.mixer?.outputBusId !== undefined ||
-          (track.mixer?.sends.length ?? 0) > 0 ||
-          track.mixer?.inserts.some(
-            (slot) =>
-              slot.sidechainSourceBusId !== undefined ||
-              (slot as { sidechainSourceGroupTrackIndex?: number })
-                .sidechainSourceGroupTrackIndex !== undefined,
-          )),
-    );
-    if (nestedReturn || nestedGroup) {
+    if (block === 'nested-routing') {
       throw new RangeError('Return stems cannot isolate nested bus routing or bus sidechain keys');
     }
   }
@@ -714,7 +653,10 @@ export async function renderProjectWithEngine(
       const engineStrip = supportsBusInsertBypass ? bus.strip : engineBusStrip(bus.strip);
       engine.setBusStripJson(
         busId,
-        busSceneJson(busId, engineStrip, undefined, { includeEq: supportsBusEq }),
+        busSceneJson(busId, engineStrip, undefined, {
+          includeEq: supportsBusEq,
+          channelLayout: bus.channelLayout,
+        }),
       );
       if (supportsBusInsertBypass) {
         bus.strip?.inserts.forEach((slot, insertIndex) => {

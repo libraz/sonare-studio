@@ -4132,10 +4132,9 @@ describe('renderProjectWithEngine offline mixer parity', () => {
       mixer: track.mixer,
       ...(track.groupIndex === undefined ? {} : { groupId: track.groupIndex + 1 }),
     }));
-    createMixerSync({ engine: liveEngine } as unknown as EngineHandle, { insertLatency }).sync(
-      liveTracks,
-      doc.mixer!.master,
-    );
+    createMixerSync({ engine: liveEngine, ctx: { state: 'running' } } as unknown as EngineHandle, {
+      insertLatency,
+    }).sync(liveTracks, doc.mixer!.master);
 
     const offline = new FakeEngine();
     await renderProjectWithEngine(doc, { ...renderOptions(offline), insertLatency });
@@ -4895,6 +4894,43 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     ]);
   });
 
+  it('declares a surround return bus strip with its channel layout like the live path', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses[0].channelLayout = '5.1';
+    doc.mixer.buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      sends: [],
+      inserts: [{ processor: 'saturation.tape', params: {}, enabled: true }],
+    };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+    const [, , json] = engine.named('setBusStripJson')[0] as [string, number, string];
+    expect(JSON.parse(json).buses[0].layout).toBe('5.1');
+  });
+
+  it('drops self and duplicate bus sends the way the live engine sync does', async () => {
+    const doc = makeDoc();
+    if (!doc.mixer) throw new Error('missing mixer');
+    doc.mixer.buses.push({ id: 'bus-b', name: 'B', gainDb: 0 });
+    const first = doc.mixer.buses[0].id;
+    doc.mixer.buses[0].strip = {
+      gainDb: 0,
+      pan: 0,
+      inserts: [],
+      sends: [
+        { busId: first, levelDb: -3, enabled: true },
+        { busId: 'bus-b', levelDb: -6, enabled: true },
+        { busId: 'bus-b', levelDb: -9, enabled: true },
+      ],
+    };
+    const engine = new FakeEngine();
+    await renderProjectWithEngine(doc, renderOptions(engine));
+    const declared = engine.named('setTrackBuses')[0][1] as Array<Record<string, unknown>>;
+    expect(declared[0].sends).toEqual([{ busId: 2, levelDb: -6, enabled: true }]);
+  });
+
   it('declares the group bus after the send buses and routes members through it', async () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(makeGroupDoc(), renderOptions(engine));
@@ -5370,10 +5406,10 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       mixer: track.mixer,
       ...(track.groupIndex === undefined ? {} : { groupId: track.groupIndex + 1 }),
     }));
-    createMixerSync({ engine: liveEngine } as unknown as EngineHandle).sync(
-      liveTracks,
-      doc.mixer!.master,
-    );
+    createMixerSync({
+      engine: liveEngine,
+      ctx: { state: 'running' },
+    } as unknown as EngineHandle).sync(liveTracks, doc.mixer!.master);
 
     const offline = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(offline));

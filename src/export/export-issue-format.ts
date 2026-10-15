@@ -16,6 +16,7 @@ export interface ExportIssueStrings {
   blocker: {
     audioClipNoMedia: string;
     mediaMissing: string;
+    soundFontMissing: string;
   };
   warning: {
     externalMidiSilent: string;
@@ -65,6 +66,10 @@ export function formatPreflightBlocker(
           blocker.labels.map((label) => formatAudioAssetLabel(label, strings)).join(', '),
         )
         .replace('{id}', blocker.assetId)
+        .replace('{reason}', blocker.reason);
+    case 'soundfont-missing':
+      return strings.blocker.soundFontMissing
+        .replace('{id}', blocker.fontId)
         .replace('{reason}', blocker.reason);
   }
 }

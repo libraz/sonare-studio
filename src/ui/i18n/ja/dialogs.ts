@@ -210,6 +210,7 @@ export const dialogs = {
         audioClipNoMedia:
           'トラック「{track}」のオーディオクリップ「{clip}」にメディア参照がありません',
         mediaMissing: '{labels} が参照するメディア「{id}」が見つからないか読み取れません: {reason}',
+        soundFontMissing: 'サウンドフォント「{id}」が見つからないか読み取れません: {reason}',
       },
       warning: {
         externalMidiSilent: '外部 MIDI トラック「{track}」はオーディオ書き出しでは無音になります',
