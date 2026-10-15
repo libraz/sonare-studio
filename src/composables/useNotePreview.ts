@@ -1,4 +1,5 @@
 import { getCurrentScope, onScopeDispose, type Ref, type ShallowRef } from 'vue';
+import { preferredNoteChannel } from '@/compose/tracks';
 import type { EngineHandle } from '@/engine/engine';
 import {
   type MidiNote,
@@ -53,9 +54,19 @@ export function useNotePreview(options: NotePreviewOptions) {
   >();
   const auditionTimers = new Set<{
     pitch: number;
+    channel: number;
     timer: ReturnType<typeof setTimeout>;
     trackId: number;
   }>();
+
+  /** Channel the active track's written notes use (GM channel 10 on drum tracks). */
+  function activeTrackChannel(): number {
+    const track = store.activeTrack;
+    const notes = track
+      ? (store.clipsByTrack.get(track.id) ?? []).flatMap((item) => item.notes)
+      : store.notes;
+    return preferredNoteChannel(track, notes);
+  }
 
   /** True when the active track can sustain live MIDI through the engine. */
   function activeMidiTrackId(): number | null {
@@ -102,7 +113,7 @@ export function useNotePreview(options: NotePreviewOptions) {
     }
   }
 
-  function pushNoteOff(trackId: number, pitch: number, channel = 0): void {
+  function pushNoteOff(trackId: number, pitch: number, channel: number): void {
     try {
       options.handle.value?.engine.pushMidiNoteOff(trackId, 0, channel, pitch);
     } catch {
@@ -112,12 +123,13 @@ export function useNotePreview(options: NotePreviewOptions) {
 
   function releaseAudition(entry: {
     pitch: number;
+    channel: number;
     timer: ReturnType<typeof setTimeout>;
     trackId: number;
   }): void {
     if (!auditionTimers.delete(entry)) return;
     clearTimeout(entry.timer);
-    pushNoteOff(entry.trackId, entry.pitch);
+    pushNoteOff(entry.trackId, entry.pitch, entry.channel);
   }
 
   /**
@@ -128,7 +140,7 @@ export function useNotePreview(options: NotePreviewOptions) {
   async function previewNoteOn(
     pitch: number,
     velocity: number,
-    channel = 0,
+    requestedChannel?: number,
     timestampMs?: number,
   ): Promise<void> {
     const trackId = activeMidiTrackId();
@@ -138,6 +150,7 @@ export function useNotePreview(options: NotePreviewOptions) {
     }
     const h = await options.ensureEngineStarted();
     if (!h || activeMidiTrackId() !== trackId) return;
+    const channel = requestedChannel ?? activeTrackChannel();
     // Retrigger: release a still-held instance of the same pitch first.
     releaseHeld(pitch, channel);
     const directExternal =
@@ -156,9 +169,24 @@ export function useNotePreview(options: NotePreviewOptions) {
     heldNotes.set(heldKey(channel, pitch), { trackId, channel, directExternal, timer });
   }
 
-  /** Releases a sustained live note started by {@link previewNoteOn}. */
-  function previewNoteOff(pitch: number, channel = 0, velocity = 0, timestampMs?: number): void {
-    releaseHeld(pitch, channel, velocity, timestampMs);
+  /**
+   * Releases a sustained live note started by {@link previewNoteOn}. Without a
+   * channel, releases the held note of that pitch on whatever channel it began.
+   */
+  function previewNoteOff(
+    pitch: number,
+    channel?: number,
+    velocity = 0,
+    timestampMs?: number,
+  ): void {
+    if (channel !== undefined) {
+      releaseHeld(pitch, channel, velocity, timestampMs);
+      return;
+    }
+    for (const key of [...heldNotes.keys()]) {
+      const [heldChannel, heldPitch] = key.split(':').map(Number);
+      if (heldPitch === (pitch & 0x7f)) releaseHeld(pitch, heldChannel, velocity, timestampMs);
+    }
   }
 
   /** Releases every sustained note (engine teardown / scope dispose). */
@@ -222,14 +250,16 @@ export function useNotePreview(options: NotePreviewOptions) {
     const activeTrack = store.tracks.find((track) => track.id === store.activeTrackId);
     if (activeTrack && activeTrack.kind === 'midi' && options.hasMidiSync()) {
       const durationMs = (PREVIEW_DURATION_PPQ * 60000) / Math.max(1, store.tempoBpm);
+      const channel = activeTrackChannel();
       try {
-        h.engine.pushMidiNoteOn(activeTrack.id, 0, 0, pitch, velocity);
+        h.engine.pushMidiNoteOn(activeTrack.id, 0, channel, pitch, velocity);
         const entry = {
           pitch,
+          channel,
           trackId: activeTrack.id,
           timer: setTimeout(() => {
             if (!auditionTimers.delete(entry)) return;
-            pushNoteOff(activeTrack.id, pitch);
+            pushNoteOff(activeTrack.id, pitch, channel);
           }, durationMs),
         };
         auditionTimers.add(entry);

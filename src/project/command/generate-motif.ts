@@ -27,6 +27,7 @@ import {
 } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import { preferredNoteChannel } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
@@ -198,8 +199,12 @@ export function buildMotifClipMerge(
       durationBeat: Math.min(note.durationBeat, availablePpq - note.startBeat),
     }))
     .filter((note) => note.durationBeat > 0);
+  const channel = preferredNoteChannel(
+    store.tracks.find((track) => track.id === clip.trackId),
+    clip.notes,
+  );
   const fresh = noteEventsToNewEditorNotes(bounded, {
-    channel: 0,
+    channel,
     beatOffset: -sourceOffset,
   });
   if (fresh.length === 0 && mode === 'append') return null;

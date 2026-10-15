@@ -2,16 +2,21 @@
 /**
  * Multi-timbral channel map for an SF2 (GM/GS module) instrument. Each MIDI
  * channel can override the track's default program; channel 10 (index 9) is a
- * percussion channel whose bank selects a GM2 drum/SFX kit. Channels left
+ * percussion channel whose program selects a GM2 drum/SFX kit. Channels left
  * unset inherit the track-level bank/program.
  */
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import type { Sf2ChannelProgram } from '@/project/instrument';
 import { getWasmModule } from '@/project/store';
-import { clampProgram, normalizeChannelMap, SF2_DRUM_CHANNEL } from '@/ui/devices/sf2-model';
+import {
+  clampProgram,
+  drumKitOf,
+  normalizeChannelMap,
+  SF2_DRUM_CHANNEL,
+} from '@/ui/devices/sf2-model';
 import { useI18n } from '@/ui/i18n';
-import { GM2_DRUM_BANK_MSB, gm2DrumBank } from '@/ui/step-sequencer/drum-map';
+import { gm2DrumBank } from '@/ui/step-sequencer/drum-map';
 
 const props = defineProps<{
   /** Current per-channel program overrides. */
@@ -71,12 +76,8 @@ function isEnabled(channel: number): boolean {
   return entryFor(channel) !== undefined;
 }
 
-/** The kit LSB currently set on the drum channel (defaults to Standard = 0). */
-const drumKitLsb = computed(() => {
-  const bank = entryFor(SF2_DRUM_CHANNEL)?.bank;
-  if (bank === undefined) return 0;
-  return bank & 0x7f;
-});
+/** The kit currently set on the drum channel (defaults to Standard = 0). */
+const drumKit = computed(() => drumKitOf(entryFor(SF2_DRUM_CHANNEL)));
 
 function commit(channel: number, next: Sf2ChannelProgram | null): void {
   const rest = props.modelValue.filter((entry) => entry.channel !== channel);
@@ -109,9 +110,8 @@ function setBank(channel: number, raw: number): void {
   commit(channel, { channel, bank, program: entryFor(channel)?.program ?? 0 });
 }
 
-function setDrumKit(channel: number, kitLsbValue: string): void {
-  const kitLsb = Number(kitLsbValue);
-  commit(channel, { channel, bank: gm2DrumBank(Number.isFinite(kitLsb) ? kitLsb : 0), program: 0 });
+function setDrumKit(channel: number, kitValue: string): void {
+  commit(channel, { channel, bank: gm2DrumBank(0), program: clampProgram(Number(kitValue)) });
 }
 
 function channelLabel(channel: number): string {
@@ -147,7 +147,7 @@ function channelLabel(channel: number): string {
         <template v-if="isEnabled(channel)">
           <div v-if="channel === SF2_DRUM_CHANNEL" class="sf2-channel-control">
             <SelectMenu
-              :model-value="String(drumKitLsb)"
+              :model-value="String(drumKit)"
               :options="drumKitOptions"
               size="sm"
               :aria-label="t.shell.devicesPanel.drumKit"

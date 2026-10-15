@@ -6,6 +6,7 @@ import {
   clampPolyphony,
   clampProgram,
   createSf2Selection,
+  drumKitOf,
   MAX_SF2_BANK,
   MAX_SF2_GAIN,
   MAX_SF2_POLYPHONY,
@@ -122,15 +123,25 @@ describe('createSf2Selection', () => {
       kind: 'sf2',
       fontId: 'gm',
       channelMap: [
-        { channel: 9, bank: (120 << 7) | 1, program: 0 },
+        { channel: 9, bank: 120 << 7, program: 8 },
         { channel: 0, program: 40 },
       ],
     });
     // Sorted by channel, entries preserved.
     expect(selection.channelMap).toEqual([
       { channel: 0, program: 40 },
-      { channel: 9, bank: (120 << 7) | 1, program: 0 },
+      { channel: 9, bank: 120 << 7, program: 8 },
     ]);
+  });
+
+  it('loads a legacy drum entry with the kit in the bank LSB as a program', () => {
+    const selection = createSf2Selection({
+      kind: 'sf2',
+      fontId: 'gm',
+      channelMap: [{ channel: 9, bank: (120 << 7) | 25, program: 0 }],
+    });
+    expect(selection.channelMap).toEqual([{ channel: 9, bank: 120 << 7, program: 25 }]);
+    expect(drumKitOf(selection.channelMap[0])).toBe(25);
   });
 });
 
@@ -206,7 +217,7 @@ describe('buildSf2Instrument', () => {
         ...EMPTY,
         fontId: 'abc',
         channelMap: [
-          { channel: 9, bank: (120 << 7) | 1, program: 0 },
+          { channel: 9, bank: 120 << 7, program: 8 },
           { channel: 0, program: 40 },
         ],
       }),
@@ -215,7 +226,7 @@ describe('buildSf2Instrument', () => {
       fontId: 'abc',
       channelMap: [
         { channel: 0, program: 40 },
-        { channel: 9, bank: (120 << 7) | 1, program: 0 },
+        { channel: 9, bank: 120 << 7, program: 8 },
       ],
     });
   });

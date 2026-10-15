@@ -10,6 +10,7 @@ import type {
   Sf2Instrument,
   TrackInstrument,
 } from '@/project/instrument';
+import { GM2_DRUM_BANK_MSB, gm2DrumBank } from '@/ui/step-sequencer/drum-map';
 
 /** Highest MIDI bank number (MSB * 128 + LSB). */
 export const MAX_SF2_BANK = 16383;
@@ -72,8 +73,24 @@ export function clampChannel(value: number): number {
 }
 
 /**
+ * Selected GM2 drum kit of a drum-channel entry. The engine picks the kit by
+ * program on the percussion bank; entries stored with the kit in the bank LSB
+ * read as that kit.
+ *
+ * @param entry The channel-10 entry, if any.
+ */
+export function drumKitOf(entry: Sf2ChannelProgram | undefined): number {
+  if (!entry) return 0;
+  const bank = entry.bank ?? 0;
+  const legacyLsb = bank & 0x7f;
+  if (bank >> 7 === GM2_DRUM_BANK_MSB && legacyLsb !== 0) return legacyLsb;
+  return clampProgram(entry.program ?? 0);
+}
+
+/**
  * Normalizes a channel map: clamps each entry, drops duplicates (last wins),
- * and sorts by channel so the persisted order is stable.
+ * moves a legacy drum kit from the bank LSB to the program, and sorts by
+ * channel so the persisted order is stable.
  *
  * @param entries Raw channel-map entries.
  */
@@ -86,6 +103,12 @@ export function normalizeChannelMap(
     const normalized: Sf2ChannelProgram = { channel };
     if (entry.bank !== undefined) normalized.bank = clampBank(entry.bank);
     if (entry.program !== undefined) normalized.program = clampProgram(entry.program);
+    if (channel === SF2_DRUM_CHANNEL && normalized.bank !== undefined) {
+      if (normalized.bank >> 7 === GM2_DRUM_BANK_MSB && (normalized.bank & 0x7f) !== 0) {
+        normalized.program = drumKitOf(normalized);
+        normalized.bank = gm2DrumBank(0);
+      }
+    }
     byChannel.set(channel, normalized);
   }
   return [...byChannel.values()].sort((a, b) => a.channel - b.channel);

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, shallowRef } from 'vue';
 import { useNotePreview } from '@/composables/useNotePreview';
 import type { EngineHandle } from '@/engine/engine';
-import { addTrack, clearHistory, setActiveTrack } from '@/project/commands';
+import { addTrack, clearHistory, setActiveTrack, setTrackPercussion } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -199,6 +199,19 @@ describe('useNotePreview live MIDI sustain', () => {
     expect(engine.pushMidiProgram).toHaveBeenCalledWith(midiTrackId, 0, 2, 24);
     expect(engine.pushMidiChannelPressure).toHaveBeenCalledWith(midiTrackId, 0, 3, 90);
     expect(engine.pushMidiPolyPressure).toHaveBeenCalledWith(midiTrackId, 0, 5, 60, 70);
+  });
+
+  it('auditions and music-types a drum track on the GM percussion channel', async () => {
+    setTrackPercussion(midiTrackId, true);
+    const { preview, pushMidiNoteOn, pushMidiNoteOff } = setup();
+    await preview.previewNote(36, 100);
+    expect(pushMidiNoteOn).toHaveBeenLastCalledWith(midiTrackId, 0, 9, 36, 100);
+    await preview.previewNoteOn(38, 90);
+    expect(pushMidiNoteOn).toHaveBeenLastCalledWith(midiTrackId, 0, 9, 38, 90);
+    preview.previewNoteOff(38);
+    expect(pushMidiNoteOff).toHaveBeenLastCalledWith(midiTrackId, 0, 9, 38);
+    preview.releaseAll();
+    expect(pushMidiNoteOff).toHaveBeenLastCalledWith(midiTrackId, 0, 9, 36);
   });
 
   it('auto-releases a held note after the safety timeout if the key-up is lost', async () => {
