@@ -9,6 +9,7 @@ import {
   addTrack,
   clearHistory,
   deleteClip,
+  renameTrack,
   setActiveClip,
 } from '@/project/commands';
 import {
@@ -354,5 +355,46 @@ describe('score artifact identity and exports', () => {
     expect(xml).toContain('<part-name>Hybrid Percussion</part-name>');
     expect(filename).toContain('Hybrid.part.musicxml');
     expect((xml.match(/<part id=/g) ?? []).length).toBe(2);
+  });
+
+  it('stops reporting a stale part name or XML as current after a track rename', async () => {
+    store.tracks[0].name = 'Before';
+    const { notation } = notationHarness(store, true);
+    await notation.transcribe();
+    expect(notation.getCurrentPartName()).toBe('Before');
+
+    renameTrack(store.tracks[0].id, 'After');
+    expect(notation.getCurrentPartName()).toBe('');
+    expect(notation.getCurrentXml()).toBe('');
+
+    await notation.transcribe();
+    expect(notation.getCurrentPartName()).toBe('After');
+    expect(notation.getCurrentXml()).toContain('<part-name>After</part-name>');
+  });
+
+  it('lets an in-flight print export finish when the score is re-transcribed unchanged', async () => {
+    const exportVerovio = fakeVerovio();
+    let releaseLoad: ((count: number) => void) | undefined;
+    exportVerovio.load.mockImplementationOnce(
+      () => new Promise<number>((resolve) => (releaseLoad = resolve)),
+    );
+    const { notation } = notationHarness(
+      store,
+      false,
+      vi.fn(() => exportVerovio.client),
+    );
+    await notation.transcribe();
+    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+
+    notation.onPrint();
+    await vi.waitFor(() => expect(exportVerovio.load).toHaveBeenCalled());
+    await notation.transcribe();
+    releaseLoad?.(1);
+
+    await vi.waitFor(() => expect(print).toHaveBeenCalledOnce());
+    window.dispatchEvent(new Event('afterprint'));
+    print.mockRestore();
+    await vi.waitFor(() => expect(notation.exporting.value).toBe(false));
+    expect(notation.error.value).toBe('');
   });
 });

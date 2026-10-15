@@ -728,13 +728,14 @@ watch(
     scheduleRetranscribe();
   },
 );
-// Annotations and display transpose are replaced wholesale by their commands
-// too; both only affect engraving, so they re-transcribe debounced like edits.
+// Annotations, display transpose and the track list are replaced wholesale by
+// their commands too, so they re-transcribe debounced like edits.
 watch(
   [
     () => store.scoreAnnotations,
     () => store.displayTransposeSemitones,
     () => store.clips,
+    () => store.tracks,
     () => store.sections,
     () => store.markers,
     () => store.tempoSegments,

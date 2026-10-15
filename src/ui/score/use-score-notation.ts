@@ -424,6 +424,15 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
           initialized: store.initialized,
           activeTrackId: store.activeTrackId,
           clips: store.clips,
+          tracks: store.tracks.map((track) => ({
+            id: track.id,
+            kind: track.kind,
+            name: track.name,
+            musicXmlPartId: track.musicXmlPartId,
+            percussion: track.percussion,
+            instrument: track.instrument,
+            generatedPart: track.generated?.part,
+          })),
           annotations: store.scoreAnnotations,
           sections: store.sections,
           markers: store.markers,
@@ -690,7 +699,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         consume,
         token.signal,
         () =>
-          artifactForCurrentState() === artifact &&
+          sameOperationIdentity(artifact.identity, transcriptionIdentity()) &&
           exportOperations.isCurrent(token, exportIdentity(xmlSnapshot, settingsSnapshot)),
       );
     } finally {

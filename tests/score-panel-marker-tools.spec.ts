@@ -257,7 +257,7 @@ describe('ScorePanel marker tools', () => {
     expect(notationMocks.transcribe).not.toHaveBeenCalled();
   });
 
-  it('retranscribes after marker, tempo and meter revisions', async () => {
+  it('retranscribes after marker, tempo, meter and track revisions', async () => {
     vi.useFakeTimers();
     const wrapper = mount(ScorePanel, {
       global: {
@@ -288,6 +288,12 @@ describe('ScorePanel marker tools', () => {
     vi.advanceTimersByTime(600);
     await nextTick();
     expect(notationMocks.transcribe).toHaveBeenCalledTimes(3);
+
+    store.tracks = store.tracks.map((track) => ({ ...track, name: `${track.name} renamed` }));
+    await nextTick();
+    vi.advanceTimersByTime(600);
+    await nextTick();
+    expect(notationMocks.transcribe).toHaveBeenCalledTimes(4);
 
     wrapper.unmount();
   });
