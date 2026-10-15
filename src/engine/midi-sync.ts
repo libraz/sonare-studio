@@ -800,8 +800,8 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       );
     }
     // Load the global SoundFont once, deterministically (the last SF2 track in
-    // track order), so live playback matches the offline render regardless of
-    // which track's instrument was edited most recently.
+    // track order), so playback does not depend on which track was edited last.
+    // Export differs: it renders each conflicting SF2 track with its own font.
     let soundFontReady = true;
     if (
       soundFontUsage.winningFontId !== undefined &&

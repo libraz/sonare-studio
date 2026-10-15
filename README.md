@@ -24,7 +24,7 @@ the browser's origin-private file system and leave it as ordinary files.
 **[libsonare](https://github.com/libraz/libsonare)** is the audio side: a C++17
 core compiled to WebAssembly that owns the project model, the DSP, the mastering
 chain, the analysis and the offline renderer. This repository carries a copy of
-its 1.8.0 build output under `src/wasm/`, synced with `yarn copy:wasm`.
+its 1.9.1 build output under `src/wasm/`, synced with `yarn copy:wasm`.
 
 **[libcantus](https://github.com/libraz/libcantus)** is the theory side: a
 dependency-free TypeScript library, published as `@libraz/libcantus`, that does
@@ -86,9 +86,10 @@ metronome, punch and cycle recording into takes, then comping across them.
 Imported audio can be analysed for tempo, chords and sections, transcribed to a
 MIDI clip in Melody or Polyphonic mode, or split into harmonic, percussive and
 residual stems. Transcription runs in a cancellable worker and adds its track
-and notes as one undoable edit; Polyphonic mode accepts clips up to 30 seconds.
+and notes as one undoable edit; Polyphonic mode reads long clips in overlapping chunks and refuses a clip only
+when a 256 MiB memory budget cannot hold one chunk.
 A sample editor handles clip content, and the media browser filters assets by
-key, BPM and loudness.
+key and BPM and sorts them by loudness.
 
 **Move files in and out.** `.szd` projects, DAWproject, Standard MIDI File,
 MIDI 2.0 clip files, MusicXML, separated stems, and WAV / FLAC / MP3 mixdown
@@ -178,8 +179,8 @@ and instantiated twice from the same bytes.
 
 On the main thread, and in workers for export, it is the project model and the
 offline renderer: tracks, clips, notes, tempo, the SMF and MIDI 2.0 codecs.
-Inside an AudioWorklet it is the realtime engine: it plays scheduled PCM against
-the transport and reports meters and telemetry. Control traffic uses
+Inside an AudioWorklet it is the realtime engine: it plays scheduled audio clips
+and MIDI against the transport and reports meters and telemetry. Control traffic uses
 SharedArrayBuffer when cross-origin isolation is available and degrades to
 postMessage otherwise (`src/engine/engine.ts`).
 
@@ -189,10 +190,9 @@ through `processorOptions.wasmBinary`. The worklet bundle is content-addressed
 and its URL reaches the app through `.worklet-build/manifest.json`, so a
 refreshed engine can never be paired with a stale worklet.
 
-Playback goes through a prerender path. MIDI clips are bounced offline to stereo
-PCM with the track's instrument (`src/engine/instruments.ts`, content-keyed
-cache) and the audio is scheduled into the realtime engine. Edits re-bounce the
-affected clips after a short debounce.
+Audio clips are scheduled into the realtime engine as PCM. MIDI clips are engine
+state too: `src/engine/midi-sync.ts` schedules their notes, with clip gain and
+fades, and engine instruments bound to each track's destination play them.
 
 ### Every edit goes through the command layer
 
@@ -293,7 +293,7 @@ The app is a static site, but it has to be served cross-origin isolated.
 - An already installed broken worker can fail a return navigation before its replacement installs. The replacement repairs that cache without deleting stored projects; subsequent ordinary navigations can recover. An in-document recovery script cannot handle a failure that occurs before the document loads.
 - Keep every deployed file under 25 MiB, the Cloudflare Pages per-file limit.
   The largest artifact is the bundled Verovio engraving worker at roughly
-  7.5 MiB; `sonare.wasm` is about 5.9 MiB (2.0 MiB gzipped).
+  7.5 MiB; `sonare.wasm` is about 7.4 MiB (2.5 MiB gzipped).
 
 ## License
 

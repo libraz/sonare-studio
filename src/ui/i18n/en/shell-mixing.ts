@@ -52,7 +52,7 @@ export const shellMixing = {
     soundFontProgramEmpty: 'No sounding MIDI program',
     soundFontProgramError: 'Coverage check failed: {detail}',
     soundFontSlotWarning:
-      'This project uses {count} SoundFonts, but playback and export share one global SF2 slot. The last SF2 track wins: {font}.',
+      'This project uses {count} SoundFonts, but playback has one global SF2 slot and uses the font of the last SF2 track: {font}. Export renders each SF2 track with its own font, so it can sound different.',
     gain: 'Gain',
     polyphony: 'Voices',
     preferModel: 'Prefer modelled instruments',

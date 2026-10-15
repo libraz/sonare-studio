@@ -52,7 +52,7 @@ export const shellMixing = {
     soundFontProgramEmpty: '発音対象のMIDIプログラムなし',
     soundFontProgramError: '対応状況の確認に失敗: {detail}',
     soundFontSlotWarning:
-      'このプロジェクトは{count}個のSoundFontを使っていますが、再生とエクスポートは1つのグローバルSF2スロットを共有します。最後のSF2トラックが優先されます: {font}。',
+      'このプロジェクトは{count}個のSoundFontを使っていますが、再生のSF2スロットは1つだけで、最後のSF2トラックのフォントが使われます: {font}。エクスポートでは各SF2トラックが自分のフォントで鳴るため、再生と音が変わることがあります。',
     gain: 'ゲイン',
     polyphony: '同時発音数',
     preferModel: 'モデリング音源を優先',

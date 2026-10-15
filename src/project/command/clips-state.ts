@@ -139,9 +139,9 @@ export function setClipGain(clipId: number, gain: number): void {
 
 /**
  * Sets a clip's fade-in/fade-out lengths as one undoable edit (delegates to
- * Project.setClipFade). Pass undefined or 0 to clear a fade. Playback applies
- * fades to audio clips only (src/project/scheduling.ts multiplies the buffer
- * edges); the prerendered MIDI path ignores them.
+ * Project.setClipFade). Pass undefined or 0 to clear a fade. Audio clips get the
+ * fades from buffer-edge gain (src/project/scheduling.ts); MIDI clips get them
+ * from src/engine/midi-sync.ts.
  *
  * @param clipId Id of the clip.
  * @param fadeInPpq Fade-in length in PPQ (finite, >= 0; 0/undefined = none).

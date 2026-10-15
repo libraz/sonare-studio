@@ -305,9 +305,9 @@ export function createTemplate(name: TemplateName): ProjectDocument {
 }
 
 /**
- * Builds the first-run demo document: one Piano track holding one 8-bar clip
- * seeded with the demo arpeggio phrase (the same content the app used to
- * seed into its single implicit clip on startup).
+ * Builds a sample document: one Piano track holding one 8-bar clip seeded with
+ * the demo arpeggio phrase. A fixture for tests; the start screen's demo is
+ * makeBwv565Document.
  *
  * @returns A new document (callers may mutate it freely).
  */

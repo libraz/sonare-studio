@@ -112,9 +112,9 @@
 
   <!-- Cross-thread -->
   <path class="flow-a" d="M160 246 L160 316" marker-end="url(#aha)"/>
-  <text class="a" x="174" y="266">prerendered clip PCM</text>
-  <text class="s" x="174" y="284">MIDI bounced offline</text>
-  <text class="s" x="174" y="300">per clip, content-keyed</text>
+  <text class="a" x="174" y="266">scheduled clips</text>
+  <text class="s" x="174" y="284">audio PCM, MIDI notes,</text>
+  <text class="s" x="174" y="300">instrument bindings</text>
 
   <path class="flow-a" d="M400 316 L400 246" marker-end="url(#aha)"/>
   <text class="a" x="414" y="266">meters and telemetry</text>
