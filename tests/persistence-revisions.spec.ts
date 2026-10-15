@@ -210,13 +210,11 @@ describe('project revisions', () => {
     expect((await listProjects()).filter((info) => isRevisionSlot(info.name))).toEqual([]);
   });
 
-  it('reclaims a slot left between payload and index publication on the next save', async () => {
+  it('keeps an unindexed slot left between payload and index publication', async () => {
     const kept = await saveProjectRevision('Song', 'kept history', bytes(1), 1000);
 
-    // Simulate process interruption after the revision payload was published
-    // but before its index record could be written.
+    // A slot the index does not name may be the only copy of a lost history.
     await saveProject('revision-interrupted', bytes(9));
-    expect((await listProjects()).filter((info) => isRevisionSlot(info.name))).toHaveLength(2);
 
     const next = await saveProjectRevision('Song', 'new history', bytes(2), 2000);
 
@@ -224,9 +222,19 @@ describe('project revisions', () => {
       { slot: next.slot, label: 'new history' },
       { slot: kept.slot, label: 'kept history' },
     ]);
-    expect([...(await loadProjectRevision(kept.slot))]).toEqual([1, 1, 1]);
-    expect([...(await loadProjectRevision(next.slot))]).toEqual([2, 2, 2]);
-    expect((await listProjects()).map((info) => info.name)).not.toContain('revision-interrupted');
+    expect((await listProjects()).map((info) => info.name)).toContain('revision-interrupted');
+  });
+
+  it('never deletes revision slots after the index is lost, however many saves follow', async () => {
+    const first = await saveProjectRevision('Song', 'a', bytes(1), 1000);
+    const directory = await root.getDirectoryHandle('revisions', { create: true });
+    await directory.removeEntry('index.json');
+
+    await saveProjectRevision('Song', 'b', bytes(2), 2000);
+    await saveProjectRevision('Song', 'c', bytes(3), 3000);
+
+    expect((await listProjects()).map((info) => info.name)).toContain(first.slot);
+    expect([...(await loadProjectRevision(first.slot))]).toEqual([1, 1, 1]);
   });
 
   it('renames revision ownership with the project and deletes it under the new name', async () => {

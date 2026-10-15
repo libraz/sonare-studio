@@ -1,3 +1,4 @@
+import { deleteSlotsGuarded } from './guarded-delete';
 import { withPersistenceMutationLock } from './mutation-lock';
 import {
   deleteProjectUnlocked,
@@ -28,6 +29,7 @@ interface RecoveryManifest {
 }
 
 let fallbackSessionId: string | null = null;
+const claimedSessionIds = new Set<string>();
 
 function createSessionId(): string {
   const id =
@@ -53,6 +55,44 @@ export function autosaveSessionId(): string {
   return fallbackSessionId;
 }
 
+function renewSessionId(): void {
+  const created = createSessionId();
+  fallbackSessionId = created;
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(SESSION_KEY, created);
+  } catch {
+    // Sandboxed/private contexts may expose sessionStorage but reject access.
+  }
+}
+
+/** Holds a tab-lifetime Web Lock on the id; false when another live tab already owns it. */
+function acquireSessionLock(locks: LockManager, sessionId: string): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    void locks.request(`${SESSION_KEY}:${sessionId}`, { ifAvailable: true }, (lock) => {
+      resolve(lock !== null);
+      return lock === null ? undefined : new Promise<void>(() => {});
+    });
+  });
+}
+
+/**
+ * Resolves this tab's autosave session id, replacing it when a duplicated tab
+ * inherited an id that another live tab already holds.
+ */
+async function claimAutosaveSessionId(): Promise<string> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  let sessionId = autosaveSessionId();
+  if (!locks || claimedSessionIds.has(sessionId)) return sessionId;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (await acquireSessionLock(locks, sessionId)) break;
+    renewSessionId();
+    sessionId = autosaveSessionId();
+  }
+  claimedSessionIds.add(sessionId);
+  return sessionId;
+}
+
 export function isAutosaveRecoverySlot(name: string): boolean {
   return name.toLowerCase().startsWith(SLOT_PREFIX);
 }
@@ -66,7 +106,8 @@ async function recoveryDirectory(): Promise<FileSystemDirectoryHandle> {
   return root.getDirectoryHandle(RECOVERY_DIR, { create: true });
 }
 
-async function readManifest(): Promise<RecoveryManifest> {
+/** `trusted` is true only when the manifest file parsed and validated. */
+async function readManifest(): Promise<{ manifest: RecoveryManifest; trusted: boolean }> {
   try {
     const handle = await (await recoveryDirectory()).getFileHandle(MANIFEST_FILE);
     const file = await handle.getFile();
@@ -86,9 +127,9 @@ async function readManifest(): Promise<RecoveryManifest> {
         typeof entry.archiveRevision === 'string' &&
         typeof entry.savedAt === 'string',
     );
-    return { version: 1, sessions };
+    return { manifest: { version: 1, sessions }, trusted: true };
   } catch {
-    return { version: 1, sessions: [] };
+    return { manifest: { version: 1, sessions: [] }, trusted: false };
   }
 }
 
@@ -119,11 +160,11 @@ export function saveAutosaveSessionRevision(
   savedAt = new Date().toISOString(),
 ): Promise<void> {
   return withPersistenceMutationLock(async () => {
-    const sessionId = autosaveSessionId();
+    const sessionId = await claimAutosaveSessionId();
     const slot = sessionSlot(sessionId);
     await saveProjectUnlocked(slot, bytes);
 
-    const manifest = await readManifest();
+    const { manifest, trusted } = await readManifest();
     const next: RecoveryManifestEntry = {
       sessionId,
       slot,
@@ -131,18 +172,44 @@ export function saveAutosaveSessionRevision(
       archiveRevision: projectBytesRevision(bytes),
       savedAt,
     };
-    const sessions = [next, ...manifest.sessions.filter((entry) => entry.sessionId !== sessionId)]
-      .sort((a, b) => b.savedAt.localeCompare(a.savedAt))
-      .slice(0, MAX_SESSION_REVISIONS);
+    const known = trusted ? manifest.sessions : await rebuildSessionEntries(slot);
+    const merged = [next, ...known.filter((entry) => entry.sessionId !== sessionId)].sort((a, b) =>
+      b.savedAt.localeCompare(a.savedAt),
+    );
+    // An unreadable manifest must not shrink the set: every on-disk slot stays listed.
+    const sessions = trusted ? merged.slice(0, MAX_SESSION_REVISIONS) : merged;
     await writeManifest({ version: 1, sessions });
 
     const retained = new Set(sessions.map((entry) => entry.slot));
-    for (const info of await listProjects()) {
-      if (isAutosaveRecoverySlot(info.name) && !retained.has(info.name)) {
-        await deleteProjectUnlocked(info.name);
-      }
-    }
+    await deleteSlotsGuarded({
+      inventoryRead: trusted,
+      candidates: (await listProjects())
+        .map((info) => info.name)
+        .filter((name) => isAutosaveRecoverySlot(name)),
+      retained,
+      remove: deleteProjectUnlocked,
+    });
   });
+}
+
+/** Rebuilds manifest entries for every on-disk session slot other than `exclude`. */
+async function rebuildSessionEntries(exclude: string): Promise<RecoveryManifestEntry[]> {
+  const entries: RecoveryManifestEntry[] = [];
+  for (const info of await listProjects()) {
+    if (!isAutosaveRecoverySlot(info.name) || info.name === exclude) continue;
+    try {
+      entries.push({
+        sessionId: info.name.slice(SLOT_PREFIX.length),
+        slot: info.name,
+        documentRevision: '',
+        archiveRevision: projectBytesRevision(await loadProject(info.name)),
+        savedAt: new Date(info.lastModified ?? 0).toISOString(),
+      });
+    } catch {
+      // An unreadable slot cannot be listed, and it is never deleted while the manifest is untrusted.
+    }
+  }
+  return entries;
 }
 
 /**
@@ -153,7 +220,7 @@ export function saveAutosaveSessionRevision(
  */
 export function loadLatestAutosaveSessionRevision(): Promise<Uint8Array | null> {
   return withPersistenceMutationLock(async () => {
-    const manifest = await readManifest();
+    const { manifest } = await readManifest();
     const listed = (await listProjects())
       .filter((info) => isAutosaveRecoverySlot(info.name))
       .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));

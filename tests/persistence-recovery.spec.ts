@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { listProjects, saveProject } from '@/persistence/opfs';
 import {
   loadLatestAutosaveSessionRevision,
@@ -89,6 +89,12 @@ describe('per-session autosave recovery', () => {
   it('keeps the latest published revision recoverable when stale-session cleanup is interrupted', async () => {
     const stale = archive('stale', '2026-07-15T00:00:00.000Z');
     const latest = archive('latest', '2026-07-16T00:01:00.000Z');
+    sessionStorage.setItem(SESSION_KEY, 'tab-a');
+    await saveAutosaveSessionRevision(
+      archive('first'),
+      '{"name":"first"}',
+      '2026-07-15T00:00:00.000Z',
+    );
     await saveProject('autosave-session-stale', stale);
     const projects = await root.getDirectoryHandle('projects', { create: true });
     const removeEntry = projects.removeEntry.bind(projects);
@@ -102,5 +108,55 @@ describe('per-session autosave recovery', () => {
       saveAutosaveSessionRevision(latest, '{"name":"latest"}', '2026-07-16T00:01:00.000Z'),
     ).rejects.toThrow('simulated cleanup interruption');
     await expect(loadLatestAutosaveSessionRevision()).resolves.toEqual(latest);
+  });
+
+  it('keeps other tabs recovery slots when the manifest is corrupt, across later saves', async () => {
+    const other = archive('other', '2026-07-16T00:00:00.000Z');
+    sessionStorage.setItem(SESSION_KEY, 'tab-a');
+    await saveAutosaveSessionRevision(other, '{"name":"other"}', '2026-07-16T00:00:00.000Z');
+    const recovery = await root.getDirectoryHandle('recovery', { create: true });
+    recovery.files.set('autosave-manifest.json', {
+      data: new TextEncoder().encode('{ truncated'),
+      lastModified: Date.now(),
+    });
+
+    sessionStorage.setItem(SESSION_KEY, 'tab-b');
+    await saveAutosaveSessionRevision(archive('b1'), '{"name":"b1"}', '2026-07-16T00:01:00.000Z');
+    await saveAutosaveSessionRevision(archive('b2'), '{"name":"b2"}', '2026-07-16T00:02:00.000Z');
+
+    expect((await listProjects()).map((entry) => entry.name)).toContain('autosave-session-tab-a');
+  });
+
+  it('gives a duplicated tab a fresh session id when another live tab holds its id', async () => {
+    const held = new Set<string>();
+    const request = vi.fn(
+      async (name: string, _options: unknown, callback: (lock: unknown) => Promise<void>) => {
+        if (held.has(name)) return callback(null);
+        held.add(name);
+        return callback({ name });
+      },
+    );
+    vi.stubGlobal('navigator', { ...navigator, locks: { request }, storage: navigator.storage });
+    try {
+      sessionStorage.setItem(SESSION_KEY, 'shared-id');
+      // The first tab claims the id; its lock is never released while it lives.
+      await saveAutosaveSessionRevision(archive('A'), '{"name":"A"}', '2026-07-16T00:00:00.000Z');
+      // A duplicated tab is a fresh page: new module state, cloned sessionStorage.
+      vi.resetModules();
+      const duplicate = await import('@/persistence/recovery');
+      sessionStorage.setItem(SESSION_KEY, 'shared-id');
+      await duplicate.saveAutosaveSessionRevision(
+        archive('B'),
+        '{"name":"B"}',
+        '2026-07-16T00:01:00.000Z',
+      );
+
+      expect(sessionStorage.getItem(SESSION_KEY)).not.toBe('shared-id');
+      expect(
+        (await listProjects()).filter((entry) => entry.name.startsWith('autosave-session-')),
+      ).toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

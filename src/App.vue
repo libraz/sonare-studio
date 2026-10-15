@@ -298,13 +298,17 @@ const autosave = useAutosave({
 });
 // Service-worker activation/recovery may reload the page. Flush the current
 // document first so OPFS writes cannot be abandoned mid-update.
+// While the launcher is open the store only holds a placeholder document, so
+// flushing it would overwrite the crash-recovery autosave with an empty project.
+const flushLiveAutosave = async (): Promise<boolean> => {
+  if (!store.initialized || startScreenOpen.value) return false;
+  return autosave.saveNow();
+};
 onScopeDispose(
   installPwaReloadPreparation(async () => {
-    // The launcher has no live document to save. An update must remain
-    // usable before the user creates or opens a project.
-    if (!store.initialized) return true;
-    const saved = await autosave.saveNow();
-    return saved;
+    // An update must remain usable before the user creates or opens a project.
+    if (!store.initialized || startScreenOpen.value) return true;
+    return autosave.saveNow();
   }),
 );
 onScopeDispose(clearAudioClipData);
@@ -964,7 +968,7 @@ useAppLifecycle({
       resolveBootStart = null;
     }
   },
-  flushAutosave: autosave.saveNow,
+  flushAutosave: flushLiveAutosave,
   shouldBlockUnload: () => dirty.value || autosave.saving.value,
 });
 

@@ -10,6 +10,7 @@
  */
 
 import { isNotFoundError } from './fs-utils';
+import { deleteSlotsGuarded } from './guarded-delete';
 import { withPersistenceMutationLock } from './mutation-lock';
 import {
   deleteProjectUnlocked,
@@ -297,28 +298,6 @@ async function readOptionalProjectSlot(slot: string): Promise<Uint8Array | null>
   }
 }
 
-/**
- * Captures physical revision slots that the published index does not name.
- * A readable index is required before classifying a slot as orphaned: when
- * the index is missing or corrupt, the payloads may be the only recoverable
- * copy of a user's history.
- */
-async function readOrphanedProjectSlots(
-  index: RevisionIndexRead,
-  stored: readonly { name: string }[],
-): Promise<{ slot: string; bytes: Uint8Array | null }[]> {
-  if (!index.usable) return [];
-  const indexedSlots = new Set(index.entries.map((entry) => entry.slot));
-  return Promise.all(
-    stored
-      .filter((info) => isRevisionSlot(info.name) && !indexedSlots.has(info.name))
-      .map(async (info) => ({
-        slot: info.name,
-        bytes: await readOptionalProjectSlot(info.name),
-      })),
-  );
-}
-
 /** Restores slot pre-images captured before a revision transaction. */
 async function restoreProjectSlots(
   images: readonly { slot: string; bytes: Uint8Array | null }[],
@@ -361,7 +340,6 @@ export async function saveProjectRevisionUnlocked(
   const index = await readIndexState();
   const entries = index.entries;
   const stored = await listProjects();
-  const orphanedImages = await readOrphanedProjectSlots(index, stored);
   const taken = new Set([
     ...entries.map((entry) => entry.slot),
     ...stored.map((info) => info.name),
@@ -387,18 +365,24 @@ export async function saveProjectRevisionUnlocked(
       bytes: await readOptionalProjectSlot(entry.slot),
     })),
   );
-  const cleanupImages = [...orphanedImages, ...droppedImages];
 
   let revisionPublished = false;
-  const deletedCleanup: typeof cleanupImages = [];
+  const deletedCleanup: typeof droppedImages = [];
   try {
     await saveProjectUnlocked(revision.slot, bytes);
     await writeIndex(published);
     revisionPublished = true;
-    for (const image of cleanupImages) {
-      deletedCleanup.push(image);
-      await deleteProjectUnlocked(image.slot);
-    }
+    // Only slots the readable index named are pruned; unindexed slots may be the only copy of a history.
+    const imageBySlot = new Map(droppedImages.map((image) => [image.slot, image]));
+    await deleteSlotsGuarded({
+      inventoryRead: index.usable,
+      candidates: imageBySlot.keys(),
+      retained: new Set(published.map((entry) => entry.slot)),
+      remove: async (slot) => {
+        deletedCleanup.push(imageBySlot.get(slot) as (typeof droppedImages)[number]);
+        await deleteProjectUnlocked(slot);
+      },
+    });
   } catch (error) {
     // Restore the old index and any pruned bytes before removing the newly
     // written slot. Every operation stays inside this lock, so no observer
