@@ -14,9 +14,8 @@
 
 import { nearestStep, noteToPitchClass, tryParseNote } from '@libraz/libcantus';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { mixdownToMono } from './audio-import';
-import { sliceAudioClipWindow } from './scheduling';
-import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import { renderAudibleClipMono } from './audible-clip-window';
+import { ppqToSeconds, secondsToPpq } from './tempo-map';
 import { MAJOR_MODE_MASK, type TempoSegment } from './types';
 
 /** One frame of the melody contour returned by the engine. */
@@ -199,8 +198,7 @@ function quantizeMelodyRhythm(
  * non-positive, or the source window is empty.
  *
  * @param clip Audio clip to analyze (needs `assetId`).
- * @param tempoBpm Constant tempo (> 0) used for the window slice (the clip
- *   plays at its native sample rate, so the slice is fixed-tempo).
+ * @param tempoBpm Fallback tempo (> 0) when `tempoSegments` is empty.
  * @param deps Injected asset loader and melody analyzer.
  * @param options Optional minimum note length.
  * @param tempoSegments Project tempo map; frame times become clip-relative PPQ
@@ -216,27 +214,16 @@ export async function analyzeAudioClipMelody(
   tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<MelodyNoteInput[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    asset.meta.sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
-  );
-  const mono = mixdownToMono(window);
-  if (mono.length === 0) return [];
+  const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
+  if (!audible) return [];
+  const { mono, sampleRate, map } = audible;
   const points =
-    deps.analyzeMelody(mono, asset.meta.sampleRate, { usePyin: options.usePyin ?? true }).points ??
-    [];
-  const scale = options.pitchQuantizeToScale
-    ? detectMelodyScale(mono, asset.meta.sampleRate, deps)
-    : null;
+    deps.analyzeMelody(mono, sampleRate, { usePyin: options.usePyin ?? true }).points ?? [];
+  const scale = options.pitchQuantizeToScale ? detectMelodyScale(mono, sampleRate, deps) : null;
   const minNoteSeconds = options.minNoteSeconds ?? 0.05;
   // Map window-relative frame seconds to clip-relative PPQ through the tempo
   // map (the inverse of how the new MIDI clip plays back), so the transcription
   // stays aligned when the tempo varies under the clip.
-  const map = normalizeTempoMap(tempoSegments, tempoBpm);
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
   const secondsToClipPpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + seconds) - clip.startPpq;
@@ -258,8 +245,8 @@ export async function analyzeAudioClipMelody(
       const startPpq = Math.max(0, secondsToClipPpq(startSeconds));
       const endPpq = Math.min(clip.lengthPpq, secondsToClipPpq(clampedEnd));
       if (endPpq > startPpq) {
-        const startFrame = startSeconds * asset.meta.sampleRate;
-        const endFrame = clampedEnd * asset.meta.sampleRate;
+        const startFrame = startSeconds * sampleRate;
+        const endFrame = clampedEnd * sampleRate;
         notes.push({
           pitch: runMidi,
           startPpq,

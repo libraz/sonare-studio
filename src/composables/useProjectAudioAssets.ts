@@ -3,6 +3,7 @@ import { confirmDialog } from '@/composables/useDialogs';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
+import { clipSourceWindowFrames } from '@/project/audible-clip-window';
 import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
 import { decodeAndIngest, decodeAudioFile, mixdownToMono } from '@/project/audio-import';
 import { clipsCollidingWith } from '@/project/command/clip-lane';
@@ -16,7 +17,6 @@ import {
   setClipWarp,
 } from '@/project/commands';
 import { inferExternalStemRole } from '@/project/external-stems';
-import { sliceAudioClipWindow } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import { isAudioClip } from '@/project/types';
@@ -191,6 +191,7 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
             current && isAudioClip(current)
               ? JSON.stringify({
                   assetId: current.assetId,
+                  startPpq: current.startPpq,
                   sourceOffsetPpq: current.sourceOffsetPpq,
                   lengthPpq: current.lengthPpq,
                   warp: current.warp,
@@ -204,15 +205,15 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       const isCurrent = (): boolean => tempoDetectionOperations.isCurrent(token, identity());
       const asset = await loadAsset(assetId);
       if (!isCurrent()) return;
-      const channels = sliceAudioClipWindow(
-        asset.channels,
+      const window = clipSourceWindowFrames(
+        clip,
+        asset.channels[0]?.length ?? 0,
         asset.meta.sampleRate,
-        clip.sourceOffsetPpq,
-        clip.lengthPpq,
-        clip.warp?.sourceBpm ?? store.tempoBpm,
+        store.tempoBpm,
+        store.tempoSegments,
       );
       const tags = await analyzeAudioTagsInWorker(
-        mixdownToMono(channels),
+        mixdownToMono(asset.channels.map((channel) => channel.slice(window.start, window.end))),
         asset.meta.sampleRate,
       ).catch(() => ({ bpm: undefined }));
       if (!isCurrent()) return;

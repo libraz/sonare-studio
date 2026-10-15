@@ -950,10 +950,7 @@ export async function sliceAudioClipAtTransients(
 
   const sourceStartPpq = current.startPpq - current.sourceOffsetPpq;
   const assetSeconds = asset.meta.numFrames / asset.meta.sampleRate;
-  const sourceEndPpq = secondsToPpq(
-    tempo,
-    ppqToSeconds(tempo, Math.max(0, sourceStartPpq)) + assetSeconds,
-  );
+  const sourceEndPpq = secondsToPpq(tempo, ppqToSeconds(tempo, sourceStartPpq) + assetSeconds);
 
   return executeAtomic((edit) => {
     const ids = [clipId];

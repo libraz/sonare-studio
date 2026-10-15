@@ -15,8 +15,7 @@
  */
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { mixdownToMono } from './audio-import';
-import { sliceAudioClipWindow } from './scheduling';
+import { renderAudibleClipMono } from './audible-clip-window';
 import {
   type ChromaAnalyzer,
   groupSectionRepeats,
@@ -24,7 +23,7 @@ import {
   SECTION_CHROMA_HOP,
   sectionChromaVector,
 } from './section-repeats';
-import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import { ppqToSeconds, secondsToPpq } from './tempo-map';
 import { type TempoSegment, TRACK_COLOR_PALETTE } from './types';
 
 export type { ChromaAnalyzer, ChromaFeatures } from './section-repeats';
@@ -99,8 +98,7 @@ function groupColor(group: number): string {
  * no asset, the tempo is non-positive, or the source window is empty.
  *
  * @param clip Audio clip to analyze (needs `assetId`).
- * @param tempoBpm Constant tempo (> 0) used for the window slice (the clip
- *   plays at its native sample rate, so the slice is fixed-tempo).
+ * @param tempoBpm Fallback tempo (> 0) when `tempoSegments` is empty.
  * @param deps Injected asset loader and section analyzer.
  * @param tempoSegments Project tempo map; detection times are placed on the
  *   timeline through it, so sections land correctly when the tempo varies under
@@ -114,22 +112,14 @@ export async function analyzeAudioClipSections(
   tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<DetectedSectionInput[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    asset.meta.sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
-  );
-  const mono = mixdownToMono(window);
-  if (mono.length === 0) return [];
-  const sections = deps.analyzeSections(mono, asset.meta.sampleRate);
+  const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
+  if (!audible) return [];
+  const { mono, sampleRate, map } = audible;
+  const sections = deps.analyzeSections(mono, sampleRate);
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
   // Map window-relative detection seconds onto the timeline through the tempo
   // map (the inverse of how playback positions the clip), so sections stay
   // aligned when the tempo varies under the clip.
-  const map = normalizeTempoMap(tempoSegments, tempoBpm);
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
   const secondsToTimelinePpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));
@@ -144,8 +134,8 @@ export async function analyzeAudioClipSections(
   // The detector's type ordinal repeats across genuinely different parts, so
   // coloring by it claims two parts are the same when they are not. Compare the
   // audio instead and color by what actually recurs.
-  const chroma = deps.chroma?.(mono, asset.meta.sampleRate, SECTION_CHROMA_FFT, SECTION_CHROMA_HOP);
-  const framesPerSecond = chroma ? asset.meta.sampleRate / SECTION_CHROMA_HOP : 0;
+  const chroma = deps.chroma?.(mono, sampleRate, SECTION_CHROMA_FFT, SECTION_CHROMA_HOP);
+  const framesPerSecond = chroma ? sampleRate / SECTION_CHROMA_HOP : 0;
   const groups = chroma
     ? groupSectionRepeats(
         placed.map(({ section }) =>

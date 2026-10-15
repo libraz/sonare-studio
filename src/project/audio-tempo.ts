@@ -17,14 +17,11 @@
 
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import { renderAudibleClipMono } from './audible-clip-window';
 import { type DetectedBeats, detectBeatsInWorker } from './audio-analysis-client';
 import { mixdownToMono } from './audio-import';
 import { type BeatGrid, fitBeatGrid } from './beat-grid';
-import {
-  type AudibleAudioClipFields,
-  renderAudibleAudioClipWindow,
-  sliceAudioClipWindow,
-} from './scheduling';
+import { type AudibleAudioClipFields, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
 import { normalizeTempoMap } from './tempo-map';
 import { meterBarLengthPpq, timeSignatureAt } from './time-signature';
@@ -192,29 +189,23 @@ export function beatTimesToTempoSegments(
  * the source window is empty, or fewer than two beats are detected.
  *
  * @param clip Audio clip window to analyze (needs `assetId`).
- * @param tempoBpm Current constant tempo (> 0) used to cut the source window.
+ * @param tempoBpm Fallback tempo (> 0) when `tempoSegments` is empty.
  * @param deps Injected asset loader and beat detector.
  * @param options BPM clamp bounds forwarded to the conversion.
+ * @param tempoSegments Project tempo map the window is rendered under.
  * @returns The detected tempo segments anchored at PPQ 0.
  */
 export async function detectAudioClipTempoMap(
-  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
+  clip: AudibleAudioClipFields,
   tempoBpm: number,
   deps: AudioTempoMapDeps,
   options?: BeatTempoMapOptions,
+  tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<TempoSegment[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    asset.meta.sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
-  );
-  const mono = mixdownToMono(window);
-  if (mono.length === 0) return [];
-  return beatTimesToTempoSegments(deps.detectBeats(mono, asset.meta.sampleRate), options);
+  const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
+  if (!audible) return [];
+  return beatTimesToTempoSegments(deps.detectBeats(audible.mono, audible.sampleRate), options);
 }
 
 /**
@@ -241,6 +232,7 @@ export async function detectActiveAudioClipTempoMap(
     store.tempoBpm,
     { loadAudioAsset: loadAsset, detectBeats: wasm.detectBeats },
     options,
+    store.tempoSegments,
   );
 }
 
@@ -325,31 +317,26 @@ export function beatsToTimeSignatures(
  * beats/downbeats are detected.
  *
  * @param clip Audio clip window to analyze (needs `assetId`).
- * @param tempoBpm Current constant tempo (> 0) used to cut the source window.
+ * @param tempoBpm Fallback tempo (> 0) when `tempoSegments` is empty.
  * @param deps Injected asset loader and beat/downbeat detectors.
  * @param options Numerator bound forwarded to the conversion.
+ * @param tempoSegments Project tempo map the window is rendered under.
  * @returns The detected meter segments anchored at PPQ 0.
  */
 export async function detectAudioClipTimeSignatures(
-  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
+  clip: AudibleAudioClipFields,
   tempoBpm: number,
   deps: AudioTimeSignatureDeps,
   options?: BeatTimeSignatureOptions,
+  tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<TimeSignatureSegment[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    asset.meta.sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
-  );
-  const mono = mixdownToMono(window);
-  if (mono.length === 0) return [];
+  const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
+  if (!audible) return [];
+  const { mono, sampleRate } = audible;
   return beatsToTimeSignatures(
-    deps.detectBeats(mono, asset.meta.sampleRate),
-    deps.detectDownbeats(mono, asset.meta.sampleRate),
+    deps.detectBeats(mono, sampleRate),
+    deps.detectDownbeats(mono, sampleRate),
     options,
   );
 }
@@ -387,6 +374,7 @@ export async function detectActiveAudioClipTimeSignatures(
       detectDownbeats: wasm.detectDownbeats,
     },
     options,
+    store.tempoSegments,
   );
 }
 
@@ -419,26 +407,19 @@ export interface AudioMeterEstimateDeps {
  * meter. Empty when the clip is too short to score a meter.
  *
  * @param candidates Numerators to consider; omitted keeps the library default.
+ * @param tempoSegments Project tempo map the window is rendered under.
  */
 export async function estimateAudioClipMeter(
-  clip: { assetId?: string; lengthPpq: number; sourceOffsetPpq: number },
+  clip: AudibleAudioClipFields,
   tempoBpm: number,
   deps: AudioMeterEstimateDeps,
   candidates?: readonly number[],
+  tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<TimeSignatureSegment[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const mono = mixdownToMono(
-    sliceAudioClipWindow(
-      asset.channels,
-      asset.meta.sampleRate,
-      clip.sourceOffsetPpq,
-      clip.lengthPpq,
-      tempoBpm,
-    ),
-  );
-  if (mono.length === 0) return [];
-  const analysis = deps.analyze(mono, asset.meta.sampleRate);
+  const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
+  if (!audible) return [];
+  const analysis = deps.analyze(audible.mono, audible.sampleRate);
   const beatTimes = analysis.beats.map((beat) => beat.time);
   const beatStrengths = analysis.beatObservations.onsetStrength;
   if (beatStrengths.length !== beatTimes.length) return [];
@@ -480,5 +461,6 @@ export async function estimateActiveAudioClipMeter(
       estimateMeter: (request) => wasm.estimateMeter(request),
     },
     candidates,
+    store.tempoSegments,
   );
 }

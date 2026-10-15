@@ -3,10 +3,10 @@
  * audio clip's source window and maps the detected progression onto the
  * project's chord-track timeline.
  *
- * The analyzed buffer is cut with the same fixed-tempo slice as playback
- * (`sliceAudioClipWindow`), so what the detector hears matches what the clip
- * sounds like; detection times (seconds, relative to the window start) are then
- * mapped back to absolute PPQ with that same constant tempo. The detector's
+ * The analyzed buffer is the clip's audible window (`renderAudibleClipMono`),
+ * so what the detector hears is what plays; detection times (seconds, relative
+ * to the clip start) are mapped back to absolute PPQ through the same tempo
+ * map. The detector's
  * `quality` ordinals 0-15 are the editor's own (Major = 0); the qualities past
  * them are carried as a base ordinal plus extensions and omissions. The
  * app-side merge and undoable commit live in
@@ -17,10 +17,9 @@
 import type { ChordQuality } from '@libraz/libcantus';
 import { type EditorQuality, libcantusQualityToEditor } from '@/compose/chord-quality';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { mixdownToMono } from './audio-import';
+import { renderAudibleClipMono } from './audible-clip-window';
 import { chordExtensionSignature, type EditorChordSymbol } from './chords';
-import { sliceAudioClipWindow } from './scheduling';
-import { normalizeTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
+import { ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { EditorClip, TempoSegment } from './types';
 
 /** Identity of a chord for adjacency comparison (root/quality/bass). */
@@ -149,12 +148,11 @@ export interface AudioChordDeps {
  * asset, the tempo is non-positive, or the source window is empty.
  *
  * @param clip Audio clip to analyze.
- * @param tempoBpm Constant tempo (> 0) used for the window slice (the clip
- *   plays at its native sample rate, so the slice is fixed-tempo).
+ * @param tempoBpm Fallback tempo (> 0) when `tempoSegments` is empty.
  * @param deps Injected asset loader and chord detector.
- * @param tempoSegments Project tempo map; detection times are placed on the
- *   timeline through it, so chords land correctly when the tempo varies under
- *   the clip. Empty (the default) reduces to the constant `tempoBpm` mapping.
+ * @param tempoSegments Project tempo map; the window is rendered under it and
+ *   detection times are placed on the timeline through it. Empty (the default)
+ *   reduces to the constant `tempoBpm`.
  * @returns Detected chord symbols in onset order, smoothed to absorb single-
  *   window detector outliers (see {@link smoothDetectedChordSymbols}).
  */
@@ -165,24 +163,14 @@ export async function analyzeAudioClipChords(
   tempoSegments: ReadonlyArray<TempoSegment> = [],
 ): Promise<EditorChordSymbol[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
-  const asset = await deps.loadAudioAsset(clip.assetId);
-  const window = sliceAudioClipWindow(
-    asset.channels,
-    asset.meta.sampleRate,
-    clip.sourceOffsetPpq,
-    clip.lengthPpq,
-    tempoBpm,
-  );
-  const mono = mixdownToMono(window);
-  if (mono.length === 0) return [];
+  const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
+  if (!audible) return [];
+  const { mono, sampleRate, map } = audible;
   // An off-pitch recording is read on its own pitch grid.
-  const result = deps.detectChords(mono, asset.meta.sampleRate, { tuning: 'auto' });
+  const result = deps.detectChords(mono, sampleRate, { tuning: 'auto' });
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
-  // Map window-relative detection seconds onto the timeline through the tempo
-  // map: the inverse of how playback positions the clip. The clip's audio
-  // starts at clip.startPpq, so a detection time `s` lands at the PPQ whose
-  // elapsed seconds is (clip start seconds + s).
-  const map = normalizeTempoMap(tempoSegments, tempoBpm);
+  // The window starts at clip.startPpq, so a detection time `s` lands at the PPQ
+  // whose elapsed seconds is (clip start seconds + s).
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
   const secondsToTimelinePpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));

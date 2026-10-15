@@ -43,8 +43,8 @@ export function transientCutsPpq(
   clip: SliceableClip,
   tempo: NormalizedTempoMap,
 ): number[] {
-  const sourceStartPpq = clip.startPpq - clip.sourceOffsetPpq;
-  const sourceStartSeconds = ppqToSeconds(tempo, Math.max(0, sourceStartPpq));
+  // Playback extrapolates the tempo map before PPQ 0, so the origin is not clamped.
+  const sourceStartSeconds = ppqToSeconds(tempo, clip.startPpq - clip.sourceOffsetPpq);
   const endPpq = clip.startPpq + clip.lengthPpq;
   const cuts: number[] = [];
   for (let index = 0; index < onsetSeconds.length; index += 1) {

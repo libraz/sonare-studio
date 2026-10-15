@@ -12,9 +12,14 @@ import {
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(
-  overrides: Partial<{ assetId?: string; lengthPpq: number; sourceOffsetPpq: number }> = {},
+  overrides: Partial<{
+    assetId?: string;
+    startPpq: number;
+    lengthPpq: number;
+    sourceOffsetPpq: number;
+  }> = {},
 ) {
-  return { assetId: 'asset-1', lengthPpq: 16, sourceOffsetPpq: 0, ...overrides };
+  return { assetId: 'asset-1', startPpq: 0, lengthPpq: 16, sourceOffsetPpq: 0, ...overrides };
 }
 
 /** A loaded asset with `frames` mono samples at `sampleRate`. */
@@ -107,6 +112,28 @@ describe('detectAudioClipTempoMap', () => {
     });
     expect(segments).toEqual([{ startPpq: 0, bpm: 120 }]);
     expect(seen).toEqual([{ length: 8 * 48000, sampleRate: 48000 }]);
+  });
+
+  it('analyses the frames playback schedules under a tempo map', async () => {
+    const seen: number[] = [];
+    // 120 BPM until PPQ 8, then 60 BPM: 8 PPQ at the change play for 8 s, not the 4 s of a flat 120.
+    await detectAudioClipTempoMap(
+      clipWindow({ startPpq: 8, lengthPpq: 8 }),
+      120,
+      {
+        loadAudioAsset: async () => asset(48000 * 20),
+        detectBeats: (samples) => {
+          seen.push(samples.length);
+          return [0, 1];
+        },
+      },
+      undefined,
+      [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 8, bpm: 60 },
+      ],
+    );
+    expect(seen).toEqual([8 * 48000]);
   });
 
   it('returns an empty map without an asset, at non-positive tempo, or on an empty window', async () => {

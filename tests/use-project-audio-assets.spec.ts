@@ -112,7 +112,7 @@ describe('useProjectAudioAssets', () => {
     expect(undo()).toBe(false);
   });
 
-  it('redetects clip tempo from the source-BPM window, not the whole asset', async () => {
+  it('redetects clip tempo from the audible source window, not the whole asset', async () => {
     const renderInfo = ref('');
     const trackId = addAudioTrack();
     const clipId = await addAudioClip({
@@ -151,7 +151,8 @@ describe('useProjectAudioAssets', () => {
     await assets.onRedetectClipTempo(clipId);
 
     expect(analysisClient.analyzeAudioTagsInWorker).toHaveBeenCalledWith(
-      new Float32Array([5, 6, 7, 8, 9, 10, 11, 12]),
+      // An unwarped clip plays 1 PPQ in at the project's 120 BPM: 0.5 s .. 1.5 s of the asset.
+      new Float32Array([3, 4, 5, 6]),
       4,
     );
     expect(store.clips.find((clip) => clip.id === clipId)?.warp).toEqual({

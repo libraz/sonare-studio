@@ -234,6 +234,8 @@ describe('useSampleWarp', () => {
     expect(setClipWarp).toHaveBeenCalledWith(7, {
       enabled: true,
       sourceBpm: expect.closeTo(100, 4),
+      sourceStartSeconds: 0,
+      sourceEndSeconds: 2,
       anchors: [
         { ppq: 1, sourceSeconds: 0.5 },
         { ppq: 2, sourceSeconds: 1.1 },
@@ -297,6 +299,46 @@ describe('useSampleWarp', () => {
         { ppq: 3, sourceSeconds: 3 },
       ],
     });
+    scope.stop();
+  });
+
+  it('auto-warps the source frames playback cuts under a tempo map', async () => {
+    setClipWarp.mockClear();
+    const project = reactive({
+      clips: [audioClip({ startPpq: 4, sourceOffsetPpq: 2, lengthPpq: 4 })],
+      clipId: 7,
+      tempoBpm: 120,
+      // 120 BPM to PPQ 4, then 60: the window plays 1 s .. 5 s of the source, not a flat 1 s .. 3 s.
+      tempoSegments: [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 4, bpm: 60 },
+      ],
+    });
+    let observedWindow: Float32Array | undefined;
+    const scope = effectScope();
+    const warp = scope.run(() =>
+      useSampleWarp({
+        project: project as never,
+        assetId: () => 'asset-1',
+        setError: () => {},
+        autoWarp: {
+          loadAudioAsset: async () => sourceWindowAsset() as never,
+          detectBeats: (samples) => {
+            observedWindow = samples;
+            return [0, 1, 2, 3];
+          },
+        },
+      }),
+    );
+    if (!warp) throw new Error('effect scope did not run');
+
+    await warp.onAutoWarp();
+
+    expect(observedWindow).toEqual(new Float32Array([1, 2, 3, 4]));
+    expect(setClipWarp).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ sourceStartSeconds: 1, sourceEndSeconds: 5 }),
+    );
     scope.stop();
   });
 

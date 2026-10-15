@@ -95,6 +95,27 @@ describe('analyzeAudioClipChords', () => {
     ]);
   });
 
+  it('analyses the frames playback schedules for a trimmed clip under a tempo map', async () => {
+    const seen: number[] = [];
+    // 120 BPM until PPQ 8, then 60: the clip's 8 PPQ at the change play for 8 s, not 4 s.
+    await analyzeAudioClipChords(
+      audioClip({ startPpq: 8, lengthPpq: 8, sourceOffsetPpq: 0 }),
+      120,
+      {
+        loadAudioAsset: async () => asset(48000 * 20),
+        detectChords: (samples) => {
+          seen.push(samples.length);
+          return { chords: [] };
+        },
+      },
+      [
+        { startPpq: 0, bpm: 120 },
+        { startPpq: 8, bpm: 60 },
+      ],
+    );
+    expect(seen).toEqual([8 * 48000]);
+  });
+
   it('accounts for the clip start offset before mapping detection seconds through tempo changes', async () => {
     // The clip begins at PPQ 2, two seconds into a 60 BPM section. A detection
     // at window second 2 therefore lands on absolute second 4 / PPQ 4, exactly

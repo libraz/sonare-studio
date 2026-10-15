@@ -10,9 +10,9 @@ import { OperationGeneration, type OperationIdentity } from '@/lib/operation-gen
 import { ensureWasm } from '@/lib/wasm';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { loadAsset } from '@/persistence/assets';
+import { clipSourceWindowFrames } from '@/project/audible-clip-window';
 import { mixdownToMono } from '@/project/audio-import';
 import { setClipWarp } from '@/project/commands';
-import { sliceAudioClipWindow } from '@/project/scheduling';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
 import {
@@ -182,24 +182,32 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
       if (typeof deps.detectBeats !== 'function') throw new Error('Auto-Warp requires detectBeats');
       const asset = await deps.loadAudioAsset(clip.assetId);
       if (!isCurrent()) return;
-      const window = sliceAudioClipWindow(
-        asset.channels,
-        asset.meta.sampleRate,
-        clip.sourceOffsetPpq,
-        clip.lengthPpq,
-        clip.warp?.sourceBpm ?? project.tempoBpm,
+      const sampleRate = asset.meta.sampleRate;
+      const window = clipSourceWindowFrames(
+        clip,
+        asset.channels[0]?.length ?? 0,
+        sampleRate,
+        project.tempoBpm,
+        project.tempoSegments,
       );
-      const mono = mixdownToMono(window);
+      const mono = mixdownToMono(
+        asset.channels.map((channel) => channel.slice(window.start, window.end)),
+      );
       if (mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');
-      const beats = deps.detectBeats(mono, asset.meta.sampleRate);
+      const beats = deps.detectBeats(mono, sampleRate);
       const downbeats =
-        typeof deps.detectDownbeats === 'function'
-          ? deps.detectDownbeats(mono, asset.meta.sampleRate)
-          : [];
+        typeof deps.detectDownbeats === 'function' ? deps.detectDownbeats(mono, sampleRate) : [];
       const warp = autoWarpFromBeatTimes(beats, downbeats, clip.lengthPpq);
       if (!warp) throw new Error('Auto-Warp could not detect enough beats');
       if (!isCurrent()) return;
-      commitWarp({ enabled: true, sourceBpm: warp.sourceBpm, anchors: warp.anchors });
+      // Anchors are seconds into the analysed window, so the warp must start there.
+      commitWarp({
+        enabled: true,
+        sourceBpm: warp.sourceBpm,
+        anchors: warp.anchors,
+        sourceStartSeconds: window.start / sampleRate,
+        sourceEndSeconds: window.end / sampleRate,
+      });
     } catch (err) {
       if (!isCurrent()) return;
       setError(errorMessage(err));

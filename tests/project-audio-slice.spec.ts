@@ -47,6 +47,14 @@ describe('transient cuts', () => {
     expect(transientCutsPpq([0.5, 1.5], clip, tempo)).toEqual([5]);
   });
 
+  it('places cuts where playback sounds them when the source starts before timeline zero', () => {
+    // The window starts 4 PPQ (2 s) into the asset but sits at timeline 0, so the asset begins at -4.
+    const clip = { startPpq: 0, lengthPpq: 4, sourceOffsetPpq: 4 };
+
+    // 3 s of source sounds at 3 s - 2 s = 1 s = PPQ 2.
+    expect(transientCutsPpq([3], clip, tempo)).toEqual([2]);
+  });
+
   it('drops onsets at the clip edges and cuts too close together', () => {
     const clip = { startPpq: 0, lengthPpq: 4, sourceOffsetPpq: 0 };
 
