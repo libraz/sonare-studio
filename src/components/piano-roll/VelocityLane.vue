@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import { clamp } from '@/lib/math';
 import { setSelection, updateNotes } from '@/project/commands';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
-import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import { useI18n } from '@/ui/i18n';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import {
@@ -21,13 +21,7 @@ import {
   quantizeLaneValue,
   rampValueAt,
 } from './lane-params';
-import {
-  DEFAULT_NOTE_COLOR,
-  getCanvasContext,
-  type NoteColorFn,
-  PIANO_ROLL_COLORS,
-  setupCanvas,
-} from './theme';
+import { DEFAULT_NOTE_COLOR, getCanvasContext, type NoteColorFn, PIANO_ROLL_COLORS } from './theme';
 
 /**
  * Parameter lane below the note grid: one draggable bar per note, horizontally
@@ -68,7 +62,7 @@ const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
 
 /** Unique painter layer suffix so several editors can share one painter. */
-const layerId = Math.random().toString(36).slice(2, 8);
+const layerId = createLayerId();
 
 const COLORS = PIANO_ROLL_COLORS;
 
@@ -78,8 +72,11 @@ const spec = computed(() => laneParamSpec(paramId.value));
 /** In-flight value overrides per note id while a drag runs. */
 const preview = shallowRef<Map<number, number> | null>(null);
 
-let widthPx = 0;
-let heightPx = 0;
+const surface = useCanvasSurface({
+  container: wrapper,
+  canvases: () => [canvas.value],
+  redraw: schedule,
+});
 
 /**
  * Active gesture. `uniform` drags the grabbed selection to one value (the
@@ -118,7 +115,7 @@ function laneBars(): LaneBar[] {
 
 function draw(): void {
   const el = canvas.value;
-  if (!el || widthPx <= 0 || heightPx <= 0) return;
+  if (!el || surface.widthPx <= 0 || surface.heightPx <= 0) return;
   const ctx = getCanvasContext(el);
   if (!ctx) return;
   const range = props.range;
@@ -126,14 +123,14 @@ function draw(): void {
   const bipolar = spec.value.bipolar;
 
   ctx.fillStyle = COLORS.laneBackground;
-  ctx.fillRect(0, 0, widthPx, heightPx);
+  ctx.fillRect(0, 0, surface.widthPx, surface.heightPx);
   ctx.fillStyle = COLORS.laneRule;
   for (const fraction of [0.25, 0.5, 0.75]) {
-    ctx.fillRect(0, Math.round(heightPx * fraction), widthPx, 1);
+    ctx.fillRect(0, Math.round(surface.heightPx * fraction), surface.widthPx, 1);
   }
   if (bipolar) {
     ctx.fillStyle = COLORS.laneCenter;
-    ctx.fillRect(0, Math.round(heightPx / 2), widthPx, 1);
+    ctx.fillRect(0, Math.round(surface.heightPx / 2), surface.widthPx, 1);
   }
 
   const colorOf = props.noteColor ?? ((): string => DEFAULT_NOTE_COLOR);
@@ -143,9 +140,9 @@ function draw(): void {
       continue;
     }
     const { x, w } = barGeometry(note);
-    if (x + w < 0 || x > widthPx) continue;
+    if (x + w < 0 || x > surface.widthPx) continue;
     const value = overrides?.get(note.id) ?? noteLaneValue(param, note);
-    const rect = laneBarRect(param, value, heightPx);
+    const rect = laneBarRect(param, value, surface.heightPx);
     const selected = props.selection.has(note.id);
     ctx.globalAlpha = selected ? 1 : 0.7;
     ctx.fillStyle = colorOf(note);
@@ -215,7 +212,7 @@ function applyLine(state: Extract<DragState, { mode: 'line' }>, x: number, value
 function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0 || props.readOnly) return;
   const point = localPoint(event);
-  const value = laneValueFromY(paramId.value, point.y, heightPx);
+  const value = laneValueFromY(paramId.value, point.y, surface.heightPx);
   if (event.altKey) {
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     drag = { mode: 'line', anchorX: point.x, anchorValue: value };
@@ -243,7 +240,7 @@ function onPointerDown(event: PointerEvent): void {
 function onPointerMove(event: PointerEvent): void {
   if (!drag || props.readOnly) return;
   const point = localPoint(event);
-  const value = laneValueFromY(paramId.value, point.y, heightPx);
+  const value = laneValueFromY(paramId.value, point.y, surface.heightPx);
   if (drag.mode === 'uniform') {
     preview.value = new Map(drag.targets.map((id) => [id, value]));
   } else if (drag.mode === 'paint') {
@@ -293,37 +290,6 @@ function onPointerCancel(): void {
   preview.value = null;
   schedule();
 }
-
-let resizeObserver: ResizeObserver | null = null;
-let stopDprObserver: (() => void) | null = null;
-
-function refreshForDevicePixelRatio(): void {
-  if (widthPx <= 0 || heightPx <= 0) return;
-  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-  schedule();
-}
-
-onMounted(() => {
-  const el = wrapper.value;
-  if (!el) return;
-  resizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[entries.length - 1];
-    widthPx = entry.contentRect.width;
-    heightPx = entry.contentRect.height;
-    if (widthPx <= 0 || heightPx <= 0) return;
-    if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-    schedule();
-  });
-  resizeObserver.observe(el);
-  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
-});
-
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  stopDprObserver?.();
-  stopDprObserver = null;
-});
 
 // Switching tabs discards any in-flight gesture preview.
 watch(paramId, () => {

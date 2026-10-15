@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
-import { getCanvasContext, setupCanvas } from '@/components/piano-roll/theme';
+import { getCanvasContext } from '@/components/piano-roll/theme';
 import type { AutomationLaneState, AutomationParam } from '@/project/automation';
 import type { PpqSpan } from '@/project/take-silence';
 import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from '@/project/tempo-map';
@@ -27,9 +27,9 @@ import { usePointerRouting } from '@/ui/arrangement/use-pointer-routing';
 import { drawGrid, drawLanes, drawRuler } from '@/ui/arrangement/use-ruler-rendering';
 import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { drawTakeLanes } from '@/ui/arrangement/use-take-lanes';
-import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { ARRANGEMENT_COLORS, RULER_HEIGHT_PX } from './theme';
 
@@ -139,7 +139,7 @@ const baseCanvas = ref<HTMLCanvasElement | null>(null);
 const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 
 /** Unique painter layer suffix so several surfaces can share one painter. */
-const layerId = Math.random().toString(36).slice(2, 8);
+const layerId = createLayerId();
 
 /** Ruler ticks, cached: the grid and ruler request them twice per repaint. */
 const cachedRulerTicks = createRulerTickCache();
@@ -370,45 +370,14 @@ function scheduleAll(): void {
   scheduleOverlay();
 }
 
-let resizeObserver: ResizeObserver | null = null;
-let stopDprObserver: (() => void) | null = null;
-let canvasWidth = 0;
-let canvasHeight = 0;
-
-/** Rebuilds both backing stores when the window crosses a DPR boundary. */
-function onDevicePixelRatioChange(): void {
-  if (canvasWidth > 0 && canvasHeight > 0) {
-    if (baseCanvas.value) setupCanvas(baseCanvas.value, canvasWidth, canvasHeight);
-    if (overlayCanvas.value) setupCanvas(overlayCanvas.value, canvasWidth, canvasHeight);
-    scheduleAll();
-  }
-}
-
-onMounted(() => {
-  const el = wrapper.value;
-  if (!el) return;
-  resizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[entries.length - 1];
-    const w = entry.contentRect.width;
-    const h = entry.contentRect.height;
-    if (w <= 0 || h <= 0) return;
-    canvasWidth = w;
-    canvasHeight = h;
+useCanvasSurface({
+  container: wrapper,
+  canvases: () => [baseCanvas.value, overlayCanvas.value],
+  onResize: (w, h) => {
     props.range.resize(w, h);
-    if (baseCanvas.value) setupCanvas(baseCanvas.value, w, h);
-    if (overlayCanvas.value) setupCanvas(overlayCanvas.value, w, h);
     emit('view-resize', w, h);
-    scheduleAll();
-  });
-  resizeObserver.observe(el);
-  stopDprObserver = observeDevicePixelRatio(onDevicePixelRatioChange);
-});
-
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  stopDprObserver?.();
-  stopDprObserver = null;
+  },
+  redraw: scheduleAll,
 });
 
 watch(

@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { ref, shallowRef, watch } from 'vue';
 import { useGestureTransaction } from '@/composables/useGestureTransaction';
 import { clamp } from '@/lib/math';
 import { isClipExpressionCurve } from '@/project/midi-cc';
 import type { ClipCcPoint, ClipExpressionCurve } from '@/project/types';
-import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import { useI18n } from '@/ui/i18n';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
-import { DEFAULT_NOTE_COLOR, getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
+import { DEFAULT_NOTE_COLOR, getCanvasContext, PIANO_ROLL_COLORS } from './theme';
 
 /**
  * Generic breakpoint-automation lane below the note grid: a curve of a
@@ -72,7 +72,7 @@ const wrapper = ref<HTMLDivElement | null>(null);
 const canvas = ref<HTMLCanvasElement | null>(null);
 
 /** Unique painter layer suffix so several editors can share one painter. */
-const layerId = Math.random().toString(36).slice(2, 8);
+const layerId = createLayerId();
 
 const COLORS = PIANO_ROLL_COLORS;
 
@@ -90,8 +90,11 @@ const NEXT_CURVE: Record<ClipExpressionCurve, ClipExpressionCurve> = {
 /** In-flight working copy of the points while a gesture runs. */
 const preview = shallowRef<ClipCcPoint[] | null>(null);
 
-let widthPx = 0;
-let heightPx = 0;
+const surface = useCanvasSurface({
+  container: wrapper,
+  canvases: () => [canvas.value],
+  redraw: schedule,
+});
 
 /** Active gesture: moving one breakpoint, or drawing a freehand curve. */
 type DragState = { mode: 'move'; index: number } | { mode: 'draw' };
@@ -117,13 +120,13 @@ function currentPoints(): ClipCcPoint[] {
 }
 
 function valueFromY(y: number): number {
-  if (heightPx <= 0) return 0;
+  if (surface.heightPx <= 0) return 0;
   const max = maxValue();
-  return clamp(Math.round((1 - y / heightPx) * max), 0, max);
+  return clamp(Math.round((1 - y / surface.heightPx) * max), 0, max);
 }
 
 function yFromValue(value: number): number {
-  return (1 - value / maxValue()) * heightPx;
+  return (1 - value / maxValue()) * surface.heightPx;
 }
 
 function effectiveCurve(point: ClipCcPoint): ClipExpressionCurve {
@@ -172,20 +175,20 @@ function hitPoint(x: number, y: number): number {
 
 function draw(): void {
   const el = canvas.value;
-  if (!el || widthPx <= 0 || heightPx <= 0) return;
+  if (!el || surface.widthPx <= 0 || surface.heightPx <= 0) return;
   const ctx = getCanvasContext(el);
   if (!ctx) return;
 
   ctx.fillStyle = COLORS.laneBackground;
-  ctx.fillRect(0, 0, widthPx, heightPx);
+  ctx.fillRect(0, 0, surface.widthPx, surface.heightPx);
   ctx.fillStyle = COLORS.laneRule;
   for (const fraction of [0.25, 0.5, 0.75]) {
-    ctx.fillRect(0, Math.round(heightPx * fraction), widthPx, 1);
+    ctx.fillRect(0, Math.round(surface.heightPx * fraction), surface.widthPx, 1);
   }
   // Bipolar lanes (pitch bend) get a brighter center rule at the no-bend value.
   if (props.centerValue !== undefined) {
     ctx.fillStyle = COLORS.laneValueText;
-    ctx.fillRect(0, Math.round(yFromValue(props.centerValue)), widthPx, 1);
+    ctx.fillRect(0, Math.round(yFromValue(props.centerValue)), surface.widthPx, 1);
   }
 
   const color = props.color ?? DEFAULT_NOTE_COLOR;
@@ -225,13 +228,13 @@ function draw(): void {
       }
     }
     const last = pts[pts.length - 1];
-    ctx.lineTo(widthPx, yFromValue(last.value));
+    ctx.lineTo(surface.widthPx, yFromValue(last.value));
     ctx.stroke();
 
     ctx.fillStyle = color;
     for (const point of pts) {
       const x = props.range.ppqToX(point.ppq);
-      if (x < -3 || x > widthPx + 3) continue;
+      if (x < -3 || x > surface.widthPx + 3) continue;
       const y = yFromValue(point.value);
       ctx.beginPath();
       ctx.arc(x, y, 2.5, 0, Math.PI * 2);
@@ -348,37 +351,6 @@ function onContextMenu(event: MouseEvent): void {
     ),
   );
 }
-
-let resizeObserver: ResizeObserver | null = null;
-let stopDprObserver: (() => void) | null = null;
-
-function refreshForDevicePixelRatio(): void {
-  if (widthPx <= 0 || heightPx <= 0) return;
-  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-  schedule();
-}
-
-onMounted(() => {
-  const el = wrapper.value;
-  if (!el) return;
-  resizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[entries.length - 1];
-    widthPx = entry.contentRect.width;
-    heightPx = entry.contentRect.height;
-    if (widthPx <= 0 || heightPx <= 0) return;
-    if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-    schedule();
-  });
-  resizeObserver.observe(el);
-  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
-});
-
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  stopDprObserver?.();
-  stopDprObserver = null;
-});
 
 watch(
   () =>

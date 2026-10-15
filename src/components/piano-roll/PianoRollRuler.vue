@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import type { TimeSignatureSegment } from '@/project/types';
-import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
-import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
+import { getCanvasContext, PIANO_ROLL_COLORS } from './theme';
 import { localRulerTicks } from './timeline-meter';
 
 const props = defineProps<{
@@ -53,32 +53,26 @@ function onPointerUp(event: PointerEvent): void {
   wrapper.value?.releasePointerCapture(event.pointerId);
 }
 
-const layerId = Math.random().toString(36).slice(2, 8);
+const layerId = createLayerId();
 const COLORS = PIANO_ROLL_COLORS;
 
-let widthPx = 0;
-let heightPx = 0;
-let resizeObserver: ResizeObserver | null = null;
-let stopDprObserver: (() => void) | null = null;
-
+const surface = useCanvasSurface({
+  container: wrapper,
+  canvases: () => [canvas.value],
+  redraw: schedule,
+});
 function schedule(): void {
   props.painter.schedule(`piano-roll-ruler-${layerId}`, draw);
 }
 
-function refreshForDevicePixelRatio(): void {
-  if (widthPx <= 0 || heightPx <= 0) return;
-  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-  schedule();
-}
-
 function draw(): void {
   const el = canvas.value;
-  if (!el || widthPx <= 0 || heightPx <= 0) return;
+  if (!el || surface.widthPx <= 0 || surface.heightPx <= 0) return;
   const ctx = getCanvasContext(el);
   if (!ctx) return;
 
   ctx.fillStyle = COLORS.rulerBackground;
-  ctx.fillRect(0, 0, widthPx, heightPx);
+  ctx.fillRect(0, 0, surface.widthPx, surface.heightPx);
 
   ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
   ctx.textBaseline = 'middle';
@@ -99,44 +93,28 @@ function draw(): void {
     for (const tick of ticks) {
       if (tick.kind !== kind) continue;
       const x = tickX(tick.ppq);
-      ctx.moveTo(x, kind === 'bar' ? 0 : heightPx * 0.5);
-      ctx.lineTo(x, heightPx);
+      ctx.moveTo(x, kind === 'bar' ? 0 : surface.heightPx * 0.5);
+      ctx.lineTo(x, surface.heightPx);
     }
     ctx.stroke();
   }
 
   ctx.fillStyle = COLORS.rulerText;
   for (const tick of ticks) {
-    if (tick.label) ctx.fillText(tick.label, tickX(tick.ppq) + 4, heightPx * 0.48);
+    if (tick.label) ctx.fillText(tick.label, tickX(tick.ppq) + 4, surface.heightPx * 0.48);
   }
 
   const clipEndX = props.range.ppqToX(props.clipLengthPpq);
-  if (clipEndX < widthPx) {
+  if (clipEndX < surface.widthPx) {
     ctx.fillStyle = COLORS.beyondClip;
-    ctx.fillRect(Math.max(0, clipEndX), 0, widthPx - Math.max(0, clipEndX), heightPx);
+    ctx.fillRect(
+      Math.max(0, clipEndX),
+      0,
+      surface.widthPx - Math.max(0, clipEndX),
+      surface.heightPx,
+    );
   }
 }
-
-onMounted(() => {
-  const el = wrapper.value;
-  if (!el) return;
-  resizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[entries.length - 1];
-    widthPx = entry.contentRect.width;
-    heightPx = entry.contentRect.height;
-    if (widthPx <= 0 || heightPx <= 0) return;
-    if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-    schedule();
-  });
-  resizeObserver.observe(el);
-  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
-});
-
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  stopDprObserver?.();
-  stopDprObserver = null;
-});
 
 watch(
   () =>

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
-import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import { MAX_PITCH, MIN_PITCH, type TimelineRange } from '@/ui/canvas/timeline-range';
+import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import { useI18n } from '@/ui/i18n';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
-import { getCanvasContext, isBlackKey, PIANO_ROLL_COLORS, setupCanvas } from './theme';
+import { getCanvasContext, isBlackKey, PIANO_ROLL_COLORS } from './theme';
 
 /**
  * Fixed piano keyboard column on the left edge of the piano roll. Renders one
@@ -31,7 +31,7 @@ const { t } = useI18n();
 const { pitchClassNames, system: noteNameSystem } = useNoteNames();
 
 /** Unique painter layer suffix so several editors can share one painter. */
-const layerId = Math.random().toString(36).slice(2, 8);
+const layerId = createLayerId();
 
 const COLORS = PIANO_ROLL_COLORS;
 
@@ -40,8 +40,11 @@ const BLACK_KEY_WIDTH_RATIO = 0.62;
 /** Minimum row height before octave labels are drawn. */
 const MIN_LABEL_ROW_HEIGHT = 8;
 
-let widthPx = 0;
-let heightPx = 0;
+const surface = useCanvasSurface({
+  container: wrapper,
+  canvases: () => [canvas.value],
+  redraw: schedule,
+});
 
 function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0 || !props.audition) return;
@@ -55,7 +58,7 @@ function onPointerDown(event: PointerEvent): void {
 
 /** Everything about the range that the painted keys depend on. */
 function viewKey(): string {
-  return `${props.range.scrollY}:${props.range.rowHeight}:${heightPx}`;
+  return `${props.range.scrollY}:${props.range.rowHeight}:${surface.heightPx}`;
 }
 
 let paintedViewKey = '';
@@ -71,76 +74,45 @@ function octaveLabel(pitch: number): string {
 
 function draw(): void {
   const el = canvas.value;
-  if (!el || widthPx <= 0 || heightPx <= 0) return;
+  if (!el || surface.widthPx <= 0 || surface.heightPx <= 0) return;
   const ctx = getCanvasContext(el);
   if (!ctx) return;
   const range = props.range;
   paintedViewKey = viewKey();
 
   ctx.fillStyle = COLORS.keyWhite;
-  ctx.fillRect(0, 0, widthPx, heightPx);
+  ctx.fillRect(0, 0, surface.widthPx, surface.heightPx);
 
-  const lowPitch = range.yToPitch(heightPx - 1);
+  const lowPitch = range.yToPitch(surface.heightPx - 1);
   const highPitch = range.yToPitch(0);
   for (let pitch = lowPitch; pitch <= highPitch; pitch++) {
     const y = range.pitchToY(pitch);
     const pc = ((pitch % 12) + 12) % 12;
     if (isBlackKey(pitch)) {
       ctx.fillStyle = COLORS.keyBlack;
-      ctx.fillRect(0, y, widthPx * BLACK_KEY_WIDTH_RATIO, range.rowHeight);
+      ctx.fillRect(0, y, surface.widthPx * BLACK_KEY_WIDTH_RATIO, range.rowHeight);
       // Black keys sit on a half-height groove line across the white area.
       ctx.fillStyle = COLORS.keyLine;
       const mid = y + range.rowHeight / 2;
-      ctx.fillRect(widthPx * BLACK_KEY_WIDTH_RATIO, Math.round(mid), widthPx, 1);
+      ctx.fillRect(surface.widthPx * BLACK_KEY_WIDTH_RATIO, Math.round(mid), surface.widthPx, 1);
     } else if (pc === 0 || pc === 5) {
       // White-key separators fall between B/C and E/F.
       ctx.fillStyle = COLORS.keyLine;
-      ctx.fillRect(0, y + range.rowHeight - 1, widthPx, 1);
+      ctx.fillRect(0, y + range.rowHeight - 1, surface.widthPx, 1);
     }
     if (pc === 0 && range.rowHeight >= MIN_LABEL_ROW_HEIGHT) {
       ctx.fillStyle = COLORS.keyLabel;
       ctx.font = canvasFont(Math.min(CANVAS_FONT_SIZE_PX.meta, range.rowHeight - 2));
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
-      ctx.fillText(octaveLabel(pitch), widthPx - 4, y + range.rowHeight / 2);
+      ctx.fillText(octaveLabel(pitch), surface.widthPx - 4, y + range.rowHeight / 2);
     }
   }
 
   // Right border separating the keyboard from the grid.
   ctx.fillStyle = COLORS.keyLine;
-  ctx.fillRect(widthPx - 1, 0, 1, heightPx);
+  ctx.fillRect(surface.widthPx - 1, 0, 1, surface.heightPx);
 }
-
-let resizeObserver: ResizeObserver | null = null;
-let stopDprObserver: (() => void) | null = null;
-
-function refreshForDevicePixelRatio(): void {
-  if (widthPx <= 0 || heightPx <= 0) return;
-  if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-  schedule();
-}
-
-onMounted(() => {
-  const el = wrapper.value;
-  if (!el) return;
-  resizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[entries.length - 1];
-    widthPx = entry.contentRect.width;
-    heightPx = entry.contentRect.height;
-    if (widthPx <= 0 || heightPx <= 0) return;
-    if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
-    schedule();
-  });
-  resizeObserver.observe(el);
-  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
-});
-
-onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  stopDprObserver?.();
-  stopDprObserver = null;
-});
 
 // Horizontal pans and zooms bump the revision too but leave the keys unchanged.
 watch(

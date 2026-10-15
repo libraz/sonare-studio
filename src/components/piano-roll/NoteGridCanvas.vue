@@ -14,11 +14,11 @@ import type {
   AccessibleObjectAdjustment,
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
-import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import { MIN_NOTE_WIDTH_PX } from '@/ui/canvas/hit-test';
 import type { Painter } from '@/ui/canvas/painter';
 import { playheadX } from '@/ui/canvas/playhead-x';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
@@ -31,7 +31,6 @@ import {
   isBlackKey,
   type NoteColorFn,
   PIANO_ROLL_COLORS,
-  setupCanvas,
   strokeRoundRect,
 } from './theme';
 import { localRulerTicks } from './timeline-meter';
@@ -232,7 +231,7 @@ const theoryCardStyle = computed<Record<string, string> | null>(() => {
 });
 
 /** Unique painter layer suffix so several editors can share one painter. */
-const layerId = Math.random().toString(36).slice(2, 8);
+const layerId = createLayerId();
 
 const COLORS = PIANO_ROLL_COLORS;
 
@@ -754,43 +753,21 @@ function playheadTick(): void {
   playheadRaf = requestAnimationFrame(playheadTick);
 }
 
-let resizeObserver: ResizeObserver | null = null;
-let stopDprObserver: (() => void) | null = null;
-
-function refreshForDevicePixelRatio(): void {
-  const { widthPx, heightPx } = props.range;
-  if (widthPx <= 0 || heightPx <= 0) return;
-  if (backgroundCanvas.value) setupCanvas(backgroundCanvas.value, widthPx, heightPx);
-  if (notesCanvas.value) setupCanvas(notesCanvas.value, widthPx, heightPx);
-  if (overlayCanvas.value) setupCanvas(overlayCanvas.value, widthPx, heightPx);
-  scheduleAll();
-}
+useCanvasSurface({
+  container: wrapper,
+  canvases: () => [backgroundCanvas.value, notesCanvas.value, overlayCanvas.value],
+  onResize: (w, h) => {
+    props.range.resize(w, h);
+    emit('view-resize', w, h);
+  },
+  redraw: scheduleAll,
+});
 
 onMounted(() => {
-  const el = wrapper.value;
-  if (!el) return;
-  resizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[entries.length - 1];
-    const w = entry.contentRect.width;
-    const h = entry.contentRect.height;
-    if (w <= 0 || h <= 0) return;
-    props.range.resize(w, h);
-    if (backgroundCanvas.value) setupCanvas(backgroundCanvas.value, w, h);
-    if (notesCanvas.value) setupCanvas(notesCanvas.value, w, h);
-    if (overlayCanvas.value) setupCanvas(overlayCanvas.value, w, h);
-    emit('view-resize', w, h);
-    scheduleAll();
-  });
-  resizeObserver.observe(el);
-  stopDprObserver = observeDevicePixelRatio(refreshForDevicePixelRatio);
   playheadRaf = requestAnimationFrame(playheadTick);
 });
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect();
-  resizeObserver = null;
-  stopDprObserver?.();
-  stopDprObserver = null;
   if (playheadRaf !== null) cancelAnimationFrame(playheadRaf);
 });
 
