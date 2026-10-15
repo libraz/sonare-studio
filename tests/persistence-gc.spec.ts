@@ -7,8 +7,13 @@ import {
   leaseFonts,
 } from '@/persistence/asset-leases';
 import { clearAudioAssetCache, listAssets, saveAsset } from '@/persistence/assets';
-import { collectReferencedMediaIds, garbageCollectMedia } from '@/persistence/gc';
-import { saveProject } from '@/persistence/opfs';
+import {
+  collectReferencedMediaIds,
+  deleteSoundFontIfUnreferenced,
+  garbageCollectMedia,
+} from '@/persistence/gc';
+import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
+import { saveProject, saveProjectUnlocked } from '@/persistence/opfs';
 import { saveProjectRevision } from '@/persistence/revisions';
 import { encodeSzd } from '@/persistence/szd';
 import { clearFontCache, listFonts, saveFont } from '@/project/fonts';
@@ -267,5 +272,66 @@ describe('media garbage collection', () => {
     expect(result.incompleteReferences).toBe(true);
     expect(result.removedAssetIds).toEqual([]);
     expect((await listAssets()).map((a) => a.id)).toEqual(['orphan']);
+  });
+
+  it('keeps media a project saved after the unlocked scan is the last reference to', async () => {
+    await saveAsset({ id: 'late', name: 'Late', sampleRate: 48000 }, mono());
+    await saveFont({ id: 'lateFont', name: 'Late' }, sf2(1, 2, 3));
+    let collecting!: Promise<unknown>;
+    await withPersistenceMutationLock(async () => {
+      // The unlocked scan completes while this lock is held, then a project lands.
+      collecting = garbageCollectMedia();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      await saveProjectUnlocked('Late', encodeSzd(makeDocument('Late', 'late', 'lateFont')));
+    });
+    await collecting;
+
+    expect((await listAssets()).map((a) => a.id)).toEqual(['late']);
+    expect((await listFonts()).map((f) => f.id)).toEqual(['lateFont']);
+  });
+
+  it('keeps media when a slot is rewritten with new references between runs', async () => {
+    await saveAsset({ id: 'first', name: 'First', sampleRate: 48000 }, mono());
+    await saveAsset({ id: 'second', name: 'Second', sampleRate: 48000 }, mono());
+    await saveProject('Song', encodeSzd(makeDocument('Song', 'first', 'f1')));
+    await garbageCollectMedia({ dryRun: true });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    await saveProject('Song', encodeSzd(makeDocument('Song', 'second', 'f1')));
+    const result = await garbageCollectMedia();
+
+    expect(result.removedAssetIds).toEqual(['first']);
+    expect((await listAssets()).map((a) => a.id)).toEqual(['second']);
+  });
+
+  describe('SoundFont removal', () => {
+    it('refuses a font referenced only by a stored project, revision or autosave slot', async () => {
+      await saveFont({ id: 'projFont', name: 'P' }, sf2(1));
+      await saveFont({ id: 'revFont', name: 'R' }, sf2(2));
+      await saveFont({ id: 'autoFont', name: 'A' }, sf2(3));
+      await saveProject('Song', encodeSzd(makeDocument('Song', 'x', 'projFont')));
+      await saveProjectRevision('Song', 'r', encodeSzd(makeDocument('Song', 'x', 'revFont')), 1);
+      await saveProject('autosave', encodeSzd(makeDocument('Auto', 'x', 'autoFont')));
+
+      for (const id of ['projFont', 'revFont', 'autoFont']) {
+        expect(await deleteSoundFontIfUnreferenced(id, () => false)).toBe(false);
+      }
+      expect((await listFonts()).map((f) => f.id).sort()).toEqual([
+        'autoFont',
+        'projFont',
+        'revFont',
+      ]);
+    });
+
+    it('refuses when a stored project cannot be decoded and removes an unreferenced font otherwise', async () => {
+      await saveFont({ id: 'free', name: 'Free' }, sf2(1));
+      await saveProject('Broken', new Uint8Array([0, 1, 2, 3]));
+      expect(await deleteSoundFontIfUnreferenced('free', () => false)).toBe(false);
+
+      await saveProject('Broken', encodeSzd(makeDocument('Broken', 'x', 'other')));
+      expect(await deleteSoundFontIfUnreferenced('free', () => true)).toBe(false);
+      expect(await deleteSoundFontIfUnreferenced('free', () => false)).toBe(true);
+      expect(await listFonts()).toEqual([]);
+    });
   });
 });

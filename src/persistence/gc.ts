@@ -24,6 +24,7 @@
 import { deleteFontUnlocked, listFontPayloads, listFonts } from '@/project/fonts';
 import type { ProjectDocument } from '@/project/serialization';
 import {
+  deleteFontGuarded,
   isAudioAssetLeased,
   isFontLeased,
   leasedAudioAssetIds,
@@ -335,4 +336,22 @@ export function garbageCollectMedia(options: MediaGcOptions = {}): Promise<Media
     });
     return withPersistenceMutationLock(() => garbageCollectMediaUnlocked(options, scan));
   })();
+}
+
+/**
+ * Deletes one stored SoundFont only when neither the live document nor any
+ * stored project, revision or autosave slot references it. An incomplete
+ * reference scan refuses the deletion.
+ *
+ * @returns True when the font was removed.
+ */
+export function deleteSoundFontIfUnreferenced(
+  fontId: string,
+  isLiveReferenced: () => boolean,
+): Promise<boolean> {
+  return deleteFontGuarded(fontId, async () => {
+    if (isLiveReferenced()) return true;
+    const scan = await collectReferencedMediaIds();
+    return !scan.complete || scan.fontIds.has(fontId);
+  });
 }

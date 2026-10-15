@@ -51,6 +51,10 @@ const fontsMock = vi.hoisted(() => {
 
 vi.mock('@/project/fonts', () => fontsMock);
 
+const gcMock = vi.hoisted(() => ({ deleteSoundFontIfUnreferenced: vi.fn(async () => false) }));
+
+vi.mock('@/persistence/gc', () => gcMock);
+
 const auditionMock = vi.hoisted(() => ({
   dispose: vi.fn(),
   play: vi.fn(async () => {}),
@@ -328,6 +332,26 @@ describe('DeviceRack.vue', () => {
 
     await wrapper.setProps({ instrumentPickerRequest: 2 });
     expect(wrapper.find('.instrument-picker').exists()).toBe(true);
+  });
+
+  it('keeps a stored SoundFont another project still references and says why', async () => {
+    const wrapper = mount(DeviceRack);
+    await wrapper.find('.instrument-button').trigger('click');
+    await wrapper
+      .findAll('.picker-tab')
+      .find((tab) => tab.text() === 'SF2')
+      ?.trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('.font-remove')[0].trigger('click');
+    await flushPromises();
+
+    expect(gcMock.deleteSoundFontIfUnreferenced).toHaveBeenCalledWith(
+      'fontaaaa00000001',
+      expect.any(Function),
+    );
+    expect(wrapper.findAll('.font-option')).toHaveLength(2);
+    expect(wrapper.text()).toContain('used by a track or a saved project');
   });
 
   it('lists stored fonts on the SF2 tab and commits a SoundFont selection', async () => {

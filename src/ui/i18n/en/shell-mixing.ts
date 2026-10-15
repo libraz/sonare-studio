@@ -167,7 +167,7 @@ export const shellMixing = {
     reasons: {
       kitSameAsStandard: 'Sounds the same as the Standard kit in this build',
       noGmCatalog: 'The built-in GM voice list is not available yet.',
-      fontInUse: 'A track in this project plays this SoundFont.',
+      fontInUse: 'This SoundFont is used by a track or a saved project.',
       noFont: 'Choose a SoundFont in the list, or load an .sf2 file.',
       noMidiPort: 'Choose an output port first.',
       ampValueUnavailable: 'The preset value for this control could not be loaded.',

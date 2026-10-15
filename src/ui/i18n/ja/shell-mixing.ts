@@ -172,7 +172,7 @@ export const shellMixing = {
     reasons: {
       kitSameAsStandard: 'このビルドでは Standard キットと同じ音です',
       noGmCatalog: '内蔵 GM 音色リストをまだ利用できません。',
-      fontInUse: 'このプロジェクトのトラックがこの SoundFont を使っています。',
+      fontInUse: 'この SoundFont はトラックまたは保存済みプロジェクトで使われています。',
       noFont: 'リストから SoundFont を選ぶか、.sf2 ファイルを読み込んでください。',
       noMidiPort: '先に出力ポートを選んでください。',
       ampValueUnavailable: 'このコントロールのプリセット値を読み込めませんでした。',

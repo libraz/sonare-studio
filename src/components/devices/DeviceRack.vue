@@ -8,7 +8,7 @@ import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
 import { isDrumTrack } from '@/compose/tracks';
-import { deleteFontGuarded } from '@/persistence/asset-leases';
+import { deleteSoundFontIfUnreferenced } from '@/persistence/gc';
 import { readFileBytesBounded } from '@/persistence/local-file';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
@@ -549,7 +549,7 @@ const useSf2Blocked = computed(() =>
 
 async function removeFont(fontId: string): Promise<void> {
   try {
-    const removed = await deleteFontGuarded(fontId, () => fontIsReferenced(fontId));
+    const removed = await deleteSoundFontIfUnreferenced(fontId, () => fontIsReferenced(fontId));
     if (!removed) {
       error.value = t.value.shell.devicesPanel.reasons.fontInUse;
       return;
