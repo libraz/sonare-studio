@@ -13,6 +13,7 @@ import {
   STREAMING_RETUNE_MAX_SEMITONES,
   STREAMING_RETUNE_MIN_SEMITONES,
 } from '@/engine/streaming-retune';
+import { clampInt } from '@/lib/math';
 import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
@@ -193,18 +194,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   pianoRollGuidanceTint: true,
 };
 
-/** Clamps a number to [lo, hi]. */
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
-}
-
 function asBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
 function asIntInRange(value: unknown, lo: number, hi: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
-  return clamp(Math.round(value), lo, hi);
+  return clampInt(value, lo, hi, fallback);
 }
 
 function asMidiInputQuantizeDenominator(value: unknown, fallback: number): number {

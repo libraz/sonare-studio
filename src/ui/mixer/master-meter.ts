@@ -6,6 +6,7 @@
  */
 
 import type { StereoMeterLevels } from '@/engine/meters';
+import { clamp } from '@/lib/math';
 
 /** Lowest correlation the meter bar represents (hard out-of-phase). */
 export const CORRELATION_MIN = -1;
@@ -22,7 +23,7 @@ export const CORRELATION_MAX = 1;
  */
 export function correlationFraction(correlation: number): number {
   if (!Number.isFinite(correlation)) return 0.5;
-  const clamped = Math.min(CORRELATION_MAX, Math.max(CORRELATION_MIN, correlation));
+  const clamped = clamp(correlation, CORRELATION_MIN, CORRELATION_MAX);
   return (clamped - CORRELATION_MIN) / (CORRELATION_MAX - CORRELATION_MIN);
 }
 

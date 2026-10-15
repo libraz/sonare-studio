@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /** Parsers for the sample editor's free-text numeric inputs. */
 
 /** Parses a finite number from text; null for blank or non-numeric input. */
@@ -14,5 +15,5 @@ export function parseNumber(value: string): number | null {
  */
 export function parsePercentFraction(value: string, fallbackPercent: number): number {
   const percent = parseNumber(value) ?? fallbackPercent;
-  return Math.min(Math.max(percent, 0), 100) / 100;
+  return clamp(percent, 0, 100) / 100;
 }

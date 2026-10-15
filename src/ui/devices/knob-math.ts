@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Pure drag/value math for the quick-control knobs.
  */
@@ -21,7 +22,7 @@ export function valueAtControlPercent(
   max: number,
   scale: KnobScale = 'linear',
 ): number {
-  const normalized = Math.min(1, Math.max(0, percent));
+  const normalized = clamp(percent, 0, 1);
   if (scale === 'log' && min > 0 && max > min) return min * (max / min) ** normalized;
   return min + normalized * (max - min);
 }
@@ -64,10 +65,10 @@ export function controlPercent(
 ): number {
   if (!(max > min)) return 0;
   if (scale === 'log' && min > 0) {
-    const clamped = Math.min(max, Math.max(min, value));
+    const clamped = clamp(value, min, max);
     return Math.log(clamped / min) / Math.log(max / min);
   }
-  return Math.min(1, Math.max(0, (value - min) / (max - min)));
+  return clamp((value - min) / (max - min), 0, 1);
 }
 
 /** Indicator rotation for a value, in degrees (-135 at min, +135 at max). */

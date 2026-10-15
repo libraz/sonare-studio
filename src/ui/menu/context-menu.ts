@@ -12,6 +12,7 @@
  */
 
 import { reactive } from 'vue';
+import { errorMessage } from '@/lib/errors';
 import { trimStraySeparators } from './menu-items';
 
 /** A single entry in a right-click action menu. */
@@ -56,7 +57,7 @@ const state = reactive<ContextMenuState>({ open: false, x: 0, y: 0, items: [], e
 
 /** Publishes a menu action failure without leaving a rejected promise unhandled. */
 export function reportContextMenuError(error: unknown): void {
-  state.error = error instanceof Error ? error.message : String(error);
+  state.error = errorMessage(error);
 }
 
 let outsideHandler: ((event: PointerEvent) => void) | null = null;

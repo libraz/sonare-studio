@@ -11,6 +11,7 @@
  * the injected `onAnnotateClick` before the seek/select still runs.
  */
 
+import { clamp } from '@/lib/math';
 import { scoreSourceIdentitiesFromXmlId } from '@/notation/source-identity';
 import type { VerovioTimemapEntry } from '@/notation/verovio';
 import { setActiveClip, setSelection } from '@/project/commands';
@@ -94,7 +95,7 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     if (note.startPpq + note.durationPpq <= clipStart || note.startPpq >= clipEnd) return null;
     const grid = options.getDivisionPpq();
     const snapped = clipStart + Math.round((note.startPpq - clipStart) / grid) * grid;
-    return Math.min(Math.max(snapped, clipStart), clipEnd - grid);
+    return clamp(snapped, clipStart, clipEnd - grid);
   }
 
   /**

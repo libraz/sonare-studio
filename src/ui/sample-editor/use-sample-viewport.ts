@@ -10,6 +10,7 @@
 
 import { markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
 import { getCanvasContext } from '@/components/piano-roll/theme';
+import { clamp } from '@/lib/math';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { CANVAS_FONT_SIZE_PX, canvasFont, colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 import { type ChannelPeaks, computePeaks } from '@/ui/waveform/peaks';
@@ -47,7 +48,7 @@ export function peakBucketForDisplayColumn(
   bucketCount: number,
 ): number {
   if (!(widthPx > 0) || !(bucketCount > 0)) return 0;
-  const column = Math.min(Math.max(0, Math.floor(columnPx)), Math.ceil(widthPx) - 1);
+  const column = clamp(Math.floor(columnPx), 0, Math.ceil(widthPx) - 1);
   return Math.min(bucketCount - 1, Math.floor((column * bucketCount) / widthPx));
 }
 
@@ -220,8 +221,8 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
         const { min, max } = peaks[c];
         for (let x = 0; x < widthPx; x++) {
           const bucket = peakBucketForDisplayColumn(x, widthPx, bucketCount);
-          const hi = Math.min(1, Math.max(-1, max[bucket]));
-          const lo = Math.min(1, Math.max(-1, min[bucket]));
+          const hi = clamp(max[bucket], -1, 1);
+          const lo = clamp(min[bucket], -1, 1);
           const y = mid - hi * amp;
           ctx.fillRect(x, y, 1, Math.max(1, (hi - lo) * amp));
         }

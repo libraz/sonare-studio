@@ -16,6 +16,8 @@
  * decoding logic. Anything unmapped is ignored rather than guessed at.
  */
 
+import { clamp, clamp01 } from '@/lib/math';
+import { isSwitchOn } from '@/lib/midi';
 import type { ControlSurfaceProtocol } from '@/project/control-surface';
 
 /** A control on the surface that behaves as a button. */
@@ -90,13 +92,13 @@ const STATUS_SYSEX = 0xf0;
 
 const MAX_14BIT = 16383;
 
-function clamp01(value: number): number {
+function unitOrZero(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
+  return clamp01(value);
 }
 
 function to14Bit(value: number): number {
-  return Math.round(clamp01(value) * MAX_14BIT);
+  return Math.round(unitOrZero(value) * MAX_14BIT);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -166,7 +168,7 @@ function decodeMackie(bytes: readonly number[]): SurfaceEvent[] {
   if (status === STATUS_NOTE_ON) {
     // Mackie surfaces send velocity 127 on press and 0 on release; a few send a
     // note-off instead, which arrives here as a 0-velocity press.
-    const pressed = data2 >= 64;
+    const pressed = isSwitchOn(data2);
     for (const block of MCU_STRIP_BLOCKS) {
       if (data1 >= block.base && data1 < block.base + SURFACE_STRIP_COUNT) {
         return [{ kind: 'button', button: block.button, slot: data1 - block.base, pressed }];
@@ -194,7 +196,7 @@ function encodeMackie(feedback: SurfaceFeedback): SurfaceMessage[] {
       const channel =
         feedback.kind === 'masterFader'
           ? MCU_MASTER_FADER_CHANNEL
-          : Math.min(SURFACE_STRIP_COUNT - 1, Math.max(0, feedback.slot));
+          : clamp(feedback.slot, 0, SURFACE_STRIP_COUNT - 1);
       const value = to14Bit(feedback.value);
       return [[STATUS_PITCH_BEND | channel, value & 0x7f, (value >> 7) & 0x7f]];
     }
@@ -204,13 +206,13 @@ function encodeMackie(feedback: SurfaceFeedback): SurfaceMessage[] {
     }
     case 'meter': {
       if (feedback.slot < 0 || feedback.slot >= SURFACE_STRIP_COUNT) return [];
-      const segment = Math.round(clamp01(feedback.level) * MCU_METER_MAX);
+      const segment = Math.round(unitOrZero(feedback.level) * MCU_METER_MAX);
       return [[STATUS_CHANNEL_PRESSURE, (feedback.slot << 4) | segment]];
     }
     default: {
       if (feedback.slot < 0 || feedback.slot >= SURFACE_STRIP_COUNT) return [];
       // Ring position 0 turns every LED off, so an active pot starts at 1.
-      const position = 1 + Math.round(clamp01(feedback.position) * 10);
+      const position = 1 + Math.round(unitOrZero(feedback.position) * 10);
       return [[STATUS_CONTROL_CHANGE, MCU_VPOT_RING_CC + feedback.slot, position]];
     }
   }

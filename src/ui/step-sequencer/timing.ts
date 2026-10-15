@@ -9,6 +9,7 @@
  * are already swung by construction and ignore the swing amount.
  */
 
+import { clamp } from '@/lib/math';
 import { MAX_OFFSET, type StepResolution } from './pattern';
 
 /** Step duration in PPQ (quarter-note units) for each resolution. */
@@ -42,7 +43,7 @@ export function swingShiftPpq(
   swing: number,
 ): number {
   if (stepIndex % 2 === 0 || isTripletResolution(resolution)) return 0;
-  const amount = Math.min(100, Math.max(0, swing)) / 100;
+  const amount = clamp(swing, 0, 100) / 100;
   return (amount * stepDurationPpq(resolution)) / 3;
 }
 
@@ -117,7 +118,7 @@ export function nearestStepForPpq(
     return null;
   }
   if (best.offset > MAX_OFFSET && best.step === stepCount - 1) return null;
-  best.offset = Math.min(MAX_OFFSET, Math.max(-MAX_OFFSET, best.offset));
+  best.offset = clamp(best.offset, -MAX_OFFSET, MAX_OFFSET);
   return best;
 }
 

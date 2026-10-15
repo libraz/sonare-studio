@@ -8,6 +8,7 @@
  * flat — the graph is a visual aid, not the audible path.
  */
 
+import { clamp } from '@/lib/math';
 import type { EqBand } from '@/wasm/index.js';
 
 /** One sampled point of the EQ response curve. */
@@ -37,7 +38,7 @@ interface BiquadCoeffs {
 /** Computes RBJ cookbook coefficients for one band, or null for flat types. */
 function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
   const type = band.type ?? 'Peak';
-  const f0 = Math.min(sampleRate / 2 - 1, Math.max(1, band.frequencyHz ?? 1000));
+  const f0 = clamp(band.frequencyHz ?? 1000, 1, sampleRate / 2 - 1);
   const gainDb = band.gainDb ?? 0;
   const q = Math.max(0.01, band.q ?? Math.SQRT1_2);
   const a = 10 ** (gainDb / 40);
@@ -203,7 +204,7 @@ export function eqCurvePath(
   if (curve.length === 0) return '';
   const segments = curve.map((point, i) => {
     const x = (i / (curve.length - 1)) * width;
-    const clamped = Math.min(maxAbsDb, Math.max(-maxAbsDb, point.db));
+    const clamped = clamp(point.db, -maxAbsDb, maxAbsDb);
     const y = height / 2 - (clamped / maxAbsDb) * (height / 2);
     return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
   });

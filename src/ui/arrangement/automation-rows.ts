@@ -11,6 +11,7 @@
  * before any ruler offset or scroll is applied by the caller.
  */
 
+import { clamp, clamp01 } from '@/lib/math';
 import {
   type AutomationParam,
   clampAutomationValue,
@@ -156,7 +157,7 @@ export function buildRowLayout(
   }
   const totalHeight = tops[expanded.length];
   return {
-    rowTop: (index) => tops[Math.min(expanded.length, Math.max(0, index))],
+    rowTop: (index) => tops[clamp(index, 0, expanded.length)],
     rowHeight: (index) =>
       laneHeight + takeRowsHeight(index) + (expanded[index] ? automationHeight : 0),
     takeTop: (index, takeIndex) => tops[index] + laneHeight + takeIndex * takeHeight,
@@ -191,7 +192,7 @@ export function reorderRowIndexForDelta(
     layout.rowTop(fromIndex) +
     layout.rowHeight(fromIndex) / 2 +
     (Number.isFinite(deltaY) ? deltaY : 0);
-  const y = Math.min(layout.totalHeight - Number.EPSILON, Math.max(0, center));
+  const y = clamp(center, 0, layout.totalHeight - Number.EPSILON);
   return layout.hitTest(y)?.index ?? fromIndex;
 }
 
@@ -257,11 +258,6 @@ export function automationValueDomain(
   if (param === 'faderDb') return { min: -60, max: 12 };
   if (param === 'pan') return { min: -1, max: 1 };
   return insertDomain ?? { min: 0, max: 1 };
-}
-
-/** Clamps a number into [0, 1]. */
-function clamp01(t: number): number {
-  return Math.min(1, Math.max(0, t));
 }
 
 /**

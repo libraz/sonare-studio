@@ -8,6 +8,7 @@
  * snapped onto the grid of a template pattern.
  */
 
+import { clamp } from '@/lib/math';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/types';
 import { gmDrumName, pitchName } from './drum-map';
 import {
@@ -49,7 +50,7 @@ export interface BakeOptions {
  */
 export function bakePattern(pattern: StepPattern, options: BakeOptions = {}): BakedNote[] {
   const basePpq = options.basePpq ?? 0;
-  const channel = Math.min(15, Math.max(0, Math.round(pattern.channel)));
+  const channel = clamp(Math.round(pattern.channel), 0, 15);
   const duration = stepDurationPpq(pattern.resolution);
   const notes: BakedNote[] = [];
   for (const row of pattern.rows) {

@@ -13,6 +13,7 @@
 
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
 import { linearToDb } from '@/lib/db';
+import { clamp } from '@/lib/math';
 import type { AutomationParam } from '@/project/automation';
 import { evaluateAutomationValue } from '@/project/automation';
 import { setAutomationLanePoints } from '@/project/commands';
@@ -140,7 +141,7 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
     const lane = faderLane.value;
     if (followsFader.value && lane) {
       const db = evaluateAutomationValue(lane.points, positionPpq()) - laneOffsetDb.value;
-      return Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, db));
+      return clamp(db, FADER_MIN_DB, FADER_MAX_DB);
     }
     // `volume` is a separate (linear) gain stage in the project model. The
     // strip fader must report the same pre-VCA level the engine receives,
@@ -155,7 +156,7 @@ export function useStripAutomation(options: StripAutomationOptions): StripAutoma
     if (writePan.value !== null) return writePan.value;
     const lane = panLane.value;
     if (followsPan.value && lane) {
-      return Math.min(1, Math.max(-1, evaluateAutomationValue(lane.points, positionPpq())));
+      return clamp(evaluateAutomationValue(lane.points, positionPpq()), -1, 1);
     }
     return strip.value.pan;
   });

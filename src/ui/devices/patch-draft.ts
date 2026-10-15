@@ -8,6 +8,7 @@
  * the base mod matrix.
  */
 
+import { clamp } from '@/lib/math';
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { getWasmModule } from '@/project/runtime';
 import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@/wasm/index.js';
@@ -456,7 +457,7 @@ export function clampPatchField(id: NumericPatchField, value: number): number {
   const raw = Number.isFinite(value) ? value : 0;
   const spec = patchFieldSpec(id);
   if (!spec) return raw;
-  const clamped = Math.min(spec.max, Math.max(spec.min, raw));
+  const clamped = clamp(raw, spec.min, spec.max);
   return spec.integer ? Math.round(clamped) : clamped;
 }
 
@@ -675,7 +676,7 @@ export function modRowsToRoutings(rows: ReadonlyArray<ModMatrixRow>): SynthModRo
     routings.push({
       source: row.source as SynthModRouting['source'],
       destination: row.destination as SynthModRouting['destination'],
-      depth: Math.min(MOD_DEPTH_MAX, Math.max(MOD_DEPTH_MIN, row.depth)),
+      depth: clamp(row.depth, MOD_DEPTH_MIN, MOD_DEPTH_MAX),
     });
     if (routings.length === MAX_MOD_ROUTINGS) break;
   }
@@ -861,7 +862,7 @@ export function adsrEnvelopePoints(
   const h = time(holdMs);
   const d = time(decayMs);
   const r = time(releaseMs);
-  const s = Math.min(1, Math.max(0, Number.isFinite(sustain) ? sustain : 0));
+  const s = clamp(Number.isFinite(sustain) ? sustain : 0, 0, 1);
   const sustainWidth = width * SUSTAIN_WIDTH_FRACTION;
   const segmentWidth = width - sustainWidth;
   const total = dl + a + h + d + r;

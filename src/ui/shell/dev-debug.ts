@@ -9,6 +9,7 @@ import type { MidiSync } from '@/engine/midi-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
 import { peakDb } from '@/lib/db';
+import { clamp } from '@/lib/math';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import type { AutomationParam, AutomationPoint, AutomationTarget } from '@/project/automation';
 import {
@@ -411,7 +412,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         for (const sample of channel) {
           sum += Math.abs(sample);
           count += 1;
-          const q = Math.max(-32768, Math.min(32767, Math.round(sample * 32767))) & 0xffff;
+          const q = clamp(Math.round(sample * 32767), -32768, 32767) & 0xffff;
           hash = Math.imul(hash ^ (q & 0xff), 0x01000193);
           hash = Math.imul(hash ^ (q >> 8), 0x01000193);
         }

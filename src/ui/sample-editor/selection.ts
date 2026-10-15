@@ -4,6 +4,7 @@
  * formatting (samples + seconds). Pure data module: no DOM, no store access.
  */
 
+import { clamp } from '@/lib/math';
 import type { SampleRange } from './ops';
 
 /**
@@ -20,7 +21,7 @@ export interface SelectionDraft {
 /** Clamps a (possibly fractional) frame position into [0, totalFrames]. */
 export function clampFrameIndex(frame: number, totalFrames: number): number {
   if (!Number.isFinite(frame)) return 0;
-  return Math.min(Math.max(0, Math.round(frame)), Math.max(0, totalFrames));
+  return clamp(Math.round(frame), 0, Math.max(0, totalFrames));
 }
 
 /** Starts a new selection at a frame (anchor and head coincide). */

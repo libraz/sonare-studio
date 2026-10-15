@@ -17,6 +17,7 @@ import {
   type MixdownRangePpq,
   type MixdownResult,
 } from '@/export/mixdown';
+import { errorMessage } from '@/lib/errors';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import type { ProjectDocument } from '@/project/serialization';
@@ -201,7 +202,7 @@ export function createMasteringPreviewController(
           status: 'error',
           progress: 0,
           stage: '',
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage(error),
         });
       }
       return false;

@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Horizontal viewport over a sample buffer: maps canvas x pixels to frame
  * positions with zoom (frames per pixel) and scroll (start frame) state.
@@ -59,13 +60,13 @@ export class SampleViewport {
 
   /** Clamps a zoom level between the zoom-in limit and whole-file fit. */
   private clampZoom(framesPerPx: number): number {
-    return Math.min(Math.max(framesPerPx, MIN_FRAMES_PER_PX), this.fitFramesPerPx());
+    return clamp(framesPerPx, MIN_FRAMES_PER_PX, this.fitFramesPerPx());
   }
 
   /** Keeps the scroll position inside the scrollable extent. */
   private clampScroll(): void {
     const maxStart = Math.max(0, this.totalFramesValue - this.widthPxValue * this.framesPerPxValue);
-    this.startFrameValue = Math.min(Math.max(0, this.startFrameValue), maxStart);
+    this.startFrameValue = clamp(this.startFrameValue, 0, maxStart);
   }
 
   /** Updates the viewport width, preserving zoom and scroll where possible. */

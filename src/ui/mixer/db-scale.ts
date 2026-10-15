@@ -8,6 +8,8 @@
  * precision.
  */
 
+import { clamp } from '@/lib/math';
+
 /** Bottom of the fader throw in dB (rendered as -inf). */
 export const FADER_MIN_DB = -96;
 
@@ -33,11 +35,6 @@ const FADER_TAPER: ReadonlyArray<readonly [number, number]> = [
   [0.75, 0],
   [1, FADER_MAX_DB],
 ];
-
-/** Clamps a number to [lo, hi]. */
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
-}
 
 /**
  * Converts a normalized fader position to decibels.

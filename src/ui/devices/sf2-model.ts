@@ -4,6 +4,7 @@
  * variant.
  */
 
+import { clamp } from '@/lib/math';
 import {
   GM2_DRUM_BANK_MSB,
   type Sf2ChannelProgram,
@@ -70,7 +71,7 @@ export const SF2_DRUM_CHANNEL = 9;
 /** Clamps a raw channel input to a valid MIDI channel (0-15). */
 export function clampChannel(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.min(15, Math.max(0, Math.round(value)));
+  return clamp(Math.round(value), 0, 15);
 }
 
 /**
@@ -118,25 +119,25 @@ export function normalizeChannelMap(
 /** Clamps a raw bank input to a valid integer bank number. */
 export function clampBank(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.min(MAX_SF2_BANK, Math.max(0, Math.round(value)));
+  return clamp(Math.round(value), 0, MAX_SF2_BANK);
 }
 
 /** Clamps a raw program input to a valid integer program number. */
 export function clampProgram(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.min(MAX_SF2_PROGRAM, Math.max(0, Math.round(value)));
+  return clamp(Math.round(value), 0, MAX_SF2_PROGRAM);
 }
 
 /** Clamps a raw gain input to the selectable linear range. */
 export function clampGain(value: number): number {
   if (!Number.isFinite(value)) return SF2_DEFAULT_GAIN;
-  return Math.min(MAX_SF2_GAIN, Math.max(0, value));
+  return clamp(value, 0, MAX_SF2_GAIN);
 }
 
 /** Clamps a raw polyphony input to a valid integer voice cap. */
 export function clampPolyphony(value: number): number {
   if (!Number.isFinite(value)) return SF2_DEFAULT_POLYPHONY;
-  return Math.min(MAX_SF2_POLYPHONY, Math.max(MIN_SF2_POLYPHONY, Math.round(value)));
+  return clamp(Math.round(value), MIN_SF2_POLYPHONY, MAX_SF2_POLYPHONY);
 }
 
 /**

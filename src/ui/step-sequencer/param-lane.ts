@@ -4,6 +4,7 @@
  * without a DOM.
  */
 
+import { clamp } from '@/lib/math';
 import {
   clampGate,
   clampOffset,
@@ -44,7 +45,7 @@ export function paramRatio(param: StepParamKind, step: PatternStep): number {
  * clamped parameter value.
  */
 export function paramValueForRatio(param: StepParamKind, ratio: number): number {
-  const t = Math.min(1, Math.max(0, ratio));
+  const t = clamp(ratio, 0, 1);
   switch (param) {
     case 'velocity':
       return clampVelocity(t * 127);

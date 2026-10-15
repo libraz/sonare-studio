@@ -8,6 +8,8 @@
  * goniometer projection.
  */
 
+import { clamp } from '@/lib/math';
+
 /** Lowest frequency the spectrum display spans, in Hz. */
 export const SPECTRUM_MIN_FREQ = 20;
 
@@ -39,7 +41,7 @@ export function frequencyToFraction(
   const span = Math.log(maxFreq / minFreq);
   if (span <= 0) return 0;
   const frac = Math.log(freq / minFreq) / span;
-  return Math.min(1, Math.max(0, frac));
+  return clamp(frac, 0, 1);
 }
 
 /**
@@ -61,7 +63,7 @@ export function spectrumDbToFraction(
   const span = maxDb - minDb;
   if (span <= 0) return 0;
   const frac = (db - minDb) / span;
-  return Math.min(1, Math.max(0, frac));
+  return clamp(frac, 0, 1);
 }
 
 /**

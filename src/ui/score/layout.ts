@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 import type { PageLayout } from '@/notation/print';
 import type { LayoutOptions } from '@/notation/verovio';
 
@@ -39,7 +40,7 @@ function baseLayoutOptions(settings: ScoreLayoutSettings): LayoutOptions {
     pageMarginBottom: margin,
     pageMarginLeft: margin,
     pageMarginRight: margin,
-    scale: Math.min(100, Math.max(20, Math.round(settings.scalePercent))),
+    scale: clamp(Math.round(settings.scalePercent), 20, 100),
     spacingStaff: Math.max(0, Math.round(settings.spacingStaff)),
     svgViewBox: true,
     header: 'none',

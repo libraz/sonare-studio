@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Loudness readout helpers for the mastering preview: numeric formatting,
  * bar-meter fractions and the true-peak clip warning threshold.
@@ -38,7 +39,7 @@ export function loudnessBarFraction(
   maxDb = 0,
 ): number {
   if (valueDb === undefined || !Number.isFinite(valueDb) || maxDb <= minDb) return 0;
-  return Math.min(1, Math.max(0, (valueDb - minDb) / (maxDb - minDb)));
+  return clamp((valueDb - minDb) / (maxDb - minDb), 0, 1);
 }
 
 /**
@@ -48,7 +49,7 @@ export function loudnessBarFraction(
  */
 export function rangeBarFraction(value: number | undefined, max = RANGE_BAR_MAX_DB): number {
   if (value === undefined || !Number.isFinite(value) || max <= 0) return 0;
-  return Math.min(1, Math.max(0, value / max));
+  return clamp(value / max, 0, 1);
 }
 
 /**

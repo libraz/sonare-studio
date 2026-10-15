@@ -8,6 +8,7 @@
  */
 
 import { dbToLinear } from '@/lib/db';
+import { clamp } from '@/lib/math';
 
 /** A half-open frame range over planar audio buffers. */
 export interface SampleRange {
@@ -37,8 +38,8 @@ function assertPlanar(channels: ReadonlyArray<Float32Array>): void {
  * A reversed range collapses to an empty range at its (clamped) start.
  */
 export function clampRange(range: SampleRange, totalFrames: number): SampleRange {
-  const startFrame = Math.min(Math.max(0, Math.floor(range.startFrame)), totalFrames);
-  const endFrame = Math.min(Math.max(startFrame, Math.floor(range.endFrame)), totalFrames);
+  const startFrame = clamp(Math.floor(range.startFrame), 0, totalFrames);
+  const endFrame = clamp(Math.floor(range.endFrame), startFrame, totalFrames);
   return { startFrame, endFrame };
 }
 

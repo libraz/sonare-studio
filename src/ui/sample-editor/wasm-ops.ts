@@ -10,6 +10,7 @@
 
 import { stepOf } from '@libraz/libcantus';
 import { downmixToMono } from '@/lib/audio-channels';
+import { clamp } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import type {
   AutoTuneKey,
@@ -1143,7 +1144,7 @@ export function matchEqToReference(
   if (!Number.isFinite(referenceSampleRate) || referenceSampleRate <= 0) {
     throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
   }
-  const mix = Number.isFinite(amount) ? Math.min(Math.max(amount, 0), 1) : 1;
+  const mix = Number.isFinite(amount) ? clamp(amount, 0, 1) : 1;
   return applyToRange(channels, range, (segment) => {
     if (mix <= 0) return segment;
     const matched = fn({
@@ -1284,7 +1285,7 @@ export function roomMorphChannels(
     widthM: preset.widthM,
     heightM: preset.heightM,
     materialPreset: preset.materialPreset,
-    wet: Number.isFinite(wet) ? Math.min(Math.max(wet, 0), 1) : 0.35,
+    wet: Number.isFinite(wet) ? clamp(wet, 0, 1) : 0.35,
     ...(airAbsorption ? { airAbsorptionEnabled: true } : {}),
   };
   const stereo = ops.roomMorphStereo;

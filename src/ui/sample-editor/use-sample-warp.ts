@@ -6,12 +6,13 @@
  */
 
 import { computed, onScopeDispose, ref, watch } from 'vue';
+import { downmixToMono } from '@/lib/audio-channels';
+import { errorMessage } from '@/lib/errors';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { loadAsset } from '@/persistence/assets';
 import { clipSourceWindowFrames } from '@/project/audible-clip-window';
-import { mixdownToMono } from '@/project/audio-import';
 import { setClipWarp } from '@/project/commands';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
@@ -41,10 +42,6 @@ export interface UseSampleWarpOptions {
   setError: (message: string) => void;
   /** Optional detector injection for tests or alternate runtimes. */
   autoWarp?: AutoWarpDeps;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -190,7 +187,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
         project.tempoBpm,
         project.tempoSegments,
       );
-      const mono = mixdownToMono(
+      const mono = downmixToMono(
         asset.channels.map((channel) => channel.slice(window.start, window.end)),
       );
       if (mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');

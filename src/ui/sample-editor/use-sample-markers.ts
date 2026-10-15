@@ -7,6 +7,7 @@
  */
 
 import { nextTick, type Ref, ref } from 'vue';
+import { errorMessage } from '@/lib/errors';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { parseNumber } from './input-parse';
 import type { DetectedNote } from './onsets';
@@ -32,10 +33,6 @@ export interface UseSampleMarkersOptions {
   setError: (message: string) => void;
   /** Clears the editor's shared error banner. */
   clearError: () => void;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /** Builds the marker state and detection actions. */

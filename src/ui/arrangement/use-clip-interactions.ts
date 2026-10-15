@@ -10,6 +10,7 @@
  */
 
 import { type Ref, ref } from 'vue';
+import { clamp } from '@/lib/math';
 import { type ClipSplitBlockReason, clipSplitBlockReason } from '@/project/clip-split';
 import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import { snapPpqToStep } from '@/ui/canvas/timeline-range';
@@ -543,7 +544,7 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     // Duplicates stay on the source track; plain moves follow the pointer lane.
     if (g.duplicate) return { startPpq, trackId: g.origin.trackId };
     const trackIds = options.getTrackIds();
-    const lane = Math.min(Math.max(0, view.laneIndexAtY(point.y)), Math.max(0, view.laneCount - 1));
+    const lane = clamp(view.laneIndexAtY(point.y), 0, Math.max(0, view.laneCount - 1));
     const candidateTrackId = trackIds[lane] ?? g.origin.trackId;
     const trackId =
       candidateTrackId === g.origin.trackId ||

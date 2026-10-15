@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 import type { EqBand } from '@/wasm/index.js';
 import { eqBandResponseDb } from './eq-curve';
 
@@ -18,10 +19,6 @@ export interface MatchFlatEqOptions {
    * when the scope tap is post-EQ.
    */
   existingBands?: ReadonlyArray<EqBand>;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 function median(values: number[]): number {

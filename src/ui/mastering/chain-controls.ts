@@ -8,6 +8,7 @@
  * strip-addressed quick-control targets directly.
  */
 
+import { clamp } from '@/lib/math';
 import type { InsertSlot } from '@/project/mixer';
 import {
   catalogParamInfo,
@@ -78,7 +79,7 @@ export function clampControlValue(control: MasteringControl, value: number): num
   if (control.kind !== 'number') {
     throw new RangeError(`Control "${control.id}" is not numeric`);
   }
-  return Math.min(control.max, Math.max(control.min, value));
+  return clamp(value, control.min, control.max);
 }
 
 /** Maps a mastering control's MIDI sweep into its native descriptor value. */

@@ -8,6 +8,7 @@
  * session-local component state; document serialization is deferred.
  */
 
+import { clamp } from '@/lib/math';
 import { DEFAULT_DRUM_KIT, pitchName } from './drum-map';
 
 /** MIDI channel used for drum-mode notes (GM percussion, channel 10). */
@@ -85,17 +86,17 @@ export interface StepPattern {
 
 /** Clamps and rounds a velocity into the valid MIDI range (1-127). */
 export function clampVelocity(value: number): number {
-  return Math.min(127, Math.max(1, Math.round(value)));
+  return clamp(Math.round(value), 1, 127);
 }
 
 /** Clamps a gate fraction into [MIN_GATE, MAX_GATE]. */
 export function clampGate(value: number): number {
-  return Math.min(MAX_GATE, Math.max(MIN_GATE, value));
+  return clamp(value, MIN_GATE, MAX_GATE);
 }
 
 /** Clamps a micro-timing offset into [-MAX_OFFSET, MAX_OFFSET]. */
 export function clampOffset(value: number): number {
-  return Math.min(MAX_OFFSET, Math.max(-MAX_OFFSET, value));
+  return clamp(value, -MAX_OFFSET, MAX_OFFSET);
 }
 
 /** Creates a step with default values, optionally overridden. */
@@ -152,7 +153,7 @@ export function createPitchPattern(
   stepCount: StepCount = 16,
   resolution: StepResolution = '1/16',
 ): StepPattern {
-  const root = Math.min(127 - (PITCH_MODE_ROW_COUNT - 1), Math.max(0, Math.round(rootPitch)));
+  const root = clamp(Math.round(rootPitch), 0, 127 - (PITCH_MODE_ROW_COUNT - 1));
   const rows = Array.from({ length: PITCH_MODE_ROW_COUNT }, (_, i) => {
     const pitch = root + PITCH_MODE_ROW_COUNT - 1 - i;
     return createRow(pitch, pitchName(pitch), stepCount);
@@ -212,7 +213,7 @@ export function withStepCount(pattern: StepPattern, stepCount: StepCount): StepP
 
 /** Sets the swing amount, clamped to 0-100 percent. */
 export function withSwing(pattern: StepPattern, swing: number): StepPattern {
-  const clamped = Math.min(100, Math.max(0, swing));
+  const clamped = clamp(swing, 0, 100);
   if (clamped === pattern.swing) return pattern;
   return { ...pattern, swing: clamped };
 }

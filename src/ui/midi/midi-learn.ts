@@ -12,6 +12,7 @@
  * which are mirrored to the engine faders in realtime — genuinely audible.
  */
 
+import { clamp, clampInt } from '@/lib/math';
 import { MIDI_VALUE_MAX, type MidiCcBinding } from '@/project/midi-learn-targets';
 
 export * from '@/project/midi-learn-targets';
@@ -43,14 +44,9 @@ export const MIDI_FADER_MIN_DB = -60;
 /** Top of the CC-mapped gain window, in dB. */
 export const MIDI_FADER_MAX_DB = 6;
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 /** Clamps a raw CC value to an integer in [0, 127]. */
 export function clampCcValue(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return clamp(Math.round(value), 0, MIDI_VALUE_MAX);
+  return clampInt(value, 0, MIDI_VALUE_MAX, 0);
 }
 
 /** Maps a 7-bit or optional 14-bit CC message to the legacy 0..127 control range. */

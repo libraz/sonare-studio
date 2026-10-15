@@ -1,8 +1,8 @@
 import { DRUM_NOTES, type DrumsOptions, generateDrums } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
+import { GM2_DRUM_BANK_MSB } from '@/project/instrument';
 import {
   drumNoteName,
-  GM2_DRUM_BANK_MSB,
   gm2DrumBank,
   gm2DrumKitName,
   gmDrumName,

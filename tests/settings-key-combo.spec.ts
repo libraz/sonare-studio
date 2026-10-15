@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
   comboFromEvent,
-  comboMatchesEvent,
   combosMatch,
   comboToString,
   formatKeyCombo,
   normalizeComboString,
   parseKeyCombo,
 } from '@/ui/settings/key-combo';
+
+/** Whether a stored combo string matches a keyboard event. */
+function comboMatchesEvent(
+  comboText: string,
+  event: KeyboardEvent,
+  platform?: Parameters<typeof comboFromEvent>[1],
+): boolean {
+  const combo = parseKeyCombo(comboText);
+  const pressed = comboFromEvent(event, platform);
+  return combo !== null && pressed !== null && combosMatch(combo, pressed);
+}
 
 function keydown(init: KeyboardEventInit): KeyboardEvent {
   return new KeyboardEvent('keydown', init);

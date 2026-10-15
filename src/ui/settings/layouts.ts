@@ -9,6 +9,7 @@
  */
 
 import type { Ref } from 'vue';
+import { clamp } from '@/lib/math';
 
 /** Editor dock tabs (mirrors the shell's dock tab union). */
 export const DOCK_TABS = [
@@ -122,11 +123,6 @@ export const MAX_USER_LAYOUTS = 32;
 
 /** Storage schema version for the saved-layouts envelope. */
 export const LAYOUTS_VERSION = 2;
-
-/** Clamps a number to [lo, hi]. */
-function clamp(value: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, value));
-}
 
 /**
  * Validates a raw layout state, clamping numbers and defaulting bad fields.

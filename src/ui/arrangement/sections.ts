@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Geometry helpers for the arrangement section lane: locating sections,
  * deriving the span of a newly created section and clamping edge resizes.
@@ -85,10 +86,10 @@ export function clampSectionEdge(
   if (edge === 'start') {
     const lower = index > 0 ? sections[index - 1].endPpq : 0;
     const upper = section.endPpq - minLengthPpq;
-    return Math.min(upper, Math.max(lower, targetPpq));
+    return clamp(targetPpq, lower, upper);
   }
   const lower = section.startPpq + minLengthPpq;
   const upper =
     index + 1 < sections.length ? sections[index + 1].startPpq : Number.POSITIVE_INFINITY;
-  return Math.min(upper, Math.max(lower, targetPpq));
+  return clamp(targetPpq, lower, upper);
 }

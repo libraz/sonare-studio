@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Pure level-meter state machine for the mixer strip meters.
  *
@@ -96,7 +97,7 @@ export function resetMeterClip(model: MeterChannelModel): void {
  */
 export function meterFraction(db: number, minDb = METER_MIN_DB): number {
   if (!Number.isFinite(db)) return 0;
-  return Math.min(1, Math.max(0, (db - minDb) / (0 - minDb)));
+  return clamp((db - minDb) / (0 - minDb), 0, 1);
 }
 
 /**

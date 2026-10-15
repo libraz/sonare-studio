@@ -13,6 +13,7 @@
 import { computed, type Ref, ref, watch } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { downmixToMono } from '@/lib/audio-channels';
+import { errorMessage } from '@/lib/errors';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import {
   type AudioAssetMeta,
@@ -48,7 +49,7 @@ import {
   trimToRange,
 } from './ops';
 import { checkedRepairStages } from './repair-analysis';
-import { createSampleOperationRunner, errorMessage } from './sample-operation-runner';
+import { createSampleOperationRunner } from './sample-operation-runner';
 import { keyModeFor, modeMaskFor, modeOrdinalOf, scaleName } from './scales';
 import {
   type AcousticAnalysisSummary,

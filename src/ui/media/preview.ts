@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Decode-free audio preview for the media browser: plays stored planar
  * channel buffers through a plain AudioBufferSourceNode on a lazily-created
@@ -175,7 +176,7 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
   ): void {
     const ctx = ensureContext();
     const duration = buffer.length / buffer.sampleRate;
-    const offset = Math.min(Math.max(0, offsetSeconds), duration);
+    const offset = clamp(offsetSeconds, 0, duration);
     const node = ctx.createBufferSource();
     node.buffer = buffer;
     if (gainNode) node.connect(gainNode);
@@ -210,7 +211,7 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
   function seek(positionSeconds: number): void {
     const entry = current;
     if (!entry || !Number.isFinite(positionSeconds)) return;
-    const nextPosition = Math.min(Math.max(0, positionSeconds), entry.duration);
+    const nextPosition = clamp(positionSeconds, 0, entry.duration);
     stopSilently();
     createSource(entry.id, entry.buffer, nextPosition, false);
   }

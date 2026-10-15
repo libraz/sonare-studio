@@ -6,6 +6,7 @@
  */
 
 import { ref } from 'vue';
+import { errorMessage } from '@/lib/errors';
 import {
   type OperationToken as GenerationToken,
   OperationGeneration,
@@ -18,10 +19,6 @@ import { editedAssetName, pushVersion, type VersionHistoryState } from './histor
 import { resolveRange, type SampleRange } from './ops';
 import { runSampleOperationInWorker, type SampleOperation } from './ops-client';
 import type { UseSampleOperationsOptions } from './use-sample-operations';
-
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /** Editor state the runner reads and writes; a subset of the composable options. */
 export type SampleOperationRunnerOptions = Pick<

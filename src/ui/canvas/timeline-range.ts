@@ -1,3 +1,4 @@
+import { clamp } from '@/lib/math';
 /**
  * Coordinate mapping core for canvas timeline surfaces (arrangement, piano roll,
  * velocity/automation lanes) plus grid snap math.
@@ -253,7 +254,7 @@ export class TimelineRange {
    */
   yToPitch(y: number): number {
     const row = Math.floor((y + this._scrollY) / this._rowHeight);
-    return Math.min(MAX_PITCH, Math.max(MIN_PITCH, MAX_PITCH - row));
+    return clamp(MAX_PITCH - row, MIN_PITCH, MAX_PITCH);
   }
 
   /**
@@ -285,11 +286,11 @@ export class TimelineRange {
   }
 
   private clampZoom(pxPerPpq: number): number {
-    return Math.min(this._maxPxPerPpq, Math.max(this._minPxPerPpq, pxPerPpq));
+    return clamp(pxPerPpq, this._minPxPerPpq, this._maxPxPerPpq);
   }
 
   private clampScrollY(y: number): number {
     const maxScroll = Math.max(0, this.contentHeightPx - this._heightPx);
-    return Math.min(maxScroll, Math.max(0, y));
+    return clamp(y, 0, maxScroll);
   }
 }

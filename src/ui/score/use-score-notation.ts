@@ -17,7 +17,10 @@
 import { computed, type Ref, ref, type ShallowRef, shallowRef } from 'vue';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
+import { downloadBlob } from '@/lib/download';
+import { errorMessage } from '@/lib/errors';
 import { projectFilename } from '@/lib/filename';
+import { clamp } from '@/lib/math';
 import {
   OperationGeneration,
   type OperationIdentity,
@@ -36,7 +39,7 @@ import {
   inspectMusicXmlExportLoss,
   serializeMusicXml,
 } from '@/notation/musicxml';
-import { createPdfPageWriter, createPrintPageWriter, downloadBlob } from '@/notation/print';
+import { createPdfPageWriter, createPrintPageWriter } from '@/notation/print';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
 import { type ProjectDocument, serializeProject } from '@/project/serialization';
@@ -621,7 +624,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       const screenXml = serializeScreenMusicXml(score);
       const count = await verovio.load(screenXml, screenLayoutOptions());
       if (!screenOperationIsCurrent(token, verovio)) return;
-      const nextPage = Math.min(Math.max(page.value, 1), Math.max(count, 1));
+      const nextPage = clamp(page.value, 1, Math.max(count, 1));
       const [pageSvg, entries] = await Promise.all([
         verovio.renderPage(nextPage),
         verovio.getTimemap(),
@@ -643,7 +646,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       if (screenOperationIsCurrent(token, verovio)) loading.value = false;
     }
@@ -671,7 +674,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       if (screenOperationIsCurrent(token, verovio)) loading.value = false;
     }
@@ -693,7 +696,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     try {
       const count = await verovio.setLayout(screenLayoutOptions());
       if (!screenOperationIsCurrent(token, verovio)) return;
-      const nextPage = Math.min(Math.max(page.value, 1), Math.max(count, 1));
+      const nextPage = clamp(page.value, 1, Math.max(count, 1));
       // Note ids survive redoLayout, so the existing timemap stays valid.
       const pageSvg = await verovio.renderPage(nextPage);
       if (!screenOperationIsCurrent(token, verovio)) return;
@@ -704,7 +707,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       if (screenOperationIsCurrent(token, verovio)) loading.value = false;
     }
@@ -712,7 +715,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
 
   function gotoPage(target: number): void {
     if (pageCount.value === 0) return;
-    const next = Math.min(Math.max(target, 1), pageCount.value);
+    const next = clamp(target, 1, pageCount.value);
     if (next === page.value) return;
     page.value = next;
     void refresh();
@@ -758,7 +761,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       await action();
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       exportOperations.invalidate();
       activeExportSignal = undefined;

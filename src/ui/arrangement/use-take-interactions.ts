@@ -12,6 +12,7 @@
  */
 
 import { type Ref, ref } from 'vue';
+import { clamp } from '@/lib/math';
 import { type CompableClipFields, compSegmentsWithRange } from '@/project/comping';
 import type { ClipCompSegment } from '@/project/types';
 import type { ClipPoint } from './clip-hit';
@@ -150,7 +151,7 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
 
   /** Pointer x as a clip-relative PPQ position, clamped into the clip window. */
   function clipRelativePpq(clip: TakeLaneClip, x: number): number {
-    return Math.min(clip.lengthPpq, Math.max(0, view.xToPpq(x) - clip.startPpq));
+    return clamp(view.xToPpq(x) - clip.startPpq, 0, clip.lengthPpq);
   }
 
   /** The dragged range with both edges snapped. */

@@ -221,23 +221,3 @@ export function combosMatch(a: KeyCombo, b: KeyCombo): boolean {
   if (a.key !== b.key || a.mod !== b.mod || a.alt !== b.alt) return false;
   return a.shift === b.shift || isShiftAmbiguous(a.key);
 }
-
-/**
- * Tests whether a stored combo string matches a keyboard event.
- *
- * @param comboText Canonical combo string ('mod+d').
- * @param event The keydown event to test.
- * @returns True when the combo matches; false for unparseable combos or
- *   modifier-only events.
- */
-export function comboMatchesEvent(
-  comboText: string,
-  event: KeyboardEvent,
-  platform = detectPlatform(),
-): boolean {
-  const combo = parseKeyCombo(comboText);
-  if (combo === null) return false;
-  const pressed = comboFromEvent(event, platform);
-  if (pressed === null) return false;
-  return combosMatch(combo, pressed);
-}

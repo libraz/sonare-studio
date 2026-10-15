@@ -7,6 +7,7 @@
  * cosmetic: the drum generator writes a shaker on 82.
  */
 import { formatPitch } from '@/lib/pitch';
+import { GM2_DRUM_BANK_MSB } from '@/project/instrument';
 
 const GM_DRUM_NAMES: Readonly<Record<number, string>> = {
   27: 'High Q',
@@ -80,9 +81,6 @@ const GM_DRUM_NAMES: Readonly<Record<number, string>> = {
 export function gmDrumName(pitch: number): string | null {
   return GM_DRUM_NAMES[pitch] ?? null;
 }
-
-/** GM2 drum-set bank: MSB 120 selects a percussion kit, the LSB picks it. */
-export const GM2_DRUM_BANK_MSB = 120;
 
 /**
  * Encodes the SF2 channel-map bank number that selects a GM2 drum/SFX kit

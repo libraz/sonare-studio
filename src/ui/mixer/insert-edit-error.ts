@@ -3,6 +3,7 @@
  * the engine refuses with its coupled keys reads as which keys block it; any
  * other error keeps its own message.
  */
+import { errorMessage } from '@/lib/errors';
 import {
   humanizeProcessorControlName,
   InsertConfigurationRefusedError,
@@ -17,7 +18,7 @@ export function insertEditErrorMessage(error: unknown, messages: Messages): stri
       related: coupledKeyList(error.related),
     });
   }
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 /** Human-readable list of coupled keys, for a tooltip or a refusal. */

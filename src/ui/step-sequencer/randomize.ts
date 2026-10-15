@@ -12,6 +12,7 @@
  */
 
 import { createPositionalRng, deriveSeed } from '@libraz/libcantus';
+import { clamp } from '@/lib/math';
 import { clampVelocity, clonePattern, DEFAULT_STEP_VELOCITY, type StepPattern } from './pattern';
 
 /** A cell-addressed random source for one operation, from the pattern's seed. */
@@ -37,7 +38,7 @@ export function jitterVelocities(
   pattern: StepPattern,
   options: VelocityJitterOptions,
 ): StepPattern {
-  const amount = Math.min(64, Math.max(0, options.amount));
+  const amount = clamp(options.amount, 0, 64);
   const random = cellRng(options.seed, 'jitter');
   const next = clonePattern(pattern);
   next.rows.forEach((row, rowIndex) => {
@@ -69,7 +70,7 @@ export interface SparseFillOptions {
  * (they stay silent until unmuted); gates and offsets are preserved.
  */
 export function sparseFill(pattern: StepPattern, options: SparseFillOptions): StepPattern {
-  const density = Math.min(1, Math.max(0, options.density));
+  const density = clamp(options.density, 0, 1);
   const resetVelocity = options.resetVelocity ?? true;
   const random = cellRng(options.seed, 'fill');
   const next = clonePattern(pattern);

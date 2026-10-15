@@ -6,6 +6,8 @@
  * is pressed or released mid-drag.
  */
 
+import { clamp } from '@/lib/math';
+
 /** Value bounds of a draggable control. */
 export interface DragRange {
   /** Lower bound (inclusive). */
@@ -25,5 +27,5 @@ export const NUDGE_DIVISIONS = 50;
 
 /** Clamps a value into a range. */
 export function clampToRange(value: number, range: DragRange): number {
-  return Math.min(range.max, Math.max(range.min, value));
+  return clamp(value, range.min, range.max);
 }
