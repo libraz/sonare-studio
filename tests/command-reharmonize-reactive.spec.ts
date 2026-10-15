@@ -7,6 +7,7 @@ import {
   applyReharmonizationProposal,
   proposeReharmonizationForActiveClip,
 } from '@/project/command/reharmonize-reactive';
+import { setTrackPercussion } from '@/project/command/tracks';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -89,6 +90,26 @@ describe('reactive reharmonization commands', () => {
     });
     expect(proposal?.changed).toBe(false);
     expect(proposal?.proposal[0]).toMatchObject({ rootPc: 11 });
+  });
+
+  it('proposes nothing for a percussion clip', () => {
+    setTrackPercussion(store.activeTrackId, true);
+    addCMajorArpeggio();
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 11, quality: 0 }]);
+    expect(
+      proposeReharmonizationForActiveClip({ editedSpan: { startPpq: 0, endPpq: 4 } }),
+    ).toBeNull();
+  });
+
+  it('leaves channel-10 notes on a melodic track out of the melody', () => {
+    addCMajorArpeggio();
+    setProjectChords([{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }]);
+    // A held B above the arpeggio would clash with C major if it were read as melody.
+    addNote({ pitch: 95, startPpq: 0, durationPpq: 4, channel: 9 });
+    const proposal = proposeReharmonizationForActiveClip({
+      editedSpan: { startPpq: 0, endPpq: 4 },
+    });
+    expect(proposal?.changed).toBe(false);
   });
 
   it('returns null when there is no active clip', () => {

@@ -124,6 +124,23 @@ describe('ChordGenerateDialog', () => {
     expect(wrapper?.emitted('generateTracks')).toBeTruthy();
   });
 
+  it('blocks harmonize with a stated reason when the source clip is percussion', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    const drumClip = store.clips.find((clip) => clip.trackId === drums?.id);
+    if (!drumClip) throw new Error('missing generated drums fixture');
+    store.clipId = drumClip.id;
+    await open();
+    document.body.querySelectorAll<HTMLElement>('.mode-select .segment[role="radio"]')[1]?.click();
+    await nextTick();
+    expect(document.body.querySelector('.mode-hint')?.textContent).toContain(
+      'Percussion clips cannot be a harmonize source.',
+    );
+    expect(confirm()?.disabled).toBe(true);
+  });
+
   it('renders progression and harmonize as an equal-width segmented control', async () => {
     await open();
     const segments = document.body.querySelectorAll('.mode-select .segment[role="radio"]');

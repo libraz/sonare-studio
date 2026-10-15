@@ -4,7 +4,10 @@ import { setProjectChords } from '@/project/command/chords';
 import { moveClip, trimClip } from '@/project/command/clips-editing';
 import { setClipLoop, setTrackFrozen } from '@/project/command/clips-state';
 import { generateBassLineCommand } from '@/project/command/generate-bass';
-import { generateCounterMelodyCommand } from '@/project/command/generate-counter-melody';
+import {
+  buildCounterPlan,
+  generateCounterMelodyCommand,
+} from '@/project/command/generate-counter-melody';
 import {
   generateDrumsCommand,
   MAX_DRUM_DIFFICULTY,
@@ -14,6 +17,7 @@ import { harmonizeFromMelodyCommand } from '@/project/command/generate-harmonize
 import { generateMotifCommand } from '@/project/command/generate-motif';
 import { clearHistory, redo, undo } from '@/project/command/history';
 import { addNote } from '@/project/command/notes';
+import { setTrackPercussion } from '@/project/command/tracks';
 import { getProject, useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -298,6 +302,27 @@ describe('generation command suite', () => {
 
     it('returns 0 with an empty melody', () => {
       expect(generateCounterMelodyCommand()).toBe(0);
+    });
+
+    it('reads no melody from a percussion clip', () => {
+      setTrackPercussion(store.activeTrackId, true);
+      addCMajorMelody();
+      setProjectChords([{ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 }]);
+      const trackCount = store.tracks.length;
+      expect(generateCounterMelodyCommand({ seed: 0 })).toBe(0);
+      expect(store.tracks.length).toBe(trackCount);
+    });
+
+    it('leaves channel-10 notes on a melodic track out of the melody', () => {
+      addCMajorMelody();
+      setProjectChords([{ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 }]);
+      const pitches = (): number[] =>
+        (buildCounterPlan(store, { seed: 0 })?.notes ?? []).map((note) => note.pitch);
+      const without = pitches();
+      // Above the whole melody, so it would take over the top voice if it were read.
+      addNote({ pitch: 96, startPpq: 0, durationPpq: 8, channel: 9 });
+      expect(without.length).toBeGreaterThan(0);
+      expect(pitches()).toEqual(without);
     });
   });
 });

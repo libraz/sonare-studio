@@ -14,7 +14,7 @@ import { type CounterMelodyOptions, generateCounterMelody } from '@libraz/libcan
 import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
-import { topVoiceOnly } from '@/compose/tracks';
+import { harmonicNotes, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import { projectMidiNoteOccurrences } from '../midi-projection';
@@ -42,7 +42,8 @@ export interface GenerateCounterMelodyParams {
  * Builds the counter-melody plan for a new track without writing to the
  * Project.
  *
- * @returns The plan, or null when there is no active MIDI clip with a melody.
+ * @returns The plan, or null when there is no active MIDI clip with a melody
+ *   (a percussion clip has none).
  */
 export function buildCounterPlan(
   store: ReturnType<typeof useProjectStore>,
@@ -51,10 +52,13 @@ export function buildCounterPlan(
 ): TrackPlan | null {
   const clip = store.activeClip;
   if (clip === null || clipKind(clip) !== 'midi') return null;
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  if (track !== undefined && isDrumTrack(track, clip.notes)) return null;
   const projected = projectMidiNoteOccurrences(clip);
-  if (projected.length === 0) return null;
+  const sourceNotes = track === undefined ? projected : harmonicNotes(track, projected);
+  if (sourceNotes.length === 0) return null;
 
-  const melody = topVoiceOnly(editorNotesToNoteEvents(projected));
+  const melody = topVoiceOnly(editorNotesToNoteEvents(sourceNotes));
   if (melody.length === 0) return null;
   const melodyEndBeat = melody.reduce(
     (max, note) => Math.max(max, note.startBeat + note.durationBeat),

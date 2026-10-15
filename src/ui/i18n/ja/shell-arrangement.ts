@@ -47,6 +47,7 @@ export const shellArrangement = {
       harmonizeBorrowed: '借用和音',
       harmonizeTranspose: '最適なキーへクリップを移調',
       harmonizeEmpty: 'メロディに付けるには、ノートのあるクリップを選択してください。',
+      harmonizeDrumSource: 'パーカッションのクリップはハーモナイズの元にできません。',
       noChanges: '再生範囲内のメロディまたはコード変更を生成できませんでした。',
       invalidBars: '小節数には正の数を指定してください。',
       generationFailed: 'コード進行を生成できませんでした。拍子と設定を確認してください。',

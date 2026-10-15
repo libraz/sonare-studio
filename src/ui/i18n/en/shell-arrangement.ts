@@ -47,6 +47,7 @@ export const shellArrangement = {
       harmonizeBorrowed: 'Borrowed',
       harmonizeTranspose: 'Transpose the clip to the best key',
       harmonizeEmpty: 'To fit chords to a melody, select a clip with notes.',
+      harmonizeDrumSource: 'Percussion clips cannot be a harmonize source.',
       noChanges: 'No audible melody or chord changes were generated.',
       invalidBars: 'Bars must be a positive number.',
       generationFailed:

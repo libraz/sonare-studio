@@ -6,6 +6,7 @@ import { keyLabel, matchModeChoiceId } from '@/components/lists/key-modes';
 import AppModal from '@/components/shell/AppModal.vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { effectiveKeyScale } from '@/compose/key';
+import { harmonicNotes, isDrumTrack } from '@/compose/tracks';
 import { generateProgressionCommand, harmonizeFromMelodyCommand } from '@/project/commands';
 import { normalizeGenerationSeed, partSeed } from '@/project/generation';
 import { projectMidiClipNoteOccurrences } from '@/project/midi-projection';
@@ -75,11 +76,30 @@ const keyReadout = computed(() =>
   ),
 );
 
+/** Whether the active clip belongs to a percussion track, which has no melody to read. */
+const harmonizeSourceIsDrum = computed(() => {
+  const clip = store.activeClip;
+  if (clip === null) return false;
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  return isDrumTrack(track, clip.notes);
+});
+
 /** Whether the active clip carries a melody the harmonizer can read. */
 const hasMelody = computed(() => {
   const clip = store.activeClip;
-  return clip !== null && projectMidiClipNoteOccurrences(clip).length > 0;
+  if (clip === null || harmonizeSourceIsDrum.value) return false;
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  const projected = projectMidiClipNoteOccurrences(clip);
+  return (track === undefined ? projected : harmonicNotes(track, projected)).length > 0;
 });
+
+/** Why the harmonize source cannot be read, or null when it can. */
+const harmonizeSourceBlocked = computed(() =>
+  firstBlock(
+    [harmonizeSourceIsDrum.value, g.value.harmonizeDrumSource],
+    [!hasMelody.value, g.value.harmonizeEmpty],
+  ),
+);
 
 /** Append/replace is only meaningful when a chord track already exists. */
 const hasChords = computed(() => store.chords.length > 0);
@@ -165,7 +185,7 @@ const harmonizeBlocked = computed(() => mode.value === 'harmonize' && !hasMelody
 
 /** Why Generate cannot run for the current mode and fields, or null. */
 const generateBlocked = computed(() => {
-  if (mode.value === 'harmonize') return firstBlock([!hasMelody.value, g.value.harmonizeEmpty]);
+  if (mode.value === 'harmonize') return harmonizeSourceBlocked.value;
   const bars = Math.round(progBars.value);
   return firstBlock([!Number.isFinite(bars) || bars <= 0, g.value.invalidBars]);
 });
@@ -392,7 +412,7 @@ function onKeydown(event: KeyboardEvent): void {
         </template>
 
         <template v-else>
-          <p v-if="harmonizeBlocked" class="mode-hint">{{ g.harmonizeEmpty }}</p>
+          <p v-if="harmonizeBlocked" class="mode-hint">{{ harmonizeSourceBlocked }}</p>
           <template v-else>
             <span class="field-label">{{ g.harmonizeStrength }}</span>
             <div class="segmented" role="radiogroup" v-radiogroup :aria-label="g.harmonizeStrength">

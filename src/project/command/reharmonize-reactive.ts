@@ -16,7 +16,7 @@ import {
   proposeReactiveReharmonization,
   type ReharmonizationProposal,
 } from '@/compose/reharmonize-reactive';
-import { topVoiceOnly } from '@/compose/tracks';
+import { harmonicNotes, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
 import { canonicalJson, fnv1a32Hex } from '../hash';
 import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
@@ -76,7 +76,7 @@ export function reharmonizationContextHash(locked: ReadonlyArray<LockedRegion> =
  * without mutating anything.
  *
  * @param params The edited span, locked regions and reharmonization strength.
- * @returns The proposal, or null when there is no active clip.
+ * @returns The proposal, or null when there is no active clip or it is percussion.
  */
 export function proposeReharmonizationForActiveClip(
   params: ReactiveReharmonizeParams,
@@ -84,14 +84,19 @@ export function proposeReharmonizationForActiveClip(
   const store = useProjectStore();
   const clip = store.activeClip;
   if (clip === null) return null;
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  if (track !== undefined && isDrumTrack(track, clip.notes)) return null;
 
   // Reduce the clip to its top voice, then shift onto the absolute timeline so
   // the melody lines up with the (absolute-PPQ) chord track.
-  const events = projectMidiNoteOccurrences(clip).map((note) => ({
-    pitch: note.pitch,
-    startBeat: note.startPpq,
-    durationBeat: note.durationPpq,
-  }));
+  const projected = projectMidiNoteOccurrences(clip);
+  const events = (track === undefined ? projected : harmonicNotes(track, projected)).map(
+    (note) => ({
+      pitch: note.pitch,
+      startBeat: note.startPpq,
+      durationBeat: note.durationPpq,
+    }),
+  );
   const melody = topVoiceOnly(events).map((event) => ({
     pitch: event.pitch,
     startPpq: event.startBeat,
