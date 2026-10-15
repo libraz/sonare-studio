@@ -375,15 +375,32 @@ async function createBrowserBackupLocked(
     >;
     const documents: ProjectDocument[] = [];
     const nested = { entries: 0, uncompressedBytes: 0 };
+    const unreadableIssues: MediaCompletenessIssue[] = [];
+    // An undecodable stored payload is still carried verbatim; its media references are unknown, so it is reported.
+    const readDocument = (slot: string, bytes: Uint8Array): void => {
+      try {
+        const decoded = decodeSzdWithResourceReport(bytes, {});
+        documents.push(decoded.document);
+        nested.entries += decoded.report.entries;
+        nested.uncompressedBytes += decoded.report.uncompressedBytes;
+      } catch (error) {
+        if (error instanceof BrowserBackupSizeError) throw error;
+        unreadableIssues.push({
+          kind: 'stored-project',
+          mediaId: slot,
+          role: 'library',
+          reason: 'unreadable',
+          projectName: slot,
+          ...(error instanceof Error && error.message ? { message: error.message } : {}),
+        });
+      }
+    };
 
     for (const project of await listProjects()) {
       if (isReservedProjectName(project.name)) continue;
       signal?.throwIfAborted();
       const bytes = await loadProject(project.name);
-      const decoded = decodeSzdWithResourceReport(bytes, {});
-      documents.push(decoded.document);
-      nested.entries += decoded.report.entries;
-      nested.uncompressedBytes += decoded.report.uncompressedBytes;
+      readDocument(project.name, bytes);
       const payloadBytes = bytes.byteLength;
       const checksum = payloadChecksum(bytes);
       await zip.add(projectEntryName(project.name), bytes);
@@ -418,10 +435,7 @@ async function createBrowserBackupLocked(
     };
     for (const [slot, bytes] of revisionStore.slots) {
       signal?.throwIfAborted();
-      const decoded = decodeSzdWithResourceReport(bytes, {});
-      documents.push(decoded.document);
-      nested.entries += decoded.report.entries;
-      nested.uncompressedBytes += decoded.report.uncompressedBytes;
+      readDocument(slot, bytes);
       const payloadBytes = bytes.byteLength;
       await zip.add(revisionEntryName(slot), bytes);
       assertNestedBackupBudget(zip.stats(), nested, limits);
@@ -487,7 +501,7 @@ async function createBrowserBackupLocked(
       }
     }
 
-    const issues: MediaCompletenessIssue[] = [];
+    const issues: MediaCompletenessIssue[] = [...unreadableIssues];
     addProjectMediaIssues(issues, documents, 'audio-asset', successfulAssets, assetFailures);
     addProjectMediaIssues(issues, documents, 'soundfont', successfulFonts, fontFailures);
     const completeness = createMediaCompletenessReport(issues);

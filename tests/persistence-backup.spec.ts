@@ -335,6 +335,24 @@ describe('browser backup archives', () => {
     expect(getFontCacheStats()).toMatchObject({ entries: 0, byteLength: 0 });
   });
 
+  it('reports an undecodable stored project instead of aborting the backup', async () => {
+    await saveProject('Good', encodeSzd(makeDocument('Good')));
+    await saveProject('Broken', new Uint8Array([0, 1, 2, 3]));
+
+    const backup = await createBrowserBackupWithReport('2026-07-04T00:00:00.000Z');
+
+    const entries = unzipSync(backup.bytes);
+    expect(Object.keys(entries).filter((name) => name.includes('Broken'))).not.toEqual([]);
+    expect(backup.completeness.complete).toBe(false);
+    expect(backup.completeness.issues).toContainEqual(
+      expect.objectContaining({
+        kind: 'stored-project',
+        projectName: 'Broken',
+        reason: 'unreadable',
+      }),
+    );
+  });
+
   it('reports every missing project media role before creating a lossy backup', async () => {
     const document = makeDocument('Missing', { assetId: 'missingClip', fontId: 'missingFont' });
     document.tracks[0].frozen = { assetId: 'missingFrozen' };

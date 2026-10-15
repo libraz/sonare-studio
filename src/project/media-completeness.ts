@@ -1,6 +1,6 @@
 import type { ProjectDocument } from './serialization';
 
-export type ProjectMediaKind = 'audio-asset' | 'soundfont';
+export type ProjectMediaKind = 'audio-asset' | 'soundfont' | 'stored-project';
 export type ProjectMediaRole = 'clip' | 'take' | 'frozen' | 'instrument' | 'library';
 export type ProjectMediaFailure = 'missing' | 'unreadable' | 'encode-failed';
 

@@ -200,6 +200,7 @@ export const dialogs = {
     mediaIssueKind: {
       'audio-asset': 'audio asset',
       soundfont: 'SoundFont',
+      'stored-project': 'stored project',
     },
     issue: {
       blocker: {

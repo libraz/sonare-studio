@@ -203,6 +203,7 @@ export const dialogs = {
     mediaIssueKind: {
       'audio-asset': 'オーディオアセット',
       soundfont: 'SoundFont',
+      'stored-project': '保存済みプロジェクト',
     },
     issue: {
       blocker: {
