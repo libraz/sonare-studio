@@ -20,6 +20,7 @@ import {
   parseInsertAutomationParam,
   parseMasteringAutomationParam,
 } from '../automation';
+import { assertValidMixerBusTopology, mixerBusTopology } from '../bus-topology';
 import { canonicalJson } from '../hash';
 import {
   assertEngineBusCapacity,
@@ -154,7 +155,8 @@ function sanitizeStripRouting(strip: MixerStrip, validBusIds: ReadonlySet<string
  * track also present in the snapshot, its captured strip and mix flags. Tracks
  * absent from the snapshot keep their current strip and flags. Every track's
  * send routing is sanitized against the restored bus set, and VCA membership
- * against the restored VCA groups, so the result is always engine-valid.
+ * against the restored VCA groups, and the resulting bus topology is validated,
+ * so the result is always engine-valid or refused.
  *
  * @param snapshot The snapshot to restore.
  * @param currentTracks The tracks currently in the store.
@@ -231,6 +233,16 @@ export function mergeMixerSnapshot(
     automationLanes.push(cloneAutomationLane(lane));
   }
   assertEngineBusCapacity(mixer.buses.length, tracks);
+  // Group strips are topology nodes too: a reciprocal bus/group route must be
+  // refused before any store write, as scene apply does.
+  assertValidMixerBusTopology(
+    mixerBusTopology(
+      mixer,
+      tracks
+        .filter((track) => track.kind === 'group')
+        .map((track) => ({ id: track.id, mixer: track.mixer })),
+    ),
+  );
   return { mixer, tracks, automationLanes };
 }
 

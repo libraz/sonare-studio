@@ -1,18 +1,19 @@
 /**
  * Per-track instrument model.
  *
- * A track instrument describes how the track's MIDI clips are rendered to
- * audio by the offline bounce (src/engine/instruments.ts). The three variants
- * map onto the libsonare Project bounce entry points:
- * - 'synth-preset' -> bounceWithSynthInstrument(presetName), or a binding
- *   object when the NativeSynth GM program resolver is enabled
- * - 'synth-patch'  -> bounceWithSynthInstrument(patch) (NativeSynth SynthPatch)
- * - 'sf2'          -> loadSoundFont + bounceWithSf2Instrument (bank/program
- *   selection is injected as MIDI bank-select/program-change events)
+ * A track instrument names the engine instrument that plays the track's MIDI
+ * clips. MIDI clips are scheduled engine state; src/engine/midi-sync.ts binds
+ * the instrument to the track's engine destination (setSynthInstrument /
+ * setSf2Instrument), and the offline bounce in src/engine/instruments.ts only
+ * serves audition and note preview. The variants:
+ * - 'synth-preset' -> a NativeSynth catalog preset, by name
+ * - 'synth-patch'  -> an inline NativeSynth SynthPatch
+ * - 'sf2'          -> a loaded SoundFont (bank/program selection is injected
+ *   as MIDI bank-select/program-change events)
  *
  * Instrument state is app-level track metadata: the wasm Project has no
  * per-track instrument API, so it lives on the store mirror and is persisted
- * by the project document (schema version 3).
+ * by the project document (PROJECT_DOCUMENT_SCHEMA_VERSION).
  */
 
 import type { SynthPatch } from '@/wasm/index.js';
@@ -495,7 +496,7 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
       }
       const { gain, polyphony } = instrument;
       // Zero is a valid value meaning mute: the UI min is 0, the model accepts
-      // it, and sf2PlaybackConfig maps it to the engine's smallest gain. Only
+      // it, and sf2PlaybackConfig maps it to SF2_MUTE_GAIN. Only
       // negative or non-finite values are rejected.
       if (gain !== undefined && (!Number.isFinite(gain) || gain < 0)) {
         throw new RangeError(`SF2 gain must be a non-negative number, got ${gain}`);
@@ -560,13 +561,17 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
  * @param instrument Instrument to identify.
  * @returns A stable key segment.
  */
+/** Smallest positive engine gain; the engine reads a gain of 0 as "use the default". */
+export const SF2_MUTE_GAIN = 1e-6;
+
 /**
  * Engine player config (master gain + voice cap) an SF2 instrument plays with.
  *
  * Only the fields the instrument sets explicitly are returned; anything it
  * leaves unset is omitted so the engine applies its own defaults (gain 0.5,
- * 48 voices). The same config drives live playback (setSf2Instrument) and the
- * offline bounce (bounceWithSf2Instrument).
+ * 48 voices). A gain of 0 maps to {@link SF2_MUTE_GAIN} so it mutes. The
+ * same config drives live playback (setSf2Instrument) and the offline
+ * bounce (bounceWithSf2Instrument).
  *
  * @param instrument SF2 instrument to read.
  * @returns A config object with only the explicitly-set gain/polyphony fields.
@@ -583,7 +588,9 @@ export function sf2PlaybackConfig(instrument: Sf2Instrument): {
     preferModelForModeledFamilies?: boolean;
     gsEfxRealization?: Sf2EfxRealization;
   } = {};
-  if (instrument.gain !== undefined) config.gain = instrument.gain;
+  if (instrument.gain !== undefined) {
+    config.gain = instrument.gain === 0 ? SF2_MUTE_GAIN : instrument.gain;
+  }
   if (instrument.polyphony !== undefined) config.polyphony = instrument.polyphony;
   if (instrument.preferModelForModeledFamilies === true) {
     config.preferModelForModeledFamilies = true;

@@ -15,6 +15,7 @@ import {
 import { useProjectStore } from '../store';
 import type { EditorTrack } from '../types';
 import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
+import { patchMixerMirror } from './mixer-internal';
 import { requireTrack } from './utils';
 
 /** Optional fields for {@link addMixerBus}. */
@@ -170,18 +171,12 @@ export function setMixerBusGain(
   }
   const key = `bus-gain:${busId}`;
   if (bus.gainDb === gainDb && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      store.mixer = {
-        ...store.mixer,
-        buses: store.mixer.buses.map((entry) =>
-          entry.id === busId ? { ...entry, gainDb } : entry,
-        ),
-      };
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    store.mixer = {
+      ...store.mixer,
+      buses: store.mixer.buses.map((entry) => (entry.id === busId ? { ...entry, gainDb } : entry)),
+    };
+  });
 }
 
 /** Sets a return-bus mute as one undoable edit without changing its fader. */

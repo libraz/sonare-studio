@@ -14,6 +14,7 @@ import {
   instrumentEquals,
   isDefaultInstrument,
   loadInstrument,
+  SF2_MUTE_GAIN,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -540,7 +541,9 @@ describe('instrument helpers', () => {
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm' })).toEqual({});
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', bank: 1, program: 4 })).toEqual({});
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 1.25 })).toEqual({ gain: 1.25 });
-    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 0 })).toEqual({ gain: 0 });
+    expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', gain: 0 })).toEqual({
+      gain: SF2_MUTE_GAIN,
+    });
     expect(sf2PlaybackConfig({ kind: 'sf2', fontId: 'gm', polyphony: 24 })).toEqual({
       polyphony: 24,
     });
@@ -686,14 +689,14 @@ describe('prerenderMidiClip per instrument kind', () => {
     });
   });
 
-  it('forwards an explicit zero gain to the SF2 bounce as silence', async () => {
+  it('forwards a zero gain to the SF2 bounce as the mute gain, not the engine default', async () => {
     await prerenderMidiClip(NOTES, {
       ...OPTS,
       instrument: { kind: 'sf2', fontId: 'my-font', gain: 0 },
       loadFont: async () => new Uint8Array([4]),
     });
 
-    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: 0 });
+    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: SF2_MUTE_GAIN });
   });
 
   it('prepends bank/program select events per used channel', async () => {

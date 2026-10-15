@@ -25,6 +25,7 @@ import {
   isMixerBusStripTarget,
   type MixerStripTarget,
   mixerBusIdFromTarget,
+  patchMixerMirror,
   requireInsert,
   writeStrip,
 } from './mixer-internal';
@@ -499,22 +500,18 @@ export function setInsertParam(
     param === 'presetIndex' &&
     Object.keys(slot.params).some((name) => name !== 'presetIndex');
   if (slot.params[param] === value && !resetsAmpOverrides && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      const next = cloneStrip(strip);
-      next.inserts[index] = {
-        ...next.inserts[index],
-        // Choosing a new amp rig replaces the old rig's custom knob settings.
-        // Keeping them would make the newly selected preset sound like a hybrid
-        // while the UI still names it as the untouched new rig.
-        params:
-          slot.processor === 'saturation.ampSim' && param === 'presetIndex'
-            ? { presetIndex: value }
-            : editedProcessorParams(slot.processor, next.inserts[index].params, param, value),
-      };
-      writeStrip(store, target, next);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const next = cloneStrip(strip);
+    next.inserts[index] = {
+      ...next.inserts[index],
+      // Choosing a new amp rig replaces the old rig's custom knob settings.
+      // Keeping them would make the newly selected preset sound like a hybrid
+      // while the UI still names it as the untouched new rig.
+      params:
+        slot.processor === 'saturation.ampSim' && param === 'presetIndex'
+          ? { presetIndex: value }
+          : editedProcessorParams(slot.processor, next.inserts[index].params, param, value),
+    };
+    writeStrip(store, target, next);
+  });
 }

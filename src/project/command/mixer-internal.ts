@@ -1,5 +1,6 @@
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '../mixer';
 import type { useProjectStore } from '../store';
+import { type CommandGestureOptions, executeApp } from './history';
 import { requireTrack } from './utils';
 
 /** Addresses a mixer strip: a track id, 'master', or a send-return bus. */
@@ -59,6 +60,24 @@ export function writeStrip(
     return;
   }
   store.tracks = store.tracks.map((t) => (t.id === target ? { ...t, mixer: strip } : t));
+}
+
+/**
+ * Applies a mixer-mirror-only edit as one undoable step, coalescing a drag
+ * (`commit: false`) into a single history entry. The write patches the mirror
+ * in place, so no Project re-read runs and clips and notes keep their identity
+ * on every drag frame.
+ *
+ * @param key Gesture key shared by every frame of the drag.
+ * @param options Gesture coalescing from the command's caller.
+ * @param write Writes the changed mixer state onto the store mirror.
+ */
+export function patchMixerMirror(
+  key: string,
+  options: CommandGestureOptions | undefined,
+  write: () => void,
+): void {
+  executeApp(write, { key, commit: options?.commit ?? true });
 }
 
 /** Returns the insert slot at an index, or throws RangeError. */

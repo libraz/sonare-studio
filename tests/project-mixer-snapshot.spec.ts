@@ -112,6 +112,17 @@ describe('buildMixerSnapshot', () => {
 });
 
 describe('mergeMixerSnapshot', () => {
+  it('refuses a snapshot whose bus graph has a routing cycle', () => {
+    const cyclic = mixer({
+      buses: [
+        { id: 'a', name: 'A', gainDb: 0, strip: strip({ outputBusId: 'b' }) },
+        { id: 'b', name: 'B', gainDb: 0, strip: strip({ outputBusId: 'a' }) },
+      ],
+    });
+    const snap = buildMixerSnapshot(cyclic, [track(1)], []);
+    expect(() => mergeMixerSnapshot(snap, [track(1)])).toThrow(/routing cycle/);
+  });
+
   it('restores the master strip and existing tracks strip/flags', () => {
     const snap = buildMixerSnapshot(mixer({ master: strip({ gainDb: -6 }) }), [
       track(1, { mixer: strip({ gainDb: 4, pan: 0.5 }), mute: true }),

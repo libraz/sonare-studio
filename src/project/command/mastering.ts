@@ -15,6 +15,7 @@ import {
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
 import { validateInsertParams } from './insert-params';
+import { patchMixerMirror } from './mixer-internal';
 
 /** Returns a working copy of the current mastering chain (default = empty). */
 function currentMasteringChain(store: ReturnType<typeof useProjectStore>): MasteringChainState {
@@ -63,19 +64,15 @@ export function setMasteringPreset(preset: string | null, options?: CommandGestu
   const key = 'mastering-preset';
   const current = chain.preset ?? null;
   if (current === preset && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      if (preset === null) {
-        delete chain.preset;
-        delete chain.presetOverrides;
-      } else {
-        chain.preset = preset;
-      }
-      writeMasteringChain(store, chain);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    if (preset === null) {
+      delete chain.preset;
+      delete chain.presetOverrides;
+    } else {
+      chain.preset = preset;
+    }
+    writeMasteringChain(store, chain);
+  });
 }
 
 /**
@@ -132,18 +129,14 @@ export function setMasteringPresetOverride(
   const overrides = chain.presetOverrides ?? {};
   const key = `mastering-preset-override:${param}`;
   if ((overrides[param] ?? null) === value && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      const nextOverrides = { ...overrides };
-      if (value === null) delete nextOverrides[param];
-      else nextOverrides[param] = value;
-      if (Object.keys(nextOverrides).length === 0) delete chain.presetOverrides;
-      else chain.presetOverrides = nextOverrides;
-      writeMasteringChain(store, chain);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const nextOverrides = { ...overrides };
+    if (value === null) delete nextOverrides[param];
+    else nextOverrides[param] = value;
+    if (Object.keys(nextOverrides).length === 0) delete chain.presetOverrides;
+    else chain.presetOverrides = nextOverrides;
+    writeMasteringChain(store, chain);
+  });
 }
 
 /**
@@ -263,15 +256,11 @@ export function setMasteringParam(
   }
   const key = `mastering-param:${index}:${param}`;
   if (slot.params[param] === value && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      chain.processors[index] = {
-        ...chain.processors[index],
-        params: editedProcessorParams(slot.processor, chain.processors[index].params, param, value),
-      };
-      writeMasteringChain(store, chain);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    chain.processors[index] = {
+      ...chain.processors[index],
+      params: editedProcessorParams(slot.processor, chain.processors[index].params, param, value),
+    };
+    writeMasteringChain(store, chain);
+  });
 }

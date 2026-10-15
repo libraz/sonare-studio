@@ -2,6 +2,7 @@ import type { VcaGroup } from '../mixer';
 import { MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
 import { useProjectStore } from '../store';
 import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
+import { patchMixerMirror } from './mixer-internal';
 import { requireTrack } from './utils';
 
 /**
@@ -119,18 +120,14 @@ export function setVcaGroupGain(
   }
   const key = `vca-gain:${groupId}`;
   if (group.gainDb === gainDb && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      store.mixer = {
-        ...store.mixer,
-        vcaGroups: (store.mixer.vcaGroups ?? []).map((entry) =>
-          entry.id === groupId ? { ...entry, gainDb } : entry,
-        ),
-      };
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    store.mixer = {
+      ...store.mixer,
+      vcaGroups: (store.mixer.vcaGroups ?? []).map((entry) =>
+        entry.id === groupId ? { ...entry, gainDb } : entry,
+      ),
+    };
+  });
 }
 
 /** Sets or clears a VCA group's mute flag as one undoable edit. */

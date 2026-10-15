@@ -7,11 +7,13 @@ import {
 } from '../instrument';
 import { useProjectStore } from '../store';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
+import { patchMixerMirror } from './mixer-internal';
 import { requireTrack } from './utils';
 
 /**
  * Sets a track's instrument as one undoable edit. Instruments are app-level
- * metadata applied when the track's MIDI clips are prerendered.
+ * metadata; src/engine/midi-sync.ts binds the instrument to the track's engine
+ * destination.
  *
  * @param trackId Id of the track.
  * @param instrument New instrument, or null to clear back to the default
@@ -34,21 +36,17 @@ export function setTrackInstrument(
       ? current === null
       : current !== null && instrumentEquals(current, instrument);
   if (unchanged && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      store.tracks = store.tracks.map((t) => {
-        if (t.id !== trackId) return t;
-        if (instrument === null) {
-          const { externalMidiMode: _mode, instrument: _dropped, ...rest } = t;
-          return rest;
-        }
-        const { externalMidiMode: _mode, ...rest } = t;
-        return { ...rest, instrument: cloneInstrument(instrument) };
-      });
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    store.tracks = store.tracks.map((t) => {
+      if (t.id !== trackId) return t;
+      if (instrument === null) {
+        const { externalMidiMode: _mode, instrument: _dropped, ...rest } = t;
+        return rest;
+      }
+      const { externalMidiMode: _mode, ...rest } = t;
+      return { ...rest, instrument: cloneInstrument(instrument) };
+    });
+  });
 }
 
 /**

@@ -35,6 +35,7 @@ import {
   isMixerBusStripTarget,
   type MixerStripTarget,
   mixerBusIdFromTarget,
+  patchMixerMirror,
   writeStrip,
 } from './mixer-internal';
 import { requireTrack } from './utils';
@@ -133,13 +134,9 @@ export function setStripGain(
   }
   const key = `strip-gain:${String(target)}`;
   if (strip.gainDb === gainDb && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      writeStrip(store, target, { ...cloneStrip(strip), gainDb });
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    writeStrip(store, target, { ...cloneStrip(strip), gainDb });
+  });
 }
 
 /**
@@ -168,18 +165,14 @@ export function setStripPan(
     return;
   }
   assertStereoBusStageAllowed(store, target);
-  executeApp(
-    () => {
-      writeStrip(store, target, { ...cloneStrip(strip), pan });
-      if (track !== undefined) {
-        store.tracks = store.tracks.map((entry) =>
-          entry.id === track.id ? { ...entry, pan } : entry,
-        );
-      }
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    writeStrip(store, target, { ...cloneStrip(strip), pan });
+    if (track !== undefined) {
+      store.tracks = store.tracks.map((entry) =>
+        entry.id === track.id ? { ...entry, pan } : entry,
+      );
+    }
+  });
 }
 
 /**
@@ -205,16 +198,12 @@ export function setStripInputTrim(
   }
   const key = `strip-input-trim:${String(target)}`;
   if ((strip.inputTrimDb ?? 0) === trimDb && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      const next = cloneStrip(strip);
-      if (trimDb === 0) delete next.inputTrimDb;
-      else next.inputTrimDb = trimDb;
-      writeStrip(store, target, next);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const next = cloneStrip(strip);
+    if (trimDb === 0) delete next.inputTrimDb;
+    else next.inputTrimDb = trimDb;
+    writeStrip(store, target, next);
+  });
 }
 
 /**
@@ -239,16 +228,12 @@ export function setStripWidth(
   const key = `strip-width:${String(target)}`;
   if ((strip.width ?? DEFAULT_STRIP_WIDTH) === width && !hasPendingGesture(key)) return;
   assertStereoBusStageAllowed(store, target);
-  executeApp(
-    () => {
-      const next = cloneStrip(strip);
-      if (width === DEFAULT_STRIP_WIDTH) delete next.width;
-      else next.width = width;
-      writeStrip(store, target, next);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const next = cloneStrip(strip);
+    if (width === DEFAULT_STRIP_WIDTH) delete next.width;
+    else next.width = width;
+    writeStrip(store, target, next);
+  });
 }
 
 /**
@@ -305,16 +290,12 @@ export function setStripEq(
   // Skip a redundant edit so re-applying an unchanged EQ adds no undo step;
   // a live band drag (pending gesture) still commits so coalescing works.
   if (JSON.stringify(strip.eq ?? null) === JSON.stringify(eq) && !hasPendingGesture(key)) return;
-  executeApp(
-    () => {
-      const next = cloneStrip(strip);
-      if (eq === null) delete next.eq;
-      else next.eq = JSON.parse(JSON.stringify(eq)) as StripEq;
-      writeStrip(store, target, next);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const next = cloneStrip(strip);
+    if (eq === null) delete next.eq;
+    else next.eq = JSON.parse(JSON.stringify(eq)) as StripEq;
+    writeStrip(store, target, next);
+  });
 }
 
 /**
@@ -371,26 +352,22 @@ export function setSend(
       return;
     }
   }
-  executeApp(
-    () => {
-      const next = cloneStrip(strip);
-      const existingIndex = next.sends.findIndex((s) => s.busId === busId);
-      if (send === null) {
-        if (existingIndex >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
-      } else {
-        const prevTiming = existingIndex >= 0 ? next.sends[existingIndex].timing : undefined;
-        const timing = send.timing ?? prevTiming;
-        const entry: StripSend = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
-        // Keep the field absent for the default (post-fader) so neutral strips stay neutral.
-        if (timing !== undefined && timing !== 'postFader') entry.timing = timing;
-        if (existingIndex >= 0) next.sends[existingIndex] = entry;
-        else next.sends = [...next.sends, entry];
-      }
-      writeStrip(store, target, next);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const next = cloneStrip(strip);
+    const existingIndex = next.sends.findIndex((s) => s.busId === busId);
+    if (send === null) {
+      if (existingIndex >= 0) next.sends = next.sends.filter((s) => s.busId !== busId);
+    } else {
+      const prevTiming = existingIndex >= 0 ? next.sends[existingIndex].timing : undefined;
+      const timing = send.timing ?? prevTiming;
+      const entry: StripSend = { busId, levelDb: send.levelDb, enabled: send.enabled ?? true };
+      // Keep the field absent for the default (post-fader) so neutral strips stay neutral.
+      if (timing !== undefined && timing !== 'postFader') entry.timing = timing;
+      if (existingIndex >= 0) next.sends[existingIndex] = entry;
+      else next.sends = [...next.sends, entry];
+    }
+    writeStrip(store, target, next);
+  });
 }
 
 /**
@@ -524,15 +501,11 @@ export function setStripDualPan(
     return;
   }
   assertStereoBusStageAllowed(store, target);
-  executeApp(
-    () => {
-      const next = cloneStrip(strip);
-      next.dualPan = { left, right };
-      writeStrip(store, target, next);
-      store.refresh();
-    },
-    { key, commit: options?.commit ?? true },
-  );
+  patchMixerMirror(key, options, () => {
+    const next = cloneStrip(strip);
+    next.dualPan = { left, right };
+    writeStrip(store, target, next);
+  });
 }
 
 /**
