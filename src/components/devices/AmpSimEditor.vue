@@ -15,6 +15,7 @@ import {
   createAutomationWriteGesture,
   isAutomationWriteMode,
 } from '@/ui/mixer/automation-mode';
+import { insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
 
 /**
  * The order is the public order of libsonare's amp_preset_names(). Keep the
@@ -316,7 +317,7 @@ function run(action: () => void): void {
     action();
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = insertEditErrorMessage(err, t.value);
   }
 }
 

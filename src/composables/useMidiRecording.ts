@@ -53,6 +53,7 @@ import type {
   ClipProgramChangeLane,
   MidiClipTake,
 } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import type { UseTransportReturn } from './useTransport';
 
 /** How a MIDI performance recorded through a transport cycle is committed. */
@@ -179,6 +180,7 @@ export function useMidiRecording(
   options: UseMidiRecordingOptions = {},
 ): UseMidiRecordingReturn {
   const store = useProjectStore();
+  const { t } = useI18n();
   const addClip = options.addRecordedMidiClip ?? addRecordedMidiClipCommand;
   const overwriteClip = options.overwriteRecordedMidiClip ?? overwriteRecordedMidiClipCommand;
   const now = options.now ?? (() => globalThis.performance?.now?.() ?? Date.now());
@@ -314,7 +316,7 @@ export function useMidiRecording(
   const arm = (trackId: number | null): void => {
     error.value = null;
     if (isRecording.value) {
-      error.value = 'Cannot change the armed track while recording.';
+      error.value = t.value.notices.recording.armedTrackLocked;
       return;
     }
     if (trackId === null) {
@@ -323,11 +325,11 @@ export function useMidiRecording(
     }
     const track = store.tracks.find((t) => t.id === trackId);
     if (!track) {
-      error.value = `Unknown track id: ${trackId}`;
+      error.value = formatMessage(t.value.notices.recording.unknownTrack, { id: trackId });
       return;
     }
     if (track.kind !== 'midi') {
-      error.value = 'MIDI recording requires a MIDI track.';
+      error.value = t.value.notices.recording.midiTrackRequired;
       return;
     }
     armedTrackId.value = trackId;
@@ -581,12 +583,12 @@ export function useMidiRecording(
     if (isRecording.value) return false;
     const trackId = armedTrackId.value;
     if (trackId === null) {
-      error.value = 'Arm a MIDI track before recording.';
+      error.value = t.value.notices.recording.armMidiTrack;
       return false;
     }
     const track = store.tracks.find((t) => t.id === trackId);
     if (track?.kind !== 'midi') {
-      error.value = 'MIDI recording requires a MIDI track.';
+      error.value = t.value.notices.recording.midiTrackRequired;
       return false;
     }
     const suppliedPlan = typeof startAtPpq === 'object' && startAtPpq !== null ? startAtPpq : null;
@@ -630,7 +632,7 @@ export function useMidiRecording(
       transport.seekPpq(plan.countInStartPpq);
       if (!transport.play()) {
         finishCountIn();
-        error.value = 'The engine rejected the transport play command.';
+        error.value = t.value.notices.recording.transportRejected;
         return false;
       }
     }
@@ -1022,7 +1024,9 @@ export function useMidiRecording(
         ? overwriteClip(input)
         : addClip(input);
     } catch (err) {
-      error.value = `Failed to store the recording: ${describeError(err)}`;
+      error.value = formatMessage(t.value.notices.recording.storeFailed, {
+        detail: describeError(err, t.value.notices.errors),
+      });
       return null;
     }
   };

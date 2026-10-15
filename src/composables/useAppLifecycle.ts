@@ -6,6 +6,7 @@ import type { ScopeBridge } from '@/engine/scope';
 import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { requestPersistentStorage } from '@/persistence/opfs';
+import { useI18n } from '@/ui/i18n';
 
 export interface AppLifecycleOptions {
   bridge: ShallowRef<MeterBridge | null>;
@@ -28,6 +29,7 @@ export interface AppLifecycleOptions {
 }
 
 export function useAppLifecycle(options: AppLifecycleOptions) {
+  const { t } = useI18n();
   const onBeforeUnload = (event: BeforeUnloadEvent): void => {
     if (!options.shouldBlockUnload?.()) return;
     event.preventDefault();
@@ -59,7 +61,7 @@ export function useAppLifecycle(options: AppLifecycleOptions) {
       });
       await Promise.all([versionReady, bootPromise]);
     } catch (err) {
-      options.errorMessage.value = describeError(err);
+      options.errorMessage.value = describeError(err, t.value.notices.errors);
     }
   });
 

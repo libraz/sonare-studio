@@ -5,7 +5,7 @@ import { useMusicTyping } from '@/composables/useMusicTyping';
 import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
 import type { useStepInput } from '@/composables/useStepInput';
 import { useWebMidi } from '@/composables/useWebMidi';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MidiLearnTransportAction } from '@/ui/midi/midi-learn';
 import type { RealtimeEngine } from '@/wasm/index.js';
 
@@ -224,7 +224,10 @@ export function useInputControls(options: InputControlsOptions) {
       // reports as `false` with no failure recorded — not something to surface
       // as an error.
       if (!ok && (webMidi.error.value !== null || webMidi.available.value === false)) {
-        errorMessage.value = webMidi.error.value ?? 'Web MIDI is unavailable in this browser.';
+        errorMessage.value =
+          webMidi.error.value === null
+            ? t.value.reasons.noWebMidi
+            : formatMessage(t.value.notices.webMidiConnectFailed, { detail: webMidi.error.value });
       }
     });
   }

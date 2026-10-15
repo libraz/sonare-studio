@@ -11,6 +11,7 @@ import type { EngineHandle } from '@/engine/engine';
 import { describeError } from '@/lib/errors';
 import { setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { useI18n } from '@/ui/i18n';
 
 type Recording = ReturnType<typeof useRecording>;
 type Transport = ReturnType<typeof useTransport>;
@@ -39,6 +40,7 @@ export function formatSeconds(s: number): string {
 }
 
 export function useTransportControls(options: TransportControlsOptions) {
+  const { t } = useI18n();
   const store = useProjectStore();
   const tempoInput = ref(options.tempo.value);
   const autoPunchEnabled = ref(false);
@@ -99,7 +101,7 @@ export function useTransportControls(options: TransportControlsOptions) {
           : [{ startPpq: 0, bpm }];
       setTempoSegments(segments);
     } catch (err) {
-      options.errorMessage.value = describeError(err);
+      options.errorMessage.value = describeError(err, t.value.notices.errors);
     }
   }
 

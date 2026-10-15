@@ -51,6 +51,7 @@ import { setProcessingSampleRate } from '@/project/processor-controls';
 import { nativeSynthFieldValue } from '@/project/quick-controls';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 type Transport = ReturnType<typeof useTransport>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
@@ -130,6 +131,7 @@ export interface EngineLifecycleCleanupFailure {
 
 export function useEngineLifecycle(options: EngineLifecycleOptions) {
   const store = useProjectStore();
+  const { t } = useI18n();
   let engineStartPromise: Promise<void> | null = null;
   let disposeCtxState: (() => void) | null = null;
   let lifecycleEpoch = 0;
@@ -194,12 +196,15 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
     await retryPendingEngineDisposals(failures);
     cleanupFailures.value = failures;
     if (failures.length > 0) {
-      options.errorMessage.value = `Engine cleanup had ${failures.length} failure(s): ${failures
-        .map(
-          (failure) =>
-            `${failure.stage}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
-        )
-        .join('; ')}`;
+      options.errorMessage.value = formatMessage(t.value.notices.engineCleanupFailed, {
+        count: failures.length,
+        details: failures
+          .map(
+            (failure) =>
+              `${failure.stage}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
+          )
+          .join('; '),
+      });
     }
   }
 
@@ -632,7 +637,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           const message =
             event instanceof CustomEvent && typeof event.detail === 'string'
               ? event.detail
-              : 'Engine worklet processor crashed during processing (onprocessorerror).';
+              : t.value.notices.engineProcessorCrashed;
           if (options.handle.value !== stagedHandle) {
             if (!published && epoch === lifecycleEpoch) {
               controller.abort(new Error(message));
@@ -693,7 +698,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
   function playTestTone(): Promise<void> {
     return options.runAction(async () => {
       const h = options.handle.value;
-      if (!h) throw new Error('Start the engine first.');
+      if (!h) throw new Error(t.value.notices.engineNotStarted);
       if (h.ctx.state === 'suspended') await h.ctx.resume();
       const osc = h.ctx.createOscillator();
       const gain = h.ctx.createGain();
@@ -711,7 +716,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
   function renderOffline(): Promise<void> {
     return options.runAction(async () => {
       const h = options.handle.value;
-      if (!h) throw new Error('Start the engine first.');
+      if (!h) throw new Error(t.value.notices.engineNotStarted);
       const seconds = 3;
       const frames = Math.round(h.ctx.sampleRate * seconds);
       const buffers = await h.engine.renderOffline(frames);

@@ -156,7 +156,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   }
 
   function reportActionError(error: unknown): void {
-    options.onError?.(describeError(error));
+    options.onError?.(describeError(error, t.value.notices.errors));
   }
 
   /** Ensures menu and palette command failures use the shell error surface. */

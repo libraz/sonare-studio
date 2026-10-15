@@ -1,10 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
+import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   AudioScheduleReplaceError,
   applyAudioClipFades,
+  discardUnownedScheduledClips,
   ppqSpanToSeconds,
   replaceScheduledProjectClips,
   resampleChannelsLinear,
@@ -255,6 +257,89 @@ describe('scheduleProjectClips with audio clips', () => {
 
     expect(loadAudioAsset).not.toHaveBeenCalled();
     expect(addClip).not.toHaveBeenCalled();
+  });
+
+  describe('multitrack schedules', () => {
+    const RATE = 1000;
+    // Four minutes of stereo at 1 kHz: scaled so the ratio to the budget below
+    // matches three 4-minute 48 kHz stereo tracks against the 512 MiB default.
+    const FRAMES = 240 * RATE;
+    const ASSET_BYTES = FRAMES * 2 * Float32Array.BYTES_PER_ELEMENT;
+    const BUDGET = Math.floor((ASSET_BYTES * 512) / 87.9);
+
+    function stereoAsset(assetId: string): LoadedAudioAsset {
+      return {
+        meta: { id: assetId, name: assetId, sampleRate: RATE, numChannels: 2, numFrames: FRAMES },
+        channels: [new Float32Array(FRAMES), new Float32Array(FRAMES)],
+      };
+    }
+
+    function setup() {
+      store.tracks = [makeTrack(1), makeTrack(2), makeTrack(3)];
+      store.clips = [1, 2, 3].map((id) =>
+        makeAudioClip(id * 10, id, { assetId: `asset-${id}`, lengthPpq: 480 }),
+      );
+      const { handle, addClip, removeClip } = makeHandle(RATE);
+      let nextId = 100;
+      addClip.mockImplementation(() => nextId++);
+      const loadAudioAsset = vi.fn(async (assetId: string) => stereoAsset(assetId));
+      const loadAudioAssetMeta = async (assetId: string) => stereoAsset(assetId).meta;
+      return { handle, addClip, removeClip, loadAudioAsset, loadAudioAssetMeta };
+    }
+
+    it('schedules three four-minute stereo assets and reschedules after a clip move', async () => {
+      const { handle, addClip, removeClip, loadAudioAsset, loadAudioAssetMeta } = setup();
+      const options = { loadAudioAsset, loadAudioAssetMeta, memoryBudgetBytes: BUDGET };
+
+      const first = await scheduleProjectClips(handle, options);
+      expect(first).toHaveLength(3);
+
+      store.clips = store.clips.map((clip) =>
+        clip.id === 20 ? { ...clip, startPpq: clip.startPpq + 4 } : clip,
+      );
+      loadAudioAsset.mockClear();
+      const second = await scheduleProjectClips(handle, { ...options, previous: first });
+
+      expect(second).toHaveLength(3);
+      expect(loadAudioAsset).toHaveBeenCalledTimes(1);
+      expect(loadAudioAsset).toHaveBeenCalledWith('asset-2');
+      expect(addClip).toHaveBeenCalledTimes(4);
+      expect(second.filter((clip) => first.includes(clip))).toHaveLength(2);
+
+      const replaced = replaceScheduledProjectClips(handle, first, second);
+      expect(replaced).toEqual(second);
+      expect(removeClip).toHaveBeenCalledTimes(1);
+      expect(removeClip).toHaveBeenCalledWith(first[1].engineClipId);
+    });
+
+    it('refuses a schedule whose prepared clips alone exceed the budget', async () => {
+      const { handle, addClip, loadAudioAsset, loadAudioAssetMeta } = setup();
+
+      const error = await scheduleProjectClips(handle, {
+        loadAudioAsset,
+        loadAudioAssetMeta,
+        memoryBudgetBytes: ASSET_BYTES * 3,
+      }).catch((caught) => caught);
+
+      expect(error).toBeInstanceOf(PayloadMemoryLimitError);
+      expect((error as PayloadMemoryLimitError).operation).toBe('live-schedule');
+      expect(addClip).not.toHaveBeenCalled();
+    });
+
+    it('keeps carried-over clips when a superseded schedule is discarded', async () => {
+      const { handle, removeClip, loadAudioAsset, loadAudioAssetMeta } = setup();
+      const options = { loadAudioAsset, loadAudioAssetMeta, memoryBudgetBytes: BUDGET };
+      const first = await scheduleProjectClips(handle, options);
+      store.clips = store.clips.map((clip) =>
+        clip.id === 30 ? { ...clip, startPpq: clip.startPpq + 4 } : clip,
+      );
+      const second = await scheduleProjectClips(handle, { ...options, previous: first });
+
+      discardUnownedScheduledClips(handle, first, second);
+
+      expect(removeClip).toHaveBeenCalledTimes(1);
+      expect(removeClip).toHaveBeenCalledWith(second[2].engineClipId);
+    });
   });
 
   it('rolls back every clip added before an engine commit failure', async () => {

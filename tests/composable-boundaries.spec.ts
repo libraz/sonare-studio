@@ -37,6 +37,7 @@ vi.mock('@/ui/i18n', () => ({
           },
         },
         reasons: { busy: 'busy' },
+        notices: { errors: { engineRejected: 'engine rejected {code}', memoryLimit: {} } },
       },
     },
   }),

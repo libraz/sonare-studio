@@ -1,13 +1,34 @@
+import { PayloadMemoryLimitError, type PayloadMemoryOperation } from '@/lib/payload-memory';
+
+/** Localized templates `describeError` needs; `{required}` and `{budget}` are MiB figures. */
+export interface ErrorCopy {
+  /** Template with `{code}` for a bare wasm exception pointer. */
+  engineRejected: string;
+  memoryLimit: Readonly<Record<PayloadMemoryOperation, string>>;
+}
+
+const MIB = 1024 * 1024;
+
+function fill(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in values ? String(values[key]) : match,
+  );
+}
+
 /**
  * Formats an unknown thrown value into a user-facing message. The wasm
  * bindings throw raw C++ exception pointers (bare numbers) for rejected
  * edits, e.g. clip overlaps; render those as an engine error code instead of
- * a meaningless integer.
+ * a meaningless integer. Other errors carry already-localized messages.
  */
-export function describeError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'number') {
-    return `The audio engine library rejected the operation (code ${err}).`;
+export function describeError(err: unknown, copy: ErrorCopy): string {
+  if (err instanceof PayloadMemoryLimitError) {
+    return fill(copy.memoryLimit[err.operation], {
+      required: Math.ceil(err.requiredBytes / MIB),
+      budget: Math.floor(err.budgetBytes / MIB),
+    });
   }
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'number') return fill(copy.engineRejected, { code: err });
   return String(err);
 }

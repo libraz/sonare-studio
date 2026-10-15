@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { shallowRef } from 'vue';
+import { computed, shallowRef } from 'vue';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { exportMusicXml } from '@/notation/io';
 import type { VerovioClient } from '@/notation/verovio';
@@ -197,6 +197,18 @@ describe('score artifact identity and exports', () => {
     resolveLoad?.(1);
     await pending;
     expect(notation.getCurrentXml()).toContain('<score-partwise');
+  });
+
+  it('lets a computed reader of the current score follow transcription and edits', async () => {
+    const { notation } = notationHarness(store);
+    const hasXml = computed(() => notation.getCurrentXml() !== '');
+    expect(hasXml.value).toBe(false);
+
+    await notation.transcribe();
+    expect(hasXml.value).toBe(true);
+
+    addNote({ pitch: 64, startPpq: 1, durationPpq: 1 });
+    expect(hasXml.value).toBe(false);
   });
 
   it('reports grid-moved notes before either MusicXML export and honours a refusal', async () => {

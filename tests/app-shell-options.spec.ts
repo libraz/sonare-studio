@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';
+import { snapChoices } from '@/ui/shell/app-shell-options';
 
-describe('SNAP_CHOICES', () => {
+describe('snapChoices', () => {
   it('offers bar, triplet, and dotted grids alongside straight note divisions', () => {
-    expect(SNAP_CHOICES).toContainEqual({ value: 'bar', label: 'Bar' });
+    const SNAP_CHOICES = snapChoices('小節');
+    expect(SNAP_CHOICES[0]).toEqual({ value: 'bar', label: '小節' });
     expect(SNAP_CHOICES).toContainEqual({ value: 12, label: '1/8T' });
     expect(SNAP_CHOICES).toContainEqual({ value: 24, label: '1/16T' });
     expect(SNAP_CHOICES).toContainEqual({ value: 8 / 3, label: '1/4.' });

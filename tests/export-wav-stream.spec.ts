@@ -9,7 +9,11 @@ describe('streaming WAV writer', () => {
     const writer = createWavStreamWriter({
       sampleRate: 48_000,
       bitDepth: 16,
-      meter: new PayloadMemoryMeter({ label: 'test', budgetBytes: 1024 }),
+      meter: new PayloadMemoryMeter({
+        operation: 'audio-export',
+        label: 'test',
+        budgetBytes: 1024,
+      }),
     });
     writer.add([new Float32Array([0, 1]), new Float32Array([0, -1])], 0);
     writer.add([new Float32Array([0.5]), new Float32Array([-0.5])], 2);
@@ -25,14 +29,22 @@ describe('streaming WAV writer', () => {
     const writer = createWavStreamWriter({
       sampleRate: 48_000,
       bitDepth: 16,
-      meter: new PayloadMemoryMeter({ label: 'test', budgetBytes: 1024 }),
+      meter: new PayloadMemoryMeter({
+        operation: 'audio-export',
+        label: 'test',
+        budgetBytes: 1024,
+      }),
     });
     expect(() => writer.add([new Float32Array(1), new Float32Array(1)], 2)).toThrow(/offset/);
     writer.abort();
   });
 
   it('charges the full Blob publish copy and releases chunks when publishing is over budget', () => {
-    const meter = new PayloadMemoryMeter({ label: 'test', budgetBytes: 56 });
+    const meter = new PayloadMemoryMeter({
+      operation: 'audio-export',
+      label: 'test',
+      budgetBytes: 56,
+    });
     const writer = createWavStreamWriter({
       sampleRate: 48_000,
       bitDepth: 16,
@@ -51,7 +63,11 @@ describe('streaming WAV writer', () => {
     // Two stereo frames retain 8 bytes. Their 44-byte WAV header plus the
     // 52-byte Blob publish copy peak at 104 bytes. A 103-byte budget used to
     // pass because the header was created outside the meter.
-    const meter = new PayloadMemoryMeter({ label: 'test', budgetBytes: 103 });
+    const meter = new PayloadMemoryMeter({
+      operation: 'audio-export',
+      label: 'test',
+      budgetBytes: 103,
+    });
     const writer = createWavStreamWriter({ sampleRate: 48_000, bitDepth: 16, meter });
     writer.add([new Float32Array([0, 1]), new Float32Array([0, -1])], 0);
 
@@ -73,6 +89,7 @@ describe('streaming WAV writer', () => {
     // copy coexist. An exact budget must succeed without a hidden metadata
     // generation or PCM copy.
     const meter = new PayloadMemoryMeter({
+      operation: 'audio-export',
       label: 'test',
       budgetBytes: chunkBytes + headerBytes + trailingBytes + fileBytes,
     });

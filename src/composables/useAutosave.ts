@@ -219,3 +219,22 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     dispose,
   };
 }
+
+/**
+ * Page-exit and pre-update flushes that never write the launcher's placeholder
+ * document over the crash-recovery autosave.
+ *
+ * @param options.hasLiveDocument Whether the store holds a document the user
+ *   created, opened or restored (false while the start screen is open).
+ * @param options.saveNow The autosave flush.
+ */
+export function liveDocumentFlushes(options: {
+  hasLiveDocument: () => boolean;
+  saveNow: () => Promise<boolean>;
+}): { flushOnExit: () => Promise<boolean>; flushBeforeUpdate: () => Promise<boolean> } {
+  return {
+    flushOnExit: async () => (options.hasLiveDocument() ? options.saveNow() : false),
+    // An update must stay usable before the user creates or opens a project.
+    flushBeforeUpdate: async () => (options.hasLiveDocument() ? options.saveNow() : true),
+  };
+}

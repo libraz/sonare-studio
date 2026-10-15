@@ -44,6 +44,7 @@ import {
   createAutomationWriteGesture,
   isAutomationWriteMode,
 } from '@/ui/mixer/automation-mode';
+import { coupledKeyList, insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
 
 /**
  * Quick Controls for the selected device (instrument or insert slot). Knob
@@ -93,7 +94,7 @@ function apply(id: string, value: ProcessorControlValue, commit: boolean): void 
     setQuickControl(props.target, id, value, { commit });
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = insertEditErrorMessage(err, t.value);
   }
 }
 
@@ -386,6 +387,24 @@ function menuControlIsNumeric(): boolean {
   return controls.value.find((control) => control.id === menu.controlId)?.kind === 'number';
 }
 
+/** Tooltip remark for a knob whose accepted range moves with sibling keys. */
+function coupledNote(control: QuickControl): string {
+  if (control.kind !== 'number' || !control.coupledWith) return '';
+  return formatMessage(t.value.shell.mixer.controls.coupledNote, {
+    related: coupledKeyList(control.coupledWith),
+  });
+}
+
+/** Control title with its current value, plus the coupled-key remark when one applies. */
+function controlTooltip(control: QuickControl): string {
+  const title = formatMessage(t.value.shell.devicesPanel.quickControlTitle, {
+    name: control.name,
+    value: controlDisplay(control),
+  });
+  const note = coupledNote(control);
+  return note ? `${title} — ${note}` : title;
+}
+
 function onBooleanToggle(control: Extract<QuickControl, { kind: 'boolean' }>): void {
   apply(control.id, !control.value, true);
 }
@@ -443,12 +462,7 @@ onBeforeUnmount(() => {
           }"
           :data-control="control.kind === 'number' ? undefined : control.id"
           :aria-label="control.name"
-          v-tooltip="
-            formatMessage(t.shell.devicesPanel.quickControlTitle, {
-              name: control.name,
-              value: controlDisplay(control),
-            })
-          "
+          v-tooltip="controlTooltip(control)"
           @contextmenu="onKnobContextMenu(control, $event)"
         >
           <div v-if="control.kind === 'number'" class="qc-knob" role="slider" tabindex="0"

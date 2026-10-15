@@ -37,11 +37,11 @@ describe('arrangement loop split entry-point wiring', () => {
 
   it('exposes the shared snap picker while working in the arrangement', () => {
     expect(arrangementView).toContain(
-      "import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';",
+      "import { snapChoices } from '@/ui/shell/app-shell-options';",
     );
     expect(arrangementView).toContain("const snapChoice = computed<number | 'bar'>({");
     expect(arrangementView).toMatch(/<SelectMenu\s+v-model="snapChoice"/);
-    expect(arrangementView).toContain(':options="SNAP_CHOICES"');
+    expect(arrangementView).toContain(':options="snapChoices(t.shell.editor.snapBar)"');
   });
 
   it('shares a view-local vertical zoom height between the headers and canvas', () => {

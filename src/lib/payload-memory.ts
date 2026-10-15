@@ -10,7 +10,25 @@ export interface PayloadMemorySample {
   peakBrowserHeapBytes?: number;
 }
 
+/** Which user-facing operation exceeded its payload budget; selects the localized advice. */
+export type PayloadMemoryOperation =
+  | 'audio-export'
+  | 'audio-encoding'
+  | 'live-schedule'
+  | 'transcription'
+  | 'score-export';
+
+/** English names used only for the log/test `message`; the UI localizes by operation key. */
+const OPERATION_LABELS: Record<PayloadMemoryOperation, string> = {
+  'audio-export': 'Audio export',
+  'audio-encoding': 'Audio encoding',
+  'live-schedule': 'Live audio schedule',
+  transcription: 'Audio transcription',
+  'score-export': 'Score export',
+};
+
 export interface PayloadMemoryMeterOptions {
+  operation: PayloadMemoryOperation;
   label: string;
   budgetBytes: number;
   onSample?: (sample: PayloadMemorySample) => void;
@@ -21,13 +39,19 @@ export interface PayloadMemoryMeterOptions {
 export class PayloadMemoryLimitError extends Error {
   readonly requiredBytes: number;
   readonly budgetBytes: number;
-  readonly operation: string;
+  readonly operation: PayloadMemoryOperation;
 
-  constructor(operation: string, requiredBytes: number, budgetBytes: number) {
+  /** `detail` names the specific payload in the English log message only. */
+  constructor(
+    operation: PayloadMemoryOperation,
+    requiredBytes: number,
+    budgetBytes: number,
+    detail?: string,
+  ) {
     const requiredMiB = Math.ceil(requiredBytes / (1024 * 1024));
     const budgetMiB = Math.floor(budgetBytes / (1024 * 1024));
     super(
-      `${operation} needs about ${requiredMiB} MiB of working memory, exceeding the ${budgetMiB} MiB browser budget. Shorten the range, lower the sample rate, or export fewer pages.`,
+      `${detail ?? OPERATION_LABELS[operation]} needs about ${requiredMiB} MiB of working memory, exceeding the ${budgetMiB} MiB browser budget.`,
     );
     this.name = 'PayloadMemoryLimitError';
     this.operation = operation;
@@ -94,9 +118,10 @@ export class PayloadMemoryMeter {
     const required = this.activeBytes + bytes;
     if (required > this.options.budgetBytes) {
       throw new PayloadMemoryLimitError(
-        `${this.options.label} (${unit})`,
+        this.options.operation,
         required,
         this.options.budgetBytes,
+        `${this.options.label} (${unit})`,
       );
     }
     this.activeBytes = required;

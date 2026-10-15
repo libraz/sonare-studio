@@ -7,6 +7,7 @@
  */
 import { dialogs } from './dialogs';
 import { harmony } from './harmony';
+import { notices } from './notices';
 import { reasons } from './reasons';
 import { settings } from './settings';
 import { shellArrangement } from './shell-arrangement';
@@ -29,6 +30,7 @@ export const ja = {
     ...shellScore,
   },
   harmony,
+  notices,
   reasons,
   dialogs,
   shortcuts,

@@ -8,8 +8,7 @@ export const COUNT_IN_CHOICES = [
   { value: 4, label: '4 bars' },
 ] as const;
 
-export const SNAP_CHOICES = [
-  { value: 'bar', label: 'Bar' },
+const GRID_SNAP_CHOICES = [
   { value: 1, label: '1/1' },
   { value: 2, label: '1/2' },
   { value: 4, label: '1/4' },
@@ -22,6 +21,11 @@ export const SNAP_CHOICES = [
   { value: 32 / 3, label: '1/16.' },
   { value: 32, label: '1/32' },
 ] as const;
+
+/** Snap grid choices, led by the bar option under its localized label. */
+export function snapChoices(barLabel: string) {
+  return [{ value: 'bar' as const, label: barLabel }, ...GRID_SNAP_CHOICES];
+}
 
 export const TOUR_STEPS: TourStep[] = [
   {

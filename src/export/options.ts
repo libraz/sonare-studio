@@ -416,6 +416,7 @@ export function createStemsZipWriter(
   const meter =
     memory.meter ??
     new PayloadMemoryMeter({
+      operation: 'audio-export',
       label: 'Stems ZIP',
       budgetBytes: memory.budgetBytes ?? DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
       onSample: memory.onSample,

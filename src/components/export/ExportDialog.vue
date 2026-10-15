@@ -657,6 +657,7 @@ async function onExport(): Promise<void> {
     const targetLufs = appSettings.settings.loudnessTargetLufs;
     const primaryTarget = targets[0]!;
     const stemMemory = new PayloadMemoryMeter({
+      operation: 'audio-export',
       label: 'Stem export',
       budgetBytes: memoryBudgetBytes,
     });
@@ -679,6 +680,7 @@ async function onExport(): Promise<void> {
             .metadata as import('@/export/audio-file-metadata').AudioFileMetadata,
         },
         meter: new PayloadMemoryMeter({
+          operation: 'audio-export',
           label: 'Streaming WAV export',
           budgetBytes: memoryBudgetBytes,
         }),
@@ -829,6 +831,7 @@ async function onExport(): Promise<void> {
         if (stems.length === 0) throw new Error(t.value.dialogs.exportAudio.noStems);
         for (const target of targets) {
           const meter = new PayloadMemoryMeter({
+            operation: 'audio-export',
             label: `Stem export (${target.encoder.id})`,
             budgetBytes: memoryBudgetBytes,
           });

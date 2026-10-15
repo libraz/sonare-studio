@@ -1,4 +1,4 @@
-import { PayloadMemoryLimitError } from '@/lib/payload-memory';
+import { PayloadMemoryLimitError, type PayloadMemoryOperation } from '@/lib/payload-memory';
 
 export const MEBIBYTE = 1024 * 1024;
 export const DEFAULT_EXPORT_MEMORY_BUDGET_BYTES = 1024 * MEBIBYTE;
@@ -16,9 +16,13 @@ export interface RenderPayloadMemoryEstimate {
   peakPayloadBytes: number;
 }
 
-function safePayloadBytes(value: number, label: string): number {
+function safePayloadBytes(
+  value: number,
+  label: string,
+  operation: PayloadMemoryOperation = 'audio-export',
+): number {
   if (!Number.isSafeInteger(value) || value < 0) {
-    throw new PayloadMemoryLimitError(label, Number.MAX_SAFE_INTEGER, 1);
+    throw new PayloadMemoryLimitError(operation, Number.MAX_SAFE_INTEGER, 1, label);
   }
   return value;
 }
@@ -101,7 +105,7 @@ export function assertRenderPayloadMemory(
     throw new RangeError('Export memory budget must be finite and greater than zero');
   }
   if (estimate.peakPayloadBytes > budgetBytes) {
-    throw new PayloadMemoryLimitError('Audio export', estimate.peakPayloadBytes, budgetBytes);
+    throw new PayloadMemoryLimitError('audio-export', estimate.peakPayloadBytes, budgetBytes);
   }
 }
 
@@ -125,8 +129,12 @@ export function estimateCodecPayloadMemory(options: {
   workerBacked?: boolean;
   retainedBytes?: number;
 }): CodecPayloadMemoryEstimate {
-  const inputBytes = safePayloadBytes(options.inputBytes, 'Audio codec input');
-  const retainedBytes = safePayloadBytes(options.retainedBytes ?? 0, 'Retained export payload');
+  const inputBytes = safePayloadBytes(options.inputBytes, 'Audio codec input', 'audio-encoding');
+  const retainedBytes = safePayloadBytes(
+    options.retainedBytes ?? 0,
+    'Retained export payload',
+    'audio-encoding',
+  );
   const workerInputCopyBytes = options.workerBacked === true ? inputBytes : 0;
   const mediaRecorder = new Set(['aac', 'opus-webm', 'opus-ogg']).has(options.encoderId);
   // MediaRecorder first copies the planar Float32 input into an AudioBuffer,
@@ -136,10 +144,15 @@ export function estimateCodecPayloadMemory(options: {
   // particular file; incompressible PCM is the safe upper bound.
   const inputGenerations = mediaRecorder ? 2 : 1;
   const encodedGenerations = mediaRecorder || options.encoderId === 'flac' ? 2 : 1;
-  const encodedOneGenerationBytes = safePayloadBytes(inputBytes + 64 * 1024, 'Encoded audio');
+  const encodedOneGenerationBytes = safePayloadBytes(
+    inputBytes + 64 * 1024,
+    'Encoded audio',
+    'audio-encoding',
+  );
   const outputUpperBoundBytes = safePayloadBytes(
     encodedOneGenerationBytes * encodedGenerations,
     'Encoded audio',
+    'audio-encoding',
   );
   // MP3 converts one 1152-frame block after the bounded-block rewrite. FLAC
   // works on at most one configured frame block at a time; reserve 16 MiB for
@@ -152,6 +165,7 @@ export function estimateCodecPayloadMemory(options: {
   const peakPayloadBytes = safePayloadBytes(
     retainedBytes + inputBytes + outputUpperBoundBytes + codecScratchBytes,
     'Audio encoding',
+    'audio-encoding',
   );
   return {
     inputBytes,
@@ -174,6 +188,6 @@ export function assertCodecPayloadMemory(
     throw new RangeError('Codec memory budget must be finite and greater than zero');
   }
   if (estimate.peakPayloadBytes > budgetBytes) {
-    throw new PayloadMemoryLimitError('Audio encoding', estimate.peakPayloadBytes, budgetBytes);
+    throw new PayloadMemoryLimitError('audio-encoding', estimate.peakPayloadBytes, budgetBytes);
   }
 }

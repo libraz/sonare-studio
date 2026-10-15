@@ -59,7 +59,11 @@ describe('streaming ZIP writer', () => {
   });
 
   it('rejects close and releases chunks when the final archive publish fails', async () => {
-    const meter = new PayloadMemoryMeter({ label: 'test', budgetBytes: 1024 * 1024 });
+    const meter = new PayloadMemoryMeter({
+      operation: 'audio-export',
+      label: 'test',
+      budgetBytes: 1024 * 1024,
+    });
     const retain = meter.retain.bind(meter);
     vi.spyOn(meter, 'retain').mockImplementation((bytes, unit) => {
       if (unit === 'ZIP archive publish') throw new Error('publish accounting failed');

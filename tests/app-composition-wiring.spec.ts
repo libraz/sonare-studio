@@ -37,8 +37,9 @@ describe('application composition wiring', () => {
   });
 
   it('connects startup, update durability, global input cleanup, and start-screen actions', () => {
-    expect(app).toContain('installPwaReloadPreparation(async () => {');
-    expect(app).toContain('await autosave.saveNow();');
+    expect(app).toContain('installPwaReloadPreparation(flushBeforeUpdate)');
+    expect(app).toContain('hasLiveDocument: () => store.initialized && !startScreenOpen.value');
+    expect(app).toContain('flushAutosave: flushOnExit');
     expect(app).toContain('useAppLifecycle({');
     expect(app).toContain('onGlobalKeyDown,');
     expect(app).toContain('onWindowPointerDown,');
@@ -59,7 +60,7 @@ describe('application composition wiring', () => {
   it('routes header undo and redo failures into the same visible error surface', () => {
     expect(app).toContain('function onUndo(): void {');
     expect(app).toContain('function onRedo(): void {');
-    expect(app).toContain('errorMessage.value = describeError(error);');
+    expect(app).toContain('errorMessage.value = describeError(error, t.value.notices.errors);');
     expect(app).toContain('@undo="onUndo"');
     expect(app).toContain('@redo="onRedo"');
   });

@@ -31,6 +31,7 @@ export const shellEditors = {
     groupInput: 'Note input',
     groupMidi: 'MIDI input',
     snap: 'Snap',
+    snapBar: 'Bar',
     snapToggleTitle: 'Snap note edits to the grid',
     snapGridTitle: 'Grid size for snapping and quantizing',
     quantizeTitle: 'Move the selected note starts onto the grid',

@@ -219,7 +219,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         updateLiveMediaLeases();
         releasePendingBundleRestoreLeases();
       } catch (error) {
-        errorMessage.value = describeError(error);
+        errorMessage.value = describeError(error, t.value.notices.errors);
         scheduleBundleLeaseRetry();
       }
     }, 1_100);
@@ -234,7 +234,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       lease.release();
     } catch (error) {
       pendingBundleRestoreLeases.add(lease);
-      errorMessage.value = describeError(error);
+      errorMessage.value = describeError(error, t.value.notices.errors);
       scheduleBundleLeaseRetry();
     }
   }
@@ -246,7 +246,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     } catch (error) {
       // A live document reference must never be silently abandoned. Existing
       // pending bundle leases remain held and the retry path keeps trying.
-      errorMessage.value = describeError(error);
+      errorMessage.value = describeError(error, t.value.notices.errors);
       scheduleBundleLeaseRetry();
     }
   });
@@ -300,7 +300,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (documentKey !== null) return documentKey;
       throw new Error('Autosave completed without a persisted document revision');
     }
-    throw autosave.lastError.value ?? new Error('Autosave failed');
+    throw autosave.lastError.value ?? new Error(t.value.shell.autosaveFailed);
   }
 
   async function confirmIncompletePortableExport(
@@ -344,7 +344,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         autosavePresent = stored.some((info) => isAutosaveProjectName(info.name));
         storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
       } catch (err) {
-        errorMessage.value = describeError(err);
+        errorMessage.value = describeError(err, t.value.notices.errors);
       }
     }
     hasAutosave.value = autosavePresent;
@@ -364,7 +364,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         hasAutosave.value = stored.some((info) => isAutosaveProjectName(info.name));
         storedProjects.value = stored.filter((info) => !isReservedProjectName(info.name));
       } catch (err) {
-        errorMessage.value = describeError(err);
+        errorMessage.value = describeError(err, t.value.notices.errors);
       }
     }
     startScreenOpen.value = true;
@@ -497,7 +497,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         await deleteProjectRevisions(name);
         await refreshRevisions();
       } catch (err) {
-        errorMessage.value = describeError(err);
+        errorMessage.value = describeError(err, t.value.notices.errors);
       }
       // Deleting a project may strand media only it referenced.
       await reclaimUnusedMedia();

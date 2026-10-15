@@ -52,7 +52,7 @@ export function useActionGuards(options: ActionGuardsOptions) {
     try {
       await action();
     } catch (err) {
-      errorMessage.value = describeError(err);
+      errorMessage.value = describeError(err, t.value.notices.errors);
     } finally {
       busy.value = false;
     }

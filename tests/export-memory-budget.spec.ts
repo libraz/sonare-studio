@@ -132,6 +132,7 @@ describe('export payload memory benchmarks', () => {
   it('tracks and releases one consumer payload at a time', () => {
     const samples: number[] = [];
     const meter = new PayloadMemoryMeter({
+      operation: 'audio-export',
       label: 'CI payload benchmark',
       budgetBytes: MEBIBYTE,
       onSample: (sample) => samples.push(sample.activeBytes),

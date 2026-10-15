@@ -286,7 +286,7 @@ async function preflightTranscription(
   }
   if (!fits(requestSeconds)) {
     throw new PayloadMemoryLimitError(
-      'Audio transcription',
+      'transcription',
       addSafeBytes([fixedBytes, requestBytes(requestSeconds)]),
       DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES,
     );

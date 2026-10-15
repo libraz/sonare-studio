@@ -367,6 +367,10 @@ const notation = useScoreNotation({
   resetPlayheadScan: () => playhead?.resetScan(),
   createClient: () => new VerovioClient(),
 });
+// Resolving the current artifact rebuilds its identity, so cache it instead of
+// recomputing it on every render.
+const hasCurrentXml = computed(() => !!notation.getCurrentXml());
+const currentPartName = computed(() => notation.getCurrentPartName());
 
 // --- Playhead highlight ---------------------------------------------------------
 
@@ -848,8 +852,8 @@ onBeforeUnmount(() => {
       :loading="notation.loading.value"
       :exporting="notation.exporting.value"
       :page-count="notation.pageCount.value"
-      :has-xml="!!notation.getCurrentXml()"
-      :part-name="notation.getCurrentPartName()"
+      :has-xml="hasCurrentXml"
+      :part-name="currentPartName"
       :zoom-percent="zoomPercent"
       :zoom-min="VIEW_ZOOM_MIN"
       :zoom-max="VIEW_ZOOM_MAX"

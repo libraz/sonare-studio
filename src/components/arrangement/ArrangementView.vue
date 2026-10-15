@@ -91,7 +91,7 @@ import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { shortcutHint } from '@/ui/settings/shortcut-hint';
-import { SNAP_CHOICES } from '@/ui/shell/app-shell-options';
+import { snapChoices } from '@/ui/shell/app-shell-options';
 import type { NoteTargetUnmatchedPolicy } from '@/wasm/index.js';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
@@ -1467,7 +1467,7 @@ onBeforeUnmount(() => {
           v-model="snapChoice"
           class="arrangement-snap"
           size="sm"
-          :options="SNAP_CHOICES"
+          :options="snapChoices(t.shell.editor.snapBar)"
           :aria-label="t.shell.editor.snap"
           :title="t.shell.arrangement.snapTitle"
         />

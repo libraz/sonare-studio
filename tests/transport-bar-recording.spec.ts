@@ -37,7 +37,7 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
   return mount(TransportBar, {
     props: {
       autoPunchEnabled: false,
-      bbtDisplay: '1.1.000',
+      readBbtDisplay: () => '1.1.000',
       bridge: null,
       canRecord: true,
       countInChoices: [
@@ -52,7 +52,7 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
       loopEnabled: false,
       metronomeEnabled: false,
       metronomeVolume: 0.35,
-      positionSeconds: 0,
+      readPositionSeconds: () => 0,
       recording: makeRecording(),
       recordingInputDeviceOptions: [
         { value: '', label: 'Default input' },

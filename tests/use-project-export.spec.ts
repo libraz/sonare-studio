@@ -2,6 +2,7 @@ import { flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
 import { useProjectExport } from '@/composables/useProjectExport';
 import { saveMixerSnapshot } from '@/project/command/mixer-snapshots';
@@ -13,6 +14,7 @@ import {
   type ProjectDocument,
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { MESSAGES } from '@/ui/i18n';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -85,6 +87,38 @@ describe('useProjectExport', () => {
     setActivePinia(createPinia());
     useProjectStore().dispose();
     vi.mocked(confirmDialog).mockReset();
+  });
+
+  it('reports an unavailable MusicXML export as the localized reason without a raw code', async () => {
+    const settings = useAppSettings();
+    const previous = settings.settings.language;
+    settings.set('language', 'ja');
+    try {
+      const errors: string[] = [];
+      const projectExport = useProjectExport({
+        closeProjectMenu: vi.fn(),
+        downloadBlobFile: vi.fn(),
+        loopEnabled: ref(false),
+        loopStartPpq: ref(0),
+        loopEndPpq: ref(0),
+        runAction: async (action) => {
+          try {
+            await action();
+          } catch (err) {
+            errors.push((err as Error).message);
+          }
+        },
+      });
+      const availability = projectExport.exportMusicXmlAction();
+      await flushPromises();
+      expect(availability.available).toBe(false);
+      expect(errors).toEqual([
+        MESSAGES.ja.notices.musicXmlUnavailable[availability.reason ?? 'unknown'],
+      ]);
+      expect(errors[0]).not.toMatch(/required|unavailable/);
+    } finally {
+      settings.set('language', previous);
+    }
   });
 
   it('exports the active MIDI clip as MusicXML from the file menu action', async () => {

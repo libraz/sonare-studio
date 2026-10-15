@@ -54,7 +54,7 @@ import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { type DockTab, useAppShellLayout } from '@/composables/useAppShellLayout';
 import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
-import { useAutosave } from '@/composables/useAutosave';
+import { liveDocumentFlushes, useAutosave } from '@/composables/useAutosave';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
@@ -105,14 +105,14 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { useContextMenuState } from '@/ui/menu/context-menu';
 import { disengageAutomationWriteModes } from '@/ui/mixer/automation-mode';
 import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
-import { COUNT_IN_CHOICES, SNAP_CHOICES, TOUR_STEPS } from '@/ui/shell/app-shell-options';
+import { COUNT_IN_CHOICES, snapChoices, TOUR_STEPS } from '@/ui/shell/app-shell-options';
 import { installSonareDevDebug } from '@/ui/shell/dev-debug';
 
 /**
  * Single-window app shell: a transport bar with the project menu on top, the
  * arrangement view (track headers + clip timeline) in the middle, and the
  * editor dock (piano roll / lists tabs) below, separated by a draggable
- * divider. Edits are bounced to the engine per clip via the prerender loop.
+ * divider. Edits reach the engine as scheduled clip state.
  */
 
 const version = ref('…');
@@ -208,7 +208,7 @@ function onUndo(): void {
   try {
     undo();
   } catch (error) {
-    errorMessage.value = describeError(error);
+    errorMessage.value = describeError(error, t.value.notices.errors);
   }
 }
 
@@ -216,7 +216,7 @@ function onRedo(): void {
   try {
     redo();
   } catch (error) {
-    errorMessage.value = describeError(error);
+    errorMessage.value = describeError(error, t.value.notices.errors);
   }
 }
 
@@ -297,20 +297,13 @@ const autosave = useAutosave({
   persistedStateKey,
 });
 // Service-worker activation/recovery may reload the page. Flush the current
-// document first so OPFS writes cannot be abandoned mid-update.
-// While the launcher is open the store only holds a placeholder document, so
-// flushing it would overwrite the crash-recovery autosave with an empty project.
-const flushLiveAutosave = async (): Promise<boolean> => {
-  if (!store.initialized || startScreenOpen.value) return false;
-  return autosave.saveNow();
-};
-onScopeDispose(
-  installPwaReloadPreparation(async () => {
-    // An update must remain usable before the user creates or opens a project.
-    if (!store.initialized || startScreenOpen.value) return true;
-    return autosave.saveNow();
-  }),
-);
+// document first so OPFS writes cannot be abandoned mid-update. While the
+// launcher is open the store only holds a placeholder document.
+const { flushOnExit, flushBeforeUpdate } = liveDocumentFlushes({
+  hasLiveDocument: () => store.initialized && !startScreenOpen.value,
+  saveNow: autosave.saveNow,
+});
+onScopeDispose(installPwaReloadPreparation(flushBeforeUpdate));
 onScopeDispose(clearAudioClipData);
 
 // Surface a failed background autosave: the user's recent edits are not on
@@ -526,7 +519,7 @@ const {
   runAction,
 });
 
-// --- Edit-to-sound loop (prerender bounce) ----------------------------------
+// --- Edit-to-sound loop (scheduling into the engine) ----------------------------------
 
 const {
   applyPending,
@@ -724,6 +717,11 @@ const {
   scheduleApply,
   syncTransportState,
 });
+// Stable playhead getters: only the components that draw the playhead read it,
+// so a telemetry tick does not re-render the App root and every panel.
+const readPositionPpq = (): number => positionPpq.value;
+const readBbtDisplay = (): string => bbtDisplay.value;
+const readPositionSeconds = (): number => positionSeconds.value;
 
 // --- Layout: arrangement/editor split ------------------------------------------
 
@@ -963,7 +961,7 @@ useAppLifecycle({
       resolveBootStart = null;
     }
   },
-  flushAutosave: flushLiveAutosave,
+  flushAutosave: flushOnExit,
   shouldBlockUnload: () => dirty.value || autosave.saving.value,
 });
 
@@ -1030,7 +1028,7 @@ onMounted(installLaunchQueueConsumer);
       >
         <ArrangementView
           ref="arrangementRef"
-          :position-ppq="() => positionPpq"
+          :position-ppq="readPositionPpq"
           :is-playing="isPlaying"
           :loop-enabled="loopEnabled"
           :loop-start-ppq="loopStartPpq"
@@ -1221,7 +1219,7 @@ onMounted(installLaunchQueueConsumer);
                 <SelectMenu
                   v-model="snapChoice"
                   class="tb-select"
-                  :options="SNAP_CHOICES"
+                  :options="snapChoices(t.shell.editor.snapBar)"
                   size="sm"
                   :aria-label="t.shell.editor.snap"
                   :title="t.shell.editor.snapGridTitle"
@@ -1397,7 +1395,7 @@ onMounted(installLaunchQueueConsumer);
           <PianoRollEditor
             ref="pianoRollRef"
             class="piano-roll-host"
-            :position-ppq="() => positionPpq"
+            :position-ppq="readPositionPpq"
             :is-playing="isPlaying"
             :force-lane-hidden="scoreVisible"
             :guidance-enabled="dockTab === 'roll' && !dockCollapsed"
@@ -1426,7 +1424,7 @@ onMounted(installLaunchQueueConsumer);
             v-if="scoreVisible"
             class="score-host"
             :style="scoreResized ? { flex: 'none', height: `${scoreHeight}px` } : undefined"
-            :position-ppq="() => positionPpq"
+            :position-ppq="readPositionPpq"
             :is-playing="isPlaying"
             :guidance-enabled="dockTab === 'roll' && !dockCollapsed"
             @seek="onSeek"
@@ -1448,7 +1446,7 @@ onMounted(installLaunchQueueConsumer);
             :bus-meter-for="busMeterSource"
             :scope-for="trackScopeSource"
             :bus-scope-for="busScopeSource"
-            :position-ppq="() => positionPpq"
+            :position-ppq="readPositionPpq"
             :is-playing="isPlaying"
             :visible="dockTab === 'mixer'"
             :loop-enabled="loopEnabled"
@@ -1482,7 +1480,7 @@ onMounted(installLaunchQueueConsumer);
         >
           <!-- Kept alive via v-show: the step pattern is session-local
                component state and must survive tab switches. -->
-          <StepSequencer :is-playing="isPlaying" :position-ppq="() => positionPpq" />
+          <StepSequencer :is-playing="isPlaying" :position-ppq="readPositionPpq" />
         </section>
         <section
           v-show="dockTab === 'lists'"
@@ -1493,7 +1491,7 @@ onMounted(installLaunchQueueConsumer);
         >
           <ProjectListsPanel
             class="lists-host"
-            :position-ppq="() => positionPpq"
+            :position-ppq="readPositionPpq"
             :initial-tab="listsInitialTab"
             @seek="onSeek"
           />
@@ -1557,7 +1555,7 @@ onMounted(installLaunchQueueConsumer);
         <aside v-if="deviceRackOpen" class="right-zone" :aria-label="t.shell.devices.panelLabel">
           <DeviceRack
             :transport-playing="isPlaying"
-            :position-ppq="() => positionPpq"
+            :position-ppq="readPositionPpq"
             :instrument-picker-request="instrumentPickerRequest"
           />
         </aside>
@@ -1566,7 +1564,7 @@ onMounted(installLaunchQueueConsumer);
 
     <TransportBar
       :auto-punch-enabled="autoPunchEnabled"
-      :bbt-display="bbtDisplay"
+      :read-bbt-display="readBbtDisplay"
       :bridge="bridge"
       :can-record="canRecord"
       :count-in-choices="COUNT_IN_CHOICES"
@@ -1578,7 +1576,7 @@ onMounted(installLaunchQueueConsumer);
       :loop-enabled="loopEnabled"
       :metronome-enabled="metronomeEnabled"
       :metronome-volume="metronomeVolume"
-      :position-seconds="positionSeconds"
+      :read-position-seconds="readPositionSeconds"
       :recording="recording"
       :recording-input-device-options="recordingInputDeviceOptions"
       :midi-recording="midiRecording"

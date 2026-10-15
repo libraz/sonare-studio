@@ -241,6 +241,7 @@ export function createPrintPageWriter(
   // Hidden on screen; the print stylesheet overrides this with !important.
   root.style.display = 'none';
   const meter = new PayloadMemoryMeter({
+    operation: 'score-export',
     label: 'Score print',
     budgetBytes: memory.budgetBytes ?? DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES,
     onSample: memory.onSample,
@@ -349,6 +350,7 @@ export async function createPdfPageWriter(
   const headerTitle = metadata.headerTitle?.trim() || metadata.title?.trim() || '';
   const pageNumbers = metadata.pageNumbers !== false;
   const meter = new PayloadMemoryMeter({
+    operation: 'score-export',
     label: 'Score PDF',
     budgetBytes: metadata.memoryBudgetBytes ?? DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES,
     onSample: metadata.onMemorySample,

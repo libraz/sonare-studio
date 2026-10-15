@@ -52,13 +52,9 @@ import {
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import type { UseTransportReturn } from './useTransport';
-
-/** Error message shown when recording is attempted before the engine runs. */
-const ENGINE_NOT_STARTED_MESSAGE = 'Start the engine before recording.';
-const RECORDING_OVERFLOW_MESSAGE =
-  'Recording reached the capture buffer limit; the end of the take was dropped.';
 
 interface RecordingChannelRoute {
   trackId: number;
@@ -269,7 +265,8 @@ export function useRecording(
   };
 
   /** Formats an unknown thrown value into a user-facing message. */
-  const messageOf = describeError;
+  const { t } = useI18n();
+  const messageOf = (err: unknown): string => describeError(err, t.value.notices.errors);
 
   const recordingIdentity = (
     targetTrackIds: readonly number[],
@@ -345,8 +342,7 @@ export function useRecording(
       suppressInputEffects &&
       (voiceChangerPreset.value !== 'off' || streamingRetuneSemitones.value !== 0)
     ) {
-      error.value =
-        'Voice changer and retune are unavailable for multiple recording devices; record with a single or aggregate device to enable them.';
+      error.value = t.value.notices.recording.multiDeviceEffectsUnavailable;
     }
     recorder = recorderFactory(handle, {
       voiceChangerPreset:
@@ -374,7 +370,7 @@ export function useRecording(
       state.value = 'idle';
       micReady.value = false;
       inputLevel.value = 0;
-      error.value = 'The microphone was disconnected. Reconnect a device and request it again.';
+      error.value = t.value.notices.recording.micDisconnected;
     });
     recorder.setMonitor(monitorEnabled.value);
     return recorder;
@@ -398,7 +394,7 @@ export function useRecording(
     if (microphoneOperations.disposed) return false;
     const rec = ensureRecorder();
     if (!rec) {
-      error.value = ENGINE_NOT_STARTED_MESSAGE;
+      error.value = t.value.notices.recording.engineNotStarted;
       return false;
     }
     if (captureSource.value === 'output') {
@@ -425,7 +421,7 @@ export function useRecording(
   const arm = (trackId: number | null): void => {
     error.value = null;
     if (state.value !== 'idle') {
-      error.value = 'Cannot change the armed track while recording.';
+      error.value = t.value.notices.recording.armedTrackLocked;
       return;
     }
     if (trackId === null) {
@@ -435,11 +431,11 @@ export function useRecording(
     }
     const track = store.tracks.find((t) => t.id === trackId);
     if (!track) {
-      error.value = `Unknown track id: ${trackId}`;
+      error.value = formatMessage(t.value.notices.recording.unknownTrack, { id: trackId });
       return;
     }
     if (track.kind !== 'audio') {
-      error.value = 'Recording requires an audio track.';
+      error.value = t.value.notices.recording.audioTrackRequired;
       return;
     }
     armedTrackId.value = trackId;
@@ -449,16 +445,16 @@ export function useRecording(
   const setTrackArmed = (trackId: number, armed: boolean): void => {
     error.value = null;
     if (state.value !== 'idle') {
-      error.value = 'Cannot change the armed track while recording.';
+      error.value = t.value.notices.recording.armedTrackLocked;
       return;
     }
     const track = store.tracks.find((t) => t.id === trackId);
     if (!track) {
-      error.value = `Unknown track id: ${trackId}`;
+      error.value = formatMessage(t.value.notices.recording.unknownTrack, { id: trackId });
       return;
     }
     if (track.kind !== 'audio') {
-      error.value = 'Recording requires an audio track.';
+      error.value = t.value.notices.recording.audioTrackRequired;
       return;
     }
     const next = armed
@@ -493,12 +489,12 @@ export function useRecording(
     if (state.value === 'recording') {
       voiceChangerPreset.value = preset;
       if (preset === 'off' || !recorder?.setVoiceChangerPreset(preset)) {
-        error.value = 'Voice changer changes will apply to the next microphone binding.';
+        error.value = t.value.notices.recording.voiceChangerNextBinding;
       }
       return;
     }
     if (state.value !== 'idle') {
-      error.value = 'Cannot change the voice changer during a recording operation.';
+      error.value = t.value.notices.recording.voiceChangerBusy;
       return;
     }
     voiceChangerPreset.value = preset;
@@ -510,12 +506,12 @@ export function useRecording(
     if (state.value === 'recording') {
       streamingRetuneSemitones.value = clampStreamingRetuneSemitones(semitones);
       if (!recorder?.setStreamingRetuneSemitones(streamingRetuneSemitones.value)) {
-        error.value = 'Retune changes will apply to the next microphone binding.';
+        error.value = t.value.notices.recording.retuneNextBinding;
       }
       return;
     }
     if (state.value !== 'idle') {
-      error.value = 'Cannot change retune during a recording operation.';
+      error.value = t.value.notices.recording.retuneBusy;
       return;
     }
     streamingRetuneSemitones.value = clampStreamingRetuneSemitones(semitones);
@@ -531,12 +527,12 @@ export function useRecording(
   const setCaptureSource = (source: RecordingCaptureSource): void => {
     error.value = null;
     if (source !== 'input' && source !== 'output') {
-      error.value = `Unknown recording source: ${source}`;
+      error.value = formatMessage(t.value.notices.recording.unknownSource, { source });
       return;
     }
     if (state.value !== 'idle') {
       pendingCaptureSource = source;
-      error.value = 'Recording source changes will apply to the next take.';
+      error.value = t.value.notices.recording.sourceNextTake;
       return;
     }
     pendingCaptureSource = null;
@@ -548,7 +544,7 @@ export function useRecording(
     const next = deviceId.trim();
     if (state.value !== 'idle') {
       inputDeviceId.value = next;
-      error.value = 'Input device changes will apply to the next take.';
+      error.value = t.value.notices.recording.deviceNextTake;
       return;
     }
     if (inputDeviceId.value === next) return;
@@ -634,12 +630,12 @@ export function useRecording(
     const explicitEnd = endAtPpq !== undefined && Number.isFinite(endAtPpq);
     const rec = ensureRecorder();
     if (!rec) {
-      error.value = ENGINE_NOT_STARTED_MESSAGE;
+      error.value = t.value.notices.recording.engineNotStarted;
       return false;
     }
     const targetTrackIds = [...armedTrackIds.value];
     if (targetTrackIds.length === 0) {
-      error.value = 'Arm an audio track before recording.';
+      error.value = t.value.notices.recording.armAudioTrack;
       return false;
     }
     if (
@@ -648,7 +644,7 @@ export function useRecording(
         return track?.kind !== 'audio';
       })
     ) {
-      error.value = 'Recording requires an audio track.';
+      error.value = t.value.notices.recording.audioTrackRequired;
       return false;
     }
     const identity = recordingIdentity(targetTrackIds, startAtPpq, endAtPpq);
@@ -716,7 +712,7 @@ export function useRecording(
     const startPpq = plan.punchInPpq;
     const endPpq = explicitEnd ? (endAtPpq as number) : undefined;
     if (endPpq !== undefined && endPpq <= startPpq) {
-      return fail('The punch-out locator must be after the punch-in locator.');
+      return fail(t.value.notices.recording.punchOrder);
     }
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
     const ownsTransport = plan.transportOwner !== 'midi';
@@ -736,7 +732,7 @@ export function useRecording(
         !Number.isFinite(endSeconds) ||
         endSeconds <= startSeconds
       ) {
-        return fail('The punch-out locator must be after the punch-in locator.');
+        return fail(t.value.notices.recording.punchOrder);
       }
       startOptions.endPpq = endPpq;
       startOptions.maxDurationSeconds = endSeconds - startSeconds;
@@ -790,7 +786,7 @@ export function useRecording(
     if (ownsTransport && plan.startedFromRest && !transport.play()) {
       await rec.stop().catch(() => undefined);
       finishCountIn();
-      return fail('The engine rejected the transport play command.');
+      return fail(t.value.notices.recording.transportRejected);
     }
     if (ownsTransport && plan.countInPpq > 0) {
       isCountingIn.value = true;
@@ -810,8 +806,7 @@ export function useRecording(
     if (state.value !== 'recording' || !operation) return null;
     if (recorder !== operation.recorder) {
       finishOperation(operation);
-      error.value =
-        'Recording input changed before the take could be stopped. The take was discarded.';
+      error.value = t.value.notices.recording.inputChangedBeforeStop;
       return null;
     }
     const rec = operation.recorder;
@@ -837,8 +832,7 @@ export function useRecording(
       return null;
     }
     if (!current()) {
-      error.value =
-        'Recording input changed before the take could be saved. The take was discarded.';
+      error.value = t.value.notices.recording.inputChangedBeforeSave;
       return complete(null);
     }
     isRecording.value = false;
@@ -930,7 +924,7 @@ export function useRecording(
           const clipIds = addRecordedAudioClips(clipInputs);
           commitAssets();
           recordingCounter = nextRecordingCounter;
-          if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
+          if (overflowed) error.value = t.value.notices.recording.overflow;
           return complete(clipIds[0] ?? null);
         }
       }
@@ -970,18 +964,24 @@ export function useRecording(
       const clipIds = addRecordedAudioClips(clipInputs);
       commitAssets();
       recordingCounter = nextRecordingCounter;
-      if (overflowed) error.value = RECORDING_OVERFLOW_MESSAGE;
+      if (overflowed) error.value = t.value.notices.recording.overflow;
       return complete(clipIds[0] ?? null);
     } catch (err) {
       try {
         await rollbackAssets();
       } catch (rollbackError) {
         if (current()) {
-          error.value = `Failed to store the recording: ${messageOf(err)}; cleanup also failed: ${messageOf(rollbackError)}`;
+          error.value = formatMessage(t.value.notices.recording.storeFailedCleanup, {
+            detail: messageOf(err),
+            cleanupDetail: messageOf(rollbackError),
+          });
         }
         return complete(null);
       }
-      if (current()) error.value = `Failed to store the recording: ${messageOf(err)}`;
+      if (current())
+        error.value = formatMessage(t.value.notices.recording.storeFailed, {
+          detail: messageOf(err),
+        });
       return complete(null);
     }
   };

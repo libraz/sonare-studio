@@ -10,14 +10,14 @@ import { inspectMusicXmlExportLoss, serializeMusicXml } from '@/notation/musicxm
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ } from '@/project/annotations';
 import { formatMediaCompletenessReport } from '@/project/media-completeness';
-import { type ProjectDocument, serializeProject } from '@/project/serialization';
+import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   scoreExportAvailability as resolveScoreExportAvailability,
   type ScoreExportAvailability,
 } from '@/ui/score/export-availability';
-import { buildProjectScore } from '@/ui/score/use-score-notation';
+import { buildProjectScore, musicXmlScoredDocument } from '@/ui/score/use-score-notation';
 
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type DownloadBlobFile = (blob: Blob, filename: string) => void;
@@ -58,12 +58,18 @@ export function useProjectExport(options: ProjectExportOptions) {
     exportDialogOpen.value = true;
   }
 
+  /** Localized text for an availability reason; an unrecognized code falls back to the generic text. */
+  function musicXmlUnavailableMessage(reason: string | null): string {
+    const messages: Record<string, string> = t.value.notices.musicXmlUnavailable;
+    return messages[reason ?? ''] ?? t.value.notices.musicXmlUnavailable.unknown;
+  }
+
   /** Routes a direct unavailable invocation through the app error surface. */
-  function reportMusicXmlUnavailable(reason: string): void {
+  function reportMusicXmlUnavailable(reason: string | null): void {
     void Promise.resolve()
       .then(() =>
         options.runAction(async () => {
-          throw new Error(`MusicXML export unavailable: ${reason}`);
+          throw new Error(musicXmlUnavailableMessage(reason));
         }),
       )
       .catch(() => {
@@ -97,21 +103,6 @@ export function useProjectExport(options: ProjectExportOptions) {
     });
   }
 
-  /** The document as a MusicXML export engraves it: every track, or the active clip. */
-  function scoredDocument(fullScore: boolean): ProjectDocument {
-    const doc = serializeProject();
-    if (fullScore) return doc;
-    const clip = store.activeClip;
-    const trackIndex = clip ? store.tracks.findIndex((track) => track.id === clip.trackId) : -1;
-    const track = doc.tracks[trackIndex];
-    if (!clip || !track) return { ...doc, tracks: [] };
-    const clipIndex = store.clips
-      .filter((entry) => entry.trackId === clip.trackId)
-      .findIndex((entry) => entry.id === clip.id);
-    const scored = track.clips[clipIndex];
-    return { ...doc, tracks: [{ ...track, clips: scored ? [scored] : [] }] };
-  }
-
   /**
    * Starts MusicXML export and returns the same eligibility result consumed by
    * menu callers. An unavailable action is therefore observable even when a
@@ -121,18 +112,18 @@ export function useProjectExport(options: ProjectExportOptions) {
     options.closeProjectMenu();
     const availability = musicXmlAvailability.value;
     if (!availability.available) {
-      reportMusicXmlUnavailable(availability.reason ?? 'unknown');
+      reportMusicXmlUnavailable(availability.reason);
       return availability;
     }
     void options.runAction(async () => {
       const clip = store.activeClip;
       const currentAvailability = musicXmlAvailability.value;
       if (!currentAvailability.available) {
-        throw new Error(`MusicXML export unavailable: ${currentAvailability.reason}`);
+        throw new Error(musicXmlUnavailableMessage(currentAvailability.reason));
       }
       const fullScore = currentAvailability.mode === 'full-score';
       if (!clip && !fullScore) {
-        throw new Error('MusicXML export unavailable: active-midi-clip-required');
+        throw new Error(musicXmlUnavailableMessage('active-midi-clip-required'));
       }
       const scoreWindow = scoreClipWindow({
         clipStartPpq: store.clipStartPpq,
@@ -143,7 +134,7 @@ export function useProjectExport(options: ProjectExportOptions) {
       const keyFifths = keyFifthsForScaleHighlight(store.scaleHighlight);
       const divisionPpq =
         SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ[store.scoreDisplaySettings.displayQuantizeKey];
-      const loss = inspectMusicXmlExportLoss(scoredDocument(fullScore), divisionPpq);
+      const loss = inspectMusicXmlExportLoss(musicXmlScoredDocument(store, fullScore), divisionPpq);
       if (!(await confirmLossReport(loss, t.value.shell.project.musicXmlExportLoss))) return;
       const score = await buildProjectScore(store, {
         divisionPpq,

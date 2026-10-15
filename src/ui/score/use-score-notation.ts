@@ -14,7 +14,7 @@
  * getters.
  */
 
-import { type Ref, ref, type ShallowRef } from 'vue';
+import { type Ref, ref, type ShallowRef, shallowRef } from 'vue';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { projectFilename } from '@/lib/filename';
@@ -130,7 +130,7 @@ export interface ScoreNotationOptions {
 }
 
 /** The document as a MusicXML export engraves it: every track, or the active clip. */
-function musicXmlLossDocument(store: ProjectStore, fullScore: boolean): ProjectDocument {
+export function musicXmlScoredDocument(store: ProjectStore, fullScore: boolean): ProjectDocument {
   const doc = serializeProject();
   if (fullScore) return doc;
   const clip = store.activeClip;
@@ -263,6 +263,7 @@ export async function consumeScorePagesSnapshot(
     );
   }
   const meter = new PayloadMemoryMeter({
+    operation: 'score-export',
     label: 'Score SVG export',
     budgetBytes: memory.budgetBytes ?? DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES,
     onSample: memory.onSample,
@@ -433,6 +434,12 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
 
   /** Last atomically published score/XML/SVG and the source revision that produced it. */
   let currentArtifact: ScoreArtifact | null = null;
+  // Bumped on every artifact change so computed readers of the current score re-evaluate.
+  const artifactRevision = shallowRef(0);
+  const setCurrentArtifact = (next: ScoreArtifact | null): void => {
+    currentArtifact = next;
+    artifactRevision.value += 1;
+  };
   /** Timemap of the last successful load (paired with the same load's SVG ids). */
   let timemap: ReadonlyArray<VerovioTimemapEntry> = [];
   const screenOperations = new OperationGeneration();
@@ -501,6 +508,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   function artifactForCurrentState(): ScoreArtifact | null {
+    void artifactRevision.value;
     const artifact = currentArtifact;
     return artifact && sameOperationIdentity(artifact.identity, transcriptionIdentity())
       ? artifact
@@ -521,7 +529,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   function clearArtifacts(): void {
-    currentArtifact = null;
+    setCurrentArtifact(null);
     svg.value = '';
     page.value = 1;
     pageCount.value = 0;
@@ -613,7 +621,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         verovio.getTimemap(),
       ]);
       if (!screenOperationIsCurrent(token, verovio)) return;
-      currentArtifact = {
+      setCurrentArtifact({
         identity: transcriptionIdentity(),
         xml,
         score,
@@ -621,7 +629,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         partTrackIds,
         projectName: store.projectName,
         fullScore,
-      };
+      });
       pageCount.value = count;
       page.value = nextPage;
       svg.value = pageSvg;
@@ -653,7 +661,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       const pageSvg = await verovio.renderPage(page.value);
       if (!screenOperationIsCurrent(token, verovio)) return;
       svg.value = pageSvg;
-      currentArtifact = { ...artifact, svg: pageSvg };
+      setCurrentArtifact({ ...artifact, svg: pageSvg });
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
@@ -686,7 +694,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
       pageCount.value = count;
       page.value = nextPage;
       svg.value = pageSvg;
-      currentArtifact = { ...artifact, svg: pageSvg };
+      setCurrentArtifact({ ...artifact, svg: pageSvg });
       options.resetPlayheadScan();
     } catch (err) {
       if (!screenOperationIsCurrent(token, verovio)) return;
@@ -794,7 +802,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   /** Asks before a MusicXML file drops content the engraved score cannot carry. */
   function confirmMusicXmlLoss(fullScore: boolean): Promise<boolean> {
     const loss = inspectMusicXmlExportLoss(
-      musicXmlLossDocument(store, fullScore),
+      musicXmlScoredDocument(store, fullScore),
       options.getDivisionPpq(),
     );
     return confirmLossReport(loss, t.value.shell.project.musicXmlExportLoss);

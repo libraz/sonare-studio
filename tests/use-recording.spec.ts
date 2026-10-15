@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed, effectScope, ref } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { useRecording } from '@/composables/useRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import type { EngineHandle } from '@/engine/engine';
@@ -19,6 +20,7 @@ import {
   undo,
 } from '@/project/commands';
 import { getProject, useProjectStore } from '@/project/store';
+import { MESSAGES } from '@/ui/i18n';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
@@ -1039,6 +1041,30 @@ describe('useRecording', () => {
     expect(await recording.stopRecord()).toBeNull();
     expect(recording.error.value).toBe('Failed to store the recording: disk full');
     expect(store.clips.some((c) => c.kind === 'audio')).toBe(false);
+  });
+
+  it('publishes localized messages under the Japanese locale', async () => {
+    const settings = useAppSettings();
+    const previous = settings.settings.language;
+    settings.set('language', 'ja');
+    try {
+      const { recording } = setup();
+      recording.arm(9999);
+      expect(recording.error.value).toBe(
+        MESSAGES.ja.notices.recording.unknownTrack.replace('{id}', '9999'),
+      );
+      const trackId = addAudioTrack();
+      recording.arm(trackId);
+      await recording.record();
+      ingestMock.mockRejectedValueOnce(new Error('disk full'));
+      expect(await recording.stopRecord()).toBeNull();
+      expect(recording.error.value).toBe(
+        MESSAGES.ja.notices.recording.storeFailed.replace('{detail}', 'disk full'),
+      );
+      expect(recording.error.value).not.toMatch(/Failed to store/);
+    } finally {
+      settings.set('language', previous);
+    }
   });
 
   it('stopRecord() without a recording is a no-op', async () => {

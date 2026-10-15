@@ -19,7 +19,8 @@ type CustomVoiceChangerPreset = Exclude<RealtimeVoiceChangerConfigInput, string>
 
 const props = defineProps<{
   autoPunchEnabled: boolean;
-  bbtDisplay: string;
+  /** Playhead bar.beat readout; a getter so only this bar re-renders per frame. */
+  readBbtDisplay: () => string;
   bridge: MeterBridge | null;
   canRecord: boolean;
   countInChoices: readonly { value: number; label: string }[];
@@ -31,7 +32,8 @@ const props = defineProps<{
   loopEnabled: boolean;
   metronomeEnabled: boolean;
   metronomeVolume: number;
-  positionSeconds: number;
+  /** Playhead seconds; a getter so only this bar re-renders per frame. */
+  readPositionSeconds: () => number;
   recording: Recording;
   recordingInputDeviceOptions: readonly RecordingInputDeviceOption[];
   midiRecording: MidiRecording;
@@ -601,7 +603,7 @@ function onRetuneInput(event: Event): void {
           inputmode="numeric"
           spellcheck="false"
           size="12"
-          :value="bbtDisplay"
+          :value="readBbtDisplay()"
           :aria-label="t.shell.transport.playheadPosition"
           v-tooltip="t.shell.transport.playheadPositionTitle"
           @focus="emit('bbtFocus')"
@@ -612,7 +614,7 @@ function onRetuneInput(event: Event): void {
       </div>
       <div class="time-register time-secondary" v-tooltip="t.shell.transport.timeTitle">
         <span class="time-cap">{{ t.shell.transport.time }}</span>
-        <span class="position-seconds">{{ positionSeconds.toFixed(2) }}s</span>
+        <span class="position-seconds">{{ readPositionSeconds().toFixed(2) }}s</span>
       </div>
     </div>
 

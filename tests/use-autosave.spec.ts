@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, nextTick } from 'vue';
-import { useAutosave } from '@/composables/useAutosave';
+import { liveDocumentFlushes, useAutosave } from '@/composables/useAutosave';
 import { ProjectNotFoundError } from '@/persistence/opfs';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import {
@@ -112,6 +112,25 @@ describe('useAutosave', () => {
       JSON.stringify(doc),
       expect.any(String),
     );
+  });
+
+  it('leaves the autosave slot untouched on page exit and update while the launcher is open', async () => {
+    const autosave = createAutosave();
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    let launcherOpen = true;
+    const flushes = liveDocumentFlushes({
+      hasLiveDocument: () => store.initialized && !launcherOpen,
+      saveNow: autosave.saveNow,
+    });
+
+    await expect(flushes.flushOnExit()).resolves.toBe(false);
+    await expect(flushes.flushBeforeUpdate()).resolves.toBe(true);
+    expect(opfsMocks.saveProject).not.toHaveBeenCalled();
+    expect(recoveryMocks.saveAutosaveSessionRevision).not.toHaveBeenCalled();
+
+    launcherOpen = false;
+    await expect(flushes.flushOnExit()).resolves.toBe(true);
+    expect(opfsMocks.saveProject).toHaveBeenCalledWith('autosave', expect.any(Uint8Array));
   });
 
   it('debounces: edits inside the quiet period collapse into one save', async () => {

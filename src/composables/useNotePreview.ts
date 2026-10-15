@@ -9,6 +9,7 @@ import {
 } from '@/engine/instruments';
 import { describeError } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
+import { useI18n } from '@/ui/i18n';
 
 const PREVIEW_DURATION_PPQ = 0.5;
 const PREVIEW_TARGET_PEAK = 0.5;
@@ -40,6 +41,7 @@ export type LiveMidiChannelVoiceMessage =
   | { kind: 'poly-pressure'; channel: number; pitch: number; value: number; timeStampMs?: number };
 
 export function useNotePreview(options: NotePreviewOptions) {
+  const { t } = useI18n();
   const store = useProjectStore();
 
   /** Sustained live notes keyed by channel+pitch, including their output path. */
@@ -162,7 +164,7 @@ export function useNotePreview(options: NotePreviewOptions) {
     try {
       if (!directExternal) h.engine.pushMidiNoteOn(trackId, 0, channel, pitch, velocity);
     } catch (err) {
-      options.errorMessage.value = describeError(err);
+      options.errorMessage.value = describeError(err, t.value.notices.errors);
       return;
     }
     const timer = setTimeout(() => releaseHeld(pitch, channel), SUSTAIN_SAFETY_MS);
@@ -240,7 +242,7 @@ export function useNotePreview(options: NotePreviewOptions) {
         engine.pushMidiPolyPressure(trackId, 0, channel, message.pitch, message.value);
       }
     } catch (err) {
-      options.errorMessage.value = describeError(err);
+      options.errorMessage.value = describeError(err, t.value.notices.errors);
     }
   }
 
@@ -264,7 +266,7 @@ export function useNotePreview(options: NotePreviewOptions) {
         };
         auditionTimers.add(entry);
       } catch (err) {
-        options.errorMessage.value = describeError(err);
+        options.errorMessage.value = describeError(err, t.value.notices.errors);
       }
       return;
     }
@@ -290,7 +292,7 @@ export function useNotePreview(options: NotePreviewOptions) {
       };
       source.start();
     } catch (err) {
-      options.errorMessage.value = describeError(err);
+      options.errorMessage.value = describeError(err, t.value.notices.errors);
     }
   }
 

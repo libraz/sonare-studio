@@ -26,13 +26,14 @@ import {
 } from '@/project/media-completeness';
 import {
   AudioScheduleReplaceError,
-  cleanupScheduledProjectClips,
+  discardUnownedScheduledClips,
   replaceScheduledProjectClips,
   type ScheduledProjectClip,
   scheduleProjectClips,
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
+import { useI18n } from '@/ui/i18n';
 import {
   automationStripModeRevision,
   isAutomationStripPlaybackEnabled,
@@ -98,6 +99,7 @@ function clipScheduleKey(clip: EditorClip): string {
 
 export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   const { bridge, scope, errorMessage, handle, transport } = options;
+  const { t } = useI18n();
   const store = useProjectStore();
 
   let scheduledClips: ScheduledProjectClip[] = [];
@@ -143,7 +145,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     engineRebuildRequired.value = true;
     if (!engineRebuildHandler) return;
     void Promise.resolve(engineRebuildHandler()).catch((error) => {
-      errorMessage.value = describeError(error);
+      errorMessage.value = describeError(error, t.value.notices.errors);
     });
   }
 
@@ -160,10 +162,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     try {
       const next = await scheduleProjectClips(h, {
         signal: controller.signal,
-        retainedScheduleBytes: scheduledClips.reduce(
-          (sum, clip) => sum + (clip.payloadBytes ?? 0),
-          0,
-        ),
+        previous: scheduledClips,
         onMediaIssue: (issue) => mediaIssues.push(issue),
       });
       if (
@@ -171,7 +170,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         generation !== applyGeneration ||
         (!stagedHandle && handle.value !== h)
       ) {
-        const cleanup = cleanupScheduledProjectClips(h, next);
+        const cleanup = discardUnownedScheduledClips(h, scheduledClips, next);
         if (!stagedHandle && cleanup.failures.length > 0) {
           mergeScheduledOwnership(cleanup.remaining);
           requestEngineRebuild();
@@ -193,7 +192,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         if (applyOptions.throwOnError) throw err;
         return;
       }
-      errorMessage.value = describeError(err);
+      errorMessage.value = describeError(err, t.value.notices.errors);
       if (applyOptions.throwOnError) throw err;
     } finally {
       if (applyController === controller) applyController = null;
@@ -248,7 +247,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       );
       mixerSync.applyChannelDelays(stripSync.sceneGeneration());
     } catch (err) {
-      errorMessage.value = describeError(err);
+      errorMessage.value = describeError(err, t.value.notices.errors);
       if (syncOptions.throwOnError) throw err;
     }
   }
@@ -260,7 +259,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.automationLanes.filter((lane) => isAutomationStripPlaybackEnabled(lane.target)),
       );
     } catch (err) {
-      errorMessage.value = describeError(err);
+      errorMessage.value = describeError(err, t.value.notices.errors);
       if (syncOptions.throwOnError) throw err;
     }
   }
@@ -327,7 +326,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       transportSync.sync(store.tempoSegments, store.timeSignatures, store.markers);
       transport.setTempoMap(effectiveTempoSegments());
     } catch (err) {
-      errorMessage.value = describeError(err);
+      errorMessage.value = describeError(err, t.value.notices.errors);
       if (syncOptions.throwOnError) throw err;
     }
   }
@@ -366,7 +365,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       publishMediaReport();
     });
     midiSyncQueue = operation.catch((err) => {
-      errorMessage.value = describeError(err);
+      errorMessage.value = describeError(err, t.value.notices.errors);
     });
     return syncOptions.throwOnError ? operation : midiSyncQueue;
   }

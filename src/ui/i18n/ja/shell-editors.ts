@@ -31,6 +31,7 @@ export const shellEditors = {
     groupInput: 'ノート入力',
     groupMidi: 'MIDI入力',
     snap: 'スナップ',
+    snapBar: '小節',
     snapToggleTitle: 'ノート編集をグリッドにスナップ',
     snapGridTitle: 'スナップとクオンタイズのグリッド幅',
     quantizeTitle: '選択ノートの開始位置をグリッドに合わせる',
@@ -222,7 +223,7 @@ export const shellEditors = {
     pressureLaneTitle: 'チャンネルプレッシャー（アフタータッチ）レーン',
     polyPressureLaneTab: 'PAT',
     polyPressureLaneTitle: 'ポリフォニックキープレッシャーレーン（ノートを選択）',
-    polyPressureSelectedKeys: '{count} keys',
+    polyPressureSelectedKeys: '{count} キー',
     mpeUnsupported:
       'MPE には対応していません。表現は MIDI 1.0 のチャンネル単位で、ポリフォニックプレッシャーも個々のノートではなくピッチ単位です。',
     laneChannelTitle: 'エクスプレッションレーンが編集する MIDI チャンネル',

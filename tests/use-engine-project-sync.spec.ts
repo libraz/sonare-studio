@@ -672,7 +672,7 @@ describe('useEngineProjectSync', () => {
 
     projectSync.applyNow();
     expect(scheduleProjectClips).toHaveBeenCalledWith(handle.value, {
-      retainedScheduleBytes: 0,
+      previous: [],
       signal: expect.any(AbortSignal),
       onMediaIssue: expect.any(Function),
     });
