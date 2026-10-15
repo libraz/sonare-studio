@@ -188,6 +188,94 @@ export function computePeaks(
   return computePeaksPure(channels, bucketCount);
 }
 
+/** Frames per block in the per-channel min/max index behind {@link computeWindowPeaks}. */
+export const PEAK_BLOCK_FRAMES = 256;
+
+/** Block index per channel buffer; dropped with the buffer. */
+const peakBlocksByChannel = new WeakMap<Float32Array, ChannelPeaks>();
+
+/** Min/max of every PEAK_BLOCK_FRAMES-aligned block of a channel, built once per buffer. */
+function channelPeakBlocks(channel: Float32Array): ChannelPeaks {
+  const cached = peakBlocksByChannel.get(channel);
+  if (cached) return cached;
+  const blockCount = Math.ceil(channel.length / PEAK_BLOCK_FRAMES);
+  const min = new Float32Array(blockCount);
+  const max = new Float32Array(blockCount);
+  for (let block = 0; block < blockCount; block++) {
+    const start = block * PEAK_BLOCK_FRAMES;
+    const end = Math.min(channel.length, start + PEAK_BLOCK_FRAMES);
+    let lo = channel[start];
+    let hi = channel[start];
+    for (let i = start + 1; i < end; i++) {
+      const v = channel[i];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    min[block] = lo;
+    max[block] = hi;
+  }
+  const blocks = { min, max };
+  peakBlocksByChannel.set(channel, blocks);
+  return blocks;
+}
+
+/**
+ * Computes peaks of the frame window [startFrame, endFrame) of whole-asset
+ * channels, identical to {@link computePeaks} over the window's subarrays.
+ * Buckets spanning several blocks read whole blocks from a cached block index
+ * and scan only their partial edge blocks, so a zoomed-out window costs about
+ * one pass over the index rather than one over every sample.
+ *
+ * @param channels Planar whole-asset channel buffers (equal lengths).
+ * @param startFrame First frame of the window (integer, >= 0).
+ * @param endFrame Frame after the window (integer, <= channel length).
+ * @param bucketCount Number of buckets per channel (positive integer).
+ */
+export function computeWindowPeaks(
+  channels: ReadonlyArray<Float32Array>,
+  startFrame: number,
+  endFrame: number,
+  bucketCount: number,
+): ChannelPeaks[] {
+  const frames = endFrame - startFrame;
+  if (frames < 2 * PEAK_BLOCK_FRAMES * bucketCount) {
+    return computePeaks(
+      channels.map((channel) => channel.subarray(startFrame, endFrame)),
+      bucketCount,
+    );
+  }
+  return channels.map((channel) => {
+    const blocks = channelPeakBlocks(channel);
+    const min = new Float32Array(bucketCount);
+    const max = new Float32Array(bucketCount);
+    for (let b = 0; b < bucketCount; b++) {
+      const start = startFrame + Math.floor((b * frames) / bucketCount);
+      const end = startFrame + Math.floor(((b + 1) * frames) / bucketCount);
+      const firstBlock = Math.ceil(start / PEAK_BLOCK_FRAMES);
+      const lastBlock = Math.floor(end / PEAK_BLOCK_FRAMES);
+      let lo = channel[start];
+      let hi = channel[start];
+      for (let i = start + 1; i < firstBlock * PEAK_BLOCK_FRAMES; i++) {
+        const v = channel[i];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      for (let block = firstBlock; block < lastBlock; block++) {
+        if (blocks.min[block] < lo) lo = blocks.min[block];
+        if (blocks.max[block] > hi) hi = blocks.max[block];
+      }
+      for (let i = lastBlock * PEAK_BLOCK_FRAMES; i < end; i++) {
+        const v = channel[i];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      min[b] = lo;
+      max[b] = hi;
+    }
+    return { min, max };
+  });
+}
+
 /**
  * Merges per-channel peaks into one envelope (bucket-wise min of mins and
  * max of maxes), e.g. for a single-lane clip waveform.

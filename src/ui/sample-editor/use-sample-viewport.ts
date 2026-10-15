@@ -13,7 +13,7 @@ import { getCanvasContext } from '@/components/piano-roll/theme';
 import { clamp } from '@/lib/math';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { CANVAS_FONT_SIZE_PX, canvasFont, colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
-import { type ChannelPeaks, computePeaks } from '@/ui/waveform/peaks';
+import { type ChannelPeaks, computeWindowPeaks } from '@/ui/waveform/peaks';
 import type { DetectedNote } from './onsets';
 import { snapFrameToOnsets } from './onsets';
 import type { SampleRange } from './ops';
@@ -163,8 +163,9 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     const baseKey = `${nextSizedKey}:${baseVersion}:${view.startFrame}:${view.endFrame}`;
     if (!baseLayer || baseLayerKey !== baseKey) {
       baseLayer ??= document.createElement('canvas');
-      baseLayer.width = canvas.width;
-      baseLayer.height = canvas.height;
+      // Assigning a size reallocates the bitmap; drawBase repaints it opaque anyway.
+      if (baseLayer.width !== canvas.width) baseLayer.width = canvas.width;
+      if (baseLayer.height !== canvas.height) baseLayer.height = canvas.height;
       const layerCtx = getCanvasContext(baseLayer);
       if (!layerCtx) return;
       drawBase(layerCtx, view, loaded, widthPx, heightPx);
@@ -203,10 +204,9 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     if (endFrame > startFrame) {
       const bucketCount = visiblePeakBucketCount(widthPx, endFrame - startFrame);
       const key = `${loaded.meta.id}:${startFrame}:${endFrame}:${bucketCount}`;
-      const peaks = visiblePeaks.getOrCompute(key, () => {
-        const windows = loaded.channels.map((channel) => channel.subarray(startFrame, endFrame));
-        return computePeaks(windows, bucketCount);
-      });
+      const peaks = visiblePeaks.getOrCompute(key, () =>
+        computeWindowPeaks(loaded.channels, startFrame, endFrame, bucketCount),
+      );
       for (let c = 0; c < peaks.length; c++) {
         const laneTop = c * LANE_HEIGHT_PX;
         const mid = laneTop + LANE_HEIGHT_PX / 2;

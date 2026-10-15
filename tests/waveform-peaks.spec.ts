@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   type ChannelPeaks,
   computePeaks,
+  computeWindowPeaks,
   createWaveformPeaksCache,
   mergePeaks,
   type WaveformPeaksModule,
@@ -235,5 +236,58 @@ describe('WaveformPeaksCache', () => {
     const a = cache.get('asset-a', channels, 1);
     cache.clear();
     expect(cache.get('asset-a', channels, 1)).not.toBe(a);
+  });
+});
+
+describe('computeWindowPeaks', () => {
+  /** Deterministic noise with sparse spikes, so block extremes sit at arbitrary frames. */
+  function signal(frames: number, seed: number): Float32Array {
+    const out = new Float32Array(frames);
+    let state = seed;
+    for (let i = 0; i < frames; i++) {
+      state = (state * 1103515245 + 12345) % 2147483648;
+      const noise = state / 2147483648 - 0.5;
+      out[i] = i % 997 === 0 ? noise * 4 : noise;
+    }
+    return out;
+  }
+
+  const ASSET_FRAMES = 256 * 400 + 37;
+  const STARTS = { zero: 0, blockAligned: 256 * 7, unaligned: 1801 } as const;
+  const ENDS = { assetEnd: ASSET_FRAMES, blockAligned: 256 * 390, unaligned: 99_001 } as const;
+  /** Bucket counts by frames per bucket relative to the two-block threshold. */
+  const BUCKETS = {
+    below: (frames: number) => Math.ceil(frames / 300),
+    atThreshold: (frames: number) => Math.floor(frames / 512),
+    large: () => 37,
+    nonInteger: () => 113,
+  } as const;
+  // Pairwise over window start/end alignment, bucket span and channel count.
+  const CASES: Array<[keyof typeof STARTS, keyof typeof ENDS, keyof typeof BUCKETS, number]> = [
+    ['unaligned', 'blockAligned', 'atThreshold', 1],
+    ['zero', 'blockAligned', 'below', 2],
+    ['zero', 'assetEnd', 'atThreshold', 2],
+    ['unaligned', 'unaligned', 'below', 1],
+    ['blockAligned', 'unaligned', 'nonInteger', 2],
+    ['zero', 'blockAligned', 'nonInteger', 1],
+    ['blockAligned', 'assetEnd', 'large', 1],
+    ['unaligned', 'assetEnd', 'nonInteger', 2],
+    ['zero', 'unaligned', 'large', 2],
+    ['unaligned', 'blockAligned', 'large', 2],
+    ['blockAligned', 'blockAligned', 'below', 1],
+    ['unaligned', 'assetEnd', 'below', 1],
+    ['blockAligned', 'unaligned', 'atThreshold', 1],
+  ];
+
+  it.each(CASES)('matches a full scan (start %s, end %s, buckets %s, %i ch)', (s, e, b, ch) => {
+    const channels = Array.from({ length: ch }, (_, c) => signal(ASSET_FRAMES, 7 + c));
+    const start = STARTS[s];
+    const end = ENDS[e];
+    const bucketCount = BUCKETS[b](end - start);
+    const expected = computePeaks(
+      channels.map((channel) => channel.subarray(start, end)),
+      bucketCount,
+    );
+    expect(computeWindowPeaks(channels, start, end, bucketCount)).toEqual(expected);
   });
 });
