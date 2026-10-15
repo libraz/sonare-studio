@@ -6,6 +6,7 @@
  * thread; there is one request per worker instance (the client disposes it).
  */
 
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 
 /** Request payload: planar channels to factor into `nComponents` components. */
@@ -41,7 +42,7 @@ self.addEventListener('message', (event: MessageEvent<DecomposeStemsWorkerReques
     .catch((error: unknown) => {
       postMessage({
         type: 'error',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       } satisfies DecomposeStemsWorkerResponse);
     });
 });

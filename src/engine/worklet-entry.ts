@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/errors';
 import {
   init as initIndexModule,
   isInitialized as isIndexInitialized,
@@ -138,7 +139,7 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
       .catch((error: unknown) => {
         port.postMessage({
           type: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: errorMessage(error),
         });
       });
   }
@@ -176,7 +177,7 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
         // this processor; the host tears the engine down on that message.
         this.port.postMessage({
           type: 'runtimeError',
-          message: error instanceof Error ? error.message : String(error),
+          message: errorMessage(error),
         });
         for (const channel of outputs[0] ?? []) channel.fill(0);
         return false;
@@ -236,7 +237,7 @@ class SonareVoiceChangerWorklet extends AudioWorkletProcessor {
       .catch((error: unknown) => {
         port.postMessage({
           type: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: errorMessage(error),
         });
       });
   }
@@ -321,7 +322,7 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
       .catch((error: unknown) => {
         port.postMessage({
           type: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: errorMessage(error),
         });
       });
   }

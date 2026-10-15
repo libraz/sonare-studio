@@ -45,6 +45,7 @@ import {
 } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 import {
+  DEFAULT_TEMPO_BPM,
   normalizeTempoMap,
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
@@ -219,7 +220,7 @@ export function useRecording(
   const countIn = createCountInController(transport, isCountingIn);
   const finishCountIn = countIn.finish;
   let recordingTrackIds: number[] = [];
-  let recordingTempoBpm = 120;
+  let recordingTempoBpm = DEFAULT_TEMPO_BPM;
   let recordingCaptureSource: RecordingCaptureSource = 'input';
   let recordingInputDeviceKeys: string[] = [];
   let recordingInputChannels: Array<number | undefined> = [];

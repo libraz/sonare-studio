@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import type { AudioAssetTags } from '@/persistence/assets';
 import { type AudioAnalysisFunctions, analyzeAudioTags } from '@/project/audio-tags';
@@ -65,7 +66,7 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
     .catch((error: unknown) => {
       postMessage({
         type: 'error',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       } satisfies AudioAnalysisWorkerResponse);
     });
 });

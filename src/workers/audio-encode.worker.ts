@@ -4,6 +4,7 @@ import { WAV_ENCODER_ID } from '@/export/codecs';
 import { type EncodeFlacOptions, encodeFlac, FLAC_ENCODER_ID } from '@/export/flac';
 import { type EncodeMp3Options, encodeMp3, MP3_ENCODER_ID } from '@/export/mp3';
 import { type EncodeWavOptions, encodeWav } from '@/export/wav';
+import { errorMessage } from '@/lib/errors';
 
 export type WorkerAudioEncoderId =
   | typeof WAV_ENCODER_ID
@@ -61,7 +62,7 @@ scope.addEventListener('message', (event: MessageEvent<AudioEncodeWorkerRequest>
     } catch (error) {
       const response: AudioEncodeWorkerResponse = {
         type: 'error',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       };
       scope.postMessage(response);
     }

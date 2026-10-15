@@ -1,5 +1,6 @@
 /** Worker endpoint for the synchronous, non-WASM sample-editor operations. */
 
+import { errorMessage } from '@/lib/errors';
 import {
   applyGainDb,
   applyGainDbInPlace,
@@ -94,7 +95,7 @@ self.addEventListener('message', (event: MessageEvent<SampleOperationRequest>) =
   } catch (error) {
     postMessage({
       type: 'error',
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     } satisfies SampleOperationResponse);
   }
 });

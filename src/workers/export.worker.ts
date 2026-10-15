@@ -28,6 +28,7 @@ import {
   type MixdownRangePpq,
   type MixdownReport,
 } from '@/export/mixdown';
+import { errorMessage } from '@/lib/errors';
 import { readAssetFrames } from '@/persistence/assets';
 import type { ProjectDocument } from '@/project/serialization';
 
@@ -154,7 +155,7 @@ function serializeExportError(error: unknown): {
       sampleRate: error.sampleRate,
     };
   }
-  return { error: error instanceof Error ? error.message : String(error) };
+  return { error: errorMessage(error) };
 }
 
 /** Yields one macrotask so queued messages (cancel) get processed. */

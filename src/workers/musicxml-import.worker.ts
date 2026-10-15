@@ -1,5 +1,6 @@
 /** One-shot SAX MusicXML parser worker. */
 
+import { errorMessage } from '@/lib/errors';
 import {
   importMusicXmlWithReport,
   MusicXmlImportError,
@@ -32,7 +33,7 @@ scope.addEventListener('message', (event: MessageEvent<MusicXmlImportWorkerReque
     const response: MusicXmlImportWorkerResponse = {
       type: 'error',
       error: {
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
         kind: error instanceof MusicXmlImportError ? 'musicxml-import' : 'unknown',
       },
     };

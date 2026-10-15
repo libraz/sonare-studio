@@ -29,6 +29,7 @@
  */
 
 import { SILENCE_DB } from '@/lib/db';
+import { clamp } from '@/lib/math';
 import {
   DEFAULT_SURROUND_PAN,
   effectiveTrackMute,
@@ -87,7 +88,7 @@ export interface StripSyncOptions {
 export function groupBusGainDb(track: EditorTrack, vcaOffset = 0, muted = track.mute): number {
   if (muted) return SILENCE_DB;
   const combined = laneGainDb(track.volume, track.mixer?.gainDb, vcaOffset);
-  return Math.min(MAX_STRIP_GAIN_DB, Math.max(SILENCE_DB, combined));
+  return clamp(combined, SILENCE_DB, MAX_STRIP_GAIN_DB);
 }
 
 /** What was last sent for one strip target, kept for change detection. */

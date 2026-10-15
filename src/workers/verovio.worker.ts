@@ -13,12 +13,13 @@
  * because the worker cannot recover without a replacement instance.
  */
 
-// @ts-expect-error -- 'verovio/esm' has no type declarations
-import { VerovioToolkit } from 'verovio/esm';
 // Verovio ships no TypeScript declarations; the imports are suppressed and the
 // toolkit surface is re-typed locally (see VerovioToolkit interface below).
+// @ts-expect-error -- 'verovio/esm' has no type declarations
+import { VerovioToolkit } from 'verovio/esm';
 // @ts-expect-error -- 'verovio/wasm' has no type declarations
 import createVerovioModule from 'verovio/wasm';
+import { errorMessage } from '@/lib/errors';
 
 /** Raw Verovio option bag passed straight to `toolkit.setOptions()`. */
 export type VerovioOptions = Record<string, string | number | boolean>;
@@ -88,9 +89,7 @@ const scope = self as unknown as DedicatedWorkerGlobalScope;
 /** Marks a failure that leaves this worker unable to process any request. */
 class ToolkitInitializationError extends Error {
   constructor(cause: unknown) {
-    super(
-      `Verovio toolkit initialization failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
+    super(`Verovio toolkit initialization failed: ${errorMessage(cause)}`);
     this.name = 'ToolkitInitializationError';
   }
 }
@@ -187,7 +186,7 @@ scope.onmessage = (event: MessageEvent<VerovioRequest>) => {
       post({
         id: request.id,
         type: error instanceof ToolkitInitializationError ? 'fatal' : 'error',
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       });
     }
   });

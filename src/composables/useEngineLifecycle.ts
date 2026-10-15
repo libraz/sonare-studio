@@ -18,6 +18,7 @@ import { createStripSync, groupBusGainDb } from '@/engine/strip-sync';
 import { createTransportSync } from '@/engine/transport-sync';
 import { createWebMidiOutput } from '@/engine/web-midi-output';
 import { SILENCE_DB } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import {
   type AutomationParam,
@@ -199,10 +200,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       options.errorMessage.value = formatMessage(t.value.notices.engineCleanupFailed, {
         count: failures.length,
         details: failures
-          .map(
-            (failure) =>
-              `${failure.stage}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
-          )
+          .map((failure) => `${failure.stage}: ${errorMessage(failure.error)}`)
           .join('; '),
       });
     }

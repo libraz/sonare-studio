@@ -1,5 +1,6 @@
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, watch } from 'vue';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { listenMidiMessages, midiNavigator } from '@/lib/web-midi';
 import { MidiCc14BitTracker } from '@/ui/midi/midi-cc-input';
@@ -252,7 +253,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     try {
       previous?.close();
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       boundEngine = null;
       connected.value = false;
@@ -347,7 +348,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
       return true;
     } catch (err) {
       if (!active()) return false;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
       release();
       return false;
     }

@@ -1,7 +1,14 @@
 import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
-import { normalizeTempoMap, ppqToSeconds, samplesToPpq, secondsToPpq } from '@/project/tempo-map';
+import { clamp01 } from '@/lib/math';
+import {
+  DEFAULT_TEMPO_BPM,
+  normalizeTempoMap,
+  ppqToSeconds,
+  samplesToPpq,
+  secondsToPpq,
+} from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
 import type { SonareEngine, SonareEngineTelemetryRecord } from '@/wasm/worklet.js';
 
@@ -9,7 +16,6 @@ import type { SonareEngine, SonareEngineTelemetryRecord } from '@/wasm/worklet.j
 const TELEMETRY_PROCESS_BLOCK = 0;
 
 /** Default tempo assumed until {@link UseTransportReturn.setTempo} is called. */
-const DEFAULT_TEMPO_BPM = 120;
 
 /** Reactive transport state and 1:1 engine transport actions returned by {@link useTransport}. */
 export interface UseTransportReturn {
@@ -377,9 +383,7 @@ export function useTransport(
     const handle = resolveHandle();
     if (!handle) return metronomeEnabled.value;
     const next = enabled ?? !metronomeEnabled.value;
-    const gain = Number.isFinite(beatGain)
-      ? Math.min(1, Math.max(0, beatGain as number))
-      : undefined;
+    const gain = Number.isFinite(beatGain) ? clamp01(beatGain as number) : undefined;
     const queued = handle.engine.setMetronome({
       enabled: next,
       ...(gain === undefined ? {} : { beatGain: gain, accentGain: Math.min(1, gain * 2) }),

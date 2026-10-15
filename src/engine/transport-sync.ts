@@ -14,12 +14,12 @@
  *   the engine's seekMarker / setLoopFromMarkers.
  */
 
+import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import { DEFAULT_TIME_SIGNATURE } from '@/project/time-signature';
 import type { EditorMarker, TempoSegment, TimeSignatureSegment } from '@/project/types';
 import type { EngineHandle } from './engine';
 
 /** Tempo sent when the project has no tempo segments. */
-const DEFAULT_TEMPO_BPM = 120;
 
 /** Options for {@link createTransportSync}. */
 export interface TransportSyncOptions {

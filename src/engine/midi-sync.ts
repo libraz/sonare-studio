@@ -30,6 +30,8 @@ import {
   MAX_REALTIME_SYSEX_BYTES,
   pushGsSetupSysex,
 } from '@/engine/gs-sysex';
+import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import type { NoteArticulation } from '@/project/annotations';
 import {
   expressionMapEntryFor,
@@ -88,9 +90,6 @@ const CC_BANK_SELECT_MSB = 0;
 const CC_BANK_SELECT_LSB = 32;
 
 /** Clamps a value into [min, max]. */
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 /** Resolves the optional initial GM selection for a NativeSynth preset. */
 function synthPresetGmProgram(
@@ -824,7 +823,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
             role: 'instrument',
             reason: 'unreadable',
             trackId: track.id,
-            message: error instanceof Error ? error.message : String(error),
+            message: errorMessage(error),
           });
         }
         console.warn(

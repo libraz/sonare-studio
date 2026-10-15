@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, getCurrentScope, onScopeDispose, ref } from 'vue';
+import { clamp } from '@/lib/math';
 import { isEditableTarget } from '@/ui/keyboard';
 import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
 import type { StepInputHandle } from './useStepInput';
@@ -104,9 +105,6 @@ export interface MusicTypingHandle {
 }
 
 /** Clamps a value into [min, max]. */
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 /**
  * Vue composable implementing QWERTY musical typing (keyboard → MIDI notes).

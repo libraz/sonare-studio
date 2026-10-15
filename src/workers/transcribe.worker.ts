@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 
@@ -103,7 +104,7 @@ function validResult(value: unknown): value is TranscribeResult {
 function postError(error: unknown): void {
   postMessage({
     type: 'error',
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage(error),
   } satisfies TranscribeWorkerResponse);
 }
 

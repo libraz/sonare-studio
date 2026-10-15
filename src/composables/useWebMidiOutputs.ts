@@ -1,5 +1,6 @@
 import { getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import type { WebMidiOutputInfo } from '@/engine/web-midi-output';
+import { errorMessage } from '@/lib/errors';
 import {
   listenStateChange,
   type MidiAccessLike,
@@ -83,7 +84,7 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
     } catch (err) {
       if (disposed || generation !== refreshGeneration) return false;
       available.value = false;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
       return false;
     }
   }

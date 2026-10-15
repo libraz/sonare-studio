@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue';
 import type { MeterListener, MeterSource } from '@/engine/meters';
+import { errorMessage } from '@/lib/errors';
 import {
   listenMidiMessages,
   listenStateChange,
@@ -178,7 +179,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
       } catch (err) {
         // A port that has gone away must not break the remaining messages or
         // the state watcher that produced them.
-        error.value = err instanceof Error ? err.message : String(err);
+        error.value = errorMessage(err);
         return;
       }
     }
@@ -535,7 +536,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
     } catch (err) {
       if (disposed) return false;
       available.value = false;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
       return false;
     }
   }

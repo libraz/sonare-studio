@@ -18,6 +18,7 @@ import {
   sf2PlaybackConfig,
   type TrackInstrument,
 } from '@/project/instrument';
+import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
 
 /** One note of a MIDI phrase, positioned in quarter-note pulses (PPQ). */
@@ -104,7 +105,6 @@ export interface NoteEvent {
   channel: number;
 }
 
-const DEFAULT_TEMPO_BPM = 120;
 const CACHE_KEY_VERSION = 'v1';
 /** Maximum distinct offline MIDI prerenders retained in memory. */
 export const MAX_PRERENDER_CACHE_ENTRIES = 64;

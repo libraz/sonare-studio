@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/errors';
 import { requestPwaEngineRecovery } from '@/pwa';
 import sonareWasmUrl from '@/wasm/sonare.wasm?url';
 import type { SonareRealtimeEngineNodeCapabilities } from '@/wasm/worklet.js';
@@ -14,7 +15,7 @@ export const WORKLET_MODULE_URL =
     : '/assets/sonare-engine-worklet.js';
 
 export function isEngineVersionMismatchError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return /(?:engine|worklet).*ABI mismatch|ABI mismatch.*(?:engine|worklet)/i.test(message);
 }
 

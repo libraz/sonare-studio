@@ -28,6 +28,7 @@
  */
 
 import { dbToLinear } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import type { EngineCaptureStatus, RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
@@ -640,9 +641,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     } catch (err) {
       for (const stream of streams) stopStreamTracks(stream);
       if (signal.aborted) signal.throwIfAborted();
-      throw new NoMicrophoneError(
-        `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new NoMicrophoneError(`Microphone access failed: ${errorMessage(err)}`);
     }
     const sources: MediaStreamAudioSourceNode[] = [];
     let merger: ChannelMergerNode | null = null;
@@ -745,9 +744,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       }
     } catch (err) {
       if (signal.aborted) signal.throwIfAborted();
-      throw new NoMicrophoneError(
-        `Microphone access failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      throw new NoMicrophoneError(`Microphone access failed: ${errorMessage(err)}`);
     }
     const retuneSemitones = clampStreamingRetuneSemitones(options.streamingRetuneSemitones ?? 0);
     const bindInput =
