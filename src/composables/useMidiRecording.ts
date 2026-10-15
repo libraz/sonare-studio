@@ -17,11 +17,7 @@ import {
   overwriteRecordedMidiClip as overwriteRecordedMidiClipCommand,
 } from '@/project/command/midi-recording';
 import { addRecordedMidiClip as addRecordedMidiClipCommand } from '@/project/commands';
-import {
-  type RecordingStartPlan,
-  resolveAutoPunchRecordingStartPlan,
-  resolveRecordingStartPlan,
-} from '@/project/loop-recording';
+import type { RecordingStartPlan } from '@/project/loop-recording';
 import {
   sanitizeCcPoints,
   sanitizePitchBendPoints,
@@ -54,6 +50,7 @@ import type {
   MidiClipTake,
 } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { createCountInController, resolveTransportRecordingPlan } from './recording-count-in';
 import type { UseTransportReturn } from './useTransport';
 
 /** How a MIDI performance recorded through a transport cycle is committed. */
@@ -206,8 +203,8 @@ export function useMidiRecording(
   let preRollHeld = new Map<string, CapturedNoteEvent>();
   let recordingStartPpq = 0;
   let recordingCounter = 0;
-  let countInTimer: ReturnType<typeof setTimeout> | null = null;
-  let restoreMetronomeOff = false;
+  const countIn = createCountInController(transport, isCountingIn);
+  const finishCountIn = countIn.finish;
   let recordingLoopLengthPpq = 0;
   let recordingWrapOffsetPpq = 0;
   let lastCapturePpq = 0;
@@ -216,18 +213,6 @@ export function useMidiRecording(
   let recordingStartTimestampMs: number | null = null;
   let lastCaptureTimestampMs: number | null = null;
   let recordingLoop: { startPpq: number; endPpq: number } | null = null;
-
-  function finishCountIn(): void {
-    if (countInTimer !== null) {
-      globalThis.clearTimeout(countInTimer);
-      countInTimer = null;
-    }
-    isCountingIn.value = false;
-    if (restoreMetronomeOff) {
-      transport.toggleMetronome(false);
-      restoreMetronomeOff = false;
-    }
-  }
 
   function currentRecordingPpq(timeStampMs?: number): number {
     if (
@@ -593,42 +578,21 @@ export function useMidiRecording(
     }
     const suppliedPlan = typeof startAtPpq === 'object' && startAtPpq !== null ? startAtPpq : null;
     const legacyStart = typeof startAtPpq === 'number' ? startAtPpq : undefined;
-    const plan =
-      suppliedPlan ??
-      (legacyStart !== undefined && Number.isFinite(legacyStart) && legacyStart >= 0
-        ? resolveAutoPunchRecordingStartPlan({
-            positionPpq: transport.positionPpq.value,
-            audiblePositionPpq: transport.audiblePositionPpq.value,
-            startedFromRest: !transport.isPlaying.value,
-            requestedStartPpq: legacyStart,
-            loopEnabled: transport.loopEnabled.value,
-            loopStartPpq: transport.loopStartPpq.value,
-            loopEndPpq: transport.loopEndPpq.value,
-            countInBars: countInBars.value,
-            timeSignatures: store.timeSignatures,
-            transportOwner: 'midi',
-          })
-        : resolveRecordingStartPlan({
-            positionPpq: transport.positionPpq.value,
-            audiblePositionPpq: transport.audiblePositionPpq.value,
-            startedFromRest: !transport.isPlaying.value,
-            loopEnabled: transport.loopEnabled.value,
-            loopStartPpq: transport.loopStartPpq.value,
-            loopEndPpq: transport.loopEndPpq.value,
-            countInBars: countInBars.value,
-            timeSignatures: store.timeSignatures,
-            transportOwner: 'midi',
-          }));
+    const plan = resolveTransportRecordingPlan({
+      suppliedPlan,
+      legacyStart,
+      transport,
+      countInBars: countInBars.value,
+      timeSignatures: store.timeSignatures,
+      transportOwner: 'midi',
+    });
     const startedFromRest = plan.startedFromRest;
     const startPpq = plan.punchInPpq;
     const tempoBpm = transport.tempo.value;
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
     const ownsTransport = plan.transportOwner === 'midi';
     if (ownsTransport && startedFromRest) {
-      if (plan.countInPpq > 0 && !transport.metronomeEnabled.value) {
-        transport.toggleMetronome(true);
-        restoreMetronomeOff = true;
-      }
+      if (plan.countInPpq > 0) countIn.forceMetronome();
       transport.seekPpq(plan.countInStartPpq);
       if (!transport.play()) {
         finishCountIn();
@@ -676,16 +640,7 @@ export function useMidiRecording(
     lastCapturePpq = startPpq;
     isRecording.value = true;
     if (ownsTransport && plan.countInPpq > 0) {
-      isCountingIn.value = true;
-      countInTimer = globalThis.setTimeout(
-        () => {
-          countInTimer = null;
-          activatePreRollHeld();
-          finishCountIn();
-        },
-        ppqRangeSeconds(tempoMap, plan.countInStartPpq, plan.countInEndPpq) * 1000 +
-          stoppedStartLatencyMs,
-      );
+      countIn.begin(plan, tempoMap, stoppedStartLatencyMs, activatePreRollHeld);
     }
     return true;
   };

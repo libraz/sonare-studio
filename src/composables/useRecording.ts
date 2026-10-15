@@ -42,18 +42,16 @@ import {
   loopRecordingSplits,
   loopRecordingTakeSlices,
   type RecordingStartPlan,
-  resolveAutoPunchRecordingStartPlan,
-  resolveRecordingStartPlan,
 } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
 import {
   normalizeTempoMap,
-  ppqRangeSeconds,
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+import { createCountInController, resolveTransportRecordingPlan } from './recording-count-in';
 import type { UseTransportReturn } from './useTransport';
 
 interface RecordingChannelRoute {
@@ -218,8 +216,8 @@ export function useRecording(
   let recorderHandle: EngineHandle | null = null;
   let unsubscribeLevel: (() => void) | null = null;
   let unsubscribeMicLost: (() => void) | null = null;
-  let countInTimer: ReturnType<typeof setTimeout> | null = null;
-  let restoreMetronomeOff = false;
+  const countIn = createCountInController(transport, isCountingIn);
+  const finishCountIn = countIn.finish;
   let recordingTrackIds: number[] = [];
   let recordingTempoBpm = 120;
   let recordingCaptureSource: RecordingCaptureSource = 'input';
@@ -374,19 +372,6 @@ export function useRecording(
     });
     recorder.setMonitor(monitorEnabled.value);
     return recorder;
-  };
-
-  /** Cancels the count-in timer and restores the metronome when we forced it on. */
-  const finishCountIn = (): void => {
-    if (countInTimer !== null) {
-      globalThis.clearTimeout(countInTimer);
-      countInTimer = null;
-    }
-    isCountingIn.value = false;
-    if (restoreMetronomeOff) {
-      restoreMetronomeOff = false;
-      transport.toggleMetronome(false);
-    }
   };
 
   const requestMic = async (): Promise<boolean> => {
@@ -681,32 +666,14 @@ export function useRecording(
 
     // Resolve the plan only after microphone prewarm. A caller that already
     // resolved a plan (the shared audio+MIDI path) is consumed verbatim.
-    const plan =
-      suppliedPlan ??
-      (legacyStart !== undefined && Number.isFinite(legacyStart) && legacyStart >= 0
-        ? resolveAutoPunchRecordingStartPlan({
-            positionPpq: transport.positionPpq.value,
-            audiblePositionPpq: transport.audiblePositionPpq.value,
-            startedFromRest: !transport.isPlaying.value,
-            requestedStartPpq: legacyStart,
-            loopEnabled: transport.loopEnabled.value,
-            loopStartPpq: transport.loopStartPpq.value,
-            loopEndPpq: transport.loopEndPpq.value,
-            countInBars: countInBars.value,
-            timeSignatures: store.timeSignatures,
-            transportOwner: 'audio',
-          })
-        : resolveRecordingStartPlan({
-            positionPpq: transport.positionPpq.value,
-            audiblePositionPpq: transport.audiblePositionPpq.value,
-            startedFromRest: !transport.isPlaying.value,
-            loopEnabled: transport.loopEnabled.value,
-            loopStartPpq: transport.loopStartPpq.value,
-            loopEndPpq: transport.loopEndPpq.value,
-            countInBars: countInBars.value,
-            timeSignatures: store.timeSignatures,
-            transportOwner: 'audio',
-          }));
+    const plan = resolveTransportRecordingPlan({
+      suppliedPlan,
+      legacyStart,
+      transport,
+      countInBars: countInBars.value,
+      timeSignatures: store.timeSignatures,
+      transportOwner: 'audio',
+    });
     operation.plan = plan;
     const tempoBpm = transport.tempo.value;
     const startPpq = plan.punchInPpq;
@@ -717,10 +684,7 @@ export function useRecording(
     const tempoMap = normalizeTempoMap(store.tempoSegments, tempoBpm);
     const ownsTransport = plan.transportOwner !== 'midi';
     if (ownsTransport && plan.startedFromRest) {
-      if (plan.countInPpq > 0 && !transport.metronomeEnabled.value) {
-        transport.toggleMetronome(true);
-        restoreMetronomeOff = true;
-      }
+      if (plan.countInPpq > 0) countIn.forceMetronome();
       transport.seekPpq(plan.countInStartPpq);
     }
     const startOptions: Parameters<Recorder['start']>[0] = { startPpq, tempoBpm, tempoMap };
@@ -789,14 +753,10 @@ export function useRecording(
       return fail(t.value.notices.recording.transportRejected);
     }
     if (ownsTransport && plan.countInPpq > 0) {
-      isCountingIn.value = true;
-      countInTimer = globalThis.setTimeout(
-        () => {
-          countInTimer = null;
-          finishCountIn();
-        },
-        ppqRangeSeconds(tempoMap, plan.countInStartPpq, plan.countInEndPpq) * 1000,
-      );
+      const stoppedStartLatencyMs = plan.startedFromRest
+        ? transport.playbackLatencySeconds.value * 1000
+        : 0;
+      countIn.begin(plan, tempoMap, stoppedStartLatencyMs);
     }
     return true;
   };

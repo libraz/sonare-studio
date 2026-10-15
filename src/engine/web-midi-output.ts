@@ -16,6 +16,13 @@
  * receives a dense batch late.
  */
 
+import {
+  listenStateChange,
+  type MidiAccessLike,
+  type MidiOutputLike,
+  midiNavigator,
+  midiPortInfos,
+} from '@/lib/web-midi';
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
@@ -64,24 +71,6 @@ export interface WebMidiOutputBridge {
   start(): Promise<boolean>;
   /** Detaches the engine subscription and releases access. Idempotent. */
   dispose(): void;
-}
-
-// Minimal Web MIDI typings — the standard DOM lib does not declare these and we
-// avoid a hard dependency on @types/webmidi (mirrors useWebMidi's structural
-// approach for inputs).
-interface MidiOutputLike {
-  id: string;
-  name?: string | null;
-  send(data: number[] | Uint8Array, timestamp?: number): void;
-}
-interface MidiAccessLike {
-  outputs: Map<string, MidiOutputLike>;
-  onstatechange: ((event: unknown) => void) | null;
-  addEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
-  removeEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
-}
-interface NavigatorWithMidi {
-  requestMIDIAccess?(options?: { sysex?: boolean }): Promise<MidiAccessLike>;
 }
 
 /** MIDI CC used by the standard All Notes Off panic message. */
@@ -157,8 +146,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
   let disposed = false;
   let routes: ExternalMidiRoute[] = [];
   let outputsList: WebMidiOutputInfo[] = [];
-  let onStateChange: ((event: unknown) => void) | null = null;
-  let previousOnStateChange: ((event: unknown) => void) | null = null;
+  let stopStateChange: (() => void) | null = null;
   let startGeneration = 0;
   let startPromise: Promise<boolean> | null = null;
   const routeByDestination = new Map<number, ExternalMidiRoute>();
@@ -179,9 +167,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
   };
 
   const refreshOutputs = (): void => {
-    outputsList = access
-      ? [...access.outputs.values()].map((port) => ({ id: port.id, name: port.name ?? port.id }))
-      : [];
+    outputsList = midiPortInfos(access?.outputs);
     // A disconnected device has already lost every note it was sustaining.
     // Forget its ownership ledger so a later hot-plug cannot receive stale
     // note-offs that might cut a new performer's notes on the same channel.
@@ -343,7 +329,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       if (disposed) return false;
       if (access) return true;
       if (startPromise) return startPromise;
-      const nav = navigator as unknown as NavigatorWithMidi;
+      const nav = midiNavigator();
       if (typeof nav.requestMIDIAccess !== 'function') {
         available = false;
         return false;
@@ -356,18 +342,10 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
           access = granted;
           available = true;
           refreshOutputs();
-          onStateChange = () => {
+          stopStateChange = listenStateChange(granted, () => {
             if (disposed || access !== granted || generation !== startGeneration) return;
             refreshOutputs();
-          };
-          if (granted.addEventListener) granted.addEventListener('statechange', onStateChange);
-          else {
-            previousOnStateChange = granted.onstatechange;
-            granted.onstatechange = (event: unknown) => {
-              previousOnStateChange?.(event);
-              onStateChange?.(event);
-            };
-          }
+          });
           return true;
         } catch {
           if (!disposed && generation === startGeneration) available = false;
@@ -393,22 +371,13 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
       } catch {
         // A broken engine subscription must not retain Web MIDI listeners.
       }
-      const previousAccess = access;
-      const previousListener = onStateChange;
       try {
-        if (previousAccess && previousListener) {
-          if (previousAccess.removeEventListener) {
-            previousAccess.removeEventListener('statechange', previousListener);
-          } else {
-            previousAccess.onstatechange = previousOnStateChange;
-          }
-        }
+        stopStateChange?.();
       } catch {
         // Local state is still cleared below.
       } finally {
         access = null;
-        onStateChange = null;
-        previousOnStateChange = null;
+        stopStateChange = null;
       }
       routes = [];
       routeByDestination.clear();

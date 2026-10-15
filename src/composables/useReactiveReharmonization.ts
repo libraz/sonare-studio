@@ -196,7 +196,6 @@ export function useReactiveReharmonization(): ReactiveReharmonization {
       }
       settleTimer = setTimeout(onEditSettled, REHARMONIZE_SETTLE_MS);
     },
-    { deep: true },
   );
 
   // Switching clips re-baselines; a suggestion for another clip's edit is moot.

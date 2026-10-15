@@ -316,6 +316,8 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
           processor: node,
           signal: options.signal,
         });
+        // Keep a rejection after a failed create() from going unhandled; the await below still observes it.
+        workletReady.catch(() => undefined);
         return node;
       },
     });

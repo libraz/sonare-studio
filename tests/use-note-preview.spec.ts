@@ -72,6 +72,26 @@ describe('useNotePreview live MIDI sustain', () => {
     expect(pushMidiNoteOff).not.toHaveBeenCalled();
   });
 
+  it('does not leave a note ringing when key-up arrives while the engine is starting', async () => {
+    const { handle, pushMidiNoteOn, pushMidiNoteOff } = makeHandle();
+    let resolveStart: (value: EngineHandle | null) => void = () => {};
+    const preview = useNotePreview({
+      errorMessage: shallowRef(''),
+      handle,
+      hasMidiSync: () => true,
+      ensureEngineStarted: () =>
+        new Promise<EngineHandle | null>((resolve) => {
+          resolveStart = resolve;
+        }),
+    });
+    const pending = preview.previewNoteOn(64, 100);
+    preview.previewNoteOff(64);
+    resolveStart(handle.value);
+    await pending;
+
+    expect(pushMidiNoteOn.mock.calls.length).toBe(pushMidiNoteOff.mock.calls.length);
+  });
+
   it('releases the matching note on key-up', async () => {
     const { preview, pushMidiNoteOff } = setup();
     await preview.previewNoteOn(64, 100);

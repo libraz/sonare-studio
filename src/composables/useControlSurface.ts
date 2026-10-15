@@ -2,6 +2,14 @@ import type { ComputedRef, Ref } from 'vue';
 import { computed, getCurrentScope, onScopeDispose, ref, watch } from 'vue';
 import type { MeterListener, MeterSource } from '@/engine/meters';
 import {
+  listenMidiMessages,
+  listenStateChange,
+  type MidiAccessLike,
+  type MidiOutputLike,
+  midiNavigator,
+  midiPortInfos,
+} from '@/lib/web-midi';
+import {
   bankSlotTrackId,
   bankWindow,
   type ControlSurfaceProtocol,
@@ -96,41 +104,8 @@ export interface ControlSurfaceHandle {
   refreshFeedback(): void;
 }
 
-interface MidiPortLike {
-  id: string;
-  name?: string | null;
-}
-interface MidiOutputLike extends MidiPortLike {
-  send(data: number[]): void;
-}
-interface MidiInputLike extends MidiPortLike {
-  onmidimessage: ((event: { data?: Uint8Array | null }) => void) | null;
-  addEventListener?(
-    type: 'midimessage',
-    listener: (event: { data?: Uint8Array | null }) => void,
-  ): void;
-  removeEventListener?(
-    type: 'midimessage',
-    listener: (event: { data?: Uint8Array | null }) => void,
-  ): void;
-}
-interface MidiAccessLike {
-  inputs: Map<string, MidiInputLike>;
-  outputs: Map<string, MidiOutputLike>;
-  onstatechange: ((event: unknown) => void) | null;
-  addEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
-  removeEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
-}
-interface NavigatorWithMidi {
-  requestMIDIAccess?(options?: { sysex?: boolean }): Promise<MidiAccessLike>;
-}
-
 /** One V-Pot detent, expressed in the 0..127 control range a slot takes. */
 const VPOT_STEP = 1;
-
-function ports(map: Map<string, MidiPortLike> | undefined): ControlSurfacePort[] {
-  return map ? [...map.values()].map((port) => ({ id: port.id, name: port.name ?? port.id })) : [];
-}
 
 /**
  * Native control-surface support: decodes a Mackie Control or HUI surface into
@@ -156,6 +131,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
   let accessHasSysEx = false;
   let detachInput: (() => void) | null = null;
   let detachStateChange: (() => void) | null = null;
+  let meterFrame: number | null = null;
   let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   let decoder: SurfaceDecoder = createSurfaceDecoder('none');
   let lastSent: SurfaceSnapshot | null = null;
@@ -311,7 +287,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
             meterValues.set(subscribedTrackId, next);
             changed = true;
           }
-          if (changed && !rebindingMeters) pushFeedback(false);
+          if (changed && !rebindingMeters) scheduleMeterFeedback();
         };
         subscription.unsubscribe = source.subscribe(listener);
       }
@@ -330,9 +306,10 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
       surface.bankOffset,
       stripCount(),
     );
+    const trackById = new Map(store.tracks.map((track) => [track.id, track]));
     const strips: Array<SurfaceStripSnapshot | null> = window.map((trackId) => {
       if (trackId === null) return null;
-      const track = store.tracks.find((entry) => entry.id === trackId);
+      const track = trackById.get(trackId);
       if (!track) return null;
       return {
         fader: gainDbToFaderPosition(track.mixer?.gainDb ?? 0),
@@ -351,6 +328,15 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
       record: options.isRecording?.value === true,
       loop: options.isLooping?.value === true,
     };
+  }
+
+  /** Meter records arrive per target; one diffed push per frame covers them all. */
+  function scheduleMeterFeedback(): void {
+    if (meterFrame !== null) return;
+    meterFrame = requestAnimationFrame(() => {
+      meterFrame = null;
+      pushFeedback(false);
+    });
   }
 
   function pushFeedback(force: boolean): void {
@@ -502,20 +488,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
     const listener = (event: { data?: Uint8Array | null }): void => {
       if (event.data) handleMessage([...event.data]);
     };
-    if (input.addEventListener && input.removeEventListener) {
-      input.addEventListener('midimessage', listener);
-      const remove = input.removeEventListener;
-      detachInput = () => remove.call(input, 'midimessage', listener);
-    } else {
-      const previous = input.onmidimessage;
-      input.onmidimessage = (event) => {
-        previous?.(event);
-        listener(event);
-      };
-      detachInput = () => {
-        input.onmidimessage = previous;
-      };
-    }
+    detachInput = listenMidiMessages(input, listener);
     connected.value = true;
     const keepAlive = surfaceKeepAlive(protocol);
     if (keepAlive.length > 0) {
@@ -527,7 +500,7 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
   async function refresh(): Promise<boolean> {
     if (disposed) return false;
     error.value = null;
-    const nav = navigator as unknown as NavigatorWithMidi;
+    const nav = midiNavigator();
     if (typeof nav.requestMIDIAccess !== 'function') {
       available.value = false;
       return false;
@@ -537,8 +510,8 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
     // access with the wider scope rather than reuse the narrower grant.
     if (access && (!needsSysEx || accessHasSysEx)) {
       available.value = true;
-      inputs.value = ports(access.inputs);
-      outputs.value = ports(access.outputs);
+      inputs.value = midiPortInfos(access.inputs);
+      outputs.value = midiPortInfos(access.outputs);
       attach();
       return true;
     }
@@ -548,29 +521,15 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
       detachStateChange?.();
       access = granted;
       accessHasSysEx = needsSysEx;
-      const onChange = (): void => {
+      detachStateChange = listenStateChange(granted, () => {
         if (disposed || access !== granted) return;
-        inputs.value = ports(granted.inputs);
-        outputs.value = ports(granted.outputs);
+        inputs.value = midiPortInfos(granted.inputs);
+        outputs.value = midiPortInfos(granted.outputs);
         attach();
-      };
-      if (granted.addEventListener) {
-        granted.addEventListener('statechange', onChange);
-        const remove = granted.removeEventListener;
-        detachStateChange = () => remove?.call(granted, 'statechange', onChange);
-      } else {
-        const previous = granted.onstatechange;
-        granted.onstatechange = (event) => {
-          previous?.(event);
-          onChange();
-        };
-        detachStateChange = () => {
-          granted.onstatechange = previous;
-        };
-      }
+      });
       available.value = true;
-      inputs.value = ports(granted.inputs);
-      outputs.value = ports(granted.outputs);
+      inputs.value = midiPortInfos(granted.inputs);
+      outputs.value = midiPortInfos(granted.outputs);
       attach();
       return true;
     } catch (err) {
@@ -653,6 +612,8 @@ export function useControlSurface(options: ControlSurfaceOptions): ControlSurfac
       // hardware never keeps displaying that no-longer-live session.
       resetFeedback(settings.value.protocol);
       disposed = true;
+      if (meterFrame !== null) cancelAnimationFrame(meterFrame);
+      meterFrame = null;
       clearMeterSubscriptions();
       detach();
       detachStateChange?.();

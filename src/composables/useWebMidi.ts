@@ -1,6 +1,7 @@
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, watch } from 'vue';
 import { ensureWasm } from '@/lib/wasm';
+import { listenMidiMessages, midiNavigator } from '@/lib/web-midi';
 import { MidiCc14BitTracker } from '@/ui/midi/midi-cc-input';
 import type { RealtimeEngine, WebMidiBinding, WebMidiInputInfo } from '@/wasm/index.js';
 
@@ -236,22 +237,9 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     for (const [id, input] of target.access.inputs) {
       if (selectedInputId.value !== null && id !== selectedInputId.value) continue;
       if (excluded.has(id)) continue;
-      if (input.addEventListener && input.removeEventListener) {
-        const listener = (event: MidiMessageEventLike): void => handleMessage(id, event);
-        input.addEventListener('midimessage', listener);
-        const remove = input.removeEventListener;
-        detachListeners.push(() => remove.call(input, 'midimessage', listener));
-      } else {
-        // No EventTarget API: chain onto the handler the binding installed.
-        const previous = input.onmidimessage;
-        input.onmidimessage = (event) => {
-          previous?.(event);
-          handleMessage(id, event);
-        };
-        detachListeners.push(() => {
-          input.onmidimessage = previous;
-        });
-      }
+      detachListeners.push(
+        listenMidiMessages(input, (event: MidiMessageEventLike) => handleMessage(id, event)),
+      );
     }
   }
 
@@ -295,11 +283,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     const excluded = new Set(excludedInputIds.value);
     if (selectedId !== null) return excluded.has(selectedId) ? [] : [selectedId];
     if (excluded.size === 0) return null;
-    const nav = navigator as unknown as {
-      requestMIDIAccess?(options?: { sysex?: boolean }): Promise<{
-        inputs: Iterable<readonly [string, { name?: string | null; manufacturer?: string | null }]>;
-      }>;
-    };
+    const nav = midiNavigator();
     if (typeof nav.requestMIDIAccess !== 'function') return null;
     const access = await nav.requestMIDIAccess({ sysex: false });
     const ids: string[] = [];

@@ -6,6 +6,7 @@
  * validity rule changes.
  */
 
+import { SILENCE_DB } from '@/lib/db';
 import { type AutomationCurve, automationCurveCode } from '@/project/automation';
 import {
   clampPan,
@@ -124,7 +125,7 @@ export function engineFaderAutomationPoints(
   muted = false,
 ): EngineAutomationPoint[] {
   const encoded = engineAutomationPointsWithValueOffset(points, valueOffset);
-  return muted ? encoded.map((point) => ({ ...point, value: -120 })) : encoded;
+  return muted ? encoded.map((point) => ({ ...point, value: SILENCE_DB })) : encoded;
 }
 
 /** EQ bands that should be declared to the engine for a strip. */

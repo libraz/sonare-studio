@@ -34,6 +34,7 @@ import {
   effectiveTrackMute,
   type InsertSlot,
   laneGainDb,
+  MAX_STRIP_GAIN_DB,
   type MixerChannelLayout,
   type MixerStrip,
   type ProjectMixerState,
@@ -84,9 +85,9 @@ export interface StripSyncOptions {
  * result clamped to the engine's bus gain range.
  */
 export function groupBusGainDb(track: EditorTrack, vcaOffset = 0, muted = track.mute): number {
-  if (muted) return -120;
+  if (muted) return SILENCE_DB;
   const combined = laneGainDb(track.volume, track.mixer?.gainDb, vcaOffset);
-  return Math.min(24, Math.max(-120, combined));
+  return Math.min(MAX_STRIP_GAIN_DB, Math.max(SILENCE_DB, combined));
 }
 
 /** What was last sent for one strip target, kept for change detection. */

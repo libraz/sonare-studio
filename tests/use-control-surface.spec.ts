@@ -4,7 +4,8 @@ import { effectScope, nextTick, ref } from 'vue';
 import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import { useControlSurface } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
-import { METER_SILENCE_DB, type MeterSource, type StereoMeterLevels } from '@/engine/meters';
+import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
+import { SILENCE_DB } from '@/lib/db';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 import { ccToGainDbFine } from '@/ui/midi/midi-learn';
@@ -100,10 +101,10 @@ function mutableMeterSource(levels: Partial<StereoMeterLevels> = {}): {
 } {
   let latest: StereoMeterLevels = {
     frame: 0,
-    peakDbL: METER_SILENCE_DB,
-    peakDbR: METER_SILENCE_DB,
-    rmsDbL: METER_SILENCE_DB,
-    rmsDbR: METER_SILENCE_DB,
+    peakDbL: SILENCE_DB,
+    peakDbR: SILENCE_DB,
+    rmsDbL: SILENCE_DB,
+    rmsDbR: SILENCE_DB,
     correlation: 0,
     ...levels,
   };
@@ -136,6 +137,14 @@ function fromSurface(bytes: number[]): void {
 }
 
 let scope: ReturnType<typeof effectScope>;
+let frames: Array<FrameRequestCallback | null>;
+
+/** Runs the animation-frame callbacks queued so far. */
+function flushFrame(): void {
+  const queued = frames;
+  frames = [];
+  for (const callback of queued) callback?.(0);
+}
 
 /** Builds a configured surface handle inside its own effect scope. */
 async function mountSurface(
@@ -173,6 +182,14 @@ async function mountSurface(
 beforeEach(() => {
   setActivePinia(createPinia());
   sent.length = 0;
+  frames = [];
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback): number => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.stubGlobal('cancelAnimationFrame', (id: number): void => {
+    frames[id - 1] = null;
+  });
   sysexRequested = undefined;
   setStripGain.mockReset();
   setStripPan.mockReset();
@@ -183,6 +200,7 @@ beforeEach(() => {
 
 afterEach(() => {
   scope?.stop();
+  vi.unstubAllGlobals();
 });
 
 describe('control surface input', () => {
@@ -338,6 +356,7 @@ describe('control surface feedback', () => {
     sent.length = 0;
 
     meter.emit({ peakDbL: -24, peakDbR: -6 });
+    flushFrame();
 
     // -6 dBFS maps to 0.9 of the shared -60..0 dB meter scale, i.e. MCU
     // segment 11. A one-shot closure read would not produce this delta.
@@ -346,8 +365,8 @@ describe('control surface feedback', () => {
 
   it('maps a silent source to the bottom MCU meter segment', async () => {
     const meter = mutableMeterSource({
-      peakDbL: METER_SILENCE_DB,
-      peakDbR: METER_SILENCE_DB,
+      peakDbL: SILENCE_DB,
+      peakDbR: SILENCE_DB,
     });
     await mountSurface({}, { trackMeterSource: () => meter.source });
 
@@ -367,9 +386,11 @@ describe('control surface feedback', () => {
     expect(meters.get(100)?.unsubscribeCount()).toBe(1);
     sent.length = 0;
     meters.get(100)?.emit({ peakDbL: 0, peakDbR: 0 });
+    flushFrame();
     expect(sent).toEqual([]);
 
     meters.get(102)?.emit({ peakDbL: -6, peakDbR: -6 });
+    flushFrame();
     expect(sent).toContainEqual([0xd0, 11]);
   });
 
@@ -383,9 +404,26 @@ describe('control surface feedback', () => {
     // must not resurrect feedback after the subscription was released.
     sent.length = 0;
     meter.emit({ peakDbL: 0, peakDbR: 0 });
+    flushFrame();
 
     expect(meter.unsubscribeCount()).toBe(1);
     expect(sent).toEqual([]);
+  });
+
+  it('coalesces meter updates within one frame into a single feedback push', async () => {
+    const meter = mutableMeterSource();
+    await mountSurface({}, { trackMeterSource: () => meter.source });
+    sent.length = 0;
+
+    meter.emit({ peakDbL: -24, peakDbR: -24 });
+    meter.emit({ peakDbL: -6, peakDbR: -6 });
+    expect(sent).toEqual([]);
+    flushFrame();
+
+    // One push covers the eight bank strips; the superseded -24 dB level never goes out.
+    const meterMessages = sent.filter((message) => message[0] === 0xd0);
+    expect(meterMessages).toHaveLength(8);
+    expect(meterMessages.every((message) => (message[1] & 0x0f) === 11)).toBe(true);
   });
 
   it('resets the hardware before a live surface scope is disposed', async () => {

@@ -12,7 +12,6 @@
  */
 
 import {
-  type ChordData,
   type ChordTimeline,
   type ChordTimelineOptions,
   type ChordTimelineResult,
@@ -44,14 +43,6 @@ export function buildChordTimeline(symbols: ReadonlyArray<EditorChordSymbol>): C
       segments.find((segment) => beat >= segment.startBeat && beat < segment.endBeat)?.chord ??
       null,
   };
-}
-
-/**
- * The chord sounding at an absolute PPQ position, or null when no chord covers
- * it (before the first symbol, after the last, or in a gap).
- */
-export function chordAtPpq(timeline: ChordTimeline, ppq: number): ChordData | null {
-  return timeline.at(ppq);
 }
 
 /**

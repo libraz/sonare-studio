@@ -3,9 +3,9 @@ import type { EngineHandle } from '@/engine/engine';
 import {
   createMeterBridge,
   INSERT_GAIN_REDUCTION_POLL_MS,
-  METER_SILENCE_DB,
   type StereoMeterLevels,
 } from '@/engine/meters';
+import { SILENCE_DB } from '@/lib/db';
 import type { SonareWorkletMeterSnapshot } from '@/wasm/worklet.js';
 
 /** Full engine meter record with overridable fields. */
@@ -68,10 +68,10 @@ describe('createMeterBridge', () => {
 
     const silent: StereoMeterLevels = {
       frame: 0,
-      peakDbL: METER_SILENCE_DB,
-      peakDbR: METER_SILENCE_DB,
-      rmsDbL: METER_SILENCE_DB,
-      rmsDbR: METER_SILENCE_DB,
+      peakDbL: SILENCE_DB,
+      peakDbR: SILENCE_DB,
+      rmsDbL: SILENCE_DB,
+      rmsDbR: SILENCE_DB,
       correlation: 0,
     };
     expect(bridge.latest).toEqual(silent);
@@ -101,7 +101,7 @@ describe('createMeterBridge', () => {
 
     emit(makeSnapshot({ targetId: 3, frame: 512 }));
     expect(bridge.latest.frame).toBe(0);
-    expect(bridge.latest.peakDbL).toBe(METER_SILENCE_DB);
+    expect(bridge.latest.peakDbL).toBe(SILENCE_DB);
     expect(listener).not.toHaveBeenCalled();
     bridge.dispose();
   });
@@ -166,8 +166,8 @@ describe('createMeterBridge', () => {
         rmsDbR: Number.NaN,
       }),
     );
-    expect(bridge.latest.peakDbL).toBe(METER_SILENCE_DB);
-    expect(bridge.latest.rmsDbR).toBe(METER_SILENCE_DB);
+    expect(bridge.latest.peakDbL).toBe(SILENCE_DB);
+    expect(bridge.latest.rmsDbR).toBe(SILENCE_DB);
     bridge.dispose();
   });
 
@@ -248,6 +248,37 @@ describe('createMeterBridge', () => {
     bridge.dispose();
   });
 
+  it('runs the SAB poll loop only while an insert gain-reduction listener exists', () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      frames.push(cb);
+      return frames.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const { handle } = makeHandle('sab');
+    (handle.engine as unknown as Record<string, unknown>).pollInsertGainReduction = vi.fn(
+      async () => [0],
+    );
+    const bridge = createMeterBridge(handle);
+    bridge.subscribe(vi.fn());
+    expect(frames).toHaveLength(0);
+
+    const unsubscribe = bridge.forTarget(2).subscribeInsertGainReduction(vi.fn());
+    const second = bridge.forTarget(2).subscribeInsertGainReduction(vi.fn());
+    expect(frames).toHaveLength(1);
+
+    unsubscribe();
+    frames.at(-1)?.(0);
+    expect(frames).toHaveLength(2);
+    second();
+    frames.at(-1)?.(100);
+    expect(frames).toHaveLength(2);
+
+    bridge.forTarget(2).subscribeInsertGainReduction(vi.fn());
+    expect(frames).toHaveLength(3);
+    bridge.dispose();
+  });
+
   it('fans postMessage per-insert gain reduction out to that target only', () => {
     const { handle, emit } = makeHandle();
     const bridge = createMeterBridge(handle);
@@ -281,12 +312,11 @@ describe('createMeterBridge', () => {
     (handle.engine as unknown as Record<string, unknown>).pollInsertGainReduction =
       pollInsertGainReduction;
     const bridge = createMeterBridge(handle);
-
-    frames.at(-1)?.(0);
-    expect(pollInsertGainReduction).not.toHaveBeenCalled();
+    expect(frames).toHaveLength(0);
 
     const listener = vi.fn();
     bridge.forTarget(4).subscribeInsertGainReduction(listener);
+    expect(frames).toHaveLength(1);
     frames.at(-1)?.(100);
     // A second frame while the request is in flight does not stack requests.
     frames.at(-1)?.(200);

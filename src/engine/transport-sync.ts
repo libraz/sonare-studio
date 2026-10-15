@@ -14,14 +14,12 @@
  *   the engine's seekMarker / setLoopFromMarkers.
  */
 
+import { DEFAULT_TIME_SIGNATURE } from '@/project/time-signature';
 import type { EditorMarker, TempoSegment, TimeSignatureSegment } from '@/project/types';
 import type { EngineHandle } from './engine';
 
 /** Tempo sent when the project has no tempo segments. */
 const DEFAULT_TEMPO_BPM = 120;
-
-/** Time signature sent when the project has no time-signature segments. */
-const DEFAULT_TIME_SIGNATURE = { numerator: 4, denominator: 4 };
 
 /** Options for {@link createTransportSync}. */
 export interface TransportSyncOptions {

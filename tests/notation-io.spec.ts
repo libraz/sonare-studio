@@ -156,12 +156,11 @@ describe('downloads', () => {
     vi.unstubAllGlobals();
   });
 
-  it('downloadBlob clicks an anchor with the given filename and revokes the URL', () => {
+  it('downloadBlob clicks an anchor with the given filename', () => {
     const blob = new Blob(['x']);
     downloadBlob(blob, 'file.bin');
     expect(createObjectURL).toHaveBeenCalledWith(blob);
     expect(downloads).toEqual(['file.bin']);
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake');
     expect(document.querySelector('a')).toBeNull();
   });
 

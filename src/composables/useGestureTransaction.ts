@@ -6,7 +6,7 @@
  * reports when the pointer has travelled far enough to count as a drag.
  */
 
-import { DEFAULT_CLIP_DRAG_THRESHOLD_PX } from '@/ui/arrangement/use-clip-interactions';
+import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 
 /** Options for {@link useGestureTransaction}. */
 export interface GestureTransactionOptions<S> {
@@ -46,7 +46,7 @@ export interface GestureTransaction<S> {
 export function useGestureTransaction<S>(
   options: GestureTransactionOptions<S>,
 ): GestureTransaction<S> {
-  const threshold = options.thresholdPx ?? DEFAULT_CLIP_DRAG_THRESHOLD_PX;
+  const threshold = options.thresholdPx ?? DRAG_THRESHOLD_PX;
   let open = false;
   let before: S | undefined;
   let dirty = false;

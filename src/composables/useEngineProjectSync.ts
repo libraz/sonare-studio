@@ -264,26 +264,32 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     }
   }
 
-  function trackMeterSource(trackId: number): MeterSource | null {
-    const b = bridge.value;
-    const sync = mixerSync;
-    if (!b || !sync) return null;
-    const laneIndex = sync.laneTrackIds().indexOf(trackId);
+  /** Engine target id of a track's lane, or null when it has no in-range lane. */
+  function laneTargetId(trackId: number): number | null {
+    const laneIndex = mixerSync?.laneTrackIds().indexOf(trackId) ?? -1;
     // Lanes past the meter range would alias into the bus target ids (33+), so
-    // report no meter rather than another strip's levels.
+    // report no target rather than another strip's.
     if (laneIndex < 0 || laneIndex >= MAX_LANE_METER_TARGETS) return null;
-    return b.forTarget(laneMeterTargetId(laneIndex));
+    return laneMeterTargetId(laneIndex);
   }
 
-  function busMeterSource(storeBusId: string): MeterSource | null {
-    const b = bridge.value;
-    const sync = stripSync;
-    if (!b || !sync) return null;
-    const busNumber = sync.busIdFor(storeBusId);
+  /** Engine target id of a store bus, or null when it is undeclared or out of range. */
+  function busTargetId(storeBusId: string): number | null {
+    const busNumber = stripSync?.busIdFor(storeBusId);
     if (busNumber === undefined) return null;
     const busIndex = busNumber - 1;
     if (busIndex < 0 || busIndex >= MAX_BUS_METER_TARGETS) return null;
-    return b.forTarget(busMeterTargetId(busIndex));
+    return busMeterTargetId(busIndex);
+  }
+
+  function trackMeterSource(trackId: number): MeterSource | null {
+    const targetId = laneTargetId(trackId);
+    return targetId === null ? null : (bridge.value?.forTarget(targetId) ?? null);
+  }
+
+  function busMeterSource(storeBusId: string): MeterSource | null {
+    const targetId = busTargetId(storeBusId);
+    return targetId === null ? null : (bridge.value?.forTarget(targetId) ?? null);
   }
 
   /** Master-output scope source (spectrum + goniometer), or null pre-engine. */
@@ -293,25 +299,14 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
 
   /** Per-track scope source, addressed by the same lane id the meters use. */
   function trackScopeSource(trackId: number): ScopeSource | null {
-    const s = scope.value;
-    const sync = mixerSync;
-    if (!s || !sync) return null;
-    const laneIndex = sync.laneTrackIds().indexOf(trackId);
-    // Same lane-range guard as trackMeterSource: no aliasing into bus targets.
-    if (laneIndex < 0 || laneIndex >= MAX_LANE_METER_TARGETS) return null;
-    return s.forTarget(laneMeterTargetId(laneIndex));
+    const targetId = laneTargetId(trackId);
+    return targetId === null ? null : (scope.value?.forTarget(targetId) ?? null);
   }
 
   /** Per-bus scope source, addressed by the same bus id the meters use. */
   function busScopeSource(storeBusId: string): ScopeSource | null {
-    const s = scope.value;
-    const sync = stripSync;
-    if (!s || !sync) return null;
-    const busNumber = sync.busIdFor(storeBusId);
-    if (busNumber === undefined) return null;
-    const busIndex = busNumber - 1;
-    if (busIndex < 0 || busIndex >= MAX_BUS_METER_TARGETS) return null;
-    return s.forTarget(busMeterTargetId(busIndex));
+    const targetId = busTargetId(storeBusId);
+    return targetId === null ? null : (scope.value?.forTarget(targetId) ?? null);
   }
 
   function effectiveTempoSegments(): { startPpq: number; bpm: number; endBpm?: number }[] {
@@ -319,6 +314,9 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
       ? store.tempoSegments.map((segment) => ({ ...segment }))
       : [{ startPpq: 0, bpm: store.tempoBpm }];
   }
+
+  /** Serialized effective tempo, shared by every watcher keyed on tempo changes. */
+  const effectiveTempoKey = computed(() => JSON.stringify(effectiveTempoSegments()));
 
   function syncTransportState(syncOptions: InitialEngineSyncOptions = {}): void {
     try {
@@ -431,7 +429,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     () =>
       [
         store.clips.filter(isAudioClip).map(clipScheduleKey).join('\n'),
-        JSON.stringify(effectiveTempoSegments()),
+        effectiveTempoKey.value,
       ].join('\0'),
     (next, prev) => {
       if (next !== prev) scheduleApply();
@@ -451,12 +449,11 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
           .map(clipScheduleKey)
           .join('\n'),
         store.tracks.map(trackMidiSyncKey).join('\n'),
-        JSON.stringify(effectiveTempoSegments()),
+        effectiveTempoKey.value,
       ].join('\0'),
     (next, prev) => {
       if (next !== prev) scheduleMidiSync();
     },
-    { flush: 'sync' },
   );
   watch(
     () => JSON.stringify(store.projectExternalMidi),

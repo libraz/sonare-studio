@@ -702,6 +702,22 @@ describe('useRecording', () => {
     expect(recording.isRecording.value).toBe(true);
   });
 
+  it('extends the count-in by the output latency of the audible pre-roll', async () => {
+    vi.useFakeTimers();
+    const { recording, transport } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    recording.countInBars.value = 1;
+    transport.positionSeconds.value = 4;
+    transport.playbackLatencySeconds.value = 0.25;
+
+    expect(await recording.record()).toBe(true);
+    vi.advanceTimersByTime(2000);
+    expect(recording.isCountingIn.value).toBe(true);
+    vi.advanceTimersByTime(250);
+    expect(recording.isCountingIn.value).toBe(false);
+  });
+
   it('clamps the count-in to the timeline start', async () => {
     const { recording, fake, seekPpq, transport } = setup();
     const trackId = addAudioTrack();

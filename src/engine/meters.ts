@@ -1,19 +1,15 @@
 import type { EngineHandle } from '@/engine/engine.js';
+import { SILENCE_DB } from '@/lib/db';
 import type { SonareWorkletMeterSnapshot } from '@/wasm/worklet.js';
 import { MASTER_METER_TARGET_ID } from './meter-targets';
-
-/**
- * Floor used to normalize non-finite dB values (silence is reported as
- * `-Infinity` by the engine); anything below this is clamped.
- */
-export const METER_SILENCE_DB = -120;
+import { createTargetListeners } from './target-listeners';
 
 /**
  * Latest stereo level readings exposed by a {@link MeterBridge}.
  *
  * Mirrors the engine's `SonareWorkletMeterSnapshot` payload minus the
  * discriminator and target id, with all peak/RMS dB values normalized to
- * finite numbers (clamped to {@link METER_SILENCE_DB}). The optional fields
+ * finite numbers (clamped to {@link SILENCE_DB}). The optional fields
  * come from full records (the master target): they are passed through
  * unclamped and omitted when the engine reports a non-finite value, which is
  * also the case for the lightweight lane/bus records.
@@ -106,21 +102,19 @@ export interface MeterBridge extends MeterSource {
   dispose(): void;
 }
 
-/** A level reading representing silence. */
-function silentLevels(): StereoMeterLevels {
-  return {
-    frame: 0,
-    peakDbL: METER_SILENCE_DB,
-    peakDbR: METER_SILENCE_DB,
-    rmsDbL: METER_SILENCE_DB,
-    rmsDbR: METER_SILENCE_DB,
-    correlation: 0,
-  };
-}
+/** A level reading representing silence, shared by every source that has no data yet. */
+const SILENT_LEVELS: StereoMeterLevels = Object.freeze({
+  frame: 0,
+  peakDbL: SILENCE_DB,
+  peakDbR: SILENCE_DB,
+  rmsDbL: SILENCE_DB,
+  rmsDbR: SILENCE_DB,
+  correlation: 0,
+});
 
 /** Clamps a possibly non-finite dB value to the silence floor. */
 function clampDb(db: number): number {
-  return Number.isFinite(db) && db > METER_SILENCE_DB ? db : METER_SILENCE_DB;
+  return Number.isFinite(db) && db > SILENCE_DB ? db : SILENCE_DB;
 }
 
 /** Normalizes an engine snapshot, omitting non-finite full-record fields. */
@@ -146,8 +140,8 @@ function toLevels(snapshot: SonareWorkletMeterSnapshot): StereoMeterLevels {
  * Creates a meter bridge for a running engine.
  *
  * Records arrive through `engine.onMeter` in both transport modes. In SAB mode
- * a requestAnimationFrame loop additionally polls per-insert gain reduction
- * for watched targets.
+ * a requestAnimationFrame loop polls per-insert gain reduction for watched
+ * targets, running only while such a listener exists.
  *
  * Every record is routed by its target id; the bridge's own latest/subscribe
  * track the master output (target id 0).
@@ -157,9 +151,9 @@ function toLevels(snapshot: SonareWorkletMeterSnapshot): StereoMeterLevels {
  */
 export function createMeterBridge(handle: EngineHandle): MeterBridge {
   const latestByTarget = new Map<number, StereoMeterLevels>();
-  const listenersByTarget = new Map<number, Set<MeterListener>>();
+  const meterListeners = createTargetListeners<StereoMeterLevels>(() => disposed);
   const sources = new Map<number, MeterSource>();
-  const insertGrListenersByTarget = new Map<number, Set<InsertGainReductionListener>>();
+  const insertGrListeners = createTargetListeners<readonly number[]>(() => disposed);
   const insertGrPolls = new Map<number, { inFlight: boolean; lastMs: number }>();
   let disposed = false;
   let rafId = 0;
@@ -168,12 +162,7 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
     const targetId = snapshot.targetId ?? MASTER_METER_TARGET_ID;
     const levels = toLevels(snapshot);
     latestByTarget.set(targetId, levels);
-    const listeners = listenersByTarget.get(targetId);
-    if (listeners) {
-      for (const listener of listeners) {
-        listener(levels);
-      }
-    }
+    meterListeners.emit(targetId, levels);
     // Only the newest record per target in a drain carries the array.
     if (snapshot.insertGainReductionDb) {
       publishInsertGr(targetId, snapshot.insertGainReductionDb);
@@ -181,15 +170,13 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   };
 
   function publishInsertGr(targetId: number, valuesDb: readonly number[]): void {
-    const listeners = insertGrListenersByTarget.get(targetId);
-    if (!listeners) return;
-    for (const listener of listeners) listener(valuesDb);
+    insertGrListeners.emit(targetId, valuesDb);
   }
 
   // Ring records have a fixed layout without per-insert values, so ask the
   // worklet for each watched target, one request in flight and throttled.
   const pollInsertGr = (now: number): void => {
-    for (const [targetId, listeners] of insertGrListenersByTarget) {
+    for (const [targetId, listeners] of insertGrListeners.entries()) {
       if (listeners.size === 0) continue;
       let state = insertGrPolls.get(targetId);
       if (!state) {
@@ -229,48 +216,33 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       ? cancelAnimationFrame
       : (id: number): void => clearTimeout(id);
 
+  // Ring records carry no per-insert values, so only SAB mode needs the poll,
+  // and only while an insert gain-reduction listener exists.
   const poll = (now: number): void => {
-    if (disposed) return;
+    rafId = 0;
+    if (disposed || !insertGrListeners.hasListeners()) return;
     pollInsertGr(now);
     rafId = raf(poll);
   };
-  // Ring records carry no per-insert values, so only SAB mode needs the poll.
-  if (handle.capabilities.mode === 'sab') {
+  const ensurePolling = (): void => {
+    if (disposed || rafId !== 0 || handle.capabilities.mode !== 'sab') return;
     rafId = raf(poll);
-  }
+  };
 
   const sourceFor = (targetId: number): MeterSource => {
     const existing = sources.get(targetId);
     if (existing) return existing;
     const source: MeterSource = {
       get latest(): StereoMeterLevels {
-        return latestByTarget.get(targetId) ?? silentLevels();
+        return latestByTarget.get(targetId) ?? SILENT_LEVELS;
       },
       subscribe(listener: MeterListener): () => void {
-        let listeners = listenersByTarget.get(targetId);
-        if (!listeners) {
-          listeners = new Set();
-          listenersByTarget.set(targetId, listeners);
-        }
-        if (!disposed) {
-          listeners.add(listener);
-        }
-        return () => {
-          listenersByTarget.get(targetId)?.delete(listener);
-        };
+        return meterListeners.subscribe(targetId, listener);
       },
       subscribeInsertGainReduction(listener: InsertGainReductionListener): () => void {
-        let listeners = insertGrListenersByTarget.get(targetId);
-        if (!listeners) {
-          listeners = new Set();
-          insertGrListenersByTarget.set(targetId, listeners);
-        }
-        if (!disposed) {
-          listeners.add(listener);
-        }
-        return () => {
-          insertGrListenersByTarget.get(targetId)?.delete(listener);
-        };
+        const unsubscribe = insertGrListeners.subscribe(targetId, listener);
+        ensurePolling();
+        return unsubscribe;
       },
     };
     sources.set(targetId, source);
@@ -297,14 +269,8 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
       disposed = true;
       cancelRaf(rafId);
       unsubscribeOnMeter();
-      for (const listeners of listenersByTarget.values()) {
-        listeners.clear();
-      }
-      listenersByTarget.clear();
-      for (const listeners of insertGrListenersByTarget.values()) {
-        listeners.clear();
-      }
-      insertGrListenersByTarget.clear();
+      meterListeners.clear();
+      insertGrListeners.clear();
     },
   };
 }

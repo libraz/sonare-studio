@@ -1,5 +1,11 @@
 import { getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import type { WebMidiOutputInfo } from '@/engine/web-midi-output';
+import {
+  listenStateChange,
+  type MidiAccessLike,
+  midiNavigator,
+  midiPortInfos,
+} from '@/lib/web-midi';
 
 /**
  * Reactive Web MIDI output-port enumeration for pickers (e.g. the External MIDI
@@ -21,20 +27,6 @@ export interface WebMidiOutputsHandle {
   refresh(): Promise<boolean>;
 }
 
-interface MidiOutputLike {
-  id: string;
-  name?: string | null;
-}
-interface MidiAccessLike {
-  outputs: Map<string, MidiOutputLike>;
-  onstatechange: ((event: unknown) => void) | null;
-  addEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
-  removeEventListener?(type: 'statechange', listener: (event: unknown) => void): void;
-}
-interface NavigatorWithMidi {
-  requestMIDIAccess?(options?: { sysex?: boolean }): Promise<MidiAccessLike>;
-}
-
 /**
  * Creates a Web MIDI output enumeration handle. The statechange listener is
  * detached automatically when the owning effect scope disposes.
@@ -45,35 +37,28 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
   const error = ref<string | null>(null);
 
   let access: MidiAccessLike | null = null;
-  let onChange: (() => void) | null = null;
-  let previousOnStateChange: ((event: unknown) => void) | null = null;
+  let stopListening: (() => void) | null = null;
   let generation = 0;
   let disposed = false;
 
   const collect = (): void => {
-    outputs.value = access
-      ? [...access.outputs.values()].map((port) => ({ id: port.id, name: port.name ?? port.id }))
-      : [];
+    outputs.value = midiPortInfos(access?.outputs);
   };
 
   const detach = (): void => {
     try {
-      if (access && onChange) {
-        if (access.removeEventListener) access.removeEventListener('statechange', onChange);
-        else access.onstatechange = previousOnStateChange;
-      }
+      stopListening?.();
     } catch {
       // Clear local ownership even when a browser/driver listener removal fails.
     } finally {
-      onChange = null;
-      previousOnStateChange = null;
+      stopListening = null;
     }
   };
 
   async function refresh(): Promise<boolean> {
     if (disposed) return false;
     error.value = null;
-    const nav = navigator as unknown as NavigatorWithMidi;
+    const nav = midiNavigator();
     if (typeof nav.requestMIDIAccess !== 'function') {
       available.value = false;
       return false;
@@ -88,18 +73,10 @@ export function useWebMidiOutputs(): WebMidiOutputsHandle {
       const granted = await nav.requestMIDIAccess({ sysex: false });
       if (disposed || generation !== refreshGeneration) return false;
       access = granted;
-      onChange = () => {
+      stopListening = listenStateChange(granted, () => {
         if (disposed || access !== granted || generation !== refreshGeneration) return;
         collect();
-      };
-      if (granted.addEventListener) granted.addEventListener('statechange', onChange);
-      else {
-        previousOnStateChange = granted.onstatechange;
-        granted.onstatechange = (event: unknown) => {
-          previousOnStateChange?.(event);
-          onChange?.();
-        };
-      }
+      });
       available.value = true;
       collect();
       return true;

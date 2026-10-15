@@ -1,5 +1,6 @@
 import type { InjectionKey, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
+import { isSwitchOn } from '@/lib/midi';
 import { mixerBusStripTarget } from '@/project/command/mixer-internal';
 import {
   clearAllMidiCcBindings,
@@ -300,16 +301,16 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
           setStripPan(trackId, ccToPanFine(value), { commit });
           break;
         case 'mute':
-          setTrackMute(trackId, value >= 64);
+          setTrackMute(trackId, isSwitchOn(value));
           break;
         case 'solo':
-          setTrackSolo(trackId, value >= 64);
+          setTrackSolo(trackId, isSwitchOn(value));
           break;
         case 'arm':
-          if (value >= 64) options.toggleTrackArm?.(trackId);
+          if (isSwitchOn(value)) options.toggleTrackArm?.(trackId);
           break;
         default:
-          if (value >= 64) options.selectTrack?.(trackId);
+          if (isSwitchOn(value)) options.selectTrack?.(trackId);
           break;
       }
       return true;
@@ -326,12 +327,12 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     if (transportAction !== null) {
       // Momentary button: act on press, ignore the release so one push does
       // not toggle twice.
-      if (value >= 64) options.transport?.[transportAction]?.();
+      if (isSwitchOn(value)) options.transport?.[transportAction]?.();
       return true;
     }
     const bankAction = parseMidiLearnBankActionTargetId(id);
     if (bankAction !== null) {
-      if (value >= 64) moveBank(bankAction);
+      if (isSwitchOn(value)) moveBank(bankAction);
       return true;
     }
     const bankSlot = parseMidiLearnBankTargetId(id);
@@ -356,14 +357,14 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
         } else if (send.param === 'enabled') {
           setSend(send.scope, send.busId, {
             levelDb: current?.levelDb ?? ccToGainDb(127),
-            enabled: value >= 64,
+            enabled: isSwitchOn(value),
             timing: current?.timing,
           });
         } else {
           setSend(send.scope, send.busId, {
             levelDb: current?.levelDb ?? ccToGainDb(127),
             enabled: current?.enabled ?? true,
-            timing: value >= 64 ? 'preFader' : 'postFader',
+            timing: isSwitchOn(value) ? 'preFader' : 'postFader',
           });
         }
         return true;
@@ -374,8 +375,8 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     const trackState = parseMidiLearnTrackStateTargetId(id);
     if (trackState) {
       try {
-        if (trackState.param === 'mute') setTrackMute(trackState.trackId, value >= 64);
-        else setTrackSolo(trackState.trackId, value >= 64);
+        if (trackState.param === 'mute') setTrackMute(trackState.trackId, isSwitchOn(value));
+        else setTrackSolo(trackState.trackId, isSwitchOn(value));
         return true;
       } catch {
         return false;
@@ -385,8 +386,8 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     if (vca) {
       try {
         if (vca.param === 'gain') setVcaGroupGain(vca.groupId, ccToGainDb(value), { commit });
-        else if (vca.param === 'mute') setVcaGroupMute(vca.groupId, value >= 64);
-        else setVcaGroupSolo(vca.groupId, value >= 64);
+        else if (vca.param === 'mute') setVcaGroupMute(vca.groupId, isSwitchOn(value));
+        else setVcaGroupSolo(vca.groupId, isSwitchOn(value));
         return true;
       } catch {
         return false;
@@ -471,7 +472,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
               ? useProjectStore().mixer.master
               : (useProjectStore().tracks.find((track) => track.id === stripControl.scope)?.mixer ??
                 null);
-          const enabled = value >= 64;
+          const enabled = isSwitchOn(value);
           const left =
             stripControl.param === 'polarityLeft' ? enabled : strip?.polarityInvertLeft === true;
           const right =
@@ -533,7 +534,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
           const strip = useProjectStore().mixer.buses.find(
             (bus) => bus.id === busStripControl.busId,
           )?.strip;
-          const enabled = value >= 64;
+          const enabled = isSwitchOn(value);
           setStripPolarityInvert(
             target,
             busStripControl.param === 'polarityLeft' ? enabled : strip?.polarityInvertLeft === true,

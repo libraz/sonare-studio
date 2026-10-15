@@ -54,6 +54,8 @@ export function useNotePreview(options: NotePreviewOptions) {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  /** Note-ons awaiting engine start, keyed like {@link heldNotes}. */
+  const pendingNoteOns = new Map<string, { released: boolean }>();
   const auditionTimers = new Set<{
     pitch: number;
     channel: number;
@@ -150,9 +152,14 @@ export function useNotePreview(options: NotePreviewOptions) {
       await previewNote(pitch, velocity);
       return;
     }
-    const h = await options.ensureEngineStarted();
-    if (!h || activeMidiTrackId() !== trackId) return;
     const channel = requestedChannel ?? activeTrackChannel();
+    const key = heldKey(channel, pitch);
+    // A note-off arriving while the engine starts marks this entry; the note then never sounds.
+    const pending = { released: false };
+    pendingNoteOns.set(key, pending);
+    const h = await options.ensureEngineStarted();
+    if (pendingNoteOns.get(key) === pending) pendingNoteOns.delete(key);
+    if (pending.released || !h || activeMidiTrackId() !== trackId) return;
     // Retrigger: release a still-held instance of the same pitch first.
     releaseHeld(pitch, channel);
     const directExternal =
@@ -168,7 +175,7 @@ export function useNotePreview(options: NotePreviewOptions) {
       return;
     }
     const timer = setTimeout(() => releaseHeld(pitch, channel), SUSTAIN_SAFETY_MS);
-    heldNotes.set(heldKey(channel, pitch), { trackId, channel, directExternal, timer });
+    heldNotes.set(key, { trackId, channel, directExternal, timer });
   }
 
   /**
@@ -182,8 +189,13 @@ export function useNotePreview(options: NotePreviewOptions) {
     timestampMs?: number,
   ): void {
     if (channel !== undefined) {
+      const pending = pendingNoteOns.get(heldKey(channel, pitch));
+      if (pending) pending.released = true;
       releaseHeld(pitch, channel, velocity, timestampMs);
       return;
+    }
+    for (const [key, pending] of pendingNoteOns) {
+      if (Number(key.split(':')[1]) === (pitch & 0x7f)) pending.released = true;
     }
     for (const key of [...heldNotes.keys()]) {
       const [heldChannel, heldPitch] = key.split(':').map(Number);
@@ -193,6 +205,7 @@ export function useNotePreview(options: NotePreviewOptions) {
 
   /** Releases every sustained note (engine teardown / scope dispose). */
   function releaseAll(): void {
+    for (const pending of pendingNoteOns.values()) pending.released = true;
     for (const key of [...heldNotes.keys()]) {
       const [channel, pitch] = key.split(':').map(Number);
       releaseHeld(pitch, channel);

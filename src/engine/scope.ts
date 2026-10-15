@@ -1,6 +1,7 @@
 import type { EngineHandle } from '@/engine/engine.js';
 import type { SonareWorkletScopeSnapshot } from '@/wasm/worklet.js';
 import { MASTER_METER_TARGET_ID } from './meter-targets';
+import { createTargetListeners } from './target-listeners';
 
 /**
  * Bridges the engine's scope telemetry (windowed-FFT spectrum bands plus a
@@ -94,7 +95,7 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
   const available = scopeIsAvailable(handle);
   const sampleRate = handle.ctx.sampleRate;
   const latestByTarget = new Map<number, ScopeFrame>();
-  const listenersByTarget = new Map<number, Set<ScopeListener>>();
+  const listeners = createTargetListeners<ScopeFrame>(() => disposed);
   const sources = new Map<number, ScopeSource>();
   let disposed = false;
 
@@ -103,12 +104,7 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     const targetId = snapshot.targetId ?? MASTER_METER_TARGET_ID;
     const frame = toFrame(snapshot);
     latestByTarget.set(targetId, frame);
-    const listeners = listenersByTarget.get(targetId);
-    if (listeners) {
-      for (const listener of listeners) {
-        listener(frame);
-      }
-    }
+    listeners.emit(targetId, frame);
   };
 
   // onScope is the single delivery path: any facade subscription starts an
@@ -126,17 +122,7 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
         return latestByTarget.get(targetId) ?? null;
       },
       subscribe(listener: ScopeListener): () => void {
-        let listeners = listenersByTarget.get(targetId);
-        if (!listeners) {
-          listeners = new Set();
-          listenersByTarget.set(targetId, listeners);
-        }
-        if (!disposed) {
-          listeners.add(listener);
-        }
-        return () => {
-          listenersByTarget.get(targetId)?.delete(listener);
-        };
+        return listeners.subscribe(targetId, listener);
       },
     };
     sources.set(targetId, source);
@@ -161,10 +147,7 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
       if (disposed) return;
       disposed = true;
       unsubscribeOnScope?.();
-      for (const listeners of listenersByTarget.values()) {
-        listeners.clear();
-      }
-      listenersByTarget.clear();
+      listeners.clear();
     },
   };
 }
