@@ -7,6 +7,7 @@ import type {
   NoteValue,
 } from '@/notation/model';
 import { extractPartScore, extractPartsScore, serializeMusicXml } from '@/notation/musicxml';
+import { importMusicXml } from '@/notation/musicxml-import';
 import { escapeXml } from '@/notation/musicxml-xml';
 import { quantizeToScore } from '@/notation/quantize';
 
@@ -2703,5 +2704,47 @@ describe('serializeMusicXml golden output', () => {
     expect(lines).toContain(
       '<harmony><root><root-step>D</root-step></root><kind>major</kind><bass><bass-step>F</bass-step><bass-alter>1</bass-alter></bass><offset>1920</offset></harmony>',
     );
+  });
+});
+
+describe('serializeMusicXml engraving transpose', () => {
+  const written = (shift: number): NotatedScore => {
+    const score = quantizeToScore(
+      [{ id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
+      {
+        divisionPpq: 1,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: 4,
+        displayTransposeSemitones: shift,
+      },
+    );
+    score.transposeSemitones = shift;
+    return score;
+  };
+
+  it('writes a transpose that cancels the written shift, in the first measure only', () => {
+    const doc = parse(serializeMusicXml(written(2)));
+    expect(qa(doc, 'transpose')).toHaveLength(1);
+    expect(q(doc, 'attributes > transpose > chromatic').textContent).toBe('-2');
+    expect(doc.querySelector('transpose > octave-change')).toBeNull();
+  });
+
+  it('splits a shift beyond an octave into chromatic and octave-change', () => {
+    const doc = parse(serializeMusicXml(written(-14)));
+    expect(q(doc, 'transpose > chromatic').textContent).toBe('2');
+    expect(q(doc, 'transpose > octave-change').textContent).toBe('1');
+  });
+
+  it('keeps the sounding pitch equal to the source pitch on re-import', () => {
+    for (const shift of [2, -3, 14]) {
+      const project = importMusicXml(serializeMusicXml(written(shift)));
+      expect(project.tracks[0].clips[0].notes.map((n) => n.pitch)).toEqual([60]);
+    }
+  });
+
+  it('emits no transpose without a shift', () => {
+    expect(serializeMusicXml(written(0))).not.toContain('<transpose>');
   });
 });

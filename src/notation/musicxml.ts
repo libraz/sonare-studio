@@ -686,6 +686,7 @@ function measureAttributesXml(
   if (isFirst || clef !== prevClef) {
     parts.push(clefXml(clef, percussion));
   }
+  if (isFirst && !percussion) parts.push(transposeXml(score.transposeSemitones ?? 0));
   return parts.length > 0 ? `<attributes>${parts.join('')}</attributes>` : undefined;
 }
 
@@ -704,6 +705,19 @@ function clefForMeasure(
   if (partClef === 'treble' && mean < 52) return 'bass';
   if (partClef === 'bass' && mean >= 67) return 'treble';
   return partClef;
+}
+
+/**
+ * Returns the `<transpose>` that maps written pitches back to sounding ones
+ * for an engraving shifted up by `semitones`, or '' when there is no shift.
+ */
+function transposeXml(semitones: number): string {
+  if (semitones === 0) return '';
+  const octaves = Math.trunc(-semitones / 12);
+  const chromatic = -semitones - octaves * 12;
+  return `<transpose><chromatic>${chromatic}</chromatic>${
+    octaves === 0 ? '' : `<octave-change>${octaves}</octave-change>`
+  }</transpose>`;
 }
 
 /**

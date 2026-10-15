@@ -15,6 +15,7 @@
  */
 
 import { type Ref, ref, type ShallowRef } from 'vue';
+import { confirmLossReport } from '@/composables/useLossConfirm';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { projectFilename } from '@/lib/filename';
 import {
@@ -30,11 +31,17 @@ import {
 } from '@/notation/chords';
 import { exportMusicXml } from '@/notation/io';
 import type { NotatedScore } from '@/notation/model';
-import { extractPartsScore, serializeMusicXml } from '@/notation/musicxml';
+import {
+  extractPartsScore,
+  inspectMusicXmlExportLoss,
+  serializeMusicXml,
+} from '@/notation/musicxml';
 import { createPdfPageWriter, createPrintPageWriter, downloadBlob } from '@/notation/print';
 import { VerovioClient, type VerovioTimemapEntry } from '@/notation/verovio';
 import { canonicalJson, fnv1a32Hex } from '@/project/hash';
+import { type ProjectDocument, serializeProject } from '@/project/serialization';
 import { clipKind, type TimeSignatureSegment } from '@/project/types';
+import { useI18n } from '@/ui/i18n';
 import {
   type ScoreLayoutSettings,
   scorePageDimsMm,
@@ -122,6 +129,21 @@ export interface ScoreNotationOptions {
   createExportClient?: () => VerovioClient;
 }
 
+/** The document as a MusicXML export engraves it: every track, or the active clip. */
+function musicXmlLossDocument(store: ProjectStore, fullScore: boolean): ProjectDocument {
+  const doc = serializeProject();
+  if (fullScore) return doc;
+  const clip = store.activeClip;
+  const trackIndex = clip ? store.tracks.findIndex((track) => track.id === clip.trackId) : -1;
+  const track = doc.tracks[trackIndex];
+  if (!clip || !track) return { ...doc, tracks: [] };
+  const clipIndex = store.clips
+    .filter((entry) => entry.trackId === clip.trackId)
+    .findIndex((entry) => entry.id === clip.id);
+  const scored = track.clips[clipIndex];
+  return { ...doc, tracks: [{ ...track, clips: scored ? [scored] : [] }] };
+}
+
 /** The notation surface bound by the score panel. */
 export interface ScoreNotation {
   /** True while a render is in flight. */
@@ -176,6 +198,7 @@ interface ScoreArtifact {
   svg: string;
   partTrackIds: number[];
   projectName: string;
+  fullScore: boolean;
 }
 
 function sameOperationIdentity(a: OperationIdentity, b: OperationIdentity): boolean {
@@ -326,6 +349,7 @@ export async function buildProjectScore(
   if (!fullScore && Object.keys(scoreProjection.annotations).length > 0) {
     score.noteAnnotations = scoreProjection.annotations;
   }
+  if (displayTransposeSemitones !== 0) score.transposeSemitones = displayTransposeSemitones;
   const title = store.projectName.trim();
   if (title) score.metadata = { title };
   applySectionMarks(
@@ -397,6 +421,7 @@ export async function buildProjectScore(
 
 /** Wires the non-destructive notation pipeline for the score panel. */
 export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
+  const { t } = useI18n();
   const { store, client } = options;
 
   const loading = ref(false);
@@ -491,6 +516,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     delete screenScore.measureTempos;
     delete screenScore.measureTempoMarks;
     delete screenScore.measureTempoTexts;
+    delete screenScore.transposeSemitones;
     return serializeMusicXml(screenScore);
   }
 
@@ -594,6 +620,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
         svg: pageSvg,
         partTrackIds,
         projectName: store.projectName,
+        fullScore,
       };
       pageCount.value = count;
       page.value = nextPage;
@@ -764,11 +791,22 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     });
   }
 
+  /** Asks before a MusicXML file drops content the engraved score cannot carry. */
+  function confirmMusicXmlLoss(fullScore: boolean): Promise<boolean> {
+    const loss = inspectMusicXmlExportLoss(
+      musicXmlLossDocument(store, fullScore),
+      options.getDivisionPpq(),
+    );
+    return confirmLossReport(loss, t.value.shell.project.musicXmlExportLoss);
+  }
+
   function onExportMusicXml(): void {
     if (loading.value) return;
     const artifact = artifactForCurrentState();
     if (!artifact) return;
     void runExport(async () => {
+      if (!(await confirmMusicXmlLoss(artifact.fullScore))) return;
+      if (artifactForCurrentState() !== artifact) return;
       exportMusicXml(artifact.xml, projectFilename(artifact.projectName, '.musicxml', 'score'));
     });
   }
@@ -784,6 +822,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     const part = artifact.score.parts[partIndices[0]];
     if (!part) return;
     void runExport(async () => {
+      if (!(await confirmMusicXmlLoss(false))) return;
       if (artifactForCurrentState() !== artifact) return;
       const partScore = extractPartsScore(artifact.score, partIndices);
       const xml = serializeMusicXml(partScore);

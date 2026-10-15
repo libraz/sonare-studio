@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { shallowRef } from 'vue';
+import { confirmLossReport } from '@/composables/useLossConfirm';
 import { exportMusicXml } from '@/notation/io';
 import type { VerovioClient } from '@/notation/verovio';
 import {
@@ -26,6 +27,10 @@ vi.mock('@/lib/wasm', async () => {
   const fakeModule = createFakeWasmModule();
   return { ensureWasm: async () => fakeModule };
 });
+
+vi.mock('@/composables/useLossConfirm', () => ({
+  confirmLossReport: vi.fn(async () => true),
+}));
 
 vi.mock('@/notation/io', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/notation/io')>()),
@@ -148,6 +153,7 @@ describe('score artifact identity and exports', () => {
     store.dispose();
     clearHistory();
     vi.mocked(exportMusicXml).mockClear();
+    vi.mocked(confirmLossReport).mockClear();
     await store.init();
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
   });
@@ -191,6 +197,24 @@ describe('score artifact identity and exports', () => {
     resolveLoad?.(1);
     await pending;
     expect(notation.getCurrentXml()).toContain('<score-partwise');
+  });
+
+  it('reports grid-moved notes before either MusicXML export and honours a refusal', async () => {
+    addNote({ pitch: 62, startPpq: 2.1, durationPpq: 1 });
+    const { notation } = notationHarness(store);
+    await notation.transcribe();
+
+    vi.mocked(confirmLossReport).mockResolvedValueOnce(false);
+    notation.onExportMusicXml();
+    await vi.waitFor(() => expect(confirmLossReport).toHaveBeenCalledTimes(1));
+    await settleExports();
+    const report = vi.mocked(confirmLossReport).mock.calls[0][0];
+    expect(report.entries.length).toBeGreaterThan(0);
+    expect(exportMusicXml).not.toHaveBeenCalled();
+
+    notation.onExportPartMusicXml();
+    await vi.waitFor(() => expect(confirmLossReport).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(exportMusicXml).toHaveBeenCalledTimes(1));
   });
 
   it('hides tempo directions from the screen preview while retaining them for artifacts and exports', async () => {

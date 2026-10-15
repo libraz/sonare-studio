@@ -420,6 +420,12 @@ export interface NotatedScore {
    * of deleted notes) are ignored by the serializer.
    */
   noteAnnotations?: Readonly<Record<number, ScoreNoteAnnotation>>;
+  /**
+   * Engraving-only transpose in semitones: written pitches are shifted by this
+   * amount from the sounding (MIDI) pitch. Serialized as a MusicXML
+   * `<transpose>` so the file still sounds at the MIDI pitch.
+   */
+  transposeSemitones?: number;
 }
 
 function hasMeasureEntry<T>(
