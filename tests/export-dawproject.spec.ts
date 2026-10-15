@@ -661,10 +661,18 @@ describe('exportDawproject arrangement', () => {
       [0, 120, 'linear'],
       [8, 140, 'hold'],
       [8, 150, 'hold'],
-      [16, 90, 'linear'],
-      // Open-ended final ramp ends at the arrangement content end (8 + 16).
-      [24, 100, 'hold'],
+      // The final segment never ramps in playback, so its end tempo is dropped.
+      [16, 90, 'hold'],
     ]);
+  });
+
+  it('writes no tempo automation for a single segment with a stale end tempo', async () => {
+    const project = await exportProjectXml(
+      makeDoc([makeTrack([makeMidiClip({ startPpq: 0, lengthPpq: 16 })])], {
+        tempoSegments: [{ startPpq: 0, bpm: 120, endBpm: 140 }],
+      }),
+    );
+    expect(project.querySelector('Arrangement > TempoAutomation')).toBeNull();
   });
 
   it('exports multiple time signatures as automation points', async () => {

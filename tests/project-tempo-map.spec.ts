@@ -11,6 +11,7 @@ import {
   secondsToPpq,
   tempoAtPpq,
 } from '@/project/tempo-map';
+import { translateTempoMapForExport } from '@/project/tempo-map-export';
 import type { TempoSegment } from '@/project/types';
 
 /** Render rate used by the sample-conversion tests. */
@@ -203,5 +204,61 @@ describe('tempo map conversions', () => {
       expect(Number.isNaN(seconds)).toBe(false);
       expect(Number.isFinite(seconds)).toBe(true);
     });
+  });
+});
+
+describe('translateTempoMapForExport', () => {
+  const meters = [
+    { startPpq: 0, numerator: 4, denominator: 4 },
+    { startPpq: 8, numerator: 3, denominator: 4 },
+    { startPpq: 20, numerator: 6, denominator: 8 },
+  ];
+
+  it('rebases tempo and meter to the offset', () => {
+    const out = translateTempoMapForExport(
+      [
+        { startPpq: 0, bpm: 100 },
+        { startPpq: 10, bpm: 140 },
+        { startPpq: 30, bpm: 90 },
+      ],
+      meters,
+      12,
+    );
+    expect(out.tempoSegments).toEqual([
+      { startPpq: 0, bpm: 140 },
+      { startPpq: 18, bpm: 90 },
+    ]);
+    expect(out.timeSignatures.map((m) => [m.startPpq, m.numerator])).toEqual([
+      [0, 3],
+      [8, 6],
+    ]);
+  });
+
+  it('starts a ramp in progress at its interpolated tempo', () => {
+    const out = translateTempoMapForExport(
+      [
+        { startPpq: 0, bpm: 100, endBpm: 140 },
+        { startPpq: 40, bpm: 140 },
+      ],
+      meters,
+      20,
+    );
+    expect(out.tempoSegments).toEqual([
+      { startPpq: 0, bpm: 120, endBpm: 140 },
+      { startPpq: 20, bpm: 140 },
+    ]);
+  });
+
+  it('never ramps the final segment', () => {
+    const out = translateTempoMapForExport([{ startPpq: 0, bpm: 100, endBpm: 160 }], meters);
+    expect(out.tempoSegments).toEqual([{ startPpq: 0, bpm: 100 }]);
+  });
+
+  it('holds the first tempo before a later first segment', () => {
+    const out = translateTempoMapForExport([{ startPpq: 16, bpm: 90 }], meters, 4);
+    expect(out.tempoSegments).toEqual([
+      { startPpq: 0, bpm: 90 },
+      { startPpq: 12, bpm: 90 },
+    ]);
   });
 });

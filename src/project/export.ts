@@ -14,6 +14,7 @@ import {
 } from './serialization';
 import { type MidiExportLossKind, projectDocumentToSmfWithLoss } from './smf';
 import { getProject, useProjectStore } from './store';
+import { translateTempoMapForExport } from './tempo-map-export';
 
 /** Bytes plus suggested filename produced by the export commands. */
 export interface MidiExportResult {
@@ -71,7 +72,8 @@ export function exportProjectClipFile(baseName?: string): MidiExportResult {
  * Exports a single clip as a Standard MIDI File.
  *
  * Source offsets are kept on the document clip, so the resulting file starts
- * at the clip window while still preserving app-level MIDI lanes.
+ * at the clip window while still preserving app-level MIDI lanes. The tempo
+ * and meter maps are rebased to the clip start.
  *
  * @param clipId Id of the clip to export.
  * @param baseName Base filename; defaults to the clip name.
@@ -136,12 +138,17 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
   }
 
   const name = sanitizeBaseName(baseName ?? clip.name, 'clip');
+  const tempoMap = translateTempoMapForExport(
+    store.tempoSegments,
+    store.timeSignatures,
+    clip.startPpq,
+  );
   const exported = await projectDocumentToSmfWithLoss({
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name,
     sampleRate: 48000,
-    tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
-    timeSignatures: store.timeSignatures.map((signature) => ({ ...signature })),
+    tempoSegments: tempoMap.tempoSegments,
+    timeSignatures: tempoMap.timeSignatures,
     tracks: [
       {
         name: track.name,

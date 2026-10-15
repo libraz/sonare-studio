@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { linearToDb } from '@/lib/db';
+import { ensureWasm } from '@/lib/wasm';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import { chordTonePitchClasses, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import {
@@ -1194,5 +1195,32 @@ describe('MIDI export commands', () => {
       { ppq: 0.25, status: 0xf0, data: [0x7e, 0x7f, 0x09] },
     ]);
     await expect(exportClipSmf(9999)).rejects.toThrow(RangeError);
+  });
+
+  it('exportClipSmf starts at the tempo and meter active at the clip position', async () => {
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    store.tempoSegments = [
+      { startPpq: 0, bpm: 100 },
+      { startPpq: 8, bpm: 140 },
+      { startPpq: 16, bpm: 90 },
+    ];
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 8, numerator: 3, denominator: 4 },
+    ];
+    store.clips = store.clips.map((clip) =>
+      clip.id === store.clipId ? { ...clip, startPpq: 10, lengthPpq: 16 } : clip,
+    );
+    const wasm = await ensureWasm();
+    const tempoSpy = vi.spyOn(wasm.Project.prototype, 'setTempoSegments');
+    const meterSpy = vi.spyOn(wasm.Project.prototype, 'setTimeSignatures');
+    await exportClipSmf(store.clipId);
+    expect(tempoSpy.mock.lastCall?.[0]).toEqual([
+      { startPpq: 0, bpm: 140, endBpm: 0 },
+      { startPpq: 6, bpm: 90, endBpm: 0 },
+    ]);
+    expect(meterSpy.mock.lastCall?.[0]).toEqual([{ startPpq: 0, numerator: 3, denominator: 4 }]);
+    tempoSpy.mockRestore();
+    meterSpy.mockRestore();
   });
 });

@@ -67,10 +67,11 @@ import {
 import type {
   DocumentAutomationLane,
   DocumentClip,
-  DocumentTempoSegment,
   ProjectDocument,
 } from '@/project/serialization';
 import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
+import { translateTempoMapForExport } from '@/project/tempo-map-export';
+import type { TempoSegment, TimeSignatureSegment } from '@/project/types';
 import { sanitizeWarpAnchors } from '@/project/warp';
 import { audioContentOriginPpq, audioContentPpqToSeconds } from './audio-time';
 import {
@@ -603,30 +604,18 @@ function transportElement(doc: ProjectDocument): XmlElement {
   };
 }
 
-/** True when a tempo segment ramps to a different end tempo. */
-function isRampSegment(segment: DocumentTempoSegment): boolean {
-  return segment.endBpm !== undefined && segment.endBpm > 0 && segment.endBpm !== segment.bpm;
-}
-
 /**
  * Builds the tempo automation points: one point per segment start, plus a
  * ramp-end point (linear interpolation) for segments carrying an end tempo.
- * An open-ended final ramp ends at the arrangement content end; when the
- * content ends before the ramp starts, the ramp degrades to a held tempo.
+ * Expects a map from `translateTempoMapForExport`, where only segments
+ * followed by another carry an end tempo.
  */
-function tempoAutomationElement(
-  segments: ReadonlyArray<DocumentTempoSegment>,
-  contentEndPpq: number,
-): XmlElement {
+function tempoAutomationElement(segments: ReadonlyArray<TempoSegment>): XmlElement {
   const points: XmlElement[] = [{ name: 'Target', attributes: { parameter: TEMPO_PARAMETER_ID } }];
   const pushPoint = (time: number, value: number, interpolation: string): void => {
     const last = points[points.length - 1];
-    // A final open-ended ramp emits a hold terminator at the content end, which
-    // re-imports as its own held segment whose start point then coincides
-    // exactly with that terminator. Collapsing an identical adjacent point keeps
-    // DAWproject round-trips idempotent instead of accreting a redundant tail
-    // point (points that merely share a time but differ in tempo — a ramp end
-    // meeting a jump — are preserved).
+    // Collapse an identical adjacent point so round-trips stay idempotent
+    // (points that merely share a time but differ in tempo are preserved).
     if (
       last.name === 'RealPoint' &&
       last.attributes?.time === time &&
@@ -639,13 +628,11 @@ function tempoAutomationElement(
   };
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
-    const ramp = isRampSegment(segment);
+    const next = segments[i + 1];
+    const ramp = next !== undefined && segment.endBpm !== undefined;
     pushPoint(segment.startPpq, segment.bpm, ramp ? 'linear' : 'hold');
-    if (ramp) {
-      const endPpq = i + 1 < segments.length ? segments[i + 1].startPpq : contentEndPpq;
-      if (endPpq > segment.startPpq) {
-        pushPoint(endPpq, segment.endBpm as number, 'hold');
-      }
+    if (ramp && next.startPpq > segment.startPpq) {
+      pushPoint(next.startPpq, segment.endBpm as number, 'hold');
     }
   }
   return {
@@ -656,13 +643,15 @@ function tempoAutomationElement(
 }
 
 /** Builds the time-signature automation points (one per document segment). */
-function timeSignatureAutomationElement(doc: ProjectDocument): XmlElement {
+function timeSignatureAutomationElement(
+  timeSignatures: ReadonlyArray<TimeSignatureSegment>,
+): XmlElement {
   return {
     name: 'TimeSignatureAutomation',
     attributes: { id: 'time-signature-automation' },
     children: [
       { name: 'Target', attributes: { parameter: TIME_SIGNATURE_PARAMETER_ID } },
-      ...doc.timeSignatures.map(
+      ...timeSignatures.map(
         (segment): XmlElement => ({
           name: 'TimeSignaturePoint',
           attributes: {
@@ -930,16 +919,12 @@ function arrangementElement(
     (doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group.gainDb]),
   );
   const children: XmlElement[] = [];
+  const translated = translateTempoMapForExport(doc.tempoSegments, doc.timeSignatures);
   if (doc.timeSignatures.length > 1) {
-    children.push(timeSignatureAutomationElement(doc));
+    children.push(timeSignatureAutomationElement(translated.timeSignatures));
   }
-  if (doc.tempoSegments.length > 1 || doc.tempoSegments.some(isRampSegment)) {
-    const contentEndPpq = doc.tracks.reduce(
-      (end, track) =>
-        track.clips.reduce((max, clip) => Math.max(max, clip.startPpq + clip.lengthPpq), end),
-      0,
-    );
-    children.push(tempoAutomationElement(doc.tempoSegments, contentEndPpq));
+  if (doc.tempoSegments.length > 1) {
+    children.push(tempoAutomationElement(translated.tempoSegments));
   }
   const markers = markersElement(doc);
   if (markers) children.push(markers);
