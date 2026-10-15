@@ -1,7 +1,9 @@
 import { HARMONIC_MINOR_MASK, MAJOR_MASK } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
+import { keyScaleToKeyFifths } from '@/compose/key';
 import { proposeKeyChanges } from '@/compose/key-changes';
-import { buildKeyMap } from '@/compose/key-map';
+import { buildKeyMap, sameKeyName } from '@/compose/key-map';
+import { keyMarkerName } from '@/compose/key-name';
 import type { VoiceLine } from '@/compose/voice-context';
 import { type EditorNote, MAJOR_MODE_MASK, type TimeSignatureSegment } from '@/project/types';
 
@@ -122,6 +124,49 @@ describe('proposeKeyChanges', () => {
       [],
     );
     expect(proposeKeyChanges(lines(notes), FOUR_FOUR, declaredAHarmonicMinor)).toEqual([]);
+  });
+
+  it('proposes the return to the declared key after a modulation', () => {
+    const progression = [I, IV, V, I, I, IV, V, I];
+    const notes = [
+      ...arp(0, 0, 4, progression),
+      ...arp(7, 32, 4, progression),
+      ...arp(0, 64, 4, progression),
+    ];
+    const declaredC = buildKeyMap({ enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK }, []);
+    const proposals = proposeKeyChanges(lines(notes), FOUR_FOUR, declaredC);
+    expect(proposals.map((proposal) => proposal.key.rootPc)).toEqual([7, 0]);
+
+    const applied = buildKeyMap(
+      { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK },
+      proposals.map((proposal, index) => ({
+        id: index + 1,
+        ppq: proposal.startPpq,
+        name: keyMarkerName(keyScaleToKeyFifths(proposal.key), proposal.key.rootPc === 9),
+      })),
+    );
+    for (const proposal of proposals) {
+      const inForce = applied.at(proposal.startPpq);
+      expect(inForce !== null && sameKeyName(inForce, proposal.key)).toBe(true);
+    }
+  });
+
+  it('lets an existing marker after a proposal take over before comparing later regions', () => {
+    const progression = [I, IV, V, I, I, IV, V, I];
+    const notes = [
+      ...arp(0, 0, 4, progression),
+      ...arp(7, 32, 4, progression),
+      ...arp(0, 64, 4, progression),
+    ];
+    const declaredC = buildKeyMap({ enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK }, []);
+    const withReturn = buildKeyMap({ enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK }, [
+      { id: 1, ppq: 48, name: keyMarkerName(0, false) },
+    ]);
+    const proposals = proposeKeyChanges(lines(notes), FOUR_FOUR, declaredC);
+    expect(proposeKeyChanges(lines(notes), FOUR_FOUR, withReturn).map((p) => p.key.rootPc)).toEqual(
+      [7],
+    );
+    expect(proposals).toHaveLength(2);
   });
 
   it('returns no proposals for no notes', () => {

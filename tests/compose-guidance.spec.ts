@@ -93,6 +93,23 @@ describe('buildGuidance', () => {
     expect(analysis?.degree).toBe(3);
   });
 
+  it('keeps every note of the first loop occurrence on triplet onsets in a clip off beat 0', () => {
+    const onsets = [0, 1 / 3, 2 / 3, 1];
+    const analyzedIds = (clipStartPpq: number): number[] => {
+      const result = buildGuidance(
+        guidanceInput({
+          clipStartPpq,
+          notes: onsets.map((startPpq, index) =>
+            note({ id: index + 1, pitch: 60 + index * 2, startPpq, durationPpq: 1 / 3 }),
+          ),
+        }),
+      );
+      return [1, 2, 3, 4].filter((id) => result.byNoteId.get(id)?.analyzed !== undefined);
+    };
+    expect(analyzedIds(0)).toEqual([1, 2, 3, 4]);
+    expect(analyzedIds(4)).toEqual([1, 2, 3, 4]);
+  });
+
   it('counts scale degrees from 1 and answers -1 off the scale', () => {
     // The tonic and the leading tone bracket the scale, and C# is outside it:
     // the three answers a card has to tell apart. A degree counted from 0 would

@@ -4,10 +4,10 @@
  *
  * The search reuses {@link buildVoiceLines}'s harmonic note pool (see the
  * caller) so a proposal reads the same notes every other theory surface does,
- * then keeps only the regions that disagree with the project's current key
- * map -- comparing each region to what is already in effect there, not to the
- * region before it, since the map may already carry a marker the timeline
- * search cannot see.
+ * then keeps only the regions that disagree with the key in effect there: the
+ * project's key map, overridden by the proposals before it until the next
+ * existing marker. A return to the home key after a modulation is therefore
+ * proposed, and the map may carry a marker the timeline search cannot see.
  *
  * Pure module (no Vue/Pinia).
  */
@@ -44,13 +44,14 @@ export interface KeyChangeProposal {
 
 /**
  * Proposes `Key:` marker positions from `lines`' notes, filtered to positions
- * where the detected key differs from what `keyMap` already reports there.
+ * where the detected key differs from the key in force there once the earlier
+ * proposals are applied to `keyMap`.
  *
  * @param lines Harmonic voice lines built with {@link buildVoiceLines} across
  *   every track, not scoped to one clip.
  * @param timeSignatures The project's time-signature segments.
  * @param keyMap The project's current key map (declared key plus any `Key:`
- *   markers), used only to filter out regions that already agree with it.
+ *   markers), used to filter out regions that already agree with it.
  */
 export function proposeKeyChanges(
   lines: ReadonlyArray<VoiceLine>,
@@ -73,10 +74,18 @@ export function proposeKeyChanges(
     minKeyBeats: 2 * barBeats,
   });
 
+  const markerStarts = keyMap.regions
+    .filter((region) => region.source === 'marker')
+    .map((region) => region.startPpq);
   const proposals: KeyChangeProposal[] = [];
   regions.forEach((region, index) => {
-    const existing = keyMap.at(region.startBeat);
-    if (existing !== null && sameKeyName(existing, region.key.scale)) return;
+    // An earlier proposal holds until an existing marker takes over after it.
+    const previous = proposals[proposals.length - 1];
+    const overridden =
+      previous !== undefined &&
+      !markerStarts.some((start) => start > previous.startPpq && start <= region.startBeat);
+    const inForce = overridden ? previous.key : keyMap.at(region.startBeat);
+    if (inForce !== null && sameKeyName(inForce, region.key.scale)) return;
     const tonic = region.key.tonic;
     const mode = isMinorKey(region.key.scale) ? 'minor' : 'major';
     proposals.push({

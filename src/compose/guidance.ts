@@ -270,16 +270,15 @@ export function buildGuidance(input: GuidanceInput): GuidanceResult {
   // A loop occurrence keeps the source note id. Keep the first occurrence for
   // card and melodic/placement readings, while the full active line remains in
   // the harmonic pass so its worst severity can be aggregated below.
-  const firstStartByNoteId = new Map<number, number>();
+  const seenNoteIds = new Set<number>();
+  const firstNotes = new Set<EditorNote>();
   for (const note of input.notes) {
-    if (!firstStartByNoteId.has(note.id)) firstStartByNoteId.set(note.id, note.startPpq);
+    if (seenNoteIds.has(note.id)) continue;
+    seenNoteIds.add(note.id);
+    firstNotes.add(note);
   }
-  const firstActiveLine = activeLine.filter(
-    (note) => firstStartByNoteId.get(note.id) === note.startPpq - input.clipStartPpq,
-  );
-  const firstInputNotes = input.notes.filter(
-    (note) => firstStartByNoteId.get(note.id) === note.startPpq,
-  );
+  const firstActiveLine = activeLine.filter((_, index) => firstNotes.has(sorted[index]));
+  const firstInputNotes = input.notes.filter((note) => firstNotes.has(note));
 
   /**
    * Each other line's top voice at `absBeat`, carrying its top at `prevBeat`
