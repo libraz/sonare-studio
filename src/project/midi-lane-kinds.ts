@@ -1,0 +1,226 @@
+/**
+ * Descriptor table for the five MIDI clip lane kinds (CC, pitch bend, program
+ * change, channel pressure, polyphonic pressure) plus the generic join, clone
+ * and window-transform helpers that iterate it. A kind differs only in its lane
+ * identity key, ordering, point sanitizer and the identity fields of a lane.
+ * Pure and canvas-free.
+ */
+
+import {
+  sanitizeCcPoints,
+  sanitizePitchBendPoints,
+  sanitizePressurePoints,
+  sanitizeProgramChangePoints,
+} from './midi-cc';
+import type {
+  ClipCcLane,
+  ClipChannelPressureLane,
+  ClipPitchBendLane,
+  ClipPolyPressureLane,
+  ClipProgramChangeLane,
+} from './types';
+
+/** Lane-list fields shared by EditorClip and MidiClipTake. */
+export interface MidiLaneFields {
+  ccLanes: ClipCcLane[];
+  pitchBendLanes: ClipPitchBendLane[];
+  programChangeLanes: ClipProgramChangeLane[];
+  channelPressureLanes: ClipChannelPressureLane[];
+  polyPressureLanes: ClipPolyPressureLane[];
+}
+
+/** Name of a lane-list field. */
+export type MidiLaneField = keyof MidiLaneFields;
+
+/** Lane type stored under field `F`. */
+export type MidiLaneOf<F extends MidiLaneField> = MidiLaneFields[F][number];
+
+type AnyLane = MidiLaneOf<MidiLaneField>;
+type AnyPoint = AnyLane['points'][number];
+
+/** Per-kind behaviour the generic lane helpers rely on. */
+export interface MidiLaneKind<F extends MidiLaneField> {
+  /** Lane-list field on EditorClip / MidiClipTake. */
+  field: F;
+  /** Identity key: lanes with equal keys describe the same lane. */
+  key(lane: MidiLaneOf<F>): string;
+  /** Sort order of lanes within a list. */
+  compare(a: MidiLaneOf<F>, b: MidiLaneOf<F>): number;
+  /** Normalizes merged points to the clip window `[0, lengthPpq]`. */
+  sanitize(
+    points: ReadonlyArray<MidiLaneOf<F>['points'][number]>,
+    lengthPpq: number,
+  ): MidiLaneOf<F>['points'];
+  /** Copy of the lane's identity fields with an empty point list. */
+  shell(lane: MidiLaneOf<F>): MidiLaneOf<F>;
+  /** True when cloning drops lanes that have no points. */
+  dropEmptyOnClone: boolean;
+}
+
+/** Kind with its lane type erased, for the loops below. */
+type ErasedKind = MidiLaneKind<MidiLaneField>;
+
+function defineKind<F extends MidiLaneField>(kind: MidiLaneKind<F>): ErasedKind {
+  return kind as unknown as ErasedKind;
+}
+
+/** Lane kinds in canonical field order. */
+export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
+  defineKind({
+    field: 'ccLanes',
+    key: (lane: ClipCcLane) => `${lane.controller}:${lane.channel}`,
+    compare: (a: ClipCcLane, b: ClipCcLane) => a.controller - b.controller || a.channel - b.channel,
+    sanitize: sanitizeCcPoints,
+    shell: (lane: ClipCcLane): ClipCcLane => ({
+      controller: lane.controller,
+      channel: lane.channel,
+      points: [],
+    }),
+    dropEmptyOnClone: true,
+  }),
+  defineKind({
+    field: 'pitchBendLanes',
+    key: (lane: ClipPitchBendLane) => String(lane.channel),
+    compare: (a: ClipPitchBendLane, b: ClipPitchBendLane) => a.channel - b.channel,
+    sanitize: sanitizePitchBendPoints,
+    shell: (lane: ClipPitchBendLane): ClipPitchBendLane => ({ channel: lane.channel, points: [] }),
+    dropEmptyOnClone: false,
+  }),
+  defineKind({
+    field: 'programChangeLanes',
+    key: (lane: ClipProgramChangeLane) => String(lane.channel),
+    compare: (a: ClipProgramChangeLane, b: ClipProgramChangeLane) => a.channel - b.channel,
+    sanitize: sanitizeProgramChangePoints,
+    shell: (lane: ClipProgramChangeLane): ClipProgramChangeLane => ({
+      channel: lane.channel,
+      points: [],
+    }),
+    dropEmptyOnClone: false,
+  }),
+  defineKind({
+    field: 'channelPressureLanes',
+    key: (lane: ClipChannelPressureLane) => String(lane.channel),
+    compare: (a: ClipChannelPressureLane, b: ClipChannelPressureLane) => a.channel - b.channel,
+    sanitize: sanitizePressurePoints,
+    shell: (lane: ClipChannelPressureLane): ClipChannelPressureLane => ({
+      channel: lane.channel,
+      points: [],
+    }),
+    dropEmptyOnClone: false,
+  }),
+  defineKind({
+    field: 'polyPressureLanes',
+    key: (lane: ClipPolyPressureLane) => `${lane.channel}:${lane.pitch}`,
+    compare: (a: ClipPolyPressureLane, b: ClipPolyPressureLane) =>
+      a.channel - b.channel || a.pitch - b.pitch,
+    sanitize: sanitizePressurePoints,
+    shell: (lane: ClipPolyPressureLane): ClipPolyPressureLane => ({
+      channel: lane.channel,
+      pitch: lane.pitch,
+      points: [],
+    }),
+    dropEmptyOnClone: false,
+  }),
+];
+
+type LaneRecord = Partial<Record<MidiLaneField, AnyLane[]>>;
+
+/** Maps lane points through `transform`, keeping each lane's identity fields. */
+type PointsTransform = <P extends { ppq: number }>(points: ReadonlyArray<P>) => P[];
+
+/**
+ * Merges the lanes of several source clips into one lane list per kind. Lanes
+ * with the same identity key are concatenated, points are sanitized to
+ * `[0, lengthPpq]`, empty lanes are dropped and the result is sorted.
+ *
+ * @param sources Source clips, in merge order.
+ * @param lengthPpq Length of the merged window.
+ * @param placePoints Maps a source lane's points into the merged window.
+ * @returns Only the kinds that ended up with at least one lane.
+ */
+export function joinMidiLaneFields<S extends Partial<MidiLaneFields>>(
+  sources: readonly S[],
+  lengthPpq: number,
+  placePoints: (points: ReadonlyArray<AnyPoint>, source: S) => AnyPoint[],
+): Partial<MidiLaneFields> {
+  const out: LaneRecord = {};
+  for (const kind of MIDI_LANE_KINDS) {
+    const lanes = new Map<string, AnyLane>();
+    for (const source of sources) {
+      for (const lane of source[kind.field] ?? []) {
+        const key = kind.key(lane);
+        const current = lanes.get(key) ?? kind.shell(lane);
+        (current.points as AnyPoint[]).push(...placePoints(lane.points, source));
+        lanes.set(key, current);
+      }
+    }
+    const joined = [...lanes.values()]
+      .map((lane) => ({ ...lane, points: kind.sanitize(lane.points, lengthPpq) }) as AnyLane)
+      .filter((lane) => lane.points.length > 0)
+      .sort(kind.compare);
+    if (joined.length > 0) out[kind.field] = joined;
+  }
+  return out as Partial<MidiLaneFields>;
+}
+
+/**
+ * Deep-copies every lane list present on `source`. A kind whose
+ * `dropEmptyOnClone` is set omits empty lanes and yields `undefined` when none
+ * remain; the key is still present so a take copy keeps its shape.
+ */
+export function cloneMidiLaneFields(source: Partial<MidiLaneFields>): Partial<MidiLaneFields> {
+  const out: Partial<Record<MidiLaneField, AnyLane[] | undefined>> = {};
+  for (const kind of MIDI_LANE_KINDS) {
+    const lanes = source[kind.field] as AnyLane[] | undefined;
+    if (lanes === undefined) continue;
+    const kept = kind.dropEmptyOnClone ? lanes.filter((lane) => lane.points.length > 0) : lanes;
+    const copied = kept.map((lane) => ({
+      ...kind.shell(lane),
+      points: lane.points.map((point) => ({ ...point })),
+    })) as AnyLane[];
+    out[kind.field] = kind.dropEmptyOnClone && copied.length === 0 ? undefined : copied;
+  }
+  return out as Partial<MidiLaneFields>;
+}
+
+/**
+ * Re-windows every lane list present on `source` through `transform` and drops
+ * lanes left without points.
+ *
+ * @returns Only the kinds that kept at least one lane.
+ */
+export function transformMidiLaneFields(
+  source: Partial<MidiLaneFields>,
+  transform: PointsTransform,
+): Partial<MidiLaneFields> {
+  const out: LaneRecord = {};
+  for (const kind of MIDI_LANE_KINDS) {
+    const transformed = (source[kind.field] as AnyLane[] | undefined)
+      ?.map(
+        (lane) =>
+          ({
+            ...kind.shell(lane),
+            points: transform(lane.points as ReadonlyArray<AnyPoint>),
+          }) as AnyLane,
+      )
+      .filter((lane) => lane.points.length > 0);
+    if (transformed !== undefined && transformed.length > 0) out[kind.field] = transformed;
+  }
+  return out as Partial<MidiLaneFields>;
+}
+
+/**
+ * Writes the non-empty lane lists of `lanes` onto `target` and deletes the
+ * field of every kind that has none, so absent and empty stay indistinguishable.
+ */
+export function assignMidiLaneFields(
+  target: Partial<MidiLaneFields>,
+  lanes: Partial<MidiLaneFields>,
+): void {
+  const fields = target as LaneRecord;
+  for (const kind of MIDI_LANE_KINDS) {
+    const next = lanes[kind.field] as AnyLane[] | undefined;
+    if (next !== undefined && next.length > 0) fields[kind.field] = next;
+    else delete fields[kind.field];
+  }
+}

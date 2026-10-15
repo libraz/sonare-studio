@@ -1,13 +1,8 @@
 import { sanitizeCompSegments } from '../comping';
-import { cloneCcLanes } from '../midi-cc';
+import { assignMidiLaneFields, transformMidiLaneFields } from '../midi-lane-kinds';
 import type { useProjectStore } from '../store';
 import type {
-  ClipChannelPressureLane,
   ClipCompSegment,
-  ClipPitchBendLane,
-  ClipPolyPressureLane,
-  ClipPressurePoint,
-  ClipProgramChangeLane,
   ClipWarp,
   EditorClip,
   EditorTrack,
@@ -144,18 +139,6 @@ function transformLanePoints<T extends PpqPoint>(
   return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
 }
 
-function transformLaneList<T extends { points: ReadonlyArray<PpqPoint> }>(
-  lanes: ReadonlyArray<T> | undefined,
-  windowStartPpq: number,
-  windowLengthPpq: number,
-): T[] | undefined {
-  const transformed = lanes?.map((lane) => ({
-    ...lane,
-    points: transformLanePoints(lane.points, windowStartPpq, windowLengthPpq),
-  })) as T[] | undefined;
-  return transformed?.filter((lane) => lane.points.length > 0);
-}
-
 /**
  * Keeps MIDI take notes in the source-relative coordinate frame while
  * clipping them to the derived source window. The native Project uses this
@@ -190,36 +173,12 @@ function transformMidiTake(
     name: take.name,
     notes: transformMidiTakeNotes(take.notes, sourceWindowStartPpq, sourceWindowEndPpq),
   };
-  const ccLanes = transformLaneList(take.ccLanes, windowStartPpq, windowLengthPpq);
-  if (ccLanes !== undefined && ccLanes.length > 0) next.ccLanes = ccLanes;
-  const pitchBendLanes = transformLaneList(take.pitchBendLanes, windowStartPpq, windowLengthPpq);
-  if (pitchBendLanes !== undefined && pitchBendLanes.length > 0) {
-    next.pitchBendLanes = pitchBendLanes;
-  }
-  const programChangeLanes = transformLaneList(
-    take.programChangeLanes,
-    windowStartPpq,
-    windowLengthPpq,
+  Object.assign(
+    next,
+    transformMidiLaneFields(take, (points) =>
+      transformLanePoints(points, windowStartPpq, windowLengthPpq),
+    ),
   );
-  if (programChangeLanes !== undefined && programChangeLanes.length > 0) {
-    next.programChangeLanes = programChangeLanes;
-  }
-  const channelPressureLanes = transformLaneList(
-    take.channelPressureLanes,
-    windowStartPpq,
-    windowLengthPpq,
-  );
-  if (channelPressureLanes !== undefined && channelPressureLanes.length > 0) {
-    next.channelPressureLanes = channelPressureLanes;
-  }
-  const polyPressureLanes = transformLaneList(
-    take.polyPressureLanes,
-    windowStartPpq,
-    windowLengthPpq,
-  );
-  if (polyPressureLanes !== undefined && polyPressureLanes.length > 0) {
-    next.polyPressureLanes = polyPressureLanes;
-  }
   return next;
 }
 
@@ -384,64 +343,12 @@ export function withDerivedClipMetadata(
   if (warp !== undefined) next.warp = warp;
   else delete next.warp;
 
-  const ccLanes = cloneCcLanes(source.ccLanes)
-    ?.map((lane) => ({
-      controller: lane.controller,
-      channel: lane.channel,
-      points: transformLanePoints(lane.points, windowStartPpq, windowLengthPpq),
-    }))
-    .filter((lane) => lane.points.length > 0);
-  if (ccLanes !== undefined && ccLanes.length > 0) next.ccLanes = ccLanes;
-  else delete next.ccLanes;
-
-  const pitchBendLanes = source.pitchBendLanes
-    ?.map<ClipPitchBendLane>((lane) => ({
-      channel: lane.channel,
-      points: transformLanePoints(lane.points, windowStartPpq, windowLengthPpq),
-    }))
-    .filter((lane) => lane.points.length > 0);
-  if (pitchBendLanes !== undefined && pitchBendLanes.length > 0) {
-    next.pitchBendLanes = pitchBendLanes;
-  } else {
-    delete next.pitchBendLanes;
-  }
-
-  const programChangeLanes = source.programChangeLanes
-    ?.map<ClipProgramChangeLane>((lane) => ({
-      channel: lane.channel,
-      points: transformLanePoints(lane.points, windowStartPpq, windowLengthPpq),
-    }))
-    .filter((lane) => lane.points.length > 0);
-  if (programChangeLanes !== undefined && programChangeLanes.length > 0) {
-    next.programChangeLanes = programChangeLanes;
-  } else {
-    delete next.programChangeLanes;
-  }
-
-  const channelPressureLanes = source.channelPressureLanes
-    ?.map<ClipChannelPressureLane>((lane) => ({
-      channel: lane.channel,
-      points: transformLanePoints<ClipPressurePoint>(lane.points, windowStartPpq, windowLengthPpq),
-    }))
-    .filter((lane) => lane.points.length > 0);
-  if (channelPressureLanes !== undefined && channelPressureLanes.length > 0) {
-    next.channelPressureLanes = channelPressureLanes;
-  } else {
-    delete next.channelPressureLanes;
-  }
-
-  const polyPressureLanes = source.polyPressureLanes
-    ?.map<ClipPolyPressureLane>((lane) => ({
-      channel: lane.channel,
-      pitch: lane.pitch,
-      points: transformLanePoints<ClipPressurePoint>(lane.points, windowStartPpq, windowLengthPpq),
-    }))
-    .filter((lane) => lane.points.length > 0);
-  if (polyPressureLanes !== undefined && polyPressureLanes.length > 0) {
-    next.polyPressureLanes = polyPressureLanes;
-  } else {
-    delete next.polyPressureLanes;
-  }
+  assignMidiLaneFields(
+    next,
+    transformMidiLaneFields(source, (points) =>
+      transformLanePoints(points, windowStartPpq, windowLengthPpq),
+    ),
+  );
   const windowEndPpq = windowStartPpq + windowLengthPpq;
   const smfSysEx = source.smfSysEx
     ?.filter(

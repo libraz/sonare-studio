@@ -3,7 +3,7 @@ import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import type { EditorChordSymbol } from '../chords';
 import { cloneInstrument, type ExternalMidiInstrument } from '../instrument';
-import { cloneCcLanes } from '../midi-cc';
+import { assignMidiLaneFields, cloneMidiLaneFields } from '../midi-lane-kinds';
 import type { MidiCcBinding } from '../midi-learn-targets';
 import { cloneMixerState, cloneStrip, type ProjectMixerState } from '../mixer';
 import { getProject, PROJECT_MAX_UNDO_DEPTH, setHistoryResetHook, useProjectStore } from '../store';
@@ -387,39 +387,7 @@ function cloneClip(clip: EditorClip): EditorClip {
     next.midiTakes = clip.midiTakes.map((take) => ({
       name: take.name,
       notes: take.notes.map((note) => ({ ...note })),
-      ...(take.ccLanes !== undefined ? { ccLanes: cloneCcLanes(take.ccLanes) } : {}),
-      ...(take.pitchBendLanes !== undefined
-        ? {
-            pitchBendLanes: take.pitchBendLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.programChangeLanes !== undefined
-        ? {
-            programChangeLanes: take.programChangeLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.channelPressureLanes !== undefined
-        ? {
-            channelPressureLanes: take.channelPressureLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.polyPressureLanes !== undefined
-        ? {
-            polyPressureLanes: take.polyPressureLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
+      ...cloneMidiLaneFields(take),
     }));
   }
   if (clip.midiCompSegments !== undefined) {
@@ -433,42 +401,7 @@ function cloneClip(clip: EditorClip): EditorClip {
         : {}),
     };
   }
-  const ccLanes = cloneCcLanes(clip.ccLanes);
-  if (ccLanes !== undefined) next.ccLanes = ccLanes;
-  else delete next.ccLanes;
-  if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
-    next.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  } else {
-    delete next.pitchBendLanes;
-  }
-  if (clip.programChangeLanes !== undefined && clip.programChangeLanes.length > 0) {
-    next.programChangeLanes = clip.programChangeLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  } else {
-    delete next.programChangeLanes;
-  }
-  if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
-    next.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  } else {
-    delete next.channelPressureLanes;
-  }
-  if (clip.polyPressureLanes !== undefined && clip.polyPressureLanes.length > 0) {
-    next.polyPressureLanes = clip.polyPressureLanes.map((lane) => ({
-      channel: lane.channel,
-      pitch: lane.pitch,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  } else {
-    delete next.polyPressureLanes;
-  }
+  assignMidiLaneFields(next, cloneMidiLaneFields(clip));
   if (clip.smfSysEx !== undefined && clip.smfSysEx.length > 0) {
     next.smfSysEx = clip.smfSysEx.map((packet) => ({ ...packet, data: [...packet.data] }));
   } else {

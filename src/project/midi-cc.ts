@@ -16,6 +16,7 @@ import type {
   ClipExpressionCurve,
   ClipPitchBendPoint,
   ClipPressurePoint,
+  ClipProgramChangePoint,
 } from './types';
 
 /** Lowest MIDI controller number / value. */
@@ -174,6 +175,34 @@ export function sanitizePressurePoints(
     );
   }
   return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
+}
+
+/**
+ * Normalizes program-change breakpoints: rounds each program to an integer,
+ * drops entries whose position is non-finite or outside [0, lengthPpq] or whose
+ * program is outside [0, 127], and returns them sorted by ppq. Points on the
+ * same position are kept.
+ *
+ * @param points Raw breakpoints in any order.
+ * @param lengthPpq Clip window length the positions must fall inside.
+ * @returns A fresh sorted point list.
+ */
+export function sanitizeProgramChangePoints(
+  points: ReadonlyArray<ClipProgramChangePoint>,
+  lengthPpq: number,
+): ClipProgramChangePoint[] {
+  return points
+    .map((point) => ({ ppq: point.ppq, program: Math.round(point.program) }))
+    .filter(
+      (point) =>
+        Number.isFinite(point.ppq) &&
+        point.ppq >= 0 &&
+        point.ppq <= lengthPpq &&
+        Number.isInteger(point.program) &&
+        point.program >= MIDI_CC_MIN &&
+        point.program <= MIDI_CC_MAX,
+    )
+    .sort((a, b) => a.ppq - b.ppq);
 }
 
 function curveT(curve: ClipExpressionCurve | undefined, t: number): number {

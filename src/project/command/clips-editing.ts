@@ -13,8 +13,8 @@ import { ingestAudioBuffer } from '../audio-import';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '../audio-slice';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { audioClipSegments } from '../comping';
-import { sanitizeCcPoints, sanitizePitchBendPoints, sanitizePressurePoints } from '../midi-cc';
 import type { RawNote } from '../midi-events';
+import { joinMidiLaneFields } from '../midi-lane-kinds';
 import {
   MAX_LOOP_OCCURRENCES,
   MIN_LOOP_WINDOW_PPQ,
@@ -42,15 +42,7 @@ import {
   ppqToSeconds,
   secondsToPpq,
 } from '../tempo-map';
-import type {
-  ClipCcLane,
-  ClipChannelPressureLane,
-  ClipPitchBendLane,
-  ClipPolyPressureLane,
-  ClipProgramChangeLane,
-  EditorClip,
-  TempoSegment,
-} from '../types';
+import type { EditorClip, TempoSegment } from '../types';
 import { canTrackContainClip, clipKind, isAudioClip } from '../types';
 import {
   clearProjectClipWarp,
@@ -271,129 +263,6 @@ function offsetPoints<T extends PpqPoint>(
   );
 }
 
-function collectJoinedCcLanes(
-  clips: readonly EditorClip[],
-  startPpq: number,
-  lengthPpq: number,
-): ClipCcLane[] | undefined {
-  const lanes = new Map<string, ClipCcLane>();
-  for (const clip of clips) {
-    for (const lane of clip.ccLanes ?? []) {
-      const key = `${lane.controller}:${lane.channel}`;
-      const current = lanes.get(key) ?? {
-        controller: lane.controller,
-        channel: lane.channel,
-        points: [],
-      };
-      current.points.push(...offsetPoints(lane.points, clip, startPpq));
-      lanes.set(key, current);
-    }
-  }
-  const out = [...lanes.values()]
-    .map((lane) => ({
-      ...lane,
-      points: sanitizeCcPoints(lane.points, lengthPpq),
-    }))
-    .filter((lane) => lane.points.length > 0)
-    .sort((a, b) => a.controller - b.controller || a.channel - b.channel);
-  return out.length > 0 ? out : undefined;
-}
-
-function collectJoinedPitchBendLanes(
-  clips: readonly EditorClip[],
-  startPpq: number,
-  lengthPpq: number,
-): ClipPitchBendLane[] | undefined {
-  const lanes = new Map<number, ClipPitchBendLane>();
-  for (const clip of clips) {
-    for (const lane of clip.pitchBendLanes ?? []) {
-      const current = lanes.get(lane.channel) ?? { channel: lane.channel, points: [] };
-      current.points.push(...offsetPoints(lane.points, clip, startPpq));
-      lanes.set(lane.channel, current);
-    }
-  }
-  const out = [...lanes.values()]
-    .map((lane) => ({ ...lane, points: sanitizePitchBendPoints(lane.points, lengthPpq) }))
-    .filter((lane) => lane.points.length > 0)
-    .sort((a, b) => a.channel - b.channel);
-  return out.length > 0 ? out : undefined;
-}
-
-function collectJoinedChannelPressureLanes(
-  clips: readonly EditorClip[],
-  startPpq: number,
-  lengthPpq: number,
-): ClipChannelPressureLane[] | undefined {
-  const lanes = new Map<number, ClipChannelPressureLane>();
-  for (const clip of clips) {
-    for (const lane of clip.channelPressureLanes ?? []) {
-      const current = lanes.get(lane.channel) ?? { channel: lane.channel, points: [] };
-      current.points.push(...offsetPoints(lane.points, clip, startPpq));
-      lanes.set(lane.channel, current);
-    }
-  }
-  const out = [...lanes.values()]
-    .map((lane) => ({ ...lane, points: sanitizePressurePoints(lane.points, lengthPpq) }))
-    .filter((lane) => lane.points.length > 0)
-    .sort((a, b) => a.channel - b.channel);
-  return out.length > 0 ? out : undefined;
-}
-
-function collectJoinedProgramChangeLanes(
-  clips: readonly EditorClip[],
-  startPpq: number,
-  lengthPpq: number,
-): ClipProgramChangeLane[] | undefined {
-  const lanes = new Map<number, ClipProgramChangeLane>();
-  for (const clip of clips) {
-    for (const lane of clip.programChangeLanes ?? []) {
-      const current = lanes.get(lane.channel) ?? { channel: lane.channel, points: [] };
-      current.points.push(...offsetPoints(lane.points, clip, startPpq));
-      lanes.set(lane.channel, current);
-    }
-  }
-  const out = [...lanes.values()]
-    .map((lane) => ({
-      ...lane,
-      points: lane.points
-        .map((point) => ({ ppq: point.ppq, program: Math.round(point.program) }))
-        .filter(
-          (point) =>
-            Number.isFinite(point.ppq) &&
-            point.ppq >= 0 &&
-            point.ppq <= lengthPpq &&
-            Number.isInteger(point.program) &&
-            point.program >= 0 &&
-            point.program <= 127,
-        )
-        .sort((a, b) => a.ppq - b.ppq),
-    }))
-    .filter((lane) => lane.points.length > 0)
-    .sort((a, b) => a.channel - b.channel);
-  return out.length > 0 ? out : undefined;
-}
-
-function collectJoinedPolyPressureLanes(
-  clips: readonly EditorClip[],
-  startPpq: number,
-  lengthPpq: number,
-): ClipPolyPressureLane[] | undefined {
-  const lanes = new Map<string, ClipPolyPressureLane>();
-  for (const clip of clips) {
-    for (const lane of clip.polyPressureLanes ?? []) {
-      const key = `${lane.channel}:${lane.pitch}`;
-      const current = lanes.get(key) ?? { channel: lane.channel, pitch: lane.pitch, points: [] };
-      current.points.push(...offsetPoints(lane.points, clip, startPpq));
-      lanes.set(key, current);
-    }
-  }
-  const out = [...lanes.values()]
-    .map((lane) => ({ ...lane, points: sanitizePressurePoints(lane.points, lengthPpq) }))
-    .filter((lane) => lane.points.length > 0)
-    .sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
-  return out.length > 0 ? out : undefined;
-}
-
 function joinedNoteOccurrences(
   clips: readonly EditorClip[],
   startPpq: number,
@@ -511,16 +380,12 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
         sourceOffsetPpq: 0,
         notes: clip.notes,
       };
-      const ccLanes = collectJoinedCcLanes(ordered, startPpq, lengthPpq);
-      if (ccLanes) next.ccLanes = ccLanes;
-      const pitchBendLanes = collectJoinedPitchBendLanes(ordered, startPpq, lengthPpq);
-      if (pitchBendLanes) next.pitchBendLanes = pitchBendLanes;
-      const programChangeLanes = collectJoinedProgramChangeLanes(ordered, startPpq, lengthPpq);
-      if (programChangeLanes) next.programChangeLanes = programChangeLanes;
-      const channelPressureLanes = collectJoinedChannelPressureLanes(ordered, startPpq, lengthPpq);
-      if (channelPressureLanes) next.channelPressureLanes = channelPressureLanes;
-      const polyPressureLanes = collectJoinedPolyPressureLanes(ordered, startPpq, lengthPpq);
-      if (polyPressureLanes) next.polyPressureLanes = polyPressureLanes;
+      Object.assign(
+        next,
+        joinMidiLaneFields(ordered, lengthPpq, (points, source) =>
+          offsetPoints(points, source, startPpq),
+        ),
+      );
       return next;
     });
     const joined = store.clips.find((clip) => clip.id === newClipId);
