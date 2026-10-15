@@ -205,65 +205,31 @@ describe('createMeterBridge', () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
-  it('drains pollMeters in SAB mode and publishes every record to its target', () => {
-    // Drive the poll loop manually through a stubbed requestAnimationFrame.
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
-      frames.push(cb);
-      return frames.length;
-    });
-    vi.stubGlobal('cancelAnimationFrame', vi.fn());
-
-    const { handle, pollMeters } = makeHandle('sab');
-    const bridge = createMeterBridge(handle);
-    const lane = bridge.forTarget(3);
-    const laneListener = vi.fn();
-    lane.subscribe(laneListener);
-
-    pollMeters.mockReturnValueOnce([
-      makeSnapshot({ targetId: 0, frame: 100, peakDbL: -3 }),
-      makeSnapshot({ targetId: 3, frame: 100, peakDbL: -20 }),
-      makeSnapshot({ targetId: 3, frame: 228, peakDbL: -18 }),
-    ]);
-    expect(frames).toHaveLength(1);
-    frames.at(-1)?.(performance.now());
-
-    expect(pollMeters).toHaveBeenCalledTimes(1);
-    expect(bridge.latest.frame).toBe(100);
-    expect(bridge.latest.peakDbL).toBe(-3);
-    // Both lane records are delivered; latest reflects the newest one.
-    expect(laneListener).toHaveBeenCalledTimes(2);
-    expect(lane.latest.frame).toBe(228);
-    expect(lane.latest.peakDbL).toBe(-18);
-
-    // The loop re-arms itself each frame.
-    expect(frames).toHaveLength(2);
-    frames.at(-1)?.(performance.now());
-    expect(pollMeters).toHaveBeenCalledTimes(2);
-    bridge.dispose();
-  });
-
-  it('does not double-publish in SAB mode when onMeter push also fires', () => {
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
-      frames.push(cb);
-      return frames.length;
-    });
+  it('delivers every record exactly once from onMeter in SAB mode', () => {
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1),
+    );
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
     const { handle, emit, pollMeters } = makeHandle('sab');
     const bridge = createMeterBridge(handle);
-    const listener = vi.fn();
-    bridge.subscribe(listener);
+    const lane = bridge.forTarget(3);
+    const masterListener = vi.fn();
+    const laneListener = vi.fn();
+    bridge.subscribe(masterListener);
+    lane.subscribe(laneListener);
 
-    // In SAB mode the poll loop is the sole source; an onMeter push (which the
-    // engine still emits) must not also publish, or every record fires twice.
-    emit(makeSnapshot({ targetId: 0, frame: 128, peakDbL: -6 }));
-    expect(listener).not.toHaveBeenCalled();
+    emit(makeSnapshot({ targetId: 0, frame: 100, peakDbL: -3 }));
+    emit(makeSnapshot({ targetId: 3, frame: 100, peakDbL: -20 }));
+    emit(makeSnapshot({ targetId: 3, frame: 228, peakDbL: -18 }));
 
-    pollMeters.mockReturnValueOnce([makeSnapshot({ targetId: 0, frame: 128, peakDbL: -6 })]);
-    frames.at(-1)?.(performance.now());
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(masterListener).toHaveBeenCalledTimes(1);
+    expect(bridge.latest.frame).toBe(100);
+    expect(laneListener).toHaveBeenCalledTimes(2);
+    expect(lane.latest.frame).toBe(228);
+    // The facade's own ring poller owns the read index, so the bridge never drains it.
+    expect(pollMeters).not.toHaveBeenCalled();
     bridge.dispose();
   });
 

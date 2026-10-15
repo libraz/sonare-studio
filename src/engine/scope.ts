@@ -82,12 +82,10 @@ function toFrame(snapshot: SonareWorkletScopeSnapshot): ScopeFrame {
 /**
  * Creates a scope bridge for a running engine.
  *
- * Delivery has one supported path: when capabilities are SAB + embind, one
- * requestAnimationFrame loop drains `engine.pollScope()`. The current engine
- * capability contract has no postMessage scope transport, so this bridge never
- * subscribes to `engine.onScope`; unavailable transports have no live delivery
- * mechanism. Every frame is routed by its target id; the bridge's own
- * latest/subscribe track the master output.
+ * Frames arrive through `engine.onScope` when capabilities are SAB + embind;
+ * other transports have no scope ring and deliver nothing. Every frame is
+ * routed by its target id; the bridge's own latest/subscribe track the master
+ * output.
  *
  * @param handle The engine handle returned by `createEngine`.
  * @returns A bridge exposing per-target scope sources plus dispose.
@@ -99,7 +97,6 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
   const listenersByTarget = new Map<number, Set<ScopeListener>>();
   const sources = new Map<number, ScopeSource>();
   let disposed = false;
-  let rafId: number | null = null;
 
   const publish = (snapshot: SonareWorkletScopeSnapshot): void => {
     if (disposed) return;
@@ -114,32 +111,10 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     }
   };
 
-  // The current capability contract exposes scope only for SAB + embind. Keep
-  // the cleanup slot optional so disposal remains safe if a future capability
-  // adds a subscription-based delivery path; no current path calls onScope.
-  let unsubscribeOnScope: (() => void) | undefined;
-
-  const raf =
-    typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: FrameRequestCallback): number => setTimeout(() => cb(performance.now()), 16);
-  const cancelRaf =
-    typeof cancelAnimationFrame === 'function'
-      ? cancelAnimationFrame
-      : (id: number): void => clearTimeout(id);
-
-  const poll = (): void => {
-    if (disposed) return;
-    for (const snapshot of handle.engine.pollScope()) {
-      publish(snapshot);
-    }
-    if (!disposed) {
-      rafId = raf(poll);
-    }
-  };
-  if (available) {
-    rafId = raf(poll);
-  }
+  // onScope is the single delivery path: any facade subscription starts an
+  // internal ring poller sharing the read index, so a pollScope() drain would
+  // lose frames. The scope ring exists only when `available`.
+  const unsubscribeOnScope = available ? handle.engine.onScope(publish) : undefined;
 
   const sourceFor = (targetId: number): ScopeSource => {
     const existing = sources.get(targetId);
@@ -185,10 +160,6 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      if (rafId !== null) {
-        cancelRaf(rafId);
-        rafId = null;
-      }
       unsubscribeOnScope?.();
       for (const listeners of listenersByTarget.values()) {
         listeners.clear();

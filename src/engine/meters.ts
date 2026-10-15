@@ -145,13 +145,9 @@ function toLevels(snapshot: SonareWorkletMeterSnapshot): StereoMeterLevels {
 /**
  * Creates a meter bridge for a running engine.
  *
- * Delivery is single-source per transport mode, so no record is delivered
- * twice:
- * - postMessage mode: `engine.onMeter` push callbacks (pollMeters yields
- *   nothing here).
- * - SAB mode: a requestAnimationFrame loop draining `engine.pollMeters()`. The
- *   engine still fires onMeter in this mode, so the push subscription is
- *   skipped — the poll loop is the sole source.
+ * Records arrive through `engine.onMeter` in both transport modes. In SAB mode
+ * a requestAnimationFrame loop additionally polls per-insert gain reduction
+ * for watched targets.
  *
  * Every record is routed by its target id; the bridge's own latest/subscribe
  * track the master output (target id 0).
@@ -217,12 +213,11 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
     }
   };
 
-  // The two delivery paths are mutually exclusive: SAB mode drains pollMeters()
-  // below, and in that mode the engine also fires onMeter push callbacks, so
-  // subscribing to both would publish every record twice. Push is the sole
-  // source in postMessage mode (where pollMeters yields nothing).
-  const isSab = handle.capabilities.mode === 'sab';
-  const unsubscribeOnMeter = isSab ? () => undefined : handle.engine.onMeter(publish);
+  // onMeter is the single source in both transport modes: any facade
+  // subscription (onMeter, onTelemetry, onMidiOut) starts an internal ring
+  // poller that shares the read index, so draining pollMeters() as well would
+  // lose records.
+  const unsubscribeOnMeter = handle.engine.onMeter(publish);
 
   // Fall back to a timer where requestAnimationFrame is unavailable (e.g. workers).
   const raf =
@@ -236,15 +231,11 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
 
   const poll = (now: number): void => {
     if (disposed) return;
-    // Publish every polled record in order so each target's latest reading
-    // reflects its newest record.
-    for (const snapshot of handle.engine.pollMeters()) {
-      publish(snapshot);
-    }
     pollInsertGr(now);
     rafId = raf(poll);
   };
-  if (isSab) {
+  // Ring records carry no per-insert values, so only SAB mode needs the poll.
+  if (handle.capabilities.mode === 'sab') {
     rafId = raf(poll);
   }
 
