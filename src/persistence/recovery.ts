@@ -1,6 +1,9 @@
+import { createRandomId, writeOpfsFile } from './fs-utils';
 import { deleteSlotsGuarded } from './guarded-delete';
 import { withPersistenceMutationLock } from './mutation-lock';
 import {
+  AUTOSAVE_SESSION_SLOT_PREFIX,
+  AUTOSAVE_SLOT,
   deleteProjectUnlocked,
   listProjects,
   loadProject,
@@ -12,7 +15,6 @@ import { decodeSzdWithMetaInWorker } from './szd';
 const RECOVERY_DIR = 'recovery';
 const MANIFEST_FILE = 'autosave-manifest.json';
 const SESSION_KEY = 'sonare-studio:autosave-session:v1';
-const SLOT_PREFIX = 'autosave-session-';
 const MAX_SESSION_REVISIONS = 8;
 
 interface RecoveryManifestEntry {
@@ -32,11 +34,7 @@ let fallbackSessionId: string | null = null;
 const claimedSessionIds = new Set<string>();
 
 function createSessionId(): string {
-  const id =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return id.replace(/[^A-Za-z0-9._-]/g, '-');
+  return createRandomId().replace(/[^A-Za-z0-9._-]/g, '-');
 }
 
 export function autosaveSessionId(): string {
@@ -94,11 +92,11 @@ async function claimAutosaveSessionId(): Promise<string> {
 }
 
 export function isAutosaveRecoverySlot(name: string): boolean {
-  return name.toLowerCase().startsWith(SLOT_PREFIX);
+  return name.toLowerCase().startsWith(AUTOSAVE_SESSION_SLOT_PREFIX);
 }
 
 function sessionSlot(sessionId: string): string {
-  return `${SLOT_PREFIX}${sessionId}`;
+  return `${AUTOSAVE_SESSION_SLOT_PREFIX}${sessionId}`;
 }
 
 async function recoveryDirectory(): Promise<FileSystemDirectoryHandle> {
@@ -134,19 +132,11 @@ async function readManifest(): Promise<{ manifest: RecoveryManifest; trusted: bo
 }
 
 async function writeManifest(manifest: RecoveryManifest): Promise<void> {
-  const handle = await (await recoveryDirectory()).getFileHandle(MANIFEST_FILE, { create: true });
-  const writable = await handle.createWritable();
-  try {
-    await writable.write(new TextEncoder().encode(JSON.stringify(manifest)));
-    await writable.close();
-  } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original manifest write failure.
-    }
-    throw error;
-  }
+  await writeOpfsFile(
+    await recoveryDirectory(),
+    MANIFEST_FILE,
+    new TextEncoder().encode(JSON.stringify(manifest)),
+  );
 }
 
 function documentRevision(documentKey: string): string {
@@ -199,7 +189,7 @@ async function rebuildSessionEntries(exclude: string): Promise<RecoveryManifestE
     if (!isAutosaveRecoverySlot(info.name) || info.name === exclude) continue;
     try {
       entries.push({
-        sessionId: info.name.slice(SLOT_PREFIX.length),
+        sessionId: info.name.slice(AUTOSAVE_SESSION_SLOT_PREFIX.length),
         slot: info.name,
         documentRevision: '',
         archiveRevision: projectBytesRevision(await loadProject(info.name)),
@@ -227,7 +217,7 @@ export function loadLatestAutosaveSessionRevision(): Promise<Uint8Array | null> 
     const manifestBySlot = new Map(manifest.sessions.map((entry) => [entry.slot, entry]));
     const modifiedAtBySlot = new Map(listed.map((info) => [info.name, info.lastModified ?? 0]));
     const candidates = new Set([
-      'autosave',
+      AUTOSAVE_SLOT,
       ...manifest.sessions.map((entry) => entry.slot),
       ...listed.map((info) => info.name),
     ]);

@@ -13,9 +13,14 @@
  * (TrackInstrument 'sf2' variant); the bytes never enter the project archive.
  */
 
-import { bytesEqual, isNotFoundError } from '@/persistence/fs-utils';
+import {
+  bytesEqual,
+  isNotFoundError,
+  MEDIA_ID_PATTERN,
+  writeOpfsFile,
+} from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
-import { isOpfsAvailable, OpfsUnavailableError } from '@/persistence/opfs';
+import { opfsDirectory } from '@/persistence/opfs';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
 
 /** Directory under the OPFS root that holds the SoundFont files. */
@@ -26,9 +31,6 @@ const SF2_EXTENSION = '.sf2';
 
 /** File extension of the JSON metadata sidecar. */
 const META_EXTENSION = '.json';
-
-/** Allowed shape of a font id (safe as an OPFS file base name). */
-const FONT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Thrown when no stored font matches the requested id. */
 export class FontNotFoundError extends Error {
@@ -239,7 +241,7 @@ export function clearFontCache(): void {
 
 /** Throws {@link InvalidFontError} unless the id is a safe file base name. */
 function validateFontId(id: string): string {
-  if (!FONT_ID_PATTERN.test(id)) {
+  if (!MEDIA_ID_PATTERN.test(id)) {
     throw new InvalidFontError(`Invalid font id: "${id}"`);
   }
   return id;
@@ -291,32 +293,8 @@ export function computeFontId(data: Uint8Array): string {
 }
 
 /** Resolves (creating on demand) the "fonts/" directory handle. */
-async function fontsDirectory(): Promise<FileSystemDirectoryHandle> {
-  if (!isOpfsAvailable()) throw new OpfsUnavailableError();
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(FONTS_DIR, { create: true });
-}
-
-/** Writes bytes to a (possibly new) file inside the fonts directory. */
-async function writeFile(
-  dir: FileSystemDirectoryHandle,
-  fileName: string,
-  bytes: Uint8Array,
-): Promise<void> {
-  const handle = await dir.getFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable();
-  try {
-    // Copy so wasm-backed or shared buffers are never handed to the stream.
-    await writable.write(new Uint8Array(bytes));
-    await writable.close();
-  } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original write/close failure.
-    }
-    throw error;
-  }
+function fontsDirectory(): Promise<FileSystemDirectoryHandle> {
+  return opfsDirectory(FONTS_DIR);
 }
 
 function decodeStoredRecord(
@@ -459,9 +437,9 @@ export async function saveFontWithStatusUnlocked(
     aliases,
   };
   const created = existingPayload === null;
-  if (created) await writeFile(dir, id + SF2_EXTENSION, data);
+  if (created) await writeOpfsFile(dir, id + SF2_EXTENSION, data);
   try {
-    await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
+    await writeOpfsFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
   } catch (error) {
     if (created) {
       for (const fileName of [id + SF2_EXTENSION, id + META_EXTENSION]) {
@@ -577,18 +555,25 @@ export async function loadFont(id: string, options: { cache?: boolean } = {}): P
  */
 export async function listFonts(): Promise<SoundFontMeta[]> {
   const dir = await fontsDirectory();
-  const out: SoundFontMeta[] = [];
+  const entries: Array<[string, FileSystemFileHandle]> = [];
   for await (const [entryName, handle] of dir.entries()) {
-    if (handle.kind !== 'file' || !entryName.endsWith(META_EXTENSION)) continue;
-    const id = entryName.slice(0, -META_EXTENSION.length);
-    try {
-      const file = await handle.getFile();
-      const parsed = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
-      out.push(validateMeta(parsed, id));
-    } catch {
-      // Skip unreadable or malformed sidecars; the listing stays usable.
-    }
+    if (handle.kind === 'file' && entryName.endsWith(META_EXTENSION))
+      entries.push([entryName, handle]);
   }
+  const read = await Promise.all(
+    entries.map(async ([entryName, handle]): Promise<SoundFontMeta | null> => {
+      const id = entryName.slice(0, -META_EXTENSION.length);
+      try {
+        const file = await handle.getFile();
+        const parsed = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
+        return validateMeta(parsed, id);
+      } catch {
+        // Skip unreadable or malformed sidecars; the listing stays usable.
+        return null;
+      }
+    }),
+  );
+  const out = read.filter((meta): meta is SoundFontMeta => meta !== null);
   out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return out;
 }
@@ -607,18 +592,25 @@ export interface SoundFontPayloadInfo {
  */
 export async function listFontPayloads(): Promise<SoundFontPayloadInfo[]> {
   const dir = await fontsDirectory();
-  const out: SoundFontPayloadInfo[] = [];
+  const entries: Array<[string, FileSystemFileHandle]> = [];
   for await (const [entryName, handle] of dir.entries()) {
-    if (handle.kind !== 'file' || !entryName.endsWith(SF2_EXTENSION)) continue;
-    const id = entryName.slice(0, -SF2_EXTENSION.length);
-    try {
-      validateFontId(id);
-      const file = await handle.getFile();
-      out.push({ id, byteLength: file.size });
-    } catch {
-      // Skip invalid ids or unreadable files; GC/listing should remain usable.
-    }
+    if (handle.kind === 'file' && entryName.endsWith(SF2_EXTENSION))
+      entries.push([entryName, handle]);
   }
+  const read = await Promise.all(
+    entries.map(async ([entryName, handle]): Promise<SoundFontPayloadInfo | null> => {
+      const id = entryName.slice(0, -SF2_EXTENSION.length);
+      try {
+        validateFontId(id);
+        const file = await handle.getFile();
+        return { id, byteLength: file.size };
+      } catch {
+        // Skip invalid ids or unreadable files; GC/listing should remain usable.
+        return null;
+      }
+    }),
+  );
+  const out = read.filter((info): info is SoundFontPayloadInfo => info !== null);
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 

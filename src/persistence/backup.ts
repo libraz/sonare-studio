@@ -12,9 +12,8 @@ import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import { preflightAndUnzipInWorker } from '@/persistence/archive-preflight';
 import {
   deleteAssetUnlocked,
-  interleavedPcmBytes,
   listAssets,
-  loadAsset,
+  readAssetPcmBytes,
   saveAssetWithStatusUnlocked,
 } from '@/persistence/assets';
 import {
@@ -32,7 +31,7 @@ import {
   prepareAssetRestore,
   prepareFontRestore,
 } from '@/persistence/bundle';
-import { MEDIA_ID_PATTERN } from '@/persistence/fs-utils';
+import { bytesEqual, MEDIA_ID_PATTERN } from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import {
   deleteProjectUnlocked,
@@ -78,8 +77,6 @@ export {
   reclaimOrphanedRestoreStages,
   reclaimOrphanedRestoreStagesAtStartup,
 } from '@/persistence/backup-restore-journal';
-
-export const BROWSER_BACKUP_FILE_EXTENSION = '.sonare-backup.zip';
 
 const BACKUP_VERSION = 2;
 const BACKUP_APP_ID = 'sonare-studio';
@@ -452,10 +449,10 @@ async function createBrowserBackupLocked(
       try {
         // Backups own these bytes only for the duration of the zip stream. Do
         // not populate the playback LRU while walking the whole asset library.
-        const loaded = await loadAsset(asset.id, { cache: false });
+        const loaded = await readAssetPcmBytes(asset.id);
         signal?.throwIfAborted();
         const meta = strToU8(JSON.stringify(loaded.meta));
-        const pcm = interleavedPcmBytes(loaded.channels);
+        const pcm = loaded.pcm;
         const payloadBytes = meta.byteLength + pcm.byteLength;
         const checksum = payloadChecksum(meta, pcm);
         await zip.add(`${ASSETS_PREFIX}${asset.id}.json`, meta);
@@ -734,14 +731,6 @@ function parseRevisionIndex(bytes: Uint8Array): ProjectRevision[] {
   return entries;
 }
 
-function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  for (let index = 0; index < left.byteLength; index += 1) {
-    if (left[index] !== right[index]) return false;
-  }
-  return true;
-}
-
 function sameProjectRevision(left: ProjectRevision, right: ProjectRevision): boolean {
   return (
     left.slot === right.slot &&
@@ -774,7 +763,7 @@ function planRevisionRestore(
   const archiveBytesBySlot = new Map(archiveSlots.map((slot) => [slot.name, slot.bytes]));
   for (const [slot, bytes] of archiveBytesBySlot) {
     const current = existing.slots.get(slot);
-    if (current !== undefined && !sameBytes(current, bytes)) revisionSlotConflict(slot);
+    if (current !== undefined && !bytesEqual(current, bytes)) revisionSlotConflict(slot);
   }
 
   const slotsToPublish = archiveSlots.filter((slot) => !existing.slots.has(slot.name));

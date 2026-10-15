@@ -1,5 +1,6 @@
 import { deleteFontUnlocked } from '@/project/fonts';
 import { deleteAssetUnlocked } from './assets';
+import { createRandomId, isStringArray } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 
 /** Raised when an operation tries to lease an asset already being deleted. */
@@ -18,28 +19,39 @@ export class FontDeletionInProgressError extends Error {
   }
 }
 
-export interface AudioAssetLease {
+/** A mutable lease over a set of media ids. */
+export interface MediaLease {
   /** Replaces the protected id set without releasing the lease object. */
-  update(assetIds: Iterable<string>): void;
+  update(ids: Iterable<string>): void;
   /** Releases every protected id. Idempotent. */
   release(): void;
 }
 
-const leaseCounts = new Map<string, number>();
-const deletingIds = new Set<string>();
+export type AudioAssetLease = MediaLease;
+
+/** Mutable SoundFont lease (same contract as {@link AudioAssetLease}). */
+export type FontLease = MediaLease;
+
 interface RemoteLeaseSnapshot {
   ids: Set<string>;
   expiresAt: number;
 }
 
-const remoteLeaseIds = new Map<string, RemoteLeaseSnapshot>();
-const remoteDeletingAssetIds = new Map<string, number>();
-// SoundFont leases mirror the audio-asset machinery so a tab's live fonts also
-// survive another tab's media GC. Both kinds share one channel and message.
-const fontLeaseCounts = new Map<string, number>();
-const deletingFontIds = new Set<string>();
-const remoteFontLeaseIds = new Map<string, RemoteLeaseSnapshot>();
-const remoteDeletingFontIds = new Map<string, number>();
+/**
+ * Lease and deletion state of one media kind. Audio assets and SoundFonts
+ * share one channel and message but are tracked independently.
+ */
+interface MediaLeaseStore {
+  counts: Map<string, number>;
+  deleting: Set<string>;
+  remoteLeases: Map<string, RemoteLeaseSnapshot>;
+  remoteDeleting: Map<string, number>;
+  deletionInProgress(id: string): Error;
+  deleteUnlocked(id: string): Promise<void>;
+  publishDeleteIntent(ids: string[]): void;
+  publishDeleteComplete(ids: string[]): void;
+}
+
 const LEASE_CHANNEL_NAME = 'sonare-studio:audio-asset-leases:v1';
 // Give a backgrounded peer a realistic window to service the BroadcastChannel
 // message. More importantly, its last advertised lease remains authoritative
@@ -50,10 +62,7 @@ const INITIAL_LEASE_SYNC_MS = 100;
 /** A crashed tab's lease eventually expires; active tabs refresh on every hello. */
 const REMOTE_LEASE_TTL_MS = 5 * 60 * 1000;
 const LEASE_HEARTBEAT_MS = 60 * 1000;
-const leaseSessionId =
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const leaseSessionId = createRandomId();
 
 type LeaseMessage =
   | { type: 'hello'; sessionId: string }
@@ -66,25 +75,8 @@ const leaseChannel =
   typeof BroadcastChannel === 'function' ? new BroadcastChannel(LEASE_CHANNEL_NAME) : null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
-function localLeaseIds(): string[] {
-  return [...leaseCounts.keys()].sort();
-}
-
-function localFontLeaseIds(): string[] {
-  return [...fontLeaseCounts.keys()].sort();
-}
-
 function postLeaseMessage(message: LeaseMessage): void {
   leaseChannel?.postMessage(message);
-}
-
-function publishLocalLeases(): void {
-  postLeaseMessage({
-    type: 'leases',
-    sessionId: leaseSessionId,
-    assetIds: localLeaseIds(),
-    fontIds: localFontLeaseIds(),
-  });
 }
 
 function publishDeleteIntent(assetIds: string[], fontIds: string[]): void {
@@ -95,8 +87,45 @@ function publishDeleteComplete(assetIds: string[], fontIds: string[]): void {
   postLeaseMessage({ type: 'delete-complete', sessionId: leaseSessionId, assetIds, fontIds });
 }
 
+const audioStore: MediaLeaseStore = {
+  counts: new Map(),
+  deleting: new Set(),
+  remoteLeases: new Map(),
+  remoteDeleting: new Map(),
+  deletionInProgress: (id) => new AssetDeletionInProgressError(id),
+  deleteUnlocked: (id) => deleteAssetUnlocked(id),
+  publishDeleteIntent: (ids) => publishDeleteIntent(ids, []),
+  publishDeleteComplete: (ids) => publishDeleteComplete(ids, []),
+};
+
+const fontStore: MediaLeaseStore = {
+  counts: new Map(),
+  deleting: new Set(),
+  remoteLeases: new Map(),
+  remoteDeleting: new Map(),
+  deletionInProgress: (id) => new FontDeletionInProgressError(id),
+  deleteUnlocked: (id) => deleteFontUnlocked(id),
+  publishDeleteIntent: (ids) => publishDeleteIntent([], ids),
+  publishDeleteComplete: (ids) => publishDeleteComplete([], ids),
+};
+
+const stores: readonly MediaLeaseStore[] = [audioStore, fontStore];
+
+function localLeaseIds(store: MediaLeaseStore): string[] {
+  return [...store.counts.keys()].sort();
+}
+
+function publishLocalLeases(): void {
+  postLeaseMessage({
+    type: 'leases',
+    sessionId: leaseSessionId,
+    assetIds: localLeaseIds(audioStore),
+    fontIds: localLeaseIds(fontStore),
+  });
+}
+
 function refreshHeartbeat(): void {
-  const hasLeases = leaseCounts.size > 0 || fontLeaseCounts.size > 0;
+  const hasLeases = stores.some((store) => store.counts.size > 0);
   if (hasLeases && !heartbeatTimer && leaseChannel) {
     heartbeatTimer = setInterval(publishLocalLeases, LEASE_HEARTBEAT_MS);
   } else if (!hasLeases && heartbeatTimer) {
@@ -106,22 +135,14 @@ function refreshHeartbeat(): void {
 }
 
 function pruneExpiredRemoteLeases(now = Date.now()): void {
-  for (const [sessionId, snapshot] of remoteLeaseIds) {
-    if (snapshot.expiresAt <= now) remoteLeaseIds.delete(sessionId);
+  for (const store of stores) {
+    for (const [sessionId, snapshot] of store.remoteLeases) {
+      if (snapshot.expiresAt <= now) store.remoteLeases.delete(sessionId);
+    }
+    for (const [id, expiresAt] of store.remoteDeleting) {
+      if (expiresAt <= now) store.remoteDeleting.delete(id);
+    }
   }
-  for (const [sessionId, snapshot] of remoteFontLeaseIds) {
-    if (snapshot.expiresAt <= now) remoteFontLeaseIds.delete(sessionId);
-  }
-  for (const [id, expiresAt] of remoteDeletingAssetIds) {
-    if (expiresAt <= now) remoteDeletingAssetIds.delete(id);
-  }
-  for (const [id, expiresAt] of remoteDeletingFontIds) {
-    if (expiresAt <= now) remoteDeletingFontIds.delete(id);
-  }
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
 leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
@@ -133,8 +154,7 @@ leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
     return;
   }
   if (message.type === 'closed') {
-    remoteLeaseIds.delete(message.sessionId);
-    remoteFontLeaseIds.delete(message.sessionId);
+    for (const store of stores) store.remoteLeases.delete(message.sessionId);
     return;
   }
   if (
@@ -143,8 +163,8 @@ leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
     isStringArray(message.fontIds)
   ) {
     const expiresAt = Date.now() + REMOTE_LEASE_TTL_MS;
-    for (const id of message.assetIds) remoteDeletingAssetIds.set(id, expiresAt);
-    for (const id of message.fontIds) remoteDeletingFontIds.set(id, expiresAt);
+    for (const id of message.assetIds) audioStore.remoteDeleting.set(id, expiresAt);
+    for (const id of message.fontIds) fontStore.remoteDeleting.set(id, expiresAt);
     // This is the delete-intent acknowledgement: send our current lease
     // snapshot before the peer's final in-lock recheck.
     publishLocalLeases();
@@ -155,15 +175,15 @@ leaseChannel?.addEventListener('message', (event: MessageEvent<unknown>) => {
     isStringArray(message.assetIds) &&
     isStringArray(message.fontIds)
   ) {
-    for (const id of message.assetIds) remoteDeletingAssetIds.delete(id);
-    for (const id of message.fontIds) remoteDeletingFontIds.delete(id);
+    for (const id of message.assetIds) audioStore.remoteDeleting.delete(id);
+    for (const id of message.fontIds) fontStore.remoteDeleting.delete(id);
     return;
   }
   if (message.type === 'leases' && isStringArray(message.assetIds)) {
     const expiresAt = Date.now() + REMOTE_LEASE_TTL_MS;
-    remoteLeaseIds.set(message.sessionId, { ids: new Set(message.assetIds), expiresAt });
+    audioStore.remoteLeases.set(message.sessionId, { ids: new Set(message.assetIds), expiresAt });
     // fontIds is optional for backward compatibility with older tabs.
-    remoteFontLeaseIds.set(message.sessionId, {
+    fontStore.remoteLeases.set(message.sessionId, {
       ids: new Set(isStringArray(message.fontIds) ? message.fontIds : []),
       expiresAt,
     });
@@ -179,53 +199,40 @@ if (typeof window !== 'undefined') {
 }
 publishLocalLeases();
 
-function increment(assetId: string): void {
+/**
+ * A second local owner may safely join an already-held lease while a peer has
+ * announced delete intent: the original local lease was advertised before that
+ * intent, so the remote collector's final recheck retains the id and rejecting
+ * the handoff would create a protection gap.
+ */
+function assertAcquirable(store: MediaLeaseStore, id: string): void {
+  if ((store.deleting.has(id) || store.remoteDeleting.has(id)) && !store.counts.has(id)) {
+    throw store.deletionInProgress(id);
+  }
+}
+
+function increment(store: MediaLeaseStore, id: string): void {
   pruneExpiredRemoteLeases();
-  // A second local owner may safely join an already-held lease while a remote
-  // tab has announced delete intent. The original local lease was advertised
-  // before that intent, so the remote collector's final recheck must retain
-  // the asset; rejecting the handoff would create a protection gap instead.
-  if (
-    (deletingIds.has(assetId) || remoteDeletingAssetIds.has(assetId)) &&
-    !leaseCounts.has(assetId)
-  )
-    throw new AssetDeletionInProgressError(assetId);
-  leaseCounts.set(assetId, (leaseCounts.get(assetId) ?? 0) + 1);
+  assertAcquirable(store, id);
+  store.counts.set(id, (store.counts.get(id) ?? 0) + 1);
 }
 
-function decrement(assetId: string): void {
-  const next = (leaseCounts.get(assetId) ?? 0) - 1;
-  if (next > 0) leaseCounts.set(assetId, next);
-  else leaseCounts.delete(assetId);
+function decrement(store: MediaLeaseStore, id: string): void {
+  const next = (store.counts.get(id) ?? 0) - 1;
+  if (next > 0) store.counts.set(id, next);
+  else store.counts.delete(id);
 }
 
-function incrementFont(fontId: string): void {
-  pruneExpiredRemoteLeases();
-  if (
-    (deletingFontIds.has(fontId) || remoteDeletingFontIds.has(fontId)) &&
-    !fontLeaseCounts.has(fontId)
-  )
-    throw new FontDeletionInProgressError(fontId);
-  fontLeaseCounts.set(fontId, (fontLeaseCounts.get(fontId) ?? 0) + 1);
-}
-
-function decrementFont(fontId: string): void {
-  const next = (fontLeaseCounts.get(fontId) ?? 0) - 1;
-  if (next > 0) fontLeaseCounts.set(fontId, next);
-  else fontLeaseCounts.delete(fontId);
-}
-
-/** Acquires a mutable lease over one or more audio asset ids. */
-export function leaseAudioAssets(assetIds: Iterable<string>): AudioAssetLease {
-  let held = new Set(assetIds);
+function acquireLease(store: MediaLeaseStore, ids: Iterable<string>): MediaLease {
+  let held = new Set(ids);
   const acquired: string[] = [];
   try {
-    for (const assetId of held) {
-      increment(assetId);
-      acquired.push(assetId);
+    for (const id of held) {
+      increment(store, id);
+      acquired.push(id);
     }
   } catch (error) {
-    for (const assetId of acquired) decrement(assetId);
+    for (const id of acquired) decrement(store, id);
     throw error;
   }
   publishLocalLeases();
@@ -235,17 +242,11 @@ export function leaseAudioAssets(assetIds: Iterable<string>): AudioAssetLease {
     update(nextIds): void {
       if (released) return;
       const next = new Set(nextIds);
-      const additions = [...next].filter((assetId) => !held.has(assetId));
-      for (const assetId of additions) {
-        if (
-          (deletingIds.has(assetId) || remoteDeletingAssetIds.has(assetId)) &&
-          !leaseCounts.has(assetId)
-        )
-          throw new AssetDeletionInProgressError(assetId);
-      }
-      for (const assetId of additions) increment(assetId);
-      for (const assetId of held) {
-        if (!next.has(assetId)) decrement(assetId);
+      const additions = [...next].filter((id) => !held.has(id));
+      for (const id of additions) assertAcquirable(store, id);
+      for (const id of additions) increment(store, id);
+      for (const id of held) {
+        if (!next.has(id)) decrement(store, id);
       }
       held = next;
       publishLocalLeases();
@@ -254,7 +255,7 @@ export function leaseAudioAssets(assetIds: Iterable<string>): AudioAssetLease {
     release(): void {
       if (released) return;
       released = true;
-      for (const assetId of held) decrement(assetId);
+      for (const id of held) decrement(store, id);
       held.clear();
       publishLocalLeases();
       refreshHeartbeat();
@@ -262,10 +263,31 @@ export function leaseAudioAssets(assetIds: Iterable<string>): AudioAssetLease {
   };
 }
 
-/** Interface for a mutable SoundFont lease (mirrors {@link AudioAssetLease}). */
-export interface FontLease {
-  update(fontIds: Iterable<string>): void;
-  release(): void;
+function leasedIds(store: MediaLeaseStore): Set<string> {
+  pruneExpiredRemoteLeases();
+  return new Set([
+    ...store.counts.keys(),
+    ...[...store.remoteLeases.values()].flatMap((snapshot) => [...snapshot.ids]),
+  ]);
+}
+
+function isLeased(store: MediaLeaseStore, id: string): boolean {
+  pruneExpiredRemoteLeases();
+  if (store.counts.has(id)) return true;
+  for (const snapshot of store.remoteLeases.values()) {
+    if (snapshot.ids.has(id)) return true;
+  }
+  return false;
+}
+
+/** Acquires a mutable lease over one or more audio asset ids. */
+export function leaseAudioAssets(assetIds: Iterable<string>): AudioAssetLease {
+  return acquireLease(audioStore, assetIds);
+}
+
+/** Acquires a mutable lease over one or more SoundFont ids. */
+export function leaseFonts(fontIds: Iterable<string>): FontLease {
+  return acquireLease(fontStore, fontIds);
 }
 
 /**
@@ -289,13 +311,13 @@ export function reserveMediaDeletion(
   fontIds: Iterable<string>,
 ): MediaDeletionReservation {
   const reservedAudioAssetIds = new Set(
-    [...new Set(audioAssetIds)].filter((assetId) => !deletingIds.has(assetId)),
+    [...new Set(audioAssetIds)].filter((assetId) => !audioStore.deleting.has(assetId)),
   );
   const reservedFontIds = new Set(
-    [...new Set(fontIds)].filter((fontId) => !deletingFontIds.has(fontId)),
+    [...new Set(fontIds)].filter((fontId) => !fontStore.deleting.has(fontId)),
   );
-  for (const assetId of reservedAudioAssetIds) deletingIds.add(assetId);
-  for (const fontId of reservedFontIds) deletingFontIds.add(fontId);
+  for (const assetId of reservedAudioAssetIds) audioStore.deleting.add(assetId);
+  for (const fontId of reservedFontIds) fontStore.deleting.add(fontId);
   if (reservedAudioAssetIds.size > 0 || reservedFontIds.size > 0) {
     publishDeleteIntent([...reservedAudioAssetIds], [...reservedFontIds]);
   }
@@ -307,8 +329,8 @@ export function reserveMediaDeletion(
     release(): void {
       if (released) return;
       released = true;
-      for (const assetId of reservedAudioAssetIds) deletingIds.delete(assetId);
-      for (const fontId of reservedFontIds) deletingFontIds.delete(fontId);
+      for (const assetId of reservedAudioAssetIds) audioStore.deleting.delete(assetId);
+      for (const fontId of reservedFontIds) fontStore.deleting.delete(fontId);
       if (reservedAudioAssetIds.size > 0 || reservedFontIds.size > 0) {
         publishDeleteComplete([...reservedAudioAssetIds], [...reservedFontIds]);
       }
@@ -316,87 +338,22 @@ export function reserveMediaDeletion(
   };
 }
 
-/** Acquires a mutable lease over one or more SoundFont ids. */
-export function leaseFonts(fontIds: Iterable<string>): FontLease {
-  let held = new Set(fontIds);
-  const acquired: string[] = [];
-  try {
-    for (const fontId of held) {
-      incrementFont(fontId);
-      acquired.push(fontId);
-    }
-  } catch (error) {
-    for (const fontId of acquired) decrementFont(fontId);
-    throw error;
-  }
-  publishLocalLeases();
-  refreshHeartbeat();
-  let released = false;
-  return {
-    update(nextIds): void {
-      if (released) return;
-      const next = new Set(nextIds);
-      const additions = [...next].filter((fontId) => !held.has(fontId));
-      for (const fontId of additions) {
-        if (
-          (deletingFontIds.has(fontId) || remoteDeletingFontIds.has(fontId)) &&
-          !fontLeaseCounts.has(fontId)
-        )
-          throw new FontDeletionInProgressError(fontId);
-      }
-      for (const fontId of additions) incrementFont(fontId);
-      for (const fontId of held) {
-        if (!next.has(fontId)) decrementFont(fontId);
-      }
-      held = next;
-      publishLocalLeases();
-      refreshHeartbeat();
-    },
-    release(): void {
-      if (released) return;
-      released = true;
-      for (const fontId of held) decrementFont(fontId);
-      held.clear();
-      publishLocalLeases();
-      refreshHeartbeat();
-    },
-  };
-}
-
 /** Snapshot of every asset id protected by at least one live lease. */
 export function leasedAudioAssetIds(): Set<string> {
-  pruneExpiredRemoteLeases();
-  return new Set([
-    ...leaseCounts.keys(),
-    ...[...remoteLeaseIds.values()].flatMap((snapshot) => [...snapshot.ids]),
-  ]);
+  return leasedIds(audioStore);
 }
 
 /** Snapshot of every SoundFont id protected by at least one live lease. */
 export function leasedFontIds(): Set<string> {
-  pruneExpiredRemoteLeases();
-  return new Set([
-    ...fontLeaseCounts.keys(),
-    ...[...remoteFontLeaseIds.values()].flatMap((snapshot) => [...snapshot.ids]),
-  ]);
+  return leasedIds(fontStore);
 }
 
 export function isAudioAssetLeased(assetId: string): boolean {
-  pruneExpiredRemoteLeases();
-  if (leaseCounts.has(assetId)) return true;
-  for (const snapshot of remoteLeaseIds.values()) {
-    if (snapshot.ids.has(assetId)) return true;
-  }
-  return false;
+  return isLeased(audioStore, assetId);
 }
 
 export function isFontLeased(fontId: string): boolean {
-  pruneExpiredRemoteLeases();
-  if (fontLeaseCounts.has(fontId)) return true;
-  for (const snapshot of remoteFontLeaseIds.values()) {
-    if (snapshot.ids.has(fontId)) return true;
-  }
-  return false;
+  return isLeased(fontStore, fontId);
 }
 
 /**
@@ -406,7 +363,7 @@ export function isFontLeased(fontId: string): boolean {
 export async function synchronizeMediaLeases(): Promise<void> {
   if (!leaseChannel) return;
   pruneExpiredRemoteLeases();
-  const hasKnownPeer = remoteLeaseIds.size > 0 || remoteFontLeaseIds.size > 0;
+  const hasKnownPeer = stores.some((store) => store.remoteLeases.size > 0);
   postLeaseMessage({ type: 'hello', sessionId: leaseSessionId });
   // Even without a previously observed peer, a tab may be suspended between
   // joining the channel and answering hello. Always reserve the full grace
@@ -425,83 +382,105 @@ export async function synchronizeAudioAssetLeases(): Promise<Set<string>> {
 }
 
 /**
- * Deletes under an exclusive id guard, checking dynamic references and leases
- * immediately before the underlying OPFS mutation.
+ * Deletes under an exclusive id guard, re-synchronizing cross-tab leases and
+ * checking dynamic references immediately before the underlying OPFS mutation.
+ * The delete intent is announced first: other tabs acknowledge with their
+ * current lease set and reject any lease acquired after this point, closing
+ * the recheck→unlink race.
  */
-export async function deleteAudioAssetGuarded(
-  assetId: string,
+async function deleteGuarded(
+  store: MediaLeaseStore,
+  id: string,
   isReferenced: () => boolean | Promise<boolean>,
-  alreadyLocked = false,
+  alreadyLocked: boolean,
 ): Promise<boolean> {
-  if (deletingIds.has(assetId)) return false;
-  deletingIds.add(assetId);
-  // Announce before the final synchronized recheck. Other tabs acknowledge
-  // with their current lease set and reject any lease acquired after this
-  // point, closing the recheck→unlink race.
-  publishDeleteIntent([assetId], []);
+  if (store.deleting.has(id)) return false;
+  store.deleting.add(id);
+  store.publishDeleteIntent([id]);
   const remove = async (): Promise<boolean> => {
     try {
-      await synchronizeAudioAssetLeases();
-      if (isAudioAssetLeased(assetId) || (await isReferenced())) {
+      await synchronizeMediaLeases();
+      if (isLeased(store, id) || (await isReferenced())) {
         return false;
       }
-      await synchronizeAudioAssetLeases();
-      if (isAudioAssetLeased(assetId)) {
+      await synchronizeMediaLeases();
+      if (isLeased(store, id)) {
         return false;
       }
-      await deleteAssetUnlocked(assetId);
+      await store.deleteUnlocked(id);
       return true;
     } finally {
-      deletingIds.delete(assetId);
-      publishDeleteComplete([assetId], []);
+      store.deleting.delete(id);
+      store.publishDeleteComplete([id]);
     }
   };
   return alreadyLocked ? remove() : withPersistenceMutationLock(remove);
 }
 
 /**
- * Deletes a SoundFont under an exclusive id guard, re-synchronizing cross-tab
- * leases immediately before the OPFS mutation so a font another tab's live
- * document still references is never removed. Mirrors {@link deleteAudioAssetGuarded}.
+ * Deletes an audio asset under an exclusive id guard, checking dynamic
+ * references and leases immediately before the underlying OPFS mutation.
  */
-export async function deleteFontGuarded(
+export function deleteAudioAssetGuarded(
+  assetId: string,
+  isReferenced: () => boolean | Promise<boolean>,
+  alreadyLocked = false,
+): Promise<boolean> {
+  return deleteGuarded(audioStore, assetId, isReferenced, alreadyLocked);
+}
+
+/**
+ * Deletes a SoundFont under an exclusive id guard, so a font another tab's
+ * live document still references is never removed.
+ */
+export function deleteFontGuarded(
   fontId: string,
   isReferenced: () => boolean | Promise<boolean>,
   alreadyLocked = false,
 ): Promise<boolean> {
-  if (deletingFontIds.has(fontId)) return false;
-  deletingFontIds.add(fontId);
-  publishDeleteIntent([], [fontId]);
-  const remove = async (): Promise<boolean> => {
-    try {
-      await synchronizeMediaLeases();
-      if (isFontLeased(fontId) || (await isReferenced())) {
-        return false;
-      }
-      await synchronizeMediaLeases();
-      if (isFontLeased(fontId)) {
-        return false;
-      }
-      await deleteFontUnlocked(fontId);
-      return true;
-    } finally {
-      deletingFontIds.delete(fontId);
-      publishDeleteComplete([], [fontId]);
+  return deleteGuarded(fontStore, fontId, isReferenced, alreadyLocked);
+}
+
+/**
+ * Deletes a group of audio assets under one reservation and one peer
+ * synchronization. Reserving every id first means no peer can acquire any of
+ * them once the synchronization window opens, so a single window covers the
+ * batch. Ids already being deleted elsewhere are skipped.
+ *
+ * @returns The ids that were removed, in deletion order.
+ */
+export async function deleteAudioAssetsGuarded(
+  assetIds: Iterable<string>,
+  isReferenced: (assetId: string) => boolean | Promise<boolean>,
+  alreadyLocked = false,
+): Promise<string[]> {
+  const reservation = reserveMediaDeletion(assetIds, []);
+  const removed: string[] = [];
+  const removeAll = async (): Promise<string[]> => {
+    if (reservation.audioAssetIds.size === 0) return removed;
+    await synchronizeMediaLeases();
+    for (const assetId of reservation.audioAssetIds) {
+      if (isAudioAssetLeased(assetId) || (await isReferenced(assetId))) continue;
+      await deleteAssetUnlocked(assetId);
+      removed.push(assetId);
     }
+    return removed;
   };
-  return alreadyLocked ? remove() : withPersistenceMutationLock(remove);
+  try {
+    return await (alreadyLocked ? removeAll() : withPersistenceMutationLock(removeAll));
+  } finally {
+    reservation.release();
+  }
 }
 
 /** Test-only reset for the process-global registry. */
 export function clearAudioAssetLeases(): void {
-  leaseCounts.clear();
-  deletingIds.clear();
-  remoteLeaseIds.clear();
-  remoteDeletingAssetIds.clear();
-  fontLeaseCounts.clear();
-  deletingFontIds.clear();
-  remoteFontLeaseIds.clear();
-  remoteDeletingFontIds.clear();
+  for (const store of stores) {
+    store.counts.clear();
+    store.deleting.clear();
+    store.remoteLeases.clear();
+    store.remoteDeleting.clear();
+  }
   publishLocalLeases();
   refreshHeartbeat();
 }

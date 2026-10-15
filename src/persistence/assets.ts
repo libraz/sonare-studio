@@ -14,10 +14,18 @@
  * project archive (see src/project/document-schema.ts).
  */
 
-import { bytesEqual, isNotFoundError } from './fs-utils';
-import { withPersistenceMutationLock } from './mutation-lock';
-import { isOpfsAvailable, OpfsQuotaExceededError, OpfsUnavailableError } from './opfs';
 import {
+  bytesEqual,
+  isNotFoundError,
+  isQuotaExceededError,
+  MEDIA_ID_PATTERN,
+  OPFS_IO_CHUNK_BYTES,
+  writeOpfsFile,
+} from './fs-utils';
+import { withPersistenceMutationLock } from './mutation-lock';
+import { OpfsQuotaExceededError, opfsDirectory } from './opfs';
+import {
+  BYTES_PER_SAMPLE,
   MAX_AUDIO_CHANNELS,
   MAX_AUDIO_SAMPLE_BYTES,
   MAX_AUDIO_SAMPLE_RATE,
@@ -32,14 +40,6 @@ const PCM_EXTENSION = '.pcm';
 
 /** File extension of the JSON metadata sidecar. */
 const META_EXTENSION = '.json';
-
-/** Bytes per sample (32-bit float). */
-const BYTES_PER_SAMPLE = 4;
-/** Comparison chunk prevents an immutable-content check from duplicating whole PCM files. */
-const PCM_COMPARE_CHUNK_BYTES = 4 * 1024 * 1024;
-
-/** Allowed shape of an asset id (safe as an OPFS file base name). */
-const ASSET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** Thrown when no stored asset matches the requested id. */
 export class AssetNotFoundError extends Error {
@@ -222,6 +222,28 @@ function cacheAsset(id: string, asset: LoadedAudioAsset): void {
   audioCacheBytes += bytes;
 }
 
+/**
+ * Warms the cache after a save, deinterleaving only when the result is kept.
+ * Unchanged content never re-deinterleaves: a cached entry just takes the
+ * latest metadata, and an uncached one stays uncached.
+ */
+function cacheSavedAsset(
+  meta: AudioAssetMeta,
+  interleaved: Float32Array,
+  numChannels: number,
+  created: boolean,
+): void {
+  const existing = audioCache.get(meta.id);
+  if (!created && !existing) return;
+  if (interleaved.byteLength > audioCacheByteBudget) {
+    removeCachedAsset(meta.id);
+    return;
+  }
+  const channels =
+    !created && existing ? existing.channels : deinterleaveChannels(interleaved, numChannels);
+  cacheAsset(meta.id, { meta, channels });
+}
+
 /** Current decoded-audio LRU usage for diagnostics and memory tests. */
 export function audioAssetCacheStats(): {
   entries: number;
@@ -304,7 +326,7 @@ export function clearAudioAssetCache(): void {
 
 /** Throws {@link InvalidAssetError} unless the id is a safe file base name. */
 function validateAssetId(id: string): string {
-  if (!ASSET_ID_PATTERN.test(id)) {
+  if (!MEDIA_ID_PATTERN.test(id)) {
     throw new InvalidAssetError(`Invalid asset id: "${id}"`);
   }
   return id;
@@ -417,46 +439,8 @@ export function deinterleaveChannels(
 }
 
 /** Resolves (creating on demand) the "assets/" directory handle. */
-async function assetsDirectory(): Promise<FileSystemDirectoryHandle> {
-  if (!isOpfsAvailable()) throw new OpfsUnavailableError();
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(ASSETS_DIR, { create: true });
-}
-
-/** Writes bytes to a (possibly new) file inside the assets directory. */
-async function writeFile(
-  dir: FileSystemDirectoryHandle,
-  fileName: string,
-  bytes: Uint8Array,
-): Promise<void> {
-  const handle = await dir.getFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable();
-  try {
-    // Bound transient copies: wasm-backed/shared input must not be retained by
-    // the stream, but duplicating a multi-gigabyte PCM payload at once can OOM.
-    const chunkBytes = 4 * 1024 * 1024;
-    for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
-      await writable.write(bytes.slice(offset, Math.min(bytes.byteLength, offset + chunkBytes)));
-    }
-    await writable.close();
-  } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original write/close failure.
-    }
-    throw error;
-  }
-}
-
-/** True when an OPFS write ran out of origin storage quota. */
-function isQuotaExceededError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'name' in error &&
-    (error as { name?: unknown }).name === 'QuotaExceededError'
-  );
+function assetsDirectory(): Promise<FileSystemDirectoryHandle> {
+  return opfsDirectory(ASSETS_DIR);
 }
 
 /** Maps the browser's raw quota exception to the persistence-facing error. */
@@ -613,8 +597,8 @@ async function pcmFileMatches(
       // Minimal OPFS mocks and a few legacy File implementations omit slice.
       return bytesEqual(new Uint8Array(await file.arrayBuffer()), expected);
     }
-    for (let offset = 0; offset < expected.byteLength; offset += PCM_COMPARE_CHUNK_BYTES) {
-      const end = Math.min(expected.byteLength, offset + PCM_COMPARE_CHUNK_BYTES);
+    for (let offset = 0; offset < expected.byteLength; offset += OPFS_IO_CHUNK_BYTES) {
+      const end = Math.min(expected.byteLength, offset + OPFS_IO_CHUNK_BYTES);
       const actual = new Uint8Array(await file.slice(offset, end).arrayBuffer());
       if (!bytesEqual(actual, expected.subarray(offset, end))) return false;
     }
@@ -752,7 +736,7 @@ export async function saveAssetWithStatusUnlocked(
   const sidecarCreated = existingSidecar === null;
   if (created) {
     try {
-      await writeFile(dir, id + PCM_EXTENSION, pcmBytes);
+      await writeOpfsFile(dir, id + PCM_EXTENSION, pcmBytes);
     } catch (error) {
       // createWritable() may create an empty/truncated entry before write()
       // rejects. Never leave that unpublished payload to become a collision.
@@ -761,7 +745,7 @@ export async function saveAssetWithStatusUnlocked(
     }
   }
   try {
-    await writeFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
+    await writeOpfsFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
   } catch (error) {
     // A sidecar that did not exist before this attempt is itself unpublished
     // when its write fails. Remove it along with any newly created PCM so a
@@ -770,10 +754,7 @@ export async function saveAssetWithStatusUnlocked(
     if (created) await removeOptionalFile(dir, id + PCM_EXTENSION);
     mapWriteError(error);
   }
-  cacheAsset(id, {
-    meta: latestMeta,
-    channels: deinterleaveChannels(interleaved, numChannels),
-  });
+  cacheSavedAsset(latestMeta, interleaved, numChannels, created);
   return { meta: latestMeta, created };
 }
 
@@ -893,6 +874,15 @@ export async function loadAsset(
     if (cached) return cached;
   }
   const meta = await loadAssetMeta(id, options);
+  const bytes = await readValidatedPcm(id, meta);
+  const channels = deinterleaveChannels(new Float32Array(bytes), meta.numChannels);
+  const loaded: LoadedAudioAsset = { meta, channels };
+  if (options.cache !== false) cacheAsset(id, loaded);
+  return loaded;
+}
+
+/** Reads an asset's PCM payload and checks it against the sidecar's frame and channel counts. */
+async function readValidatedPcm(id: string, meta: AudioAssetMeta): Promise<ArrayBuffer> {
   const dir = await assetsDirectory();
   let file: File;
   try {
@@ -912,10 +902,25 @@ export async function loadAsset(
       `Asset "${id}": PCM payload is ${bytes.byteLength} bytes, expected ${expectedBytes}`,
     );
   }
-  const channels = deinterleaveChannels(new Float32Array(bytes), meta.numChannels);
-  const loaded: LoadedAudioAsset = { meta, channels };
-  if (options.cache !== false) cacheAsset(id, loaded);
-  return loaded;
+  return bytes;
+}
+
+/**
+ * Reads an asset's metadata and its raw interleaved little-endian float32 PCM
+ * bytes, skipping the planar decode and the decoded-audio LRU. Use it where the
+ * bytes are only compared or serialized (backup, bundle export, restore checks).
+ *
+ * @param id Asset id.
+ * @returns Metadata plus an owned PCM byte buffer.
+ * @throws AssetNotFoundError when no such asset is stored.
+ * @throws InvalidAssetError when the PCM size disagrees with the sidecar.
+ */
+export async function readAssetPcmBytes(
+  id: string,
+): Promise<{ meta: AudioAssetMeta; pcm: Uint8Array }> {
+  validateAssetId(id);
+  const meta = await loadAssetMeta(id, { cache: false });
+  return { meta, pcm: new Uint8Array(await readValidatedPcm(id, meta)) };
 }
 
 /**
@@ -991,18 +996,25 @@ export async function readAssetFrames(
  */
 export async function listAssets(): Promise<AudioAssetMeta[]> {
   const dir = await assetsDirectory();
-  const out: AudioAssetMeta[] = [];
+  const entries: Array<[string, FileSystemFileHandle]> = [];
   for await (const [entryName, handle] of dir.entries()) {
-    if (handle.kind !== 'file' || !entryName.endsWith(META_EXTENSION)) continue;
-    const id = entryName.slice(0, -META_EXTENSION.length);
-    try {
-      const file = await handle.getFile();
-      const parsed = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
-      out.push(validateMeta(parsed, id));
-    } catch {
-      // Skip unreadable or malformed sidecars; the listing stays usable.
-    }
+    if (handle.kind === 'file' && entryName.endsWith(META_EXTENSION))
+      entries.push([entryName, handle]);
   }
+  const read = await Promise.all(
+    entries.map(async ([entryName, handle]): Promise<AudioAssetMeta | null> => {
+      const id = entryName.slice(0, -META_EXTENSION.length);
+      try {
+        const file = await handle.getFile();
+        const parsed = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
+        return validateMeta(parsed, id);
+      } catch {
+        // Skip unreadable or malformed sidecars; the listing stays usable.
+        return null;
+      }
+    }),
+  );
+  const out = read.filter((meta): meta is AudioAssetMeta => meta !== null);
   out.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   return out;
 }
@@ -1021,18 +1033,25 @@ export interface AudioAssetPayloadInfo {
  */
 export async function listAssetPayloads(): Promise<AudioAssetPayloadInfo[]> {
   const dir = await assetsDirectory();
-  const out: AudioAssetPayloadInfo[] = [];
+  const entries: Array<[string, FileSystemFileHandle]> = [];
   for await (const [entryName, handle] of dir.entries()) {
-    if (handle.kind !== 'file' || !entryName.endsWith(PCM_EXTENSION)) continue;
-    const id = entryName.slice(0, -PCM_EXTENSION.length);
-    try {
-      validateAssetId(id);
-      const file = await handle.getFile();
-      out.push({ id, byteLength: file.size });
-    } catch {
-      // Skip invalid ids or unreadable files; GC/listing should remain usable.
-    }
+    if (handle.kind === 'file' && entryName.endsWith(PCM_EXTENSION))
+      entries.push([entryName, handle]);
   }
+  const read = await Promise.all(
+    entries.map(async ([entryName, handle]): Promise<AudioAssetPayloadInfo | null> => {
+      const id = entryName.slice(0, -PCM_EXTENSION.length);
+      try {
+        validateAssetId(id);
+        const file = await handle.getFile();
+        return { id, byteLength: file.size };
+      } catch {
+        // Skip invalid ids or unreadable files; GC/listing should remain usable.
+        return null;
+      }
+    }),
+  );
+  const out = read.filter((info): info is AudioAssetPayloadInfo => info !== null);
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 

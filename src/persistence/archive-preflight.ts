@@ -166,6 +166,7 @@ function resolveLimits(
 function archiveEntryValidator(
   resolved: ArchiveLimits,
   signal?: AbortSignal,
+  include?: (name: string) => boolean,
 ): {
   filter: (entry: UnzipFileInfo) => boolean;
   report: () => ArchivePreflightReport;
@@ -238,7 +239,8 @@ function archiveEntryValidator(
       entries += 1;
       compressedBytes += entry.size;
       uncompressedBytes += expandedBytes;
-      return true;
+      // Skipped entries are still validated and counted, but never inflated.
+      return include?.(entry.name) ?? true;
     },
     report: () => ({ entries, compressedBytes, uncompressedBytes }),
   };
@@ -285,11 +287,15 @@ export function preflightAndUnzip(
  * Runs bounded ZIP expansion through fflate's asynchronous worker path.
  * The returned terminator is wired to AbortSignal so imports do not leave a
  * decompressor alive after the owning UI operation has been cancelled.
+ *
+ * @param include Selects the entries to inflate; every entry is still
+ *   validated against the limits. Omit to inflate all of them.
  */
 export function preflightAndUnzipInWorker(
   bytes: Uint8Array,
   limits: Partial<ArchiveLimits> = {},
   signal?: AbortSignal,
+  include?: (name: string) => boolean,
 ): Promise<PreflightedArchive> {
   let resolved: ArchiveLimits;
   try {
@@ -298,7 +304,7 @@ export function preflightAndUnzipInWorker(
   } catch (error) {
     return Promise.reject(error);
   }
-  const validator = archiveEntryValidator(resolved, signal);
+  const validator = archiveEntryValidator(resolved, signal, include);
   return new Promise((resolve, reject) => {
     let settled = false;
     let terminate: (() => void) | undefined;

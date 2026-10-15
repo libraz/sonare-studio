@@ -36,10 +36,8 @@ import { type AudioAssetMeta, deleteAssetUnlocked, listAssetPayloads, listAssets
 import { collectReferencedAssetIds, collectReferencedFontIds } from './bundle';
 import { withPersistenceMutationLock } from './mutation-lock';
 import { isOpfsAvailable, listProjects, loadProject, type StoredProjectInfo } from './opfs';
+import { BYTES_PER_SAMPLE } from './resource-limits';
 import { decodeSzdInWorker } from './szd';
-
-/** Bytes per stored PCM sample (32-bit float). */
-const BYTES_PER_SAMPLE = 4;
 
 interface CachedProjectReferences {
   fingerprint: string;
@@ -273,7 +271,6 @@ async function garbageCollectMediaUnlocked(
   const removedAssetIds: string[] = [];
   const removedFontIds: string[] = [];
   let reclaimedBytes = 0;
-  let incompleteReferences = false;
   // Reserve every candidate before asking peers for their latest lease set.
   // A peer that receives this intent cannot acquire one of these ids after the
   // synchronization window opens, so one shared synchronization safely covers
@@ -282,13 +279,13 @@ async function garbageCollectMediaUnlocked(
     [...orphanAssets, ...orphanPayloads].map((entry) => entry.id),
     [...orphanFonts, ...orphanFontPayloads].map((entry) => entry.id),
   );
+  // Filled after peers were synchronized. Reserved ids cannot gain a lease
+  // afterwards, so one snapshot covers every candidate.
+  let protectedAssets = new Set<string>();
+  let protectedFonts = new Set<string>();
   const deleteCandidate = async (assetId: string, byteLength: number): Promise<void> => {
     if (!deletionReservation.audioAssetIds.has(assetId)) return;
-    if (!complete) {
-      incompleteReferences = true;
-      return;
-    }
-    if (isAudioAssetLeased(assetId) || assetIds.has(assetId) || protectedAssetIds().has(assetId)) {
+    if (isAudioAssetLeased(assetId) || assetIds.has(assetId) || protectedAssets.has(assetId)) {
       return;
     }
     await deleteAssetUnlocked(assetId);
@@ -297,17 +294,15 @@ async function garbageCollectMediaUnlocked(
   };
   const deleteFontCandidate = async (fontId: string, byteLength: number): Promise<void> => {
     if (!deletionReservation.fontIds.has(fontId)) return;
-    if (!complete) {
-      incompleteReferences = true;
-      return;
-    }
-    if (isFontLeased(fontId) || fontIds.has(fontId) || protectedFontIds().has(fontId)) return;
+    if (isFontLeased(fontId) || fontIds.has(fontId) || protectedFonts.has(fontId)) return;
     await deleteFontUnlocked(fontId);
     removedFontIds.push(fontId);
     reclaimedBytes += byteLength;
   };
   try {
     await synchronizeMediaLeases();
+    protectedAssets = protectedAssetIds();
+    protectedFonts = protectedFontIds();
     for (const meta of orphanAssets) await deleteCandidate(meta.id, assetBytes(meta));
     for (const payload of orphanPayloads) await deleteCandidate(payload.id, payload.byteLength);
     for (const meta of orphanFonts) await deleteFontCandidate(meta.id, meta.byteLength);
@@ -320,7 +315,7 @@ async function garbageCollectMediaUnlocked(
     removedAssetIds: removedAssetIds.sort(),
     removedFontIds: removedFontIds.sort(),
     reclaimedBytes,
-    incompleteReferences,
+    incompleteReferences: false,
   };
 }
 

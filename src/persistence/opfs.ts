@@ -8,7 +8,7 @@
  * {@link OpfsUnavailableError} the UI can present.
  */
 
-import { isNotFoundError } from './fs-utils';
+import { isNotFoundError, isQuotaExceededError, writeOpfsFile } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 import { prepareProjectRename } from './revisions';
 
@@ -32,15 +32,6 @@ export class OpfsQuotaExceededError extends Error {
     super('Project storage is full. Free browser storage space and try saving again.');
     this.name = 'OpfsQuotaExceededError';
   }
-}
-
-function isQuotaExceededError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'name' in error &&
-    (error as { name?: unknown }).name === 'QuotaExceededError'
-  );
 }
 
 /** Thrown when a stored project with the requested name does not exist. */
@@ -170,13 +161,19 @@ export function sanitizeProjectName(name: string): string {
   return cleaned;
 }
 
-/** Slot-name prefix of the revision snapshots (see src/persistence/revisions.ts). */
-const REVISION_SLOT_PREFIX = 'revision-';
+/** Slot-name prefix marking a stored project as a revision snapshot. */
+export const REVISION_SLOT_PREFIX = 'revision-';
+
+/** Slot name of the shared autosave snapshot. */
+export const AUTOSAVE_SLOT = 'autosave';
+
+/** Slot-name prefix of the per-session autosave snapshots. */
+export const AUTOSAVE_SESSION_SLOT_PREFIX = 'autosave-session-';
 
 /** True when a stored name is an autosave slot (the crash-recovery snapshot). */
 export function isAutosaveProjectName(name: string): boolean {
   const sanitized = sanitizeProjectName(name).toLowerCase();
-  return sanitized === 'autosave' || sanitized.startsWith('autosave-session-');
+  return sanitized === AUTOSAVE_SLOT || sanitized.startsWith(AUTOSAVE_SESSION_SLOT_PREFIX);
 }
 
 /**
@@ -189,11 +186,20 @@ export function isReservedProjectName(name: string): boolean {
   return isAutosaveProjectName(sanitized) || sanitized.startsWith(REVISION_SLOT_PREFIX);
 }
 
-/** Resolves (creating on demand) the "projects/" directory handle. */
-async function projectsDirectory(): Promise<FileSystemDirectoryHandle> {
+/**
+ * Resolves (creating on demand) a top-level OPFS directory handle.
+ *
+ * @throws OpfsUnavailableError when the environment exposes no OPFS.
+ */
+export async function opfsDirectory(name: string): Promise<FileSystemDirectoryHandle> {
   if (!isOpfsAvailable()) throw new OpfsUnavailableError();
   const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(PROJECTS_DIR, { create: true });
+  return root.getDirectoryHandle(name, { create: true });
+}
+
+/** Resolves (creating on demand) the "projects/" directory handle. */
+function projectsDirectory(): Promise<FileSystemDirectoryHandle> {
+  return opfsDirectory(PROJECTS_DIR);
 }
 
 /**
@@ -205,18 +211,9 @@ async function projectsDirectory(): Promise<FileSystemDirectoryHandle> {
 export async function saveProjectUnlocked(name: string, bytes: Uint8Array): Promise<void> {
   const fileName = sanitizeProjectName(name) + FILE_EXTENSION;
   const dir = await projectsDirectory();
-  const handle = await dir.getFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable();
   try {
-    // Copy so wasm-backed or shared buffers are never handed to the stream.
-    await writable.write(new Uint8Array(bytes));
-    await writable.close();
+    await writeOpfsFile(dir, fileName, bytes);
   } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original write/close failure.
-    }
     if (isQuotaExceededError(error)) throw new OpfsQuotaExceededError();
     throw error;
   }
@@ -286,17 +283,22 @@ export function saveProjectChecked(
  */
 export async function listProjects(): Promise<StoredProjectInfo[]> {
   const dir = await projectsDirectory();
-  const out: StoredProjectInfo[] = [];
+  const entries: Array<[string, FileSystemFileHandle]> = [];
   for await (const [entryName, handle] of dir.entries()) {
-    if (handle.kind !== 'file' || !entryName.endsWith(FILE_EXTENSION)) continue;
-    const file = await handle.getFile();
-    const info: StoredProjectInfo = {
-      name: entryName.slice(0, -FILE_EXTENSION.length),
-      size: file.size,
-    };
-    if (Number.isFinite(file.lastModified)) info.lastModified = file.lastModified;
-    out.push(info);
+    if (handle.kind === 'file' && entryName.endsWith(FILE_EXTENSION))
+      entries.push([entryName, handle]);
   }
+  const out = await Promise.all(
+    entries.map(async ([entryName, handle]): Promise<StoredProjectInfo> => {
+      const file = await handle.getFile();
+      const info: StoredProjectInfo = {
+        name: entryName.slice(0, -FILE_EXTENSION.length),
+        size: file.size,
+      };
+      if (Number.isFinite(file.lastModified)) info.lastModified = file.lastModified;
+      return info;
+    }),
+  );
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }

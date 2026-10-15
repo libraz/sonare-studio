@@ -7,7 +7,12 @@
  */
 
 import { deleteAssetUnlocked } from '@/persistence/assets';
-import { isNotFoundError } from '@/persistence/fs-utils';
+import {
+  createRandomId,
+  isNotFoundError,
+  isStringArray,
+  writeOpfsFile,
+} from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
 import {
   deleteProjectUnlocked,
@@ -59,26 +64,6 @@ interface BrowserRestoreStageManifest {
   revisionIndexPublishIntent?: boolean;
 }
 
-async function writeStageFile(
-  directory: FileSystemDirectoryHandle,
-  name: string,
-  bytes: Uint8Array,
-): Promise<void> {
-  const handle = await directory.getFileHandle(name, { create: true });
-  const writable = await handle.createWritable();
-  try {
-    await writable.write(new Uint8Array(bytes));
-    await writable.close();
-  } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original staging failure.
-    }
-    throw error;
-  }
-}
-
 export async function prepareBrowserRestoreStage(
   projects: readonly { name: string; bytes: Uint8Array }[],
   previousProjects: ReadonlyMap<string, Uint8Array | null>,
@@ -89,10 +74,7 @@ export async function prepareBrowserRestoreStage(
 ): Promise<BrowserRestoreStage> {
   const root = await navigator.storage.getDirectory();
   const stagingRoot = await root.getDirectoryHandle(RESTORE_STAGING_DIR, { create: true });
-  const transactionId =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const transactionId = createRandomId();
   const directory = await stagingRoot.getDirectoryHandle(transactionId, { create: true });
   // Namespace incoming archives separately from rollback pre-images. A user
   // project named `previous-X` must never collide with the pre-image for `X`.
@@ -105,14 +87,14 @@ export async function prepareBrowserRestoreStage(
   try {
     for (const project of projects) {
       signal?.throwIfAborted();
-      await writeStageFile(directory, fileName(project.name), project.bytes);
+      await writeOpfsFile(directory, fileName(project.name), project.bytes);
       const previous = previousProjects.get(project.name);
-      if (previous) await writeStageFile(directory, previousFileName(project.name), previous);
+      if (previous) await writeOpfsFile(directory, previousFileName(project.name), previous);
     }
     if (revisionIndex) {
-      await writeStageFile(directory, revisionIndexFileName, revisionIndex.bytes);
+      await writeOpfsFile(directory, revisionIndexFileName, revisionIndex.bytes);
       if (revisionIndex.previousBytes) {
-        await writeStageFile(directory, previousRevisionIndexFileName, revisionIndex.previousBytes);
+        await writeOpfsFile(directory, previousRevisionIndexFileName, revisionIndex.previousBytes);
       }
     }
     manifest = {
@@ -142,7 +124,7 @@ export async function prepareBrowserRestoreStage(
     };
     // The manifest is the staging publish marker and is deliberately written
     // only after every incoming project archive is durable.
-    await writeStageFile(
+    await writeOpfsFile(
       directory,
       RESTORE_MANIFEST_FILE,
       new TextEncoder().encode(JSON.stringify(manifest)),
@@ -156,7 +138,7 @@ export async function prepareBrowserRestoreStage(
     throw error;
   }
   const writeManifest = (manifest: BrowserRestoreStageManifest): Promise<void> =>
-    writeStageFile(
+    writeOpfsFile(
       directory,
       RESTORE_MANIFEST_FILE,
       new TextEncoder().encode(JSON.stringify(manifest)),
@@ -213,10 +195,6 @@ async function readStageFile(
 ): Promise<Uint8Array> {
   const file = await (await directory.getFileHandle(name)).getFile();
   return new Uint8Array(await file.arrayBuffer());
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
 function isRecoverableRestoreStageManifest(value: unknown): value is BrowserRestoreStageManifest {

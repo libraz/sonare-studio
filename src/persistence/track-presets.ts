@@ -5,17 +5,15 @@ import {
   normalizeTrackChannelPresetName,
   type TrackChannelPreset,
 } from '@/project/track-preset';
-import { isNotFoundError } from './fs-utils';
+import { isNotFoundError, writeOpfsFile } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
-import { isOpfsAvailable, OpfsUnavailableError } from './opfs';
+import { opfsDirectory } from './opfs';
 
 const PRESETS_DIR = 'track-presets';
 const PRESETS_FILE = 'presets.json';
 
-async function presetsDirectory(): Promise<FileSystemDirectoryHandle> {
-  if (!isOpfsAvailable()) throw new OpfsUnavailableError();
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(PRESETS_DIR, { create: true });
+function presetsDirectory(): Promise<FileSystemDirectoryHandle> {
+  return opfsDirectory(PRESETS_DIR);
 }
 
 /** Lists valid user presets in menu order. Invalid records are ignored, not executed. */
@@ -44,20 +42,11 @@ export async function listTrackChannelPresets(): Promise<TrackChannelPreset[]> {
 }
 
 async function writeTrackChannelPresets(presets: readonly TrackChannelPreset[]): Promise<void> {
-  const directory = await presetsDirectory();
-  const handle = await directory.getFileHandle(PRESETS_FILE, { create: true });
-  const writable = await handle.createWritable();
-  try {
-    await writable.write(new TextEncoder().encode(JSON.stringify(presets)));
-    await writable.close();
-  } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the actual write error.
-    }
-    throw error;
-  }
+  await writeOpfsFile(
+    await presetsDirectory(),
+    PRESETS_FILE,
+    new TextEncoder().encode(JSON.stringify(presets)),
+  );
 }
 
 /** Saves one preset, replacing a previous preset with the same display name. */

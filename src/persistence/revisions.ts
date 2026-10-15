@@ -9,27 +9,24 @@
  * timestamp; if the index is ever lost the slots remain readable projects.
  */
 
-import { isNotFoundError } from './fs-utils';
+import { isNotFoundError, writeOpfsFile } from './fs-utils';
 import { deleteSlotsGuarded } from './guarded-delete';
 import { withPersistenceMutationLock } from './mutation-lock';
 import {
   deleteProjectUnlocked,
-  isOpfsAvailable,
   listProjects,
   loadProject,
-  OpfsUnavailableError,
+  opfsDirectory,
   ProjectAlreadyExistsError,
   ProjectNotFoundError,
   type ProjectRenameHooks,
+  REVISION_SLOT_PREFIX,
   sanitizeProjectName,
   saveProjectUnlocked,
 } from './opfs';
 
 const REVISIONS_DIR = 'revisions';
 const INDEX_FILE = 'index.json';
-
-/** Slot-name prefix marking a stored project as a revision snapshot. */
-export const REVISION_SLOT_PREFIX = 'revision-';
 
 /** Revisions kept per project; the oldest are pruned beyond this. */
 export const MAX_REVISIONS_PER_PROJECT = 20;
@@ -71,10 +68,8 @@ export function isRevisionSlot(name: string): boolean {
   return name.toLowerCase().startsWith(REVISION_SLOT_PREFIX);
 }
 
-async function revisionsDirectory(): Promise<FileSystemDirectoryHandle> {
-  if (!isOpfsAvailable()) throw new OpfsUnavailableError();
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(REVISIONS_DIR, { create: true });
+function revisionsDirectory(): Promise<FileSystemDirectoryHandle> {
+  return opfsDirectory(REVISIONS_DIR);
 }
 
 interface RevisionIndexRead {
@@ -111,23 +106,36 @@ function parseRevisionIndex(raw: unknown): ProjectRevision[] {
   return entries;
 }
 
-/** Reads the index, dropping malformed records rather than failing the read. */
-async function readIndexState(): Promise<RevisionIndexRead> {
+/** Reads the raw index file, or null when none was published. */
+async function readIndexBytes(): Promise<Uint8Array | null> {
   const directory = await revisionsDirectory();
-  let raw: unknown;
   try {
     const file = await (await directory.getFileHandle(INDEX_FILE)).getFile();
-    raw = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
+    return new Uint8Array(await file.arrayBuffer());
   } catch (error) {
-    if (isNotFoundError(error) || error instanceof SyntaxError) {
-      // A missing or corrupt index cannot distinguish valid historical slots
-      // from an interrupted write. Keep those slots readable for recovery.
-      return { entries: [], usable: false };
-    }
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
+/** Parses index bytes, dropping malformed records rather than failing the read. */
+function parseIndexBytes(bytes: Uint8Array | null): RevisionIndexRead {
+  // A missing or corrupt index cannot distinguish valid historical slots
+  // from an interrupted write. Keep those slots readable for recovery.
+  if (bytes === null) return { entries: [], usable: false };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(bytes));
+  } catch (error) {
+    if (error instanceof SyntaxError) return { entries: [], usable: false };
     throw error;
   }
   if (!Array.isArray(raw)) return { entries: [], usable: false };
   return { entries: parseRevisionIndex(raw), usable: true };
+}
+
+async function readIndexState(): Promise<RevisionIndexRead> {
+  return parseIndexBytes(await readIndexBytes());
 }
 
 async function readIndex(): Promise<ProjectRevision[]> {
@@ -146,14 +154,7 @@ export interface ProjectRevisionStoreSnapshot {
 
 /** Reads the revision store without acquiring the mutation lock. */
 export async function readProjectRevisionStoreUnlocked(): Promise<ProjectRevisionStoreSnapshot> {
-  const directory = await revisionsDirectory();
-  let indexBytes: Uint8Array | null = null;
-  try {
-    const file = await (await directory.getFileHandle(INDEX_FILE)).getFile();
-    indexBytes = new Uint8Array(await file.arrayBuffer());
-  } catch (error) {
-    if (!isNotFoundError(error)) throw error;
-  }
+  const indexBytes = await readIndexBytes();
 
   const slots = new Map<string, Uint8Array>();
   for (const project of await listProjects()) {
@@ -166,25 +167,12 @@ export async function readProjectRevisionStoreUnlocked(): Promise<ProjectRevisio
       if (!(error instanceof ProjectNotFoundError)) throw error;
     }
   }
-  return { index: await readIndex(), slots, indexBytes };
+  return { index: parseIndexBytes(indexBytes).entries, slots, indexBytes };
 }
 
 /** Publishes raw index bytes while the caller owns the mutation lock. */
 export async function writeProjectRevisionIndexBytesUnlocked(bytes: Uint8Array): Promise<void> {
-  const directory = await revisionsDirectory();
-  const handle = await directory.getFileHandle(INDEX_FILE, { create: true });
-  const writable = await handle.createWritable();
-  try {
-    await writable.write(new Uint8Array(bytes));
-    await writable.close();
-  } catch (error) {
-    try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original write failure.
-    }
-    throw error;
-  }
+  await writeOpfsFile(await revisionsDirectory(), INDEX_FILE, bytes);
 }
 
 /** Removes the revision index while the caller owns the mutation lock. */
@@ -229,38 +217,6 @@ export async function prepareProjectRename(
     beforeSourceDelete: () => writeIndex(renamed),
     rollback: () => writeIndex(entries),
   };
-}
-
-/**
- * Updates revision ownership after a project slot has already been moved.
- * Normal project renames use {@link prepareProjectRename} through
- * {@link renameProject} so the index update participates in the byte move
- * transaction. This entry point is for recovery/migration callers that have
- * moved the project bytes themselves.
- */
-export async function renameProjectRevisions(oldName: string, newName: string): Promise<number> {
-  return withPersistenceMutationLock(() => renameProjectRevisionsUnlocked(oldName, newName));
-}
-
-/** Updates revision ownership without acquiring the mutation lock. */
-export async function renameProjectRevisionsUnlocked(
-  oldName: string,
-  newName: string,
-): Promise<number> {
-  const from = sanitizeProjectName(oldName);
-  const to = sanitizeProjectName(newName);
-  if (from === to) return 0;
-  const entries = await readIndex();
-  if (entries.some((entry) => entry.projectName === to)) {
-    throw new ProjectAlreadyExistsError(to);
-  }
-  const renamed = entries.map((entry) =>
-    entry.projectName === from ? { ...entry, projectName: to } : entry,
-  );
-  const changed = entries.filter((entry) => entry.projectName === from).length;
-  if (changed === 0) return 0;
-  await writeIndex(renamed);
-  return changed;
 }
 
 /**

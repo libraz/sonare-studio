@@ -217,9 +217,10 @@ function unzipSzd(bytes: Uint8Array): Record<string, Uint8Array> {
 async function unzipSzdInWorker(
   bytes: Uint8Array,
   signal?: AbortSignal,
+  include?: (name: string) => boolean,
 ): Promise<Record<string, Uint8Array>> {
   try {
-    return (await preflightAndUnzipInWorker(bytes, szdLimits(), signal)).entries;
+    return (await preflightAndUnzipInWorker(bytes, szdLimits(), signal, include)).entries;
   } catch (error) {
     if (signal?.aborted) signal.throwIfAborted();
     if (error instanceof ArchivePreflightError) {
@@ -358,15 +359,6 @@ function validateDocument(value: unknown): ProjectDocument {
   return doc as ProjectDocument;
 }
 
-/**
- * Decodes .szd bytes back into a project document.
- *
- * @param bytes Archive bytes produced by {@link encodeSzd}.
- * @returns The contained project document, schema-checked.
- * @throws SzdFormatError when the bytes are not a zip archive, the project
- *   entry is missing or malformed, the schema version is unsupported, or the
- *   archive was written by a different application.
- */
 function readSzdMetaValue(entries: Record<string, Uint8Array>): Partial<SzdMetaDocument> | null {
   const metaBytes = entries[META_ENTRY];
   if (!metaBytes) return null;
@@ -400,16 +392,28 @@ function decodeSzdEntries(entries: Record<string, Uint8Array>): ProjectDocument 
   return validateDocument(parseEntryJson(projectBytes, PROJECT_ENTRY));
 }
 
+/**
+ * Decodes .szd bytes back into a project document.
+ *
+ * @param bytes Archive bytes produced by {@link encodeSzd}.
+ * @returns The contained project document, schema-checked.
+ * @throws SzdFormatError when the bytes are not a zip archive, the project
+ *   entry is missing or malformed, the schema version is unsupported, or the
+ *   archive was written by a different application.
+ */
 export function decodeSzd(bytes: Uint8Array): ProjectDocument {
   return decodeSzdEntries(unzipSzd(bytes));
 }
 
-/** Parses a project document through fflate's worker path. */
+/** Inflates only the document and metadata entries, leaving bundled media compressed. */
+const isDocumentEntry = (name: string): boolean => name === PROJECT_ENTRY || name === META_ENTRY;
+
+/** Parses a project document through fflate's worker path, skipping bundled media. */
 export async function decodeSzdInWorker(
   bytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<ProjectDocument> {
-  const entries = await unzipSzdInWorker(bytes, signal);
+  const entries = await unzipSzdInWorker(bytes, signal, isDocumentEntry);
   signal?.throwIfAborted();
   return decodeSzdEntries(entries);
 }
@@ -423,7 +427,7 @@ export async function decodeSzdWithMetaInWorker(
   bytes: Uint8Array,
   signal?: AbortSignal,
 ): Promise<{ document: ProjectDocument; meta: SzdMetaDocument | null }> {
-  const entries = await unzipSzdInWorker(bytes, signal);
+  const entries = await unzipSzdInWorker(bytes, signal, isDocumentEntry);
   signal?.throwIfAborted();
   return { document: decodeSzdEntries(entries), meta: readSzdMetaEntries(entries) };
 }
@@ -437,17 +441,6 @@ export function decodeSzdWithResourceReport(
   return { document: decodeSzdEntries(decoded.entries), report: decoded.report };
 }
 
-/**
- * Extracts the bundled media (audio assets + SoundFonts) from a .szd archive.
- *
- * Each asset/font is a `<id>.json` sidecar paired with a payload (`.pcm` for
- * assets, `.sf2` for fonts); entries missing either half are skipped. Archives
- * written before media bundling simply yield empty arrays.
- *
- * @param bytes Archive bytes produced by {@link encodeSzd}.
- * @returns The bundled assets and fonts (empty when none are present).
- * @throws SzdFormatError when the bytes are not a readable zip archive.
- */
 function decodeSzdBundleEntries(entries: Record<string, Uint8Array>): SzdMediaBundle {
   const assets: SzdAssetEntry[] = [];
   const fonts: SzdFontEntry[] = [];
@@ -465,20 +458,19 @@ function decodeSzdBundleEntries(entries: Record<string, Uint8Array>): SzdMediaBu
   return { assets, fonts };
 }
 
+/**
+ * Extracts the bundled media (audio assets + SoundFonts) from a .szd archive.
+ *
+ * Each asset/font is a `<id>.json` sidecar paired with a payload (`.pcm` for
+ * assets, `.sf2` for fonts); entries missing either half are skipped. Archives
+ * written before media bundling simply yield empty arrays.
+ *
+ * @param bytes Archive bytes produced by {@link encodeSzd}.
+ * @returns The bundled assets and fonts (empty when none are present).
+ * @throws SzdFormatError when the bytes are not a readable zip archive.
+ */
 export function decodeSzdBundle(bytes: Uint8Array): SzdMediaBundle {
   return decodeSzdBundleEntries(unzipSzd(bytes));
-}
-
-/** Parses a project document and its media bundle from one ZIP expansion. */
-export function decodeSzdWithBundle(bytes: Uint8Array): {
-  document: ProjectDocument;
-  bundle: SzdMediaBundle;
-} {
-  const entries = unzipSzd(bytes);
-  return {
-    document: decodeSzdEntries(entries),
-    bundle: decodeSzdBundleEntries(entries),
-  };
 }
 
 /** Parses an imported project and bundle once on fflate's worker path. */

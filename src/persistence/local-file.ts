@@ -23,29 +23,30 @@ const SZD_MIME = 'application/zip';
 const BACKUP_FILE_EXTENSION = '.sonare-backup.zip';
 const DAWPROJECT_FILE_EXTENSION = '.dawproject';
 
+/** An archive picked from disk (project, whole-browser backup or DAWproject). */
+export interface PickedLocalFile {
+  /** File name as reported by the browser (including extension). */
+  name: string;
+  /** File contents, owned by the caller. */
+  bytes: Uint8Array;
+}
+
 /** A file picked by {@link pickAndReadSzd}. */
-export interface PickedSzdFile {
-  /** File name as reported by the browser (including extension). */
-  name: string;
-  /** File contents, owned by the caller. */
-  bytes: Uint8Array;
-}
+export type PickedSzdFile = PickedLocalFile;
 
-/** A whole-browser backup picked from disk. */
-export interface PickedBackupFile {
-  /** File name as reported by the browser (including extension). */
-  name: string;
-  /** File contents, owned by the caller. */
-  bytes: Uint8Array;
-}
-
-/** A DAWproject archive picked from disk. */
-export interface PickedDawprojectFile {
-  /** File name as reported by the browser (including extension). */
-  name: string;
-  /** File contents, owned by the caller. */
-  bytes: Uint8Array;
-}
+/** File extensions of the external audio files a DAWproject archive can reference. */
+const EXTERNAL_AUDIO_EXTENSIONS = [
+  '.wav',
+  '.wave',
+  '.aif',
+  '.aiff',
+  '.flac',
+  '.mp3',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.opus',
+];
 
 /** One user-selected external audio file for DAWproject media relinking. */
 export interface PickedExternalAudioFile {
@@ -178,13 +179,13 @@ export async function readFileBytesBounded(file: File, maxBytes: number): Promis
   return offset === output.byteLength ? output : output.slice(0, offset);
 }
 
-/** Reads a picked File into a {@link PickedSzdFile}. */
-async function readPickedFile(file: File, maxBytes: number): Promise<PickedSzdFile> {
+/** Reads a picked File into a {@link PickedLocalFile}. */
+async function readPickedFile(file: File, maxBytes: number): Promise<PickedLocalFile> {
   return { name: file.name, bytes: await readFileBytesBounded(file, maxBytes) };
 }
 
 /** Reads an externally supplied .szd File with the same bounds as the picker. */
-export function readSzdFile(file: File): Promise<PickedSzdFile> {
+export function readSzdFile(file: File): Promise<PickedLocalFile> {
   return readPickedFile(file, MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES);
 }
 
@@ -249,14 +250,49 @@ export function pickViaInputElement<T>(options: InputPickerOptions<T>): Promise<
   });
 }
 
-/** Opens a .szd file via a transient input[type=file] element. */
-function pickSzdViaInputElement(): Promise<PickedSzdFile | null> {
+/** What a single-archive picker offers and how large a file it accepts. */
+interface ArchivePickerSpec {
+  /** Dialog description shown by the File System Access picker. */
+  description: string;
+  /** Accepted extensions, for both the picker and the input element. */
+  extensions: string[];
+  /** Hides the "all files" escape hatch in the File System Access picker. */
+  excludeAcceptAllOption: boolean;
+  /** Largest accepted file. */
+  maxBytes: number;
+}
+
+/**
+ * Asks the user to pick one archive and reads its bytes.
+ *
+ * Uses the File System Access API (window.showOpenFilePicker) when available
+ * and falls back to a transient input[type=file] element otherwise.
+ *
+ * @returns The picked file, or null when the user cancelled the dialog.
+ */
+async function pickAndReadArchive(spec: ArchivePickerSpec): Promise<PickedLocalFile | null> {
+  const picker = (globalThis as { showOpenFilePicker?: ShowOpenFilePicker }).showOpenFilePicker;
+  if (typeof picker === 'function') {
+    try {
+      const [handle] = await picker({
+        multiple: false,
+        excludeAcceptAllOption: spec.excludeAcceptAllOption,
+        types: [{ description: spec.description, accept: { [SZD_MIME]: spec.extensions } }],
+      });
+      if (!handle) return null;
+      return await readPickedFile(await handle.getFile(), spec.maxBytes);
+    } catch (error) {
+      // The picker rejects with AbortError when the user cancels.
+      if (error instanceof Error && error.name === 'AbortError') return null;
+      throw error;
+    }
+  }
   return pickViaInputElement({
-    accept: SZD_FILE_EXTENSION,
+    accept: spec.extensions.join(','),
     read: async (files) => {
       const file = files[0];
       if (!file) return null;
-      return readPickedFile(file, MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES);
+      return readPickedFile(file, spec.maxBytes);
     },
   });
 }
@@ -264,118 +300,43 @@ function pickSzdViaInputElement(): Promise<PickedSzdFile | null> {
 /**
  * Asks the user to pick a .szd project file and reads its bytes.
  *
- * Uses the File System Access API (window.showOpenFilePicker) when available
- * and falls back to a transient input[type=file] element otherwise.
- *
  * @returns The picked file, or null when the user cancelled the dialog.
  */
-export async function pickAndReadSzd(): Promise<PickedSzdFile | null> {
-  const picker = (globalThis as { showOpenFilePicker?: ShowOpenFilePicker }).showOpenFilePicker;
-  if (typeof picker === 'function') {
-    try {
-      const [handle] = await picker({
-        multiple: false,
-        // Constrain the picker to .szd: hide the "all files" escape hatch so the
-        // dialog only offers project archives.
-        excludeAcceptAllOption: true,
-        types: [
-          {
-            description: 'Sonare Studio project',
-            accept: { [SZD_MIME]: [SZD_FILE_EXTENSION] },
-          },
-        ],
-      });
-      if (!handle) return null;
-      return await readSzdFile(await handle.getFile());
-    } catch (error) {
-      // The picker rejects with AbortError when the user cancels.
-      if (error instanceof Error && error.name === 'AbortError') return null;
-      throw error;
-    }
-  }
-  return pickSzdViaInputElement();
-}
-
-/** Opens a whole-browser backup zip via a transient input[type=file] element. */
-function pickBackupViaInputElement(): Promise<PickedBackupFile | null> {
-  return pickViaInputElement({
-    accept: `${BACKUP_FILE_EXTENSION},.zip`,
-    read: async (files) => {
-      const file = files[0];
-      if (!file) return null;
-      return readPickedFile(file, MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES);
-    },
+export function pickAndReadSzd(): Promise<PickedSzdFile | null> {
+  return pickAndReadArchive({
+    description: 'Sonare Studio project',
+    extensions: [SZD_FILE_EXTENSION],
+    excludeAcceptAllOption: true,
+    maxBytes: MAX_PROJECT_ARCHIVE_COMPRESSED_BYTES,
   });
 }
 
 /**
  * Asks the user to pick a whole-browser backup archive and reads its bytes.
  */
-export async function pickAndReadBrowserBackup(): Promise<PickedBackupFile | null> {
-  const picker = (globalThis as { showOpenFilePicker?: ShowOpenFilePicker }).showOpenFilePicker;
-  if (typeof picker === 'function') {
-    try {
-      const [handle] = await picker({
-        multiple: false,
-        excludeAcceptAllOption: false,
-        types: [
-          {
-            description: 'Sonare Studio browser backup',
-            accept: { [SZD_MIME]: [BACKUP_FILE_EXTENSION, '.zip'] },
-          },
-        ],
-      });
-      if (!handle) return null;
-      return await readPickedFile(await handle.getFile(), MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES);
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return null;
-      throw error;
-    }
-  }
-  return pickBackupViaInputElement();
-}
-
-/** Opens a DAWproject file via a transient input[type=file] element. */
-function pickDawprojectViaInputElement(): Promise<PickedDawprojectFile | null> {
-  return pickViaInputElement({
-    accept: DAWPROJECT_FILE_EXTENSION,
-    read: async (files) => {
-      const file = files[0];
-      if (!file) return null;
-      return readPickedFile(file, MAX_DAWPROJECT_ARCHIVE_BYTES);
-    },
+export function pickAndReadBrowserBackup(): Promise<PickedLocalFile | null> {
+  return pickAndReadArchive({
+    description: 'Sonare Studio browser backup',
+    extensions: [BACKUP_FILE_EXTENSION, '.zip'],
+    excludeAcceptAllOption: false,
+    maxBytes: MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES,
   });
 }
 
 /** Asks the user to pick a .dawproject archive and reads its bytes. */
-export async function pickAndReadDawproject(): Promise<PickedDawprojectFile | null> {
-  const picker = (globalThis as { showOpenFilePicker?: ShowOpenFilePicker }).showOpenFilePicker;
-  if (typeof picker === 'function') {
-    try {
-      const [handle] = await picker({
-        multiple: false,
-        excludeAcceptAllOption: true,
-        types: [
-          {
-            description: 'DAWproject',
-            accept: { [SZD_MIME]: [DAWPROJECT_FILE_EXTENSION] },
-          },
-        ],
-      });
-      if (!handle) return null;
-      return await readPickedFile(await handle.getFile(), MAX_DAWPROJECT_ARCHIVE_BYTES);
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return null;
-      throw error;
-    }
-  }
-  return pickDawprojectViaInputElement();
+export function pickAndReadDawproject(): Promise<PickedLocalFile | null> {
+  return pickAndReadArchive({
+    description: 'DAWproject',
+    extensions: [DAWPROJECT_FILE_EXTENSION],
+    excludeAcceptAllOption: true,
+    maxBytes: MAX_DAWPROJECT_ARCHIVE_BYTES,
+  });
 }
 
 /** Opens external audio files via a transient input[type=file] element. */
 function pickExternalAudioViaInputElement(): Promise<PickedExternalAudioFile[] | null> {
   return pickViaInputElement({
-    accept: 'audio/*,.wav,.wave,.aif,.aiff,.flac,.mp3,.m4a,.aac,.ogg,.opus',
+    accept: `audio/*,${EXTERNAL_AUDIO_EXTENSIONS.join(',')}`,
     multiple: true,
     read: async (files) => {
       if (files.length === 0) return null;
@@ -396,20 +357,7 @@ export async function pickAndReadExternalAudioFiles(): Promise<PickedExternalAud
         types: [
           {
             description: 'Audio files',
-            accept: {
-              'audio/*': [
-                '.wav',
-                '.wave',
-                '.aif',
-                '.aiff',
-                '.flac',
-                '.mp3',
-                '.m4a',
-                '.aac',
-                '.ogg',
-                '.opus',
-              ],
-            },
+            accept: { 'audio/*': EXTERNAL_AUDIO_EXTENSIONS },
           },
         ],
       });

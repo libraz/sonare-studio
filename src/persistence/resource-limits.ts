@@ -3,6 +3,8 @@ const MIB = 1024 * 1024;
 export const MAX_AUDIO_SAMPLE_RATE = 384_000;
 export const MAX_AUDIO_CHANNELS = 32;
 export const MAX_AUDIO_SAMPLE_BYTES = 256 * MIB;
+/** Bytes per stored PCM sample (32-bit float). */
+export const BYTES_PER_SAMPLE = Float32Array.BYTES_PER_ELEMENT;
 export const MAX_AUDIO_SAMPLES = MAX_AUDIO_SAMPLE_BYTES / Float32Array.BYTES_PER_ELEMENT;
 
 /** Largest Standard MIDI File accepted before invoking the wasm parser. */

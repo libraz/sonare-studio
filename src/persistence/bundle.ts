@@ -32,12 +32,13 @@ import {
   type AudioAssetMeta,
   computeAssetId,
   deleteAssetUnlocked,
-  interleavedPcmBytes,
-  loadAsset,
+  readAssetPcmBytes,
   saveAssetWithStatusUnlocked,
 } from './assets';
+import { bytesEqual } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 import {
+  BYTES_PER_SAMPLE,
   MAX_AUDIO_CHANNELS,
   MAX_AUDIO_SAMPLE_BYTES,
   MAX_AUDIO_SAMPLE_RATE,
@@ -82,11 +83,11 @@ export async function gatherProjectBundleWithReport(
   const assets = [];
   for (const id of collectReferencedAssetIds(doc)) {
     try {
-      const loaded = await loadAsset(id);
+      const loaded = await readAssetPcmBytes(id);
       assets.push({
         id,
         meta: textEncoder.encode(JSON.stringify(loaded.meta)),
-        pcm: interleavedPcmBytes(loaded.channels),
+        pcm: loaded.pcm,
       });
     } catch (error) {
       issues.push(...mediaFailureIssues(doc, 'audio-asset', id, 'unreadable', error));
@@ -112,7 +113,11 @@ export async function gatherProjectBundle(doc: ProjectDocument): Promise<SzdMedi
 /** Reconstructs a Float32Array from interleaved-PCM bytes (alignment-safe). */
 function floatsFromPcm(bytes: Uint8Array): Float32Array {
   const copy = bytes.slice();
-  return new Float32Array(copy.buffer, copy.byteOffset, Math.floor(copy.byteLength / 4));
+  return new Float32Array(
+    copy.buffer,
+    copy.byteOffset,
+    Math.floor(copy.byteLength / BYTES_PER_SAMPLE),
+  );
 }
 
 const CONTENT_ID_PATTERN = /^[0-9a-f]{16}$/i;
@@ -217,14 +222,6 @@ function acquireProjectBundleRestoreLease(
   }
 }
 
-function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  for (let i = 0; i < left.byteLength; i += 1) {
-    if (left[i] !== right[i]) return false;
-  }
-  return true;
-}
-
 /** Parses and validates one bundled audio pair without touching storage. */
 export function prepareAssetRestore(entry: SzdMediaBundle['assets'][number]): PreparedAssetRestore {
   if (
@@ -313,12 +310,11 @@ export function prepareFontRestore(entry: SzdMediaBundle['fonts'][number]): Prep
 /** Returns true for an identical existing asset, false when the id is unused. */
 export async function preflightAssetRestore(entry: PreparedAssetRestore): Promise<boolean> {
   try {
-    const existing = await loadAsset(entry.id);
-    const existingBytes = interleavedPcmBytes(existing.channels);
+    const existing = await readAssetPcmBytes(entry.id);
     if (
       existing.meta.sampleRate !== entry.meta.sampleRate ||
       existing.meta.numChannels !== entry.meta.numChannels ||
-      !equalBytes(existingBytes, entry.pcm)
+      !bytesEqual(existing.pcm, entry.pcm)
     ) {
       throw new MediaRestoreConflictError('asset', entry.id);
     }
@@ -333,7 +329,7 @@ export async function preflightAssetRestore(entry: PreparedAssetRestore): Promis
 export async function preflightFontRestore(entry: PreparedFontRestore): Promise<boolean> {
   try {
     const existing = await loadFont(entry.id);
-    if (!equalBytes(existing, entry.data)) {
+    if (!bytesEqual(existing, entry.data)) {
       throw new MediaRestoreConflictError('font', entry.id);
     }
     return true;

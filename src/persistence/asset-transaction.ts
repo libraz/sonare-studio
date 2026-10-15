@@ -1,4 +1,4 @@
-import { deleteAudioAssetGuarded, leaseAudioAssets } from './asset-leases';
+import { deleteAudioAssetsGuarded, leaseAudioAssets } from './asset-leases';
 import { type AudioAssetMeta, type SaveAssetInput, saveAssetWithStatus } from './assets';
 
 export interface AudioAssetTransaction {
@@ -54,9 +54,7 @@ export function createAudioAssetTransaction(): AudioAssetTransaction {
       if (finished) return;
       finished = true;
       lease.release();
-      for (const assetId of [...createdIds].reverse()) {
-        await deleteAudioAssetGuarded(assetId, () => isReferenced(assetId));
-      }
+      await deleteAudioAssetsGuarded([...createdIds].reverse(), isReferenced);
     },
   };
 }
