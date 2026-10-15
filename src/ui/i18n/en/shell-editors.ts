@@ -87,7 +87,6 @@ export const shellEditors = {
       noNotesSelected: 'No notes selected',
       noteSelected: '{pitch} selected at {start} PPQ for {duration} PPQ',
       notesSelected: '{count} notes selected from {low} to {high}',
-      pointerPosition: 'Pointer at {ppq} PPQ, {pitch}',
       instructions:
         'Use arrows to explore notes, Space to select, Ctrl+Arrows to move, Shift+Left or Right to resize, Shift+F10 for actions, or Tab to edit sliders.',
       edit: 'Selected note properties',

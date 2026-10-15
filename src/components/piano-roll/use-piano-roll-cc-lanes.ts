@@ -76,10 +76,12 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
   const store = useProjectStore();
 
   const polyPressurePitches = computed<number[]>(() => {
-    const pitches = [...store.selection]
-      .map((id) => store.notes.find((n) => n.id === id)?.pitch)
-      .filter((pitch): pitch is number => pitch !== undefined);
-    return [...new Set(pitches)].sort((a, b) => a - b);
+    const selection = store.selection;
+    const pitches = new Set<number>();
+    for (const note of store.notes) {
+      if (selection.has(note.id)) pitches.add(note.pitch);
+    }
+    return [...pitches].sort((a, b) => a - b);
   });
 
   const polyPressurePitch = computed<number | null>(() => polyPressurePitches.value[0] ?? null);

@@ -15,6 +15,7 @@ import type {
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
+import { MIN_NOTE_WIDTH_PX } from '@/ui/canvas/hit-test';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
@@ -240,6 +241,15 @@ const LABEL_MIN_ROW_HEIGHT = 13;
 const LABEL_MIN_NOTE_WIDTH = 26;
 const SHORT_NOTE_WARNING_PPQ = 0.0625;
 
+/** HUD pill metrics (px): height, horizontal text padding, corner radius, canvas-edge margin. */
+const HUD_HEIGHT_PX = 20;
+const HUD_PADDING_X = 7;
+const HUD_RADIUS_PX = 4;
+const HUD_MARGIN_PX = 4;
+/** Offset of a note-anchored HUD pill from the note's top-left corner. */
+const HUD_ANCHOR_OFFSET_X = 8;
+const HUD_ANCHOR_OFFSET_Y = -22;
+
 const selectedNotes = computed(() => props.notes.filter((note) => props.selection.has(note.id)));
 
 const liveStatus = computed(() => {
@@ -267,75 +277,78 @@ const liveStatus = computed(() => {
       }),
     );
   }
-  const hover = hoverPoint.value;
-  if (hover) {
-    parts.push(
-      formatMessage(t.value.shell.pianoRoll.accessibility.pointerPosition, {
-        ppq: props.range.xToPpq(hover.x).toFixed(2),
-        pitch: formatPitch(props.range.yToPitch(hover.y)),
-      }),
-    );
-  }
   return parts.join('. ');
 });
 
-const accessibleNotes = computed<AccessibleObjectItem[]>(() => {
+/** Sorted navigator items without selection state, so a selection change reuses them. */
+const accessibleNoteBases = computed<
+  Array<{ noteId: number; item: Omit<AccessibleObjectItem, 'selected'> }>
+>(() => {
   const minimumPpq = props.minPpq ?? 0;
   const step = Math.max(0.0625, props.gridPpq);
   return [...props.notes]
     .sort((a, b) => a.startPpq - b.startPpq || b.pitch - a.pitch || a.id - b.id)
     .map((note) => ({
-      id: `note-${note.id}`,
-      label: formatMessage(t.value.shell.pianoRoll.accessibility.note, {
-        pitch: formatPitch(note.pitch),
-        start: note.startPpq.toFixed(2),
-        length: note.durationPpq.toFixed(2),
-        velocity: note.velocity,
-      }),
-      selected: props.selection.has(note.id),
-      controls: [
-        {
-          id: 'pitch',
-          label: t.value.shell.pianoRoll.accessibility.pitch,
-          min: 0,
-          max: 127,
-          step: 1,
-          value: note.pitch,
-          valueText: formatPitch(note.pitch),
-        },
-        {
-          id: 'start',
-          label: t.value.shell.pianoRoll.accessibility.start,
-          min: minimumPpq,
-          max: Math.max(minimumPpq, props.clipLengthPpq - note.durationPpq),
-          step,
-          value: note.startPpq,
-          valueText: formatMessage(t.value.shell.pianoRoll.accessibility.ppqValue, {
-            value: note.startPpq.toFixed(2),
-          }),
-        },
-        {
-          id: 'duration',
-          label: t.value.shell.pianoRoll.accessibility.duration,
-          min: 0.0625,
-          max: Math.max(0.0625, props.clipLengthPpq - note.startPpq),
-          step,
-          value: note.durationPpq,
-          valueText: formatMessage(t.value.shell.pianoRoll.accessibility.ppqValue, {
-            value: note.durationPpq.toFixed(2),
-          }),
-        },
-        {
-          id: 'velocity',
-          label: t.value.shell.pianoRoll.accessibility.velocity,
-          min: 1,
-          max: 127,
-          step: 1,
-          value: note.velocity,
-        },
-      ],
+      noteId: note.id,
+      item: {
+        id: `note-${note.id}`,
+        label: formatMessage(t.value.shell.pianoRoll.accessibility.note, {
+          pitch: formatPitch(note.pitch),
+          start: note.startPpq.toFixed(2),
+          length: note.durationPpq.toFixed(2),
+          velocity: note.velocity,
+        }),
+        controls: [
+          {
+            id: 'pitch',
+            label: t.value.shell.pianoRoll.accessibility.pitch,
+            min: 0,
+            max: 127,
+            step: 1,
+            value: note.pitch,
+            valueText: formatPitch(note.pitch),
+          },
+          {
+            id: 'start',
+            label: t.value.shell.pianoRoll.accessibility.start,
+            min: minimumPpq,
+            max: Math.max(minimumPpq, props.clipLengthPpq - note.durationPpq),
+            step,
+            value: note.startPpq,
+            valueText: formatMessage(t.value.shell.pianoRoll.accessibility.ppqValue, {
+              value: note.startPpq.toFixed(2),
+            }),
+          },
+          {
+            id: 'duration',
+            label: t.value.shell.pianoRoll.accessibility.duration,
+            min: 0.0625,
+            max: Math.max(0.0625, props.clipLengthPpq - note.startPpq),
+            step,
+            value: note.durationPpq,
+            valueText: formatMessage(t.value.shell.pianoRoll.accessibility.ppqValue, {
+              value: note.durationPpq.toFixed(2),
+            }),
+          },
+          {
+            id: 'velocity',
+            label: t.value.shell.pianoRoll.accessibility.velocity,
+            min: 1,
+            max: 127,
+            step: 1,
+            value: note.velocity,
+          },
+        ],
+      },
     }));
 });
+
+const accessibleNotes = computed<AccessibleObjectItem[]>(() =>
+  accessibleNoteBases.value.map(({ noteId, item }) => ({
+    ...item,
+    selected: props.selection.has(noteId),
+  })),
+);
 
 function noteForAccessibleId(id: string): EditorNote | undefined {
   const noteId = Number(id.replace(/^note-/, ''));
@@ -419,7 +432,18 @@ function drawMeterLines(ctx: CanvasRenderingContext2D, height: number): void {
   }
 }
 
+const overlapCache = new WeakMap<ReadonlyArray<EditorNote>, Set<number>>();
+
+/** Ids of same-pitch notes that overlap in time; cached per (immutable) note array. */
 function overlappingNoteIds(notes: ReadonlyArray<EditorNote>): Set<number> {
+  const cached = overlapCache.get(notes);
+  if (cached) return cached;
+  const ids = findOverlappingNoteIds(notes);
+  overlapCache.set(notes, ids);
+  return ids;
+}
+
+function findOverlappingNoteIds(notes: ReadonlyArray<EditorNote>): Set<number> {
   const byPitch = new Map<number, EditorNote[]>();
   for (const note of notes) {
     const group = byPitch.get(note.pitch);
@@ -543,7 +567,7 @@ function drawNotes(): void {
   for (const ghost of visibleGhosts) {
     const y = range.pitchToY(ghost.pitch);
     const x = range.ppqToX(ghost.startPpq);
-    const ghostW = Math.max(2, ghost.durationPpq * range.pxPerPpq - 1);
+    const ghostW = Math.max(MIN_NOTE_WIDTH_PX, ghost.durationPpq * range.pxPerPpq - 1);
     ctx.fillStyle = ghost.color;
     fillRoundRect(ctx, x, y + 1, ghostW, noteH, 2);
   }
@@ -553,11 +577,13 @@ function drawNotes(): void {
   const visibleNotes = visibleNotesInWindow(list, viewWindow);
   const colorOf = props.noteColor ?? ((): string => DEFAULT_NOTE_COLOR);
   const scaleMaskActive = hasScaleMask();
-  const overlapIds = overlappingNoteIds(visibleNotes);
+  const overlapIds = overlappingNoteIds(list);
+  ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
+  ctx.textBaseline = 'middle';
   for (const note of visibleNotes) {
     const y = range.pitchToY(note.pitch);
     const x = range.ppqToX(note.startPpq);
-    const noteW = Math.max(2, note.durationPpq * range.pxPerPpq - 1);
+    const noteW = Math.max(MIN_NOTE_WIDTH_PX, note.durationPpq * range.pxPerPpq - 1);
     // Negative ids mark in-flight duplicate copies; render them as selected.
     const selected = note.id < 0 || props.selection.has(note.id);
     ctx.fillStyle = colorOf(note);
@@ -587,11 +613,29 @@ function drawNotes(): void {
 
     if (range.rowHeight >= LABEL_MIN_ROW_HEIGHT && noteW >= LABEL_MIN_NOTE_WIDTH) {
       ctx.fillStyle = COLORS.noteText;
-      ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
-      ctx.textBaseline = 'middle';
       ctx.fillText(formatPitch(note.pitch), x + 5, y + range.rowHeight / 2, noteW - 8);
     }
   }
+}
+
+/** Draws a HUD pill with its top-left near (x, y), clamped inside the w x h canvas. */
+function drawHudLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
+  const boxW = ctx.measureText(text).width + HUD_PADDING_X * 2;
+  const left = Math.min(Math.max(HUD_MARGIN_PX, x), w - boxW - HUD_MARGIN_PX);
+  const top = Math.min(Math.max(HUD_MARGIN_PX, y), h - HUD_HEIGHT_PX - HUD_MARGIN_PX);
+  ctx.fillStyle = COLORS.hudBackground;
+  fillRoundRect(ctx, left, top, boxW, HUD_HEIGHT_PX, HUD_RADIUS_PX);
+  ctx.fillStyle = COLORS.hudText;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, left + HUD_PADDING_X, top + HUD_HEIGHT_PX / 2);
 }
 
 /** Draws the placement column, marquee, readouts, crosshair and playhead line. */
@@ -629,41 +673,26 @@ function drawOverlay(): void {
 
   const readout = props.interactions.gestureReadout?.value ?? null;
   if (readout) {
-    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
-    const paddingX = 7;
-    const paddingY = 4;
-    const metrics = ctx.measureText(readout.text);
-    const boxW = metrics.width + paddingX * 2;
-    const boxH = 20;
-    const x = Math.min(Math.max(4, readout.x), w - boxW - 4);
-    const y = Math.min(Math.max(4, readout.y), h - boxH - 4);
-    ctx.fillStyle = COLORS.hudBackground;
-    fillRoundRect(ctx, x, y, boxW, boxH, 4);
-    ctx.fillStyle = COLORS.hudText;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(readout.text, x + paddingX, y + boxH / 2 + paddingY * 0.05);
+    drawHudLabel(ctx, readout.text, readout.x, readout.y, w, h);
   }
 
   const ghost = hoveredGhost.value;
   if (ghost) {
     const x = props.range.ppqToX(ghost.startPpq);
     const y = props.range.pitchToY(ghost.pitch);
-    const ghostW = Math.max(2, ghost.durationPpq * props.range.pxPerPpq - 1);
+    const ghostW = Math.max(MIN_NOTE_WIDTH_PX, ghost.durationPpq * props.range.pxPerPpq - 1);
     const noteH = Math.max(2, props.range.rowHeight - 2);
     ctx.strokeStyle = COLORS.noteSelectedBorder;
     ctx.lineWidth = 1.5;
     strokeRoundRect(ctx, x + 0.5, y + 1.5, ghostW - 1, noteH - 1, 2);
-    const text = `${ghost.trackName} · ${formatPitch(ghost.pitch)}`;
-    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
-    const boxW = ctx.measureText(text).width + 14;
-    const boxH = 20;
-    const labelX = Math.min(Math.max(4, x + 8), w - boxW - 4);
-    const labelY = Math.min(Math.max(4, y - 22), h - boxH - 4);
-    ctx.fillStyle = COLORS.hudBackground;
-    fillRoundRect(ctx, labelX, labelY, boxW, boxH, 4);
-    ctx.fillStyle = COLORS.hudText;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, labelX + 7, labelY + boxH / 2);
+    drawHudLabel(
+      ctx,
+      `${ghost.trackName} · ${formatPitch(ghost.pitch)}`,
+      x + HUD_ANCHOR_OFFSET_X,
+      y + HUD_ANCHOR_OFFSET_Y,
+      w,
+      h,
+    );
   }
 
   // Hover HUD for the active layer, matching the ghost note's. Suppressed while
@@ -674,17 +703,14 @@ function drawOverlay(): void {
   if (!ghost && !readout && hoverNote && !hoveredCard.value) {
     const x = props.range.ppqToX(hoverNote.startPpq);
     const y = props.range.pitchToY(hoverNote.pitch);
-    const text = `${formatPitch(hoverNote.pitch)} · vel ${hoverNote.velocity}`;
-    ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.label);
-    const boxW = ctx.measureText(text).width + 14;
-    const boxH = 20;
-    const labelX = Math.min(Math.max(4, x + 8), w - boxW - 4);
-    const labelY = Math.min(Math.max(4, y - 22), h - boxH - 4);
-    ctx.fillStyle = COLORS.hudBackground;
-    fillRoundRect(ctx, labelX, labelY, boxW, boxH, 4);
-    ctx.fillStyle = COLORS.hudText;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, labelX + 7, labelY + boxH / 2);
+    drawHudLabel(
+      ctx,
+      `${formatPitch(hoverNote.pitch)} · vel ${hoverNote.velocity}`,
+      x + HUD_ANCHOR_OFFSET_X,
+      y + HUD_ANCHOR_OFFSET_Y,
+      w,
+      h,
+    );
   }
 
   const guide = hoverPoint.value;

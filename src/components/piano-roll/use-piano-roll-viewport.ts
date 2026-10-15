@@ -13,7 +13,7 @@
 import { computed, markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
 import { useProjectStore } from '@/project/store';
 import { createPainter, type Painter } from '@/ui/canvas/painter';
-import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { MAX_PITCH, TimelineRange } from '@/ui/canvas/timeline-range';
 import { createNoteExtentCache } from './content-extent';
 import { contentCenterPitch } from './overlay';
 
@@ -23,6 +23,13 @@ const DEFAULT_PX_PER_PPQ = 38;
 const DEFAULT_ROW_HEIGHT = 10;
 /** Pitch placed near the vertical center on first layout (C5). */
 const INITIAL_CENTER_PITCH = 72;
+
+/** Scrolls vertically so the row of `pitch` sits at the viewport center. */
+export function centerRangeOnPitch(range: TimelineRange, pitch: number): void {
+  range.setScrollY(
+    range.scrollY + range.pitchToY(pitch) + range.rowHeight / 2 - range.heightPx / 2,
+  );
+}
 
 /** Reactive viewport state and helpers returned by {@link usePianoRollViewport}. */
 export interface PianoRollViewport {
@@ -104,7 +111,7 @@ export function usePianoRollViewport(options: UsePianoRollViewportOptions = {}):
   function onGridResize(): void {
     if (!initialScrollDone && range.heightPx > 1) {
       initialScrollDone = true;
-      const rowTop = (127 - INITIAL_CENTER_PITCH) * range.rowHeight;
+      const rowTop = (MAX_PITCH - INITIAL_CENTER_PITCH) * range.rowHeight;
       range.setScrollY(rowTop - range.heightPx / 2);
     }
     bump();
@@ -114,8 +121,7 @@ export function usePianoRollViewport(options: UsePianoRollViewportOptions = {}):
     if (range.heightPx <= 1) return;
     const center = contentCenterPitch(store.notes);
     if (center === null) return;
-    const rowTop = (127 - center) * range.rowHeight;
-    range.setScrollY(rowTop + range.rowHeight / 2 - range.heightPx / 2);
+    centerRangeOnPitch(range, center);
     bump();
   }
 

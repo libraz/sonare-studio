@@ -16,8 +16,8 @@ const ZOOM_WHEEL_SENSITIVITY = 0.0035;
 /** Per-click zoom multiplier for the toolbar zoom buttons. */
 export const ZOOM_BUTTON_STEP = 1.2;
 /** Row-height bounds for vertical zoom (px). */
-const MIN_ROW_HEIGHT = 5;
-const MAX_ROW_HEIGHT = 40;
+export const MIN_ROW_HEIGHT = 5;
+export const MAX_ROW_HEIGHT = 40;
 
 /** Zoom/pan handlers returned by {@link usePianoRollZoom}. */
 export interface PianoRollZoom {

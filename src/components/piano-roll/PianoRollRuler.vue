@@ -83,24 +83,31 @@ function draw(): void {
   ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
   ctx.textBaseline = 'middle';
 
-  for (const tick of localRulerTicks(
+  const ticks = localRulerTicks(
     props.timeSignatures,
     props.timeSignatureOriginPpq ?? 0,
     props.range.startPpq,
     props.range.endPpq,
     props.range.pxPerPpq,
-  )) {
-    const x = Math.round(props.range.ppqToX(tick.ppq)) + 0.5;
-    ctx.strokeStyle = tick.kind === 'bar' ? COLORS.rulerBar : COLORS.rulerBeat;
-    ctx.beginPath();
-    ctx.moveTo(x, tick.kind === 'bar' ? 0 : heightPx * 0.5);
-    ctx.lineTo(x, heightPx);
-    ctx.stroke();
+  );
+  const tickX = (ppq: number): number => Math.round(props.range.ppqToX(ppq)) + 0.5;
 
-    if (tick.label) {
-      ctx.fillStyle = COLORS.rulerText;
-      ctx.fillText(tick.label, x + 4, heightPx * 0.48);
+  // One path and one stroke per tick kind.
+  for (const kind of ['beat', 'bar'] as const) {
+    ctx.strokeStyle = kind === 'bar' ? COLORS.rulerBar : COLORS.rulerBeat;
+    ctx.beginPath();
+    for (const tick of ticks) {
+      if (tick.kind !== kind) continue;
+      const x = tickX(tick.ppq);
+      ctx.moveTo(x, kind === 'bar' ? 0 : heightPx * 0.5);
+      ctx.lineTo(x, heightPx);
     }
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = COLORS.rulerText;
+  for (const tick of ticks) {
+    if (tick.label) ctx.fillText(tick.label, tickX(tick.ppq) + 4, heightPx * 0.48);
   }
 
   const clipEndX = props.range.ppqToX(props.clipLengthPpq);

@@ -3,7 +3,8 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { EditorNote } from '@/project/types';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
-import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { MAX_PITCH, type TimelineRange } from '@/ui/canvas/timeline-range';
+import { createNoteExtentCache } from './content-extent';
 import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
 
 const props = defineProps<{
@@ -29,18 +30,17 @@ let heightPx = 0;
 let resizeObserver: ResizeObserver | null = null;
 let stopDprObserver: (() => void) | null = null;
 
+const noteExtent = createNoteExtentCache();
+
 function contentEndPpq(): number {
-  const noteEnd = props.notes.reduce(
-    (end, note) => Math.max(end, note.startPpq + note.durationPpq),
-    0,
-  );
+  const noteEnd = noteExtent(props.notes);
   // The viewport is deliberately excluded: scrolling it while dragging this
   // minimap must not alter the time-to-x scale beneath the pointer.
   return Math.max(1, props.clipLengthPpq, noteEnd);
 }
 
 function yForPitch(pitch: number): number {
-  return ((127 - pitch) / 127) * heightPx;
+  return ((MAX_PITCH - pitch) / MAX_PITCH) * heightPx;
 }
 
 function schedule(): void {
@@ -51,6 +51,45 @@ function refreshForDevicePixelRatio(): void {
   if (widthPx <= 0 || heightPx <= 0) return;
   if (canvas.value) setupCanvas(canvas.value, widthPx, heightPx);
   schedule();
+}
+
+/** Offscreen canvas holding the painted notes, rebuilt only when its inputs change. */
+let noteLayer: HTMLCanvasElement | null = null;
+let noteLayerKey: {
+  notes: readonly EditorNote[];
+  scaleX: number;
+  widthPx: number;
+  heightPx: number;
+  dpr: number;
+} | null = null;
+
+/** Returns the note layer for the current notes and size, repainting it only on a change. */
+function noteLayerFor(scaleX: number): HTMLCanvasElement | null {
+  const dpr = globalThis.devicePixelRatio || 1;
+  const key = noteLayerKey;
+  if (
+    noteLayer &&
+    key &&
+    key.notes === props.notes &&
+    key.scaleX === scaleX &&
+    key.widthPx === widthPx &&
+    key.heightPx === heightPx &&
+    key.dpr === dpr
+  ) {
+    return noteLayer;
+  }
+  noteLayer ??= document.createElement('canvas');
+  const ctx = setupCanvas(noteLayer, widthPx, heightPx);
+  if (!ctx) return null;
+  ctx.fillStyle = COLORS.minimapNote;
+  for (const note of props.notes) {
+    const x = note.startPpq * scaleX;
+    const w = Math.max(1, note.durationPpq * scaleX);
+    const y = yForPitch(note.pitch);
+    ctx.fillRect(x, y, w, 2);
+  }
+  noteLayerKey = { notes: props.notes, scaleX, widthPx, heightPx, dpr };
+  return noteLayer;
 }
 
 function draw(): void {
@@ -66,13 +105,8 @@ function draw(): void {
   // playback frame on dense clips.
   const scaleX = widthPx / contentEndPpq();
 
-  ctx.fillStyle = COLORS.minimapNote;
-  for (const note of props.notes) {
-    const x = note.startPpq * scaleX;
-    const w = Math.max(1, note.durationPpq * scaleX);
-    const y = yForPitch(note.pitch);
-    ctx.fillRect(x, y, w, 2);
-  }
+  const notesLayer = noteLayerFor(scaleX);
+  if (notesLayer) ctx.drawImage(notesLayer, 0, 0, widthPx, heightPx);
 
   const viewX = props.range.startPpq * scaleX;
   const viewW = Math.max(6, (props.range.endPpq - props.range.startPpq) * scaleX);

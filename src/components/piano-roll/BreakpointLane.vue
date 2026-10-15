@@ -380,7 +380,17 @@ onBeforeUnmount(() => {
 });
 
 watch(
-  () => [props.revision, props.points, props.clipId, props.valueMax, props.curveMode] as const,
+  () =>
+    [
+      props.revision,
+      props.points,
+      props.clipId,
+      props.valueMax,
+      props.curveMode,
+      props.color,
+      props.centerValue,
+      props.readoutLabel,
+    ] as const,
   () => schedule(),
 );
 </script>

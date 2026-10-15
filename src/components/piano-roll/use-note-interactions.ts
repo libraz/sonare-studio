@@ -8,7 +8,7 @@
  * set, so the gesture logic is unit-testable without mounting components.
  */
 
-import { type Ref, ref } from 'vue';
+import { type Ref, ref, shallowRef } from 'vue';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/types';
 import {
   hitTestNote,
@@ -297,7 +297,8 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   const marquee = ref<MarqueeRect | null>(null);
-  const previewNotes = ref<EditorNote[] | null>(null);
+  // Shallow: previews are replaced wholesale per pointermove and share untouched note objects.
+  const previewNotes = shallowRef<EditorNote[] | null>(null);
   const cursor = ref<InteractionCursor>('default');
   const gestureReadout = ref<{ text: string; x: number; y: number } | null>(null);
 
@@ -445,15 +446,12 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       durationPpq: drawLength(g, point, modifiers),
       channel: g.channel,
     };
-    return [...options.getNotes().map((note) => ({ ...note })), draft];
+    return [...options.getNotes(), draft];
   }
 
   /** Builds the rendered note list with the erase-marked notes removed. */
   function buildErasePreview(ids: ReadonlySet<number>): EditorNote[] {
-    return options
-      .getNotes()
-      .filter((note) => !ids.has(note.id))
-      .map((note) => ({ ...note }));
+    return options.getNotes().filter((note) => !ids.has(note.id));
   }
 
   /** Hover cursor for a non-select tool. */
@@ -591,7 +589,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   /** Builds the rendered note list for an in-flight move/duplicate gesture. */
   function buildMovePreview(g: MoveGesture, deltas: MoveDeltas): EditorNote[] {
-    const all = options.getNotes().map((note) => ({ ...note }));
+    const all = options.getNotes();
     if (g.duplicate) {
       // Duplicate copies get negative placeholder ids so renderers can treat
       // them as selected without clashing with real (positive) note ids.
@@ -620,7 +618,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   function buildResizePreview(g: ResizeGesture, delta: number): EditorNote[] {
     return options.getNotes().map((note) => {
       const origin = g.origins.get(note.id);
-      return origin ? { ...note, ...resizedExtent(g.edge, origin, delta) } : { ...note };
+      return origin ? { ...note, ...resizedExtent(g.edge, origin, delta) } : note;
     });
   }
 

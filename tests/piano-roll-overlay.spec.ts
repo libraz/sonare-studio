@@ -7,7 +7,6 @@ import {
   type GhostNote,
   ghostNoteColor,
   hitTestGhost,
-  isNoteInView,
 } from '@/components/piano-roll/overlay';
 import { DEFAULT_NOTE_COLOR } from '@/components/piano-roll/theme';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
@@ -184,33 +183,6 @@ describe('buildGhostNotes', () => {
     const clips = [makeClip({ id: 10 }), makeClip({ id: 11, trackId: 99, notes: [makeNote()] })];
     const ghosts = buildGhostNotes({ clips, tracks: [], activeClipId: 10 });
     expect(ghosts[0].color).toBe(ghostNoteColor(DEFAULT_NOTE_COLOR));
-  });
-});
-
-describe('isNoteInView', () => {
-  const window = { startPpq: 4, endPpq: 8, minPitch: 60, maxPitch: 72 };
-
-  it('keeps notes intersecting the window', () => {
-    expect(isNoteInView({ startPpq: 5, durationPpq: 1, pitch: 64 }, window)).toBe(true);
-    expect(isNoteInView({ startPpq: 3, durationPpq: 2, pitch: 64 }, window)).toBe(true);
-    expect(isNoteInView({ startPpq: 7.5, durationPpq: 4, pitch: 64 }, window)).toBe(true);
-  });
-
-  it('culls notes that only touch the horizontal edges', () => {
-    expect(isNoteInView({ startPpq: 3, durationPpq: 1, pitch: 64 }, window)).toBe(false);
-    expect(isNoteInView({ startPpq: 8, durationPpq: 1, pitch: 64 }, window)).toBe(false);
-  });
-
-  it('culls notes fully outside horizontally', () => {
-    expect(isNoteInView({ startPpq: 0, durationPpq: 1, pitch: 64 }, window)).toBe(false);
-    expect(isNoteInView({ startPpq: 20, durationPpq: 1, pitch: 64 }, window)).toBe(false);
-  });
-
-  it('treats the pitch bounds as inclusive', () => {
-    expect(isNoteInView({ startPpq: 5, durationPpq: 1, pitch: 60 }, window)).toBe(true);
-    expect(isNoteInView({ startPpq: 5, durationPpq: 1, pitch: 72 }, window)).toBe(true);
-    expect(isNoteInView({ startPpq: 5, durationPpq: 1, pitch: 59 }, window)).toBe(false);
-    expect(isNoteInView({ startPpq: 5, durationPpq: 1, pitch: 73 }, window)).toBe(false);
   });
 });
 

@@ -87,7 +87,6 @@ export const shellEditors = {
       noNotesSelected: 'ノートは選択されていません',
       noteSelected: '{pitch} を選択。位置 {start} PPQ、長さ {duration} PPQ',
       notesSelected: '{low} から {high} まで {count} 個のノートを選択',
-      pointerPosition: 'ポインター位置 {ppq} PPQ、{pitch}',
       instructions:
         '矢印でノートを探索、Spaceで選択、Ctrl+矢印で移動、Shift+左右で長さ変更、Shift+F10で操作、Tabでスライダー編集を行います。',
       edit: '選択ノートのプロパティ',

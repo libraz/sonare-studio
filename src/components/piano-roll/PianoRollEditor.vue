@@ -37,6 +37,7 @@ import type { MeasureRange } from '@/project/time-signature';
 import type { NewEditorNote } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
+import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
@@ -61,8 +62,8 @@ import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
 import { usePianoRollLanes } from './use-piano-roll-lanes';
 import { usePianoRollNoteMenu } from './use-piano-roll-note-menu';
 import { usePianoRollScrollbar } from './use-piano-roll-scrollbar';
-import { usePianoRollViewport } from './use-piano-roll-viewport';
-import { usePianoRollZoom } from './use-piano-roll-zoom';
+import { centerRangeOnPitch, usePianoRollViewport } from './use-piano-roll-viewport';
+import { MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, usePianoRollZoom } from './use-piano-roll-zoom';
 import { describePlacementVerdict, usePlacementCell } from './use-placement-cell';
 import VelocityLane from './VelocityLane.vue';
 
@@ -424,18 +425,19 @@ function fitTimeToSpan(startPpq: number, endPpq: number): void {
 
 function fitPitchToNotes(notes: ReadonlyArray<{ pitch: number }>): void {
   if (notes.length === 0 || range.heightPx <= 0) return;
-  let minPitch = 127;
-  let maxPitch = 0;
+  let minPitch = MAX_PITCH;
+  let maxPitch = MIN_PITCH;
   for (const note of notes) {
     minPitch = Math.min(minPitch, note.pitch);
     maxPitch = Math.max(maxPitch, note.pitch);
   }
   const span = Math.max(1, maxPitch - minPitch + 1);
-  const rowHeight = Math.min(40, Math.max(5, (range.heightPx - 16) / (span + 2)));
+  const rowHeight = Math.min(
+    MAX_ROW_HEIGHT,
+    Math.max(MIN_ROW_HEIGHT, (range.heightPx - 16) / (span + 2)),
+  );
   range.setRowHeight(rowHeight);
-  const centerPitch = (minPitch + maxPitch) / 2;
-  const rowTop = (127 - centerPitch) * range.rowHeight;
-  range.setScrollY(rowTop + range.rowHeight / 2 - range.heightPx / 2);
+  centerRangeOnPitch(range, (minPitch + maxPitch) / 2);
 }
 
 function fitClip(): void {

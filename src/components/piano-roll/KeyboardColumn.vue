@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
-import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { MAX_PITCH, MIN_PITCH, type TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import { getCanvasContext, isBlackKey, PIANO_ROLL_COLORS, setupCanvas } from './theme';
@@ -47,11 +47,18 @@ function onPointerDown(event: PointerEvent): void {
   if (event.button !== 0 || !props.audition) return;
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
   const pitch = Math.max(
-    0,
-    Math.min(127, Math.round(props.range.yToPitch(event.clientY - bounds.top))),
+    MIN_PITCH,
+    Math.min(MAX_PITCH, Math.round(props.range.yToPitch(event.clientY - bounds.top))),
   );
   props.audition(pitch, 96);
 }
+
+/** Everything about the range that the painted keys depend on. */
+function viewKey(): string {
+  return `${props.range.scrollY}:${props.range.rowHeight}:${heightPx}`;
+}
+
+let paintedViewKey = '';
 
 function schedule(): void {
   props.painter.schedule(`keyboard-column-${layerId}`, draw);
@@ -68,6 +75,7 @@ function draw(): void {
   const ctx = getCanvasContext(el);
   if (!ctx) return;
   const range = props.range;
+  paintedViewKey = viewKey();
 
   ctx.fillStyle = COLORS.keyWhite;
   ctx.fillRect(0, 0, widthPx, heightPx);
@@ -134,9 +142,12 @@ onBeforeUnmount(() => {
   stopDprObserver = null;
 });
 
+// Horizontal pans and zooms bump the revision too but leave the keys unchanged.
 watch(
   () => props.revision,
-  () => schedule(),
+  () => {
+    if (viewKey() !== paintedViewKey) schedule();
+  },
 );
 
 // The key labels are painted, so a renamed system has to repaint the column.

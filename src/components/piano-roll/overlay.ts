@@ -19,7 +19,7 @@ import {
   type Point,
 } from '@/ui/canvas/hit-test';
 import { DEFAULT_NOTE_COLOR } from './theme';
-import { type NoteViewWindow, visibleNotesInWindow } from './visible-notes';
+import { visibleNotesInWindow } from './visible-notes';
 
 /** Clip fields needed to convert between source-relative and timeline PPQ. */
 export type ClipFrame = Pick<EditorClip, 'startPpq' | 'sourceOffsetPpq'>;
@@ -156,24 +156,6 @@ export function buildGhostNotes(options: BuildGhostNotesOptions): GhostNote[] {
 }
 
 export type { NoteViewWindow } from './visible-notes';
-
-/**
- * Returns true when a note's rectangle intersects the visible window.
- * Notes merely touching the horizontal edges are culled (zero visible width);
- * the pitch bounds are inclusive.
- *
- * @param note - Note extent in musical coordinates.
- * @param view - Visible window of the viewport.
- */
-export function isNoteInView(
-  note: { startPpq: number; durationPpq: number; pitch: number },
-  view: NoteViewWindow,
-): boolean {
-  if (note.startPpq + note.durationPpq <= view.startPpq || note.startPpq >= view.endPpq) {
-    return false;
-  }
-  return note.pitch >= view.minPitch && note.pitch <= view.maxPitch;
-}
 
 /** Inverse projections a view may offer, used to narrow the hit-test candidates. */
 type InverseProjection = Partial<{

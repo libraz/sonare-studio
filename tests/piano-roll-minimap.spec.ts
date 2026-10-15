@@ -90,6 +90,7 @@ describe('PianoRollMinimap', () => {
       fillRect: vi.fn(),
       strokeRect: vi.fn(),
       setTransform: vi.fn(),
+      drawImage: vi.fn(),
     };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
       context as unknown as CanvasRenderingContext2D,
