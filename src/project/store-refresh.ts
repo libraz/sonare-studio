@@ -1,4 +1,3 @@
-import { cloneCcLanes } from './midi-cc';
 import {
   noteKey,
   pairEventsIntoNotes,
@@ -6,6 +5,7 @@ import {
   type RawNote,
   type SerializedMidiEvent,
 } from './midi-events';
+import { assignMidiLaneFields, cloneMidiLaneFields, copyMidiLaneFields } from './midi-lane-kinds';
 import {
   type EditorClip,
   type EditorNote,
@@ -348,46 +348,7 @@ export function buildClipMirror(
         entry.midiTakes = previous.midiTakes.map((take) => ({
           name: take.name,
           notes: take.notes.map((note) => ({ ...note })),
-          ...(take.ccLanes !== undefined
-            ? {
-                ccLanes: take.ccLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.pitchBendLanes !== undefined
-            ? {
-                pitchBendLanes: take.pitchBendLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.programChangeLanes !== undefined
-            ? {
-                programChangeLanes: take.programChangeLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.channelPressureLanes !== undefined
-            ? {
-                channelPressureLanes: take.channelPressureLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.polyPressureLanes !== undefined
-            ? {
-                polyPressureLanes: take.polyPressureLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
+          ...copyMidiLaneFields(take),
         }));
         entry.midiActiveTakeIndex = Math.min(
           Math.max(0, previous.midiActiveTakeIndex ?? previous.midiTakes.length - 1),
@@ -405,37 +366,8 @@ export function buildClipMirror(
             : {}),
         };
       }
-      // CC lanes are app-level metadata, carried forward across refreshes.
-      const ccLanes = cloneCcLanes(previous?.ccLanes);
-      if (ccLanes !== undefined) entry.ccLanes = ccLanes;
-      if (previous?.pitchBendLanes !== undefined && previous.pitchBendLanes.length > 0) {
-        entry.pitchBendLanes = previous.pitchBendLanes.map((lane) => ({
-          channel: lane.channel,
-          points: lane.points.map((point) => ({ ...point })),
-        }));
-      }
-      if (previous?.programChangeLanes !== undefined && previous.programChangeLanes.length > 0) {
-        entry.programChangeLanes = previous.programChangeLanes.map((lane) => ({
-          channel: lane.channel,
-          points: lane.points.map((point) => ({ ...point })),
-        }));
-      }
-      if (
-        previous?.channelPressureLanes !== undefined &&
-        previous.channelPressureLanes.length > 0
-      ) {
-        entry.channelPressureLanes = previous.channelPressureLanes.map((lane) => ({
-          channel: lane.channel,
-          points: lane.points.map((point) => ({ ...point })),
-        }));
-      }
-      if (previous?.polyPressureLanes !== undefined && previous.polyPressureLanes.length > 0) {
-        entry.polyPressureLanes = previous.polyPressureLanes.map((lane) => ({
-          channel: lane.channel,
-          pitch: lane.pitch,
-          points: lane.points.map((point) => ({ ...point })),
-        }));
-      }
+      // Lanes are app-level metadata, carried forward across refreshes.
+      assignMidiLaneFields(entry, cloneMidiLaneFields(previous ?? {}));
       if (previous?.smfSysEx !== undefined && previous.smfSysEx.length > 0) {
         entry.smfSysEx = previous.smfSysEx.map((packet) => ({
           ...packet,

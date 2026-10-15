@@ -183,6 +183,26 @@ export function cloneMidiLaneFields(source: Partial<MidiLaneFields>): Partial<Mi
   return out as Partial<MidiLaneFields>;
 }
 
+/** Lane-list fields as read-only input. */
+type ReadonlyMidiLaneFields = { readonly [F in MidiLaneField]?: ReadonlyArray<MidiLaneOf<F>> };
+
+/**
+ * Copies every lane list present on `source`, spreading each lane (extra
+ * properties and empty lanes survive) and copying its points.
+ */
+export function copyMidiLaneFields(source: ReadonlyMidiLaneFields): Partial<MidiLaneFields> {
+  const out: LaneRecord = {};
+  for (const kind of MIDI_LANE_KINDS) {
+    const lanes = source[kind.field] as ReadonlyArray<AnyLane> | undefined;
+    if (lanes === undefined) continue;
+    out[kind.field] = lanes.map((lane) => ({
+      ...lane,
+      points: lane.points.map((point) => ({ ...point })),
+    })) as AnyLane[];
+  }
+  return out as Partial<MidiLaneFields>;
+}
+
 /**
  * Re-windows every lane list present on `source` through `transform` and drops
  * lanes left without points.

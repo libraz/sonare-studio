@@ -46,8 +46,8 @@ import {
   type ExternalMidiInstrument,
   validateTrackInstrument,
 } from './instrument';
-import { cloneCcLanes } from './midi-cc';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
+import { assignMidiLaneFields, cloneMidiLaneFields, copyMidiLaneFields } from './midi-lane-kinds';
 import { cloneStrip, createDefaultStrip, isDefaultMixerState } from './mixer';
 import { isValidPitchRange } from './pitch-range';
 import { getProject, useProjectStore } from './store';
@@ -87,46 +87,7 @@ function toDocumentClip(
     out.midiTakes = clip.midiTakes.map((take) => ({
       name: take.name,
       notes: take.notes.map((note) => ({ ...note })),
-      ...(take.ccLanes !== undefined
-        ? {
-            ccLanes: take.ccLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.pitchBendLanes !== undefined
-        ? {
-            pitchBendLanes: take.pitchBendLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.programChangeLanes !== undefined
-        ? {
-            programChangeLanes: take.programChangeLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.channelPressureLanes !== undefined
-        ? {
-            channelPressureLanes: take.channelPressureLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
-      ...(take.polyPressureLanes !== undefined
-        ? {
-            polyPressureLanes: take.polyPressureLanes.map((lane) => ({
-              ...lane,
-              points: lane.points.map((point) => ({ ...point })),
-            })),
-          }
-        : {}),
+      ...copyMidiLaneFields(take),
     }));
     out.midiActiveTakeIndex = Math.min(
       Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes.length - 1),
@@ -154,33 +115,7 @@ function toDocumentClip(
         : {}),
     };
   }
-  const ccLanes = cloneCcLanes(clip.ccLanes);
-  if (ccLanes !== undefined) out.ccLanes = ccLanes;
-  if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
-    out.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.programChangeLanes !== undefined && clip.programChangeLanes.length > 0) {
-    out.programChangeLanes = clip.programChangeLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
-    out.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.polyPressureLanes !== undefined && clip.polyPressureLanes.length > 0) {
-    out.polyPressureLanes = clip.polyPressureLanes.map((lane) => ({
-      channel: lane.channel,
-      pitch: lane.pitch,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
+  assignMidiLaneFields(out, cloneMidiLaneFields(clip));
   if (clip.smfSysEx !== undefined && clip.smfSysEx.length > 0) {
     out.smfSysEx = clip.smfSysEx.map((packet) => ({ ...packet, data: [...packet.data] }));
   }

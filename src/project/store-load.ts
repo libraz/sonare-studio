@@ -17,6 +17,7 @@ import {
   sanitizePressurePoints,
 } from './midi-cc';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
+import { copyMidiLaneFields } from './midi-lane-kinds';
 import { cloneStrip, createDefaultStrip } from './mixer';
 import { isValidPitchRange } from './pitch-range';
 import {
@@ -164,46 +165,7 @@ export function applyDocumentClipMetadata(
         takes.push({
           name: take.name,
           notes,
-          ...(take.ccLanes !== undefined
-            ? {
-                ccLanes: take.ccLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.pitchBendLanes !== undefined
-            ? {
-                pitchBendLanes: take.pitchBendLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.programChangeLanes !== undefined
-            ? {
-                programChangeLanes: take.programChangeLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.channelPressureLanes !== undefined
-            ? {
-                channelPressureLanes: take.channelPressureLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
-          ...(take.polyPressureLanes !== undefined
-            ? {
-                polyPressureLanes: take.polyPressureLanes.map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((point) => ({ ...point })),
-                })),
-              }
-            : {}),
+          ...copyMidiLaneFields(take),
         });
       }
       if (takes.length > 0) {

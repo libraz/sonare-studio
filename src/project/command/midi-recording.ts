@@ -1,5 +1,13 @@
 import { sanitizeCompSegments } from '../comping';
 import type { RawNote } from '../midi-events';
+import {
+  assignMidiLaneFields,
+  copyMidiLaneFields,
+  MIDI_LANE_KINDS,
+  type MidiLaneField,
+  type MidiLaneFields,
+  type MidiLaneOf,
+} from '../midi-lane-kinds';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import type {
   ClipCcLane,
@@ -8,6 +16,7 @@ import type {
   ClipPitchBendLane,
   ClipPolyPressureLane,
   ClipProgramChangeLane,
+  EditorClip,
   MidiClipTake,
 } from '../types';
 import { clearLaneRangeWithin, makeRoomForRecordingWithin } from './clip-lane';
@@ -19,46 +28,7 @@ function cloneMidiTake(take: MidiClipTake): MidiClipTake {
   return {
     name: take.name,
     notes: take.notes.map((note) => ({ ...note })),
-    ...(take.ccLanes !== undefined
-      ? {
-          ccLanes: take.ccLanes.map((lane) => ({
-            ...lane,
-            points: lane.points.map((point) => ({ ...point })),
-          })),
-        }
-      : {}),
-    ...(take.pitchBendLanes !== undefined
-      ? {
-          pitchBendLanes: take.pitchBendLanes.map((lane) => ({
-            ...lane,
-            points: lane.points.map((point) => ({ ...point })),
-          })),
-        }
-      : {}),
-    ...(take.programChangeLanes !== undefined
-      ? {
-          programChangeLanes: take.programChangeLanes.map((lane) => ({
-            ...lane,
-            points: lane.points.map((point) => ({ ...point })),
-          })),
-        }
-      : {}),
-    ...(take.channelPressureLanes !== undefined
-      ? {
-          channelPressureLanes: take.channelPressureLanes.map((lane) => ({
-            ...lane,
-            points: lane.points.map((point) => ({ ...point })),
-          })),
-        }
-      : {}),
-    ...(take.polyPressureLanes !== undefined
-      ? {
-          polyPressureLanes: take.polyPressureLanes.map((lane) => ({
-            ...lane,
-            points: lane.points.map((point) => ({ ...point })),
-          })),
-        }
-      : {}),
+    ...copyMidiLaneFields(take),
   };
 }
 
@@ -135,6 +105,11 @@ function storeRecordedMidiClip(
   const activeTake =
     activeMidiTakeIndex === undefined ? undefined : midiTakes?.[activeMidiTakeIndex];
   const notes = activeTake?.notes ?? input.notes;
+  const recordedLanes = MIDI_LANE_KINDS.reduce<Record<string, unknown>>((lanes, { field }) => {
+    const source = activeTake?.[field] ?? input[field];
+    if (source !== undefined) lanes[field] = source;
+    return lanes;
+  }, {}) as Partial<MidiLaneFields>;
   const project = getProject();
   const events = notesToProjectEvents(notes.map((note) => ({ ...note })));
   return executeAtomic((edit) => {
@@ -153,11 +128,7 @@ function storeRecordedMidiClip(
     if (
       input.name !== undefined ||
       activeTake !== undefined ||
-      input.ccLanes !== undefined ||
-      input.pitchBendLanes !== undefined ||
-      input.programChangeLanes !== undefined ||
-      input.channelPressureLanes !== undefined ||
-      input.polyPressureLanes !== undefined
+      MIDI_LANE_KINDS.some(({ field }) => input[field] !== undefined)
     ) {
       // Seed the mirror entry so refresh keeps the app-level name; refresh
       // rebuilds the notes from the Project.
@@ -174,61 +145,7 @@ function storeRecordedMidiClip(
           loopEnabled: false,
           loopLengthPpq: 0,
           notes: [],
-          ...(activeTake?.ccLanes !== undefined || input.ccLanes !== undefined
-            ? {
-                ccLanes: (activeTake?.ccLanes ?? input.ccLanes ?? []).map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((p) => ({ ...p })),
-                })),
-              }
-            : {}),
-          ...(activeTake?.pitchBendLanes !== undefined || input.pitchBendLanes !== undefined
-            ? {
-                pitchBendLanes: (activeTake?.pitchBendLanes ?? input.pitchBendLanes ?? []).map(
-                  (lane) => ({
-                    ...lane,
-                    points: lane.points.map((p) => ({ ...p })),
-                  }),
-                ),
-              }
-            : {}),
-          ...(activeTake?.programChangeLanes !== undefined || input.programChangeLanes !== undefined
-            ? {
-                programChangeLanes: (
-                  activeTake?.programChangeLanes ??
-                  input.programChangeLanes ??
-                  []
-                ).map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((p) => ({ ...p })),
-                })),
-              }
-            : {}),
-          ...(activeTake?.channelPressureLanes !== undefined ||
-          input.channelPressureLanes !== undefined
-            ? {
-                channelPressureLanes: (
-                  activeTake?.channelPressureLanes ??
-                  input.channelPressureLanes ??
-                  []
-                ).map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((p) => ({ ...p })),
-                })),
-              }
-            : {}),
-          ...(activeTake?.polyPressureLanes !== undefined || input.polyPressureLanes !== undefined
-            ? {
-                polyPressureLanes: (
-                  activeTake?.polyPressureLanes ??
-                  input.polyPressureLanes ??
-                  []
-                ).map((lane) => ({
-                  ...lane,
-                  points: lane.points.map((p) => ({ ...p })),
-                })),
-              }
-            : {}),
+          ...copyMidiLaneFields(recordedLanes),
           ...(midiTakes && midiTakes.length > 0
             ? { midiTakes, midiActiveTakeIndex: activeMidiTakeIndex }
             : {}),
@@ -259,32 +176,18 @@ export function setClipMidiActiveTake(clipId: number, takeIndex: number): void {
     project.setMidiEvents(clipId, notesToProjectEvents(activeTake.notes));
     store.clips = store.clips.map((entry, index) => {
       if (index !== clipIndex) return entry;
-      const {
-        ccLanes: _ccLanes,
-        pitchBendLanes: _pitchBendLanes,
-        programChangeLanes: _programChangeLanes,
-        channelPressureLanes: _channelPressureLanes,
-        polyPressureLanes: _polyPressureLanes,
-        ...base
-      } = entry;
-      return {
-        ...base,
+      const next: EditorClip = {
+        ...entry,
         midiTakes: takes.map(cloneMidiTake),
         midiActiveTakeIndex: takeIndex,
-        ...(activeTake.ccLanes !== undefined ? { ccLanes: activeTake.ccLanes } : {}),
-        ...(activeTake.pitchBendLanes !== undefined
-          ? { pitchBendLanes: activeTake.pitchBendLanes }
-          : {}),
-        ...(activeTake.programChangeLanes !== undefined
-          ? { programChangeLanes: activeTake.programChangeLanes }
-          : {}),
-        ...(activeTake.channelPressureLanes !== undefined
-          ? { channelPressureLanes: activeTake.channelPressureLanes }
-          : {}),
-        ...(activeTake.polyPressureLanes !== undefined
-          ? { polyPressureLanes: activeTake.polyPressureLanes }
-          : {}),
       };
+      const fields = next as Partial<Record<MidiLaneField, unknown>>;
+      for (const { field } of MIDI_LANE_KINDS) {
+        const lanes = activeTake[field];
+        if (lanes !== undefined) fields[field] = lanes;
+        else delete fields[field];
+      }
+      return next;
     });
     store.refresh();
   });
@@ -339,34 +242,24 @@ export function setClipMidiCompSegments(
     }
     return out;
   };
-  const ccLanes = composeLanes((take) => take.ccLanes);
-  const pitchBendLanes = composeLanes((take) => take.pitchBendLanes);
-  const programChangeLanes = composeLanes((take) => take.programChangeLanes);
-  const channelPressureLanes = composeLanes((take) => take.channelPressureLanes);
-  const polyPressureLanes = composeLanes((take) => take.polyPressureLanes);
+  const composed: Partial<Record<MidiLaneField, MidiLaneOf<MidiLaneField>[]>> = {};
+  for (const { field } of MIDI_LANE_KINDS) {
+    composed[field] = composeLanes<MidiLaneOf<MidiLaneField>>(
+      (take) => take[field] as MidiLaneOf<MidiLaneField>[] | undefined,
+    );
+  }
   const project = getProject();
   execute(1, () => {
     project.setMidiEvents(clipId, notesToProjectEvents(notes));
     store.clips = store.clips.map((entry, index) => {
       if (index !== clipIndex) return entry;
-      const {
-        ccLanes: _ccLanes,
-        pitchBendLanes: _pitchBendLanes,
-        programChangeLanes: _programChangeLanes,
-        channelPressureLanes: _channelPressureLanes,
-        polyPressureLanes: _polyPressureLanes,
-        ...base
-      } = entry;
-      return {
-        ...base,
+      const next: EditorClip = {
+        ...entry,
         midiTakes: takes.map(cloneMidiTake),
         midiCompSegments: selected,
-        ...(ccLanes.length > 0 ? { ccLanes } : {}),
-        ...(pitchBendLanes.length > 0 ? { pitchBendLanes } : {}),
-        ...(programChangeLanes.length > 0 ? { programChangeLanes } : {}),
-        ...(channelPressureLanes.length > 0 ? { channelPressureLanes } : {}),
-        ...(polyPressureLanes.length > 0 ? { polyPressureLanes } : {}),
       };
+      assignMidiLaneFields(next, composed as Partial<MidiLaneFields>);
+      return next;
     });
     store.refresh();
   });

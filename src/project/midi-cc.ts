@@ -11,7 +11,6 @@
 
 import { clamp, clampInt } from '@/lib/math';
 import type {
-  ClipCcLane,
   ClipCcPoint,
   ClipExpressionCurve,
   ClipPitchBendPoint,
@@ -256,25 +255,4 @@ export function expandExpressionPoints<
     }
   }
   return out;
-}
-
-/**
- * Deep-copies a clip's CC lanes, dropping empty lanes. Returns undefined when
- * no lane survives so callers can omit the field entirely.
- *
- * @param lanes Source CC lanes (may be undefined).
- * @returns A fresh lane list, or undefined when there is nothing to keep.
- */
-export function cloneCcLanes(
-  lanes: ReadonlyArray<ClipCcLane> | undefined,
-): ClipCcLane[] | undefined {
-  if (lanes === undefined) return undefined;
-  const out = lanes
-    .filter((lane) => lane.points.length > 0)
-    .map((lane) => ({
-      controller: lane.controller,
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  return out.length > 0 ? out : undefined;
 }
