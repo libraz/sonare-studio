@@ -31,6 +31,7 @@ import {
 import { expandedSoloStates } from '@/project/scheduling';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
+import { createRetryTimer } from './retry-timer';
 
 // The fader silence floor and linear->dB conversion live in the shared
 // @/lib/db module; re-exported so existing engine importers keep one site.
@@ -48,6 +49,13 @@ interface LaneState {
   dualPanLeft: number;
   dualPanRight: number;
 }
+
+/**
+ * The lane values the engine has accepted. Fader, pan and solo/mute go through
+ * the command ring and may be refused, so they stay unset until accepted.
+ */
+type AppliedLaneState = Omit<LaneState, 'gainDb' | 'pan' | 'solo' | 'mute'> &
+  Partial<Pick<LaneState, 'gainDb' | 'pan' | 'solo' | 'mute'>>;
 
 /** Mirrors store mixer state onto a running engine. */
 export interface MixerSync {
@@ -129,10 +137,12 @@ export function pflAuditionStates(
  */
 export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions = {}): MixerSync {
   const laneIds: number[] = [];
-  const laneStates = new Map<number, LaneState>();
+  const laneStates = new Map<number, AppliedLaneState>();
   // Lanes of deleted tracks that have already been muted.
   const retiredMuted = new Set<number>();
-  let masterState: { gainDb: number; pan: number } | undefined;
+  let masterState: { gainDb?: number; pan?: number } | undefined;
+  const retry = createRetryTimer(() => handle.ctx.state === 'closed');
+  let lastArgs: Parameters<MixerSync['sync']> | undefined;
   let sceneGeneration = 0;
   const pendingChannelDelays = new Map<number, number>();
   const appliedChannelDelays = new Map<number, number>();
@@ -147,6 +157,9 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     soloMode?: MixerSoloMode,
     pdcBuses?: ReadonlyArray<InsertPdcBus>,
   ): void => {
+    lastArgs = [tracks, master, vcaGainDb, vcaControls, soloMode, pdcBuses];
+    // A refused command leaves its value unrecorded so the next pass re-sends it.
+    let refused = false;
     const appended = tracks.filter((track) => !laneIds.includes(track.id)).map((track) => track.id);
     if (appended.length > 0) {
       // Record the lanes only once the engine has accepted them.
@@ -165,7 +178,10 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
         continue;
       }
       if (retiredMuted.has(id)) continue;
-      handle.engine.setSoloMute(id, false, true);
+      if (!handle.engine.setSoloMute(id, false, true)) {
+        refused = true;
+        continue;
+      }
       retiredMuted.add(id);
       laneStates.delete(id);
     }
@@ -205,10 +221,25 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
         dualPanRight: pflAudition ? 0 : clampPan(strip?.dualPan?.right ?? 1),
       };
       const prev = laneStates.get(track.id);
-      if (prev?.gainDb !== next.gainDb) handle.engine.setStripGain(track.id, next.gainDb);
-      if (prev?.pan !== next.pan) handle.engine.setStripPan(track.id, next.pan);
+      const applied: AppliedLaneState = { ...next };
+      if (prev?.gainDb !== next.gainDb) {
+        if (!handle.engine.setStripGain(track.id, next.gainDb)) {
+          applied.gainDb = prev?.gainDb;
+          refused = true;
+        }
+      }
+      if (prev?.pan !== next.pan) {
+        if (!handle.engine.setStripPan(track.id, next.pan)) {
+          applied.pan = prev?.pan;
+          refused = true;
+        }
+      }
       if (prev?.solo !== next.solo || prev?.mute !== next.mute) {
-        handle.engine.setSoloMute(track.id, next.solo, next.mute);
+        if (!handle.engine.setSoloMute(track.id, next.solo, next.mute)) {
+          applied.solo = prev?.solo;
+          applied.mute = prev?.mute;
+          refused = true;
+        }
       }
       if (
         prev
@@ -232,16 +263,26 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
           handle.engine.setTrackStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
         }
       }
-      laneStates.set(track.id, next);
+      laneStates.set(track.id, applied);
     }
     const masterNext = { gainDb: master.gainDb, pan: clampPan(master.pan) };
+    const masterApplied = { ...masterState };
     if (masterState?.gainDb !== masterNext.gainDb) {
-      handle.engine.setStripGain('master', masterNext.gainDb);
+      if (handle.engine.setStripGain('master', masterNext.gainDb)) {
+        masterApplied.gainDb = masterNext.gainDb;
+      } else {
+        refused = true;
+      }
     }
     if (masterState?.pan !== masterNext.pan) {
-      handle.engine.setStripPan('master', masterNext.pan);
+      if (handle.engine.setStripPan('master', masterNext.pan)) {
+        masterApplied.pan = masterNext.pan;
+      } else {
+        refused = true;
+      }
     }
-    masterState = masterNext;
+    masterState = masterApplied;
+    if (refused) retry.schedule('sync', () => sync(...(lastArgs as Parameters<MixerSync['sync']>)));
   };
 
   return {

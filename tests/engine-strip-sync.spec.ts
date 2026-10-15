@@ -168,7 +168,7 @@ function makeHandle(): {
     setStripEq: vi.fn(),
     setStripInsertBypassed: vi.fn(),
     setTrackBuses: vi.fn(),
-    setBusGain: vi.fn(),
+    setBusGain: vi.fn(() => true),
     setTrackSends: vi.fn(),
     setTrackOutputBus: vi.fn(),
     setBusSidechain: vi.fn(),
@@ -176,7 +176,7 @@ function makeHandle(): {
     setBusStripJson: vi.fn(),
     setLaneSidechain: vi.fn(),
   };
-  const handle = { engine } as unknown as EngineHandle;
+  const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
   return { handle, engine };
 }
 
@@ -2154,6 +2154,42 @@ describe('createStripSync sidechain bindings', () => {
     expect(engine.setLaneSidechain).toHaveBeenCalledWith(3, 0, 10);
   });
 
+  it('clears a key before its strip is replaced by a shorter one', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    sync.sync([makeTrack(1, keyedStrip(2)), makeTrack(2)], makeMixer());
+    engine.setLaneSidechain.mockClear();
+    engine.setTrackStripJson.mockClear();
+
+    sync.sync([makeTrack(1, makeStrip()), makeTrack(2)], makeMixer());
+
+    expect(engine.setLaneSidechain).toHaveBeenCalledTimes(1);
+    expect(engine.setLaneSidechain).toHaveBeenCalledWith(1, 0, null);
+    expect(engine.setLaneSidechain.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackStripJson.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('clears the key on freeze and re-applies it on unfreeze', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createStripSync(handle);
+    const live = [makeTrack(1, keyedStrip(2)), makeTrack(2)];
+    const frozen = [{ ...makeTrack(1, keyedStrip(2)), frozen: { assetId: 'a' } }, makeTrack(2)];
+    sync.sync(live, makeMixer());
+    engine.setLaneSidechain.mockClear();
+    engine.setTrackStripJson.mockClear();
+
+    sync.sync(frozen, makeMixer());
+    expect(engine.setLaneSidechain.mock.calls).toEqual([[1, 0, null]]);
+    expect(engine.setLaneSidechain.mock.invocationCallOrder[0]).toBeLessThan(
+      engine.setTrackStripJson.mock.invocationCallOrder[0],
+    );
+    engine.setLaneSidechain.mockClear();
+
+    sync.sync(live, makeMixer());
+    expect(engine.setLaneSidechain.mock.calls).toEqual([[1, 0, 2]]);
+  });
+
   it('clears a binding whose source track disappears', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
@@ -2243,5 +2279,32 @@ describe('createStripSync sidechain bindings', () => {
     expect(engine.setBusSidechain).toHaveBeenCalledWith(1, 0, 'bus', 2);
     // Group buses follow user buses in the compact numbering.
     expect(engine.setBusSidechain).toHaveBeenCalledWith(3, 0, 'bus', 4);
+  });
+});
+
+describe('createStripSync bus gain refusal', () => {
+  it('re-sends a bus gain the engine ring refused', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, engine } = makeHandle();
+      const sync = createStripSync(handle);
+      const tracks = [makeTrack(1)];
+      sync.sync(tracks, makeMixer({ buses: [makeBus('A', 0)] }));
+      engine.setBusGain.mockClear();
+      engine.setBusGain.mockReturnValueOnce(false);
+
+      sync.sync(tracks, makeMixer({ buses: [makeBus('A', -6)] }));
+      expect(engine.setBusGain).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(200);
+      expect(engine.setBusGain.mock.calls).toEqual([
+        [1, -6],
+        [1, -6],
+      ]);
+      vi.advanceTimersByTime(500);
+      expect(engine.setBusGain).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

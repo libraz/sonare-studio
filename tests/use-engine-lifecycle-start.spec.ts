@@ -170,6 +170,32 @@ describe('useEngineLifecycle startup transaction', () => {
     expect(state.scope.value).not.toBeNull();
   });
 
+  it('re-sends a restored master fader value the engine ring refused', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handle: engineHandle } = makeHandle();
+      const setStripGain = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+      (engineHandle as unknown as { engine: Record<string, unknown> }).engine.setStripGain =
+        setStripGain;
+      mocks.createEngine.mockResolvedValue(engineHandle);
+      const state = setupLifecycle();
+      await state.lifecycle.startEngine();
+      const options = mocks.createAutomationSync.mock.calls[0][1] as {
+        restoreParam: (target: string, param: string) => void;
+      };
+
+      options.restoreParam('master', 'faderDb');
+      expect(setStripGain).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(200);
+      expect(setStripGain).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(500);
+      expect(setStripGain).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rolls back a failed initial sync and permits a clean retry', async () => {
     const first = makeHandle();
     const second = makeHandle();

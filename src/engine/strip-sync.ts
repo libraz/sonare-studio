@@ -62,6 +62,7 @@ import {
   insertParamStructure,
   syncInsertNumericParams,
 } from './insert-param-patching';
+import { createRetryTimer } from './retry-timer';
 import { busSceneJson, liveMasterStrip, stripSceneJson } from './strip-scene';
 
 export type { BusSceneJsonOptions } from './strip-scene';
@@ -321,6 +322,38 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
   const lastSidechains = new Map<string, { trackId: number; index: number; source: number }>();
   const lastBusSidechains = new Map<string, { busId: number; index: number } & SidechainBinding>();
   const lastMasterSidechains = new Map<number, SidechainBinding>();
+  const retry = createRetryTimer(() => handle.ctx.state === 'closed');
+  let lastArgs: Parameters<StripSync['sync']> | undefined;
+
+  /**
+   * Single owner of track-lane sidechain keys. Keys are cleared before the
+   * strip they sit on changes (a replaced strip may be shorter, neutral while
+   * frozen, or drop the key itself), and re-applied from the declared strips
+   * once the strips exist.
+   *
+   * @param desired Keys the declared strips call for, by `track:insert`.
+   * @param replacedTrackId When set, clear every key of that track only,
+   *   because its strip is about to be replaced; nothing is applied.
+   */
+  const settleTrackSidechains = (
+    desired: ReadonlyMap<string, { trackId: number; index: number; source: number }>,
+    replacedTrackId?: number,
+  ): void => {
+    for (const [key, binding] of lastSidechains) {
+      if (replacedTrackId === undefined ? desired.has(key) : binding.trackId !== replacedTrackId) {
+        continue;
+      }
+      handle.engine.setLaneSidechain(binding.trackId, binding.index, null);
+      lastSidechains.delete(key);
+    }
+    if (replacedTrackId !== undefined) return;
+    for (const [key, binding] of desired) {
+      const previous = lastSidechains.get(key);
+      if (previous && previous.source === binding.source) continue;
+      handle.engine.setLaneSidechain(binding.trackId, binding.index, binding.source);
+      lastSidechains.set(key, binding);
+    }
+  };
 
   const clearBusSidechains = (busId?: number): void => {
     if (!supportsBusSidechain) return;
@@ -549,6 +582,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     sceneGeneration?: number,
     pdcTrackIds?: ReadonlySet<number>,
   ): void => {
+    lastArgs = [tracks, mixer, sceneGeneration, pdcTrackIds];
+    let gainRefused = false;
     // The facade retains strip JSON and can replay it as part of a structural
     // mixer command (notably setTrackLanes). That replacement clears master
     // EQ, bypass and by-name parameters, which live outside that JSON.
@@ -795,8 +830,12 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     } else {
       for (const entry of busDeclarations) {
         if (lastBusGain.get(entry.busId) !== entry.gainDb) {
-          handle.engine.setBusGain(entry.busId, entry.gainDb);
-          lastBusGain.set(entry.busId, entry.gainDb);
+          // A refused gain stays unrecorded and is re-sent by the retry.
+          if (handle.engine.setBusGain(entry.busId, entry.gainDb)) {
+            lastBusGain.set(entry.busId, entry.gainDb);
+          } else {
+            gainRefused = true;
+          }
         }
       }
     }
@@ -850,6 +889,19 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       if (memory) lastBusStrip.set(busId, memory);
     }
 
+    // Bindings are diffed per (track, insertIndex). A frozen track's strip is
+    // neutral, so it carries no keys.
+    const desiredSidechains = new Map<string, { trackId: number; index: number; source: number }>();
+    const trackIds = new Set(tracks.map((track) => track.id));
+    for (const track of tracks) {
+      if (track.kind === 'group' || track.frozen !== undefined) continue;
+      (track.mixer?.inserts ?? []).forEach((slot, index) => {
+        const source = slot.sidechainSourceTrackId;
+        if (source === undefined || source === track.id || !trackIds.has(source)) return;
+        desiredSidechains.set(`${track.id}:${index}`, { trackId: track.id, index, source });
+      });
+    }
+
     for (const track of tracks) {
       if (track.kind === 'group') {
         const busId = groupBusByTrackId.get(track.id) as number;
@@ -875,6 +927,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         trackStripMemory.get(track.id),
         (json) => {
           replayMasterState = true;
+          settleTrackSidechains(desiredSidechains, track.id);
           handle.engine.setTrackStripJson(track.id, json);
         },
         (insertIndex, paramName, value) =>
@@ -900,30 +953,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       replayMasterState,
     );
 
-    // Insert sidechain keys, replayed after the strips exist. Bindings are
-    // diffed per (track, insertIndex); stale ones are cleared with null.
-    const desiredSidechains = new Map<string, { trackId: number; index: number; source: number }>();
-    const trackIds = new Set(tracks.map((track) => track.id));
-    for (const track of tracks) {
-      if (track.kind === 'group') continue;
-      (track.mixer?.inserts ?? []).forEach((slot, index) => {
-        const source = slot.sidechainSourceTrackId;
-        if (source === undefined || source === track.id || !trackIds.has(source)) return;
-        desiredSidechains.set(`${track.id}:${index}`, { trackId: track.id, index, source });
-      });
-    }
-    for (const [key, binding] of lastSidechains) {
-      if (!desiredSidechains.has(key)) {
-        handle.engine.setLaneSidechain(binding.trackId, binding.index, null);
-        lastSidechains.delete(key);
-      }
-    }
-    for (const [key, binding] of desiredSidechains) {
-      const previous = lastSidechains.get(key);
-      if (previous && previous.source === binding.source) continue;
-      handle.engine.setLaneSidechain(binding.trackId, binding.index, binding.source);
-      lastSidechains.set(key, binding);
-    }
+    // Insert sidechain keys, replayed after the strips exist.
+    settleTrackSidechains(desiredSidechains);
 
     // Bus and master strips use the newer keyed-source ABI. Bus source ids
     // must be resolved after compacting the project buses, and disabled legacy
@@ -1011,6 +1042,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       }
     }
     if (replayMasterState) stripSceneGeneration += 1;
+    if (gainRefused)
+      retry.schedule('sync', () => sync(...(lastArgs as Parameters<StripSync['sync']>)));
   };
 
   return {

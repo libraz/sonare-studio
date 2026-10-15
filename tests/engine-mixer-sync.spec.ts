@@ -44,15 +44,15 @@ function makeHandle(): {
       }
       declared.splice(0, declared.length, ...lanes);
     }),
-    setStripGain: vi.fn(),
-    setStripPan: vi.fn(),
-    setSoloMute: vi.fn(),
+    setStripGain: vi.fn(() => true),
+    setStripPan: vi.fn(() => true),
+    setSoloMute: vi.fn(() => true),
     setTrackStripChannelDelaySamples: vi.fn(),
     setTrackStripPanLaw: vi.fn(),
     setTrackStripPanMode: vi.fn(),
     setTrackStripDualPan: vi.fn(),
   };
-  const handle = { engine } as unknown as EngineHandle;
+  const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
   return { handle, engine };
 }
 
@@ -516,6 +516,83 @@ describe('createMixerSync', () => {
     expect(engine.setStripGain.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setStripPan.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
+      [2, false, true],
+    ]);
+  });
+});
+
+describe('command ring refusals', () => {
+  /** Makes the ring setters accept only `budget` commands, then refuse. */
+  function limitRing(engine: ReturnType<typeof makeHandle>['engine'], budget: { left: number }) {
+    for (const setter of [engine.setStripGain, engine.setStripPan, engine.setSoloMute]) {
+      const accept = setter.getMockImplementation() as (...args: never[]) => boolean;
+      setter.mockImplementation((...args: never[]) => {
+        if (budget.left <= 0) return false;
+        budget.left -= 1;
+        return accept(...args);
+      });
+    }
+  }
+
+  it('re-sends every refused lane value once the ring has room', () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, engine } = makeHandle();
+      const budget = { left: 10 };
+      limitRing(engine, budget);
+      const sync = createMixerSync(handle);
+      const tracks = Array.from({ length: 8 }, (_, i) =>
+        makeTrack(i + 1, { volume: 0.5, pan: 0.25, mute: i % 2 === 0 }),
+      );
+
+      sync.sync(tracks, neutralMaster());
+      budget.left = 1000;
+      vi.advanceTimersByTime(200);
+
+      for (const track of tracks) {
+        const accepted = (mock: ReturnType<typeof vi.fn>) =>
+          mock.mock.results.some(
+            (result, i) => mock.mock.calls[i][0] === track.id && result.value === true,
+          );
+        expect(accepted(engine.setStripGain)).toBe(true);
+        expect(accepted(engine.setStripPan)).toBe(true);
+        expect(accepted(engine.setSoloMute)).toBe(true);
+      }
+      // Nothing is left pending, so no further re-sends are queued.
+      const callsBefore = engine.setStripGain.mock.calls.length;
+      vi.advanceTimersByTime(500);
+      expect(engine.setStripGain.mock.calls.length).toBe(callsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a refused value pending for the next sync even without a timer', () => {
+    const { handle, engine } = makeHandle();
+    engine.setStripGain.mockReturnValueOnce(false);
+    const sync = createMixerSync(handle);
+    const tracks = [makeTrack(1, { volume: 0.5 })];
+
+    sync.sync(tracks, neutralMaster());
+    engine.setStripGain.mockClear();
+    sync.sync(tracks, neutralMaster());
+
+    expect(engine.setStripGain).toHaveBeenCalledTimes(1);
+    expect(engine.setStripGain).toHaveBeenCalledWith(1, linearToDb(0.5));
+  });
+
+  it('keeps a refused retired-lane mute pending', () => {
+    const { handle, engine } = makeHandle();
+    const sync = createMixerSync(handle);
+    sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
+    engine.setSoloMute.mockClear();
+    engine.setSoloMute.mockReturnValueOnce(false);
+
+    sync.sync([makeTrack(1)], neutralMaster());
+    sync.sync([makeTrack(1)], neutralMaster());
+
+    expect(engine.setSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
+      [2, false, true],
       [2, false, true],
     ]);
   });
