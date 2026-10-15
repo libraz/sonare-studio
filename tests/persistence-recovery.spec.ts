@@ -6,7 +6,12 @@ import {
 } from '@/persistence/recovery';
 import { encodeSzd } from '@/persistence/szd';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
-import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
+import {
+  installMockOpfs,
+  type MemoryDirectoryHandle,
+  MemoryFileHandle,
+  uninstallMockOpfs,
+} from './opfs-mock';
 
 const SESSION_KEY = 'sonare-studio:autosave-session:v1';
 
@@ -158,5 +163,19 @@ describe('per-session autosave recovery', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it('prunes stale session slots by name without reading every stored project', async () => {
+    sessionStorage.setItem(SESSION_KEY, 'tab-a');
+    await saveAutosaveSessionRevision(archive('A'), '{"name":"A"}', '2026-07-16T00:00:00.000Z');
+    await saveProject('song', archive('song'));
+    const getFile = vi.spyOn(MemoryFileHandle.prototype, 'getFile');
+
+    await saveAutosaveSessionRevision(archive('A2'), '{"name":"A2"}', '2026-07-16T00:01:00.000Z');
+
+    // Only the recovery manifest is read; project archives are never opened.
+    const opened = getFile.mock.contexts.map((handle) => (handle as MemoryFileHandle).name);
+    expect(opened.filter((name) => name.endsWith('.szd'))).toEqual([]);
+    getFile.mockRestore();
   });
 });

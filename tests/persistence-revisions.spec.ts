@@ -63,6 +63,16 @@ describe('project revisions', () => {
     expect(listed[0].size).toBe(3);
   });
 
+  it('picks a free slot by name without opening other stored projects', async () => {
+    await saveProject('Song', bytes(7));
+    const getFile = vi.spyOn(MemoryFileHandle.prototype, 'getFile');
+
+    await saveProjectRevision('Song', 'take one', bytes(1), 1000);
+
+    const opened = getFile.mock.contexts.map((handle) => (handle as MemoryFileHandle).name);
+    expect(opened).not.toContain('Song.szd');
+  });
+
   it('keeps revisions inside the stored-project set so media is never collected', async () => {
     const revision = await saveProjectRevision('Song', 'take 1', bytes(1), 1000);
 

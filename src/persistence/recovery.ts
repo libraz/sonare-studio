@@ -5,6 +5,7 @@ import {
   AUTOSAVE_SESSION_SLOT_PREFIX,
   AUTOSAVE_SLOT,
   deleteProjectUnlocked,
+  listProjectNames,
   listProjects,
   loadProject,
   projectBytesRevision,
@@ -173,9 +174,7 @@ export function saveAutosaveSessionRevision(
     const retained = new Set(sessions.map((entry) => entry.slot));
     await deleteSlotsGuarded({
       inventoryRead: trusted,
-      candidates: (await listProjects())
-        .map((info) => info.name)
-        .filter((name) => isAutosaveRecoverySlot(name)),
+      candidates: (await listProjectNames()).filter((name) => isAutosaveRecoverySlot(name)),
       retained,
       remove: deleteProjectUnlocked,
     });

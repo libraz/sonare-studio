@@ -276,18 +276,34 @@ export function saveProjectChecked(
   });
 }
 
-/**
- * Lists the stored projects, sorted by name.
- *
- * @returns Name (without extension), size and last-modified time per project.
- */
-export async function listProjects(): Promise<StoredProjectInfo[]> {
+async function projectFileEntries(): Promise<Array<[string, FileSystemFileHandle]>> {
   const dir = await projectsDirectory();
   const entries: Array<[string, FileSystemFileHandle]> = [];
   for await (const [entryName, handle] of dir.entries()) {
     if (handle.kind === 'file' && entryName.endsWith(FILE_EXTENSION))
       entries.push([entryName, handle]);
   }
+  return entries;
+}
+
+/**
+ * Lists the stored project names without opening the files, sorted by name.
+ *
+ * @returns Project names without the extension.
+ */
+export async function listProjectNames(): Promise<string[]> {
+  return (await projectFileEntries())
+    .map(([entryName]) => entryName.slice(0, -FILE_EXTENSION.length))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Lists the stored projects, sorted by name.
+ *
+ * @returns Name (without extension), size and last-modified time per project.
+ */
+export async function listProjects(): Promise<StoredProjectInfo[]> {
+  const entries = await projectFileEntries();
   const out = await Promise.all(
     entries.map(async ([entryName, handle]): Promise<StoredProjectInfo> => {
       const file = await handle.getFile();

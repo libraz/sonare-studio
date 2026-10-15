@@ -14,7 +14,7 @@ import { deleteSlotsGuarded } from './guarded-delete';
 import { withPersistenceMutationLock } from './mutation-lock';
 import {
   deleteProjectUnlocked,
-  listProjects,
+  listProjectNames,
   loadProject,
   opfsDirectory,
   ProjectAlreadyExistsError,
@@ -157,12 +157,12 @@ export async function readProjectRevisionStoreUnlocked(): Promise<ProjectRevisio
   const indexBytes = await readIndexBytes();
 
   const slots = new Map<string, Uint8Array>();
-  for (const project of await listProjects()) {
-    if (!isRevisionSlot(project.name)) continue;
+  for (const name of await listProjectNames()) {
+    if (!isRevisionSlot(name)) continue;
     try {
-      slots.set(project.name, await loadProject(project.name));
+      slots.set(name, await loadProject(name));
     } catch (error) {
-      // A slot can disappear between listProjects() and loadProject(). The
+      // A slot can disappear between listing and loadProject(). The
       // index remains useful even when one of its old payloads is missing.
       if (!(error instanceof ProjectNotFoundError)) throw error;
     }
@@ -295,11 +295,7 @@ export async function saveProjectRevisionUnlocked(
   const cleanLabel = sanitizeRevisionLabel(label);
   const index = await readIndexState();
   const entries = index.entries;
-  const stored = await listProjects();
-  const taken = new Set([
-    ...entries.map((entry) => entry.slot),
-    ...stored.map((info) => info.name),
-  ]);
+  const taken = new Set([...entries.map((entry) => entry.slot), ...(await listProjectNames())]);
   const revision: ProjectRevision = {
     slot: nextSlot(taken, savedAt),
     projectName: project,
