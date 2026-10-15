@@ -72,11 +72,6 @@ const GM_DRUM_NAMES: Readonly<Record<number, string>> = {
   87: 'Open Surdo',
 };
 
-/** First pitch covered by the GM percussion map. */
-export const GM_DRUM_MIN_PITCH = 27;
-/** Last pitch covered by the GM percussion map. */
-export const GM_DRUM_MAX_PITCH = 87;
-
 /**
  * Returns the GM percussion name for a pitch, or null outside 27-87.
  *

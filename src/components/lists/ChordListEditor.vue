@@ -30,6 +30,7 @@ import {
 } from '@/project/commands';
 import { partSeed } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
+import { timeSignatureAt } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -129,7 +130,7 @@ function isTentative(chord: EditorChordSymbol): boolean {
 const detectKind = computed<'midi' | 'audio' | null>(() => {
   const clip = store.activeClip;
   if (!clip) return null;
-  const kind = clip.kind ?? 'midi';
+  const kind = clipKind(clip);
   if (kind === 'midi') return 'midi';
   if (kind === 'audio' && clip.assetId !== undefined) return 'audio';
   return null;
@@ -155,12 +156,7 @@ const clearBlocked = computed(() =>
 
 /** Bar length in PPQ at a position, from the active time signature. */
 function barLengthAt(ppq: number): number {
-  let signature = { numerator: 4, denominator: 4 };
-  for (const candidate of store.timeSignatures) {
-    if (candidate.startPpq > ppq) break;
-    signature = candidate;
-  }
-  return barLengthPpq(signature);
+  return barLengthPpq(timeSignatureAt(store.timeSignatures, ppq));
 }
 
 /** Commits a chord list mutated at one index (drop the entry when null). */
@@ -307,6 +303,14 @@ interface ChordRowItem {
   chord: EditorChordSymbol;
   groupStartIndex: number | null;
   repeatLabel: string | null;
+  /** Display name, resolved once per rebuild instead of at every use in the row. */
+  name: string;
+  roman: string;
+  position: string;
+  tentative: boolean;
+  qualityKey: string;
+  dominantTooltip: string;
+  dominantBlocked: string | null;
 }
 
 /** A collapsible header row introducing a detected repeating pattern. */
@@ -323,19 +327,34 @@ type RowItem = ChordRowItem | GroupHeaderRowItem;
  * repeat after the first.
  */
 const rowItems = computed<RowItem[]>(() => {
+  const chordRow = (
+    index: number,
+    groupStartIndex: number | null,
+    repeatLabel: string | null,
+  ): ChordRowItem => {
+    const chord = store.chords[index];
+    return {
+      kind: 'chord',
+      index,
+      chord,
+      groupStartIndex,
+      repeatLabel,
+      name: chordName(chord),
+      roman: romanFor(chord),
+      position: positionText(chord),
+      tentative: isTentative(chord),
+      qualityKey: qualityChoiceKeyFor(chord),
+      dominantTooltip: insertDominantTooltip(chord),
+      dominantBlocked: insertDominantBlocked(chord),
+    };
+  };
   const groupByStart = new Map(patternGroups.value.map((group) => [group.startIndex, group]));
   const items: RowItem[] = [];
   let i = 0;
   while (i < store.chords.length) {
     const group = groupByStart.get(i);
     if (!group) {
-      items.push({
-        kind: 'chord',
-        index: i,
-        chord: store.chords[i],
-        groupStartIndex: null,
-        repeatLabel: null,
-      });
+      items.push(chordRow(i, null, null));
       i += 1;
       continue;
     }
@@ -351,13 +370,7 @@ const rowItems = computed<RowItem[]>(() => {
               count: group.repeatCount,
             })
           : null;
-      items.push({
-        kind: 'chord',
-        index: i + k,
-        chord: store.chords[i + k],
-        groupStartIndex: group.startIndex,
-        repeatLabel,
-      });
+      items.push(chordRow(i + k, group.startIndex, repeatLabel));
     }
     i += group.length;
   }
@@ -620,18 +633,18 @@ function clearAll(): void {
         <tr
           class="chord-row"
           :class="{
-            tentative: isTentative(item.chord),
+            tentative: item.tentative,
             'in-group': item.groupStartIndex !== null,
             selected: selectedIndices.has(item.index),
           }"
-          v-tooltip="isTentative(item.chord) ? t.shell.lists.chords.tentativeTitle : undefined"
+          v-tooltip="item.tentative ? t.shell.lists.chords.tentativeTitle : undefined"
         >
           <td class="cell-checkbox">
             <input
               type="checkbox"
               :checked="selectedIndices.has(item.index)"
               :aria-label="
-                formatMessage(t.shell.lists.chords.selectRow, { name: chordName(item.chord) })
+                formatMessage(t.shell.lists.chords.selectRow, { name: item.name })
               "
               @click="onSelectClick(item.index, $event)"
             />
@@ -642,7 +655,7 @@ function clearAll(): void {
               class="row-button"
               v-tooltip="t.shell.lists.common.seekTitle"
               :aria-label="
-                formatMessage(t.shell.lists.chords.seekTo, { name: chordName(item.chord) })
+                formatMessage(t.shell.lists.chords.seekTo, { name: item.name })
               "
               @click="onSeek(item.chord)"
             >
@@ -653,12 +666,12 @@ function clearAll(): void {
             <div class="cell-position-wrap">
               <span v-if="item.repeatLabel" class="repeat-badge">{{ item.repeatLabel }}</span>
               <input
-                :value="positionText(item.chord)"
+                :value="item.position"
                 class="cell-input cell-position"
                 type="text"
                 inputmode="decimal"
                 :aria-label="
-                  formatMessage(t.shell.lists.chords.positionOf, { name: chordName(item.chord) })
+                  formatMessage(t.shell.lists.chords.positionOf, { name: item.name })
                 "
                 @change="onPositionChange(item.index, item.chord, $event)"
               />
@@ -676,7 +689,7 @@ function clearAll(): void {
           </td>
           <td>
             <SelectMenu
-              :model-value="qualityChoiceKeyFor(item.chord)"
+              :model-value="item.qualityKey"
               class="cell-input cell-select"
               size="sm"
               :options="qualityOptionsByIndex[item.index] ?? QUALITY_OPTIONS"
@@ -694,20 +707,20 @@ function clearAll(): void {
               @change="onBassChange(item.index, item.chord, $event)"
             />
           </td>
-          <td class="cell-name">{{ chordName(item.chord) }}</td>
-          <td class="cell-roman">{{ romanFor(item.chord) }}</td>
+          <td class="cell-name">{{ item.name }}</td>
+          <td class="cell-roman">{{ item.roman }}</td>
           <td class="cell-actions">
             <button
               type="button"
               class="row-button"
               v-tooltip="{
-                text: insertDominantTooltip(item.chord),
-                reason: insertDominantBlocked(item.chord),
+                text: item.dominantTooltip,
+                reason: item.dominantBlocked,
               }"
               :aria-label="
-                formatMessage(t.shell.lists.chords.insertDominant, { name: chordName(item.chord) })
+                formatMessage(t.shell.lists.chords.insertDominant, { name: item.name })
               "
-              :disabled="!!insertDominantBlocked(item.chord)"
+              :disabled="!!item.dominantBlocked"
               @click="onInsertDominant(item.index)"
             >
               <ListIcon name="insertDominant" />
@@ -720,7 +733,7 @@ function clearAll(): void {
               v-tooltip="{ text: t.shell.lists.chords.reharmonizeTitle, reason: reharmBlocked }"
               :disabled="!!reharmBlocked && reharmIndex !== item.index"
               :aria-label="
-                formatMessage(t.shell.lists.chords.reharmonize, { name: chordName(item.chord) })
+                formatMessage(t.shell.lists.chords.reharmonize, { name: item.name })
               "
               @click="toggleReharm(item.index)"
             >
@@ -731,7 +744,7 @@ function clearAll(): void {
               class="row-button"
               v-tooltip="t.shell.lists.common.deleteTitle"
               :aria-label="
-                formatMessage(t.shell.lists.chords.delete, { name: chordName(item.chord) })
+                formatMessage(t.shell.lists.chords.delete, { name: item.name })
               "
               @click="onDelete(item.index)"
             >

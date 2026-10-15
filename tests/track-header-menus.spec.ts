@@ -10,9 +10,9 @@ import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import {
   type ContextMenuItem,
   closeContextMenu,
-  isItemDisabled,
   useContextMenuState,
 } from '@/ui/menu/context-menu';
+import { isItemDisabled } from '@/ui/menu/menu-items';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');

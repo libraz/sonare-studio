@@ -3,12 +3,18 @@ import { computed, ref } from 'vue';
 import LevelMeter from '@/components/LevelMeter.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import TransportBbtField from '@/components/shell/TransportBbtField.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
+import TransportSecondsText from '@/components/shell/TransportSecondsText.vue';
 import type { useMidiRecording } from '@/composables/useMidiRecording';
 import type { useRecording } from '@/composables/useRecording';
 import type { RecordingInputDeviceOption } from '@/composables/useRecordingControls';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
+import {
+  STREAMING_RETUNE_MAX_SEMITONES,
+  STREAMING_RETUNE_MIN_SEMITONES,
+} from '@/engine/streaming-retune';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
@@ -23,7 +29,7 @@ const props = defineProps<{
   readBbtDisplay: () => string;
   bridge: MeterBridge | null;
   canRecord: boolean;
-  countInChoices: readonly { value: number; label: string }[];
+  countInChoices: readonly { value: number }[];
   handle: EngineHandle | null;
   hasLocatorWindow: boolean;
   isCountingIn: boolean;
@@ -467,8 +473,8 @@ function onRetuneInput(event: Event): void {
               <input
                 class="num"
                 type="number"
-                min="-24"
-                max="24"
+                :min="STREAMING_RETUNE_MIN_SEMITONES"
+                :max="STREAMING_RETUNE_MAX_SEMITONES"
                 step="1"
                 :value="recording.streamingRetuneSemitones.value"
                 :disabled="!!inputSettingBlocked"
@@ -597,13 +603,10 @@ function onRetuneInput(event: Event): void {
     <div class="time-display" :class="{ playing: isPlaying, recording: isRecording }">
       <div class="time-register time-primary">
         <span class="time-cap">{{ t.shell.transport.bars }}</span>
-        <input
+        <TransportBbtField
           class="position-bbt"
-          type="text"
-          inputmode="numeric"
-          spellcheck="false"
           size="12"
-          :value="readBbtDisplay()"
+          :read-value="readBbtDisplay"
           :aria-label="t.shell.transport.playheadPosition"
           v-tooltip="t.shell.transport.playheadPositionTitle"
           @focus="emit('bbtFocus')"
@@ -614,7 +617,7 @@ function onRetuneInput(event: Event): void {
       </div>
       <div class="time-register time-secondary" v-tooltip="t.shell.transport.timeTitle">
         <span class="time-cap">{{ t.shell.transport.time }}</span>
-        <span class="position-seconds">{{ readPositionSeconds().toFixed(2) }}s</span>
+        <TransportSecondsText class="position-seconds" :read-seconds="readPositionSeconds" />
       </div>
     </div>
 

@@ -1,12 +1,11 @@
 import type { TourStep } from '@/components/onboarding/tour-steps';
+import { COUNT_IN_BARS_MAX, COUNT_IN_BARS_MIN } from '@/ui/settings/app-settings';
 
-export const COUNT_IN_CHOICES = [
-  { value: 0, label: 'Off' },
-  { value: 1, label: '1 bar' },
-  { value: 2, label: '2 bars' },
-  { value: 3, label: '3 bars' },
-  { value: 4, label: '4 bars' },
-] as const;
+/** Count-in bar choices (Off through the maximum); the transport bar localizes the labels. */
+export const COUNT_IN_CHOICES: readonly { value: number }[] = Array.from(
+  { length: COUNT_IN_BARS_MAX - COUNT_IN_BARS_MIN + 1 },
+  (_, index) => ({ value: COUNT_IN_BARS_MIN + index }),
+);
 
 const GRID_SNAP_CHOICES = [
   { value: 1, label: '1/1' },
@@ -27,45 +26,12 @@ export function snapChoices(barLabel: string) {
   return [{ value: 'bar' as const, label: barLabel }, ...GRID_SNAP_CHOICES];
 }
 
-export const TOUR_STEPS: TourStep[] = [
-  {
-    id: 'transport',
-    target: '.transport-bar',
-    title: 'Transport bar',
-    body: 'Play, stop, record, cycle, tempo, locators and the playhead position live in this bottom dock. Pressing Play boots the audio engine automatically.',
-    placement: 'top',
-  },
-  {
-    id: 'arrange',
-    target: '.arrange-zone',
-    title: 'Arrangement',
-    body: 'Tracks and clips on the timeline. Double-click an empty lane to create a clip.',
-  },
-  {
-    id: 'dock',
-    target: '.dock-tabs',
-    title: 'Editor dock',
-    body: 'Switch between the piano roll, mixer, mastering, step sequencer and more.',
-    placement: 'top',
-  },
-  {
-    id: 'roll',
-    target: '.piano-roll-host',
-    title: 'Piano roll',
-    body: 'Double-click to create notes, drag to move or resize them. Every edit is undoable.',
-    placement: 'top',
-  },
-  {
-    id: 'score',
-    target: '.dock-tab-score',
-    title: 'Score view',
-    body: 'Engraves the active clip as notation - display-only, your MIDI never changes.',
-    placement: 'top',
-  },
-  {
-    id: 'menu',
-    target: '.app-menubar:not(.app-menubar--end)',
-    title: 'Project menu',
-    body: 'New, open, save, audio import and all export options.',
-  },
+/** Tour anchors in order; the localized title and body come from the i18n tree by id. */
+export const TOUR_STEPS: Omit<TourStep, 'title' | 'body'>[] = [
+  { id: 'transport', target: '.transport-bar', placement: 'top' },
+  { id: 'arrange', target: '.arrange-zone' },
+  { id: 'dock', target: '.dock-tabs', placement: 'top' },
+  { id: 'roll', target: '.piano-roll-host', placement: 'top' },
+  { id: 'score', target: '.dock-tab-score', placement: 'top' },
+  { id: 'menu', target: '.app-menubar:not(.app-menubar--end)' },
 ];

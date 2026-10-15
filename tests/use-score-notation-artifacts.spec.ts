@@ -117,6 +117,7 @@ function notationHarness(
   fullScore = false,
   exportClient = vi.fn(() => fakeVerovio().client),
   createClient?: () => VerovioClient,
+  getLayoutSettings: () => ScoreLayoutSettings = () => LAYOUT,
 ) {
   const verovio = fakeVerovio();
   const notation = useScoreNotation({
@@ -131,7 +132,7 @@ function notationHarness(
     getKeyFifths: () => 0,
     getChordsEnabled: () => false,
     getFullScoreEnabled: () => fullScore,
-    getLayoutSettings: () => LAYOUT,
+    getLayoutSettings,
     resetPlayheadScan: vi.fn(),
     ...(createClient === undefined ? {} : { createClient }),
     createExportClient: exportClient,
@@ -197,6 +198,19 @@ describe('score artifact identity and exports', () => {
     resolveLoad?.(1);
     await pending;
     expect(notation.getCurrentXml()).toContain('<score-partwise');
+  });
+
+  it('resolves the current artifact once for repeated readers of an unchanged state', async () => {
+    const getLayoutSettings = vi.fn(() => LAYOUT);
+    const { notation } = notationHarness(store, false, undefined, undefined, getLayoutSettings);
+    await notation.transcribe();
+    notation.getCurrentXml();
+    getLayoutSettings.mockClear();
+
+    notation.getCurrentXml();
+    notation.getCurrentPartName();
+    notation.getCurrentXml();
+    expect(getLayoutSettings).not.toHaveBeenCalled();
   });
 
   it('lets a computed reader of the current score follow transcription and edits', async () => {

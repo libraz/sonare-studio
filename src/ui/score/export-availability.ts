@@ -101,8 +101,3 @@ export function scoreExportAvailability(
       : { available: false, mode, reason: 'active-midi-clip-required' }
     : { available: false, mode, reason: 'active-midi-clip-required' };
 }
-
-/** Descriptive aliases for callers that name the format rather than the UI. */
-export const musicXmlExportAvailability = scoreExportAvailability;
-export const getMusicXmlExportAvailability = scoreExportAvailability;
-export const getScoreExportAvailability = scoreExportAvailability;

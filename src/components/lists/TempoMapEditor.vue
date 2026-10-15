@@ -1,21 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { detectActiveAudioClipTempo, detectActiveAudioClipTempoMap } from '@/project/audio-tempo';
 import { setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { isAudioClip, type TempoSegment } from '@/project/types';
-import { firstBlock } from '@/ui/disabled-reason';
+import type { TempoSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { barBeatFromPpq, formatBarBeat, parseBarBeat } from './bar-beat';
+import { formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
-import {
-  formatRowIssue,
-  MAX_BPM,
-  MIN_BPM,
-  mergeTempoSegments,
-  validateTempoRows,
-} from './row-validation';
+import { MAX_BPM, MIN_BPM, mergeTempoSegments, validateTempoRows } from './row-validation';
+import { useDraftList } from './use-draft-list';
 
 /**
  * Tempo-map list editor: one row per tempo segment (position in bars.beats,
@@ -35,80 +28,44 @@ interface DraftRow {
   endBpm: string;
 }
 
-let nextRowKey = 1;
-const rows = ref<DraftRow[]>([]);
-const dirty = ref(false);
-const errors = ref<string[]>([]);
-/** True while a tempo detection is awaiting the engine. */
-const isDetecting = ref(false);
-let detectGeneration = 0;
-
-/** The active clip when it is an audio clip carrying an asset, else null. */
-const detectableAudioClip = computed(() => {
-  const clip = store.activeClip;
-  return clip && isAudioClip(clip) && clip.assetId !== undefined ? clip : null;
-});
-
-const detectBlocked = computed(() =>
-  firstBlock(
-    [detectableAudioClip.value === null, t.value.reasons.noAudioClip],
-    [isDetecting.value, t.value.reasons.busy],
-  ),
-);
-const draftBlocked = computed(() =>
-  firstBlock([!dirty.value, t.value.shell.lists.reasons.noEdits]),
-);
-
 /** Formats a BPM value without floating-point noise. */
 function formatBpm(bpm: number): string {
   return String(Math.round(bpm * 1000) / 1000);
 }
 
-/** Rebuilds the draft from the store mirror. */
-function rowsFromStore(): DraftRow[] {
-  return store.tempoSegments.map((segment) => ({
-    key: nextRowKey++,
-    position: formatBarBeat(segment.startPpq, store.timeSignatures),
-    bpm: formatBpm(segment.bpm),
-    endBpm: segment.endBpm !== undefined && segment.endBpm > 0 ? formatBpm(segment.endBpm) : '',
-  }));
-}
-
-// The mirror is replaced wholesale after every command; resync the draft
-// whenever it is clean so undo/redo and external edits show through.
-watch(
-  () => store.tempoSegments,
-  () => {
-    if (dirty.value) return;
-    rows.value = rowsFromStore();
-    errors.value = [];
-  },
-  { immediate: true },
-);
-
-function markDirty(): void {
-  dirty.value = true;
-}
+const {
+  rows,
+  dirty,
+  errors,
+  nextKey,
+  markDirty,
+  deleteRow,
+  revert,
+  detectBlocked,
+  draftBlocked,
+  nextBarPosition,
+  invalidPositionMessage,
+  formatIssues,
+  guardedDetect,
+} = useDraftList<DraftRow>({
+  buildRows: (nextKey) =>
+    store.tempoSegments.map((segment) => ({
+      key: nextKey(),
+      position: formatBarBeat(segment.startPpq, store.timeSignatures),
+      bpm: formatBpm(segment.bpm),
+      endBpm: segment.endBpm !== undefined && segment.endBpm > 0 ? formatBpm(segment.endBpm) : '',
+    })),
+  source: () => store.tempoSegments,
+});
 
 /** Appends a row one bar after the last entry, inheriting its tempo. */
 function addRow(): void {
   const last = rows.value[rows.value.length - 1];
-  let position = '1.1';
-  let bpm = formatBpm(store.tempoBpm || 120);
-  if (last) {
-    const lastPpq = parseBarBeat(last.position, store.timeSignatures);
-    if (lastPpq !== null) {
-      const { bar } = barBeatFromPpq(lastPpq, store.timeSignatures);
-      position = `${bar + 1}.1`;
-    }
-    bpm = last.bpm;
-  }
-  rows.value = [...rows.value, { key: nextRowKey++, position, bpm, endBpm: '' }];
-  dirty.value = true;
-}
-
-function deleteRow(index: number): void {
-  rows.value = rows.value.filter((_, i) => i !== index);
+  const bpm = last ? last.bpm : formatBpm(store.tempoBpm || 120);
+  rows.value = [
+    ...rows.value,
+    { key: nextKey(), position: nextBarPosition(last?.position), bpm, endBpm: '' },
+  ];
   dirty.value = true;
 }
 
@@ -116,15 +73,8 @@ function deleteRow(index: number): void {
  * Detects the active audio clip's tempo and writes it into the draft as the
  * song-start (1.1) BPM, leaving the existing rows for review before Apply.
  */
-async function detectFromClip(): Promise<void> {
-  const clip = detectableAudioClip.value;
-  if (!clip || isDetecting.value) return;
-  const generation = ++detectGeneration;
-  errors.value = [];
-  isDetecting.value = true;
-  const isCurrent = () =>
-    generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
-  try {
+function detectFromClip(): Promise<void> {
+  return guardedDetect(async (clip, isCurrent) => {
     const bpm = await detectActiveAudioClipTempo(clip.id);
     if (!isCurrent()) return;
     if (bpm === null) {
@@ -138,14 +88,9 @@ async function detectFromClip(): Promise<void> {
     rows.value =
       startIndex >= 0
         ? rows.value.map((row, i) => (i === startIndex ? { ...row, bpm: text } : row))
-        : [{ key: nextRowKey++, position: '1.1', bpm: text, endBpm: '' }, ...rows.value];
+        : [{ key: nextKey(), position: '1.1', bpm: text, endBpm: '' }, ...rows.value];
     dirty.value = true;
-  } catch (err) {
-    if (!isCurrent()) return;
-    errors.value = [err instanceof Error ? err.message : String(err)];
-  } finally {
-    if (generation === detectGeneration) isDetecting.value = false;
-  }
+  });
 }
 
 /**
@@ -153,15 +98,8 @@ async function detectFromClip(): Promise<void> {
  * resulting variable tempo map (one constant segment per detected beat
  * interval, anchored at song start). The draft awaits review before Apply.
  */
-async function detectMapFromClip(): Promise<void> {
-  const clip = detectableAudioClip.value;
-  if (!clip || isDetecting.value) return;
-  const generation = ++detectGeneration;
-  errors.value = [];
-  isDetecting.value = true;
-  const isCurrent = () =>
-    generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
-  try {
+function detectMapFromClip(): Promise<void> {
+  return guardedDetect(async (clip, isCurrent) => {
     const segments = await detectActiveAudioClipTempoMap(clip.id, {
       minBpm: MIN_BPM,
       maxBpm: MAX_BPM,
@@ -172,25 +110,13 @@ async function detectMapFromClip(): Promise<void> {
       return;
     }
     rows.value = segments.map((segment) => ({
-      key: nextRowKey++,
+      key: nextKey(),
       position: formatBarBeat(segment.startPpq, store.timeSignatures),
       bpm: formatBpm(segment.bpm),
       endBpm: '',
     }));
     dirty.value = true;
-  } catch (err) {
-    if (!isCurrent()) return;
-    errors.value = [err instanceof Error ? err.message : String(err)];
-  } finally {
-    if (generation === detectGeneration) isDetecting.value = false;
-  }
-}
-
-/** Discards the draft and reloads the rows from the store. */
-function revert(): void {
-  rows.value = rowsFromStore();
-  dirty.value = false;
-  errors.value = [];
+  });
 }
 
 /** Validates the draft and commits it as one undoable tempo-map edit. */
@@ -201,31 +127,14 @@ function apply(): void {
   rows.value.forEach((row, index) => {
     const startPpq = parseBarBeat(row.position, store.timeSignatures);
     if (startPpq === null) {
-      issues.push(
-        formatMessage(t.value.shell.lists.common.rowInvalidPosition, {
-          row: index + 1,
-          position: row.position,
-        }),
-      );
+      issues.push(invalidPositionMessage(index, row.position));
       return;
     }
     const segment: TempoSegment = { startPpq, bpm: Number(row.bpm) };
     if (row.endBpm.trim() !== '') segment.endBpm = Number(row.endBpm);
     parsed.push(segment);
   });
-  if (issues.length === 0) {
-    for (const issue of validateTempoRows(parsed)) {
-      const message = formatRowIssue(issue.issue, t.value.shell.lists.common.validation);
-      issues.push(
-        issue.row >= 0
-          ? formatMessage(t.value.shell.lists.common.rowIssue, {
-              row: issue.row + 1,
-              message,
-            })
-          : message,
-      );
-    }
-  }
+  if (issues.length === 0) issues.push(...formatIssues(validateTempoRows(parsed)));
   errors.value = issues;
   if (issues.length > 0) return;
   setTempoSegments(mergeTempoSegments(parsed));

@@ -55,16 +55,16 @@ export class MidiCc14BitTracker {
     const selector = this.parameterByChannel.get(channel);
     if (!selector || selector.msb === undefined || selector.lsb === undefined) return null;
     const parameter = (selector.msb << 7) | selector.lsb;
-    const value14 =
-      lsb === undefined ? value << 7 : ((selector.dataMsb ?? value) << 7) | (lsb & 0x7f);
-    return {
+    // A lone data MSB stays 7-bit so full scale (127) is not rescaled as a 14-bit value.
+    const decoded: DecodedMidiCcInput = {
       channel,
       controller: CC_DATA_ENTRY_MSB,
       value,
-      value14,
       kind: selector.kind,
       parameter,
     };
+    if (lsb !== undefined) decoded.value14 = ((selector.dataMsb ?? value) << 7) | (lsb & 0x7f);
+    return decoded;
   }
 
   decode(channel: number, controller: number, value: number): DecodedMidiCcInput {
@@ -105,7 +105,7 @@ export class MidiCc14BitTracker {
     }
     if (cc >= MIDI_14BIT_MSB_MIN && cc <= MIDI_14BIT_MSB_MAX) {
       this.msbByChannelController.set(key(channel, cc), v);
-      return { channel, controller: cc, value: v, value14: v << 7 };
+      return { channel, controller: cc, value: v };
     }
     if (cc >= MIDI_14BIT_LSB_MIN && cc <= MIDI_14BIT_LSB_MAX) {
       const msbController = cc - MIDI_14BIT_LSB_MIN;

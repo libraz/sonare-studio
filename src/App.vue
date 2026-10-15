@@ -178,28 +178,27 @@ const snapChoice = computed<number | 'bar'>({
   },
 });
 const stepInput = useStepInput();
+/**
+ * Snapshot of the store mirrors a history entry can change. Each evaluation
+ * yields a fresh array, so dependents re-run on every mirror change.
+ */
+const historyRevision = computed(() => [
+  store.tracks.length,
+  store.clips.length,
+  store.notes.length,
+  store.markers.length,
+  store.sections.length,
+  store.automationLanes.length,
+  store.midiCcBindings.size,
+  store.projectName,
+  store.displayTransposeSemitones,
+]);
 const historyCanUndo = computed(() => {
-  store.tracks.length;
-  store.clips.length;
-  store.notes.length;
-  store.markers.length;
-  store.sections.length;
-  store.automationLanes.length;
-  store.midiCcBindings.size;
-  store.projectName;
-  store.displayTransposeSemitones;
+  void historyRevision.value;
   return canUndo();
 });
 const historyCanRedo = computed(() => {
-  store.tracks.length;
-  store.clips.length;
-  store.notes.length;
-  store.markers.length;
-  store.sections.length;
-  store.automationLanes.length;
-  store.midiCcBindings.size;
-  store.projectName;
-  store.displayTransposeSemitones;
+  void historyRevision.value;
   return canRedo();
 });
 
@@ -281,9 +280,9 @@ const engineStatusState = computed(() => {
 });
 const localizedTourSteps = computed(() =>
   TOUR_STEPS.map((step) => {
-    const copy = { ...step };
-    const translated = t.value.shell.tour.steps[step.id as keyof typeof t.value.shell.tour.steps];
-    return translated ? { ...copy, title: translated.title, body: translated.body } : copy;
+    const { title, body } =
+      t.value.shell.tour.steps[step.id as keyof typeof t.value.shell.tour.steps];
+    return { ...step, title, body };
   }),
 );
 

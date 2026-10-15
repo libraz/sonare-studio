@@ -94,7 +94,6 @@ describe('useWebMidi', () => {
       channel: 0,
       controller: 1,
       value: 64,
-      value14: 8192,
       timeStampMs: 10,
     });
     expect(onControlChange).toHaveBeenNthCalledWith(2, {
@@ -172,7 +171,6 @@ describe('useWebMidi', () => {
       channel: 2,
       controller: 6,
       value: 64,
-      value14: 8192,
       kind: 'rpn',
       parameter: 2,
       timeStampMs: 22,

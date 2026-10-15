@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
 import { hasNativeEnterBehavior } from '@/ui/accessibility/keyboard';
 import { useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
@@ -113,15 +114,7 @@ function onKeydown(event: KeyboardEvent): void {
               v-tooltip="t.settings.close"
               @click="emit('close')"
             >
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path
-                  d="M4 4l8 8M12 4l-8 8"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                />
-              </svg>
+              <CloseIcon />
             </button>
           </header>
           <div class="modal-body"><slot /></div>

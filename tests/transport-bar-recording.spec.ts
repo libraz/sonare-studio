@@ -40,10 +40,7 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
       readBbtDisplay: () => '1.1.000',
       bridge: null,
       canRecord: true,
-      countInChoices: [
-        { value: 0, label: 'Off' },
-        { value: 1, label: '1 bar' },
-      ],
+      countInChoices: [{ value: 0 }, { value: 1 }],
       handle: {},
       hasLocatorWindow: true,
       isCountingIn: false,

@@ -134,12 +134,20 @@ const displayedAssets = computed(() =>
 /** Asset ids referenced by clips, comp takes or frozen tracks; deletion is blocked. */
 const referencedIds = computed(() => referencedAssetIds(store.clips, store.tracks));
 
-/** Includes snapshots reachable through undo/redo, not only the live mirror. */
+/**
+ * Asset ids that deletion must not touch, resolved once per change so list
+ * rows share the lookup. Actions re-check through {@link isReferenced}.
+ */
+const blockedIds = computed(
+  () => new Set([...referencedIds.value, ...collectHistoryReferencedMediaIds().assetIds]),
+);
+
 /** Why an asset cannot be deleted: clips still play it. */
 function deleteBlocked(assetId: string): string | null {
-  return firstBlock([isReferenced(assetId), t.value.shell.media.deleteBlocked]);
+  return firstBlock([blockedIds.value.has(assetId), t.value.shell.media.deleteBlocked]);
 }
 
+/** Includes snapshots reachable through undo/redo, not only the live mirror. */
 function isReferenced(assetId: string): boolean {
   return (
     referencedIds.value.has(assetId) || collectHistoryReferencedMediaIds().assetIds.has(assetId)

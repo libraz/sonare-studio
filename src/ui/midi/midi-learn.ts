@@ -67,13 +67,6 @@ export function ccToGainDb(value: number): number {
   return MIDI_FADER_MIN_DB + t * (MIDI_FADER_MAX_DB - MIDI_FADER_MIN_DB);
 }
 
-/** Maps gain in dB back to the nearest CC value (for display / round-trip). */
-export function gainDbToCc(gainDb: number): number {
-  if (!Number.isFinite(gainDb)) return 0;
-  const t = (gainDb - MIDI_FADER_MIN_DB) / (MIDI_FADER_MAX_DB - MIDI_FADER_MIN_DB);
-  return clampCcValue(t * MIDI_VALUE_MAX);
-}
-
 /**
  * Like {@link ccToGainDb} but without the 7-bit rounding, for a surface whose
  * fader is 14-bit. Integer inputs give exactly the same result, so a learned
@@ -126,12 +119,6 @@ export function panToCc(pan: number): number {
 export function ccToRange(value: number, min: number, max: number): number {
   const t = clampCcValue(value) / MIDI_VALUE_MAX;
   return min + t * (max - min);
-}
-
-/** Maps a value in [min, max] back to the nearest CC value (for round-trips). */
-export function rangeToCc(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value) || max === min) return 0;
-  return clampCcValue(((value - min) / (max - min)) * MIDI_VALUE_MAX);
 }
 
 /** Maps a CC value logarithmically into a positive range. */

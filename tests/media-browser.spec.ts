@@ -24,9 +24,15 @@ vi.mock('@/persistence/assets', () => assetStore);
 const decodeAndIngestMock = vi.hoisted(() => vi.fn());
 vi.mock('@/project/audio-import', () => ({ decodeAndIngest: decodeAndIngestMock }));
 
-const historyRefs = vi.hoisted(() => ({ assetIds: new Set<string>() }));
+const historyRefs = vi.hoisted(() => ({
+  assetIds: new Set<string>(),
+  collect: vi.fn(),
+}));
 vi.mock('@/project/commands', () => ({
-  collectHistoryReferencedMediaIds: () => ({ assetIds: historyRefs.assetIds, fontIds: new Set() }),
+  collectHistoryReferencedMediaIds: () => {
+    historyRefs.collect();
+    return { assetIds: historyRefs.assetIds, fontIds: new Set() };
+  },
 }));
 
 /** Module returned by the mocked ensureWasm; tests add timeStretch here. */
@@ -374,6 +380,18 @@ describe('MediaBrowser', () => {
     await button.trigger('click');
     expect(wrapper.find('.danger').exists()).toBe(false);
     expect(assetStore.deleteAsset).not.toHaveBeenCalled();
+  });
+
+  it('resolves history references once per render, not once per row', async () => {
+    assetStore.listAssets.mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => meta({ id: `row-${index}`, name: `Row ${index}` })),
+    );
+    historyRefs.collect.mockClear();
+
+    const wrapper = await mountBrowser();
+
+    expect(wrapper.findAll('.asset-row')).toHaveLength(6);
+    expect(historyRefs.collect.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
   it('blocks deleting assets referenced only by frozen tracks', async () => {

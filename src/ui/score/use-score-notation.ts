@@ -14,7 +14,7 @@
  * getters.
  */
 
-import { type Ref, ref, type ShallowRef, shallowRef } from 'vue';
+import { computed, type Ref, ref, type ShallowRef, shallowRef } from 'vue';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { projectFilename } from '@/lib/filename';
@@ -507,12 +507,18 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     };
   }
 
-  function artifactForCurrentState(): ScoreArtifact | null {
+  // Hashing the identity serializes every clip, so share one cached result
+  // between all readers instead of recomputing it per call.
+  const currentStateArtifact = computed<ScoreArtifact | null>(() => {
     void artifactRevision.value;
     const artifact = currentArtifact;
     return artifact && sameOperationIdentity(artifact.identity, transcriptionIdentity())
       ? artifact
       : null;
+  });
+
+  function artifactForCurrentState(): ScoreArtifact | null {
+    return currentStateArtifact.value;
   }
 
   /**

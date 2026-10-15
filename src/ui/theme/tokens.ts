@@ -98,9 +98,6 @@ export function canvasFont(sizePx: number, weight?: number): string {
     : `${weight} ${sizePx}px ${CANVAS_FONT_STACK}`;
 }
 
-/** Token key set, for the sync test. */
-export type TokenName = keyof typeof TOKENS;
-
 /**
  * Converts a `#rrggbb` color to an `rgba()` string with the given alpha.
  * Non-hex inputs are returned unchanged.

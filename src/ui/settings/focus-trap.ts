@@ -1,6 +1,5 @@
 /**
- * Focus-trap helper for modal dialogs: keeps Tab cycling inside a container
- * and restores focus to the previously focused element on release.
+ * Focus-trap helpers for modal dialogs: keep Tab cycling inside a container.
  *
  * Pure DOM (no Vue dependency) so it is unit-testable under jsdom; visibility
  * checks avoid layout APIs (offsetParent) that jsdom does not implement.
@@ -69,54 +68,4 @@ export function wrapTabFocus(event: KeyboardEvent, container: HTMLElement): bool
     return true;
   }
   return false;
-}
-
-/** Handle returned by {@link createFocusTrap}. */
-export interface FocusTrap {
-  /** Starts trapping: remembers the focused element and moves focus inside. */
-  activate(): void;
-  /** Stops trapping and restores focus to the previously focused element. */
-  deactivate(): void;
-  /** True while the trap is active. */
-  isActive(): boolean;
-}
-
-/**
- * Creates a focus trap around a container.
- *
- * On activate, focus moves to the first focusable child (or the container
- * itself when empty — give it tabindex="-1"); a keydown listener wraps Tab.
- * On deactivate, focus returns to whatever was focused before activation.
- *
- * @param container The modal root element.
- */
-export function createFocusTrap(container: HTMLElement): FocusTrap {
-  let active = false;
-  let previous: HTMLElement | null = null;
-
-  const onKeydown = (event: KeyboardEvent): void => {
-    wrapTabFocus(event, container);
-  };
-
-  return {
-    activate(): void {
-      if (active) return;
-      active = true;
-      const current = container.ownerDocument.activeElement;
-      previous = current instanceof HTMLElement ? current : null;
-      container.addEventListener('keydown', onKeydown);
-      const focusable = getFocusableElements(container);
-      (focusable[0] ?? container).focus();
-    },
-    deactivate(): void {
-      if (!active) return;
-      active = false;
-      container.removeEventListener('keydown', onKeydown);
-      if (previous?.isConnected) previous.focus();
-      previous = null;
-    },
-    isActive(): boolean {
-      return active;
-    },
-  };
 }

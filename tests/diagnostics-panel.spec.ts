@@ -111,6 +111,32 @@ describe('DiagnosticsPanel', () => {
     expect(text).toContain('4.0 KB');
   });
 
+  it('re-reads latency and heap usage each time the dialog opens', async () => {
+    const handle = fakeHandle() as unknown as { ctx: { outputLatency: number } };
+    const memory = { usedJSHeapSize: 1024, jsHeapSizeLimit: 4096 };
+    vi.stubGlobal('performance', { memory });
+    wrapper = mount(DiagnosticsPanel, {
+      props: {
+        open: true,
+        busy: false,
+        ctxState: 'running',
+        handle: handle as never,
+        renderInfo: '',
+      },
+      attachTo: document.body,
+    });
+    expect(document.body.textContent).toContain('1.0 KB');
+
+    handle.ctx.outputLatency = 0.0421;
+    memory.usedJSHeapSize = 2048;
+    await wrapper.setProps({ open: false });
+    await wrapper.setProps({ open: true });
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('42.1');
+    expect(text).toContain('2.0 KB');
+  });
+
   it('emits close from the footer button', async () => {
     wrapper = mount(DiagnosticsPanel, {
       props: { open: true, busy: false, ctxState: '', handle: null, renderInfo: '' },

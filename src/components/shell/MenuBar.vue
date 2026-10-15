@@ -16,7 +16,8 @@
  */
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
-import { cleanMenuItems, isItemDisabled, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
+import { cleanMenuItems, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
+import { isItemDisabled } from '@/ui/menu/menu-items';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 const props = withDefaults(

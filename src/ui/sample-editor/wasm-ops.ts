@@ -9,6 +9,7 @@
  */
 
 import { stepOf } from '@libraz/libcantus';
+import { downmixToMono } from '@/lib/audio-channels';
 import { ensureWasm } from '@/lib/wasm';
 import type {
   AutoTuneKey,
@@ -26,13 +27,15 @@ import {
   parseReferenceLoudness,
   parseTonalBalance,
 } from './match-eq-analysis';
-import {
-  type DetectedNote,
-  downmixToMono,
-  onsetSecondsToFrames,
-  silenceSplitMarkers,
-} from './onsets';
+import { type DetectedNote, onsetSecondsToFrames, silenceSplitMarkers } from './onsets';
 import { resolveRange, type SampleRange, spliceRange } from './ops';
+
+/** F0 hop for note detection, matching the pitch-correction contour. */
+export const NOTE_DETECT_HOP = 512;
+/** F0 analysis window, matching the pitch-correction contour. */
+export const NOTE_DETECT_FRAME = 2048;
+/** STFT size of the spectral-edit processor. */
+const SPECTRAL_EDIT_FFT_SIZE = 2048;
 
 /** The subset of the libsonare module consumed by the sample editor. */
 export type SampleEditorWasmOps = Partial<
@@ -194,6 +197,26 @@ export async function loadSampleEditorWasm(): Promise<SampleEditorWasmOps | null
   }
 }
 
+/** Resolves the effective range and rejects an empty one. */
+function resolveNonEmptyRange(
+  channels: ReadonlyArray<Float32Array>,
+  range: SampleRange | null | undefined,
+): SampleRange {
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot process an empty range');
+  }
+  return resolved;
+}
+
+/** Trims per-channel results to the shortest so the set stays planar. */
+function toPlanar(segments: ReadonlyArray<Float32Array>): Float32Array[] {
+  const minFrames = Math.min(...segments.map((segment) => segment.length));
+  return segments.map((segment) =>
+    segment.length === minFrames ? segment : segment.slice(0, minFrames),
+  );
+}
+
 /**
  * Runs a mono segment transform per channel over the range (whole file when
  * omitted) and splices the results back. Output segments of unequal lengths
@@ -205,17 +228,11 @@ function applyToRange(
   range: SampleRange | null | undefined,
   transform: (segment: Float32Array) => Float32Array,
 ): Float32Array[] {
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) =>
     transform(channel.slice(resolved.startFrame, resolved.endFrame)),
   );
-  const minFrames = Math.min(...segments.map((segment) => segment.length));
-  const planar = segments.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  const planar = toPlanar(segments);
   return spliceRange(channels, resolved, planar);
 }
 
@@ -231,10 +248,7 @@ function applyRepairToRange(
   stereo?: (left: Float32Array, right: Float32Array) => { left: Float32Array; right: Float32Array },
 ): Float32Array[] {
   if (channels.length !== 2 || stereo === undefined) return applyToRange(channels, range, mono);
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const out = stereo(
     channels[0].slice(resolved.startFrame, resolved.endFrame),
     channels[1].slice(resolved.startFrame, resolved.endFrame),
@@ -319,17 +333,13 @@ export function pitchCorrectTimevaryingRange(
   if (!Number.isInteger(targetMidi) || targetMidi < 0 || targetMidi > 127) {
     throw new RangeError(`targetMidi must be an integer in [0, 127], got ${targetMidi}`);
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
-  const hopLength = 512;
   const contour = detect(
     downmixToMono(segments),
     sampleRate,
-    2048,
-    hopLength,
+    NOTE_DETECT_FRAME,
+    NOTE_DETECT_HOP,
     undefined,
     undefined,
     undefined,
@@ -344,12 +354,9 @@ export function pitchCorrectTimevaryingRange(
       ? Int32Array.from(contour.voicedFlag, (flag) => (flag ? 1 : 0))
       : undefined;
   const corrected = segments.map((segment) =>
-    correct(segment, f0, targetMidi, sampleRate, hopLength, voiced),
+    correct(segment, f0, targetMidi, sampleRate, NOTE_DETECT_HOP, voiced),
   );
-  const minFrames = Math.min(...corrected.map((segment) => segment.length));
-  const planar = corrected.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  const planar = toPlanar(corrected);
   return spliceRange(channels, resolved, planar);
 }
 
@@ -374,10 +381,7 @@ export function tuneToReferenceRange(
   if (typeof detect !== 'function' || typeof shift !== 'function') {
     throw new Error('Tune to A440 is unavailable in this libsonare build');
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
   const tuning = detect(downmixToMono(segments), sampleRate);
   if (!Number.isFinite(tuning)) {
@@ -385,10 +389,7 @@ export function tuneToReferenceRange(
   }
   const semitones = -tuning;
   const corrected = segments.map((segment) => shift(segment, sampleRate, semitones));
-  const minFrames = Math.min(...corrected.map((segment) => segment.length));
-  const planar = corrected.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  const planar = toPlanar(corrected);
   return spliceRange(channels, resolved, planar);
 }
 
@@ -424,10 +425,7 @@ export function scaleCorrectRange(
   ) {
     throw new Error('Scale correction is unavailable in this libsonare build');
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
   const medianF0 = detect(downmixToMono(segments), sampleRate).medianF0;
   if (!(medianF0 > 0)) {
@@ -439,10 +437,7 @@ export function scaleCorrectRange(
   const corrected = segments.map((segment) =>
     correct(segment, sampleRate, currentMidi, targetMidi),
   );
-  const minFrames = Math.min(...corrected.map((segment) => segment.length));
-  const planar = corrected.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  const planar = toPlanar(corrected);
   return spliceRange(channels, resolved, planar);
 }
 
@@ -470,10 +465,7 @@ export function autoTuneRange(
   if (typeof fn !== 'function') {
     throw new Error('Auto-tune is unavailable in this libsonare build');
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
   const first = fn({ samples: segments[0], sampleRate, key, strength });
   const shared: AutoTuneKey = { root: first.key.root, mode: first.key.mode };
@@ -625,10 +617,7 @@ export function spectralEditRange(
   if (!['gain', 'attenuate', 'mute', 'heal'].includes(options.mode)) {
     throw new RangeError(`Unsupported spectral edit mode: ${options.mode}`);
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const edit = {
     startSample: resolved.startFrame,
     endSample: resolved.endFrame,
@@ -638,12 +627,13 @@ export function spectralEditRange(
     mode: options.mode,
   };
   const processed = channels.map((channel) =>
-    fn(channel, sampleRate, [edit], { nFft: 2048, hopLength: 512, window: 'hann' }),
+    fn(channel, sampleRate, [edit], {
+      nFft: SPECTRAL_EDIT_FFT_SIZE,
+      hopLength: NOTE_DETECT_HOP,
+      window: 'hann',
+    }),
   );
-  const minFrames = Math.min(...processed.map((segment) => segment.length));
-  return processed.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  return toPlanar(processed);
 }
 
 /**
@@ -697,10 +687,7 @@ export function noteStretchRange(
   if (!Number.isFinite(rate) || rate <= 0) {
     throw new RangeError(`rate must be > 0, got ${rate}`);
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const stretched = channels.map((channel) =>
     fn(channel, sampleRate, {
       onsetSample: resolved.startFrame,
@@ -708,10 +695,7 @@ export function noteStretchRange(
       stretchRatio: 1 / rate,
     }),
   );
-  const minFrames = Math.min(...stretched.map((segment) => segment.length));
-  return stretched.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  return toPlanar(stretched);
 }
 
 /**
@@ -745,10 +729,7 @@ export function noteMoveRange(
   if (!Number.isFinite(shiftFrames)) {
     throw new RangeError(`shiftFrames must be finite, got ${shiftFrames}`);
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const totalFrames = channels[0]?.length ?? 0;
   const noteFrames = resolved.endFrame - resolved.startFrame;
   const targetOnsetSample = Math.min(
@@ -762,10 +743,7 @@ export function noteMoveRange(
       targetOnsetSample,
     }),
   );
-  const minFrames = Math.min(...moved.map((segment) => segment.length));
-  return moved.map((segment) =>
-    segment.length === minFrames ? segment : segment.slice(0, minFrames),
-  );
+  return toPlanar(moved);
 }
 
 /**
@@ -953,10 +931,7 @@ export function analyzeRepairRange(
   if (typeof fn !== 'function') {
     throw new Error('Repair analysis is unavailable in this libsonare build');
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   return fn({
     channels: channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
     sampleRate,
@@ -983,10 +958,7 @@ export function repairStagesRange(
     throw new Error('Repair is unavailable in this libsonare build');
   }
   if (stages.length === 0) throw new RangeError('Choose at least one repair stage');
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot process an empty range');
-  }
+  const resolved = resolveNonEmptyRange(channels, range);
   const out = fn({
     channels: channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
     sampleRate,
@@ -1046,10 +1018,6 @@ export function splitSilenceFrames(
   return silenceSplitMarkers(fn(mono, topDb), mono.length);
 }
 
-/** F0 hop for note detection, matching the pitch-correction contour. */
-export const NOTE_DETECT_HOP = 512;
-/** F0 analysis window, matching the pitch-correction contour. */
-export const NOTE_DETECT_FRAME = 2048;
 /**
  * Pitch step that starts a new note, in cents. A semitone is 100, so the
  * threshold has to sit below that to separate adjacent semitones — and above

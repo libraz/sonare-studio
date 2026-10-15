@@ -1,7 +1,13 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import StepGrid from '@/components/step-sequencer/StepGrid.vue';
+import { formatMessage } from '@/ui/i18n';
 import { createDrumPattern, type StepPattern, withStep } from '@/ui/step-sequencer/pattern';
+
+vi.mock('@/ui/i18n', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/ui/i18n')>();
+  return { ...original, formatMessage: vi.fn(original.formatMessage) };
+});
 
 function mountGrid(pattern: StepPattern, selectedRow = 0) {
   return mount(StepGrid, {
@@ -40,6 +46,14 @@ describe('StepGrid', () => {
     const playing = wrapper.findAll('.cell-playing');
     expect(playing).toHaveLength(pattern.rows.length);
     expect(playing.every((c) => c.attributes('data-step') === '3')).toBe(true);
+  });
+
+  it('re-renders only the cells whose playing state changed', async () => {
+    const pattern = createDrumPattern(16);
+    const wrapper = mountGrid(pattern);
+    vi.mocked(formatMessage).mockClear();
+    await wrapper.setProps({ playingStep: 3 });
+    expect(vi.mocked(formatMessage).mock.calls.length).toBeLessThanOrEqual(pattern.rows.length);
   });
 
   it('renders one cell per row and step', () => {

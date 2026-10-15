@@ -282,3 +282,25 @@ describe('useShortcuts', () => {
     expect(shortcuts.keysFor('edit.undo')).toEqual(['mod+z']);
   });
 });
+
+describe('matchShortcut platform detection', () => {
+  it('reads the platform once per event regardless of binding count', () => {
+    const bindings = resolveBindings({});
+    let reads = 0;
+    const original = Object.getOwnPropertyDescriptor(globalThis.navigator, 'platform');
+    Object.defineProperty(globalThis.navigator, 'platform', {
+      configurable: true,
+      get() {
+        reads += 1;
+        return 'Win32';
+      },
+    });
+    try {
+      matchShortcut(keydown({ key: 'q', ctrlKey: true }), 'editor', bindings);
+    } finally {
+      if (original) Object.defineProperty(globalThis.navigator, 'platform', original);
+      else delete (globalThis.navigator as unknown as Record<string, unknown>).platform;
+    }
+    expect(reads).toBe(1);
+  });
+});

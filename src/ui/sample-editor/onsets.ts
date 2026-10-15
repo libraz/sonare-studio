@@ -1,15 +1,11 @@
 /**
- * Transient-onset helpers for the sample editor: downmix the audio to mono for
- * the detector, turn the detector's onset times into frame positions, and snap
- * or slice a frame to those positions. Pure data module: no DOM, no wasm, no
- * store access (the wasm call itself lives in wasm-ops.ts).
+ * Transient-onset helpers for the sample editor: turn the detector's onset times
+ * into frame positions, and snap or slice a frame to those positions. Pure data
+ * module: no DOM, no wasm, no store access (the wasm call itself lives in
+ * wasm-ops.ts).
  */
 
 import type { SampleRange } from './ops';
-
-// The mono downmix the detectors need is shared with the arrangement-side
-// transient slicing, so it lives outside this UI module.
-export { downmixToMono } from '@/lib/audio-channels';
 
 /**
  * Converts onset times in seconds to sorted, deduplicated frame indices inside

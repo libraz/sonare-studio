@@ -845,6 +845,24 @@ describe('ExportDialog', () => {
     expect(download).not.toHaveBeenCalled();
   });
 
+  it('prints media ids verbatim even when they contain replacement patterns', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await clickExport();
+    control.resolve(
+      makeResult({
+        report: {
+          peakDb: -6,
+          lufs: -14,
+          mediaIssues: [{ kind: 'audio-asset', id: 'take$&1$1', reason: 'missing-or-unreadable' }],
+        },
+      }),
+    );
+    await flushPromises();
+
+    expect(q('.dialog-error')?.textContent ?? '').toContain('audio asset: take$&1$1');
+  });
+
   it('passes WAV dither to the encoder when the dither toggle is enabled', async () => {
     const control = makeRender();
     const encode = vi.fn(() => new Uint8Array([1, 2, 3]));

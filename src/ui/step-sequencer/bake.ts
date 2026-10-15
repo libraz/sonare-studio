@@ -20,9 +20,6 @@ import {
 } from './pattern';
 import { nearestStepForPpq, stepDurationPpq, stepStartPpq } from './timing';
 
-/** MIDI channel used for drum-mode notes (GM percussion, channel 10). */
-export const DRUM_CHANNEL = 9;
-
 /** A generated note, relative to the clip source origin. */
 export interface BakedNote {
   /** MIDI note number. */

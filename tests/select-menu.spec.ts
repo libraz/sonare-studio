@@ -124,4 +124,24 @@ describe('SelectMenu', () => {
     await trigger.trigger('keydown', { key: 'Home' });
     expect(trigger.attributes('aria-activedescendant')).toMatch(/option-1$/);
   });
+
+  it('repositions once per frame and ignores scrolls inside its own list', async () => {
+    const wrapper = mountMenu();
+    const trigger = wrapper.find('button').element;
+    await wrapper.find('button').trigger('click');
+    await vi.runAllTimersAsync();
+    const measure = vi.spyOn(trigger, 'getBoundingClientRect');
+    const list = document.body.querySelector('.select-list') as HTMLElement;
+
+    list.dispatchEvent(new Event('scroll'));
+    await vi.runAllTimersAsync();
+    expect(measure).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event('scroll'));
+    window.dispatchEvent(new Event('scroll'));
+    window.dispatchEvent(new Event('resize'));
+    await vi.runAllTimersAsync();
+    expect(measure).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
 });

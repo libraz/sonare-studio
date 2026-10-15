@@ -22,6 +22,7 @@ import {
 import { euclideanRhythm } from '@/ui/step-sequencer/euclid';
 import { STEP_PARAM_KINDS, type StepParamKind } from '@/ui/step-sequencer/param-lane';
 import {
+  clampVelocity,
   clearedRow,
   createDrumPattern,
   createPitchPattern,
@@ -57,13 +58,6 @@ const props = defineProps<{
   isPlaying?: boolean;
   /** Reactive transport position getter, in timeline PPQ. */
   positionPpq?: () => number;
-}>();
-
-const emit = defineEmits<{
-  /** Fired after a successful Apply with the number of baked notes. */
-  applied: [noteCount: number];
-  /** Fired after Pull with the number of notes captured into the pattern. */
-  pulled: [noteCount: number];
 }>();
 
 const store = useProjectStore();
@@ -157,15 +151,13 @@ const statusType = ref<'info' | 'warning' | 'error'>('info');
 type OverflowPolicy = 'resize' | 'loop' | 'trim';
 const overflowPolicy = ref<OverflowPolicy>('trim');
 
-const activeClip = computed(() => store.clips.find((clip) => clip.id === store.clipId) ?? null);
-
 /**
  * Step under the playhead while the transport rolls through the active clip.
  * Reads the position every frame but only changes value per step, so the grid
  * re-renders at step rate.
  */
 const playingStep = computed<number | null>(() => {
-  const clip = activeClip.value;
+  const clip = store.activeClip;
   if (!props.isPlaying || !props.positionPpq || !clip || clipKind(clip) !== 'midi') return null;
   const sourcePpq = midiTimelinePpqToSource(clip, props.positionPpq());
   if (sourcePpq === null) return null;
@@ -175,13 +167,13 @@ const playingStep = computed<number | null>(() => {
 
 /** True when the active clip exists and holds MIDI content. */
 const canTargetClip = computed(() => {
-  const clip = activeClip.value;
+  const clip = store.activeClip;
   return clip !== null && clipKind(clip) === 'midi';
 });
 
 /** Frozen content remains available to Pull, but Apply cannot mutate it. */
 const contentReadOnly = computed(() => {
-  const clip = activeClip.value;
+  const clip = store.activeClip;
   return (
     clip !== null && store.tracks.find((track) => track.id === clip.trackId)?.frozen !== undefined
   );
@@ -300,7 +292,7 @@ function onSetStep(rowIndex: number, stepIndex: number, active: boolean): void {
 function onSetStepVelocity(rowIndex: number, stepIndex: number, velocity: number): void {
   const current = pattern.value.rows[rowIndex]?.steps[stepIndex];
   if (!current) return;
-  const next = Math.min(127, Math.max(1, Math.round(velocity)));
+  const next = clampVelocity(velocity);
   if (current.velocity !== next) {
     setPattern(withStep(pattern.value, rowIndex, stepIndex, { velocity: next }));
   }
@@ -367,7 +359,7 @@ function applyFill(): void {
 // --- Bake / unbake -----------------------------------------------------------
 
 async function applyToClip(): Promise<void> {
-  const clip = activeClip.value;
+  const clip = store.activeClip;
   if (!clip || !canTargetClip.value) {
     status.value = t.value.shell.stepSequencer.status.noActiveApply;
     statusType.value = 'warning';
@@ -438,11 +430,10 @@ async function applyToClip(): Promise<void> {
     name: clip.name,
   });
   statusType.value = 'info';
-  emit('applied', baked.length);
 }
 
 function pullFromClip(): void {
-  const clip = activeClip.value;
+  const clip = store.activeClip;
   if (!clip || !canTargetClip.value) {
     status.value = t.value.shell.stepSequencer.status.noActivePull;
     statusType.value = 'warning';
@@ -471,7 +462,6 @@ function pullFromClip(): void {
     });
     statusType.value = 'info';
   }
-  emit('pulled', captured);
 }
 
 defineExpose({

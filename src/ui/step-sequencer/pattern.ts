@@ -10,6 +10,9 @@
 
 import { DEFAULT_DRUM_KIT, pitchName } from './drum-map';
 
+/** MIDI channel used for drum-mode notes (GM percussion, channel 10). */
+export const DRUM_CHANNEL = 9;
+
 /** Step grid rates relative to a quarter note (T = triplet). */
 export type StepResolution = '1/8' | '1/16' | '1/8T' | '1/16T';
 
@@ -127,7 +130,7 @@ export function createDrumPattern(
 ): StepPattern {
   return {
     mode: 'drum',
-    channel: 9,
+    channel: DRUM_CHANNEL,
     stepCount,
     resolution,
     swing: 0,
@@ -205,12 +208,6 @@ export function withStepCount(pattern: StepPattern, stepCount: StepCount): StepP
       ),
     })),
   };
-}
-
-/** Changes the step rate; steps keep their indices (same steps, new tempo grid). */
-export function withResolution(pattern: StepPattern, resolution: StepResolution): StepPattern {
-  if (resolution === pattern.resolution) return pattern;
-  return { ...pattern, resolution };
 }
 
 /** Sets the swing amount, clamped to 0-100 percent. */

@@ -18,7 +18,8 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
-import { closeContextMenu, isItemDisabled, useContextMenuState } from '@/ui/menu/context-menu';
+import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
+import { isItemDisabled } from '@/ui/menu/menu-items';
 import { dbToFaderPosition } from '@/ui/mixer/db-scale';
 import { vTooltip } from '@/ui/tooltip';
 import { selectOption, selectValueText } from './helpers/select-menu';

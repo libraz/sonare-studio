@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { StepPattern } from '@/ui/step-sequencer/pattern';
+import { clampVelocity, type StepPattern } from '@/ui/step-sequencer/pattern';
 import { isTripletResolution } from '@/ui/step-sequencer/timing';
+import StepCell from './StepCell.vue';
 
 /**
  * The step grid: one row per lane, one cell per step. Left-click toggles a
@@ -107,10 +108,6 @@ function onPointerUp(): void {
   paint = null;
 }
 
-function fillHeight(velocity: number): string {
-  return `${Math.round((velocity / 127) * 100)}%`;
-}
-
 function setActiveCell(row: number, step: number, focus = false): void {
   activeRow.value = Math.min(props.pattern.rows.length - 1, Math.max(0, row));
   activeStep.value = Math.min(props.pattern.stepCount - 1, Math.max(0, step));
@@ -127,6 +124,16 @@ function setActiveCell(row: number, step: number, focus = false): void {
   }
 }
 
+function onGridFocusIn(event: FocusEvent): void {
+  const cell = cellFromElement(event.target as Element | null);
+  if (cell) onCellFocus(cell.row, cell.step);
+}
+
+function onGridKeyDown(event: KeyboardEvent): void {
+  const cell = cellFromElement(event.target as Element | null);
+  if (cell) onCellKeyDown(event, cell.row, cell.step);
+}
+
 function onCellFocus(row: number, step: number): void {
   if (row === activeRow.value && step === activeStep.value) return;
   setActiveCell(row, step);
@@ -138,7 +145,7 @@ function onCellKeyDown(event: KeyboardEvent, row: number, step: number): void {
     if (!current) return;
     event.preventDefault();
     const delta = event.key === 'ArrowUp' ? 1 : -1;
-    const velocity = Math.min(127, Math.max(1, current.velocity + delta * (event.altKey ? 8 : 1)));
+    const velocity = clampVelocity(current.velocity + delta * (event.altKey ? 8 : 1));
     emit('set-velocity', row, step, velocity);
     liveStatus.value = formatMessage(t.value.shell.stepSequencer.accessibility.velocityChanged, {
       velocity,
@@ -181,10 +188,7 @@ function onCellKeyDown(event: KeyboardEvent, row: number, step: number): void {
 }
 
 function onVelocityInput(event: Event): void {
-  const velocity = Math.min(
-    127,
-    Math.max(1, Math.round(Number((event.target as HTMLInputElement).value))),
-  );
+  const velocity = clampVelocity(Number((event.target as HTMLInputElement).value));
   emit('set-velocity', activeRow.value, activeStep.value, velocity);
   liveStatus.value = formatMessage(t.value.shell.stepSequencer.accessibility.velocityChanged, {
     velocity,
@@ -210,6 +214,8 @@ watch(
       @pointermove="onPointerMove"
       @pointerup="onPointerUp"
       @pointercancel="onPointerUp"
+      @focusin="onGridFocusIn"
+      @keydown="onGridKeyDown"
       @contextmenu.prevent
     >
       <div
@@ -233,41 +239,17 @@ watch(
           </svg>
         </button>
         <div class="row-cells" role="presentation">
-          <button
+          <StepCell
             v-for="(step, stepIndex) in row.steps"
             :key="stepIndex"
-            type="button"
-            role="gridcell"
-            class="grid-cell"
-            :class="{
-              'cell-active': step.active,
-              'cell-accent': stepIndex % groupSize === 0,
-              'cell-playing': stepIndex === props.playingStep,
-            }"
-            :data-row="rowIndex"
-            :data-step="stepIndex"
-            :data-step-grid-active="rowIndex === activeRow && stepIndex === activeStep"
-            :tabindex="rowIndex === activeRow && stepIndex === activeStep ? 0 : -1"
-            :aria-selected="rowIndex === activeRow && stepIndex === activeStep"
-            :aria-label="
-              formatMessage(t.shell.stepSequencer.accessibility.step, {
-                row: row.name,
-                step: stepIndex + 1,
-                state: step.active
-                  ? t.shell.stepSequencer.accessibility.active
-                  : t.shell.stepSequencer.accessibility.inactive,
-                velocity: step.velocity,
-              })
-            "
-            @focus="onCellFocus(rowIndex, stepIndex)"
-            @keydown="onCellKeyDown($event, rowIndex, stepIndex)"
-          >
-            <span
-              v-if="step.active"
-              class="cell-fill"
-              :style="{ height: fillHeight(step.velocity) }"
-            />
-          </button>
+            :step="step"
+            :row-name="row.name"
+            :row-index="rowIndex"
+            :step-index="stepIndex"
+            :accent="stepIndex % groupSize === 0"
+            :playing="stepIndex === props.playingStep"
+            :current="rowIndex === activeRow && stepIndex === activeStep"
+          />
         </div>
       </div>
     </div>
@@ -396,7 +378,7 @@ watch(
   opacity: 0.45;
 }
 
-.cell-fill {
+.grid-cell :deep(.cell-fill) {
   position: absolute;
   left: 0;
   right: 0;

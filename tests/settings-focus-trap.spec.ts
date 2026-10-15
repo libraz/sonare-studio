@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createFocusTrap, getFocusableElements, wrapTabFocus } from '@/ui/settings/focus-trap';
+import { getFocusableElements, wrapTabFocus } from '@/ui/settings/focus-trap';
 
 /** Creates one element with attributes and appends it to a parent. */
 function el(
@@ -121,66 +121,5 @@ describe('wrapTabFocus', () => {
     expect(wrapTabFocus(event, container)).toBe(true);
     expect(event.defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(container);
-  });
-});
-
-describe('createFocusTrap', () => {
-  it('focuses the first focusable child on activate', () => {
-    const container = makeContainer();
-    el(container, 'button', { id: 'a' });
-    el(container, 'button', { id: 'b' });
-    const trap = createFocusTrap(container);
-    expect(trap.isActive()).toBe(false);
-    trap.activate();
-    expect(trap.isActive()).toBe(true);
-    expect(document.activeElement?.id).toBe('a');
-    trap.deactivate();
-  });
-
-  it('falls back to the container itself when empty', () => {
-    const container = makeContainer();
-    el(container, 'p');
-    const trap = createFocusTrap(container);
-    trap.activate();
-    expect(document.activeElement).toBe(container);
-    trap.deactivate();
-  });
-
-  it('wraps Tab while active', () => {
-    const container = makeContainer();
-    el(container, 'button', { id: 'a' });
-    const last = el(container, 'button', { id: 'b' });
-    const trap = createFocusTrap(container);
-    trap.activate();
-    last.focus();
-    container.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Tab', cancelable: true, bubbles: true }),
-    );
-    expect(document.activeElement?.id).toBe('a');
-    trap.deactivate();
-  });
-
-  it('restores focus to the previously focused element on deactivate', () => {
-    const trigger = el(document.body, 'button', { id: 'trigger' });
-    trigger.focus();
-    const container = makeContainer();
-    el(container, 'button', { id: 'a' });
-    const trap = createFocusTrap(container);
-    trap.activate();
-    expect(document.activeElement?.id).toBe('a');
-    trap.deactivate();
-    expect(trap.isActive()).toBe(false);
-    expect(document.activeElement?.id).toBe('trigger');
-  });
-
-  it('activate and deactivate are idempotent', () => {
-    const container = makeContainer();
-    el(container, 'button', { id: 'a' });
-    const trap = createFocusTrap(container);
-    trap.activate();
-    trap.activate();
-    trap.deactivate();
-    trap.deactivate();
-    expect(trap.isActive()).toBe(false);
   });
 });

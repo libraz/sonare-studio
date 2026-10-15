@@ -30,6 +30,7 @@ import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { formatChannels, formatSampleRate } from '@/ui/media/asset-list';
 import {
   type AssetVersion,
   createHistory,
@@ -310,9 +311,7 @@ function clearSelection(): void {
 const assetInfo = computed(() => {
   const meta = asset.value?.meta;
   if (!meta) return '';
-  const channels =
-    meta.numChannels === 1 ? 'mono' : meta.numChannels === 2 ? 'stereo' : `${meta.numChannels} ch`;
-  return `${channels} · ${meta.sampleRate} Hz`;
+  return `${formatChannels(meta.numChannels)} · ${formatSampleRate(meta.sampleRate)}`;
 });
 
 // --- Loading ---------------------------------------------------------------

@@ -56,6 +56,27 @@ export interface PreviewSource {
   sampleRate: number;
 }
 
+function validPreviewSource(source: PreviewSource): boolean {
+  const frames = source.channels[0]?.length ?? 0;
+  return source.channels.length > 0 && frames > 0 && source.sampleRate > 0;
+}
+
+/** Copies planar channels into a new AudioBuffer so wasm- or SharedArrayBuffer-backed input is accepted. */
+function copyPreviewBuffer(context: AudioContext, source: PreviewSource): AudioBuffer {
+  const frames = source.channels[0]?.length ?? 0;
+  const buffer = context.createBuffer(source.channels.length, frames, source.sampleRate);
+  for (let c = 0; c < source.channels.length; c++) {
+    buffer.copyToChannel(new Float32Array(source.channels[c]), c);
+  }
+  return buffer;
+}
+
+/** Context clock in seconds, 0 when the host reports a non-finite time. */
+function audioTime(ctx: AudioContext): number {
+  const value = ctx.currentTime;
+  return Number.isFinite(value) ? value : 0;
+}
+
 /** Creates the AudioContext used for preview playback (called lazily once). */
 export type PreviewContextFactory = () => AudioContext;
 
@@ -139,11 +160,6 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
     options.onChange?.(null);
   }
 
-  function audioTime(ctx: AudioContext): number {
-    const value = ctx.currentTime;
-    return Number.isFinite(value) ? value : 0;
-  }
-
   function position(): number {
     const entry = current;
     if (!entry || !context) return 0;
@@ -185,16 +201,10 @@ export function createAudioPreview(options: AudioPreviewOptions = {}): AudioPrev
 
   function play(id: string, source: PreviewSource, offsetSeconds = 0): void {
     if (disposed) return;
-    const frames = source.channels[0]?.length ?? 0;
-    if (source.channels.length === 0 || frames === 0 || !(source.sampleRate > 0)) return;
+    if (!validPreviewSource(source)) return;
     const ctx = ensureContext();
     stopSilently();
-    const buffer = ctx.createBuffer(source.channels.length, frames, source.sampleRate);
-    for (let c = 0; c < source.channels.length; c++) {
-      // Copy so wasm- or SharedArrayBuffer-backed channels are accepted.
-      buffer.copyToChannel(new Float32Array(source.channels[c]), c);
-    }
-    createSource(id, buffer, offsetSeconds, true);
+    createSource(id, copyPreviewBuffer(ctx, source), offsetSeconds, true);
   }
 
   function seek(positionSeconds: number): void {
@@ -293,19 +303,8 @@ export interface ABAudioPreview {
 /** Default short A/B crossfade, long enough to avoid a hard discontinuity. */
 export const DEFAULT_AB_PREVIEW_RAMP_SECONDS = 0.015;
 
-function validPreviewSource(source: PreviewSource): boolean {
-  const frames = source.channels[0]?.length ?? 0;
-  return source.channels.length > 0 && frames > 0 && source.sampleRate > 0;
-}
-
-function copyPreviewBuffer(context: AudioContext, source: PreviewSource): AudioBuffer {
-  const frames = source.channels[0]?.length ?? 0;
-  const buffer = context.createBuffer(source.channels.length, frames, source.sampleRate);
-  for (let c = 0; c < source.channels.length; c++) {
-    buffer.copyToChannel(new Float32Array(source.channels[c]), c);
-  }
-  return buffer;
-}
+/** Lead time before an A/B start so both gain envelopes are scheduled ahead of the sources. */
+const AB_PREVIEW_START_LEAD_SECONDS = 0.01;
 
 /** Schedules a short linear gain ramp where the host exposes AudioParam timing. */
 function schedulePreviewGain(node: GainNode, target: number, now: number, duration: number): void {
@@ -387,11 +386,6 @@ export function createABAudioPreview(options: ABAudioPreviewOptions = {}): ABAud
     return context;
   }
 
-  function audioTime(ctx: AudioContext): number {
-    const value = ctx.currentTime;
-    return Number.isFinite(value) ? value : 0;
-  }
-
   function selectedTarget(variant: PreviewVariant): number {
     return variant === selectedVariant ? gainTargets[variant] : 0;
   }
@@ -456,7 +450,7 @@ export function createABAudioPreview(options: ABAudioPreviewOptions = {}): ABAud
       Math.min(offsetSeconds, Math.max(durations.processed, durations.bypassed)),
     );
     const now = audioTime(ctx);
-    const when = now + 0.01;
+    const when = now + AB_PREVIEW_START_LEAD_SECONDS;
     const nodes = {
       processed: ctx.createBufferSource(),
       bypassed: ctx.createBufferSource(),

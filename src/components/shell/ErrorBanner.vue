@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, watch } from 'vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
 import { useI18n } from '@/ui/i18n';
 
 /**
@@ -59,7 +60,7 @@ onBeforeUnmount(clearDismissTimer);
         v-tooltip="t.shell.dismissError"
         @click="emit('dismiss')"
       >
-        ✕
+        <CloseIcon />
       </button>
     </p>
   </Transition>

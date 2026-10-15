@@ -6,7 +6,6 @@ import {
   ccToRange,
   clampCcValue,
   formatMidiCcBinding,
-  gainDbToCc,
   MIDI_FADER_MAX_DB,
   MIDI_FADER_MIN_DB,
   MIDI_LEARN_TRANSPORT_ACTIONS,
@@ -32,7 +31,6 @@ import {
   parseMidiLearnTrackStateTargetId,
   parseMidiLearnTransportTargetId,
   parseMidiLearnVcaTargetId,
-  rangeToCc,
   sanitizeMidiCcBindings,
   withMidiLearnTargetScope,
 } from '@/ui/midi/midi-learn';
@@ -54,13 +52,6 @@ describe('gain mapping', () => {
       MIDI_FADER_MIN_DB + (64 / 127) * (MIDI_FADER_MAX_DB - MIDI_FADER_MIN_DB),
       5,
     );
-  });
-
-  it('round-trips dB back to the originating CC value', () => {
-    for (const cc of [0, 32, 64, 100, 127]) {
-      expect(gainDbToCc(ccToGainDb(cc))).toBe(cc);
-    }
-    expect(gainDbToCc(Number.NaN)).toBe(0);
   });
 });
 
@@ -327,14 +318,6 @@ describe('range mapping', () => {
     expect(ccToRange(0, -60, 0)).toBe(-60);
     expect(ccToRange(127, -60, 0)).toBe(0);
     expect(ccToRange(64, 0, 1)).toBeCloseTo(64 / 127, 5);
-  });
-
-  it('round-trips a value back to its CC and handles degenerate ranges', () => {
-    for (const cc of [0, 32, 64, 100, 127]) {
-      expect(rangeToCc(ccToRange(cc, -24, 24), -24, 24)).toBe(cc);
-    }
-    expect(rangeToCc(5, 10, 10)).toBe(0);
-    expect(rangeToCc(Number.NaN, 0, 1)).toBe(0);
   });
 
   it('maps a CC value logarithmically across a positive range', () => {

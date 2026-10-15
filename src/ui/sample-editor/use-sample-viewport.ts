@@ -9,7 +9,7 @@
  */
 
 import { markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
-import { setupCanvas } from '@/components/piano-roll/theme';
+import { getCanvasContext } from '@/components/piano-roll/theme';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { CANVAS_FONT_SIZE_PX, canvasFont, colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 import { type ChannelPeaks, computePeaks } from '@/ui/waveform/peaks';
@@ -120,6 +120,14 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
   let drawQueued = false;
   let drawFrame: number | null = null;
   const visiblePeaks = new VisiblePeaksCache();
+  /** Backing-store size last applied to the canvas; resizing clears and reallocates it. */
+  let sizedKey = '';
+  let sizedCanvas: HTMLCanvasElement | null = null;
+  /** Offscreen waveform/onset/note layer, reused while only the selection changes. */
+  let baseLayer: HTMLCanvasElement | null = null;
+  let baseLayerKey = '';
+  /** Bumped when asset, onsets or notes change so the cached layer is rebuilt. */
+  let baseVersion = 0;
 
   function scheduleDraw(): void {
     if (drawQueued) return;
@@ -140,8 +148,51 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     const lanes = Math.max(1, loaded?.channels.length ?? 1);
     const heightPx = lanes * LANE_HEIGHT_PX;
     canvas.style.height = `${heightPx}px`;
-    const ctx = setupCanvas(canvas, widthPx, heightPx);
+    const dpr = globalThis.devicePixelRatio || 1;
+    const nextSizedKey = `${widthPx}x${heightPx}@${dpr}`;
+    if (sizedCanvas !== canvas || sizedKey !== nextSizedKey) {
+      canvas.width = Math.max(1, Math.round(widthPx * dpr));
+      canvas.height = Math.max(1, Math.round(heightPx * dpr));
+      sizedCanvas = canvas;
+      sizedKey = nextSizedKey;
+    }
+    const ctx = getCanvasContext(canvas);
     if (!ctx) return;
+
+    const baseKey = `${nextSizedKey}:${baseVersion}:${view.startFrame}:${view.endFrame}`;
+    if (!baseLayer || baseLayerKey !== baseKey) {
+      baseLayer ??= document.createElement('canvas');
+      baseLayer.width = canvas.width;
+      baseLayer.height = canvas.height;
+      const layerCtx = getCanvasContext(baseLayer);
+      if (!layerCtx) return;
+      drawBase(layerCtx, view, loaded, widthPx, heightPx);
+      baseLayerKey = baseKey;
+    }
+    ctx.drawImage(baseLayer, 0, 0, widthPx, heightPx);
+
+    const range = selRange();
+    if (range) {
+      const x0 = Math.max(0, view.frameToX(range.startFrame));
+      const x1 = Math.min(widthPx, view.frameToX(range.endFrame));
+      if (x1 > x0) {
+        ctx.fillStyle = COLORS.selectionFill;
+        ctx.fillRect(x0, 0, x1 - x0, heightPx);
+        ctx.fillStyle = COLORS.selectionEdge;
+        ctx.fillRect(Math.floor(x0), 0, 1, heightPx);
+        ctx.fillRect(Math.floor(x1) - 1, 0, 1, heightPx);
+      }
+    }
+  }
+
+  /** Paints background, waveform, onset markers and note labels (everything but the selection). */
+  function drawBase(
+    ctx: CanvasRenderingContext2D,
+    view: SampleViewport,
+    loaded: LoadedAudioAsset | null,
+    widthPx: number,
+    heightPx: number,
+  ): void {
     ctx.fillStyle = COLORS.background;
     ctx.fillRect(0, 0, widthPx, heightPx);
     if (!loaded || loaded.meta.numFrames === 0) return;
@@ -201,22 +252,12 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
         ctx.fillText(formatNote(note.midi), Math.floor(x) + 2, 2);
       }
     }
-
-    const range = selRange();
-    if (range) {
-      const x0 = Math.max(0, view.frameToX(range.startFrame));
-      const x1 = Math.min(widthPx, view.frameToX(range.endFrame));
-      if (x1 > x0) {
-        ctx.fillStyle = COLORS.selectionFill;
-        ctx.fillRect(x0, 0, x1 - x0, heightPx);
-        ctx.fillStyle = COLORS.selectionEdge;
-        ctx.fillRect(Math.floor(x0), 0, 1, heightPx);
-        ctx.fillRect(Math.floor(x1) - 1, 0, 1, heightPx);
-      }
-    }
   }
 
   watch([selection, asset, onsetFrames, noteRegions], scheduleDraw);
+  watch([asset, onsetFrames, noteRegions], () => {
+    baseVersion += 1;
+  });
   watch(asset, () => visiblePeaks.clear());
 
   /** Current viewport instance (null before the first load). */
@@ -293,6 +334,7 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
     resizeObserver?.disconnect();
     resizeObserver = null;
     visiblePeaks.clear();
+    baseLayer = null;
   });
 
   return {

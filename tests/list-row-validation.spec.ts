@@ -6,7 +6,6 @@ import {
   mergeTempoSegments,
   mergeTimeSignatureSegments,
   type RowIssueStrings,
-  sortSegments,
   validateTempoRows,
   validateTimeSignatureRows,
 } from '@/components/lists/row-validation';
@@ -139,18 +138,6 @@ describe('validateTimeSignatureRows', () => {
       { startPpq: 0, numerator: 3, denominator: 4 },
     ]);
     expect(issues).toEqual([{ row: 1, issue: { kind: 'positions-not-ascending' } }]);
-  });
-});
-
-describe('sortSegments', () => {
-  it('returns a sorted copy without mutating the input', () => {
-    const rows = [
-      { startPpq: 8, bpm: 100 },
-      { startPpq: 0, bpm: 120 },
-    ];
-    const sorted = sortSegments(rows);
-    expect(sorted.map((r) => r.startPpq)).toEqual([0, 8]);
-    expect(rows[0].startPpq).toBe(8);
   });
 });
 

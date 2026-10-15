@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MidiCc14BitTracker } from '@/ui/midi/midi-cc-input';
+import { midiCcMessageValue } from '@/ui/midi/midi-learn';
 
 describe('MidiCc14BitTracker', () => {
   it('emits the MSB controller and combined value for 14-bit CC pairs', () => {
@@ -8,7 +9,6 @@ describe('MidiCc14BitTracker', () => {
       channel: 0,
       controller: 1,
       value: 64,
-      value14: 8192,
     });
     expect(tracker.decode(0, 33, 5)).toEqual({
       channel: 0,
@@ -16,6 +16,20 @@ describe('MidiCc14BitTracker', () => {
       value: 64,
       value14: 8197,
     });
+  });
+
+  it('leaves a lone MSB at full scale for the 7-bit mapping', () => {
+    const tracker = new MidiCc14BitTracker();
+    const msb = tracker.decode(0, 1, 127);
+    expect(msb.value14).toBeUndefined();
+    expect(midiCcMessageValue(msb)).toBe(127);
+    expect(midiCcMessageValue(tracker.decode(0, 33, 127))).toBe(127);
+    const data = (() => {
+      tracker.decode(0, 101, 0);
+      tracker.decode(0, 100, 2);
+      return tracker.decode(0, 6, 127);
+    })();
+    expect(midiCcMessageValue(data)).toBe(127);
   });
 
   it('keeps unrelated 7-bit controllers unchanged', () => {
@@ -38,7 +52,6 @@ describe('MidiCc14BitTracker', () => {
       channel: 0,
       controller: 6,
       value: 64,
-      value14: 8192,
       kind: 'rpn',
       parameter: 2,
     });
@@ -60,7 +73,6 @@ describe('MidiCc14BitTracker', () => {
       channel: 2,
       controller: 6,
       value: 10,
-      value14: 1280,
       kind: 'nrpn',
       parameter: 140,
     });
@@ -70,7 +82,6 @@ describe('MidiCc14BitTracker', () => {
     expect(tracker.decode(2, 6, 20)).toMatchObject({
       kind: 'rpn',
       parameter: 0,
-      value14: 2560,
     });
 
     expect(tracker.decode(3, 6, 20)).toEqual({ channel: 3, controller: 6, value: 20 });

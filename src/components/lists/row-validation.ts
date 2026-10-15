@@ -9,6 +9,7 @@
  */
 
 import type { TempoSegment, TimeSignatureSegment } from '@/project/types';
+import { formatMessage } from '@/ui/i18n';
 
 /** Lowest tempo the editor accepts, in BPM. */
 export const MIN_BPM = 20;
@@ -67,19 +68,15 @@ export function formatRowIssue(issue: RowIssueCode, strings: RowIssueStrings): s
     case 'tempo-map-empty':
       return strings.tempoMapEmpty;
     case 'bpm-out-of-range':
-      return strings.bpmOutOfRange
-        .replace('{min}', String(issue.min))
-        .replace('{max}', String(issue.max));
+      return formatMessage(strings.bpmOutOfRange, { min: issue.min, max: issue.max });
     case 'ramp-bpm-out-of-range':
-      return strings.rampBpmOutOfRange
-        .replace('{min}', String(issue.min))
-        .replace('{max}', String(issue.max));
+      return formatMessage(strings.rampBpmOutOfRange, { min: issue.min, max: issue.max });
     case 'time-signature-map-empty':
       return strings.timeSignatureMapEmpty;
     case 'beats-per-bar-out-of-range':
-      return strings.beatsPerBarOutOfRange.replace('{max}', String(issue.max));
+      return formatMessage(strings.beatsPerBarOutOfRange, { max: issue.max });
     case 'beat-unit-invalid':
-      return strings.beatUnitInvalid.replace('{allowed}', issue.allowed.join(', '));
+      return formatMessage(strings.beatUnitInvalid, { allowed: issue.allowed.join(', ') });
   }
 }
 
@@ -167,11 +164,6 @@ export function validateTimeSignatureRows(rows: ReadonlyArray<TimeSignatureSegme
     }
   });
   return issues;
-}
-
-/** Returns a copy of the rows sorted by ascending start position (stable). */
-export function sortSegments<T extends { startPpq: number }>(rows: ReadonlyArray<T>): T[] {
-  return [...rows].sort((a, b) => a.startPpq - b.startPpq);
 }
 
 /**

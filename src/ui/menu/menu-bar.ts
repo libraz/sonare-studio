@@ -10,6 +10,8 @@
  * anchored to their bar triggers and support keyboard menu-to-menu traversal.
  */
 
+import { isItemDisabled, trimStraySeparators } from './menu-items';
+
 /** A single row in a menu-bar dropdown. */
 export interface MenuBarItem {
   /** Stable key within the menu. */
@@ -46,11 +48,6 @@ export interface MenuBarMenu {
   items: MenuBarItem[];
 }
 
-/** True when the item is greyed out, by flag or by a stated reason. */
-export function isItemDisabled(item: MenuBarItem): boolean {
-  return Boolean(item.disabled || item.disabledReason);
-}
-
 /** True when an item can receive keyboard focus / be activated. */
 export function isNavigable(item: MenuBarItem): boolean {
   return !item.separator && !item.heading && !isItemDisabled(item) && Boolean(item.run);
@@ -62,22 +59,5 @@ export function isNavigable(item: MenuBarItem): boolean {
  * item, so a menu never shows a stray line or dangling heading.
  */
 export function cleanMenuItems(items: readonly MenuBarItem[]): MenuBarItem[] {
-  const out: MenuBarItem[] = [];
-  for (const item of items) {
-    if (item.separator) {
-      if (out.length === 0 || out[out.length - 1].separator || out[out.length - 1].heading) {
-        continue;
-      }
-      out.push(item);
-    } else {
-      out.push(item);
-    }
-  }
-  // Trim trailing separators, and headings with nothing beneath them.
-  while (out.length > 0) {
-    const last = out[out.length - 1];
-    if (last.separator || last.heading) out.pop();
-    else break;
-  }
-  return out;
+  return trimStraySeparators(items);
 }

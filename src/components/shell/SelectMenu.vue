@@ -87,6 +87,24 @@ function reposition(): void {
   };
 }
 
+let repositionFrame: number | null = null;
+
+/** Coalesces viewport changes into one reposition per frame, ignoring the list's own scroll. */
+function scheduleReposition(event: Event): void {
+  if (event.target instanceof Node && listRef.value?.contains(event.target)) return;
+  if (repositionFrame !== null) return;
+  repositionFrame = requestAnimationFrame(() => {
+    repositionFrame = null;
+    reposition();
+  });
+}
+
+function cancelScheduledReposition(): void {
+  if (repositionFrame === null) return;
+  cancelAnimationFrame(repositionFrame);
+  repositionFrame = null;
+}
+
 function openMenu(): void {
   if (isDisabled.value) return;
   open.value = true;
@@ -224,19 +242,21 @@ function onDocumentPointerDown(event: PointerEvent): void {
 watch(open, (isOpen) => {
   if (isOpen) {
     document.addEventListener('pointerdown', onDocumentPointerDown, true);
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', scheduleReposition);
+    window.addEventListener('scroll', scheduleReposition, true);
   } else {
     document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-    window.removeEventListener('resize', reposition);
-    window.removeEventListener('scroll', reposition, true);
+    window.removeEventListener('resize', scheduleReposition);
+    window.removeEventListener('scroll', scheduleReposition, true);
+    cancelScheduledReposition();
   }
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-  window.removeEventListener('resize', reposition);
-  window.removeEventListener('scroll', reposition, true);
+  window.removeEventListener('resize', scheduleReposition);
+  window.removeEventListener('scroll', scheduleReposition, true);
+  cancelScheduledReposition();
   clearTimeout(typeaheadTimer);
 });
 </script>

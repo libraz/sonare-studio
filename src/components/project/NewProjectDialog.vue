@@ -46,17 +46,6 @@ const TEMPLATE_MESSAGE_KEYS: Record<
   transcription: 'transcription',
 };
 
-/** Display metadata per template. */
-const templateInfo = computed<Record<TemplateName, { label: string; description: string }>>(() => ({
-  empty: t.value.dialogs.newProject.templateInfo.empty,
-  band: t.value.dialogs.newProject.templateInfo.band,
-  jpop: t.value.dialogs.newProject.templateInfo.jpop,
-  'baroque-organ': t.value.dialogs.newProject.templateInfo.baroqueOrgan,
-  'gm-orchestra': t.value.dialogs.newProject.templateInfo.gmOrchestra,
-  programming: t.value.dialogs.newProject.templateInfo.programming,
-  transcription: t.value.dialogs.newProject.templateInfo.transcription,
-}));
-
 const selected = ref<TemplateName>('empty');
 
 /** Stable option id used by the focused listbox's active-descendant relation. */
@@ -86,8 +75,8 @@ function moveSelection(delta: number): void {
 }
 
 /**
- * Template-list navigation and confirm; the modal shell owns Tab and Escape.
- * Handled keys stop here so the modal-level listener does not repeat them.
+ * Template-list navigation and confirm, listening on the modal so it also
+ * receives keys from the list; the modal shell owns Tab and Escape.
  */
 function onKeydown(event: KeyboardEvent): void {
   switch (event.key) {
@@ -111,12 +100,9 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-function templateLabel(name: TemplateName): string {
-  return t.value.dialogs.newProject.templateInfo[TEMPLATE_MESSAGE_KEYS[name]].label;
-}
-
-function templateDescription(name: TemplateName): string {
-  return templateInfo.value[name].description;
+/** Localized label and description of a template. */
+function templateInfo(name: TemplateName): { label: string; description: string } {
+  return t.value.dialogs.newProject.templateInfo[TEMPLATE_MESSAGE_KEYS[name]];
 }
 </script>
 
@@ -136,7 +122,6 @@ function templateDescription(name: TemplateName): string {
           tabindex="0"
           :aria-label="t.dialogs.newProject.templates"
           :aria-activedescendant="activeTemplateId"
-          @keydown="onKeydown"
         >
           <li
             v-for="name in TEMPLATE_NAMES"
@@ -149,8 +134,8 @@ function templateDescription(name: TemplateName): string {
             @click="selected = name"
             @dblclick="onCreate"
           >
-            <span class="template-label">{{ templateLabel(name) }}</span>
-            <span class="template-description">{{ templateDescription(name) }}</span>
+            <span class="template-label">{{ templateInfo(name).label }}</span>
+            <span class="template-description">{{ templateInfo(name).description }}</span>
           </li>
         </ul>
         <div class="template-preview" :aria-label="t.dialogs.newProject.templateTracks">

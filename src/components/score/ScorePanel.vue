@@ -555,13 +555,9 @@ function onAnnotateClick(event: MouseEvent, ids: number[]): void {
 function onAnnotateStaffDrag(ids: number[], staff: 1 | 2): void {
   const id = ids[0];
   if (id === undefined) return;
-  try {
-    setNoteAnnotation(store.clipId, id, { staffOverride: staff });
-    notation.setError('');
+  if (tryScoreEdit(() => setNoteAnnotation(store.clipId, id, { staffOverride: staff }))) {
     closePalette();
     void notation.transcribe();
-  } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -599,17 +595,24 @@ function onScoreKeyDown(event: KeyboardEvent): void {
   });
 }
 
+/** Runs a score edit, clearing the panel error on success and surfacing a thrown one. */
+function tryScoreEdit(edit: () => void): boolean {
+  try {
+    edit();
+    notation.setError('');
+    return true;
+  } catch (err) {
+    notation.setError(err instanceof Error ? err.message : String(err));
+    return false;
+  }
+}
+
 /** Applies a field-wise annotation edit to the palette's target note. */
 function applyAnnotation(update: NoteAnnotationUpdate): void {
   const id = annotationNoteId.value;
   const clipId = annotationClipId.value;
   if (id === null || clipId === null) return;
-  try {
-    setNoteAnnotation(clipId, id, update);
-    notation.setError('');
-  } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
-  }
+  tryScoreEdit(() => setNoteAnnotation(clipId, id, update));
 }
 
 /** Removes every annotation of the target note. */
@@ -617,12 +620,7 @@ function clearAnnotation(): void {
   const id = annotationNoteId.value;
   const clipId = annotationClipId.value;
   if (id === null || clipId === null) return;
-  try {
-    clearNoteAnnotation(clipId, id);
-    notation.setError('');
-  } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
-  }
+  tryScoreEdit(() => clearNoteAnnotation(clipId, id));
 }
 
 /** Closes the floating palette and disarms any pending slur. */
@@ -636,12 +634,7 @@ function closePalette(): void {
 
 /** Layout popover change handler for the display transpose select. */
 function onTransposeChange(value: number): void {
-  try {
-    setDisplayTranspose(value);
-    notation.setError('');
-  } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
-  }
+  tryScoreEdit(() => setDisplayTranspose(value));
 }
 
 function markerEditPpq(): number {
@@ -657,7 +650,7 @@ function nearestLyricOnset(ppq: number): number {
 }
 
 function addLyricMarker(): void {
-  try {
+  const edited = tryScoreEdit(() => {
     const name = scoreLyricMarkerName(lyricInput.value, {
       verse: lyricVerseInput.value,
       syllabic: lyricSyllabicInput.value,
@@ -665,18 +658,15 @@ function addLyricMarker(): void {
     });
     setMarker(null, nearestLyricOnset(markerEditPpq()), name);
     lyricInput.value = '';
-    notation.setError('');
-    void notation.transcribe();
-  } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
-  }
+  });
+  if (edited) void notation.transcribe();
 }
 
 /** Tolerance for an edit position sitting exactly on a measure start. */
 const MEASURE_EPSILON_PPQ = 1e-6;
 
 function addKeyMarker(): void {
-  try {
+  const edited = tryScoreEdit(() => {
     const editPpq = markerEditPpq();
     const ppq = clipMeasureGrid(
       store.timeSignatures,
@@ -689,11 +679,8 @@ function addKeyMarker(): void {
       store.clipStartPpq,
     );
     setMarker(null, ppq, scoreKeyMarkerName(keyRootInput.value, keyModeInput.value));
-    notation.setError('');
-    void notation.transcribe();
-  } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
-  }
+  });
+  if (edited) void notation.transcribe();
 }
 
 // --- Reactive re-transcription -----------------------------------------------------

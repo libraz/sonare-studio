@@ -214,6 +214,7 @@ export const shellSample = {
     },
     errors: {
       gain: 'Enter a finite gain in dB',
+      normalizeTarget: 'Enter a finite peak target in dB',
       pitch: 'Enter a finite pitch offset in semitones',
       tune: 'Enter a note name (A4, C#3) or MIDI number (0–127)',
       voice: 'Enter a finite pitch and a formant factor > 0',

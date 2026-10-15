@@ -75,7 +75,6 @@ describe('StepSequencer (apply / pull integration)', () => {
       channel: 9,
     });
     expect(store.notes[1].startPpq).toBe(2);
-    expect(wrapper.emitted('applied')).toEqual([[2]]);
     expect(wrapper.find('[data-test="status"]').text()).toContain('Applied 2 notes');
   });
 
@@ -253,7 +252,6 @@ describe('StepSequencer (apply / pull integration)', () => {
     expect(snare?.steps[4].velocity).toBe(80);
     expect(snare?.steps[4].gate).toBeCloseTo(1, 9);
     expect(snare?.steps[4].offset).toBeCloseTo(0.25, 9);
-    expect(wrapper.emitted('pulled')).toEqual([[2]]);
   });
 
   it('reports multichannel Pull as an error and leaves the pattern unchanged', async () => {
@@ -269,7 +267,6 @@ describe('StepSequencer (apply / pull integration)', () => {
     );
     expect(wrapper.find('[data-test="status"]').classes()).toContain('seq-status-error');
     expect((wrapper.vm as unknown as SequencerVm).pattern).toBe(before);
-    expect(wrapper.emitted('pulled')).toBeUndefined();
   });
 
   it('applies a euclidean fill to the selected row through the popover', async () => {

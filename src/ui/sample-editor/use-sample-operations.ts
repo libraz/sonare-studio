@@ -12,6 +12,7 @@
 
 import { computed, type Ref, ref, watch } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { downmixToMono } from '@/lib/audio-channels';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import {
   type AudioAssetMeta,
@@ -29,9 +30,10 @@ import type {
   RirDiagnostic,
 } from '@/wasm/index.js';
 import type { VersionHistoryState } from './history';
+import { parseNumber, parsePercentFraction } from './input-parse';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { formatMidiNote, parseMidiNote } from './note-names';
-import { downmixToMono } from './onsets';
+
 import {
   applyGainDb,
   cutCrossfadeFrames,
@@ -104,6 +106,13 @@ const ROOM_PRESETS: ReadonlyArray<{ id: string; preset: RoomMorphPreset }> = [
 ];
 const ESTIMATED_ROOM_PRESET_ID = 'estimatedRoom';
 
+/** Fallback sample rate (Hz) when no asset is loaded. */
+const DEFAULT_SAMPLE_RATE_HZ = 48000;
+/** Default room reverb wet mix, in percent. */
+const DEFAULT_ROOM_WET_PERCENT = 35;
+/** Default Match EQ strength, in percent. */
+const DEFAULT_MATCH_EQ_AMOUNT_PERCENT = 100;
+
 /** Peak targets (in dB) offered by the normalize control. */
 export const NORMALIZE_TARGET_OPTIONS: { value: string; label: string }[] = [
   { value: '-1', label: '-1 dB' },
@@ -155,11 +164,6 @@ export interface UseSampleOperationsOptions {
   getProjectGeneration?: () => number;
 }
 
-function parseNumber(value: string): number | null {
-  const parsed = Number(value);
-  return value.trim().length > 0 && Number.isFinite(parsed) ? parsed : null;
-}
-
 /** Builds the operation models, the runOp wrapper and every operation action. */
 export function useSampleOperations(options: UseSampleOperationsOptions) {
   const { asset, currentAssetId, busy, loading, error, wasmOps, selRange, clearSelection } =
@@ -203,7 +207,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const roomPresetId = ref(ROOM_PRESETS[0].id);
   const restorePresetId = ref<string>(restorationPresets()[0] ?? '');
   /** Room reverb wet/dry mix as a percentage string (0 = dry, 100 = fully wet). */
-  const roomWetInput = ref('35');
+  const roomWetInput = ref(String(DEFAULT_ROOM_WET_PERCENT));
   const roomAirAbsorption = ref(false);
 
   /** Stored audio assets offered as the Match EQ reference. */
@@ -211,7 +215,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   /** Selected reference asset id ('' = none picked). */
   const referenceAssetId = ref('');
   /** Parallel match strength as a percentage string (100 = fully matched). */
-  const matchEqAmountInput = ref('100');
+  const matchEqAmountInput = ref(String(DEFAULT_MATCH_EQ_AMOUNT_PERCENT));
   /** Latest Match EQ analysis against the reference (null = none run). */
   const matchEqAnalysis = ref<MatchEqAnalysis | null>(null);
   /** True while a Match EQ analysis is awaiting the engine. */
@@ -343,7 +347,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   }
 
   function sampleRate(): number {
-    return asset.value?.meta.sampleRate ?? 48000;
+    return asset.value?.meta.sampleRate ?? DEFAULT_SAMPLE_RATE_HZ;
   }
 
   async function onGain(): Promise<void> {
@@ -359,7 +363,11 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   }
 
   async function onNormalize(): Promise<void> {
-    const target = parseNumber(normalizeTargetInput.value) ?? -1;
+    const target = parseNumber(normalizeTargetInput.value);
+    if (target === null) {
+      error.value = t.value.shell.sampleEditor.errors.normalizeTarget;
+      return;
+    }
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.normalize, { target }),
       runBuiltinOp({ type: 'normalize', targetDb: target }, (channels, range) =>
@@ -452,14 +460,18 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
+  /** Parses the tune note, raising the localized input error when invalid. */
+  function parseTuneTarget(): number | null {
+    const targetMidi = parseMidiNote(tuneNoteInput.value, noteNames.system.value);
+    if (targetMidi === null) error.value = t.value.shell.sampleEditor.errors.tune;
+    return targetMidi;
+  }
+
   async function onPitchCorrect(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    const targetMidi = parseMidiNote(tuneNoteInput.value, noteNames.system.value);
-    if (targetMidi === null) {
-      error.value = t.value.shell.sampleEditor.errors.tune;
-      return;
-    }
+    const targetMidi = parseTuneTarget();
+    if (targetMidi === null) return;
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.tune, {
         note: formatMidiNote(targetMidi, noteNames.system.value),
@@ -471,11 +483,8 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   async function onPitchCorrectTimevarying(): Promise<void> {
     const ops = wasmOps.value;
     if (!ops) return;
-    const targetMidi = parseMidiNote(tuneNoteInput.value, noteNames.system.value);
-    if (targetMidi === null) {
-      error.value = t.value.shell.sampleEditor.errors.tune;
-      return;
-    }
+    const targetMidi = parseTuneTarget();
+    if (targetMidi === null) return;
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.tuneContour, {
         note: formatMidiNote(targetMidi, noteNames.system.value),
@@ -577,14 +586,21 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     );
   }
 
-  async function onTimeStretch(): Promise<void> {
-    const ops = wasmOps.value;
+  /** Parses the stretch rate, raising the localized input error when invalid. */
+  function parseStretchRate(): number | null {
     const rate = parseNumber(stretchInput.value);
-    if (!ops) return;
     if (rate === null || rate <= 0) {
       error.value = t.value.shell.sampleEditor.errors.stretch;
-      return;
+      return null;
     }
+    return rate;
+  }
+
+  async function onTimeStretch(): Promise<void> {
+    const ops = wasmOps.value;
+    if (!ops) return;
+    const rate = parseStretchRate();
+    if (rate === null) return;
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.stretch, { rate }),
       (channels, range) => timeStretchRange(ops, channels, sampleRate(), rate, range),
@@ -593,12 +609,9 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
 
   async function onNoteStretch(): Promise<void> {
     const ops = wasmOps.value;
-    const rate = parseNumber(stretchInput.value);
     if (!ops) return;
-    if (rate === null || rate <= 0) {
-      error.value = t.value.shell.sampleEditor.errors.stretch;
-      return;
-    }
+    const rate = parseStretchRate();
+    if (rate === null) return;
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.noteStretch, { rate }),
       (channels, range) => noteStretchRange(ops, channels, sampleRate(), rate, range),
@@ -799,9 +812,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     if (!ops) return;
     const entry = selectedRoomPreset();
     if (!entry) return;
-    // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] wet mix.
-    const wetPercent = parseNumber(roomWetInput.value) ?? 35;
-    const wet = Math.min(Math.max(wetPercent, 0), 100) / 100;
+    const wet = parsePercentFraction(roomWetInput.value, DEFAULT_ROOM_WET_PERCENT);
     let diagnostics: RirDiagnostic[] = [];
     const committed = await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.placeInRoom, { room: entry.label }),
@@ -871,6 +882,16 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     }
   }
 
+  /** Loads a Match EQ reference while holding a lease so it cannot be collected mid-load. */
+  async function loadReferenceAsset(refId: string): Promise<LoadedAudioAsset> {
+    const referenceLease = leaseAudioAssets([refId]);
+    try {
+      return await loadAsset(refId);
+    } finally {
+      referenceLease.release();
+    }
+  }
+
   /**
    * EQ-matches the selection (or whole file) to a chosen reference asset's
    * tonal balance, producing a new version. The reference is loaded and
@@ -888,13 +909,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     let referenceMono: Float32Array;
     let referenceSampleRate: number;
     try {
-      const referenceLease = leaseAudioAssets([refId]);
-      let reference: LoadedAudioAsset;
-      try {
-        reference = await loadAsset(refId);
-      } finally {
-        referenceLease.release();
-      }
+      const reference = await loadReferenceAsset(refId);
       if (!operationIsCurrent(token)) return;
       referenceMono = downmixToMono(reference.channels);
       referenceSampleRate = reference.meta.sampleRate;
@@ -905,9 +920,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
       busy.value = false;
     }
     const referenceName = referenceAssets.value.find((meta) => meta.id === refId)?.name ?? '';
-    // Clamp the user's percentage to [0, 100] before mapping to a [0, 1] mix.
-    const amountPercent = parseNumber(matchEqAmountInput.value) ?? 100;
-    const amount = Math.min(Math.max(amountPercent, 0), 100) / 100;
+    const amount = parsePercentFraction(matchEqAmountInput.value, DEFAULT_MATCH_EQ_AMOUNT_PERCENT);
     await runOp(
       formatMessage(t.value.shell.sampleEditor.ops.matchEq, { reference: referenceName }),
       (channels, range) =>
@@ -939,13 +952,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
     error.value = null;
     analyzingMatchEq.value = true;
     try {
-      const referenceLease = leaseAudioAssets([refId]);
-      let reference: LoadedAudioAsset;
-      try {
-        reference = await loadAsset(refId);
-      } finally {
-        referenceLease.release();
-      }
+      const reference = await loadReferenceAsset(refId);
       if (!operationIsCurrent(token)) return;
       const referenceMono = downmixToMono(reference.channels);
       matchEqAnalysis.value = analyzeMatchEqToReference(

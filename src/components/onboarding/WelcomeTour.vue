@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { hasNativeEnterBehavior } from '@/ui/accessibility/keyboard';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
@@ -237,13 +237,37 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
+let viewportFrame: number | null = null;
+
+/** Coalesces resize/scroll bursts into one re-measure per frame. */
 function onViewportChange(): void {
-  reposition();
+  if (viewportFrame !== null) return;
+  viewportFrame = requestAnimationFrame(() => {
+    viewportFrame = null;
+    reposition();
+  });
 }
 
+function detachViewportListeners(): void {
+  window.removeEventListener('resize', onViewportChange);
+  window.removeEventListener('scroll', onViewportChange, true);
+  if (viewportFrame !== null) {
+    cancelAnimationFrame(viewportFrame);
+    viewportFrame = null;
+  }
+}
+
+// The anchor only needs tracking while a step is on screen.
+watch(visible, (isVisible) => {
+  if (isVisible) {
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
+  } else {
+    detachViewportListeners();
+  }
+});
+
 onMounted(() => {
-  window.addEventListener('resize', onViewportChange);
-  window.addEventListener('scroll', onViewportChange, true);
   if (props.autoStart && !wasSeen()) {
     // Wait a tick so the shell has rendered the anchor elements.
     void nextTick(() => open());
@@ -251,8 +275,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', onViewportChange);
-  window.removeEventListener('scroll', onViewportChange, true);
+  detachViewportListeners();
   restorePreviousFocus(false);
 });
 </script>

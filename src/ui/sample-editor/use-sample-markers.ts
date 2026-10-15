@@ -8,6 +8,7 @@
 
 import { nextTick, type Ref, ref } from 'vue';
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import { parseNumber } from './input-parse';
 import type { DetectedNote } from './onsets';
 import { noteRegionMarkers } from './onsets';
 import {
@@ -35,11 +36,6 @@ export interface UseSampleMarkersOptions {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function parseNumber(value: string): number | null {
-  const parsed = Number(value);
-  return value.trim().length > 0 && Number.isFinite(parsed) ? parsed : null;
 }
 
 /** Builds the marker state and detection actions. */

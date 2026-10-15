@@ -10,6 +10,10 @@
 import type { NoteNameSystem } from '@libraz/libcantus';
 import { DEFAULT_APP_GUIDANCE_PROFILE, type GuidanceProfile } from '@/compose/guidance-profile';
 import {
+  STREAMING_RETUNE_MAX_SEMITONES,
+  STREAMING_RETUNE_MIN_SEMITONES,
+} from '@/engine/streaming-retune';
+import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
   type StreamingPlatformConfig,
@@ -323,8 +327,8 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
     ),
     recordingRetuneSemitones: asIntInRange(
       source.recordingRetuneSemitones,
-      -24,
-      24,
+      STREAMING_RETUNE_MIN_SEMITONES,
+      STREAMING_RETUNE_MAX_SEMITONES,
       defaults.recordingRetuneSemitones,
     ),
     recordingCaptureSource: asRecordingCaptureSource(

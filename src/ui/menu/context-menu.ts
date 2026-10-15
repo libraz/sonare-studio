@@ -12,6 +12,7 @@
  */
 
 import { reactive } from 'vue';
+import { trimStraySeparators } from './menu-items';
 
 /** A single entry in a right-click action menu. */
 export interface ContextMenuItem {
@@ -35,11 +36,6 @@ export interface ContextMenuItem {
   danger?: boolean;
   /** True renders a divider line instead of an action item. */
   separator?: boolean;
-}
-
-/** True when the item is greyed out, by flag or by a stated reason. */
-export function isItemDisabled(item: ContextMenuItem): boolean {
-  return Boolean(item.disabled || item.disabledReason);
 }
 
 /** Reactive state backing the singleton ContextMenu component. */
@@ -107,19 +103,16 @@ export function restoreContextMenuFocus(generation: number | null): void {
  * line.
  */
 export function cleanItems(items: readonly ContextMenuItem[]): ContextMenuItem[] {
-  const out: ContextMenuItem[] = [];
+  const cleaned: ContextMenuItem[] = [];
   for (const item of items) {
-    if (item.separator) {
-      if (out.length === 0 || out[out.length - 1].separator) continue;
-      out.push(item);
-    } else {
-      const children = item.children ? cleanItems(item.children) : undefined;
-      if (item.children && !children?.some((child) => !child.separator)) continue;
-      out.push(children ? { ...item, children } : item);
+    if (item.separator || !item.children) {
+      cleaned.push(item);
+      continue;
     }
+    const children = cleanItems(item.children);
+    if (children.some((child) => !child.separator)) cleaned.push({ ...item, children });
   }
-  while (out.length > 0 && out[out.length - 1].separator) out.pop();
-  return out;
+  return trimStraySeparators(cleaned);
 }
 
 /** Options controlling focus ownership while closing a menu. */

@@ -48,6 +48,7 @@ import {
   MEBIBYTE,
 } from '@/export/memory-budget';
 import {
+  type ExportMediaIssue,
   MixdownCancelledError,
   type MixdownProgressFn,
   type MixdownRangePpq,
@@ -73,6 +74,7 @@ import {
 } from '@/export/options';
 import type { WavBitDepth } from '@/export/wav';
 import { createWavStreamWriter, type WavStreamWriter } from '@/export/wav-stream';
+import { peakDb } from '@/lib/db';
 import { downloadBlob } from '@/lib/download';
 import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import { ensureWasm } from '@/lib/wasm';
@@ -80,7 +82,7 @@ import { masteringChainIsActive } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { firstBlock } from '@/ui/disabled-reason';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSampleRate } from '@/ui/media/asset-list';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
@@ -162,17 +164,21 @@ const stage = ref('');
 const errorMessage = ref('');
 const cancelled = ref(false);
 const report = ref<MixdownReport | null>(null);
+/** Localized line for a media reference the render could not resolve. */
+function formatMediaIssue(issue: ExportMediaIssue): string {
+  const strings = t.value.dialogs.exportAudio;
+  return formatMessage(strings.mediaIssue, {
+    kind: strings.mediaIssueKind[issue.kind] ?? issue.kind,
+    id: issue.id,
+  });
+}
 const reportLimitations = computed(() => {
   const strings = t.value.dialogs.exportAudio;
   return [
     ...(report.value?.limitations ?? []).map((limitation) =>
       formatExportLimitation(limitation, strings.issue),
     ),
-    ...(report.value?.mediaIssues ?? []).map((issue) =>
-      strings.mediaIssue
-        .replace('{kind}', strings.mediaIssueKind[issue.kind] ?? issue.kind)
-        .replace('{id}', issue.id),
-    ),
+    ...(report.value?.mediaIssues ?? []).map(formatMediaIssue),
   ];
 });
 const reportClipping = computed(
@@ -435,10 +441,7 @@ function stemPeakDb(stem: MixdownStem): number {
       if (magnitude > peak) peak = magnitude;
     }
   }
-  return Math.max(
-    peak > 0 ? 20 * Math.log10(peak) : -Infinity,
-    stem.report?.truePeakDb ?? -Infinity,
-  );
+  return Math.max(peakDb(peak), stem.report?.truePeakDb ?? -Infinity);
 }
 
 /** Default download seam: transient anchor around an object URL. */
@@ -763,13 +766,8 @@ async function onExport(): Promise<void> {
     controller.signal.throwIfAborted();
     const mediaIssues = result.report.mediaIssues ?? [];
     if (mediaIssues.length > 0) {
-      const exportStrings = t.value.dialogs.exportAudio;
-      const problems = mediaIssues.map((issue) =>
-        exportStrings.mediaIssue
-          .replace('{kind}', exportStrings.mediaIssueKind[issue.kind] ?? issue.kind)
-          .replace('{id}', issue.id),
-      );
-      throw new Error(`${exportStrings.preflightBlocked}\n${problems.join('\n')}`);
+      const problems = mediaIssues.map(formatMediaIssue);
+      throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${problems.join('\n')}`);
     }
     progress.value = 1;
     stage.value = 'encode';
@@ -905,9 +903,10 @@ async function onExport(): Promise<void> {
       errorMessage.value = t.value.dialogs.exportAudio.workerError;
     } else if (error instanceof MasteringBufferLimitError) {
       const message = t.value.dialogs.exportAudio.masteringBufferLimit;
-      errorMessage.value = message
-        .replace('{duration}', formatMasteringDuration(error.totalFrames, error.sampleRate))
-        .replace('{limit}', formatMasteringDuration(error.maxFrames, error.sampleRate));
+      errorMessage.value = formatMessage(message, {
+        duration: formatMasteringDuration(error.totalFrames, error.sampleRate),
+        limit: formatMasteringDuration(error.maxFrames, error.sampleRate),
+      });
     } else {
       errorMessage.value = error instanceof Error ? error.message : String(error);
     }

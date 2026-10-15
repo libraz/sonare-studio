@@ -9,7 +9,7 @@
 
 import { MUSIC_TYPING_RESERVED_KEYS } from '@/composables/useMusicTyping';
 import {
-  comboMatchesEvent,
+  comboFromEvent,
   combosMatch,
   type KeyCombo,
   normalizeComboString,
@@ -540,6 +540,18 @@ export function findConflicts(bindings: ShortcutBindings): ShortcutConflict[] {
   return conflicts;
 }
 
+const parsedCombos = new Map<string, KeyCombo | null>();
+
+/** Tests a stored combo string against a pressed combo, parsing each string once. */
+function matchesCombo(text: string, pressed: KeyCombo): boolean {
+  let combo = parsedCombos.get(text);
+  if (combo === undefined) {
+    combo = parseKeyCombo(text);
+    parsedCombos.set(text, combo);
+  }
+  return combo !== null && combosMatch(combo, pressed);
+}
+
 /**
  * Matches a keydown event against the bindings for a focus scope.
  *
@@ -559,12 +571,14 @@ export function matchShortcut(
   scope: ShortcutScope,
   bindings: ShortcutBindings,
 ): string | null {
+  const pressed = comboFromEvent(event);
+  if (pressed === null) return null;
   let globalMatch: string | null = null;
   for (const action of SHORTCUT_ACTIONS) {
     if (!action.customizable) continue;
     if (action.when !== scope && action.when !== 'global') continue;
     const keys = bindings.get(action.id) ?? [];
-    if (!keys.some((combo) => comboMatchesEvent(combo, event))) continue;
+    if (!keys.some((text) => matchesCombo(text, pressed))) continue;
     if (action.when === scope) return action.id;
     if (globalMatch === null) globalMatch = action.id;
   }

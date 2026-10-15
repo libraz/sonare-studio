@@ -78,7 +78,7 @@ export function detectPlatform(): Platform {
 
 /** Normalizes a raw key token (from text or KeyboardEvent.key). */
 function normalizeKey(raw: string): string {
-  const lower = raw.length === 1 ? raw.toLowerCase() : raw.toLowerCase();
+  const lower = raw.toLowerCase();
   return KEY_ALIASES[lower] ?? lower;
 }
 

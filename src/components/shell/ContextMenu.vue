@@ -9,11 +9,11 @@ import { computed, nextTick, reactive, ref, watch } from 'vue';
 import {
   type ContextMenuItem,
   closeContextMenu,
-  isItemDisabled,
   reportContextMenuError,
   restoreContextMenuFocus,
   useContextMenuState,
 } from '@/ui/menu/context-menu';
+import { isItemDisabled } from '@/ui/menu/menu-items';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 const state = useContextMenuState();

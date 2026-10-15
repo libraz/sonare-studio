@@ -58,8 +58,12 @@ type NavigatorWithDeviceMemory = Navigator & {
 
 const storageEstimate = ref<StorageEstimate | null>(null);
 
+/** Bumped on open: the AudioContext latency and heap figures are not reactive. */
+const snapshotRevision = ref(0);
+
 /** Output latency in milliseconds, or null when the context exposes none. */
 const latencyMs = computed<number | null>(() => {
+  void snapshotRevision.value;
   const ctx = props.handle?.ctx;
   if (!ctx) return null;
   const seconds = ctx.outputLatency || ctx.baseLatency;
@@ -69,15 +73,21 @@ const latencyMs = computed<number | null>(() => {
 /** Whether the engine reports a usable ABI (defaults to true when unspecified). */
 const abiOk = computed(() => props.handle?.capabilities.abiCompatible ?? true);
 
-const memory = computed(() => (globalThis.performance as PerformanceWithMemory).memory ?? null);
+/** Current JS heap figures (non-reactive browser getter), tied to the open snapshot. */
+function readMemory(): PerformanceWithMemory['memory'] | null {
+  void snapshotRevision.value;
+  return (globalThis.performance as PerformanceWithMemory).memory ?? null;
+}
 
-const usedHeap = computed(() =>
-  memory.value?.usedJSHeapSize !== undefined ? formatSize(memory.value.usedJSHeapSize) : null,
-);
+const usedHeap = computed(() => {
+  const used = readMemory()?.usedJSHeapSize;
+  return used !== undefined ? formatSize(used) : null;
+});
 
-const heapLimit = computed(() =>
-  memory.value?.jsHeapSizeLimit !== undefined ? formatSize(memory.value.jsHeapSizeLimit) : null,
-);
+const heapLimit = computed(() => {
+  const limit = readMemory()?.jsHeapSizeLimit;
+  return limit !== undefined ? formatSize(limit) : null;
+});
 
 const storageUsage = computed(() =>
   storageEstimate.value?.usage !== undefined ? formatSize(storageEstimate.value.usage) : null,
@@ -96,6 +106,7 @@ const isolated = computed(() => globalThis.crossOriginIsolated === true);
 watch(
   () => props.open,
   async (open) => {
+    if (open) snapshotRevision.value += 1;
     if (!open || typeof navigator.storage?.estimate !== 'function') return;
     try {
       storageEstimate.value = await navigator.storage.estimate();

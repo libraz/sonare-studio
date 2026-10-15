@@ -194,11 +194,14 @@ describe('WelcomeTour', () => {
     wrapper.unmount();
   });
 
-  it('removes viewport listeners on unmount', () => {
+  it('removes viewport listeners on unmount', async () => {
     const add = vi.spyOn(window, 'addEventListener');
     const remove = vi.spyOn(window, 'removeEventListener');
     const wrapper = mountTour({ autoStart: false });
+    expect(add).not.toHaveBeenCalledWith('scroll', expect.any(Function), true);
 
+    (wrapper.vm as unknown as { open: () => void }).open();
+    await nextTick();
     expect(add).toHaveBeenCalledWith('resize', expect.any(Function));
     expect(add).toHaveBeenCalledWith('scroll', expect.any(Function), true);
 

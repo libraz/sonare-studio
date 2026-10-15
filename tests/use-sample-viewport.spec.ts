@@ -39,6 +39,7 @@ describe('useSampleViewport', () => {
     const fillRect = vi.fn();
     const context = {
       fillRect,
+      drawImage: vi.fn(),
       setTransform: vi.fn(),
     } as unknown as CanvasRenderingContext2D;
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
@@ -140,5 +141,79 @@ describe('useSampleViewport', () => {
     wrapper.unmount();
 
     expect(cancelAnimationFrame).toHaveBeenCalledWith(42);
+  });
+
+  it('keeps the backing store and cached waveform layer across selection-only redraws', async () => {
+    const fillRect = vi.fn();
+    const drawImage = vi.fn();
+    const context = {
+      fillRect,
+      drawImage,
+      setTransform: vi.fn(),
+    } as unknown as CanvasRenderingContext2D;
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context);
+    const widthSets = vi.fn();
+    const widthDescriptor = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'width');
+    Object.defineProperty(HTMLCanvasElement.prototype, 'width', {
+      configurable: true,
+      get: widthDescriptor?.get,
+      set(value: number) {
+        widthSets(this, value);
+        widthDescriptor?.set?.call(this, value);
+      },
+    });
+
+    const pendingFrames: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => pendingFrames.push(callback)),
+    );
+
+    const asset = ref<LoadedAudioAsset | null>(null);
+    const selection = ref<null | { startFrame: number; endFrame: number }>(null);
+    const Host = defineComponent({
+      setup() {
+        const viewport = useSampleViewport({
+          asset,
+          selection,
+          onsetFrames: ref([]),
+          noteRegions: ref([]),
+          formatNote: (midi: number) => String(Math.round(midi)),
+          selRange: () => selection.value,
+        });
+        viewport.syncViewportToFrames(40);
+        return () =>
+          h('div', { ref: viewport.wrapRef }, [h('canvas', { ref: viewport.canvasRef })]);
+      },
+    });
+
+    const wrapper = mount(Host);
+    try {
+      asset.value = {
+        meta: { id: 'sel', name: 'sel', sampleRate: 48000, numChannels: 1, numFrames: 40 },
+        channels: [new Float32Array(40).fill(1)],
+      };
+      await wrapper.vm.$nextTick();
+      pendingFrames.shift()?.(0);
+      const mainWidthSets = widthSets.mock.calls.filter(
+        ([el]) => el === wrapper.find('canvas').element,
+      ).length;
+      fillRect.mockClear();
+
+      selection.value = { startFrame: 4, endFrame: 20 };
+      await wrapper.vm.$nextTick();
+      pendingFrames.shift()?.(0);
+
+      expect(
+        widthSets.mock.calls.filter(([el]) => el === wrapper.find('canvas').element),
+      ).toHaveLength(mainWidthSets);
+      expect(fillRect.mock.calls.length).toBeLessThan(10);
+      expect(drawImage).toHaveBeenCalled();
+    } finally {
+      if (widthDescriptor) {
+        Object.defineProperty(HTMLCanvasElement.prototype, 'width', widthDescriptor);
+      }
+      wrapper.unmount();
+    }
   });
 });
