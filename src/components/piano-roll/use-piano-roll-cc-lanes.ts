@@ -10,6 +10,7 @@
  */
 
 import { type ComputedRef, computed, type Ref } from 'vue';
+import { clamp } from '@/lib/math';
 import {
   setClipCcLane,
   setClipChannelPressure,
@@ -189,12 +190,12 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
   function ccSnap(ppq: number): number {
     const clip = store.activeClip;
     const window = clip ? audibleMidiSourceWindow(clip) : null;
-    const clamped = window ? Math.min(window.endPpq, Math.max(window.startPpq, ppq)) : ppq;
+    const clamped = window ? clamp(ppq, window.startPpq, window.endPpq) : ppq;
     if (!store.snapEnabled) return clamped;
     const step = gridPpq.value;
     const snapped =
       step > 0 ? (options.snapPpq?.(clamped) ?? Math.round(clamped / step) * step) : clamped;
-    return window ? Math.min(window.endPpq, Math.max(window.startPpq, snapped)) : snapped;
+    return window ? clamp(snapped, window.startPpq, window.endPpq) : snapped;
   }
 
   return {

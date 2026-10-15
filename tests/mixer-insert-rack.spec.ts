@@ -172,8 +172,8 @@ describe('InsertRack sidechain source options', () => {
     store.dispose();
     clearHistory();
     await store.init();
-    const add = vi.spyOn(document, 'addEventListener');
-    const remove = vi.spyOn(document, 'removeEventListener');
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
     const wrapper = mount(InsertRack, {
       props: { target: 'master' },
       global: {

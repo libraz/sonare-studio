@@ -1,5 +1,6 @@
 <script setup lang="ts" generic="T extends string | number">
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 
 /**
@@ -233,19 +234,17 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  const target = event.target as Node;
-  if (triggerRef.value?.contains(target) || listRef.value?.contains(target)) return;
-  closeMenu(false);
-}
+useOutsidePointerDown(
+  open,
+  (target) => !!triggerRef.value?.contains(target) || !!listRef.value?.contains(target),
+  () => closeMenu(false),
+);
 
 watch(open, (isOpen) => {
   if (isOpen) {
-    document.addEventListener('pointerdown', onDocumentPointerDown, true);
     window.addEventListener('resize', scheduleReposition);
     window.addEventListener('scroll', scheduleReposition, true);
   } else {
-    document.removeEventListener('pointerdown', onDocumentPointerDown, true);
     window.removeEventListener('resize', scheduleReposition);
     window.removeEventListener('scroll', scheduleReposition, true);
     cancelScheduledReposition();
@@ -253,7 +252,6 @@ watch(open, (isOpen) => {
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   window.removeEventListener('resize', scheduleReposition);
   window.removeEventListener('scroll', scheduleReposition, true);
   cancelScheduledReposition();

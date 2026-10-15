@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useEditorTool } from '@/composables/useEditorTool';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { setActiveTrack } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
@@ -140,29 +141,23 @@ function toggleView(): void {
   if (viewOpen.value) void nextTick(() => viewPopover.value?.focus());
 }
 
-function onViewPointerDown(event: PointerEvent): void {
-  const target = event.target;
-  if (!(target instanceof Node)) return;
-  if (viewPopover.value?.contains(target) || viewTrigger.value?.contains(target)) return;
-  // A SelectMenu list teleports outside the popover; a press inside it is still ours.
-  if (target instanceof Element && target.closest('[role="listbox"]')) return;
-  viewOpen.value = false;
-}
+useOutsidePointerDown(
+  viewOpen,
+  (target) =>
+    !!viewPopover.value?.contains(target) ||
+    !!viewTrigger.value?.contains(target) ||
+    // A SelectMenu list teleports outside the popover; a press inside it is still ours.
+    (target instanceof Element && !!target.closest('[role="listbox"]')),
+  () => {
+    viewOpen.value = false;
+  },
+);
 
 /** Escape closes the popover and hands focus back to its trigger. */
 function closeView(): void {
   viewOpen.value = false;
   viewTrigger.value?.focus();
 }
-
-watch(viewOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onViewPointerDown, true);
-  else document.removeEventListener('pointerdown', onViewPointerDown, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onViewPointerDown, true);
-});
 
 /** Toggles the transform popover (closing it when no MIDI clip is active). */
 function toggleFxPanel(): void {

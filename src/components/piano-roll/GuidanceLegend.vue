@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import type { GuidanceProfile } from '@/compose/guidance-profile';
 import { useI18n } from '@/ui/i18n';
@@ -55,7 +56,7 @@ function setProfile(next: GuidanceProfile): void {
         :aria-label="t.shell.pianoRoll.guideClose"
         @click="$emit('close')"
       >
-        ✕
+        <CloseIcon />
       </button>
     </header>
     <div class="legend-level">

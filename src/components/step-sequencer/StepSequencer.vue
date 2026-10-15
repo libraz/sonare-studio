@@ -5,6 +5,8 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { useGestureTransaction } from '@/composables/useGestureTransaction';
+import { errorMessage } from '@/lib/errors';
+import { clampInt } from '@/lib/math';
 import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
 import { audibleMidiSourceWindow, midiTimelinePpqToSource } from '@/project/midi-projection';
@@ -224,11 +226,6 @@ watch(
   },
 );
 
-function clampInt(value: number, min: number, max: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
-
 // --- Toolbar handlers -------------------------------------------------------
 
 function setMode(mode: SequencerMode): void {
@@ -421,7 +418,7 @@ async function applyToClip(): Promise<void> {
   try {
     applyNoteEdits(plan);
   } catch (err) {
-    status.value = err instanceof Error ? err.message : String(err);
+    status.value = errorMessage(err);
     statusType.value = 'error';
     return;
   }
@@ -443,7 +440,7 @@ function pullFromClip(): void {
   try {
     result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
   } catch (err) {
-    status.value = err instanceof Error ? err.message : String(err);
+    status.value = errorMessage(err);
     statusType.value = 'error';
     return;
   }

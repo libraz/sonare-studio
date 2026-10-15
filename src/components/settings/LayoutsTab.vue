@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
-import { useAppSettings } from '@/composables/useAppSettings';
-import { confirmDialog, promptDialog } from '@/composables/useDialogs';
+import { confirmDestructive, promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -24,7 +23,6 @@ const props = withDefaults(
 );
 
 const namedLayouts = useLayouts();
-const appSettings = useAppSettings();
 const { t } = useI18n();
 
 const newLayoutName = ref('');
@@ -64,11 +62,9 @@ function saveCurrentLayout(): void {
 function deleteLayout(name: string): void {
   void (async () => {
     if (
-      appSettings.settings.confirmDestructive &&
-      !(await confirmDialog({
+      !(await confirmDestructive({
         title: t.value.settings.layouts.deleteTitle,
         message: formatMessage(t.value.settings.layouts.deleteMessage, { name }),
-        danger: true,
         confirmLabel: t.value.settings.layouts.delete,
       }))
     )

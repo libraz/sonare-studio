@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessReadout.vue';
 import StreamingTargetsTable from '@/components/mastering/StreamingTargetsTable.vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
+import { clamp01 } from '@/lib/math';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { formatLevel, type LoudnessRow } from '@/ui/mastering/loudness';
@@ -297,7 +298,7 @@ function formatAttenuation(value: number): string {
     </details>
     <div v-if="rendering" class="preview-progress">
       <div class="progress-track">
-        <div class="progress-fill" :style="{ transform: `scaleX(${Math.min(1, Math.max(0, progress))})` }" />
+        <div class="progress-fill" :style="{ transform: `scaleX(${clamp01(progress)})` }" />
       </div>
       <span class="progress-stage">{{ stage }}</span>
     </div>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue';
+import { clamp } from '@/lib/math';
 import { useI18n } from '@/ui/i18n';
 
 /**
@@ -43,10 +44,6 @@ const editing = ref(false);
 const draft = ref('');
 const input = ref<HTMLInputElement | null>(null);
 
-function clamp(value: number): number {
-  return Math.min(props.max, Math.max(props.min, value));
-}
-
 function startEditing(): void {
   if (locked.value) return;
   draft.value = String(props.value);
@@ -63,7 +60,7 @@ function finish(commit: boolean): void {
   if (!commit || locked.value) return;
   const text = String(draft.value).trim();
   const value = text === '' ? Number.NaN : Number(text);
-  if (Number.isFinite(value)) emit('change', clamp(value));
+  if (Number.isFinite(value)) emit('change', clamp(value, props.min, props.max));
 }
 
 function onKeyDown(event: KeyboardEvent): void {

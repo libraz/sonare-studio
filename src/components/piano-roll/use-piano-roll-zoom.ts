@@ -9,6 +9,7 @@
  */
 
 import type { Ref } from 'vue';
+import { clamp } from '@/lib/math';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 
 /** Wheel-to-zoom sensitivity for ⌘wheel / pinch gestures. */
@@ -70,7 +71,7 @@ export function usePianoRollZoom(options: UsePianoRollZoomOptions): PianoRollZoo
 
   function zoomVertical(factor: number): void {
     const centerRow = (range.scrollY + range.heightPx / 2) / range.rowHeight;
-    const next = Math.min(MAX_ROW_HEIGHT, Math.max(MIN_ROW_HEIGHT, range.rowHeight * factor));
+    const next = clamp(range.rowHeight * factor, MIN_ROW_HEIGHT, MAX_ROW_HEIGHT);
     range.setRowHeight(next);
     range.setScrollY(centerRow * range.rowHeight - range.heightPx / 2);
     bump();

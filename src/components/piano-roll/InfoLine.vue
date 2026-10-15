@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { clamp } from '@/lib/math';
 import { updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
@@ -42,10 +43,6 @@ const blocked = computed(() =>
 );
 
 /** Clamps a value into [min, max]. */
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 /** Formats a PPQ value for display (rounded to milli-PPQ, no trailing zeros). */
 function formatPpq(value: number): string {
   return String(Math.round(value * 1000) / 1000);

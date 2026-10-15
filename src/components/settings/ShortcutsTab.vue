@@ -2,8 +2,7 @@
 import { onBeforeUnmount, ref } from 'vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { useAppSettings } from '@/composables/useAppSettings';
-import { confirmDialog } from '@/composables/useDialogs';
+import { confirmDestructive } from '@/composables/useDialogs';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { comboFromEvent, comboToString, detectPlatform } from '@/ui/settings/key-combo';
@@ -23,7 +22,6 @@ const emit = defineEmits<{
 }>();
 
 const shortcuts = useShortcuts();
-const appSettings = useAppSettings();
 const { t } = useI18n();
 const platform = detectPlatform();
 
@@ -73,11 +71,9 @@ function resetActionKeys(actionId: string): void {
 function resetAll(): void {
   void (async () => {
     if (
-      appSettings.settings.confirmDestructive &&
-      !(await confirmDialog({
+      !(await confirmDestructive({
         title: t.value.settings.shortcuts.resetAllTitle,
         message: t.value.settings.shortcuts.resetAllMessage,
-        danger: true,
         confirmLabel: t.value.settings.shortcuts.resetAll,
       }))
     )

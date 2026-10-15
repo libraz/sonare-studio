@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
+import { clamp } from '@/lib/math';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { clampVelocity, type StepPattern } from '@/ui/step-sequencer/pattern';
 import { isTripletResolution } from '@/ui/step-sequencer/timing';
@@ -109,8 +110,8 @@ function onPointerUp(): void {
 }
 
 function setActiveCell(row: number, step: number, focus = false): void {
-  activeRow.value = Math.min(props.pattern.rows.length - 1, Math.max(0, row));
-  activeStep.value = Math.min(props.pattern.stepCount - 1, Math.max(0, step));
+  activeRow.value = clamp(row, 0, props.pattern.rows.length - 1);
+  activeStep.value = clamp(step, 0, props.pattern.stepCount - 1);
   emit('select-row', activeRow.value);
   liveStatus.value = activeCellLabel.value;
   if (focus) {
@@ -198,7 +199,7 @@ function onVelocityInput(event: Event): void {
 watch(
   () => props.selectedRow,
   (row) => {
-    activeRow.value = Math.min(props.pattern.rows.length - 1, Math.max(0, row));
+    activeRow.value = clamp(row, 0, props.pattern.rows.length - 1);
   },
 );
 </script>

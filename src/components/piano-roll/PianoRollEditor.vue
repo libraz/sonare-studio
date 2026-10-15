@@ -11,6 +11,7 @@ import { usePlacementGuidance } from '@/composables/usePlacementGuidance';
 import { useReactiveReharmonization } from '@/composables/useReactiveReharmonization';
 import { buildKeyMap } from '@/compose/key-map';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
+import { clamp } from '@/lib/math';
 import {
   addNote,
   addNotes,
@@ -497,12 +498,12 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   const maximum = sourceWindowEndPpq.value;
   if (payload.kind === 'set') {
     if (payload.controlId === 'pitch') {
-      updateNotes([{ id: note.id, pitch: Math.min(127, Math.max(0, Math.round(payload.value))) }]);
+      updateNotes([{ id: note.id, pitch: clamp(Math.round(payload.value), 0, 127) }]);
     } else if (payload.controlId === 'start') {
       updateNotes([
         {
           id: note.id,
-          startPpq: Math.min(maximum - note.durationPpq, Math.max(minimum, payload.value)),
+          startPpq: clamp(payload.value, minimum, maximum - note.durationPpq),
         },
       ]);
     } else if (payload.controlId === 'duration') {
@@ -513,9 +514,7 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
         },
       ]);
     } else if (payload.controlId === 'velocity') {
-      updateNotes([
-        { id: note.id, velocity: Math.min(127, Math.max(1, Math.round(payload.value))) },
-      ]);
+      updateNotes([{ id: note.id, velocity: clamp(Math.round(payload.value), 1, 127) }]);
     }
     return;
   }
@@ -523,7 +522,7 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   const step = Math.max(0.0625, store.snapEnabled ? gridPpq.value : 0.0625) * (coarse ? 4 : 1);
   if (direction === 'up' || direction === 'down') {
     const delta = direction === 'up' ? (coarse ? 12 : 1) : coarse ? -12 : -1;
-    updateNotes([{ id: note.id, pitch: Math.min(127, Math.max(0, note.pitch + delta)) }]);
+    updateNotes([{ id: note.id, pitch: clamp(note.pitch + delta, 0, 127) }]);
     return;
   }
   const delta =

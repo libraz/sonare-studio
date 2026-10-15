@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
+import { clamp } from '@/lib/math';
 import { setSelection, updateNotes } from '@/project/commands';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
@@ -104,7 +105,7 @@ function schedule(): void {
 function barGeometry(note: EditorNote): { x: number; w: number } {
   const x = props.range.ppqToX(note.startPpq);
   const endX = props.range.ppqToX(note.startPpq + note.durationPpq);
-  return { x, w: Math.max(3, Math.min(8, endX - x - 1)) };
+  return { x, w: clamp(endX - x - 1, 3, 8) };
 }
 
 /** Bar columns of all notes in note order (topmost hit target last). */

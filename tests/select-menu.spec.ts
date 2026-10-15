@@ -35,20 +35,18 @@ describe('SelectMenu', () => {
   }
 
   it('removes global listeners when unmounted while open', async () => {
-    const addDocument = vi.spyOn(document, 'addEventListener');
-    const removeDocument = vi.spyOn(document, 'removeEventListener');
     const addWindow = vi.spyOn(window, 'addEventListener');
     const removeWindow = vi.spyOn(window, 'removeEventListener');
     const wrapper = mountMenu();
 
     await wrapper.find('button').trigger('click');
-    expect(addDocument).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    expect(addWindow).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
     expect(addWindow).toHaveBeenCalledWith('resize', expect.any(Function));
     expect(addWindow).toHaveBeenCalledWith('scroll', expect.any(Function), true);
 
     wrapper.unmount();
 
-    expect(removeDocument).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
+    expect(removeWindow).toHaveBeenCalledWith('pointerdown', expect.any(Function), true);
     expect(removeWindow).toHaveBeenCalledWith('resize', expect.any(Function));
     expect(removeWindow).toHaveBeenCalledWith('scroll', expect.any(Function), true);
   });

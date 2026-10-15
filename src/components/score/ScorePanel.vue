@@ -17,6 +17,8 @@ import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { TheoryCard } from '@/compose/explain';
 import { GM_PERCUSSION_CHANNEL, isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
+import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
 import {
@@ -305,7 +307,7 @@ function annotateAccessibleScoreNote(id: string): void {
 
 /** Multiplies the on-screen zoom by a factor, clamped to the zoom bounds. */
 function zoomView(factor: number): void {
-  viewZoom.value = Math.min(VIEW_ZOOM_MAX, Math.max(VIEW_ZOOM_MIN, viewZoom.value * factor));
+  viewZoom.value = clamp(viewZoom.value * factor, VIEW_ZOOM_MIN, VIEW_ZOOM_MAX);
 }
 
 // --- Render state ------------------------------------------------------------
@@ -402,7 +404,7 @@ const interactions = useScoreInteractions({
         const note = clip.notes.find((entry) => entry.id === id);
         return note === undefined
           ? { id }
-          : { id, pitch: Math.min(127, Math.max(0, note.pitch + semitones[index])) };
+          : { id, pitch: clamp(note.pitch + semitones[index], 0, 127) };
       }),
     });
   },
@@ -602,7 +604,7 @@ function tryScoreEdit(edit: () => void): boolean {
     notation.setError('');
     return true;
   } catch (err) {
-    notation.setError(err instanceof Error ? err.message : String(err));
+    notation.setError(errorMessage(err));
     return false;
   }
 }

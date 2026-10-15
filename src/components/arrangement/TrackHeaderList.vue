@@ -4,10 +4,11 @@ import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue
 import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { useAppSettings } from '@/composables/useAppSettings';
-import { confirmDialog, promptDialog } from '@/composables/useDialogs';
+import { confirmDestructive, promptDialog } from '@/composables/useDialogs';
 import { isDrumTrack } from '@/compose/tracks';
 import { dbToLinear, linearToDb } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import { isOpfsAvailable } from '@/persistence/opfs';
 import {
   deleteTrackChannelPreset,
@@ -182,7 +183,6 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
-const appSettings = useAppSettings();
 const displayTracks = computed(() => props.tracks ?? store.tracks);
 
 /** Position the native popover inside the visible header viewport. The top
@@ -200,7 +200,7 @@ function positionTrackOverflow(event: Event): void {
   const anchor = trigger.getBoundingClientRect();
   const viewportTop = viewport?.top ?? 0;
   const viewportBottom = viewport?.bottom ?? window.innerHeight;
-  panel.style.maxHeight = `${Math.max(40, Math.min(320, viewportBottom - viewportTop - 8))}px`;
+  panel.style.maxHeight = `${clamp(viewportBottom - viewportTop - 8, 40, 320)}px`;
   const { width, height } = panel.getBoundingClientRect();
   const below = anchor.bottom + 4;
   const above = anchor.top - height - 4;
@@ -247,7 +247,7 @@ async function refreshSavedTrackPresets(): Promise<void> {
 onMounted(() => {
   if (!isOpfsAvailable()) return;
   void refreshSavedTrackPresets().catch((reason: unknown) => {
-    error.value = reason instanceof Error ? reason.message : String(reason);
+    error.value = errorMessage(reason);
   });
 });
 
@@ -290,7 +290,7 @@ function commitRename(): void {
     renameTrack(trackId, name);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -386,14 +386,12 @@ async function onDelete(track: EditorTrack): Promise<void> {
   const ids = selectedTrackIds(track.id);
   const labels = t.value.shell.arrangement.trackHeader;
   if (
-    appSettings.settings.confirmDestructive &&
-    !(await confirmDialog({
+    !(await confirmDestructive({
       title: labels.deleteTrack,
       message:
         ids.length === 1
           ? formatMessage(labels.deleteTrackConfirmMessage, { name: track.name })
           : formatMessage(labels.deleteTracksConfirmMessage, { count: ids.length }),
-      danger: true,
       confirmLabel: labels.deleteTrackConfirm,
     }))
   )
@@ -419,7 +417,7 @@ async function savePreset(track: EditorTrack): Promise<void> {
     await refreshSavedTrackPresets();
     error.value = '';
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : String(reason);
+    error.value = errorMessage(reason);
   }
 }
 
@@ -429,7 +427,7 @@ async function deletePreset(name: string): Promise<void> {
     await refreshSavedTrackPresets();
     error.value = '';
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : String(reason);
+    error.value = errorMessage(reason);
   }
 }
 
@@ -457,7 +455,7 @@ function onGroupChange(track: EditorTrack, value: string | number): void {
     else setTracksGroup(ids, groupId);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -480,7 +478,7 @@ function onVcaChange(track: EditorTrack, value: string): void {
     setTrackVca(track.id, value === VCA_NONE ? null : value);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -510,7 +508,7 @@ function onRecordInputChannelChange(track: EditorTrack, value: number): void {
     setTrackRecordInputChannel(track.id, value === RECORD_INPUT_AUTO ? null : value);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -538,7 +536,7 @@ function onRecordInputDeviceChange(track: EditorTrack, value: string): void {
     setTrackRecordInputDeviceId(track.id, value === RECORD_DEVICE_DEFAULT ? null : value);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 

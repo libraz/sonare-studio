@@ -4,7 +4,7 @@ import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
-import { confirmDialog } from '@/composables/useDialogs';
+import { confirmDestructive } from '@/composables/useDialogs';
 import type { GuidanceProfile } from '@/compose/guidance-profile';
 import { useI18n } from '@/ui/i18n';
 import {
@@ -96,11 +96,9 @@ function onEditorDensityChange(value: 'comfortable' | 'compact'): void {
 function resetDefaults(): void {
   void (async () => {
     if (
-      appSettings.settings.confirmDestructive &&
-      !(await confirmDialog({
+      !(await confirmDestructive({
         title: t.value.settings.general.resetTitle,
         message: t.value.settings.general.resetMessage,
-        danger: true,
         confirmLabel: t.value.settings.general.resetDefaults,
       }))
     )

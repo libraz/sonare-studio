@@ -3,12 +3,14 @@ import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref,
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { confirmDialog } from '@/composables/useDialogs';
+import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 type TuningMode = 'concert' | 'auto';
 /** Shortest kept note as a `1/n` division; 'auto' keeps the library default. */
@@ -214,7 +216,7 @@ function onShortestKeydown(event: KeyboardEvent, current: ShortestNote): void {
   if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
   event.preventDefault();
   const index = SHORTEST_NOTES.indexOf(current) + (event.key === 'ArrowLeft' ? -1 : 1);
-  const next = SHORTEST_NOTES[Math.min(SHORTEST_NOTES.length - 1, Math.max(0, index))];
+  const next = SHORTEST_NOTES[clamp(index, 0, SHORTEST_NOTES.length - 1)];
   if (next !== current) {
     chooseShortest(next);
     if (shortestNote.value === next) void nextTick(() => shortestButtons.get(next)?.focus());
@@ -239,7 +241,7 @@ function onVoicesKeydown(event: KeyboardEvent, current: MaxVoices): void {
   if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
   event.preventDefault();
   const index = MAX_VOICES.indexOf(current) + (event.key === 'ArrowLeft' ? -1 : 1);
-  const next = MAX_VOICES[Math.min(MAX_VOICES.length - 1, Math.max(0, index))];
+  const next = MAX_VOICES[clamp(index, 0, MAX_VOICES.length - 1)];
   if (next !== current) {
     chooseVoices(next);
     if (maxVoices.value === next) void nextTick(() => voicesButtons.get(next)?.focus());
@@ -254,7 +256,7 @@ function setVoicesButton(name: MaxVoices, element: Element | ComponentPublicInst
 function voicesTitle(voices: MaxVoices): string {
   return voices === 'auto'
     ? copy.value.voicesAutoTitle
-    : copy.value.voicesTitle.replace('{n}', String(voices));
+    : formatMessage(copy.value.voicesTitle, { n: voices });
 }
 
 function chooseTidy(next: boolean): void {
@@ -312,7 +314,7 @@ function shortestLabel(note: ShortestNote): string {
 function shortestTitle(note: ShortestNote): string {
   return note === 'auto'
     ? copy.value.shortestAutoTitle
-    : copy.value.shortestTitle.replace('{n}', String(note));
+    : formatMessage(copy.value.shortestTitle, { n: note });
 }
 
 function isAbortError(value: unknown): boolean {
@@ -367,13 +369,13 @@ async function run(): Promise<void> {
       const wasm = await ensureWasm();
       if (currentController.signal.aborted) return;
       const hz = wasm.tuningToReferenceHz(measured, 440);
-      detectedReference.value = copy.value.detectedReference.replace('{hz}', hz.toFixed(1));
+      detectedReference.value = formatMessage(copy.value.detectedReference, { hz: hz.toFixed(1) });
       return;
     }
     emit('close');
   } catch (value) {
     if (!currentController.signal.aborted && !isAbortError(value)) {
-      error.value = value instanceof Error ? value.message : String(value);
+      error.value = errorMessage(value);
     }
   } finally {
     if (controller.value === currentController) {

@@ -1,3 +1,4 @@
+import { clamp, clamp01 } from '@/lib/math';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
 
 /**
@@ -138,14 +139,6 @@ export const LANE_PARAMS: readonly LaneParamSpec[] = [
  */
 export function laneParamSpec(id: LaneParamId): LaneParamSpec {
   return SPECS[id];
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function clamp01(value: number): number {
-  return clamp(value, 0, 1);
 }
 
 /**

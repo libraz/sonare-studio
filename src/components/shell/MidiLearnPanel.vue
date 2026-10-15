@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
-import { useAppSettings } from '@/composables/useAppSettings';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
-import { confirmDialog } from '@/composables/useDialogs';
+import { confirmDestructive } from '@/composables/useDialogs';
 import type { MidiLearnHandle } from '@/composables/useMidiLearn';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import {
   CONTROL_SURFACE_PROTOCOLS,
   type ControlSurfaceProtocol,
@@ -51,7 +51,6 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const appSettings = useAppSettings();
 const store = useProjectStore();
 const panel = ref<HTMLElement | null>(null);
 
@@ -59,20 +58,18 @@ function close(): void {
   emit('close');
 }
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!panel.value?.contains(event.target as Node)) close();
-}
+// The panel is dismissed by a press anywhere outside it for as long as it is mounted.
+useOutsidePointerDown(
+  () => true,
+  (target) => !!panel.value?.contains(target),
+  close,
+);
 
 onMounted(() => {
-  document.addEventListener('pointerdown', onDocumentPointerDown, true);
   // Focus the dialog itself, not its dismiss action: a screen reader then
   // announces the panel's name, and the first Tab reaches the bindings rather
   // than leaving the close button pre-armed under Enter.
   void nextTick(() => panel.value?.focus());
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
 });
 
 /** The two bindable parameters per strip, in column order. */
@@ -311,11 +308,9 @@ function bankCaption(slot: number, param: BankGridParam): string {
 function clearAll(): void {
   void (async () => {
     if (
-      appSettings.settings.confirmDestructive &&
-      !(await confirmDialog({
+      !(await confirmDestructive({
         title: t.value.shell.midiLearn.clearAllTitle,
         message: t.value.shell.midiLearn.clearAllMessage,
-        danger: true,
         confirmLabel: t.value.shell.midiLearn.clearAll,
       }))
     )

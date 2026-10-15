@@ -3,6 +3,7 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import { detectActiveAudioClipTempo, detectActiveAudioClipTempoMap } from '@/project/audio-tempo';
 import { setTempoSegments } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
@@ -61,7 +62,7 @@ const {
 /** Appends a row one bar after the last entry, inheriting its tempo. */
 function addRow(): void {
   const last = rows.value[rows.value.length - 1];
-  const bpm = last ? last.bpm : formatBpm(store.tempoBpm || 120);
+  const bpm = last ? last.bpm : formatBpm(store.tempoBpm || DEFAULT_TEMPO_BPM);
   rows.value = [
     ...rows.value,
     { key: nextKey(), position: nextBarPosition(last?.position), bpm, endBpm: '' },

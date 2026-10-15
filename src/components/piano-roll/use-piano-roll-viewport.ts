@@ -11,6 +11,7 @@
  */
 
 import { computed, markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
+import { errorMessage } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
 import { createPainter, type Painter } from '@/ui/canvas/painter';
 import { MAX_PITCH, TimelineRange } from '@/ui/canvas/timeline-range';
@@ -146,7 +147,7 @@ export function usePianoRollViewport(options: UsePianoRollViewportOptions = {}):
     try {
       await store.init();
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     }
   });
 

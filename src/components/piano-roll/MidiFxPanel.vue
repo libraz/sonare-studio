@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive } from 'vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
 import { bakeClipMidiFx } from '@/project/commands';
 import {
   DEFAULT_MIDI_FX_CONFIG,
@@ -115,15 +116,7 @@ function pct(value: number): string {
         :aria-label="t.shell.pianoRoll.midiTransform.close"
         @click="emit('close')"
       >
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path
-            d="M4 4l8 8M12 4l-8 8"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-          />
-        </svg>
+        <CloseIcon />
       </button>
     </header>
 

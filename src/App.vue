@@ -79,7 +79,8 @@ import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
-import { describeError } from '@/lib/errors';
+import { describeError, errorMessage as thrownMessage } from '@/lib/errors';
+import { clamp01 } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import {
   canRedo,
@@ -159,7 +160,7 @@ const ctxState = ref('');
 const metronomeVolume = ref(0.35);
 
 function setMetronomeVolume(value: number): void {
-  const next = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : metronomeVolume.value;
+  const next = Number.isFinite(value) ? clamp01(value) : metronomeVolume.value;
   metronomeVolume.value = next;
   transport.toggleMetronome(metronomeEnabled.value, next);
 }
@@ -178,29 +179,8 @@ const snapChoice = computed<number | 'bar'>({
   },
 });
 const stepInput = useStepInput();
-/**
- * Snapshot of the store mirrors a history entry can change. Each evaluation
- * yields a fresh array, so dependents re-run on every mirror change.
- */
-const historyRevision = computed(() => [
-  store.tracks.length,
-  store.clips.length,
-  store.notes.length,
-  store.markers.length,
-  store.sections.length,
-  store.automationLanes.length,
-  store.midiCcBindings.size,
-  store.projectName,
-  store.displayTransposeSemitones,
-]);
-const historyCanUndo = computed(() => {
-  void historyRevision.value;
-  return canUndo();
-});
-const historyCanRedo = computed(() => {
-  void historyRevision.value;
-  return canRedo();
-});
+const historyCanUndo = computed(() => canUndo());
+const historyCanRedo = computed(() => canRedo());
 
 /** Keep header history controls on the same user-visible error surface as menus and shortcuts. */
 function onUndo(): void {
@@ -466,7 +446,7 @@ function installLaunchQueueConsumer(): void {
   installPwaLaunchQueue(queue, {
     importFile: importLaunchedSzdFile,
     onError: (reason) => {
-      errorMessage.value = reason instanceof Error ? reason.message : String(reason);
+      errorMessage.value = thrownMessage(reason);
     },
     waitForBoot: async () => {
       await bootStarted;

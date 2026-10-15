@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import { formatBarBeat } from '@/components/lists/bar-beat';
 import { useArrangementAnalysis } from '@/composables/useArrangementAnalysis';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { type ArrangementConflict, conflictReason } from '@/compose/arrangement';
 import type { MotifRelationship, TrackMotifs } from '@/compose/motifs';
 import type { RankedCadence } from '@/compose/phrases';
@@ -64,24 +65,24 @@ const open = ref(false);
 const popoverStyle = ref<{ left: string; top: string }>({ left: '0px', top: '0px' });
 const headerEl = ref<HTMLElement | null>(null);
 
-/** Closes the popover on any press outside of it or the header bar. */
-function onOutsidePointerDown(event: PointerEvent): void {
-  const target = event.target as HTMLElement | null;
-  if (!target?.closest('.ap-popover') && !target?.closest('.ap-head')) closePopover();
-}
-
 function openPopover(): void {
   const rect = headerEl.value?.getBoundingClientRect();
   if (rect) popoverStyle.value = { left: `${rect.left}px`, top: `${rect.bottom + 4}px` };
   open.value = true;
-  window.addEventListener('pointerdown', onOutsidePointerDown, true);
 }
 
 function closePopover(): void {
   if (!open.value) return;
   open.value = false;
-  window.removeEventListener('pointerdown', onOutsidePointerDown, true);
 }
+
+/** Closes the popover on any press outside of it or the header bar. */
+useOutsidePointerDown(
+  open,
+  (target) =>
+    target instanceof Element && !!(target.closest('.ap-popover') || target.closest('.ap-head')),
+  closePopover,
+);
 
 function toggleResults(): void {
   if (open.value) closePopover();

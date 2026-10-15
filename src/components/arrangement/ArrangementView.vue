@@ -7,6 +7,7 @@ import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { buildKeyMap } from '@/compose/key-map';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { TuneToMidiRefusedError } from '@/project/audio-tune-to-midi';
@@ -258,7 +259,7 @@ function detectSections(): void {
       const count = await detectSectionsFromAudioClip(clip.id);
       if (count === 0) error.value = t.value.shell.arrangement.noSectionsDetected;
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       isDetectingSections.value = false;
     }
@@ -293,7 +294,7 @@ function splitToStems(): void {
       if (newClipIds.length === 0) error.value = t.value.shell.arrangement.noStemsSeparated;
       else setActiveClip(newClipIds[0]);
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     } finally {
       isSplittingStems.value = false;
     }
@@ -320,8 +321,7 @@ function splitToComponents(clipId: number, count: number): void {
       if (newClipIds.length === 0) error.value = t.value.shell.arrangement.noStemsSeparated;
       else setActiveClip(newClipIds[0]);
     } catch (err) {
-      if (!controller.signal.aborted)
-        error.value = err instanceof Error ? err.message : String(err);
+      if (!controller.signal.aborted) error.value = errorMessage(err);
     } finally {
       isSplittingStems.value = false;
       componentSplitAbort.value = null;
@@ -446,9 +446,7 @@ function tuneToMidi(
           ? formatMessage(t.value.shell.arrangement.tuneToMidiRefused[err.reason], {
               track: trackName,
             })
-          : err instanceof Error
-            ? err.message
-            : String(err);
+          : errorMessage(err);
     } finally {
       isTuningToMidi.value = false;
     }
@@ -914,7 +912,7 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
       }
     }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    error.value = errorMessage(cause);
   }
 }
 
@@ -1020,12 +1018,7 @@ function runCrossfade(clipId: number): void {
     crossfadeClips(clip.id, partner.id, crossfadeOptionsFor(clip, partner));
   } catch (cause) {
     const plan = planClipCrossfade(clip, partner, crossfadeOptionsFor(clip, partner));
-    error.value =
-      'reason' in plan
-        ? crossfadeReasonText(plan.reason)
-        : cause instanceof Error
-          ? cause.message
-          : String(cause);
+    error.value = 'reason' in plan ? crossfadeReasonText(plan.reason) : errorMessage(cause);
   }
 }
 
@@ -1042,7 +1035,7 @@ async function runTransientSlice(clipId: number, quantize: boolean): Promise<voi
     });
     if (ids.length < 2) error.value = t.value.shell.arrangement.clipActions.sliceNoTransients;
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : String(cause);
+    error.value = errorMessage(cause);
   }
 }
 
@@ -1081,7 +1074,7 @@ function alignToReference(clip: EditorClip, reference: EditorClip): void {
         });
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     }
   })();
 }
@@ -1342,7 +1335,7 @@ function exportClipToSmf(clipId: number): void {
         result.filename,
       );
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     }
   })();
 }
@@ -1402,7 +1395,7 @@ function rippleTimeFromPrompt(mode: 'insert' | 'delete', ppq: number): void {
       if (isInsert) insertTime(ppq, lengthPpq);
       else deleteTime(ppq, ppq + lengthPpq);
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     }
   })();
 }
@@ -1433,7 +1426,7 @@ function cutAtPlayhead(): void {
     splitClip(target.id, ppq);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -1453,7 +1446,7 @@ onMounted(async () => {
   try {
     await store.init();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 });
 

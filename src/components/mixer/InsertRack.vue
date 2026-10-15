@@ -3,7 +3,9 @@ import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import type { MeterSource } from '@/engine/meters';
+import { errorMessage } from '@/lib/errors';
 import {
   assertNoBusRoutingCycle,
   groupBusTopologyId,
@@ -304,7 +306,7 @@ function pasteSlot(index: number): void {
     expandedIndex.value = index;
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -352,7 +354,7 @@ function onDrop(index: number): void {
     expandedIndex.value = null;
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -503,7 +505,7 @@ function onSidechainChange(index: number, value: SidechainSourceValue): void {
     setInsertSidechain(props.target, index, source);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -530,25 +532,21 @@ function onAddProcessor(processorId: string): void {
     expandedIndex.value = index;
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !addMenu.value?.contains(event.target)) {
+useOutsidePointerDown(
+  addMenuOpen,
+  (target) => !!addMenu.value?.contains(target),
+  () => {
     addMenuOpen.value = false;
-  }
-}
-
-watch(addMenuOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
+  },
+);
 
 onBeforeUnmount(() => {
   unsubscribeGr?.();
   unsubscribeGr = null;
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   for (const gesture of gestures.values()) gesture.end();
   gestures.clear();
 });

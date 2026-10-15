@@ -73,8 +73,8 @@ describe('MixerPanel.vue', () => {
   });
 
   it('removes toolbar menu outside-click listeners on unmount', async () => {
-    const add = vi.spyOn(document, 'addEventListener');
-    const remove = vi.spyOn(document, 'removeEventListener');
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
     const wrapper = shallowMount(MixerPanel, {
       global: {
         directives: { tooltip: {} },

@@ -258,8 +258,8 @@ describe('MasteringPanel.vue', () => {
   });
 
   it('removes preset menu outside-click listeners on unmount', async () => {
-    const add = vi.spyOn(document, 'addEventListener');
-    const remove = vi.spyOn(document, 'removeEventListener');
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
     const wrapper = mount(MasteringPanel);
 
     await wrapper.find('.preset-button').trigger('click');

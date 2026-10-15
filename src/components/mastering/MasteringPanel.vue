@@ -5,10 +5,12 @@ import PresetSelector from '@/components/mastering/PresetSelector.vue';
 import PreviewPane from '@/components/mastering/PreviewPane.vue';
 import ProcessorRack from '@/components/mastering/ProcessorRack.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { renderMixdownInWorker } from '@/export/client';
 import { formatClippingCensus } from '@/export/export-issue-format';
 import type { MixdownResult } from '@/export/mixdown';
 import { dbToLinear } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import {
   addMasteringProcessor,
@@ -191,7 +193,7 @@ function runCommand(action: () => void): void {
     action();
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -505,7 +507,7 @@ async function onAutoSuggest(): Promise<void> {
     };
     runCommand(() => applyMasteringPresetWithOverrides(preset, overrides));
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   } finally {
     suggesting.value = false;
   }
@@ -576,7 +578,7 @@ async function onCheckTargets(): Promise<void> {
     }
     streamingTargets.value = parseStreamingPreview(json);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   } finally {
     checkingTargets.value = false;
   }
@@ -754,24 +756,24 @@ function onAddProcessor(processorId: string): void {
 
 // --- Popover dismiss -------------------------------------------------------------
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node)) return;
-  const addMenuEl = processorRackRef.value?.addMenuEl;
-  const presetMenuEl = presetSelectorRef.value?.root;
-  if (!addMenuEl?.contains(event.target)) addMenuOpen.value = false;
-  if (!presetMenuEl?.contains(event.target)) presetMenuOpen.value = false;
-}
+useOutsidePointerDown(
+  addMenuOpen,
+  (target) => !!processorRackRef.value?.addMenuEl?.contains(target),
+  () => {
+    addMenuOpen.value = false;
+  },
+);
+useOutsidePointerDown(
+  presetMenuOpen,
+  (target) => !!presetSelectorRef.value?.root?.contains(target),
+  () => {
+    presetMenuOpen.value = false;
+  },
+);
 
 const suggestBlocked = computed(() =>
   firstBlock([suggesting.value, t.value.shell.mastering.reasons.analyzing]),
 );
-
-const anyMenuOpen = computed(() => addMenuOpen.value || presetMenuOpen.value);
-
-watch(anyMenuOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
 
 // --- Preview ---------------------------------------------------------------------
 
@@ -840,7 +842,7 @@ async function onPreview(): Promise<void> {
   try {
     doc = serializeProject();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
     return;
   }
   const range = derivePreviewRange(
@@ -1041,7 +1043,7 @@ async function onReferenceFile(event: Event): Promise<void> {
     referenceAnalysis.value = null;
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -1067,7 +1069,7 @@ async function onCompareReference(): Promise<void> {
       reference.sampleRate,
     );
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   } finally {
     analyzingReference.value = false;
   }
@@ -1101,7 +1103,6 @@ const renderError = computed(() =>
 );
 
 onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
   for (const gesture of gestures.values()) gesture.end();
   gestures.clear();
   controller.dispose();

@@ -6,7 +6,9 @@ import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
+import { errorMessage } from '@/lib/errors';
 import { deleteSoundFontIfUnreferenced } from '@/persistence/gc';
 import { readFileBytesBounded } from '@/persistence/local-file';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
@@ -156,7 +158,7 @@ function run(action: () => void): void {
     action();
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -177,7 +179,7 @@ function audition(candidate: NonNullable<typeof instrument.value>): void {
     },
     (err: unknown) => {
       if (disposed || generation !== auditionGeneration) return;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     },
   );
 }
@@ -443,16 +445,13 @@ function openTab(tab: PickerTab): void {
 }
 
 /** Closes the picker when the pointer goes down outside of it. */
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !pickerRoot.value?.contains(event.target)) {
+useOutsidePointerDown(
+  pickerOpen,
+  (target) => !!pickerRoot.value?.contains(target),
+  () => {
     pickerOpen.value = false;
-  }
-}
-
-watch(pickerOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
+  },
+);
 
 onBeforeUnmount(() => {
   disposed = true;
@@ -461,7 +460,6 @@ onBeforeUnmount(() => {
   rackAudition = null;
   sf2ManifestRequest += 1;
   if (sf2ManifestTimer !== undefined) clearTimeout(sf2ManifestTimer);
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
 });
 
 function choosePreset(preset: string): void {
@@ -506,7 +504,7 @@ async function refreshFonts(): Promise<void> {
     error.value = '';
   } catch (err) {
     fonts.value = [];
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   } finally {
     fontsLoading.value = false;
   }
@@ -543,7 +541,7 @@ async function removeFont(fontId: string): Promise<void> {
     }
     await refreshFonts();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -742,7 +740,7 @@ function refreshSf2ManifestProbe(): void {
       .catch((err: unknown) => {
         if (request !== sf2ManifestRequest) return;
         sf2ManifestPresets.value = [];
-        const detail = err instanceof Error ? err.message : String(err);
+        const detail = errorMessage(err);
         sf2ManifestProbe.value = {
           state: 'error',
           text: formatMessage(t.value.shell.devicesPanel.soundFontProgramError, { detail }),
@@ -826,7 +824,7 @@ async function onSf2FileChange(event: Event): Promise<void> {
     selectFont(meta.id);
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 

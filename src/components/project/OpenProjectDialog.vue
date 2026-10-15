@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
+import { clamp } from '@/lib/math';
 import type { StoredProjectInfo } from '@/persistence/opfs';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatSize } from '@/ui/shell/format';
@@ -56,7 +57,7 @@ watch(
 function moveSelection(delta: number): void {
   const count = props.storedProjects.length;
   if (count === 0) return;
-  selectedIndex.value = Math.min(count - 1, Math.max(0, selectedIndex.value + delta));
+  selectedIndex.value = clamp(selectedIndex.value + delta, 0, count - 1);
   scrollSelectedIntoView();
 }
 

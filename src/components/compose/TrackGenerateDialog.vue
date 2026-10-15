@@ -4,6 +4,8 @@ import AppModal from '@/components/shell/AppModal.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { toSafetyProfile } from '@/compose/guidance-profile';
 import { harmonicNotes, isDrumTrack } from '@/compose/tracks';
+import { errorMessage } from '@/lib/errors';
+import { clamp01 } from '@/lib/math';
 import {
   type BatchPartSpec,
   type BatchTarget,
@@ -849,7 +851,7 @@ function paramsFor(part: TrackPart): BatchPartSpec['params'] {
         bars: drumBars.value,
         style: drumStyle.value,
         section: drumSection.value,
-        density: Math.min(1, Math.max(0, drumDensity.value)),
+        density: clamp01(drumDensity.value),
         fills: drumFills.value,
         ...(drumNextSection.value !== 'same' ? { nextSection: drumNextSection.value } : {}),
         ...(drumDifficulty.value > 0 ? { difficulty: drumDifficulty.value } : {}),
@@ -909,7 +911,7 @@ function onGenerate(): void {
     else if (written > 0) emit('close');
     else error.value = g.value.error;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = errorMessage(e);
   } finally {
     generating.value = false;
   }
@@ -925,7 +927,7 @@ function onComposeLead(): void {
     }
     emit('composeLead');
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    error.value = errorMessage(e);
   }
 }
 

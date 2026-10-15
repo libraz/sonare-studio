@@ -3,6 +3,7 @@ import { computed, inject, onBeforeUnmount, reactive, ref } from 'vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import {
   type AutomationParam,
   type AutomationTarget,
@@ -326,17 +327,16 @@ function learnState(controlId: string): 'unbound' | 'armed' | 'bound' | undefine
   return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
 }
 
-/** Closes the menu on any press outside of it. */
-function onOutsidePointerDown(event: PointerEvent): void {
-  const target = event.target as HTMLElement | null;
-  if (!target?.closest('.qc-menu')) closeMenu();
+function closeMenu(): void {
+  menu.open = false;
 }
 
-function closeMenu(): void {
-  if (!menu.open) return;
-  menu.open = false;
-  window.removeEventListener('pointerdown', onOutsidePointerDown, true);
-}
+/** Closes the menu on any press outside of it. */
+useOutsidePointerDown(
+  () => menu.open,
+  (target) => target instanceof Element && !!target.closest('.qc-menu'),
+  closeMenu,
+);
 
 function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
   // Open when the knob has at least one menu action: MIDI learn (when a handle
@@ -352,7 +352,6 @@ function onKnobContextMenu(control: QuickControl, event: MouseEvent): void {
   menu.x = event.clientX;
   menu.y = event.clientY;
   menu.controlId = control.id;
-  window.addEventListener('pointerdown', onOutsidePointerDown, true);
 }
 
 /** Existing automation lane for a control, or undefined. */

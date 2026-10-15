@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { type CSSProperties, computed, ref } from 'vue';
+import { clamp, clamp01 } from '@/lib/math';
 import {
   isBipolarParam,
   paramRatio,
@@ -40,7 +41,7 @@ const bipolar = computed(() => isBipolarParam(props.param));
 /** Bar geometry per step, in percent of the lane height. */
 const bars = computed<CSSProperties[]>(() =>
   props.steps.map((step) => {
-    const ratio = Math.min(1, Math.max(0, paramRatio(props.param, step)));
+    const ratio = clamp01(paramRatio(props.param, step));
     if (!bipolar.value) return { bottom: '0%', height: `${ratio * 100}%` };
     const from = Math.min(0.5, ratio);
     return { bottom: `${from * 100}%`, height: `${Math.abs(ratio - 0.5) * 100}%` };
@@ -80,7 +81,7 @@ function parameterValueText(step: PatternStep): string {
 
 function setKeyboardValue(stepIndex: number, value: number): void {
   const { min, max } = parameterBounds();
-  emit('set-value', stepIndex, Math.min(max, Math.max(min, value)));
+  emit('set-value', stepIndex, clamp(value, min, max));
 }
 
 function focusStep(stepIndex: number): void {

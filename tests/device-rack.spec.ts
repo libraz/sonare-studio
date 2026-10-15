@@ -299,8 +299,8 @@ describe('DeviceRack.vue', () => {
   });
 
   it('removes the instrument picker outside-click listener on unmount', async () => {
-    const add = vi.spyOn(document, 'addEventListener');
-    const remove = vi.spyOn(document, 'removeEventListener');
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
     const wrapper = mount(DeviceRack);
 
     await wrapper.find('.instrument-button').trigger('click');

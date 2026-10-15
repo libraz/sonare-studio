@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
+import { errorMessage } from '@/lib/errors';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import { groupBusTopologyId } from '@/project/bus-topology';
 import {
@@ -162,7 +164,7 @@ function onAddBus(): void {
     addMixerBus();
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -179,7 +181,7 @@ function onAddVca(): void {
     addVcaGroup();
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -202,32 +204,24 @@ function onApplyScenePreset(preset: string): void {
     sceneMenuOpen.value = false;
     error.value = '';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node)) {
+useOutsidePointerDown(
+  menuOpen,
+  (target) => !!menuEl.value?.contains(target),
+  () => {
     menuOpen.value = false;
+  },
+);
+useOutsidePointerDown(
+  sceneMenuOpen,
+  (target) => !!sceneMenuEl.value?.contains(target),
+  () => {
     sceneMenuOpen.value = false;
-    return;
-  }
-  if (!menuEl.value?.contains(event.target)) {
-    menuOpen.value = false;
-  }
-  if (!sceneMenuEl.value?.contains(event.target)) {
-    sceneMenuOpen.value = false;
-  }
-}
-
-watch([menuOpen, sceneMenuOpen], ([viewOpen, scenesOpen]) => {
-  if (viewOpen || scenesOpen) document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
+  },
+);
 </script>
 
 <template>

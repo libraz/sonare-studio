@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue';
+import { ref } from 'vue';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { useI18n } from '@/ui/i18n';
 
 const emit = defineEmits<{
@@ -15,20 +16,13 @@ function onAdd(kind: 'midi' | 'audio' | 'group'): void {
   emit('add', kind);
 }
 
-function onDocumentPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !menu.value?.contains(event.target)) {
+useOutsidePointerDown(
+  open,
+  (target) => !!menu.value?.contains(target),
+  () => {
     open.value = false;
-  }
-}
-
-watch(open, (isOpen) => {
-  if (isOpen) document.addEventListener('pointerdown', onDocumentPointerDown, true);
-  else document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-});
+  },
+);
 </script>
 
 <template>

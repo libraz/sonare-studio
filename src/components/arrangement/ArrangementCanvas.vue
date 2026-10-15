@@ -4,7 +4,7 @@ import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObje
 import { getCanvasContext, setupCanvas } from '@/components/piano-roll/theme';
 import type { AutomationLaneState, AutomationParam } from '@/project/automation';
 import type { PpqSpan } from '@/project/take-silence';
-import { normalizeTempoMap } from '@/project/tempo-map';
+import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from '@/project/tempo-map';
 import type {
   EditorClip,
   EditorMarker,
@@ -163,7 +163,7 @@ const barPpq = computed(() => {
 
 /** Tempo map for audio source mapping, rebuilt only when its inputs change. */
 const tempoMap = computed(() =>
-  normalizeTempoMap(props.tempoSegments ?? [], props.tempoBpm ?? 120),
+  normalizeTempoMap(props.tempoSegments ?? [], props.tempoBpm ?? DEFAULT_TEMPO_BPM),
 );
 
 const activeClip = computed(() => props.clips.find((clip) => clip.id === props.activeClipId));

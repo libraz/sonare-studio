@@ -3,6 +3,7 @@ import { computed, ref, shallowRef, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { type ExportRenderHandle, renderMixdownInWorker } from '@/export/client';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { applyMixerSceneJson } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
@@ -110,7 +111,7 @@ async function analyze(): Promise<void> {
       ]),
     );
   } catch (err) {
-    if (current === generation) error.value = err instanceof Error ? err.message : String(err);
+    if (current === generation) error.value = errorMessage(err);
   } finally {
     if (current === generation) analyzing.value = false;
   }
@@ -160,7 +161,7 @@ function onApply(): void {
     applyMixerSceneJson(JSON.stringify(suggestion.scene), { preserveTrackInserts: true });
     emit('close');
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 </script>

@@ -76,6 +76,7 @@ import type { WavBitDepth } from '@/export/wav';
 import { createWavStreamWriter, type WavStreamWriter } from '@/export/wav-stream';
 import { peakDb } from '@/lib/db';
 import { downloadBlob } from '@/lib/download';
+import { errorMessage as thrownMessage } from '@/lib/errors';
 import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import { ensureWasm } from '@/lib/wasm';
 import { masteringChainIsActive } from '@/project/mixer';
@@ -908,7 +909,7 @@ async function onExport(): Promise<void> {
         limit: formatMasteringDuration(error.maxFrames, error.sampleRate),
       });
     } else {
-      errorMessage.value = error instanceof Error ? error.message : String(error);
+      errorMessage.value = thrownMessage(error);
     }
   } finally {
     busy.value = false;

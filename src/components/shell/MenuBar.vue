@@ -14,8 +14,10 @@
  * are. The same component drives both the left command bar and the right-hand
  * Layout menu (via `align="end"`).
  */
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+
+import { computed, nextTick, ref } from 'vue';
 import TransportIcon from '@/components/shell/TransportIcon.vue';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { cleanMenuItems, isNavigable, type MenuBarMenu } from '@/ui/menu/menu-bar';
 import { isItemDisabled } from '@/ui/menu/menu-items';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
@@ -78,18 +80,9 @@ function setPanelEl(id: string, el: HTMLElement | null): void {
   else panelEls.delete(id);
 }
 
-function attach(): void {
-  window.addEventListener('pointerdown', onPointerDown, true);
-}
-
-function detach(): void {
-  window.removeEventListener('pointerdown', onPointerDown, true);
-}
-
 function openMenu(id: string, focusPanel = false): void {
   openId.value = id;
   activeRowId.value = null;
-  attach();
   if (focusPanel) void nextTick(() => panelEls.get(id)?.focus());
 }
 
@@ -97,7 +90,6 @@ function close(focusTrigger = false): void {
   const id = openId.value;
   openId.value = null;
   activeRowId.value = null;
-  detach();
   if (focusTrigger && id) triggerEls.get(id)?.focus();
 }
 
@@ -118,11 +110,11 @@ function activate(itemId: string): void {
   run?.();
 }
 
-function onPointerDown(event: PointerEvent): void {
-  const target = event.target;
-  if (target instanceof Node && rootEl.value?.contains(target)) return;
-  close();
-}
+useOutsidePointerDown(
+  () => openId.value !== null,
+  (target) => !!rootEl.value?.contains(target),
+  () => close(),
+);
 
 /** Moves the keyboard highlight by `delta`, wrapping, opening at an end. */
 function moveActive(delta: 1 | -1): void {
@@ -231,8 +223,6 @@ function onKeydown(event: KeyboardEvent): void {
       break;
   }
 }
-
-onBeforeUnmount(detach);
 </script>
 
 <template>

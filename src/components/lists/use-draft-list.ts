@@ -6,6 +6,7 @@
  */
 
 import { computed, type Ref, ref, watch } from 'vue';
+import { errorMessage } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, isAudioClip } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
@@ -146,7 +147,7 @@ export function useDraftList<Row extends { key: number }>(
       await run(clip, isCurrent);
     } catch (err) {
       if (!isCurrent()) return;
-      errors.value = [err instanceof Error ? err.message : String(err)];
+      errors.value = [errorMessage(err)];
     } finally {
       if (generation === detectGeneration) isDetecting.value = false;
     }

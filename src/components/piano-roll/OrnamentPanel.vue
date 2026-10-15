@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
 import { timeSignatureAtPpq } from '@/compose/meter';
 import { ORNAMENT_MARKS, type OrnamentMark, planOrnaments } from '@/compose/ornaments';
 import { ornamentClipNotes } from '@/project/commands';
@@ -98,15 +99,7 @@ function apply(): void {
         :aria-label="t.shell.pianoRoll.ornament.close"
         @click="emit('close')"
       >
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-          <path
-            d="M4 4l8 8M12 4l-8 8"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-          />
-        </svg>
+        <CloseIcon />
       </button>
     </header>
 

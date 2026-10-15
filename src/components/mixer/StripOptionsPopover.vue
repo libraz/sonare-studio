@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, inject, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
+import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
+import { clamp } from '@/lib/math';
 import {
   currentStrip,
   isMixerBusStripTarget,
@@ -136,9 +138,7 @@ const hasStripOptions = computed(
 
 function onInputTrimInput(event: Event, commit: boolean): void {
   const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw)
-    ? Math.min(MAX_INPUT_TRIM_DB, Math.max(MIN_INPUT_TRIM_DB, raw))
-    : 0;
+  const value = Number.isFinite(raw) ? clamp(raw, MIN_INPUT_TRIM_DB, MAX_INPUT_TRIM_DB) : 0;
   setStripInputTrim(props.target, value, { commit });
 }
 
@@ -146,7 +146,7 @@ function onWidthInput(event: Event, commit: boolean): void {
   if (isSurroundBus.value) return;
   const raw = Number.parseFloat((event.target as HTMLInputElement).value);
   const value = Number.isFinite(raw)
-    ? Math.min(MAX_STRIP_WIDTH, Math.max(MIN_STRIP_WIDTH, raw))
+    ? clamp(raw, MIN_STRIP_WIDTH, MAX_STRIP_WIDTH)
     : DEFAULT_STRIP_WIDTH;
   setStripWidth(props.target, value, { commit });
 }
@@ -171,7 +171,7 @@ function onPolarityToggle(channel: 'left' | 'right'): void {
 function onChannelDelayInput(event: Event): void {
   if (typeof props.target !== 'number') return;
   const raw = Number.parseInt((event.target as HTMLInputElement).value, 10);
-  const samples = Number.isFinite(raw) ? Math.min(MAX_CHANNEL_DELAY_SAMPLES, Math.max(0, raw)) : 0;
+  const samples = Number.isFinite(raw) ? clamp(raw, 0, MAX_CHANNEL_DELAY_SAMPLES) : 0;
   setStripChannelDelaySamples(props.target, samples);
 }
 
@@ -189,7 +189,7 @@ function onPanModeChange(value: string): void {
 function onDualPanInput(channel: 'left' | 'right', event: Event, commit: boolean): void {
   if (props.target === 'master' || isSurroundBus.value) return;
   const raw = Number.parseFloat((event.target as HTMLInputElement).value);
-  const value = Number.isFinite(raw) ? Math.min(1, Math.max(-1, raw)) : 0;
+  const value = Number.isFinite(raw) ? clamp(raw, -1, 1) : 0;
   const left = channel === 'left' ? value : dualPanLeft.value;
   const right = channel === 'right' ? value : dualPanRight.value;
   setStripDualPan(props.target, left, right, { commit });
@@ -241,20 +241,13 @@ function onMidiForget(param: MidiLearnStripControlParam): void {
   midiLearn?.clearId(learnTargetId(param));
 }
 
-function onOptionsPointerDown(event: PointerEvent): void {
-  if (!(event.target instanceof Node) || !optionsMenu.value?.contains(event.target)) {
+useOutsidePointerDown(
+  optionsOpen,
+  (target) => !!optionsMenu.value?.contains(target),
+  () => {
     optionsOpen.value = false;
-  }
-}
-
-watch(optionsOpen, (open) => {
-  if (open) document.addEventListener('pointerdown', onOptionsPointerDown, true);
-  else document.removeEventListener('pointerdown', onOptionsPointerDown, true);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('pointerdown', onOptionsPointerDown, true);
-});
+  },
+);
 </script>
 
 <template>

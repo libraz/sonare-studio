@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { clamp, clamp01 } from '@/lib/math';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   dbToFaderPosition,
@@ -70,7 +71,7 @@ function dbFromPointer(event: PointerEvent): number {
 
 /** Clamps a dB value to the fader range. */
 function clampDb(db: number): number {
-  return Math.min(FADER_MAX_DB, Math.max(FADER_MIN_DB, db));
+  return clamp(db, FADER_MIN_DB, FADER_MAX_DB);
 }
 
 /** Nudges the gain by one step in the given direction (commit). */
@@ -106,7 +107,7 @@ function onPointerMove(event: PointerEvent): void {
     // Fine drag: move relative to the current value in tapered position space.
     const deltaUp = lastY - event.clientY;
     const position = dbToFaderPosition(dragDb) + (deltaUp / props.height) * FINE_FACTOR;
-    dragDb = faderPositionToDb(Math.min(1, Math.max(0, position)));
+    dragDb = faderPositionToDb(clamp01(position));
   } else {
     dragDb = dbFromPointer(event);
   }

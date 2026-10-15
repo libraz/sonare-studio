@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterBridge } from '@/engine/meters';
+import { clamp } from '@/lib/math';
 import { useI18n } from '@/ui/i18n';
 import { drawMeterBar } from '@/ui/mixer/meter-draw';
 import {
@@ -133,7 +134,7 @@ function draw(ts: number): void {
   let lastLabelY = Number.NEGATIVE_INFINITY;
   for (const db of TICK_DBS) {
     if (db < props.minDb) continue;
-    const y = Math.min(h - 4, Math.max(4, dbToY(db, h)));
+    const y = clamp(dbToY(db, h), 4, h - 4);
     ctx.fillStyle = TOKENS.text4;
     ctx.fillRect(2 * barW + gap + 1, y, 4, 1);
     if (y - lastLabelY < labelGap) continue;

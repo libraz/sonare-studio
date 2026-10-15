@@ -63,8 +63,8 @@ describe('StripOptionsPopover MIDI learn', () => {
   });
 
   it('removes the options popover outside-click listener on unmount', async () => {
-    const add = vi.spyOn(document, 'addEventListener');
-    const remove = vi.spyOn(document, 'removeEventListener');
+    const add = vi.spyOn(window, 'addEventListener');
+    const remove = vi.spyOn(window, 'removeEventListener');
     const wrapper = mount(StripOptionsPopover, {
       props: { target: trackId, name: 'Track 1' },
     });

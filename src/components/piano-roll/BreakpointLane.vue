@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useGestureTransaction } from '@/composables/useGestureTransaction';
+import { clamp } from '@/lib/math';
 import { isClipExpressionCurve } from '@/project/midi-cc';
 import type { ClipCcPoint, ClipExpressionCurve } from '@/project/types';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
@@ -118,7 +119,7 @@ function currentPoints(): ClipCcPoint[] {
 function valueFromY(y: number): number {
   if (heightPx <= 0) return 0;
   const max = maxValue();
-  return Math.min(max, Math.max(0, Math.round((1 - y / heightPx) * max)));
+  return clamp(Math.round((1 - y / heightPx) * max), 0, max);
 }
 
 function yFromValue(value: number): number {
@@ -143,8 +144,8 @@ function segmentValue(start: number, end: number, t: number, curve: ClipExpressi
 
 function ppqFromX(x: number): number {
   const min = props.clipStartPpq ?? 0;
-  const raw = Math.min(props.clipLengthPpq, Math.max(min, props.range.xToPpq(x)));
-  return props.snapPpq ? Math.min(props.clipLengthPpq, Math.max(min, props.snapPpq(raw))) : raw;
+  const raw = clamp(props.range.xToPpq(x), min, props.clipLengthPpq);
+  return props.snapPpq ? clamp(props.snapPpq(raw), min, props.clipLengthPpq) : raw;
 }
 
 function localPoint(event: PointerEvent): { x: number; y: number } {
@@ -213,7 +214,7 @@ function draw(): void {
         ctx.lineTo(startX, startY);
         ctx.lineTo(endX, endY);
       } else {
-        const samples = Math.max(4, Math.min(48, Math.ceil(Math.abs(endX - startX) / 8)));
+        const samples = clamp(Math.ceil(Math.abs(endX - startX) / 8), 4, 48);
         for (let step = 1; step <= samples; step++) {
           const t = step / samples;
           ctx.lineTo(

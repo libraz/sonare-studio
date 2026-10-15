@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { clamp01 } from '@/lib/math';
 import { controlPercent, valueAtControlPercent } from '@/ui/devices/knob-math';
 import { useI18n } from '@/ui/i18n';
 import { DEFAULT_DRAG_PIXELS, type DragRange, FINE_FACTOR, NUDGE_DIVISIONS } from '@/ui/mixer/drag';
@@ -129,7 +130,7 @@ function onPointerMove(event: PointerEvent): void {
   lastY = event.clientY;
   if (deltaUp === 0) return;
   const factor = event.shiftKey ? FINE_FACTOR : 1;
-  dragNorm = Math.min(1, Math.max(0, dragNorm + (deltaUp / DEFAULT_DRAG_PIXELS) * factor));
+  dragNorm = clamp01(dragNorm + (deltaUp / DEFAULT_DRAG_PIXELS) * factor);
   emit('change', fromNorm(dragNorm), false);
 }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useId, watch } from 'vue';
+import { clamp } from '@/lib/math';
 import type {
   AccessibleObjectAdjustment,
   AccessibleObjectItem,
@@ -43,7 +44,7 @@ async function announce(message: string): Promise<void> {
 
 function moveActive(delta: number): void {
   if (props.items.length === 0) return;
-  activeIndex.value = Math.min(props.items.length - 1, Math.max(0, activeIndex.value + delta));
+  activeIndex.value = clamp(activeIndex.value + delta, 0, props.items.length - 1);
   const item = activeItem.value;
   if (item) void announce(item.label);
 }

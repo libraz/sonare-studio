@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
+import { clamp } from '@/lib/math';
 import type { ProjectDocument } from '@/project/serialization';
 import { createTemplate, TEMPLATE_NAMES, type TemplateName } from '@/project/templates';
 import { useI18n } from '@/ui/i18n';
@@ -70,7 +71,7 @@ function onCancel(): void {
 /** Moves the template selection by `delta` within the list bounds. */
 function moveSelection(delta: number): void {
   const index = TEMPLATE_NAMES.indexOf(selected.value);
-  const next = Math.min(TEMPLATE_NAMES.length - 1, Math.max(0, index + delta));
+  const next = clamp(index + delta, 0, TEMPLATE_NAMES.length - 1);
   selected.value = TEMPLATE_NAMES[next];
 }
 

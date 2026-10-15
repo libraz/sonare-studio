@@ -9,6 +9,7 @@
  */
 
 import { type Ref, ref, shallowRef } from 'vue';
+import { clamp, clampInt } from '@/lib/math';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/types';
 import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import {
@@ -327,7 +328,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
 
   /** Clamps a pitch into the playable range. */
   function clampPitch(pitch: number): number {
-    return Math.min(MAX_PITCH, Math.max(MIN_PITCH, pitch));
+    return clamp(pitch, MIN_PITCH, MAX_PITCH);
   }
 
   function createdPitch(point: InteractionPoint): number {
@@ -343,7 +344,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   /** Clamps the channel chosen by the host to the MIDI channel range. */
   function createdChannel(): number {
     const channel = options.getCreatedChannel?.() ?? 0;
-    return Number.isFinite(channel) ? Math.min(15, Math.max(0, Math.round(channel))) : 0;
+    return Number.isFinite(channel) ? clampInt(channel, 0, 15, 0) : 0;
   }
 
   function clampPpq(ppq: number): number {
@@ -508,7 +509,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       rawMaxPpq !== undefined && Number.isFinite(rawMaxPpq) ? rawMaxPpq : Number.POSITIVE_INFINITY;
     deltaPpq = clampMoveDelta(deltaPpq, [...g.origins.values()], minPpq, maxPpq);
     let deltaPitch = Math.round((g.start.y - point.y) / view.rowHeight);
-    deltaPitch = Math.min(MAX_PITCH - maxPitch, Math.max(MIN_PITCH - minPitch, deltaPitch));
+    deltaPitch = clamp(deltaPitch, MIN_PITCH - minPitch, MAX_PITCH - maxPitch);
     if (modifiers.shift === true) {
       const horizontalPx = Math.abs(point.x - g.start.x);
       const verticalPx = Math.abs(point.y - g.start.y);

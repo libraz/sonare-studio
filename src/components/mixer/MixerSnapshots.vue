@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useAppSettings } from '@/composables/useAppSettings';
-import { confirmDialog } from '@/composables/useDialogs';
+import { confirmDestructive } from '@/composables/useDialogs';
 import {
   activeMixerSnapshotSlot,
   type MixerSnapshotSlot,
@@ -22,7 +21,6 @@ import { formatMessage, useI18n } from '@/ui/i18n';
  */
 
 const { t } = useI18n();
-const appSettings = useAppSettings();
 
 const SLOTS = mixerSnapshotSlots();
 
@@ -55,11 +53,9 @@ function storeSnapshot(slot: MixerSnapshotSlot): void {
   void (async () => {
     if (
       filled.value[slot] &&
-      appSettings.settings.confirmDestructive &&
-      !(await confirmDialog({
+      !(await confirmDestructive({
         title: t.value.shell.mixer.snapshots.overwriteTitle,
         message: formatMessage(t.value.shell.mixer.snapshots.overwriteMessage, { slot }),
-        danger: true,
         confirmLabel: t.value.shell.mixer.snapshots.overwrite,
       }))
     )

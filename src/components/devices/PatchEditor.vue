@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
+import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import { setTrackInstrument } from '@/project/commands';
 import { type StoredSynthPatch, trackInstrument } from '@/project/instrument';
 import { unitLabel } from '@/project/processor-controls';
@@ -353,7 +355,7 @@ function onModRowChange(index: number, patchRow: Partial<ModMatrixRow>): void {
 function onModDepthInput(index: number, event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(raw)) return;
-  onModRowChange(index, { depth: Math.min(MOD_DEPTH_MAX, Math.max(MOD_DEPTH_MIN, raw)) });
+  onModRowChange(index, { depth: clamp(raw, MOD_DEPTH_MIN, MOD_DEPTH_MAX) });
 }
 
 // --- Envelope display ----------------------------------------------------------
@@ -462,7 +464,7 @@ function onApply(): void {
     error.value = '';
     emit('applied');
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = errorMessage(err);
   }
 }
 
@@ -481,7 +483,7 @@ function onAudition(): void {
     })
     .catch((err: unknown) => {
       if (disposed || generation !== auditionGeneration) return;
-      error.value = err instanceof Error ? err.message : String(err);
+      error.value = errorMessage(err);
     });
 }
 

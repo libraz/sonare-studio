@@ -5,6 +5,7 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { deleteAudioAssetGuarded } from '@/persistence/asset-leases';
 import { type AudioAssetMeta, listAssets, loadAsset } from '@/persistence/assets';
@@ -72,11 +73,6 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
-
-/** Renders an unknown error as a display message. */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 // --- Asset listing ---------------------------------------------------------
 

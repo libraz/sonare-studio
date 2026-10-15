@@ -1,5 +1,6 @@
 <script lang="ts">
 import { ref as moduleRef } from 'vue';
+import { errorMessage } from '@/lib/errors';
 
 /** Operation groups shown as tabs above the operation toolbar. */
 const OPS_GROUPS = [
@@ -315,10 +316,6 @@ const assetInfo = computed(() => {
 });
 
 // --- Loading ---------------------------------------------------------------
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 async function loadCurrent(assetId: string): Promise<void> {
   const generation = ++loadGeneration;

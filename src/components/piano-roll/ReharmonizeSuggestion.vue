@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import CloseIcon from '@/components/shell/CloseIcon.vue';
 import type { PendingChordChange } from '@/composables/useReactiveReharmonization';
 import { useI18n } from '@/ui/i18n';
 
@@ -58,7 +59,7 @@ const overflowCount = computed(() => Math.max(0, props.changes.length - MAX_SHOW
       v-tooltip="t.shell.pianoRoll.reharmonize.dismiss"
       @click="emit('dismiss')"
     >
-      ✕
+      <CloseIcon />
     </button>
   </div>
 </template>
