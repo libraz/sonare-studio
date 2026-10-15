@@ -889,14 +889,15 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
       }
       return;
     }
-    const currentTrackIndex = store.tracks.findIndex((item) => item.id === clip.trackId);
+    const lanes = visibleTracks.value;
+    const currentTrackIndex = lanes.findIndex((item) => item.id === clip.trackId);
     const trackDelta = direction === 'up' ? -1 : 1;
     for (
       let index = currentTrackIndex + trackDelta;
-      index >= 0 && index < store.tracks.length;
+      index >= 0 && index < lanes.length;
       index += trackDelta
     ) {
-      const destination = store.tracks[index];
+      const destination = lanes[index];
       if (
         destination.frozen === undefined &&
         canTrackContainClip(destination.kind, clipKind(clip))

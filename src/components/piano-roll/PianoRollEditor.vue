@@ -33,16 +33,16 @@ import {
 } from '@/project/midi-cc';
 import { audibleMidiSourceNotes, audibleMidiSourceWindow } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
-import { measureRangeAt, snapPpqToMeterGrid } from '@/project/time-signature';
+import type { MeasureRange } from '@/project/time-signature';
 import type { NewEditorNote } from '@/project/types';
 import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navigation';
-import { localizeMeter } from '@/ui/arrangement/ruler';
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
 import { LANE_PARAMS, type LaneParamId } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
+import { clampMoveDelta, clampResizedDuration } from './nudge-bounds';
 import { buildGhostNotes, type GhostNote } from './overlay';
 import PianoRollMinimap from './PianoRollMinimap.vue';
 import PianoRollRuler from './PianoRollRuler.vue';
@@ -51,6 +51,11 @@ import ReharmonizeLockStrip from './ReharmonizeLockStrip.vue';
 import ReharmonizeSuggestion from './ReharmonizeSuggestion.vue';
 import { pianoRollStatusLocation } from './status-location';
 import { DEFAULT_NOTE_COLOR, KEYBOARD_COLUMN_WIDTH_PX, type NoteColorFn } from './theme';
+import {
+  floorLocalPpqToMeterGrid,
+  localMeasureRange,
+  snapLocalPpqToMeterGrid,
+} from './timeline-meter';
 import { useNoteInteractions } from './use-note-interactions';
 import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
 import { usePianoRollLanes } from './use-piano-roll-lanes';
@@ -472,6 +477,7 @@ const { onNoteContext } = usePianoRollNoteMenu({
   contentReadOnly,
   gridPpq,
   snapPpq: (ppq) => snapPianoRollPpq(ppq),
+  barLengthPpq: (ppq) => pianoRollMeasureAt(ppq).lengthPpq,
 });
 
 type NoteKeyboardAction =
@@ -525,18 +531,10 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
         ? -step
         : step;
   if (resize) {
-    updateNotes([
-      {
-        id: note.id,
-        durationPpq: Math.min(maximum - note.startPpq, Math.max(0.0625, note.durationPpq + delta)),
-      },
-    ]);
+    updateNotes([{ id: note.id, durationPpq: clampResizedDuration(note, delta, maximum) }]);
   } else {
     updateNotes([
-      {
-        id: note.id,
-        startPpq: Math.min(maximum - note.durationPpq, Math.max(minimum, note.startPpq + delta)),
-      },
+      { id: note.id, startPpq: note.startPpq + clampMoveDelta(delta, [note], minimum, maximum) },
     ]);
   }
 }
@@ -578,18 +576,33 @@ function onRulerSeek(localPpq: number): void {
   emit('seek', Math.max(0, localPpq + timeSignatureOriginPpq.value));
 }
 
-const localTimeSignatures = computed(() =>
-  localizeMeter(store.timeSignatures, timeSignatureOriginPpq.value),
-);
 const snapPianoRollPpq = (ppq: number): number =>
-  snapPpqToMeterGrid(localTimeSignatures.value, ppq, store.snapBar ? 'bar' : gridPpq.value);
+  snapLocalPpqToMeterGrid(
+    store.timeSignatures,
+    timeSignatureOriginPpq.value,
+    ppq,
+    store.snapBar ? 'bar' : gridPpq.value,
+  );
+
+const floorPianoRollPpq = (ppq: number): number =>
+  floorLocalPpqToMeterGrid(
+    store.timeSignatures,
+    timeSignatureOriginPpq.value,
+    ppq,
+    store.snapBar ? 'bar' : gridPpq.value,
+  );
+
+/** Bar containing a piano-roll position, resolved on the timeline meter. */
+function pianoRollMeasureAt(ppq: number): MeasureRange {
+  return localMeasureRange(store.timeSignatures, timeSignatureOriginPpq.value, ppq);
+}
 
 /** Moves a piano-roll position to the adjacent real bar boundary in Bar mode. */
 function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: boolean): number {
   let cursor = Math.max(0, ppq);
   const steps = coarse ? 4 : 1;
   for (let index = 0; index < steps; index += 1) {
-    const current = measureRangeAt(localTimeSignatures.value, cursor);
+    const current = pianoRollMeasureAt(cursor);
     if (direction === 'right') {
       cursor = current.startPpq + current.lengthPpq;
       continue;
@@ -597,7 +610,7 @@ function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: bool
     cursor =
       cursor > current.startPpq + 1e-9
         ? current.startPpq
-        : measureRangeAt(localTimeSignatures.value, Math.max(0, cursor - 1e-6)).startPpq;
+        : pianoRollMeasureAt(Math.max(0, cursor - 1e-6)).startPpq;
   }
   return cursor - ppq;
 }
@@ -628,6 +641,7 @@ const interactions = useNoteInteractions({
   // the drawn gridlines keep following the configured division.
   getGridPpq: () => (store.snapEnabled ? gridPpq.value : 0),
   snapPpq: snapPianoRollPpq,
+  floorPpq: floorPianoRollPpq,
   getTool: () => tool.value,
   isReadOnly: () => contentReadOnly.value,
   getMinPpq: () => sourceWindowStartPpq.value,
@@ -692,29 +706,30 @@ function onKeyDown(event: KeyboardEvent): void {
 }
 
 function handleKeyboardEdit(event: KeyboardEvent): boolean {
-  const selected = store.selectedNotes;
+  const selected = audibleSourceNotes.value.filter((note) => store.selection.has(note.id));
   if (selected.length === 0) return false;
   const step = store.snapEnabled ? gridPpq.value : 0.0625;
   let updates: Parameters<typeof updateNotes>[0] = [];
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     const direction = event.key === 'ArrowLeft' ? 'left' : 'right';
     const minStart = Math.min(...selected.map((note) => note.startPpq));
-    const maxEnd = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
     const requestedDelta =
       store.snapEnabled && store.snapBar
         ? barKeyboardDelta(minStart, direction, event.shiftKey)
         : direction === 'left'
           ? -step
           : step;
-    const delta = Math.min(
-      noteEndLimit.value - maxEnd,
-      Math.max(sourceWindowStartPpq.value - minStart, requestedDelta),
+    const delta = clampMoveDelta(
+      requestedDelta,
+      selected,
+      sourceWindowStartPpq.value,
+      noteEndLimit.value,
     );
     if (event.altKey) {
       const ids = addNotes(
         selected.map((note) => ({
           pitch: note.pitch,
-          startPpq: Math.max(sourceWindowStartPpq.value, note.startPpq + delta),
+          startPpq: note.startPpq + delta,
           durationPpq: note.durationPpq,
           velocity: note.velocity,
           channel: note.channel,
@@ -725,17 +740,14 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
     } else {
       updates = selected.map((note) => ({
         id: note.id,
-        startPpq: Math.max(sourceWindowStartPpq.value, note.startPpq + delta),
+        startPpq: note.startPpq + delta,
       }));
     }
   } else if (event.key === '[' || event.key === ']') {
     const delta = event.key === '[' ? -step : step;
     updates = selected.map((note) => ({
       id: note.id,
-      durationPpq: Math.min(
-        noteEndLimit.value - note.startPpq,
-        Math.max(0.0625, note.durationPpq + delta),
-      ),
+      durationPpq: clampResizedDuration(note, delta, noteEndLimit.value),
     }));
   } else {
     return false;
@@ -766,7 +778,10 @@ const statusText = computed(() => {
   if (!hover) {
     return `${prefix}${selection} selected · Snap ${snap}`;
   }
-  const location = pianoRollStatusLocation(localTimeSignatures.value, hover.ppq);
+  const location = pianoRollStatusLocation(
+    store.timeSignatures,
+    hover.ppq + timeSignatureOriginPpq.value,
+  );
   return `${prefix}${formatPitch(hover.pitch)} · ${location.bar}.${location.beat} · ${hover.ppq.toFixed(3)} ppq · ${selection} selected · Snap ${snap}`;
 });
 
@@ -860,7 +875,7 @@ const { followAnchorLocalX } = playheadFollow;
         :range="range"
         :revision="revision"
         :chords="store.chords"
-        :time-signatures="localTimeSignatures"
+        :time-signatures="store.timeSignatures"
         :origin-ppq="timeSignatureOriginPpq"
         :key-map="keyMap"
         @seek="(ppq) => emit('seek', Math.max(0, ppq))"
@@ -979,6 +994,7 @@ const { followAnchorLocalX } = playheadFollow;
         :param="laneParam"
         :min-ppq="sourceWindowStartPpq"
         :max-ppq="sourceWindowEndPpq"
+        :note-color="noteColor"
         :read-only="contentReadOnly"
       />
       <BreakpointLane

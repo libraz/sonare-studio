@@ -14,7 +14,6 @@ import type {
   AccessibleObjectAdjustment,
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
-import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -33,6 +32,7 @@ import {
   setupCanvas,
   strokeRoundRect,
 } from './theme';
+import { localRulerTicks } from './timeline-meter';
 import type {
   InteractionModifiers,
   InteractionPoint,
@@ -124,9 +124,6 @@ const overlayCanvas = ref<HTMLCanvasElement | null>(null);
 const hoveredGhost = ref<GhostNote | null>(null);
 /** Editable note under the pointer during a passive hover (no drag in flight). */
 const hoveredNote = ref<EditorNote | null>(null);
-const localTimeSignatures = computed(() =>
-  localizeMeter(props.timeSignatures, props.timeSignatureOriginPpq ?? 0),
-);
 const hoverPoint = ref<InteractionPoint | null>(null);
 
 /** Offset of the hover theory card from the pointer, in px. */
@@ -409,8 +406,9 @@ function drawVerticalLines(
 
 /** Draws meter-aware beat/bar lines from the same tick model as the ruler. */
 function drawMeterLines(ctx: CanvasRenderingContext2D, height: number): void {
-  for (const tick of rulerTicks(
-    localTimeSignatures.value,
+  for (const tick of localRulerTicks(
+    props.timeSignatures,
+    props.timeSignatureOriginPpq ?? 0,
     props.range.startPpq,
     props.range.endPpq,
     props.range.pxPerPpq,

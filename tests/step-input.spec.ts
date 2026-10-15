@@ -1,21 +1,25 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStepInput } from '@/composables/useStepInput';
-import { addNote } from '@/project/commands';
+import { addNote, noteEndLimitPpq } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 
 // The step cursor writes through the project commands; mock them so the spec
 // runs without the wasm-backed Project.
 vi.mock('@/project/commands', () => ({
   addNote: vi.fn(() => 42),
+  noteEndLimitPpq: vi.fn(() => Number.POSITIVE_INFINITY),
 }));
 
 const addNoteMock = vi.mocked(addNote);
+const noteEndLimitMock = vi.mocked(noteEndLimitPpq);
 
 describe('useStepInput', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     addNoteMock.mockClear();
+    noteEndLimitMock.mockReset();
+    noteEndLimitMock.mockReturnValue(Number.POSITIVE_INFINITY);
   });
 
   it('starts disarmed with the cursor at 0', () => {
@@ -187,7 +191,7 @@ describe('useStepInput', () => {
     expect(step.cursorPpq.value).toBe(8.75);
   });
 
-  it('clamps step notes to both ends of the active clip window', () => {
+  it('clamps step notes to the clip start and grows past the clip end', () => {
     const store = useProjectStore();
     store.snapDivision = 4;
     store.clips = [
@@ -216,14 +220,43 @@ describe('useStepInput', () => {
     });
     expect(step.cursorPpq.value).toBe(9);
 
-    step.setCursor(20);
+    step.setCursor(10);
     step.enterNote(62);
-    expect(addNoteMock).toHaveBeenLastCalledWith({
-      pitch: 62,
-      startPpq: 5,
-      durationPpq: 1,
-    });
-    expect(step.cursorPpq.value).toBe(10);
+    step.enterNote(64);
+    expect(addNoteMock).toHaveBeenNthCalledWith(2, { pitch: 62, startPpq: 6, durationPpq: 1 });
+    expect(addNoteMock).toHaveBeenNthCalledWith(3, { pitch: 64, startPpq: 7, durationPpq: 1 });
+    expect(step.cursorPpq.value).toBe(12);
+  });
+
+  it('refuses a note that would pass the clip growth limit without moving the cursor', () => {
+    const store = useProjectStore();
+    store.snapDivision = 4;
+    store.clips = [
+      {
+        id: 7,
+        trackId: 3,
+        name: 'Looped',
+        startPpq: 0,
+        lengthPpq: 8,
+        sourceOffsetPpq: 0,
+        gain: 1,
+        loopEnabled: true,
+        loopLengthPpq: 2,
+        notes: [],
+      },
+    ];
+    store.clipId = 7;
+    noteEndLimitMock.mockReturnValue(2);
+    const step = useStepInput();
+
+    step.arm(1);
+    expect(step.enterNote(60)).toBe(42);
+    expect(step.cursorPpq.value).toBe(2);
+    addNoteMock.mockClear();
+
+    expect(step.enterNote(62)).toBeNull();
+    expect(addNoteMock).not.toHaveBeenCalled();
+    expect(step.cursorPpq.value).toBe(2);
   });
 
   it('uses the active meter bar as the step while Bar snap is selected', () => {

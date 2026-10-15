@@ -19,6 +19,7 @@ import {
 } from '@/ui/canvas/hit-test';
 import { MAX_PITCH, MIN_PITCH, snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
+import { clampMoveDelta } from './nudge-bounds';
 import { visibleNotesInWindow } from './visible-notes';
 
 /** Px a pointer must travel from its down point before a drag gesture starts. */
@@ -85,6 +86,8 @@ export interface UseNoteInteractionsOptions {
   getGridPpq(): number;
   /** Optionally resolves a PPQ position on a meter-aware snap grid. */
   snapPpq?(ppq: number): number;
+  /** Optionally floors a PPQ position to the start of its meter-aware grid cell (or bar). */
+  floorPpq?(ppq: number): number;
   /** Returns the active editor tool (absent = always the select tool). */
   getTool?(): EditorToolId;
   /** True when note selection/audition is allowed but content mutation is blocked. */
@@ -353,15 +356,6 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       : Math.max(min, ppq);
   }
 
-  function clampStartPpq(ppq: number): number {
-    const rawMin = options.getMinPpq?.();
-    const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
-    const max = options.getMaxPpq?.();
-    const end =
-      max !== undefined && Number.isFinite(max) ? max - minDuration : Number.POSITIVE_INFINITY;
-    return Math.max(min, Math.min(end, clampPpq(ppq)));
-  }
-
   function formatPpq(value: number): string {
     return String(Math.round(value * 1000) / 1000);
   }
@@ -403,7 +397,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const step = options.getGridPpq();
     const minLen = drawMinLength();
     const snapped =
-      bypassSnap || !(step > 0) ? ppq : (options.snapPpq?.(ppq) ?? Math.floor(ppq / step) * step);
+      bypassSnap || !(step > 0) ? ppq : (options.floorPpq?.(ppq) ?? Math.floor(ppq / step) * step);
     const rawMin = options.getMinPpq?.();
     const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
     const rawMax = options.getMaxPpq?.();
@@ -501,30 +495,22 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const step = options.getGridPpq();
     const rawDelta = pointerDeltaPpq(g.pointerStartPpq, point);
     const targetStart = bypass
-      ? clampStartPpq(grabbed.startPpq + rawDelta)
-      : clampStartPpq(
-          options.snapPpq?.(grabbed.startPpq + rawDelta) ??
-            grabbed.startPpq + snapDeltaToStep(rawDelta, step),
-        );
+      ? grabbed.startPpq + rawDelta
+      : (options.snapPpq?.(grabbed.startPpq + rawDelta) ??
+        grabbed.startPpq + snapDeltaToStep(rawDelta, step));
     let deltaPpq = targetStart - grabbed.startPpq;
-    let minStart = Number.POSITIVE_INFINITY;
     let minPitch = Number.POSITIVE_INFINITY;
     let maxPitch = Number.NEGATIVE_INFINITY;
     for (const origin of g.origins.values()) {
-      minStart = Math.min(minStart, origin.startPpq);
       minPitch = Math.min(minPitch, origin.pitch);
       maxPitch = Math.max(maxPitch, origin.pitch);
     }
     const rawMinPpq = options.getMinPpq?.();
     const minPpq = rawMinPpq !== undefined && Number.isFinite(rawMinPpq) ? rawMinPpq : 0;
-    if (minStart + deltaPpq < minPpq) deltaPpq = minPpq - minStart;
-    const max = options.getMaxPpq?.();
-    if (max !== undefined && Number.isFinite(max)) {
-      let maxEnd = Number.NEGATIVE_INFINITY;
-      for (const origin of g.origins.values())
-        maxEnd = Math.max(maxEnd, origin.startPpq + origin.durationPpq);
-      if (maxEnd + deltaPpq > max) deltaPpq = max - maxEnd;
-    }
+    const rawMaxPpq = options.getMaxPpq?.();
+    const maxPpq =
+      rawMaxPpq !== undefined && Number.isFinite(rawMaxPpq) ? rawMaxPpq : Number.POSITIVE_INFINITY;
+    deltaPpq = clampMoveDelta(deltaPpq, [...g.origins.values()], minPpq, maxPpq);
     let deltaPitch = Math.round((g.start.y - point.y) / view.rowHeight);
     deltaPitch = Math.min(MAX_PITCH - maxPitch, Math.max(MIN_PITCH - minPitch, deltaPitch));
     if (modifiers.shift === true) {

@@ -61,6 +61,8 @@ export interface UsePianoRollNoteMenuOptions {
   gridPpq: Ref<number>;
   /** Resolves a point on the piano roll's meter-aware snap grid. */
   snapPpq(ppq: number): number;
+  /** Length in PPQ of the bar containing a piano-roll position. */
+  barLengthPpq(ppq: number): number;
 }
 
 /** Note context-menu handler returned by {@link usePianoRollNoteMenu}. */
@@ -76,7 +78,7 @@ export interface PianoRollNoteMenu {
  * @returns The context-menu handler.
  */
 export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): PianoRollNoteMenu {
-  const { contentReadOnly, gridPpq, snapPpq } = options;
+  const { contentReadOnly, gridPpq, snapPpq, barLengthPpq } = options;
   const store = useProjectStore();
   const { t } = useI18n();
   /** Edits are refused on a frozen track; every editing item carries this reason. */
@@ -85,13 +87,11 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
   /** Maximum per-note random velocity jitter applied by the Humanize action. */
   const HUMANIZE_VELOCITY_AMOUNT = 12;
 
-  /** Timeline span occupied by the selected phrase, used as its repeat interval. */
-  function selectionSpanPpq(): number {
+  /** Length of the bar holding the start of the selection, the repeat interval. */
+  function selectionBarPpq(): number {
     const selected = store.selectedNotes;
     if (selected.length === 0) return 0;
-    const start = Math.min(...selected.map((note) => note.startPpq));
-    const end = Math.max(...selected.map((note) => note.startPpq + note.durationPpq));
-    return Math.max(0, end - start);
+    return barLengthPpq(Math.min(...selected.map((note) => note.startPpq)));
   }
 
   /** Selection-wide note operations shared by the note and empty-space menus. */
@@ -106,12 +106,12 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
             id: 'duplicate-grid',
             label: t.value.shell.pianoRoll.context.duplicateByGrid,
             hint: formatKeyCombo('alt+arrowright', detectPlatform()),
-            run: () => duplicateSelection(selectionSpanPpq()),
+            run: () => duplicateSelection(gridPpq.value),
           },
           {
             id: 'repeat-bar',
             label: t.value.shell.pianoRoll.context.repeatBar,
-            run: () => repeatSelection(3, selectionSpanPpq()),
+            run: () => repeatSelection(3, selectionBarPpq()),
           },
           { id: 'sep-edit-tools', separator: true },
           {
@@ -371,7 +371,7 @@ export function usePianoRollNoteMenu(options: UsePianoRollNoteMenuOptions): Pian
             danger: true,
             hint: shortcutHint('edit.deleteSelectedNotes'),
             disabledReason: frozen(),
-            run: () => deleteNotes([note.id]),
+            run: () => deleteNotes([...store.selection]),
           },
         );
       }

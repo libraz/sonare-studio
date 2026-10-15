@@ -59,6 +59,27 @@ describe('ChordLane', () => {
     expect(wrapper.get('.chord-band').attributes('style')).toContain('left: 0px');
   });
 
+  it('repeats labels on timeline bar lines when the origin is mid-bar', () => {
+    // 100 px per PPQ keeps every bar wider than the label spacing guard.
+    const range = new TimelineRange({ widthPx: 1400, heightPx: 22, pxPerPpq: 100 });
+    const wrapper = mount(ChordLane, {
+      props: {
+        range,
+        revision: 0,
+        chords: [chord(2, 14)],
+        timeSignatures: METER,
+        keyMap: C_MAJOR,
+        originPpq: 2,
+      },
+    });
+    const offsets = wrapper
+      .findAll('.chord-name')
+      .map((label) => label.attributes('style'))
+      .map((style) => Number(/left: ([\d.]+)px/.exec(style ?? '')?.[1]));
+    // Absolute bar lines 4, 8 and 12 sit at local PPQ 2, 6 and 10.
+    expect(offsets).toEqual([0, 200, 600, 1000]);
+  });
+
   it('emits seek with the chord absolute startPpq on click', async () => {
     const range = new TimelineRange({ widthPx: 400, heightPx: 22, pxPerPpq: 10 });
     const wrapper = mount(ChordLane, {

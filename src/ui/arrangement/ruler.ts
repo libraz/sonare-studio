@@ -90,36 +90,6 @@ function normalizeMeter(meter: ReadonlyArray<MeterSegment>): MeterSegment[] {
   return normalizeTimeSignatureMap(meter);
 }
 
-/**
- * Converts a project-absolute meter map into a local PPQ frame.
- *
- * Piano-roll note positions are clip-source relative: local PPQ 0 maps to
- * `timelineOriginPpq` on the arrangement timeline. This helper preserves the
- * meter active at that origin as a local segment at 0, then shifts subsequent
- * meter changes into the local frame.
- */
-export function localizeMeter(
-  meter: ReadonlyArray<MeterSegment>,
-  timelineOriginPpq: number,
-): MeterSegment[] {
-  const segments = normalizeMeter(meter);
-  const origin = Number.isFinite(timelineOriginPpq) ? timelineOriginPpq : 0;
-  let active = segments[0];
-  for (const segment of segments) {
-    if (segment.startPpq <= origin) active = segment;
-    else break;
-  }
-  const localized: MeterSegment[] = [
-    { startPpq: 0, numerator: active.numerator, denominator: active.denominator },
-  ];
-  for (const segment of segments) {
-    const shifted = segment.startPpq - origin;
-    if (shifted <= 0) continue;
-    localized.push({ ...segment, startPpq: shifted });
-  }
-  return localized;
-}
-
 /** A bar window on the timeline. */
 export interface BarRange {
   /** Bar start in PPQ. */

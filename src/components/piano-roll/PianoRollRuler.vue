@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { TimeSignatureSegment } from '@/project/types';
-import { localizeMeter, rulerTicks } from '@/ui/arrangement/ruler';
 import { observeDevicePixelRatio } from '@/ui/canvas/device-pixel-ratio';
 import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
 import { getCanvasContext, PIANO_ROLL_COLORS, setupCanvas } from './theme';
+import { localRulerTicks } from './timeline-meter';
 
 const props = defineProps<{
   range: TimelineRange;
@@ -55,9 +55,6 @@ function onPointerUp(event: PointerEvent): void {
 
 const layerId = Math.random().toString(36).slice(2, 8);
 const COLORS = PIANO_ROLL_COLORS;
-const localTimeSignatures = computed(() =>
-  localizeMeter(props.timeSignatures, props.timeSignatureOriginPpq ?? 0),
-);
 
 let widthPx = 0;
 let heightPx = 0;
@@ -86,8 +83,9 @@ function draw(): void {
   ctx.font = canvasFont(CANVAS_FONT_SIZE_PX.meta);
   ctx.textBaseline = 'middle';
 
-  for (const tick of rulerTicks(
-    localTimeSignatures.value,
+  for (const tick of localRulerTicks(
+    props.timeSignatures,
+    props.timeSignatureOriginPpq ?? 0,
     props.range.startPpq,
     props.range.endPpq,
     props.range.pxPerPpq,

@@ -43,6 +43,7 @@ input, textarea, select or contenteditable element has focus.
 | `Shift+ArrowUp` / `Shift+ArrowDown` | Transpose selected notes up / down a semitone <!-- shortcut-action: edit.transposeUp --> <!-- shortcut-action: edit.transposeDown --> | editor dock |
 | `Mod+Shift+ArrowUp` / `Mod+Shift+ArrowDown` | Transpose selected notes up / down an octave <!-- shortcut-action: edit.transposeOctaveUp --> <!-- shortcut-action: edit.transposeOctaveDown --> | editor dock |
 | `Escape` | Cancel an in-flight drag gesture (piano roll) | editor dock |
+| `[` / `]` | Shorten / lengthen selected notes by one grid step (piano roll). Overrides the global locator shortcuts while notes are selected in the focused piano roll | editor dock |
 
 ## Arrangement
 

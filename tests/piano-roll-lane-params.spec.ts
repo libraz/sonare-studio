@@ -17,6 +17,9 @@ import {
 } from '@/components/piano-roll/lane-params';
 import type { EditorNote } from '@/project/types';
 
+/** Edge of the start-offset range, just under half a sixteenth. */
+const OFFSET_MAX = laneParamSpec('offset').max;
+
 /** Builds an editor note with sensible defaults. */
 function makeNote(partial: Partial<EditorNote> & { id: number }): EditorNote {
   return {
@@ -101,10 +104,10 @@ describe('normalizedLaneValue', () => {
   });
 
   it('maps offset bipolar around zero', () => {
-    expect(normalizedLaneValue('offset', 0.5)).toBe(1);
-    expect(normalizedLaneValue('offset', -0.5)).toBe(-1);
+    expect(normalizedLaneValue('offset', OFFSET_MAX)).toBe(1);
+    expect(normalizedLaneValue('offset', -OFFSET_MAX)).toBe(-1);
     expect(normalizedLaneValue('offset', 0)).toBe(0);
-    expect(normalizedLaneValue('offset', 0.25)).toBeCloseTo(0.5, 9);
+    expect(normalizedLaneValue('offset', OFFSET_MAX / 2)).toBeCloseTo(0.5, 9);
     expect(normalizedLaneValue('offset', 2)).toBe(1);
   });
 
@@ -133,8 +136,8 @@ describe('laneValueFromNormalized', () => {
   });
 
   it('maps bipolar offset without stepping', () => {
-    expect(laneValueFromNormalized('offset', 0.5)).toBeCloseTo(0.25, 9);
-    expect(laneValueFromNormalized('offset', -2)).toBe(-0.5);
+    expect(laneValueFromNormalized('offset', 0.5)).toBeCloseTo(OFFSET_MAX / 2, 9);
+    expect(laneValueFromNormalized('offset', -2)).toBe(-OFFSET_MAX);
   });
 });
 
@@ -149,10 +152,10 @@ describe('laneValueFromY', () => {
   });
 
   it('maps bipolar offset with the center line at zero', () => {
-    expect(laneValueFromY('offset', 0, 100)).toBe(0.5);
+    expect(laneValueFromY('offset', 0, 100)).toBe(OFFSET_MAX);
     expect(laneValueFromY('offset', 50, 100)).toBe(0);
-    expect(laneValueFromY('offset', 100, 100)).toBe(-0.5);
-    expect(laneValueFromY('offset', 200, 100)).toBe(-0.5);
+    expect(laneValueFromY('offset', 100, 100)).toBe(-OFFSET_MAX);
+    expect(laneValueFromY('offset', 200, 100)).toBe(-OFFSET_MAX);
   });
 
   it('steps channel values across the lane height', () => {
@@ -177,12 +180,12 @@ describe('quantizeLaneValue', () => {
     expect(quantizeLaneValue('channel', 20)).toBe(15);
     expect(quantizeLaneValue('channel', -3)).toBe(0);
     expect(quantizeLaneValue('length', 100)).toBe(16);
-    expect(quantizeLaneValue('offset', 0.9)).toBe(0.5);
+    expect(quantizeLaneValue('offset', 0.9)).toBe(OFFSET_MAX);
   });
 
   it('keeps continuous parameters unrounded', () => {
     expect(quantizeLaneValue('length', 1.337)).toBeCloseTo(1.337, 9);
-    expect(quantizeLaneValue('offset', -0.125)).toBeCloseTo(-0.125, 9);
+    expect(quantizeLaneValue('offset', -0.1)).toBeCloseTo(-0.1, 9);
   });
 });
 
@@ -199,13 +202,13 @@ describe('laneBarRect', () => {
   });
 
   it('grows bipolar bars up from the center for positive values', () => {
-    const rect = laneBarRect('offset', 0.5, 100);
+    const rect = laneBarRect('offset', OFFSET_MAX, 100);
     expect(rect.y).toBeCloseTo(1, 9);
     expect(rect.h).toBeCloseTo(49, 9);
   });
 
   it('grows bipolar bars down from the center for negative values', () => {
-    const rect = laneBarRect('offset', -0.5, 100);
+    const rect = laneBarRect('offset', -OFFSET_MAX, 100);
     expect(rect.y).toBe(50);
     expect(rect.h).toBeCloseTo(49, 9);
   });
@@ -233,21 +236,26 @@ describe('laneUpdateForValue', () => {
   });
 
   it('rewrites the note start relative to the nearest sixteenth for offset', () => {
-    const note = makeNote({ id: 7, startPpq: 4.125 });
-    expect(laneUpdateForValue('offset', note, 0.25)).toEqual({ id: 7, startPpq: 4.5 });
-    expect(laneUpdateForValue('offset', note, -0.125)).toBeNull();
+    const note = makeNote({ id: 7, startPpq: 4.1 });
+    expect(laneUpdateForValue('offset', note, 0.12)).toEqual({ id: 7, startPpq: 4.12 });
+    expect(laneUpdateForValue('offset', note, 0.1)).toBeNull();
   });
 
   it('clamps offset targets at the timeline origin', () => {
     const note = makeNote({ id: 7, startPpq: 0.25 });
-    expect(laneUpdateForValue('offset', note, -0.5)).toEqual({ id: 7, startPpq: 0 });
+    expect(laneUpdateForValue('offset', note, -OFFSET_MAX)).toEqual({
+      id: 7,
+      startPpq: 0.25 - OFFSET_MAX,
+    });
     const atZero = makeNote({ id: 8, startPpq: 0 });
-    expect(laneUpdateForValue('offset', atZero, -0.5)).toBeNull();
+    expect(laneUpdateForValue('offset', atZero, -OFFSET_MAX)).toBeNull();
   });
 
   it('keeps offset edits inside the audible source window', () => {
     const note = makeNote({ id: 7, startPpq: 1.1, durationPpq: 0.5 });
-    expect(laneUpdateForValue('offset', note, 0.5, { minStartPpq: 1, maxEndPpq: 1.5 })).toEqual({
+    expect(
+      laneUpdateForValue('offset', note, OFFSET_MAX, { minStartPpq: 1, maxEndPpq: 1.5 }),
+    ).toEqual({
       id: 7,
       startPpq: 1,
     });
@@ -334,5 +342,20 @@ describe('barsInSpan', () => {
 
   it('handles a zero-width span inside one bar', () => {
     expect(barsInSpan(bars, 42, 42).map((bar) => bar.id)).toEqual([3]);
+  });
+});
+
+describe('offset lane round trip', () => {
+  it('reads back every committed offset across the lane range', () => {
+    const steps = 40;
+    for (let i = 0; i <= steps; i++) {
+      const value = -OFFSET_MAX + (2 * OFFSET_MAX * i) / steps;
+      for (const startPpq of [4, 4.25, 5.1]) {
+        const note = makeNote({ id: 1, startPpq });
+        const update = laneUpdateForValue('offset', note, value);
+        const edited = { ...note, ...(update ?? {}) };
+        expect(noteLaneValue('offset', edited)).toBeCloseTo(value, 9);
+      }
+    }
   });
 });

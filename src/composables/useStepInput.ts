@@ -1,9 +1,12 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, ref } from 'vue';
 import { preferredNoteChannel } from '@/compose/tracks';
-import { addNote } from '@/project/commands';
+import { addNote, noteEndLimitPpq } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
+
+/** Tolerance when comparing a note end to the clip's growth limit. */
+const END_EPSILON_PPQ = 1e-9;
 
 /** Step-input state and actions returned by {@link useStepInput}. */
 export interface StepInputHandle {
@@ -31,11 +34,13 @@ export interface StepInputHandle {
   setCursor(ppq: number): void;
   /**
    * Writes one note of the current grid-step length at the cursor and
-   * advances the cursor by one step. No-op while disarmed.
+   * advances the cursor by one step. No-op while disarmed; a non-looped clip
+   * grows to hold the note.
    *
    * @param pitch MIDI note number (integer, 0-127).
    * @param velocity Note-on velocity (integer, 1-127); omitted = command default.
-   * @returns The new editor note id, or null while disarmed.
+   * @returns The new editor note id, or null while disarmed or when the note
+   *   would not fit before the clip's growth limit (a looped clip's window, or the next clip).
    */
   enterNote(pitch: number, velocity?: number): number | null;
   /** Advances the cursor one grid step without writing a note (a rest). */
@@ -87,12 +92,13 @@ export function useStepInput(): StepInputHandle {
     if (!armed.value) return null;
     const clip = store.activeClip;
     const durationPpq = clip ? Math.min(stepPpq.value, clip.lengthPpq) : stepPpq.value;
-    const timelineStart = clip
-      ? Math.min(
-          Math.max(cursorPpq.value, clip.startPpq),
-          clip.startPpq + Math.max(0, clip.lengthPpq - durationPpq),
-        )
-      : cursorPpq.value;
+    const timelineStart = clip ? Math.max(cursorPpq.value, clip.startPpq) : cursorPpq.value;
+    // A looped clip does not grow and a following clip bounds growth; a note
+    // past that edge would stack on the last cell or be inaudible.
+    if (clip) {
+      const limit = noteEndLimitPpq(clip) - clip.sourceOffsetPpq + clip.startPpq;
+      if (timelineStart + durationPpq > limit + END_EPSILON_PPQ) return null;
+    }
     const sourceStart = clip ? timelineStart - clip.startPpq + clip.sourceOffsetPpq : timelineStart;
     const trackNotes = store.activeTrack
       ? (store.clipsByTrack.get(store.activeTrack.id) ?? []).flatMap((item) => item.notes)

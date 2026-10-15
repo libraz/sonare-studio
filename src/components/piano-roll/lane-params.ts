@@ -49,10 +49,14 @@ export const DEFAULT_OFF_VELOCITY = 64;
 const MIN_LENGTH_PPQ = 0.0625;
 /** Longest length bar: four 4/4 bars. */
 const MAX_LENGTH_PPQ = 16;
-/** Start-offset range: one eighth note either side of the nearest beat. */
-const MAX_OFFSET_PPQ = 0.5;
 /** Offset lane anchors note edits to the sixteenth-note grid. */
 const OFFSET_GRID_PPQ = 0.25;
+/**
+ * Start-offset range: just under half a sixteenth either side of the nearest
+ * sixteenth. The exact half-grid value would re-anchor to the next gridline on
+ * read-back, so the range stops a hair short of it.
+ */
+const MAX_OFFSET_PPQ = OFFSET_GRID_PPQ / 2 - 1 / 1024;
 /** Tolerance below which fractional PPQ values count as unchanged. */
 const PPQ_EPSILON = 1e-9;
 

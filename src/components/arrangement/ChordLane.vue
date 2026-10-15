@@ -163,8 +163,9 @@ function labelsFor(
   // Bar count in a viewport is small; the guard just prevents a runaway loop
   // if a degenerate meter map ever yields a non-advancing bar range.
   for (let guard = 0; guard < 4096; guard++) {
-    const bar = barRangeAt(props.timeSignatures, anchor);
-    const next = bar.startPpq + bar.lengthPpq;
+    // Bars come from the timeline meter map, so local anchors shift by the origin.
+    const bar = barRangeAt(props.timeSignatures, anchor + origin);
+    const next = bar.startPpq + bar.lengthPpq - origin;
     if (!(next < visEnd) || next <= anchor) break;
     anchor = next;
     const anchorX = props.range.ppqToX(anchor);

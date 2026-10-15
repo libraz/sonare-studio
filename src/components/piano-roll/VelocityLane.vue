@@ -339,7 +339,7 @@ watch(
 );
 
 watch(
-  () => [props.revision, props.notes, props.selection, paramId.value] as const,
+  () => [props.revision, props.notes, props.selection, paramId.value, props.noteColor] as const,
   () => schedule(),
 );
 </script>

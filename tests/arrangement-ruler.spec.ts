@@ -3,7 +3,6 @@ import {
   barRangeAt,
   createRulerTickCache,
   DEFAULT_MIN_BAR_SPACING_PX,
-  localizeMeter,
   type MeterSegment,
   nearestBarPpq,
   type RulerTick,
@@ -113,29 +112,6 @@ describe('rulerTicks', () => {
     expect(ticks.length).toBeGreaterThan(0);
     expect(bars(ticks).length).toBeGreaterThan(0);
     expect(ticks.every((tick) => tick.label === undefined)).toBe(true);
-  });
-});
-
-describe('localizeMeter', () => {
-  const mixed: MeterSegment[] = [
-    { startPpq: 0, numerator: 4, denominator: 4 },
-    { startPpq: 8, numerator: 3, denominator: 4 },
-    { startPpq: 17, numerator: 5, denominator: 8 },
-  ];
-
-  it('starts with the meter active at the clip timeline origin', () => {
-    expect(localizeMeter(mixed, 8)).toEqual([
-      { startPpq: 0, numerator: 3, denominator: 4 },
-      { startPpq: 9, numerator: 5, denominator: 8 },
-    ]);
-  });
-
-  it('shifts future meter changes into the clip-local frame', () => {
-    expect(localizeMeter(mixed, 6)).toEqual([
-      { startPpq: 0, numerator: 4, denominator: 4 },
-      { startPpq: 2, numerator: 3, denominator: 4 },
-      { startPpq: 11, numerator: 5, denominator: 8 },
-    ]);
   });
 });
 
