@@ -543,6 +543,47 @@ describe('TrackGenerateDialog', () => {
     expect(document.body.querySelector('.dialog-error')).toBeNull();
   });
 
+  it('blocks the counter melody with a stated reason when the source clip is percussion', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    const drumClip = store.clips.find((clip) => clip.trackId === drums?.id);
+    if (!drumClip) throw new Error('missing generated drums fixture');
+    store.clipId = drumClip.id;
+    await open();
+    const counterRow = [...document.body.querySelectorAll<HTMLElement>('.part-row')][3];
+    expect(counterRow.textContent).toContain('Percussion clips cannot be a counter-melody source.');
+  });
+
+  it('numbers drum range bars on the project meter map', async () => {
+    setProjectChords(FOUR_CHORDS);
+    const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
+    generateTracksBatchCommand([
+      { part: 'drums', params: { bars: 4, seed: 10 }, target: { kind: 'new' } },
+    ]);
+    const drums = store.tracks.find((track) => track.name === 'Drums');
+    if (!drums) throw new Error('missing generated drums fixture');
+    setSections([{ name: 'Verse', startPpq: 3, endPpq: 11 }]);
+    // A leading 3/4 bar: ruler bar 2 starts at PPQ 3, not PPQ 4.
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 3, denominator: 4 },
+      { startPpq: 3, numerator: 4, denominator: 4 },
+    ];
+
+    await open({
+      part: 'drums',
+      target: { kind: 'replaceRange', trackId: drums.id, startPpq: 3, endPpq: 11 },
+    });
+
+    const row = [...document.body.querySelectorAll<HTMLElement>('.part-row')][1];
+    expect(row.querySelector<HTMLInputElement>('.drum-range-start')?.value).toBe('2');
+    expect(row.querySelector<HTMLInputElement>('.drum-range-length')?.value).toBe('2');
+    expect(row.querySelector<HTMLSelectElement>('.drum-range-panel select')?.value).toBe(
+      `section:${store.sections[0].id}`,
+    );
+  });
+
   it('ignores a stale drum range when drums are unchecked for whole-song generation', async () => {
     setProjectChords(FOUR_CHORDS);
     const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');

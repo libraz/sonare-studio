@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { estimateChordsFromArrangement } from '@/project/command/chords';
+import { detectChordsForClip, estimateChordsFromArrangement } from '@/project/command/chords';
 import { addMidiClip, setActiveClip } from '@/project/command/clips';
 import { clearHistory, undo } from '@/project/command/history';
 import { addNote } from '@/project/command/notes';
@@ -92,5 +92,69 @@ describe('estimateChordsFromArrangement', () => {
     const summary = estimateChordsFromArrangement();
     expect(summary.count).toBe(0);
     expect(store.chords).toEqual([]);
+  });
+});
+
+describe('detectChordsForClip bar grid', () => {
+  let store: ReturnType<typeof useProjectStore>;
+
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+    store.scaleHighlight = { enabled: true, rootPc: 0, modeMask: MAJOR_MODE_MASK };
+  });
+
+  /** Fills each listed bar (source PPQ range) with a different triad. */
+  function fillBars(bars: ReadonlyArray<readonly [number, number, readonly number[]]>): void {
+    for (const [startPpq, durationPpq, pitches] of bars) {
+      for (const pitch of pitches) addNote({ pitch, startPpq, durationPpq });
+    }
+  }
+
+  it('slots a clip that starts mid-bar on the project bar lines', () => {
+    const trackId = addTrack({ name: 'Keys' });
+    const clipId = addMidiClip({ trackId, startPpq: 2, lengthPpq: 10 });
+    store.clipId = clipId;
+    store.refresh();
+    // Source ppq 0..2 sit in bar 1 (timeline 2..4), 2..6 in bar 2, 6..10 in bar 3.
+    fillBars([
+      [0, 2, [60, 64, 67]],
+      [2, 4, [65, 69, 72]],
+      [6, 4, [67, 71, 74]],
+    ]);
+
+    detectChordsForClip(clipId);
+
+    const starts = store.chords.map((chord) => chord.startPpq);
+    expect(starts.slice(0, 3)).toEqual([2, 4, 8]);
+    for (const chord of store.chords) {
+      expect([2, 4, 8, 12]).toContain(chord.startPpq);
+    }
+  });
+
+  it('follows a meter change inside the clip', () => {
+    const trackId = addTrack({ name: 'Keys' });
+    const clipId = addMidiClip({ trackId, startPpq: 0, lengthPpq: 10 });
+    store.clipId = clipId;
+    store.refresh();
+    fillBars([
+      [0, 4, [60, 64, 67]],
+      [4, 3, [65, 69, 72]],
+      [7, 3, [67, 71, 74]],
+    ]);
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 4, numerator: 3, denominator: 4 },
+    ];
+
+    detectChordsForClip(clipId);
+    expect(store.chords.map((chord) => [chord.startPpq, chord.endPpq])).toEqual([
+      [0, 4],
+      [4, 7],
+      [7, 10],
+    ]);
   });
 });

@@ -23,13 +23,19 @@ import { type HarmonizeResult, harmonizeMelody, type KeyScale } from '@libraz/li
 import { chordSpanToEditorChord } from '@/compose/chord-io';
 import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { scaleHighlightToKeyScale } from '@/compose/key';
-import { topVoiceOnly } from '@/compose/tracks';
-import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from '../chords';
+import { harmonicNotes, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
+import { type EditorChordSymbol, sanitizeChordSymbols } from '../chords';
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, projectMidiClipNoteOccurrences } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { meterBarLengthPpq, timeSignatureAt, timeSignatureRanges } from '../time-signature';
-import { execute } from './history';
+import {
+  measureRangeAt,
+  meterBarLengthPpq,
+  timeSignatureAt,
+  timeSignatureRanges,
+} from '../time-signature';
+import { applyProjectChords } from './chords';
+import { executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
 /** Reharmonization strength passed through to libcantus. */
@@ -81,23 +87,33 @@ function spansToChordSymbols(
  *
  * @param params Harmonization options (see {@link HarmonizeFromMelodyParams}).
  * @returns The number of chords written, or 0 when the active clip has no notes.
- * @throws Error when there is no active clip.
+ * @throws Error when there is no active clip or it belongs to a percussion track.
  */
 export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {}): number {
   const store = useProjectStore();
   const clip = store.activeClip;
   if (clip === null) throw new Error('No active clip to harmonize');
   requireEditableClip(store, clip.id);
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  if (track !== undefined && isDrumTrack(track, clip.notes)) {
+    throw new Error('Cannot harmonize a percussion clip');
+  }
   const target = createGenerationTargetFrame({
     startPpq: clip.startPpq,
     endPpq: clip.startPpq + clip.lengthPpq,
     chords: store.chords,
     timeSignatures: store.timeSignatures,
   });
+  // Chord slots sit on the project bar grid, so the melody is expressed from
+  // the bar containing the clip start rather than from the clip start itself.
+  const gridOriginPpq = measureRangeAt(target.timeSignatures, target.startPpq).startPpq;
+  const gridShiftPpq = target.startPpq - gridOriginPpq;
+  const sourceNotes = projectMidiClipNoteOccurrences(clip);
+  const melodyNotes = track === undefined ? sourceNotes : harmonicNotes(track, sourceNotes);
   const melody = topVoiceOnly(
-    projectMidiClipNoteOccurrences(clip).map((note) => ({
+    melodyNotes.map((note) => ({
       pitch: note.pitch,
-      startBeat: note.startPpq,
+      startBeat: note.startPpq + gridShiftPpq,
       durationBeat: note.durationPpq,
       velocity: note.velocity,
     })),
@@ -152,9 +168,9 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   if (shouldSplitForMeter) {
     let segmentKey = analysisKey;
     const symbols: EditorChordSymbol[] = [];
-    for (const range of meterRanges) {
-      const localStart = range.startPpq - target.startPpq;
-      const localEnd = range.endPpq - target.startPpq;
+    for (const [rangeIndex, range] of meterRanges.entries()) {
+      const localStart = (rangeIndex === 0 ? gridOriginPpq : range.startPpq) - gridOriginPpq;
+      const localEnd = range.endPpq - gridOriginPpq;
       const segmentMelody = analysisMelody.flatMap((note) => {
         const start = Math.max(note.startBeat, localStart);
         const end = Math.min(note.startBeat + note.durationBeat, localEnd);
@@ -174,11 +190,13 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       });
       segmentKey = explicitKey ?? result.key.scale;
       symbols.push(
-        ...spansToChordSymbols(result, localEnd - localStart, range.startPpq).map((chord) => ({
-          ...chord,
-          startPpq: Math.max(range.startPpq, chord.startPpq),
-          endPpq: Math.min(range.endPpq, chord.endPpq),
-        })),
+        ...spansToChordSymbols(result, localEnd - localStart, gridOriginPpq + localStart).map(
+          (chord) => ({
+            ...chord,
+            startPpq: Math.max(range.startPpq, chord.startPpq),
+            endPpq: Math.min(range.endPpq, chord.endPpq),
+          }),
+        ),
       );
     }
     generated = sanitizeChordSymbols(symbols);
@@ -194,7 +212,7 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
       ctx: { seed: params.seed ?? 0 },
     });
     generated = sanitizeChordSymbols(
-      spansToChordSymbols(result, melodyEndBeat, target.startPpq).map((chord) => ({
+      spansToChordSymbols(result, melodyEndBeat, gridOriginPpq).map((chord) => ({
         ...chord,
         startPpq: Math.max(target.startPpq, chord.startPpq),
         endPpq: Math.min(target.endPpq, chord.endPpq),
@@ -209,24 +227,20 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   const project = getProject();
 
   if (shift === 0) {
-    execute(1, () => {
-      project.annotateChords(toProjectChordSymbols(sanitized));
-      store.refresh(undefined, sanitized);
-    });
+    executeAtomic((edit) => applyProjectChords(store, sanitized, edit));
     return generated.length;
   }
 
-  // Transpose the clip to match the harmonization, and write both the shifted
-  // notes and the chords in one undoable edit (setMidiEvents + annotateChords).
+  // Transpose the clip to match the harmonization; the shifted notes and the
+  // chord write (with its chord-follow re-voicing) share one undoable edit.
   const audibleNoteIds = new Set(audibleOccurrences.map((entry) => entry.sourceIdentity.noteId));
   const shifted: RawNote[] = clip.notes.map(({ id, ...note }) => ({
     ...note,
     pitch: audibleNoteIds.has(id) ? note.pitch + shift : note.pitch,
   }));
-  execute(2, () => {
-    project.setMidiEvents(clip.id, notesToProjectEvents(shifted));
-    project.annotateChords(toProjectChordSymbols(sanitized));
-    store.refresh(undefined, sanitized);
+  executeAtomic((edit) => {
+    edit(1, () => project.setMidiEvents(clip.id, notesToProjectEvents(shifted)));
+    applyProjectChords(store, sanitized, edit);
   });
   return generated.length;
 }

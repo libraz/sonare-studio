@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { toSafetyProfile } from '@/compose/guidance-profile';
+import { harmonicNotes, isDrumTrack } from '@/compose/tracks';
 import {
   type BatchPartSpec,
   type BatchTarget,
@@ -16,7 +17,13 @@ import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/gener
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds, secondsToPpq } from '@/project/tempo-map';
-import { isFourFourBarRange } from '@/project/time-signature';
+import {
+  advanceBarsPpq,
+  barNumberAt,
+  barStartPpq,
+  barsBetweenPpq,
+  isFourFourBarRange,
+} from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -56,9 +63,6 @@ const appSettings = useAppSettings();
 const { t } = useI18n();
 
 const g = computed(() => t.value.shell.generate.track);
-
-/** Beats per bar the generators assume (4/4). */
-const BEATS_PER_BAR = 4;
 
 const PART_IDS: readonly TrackPart[] = ['motif', 'drums', 'bass', 'counter', 'backing'];
 
@@ -142,7 +146,11 @@ function formatDuration(seconds: number): string {
 
 const wholeDuration = computed(() =>
   Number.isFinite(wholeBars.value) && wholeBars.value > 0
-    ? ppqDurationSeconds(tempoMap.value, 0, wholeBars.value * BEATS_PER_BAR)
+    ? ppqDurationSeconds(
+        tempoMap.value,
+        0,
+        advanceBarsPpq(store.timeSignatures, 0, wholeBars.value),
+      )
     : 0,
 );
 
@@ -194,10 +202,21 @@ function onDurationChange(event: Event): void {
     durationError.value = g.value.lengthTimeInvalid;
     return;
   }
-  const lower = Math.max(1, Math.floor(secondsToPpq(tempoMap.value, seconds) / BEATS_PER_BAR));
+  const lower = Math.max(
+    1,
+    Math.floor(barsBetweenPpq(store.timeSignatures, 0, secondsToPpq(tempoMap.value, seconds))),
+  );
   const upper = lower + 1;
-  const lowerSeconds = ppqDurationSeconds(tempoMap.value, 0, lower * BEATS_PER_BAR);
-  const upperSeconds = ppqDurationSeconds(tempoMap.value, 0, upper * BEATS_PER_BAR);
+  const lowerSeconds = ppqDurationSeconds(
+    tempoMap.value,
+    0,
+    advanceBarsPpq(store.timeSignatures, 0, lower),
+  );
+  const upperSeconds = ppqDurationSeconds(
+    tempoMap.value,
+    0,
+    advanceBarsPpq(store.timeSignatures, 0, upper),
+  );
   const bars = seconds - lowerSeconds <= upperSeconds - seconds ? lower : upper;
   if (!Number.isInteger(bars) || bars < 1 || bars > 256) {
     durationError.value = g.value.lengthInvalid;
@@ -212,7 +231,7 @@ function onDurationChange(event: Event): void {
 /** Chord progression length in whole bars (0 when there is no chord track). */
 const chordProgressionBars = computed(() => {
   const end = store.chords.reduce((max, chord) => Math.max(max, chord.endPpq), 0);
-  return Math.max(0, Math.round(end / BEATS_PER_BAR));
+  return Math.max(0, Math.round(barsBetweenPpq(store.timeSignatures, 0, end)));
 });
 
 /** Active editable MIDI clip (enables motif's clip targets). */
@@ -228,14 +247,24 @@ const counterSourceClip = computed(() => {
   return clip !== null && clipKind(clip) === 'midi' ? clip : null;
 });
 
+/** True when the counter-melody source clip belongs to a percussion track. */
+const counterSourceIsDrum = computed(() => {
+  const clip = counterSourceClip.value;
+  if (clip === null) return false;
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  return isDrumTrack(track, clip.notes);
+});
+
 /** Active MIDI clip's melody length in bars, or null when none is active. */
 const counterBars = computed(() => {
   const clip = counterSourceClip.value;
-  if (clip === null) return null;
-  const notes = projectMidiNoteOccurrences(clip);
+  if (clip === null || counterSourceIsDrum.value) return null;
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  const projected = projectMidiNoteOccurrences(clip);
+  const notes = track === undefined ? projected : harmonicNotes(track, projected);
   if (notes.length === 0) return null;
   const end = notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
-  return Math.max(1, Math.round(end / BEATS_PER_BAR));
+  return Math.max(1, Math.round(barsBetweenPpq(store.timeSignatures, 0, end)));
 });
 
 const hasChords = computed(() => store.chords.length > 0);
@@ -254,6 +283,7 @@ const counterAvailable = computed(() => counterBars.value !== null);
 function partBlocked(part: TrackPart): string | null {
   return firstBlock(
     [!hasChords.value && (part === 'bass' || part === 'backing'), g.value.chordsRequired],
+    [part === 'counter' && counterSourceIsDrum.value, g.value.counterDrumSource],
     [part === 'counter' && !counterAvailable.value, g.value.counterUnavailable],
   );
 }
@@ -364,11 +394,12 @@ interface SavedDrumSection {
 /** Saved arrangement sections that can be addressed on the generator's 4/4 grid. */
 const savedDrumSections = computed<ReadonlyArray<SavedDrumSection>>(() =>
   store.sections.flatMap((section) => {
-    const startBar = section.startPpq / BEATS_PER_BAR + 1;
-    const lengthBars = (section.endPpq - section.startPpq) / BEATS_PER_BAR;
+    const startBar = barNumberAt(store.timeSignatures, section.startPpq);
+    const spanBars = barsBetweenPpq(store.timeSignatures, section.startPpq, section.endPpq);
+    const lengthBars = Math.round(spanBars);
     if (
-      !Number.isInteger(startBar) ||
-      !Number.isInteger(lengthBars) ||
+      barStartPpq(store.timeSignatures, startBar) !== section.startPpq ||
+      Math.abs(spanBars - lengthBars) > 1e-9 ||
       startBar < 1 ||
       lengthBars < 1 ||
       !isFourFourBarRange(store.timeSignatures, section.startPpq, lengthBars)
@@ -504,9 +535,15 @@ function targetTrackId(value: string, prefix: 'replace' | 'range'): number | nul
 const drumRangeTrackId = computed(() => targetTrackId(parts.drums.target, 'range'));
 const isDrumRangeTarget = computed(() => drumRangeTrackId.value !== null);
 
-const drumRangeStartPpq = computed(() => (Math.round(drumRangeStartBar.value) - 1) * BEATS_PER_BAR);
-const drumRangeEndPpq = computed(
-  () => drumRangeStartPpq.value + Math.round(drumRangeLengthBars.value) * BEATS_PER_BAR,
+const drumRangeStartPpq = computed(() =>
+  barStartPpq(store.timeSignatures, Math.round(drumRangeStartBar.value)),
+);
+const drumRangeEndPpq = computed(() =>
+  advanceBarsPpq(
+    store.timeSignatures,
+    drumRangeStartPpq.value,
+    Math.round(drumRangeLengthBars.value),
+  ),
 );
 
 const drumRangeTargetClipEndPpq = computed(() => {
@@ -539,13 +576,13 @@ const drumRangeValidation = computed(() => {
   const clipStart = drumRangeTargetClipStartPpq.value;
   if (clipStart > 0 && drumRangeStartPpq.value < clipStart) {
     return formatMessage(g.value.rangeBeforeTrack, {
-      start: Math.round(clipStart / BEATS_PER_BAR) + 1,
+      start: barNumberAt(store.timeSignatures, clipStart),
     });
   }
   const clipEnd = drumRangeTargetClipEndPpq.value;
   if (clipEnd > 0 && drumRangeEndPpq.value > clipEnd) {
     return formatMessage(g.value.rangeOutsideTrack, {
-      end: Math.round(clipEnd / BEATS_PER_BAR),
+      end: Math.round(barsBetweenPpq(store.timeSignatures, 0, clipEnd)),
     });
   }
   const intersecting = store.clips.filter(
@@ -579,8 +616,8 @@ function onDrumRangeSectionChange(): void {
   drumRangeStartBar.value = section.startBar;
   drumRangeLengthBars.value = section.lengthBars;
   applyDrumSectionContext(
-    (section.startBar - 1) * BEATS_PER_BAR,
-    (section.startBar - 1 + section.lengthBars) * BEATS_PER_BAR,
+    barStartPpq(store.timeSignatures, section.startBar),
+    barStartPpq(store.timeSignatures, section.startBar + section.lengthBars),
   );
 }
 
@@ -626,10 +663,10 @@ function encodeTarget(target: BatchTarget): string {
   if (target.kind === 'new') return 'new';
   if (target.kind === 'replaceTrack') return `replace:${target.trackId}`;
   if (target.kind === 'replaceRange') {
-    drumRangeStartBar.value = Math.floor(target.startPpq / BEATS_PER_BAR) + 1;
+    drumRangeStartBar.value = barNumberAt(store.timeSignatures, target.startPpq);
     drumRangeLengthBars.value = Math.max(
       1,
-      Math.round((target.endPpq - target.startPpq) / BEATS_PER_BAR),
+      Math.round(barsBetweenPpq(store.timeSignatures, target.startPpq, target.endPpq)),
     );
     applyDrumSectionContext(target.startPpq, target.endPpq);
     return `range:${target.trackId}`;

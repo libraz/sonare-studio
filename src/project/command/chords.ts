@@ -21,7 +21,7 @@ import {
   projectMidiNoteOccurrences,
 } from '../midi-projection';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { meterBarLengthPpq, timeSignatureAt } from '../time-signature';
+import { measureGrid, measureRangeAt, meterBarLengthPpq, timeSignatureAt } from '../time-signature';
 import { clipKind, type EditorNote, type LeadFollowStashEntry } from '../types';
 import { type AtomicProjectEdit, execute, executeAtomic } from './history';
 import { requireClip } from './utils';
@@ -295,12 +295,19 @@ export function arrangementMelodyPitchClasses(startPpq: number, endPpq: number):
   const { harmonic } = harmonicTracksOnly(harmonicTrackNotes(store));
   const namedMelody = harmonic.filter((item) => isMelodyTrack(item.track));
   const active = store.activeClip;
+  const activeTrack = active
+    ? store.tracks.find((track) => track.id === active.trackId)
+    : undefined;
+  const activeNotes =
+    active && clipKind(active) === 'midi' ? projectMidiNoteOccurrences(active) : [];
   const notes =
     namedMelody.length > 0
       ? namedMelody.flatMap((item) => item.notes)
-      : active && clipKind(active) === 'midi'
-        ? projectMidiNoteOccurrences(active)
-        : [];
+      : activeTrack === undefined
+        ? activeNotes
+        : isDrumTrack(activeTrack, activeNotes)
+          ? []
+          : harmonicNotes(activeTrack, activeNotes);
   return melodyPitchClassesInRegion(notes, startPpq, endPpq, 1e-6, {
     ts: timeSignatureAtPpq(store.timeSignatures, startPpq),
   });
@@ -358,6 +365,7 @@ export function detectChordsForClip(clipId: number): number {
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
+  const clipEnd = clip.startPpq + clip.lengthPpq;
   const notes = projectMidiClipNoteOccurrences(clip);
   // Percussion clips carry drum hits, not harmony; pooling them into chord
   // estimation yields nonsense symbols, so a drum clip detects nothing (the
@@ -368,6 +376,11 @@ export function detectChordsForClip(clipId: number): number {
     clipStartPpq: clip.startPpq,
     clipLengthPpq: clip.lengthPpq,
     measureLengthPpq: measureLengthAtPpq(store, clip.startPpq),
+    measures: measureGrid(
+      store.timeSignatures,
+      measureRangeAt(store.timeSignatures, clip.startPpq).startPpq,
+      clipEnd,
+    ),
     keyFifths: 0,
   }).map<EditorChordSymbol>((symbol) => {
     const next: EditorChordSymbol = {
@@ -380,7 +393,6 @@ export function detectChordsForClip(clipId: number): number {
     if (symbol.extensions !== undefined) next.extensions = symbol.extensions;
     return next;
   });
-  const clipEnd = clip.startPpq + clip.lengthPpq;
   const kept = store.chords.filter(
     (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEnd,
   );

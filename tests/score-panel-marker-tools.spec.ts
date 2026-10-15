@@ -193,6 +193,38 @@ describe('ScorePanel marker tools', () => {
     expect(notationMocks.transcribe).toHaveBeenCalled();
   });
 
+  /** Mounts the panel at an edit position, adds a key marker, and returns the written ppq. */
+  async function addKeyAt(positionPpq: number): Promise<number> {
+    commandMocks.setMarker.mockClear();
+    const wrapper = mount(ScorePanel, {
+      props: { positionPpq: () => positionPpq },
+      global: {
+        stubs: { EmptyState: true, ScoreAnnotationPalette: true, ScoreToolbar: true },
+      },
+    });
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Add key')
+      ?.trigger('click');
+    await nextTick();
+    return commandMocks.setMarker.mock.calls[0][1] as number;
+  }
+
+  it('snaps the key marker to the containing measure across a meter change', async () => {
+    store.timeSignatures = [
+      { startPpq: 0, numerator: 4, denominator: 4 },
+      { startPpq: 4, numerator: 3, denominator: 4 },
+    ];
+    expect(await addKeyAt(8.5)).toBe(7);
+  });
+
+  it('snaps the key marker to the containing measure after an opening pickup', async () => {
+    store.pickupLengthPpq = 1;
+    expect(await addKeyAt(3)).toBe(1);
+    expect(await addKeyAt(5.5)).toBe(5);
+    expect(await addKeyAt(0.5)).toBe(0);
+  });
+
   it('clears a pending retranscribe timer on unmount', async () => {
     vi.useFakeTimers();
     const wrapper = mount(ScorePanel, {

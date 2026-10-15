@@ -40,6 +40,7 @@ import {
 } from '@/project/commands';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
+import { clipMeasureGrid } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import type { AccessibleObjectItem } from '@/ui/accessibility/object-navigation';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -53,7 +54,6 @@ import {
   scoreEditPpq,
   scoreKeyMarkerName,
   scoreLyricMarkerName,
-  scoreMeasureStartPpq,
 } from '@/ui/score/marker-editors';
 import { scoreOmitsMidiFx } from '@/ui/score/midi-fx-notice';
 import { type PlayheadSync, usePlayheadSync } from '@/ui/score/use-playhead-sync';
@@ -668,9 +668,22 @@ function addLyricMarker(): void {
   }
 }
 
+/** Tolerance for an edit position sitting exactly on a measure start. */
+const MEASURE_EPSILON_PPQ = 1e-6;
+
 function addKeyMarker(): void {
   try {
-    const ppq = scoreMeasureStartPpq(markerEditPpq(), store.clipStartPpq, measureLenPpq.value);
+    const editPpq = markerEditPpq();
+    const ppq = clipMeasureGrid(
+      store.timeSignatures,
+      store.clipStartPpq,
+      store.clipStartPpq + screenClipLengthPpq.value,
+      store.pickupLengthPpq,
+    ).reduce(
+      (start, measure) =>
+        measure.startPpq <= editPpq + MEASURE_EPSILON_PPQ ? measure.startPpq : start,
+      store.clipStartPpq,
+    );
     setMarker(null, ppq, scoreKeyMarkerName(keyRootInput.value, keyModeInput.value));
     notation.setError('');
     void notation.transcribe();

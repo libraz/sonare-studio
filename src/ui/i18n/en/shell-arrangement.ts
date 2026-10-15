@@ -85,6 +85,7 @@ export const shellArrangement = {
       partCounter: 'Counter melody',
       partBacking: 'Backing',
       counterUnavailable: 'Requires a MIDI clip with audible notes.',
+      counterDrumSource: 'Percussion clips cannot be a counter-melody source.',
       chordsRequired: 'Requires a chord progression.',
       roleRhythm: 'Rhythm',
       roleLow: 'Low',

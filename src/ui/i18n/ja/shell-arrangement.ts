@@ -84,6 +84,7 @@ export const shellArrangement = {
       partCounter: '対旋律',
       partBacking: 'バッキング',
       counterUnavailable: '音のあるMIDIクリップを選択すると生成できます。',
+      counterDrumSource: 'パーカッションのクリップはカウンターメロディの元にできません。',
       chordsRequired: 'コード進行を作成すると生成できます。',
       roleRhythm: 'リズム',
       roleLow: '低音域',

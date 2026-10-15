@@ -320,6 +320,54 @@ export function measureGrid(
   return ranges;
 }
 
+/**
+ * Measure grid of a notated clip window: project barlines from the clip start,
+ * or, when the clip opens at PPQ 0 with a pickup, the short pickup measure
+ * followed by full bars of the governing meter (cut at meter changes).
+ */
+export function clipMeasureGrid(
+  segments: readonly TimeSignatureSegment[],
+  startPpq: number,
+  endPpq: number,
+  pickupLengthPpq: number,
+): MeasureRange[] {
+  if (!(pickupLengthPpq > 0) || Math.abs(startPpq) > PPQ_EPSILON) {
+    return measureGrid(segments, startPpq, endPpq);
+  }
+  const pickupEnd = Math.min(endPpq, startPpq + pickupLengthPpq);
+  const first = timeSignatureAt(segments, startPpq);
+  const ranges: MeasureRange[] = [
+    {
+      startPpq,
+      lengthPpq: pickupEnd - startPpq,
+      numerator: first.numerator,
+      denominator: first.denominator,
+      index: 0,
+    },
+  ];
+  let cursor = pickupEnd;
+  while (cursor < endPpq - PPQ_EPSILON) {
+    const meter = timeSignatureAt(segments, cursor);
+    const nextChange = normalizeTimeSignatureMap(segments).find(
+      (segment) => segment.startPpq > cursor + PPQ_EPSILON,
+    )?.startPpq;
+    const end = Math.min(
+      endPpq,
+      cursor + meterBarLengthPpq(meter),
+      nextChange ?? Number.POSITIVE_INFINITY,
+    );
+    ranges.push({
+      startPpq: cursor,
+      lengthPpq: end - cursor,
+      numerator: meter.numerator,
+      denominator: meter.denominator,
+      index: ranges.length,
+    });
+    cursor = end;
+  }
+  return ranges;
+}
+
 /** Walks backward over the actual meter grid for a recording count-in. */
 export function countInStartPpq(
   segments: readonly TimeSignatureSegment[],
@@ -351,6 +399,31 @@ export function advanceBarsPpq(
     cursor = rangeEnd > cursor + PPQ_EPSILON ? rangeEnd : cursor + range.lengthPpq;
   }
   return cursor;
+}
+
+/** PPQ of the start of a 1-based bar number on the project meter map. */
+export function barStartPpq(segments: readonly TimeSignatureSegment[], bar: number): number {
+  return advanceBarsPpq(segments, 0, Math.floor(bar) - 1);
+}
+
+/** 1-based number of the bar containing an absolute PPQ position. */
+export function barNumberAt(segments: readonly TimeSignatureSegment[], ppq: number): number {
+  return measureRangeAt(segments, Math.max(0, ppq)).index + 1;
+}
+
+/**
+ * Number of bars a PPQ range spans, each portion measured against the bar
+ * length of the meter governing it (fractional for a partial bar).
+ */
+export function barsBetweenPpq(
+  segments: readonly TimeSignatureSegment[],
+  startPpq: number,
+  endPpq: number,
+): number {
+  return measureGrid(segments, startPpq, endPpq).reduce(
+    (bars, measure) => bars + measure.lengthPpq / meterBarLengthPpq(measure),
+    0,
+  );
 }
 
 /** True when a requested bar range is entirely representable by 4/4-only generators. */

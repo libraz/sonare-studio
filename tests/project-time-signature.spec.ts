@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   advanceBarsPpq,
+  barNumberAt,
+  barStartPpq,
+  barsBetweenPpq,
+  clipMeasureGrid,
   countInStartPpq,
   DEFAULT_TIME_SIGNATURE,
   isFourFourBarRange,
@@ -246,6 +250,56 @@ describe('timeSignatureRanges', () => {
     expect(timeSignatureRanges([{ startPpq: 8, numerator: 3, denominator: 4 }], 2, 10)).toEqual([
       { startPpq: 2, endPpq: 8, numerator: 4, denominator: 4 },
       { startPpq: 8, endPpq: 10, numerator: 3, denominator: 4 },
+    ]);
+  });
+});
+
+describe('bar numbers on a meter map', () => {
+  const threeFourFirst: TimeSignatureSegment[] = [
+    { startPpq: 0, numerator: 3, denominator: 4 },
+    { startPpq: 6, numerator: 4, denominator: 4 },
+  ];
+
+  it('maps 1-based bar numbers to PPQ and back across a meter change', () => {
+    expect(barStartPpq(threeFourFirst, 1)).toBe(0);
+    expect(barStartPpq(threeFourFirst, 2)).toBe(3);
+    expect(barStartPpq(threeFourFirst, 4)).toBe(10);
+    expect(barNumberAt(threeFourFirst, 3)).toBe(2);
+    expect(barNumberAt(threeFourFirst, 9.5)).toBe(3);
+    expect(barNumberAt(threeFourFirst, 10)).toBe(4);
+  });
+
+  it('measures a range in bars of the governing meters', () => {
+    expect(barsBetweenPpq(threeFourFirst, 0, 14)).toBe(4);
+    expect(barsBetweenPpq(threeFourFirst, 3, 8)).toBeCloseTo(1 + 2 / 4);
+  });
+});
+
+describe('clipMeasureGrid', () => {
+  it('follows project barlines from a mid-bar clip start', () => {
+    expect(clipMeasureGrid([], 2, 10, 0).map((m) => [m.startPpq, m.lengthPpq])).toEqual([
+      [2, 2],
+      [4, 4],
+      [8, 2],
+    ]);
+  });
+
+  it('opens with the pickup measure, then full bars cut at meter changes', () => {
+    const grid = clipMeasureGrid(
+      [
+        { startPpq: 0, numerator: 4, denominator: 4 },
+        { startPpq: 6, numerator: 3, denominator: 4 },
+      ],
+      0,
+      12,
+      1,
+    );
+    expect(grid.map((m) => [m.startPpq, m.lengthPpq])).toEqual([
+      [0, 1],
+      [1, 4],
+      [5, 1],
+      [6, 3],
+      [9, 3],
     ]);
   });
 });

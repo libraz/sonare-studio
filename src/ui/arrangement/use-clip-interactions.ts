@@ -332,13 +332,10 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     return { laneIndex, trackId };
   }
 
-  /** Resolves the grid-snapped start cell of a draw at the pointer x. */
+  /** Resolves the snapped start of a draw at the pointer x, on the same grid as its end. */
   function drawStartPpq(point: ClipPoint, modifiers: ClipModifiers): number {
-    const step = options.getGridPpq();
     const ppq = view.xToPpq(point.x);
-    return modifiers.meta === true || !(step > 0)
-      ? Math.max(0, ppq)
-      : Math.max(0, Math.floor(ppq / step) * step);
+    return modifiers.meta === true ? Math.max(0, ppq) : snapPosition(ppq, options.getGridPpq());
   }
 
   /** Resolves the snapped length of an in-flight clip draw (>= one bar). */

@@ -15,9 +15,12 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => createFakeWasmModule() };
 });
 
+import { setProjectChords } from '@/project/command/chords';
+import { addMidiClip } from '@/project/command/clips';
 import { harmonizeFromMelodyCommand } from '@/project/command/generate-harmonize';
-import { clearHistory } from '@/project/command/history';
+import { clearHistory, undo } from '@/project/command/history';
 import { addNote } from '@/project/command/notes';
+import { addTrack, setTrackChordFollow, setTrackPercussion } from '@/project/command/tracks';
 import { useProjectStore } from '@/project/store';
 import { MAJOR_MODE_MASK } from '@/project/types';
 
@@ -110,5 +113,83 @@ describe('harmonizeFromMelodyCommand transpose placement', () => {
     ]);
     expect(segmentInputs[0]).not.toHaveProperty('key');
     expect(segmentInputs[1]?.key).toEqual(inferred);
+  });
+
+  it('places chord slots on the project bar grid when the clip starts mid-bar', () => {
+    const trackId = addTrack({ name: 'Lead' });
+    const clipId = addMidiClip({ trackId, startPpq: 2, lengthPpq: 8 });
+    store.clipId = clipId;
+    store.refresh();
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    addNote({ pitch: 64, startPpq: 3, durationPpq: 1 });
+    harmonize.mockImplementation(() => ({
+      ...result(0),
+      chords: [
+        { rootPc: 0, quality: 'maj' as const, startBeat: 0 },
+        { rootPc: 7, quality: 'maj' as const, startBeat: 4 },
+      ],
+    }));
+
+    harmonizeFromMelodyCommand();
+
+    // The melody reaches the harmonizer on the bar grid (clip start 2 -> +2).
+    expect(
+      harmonize.mock.calls[0][0].melody.map((note: { startBeat: number }) => note.startBeat),
+    ).toEqual([2, 5]);
+    expect(store.chords.map((chord) => [chord.startPpq, chord.endPpq])).toEqual([
+      [2, 4],
+      [4, 6],
+    ]);
+  });
+
+  it('refuses a percussion clip', () => {
+    const trackId = addTrack({ name: 'Kit' });
+    setTrackPercussion(trackId, true);
+    store.clipId = addMidiClip({ trackId, startPpq: 0, lengthPpq: 4 });
+    store.refresh();
+    addNote({ pitch: 36, startPpq: 0, durationPpq: 1, channel: 9 });
+
+    expect(() => harmonizeFromMelodyCommand()).toThrow('percussion');
+    expect(harmonize).not.toHaveBeenCalled();
+  });
+
+  it('drops channel-10 notes of a melodic track from the melody', () => {
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    addNote({ pitch: 36, startPpq: 1, durationPpq: 1, channel: 9 });
+    harmonize.mockImplementation(() => result(0));
+
+    harmonizeFromMelodyCommand();
+
+    expect(harmonize.mock.calls[0][0].melody.map((note: { pitch: number }) => note.pitch)).toEqual([
+      60,
+    ]);
+  });
+
+  it('re-voices a Follow chord track part in the same undo step as the harmonized chords', () => {
+    const padTrack = addTrack({ name: 'Pad' });
+    const padClip = addMidiClip({ trackId: padTrack, startPpq: 0, lengthPpq: 8 });
+    store.clipId = padClip;
+    store.refresh();
+    const padNoteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 4 });
+    setProjectChords([{ startPpq: 0, endPpq: 8, rootPc: 0, quality: 0 }]);
+    setTrackChordFollow(padTrack, 'root');
+    const leadTrack = addTrack({ name: 'Lead' });
+    store.clipId = addMidiClip({ trackId: leadTrack, startPpq: 0, lengthPpq: 8 });
+    store.refresh();
+    addNote({ pitch: 65, startPpq: 0, durationPpq: 1 });
+    harmonize.mockImplementation(() => ({
+      ...result(0),
+      chords: [{ rootPc: 5, quality: 'maj' as const, startBeat: 0 }],
+    }));
+
+    harmonizeFromMelodyCommand();
+    const padPitch = () =>
+      store.clips.find((clip) => clip.id === padClip)?.notes.find((note) => note.id === padNoteId)
+        ?.pitch;
+    expect(padPitch()).not.toBe(60);
+
+    expect(undo()).toBe(true);
+    expect(padPitch()).toBe(60);
+    expect(store.chords[0].rootPc).toBe(0);
   });
 });

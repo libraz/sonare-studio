@@ -698,6 +698,20 @@ describe('useClipInteractions tools', () => {
       expect(interactions.previewDraft.value).toBeNull();
     });
 
+    it('starts a drawn clip on the meter-aware snap grid and bypasses it with meta', () => {
+      // Bar mode on 4/4 for 3 beats then 3/4: bar lines at 0, 3, 6, 9.
+      const barSnap = (ppq: number) => Math.round(ppq / 3) * 3;
+      const { interactions, commands, setTool } = makeSetup({ snapPpq: barSnap });
+      setTool('draw');
+      interactions.onPointerDown({ x: 80, y: 75 }); // raw PPQ 8 snaps to the bar line at 9
+      interactions.onPointerUp({ x: 80, y: 75 });
+      expect(commands.createClip).toHaveBeenLastCalledWith(20, 9, 4);
+
+      interactions.onPointerDown({ x: 80, y: 75 }, { meta: true });
+      interactions.onPointerUp({ x: 80, y: 75 }, { meta: true });
+      expect(commands.createClip).toHaveBeenLastCalledWith(20, 8, 4);
+    });
+
     it('does nothing when drawing off the lane area', () => {
       const { interactions, commands, setTool } = makeSetup();
       setTool('draw');
