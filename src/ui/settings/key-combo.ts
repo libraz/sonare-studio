@@ -171,19 +171,37 @@ export function formatKeyCombo(combo: KeyCombo | string, platform: Platform): st
 }
 
 /**
- * Builds a combo from a keyboard event.
+ * Resolves the key of an Alt-modified event. Option on macOS composes
+ * `event.key` into another character ('mu', 'ß', a dead key), so a letter or
+ * digit is taken from the physical `event.code` whenever the composed key is
+ * not itself a plain letter or digit.
+ */
+function altKeyFromEvent(event: KeyboardEvent, key: string): string {
+  if (!event.altKey || /^[a-z0-9]$/.test(key)) return key;
+  const physical = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code ?? '');
+  return physical === null ? key : (physical[1] ?? physical[2]).toLowerCase();
+}
+
+/**
+ * Builds a combo from a keyboard event. This is the single place where event
+ * modifiers are read, so matching and capture agree on the platform table.
  *
- * `mod` is set from the command modifier of the supplied platform: Cmd on
- * macOS and Ctrl everywhere else.
+ * `mod` is the command modifier of the supplied platform: Cmd on macOS and
+ * Ctrl everywhere else. The other platform's command key (Ctrl on macOS, the
+ * Windows key elsewhere) has no combo representation, so an event carrying it
+ * resolves to no combo instead of matching the bare key.
  *
- * @returns The combo, or null when the pressed key is itself a modifier.
+ * @returns The combo, or null when the pressed key is itself a modifier or a
+ *   foreign command modifier is held.
  */
 export function comboFromEvent(event: KeyboardEvent, platform = detectPlatform()): KeyCombo | null {
   const key = normalizeKey(event.key);
   if (MODIFIER_KEYS.has(key)) return null;
+  const mac = platform === 'mac';
+  if (mac ? event.ctrlKey : event.metaKey) return null;
   return {
-    key,
-    mod: platform === 'mac' ? event.metaKey : event.ctrlKey,
+    key: altKeyFromEvent(event, key),
+    mod: mac ? event.metaKey : event.ctrlKey,
     shift: event.shiftKey,
     alt: event.altKey,
   };

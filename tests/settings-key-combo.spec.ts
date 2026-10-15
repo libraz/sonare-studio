@@ -104,7 +104,30 @@ describe('comboFromEvent', () => {
   it('uses Cmd on macOS and Ctrl elsewhere for mod', () => {
     expect(comboFromEvent(keydown({ key: 'd', metaKey: true }), 'mac')?.mod).toBe(true);
     expect(comboFromEvent(keydown({ key: 'd', ctrlKey: true }), 'other')?.mod).toBe(true);
-    expect(comboFromEvent(keydown({ key: 'd', metaKey: true }), 'other')?.mod).toBe(false);
+  });
+
+  it('yields no combo while the foreign command modifier is held', () => {
+    expect(comboFromEvent(keydown({ key: 'r', ctrlKey: true }), 'mac')).toBeNull();
+    expect(comboFromEvent(keydown({ key: 'd', metaKey: true }), 'other')).toBeNull();
+    expect(comboMatchesEvent('r', keydown({ key: 'r', ctrlKey: true }), 'mac')).toBe(false);
+    expect(comboMatchesEvent('d', keydown({ key: 'd', metaKey: true }), 'other')).toBe(false);
+  });
+
+  it('resolves Option-composed letters from the physical key', () => {
+    const event = keydown({ key: 'µ', code: 'KeyM', altKey: true });
+    expect(comboFromEvent(event, 'mac')).toEqual({ key: 'm', mod: false, shift: false, alt: true });
+    expect(comboMatchesEvent('alt+m', event, 'mac')).toBe(true);
+    expect(
+      comboMatchesEvent('alt+s', keydown({ key: 'ß', code: 'KeyS', altKey: true }), 'mac'),
+    ).toBe(true);
+    expect(
+      comboMatchesEvent('alt+1', keydown({ key: '¡', code: 'Digit1', altKey: true }), 'mac'),
+    ).toBe(true);
+  });
+
+  it('keeps the layout key when Alt does not compose it', () => {
+    const event = keydown({ key: 'a', code: 'KeyQ', altKey: true });
+    expect(comboFromEvent(event, 'other')?.key).toBe('a');
   });
 
   it('returns null for modifier-only presses', () => {
