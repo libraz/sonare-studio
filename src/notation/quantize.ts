@@ -48,7 +48,7 @@ import {
 } from '@/notation/model';
 import { type AssignedVoiceUnits, EPSILON, meanPitch, type VoiceUnit } from '@/notation/voice-unit';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
-import { measureGrid, timeSignatureAt } from '@/project/time-signature';
+import { clipMeasureGrid } from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 
 export {
@@ -442,6 +442,24 @@ function percussionVoiceGroup(pitch: number): 1 | 2 {
   }
 }
 
+/** Union of two identity lists, keeping first-seen order. */
+function mergeSourceIdentities(
+  a: readonly MidiSourceIdentity[] | undefined,
+  b: readonly MidiSourceIdentity[] | undefined,
+): MidiSourceIdentity[] {
+  const merged = [...(a ?? [])];
+  for (const identity of b ?? []) {
+    const known = merged.some(
+      (m) =>
+        m.clipId === identity.clipId &&
+        m.noteId === identity.noteId &&
+        m.occurrence === identity.occurrence,
+    );
+    if (!known) merged.push({ ...identity });
+  }
+  return merged;
+}
+
 /**
  * Pipeline step 3: assign units to at most `maxVoices` monophonic voices.
  *
@@ -492,6 +510,7 @@ function separateVoices(units: VoiceUnit[], maxVoices: number): VoiceUnit[][] {
         last.pitches = [...new Set([...last.pitches, ...unit.pitches])].sort((a, b) => a - b);
         last.channels = [...new Set([...last.channels, ...unit.channels])].sort((a, b) => a - b);
         last.ids = [...new Set([...last.ids, ...unit.ids])].sort((a, b) => a - b);
+        last.sourceIdentities = mergeSourceIdentities(last.sourceIdentities, unit.sourceIdentities);
         last.velocity = Math.max(last.velocity, unit.velocity);
         last.endPpq = Math.max(last.endPpq, unit.endPpq);
       } else {
@@ -604,40 +623,7 @@ function buildMeasureGrid(
     { startPpq: 0, numerator: opts.timeSig.beats, denominator: opts.timeSig.beatUnit },
     ...opts.timeSignatures,
   ];
-  if (opts.pickupLengthPpq > 0 && Math.abs(opts.clipStartPpq) <= EPSILON) {
-    const pickupEnd = Math.min(opts.clipEndPpq, opts.clipStartPpq + opts.pickupLengthPpq);
-    const firstMeter = timeSignatureAt(changes, opts.clipStartPpq);
-    const ranges = [
-      {
-        index: 0,
-        startPpq: opts.clipStartPpq,
-        lengthPpq: pickupEnd - opts.clipStartPpq,
-        timeSig: { beats: firstMeter.numerator, beatUnit: firstMeter.denominator },
-      },
-    ];
-    let cursor = pickupEnd;
-    while (cursor < opts.clipEndPpq - EPSILON) {
-      const meter = timeSignatureAt(changes, cursor);
-      const barLength = meter.numerator * (4 / meter.denominator);
-      const nextChange = changes
-        .filter((change) => change.startPpq > cursor + EPSILON)
-        .sort((a, b) => a.startPpq - b.startPpq)[0]?.startPpq;
-      const end = Math.min(
-        opts.clipEndPpq,
-        cursor + barLength,
-        nextChange ?? Number.POSITIVE_INFINITY,
-      );
-      ranges.push({
-        index: ranges.length,
-        startPpq: cursor,
-        lengthPpq: end - cursor,
-        timeSig: { beats: meter.numerator, beatUnit: meter.denominator },
-      });
-      cursor = end;
-    }
-    return ranges;
-  }
-  const ranges = measureGrid(changes, opts.clipStartPpq, opts.clipEndPpq);
+  const ranges = clipMeasureGrid(changes, opts.clipStartPpq, opts.clipEndPpq, opts.pickupLengthPpq);
   if (ranges.length === 0) {
     return [
       {

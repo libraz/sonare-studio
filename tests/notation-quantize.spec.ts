@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type NotatedScore, noteValueToPpq } from '@/notation/model';
+import { serializeMusicXml } from '@/notation/musicxml';
 import {
   assignGrandStaffUnits,
   type QuantizeOptions,
@@ -8,6 +9,7 @@ import {
   staffForMeanPitch,
   type VoiceUnit,
 } from '@/notation/quantize';
+import { scoreSourceIdentitiesFromXmlId } from '@/notation/source-identity';
 import type { EditorNote } from '@/project/types';
 
 let nextId = 1;
@@ -878,5 +880,31 @@ describe('quantizeToScore: structural invariants on a dense fixture', () => {
     // quantize() asserts the invariants internally.
     const score = quantize(notes, baseOptions({ clipLengthPpq: 10 }));
     expect(score.parts[0].measures).toHaveLength(3);
+  });
+});
+
+describe('quantizeToScore: same-onset overflow identities', () => {
+  it('keeps every merged note identity on the engraved noteheads', () => {
+    const notes = [makeNote(60, 0, 4, 1), makeNote(64, 0, 2, 2), makeNote(67, 0, 1, 3)].map(
+      (note) => ({
+        ...note,
+        scoreSourceIdentity: { clipId: 1, noteId: note.id, occurrence: 0 },
+      }),
+    );
+    const score = quantizeToScore(notes, baseOptions({ maxVoices: 1 }));
+    const events = score.parts[0].measures[0].voices.flatMap((v) => v.events);
+    const note = events.find((e) => e.kind === 'note');
+    expect(note?.sourceIds).toEqual([1, 2, 3]);
+    expect(note?.sourceIdentities?.map((identity) => identity.noteId).sort()).toEqual([1, 2, 3]);
+    const xml = serializeMusicXml(score);
+    const ids = [...xml.matchAll(/xml:id="(sonare-note-[^"]+)"/g)].map((m) => m[1]);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(
+        scoreSourceIdentitiesFromXmlId(id)
+          .map((identity) => identity.noteId)
+          .sort(),
+      ).toEqual([1, 2, 3]);
+    }
   });
 });
