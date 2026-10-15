@@ -20,6 +20,7 @@ import {
 } from '@/persistence/local-file';
 import {
   isReservedProjectName,
+  listProjectNames,
   listProjects,
   loadProjectWithRevision,
   renameProject,
@@ -57,6 +58,7 @@ vi.mock('@/persistence/opfs', () => ({
   deleteProject: vi.fn(),
   isOpfsAvailable: () => true,
   isReservedProjectName: vi.fn(() => false),
+  listProjectNames: vi.fn(async () => []),
   listProjects: vi.fn(async () => []),
   loadProjectWithRevision: vi.fn(),
   renameProject: vi.fn(),
@@ -699,7 +701,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     const store = useProjectStore();
     await store.init();
     store.projectName = 'Current Song';
-    vi.mocked(listProjects).mockResolvedValue([{ name: 'Taken_Song', size: 10 }]);
+    vi.mocked(listProjectNames).mockResolvedValue(['Taken_Song']);
     vi.mocked(promptDialog).mockResolvedValue('Taken:Song');
     const { confirmAction, persistence } = setup();
     confirmAction.mockResolvedValueOnce(false);
@@ -731,7 +733,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
     const store = useProjectStore();
     await store.init();
     store.projectName = 'Taken Song';
-    vi.mocked(listProjects).mockResolvedValue([{ name: 'Taken Song', size: 10 }]);
+    vi.mocked(listProjectNames).mockResolvedValue(['Taken Song']);
     const { confirmAction, persistence } = setup();
     confirmAction.mockResolvedValueOnce(false);
 
@@ -981,9 +983,7 @@ describe('useProjectPersistence autosave refresh after load', () => {
       bytes: encodeSzd(makeDocument('Stored Project')),
       revision: 'revision-1',
     });
-    vi.mocked(listProjects).mockResolvedValue([
-      { name: 'Stored Project', size: 1, lastModified: 0 },
-    ] as Awaited<ReturnType<typeof listProjects>>);
+    vi.mocked(listProjectNames).mockResolvedValue(['Stored Project']);
     vi.mocked(saveProjectChecked).mockResolvedValue('revision-3');
     const { confirmAction, persistence } = setup();
     await persistence.openStoredProject('Stored Project');

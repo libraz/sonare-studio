@@ -47,6 +47,7 @@ import {
   isAutosaveProjectName,
   isOpfsAvailable,
   isReservedProjectName,
+  listProjectNames,
   listProjects,
   loadProjectWithRevision,
   renameProject,
@@ -809,7 +810,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     // existing name is an intentional overwrite, not a cross-tab conflict;
     // use the same explicit confirmation path as Save As.
     if (savedProjectSlot.value === null) {
-      const exists = (await listProjects()).some((project) => project.name === slot);
+      const exists = (await listProjectNames()).includes(slot);
       if (exists) {
         expectedRevision = (await loadProjectWithRevision(slot)).revision;
         const confirmed = await confirmAction(
@@ -848,7 +849,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       if (!name) return;
       void runAction(async () => {
         const slot = projectSlotName(name);
-        const exists = (await listProjects()).some((project) => project.name === slot);
+        const exists = (await listProjectNames()).includes(slot);
         let expectedRevision: string | null = null;
         if (exists && slot !== savedProjectSlot.value) {
           expectedRevision = (await loadProjectWithRevision(slot)).revision;
@@ -999,7 +1000,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       // The restore may have replaced the open project's slot. Saving must then
       // ask before overwriting the restored copy rather than report a conflict.
       const slot = savedProjectSlot.value;
-      if (slot !== null && (await listProjects()).some((project) => project.name === slot)) {
+      if (slot !== null && (await listProjectNames()).includes(slot)) {
         const { revision } = await loadProjectWithRevision(slot);
         if (revision !== savedProjectRevision.value) restoreReplacedSlot.value = slot;
       }
