@@ -1,3 +1,4 @@
+import { shallowRef } from 'vue';
 import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
 import {
   applyGrooveToPosition,
@@ -36,6 +37,13 @@ const MIN_DURATION_PPQ = 0.0625;
 
 /** Process-local note clipboard; entries stay detached from mutable store notes. */
 let noteClipboard: Array<Omit<EditorNote, 'id'>> = [];
+/** Bumped on every note copy so menus reading the clipboard stay reactive. */
+export const noteClipboardVersion = shallowRef(0);
+
+/** Returns whether copied notes are available to paste. */
+export function hasCopiedNotes(): boolean {
+  return noteClipboard.length > 0;
+}
 
 /** Throws RangeError when a note has out-of-range or non-finite fields. */
 function validateNote(note: Omit<EditorNote, 'id'>): void {
@@ -181,6 +189,7 @@ export function copySelectedNotes(): boolean {
       ...(note.offVelocity === undefined ? {} : { offVelocity: note.offVelocity }),
     }))
     .sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
+  noteClipboardVersion.value += 1;
   return true;
 }
 

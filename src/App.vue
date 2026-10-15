@@ -748,9 +748,7 @@ const {
   onScoreDividerPointerMove,
   onScoreDividerPointerUp,
   onScoreDividerKeydown,
-  persistArrangeHeight,
   persistDeviceRackOpen,
-  persistDockCollapsed,
   disposeLayout,
   toggleDeviceRack,
   toggleDockCollapsed,
@@ -825,9 +823,6 @@ const {
 } = useShellPanels({
   errorMessage,
   layoutBindings,
-  persistArrangeHeight,
-  persistDeviceRackOpen,
-  persistDockCollapsed,
 });
 
 // Defer the first-run welcome tour until the start screen is dismissed so the

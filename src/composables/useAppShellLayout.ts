@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, type Ref, ref } from 'vue';
 import {
   ARRANGE_HEIGHT_MAX_PX,
   ARRANGE_HEIGHT_MIN_PX,
@@ -350,12 +350,29 @@ export function useAppShellLayout() {
     },
   });
 
+  // Every field a layout writes is persisted by its binding, so the Layout
+  // menu and Settings apply paths both survive a reload.
+  const persistedFlag = (flag: Ref<boolean>, key: string) =>
+    computed({
+      get: () => flag.value,
+      set: (next: boolean) => {
+        flag.value = next;
+        writeStoredFlag(key, next);
+      },
+    });
+
   const layoutBindings: LayoutBindings = {
     arrangeHeightPx: layoutArrangeHeight,
-    dockTab,
-    deviceRackOpen,
-    scoreOpen: scoreVisible,
-    dockCollapsed,
+    dockTab: computed({
+      get: () => dockTab.value,
+      set: (next: DockTab) => {
+        dockTab.value = next;
+        persistDockTab(next);
+      },
+    }),
+    deviceRackOpen: persistedFlag(deviceRackOpen, DEVICE_RACK_OPEN_KEY),
+    scoreOpen: persistedFlag(scoreVisible, SCORE_VISIBLE_KEY),
+    dockCollapsed: persistedFlag(dockCollapsed, DOCK_COLLAPSED_KEY),
   };
 
   return {

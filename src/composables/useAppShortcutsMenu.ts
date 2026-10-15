@@ -10,6 +10,7 @@ import {
   clipClipboardVersion,
   hasCopiedClip,
 } from '@/project/command/clips-clipboard';
+import { hasCopiedNotes, noteClipboardVersion } from '@/project/command/notes';
 import {
   canRedo,
   canUndo,
@@ -308,8 +309,15 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         ) {
           return false;
         }
-        const recorder = track.kind === 'audio' ? options.recording : options.midiRecording;
-        recorder.arm(recorder.armedTrackId.value === track.id ? null : track.id);
+        // Same recorder calls as the header ARM button: audio toggles only this
+        // track, MIDI keeps its single-arm semantics.
+        if (track.kind === 'audio') {
+          const { armedTrackIds } = options.recording;
+          options.recording.setTrackArmed(track.id, !armedTrackIds.value.includes(track.id));
+        } else {
+          const { armedTrackId } = options.midiRecording;
+          options.midiRecording.arm(armedTrackId.value === track.id ? null : track.id);
+        }
         return true;
       }
       case 'view.toggleSnap':
@@ -485,11 +493,13 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     // The clipboard is process-local, so read its revision to keep the menu
     // reactive after a copy made by a keyboard shortcut or another surface.
     void clipClipboardVersion.value;
+    void noteClipboardVersion.value;
     const arrangementFocus = focusZone.value === 'arrange';
     const r = t.value.reasons;
+    const noNoteSelection = firstBlock([store.selection.size === 0, r.noNoteSelection]);
     const noSelection = arrangementFocus
       ? firstBlock([!store.activeClip, r.noClipSelection])
-      : firstBlock([store.selection.size === 0, r.noNoteSelection]);
+      : noNoteSelection;
     const noClip = firstBlock([!store.activeClip, r.noClipSelection]);
     const readOnly = firstBlock([activeContentReadOnly(), r.trackFrozen]);
     const pasteUnavailable = arrangementFocus
@@ -500,8 +510,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
             r.noRoomToPaste,
           ],
         )
-      : noClip;
+      : firstBlock(noClip, [!hasCopiedNotes(), r.nothingToPaste]);
     const editSelection = firstBlock(readOnly, noSelection);
+    const editNotes = firstBlock(noNoteSelection, readOnly);
     const editClip = firstBlock(readOnly, noClip);
     return [
       actionItem('edit.undo', a['edit.undo'], { reason: canUndo() ? null : r.nothingToUndo }),
@@ -512,21 +523,21 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       sep('edit.sep-select'),
       actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
       actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], {
-        reason: editSelection,
+        reason: editNotes,
       }),
       actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
-        reason: editSelection,
+        reason: editNotes,
       }),
       heading('edit.transpose', t.value.shortcuts.menu.transpose),
-      actionItem('edit.transposeUp', a['edit.transposeUp'], { reason: editSelection }),
+      actionItem('edit.transposeUp', a['edit.transposeUp'], { reason: editNotes }),
       actionItem('edit.transposeDown', a['edit.transposeDown'], {
-        reason: editSelection,
+        reason: editNotes,
       }),
       actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp'], {
-        reason: editSelection,
+        reason: editNotes,
       }),
       actionItem('edit.transposeOctaveDown', a['edit.transposeOctaveDown'], {
-        reason: editSelection,
+        reason: editNotes,
       }),
       heading('edit.clip', t.value.shortcuts.menu.clip),
       actionItem('arrange.duplicateClip', a['arrange.duplicateClip'], {
@@ -607,8 +618,10 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       actionItem('transport.nudgeBack', a['transport.nudgeBack'], { reason: engineOff }),
       actionItem('transport.nudgeForward', a['transport.nudgeForward'], { reason: engineOff }),
       heading('transport.locators', t.value.shortcuts.menu.locators),
-      actionItem('transport.setLeftLocator', a['transport.setLeftLocator']),
-      actionItem('transport.setRightLocator', a['transport.setRightLocator']),
+      actionItem('transport.setLeftLocator', a['transport.setLeftLocator'], { reason: engineOff }),
+      actionItem('transport.setRightLocator', a['transport.setRightLocator'], {
+        reason: engineOff,
+      }),
     ];
   }
 

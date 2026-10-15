@@ -2,6 +2,7 @@ import type { Ref } from 'vue';
 import type { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
 import { describeError } from '@/lib/errors';
+import { useI18n } from '@/ui/i18n';
 
 type AppSettings = ReturnType<typeof useAppSettings>;
 
@@ -13,6 +14,7 @@ export interface ActionGuardsOptions {
 
 export function useActionGuards(options: ActionGuardsOptions) {
   const { appSettings, busy, errorMessage } = options;
+  const { t } = useI18n();
 
   function confirmAction(
     message: string,
@@ -41,7 +43,10 @@ export function useActionGuards(options: ActionGuardsOptions) {
   }
 
   async function runAction(action: () => Promise<void>): Promise<void> {
-    if (busy.value) return;
+    if (busy.value) {
+      errorMessage.value = t.value.reasons.busy;
+      return;
+    }
     busy.value = true;
     errorMessage.value = '';
     try {

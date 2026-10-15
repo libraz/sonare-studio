@@ -4,6 +4,7 @@ import {
   maximumArrangementHeight,
   useAppShellLayout,
 } from '@/composables/useAppShellLayout';
+import { applyLayoutState } from '@/ui/settings/layouts';
 
 describe('useAppShellLayout', () => {
   let rafCallbacks: Map<number, FrameRequestCallback>;
@@ -76,6 +77,30 @@ describe('useAppShellLayout', () => {
     expect(layout.arrangeHeight.value).toBe(510);
     expect(window.localStorage.getItem('sonare-studio.arrangeHeightPx')).toBe('510');
     layout.disposeLayout();
+  });
+
+  it('persists every field an applied layout writes, so it survives a reload', () => {
+    const layout = useAppShellLayout();
+
+    applyLayoutState(
+      {
+        arrangeHeightPx: 300,
+        dockTab: 'mixer',
+        deviceRackOpen: true,
+        scoreOpen: true,
+        dockCollapsed: true,
+      },
+      layout.layoutBindings,
+    );
+    layout.disposeLayout();
+
+    const reloaded = useAppShellLayout();
+    expect(reloaded.arrangeHeight.value).toBe(300);
+    expect(reloaded.dockTab.value).toBe('mixer');
+    expect(reloaded.deviceRackOpen.value).toBe(true);
+    expect(reloaded.scoreVisible.value).toBe(true);
+    expect(reloaded.dockCollapsed.value).toBe(true);
+    reloaded.disposeLayout();
   });
 
   it('reclamps the active layout after a viewport resize', () => {

@@ -36,6 +36,7 @@ vi.mock('@/ui/i18n', () => ({
             saveLayoutTitle: 'Save layout',
           },
         },
+        reasons: { busy: 'busy' },
       },
     },
   }),
@@ -135,49 +136,29 @@ describe('useActionGuards', () => {
   it('does not start a second action while the first one is busy', async () => {
     const busy = ref(true);
     const action = vi.fn(async () => {});
+    const errorMessage = ref('');
     const guards = useActionGuards({
       appSettings: { settings: { confirmDestructive: false } } as never,
       busy,
-      errorMessage: ref(''),
+      errorMessage,
     });
 
     await guards.runAction(action);
     expect(action).not.toHaveBeenCalled();
+    // The refusal is reported instead of being dropped silently.
+    expect(errorMessage.value).toBe('busy');
   });
 });
 
 describe('useShellPanels', () => {
-  function createPanels() {
-    const persistArrangeHeight = vi.fn();
-    const persistDeviceRackOpen = vi.fn();
-    const persistDockCollapsed = vi.fn();
-    const panels = useShellPanels({
-      errorMessage: ref(''),
-      layoutBindings: {} as never,
-      persistArrangeHeight,
-      persistDeviceRackOpen,
-      persistDockCollapsed,
-    });
-    return { panels, persistArrangeHeight, persistDeviceRackOpen, persistDockCollapsed };
-  }
-
-  it('persists only successfully applied named layouts', () => {
-    const { panels, persistArrangeHeight, persistDeviceRackOpen, persistDockCollapsed } =
-      createPanels();
+  it('closes the layout menu and applies the named layout', () => {
+    const panels = useShellPanels({ errorMessage: ref(''), layoutBindings: {} as never });
     panels.layoutMenuOpen.value = true;
-    layoutMocks.apply.mockReturnValue(false);
-
-    panels.applyNamedLayout('missing');
-    expect(panels.layoutMenuOpen.value).toBe(false);
-    expect(layoutMocks.apply).toHaveBeenCalledWith('missing', expect.anything());
-    expect(persistArrangeHeight).not.toHaveBeenCalled();
-
     layoutMocks.apply.mockReturnValue(true);
+
     panels.applyNamedLayout('Wide');
+    expect(panels.layoutMenuOpen.value).toBe(false);
     expect(layoutMocks.apply).toHaveBeenLastCalledWith('Wide', expect.anything());
-    expect(persistArrangeHeight).toHaveBeenCalledTimes(1);
-    expect(persistDeviceRackOpen).toHaveBeenCalledTimes(1);
-    expect(persistDockCollapsed).toHaveBeenCalledTimes(1);
   });
 
   it('surfaces a localized error when saving a layout is rejected', async () => {
@@ -185,9 +166,6 @@ describe('useShellPanels', () => {
     const panels = useShellPanels({
       errorMessage,
       layoutBindings: {} as never,
-      persistArrangeHeight: vi.fn(),
-      persistDeviceRackOpen: vi.fn(),
-      persistDockCollapsed: vi.fn(),
     });
     dialogMocks.promptDialog.mockResolvedValue('Built in');
     layoutMocks.saveCurrent.mockReturnValue(false);

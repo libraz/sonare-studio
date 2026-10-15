@@ -11,9 +11,6 @@ interface TourHandle {
 export interface ShellPanelsOptions {
   errorMessage: Ref<string>;
   layoutBindings: LayoutBindings;
-  persistArrangeHeight: () => void;
-  persistDeviceRackOpen: () => void;
-  persistDockCollapsed: () => void;
 }
 
 export function useShellPanels(options: ShellPanelsOptions) {
@@ -31,10 +28,7 @@ export function useShellPanels(options: ShellPanelsOptions) {
 
   function applyNamedLayout(name: string): void {
     layoutMenuOpen.value = false;
-    if (!namedLayouts.apply(name, options.layoutBindings)) return;
-    options.persistArrangeHeight();
-    options.persistDockCollapsed();
-    options.persistDeviceRackOpen();
+    namedLayouts.apply(name, options.layoutBindings);
   }
 
   function saveCurrentLayoutAction(): void {

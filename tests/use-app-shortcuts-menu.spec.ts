@@ -2,7 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref, shallowRef } from 'vue';
 import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
-import { addMidiClip } from '@/project/commands';
+import { addMidiClip, addNote } from '@/project/commands';
 import { serializeProject } from '@/project/serialization';
 import { getProject, useProjectStore } from '@/project/store';
 import {
@@ -349,6 +349,89 @@ describe('useAppShortcutsMenu', () => {
     transport?.items.find((item) => item.id === 'transport.togglePlayback')?.run?.();
     expect(onError).toHaveBeenCalledTimes(2);
     expect(togglePlayback).toHaveBeenCalledTimes(2);
+  });
+
+  it('toggles arm on only the active audio track from the shortcut', () => {
+    const armedTrackIds = ref<number[]>([3, 4]);
+    const setTrackArmed = vi.fn((id: number, armed: boolean) => {
+      armedTrackIds.value = armed
+        ? [...armedTrackIds.value, id]
+        : armedTrackIds.value.filter((entry) => entry !== id);
+    });
+    const { match, menu } = harness(
+      { value: false },
+      {
+        recording: {
+          armedTrackId: ref<number | null>(4),
+          armedTrackIds,
+          isRecording: ref(false),
+          setTrackArmed,
+          arm: vi.fn(),
+        } as never,
+      },
+    );
+    match.mockReturnValue('track.toggleArm');
+    const store = useProjectStore();
+    store.tracks = [3, 4].map((id) => ({
+      id,
+      name: `A${id}`,
+      color: '#123456',
+      kind: 'audio' as const,
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      order: id,
+    }));
+    store.activeTrackId = 4;
+
+    menu.onGlobalKeyDown(new KeyboardEvent('keydown', { key: 'a', cancelable: true }));
+
+    expect(setTrackArmed).toHaveBeenCalledWith(4, false);
+    expect(armedTrackIds.value).toEqual([3]);
+  });
+
+  it('disables note-only Edit rows without a note selection and locators without an engine', async () => {
+    const store = useProjectStore();
+    await store.init();
+    store.selection = new Set();
+    const { menu } = harness({ value: false });
+    menu.focusZone.value = 'arrange';
+    const rows = (menuId: string) =>
+      menu.menuBarModel.value.find((entry) => entry.id === menuId)?.items ?? [];
+    const edit = (id: string) => rows('edit').find((entry) => entry.id === id);
+    const transport = (id: string) => rows('transport').find((entry) => entry.id === id);
+
+    for (const id of [
+      'edit.quantizeSelection',
+      'edit.deleteSelectedNotes',
+      'edit.transposeUp',
+      'edit.transposeOctaveDown',
+    ]) {
+      expect(edit(id)?.disabledReason).toBeTruthy();
+    }
+    expect(transport('transport.setLeftLocator')?.disabledReason).toBeTruthy();
+    expect(transport('transport.setRightLocator')?.disabledReason).toBeTruthy();
+    store.dispose();
+  });
+
+  it('disables note Paste until notes have been copied', async () => {
+    const store = useProjectStore();
+    await store.init();
+    addMidiClip({ trackId: store.activeTrackId, startPpq: 0, lengthPpq: 16 });
+    const noteId = addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    const { menu } = harness({ value: false });
+    menu.focusZone.value = 'editor';
+    const item = (id: string) =>
+      (menu.menuBarModel.value.find((entry) => entry.id === 'edit')?.items ?? []).find(
+        (entry) => entry.id === id,
+      );
+
+    expect(item('edit.paste')?.disabledReason).toBeTruthy();
+    store.selection = new Set([noteId]);
+    item('edit.copy')?.run?.();
+    expect(item('edit.paste')?.disabledReason).toBeNull();
+    store.dispose();
   });
 
   it('uses arrangement clip selection for Edit clipboard actions after the active clip is cut', async () => {
