@@ -19,7 +19,11 @@ import {
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import { encodeAudioInWorker, isWorkerAudioEncoderId } from '@/export/encode-client';
 import { offlineAutomationLimitations } from '@/export/engine-render';
-import { documentAudibleTrackIndices, resolveRenderWindow } from '@/export/engine-render-context';
+import {
+  documentAudibleTrackIndices,
+  documentBusStemsBlock,
+  resolveRenderWindow,
+} from '@/export/engine-render-context';
 import {
   formatClippingCensus,
   formatExportLimitation,
@@ -258,6 +262,17 @@ const stemOptionBlocked = computed(() =>
     t.value.dialogs.exportAudio.reasons.stemsOnly,
   ]),
 );
+const busStemsBlock = computed(() =>
+  props.open && model.value.mode === 'stems' ? documentBusStemsBlock(props.getDocument()) : null,
+);
+const busStemsBlocked = computed(() => {
+  const reasons = t.value.dialogs.exportAudio.reasons;
+  return firstBlock(
+    stemOptionBlocked.value,
+    [busStemsBlock.value === 'bus-graph-full', reasons.busGraphFull],
+    [busStemsBlock.value === 'nested-routing', reasons.nestedBusRouting],
+  );
+});
 const releaseTailBlocked = computed(() =>
   firstBlock(busyReason.value, [
     model.value.range !== 'project',
@@ -548,6 +563,7 @@ async function onExport(): Promise<void> {
   try {
     const doc = structuredClone(props.getDocument()) as ProjectDocument;
     const exportModel: ExportOptionsModel = { ...model.value };
+    if (documentBusStemsBlock(doc) !== null) exportModel.includeBusStems = false;
     const memoryBudgetBytes = exportModel.memoryBudgetMiB * MEBIBYTE;
     stage.value = 'preflight';
     const preflight = await audioExportPreflight(doc, {
@@ -1158,12 +1174,13 @@ function onKeydown(event: KeyboardEvent): void {
             :reason="stemOptionBlocked"
           />
           <ToggleButton
-            v-model="model.includeBusStems"
+            :model-value="model.includeBusStems && busStemsBlock === null"
+            @update:model-value="model.includeBusStems = $event"
             class="include-bus-stems"
             size="sm"
             :label="t.dialogs.exportAudio.includeBusStems"
             :title="t.dialogs.exportAudio.includeBusStemsTitle"
-            :reason="stemOptionBlocked"
+            :reason="busStemsBlocked"
           />
         </div>
 

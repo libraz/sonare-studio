@@ -194,6 +194,9 @@ export const dialogs = {
       ditherNeeds16Bit: 'Dither applies to 16-bit output only.',
       stemsOnly: 'Choose Stems as the mode first.',
       wholeProjectOnly: 'Only used when exporting the whole project.',
+      busGraphFull: 'Bus stems need a free bus, and all 16 are in use.',
+      nestedBusRouting:
+        'Bus stems cannot export buses or groups that route into another bus or group.',
     },
     memoryBudgetWarningTitle: 'Use a larger export memory limit?',
     memoryBudgetWarningMessage:

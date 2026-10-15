@@ -1353,6 +1353,29 @@ describe('ExportDialog', () => {
     });
   });
 
+  it('disables bus stems with a reason and exports without them for nested bus routing', async () => {
+    const control = makeRender();
+    const nestedStrip = { gainDb: 0, pan: 0, inserts: [], sends: [] };
+    mountDialog(control, {
+      getDocument: () => ({
+        ...makeDocument(),
+        mixer: {
+          master: { ...nestedStrip },
+          buses: [
+            { id: 'bus-a', name: 'A', gainDb: 0, strip: { ...nestedStrip, outputBusId: 'bus-b' } },
+            { id: 'bus-b', name: 'B', gainDb: 0 },
+          ],
+        },
+      }),
+    });
+    await checkRadio('.mode-stems');
+    const includeBusStems = q<HTMLButtonElement>('.include-bus-stems');
+    expect(includeBusStems?.disabled).toBe(true);
+    expect(includeBusStems?.getAttribute('aria-pressed')).toBe('false');
+    await clickExport();
+    expect(control.options()).toMatchObject({ stems: true, busStems: false });
+  });
+
   it('can disable the final master stem in stems mode', async () => {
     const control = makeRender();
     mountDialog(control);

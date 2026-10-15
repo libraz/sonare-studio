@@ -5,6 +5,7 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
+import { confirmLossReport } from '@/composables/useLossConfirm';
 import { buildKeyMap } from '@/compose/key-map';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
@@ -1329,6 +1330,8 @@ function exportClipToSmf(clipId: number): void {
   void (async () => {
     try {
       const result = await exportClipSmf(clipId);
+      const copy = t.value.shell.project.midiExportLoss;
+      if (!(await confirmLossReport(result.loss, { ...copy.smf, items: copy.items }))) return;
       downloadBlobFile(
         new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
         result.filename,

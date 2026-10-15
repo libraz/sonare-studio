@@ -197,6 +197,8 @@ export const dialogs = {
       ditherNeeds16Bit: 'ディザーは16bit出力にのみ適用されます。',
       stemsOnly: '先にモードで「ステム」を選んでください。',
       wholeProjectOnly: 'プロジェクト全体を書き出すときだけ使います。',
+      busGraphFull: 'バスステムには空きバスが必要ですが、16本すべて使用中です。',
+      nestedBusRouting: '別のバスやグループへ送っているバス・グループはバスステムにできません。',
     },
     memoryBudgetWarningTitle: 'より大きい書き出しメモリ上限を使用しますか？',
     memoryBudgetWarningMessage:
