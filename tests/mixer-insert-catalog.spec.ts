@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   categoryLabel,
   FALLBACK_INSERT_CATALOG,
-  groupInsertCatalog,
+  groupInsertCatalogEntries,
   humanizeInsertName,
   loadInsertCatalog,
 } from '@/ui/mixer/insert-catalog';
@@ -31,7 +31,10 @@ describe('categoryLabel', () => {
   });
 });
 
-describe('groupInsertCatalog', () => {
+const groupInsertCatalog = (names: readonly string[]) =>
+  groupInsertCatalogEntries(names.map((id) => ({ id, label: humanizeInsertName(id) })));
+
+describe('groupInsertCatalogEntries', () => {
   it('groups by category prefix in menu order', () => {
     const groups = groupInsertCatalog([
       'stereo.imager',

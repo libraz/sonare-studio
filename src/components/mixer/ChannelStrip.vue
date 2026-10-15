@@ -8,11 +8,7 @@ import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
 import type { AutomationParam } from '@/project/automation';
-import {
-  assertNoBusRoutingCycle,
-  groupBusTopologyId,
-  mixerBusTopology,
-} from '@/project/bus-topology';
+import { groupBusTopologyId } from '@/project/bus-topology';
 import {
   addVcaGroup,
   renameTrack,
@@ -34,7 +30,8 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { type MidiLearnTrackStateParam, midiLearnTrackStateTargetId } from '@/ui/midi/midi-learn';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
-import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
+import { FADER_HEIGHT, FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
+import { buildOutputBusOptions, createOutputBusGuard } from '@/ui/mixer/output-bus-options';
 import type { SidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 import { useStripAutomation } from '@/ui/mixer/use-strip-automation';
 import { useStripGestures } from '@/ui/mixer/use-strip-gestures';
@@ -176,48 +173,30 @@ const outputSourceBusId = computed(() =>
 );
 
 /** Prevent a group output route from introducing a self-route or cycle. */
-function isOutputBusAllowed(busId: string): boolean {
-  const source = outputSourceBusId.value;
-  if (source === undefined) return true;
-  if (source === busId) return false;
-  try {
-    assertNoBusRoutingCycle(
-      mixerBusTopology(
-        store.mixer,
-        store.tracks
-          .filter((entry) => entry.kind === 'group')
-          .map((entry) => ({ id: entry.id, mixer: entry.mixer })),
-      ),
-      source,
-      busId,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
+const isOutputBusAllowed = computed(() =>
+  createOutputBusGuard(
+    store.mixer,
+    store.tracks
+      .filter((entry) => entry.kind === 'group')
+      .map((entry) => ({ id: entry.id, mixer: entry.mixer })),
+    outputSourceBusId.value,
+  ),
+);
 
 /** Output-bus options: the master mix plus every valid send-bus destination. */
-const outputBusOptions = computed(() => [
-  { value: '', label: t.value.shell.mixer.strip.master },
-  ...store.mixer.buses.map((bus) =>
-    isOutputBusAllowed(bus.id)
-      ? { value: bus.id, label: bus.name }
-      : {
-          value: bus.id,
-          label: bus.name,
-          disabled: true,
-          detail: t.value.shell.mixer.reasons.busLoop,
-        },
-  ),
-]);
+const outputBusOptions = computed(() =>
+  buildOutputBusOptions(store.mixer.buses, isOutputBusAllowed.value, {
+    master: t.value.shell.mixer.strip.master,
+    busLoop: t.value.shell.mixer.reasons.busLoop,
+  }),
+);
 
 /** Selected output bus id, or '' for the master mix. */
 const outputBusValue = computed(() => strip.value.outputBusId ?? '');
 
 function onOutputBusChange(value: string): void {
   if (!track.value) return;
-  if (value !== '' && !isOutputBusAllowed(value)) return;
+  if (value !== '' && !isOutputBusAllowed.value(value)) return;
   setStripOutputBus(track.value.id, value === '' ? null : value);
 }
 
@@ -364,6 +343,12 @@ function learnTrackState(
   return midiLearn.bindingForId(id) ? 'bound' : 'unbound';
 }
 
+/** Learn state per toggle, resolved once per change instead of per template use. */
+const learnStates = computed(() => ({
+  mute: learnTrackState('mute'),
+  solo: learnTrackState('solo'),
+}));
+
 function onMidiLearnTrackState(param: MidiLearnTrackStateParam): void {
   const id = learnTrackStateId(param);
   if (id !== '') midiLearn?.armId(id);
@@ -421,7 +406,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="strip-section">
-      <StripEqSection :target="props.target" :scope="props.scope" />
+      <StripEqSection :target="props.target" :scope="props.scope" :visible="props.visible" />
     </div>
 
     <div v-if="showSends" class="strip-section">
@@ -481,12 +466,12 @@ onBeforeUnmount(() => {
             M
           </button>
           <button
-            v-if="learnTrackState('mute')"
+            v-if="learnStates.mute"
             type="button"
             class="track-state-midi-learn"
-            :class="learnTrackState('mute')"
+            :class="learnStates.mute"
             v-tooltip="
-              learnTrackState('mute') === 'armed'
+              learnStates.mute === 'armed'
                 ? t.shell.mixer.controls.midiLearnListening
                 : t.shell.mixer.controls.midiLearnMute
             "
@@ -496,7 +481,7 @@ onBeforeUnmount(() => {
             MIDI
           </button>
           <button
-            v-if="learnTrackState('mute') === 'bound'"
+            v-if="learnStates.mute === 'bound'"
             type="button"
             class="track-state-midi-forget"
             v-tooltip="t.shell.mixer.controls.midiForget"
@@ -519,12 +504,12 @@ onBeforeUnmount(() => {
             S
           </button>
           <button
-            v-if="learnTrackState('solo')"
+            v-if="learnStates.solo"
             type="button"
             class="track-state-midi-learn"
-            :class="learnTrackState('solo')"
+            :class="learnStates.solo"
             v-tooltip="
-              learnTrackState('solo') === 'armed'
+              learnStates.solo === 'armed'
                 ? t.shell.mixer.controls.midiLearnListening
                 : t.shell.mixer.controls.midiLearnSolo
             "
@@ -534,7 +519,7 @@ onBeforeUnmount(() => {
             MIDI
           </button>
           <button
-            v-if="learnTrackState('solo') === 'bound'"
+            v-if="learnStates.solo === 'bound'"
             type="button"
             class="track-state-midi-forget"
             v-tooltip="t.shell.mixer.controls.midiForget"
@@ -550,7 +535,7 @@ onBeforeUnmount(() => {
     <div class="strip-fader-row">
       <MixerFader
         :value-db="displayedGainDb"
-        :height="132"
+        :height="FADER_HEIGHT"
         :reason="faderBlocked"
         @change="onGainChange"
       />
@@ -558,7 +543,7 @@ onBeforeUnmount(() => {
         :bridge="props.bridge"
         :placeholder="!props.bridge"
         :width="12"
-        :height="132"
+        :height="FADER_HEIGHT"
         :visible="props.visible"
       />
     </div>

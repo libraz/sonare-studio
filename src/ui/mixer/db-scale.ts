@@ -14,6 +14,9 @@ export const FADER_MIN_DB = -96;
 /** Top of the fader throw in dB. */
 export const FADER_MAX_DB = 24;
 
+/** Default fader throw in px; the strip meter beside it matches. */
+export const FADER_HEIGHT = 132;
+
 /** Gain at or below this many dB is displayed as -inf. */
 export const SILENCE_DISPLAY_DB = -90;
 
@@ -97,31 +100,6 @@ export function formatPan(pan: number): string {
   const percent = Math.round(Math.abs(clamp(pan, -1, 1)) * 100);
   if (percent === 0) return 'C';
   return pan < 0 ? `L${percent}` : `R${percent}`;
-}
-
-/**
- * Maps a normalized value in [0, 1] to a frequency on a logarithmic scale.
- *
- * @param norm Normalized position (clamped to [0, 1]).
- * @param minHz Lower bound of the frequency range (> 0).
- * @param maxHz Upper bound of the frequency range (> minHz).
- */
-export function normToHz(norm: number, minHz: number, maxHz: number): number {
-  const n = clamp(norm, 0, 1);
-  return minHz * (maxHz / minHz) ** n;
-}
-
-/**
- * Maps a frequency to its normalized log-scale position (inverse of
- * {@link normToHz}).
- *
- * @param hz Frequency in Hz (clamped to [minHz, maxHz]).
- * @param minHz Lower bound of the frequency range (> 0).
- * @param maxHz Upper bound of the frequency range (> minHz).
- */
-export function hzToNorm(hz: number, minHz: number, maxHz: number): number {
-  const f = clamp(hz, minHz, maxHz);
-  return Math.log(f / minHz) / Math.log(maxHz / minHz);
 }
 
 /**

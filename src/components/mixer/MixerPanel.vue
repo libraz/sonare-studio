@@ -6,6 +6,7 @@ import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
+import { groupBusTopologyId } from '@/project/bus-topology';
 import {
   addMixerBus,
   addVcaGroup,
@@ -104,7 +105,7 @@ const appSettings = useAppSettings();
 /** A group track's inserts run on its group bus, so read their gain reduction there. */
 function insertMeterFor(track: EditorTrack): MeterSource | null {
   if (track.kind !== 'group') return null;
-  return props.busMeterFor ? props.busMeterFor(`group:${track.id}`) : null;
+  return props.busMeterFor ? props.busMeterFor(groupBusTopologyId(track.id)) : null;
 }
 const { t } = useI18n();
 

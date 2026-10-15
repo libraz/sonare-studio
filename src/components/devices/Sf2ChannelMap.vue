@@ -8,8 +8,9 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import type { Sf2ChannelProgram } from '@/project/instrument';
-import { getWasmModule } from '@/project/store';
+import { gm2DrumSetName, gmProgramName } from '@/ui/devices/gm-catalog';
 import {
+  clampBank,
   clampProgram,
   drumKitOf,
   normalizeChannelMap,
@@ -31,35 +32,19 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-interface WasmNames {
-  Project?: {
-    gmInstrumentName?: (program: number) => string | null;
-    gm2DrumSetName?: (bankLsb: number) => string | null;
-  };
-}
-
-function wasmProject(): WasmNames['Project'] {
-  try {
-    return (getWasmModule() as unknown as WasmNames).Project;
-  } catch {
-    return undefined;
-  }
-}
-
 /** All 16 MIDI channels, in order. */
 const CHANNELS = Array.from({ length: 16 }, (_, channel) => channel);
 
 /** Program name for a melodic channel program (GM set). */
 function programName(program: number): string {
-  return wasmProject()?.gmInstrumentName?.(program) ?? `Program ${program}`;
+  return gmProgramName(program) ?? `Program ${program}`;
 }
 
 /** GM2 drum/SFX kits the loaded module names, in bank-LSB order. */
 const drumKitOptions = computed(() => {
-  const project = wasmProject();
   const options: { value: string; label: string }[] = [];
   for (let lsb = 0; lsb <= 127; lsb++) {
-    const name = project?.gm2DrumSetName?.(lsb);
+    const name = gm2DrumSetName(lsb);
     if (name) options.push({ value: String(lsb), label: name });
   }
   // Standard kit fallback so the control is never empty when the module lacks
@@ -106,8 +91,7 @@ function setProgram(channel: number, raw: number): void {
 }
 
 function setBank(channel: number, raw: number): void {
-  const bank = Number.isFinite(raw) ? Math.max(0, Math.min(16383, Math.round(raw))) : 0;
-  commit(channel, { channel, bank, program: entryFor(channel)?.program ?? 0 });
+  commit(channel, { channel, bank: clampBank(raw), program: entryFor(channel)?.program ?? 0 });
 }
 
 function setDrumKit(channel: number, kitValue: string): void {

@@ -7,8 +7,6 @@ import {
   formatDb,
   formatHz,
   formatPan,
-  hzToNorm,
-  normToHz,
 } from '@/ui/mixer/db-scale';
 
 describe('faderPositionToDb / dbToFaderPosition', () => {
@@ -88,29 +86,6 @@ describe('formatPan', () => {
   it('clamps and rounds', () => {
     expect(formatPan(2)).toBe('R100');
     expect(formatPan(0.004)).toBe('C');
-  });
-});
-
-describe('normToHz / hzToNorm', () => {
-  it('maps the endpoints of the range', () => {
-    expect(normToHz(0, 20, 20000)).toBeCloseTo(20, 9);
-    expect(normToHz(1, 20, 20000)).toBeCloseTo(20000, 6);
-    expect(hzToNorm(20, 20, 20000)).toBeCloseTo(0, 9);
-    expect(hzToNorm(20000, 20, 20000)).toBeCloseTo(1, 9);
-  });
-
-  it('is logarithmic: the geometric mean sits at the middle', () => {
-    const mid = Math.sqrt(20 * 20000);
-    expect(hzToNorm(mid, 20, 20000)).toBeCloseTo(0.5, 9);
-    expect(normToHz(0.5, 20, 20000)).toBeCloseTo(mid, 6);
-  });
-
-  it('round-trips and clamps', () => {
-    for (const hz of [30, 120, 1000, 8000, 16000]) {
-      expect(normToHz(hzToNorm(hz, 20, 20000), 20, 20000)).toBeCloseTo(hz, 6);
-    }
-    expect(hzToNorm(5, 20, 20000)).toBe(0);
-    expect(normToHz(2, 20, 20000)).toBeCloseTo(20000, 6);
   });
 });
 

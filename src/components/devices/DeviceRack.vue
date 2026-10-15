@@ -7,7 +7,6 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
-import { isDrumTrack } from '@/compose/tracks';
 import { deleteSoundFontIfUnreferenced } from '@/persistence/gc';
 import { readFileBytesBounded } from '@/persistence/local-file';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
@@ -47,11 +46,19 @@ import {
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { createPatchAudition, type PatchAudition } from '@/ui/devices/audition';
 import { instrumentLabel, patchBaseLabel } from '@/ui/devices/device-labels';
+import {
+  gm2ProgramName,
+  gmCatalog,
+  gmFamilies,
+  gmProgramName,
+  trackIsDrums,
+} from '@/ui/devices/gm-catalog';
 import { patchEditCount } from '@/ui/devices/patch-draft';
 import { groupPresets, type PresetCategory } from '@/ui/devices/preset-filter';
 import {
   buildSf2Instrument,
   clampBank,
+  clampChannel,
   clampGain,
   clampPolyphony,
   clampProgram,
@@ -205,8 +212,8 @@ const instrumentCaption = computed(() => {
     const program = current.gmProgram ?? 0;
     const catalog = gmCatalog();
     const bank = gmEffectiveBank(current.gmBank ?? 0);
-    const base = catalog?.Project?.gmInstrumentName?.(program);
-    const variation = bank ? catalog?.Project?.gm2InstrumentName?.(bank, program) : null;
+    const base = gmProgramName(program);
+    const variation = bank ? gm2ProgramName(bank, program) : null;
     const name = gmIsDrums.value
       ? catalog?.synthGsDrumKitName?.(program)
       : variation && variation !== base
@@ -276,34 +283,13 @@ const filteredPresetCount = computed(() =>
   presetGroups.value.reduce((sum, group) => sum + group.presets.length, 0),
 );
 
-interface GmCatalog {
-  Project?: {
-    gmInstrumentName?: (program: number) => string | null;
-    gm2InstrumentName?: (bank: number, program: number) => string | null;
-  };
-  synthGsDrumKitName?: (program: number) => string | null;
-  synthGsDrumKitIsVoicedApart?: (program: number) => boolean | null;
-  synthGsVariationIsVoicedApart?: (bank: number, program: number) => boolean | null;
-}
-
-function gmCatalog(): GmCatalog | null {
-  try {
-    return getWasmModule() as unknown as GmCatalog;
-  } catch {
-    return null;
-  }
-}
-
 const gmProgram = ref(0);
 const gmBank = ref(0);
 const gmIsDrums = computed(() => {
   const track = activeTrack.value;
-  return track
-    ? isDrumTrack(
-        track,
-        (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes),
-      )
-    : false;
+  return trackIsDrums(track, () =>
+    track ? (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes) : [],
+  );
 });
 
 /** NativeSynth reads GS variations from CC0, or GM2 variations from CC32 with MSB 121. */
@@ -313,17 +299,14 @@ function gmEffectiveBank(bank: number): number {
 }
 
 function gmVariationLabel(bank: number, program: number): string {
-  const catalog = gmCatalog();
-  const name = catalog?.Project?.gm2InstrumentName?.(bank, program);
-  const base = catalog?.Project?.gmInstrumentName?.(program);
+  const name = gm2ProgramName(bank, program);
+  const base = gmProgramName(program);
   return name && name !== base ? `${bank} · ${name}` : String(bank);
 }
 const gmProgramOptions = computed(() => {
   const catalog = gmCatalog();
   return Array.from({ length: 128 }, (_, program) => {
-    const name = gmIsDrums.value
-      ? catalog?.synthGsDrumKitName?.(program)
-      : catalog?.Project?.gmInstrumentName?.(program);
+    const name = gmIsDrums.value ? catalog?.synthGsDrumKitName?.(program) : gmProgramName(program);
     if (name === null || name === undefined) return null;
     const sameAsStandard =
       gmIsDrums.value && program !== 0
@@ -782,42 +765,12 @@ watch(
 
 // --- SF2 GM / GM2 program browser ---------------------------------------------
 
-interface GmFamilyView {
-  index: number;
-  name: string;
-  firstProgram: number;
-}
-
-const gmFamilies = computed<GmFamilyView[]>(() => {
-  try {
-    const wasm = getWasmModule() as unknown as {
-      Project?: {
-        gmFamilyName?: (family: number) => string | null;
-        gmFamilyFirstProgram?: (family: number) => number;
-      };
-    };
-    const Project = wasm.Project;
-    if (
-      !Project ||
-      typeof Project.gmFamilyName !== 'function' ||
-      typeof Project.gmFamilyFirstProgram !== 'function'
-    ) {
-      return [];
-    }
-    return Array.from({ length: 16 }, (_, index) => ({
-      index,
-      name: Project.gmFamilyName?.(index) ?? `Family ${index + 1}`,
-      firstProgram: Project.gmFamilyFirstProgram?.(index) ?? index * 8,
-    }));
-  } catch {
-    return [];
-  }
-});
+const gmFamilyList = computed(() => gmFamilies());
 
 const selectedGmFamily = computed(() => Math.floor(sf2Selection.value.program / 8));
 
 const gmFamilyOptions = computed(() =>
-  gmFamilies.value.map((family) => ({
+  gmFamilyList.value.map((family) => ({
     value: String(family.index),
     label: `${family.index + 1}. ${family.name}`,
   })),
@@ -826,35 +779,17 @@ const gmFamilyOptions = computed(() =>
 function onGmFamilyChange(value: string): void {
   const family = Number(value);
   if (!Number.isInteger(family)) return;
-  const firstProgram = gmFamilies.value.find((entry) => entry.index === family)?.firstProgram;
+  const firstProgram = gmFamilyList.value.find((entry) => entry.index === family)?.firstProgram;
   if (firstProgram !== undefined) selectSf2Program(firstProgram);
 }
 
 function gmInstrumentName(program: number): string {
-  try {
-    const wasm = getWasmModule() as unknown as {
-      Project?: { gmInstrumentName?: (program: number) => string | null };
-    };
-    return wasm.Project?.gmInstrumentName?.(program) ?? `Program ${program}`;
-  } catch {
-    return `Program ${program}`;
-  }
-}
-
-function gm2InstrumentName(bank: number, program: number): string | null {
-  try {
-    const wasm = getWasmModule() as unknown as {
-      Project?: { gm2InstrumentName?: (bankLsb: number, program: number) => string | null };
-    };
-    return wasm.Project?.gm2InstrumentName?.(bank & 0x7f, program) ?? null;
-  } catch {
-    return null;
-  }
+  return gmProgramName(program) ?? `Program ${program}`;
 }
 
 const sf2ProgramName = computed(() => {
   const { bank, program } = sf2Selection.value;
-  return gm2InstrumentName(bank, program) ?? gmInstrumentName(program);
+  return gm2ProgramName(bank, program) ?? gmInstrumentName(program);
 });
 
 const sf2ProgramOptions = computed(() => {
@@ -864,7 +799,7 @@ const sf2ProgramOptions = computed(() => {
     return {
       program,
       gmName: gmInstrumentName(program),
-      gm2Name: gm2InstrumentName(sf2Selection.value.bank, program),
+      gm2Name: gm2ProgramName(sf2Selection.value.bank, program),
     };
   });
 });
@@ -948,7 +883,7 @@ function onExternalPortChange(portId: string): void {
 
 function onExternalChannelInput(event: Event): void {
   const raw = Number((event.target as HTMLInputElement).value);
-  const channel = Number.isFinite(raw) ? Math.min(15, Math.max(0, Math.round(raw - 1))) : 0;
+  const channel = clampChannel(raw - 1);
   externalSelection.value = { ...externalSelection.value, channel };
 }
 

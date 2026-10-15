@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { ScopeSource } from '@/engine/scope';
 import { useI18n } from '@/ui/i18n';
-import { goniometerXY } from '@/ui/mixer/spectrum-model';
+import { type GoniometerXY, goniometerXY } from '@/ui/mixer/spectrum-model';
 import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 
 /** Scope chrome shared with the spectrum analyzer. */
@@ -45,6 +45,17 @@ let right: Float32Array | null = null;
 let interleaved: Float32Array | null = null;
 /** True once a silent frame was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
+/** Scope source and engine frame last painted; an unchanged frame is not repainted. */
+let paintedScope: ScopeSource | null = null;
+let paintedFrame = -1;
+/** Reused projection result, so plotting allocates nothing per point. */
+const projected: GoniometerXY = { x: 0, y: 0 };
+
+/** Forces the next frame to repaint (canvas cleared or display re-enabled). */
+function invalidate(): void {
+  idleFrameDrawn = false;
+  paintedScope = null;
+}
 
 function stopAnimation(): void {
   if (rafId !== 0) cancelAnimationFrame(rafId);
@@ -64,7 +75,7 @@ function resizeCanvas(): void {
   canvas.height = Math.round(props.size * dpr);
   canvas.style.width = `${props.size}px`;
   canvas.style.height = `${props.size}px`;
-  idleFrameDrawn = false;
+  invalidate();
 }
 
 function drawGraticule(ctx: CanvasRenderingContext2D): void {
@@ -97,7 +108,7 @@ function plotInterleaved(ctx: CanvasRenderingContext2D, points: Float32Array): b
   drawGraticule(ctx);
   ctx.fillStyle = TRACE_DOT;
   for (let i = 0; i + 1 < points.length; i += 2) {
-    const { x, y } = goniometerXY(points[i], points[i + 1]);
+    const { x, y } = goniometerXY(points[i], points[i + 1], projected);
     ctx.fillRect(radius + x * radius, radius - y * radius, 1, 1);
   }
   return true;
@@ -118,9 +129,13 @@ function draw(): void {
   // Prefer the engine scope (works on any strip); fall back to the analyser.
   const scopeFrame = props.scope?.available ? props.scope.latest : null;
   if (scopeFrame && scopeFrame.points.length > 0) {
+    if (props.scope === paintedScope && scopeFrame.frame === paintedFrame) return;
+    paintedScope = props.scope;
+    paintedFrame = scopeFrame.frame;
     plotInterleaved(ctx, scopeFrame.points);
     return;
   }
+  paintedScope = null;
 
   const analyser = props.analyser;
   if (!analyser?.available) {
@@ -160,7 +175,7 @@ watch(
   () => props.visible,
   (visible) => {
     if (visible) {
-      idleFrameDrawn = false;
+      invalidate();
       startAnimation();
     } else {
       stopAnimation();

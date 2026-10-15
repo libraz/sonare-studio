@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterBridge } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
+import { drawMeterBar } from '@/ui/mixer/meter-draw';
 import {
   advanceMeterChannel,
   createMeterChannel,
@@ -11,13 +12,7 @@ import {
   meterFraction,
   resetMeterClip,
 } from '@/ui/mixer/meter-model';
-import {
-  CANVAS_FONT_SIZE_PX,
-  canvasFont,
-  colorWithAlpha,
-  METER_ZONE_ALPHA,
-  TOKENS,
-} from '@/ui/theme/tokens';
+import { CANVAS_FONT_SIZE_PX, canvasFont, TOKENS } from '@/ui/theme/tokens';
 
 const props = withDefaults(
   defineProps<{
@@ -35,14 +30,14 @@ const props = withDefaults(
 
 const { t } = useI18n();
 
-const GREEN_BELOW_DB = -12;
-const YELLOW_BELOW_DB = -6;
 const TICK_DBS = [0, -6, -12, -24, -48];
 
-/** Dimmed scale backdrop, derived from the ramp so every meter matches. */
-const ZONE_GREEN = colorWithAlpha(TOKENS.meterGreen, METER_ZONE_ALPHA);
-const ZONE_YELLOW = colorWithAlpha(TOKENS.meterYellow, METER_ZONE_ALPHA);
-const ZONE_RED = colorWithAlpha(TOKENS.meterRed, METER_ZONE_ALPHA);
+/** Width of the dB scale lane right of the bars; mirrored by the clip flash in CSS. */
+const SCALE_W = 22;
+/** Height of the clip LED drawn at the top of the scale lane; mirrored in CSS. */
+const CLIP_LED_H = 3;
+const cssScaleW = `${SCALE_W}px`;
+const cssClipLedH = `${CLIP_LED_H}px`;
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let canvasCtx: CanvasRenderingContext2D | null = null;
@@ -73,57 +68,6 @@ function resizeCanvas(): void {
 /** Maps a dB value to a y coordinate (0 dB at top, minDb at bottom). */
 function dbToY(db: number, h: number): number {
   return (1 - meterFraction(db, props.minDb)) * h;
-}
-
-/** Draws one vertical meter bar (RMS fill + peak cap + hold marker). */
-function drawBar(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  barW: number,
-  h: number,
-  model: MeterChannelModel,
-): void {
-  // Zone backdrop (dimmed) so the scale is visible even when silent.
-  const yYellow = dbToY(GREEN_BELOW_DB, h);
-  const yRed = dbToY(YELLOW_BELOW_DB, h);
-  ctx.fillStyle = ZONE_GREEN;
-  ctx.fillRect(x, yYellow, barW, h - yYellow);
-  ctx.fillStyle = ZONE_YELLOW;
-  ctx.fillRect(x, yRed, barW, yYellow - yRed);
-  ctx.fillStyle = ZONE_RED;
-  ctx.fillRect(x, 0, barW, yRed);
-
-  // RMS fill, clipped per zone for green/yellow/red coloring.
-  const yRms = dbToY(model.rmsDb, h);
-  const fillZone = (color: string, zoneTop: number, zoneBottom: number): void => {
-    const top = Math.max(yRms, zoneTop);
-    if (top < zoneBottom) {
-      ctx.fillStyle = color;
-      ctx.fillRect(x, top, barW, zoneBottom - top);
-    }
-  };
-  fillZone(TOKENS.meterGreen, yYellow, h);
-  fillZone(TOKENS.meterYellow, yRed, yYellow);
-  fillZone(TOKENS.meterRed, 0, yRed);
-
-  // Peak cap line (color follows its own zone).
-  if (model.peakDb > props.minDb) {
-    const yPeak = dbToY(model.peakDb, h);
-    ctx.fillStyle =
-      model.peakDb >= YELLOW_BELOW_DB
-        ? TOKENS.meterPeakHot
-        : model.peakDb >= GREEN_BELOW_DB
-          ? TOKENS.meterPeakWarm
-          : TOKENS.meterPeakCool;
-    ctx.fillRect(x, Math.max(0, yPeak - 1), barW, 1.5);
-  }
-
-  // Peak-hold marker.
-  if (model.holdDb > props.minDb) {
-    const yHold = dbToY(model.holdDb, h);
-    ctx.fillStyle = TOKENS.meterHold;
-    ctx.fillRect(x, Math.max(0, yHold - 0.5), barW, 1);
-  }
 }
 
 /** Renders one frame: applies decay then draws bars and the dB scale. */
@@ -168,16 +112,16 @@ function draw(ts: number): void {
   ctx.fillStyle = TOKENS.meterWell;
   ctx.fillRect(0, 0, w, h);
 
-  const scaleW = 22;
+  const scaleW = SCALE_W;
   const gap = 3;
   const barW = (w - scaleW - gap) / 2;
-  drawBar(ctx, 0, barW, h, channels[0]);
-  drawBar(ctx, barW + gap, barW, h, channels[1]);
+  drawMeterBar(ctx, channels[0], 0, barW, 0, h, props.minDb);
+  drawMeterBar(ctx, channels[1], barW + gap, barW, 0, h, props.minDb);
 
   // Keep the clip indicator in the scale lane so the transport meter retains
   // its existing bar dimensions while exposing the same latch as StripMeter.
   ctx.fillStyle = clipped.value ? TOKENS.meterRed : TOKENS.meterClipOff;
-  ctx.fillRect(2 * barW + gap, 0, scaleW, 3);
+  ctx.fillRect(2 * barW + gap, 0, scaleW, CLIP_LED_H);
 
   // dB scale ticks + labels. Every tick gets a mark, but a label is skipped
   // when it would collide with the previous one so compact meters (e.g. the
@@ -262,8 +206,8 @@ watch(
   position: absolute;
   top: 0;
   right: 0;
-  width: 22px;
-  height: 3px;
+  width: v-bind(cssScaleW);
+  height: v-bind(cssClipLedH);
   border-radius: 1px;
   background: var(--meter-red);
   box-shadow: 0 0 6px 1px color-mix(in srgb, var(--meter-red) 70%, transparent);

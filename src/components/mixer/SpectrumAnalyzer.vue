@@ -53,6 +53,15 @@ let rafId = 0;
 let bins: Float32Array | null = null;
 /** True once a silent frame was painted; idle frames are then skipped. */
 let idleFrameDrawn = false;
+/** Scope source and engine frame last painted; an unchanged frame is not repainted. */
+let paintedScope: ScopeSource | null = null;
+let paintedFrame = -1;
+
+/** Forces the next frame to repaint (canvas cleared or display re-enabled). */
+function invalidate(): void {
+  idleFrameDrawn = false;
+  paintedScope = null;
+}
 
 function stopAnimation(): void {
   if (rafId !== 0) cancelAnimationFrame(rafId);
@@ -72,7 +81,7 @@ function resizeCanvas(): void {
   canvas.height = Math.round(props.height * dpr);
   canvas.style.width = `${props.width}px`;
   canvas.style.height = `${props.height}px`;
-  idleFrameDrawn = false;
+  invalidate();
 }
 
 function drawGrid(ctx: CanvasRenderingContext2D): void {
@@ -91,20 +100,26 @@ function drawGrid(ctx: CanvasRenderingContext2D): void {
   }
 }
 
-/** Strokes and fills a magnitude curve from (frequency, dB) sample pairs. */
+/**
+ * Strokes and fills a magnitude curve over `dbs[first..]`, placing entry `i`
+ * at `freqOf(i)` Hz.
+ */
 function strokeCurve(
   ctx: CanvasRenderingContext2D,
-  samples: Iterable<readonly [freq: number, db: number]>,
+  dbs: Float32Array,
+  first: number,
+  freqOf: (index: number) => number,
 ): void {
   const w = props.width;
   const h = props.height;
   ctx.beginPath();
   ctx.moveTo(0, h);
-  for (const [freq, db] of samples) {
+  for (let i = first; i < dbs.length; i += 1) {
+    const freq = freqOf(i);
     if (freq < SPECTRUM_MIN_FREQ) continue;
     if (freq > SPECTRUM_MAX_FREQ) break;
     const x = frequencyToFraction(freq, SPECTRUM_MIN_FREQ, SPECTRUM_MAX_FREQ) * w;
-    const y = (1 - spectrumDbToFraction(db)) * h;
+    const y = (1 - spectrumDbToFraction(dbs[i])) * h;
     ctx.lineTo(x, y);
   }
   ctx.lineTo(w, h);
@@ -128,6 +143,9 @@ function anyActive(values: Float32Array): boolean {
 function drawScope(ctx: CanvasRenderingContext2D, scope: ScopeSource): boolean {
   const frame = scope.latest;
   if (!frame || frame.bands.length === 0) return false;
+  if (scope === paintedScope && frame.frame === paintedFrame) return true;
+  paintedScope = scope;
+  paintedFrame = frame.frame;
   const bands = frame.bands;
   const active = anyActive(bands);
   if (!active && idleFrameDrawn) return true;
@@ -135,15 +153,8 @@ function drawScope(ctx: CanvasRenderingContext2D, scope: ScopeSource): boolean {
   drawGrid(ctx);
   const nyquist = scope.sampleRate / 2;
   const count = bands.length;
-  strokeCurve(
-    ctx,
-    (function* () {
-      for (let b = 0; b < count; b += 1) {
-        // Band b spans [b/count, (b+1)/count] * Nyquist; use its center.
-        yield [((b + 0.5) / count) * nyquist, bands[b]] as const;
-      }
-    })(),
-  );
+  // Band b spans [b/count, (b+1)/count] * Nyquist; use its center.
+  strokeCurve(ctx, bands, 0, (b) => ((b + 0.5) / count) * nyquist);
   return true;
 }
 
@@ -157,18 +168,8 @@ function drawAnalyser(ctx: CanvasRenderingContext2D, analyser: AnalyserBridge): 
   if (!active && idleFrameDrawn) return;
   idleFrameDrawn = !active;
   drawGrid(ctx);
-  strokeCurve(
-    ctx,
-    (function* () {
-      // Skip the DC bin.
-      for (let i = 1; i < (bins as Float32Array).length; i += 1) {
-        yield [
-          binFrequency(i, analyser.sampleRate, analyser.fftSize),
-          (bins as Float32Array)[i],
-        ] as const;
-      }
-    })(),
-  );
+  // Skip the DC bin.
+  strokeCurve(ctx, bins, 1, (i) => binFrequency(i, analyser.sampleRate, analyser.fftSize));
 }
 
 function draw(): void {
@@ -185,6 +186,7 @@ function draw(): void {
 
   // Prefer the engine scope (works for any strip); fall back to the analyser.
   if (props.scope?.available && drawScope(ctx, props.scope)) return;
+  paintedScope = null;
   if (props.analyser?.available) {
     drawAnalyser(ctx, props.analyser);
     return;
@@ -207,7 +209,7 @@ watch(
   () => props.visible,
   (visible) => {
     if (visible) {
-      idleFrameDrawn = false;
+      invalidate();
       startAnimation();
     } else {
       stopAnimation();

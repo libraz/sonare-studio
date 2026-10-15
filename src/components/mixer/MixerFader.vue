@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   dbToFaderPosition,
+  FADER_HEIGHT,
   FADER_MAX_DB,
   FADER_MIN_DB,
   faderPositionToDb,
@@ -30,7 +31,7 @@ const props = withDefaults(
     /** Why the fader is locked; a non-empty reason also disables it. */
     reason?: string | null;
   }>(),
-  { height: 132, disabled: false, reason: null },
+  { height: FADER_HEIGHT, disabled: false, reason: null },
 );
 
 const locked = computed(() => props.disabled || !!props.reason);

@@ -93,11 +93,15 @@ export interface GoniometerXY {
  *
  * @param left Left-channel sample in [-1, 1].
  * @param right Right-channel sample in [-1, 1].
+ * @param out Optional result to overwrite, for allocation-free plotting loops.
  * @returns The rotated coordinate; `y` points up for in-phase content.
  */
-export function goniometerXY(left: number, right: number): GoniometerXY {
-  return {
-    x: (left - right) * Math.SQRT1_2,
-    y: (left + right) * Math.SQRT1_2,
-  };
+export function goniometerXY(
+  left: number,
+  right: number,
+  out: GoniometerXY = { x: 0, y: 0 },
+): GoniometerXY {
+  out.x = (left - right) * Math.SQRT1_2;
+  out.y = (left + right) * Math.SQRT1_2;
+  return out;
 }

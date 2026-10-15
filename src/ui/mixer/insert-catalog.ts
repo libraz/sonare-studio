@@ -163,21 +163,10 @@ export function categoryLabel(category: string): string {
 }
 
 /**
- * Groups catalog processor ids by their category prefix. Known categories
- * appear in menu order, unknown ones after them alphabetically; processors
- * keep the input order within each group.
- *
- * @param names Catalog processor ids.
- * @returns Non-empty groups only.
- */
-export function groupInsertCatalog(names: readonly string[]): InsertCatalogGroup[] {
-  return groupInsertCatalogEntries(names.map((id) => ({ id, label: humanizeInsertName(id) })));
-}
-
-/**
- * Groups pre-built catalog entries (carrying `kind`/`stereoOnly` metadata) by
- * their category prefix, preserving the metadata. Ordering matches
- * {@link groupInsertCatalog}.
+ * Groups catalog entries (carrying `kind`/`stereoOnly` metadata) by their
+ * category prefix, preserving the metadata. Known categories appear in menu
+ * order, unknown ones after them alphabetically; processors keep the input
+ * order within each group.
  *
  * @param entries Catalog entries (already humanized).
  * @returns Non-empty groups only.

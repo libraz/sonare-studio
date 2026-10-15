@@ -2,17 +2,17 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterSource } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
-import { formatDb } from '@/ui/mixer/db-scale';
+import { FADER_HEIGHT, formatDb } from '@/ui/mixer/db-scale';
+import { drawMeterBar } from '@/ui/mixer/meter-draw';
 import {
   advanceMeterChannel,
   createMeterChannel,
   isMeterAtFloor,
   METER_MIN_DB,
   type MeterChannelModel,
-  meterFraction,
   resetMeterClip,
 } from '@/ui/mixer/meter-model';
-import { colorWithAlpha, METER_ZONE_ALPHA, TOKENS } from '@/ui/theme/tokens';
+import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 
 /**
  * Compact per-strip stereo meter: peak + RMS bars with a latched clip LED
@@ -35,19 +35,19 @@ const props = withDefaults(
     /** Whether the mixer dock is visible and this meter should animate. */
     visible?: boolean;
   }>(),
-  { bridge: null, placeholder: false, width: 12, height: 132, minDb: METER_MIN_DB, visible: true },
+  {
+    bridge: null,
+    placeholder: false,
+    width: 12,
+    height: FADER_HEIGHT,
+    minDb: METER_MIN_DB,
+    visible: true,
+  },
 );
 
 /** Height of the clip LED row at the top, in px. */
 const CLIP_LED_H = 7;
 
-const GREEN_BELOW_DB = -12;
-const YELLOW_BELOW_DB = -6;
-
-/** Dimmed scale backdrop, derived from the ramp so every meter matches. */
-const ZONE_GREEN = colorWithAlpha(TOKENS.meterGreen, METER_ZONE_ALPHA);
-const ZONE_YELLOW = colorWithAlpha(TOKENS.meterYellow, METER_ZONE_ALPHA);
-const ZONE_RED = colorWithAlpha(TOKENS.meterRed, METER_ZONE_ALPHA);
 /** Placeholder groove: the well lifted just enough to read as a dead channel. */
 const PLACEHOLDER_GROOVE = colorWithAlpha(TOKENS.text4, 0.12);
 
@@ -63,13 +63,22 @@ const channels: MeterChannelModel[] = [
 ];
 
 const clipped = ref(false);
-const peakHoldDb = ref(props.minDb);
 const { t } = useI18n();
 
+/**
+ * The peak readout changes on most frames while the hold decays, so it is
+ * written straight to the DOM instead of re-rendering the component.
+ */
+const peakRef = ref<HTMLElement | null>(null);
+let peakText = '';
+
 /** Displays the floor as silence while preserving numeric peak values above it. */
-const peakHoldDisplay = computed(() =>
-  peakHoldDb.value <= props.minDb ? '-inf' : formatDb(peakHoldDb.value),
-);
+function showPeakHold(holdDb: number): void {
+  const text = holdDb <= props.minDb ? '-inf' : formatDb(holdDb);
+  if (text === peakText || !peakRef.value) return;
+  peakText = text;
+  peakRef.value.textContent = text;
+}
 
 const title = computed(() =>
   props.placeholder
@@ -92,59 +101,6 @@ function resizeCanvas(): void {
   idleFrameDrawn = false;
 }
 
-/** dB to y inside the bar area (below the clip LED). */
-function dbToY(db: number, barsH: number): number {
-  return CLIP_LED_H + (1 - meterFraction(db, props.minDb)) * barsH;
-}
-
-function drawBar(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  barW: number,
-  barsH: number,
-  model: MeterChannelModel,
-): void {
-  const bottom = CLIP_LED_H + barsH;
-  const yYellow = dbToY(GREEN_BELOW_DB, barsH);
-  const yRed = dbToY(YELLOW_BELOW_DB, barsH);
-  // Dim zone backdrop.
-  ctx.fillStyle = ZONE_GREEN;
-  ctx.fillRect(x, yYellow, barW, bottom - yYellow);
-  ctx.fillStyle = ZONE_YELLOW;
-  ctx.fillRect(x, yRed, barW, yYellow - yRed);
-  ctx.fillStyle = ZONE_RED;
-  ctx.fillRect(x, CLIP_LED_H, barW, yRed - CLIP_LED_H);
-  // RMS fill per zone.
-  const yRms = dbToY(model.rmsDb, barsH);
-  const fillZone = (color: string, zoneTop: number, zoneBottom: number): void => {
-    const top = Math.max(yRms, zoneTop);
-    if (top < zoneBottom) {
-      ctx.fillStyle = color;
-      ctx.fillRect(x, top, barW, zoneBottom - top);
-    }
-  };
-  fillZone(TOKENS.meterGreen, yYellow, bottom);
-  fillZone(TOKENS.meterYellow, yRed, yYellow);
-  fillZone(TOKENS.meterRed, CLIP_LED_H, yRed);
-  // Peak cap — zone-coloured, matching the master meter's cap exactly.
-  if (model.peakDb > props.minDb) {
-    const yPeak = dbToY(model.peakDb, barsH);
-    ctx.fillStyle =
-      model.peakDb >= YELLOW_BELOW_DB
-        ? TOKENS.meterPeakHot
-        : model.peakDb >= GREEN_BELOW_DB
-          ? TOKENS.meterPeakWarm
-          : TOKENS.meterPeakCool;
-    ctx.fillRect(x, Math.max(CLIP_LED_H, yPeak - 1), barW, 1.5);
-  }
-  // Peak-hold marker.
-  if (model.holdDb > props.minDb) {
-    const yHold = dbToY(model.holdDb, barsH);
-    ctx.fillStyle = TOKENS.meterHold;
-    ctx.fillRect(x, Math.max(CLIP_LED_H, yHold - 0.5), barW, 1);
-  }
-}
-
 function drawFrame(ctx: CanvasRenderingContext2D): void {
   const w = props.width;
   const h = props.height;
@@ -153,8 +109,8 @@ function drawFrame(ctx: CanvasRenderingContext2D): void {
   ctx.fillRect(0, 0, w, h);
   const gap = 2;
   const barW = (w - gap) / 2;
-  drawBar(ctx, 0, barW, barsH, channels[0]);
-  drawBar(ctx, barW + gap, barW, barsH, channels[1]);
+  drawMeterBar(ctx, channels[0], 0, barW, CLIP_LED_H, barsH, props.minDb);
+  drawMeterBar(ctx, channels[1], barW + gap, barW, CLIP_LED_H, barsH, props.minDb);
   // Clip LED.
   ctx.fillStyle = clipped.value ? TOKENS.meterRed : TOKENS.meterClipOff;
   ctx.fillRect(0, 0, w, CLIP_LED_H - 2);
@@ -214,7 +170,7 @@ function draw(ts: number): void {
     props.minDb,
   );
   clipped.value = channels[0].clipped || channels[1].clipped;
-  peakHoldDb.value = Math.max(channels[0].holdDb, channels[1].holdDb);
+  showPeakHold(Math.max(channels[0].holdDb, channels[1].holdDb));
   // Silent meters render identically every frame: paint the floor state once,
   // then skip the canvas work until levels rise again.
   const atFloor = channels.every((model) =>
@@ -235,12 +191,13 @@ function onClick(): void {
     channel.holdAtMs = 0;
   }
   clipped.value = false;
-  peakHoldDb.value = props.minDb;
+  showPeakHold(props.minDb);
   // The clip LED changed; force a repaint even when the bars are at rest.
   idleFrameDrawn = false;
 }
 
 onMounted(() => {
+  showPeakHold(props.minDb);
   resizeCanvas();
   if (props.placeholder) drawPlaceholder();
   else startAnimation();
@@ -303,7 +260,7 @@ watch(
       :style="{ width: `${props.width}px`, height: `${CLIP_LED_H - 2}px` }"
       aria-hidden="true"
     />
-    <span class="strip-meter-peak">{{ peakHoldDisplay }}</span>
+    <span ref="peakRef" class="strip-meter-peak" />
   </div>
 </template>
 

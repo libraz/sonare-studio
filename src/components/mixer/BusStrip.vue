@@ -9,7 +9,6 @@ import {
   busAutomationTarget,
   evaluateAutomationValue,
 } from '@/project/automation';
-import { assertNoBusRoutingCycle, mixerBusTopology } from '@/project/bus-topology';
 import { setMixerBusChannelLayout } from '@/project/command/mixer';
 import {
   mixerBusStripTarget,
@@ -41,6 +40,7 @@ import {
   toggleAutomationStripMode,
 } from '@/ui/mixer/automation-mode';
 import { FADER_MAX_DB, FADER_MIN_DB, formatDb, formatPan } from '@/ui/mixer/db-scale';
+import { buildOutputBusOptions, createOutputBusGuard } from '@/ui/mixer/output-bus-options';
 import type { SidechainRefusalLookup } from '@/ui/mixer/sidechain-refusal';
 import InsertRack from './InsertRack.vue';
 import MixerFader from './MixerFader.vue';
@@ -148,38 +148,22 @@ const outputBusValue = computed(() => props.bus.strip?.outputBusId ?? '');
 const channelLayoutError = ref('');
 
 /** A return bus can route into another return bus, but never itself or a cycle. */
-function isOutputBusAllowed(busId: string): boolean {
-  if (busId === props.bus.id) return false;
-  try {
-    assertNoBusRoutingCycle(
-      mixerBusTopology(
-        store.mixer,
-        store.tracks
-          .filter((track) => track.kind === 'group')
-          .map((track) => ({ id: track.id, mixer: track.mixer })),
-      ),
-      props.bus.id,
-      busId,
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const outputBusOptions = computed(() => [
-  { value: '', label: t.value.shell.mixer.strip.master },
-  ...store.mixer.buses.map((bus) =>
-    isOutputBusAllowed(bus.id)
-      ? { value: bus.id, label: bus.name }
-      : {
-          value: bus.id,
-          label: bus.name,
-          disabled: true,
-          detail: t.value.shell.mixer.reasons.busLoop,
-        },
+const isOutputBusAllowed = computed(() =>
+  createOutputBusGuard(
+    store.mixer,
+    store.tracks
+      .filter((track) => track.kind === 'group')
+      .map((track) => ({ id: track.id, mixer: track.mixer })),
+    props.bus.id,
   ),
-]);
+);
+
+const outputBusOptions = computed(() =>
+  buildOutputBusOptions(store.mixer.buses, isOutputBusAllowed.value, {
+    master: t.value.shell.mixer.strip.master,
+    busLoop: t.value.shell.mixer.reasons.busLoop,
+  }),
+);
 
 const channelLayoutOptions = computed(() =>
   MIXER_CHANNEL_LAYOUTS.map((layout) => {
@@ -244,7 +228,7 @@ function onPanChange(value: number, commit: boolean): void {
 }
 
 function onOutputBusChange(value: string): void {
-  if (value !== '' && !isOutputBusAllowed(value)) return;
+  if (value !== '' && !isOutputBusAllowed.value(value)) return;
   setStripOutputBus(stripTarget.value, value === '' ? null : value);
 }
 
@@ -317,7 +301,7 @@ onBeforeUnmount(() => {
       />
     </div>
     <div class="bus-eq">
-      <StripEqSection :target="stripTarget" :scope="props.scope" />
+      <StripEqSection :target="stripTarget" :scope="props.scope" :visible="props.visible" />
     </div>
     <div v-if="store.mixer.buses.length > 0" class="bus-routing">
       <div class="bus-route-row">

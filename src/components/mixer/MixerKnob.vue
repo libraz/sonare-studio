@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { controlPercent, valueAtControlPercent } from '@/ui/devices/knob-math';
 import { useI18n } from '@/ui/i18n';
 import { DEFAULT_DRAG_PIXELS, type DragRange, FINE_FACTOR, NUDGE_DIVISIONS } from '@/ui/mixer/drag';
 import { useControlInteractions } from '@/ui/mixer/use-control-interactions';
@@ -84,24 +85,16 @@ const range = computed<DragRange>(() => ({ min: props.min, max: props.max }));
 
 /** Maps a value to its normalized [0, 1] position under the active scale. */
 function toNorm(value: number): number {
-  const span = props.max - props.min;
-  if (props.scale === 'log' && props.min > 0 && props.max > props.min) {
-    return Math.log(Math.max(props.min, value) / props.min) / Math.log(props.max / props.min);
-  }
-  return span > 0 ? (value - props.min) / span : 0;
+  return controlPercent(value, props.min, props.max, props.scale);
 }
 
 /** Maps a normalized [0, 1] position back to a value under the active scale. */
 function fromNorm(norm: number): number {
-  const n = Math.min(1, Math.max(0, norm));
-  if (props.scale === 'log' && props.min > 0 && props.max > props.min) {
-    return props.min * (props.max / props.min) ** n;
-  }
-  return props.min + n * (props.max - props.min);
+  return valueAtControlPercent(norm, props.min, props.max, props.scale);
 }
 
 /** Pointer angle for the current value (-135deg at min, +135deg at max). */
-const angleDeg = computed(() => (Math.min(1, Math.max(0, toNorm(props.value))) - 0.5) * SWEEP_DEG);
+const angleDeg = computed(() => (toNorm(props.value) - 0.5) * SWEEP_DEG);
 
 const displayText = computed(() => props.display || `${props.value}`);
 

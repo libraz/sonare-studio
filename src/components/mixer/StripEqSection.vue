@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, inject, onBeforeUnmount, shallowRef, watch } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import type { ScopeFrame, ScopeSource } from '@/engine/scope';
@@ -13,6 +13,7 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { type MidiLearnEqParam, midiLearnEqTargetId } from '@/ui/midi/midi-learn';
 import { formatDb, formatHz } from '@/ui/mixer/db-scale';
+import { clampToRange } from '@/ui/mixer/drag';
 import { eqCurve, eqCurvePath } from '@/ui/mixer/eq-curve';
 import { matchFlatEqBands } from '@/ui/mixer/match-eq';
 import {
@@ -36,12 +37,17 @@ import MixerKnob from './MixerKnob.vue';
  * per-strip gesture key coalesces a knob drag into one undo entry.
  */
 
-const props = defineProps<{
-  /** Strip the section edits: a track id or 'master'. */
-  target: MixerStripTarget;
-  /** Per-strip engine spectrum source used as the EQ graph background. */
-  scope?: ScopeSource | null;
-}>();
+const props = withDefaults(
+  defineProps<{
+    /** Strip the section edits: a track id or 'master'. */
+    target: MixerStripTarget;
+    /** Per-strip engine spectrum source used as the EQ graph background. */
+    scope?: ScopeSource | null;
+    /** Whether the mixer dock is visible and the spectrum backdrop should update. */
+    visible?: boolean;
+  }>(),
+  { scope: null, visible: true },
+);
 
 const store = useProjectStore();
 const { t } = useI18n();
@@ -151,39 +157,41 @@ function bandLabel(band: EqBand, index: number): string {
   }
 }
 
+/** Reset frequency and Q per band type; unlisted types use {@link BAND_FALLBACK}. */
+const BAND_DEFAULTS: Partial<Record<EqBandType, { frequencyHz: number; q: number }>> = {
+  HighPass: { frequencyHz: 80, q: Math.SQRT1_2 },
+  LowShelf: { frequencyHz: 120, q: Math.SQRT1_2 },
+  Peak: { frequencyHz: 1000, q: 0.9 },
+  HighShelf: { frequencyHz: 8000, q: Math.SQRT1_2 },
+  LowPass: { frequencyHz: 12000, q: Math.SQRT1_2 },
+};
+const BAND_FALLBACK = { frequencyHz: 1000, q: Math.SQRT1_2 };
+
+/** Centre frequency of a band appended with the add button. */
+const ADDED_BAND_FREQ = 3000;
+
+function bandDefaults(type: EqBandType | undefined): { frequencyHz: number; q: number } {
+  return (type && BAND_DEFAULTS[type]) || BAND_FALLBACK;
+}
+
 /** Neutral three-band starting layout when the EQ is first enabled. */
 function defaultEqBands(): EqBand[] {
-  return [
-    { type: 'LowShelf', frequencyHz: 120, gainDb: 0, q: Math.SQRT1_2, enabled: true },
-    { type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 0.9, enabled: true },
-    { type: 'HighShelf', frequencyHz: 8000, gainDb: 0, q: Math.SQRT1_2, enabled: true },
-  ];
+  return (['LowShelf', 'Peak', 'HighShelf'] as const).map((type) => ({
+    type,
+    ...bandDefaults(type),
+    gainDb: 0,
+    enabled: true,
+  }));
 }
 
 /** Reset frequency for a band type (matches the neutral starting layout). */
 function defaultFreq(band: EqBand): number {
-  switch (band.type) {
-    case 'HighPass':
-      return 80;
-    case 'LowShelf':
-      return 120;
-    case 'HighShelf':
-      return 8000;
-    case 'LowPass':
-      return 12000;
-    default:
-      return 1000;
-  }
+  return bandDefaults(band.type).frequencyHz;
 }
 
 /** Reset Q for a band type. */
 function defaultQ(band: EqBand): number {
-  return band.type === 'Peak' ? 0.9 : Math.SQRT1_2;
-}
-
-/** Clamps a value into a closed range. */
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+  return bandDefaults(band.type).q;
 }
 
 const curvePath = computed(() => {
@@ -194,20 +202,25 @@ const curvePath = computed(() => {
   return eqCurvePath(eqCurve(bands, 48), GRAPH_W, GRAPH_H, BAND_GAIN_DB);
 });
 
-const scopeFrame = ref<ScopeFrame | null>(props.scope?.latest ?? null);
+const scopeFrame = shallowRef<ScopeFrame | null>(null);
 let unsubscribeScope: (() => void) | null = null;
 
-function bindScope(source: ScopeSource | null | undefined): void {
+/** Follows the scope only while the dock is visible; hidden strips hold no subscription. */
+function bindScope(source: ScopeSource | null | undefined, visible: boolean): void {
   unsubscribeScope?.();
   unsubscribeScope = null;
-  scopeFrame.value = source?.available ? (source.latest ?? null) : null;
-  if (!source?.available) return;
+  scopeFrame.value = visible && source?.available ? (source.latest ?? null) : null;
+  if (!visible || !source?.available) return;
   unsubscribeScope = source.subscribe((frame) => {
     scopeFrame.value = frame;
   });
 }
 
-watch(() => props.scope, bindScope, { immediate: true });
+watch(
+  () => [props.scope, props.visible] as const,
+  ([source, visible]) => bindScope(source, visible),
+  { immediate: true },
+);
 
 onBeforeUnmount(() => {
   unsubscribeScope?.();
@@ -321,7 +334,7 @@ function setBandType(index: number, type: EqBandType): void {
   const next: EqBand = {
     ...band,
     type,
-    frequencyHz: clamp(band.frequencyHz ?? 1000, range.min, range.max),
+    frequencyHz: clampToRange(band.frequencyHz ?? 1000, range),
   };
   commitBands(bands.map((b, i) => (i === index ? next : b)));
 }
@@ -390,7 +403,13 @@ function setBandDynamicMode(index: number, mode: DynamicMode): void {
 function addBand(): void {
   const bands = currentBands();
   if (bands.length >= MAX_BANDS) return;
-  const band: EqBand = { type: 'Peak', frequencyHz: 3000, gainDb: 0, q: 0.9, enabled: true };
+  const band: EqBand = {
+    type: 'Peak',
+    ...bandDefaults('Peak'),
+    frequencyHz: ADDED_BAND_FREQ,
+    gainDb: 0,
+    enabled: true,
+  };
   commitBands([...bands, band]);
 }
 
@@ -402,16 +421,18 @@ function removeBand(index: number): void {
   commitBands(bands.filter((_, i) => i !== index));
 }
 
-const EQ_MIDI_LEARN_LABEL: Record<MidiLearnEqParam, string> = {
-  frequencyHz: 'MIDI Learn Freq',
-  gainDb: 'MIDI Learn Gain',
-  q: 'MIDI Learn Q',
+type EqControlsKey = keyof typeof t.value.shell.mixer.controls;
+
+const EQ_MIDI_LEARN_LABEL_KEY: Record<MidiLearnEqParam, EqControlsKey> = {
+  frequencyHz: 'midiLearnFreq',
+  gainDb: 'midiLearnGain',
+  q: 'midiLearnQ',
 };
 
-const EQ_MIDI_FORGET_LABEL: Record<MidiLearnEqParam, string> = {
-  frequencyHz: 'Forget MIDI Freq',
-  gainDb: 'Forget MIDI Gain',
-  q: 'Forget MIDI Q',
+const EQ_MIDI_FORGET_LABEL_KEY: Record<MidiLearnEqParam, EqControlsKey> = {
+  frequencyHz: 'midiForgetFreq',
+  gainDb: 'midiForgetGain',
+  q: 'midiForgetQ',
 };
 
 function learnEqId(index: number, param: MidiLearnEqParam): string {
@@ -432,14 +453,16 @@ function appendMidiLearnItems(items: ContextMenuItem[], index: number, band: EqB
     const bound = midiLearn.bindingForId(id) !== undefined;
     items.push({
       id: `midi:learn:${param}`,
-      label: armed ? t.value.shell.mixer.controls.midiLearnListening : EQ_MIDI_LEARN_LABEL[param],
+      label: armed
+        ? t.value.shell.mixer.controls.midiLearnListening
+        : t.value.shell.mixer.controls[EQ_MIDI_LEARN_LABEL_KEY[param]],
       checked: armed || bound,
       run: () => midiLearn.armId(id),
     });
     if (bound) {
       items.push({
         id: `midi:forget:${param}`,
-        label: EQ_MIDI_FORGET_LABEL[param],
+        label: t.value.shell.mixer.controls[EQ_MIDI_FORGET_LABEL_KEY[param]],
         run: () => midiLearn.clearId(id),
       });
     }
