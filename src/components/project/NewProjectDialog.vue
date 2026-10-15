@@ -85,19 +85,25 @@ function moveSelection(delta: number): void {
   selected.value = TEMPLATE_NAMES[next];
 }
 
-/** Template-list navigation and confirm; the modal shell owns Tab and Escape. */
+/**
+ * Template-list navigation and confirm; the modal shell owns Tab and Escape.
+ * Handled keys stop here so the modal-level listener does not repeat them.
+ */
 function onKeydown(event: KeyboardEvent): void {
   switch (event.key) {
     case 'Enter':
       event.preventDefault();
+      event.stopPropagation();
       onCreate();
       break;
     case 'ArrowDown':
       event.preventDefault();
+      event.stopPropagation();
       moveSelection(1);
       break;
     case 'ArrowUp':
       event.preventDefault();
+      event.stopPropagation();
       moveSelection(-1);
       break;
     default:
@@ -130,7 +136,7 @@ function templateDescription(name: TemplateName): string {
           tabindex="0"
           :aria-label="t.dialogs.newProject.templates"
           :aria-activedescendant="activeTemplateId"
-          @keydown.stop="onKeydown"
+          @keydown="onKeydown"
         >
           <li
             v-for="name in TEMPLATE_NAMES"

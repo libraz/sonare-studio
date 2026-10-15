@@ -88,6 +88,41 @@ describe('MenuBar', () => {
     document.body.replaceChildren();
   });
 
+  it('keeps row ids valid and unique when item ids embed names with spaces', async () => {
+    const names: MenuBarMenu[] = [
+      {
+        id: 'layout',
+        label: 'Layout',
+        items: [
+          { id: 'layout.My Mix', label: 'My Mix', run: vi.fn() },
+          { id: 'layout.My-Mix', label: 'My-Mix', run: vi.fn() },
+          { id: 'file.recent.Song 1', label: 'Song 1', run: vi.fn() },
+        ],
+      },
+    ];
+    const wrapper = mount(MenuBar, {
+      attachTo: document.body,
+      props: { menus: names },
+      global: { stubs: { TransportIcon: true } },
+    });
+    const trigger = wrapper.find('.app-menubar__trigger');
+    (trigger.element as HTMLButtonElement).focus();
+    await trigger.trigger('keydown', { key: 'ArrowDown' });
+    await nextTick();
+    const panel = wrapper.find<HTMLElement>('[role="menu"]');
+    await panel.trigger('keydown', { key: 'ArrowDown' });
+    await nextTick();
+
+    const ids = wrapper.findAll('.menu-panel__item').map((row) => row.element.id);
+    expect(new Set(ids).size).toBe(3);
+    for (const id of ids) expect(id).not.toMatch(/\s/);
+    const active = panel.attributes('aria-activedescendant');
+    expect(active).toBeDefined();
+    expect(document.getElementById(active as string)).not.toBeNull();
+    wrapper.unmount();
+    document.body.replaceChildren();
+  });
+
   it('uses the focused menu as aria-activedescendant owner', async () => {
     const wrapper = mount(MenuBar, {
       attachTo: document.body,

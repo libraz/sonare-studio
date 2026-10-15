@@ -50,8 +50,13 @@ const openItems = computed(() => {
 
 const navigableIds = computed(() => openItems.value.filter(isNavigable).map((item) => item.id));
 
+/** Escapes every character outside [A-Za-z0-9-] reversibly, keeping ids valid and unique. */
+function domSafe(raw: string): string {
+  return raw.replace(/[^A-Za-z0-9-]/g, (char) => `_${char.codePointAt(0)?.toString(16)}_`);
+}
+
 function rowDomId(menuId: string, itemId: string): string {
-  return `menubar-${menuId}-${itemId}`;
+  return `menubar-${domSafe(menuId)}-${domSafe(itemId)}`;
 }
 
 function triggerDomId(menuId: string): string {

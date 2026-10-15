@@ -136,6 +136,15 @@ describe('NewProjectDialog', () => {
     expect(wrapper?.emitted('cancel')).toHaveLength(3);
   });
 
+  it('emits cancel on Escape while the template list has focus', async () => {
+    open();
+    const listbox = q<HTMLElement>('[role="listbox"]')!;
+    listbox.focus();
+    listbox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await nextTick();
+    expect(wrapper?.emitted('cancel')).toHaveLength(1);
+  });
+
   it('supports keyboard selection and Enter-to-create', async () => {
     open();
     await keydown('ArrowDown');
