@@ -8,7 +8,7 @@ import {
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
-import { gmProgramForPreset } from './instrument';
+import { GM2_DRUM_BANK, GM2_DRUM_BANK_MSB, gmProgramForPreset, isGm2DrumBank } from './instrument';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from './midi-cc';
 import {
   notesToProjectMidiEvents,
@@ -34,7 +34,8 @@ import { type SmfSysExPacket, TRACK_COLOR_PALETTE } from './types';
 
 const DEFAULT_SAMPLE_RATE = 48000;
 const DEFAULT_BPM = 120;
-const GM2_DRUM_BANK = 120 << 7;
+/** First GM program of the sound-effects family; lower percussive programs map to the drum kit. */
+const GM_SOUND_EFFECTS_PROGRAM = 120;
 const DEFAULT_CLIP_LENGTH_PPQ = 1;
 const SMF_EDGE_PAD_PPQ = 1 / 480;
 const PPQ_INTEGER_EPSILON = 1 / 256;
@@ -483,7 +484,7 @@ function displayClipLength(lengthPpq: number): number {
 }
 
 function presetForGmProgram(program: number, ch: number, bank?: number): string {
-  if (ch === 9 || (bank !== undefined && bank >> 7 === 120)) return 'drum-kit';
+  if (ch === 9 || isGm2DrumBank(bank)) return 'drum-kit';
   if (program === 4 || program === 5) return 'e-piano';
   if (program < 8) return 'acoustic-piano';
   if (program < 16) return 'e-piano';
@@ -497,7 +498,7 @@ function presetForGmProgram(program: number, ch: number, bank?: number): string 
   if (program < 88) return 'saw-lead';
   if (program < 96) return 'warm-pad';
   if (program < 112) return 'pluck';
-  if (program < 120) return 'drum-kit';
+  if (program < GM_SOUND_EFFECTS_PROGRAM) return 'drum-kit';
   return 'sine';
 }
 
@@ -785,9 +786,7 @@ function trackDocument(
         }
       : undefined;
   const firstProgram =
-    programs.find(
-      (entry) => entry.channel === 9 || (entry.bank !== undefined && entry.bank >> 7 === 120),
-    ) ??
+    programs.find((entry) => entry.channel === 9 || isGm2DrumBank(entry.bank)) ??
     programs[0] ??
     defaultProgram ??
     (events.some((event) => channel(event) === 9)
@@ -844,7 +843,7 @@ function splitTrackByChannelAndProgram(
     )
     .map((group, offset) => {
       const suffix =
-        group.key.channel === 9 || (group.key.bank !== undefined && group.key.bank >> 7 === 120)
+        group.key.channel === 9 || isGm2DrumBank(group.key.bank)
           ? ` Ch ${group.key.channel + 1} Drums`
           : ` Ch ${group.key.channel + 1} ${presetForGmProgram(group.key.program ?? 0, group.key.channel, group.key.bank)}`;
       return trackDocument(track, clip, group.events, index + offset, suffix);
@@ -1232,6 +1231,8 @@ async function projectFromDocument(
       const offset = finiteNonNegative(clip.startPpq) - startPpq;
       return clipEvents(clip, wasm).map((event) => ({ ...event, ppq: event.ppq + offset }));
     });
+    // Setup events lead the track; each chunk lands ahead of the previous one.
+    const prelude: (typeof events)[] = [];
     const instrument = track.instrument;
     const preset =
       instrument?.kind === 'synth-preset'
@@ -1253,12 +1254,12 @@ async function projectFromDocument(
     if (staticVolume !== 1 || staticPan !== 0) {
       for (const ch of channels) {
         if (staticPan !== 0) {
-          events.unshift(
+          prelude.push([
             wasm.Project.midiCc(0, 0, ch, 10, clampInt((staticPan + 1) * 63.5, 0, 127)),
-          );
+          ]);
         }
         if (staticVolume !== 1) {
-          events.unshift(wasm.Project.midiCc(0, 0, ch, 7, gmVolumeCc(staticVolume)));
+          prelude.push([wasm.Project.midiCc(0, 0, ch, 7, gmVolumeCc(staticVolume))]);
         }
       }
     }
@@ -1273,31 +1274,25 @@ async function projectFromDocument(
           : clampInt(gmProgramForPreset(preset), 0, 127);
       for (const ch of channels) {
         if (importedBank !== undefined) {
-          events.unshift(
-            ...wasm.Project.midiBankProgram(
-              0,
-              0,
-              ch,
-              importedBank >> 7,
-              importedBank & 0x7f,
-              program,
-            ),
+          prelude.push(
+            wasm.Project.midiBankProgram(0, 0, ch, importedBank >> 7, importedBank & 0x7f, program),
           );
         } else if (preset === 'drum-kit') {
-          events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, 120, 0, program));
+          prelude.push(wasm.Project.midiBankProgram(0, 0, ch, GM2_DRUM_BANK_MSB, 0, program));
         } else {
-          events.unshift(wasm.Project.midiProgram(0, 0, ch, program));
+          prelude.push([wasm.Project.midiProgram(0, 0, ch, program)]);
         }
       }
     } else if (instrument?.kind === 'sf2') {
       const bank = clampInt(instrument.bank ?? 0, 0, 16383);
       const program = clampInt(instrument.program ?? 0, 0, 127);
       for (const ch of channels) {
-        events.unshift(...wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program));
+        prelude.push(wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program));
       }
     }
-    events.sort((a, b) => a.ppq - b.ppq);
-    project.setMidiEvents(clipId, events);
+    const ordered = [...prelude.reverse().flat(), ...events];
+    ordered.sort((a, b) => a.ppq - b.ppq);
+    project.setMidiEvents(clipId, ordered);
   }
   return project;
 }

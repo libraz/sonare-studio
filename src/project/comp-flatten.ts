@@ -8,7 +8,7 @@
 import { OperationGeneration } from '@/lib/operation-generation';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
-import { collectReferencedAudioAssetIds } from './asset-references';
+import { createAssetReferenceGuard } from './asset-references';
 import { dropClipTakesBatch } from './commands';
 import { audioClipSegments } from './comping';
 import {
@@ -113,8 +113,7 @@ async function flattenCompClips(
   };
   const loadAudio = options.loadAudioAsset ?? loadAsset;
   const assets = createAudioAssetTransaction();
-  const isReferenced = (assetId: string): boolean =>
-    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  const isReferenced = createAssetReferenceGuard(store);
   const inputs = clips.map((clip) => ({ clip, token: flattenClipToken(clip) }));
   const clipIds = inputs.map(({ clip }) => clip.id);
   const targetId = `comp:${clipIds.join(',')}`;

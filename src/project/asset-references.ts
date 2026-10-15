@@ -37,3 +37,19 @@ export function collectReferencedAudioAssetIds(
   }
   return ids;
 }
+
+/**
+ * Builds a rollback guard over the live project mirror. The reference set is
+ * collected on the first check (the point of rollback) and reused for every
+ * asset the rollback considers.
+ */
+export function createAssetReferenceGuard(store: {
+  clips: Iterable<AssetReferenceClip>;
+  tracks: Iterable<AssetReferenceTrack>;
+}): (assetId: string) => boolean {
+  let referenced: Set<string> | undefined;
+  return (assetId) => {
+    referenced ??= collectReferencedAudioAssetIds(store.clips, store.tracks);
+    return referenced.has(assetId);
+  };
+}

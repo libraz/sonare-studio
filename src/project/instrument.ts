@@ -17,6 +17,7 @@
  */
 
 import type { SynthPatch } from '@/wasm/index.js';
+import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
 /**
@@ -354,9 +355,20 @@ export function instrumentDedupeKey(instrument: TrackInstrument): string {
   }
 }
 
+/** GM2 bank-select MSB that selects the percussion kits (kit in the LSB). */
+export const GM2_DRUM_BANK_MSB = 120;
+
+/** GM2 percussion bank with the standard kit (LSB 0). */
+export const GM2_DRUM_BANK = GM2_DRUM_BANK_MSB << 7;
+
+/** Whether a 14-bit bank number selects a GM2 percussion kit. */
+export function isGm2DrumBank(bank: number | undefined): boolean {
+  return bank !== undefined && bank >> 7 === GM2_DRUM_BANK_MSB;
+}
+
 /** Deep-copies an instrument (instruments are plain JSON data). */
 export function cloneInstrument(instrument: TrackInstrument): TrackInstrument {
-  return JSON.parse(JSON.stringify(instrument)) as TrackInstrument;
+  return cloneJson(instrument);
 }
 
 /**

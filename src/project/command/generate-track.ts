@@ -16,7 +16,7 @@ import type { TrackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { getProject, notesToProjectEvents, type useProjectStore } from '../store';
 import { type NewEditorNote, TRACK_COLOR_PALETTE } from '../types';
-import type { AtomicProjectEdit } from './history';
+import { type AtomicProjectEdit, executeAtomic } from './history';
 
 /** The project store instance type (Pinia setup store). */
 type ProjectStore = ReturnType<typeof useProjectStore>;
@@ -141,4 +141,39 @@ export function addGeneratedTrack(
   edit(1, () => project.setMidiEvents(clipId, notesToProjectEvents(track.notes)));
   store.refresh();
   return clipId;
+}
+
+/**
+ * Writes a {@link TrackPlan} as a new track with one clip at the timeline
+ * start. Must run inside an `executeAtomic` boundary.
+ *
+ * @returns The new clip's id.
+ */
+export function addPlannedTrack(
+  store: ProjectStore,
+  plan: TrackPlan,
+  edit: AtomicProjectEdit,
+): number {
+  return addGeneratedTrack(
+    store,
+    {
+      name: plan.name,
+      notes: plan.notes,
+      startPpq: 0,
+      lengthPpq: plan.lengthPpq,
+      preset: plan.preset,
+      provenance: plan.provenance,
+    },
+    edit,
+  );
+}
+
+/**
+ * Writes a {@link TrackPlan} as one undoable edit.
+ *
+ * @returns The number of notes written.
+ */
+export function commitTrackPlan(store: ProjectStore, plan: TrackPlan): number {
+  executeAtomic((edit) => addPlannedTrack(store, plan, edit));
+  return plan.notes.length;
 }

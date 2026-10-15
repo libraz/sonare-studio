@@ -176,6 +176,28 @@ export function addGroupTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
 }
 
 /**
+ * Writes (or, for `undefined`, deletes) one track field on several tracks as
+ * one undoable mirror edit.
+ */
+function patchTracks<K extends keyof EditorTrack>(
+  store: ReturnType<typeof useProjectStore>,
+  ids: ReadonlySet<number>,
+  key: K,
+  value: EditorTrack[K] | undefined,
+): void {
+  execute(0, () => {
+    store.tracks = store.tracks.map((track) => {
+      if (!ids.has(track.id)) return track;
+      const next: Record<string, unknown> = { ...track };
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+      return next as unknown as EditorTrack;
+    });
+    store.refresh();
+  });
+}
+
+/**
  * Assigns a track to a group track (or removes the membership with null), as
  * one undoable edit. Group tracks cannot be nested.
  *
@@ -183,28 +205,7 @@ export function addGroupTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
  * @param groupId Id of a group track, or null for the master mix.
  */
 export function setTrackGroup(trackId: number, groupId: number | null): void {
-  const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (track.kind === 'group') {
-    throw new RangeError('Group tracks cannot be nested into another group');
-  }
-  if (groupId !== null) {
-    const group = requireTrack(store, groupId);
-    if (group.kind !== 'group') {
-      throw new RangeError(`Track ${groupId} is not a group track`);
-    }
-  }
-  if ((track.groupId ?? null) === groupId) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((entry) => {
-      if (entry.id !== trackId) return entry;
-      const next = { ...entry };
-      if (groupId === null) delete next.groupId;
-      else next.groupId = groupId;
-      return next;
-    });
-    store.refresh();
-  });
+  setTracksGroup([trackId], groupId);
 }
 
 /**
@@ -233,14 +234,7 @@ export function renameTrack(trackId: number, name: string): void {
  * @param color New CSS color string (non-empty).
  */
 export function setTrackColor(trackId: number, color: string): void {
-  const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (color.length === 0) throw new RangeError('Track color must not be empty');
-  if (track.color === color) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => (t.id === trackId ? { ...t, color } : t));
-    store.refresh();
-  });
+  setTracksColor([trackId], color);
 }
 
 /** Applies one display color to several tracks as one undoable operation. */
@@ -250,10 +244,7 @@ export function setTracksColor(trackIds: Iterable<number>, color: string): void 
   for (const id of ids) requireTrack(store, id);
   if (color.length === 0) throw new RangeError('Track color must not be empty');
   if (ids.size === 0 || [...ids].every((id) => requireTrack(store, id).color === color)) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((track) => (ids.has(track.id) ? { ...track, color } : track));
-    store.refresh();
-  });
+  patchTracks(store, ids, 'color', color);
 }
 
 /** Assigns several non-group tracks to the same output group in one undo step. */
@@ -269,16 +260,7 @@ export function setTracksGroup(trackIds: Iterable<number>, groupId: number | nul
     if (group.kind !== 'group') throw new RangeError(`Track ${groupId} is not a group track`);
   }
   if (tracks.length === 0 || tracks.every((track) => (track.groupId ?? null) === groupId)) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((track) => {
-      if (!ids.has(track.id)) return track;
-      const next = { ...track };
-      if (groupId === null) delete next.groupId;
-      else next.groupId = groupId;
-      return next;
-    });
-    store.refresh();
-  });
+  patchTracks(store, ids, 'groupId', groupId ?? undefined);
 }
 
 /**
@@ -367,16 +349,7 @@ export function setTrackExpressionMap(trackId: number, map: TrackExpressionMap |
   const sanitized = map === null ? undefined : sanitizeExpressionMap(map);
   const current = track.expressionMap;
   if (JSON.stringify(current ?? null) === JSON.stringify(sanitized ?? null)) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
-      const next = { ...t };
-      if (sanitized === undefined) delete next.expressionMap;
-      else next.expressionMap = sanitized;
-      return next;
-    });
-    store.refresh();
-  });
+  patchTracks(store, new Set([trackId]), 'expressionMap', sanitized);
 }
 
 /**
@@ -392,16 +365,7 @@ export function setTrackChordFollow(trackId: number, mode: ChordFollowMode | nul
   const store = useProjectStore();
   const track = requireTrack(store, trackId);
   if ((track.chordFollow ?? null) === mode) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
-      const next = { ...t };
-      if (mode === null) delete next.chordFollow;
-      else next.chordFollow = mode;
-      return next;
-    });
-    store.refresh();
-  });
+  patchTracks(store, new Set([trackId]), 'chordFollow', mode ?? undefined);
 }
 
 /**
@@ -417,16 +381,7 @@ export function setTrackPercussion(trackId: number, percussion: boolean | null):
   const store = useProjectStore();
   const track = requireTrack(store, trackId);
   if ((track.percussion ?? null) === percussion) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
-      const next = { ...t };
-      if (percussion === null) delete next.percussion;
-      else next.percussion = percussion;
-      return next;
-    });
-    store.refresh();
-  });
+  patchTracks(store, new Set([trackId]), 'percussion', percussion ?? undefined);
 }
 
 /**
@@ -451,16 +406,12 @@ export function setTrackPitchRange(trackId: number, range: PitchRange | null): v
   ) {
     return;
   }
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
-      const next = { ...t };
-      if (range === null) delete next.pitchRange;
-      else next.pitchRange = { low: range.low, high: range.high };
-      return next;
-    });
-    store.refresh();
-  });
+  patchTracks(
+    store,
+    new Set([trackId]),
+    'pitchRange',
+    range === null ? undefined : { low: range.low, high: range.high },
+  );
 }
 
 /**
@@ -520,16 +471,7 @@ export function setTrackRecordInputChannel(trackId: number, channel: number | nu
     throw new RangeError(`Recording input channel must be a non-negative integer, got ${channel}`);
   }
   if ((track.recordInputChannel ?? null) === channel) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
-      const next: EditorTrack = { ...t };
-      if (channel === null) delete next.recordInputChannel;
-      else next.recordInputChannel = channel;
-      return next;
-    });
-    store.refresh();
-  });
+  patchTracks(store, new Set([trackId]), 'recordInputChannel', channel ?? undefined);
 }
 
 /**
@@ -548,16 +490,7 @@ export function setTrackRecordInputDeviceId(trackId: number, deviceId: string | 
   }
   const next = deviceId?.trim() ? deviceId.trim() : null;
   if ((track.recordInputDeviceId ?? null) === next) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => {
-      if (t.id !== trackId) return t;
-      const entry: EditorTrack = { ...t };
-      if (next === null) delete entry.recordInputDeviceId;
-      else entry.recordInputDeviceId = next;
-      return entry;
-    });
-    store.refresh();
-  });
+  patchTracks(store, new Set([trackId]), 'recordInputDeviceId', next ?? undefined);
 }
 
 /**

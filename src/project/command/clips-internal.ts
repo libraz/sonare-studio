@@ -14,6 +14,7 @@ import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
 import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
 import type { AtomicProjectEdit } from './history';
+import { pruneClipScoreAnnotations } from './tracks';
 import { requireEditableClip, withDerivedClipMetadata } from './utils';
 
 /** Reinstalls derived app metadata after a native clip split. */
@@ -134,7 +135,5 @@ export function removeClipWithin(edit: AtomicProjectEdit, clipId: number): void 
   const project = getProject();
   clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
   edit(1, () => project.removeClip(clipId));
-  const nextAnnotations = { ...store.scoreAnnotations };
-  delete nextAnnotations[clipId];
-  store.scoreAnnotations = nextAnnotations;
+  pruneClipScoreAnnotations(store, [clipId]);
 }

@@ -1,7 +1,7 @@
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type AudioAssetMeta, audioAssetUri, loadAsset } from '@/persistence/assets';
-import { collectReferencedAudioAssetIds } from '../asset-references';
+import { createAssetReferenceGuard } from '../asset-references';
 import {
   type AudioStemEnhancers,
   type AudioStemSeparator,
@@ -102,8 +102,7 @@ async function placeSeparatedStems(
 ): Promise<number[]> {
   const store = useProjectStore();
   const assets = createAudioAssetTransaction();
-  const isReferenced = (assetId: string): boolean =>
-    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  const isReferenced = createAssetReferenceGuard(store);
   try {
     const saved: { stem: SeparatedStem; meta: AudioAssetMeta }[] = [];
     for (const stem of stems) {

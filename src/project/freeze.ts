@@ -12,7 +12,7 @@ import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
-import { collectReferencedAudioAssetIds } from './asset-references';
+import { createAssetReferenceGuard } from './asset-references';
 import { addBouncedClip, setTrackFrozen } from './commands';
 import {
   assertProjectOperationCurrent,
@@ -126,8 +126,7 @@ export async function freezeTrack(
     trackRenderRevision(trackId),
   );
   const assets = options.ingest ? null : createAudioAssetTransaction();
-  const isReferenced = (assetId: string): boolean =>
-    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  const isReferenced = createAssetReferenceGuard(store);
   try {
     const result = await renderFrozen(
       doc,
@@ -225,8 +224,7 @@ export async function bounceTrackRange(
     trackRenderRevision(trackId),
   );
   const assets = options.ingest ? null : createAudioAssetTransaction();
-  const isReferenced = (assetId: string): boolean =>
-    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  const isReferenced = createAssetReferenceGuard(store);
   try {
     const result = await renderFrozen(
       doc,

@@ -25,8 +25,7 @@ import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
-import { addGeneratedTrack, type TrackPlan } from './generate-track';
-import { executeAtomic } from './history';
+import { commitTrackPlan, type TrackPlan } from './generate-track';
 
 /** Backing voicing mode: smooth SATB leading, or a fixed tertian style. */
 export type BackingStyle = 'smooth' | VoicingStyle;
@@ -134,19 +133,5 @@ export function generateBackingCommand(params: GenerateBackingParams = {}): numb
   const plan = buildBackingPlan(store, params);
   if (plan === null) return 0;
 
-  executeAtomic((edit) =>
-    addGeneratedTrack(
-      store,
-      {
-        name: plan.name,
-        notes: plan.notes,
-        startPpq: 0,
-        lengthPpq: plan.lengthPpq,
-        preset: plan.preset,
-        provenance: plan.provenance,
-      },
-      edit,
-    ),
-  );
-  return plan.notes.length;
+  return commitTrackPlan(store, plan);
 }

@@ -2,7 +2,7 @@ import { planClipCrossfade } from '../clip-crossfade';
 import { validateClipFadePair } from '../clip-fades';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
-import type { ClipWarp } from '../types';
+import type { ClipWarp, EditorClip } from '../types';
 import {
   clearProjectClipWarp,
   hasInstalledProjectClipWarp,
@@ -137,6 +137,16 @@ export function setClipGain(clipId: number, gain: number): void {
   });
 }
 
+/** Pins a clip's mirrored fade lengths (a zero length clears the field). */
+function withClipFades(clip: EditorClip, fadeInPpq: number, fadeOutPpq: number): EditorClip {
+  const { fadeInPpq: _in, fadeOutPpq: _out, ...rest } = clip;
+  return {
+    ...rest,
+    ...(fadeInPpq > 0 ? { fadeInPpq } : {}),
+    ...(fadeOutPpq > 0 ? { fadeOutPpq } : {}),
+  };
+}
+
 /**
  * Sets a clip's fade-in/fade-out lengths as one undoable edit (delegates to
  * Project.setClipFade). Pass undefined or 0 to clear a fade. Audio clips get the
@@ -167,15 +177,7 @@ export function setClipFades(clipId: number, fadeInPpq?: number, fadeOutPpq?: nu
     store.refresh();
     // Mirror fallback for bindings that do not serialize fades in toJson():
     // pin the values we just set (0 clears the field).
-    store.clips = store.clips.map((c) => {
-      if (c.id !== clipId) return c;
-      const { fadeInPpq: _oldIn, fadeOutPpq: _oldOut, ...rest } = c;
-      return {
-        ...rest,
-        ...(fadeIn > 0 ? { fadeInPpq: fadeIn } : {}),
-        ...(fadeOut > 0 ? { fadeOutPpq: fadeOut } : {}),
-      };
-    });
+    store.clips = store.clips.map((c) => (c.id === clipId ? withClipFades(c, fadeIn, fadeOut) : c));
   });
 }
 
@@ -233,14 +235,9 @@ export function crossfadeClips(
     // Mirror fallback for bindings that do not serialize fades in toJson().
     store.clips = store.clips.map((clip) => {
       if (clip.id !== left.id && clip.id !== right.id) return clip;
-      const { fadeInPpq: _in, fadeOutPpq: _out, ...rest } = clip;
-      const fadeIn = clip.id === left.id ? leftFadeIn : plan.lengthPpq;
-      const fadeOut = clip.id === left.id ? plan.lengthPpq : rightFadeOut;
-      return {
-        ...rest,
-        ...(fadeIn > 0 ? { fadeInPpq: fadeIn } : {}),
-        ...(fadeOut > 0 ? { fadeOutPpq: fadeOut } : {}),
-      };
+      return clip.id === left.id
+        ? withClipFades(clip, leftFadeIn, plan.lengthPpq)
+        : withClipFades(clip, plan.lengthPpq, rightFadeOut);
     });
   });
   return plan.lengthPpq;

@@ -2,9 +2,9 @@ import type { SendTiming } from '@/wasm/index.js';
 import {
   assertKnownBusDestination,
   assertNoBusRoutingCycle,
-  groupBusTopologyId,
   mixerBusTopology,
 } from '../bus-topology';
+import { cloneJson } from '../clone-json';
 import {
   cloneStrip,
   DEFAULT_DUAL_PAN,
@@ -28,7 +28,7 @@ import {
   type StripSend,
 } from '../mixer';
 import { useProjectStore } from '../store';
-import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
+import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
 import { setMixerBusGain } from './mixer-buses';
 import {
   currentStrip,
@@ -36,6 +36,7 @@ import {
   type MixerStripTarget,
   mixerBusIdFromTarget,
   patchMixerMirror,
+  sidechainTargetTopologyId,
   writeStrip,
 } from './mixer-internal';
 import { requireTrack } from './utils';
@@ -99,7 +100,7 @@ export function setMixerSoloMode(mode: MixerSoloMode): void {
   const store = useProjectStore();
   const next = normalizeMixerSoloMode(mode);
   if ((store.mixer.soloMode ?? 'inPlace') === next) return;
-  execute(0, () => {
+  executeApp(() => {
     store.mixer = {
       ...store.mixer,
       ...(next === 'inPlace' ? { soloMode: undefined } : { soloMode: next }),
@@ -293,7 +294,7 @@ export function setStripEq(
   patchMixerMirror(key, options, () => {
     const next = cloneStrip(strip);
     if (eq === null) delete next.eq;
-    else next.eq = JSON.parse(JSON.stringify(eq)) as StripEq;
+    else next.eq = cloneJson(eq);
     writeStrip(store, target, next);
   });
 }
@@ -322,17 +323,8 @@ export function setSend(
   if (!store.mixer.buses.some((bus) => bus.id === busId)) {
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }
-  if (
-    send !== null &&
-    (isMixerBusStripTarget(target) ||
-      (typeof target === 'number' &&
-        store.tracks.find((track) => track.id === target)?.kind === 'group'))
-  ) {
-    const sourceBusId = isMixerBusStripTarget(target)
-      ? mixerBusIdFromTarget(target)
-      : groupBusTopologyId(target as number);
-    assertBusRouteAllowed(store, sourceBusId, busId);
-  }
+  const sendSourceBusId = send === null ? undefined : sidechainTargetTopologyId(store, target);
+  if (sendSourceBusId !== undefined) assertBusRouteAllowed(store, sendSourceBusId, busId);
   if (send !== null && !Number.isFinite(send.levelDb)) {
     throw new RangeError(`Send level must be finite, got ${send.levelDb}`);
   }
@@ -523,12 +515,7 @@ export function setStripOutputBus(target: MixerStripTarget, busId: string | null
   if (target === 'master') {
     throw new RangeError('The master strip has no output bus to route');
   }
-  const sourceBusId = isMixerBusStripTarget(target)
-    ? mixerBusIdFromTarget(target)
-    : (() => {
-        const track = requireTrack(store, target);
-        return track.kind === 'group' ? groupBusTopologyId(track.id) : undefined;
-      })();
+  const sourceBusId = sidechainTargetTopologyId(store, target);
   if (busId !== null && !store.mixer.buses.some((bus) => bus.id === busId)) {
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }

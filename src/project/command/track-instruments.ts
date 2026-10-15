@@ -31,10 +31,12 @@ export function setTrackInstrument(
   if (instrument !== null) validateTrackInstrument(instrument);
   const key = `track-instrument:${trackId}`;
   const current = track.instrument ?? null;
+  // Picking an instrument also leaves project External MIDI mode.
   const unchanged =
-    instrument === null
+    track.externalMidiMode === undefined &&
+    (instrument === null
       ? current === null
-      : current !== null && instrumentEquals(current, instrument);
+      : current !== null && instrumentEquals(current, instrument));
   if (unchanged && !hasPendingGesture(key)) return;
   patchMixerMirror(key, options, () => {
     store.tracks = store.tracks.map((t) => {
@@ -175,6 +177,7 @@ export function setTrackInstruments(
   if (instrument !== null) validateTrackInstrument(instrument);
   const changed = store.tracks.some((track) => {
     if (!ids.has(track.id)) return false;
+    if (track.externalMidiMode !== undefined) return true;
     const current = track.instrument ?? null;
     if (instrument === null) return current !== null;
     return current === null || !instrumentEquals(current, instrument);

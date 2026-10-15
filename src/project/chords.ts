@@ -21,14 +21,10 @@ import {
   normalizedChordOmissions,
   TONE_PCS_BY_QUALITY,
 } from '@/compose/chord-quality';
-import { PITCH_CLASS_NAMES } from '@/lib/pitch';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
 
 /** Sentinel used by the Project annotation encoding for "no pitch class". */
 const PC_NONE = 255;
-
-/** Pitch-class display names (sharp spelling), indexed by pitch class 0..11. */
-export const CHORD_PITCH_CLASS_NAMES = PITCH_CLASS_NAMES;
 
 /** One selectable chord quality: audio-domain ordinal, name suffix, and label. */
 export interface ChordQualityChoice {

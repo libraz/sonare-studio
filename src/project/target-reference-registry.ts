@@ -1,4 +1,4 @@
-import type { AutomationLaneState } from './automation';
+import { type AutomationLaneState, parseInsertAutomationParam } from './automation';
 import {
   migrateAutomationLanesToProcessorIds,
   remapInsertLanesAfterRemoval,
@@ -218,6 +218,33 @@ export function reorderInsertProcessorReferences(
     else if (fromIndex < toIndex && index > fromIndex && index <= toIndex) next = index - 1;
     else if (fromIndex > toIndex && index >= toIndex && index < fromIndex) next = index + 1;
     return next === index ? id : midiLearnInsertTargetId(ref.scope, next, ref.paramId);
+  });
+}
+
+/**
+ * Drops references to the old slot identity when a replacement changes the
+ * processor type. Positional references at this slot are also unsafe: unlike
+ * a reorder, they describe the old processor and cannot be rebound to the
+ * replacement's parameter set. References to other slots remain untouched.
+ */
+export function pruneReplacedInsertReferences(
+  store: ProjectStore,
+  target: ProcessorReferenceTarget,
+  index: number,
+  oldProcessorId?: string,
+): void {
+  store.automationLanes = store.automationLanes.filter((lane) => {
+    if (lane.target !== target) return true;
+    const ref = parseInsertAutomationParam(lane.param);
+    if (ref === undefined) return true;
+    return ref.processorId !== oldProcessorId && ref.insertIndex !== index;
+  });
+  remapMidiTargets(store, (id) => {
+    const ref = parseMidiLearnInsertTargetId(id);
+    if (!ref || !sameMidiScope(target, ref.scope)) return id;
+    const replaced =
+      (oldProcessorId !== undefined && ref.processorId === oldProcessorId) || ref.index === index;
+    return replaced ? null : id;
   });
 }
 

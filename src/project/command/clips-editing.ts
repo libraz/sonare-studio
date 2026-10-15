@@ -8,7 +8,7 @@ import {
   projectClipScoreAnnotations,
   remapClipScoreAnnotations,
 } from '../annotations';
-import { collectReferencedAudioAssetIds } from '../asset-references';
+import { createAssetReferenceGuard } from '../asset-references';
 import { ingestAudioBuffer } from '../audio-import';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '../audio-slice';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
@@ -35,7 +35,13 @@ import {
   setAudioSourceId,
   useProjectStore,
 } from '../store';
-import { normalizeTempoMap, ppqRangeSamples, ppqToSeconds, secondsToPpq } from '../tempo-map';
+import {
+  type NormalizedTempoMap,
+  normalizeTempoMap,
+  ppqRangeSamples,
+  ppqToSeconds,
+  secondsToPpq,
+} from '../tempo-map';
 import type {
   ClipCcLane,
   ClipChannelPressureLane,
@@ -54,7 +60,12 @@ import {
   warpedClipSource,
 } from '../warp';
 import { assertNoNewClipOverlaps, moveClipsWithin, replaceClipsWithin } from './clip-lane';
-import { moveClipWithin, splitClipWithin, trimClipWithin } from './clips-internal';
+import {
+  moveClipWithin,
+  removeClipWithin,
+  splitClipWithin,
+  trimClipWithin,
+} from './clips-internal';
 import { execute, executeAtomic } from './history';
 import {
   requireEditableClip,
@@ -77,14 +88,9 @@ export { assertNoNewClipOverlaps };
  */
 export function deleteClip(clipId: number): void {
   const store = useProjectStore();
-  const project = getProject();
   requireEditableClip(store, clipId);
   executeAtomic((edit) => {
-    clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
-    edit(1, () => project.removeClip(clipId));
-    const nextAnnotations = { ...store.scoreAnnotations };
-    delete nextAnnotations[clipId];
-    store.scoreAnnotations = nextAnnotations;
+    removeClipWithin(edit, clipId);
     if (store.clipId === clipId) store.clipId = -1;
     store.refresh();
   });
@@ -119,31 +125,39 @@ export function renameClip(clipId: number, name: string): void {
 export function moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void {
   const store = useProjectStore();
   const project = getProject();
-  const clip = requireEditableClip(store, clipId);
-  validatePpq(newStartPpq, 'Clip startPpq');
-  if (newTrackId !== undefined) {
-    const destination = requireEditableTrack(store, newTrackId);
-    if (!canTrackContainClip(destination.kind, clipKind(clip))) {
-      throw new RangeError(
-        `Cannot move ${clipKind(clip)} clip ${clipId} to ${destination.kind} track ${newTrackId}`,
-      );
-    }
-  }
-  if (project.getOverlapPolicy() === 1) {
-    assertNoNewClipOverlaps(store.clips, [
-      {
-        clipId,
-        startPpq: newStartPpq,
-        lengthPpq: clip.lengthPpq,
-        trackId: newTrackId ?? clip.trackId,
-      },
-    ]);
-  }
+  const placement = validatedClipMove(store, { clipId, newStartPpq, newTrackId });
+  if (project.getOverlapPolicy() === 1) assertNoNewClipOverlaps(store.clips, [placement]);
   execute(1, () => {
     if (newTrackId === undefined) project.moveClip(clipId, newStartPpq);
     else project.moveClip(clipId, newStartPpq, newTrackId);
     store.refresh();
   });
+}
+
+/**
+ * Validates one clip move (editable clip, finite start, destination track
+ * that can hold the clip) and returns the resulting placement.
+ */
+function validatedClipMove(
+  store: ReturnType<typeof useProjectStore>,
+  move: { clipId: number; newStartPpq: number; newTrackId?: number },
+): { clipId: number; startPpq: number; lengthPpq: number; trackId: number } {
+  const clip = requireEditableClip(store, move.clipId);
+  validatePpq(move.newStartPpq, 'Clip startPpq');
+  if (move.newTrackId !== undefined) {
+    const destination = requireEditableTrack(store, move.newTrackId);
+    if (!canTrackContainClip(destination.kind, clipKind(clip))) {
+      throw new RangeError(
+        `Cannot move ${clipKind(clip)} clip ${move.clipId} to ${destination.kind} track ${move.newTrackId}`,
+      );
+    }
+  }
+  return {
+    clipId: move.clipId,
+    startPpq: move.newStartPpq,
+    lengthPpq: clip.lengthPpq,
+    trackId: move.newTrackId ?? clip.trackId,
+  };
 }
 
 /** Moves several clips as one undoable arrangement edit. */
@@ -154,34 +168,12 @@ export function moveClips(
   const store = useProjectStore();
   const project = getProject();
   const ids = new Set<number>();
-  for (const move of moves) {
+  const placements = moves.map((move) => {
     if (ids.has(move.clipId)) throw new RangeError(`Duplicate clip move ${move.clipId}`);
     ids.add(move.clipId);
-    const clip = requireEditableClip(store, move.clipId);
-    validatePpq(move.newStartPpq, 'Clip startPpq');
-    if (move.newTrackId !== undefined) {
-      const destination = requireEditableTrack(store, move.newTrackId);
-      if (!canTrackContainClip(destination.kind, clipKind(clip))) {
-        throw new RangeError(
-          `Cannot move ${clipKind(clip)} clip ${move.clipId} to ${destination.kind}`,
-        );
-      }
-    }
-  }
-  if (project.getOverlapPolicy() === 1) {
-    assertNoNewClipOverlaps(
-      store.clips,
-      moves.map((move) => {
-        const clip = requireEditableClip(store, move.clipId);
-        return {
-          clipId: move.clipId,
-          startPpq: move.newStartPpq,
-          lengthPpq: clip.lengthPpq,
-          trackId: move.newTrackId ?? clip.trackId,
-        };
-      }),
-    );
-  }
+    return validatedClipMove(store, move);
+  });
+  if (project.getOverlapPolicy() === 1) assertNoNewClipOverlaps(store.clips, placements);
   executeAtomic((edit) => {
     moveClipsWithin(
       edit,
@@ -638,30 +630,26 @@ export async function consolidateAudioClips(
   if (!Number.isFinite(tempoBpm) || tempoBpm <= 0) {
     throw new RangeError(`Tempo must be finite and > 0, got ${tempoBpm}`);
   }
-  const tempoMap = normalizeTempoMap(
-    options.tempoSegments ??
-      (options.tempoBpm !== undefined ? [{ startPpq: 0, bpm: tempoBpm }] : store.tempoSegments),
-    tempoBpm,
-  );
+  const liveTempoMap = (): NormalizedTempoMap => {
+    const bpm = options.tempoBpm ?? store.tempoBpm;
+    return normalizeTempoMap(
+      options.tempoSegments ??
+        (options.tempoBpm !== undefined ? [{ startPpq: 0, bpm }] : store.tempoSegments),
+      bpm,
+    );
+  };
+  const tempoMap = liveTempoMap();
   const ordered = [...clips].sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
   const sourceTokens = consolidateSourceTokens(ordered);
   const targetId = `consolidate:${uniqueIds
     .slice()
     .sort((a, b) => a - b)
     .join(',')}`;
-  const currentRevision = (): string | null => {
+  const currentRevision = (map: NormalizedTempoMap = liveTempoMap()): string | null => {
     if (!areConsolidateSourcesCurrent(store, sourceTokens)) return null;
-    const currentTempoBpm = options.tempoBpm ?? store.tempoBpm;
-    const currentTempoMap = normalizeTempoMap(
-      options.tempoSegments ??
-        (options.tempoBpm !== undefined
-          ? [{ startPpq: 0, bpm: currentTempoBpm }]
-          : store.tempoSegments),
-      currentTempoBpm,
-    );
-    return JSON.stringify({ sources: [...sourceTokens.entries()], tempoMap: currentTempoMap });
+    return JSON.stringify({ sources: [...sourceTokens.entries()], tempoMap: map });
   };
-  const revision = currentRevision();
+  const revision = currentRevision(tempoMap);
   const operation = beginProjectOperation(consolidateOperations, store, targetId, revision);
   const assertCurrent = (): void =>
     assertProjectOperationCurrent(
@@ -828,8 +816,7 @@ export async function consolidateAudioClips(
     }
 
     const assets = options.ingest ? null : createAudioAssetTransaction();
-    const isReferenced = (assetId: string): boolean =>
-      collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+    const isReferenced = createAssetReferenceGuard(store);
     try {
       const meta = options.ingest
         ? await ingest(stitched, sampleRate, `${ordered[0].name} (consolidated)`)

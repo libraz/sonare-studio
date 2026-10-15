@@ -23,8 +23,7 @@ import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { normalizeTempoMap, tempoAtPpq } from '../tempo-map';
 import { isFourFourBarRange } from '../time-signature';
-import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
-import { executeAtomic } from './history';
+import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
 
 /** GM percussion channel (MIDI channel 10, zero-based). */
 const GM_PERCUSSION_CHANNEL = 9;
@@ -142,19 +141,5 @@ export function generateDrumsCommand(params: GenerateDrumsParams = {}): number {
   const plan = buildDrumsPlan(store, params);
   if (plan === null) return 0;
 
-  executeAtomic((edit) =>
-    addGeneratedTrack(
-      store,
-      {
-        name: plan.name,
-        notes: plan.notes,
-        startPpq: 0,
-        lengthPpq: plan.lengthPpq,
-        preset: plan.preset,
-        provenance: plan.provenance,
-      },
-      edit,
-    ),
-  );
-  return plan.notes.length;
+  return commitTrackPlan(store, plan);
 }

@@ -10,10 +10,22 @@ import { executeApp } from './history';
  *
  * @param id Target id (mixer strip or quick control) the controller drives.
  * @param binding MIDI channel + controller to capture for that target.
+ *   No-op (and no history entry) when the target is already bound to it.
  */
 export function setMidiCcBinding(id: string, binding: MidiCcBinding): void {
+  const bindings = useProjectStore().midiCcBindings;
+  const current = bindings.get(id);
+  if (
+    current !== undefined &&
+    current.channel === binding.channel &&
+    current.controller === binding.controller &&
+    current.kind === binding.kind &&
+    current.parameter === binding.parameter
+  ) {
+    return;
+  }
   executeApp(() => {
-    useProjectStore().midiCcBindings.set(id, { ...binding });
+    bindings.set(id, { ...binding });
   });
 }
 

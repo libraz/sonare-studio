@@ -1,4 +1,4 @@
-import type { MixerBus, MixerStrip, ProjectMixerState, StripSend } from './mixer';
+import type { MixerStrip, ProjectMixerState, StripSend } from './mixer';
 
 /** Bus ids occupied by internal routing nodes. */
 export const RESERVED_MIXER_BUS_ID = 'return-solo-discard';
@@ -84,14 +84,6 @@ export function mixerBusTopology(
     nodes.push(topologyNode(groupBusTopologyId(trackId), strip));
   }
   return nodes;
-}
-
-/** Returns all known bus ids, including internal group buses. */
-export function mixerBusTopologyIds(
-  mixer: Pick<ProjectMixerState, 'buses'>,
-  groupTracks: ReadonlyArray<MixerGroupBusInput> = [],
-): ReadonlySet<string> {
-  return new Set(mixerBusTopology(mixer, groupTracks).map((node) => node.id));
 }
 
 /** Throws when a bus route names a missing node or itself. */
@@ -190,9 +182,4 @@ export function assertValidMixerBusTopology(nodes: ReadonlyArray<MixerBusTopolog
       assertNoBusRoutingCycle(graph, source, node.id);
     }
   }
-}
-
-/** Returns a mixer bus by id without throwing, for command validation paths. */
-export function mixerBusById(buses: ReadonlyArray<MixerBus>, busId: string): MixerBus | undefined {
-  return buses.find((bus) => bus.id === busId);
 }

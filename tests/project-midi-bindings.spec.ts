@@ -41,6 +41,19 @@ describe('MIDI-learn binding commands', () => {
     expect(store.midiCcBindings.get('gain:master')).toEqual({ channel: 0, controller: 7 });
   });
 
+  it('re-binding a target to the same source adds no history entry', () => {
+    setMidiCcBinding('gain:master', { channel: 0, controller: 7 });
+    setMidiCcBinding('nrpn:target', { channel: 1, controller: 99, kind: 'nrpn', parameter: 12 });
+    clearHistory();
+
+    setMidiCcBinding('gain:master', { channel: 0, controller: 7 });
+    setMidiCcBinding('nrpn:target', { channel: 1, controller: 99, kind: 'nrpn', parameter: 12 });
+
+    expect(canUndo()).toBe(false);
+    setMidiCcBinding('nrpn:target', { channel: 1, controller: 99, kind: 'nrpn', parameter: 13 });
+    expect(canUndo()).toBe(true);
+  });
+
   it('rebinding the same target keeps the prior binding recoverable by undo', () => {
     setMidiCcBinding('gain:master', { channel: 0, controller: 7 });
     setMidiCcBinding('gain:master', { channel: 1, controller: 10 });

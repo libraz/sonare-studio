@@ -23,6 +23,7 @@
 
 import { linearToDb, SILENCE_DB } from '@/lib/db';
 import type { EqBand, SendTiming } from '@/wasm/index.js';
+import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
 /** Explicit source namespaces accepted by an insert sidechain key command. */
@@ -239,11 +240,14 @@ export const MIN_STRIP_WIDTH = 0;
 /** Highest accepted stereo width multiplier. */
 export const MAX_STRIP_WIDTH = 2;
 
+/** Band slots of the engine's StreamingEqualizer. */
+export const MAX_STRIP_EQ_BANDS = 24;
+
 /** Channel EQ as a list of libsonare EqBand descriptors. */
 export interface StripEq {
   /** False bypasses the whole EQ. */
   enabled: boolean;
-  /** Up to 24 bands (StreamingEqualizer band slots). */
+  /** Up to {@link MAX_STRIP_EQ_BANDS} bands. */
   bands: EqBand[];
 }
 
@@ -597,17 +601,17 @@ export function createDefaultMasteringChain(): MasteringChainState {
 
 /** Deep-copies a strip (strips are plain JSON data). */
 export function cloneStrip(strip: MixerStrip): MixerStrip {
-  return JSON.parse(JSON.stringify(strip)) as MixerStrip;
+  return cloneJson(strip);
 }
 
 /** Deep-copies a mastering chain (chains are plain JSON data). */
 export function cloneMasteringChain(chain: MasteringChainState): MasteringChainState {
-  return JSON.parse(JSON.stringify(chain)) as MasteringChainState;
+  return cloneJson(chain);
 }
 
 /** Deep-copies the project mixer state. */
 export function cloneMixerState(state: ProjectMixerState): ProjectMixerState {
-  return JSON.parse(JSON.stringify(state)) as ProjectMixerState;
+  return cloneJson(state);
 }
 
 /** True when a strip is neutral (no audible or UI-only deviation). */

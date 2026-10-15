@@ -902,7 +902,7 @@ describe('mixer commands', () => {
 
     it('validates the strip, slot index and source track', () => {
       const sourceId = addAudioTrack({ name: 'Kick' });
-      expect(() => setInsertSidechain(trackId, 0, sourceId)).toThrow(/no mixer strip/);
+      expect(() => setInsertSidechain(trackId, 0, sourceId)).toThrow(/Unknown insert index/);
       addInsert(trackId, 'dynamics.compressor');
       expect(() => setInsertSidechain(trackId, 5, sourceId)).toThrow(RangeError);
       expect(() => setInsertSidechain(trackId, 0, trackId)).toThrow(/its own track/);

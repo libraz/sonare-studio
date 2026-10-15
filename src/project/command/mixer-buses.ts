@@ -1,10 +1,14 @@
 import { busAutomationTarget } from '../automation';
 import { assertKnownBusDestination, assertValidMixerBusId } from '../bus-topology';
-import { parseMidiLearnBusStripControlTargetId } from '../midi-learn-targets';
+import {
+  parseMidiLearnBusStripControlTargetId,
+  parseMidiLearnSendTargetId,
+} from '../midi-learn-targets';
 import {
   assertCanAddEngineBus,
   canRouteReturnSolo,
   cloneStrip,
+  createDefaultStrip,
   isMixerChannelLayout,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
@@ -41,12 +45,13 @@ export interface AddMixerBusInput {
 export function addMixerBus(input: AddMixerBusInput = {}): string {
   const store = useProjectStore();
   assertCanAddEngineBus(store.mixer.buses.length, store.tracks);
+  const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
   let id = input.id;
   if (id !== undefined) {
-    assertValidMixerBusId(id, new Set(store.mixer.buses.map((bus) => bus.id)));
+    assertValidMixerBusId(id, knownBusIds);
   } else {
     let n = 1;
-    while (store.mixer.buses.some((bus) => bus.id === `bus-${n}`)) n++;
+    while (knownBusIds.has(`bus-${n}`)) n++;
     id = `bus-${n}`;
   }
   const busId = id;
@@ -55,7 +60,6 @@ export function addMixerBus(input: AddMixerBusInput = {}): string {
     throw new RangeError(`Unknown mixer bus channel layout: ${String(input.channelLayout)}`);
   }
   if (input.outputBusId !== undefined) {
-    const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
     // The new bus is not in the old list yet, but it is the route source.
     assertKnownBusDestination(input.outputBusId, knownBusIds, busId);
   }
@@ -70,15 +74,7 @@ export function addMixerBus(input: AddMixerBusInput = {}): string {
           gainDb: 0,
           ...(input.channelLayout !== undefined ? { channelLayout: input.channelLayout } : {}),
           ...(input.outputBusId !== undefined
-            ? {
-                strip: {
-                  gainDb: 0,
-                  pan: 0,
-                  inserts: [],
-                  sends: [],
-                  outputBusId: input.outputBusId,
-                },
-              }
+            ? { strip: { ...createDefaultStrip(), outputBusId: input.outputBusId } }
             : {}),
         },
       ],
@@ -136,10 +132,13 @@ export function removeMixerBus(busId: string): void {
     };
     const target = busAutomationTarget(busId);
     store.automationLanes = store.automationLanes.filter((lane) => lane.target !== target);
-    // Bus-strip learn targets embed a stable bus id, so remove only bindings
-    // belonging to the bus that has just been removed.
+    // Bus-strip and send learn targets embed a stable bus id, so remove only
+    // bindings belonging to the bus that has just been removed.
     for (const targetId of store.midiCcBindings.keys()) {
-      if (parseMidiLearnBusStripControlTargetId(targetId)?.busId === busId) {
+      if (
+        parseMidiLearnBusStripControlTargetId(targetId)?.busId === busId ||
+        parseMidiLearnSendTargetId(targetId)?.busId === busId
+      ) {
         store.midiCcBindings.delete(targetId);
       }
     }

@@ -2,7 +2,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { loadAsset } from '@/persistence/assets';
 import type { NoteTargetUnmatchedPolicy } from '@/wasm/index.js';
-import { collectReferencedAudioAssetIds } from '../asset-references';
+import { createAssetReferenceGuard } from '../asset-references';
 import { tuneAudioClipToMidi } from '../audio-tune-to-midi';
 import { getProject, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
@@ -86,8 +86,7 @@ export async function tuneAudioClipToMidiTrack(
   if (!tuned || !isCurrent()) return null;
 
   const assets = createAudioAssetTransaction();
-  const isReferenced = (assetId: string): boolean =>
-    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  const isReferenced = createAssetReferenceGuard(store);
   try {
     const meta = await assets.save(
       { name: `${clip.name} tuned`, sampleRate: tuned.sampleRate },

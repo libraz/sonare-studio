@@ -1,11 +1,9 @@
-import { parseInsertAutomationParam } from '../automation';
 import {
   assertKnownBusDestination,
   assertNoBusRoutingCycle,
   groupBusTopologyId,
   mixerBusTopology,
 } from '../bus-topology';
-import { parseMidiLearnInsertTargetId } from '../midi-learn-targets';
 import {
   cloneStrip,
   createProcessorId,
@@ -16,6 +14,7 @@ import { editedProcessorParams } from '../processor-controls';
 import { useProjectStore } from '../store';
 import {
   pruneInsertProcessorReferences,
+  pruneReplacedInsertReferences,
   reorderInsertProcessorReferences,
 } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
@@ -27,47 +26,10 @@ import {
   mixerBusIdFromTarget,
   patchMixerMirror,
   requireInsert,
+  sidechainTargetTopologyId,
   writeStrip,
 } from './mixer-internal';
 import { requireTrack } from './utils';
-
-/**
- * Drops references to the old slot identity when a replacement changes the
- * processor type. Positional references at this slot are also unsafe: unlike
- * a reorder, they describe the old processor and cannot be rebound to the
- * replacement's parameter set. References to other slots remain untouched.
- */
-function pruneReplacedInsertReferences(
-  store: ReturnType<typeof useProjectStore>,
-  target: MixerStripTarget,
-  index: number,
-  oldProcessorId?: string,
-): void {
-  store.automationLanes = store.automationLanes.filter((lane) => {
-    if (lane.target !== target) return true;
-    const ref = parseInsertAutomationParam(lane.param);
-    if (ref === undefined) return true;
-    return ref.processorId !== oldProcessorId && ref.insertIndex !== index;
-  });
-
-  const nextBindings = new Map(store.midiCcBindings);
-  for (const [id] of nextBindings) {
-    const ref = parseMidiLearnInsertTargetId(id);
-    if (!ref || !sameMidiLearnScope(target, ref.scope)) continue;
-    if (
-      (oldProcessorId !== undefined && ref.processorId === oldProcessorId) ||
-      ref.index === index
-    ) {
-      nextBindings.delete(id);
-    }
-  }
-  store.midiCcBindings.clear();
-  for (const [id, binding] of nextBindings) store.midiCcBindings.set(id, binding);
-}
-
-function sameMidiLearnScope(target: MixerStripTarget, scope: number | 'master'): boolean {
-  return (target === 'master' || typeof target === 'number') && target === scope;
-}
 
 /** Reads the one sidechain namespace carried by an insert slot. */
 function sidechainSourceFromSlot(
@@ -92,6 +54,16 @@ function sidechainSourceFromSlot(
   return sources[0] ?? null;
 }
 
+/** True when two sidechain sources address the same namespace and id. */
+function sameSidechainSource(
+  a: MixerSidechainSource | null,
+  b: MixerSidechainSource | null,
+): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind === 'bus') return b.kind === 'bus' && a.busId === b.busId;
+  return b.kind !== 'bus' && a.kind === b.kind && a.trackId === b.trackId;
+}
+
 /** Returns bus/group graph ids carried by an insert sidechain slot. */
 function sidechainTopologySources(
   slot: Pick<InsertSlot, 'sidechainSourceBusId' | 'sidechainSourceGroupTrackId'>,
@@ -102,17 +74,6 @@ function sidechainTopologySources(
     sources.push(groupBusTopologyId(slot.sidechainSourceGroupTrackId));
   }
   return sources;
-}
-
-/** Returns the bus/group graph id for a strip target, when it has one. */
-function sidechainTargetTopologyId(
-  store: ReturnType<typeof useProjectStore>,
-  target: MixerStripTarget,
-): string | undefined {
-  if (isMixerBusStripTarget(target)) return mixerBusIdFromTarget(target);
-  if (typeof target !== 'number') return undefined;
-  const track = requireTrack(store, target);
-  return track.kind === 'group' ? groupBusTopologyId(track.id) : undefined;
 }
 
 /**
@@ -427,35 +388,12 @@ export function setInsertSidechain(
   source: number | MixerSidechainSource | null,
 ): void {
   const store = useProjectStore();
-  const strip =
-    typeof target === 'number'
-      ? (() => {
-          const track = requireTrack(store, target);
-          if (!track.mixer) throw new RangeError(`Track ${target} has no mixer strip`);
-          return track.mixer;
-        })()
-      : currentStrip(store, target);
+  const strip = currentStrip(store, target);
   const slot = requireInsert(strip, index);
   const normalized =
     typeof source === 'number' ? { kind: 'track' as const, trackId: source } : source;
   validateInsertSidechainSource(store, target, normalized, slot);
-  const same =
-    normalized === null
-      ? slot.sidechainSourceTrackId === undefined &&
-        slot.sidechainSourceBusId === undefined &&
-        slot.sidechainSourceGroupTrackId === undefined
-      : normalized.kind === 'track'
-        ? slot.sidechainSourceTrackId === normalized.trackId &&
-          slot.sidechainSourceBusId === undefined &&
-          slot.sidechainSourceGroupTrackId === undefined
-        : normalized.kind === 'bus'
-          ? slot.sidechainSourceBusId === normalized.busId &&
-            slot.sidechainSourceTrackId === undefined &&
-            slot.sidechainSourceGroupTrackId === undefined
-          : slot.sidechainSourceGroupTrackId === normalized.trackId &&
-            slot.sidechainSourceTrackId === undefined &&
-            slot.sidechainSourceBusId === undefined;
-  if (same) return;
+  if (sameSidechainSource(sidechainSourceFromSlot(slot), normalized)) return;
   executeApp(() => {
     const next = cloneStrip(strip);
     const updated = { ...next.inserts[index] };

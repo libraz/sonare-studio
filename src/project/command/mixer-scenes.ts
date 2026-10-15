@@ -18,6 +18,7 @@ import {
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_MIXER_BUSES,
+  MAX_STRIP_EQ_BANDS,
   MAX_STRIP_GAIN_DB,
   MAX_STRIP_WIDTH,
   MAX_VCA_GROUPS,
@@ -128,6 +129,7 @@ export interface ApplyMixerSceneResult {
   vcaCount: number;
 }
 
+/** Scene file indices (a file format; independent of the display order in PAN_LAW_IDS). */
 const PAN_LAW_FROM_SCENE: ReadonlyArray<PanLawId> = [
   'const3dB',
   'const4.5dB',
@@ -159,7 +161,7 @@ function clamp(value: number, min: number, max: number): number {
 function sceneEq(value: unknown): StripEq | undefined {
   const record = objectRecord(value);
   if (!record || !Array.isArray(record.bands)) return undefined;
-  const bands = record.bands.slice(0, 24).flatMap((entry) => {
+  const bands = record.bands.slice(0, MAX_STRIP_EQ_BANDS).flatMap((entry) => {
     const band = objectRecord(entry);
     if (!band) return [];
     const clean: Record<string, number | boolean | string> = {};
@@ -589,13 +591,18 @@ function buildScenePlan(
   // A scene written for this project names its strips by track id; a template
   // does not, and its strips map onto the tracks in order.
   const trackIds = new Set(tracks.map((track) => track.id));
+  const sceneTrackIds = trackSceneStrips.map(sceneStripTrackId);
   const byTrackId =
-    trackSceneStrips.length > 0 &&
-    trackSceneStrips.every((strip) => trackIds.has(sceneStripTrackId(strip) ?? -1));
+    trackSceneStrips.length > 0 && sceneTrackIds.every((id) => trackIds.has(id ?? -1));
+  const stripByTrackId = new Map<number, SceneStrip>();
+  if (byTrackId) {
+    trackSceneStrips.forEach((strip, index) => {
+      const id = sceneTrackIds[index];
+      if (id !== undefined && !stripByTrackId.has(id)) stripByTrackId.set(id, strip);
+    });
+  }
   const stripForTrack = (track: EditorTrack, index: number): SceneStrip | undefined =>
-    byTrackId
-      ? trackSceneStrips.find((strip) => sceneStripTrackId(strip) === track.id)
-      : trackSceneStrips[index];
+    byTrackId ? stripByTrackId.get(track.id) : trackSceneStrips[index];
   const sidechainBySceneId = new Map<string, SceneSidechainSource>();
   tracks.forEach((track, index) => {
     const strip = stripForTrack(track, index);

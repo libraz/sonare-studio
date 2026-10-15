@@ -132,6 +132,16 @@ export function pairNoteBoundariesIntoNotes(
   );
 }
 
+/** Orders boundaries by PPQ with note-offs ahead of note-ons at the same PPQ. */
+function compareBoundaries(a: NoteBoundaryEvent, b: NoteBoundaryEvent): number {
+  return (
+    a.ppq - b.ppq ||
+    (a.kind === b.kind ? 0 : a.kind === 'off' ? -1 : 1) ||
+    a.pitch - b.pitch ||
+    a.channel - b.channel
+  );
+}
+
 /** A note boundary tagged with its position in the array it came from. */
 interface IndexedBoundary extends NoteBoundaryEvent {
   index: number;
@@ -143,13 +153,7 @@ interface IndexedBoundary extends NoteBoundaryEvent {
  */
 function pairIndexedBoundaries(boundaries: ReadonlyArray<IndexedBoundary>): IndexedRawNote[] {
   const decoded = boundaries.slice();
-  decoded.sort(
-    (a, b) =>
-      a.ppq - b.ppq ||
-      (a.kind === b.kind ? 0 : a.kind === 'off' ? -1 : 1) ||
-      a.pitch - b.pitch ||
-      a.channel - b.channel,
-  );
+  decoded.sort(compareBoundaries);
   const pending = new Map<string, Array<{ startPpq: number; velocity: number; index: number }>>();
   const out: IndexedRawNote[] = [];
   for (const event of decoded) {
@@ -235,13 +239,7 @@ export function notesToProjectMidiEvents(
       velocity: note.offVelocity ?? 0,
     });
   }
-  boundaries.sort(
-    (a, b) =>
-      a.ppq - b.ppq ||
-      (a.kind === b.kind ? 0 : a.kind === 'off' ? -1 : 1) ||
-      a.pitch - b.pitch ||
-      a.channel - b.channel,
-  );
+  boundaries.sort(compareBoundaries);
   return boundaries.map((b) =>
     b.kind === 'on'
       ? wasm.Project.midiNoteOn(b.ppq, 0, b.channel, b.pitch, b.velocity)

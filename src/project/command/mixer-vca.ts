@@ -1,7 +1,7 @@
 import type { VcaGroup } from '../mixer';
 import { MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
 import { useProjectStore } from '../store';
-import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
+import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
 import { patchMixerMirror } from './mixer-internal';
 import { requireTrack } from './utils';
 
@@ -180,7 +180,7 @@ export function setTrackVca(trackId: number, groupId: string | null): void {
     throw new RangeError(`Unknown VCA group id: ${groupId}`);
   }
   if ((track.vcaId ?? null) === groupId) return;
-  execute(0, () => {
+  executeApp(() => {
     store.tracks = store.tracks.map((t) => {
       if (t.id !== trackId) return t;
       const next = { ...t };

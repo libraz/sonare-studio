@@ -1,3 +1,4 @@
+import { groupBusTopologyId } from '../bus-topology';
 import { createDefaultStrip, type InsertSlot, type MixerStrip } from '../mixer';
 import type { useProjectStore } from '../store';
 import { type CommandGestureOptions, executeApp } from './history';
@@ -86,4 +87,15 @@ export function requireInsert(strip: MixerStrip, index: number): InsertSlot {
     throw new RangeError(`Unknown insert index: ${index}`);
   }
   return strip.inserts[index];
+}
+
+/** Returns the bus/group graph id for a strip target, when it has one. */
+export function sidechainTargetTopologyId(
+  store: ReturnType<typeof useProjectStore>,
+  target: MixerStripTarget,
+): string | undefined {
+  if (isMixerBusStripTarget(target)) return mixerBusIdFromTarget(target);
+  if (typeof target !== 'number') return undefined;
+  const track = requireTrack(store, target);
+  return track.kind === 'group' ? groupBusTopologyId(track.id) : undefined;
 }

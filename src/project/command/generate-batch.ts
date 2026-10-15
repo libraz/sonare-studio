@@ -32,7 +32,7 @@ import {
   type RegenerateDrumsRangeParams,
 } from './generate-drums-range';
 import { buildMotifClipMerge, buildMotifPlan, type GenerateMotifParams } from './generate-motif';
-import { addGeneratedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
+import { addPlannedTrack, EDITS_PER_TRACK, type TrackPlan } from './generate-track';
 import { type AtomicProjectEdit, executeAtomic } from './history';
 import { leadFollowRejection } from './lead-follow';
 import { pruneClipScoreAnnotations } from './tracks';
@@ -234,19 +234,7 @@ function buildBatchOps(
             replaceTrack(store, trackId, plan, edit);
             return trackId;
           }
-          const clipId = addGeneratedTrack(
-            store,
-            {
-              name: plan.name,
-              notes: plan.notes,
-              startPpq: 0,
-              lengthPpq: plan.lengthPpq,
-              preset: plan.preset,
-              provenance: plan.provenance,
-            },
-            edit,
-          );
-          return trackOfClip(store, clipId);
+          return trackOfClip(store, addPlannedTrack(store, plan, edit));
         },
       });
       continue;
@@ -255,22 +243,7 @@ function buildBatchOps(
     ops.push({
       part: spec.part,
       edits: EDITS_PER_TRACK,
-      apply: (edit) =>
-        trackOfClip(
-          store,
-          addGeneratedTrack(
-            store,
-            {
-              name: plan.name,
-              notes: plan.notes,
-              startPpq: 0,
-              lengthPpq: plan.lengthPpq,
-              preset: plan.preset,
-              provenance: plan.provenance,
-            },
-            edit,
-          ),
-        ),
+      apply: (edit) => trackOfClip(store, addPlannedTrack(store, plan, edit)),
     });
   }
 

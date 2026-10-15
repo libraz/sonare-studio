@@ -35,7 +35,7 @@ import { audibleMidiProjector, audibleMidiSourceWindow } from '../midi-projectio
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { isFourFourBarRange, timeSignatureAt } from '../time-signature';
 import type { EditorClip } from '../types';
-import { addGeneratedTrack, materializeNote, type TrackPlan } from './generate-track';
+import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
 import { executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
@@ -70,13 +70,6 @@ export interface GenerateMotifParams {
   mode?: 'append' | 'replace';
   /** Deterministic seed (default 0). */
   seed?: number;
-}
-
-/** Clip-relative offset in beats to append after the given notes. */
-export function appendOffset(
-  notes: ReadonlyArray<{ startPpq: number; durationPpq: number }>,
-): number {
-  return notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
 }
 
 /** Bar count the motif command generates for (validated). */
@@ -238,19 +231,5 @@ export function generateMotifCommand(params: GenerateMotifParams = {}): number {
 
   const plan = buildMotifPlan(store, params);
   if (plan === null) return 0;
-  executeAtomic((edit) =>
-    addGeneratedTrack(
-      store,
-      {
-        name: plan.name,
-        notes: plan.notes,
-        startPpq: 0,
-        lengthPpq: plan.lengthPpq,
-        preset: plan.preset,
-        provenance: plan.provenance,
-      },
-      edit,
-    ),
-  );
-  return plan.notes.length;
+  return commitTrackPlan(store, plan);
 }

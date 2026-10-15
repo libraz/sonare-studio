@@ -21,6 +21,7 @@ import {
   parseMasteringAutomationParam,
 } from '../automation';
 import { assertValidMixerBusTopology, mixerBusTopology } from '../bus-topology';
+import { cloneJson } from '../clone-json';
 import { canonicalJson } from '../hash';
 import {
   assertEngineBusCapacity,
@@ -364,14 +365,27 @@ export function exportMixerSnapshotSlots(): MixerSnapshotSlotState {
   const snapshots: Partial<Record<MixerSnapshotSlot, MixerSnapshot>> = {};
   for (const slot of MIXER_SNAPSHOT_SLOTS) {
     const snapshot = slots.snapshots[slot];
-    if (snapshot) snapshots[slot] = markRaw(JSON.parse(JSON.stringify(snapshot)) as MixerSnapshot);
+    if (snapshot) snapshots[slot] = markRaw(cloneJson(snapshot));
+  }
+  return { snapshots, active: slots.active };
+}
+
+/**
+ * Slot state sharing the stored snapshots. Snapshots are raw and replaced
+ * rather than mutated, so history and dirty tracking can hold them uncopied.
+ */
+export function captureMixerSnapshotSlots(): MixerSnapshotSlotState {
+  const snapshots: Partial<Record<MixerSnapshotSlot, MixerSnapshot>> = {};
+  for (const slot of MIXER_SNAPSHOT_SLOTS) {
+    const snapshot = slots.snapshots[slot];
+    if (snapshot) snapshots[slot] = snapshot;
   }
   return { snapshots, active: slots.active };
 }
 
 /** Deterministic reactive signature used by dirty/autosave state tracking. */
 export function mixerSnapshotSlotsKey(): string {
-  return canonicalJson(exportMixerSnapshotSlots());
+  return canonicalJson(captureMixerSnapshotSlots());
 }
 
 /** Replaces the current slot registry from persisted snapshot state. */
@@ -387,18 +401,7 @@ export function importMixerSnapshotSlots(state: MixerSnapshotSlotState | null): 
 
 /** Drops a removed track and every sidechain reference to it from all slots. */
 export function pruneMixerSnapshotTrackReferences(trackId: number): void {
-  const prune = (strip: MixerStrip): MixerStrip => {
-    const next = pruneStripTrackReferences(strip, trackId);
-    if (!next.inserts.some((slot) => slot.sidechainSourceGroupTrackId === trackId)) return next;
-    const cleaned = cloneStrip(next);
-    cleaned.inserts = cleaned.inserts.map((slot) => {
-      if (slot.sidechainSourceGroupTrackId !== trackId) return slot;
-      const cleared = { ...slot };
-      delete cleared.sidechainSourceGroupTrackId;
-      return cleared;
-    });
-    return cleaned;
-  };
+  const prune = (strip: MixerStrip): MixerStrip => pruneStripTrackReferences(strip, trackId);
   for (const slot of MIXER_SNAPSHOT_SLOTS) {
     const snapshot = slots.snapshots[slot];
     if (!snapshot) continue;
@@ -426,7 +429,7 @@ export function pruneMixerSnapshotTrackReferences(trackId: number): void {
 }
 
 registerHistoryStateContributor<MixerSnapshotSlotState>('mixer-snapshot-slots', {
-  capture: exportMixerSnapshotSlots,
+  capture: captureMixerSnapshotSlots,
   restore: importMixerSnapshotSlots,
 });
 registerTargetReferenceContributor({ pruneTrack: pruneMixerSnapshotTrackReferences });

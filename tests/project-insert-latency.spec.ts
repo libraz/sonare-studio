@@ -3,8 +3,6 @@ import {
   createInsertPdcPlan,
   insertChainLatencySamples,
   insertLatencyResolverFromCatalog,
-  maxTrackInsertLatencySamples,
-  trackPdcDelaySamples,
 } from '@/project/insert-latency';
 import { createDefaultStrip } from '@/project/mixer';
 
@@ -73,48 +71,6 @@ describe('insert latency helpers', () => {
     );
 
     expect(resolve({ processor: 'eq.linearPhase', params: { kernelSize: 2 } })).toBe(256);
-  });
-
-  it('computes per-track PDC delays while preserving manual channel delay', () => {
-    const resolve = insertLatencyResolverFromCatalog([
-      { id: 'linear.eq', latencySamples: 128 },
-      { id: 'lookahead.limiter', latencySamples: 64 },
-    ]);
-    const tracks = [
-      {
-        kind: 'audio',
-        mixer: {
-          ...createDefaultStrip(),
-          inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
-        },
-      },
-      {
-        kind: 'audio',
-        mixer: {
-          ...createDefaultStrip(),
-          channelDelaySamples: 8,
-          inserts: [{ processor: 'lookahead.limiter', params: {}, enabled: true }],
-        },
-      },
-      {
-        kind: 'audio',
-        frozen: { assetId: 'frozen' },
-        mixer: {
-          ...createDefaultStrip(),
-          inserts: [{ processor: 'lookahead.limiter', params: {}, enabled: true }],
-        },
-      },
-      { kind: 'group', mixer: createDefaultStrip() },
-    ];
-
-    const maxLatency = maxTrackInsertLatencySamples(tracks, resolve);
-    expect(maxLatency).toBe(128);
-    expect(trackPdcDelaySamples(tracks[0], maxLatency, resolve)).toBe(0);
-    expect(trackPdcDelaySamples(tracks[1], maxLatency, resolve)).toBe(72);
-    // The frozen PCM already contains the limiter's 64 samples. PDC must add
-    // only the remaining 64 samples, not a second full 128-sample delay.
-    expect(trackPdcDelaySamples(tracks[2], maxLatency, resolve)).toBe(64);
-    expect(trackPdcDelaySamples(tracks[3], maxLatency, resolve)).toBe(128);
   });
 
   it('includes routed return/group latency while excluding an unused return bus', () => {

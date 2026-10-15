@@ -1,6 +1,6 @@
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type AudioAssetMeta, audioAssetUri } from '@/persistence/assets';
-import { collectReferencedAudioAssetIds } from '../asset-references';
+import { createAssetReferenceGuard } from '../asset-references';
 import { type ExternalStemRole, externalStemTrackName } from '../external-stems';
 import {
   getAudioSourceId,
@@ -72,8 +72,7 @@ export async function importExternalStems(
   // Store every stem under one lease-backed transaction before touching the
   // Project. Any save/placement failure removes only newly-created content.
   const assets = createAudioAssetTransaction();
-  const isReferenced = (assetId: string): boolean =>
-    collectReferencedAudioAssetIds(store.clips, store.tracks).has(assetId);
+  const isReferenced = createAssetReferenceGuard(store);
   try {
     const saved: { stem: ExternalStemImport; meta: AudioAssetMeta }[] = [];
     for (const stem of stems) {

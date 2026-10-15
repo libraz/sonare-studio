@@ -619,30 +619,3 @@ export function editorNoteToMidiNote(note: EditorNote): MidiNote {
     channel: note.channel,
   };
 }
-
-/**
- * Converts a list of editor notes to engine {@link MidiNote}s.
- *
- * @param notes Editor notes to convert.
- * @returns Engine-facing notes in the same order.
- */
-export function editorNotesToMidiNotes(notes: ReadonlyArray<EditorNote>): MidiNote[] {
-  return notes.map(editorNoteToMidiNote);
-}
-
-/**
- * Converts an engine {@link MidiNote} to a {@link NewEditorNote} payload
- * (e.g., to import a generated phrase into the editor).
- *
- * @param note Engine note to convert.
- * @returns Creation payload accepted by the addNote command.
- */
-export function midiNoteToNewEditorNote(note: MidiNote): NewEditorNote {
-  return {
-    pitch: note.note,
-    velocity: note.velocity,
-    startPpq: note.startPpq,
-    durationPpq: note.durationPpq,
-    channel: note.channel ?? 0,
-  };
-}

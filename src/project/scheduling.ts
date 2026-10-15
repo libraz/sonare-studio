@@ -834,6 +834,12 @@ function* scheduleUnits(
   targetRate: number,
 ): Generator<ScheduleUnit> {
   const context = JSON.stringify([targetRate, tempoMap]);
+  const clipsByTrack = new Map<number, EditorClip[]>();
+  for (const clip of store.clips) {
+    const list = clipsByTrack.get(clip.trackId);
+    if (list) list.push(clip);
+    else clipsByTrack.set(clip.trackId, [clip]);
+  }
   for (const track of store.tracks) {
     // Frozen tracks play their baked pre-fader render from the timeline
     // start instead of their own clips (which stay silent until unfreeze).
@@ -845,8 +851,8 @@ function* scheduleUnits(
       };
       continue;
     }
-    for (const clip of store.clips) {
-      if (clip.trackId !== track.id || clipKind(clip) !== 'audio' || clip.gain <= 0) continue;
+    for (const clip of clipsByTrack.get(track.id) ?? []) {
+      if (clipKind(clip) !== 'audio' || clip.gain <= 0) continue;
       const { name: _name, ...content } = clip;
       const clipKey = `${context}|${JSON.stringify(content)}`;
       // A clip expands to one engine clip per comp segment (one segment for
