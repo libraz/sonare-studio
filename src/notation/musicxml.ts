@@ -10,6 +10,7 @@
  * on any particular whitespace beyond well-formedness.
  */
 
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import {
   type FieldDispositions,
   type LossReport,
@@ -75,7 +76,6 @@ import { type BeamIndex, beamXml, buildBeamIndex } from './musicxml-beams';
 import { groupChordSymbolsByMeasure, harmonyXml } from './musicxml-harmony';
 import {
   eventUsesPercussionMap,
-  GM_PERCUSSION_CHANNEL,
   noteheadXml,
   partUsesPercussionMap,
   percussionDisplay,

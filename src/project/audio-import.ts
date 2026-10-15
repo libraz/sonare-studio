@@ -70,12 +70,6 @@ function preflightDecodedAudio(decoded: AudioBuffer): void {
   }
 }
 
-/**
- * Alias kept for the sample editor's warp composable until it imports
- * {@link downmixToMono} directly.
- */
-export { downmixToMono as mixdownToMono };
-
 /** Tags are best effort: a worker that cannot start or load leaves the asset untagged. */
 async function detectTags(
   channels: ReadonlyArray<Float32Array>,

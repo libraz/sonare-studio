@@ -17,7 +17,9 @@
 
 import { SaxesParser } from 'saxes';
 import { keyMarkerName } from '@/compose/key-name';
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
+import { clampInt } from '@/lib/math';
 import { MAX_XML_DOCUMENT_BYTES, preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
   type DocumentClip,
@@ -28,15 +30,12 @@ import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
 } from '@/project/serialization';
+import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
 import { NOTE_VALUE_BASE_PPQ } from './model';
-import { GM_PERCUSSION_CHANNEL } from './musicxml-percussion';
 
 /** Sample rate assigned to imported projects (matches the SMF importer). */
 const DEFAULT_SAMPLE_RATE = 48000;
-
-/** Fallback tempo in BPM when the document carries no tempo direction. */
-const DEFAULT_BPM = 120;
 
 /** Default note-on velocity when a note carries no dynamics hint. */
 const DEFAULT_VELOCITY = 96;
@@ -153,10 +152,6 @@ interface InstrumentMapping {
 interface PartInfo {
   name: string;
   instruments: Map<string, InstrumentMapping>;
-}
-
-function clampInt(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 /** Returns direct child elements of `parent`, optionally filtered by tag name. */
@@ -980,7 +975,7 @@ function tempoSegments(tempos: Map<number, number>): DocumentTempoSegment[] {
     segments.push(segment);
   }
   if (segments.length === 0 || segments[0].startPpq > 0) {
-    segments.unshift({ startPpq: 0, bpm: segments[0]?.bpm ?? DEFAULT_BPM });
+    segments.unshift({ startPpq: 0, bpm: segments[0]?.bpm ?? DEFAULT_TEMPO_BPM });
   }
   return segments;
 }
@@ -989,7 +984,7 @@ function tempoSegments(tempos: Map<number, number>): DocumentTempoSegment[] {
 function tempoAtPpq(segments: ReadonlyArray<DocumentTempoSegment>, ppq: number): number {
   let low = 0;
   let high = segments.length - 1;
-  let match = segments[0]?.bpm ?? DEFAULT_BPM;
+  let match = segments[0]?.bpm ?? DEFAULT_TEMPO_BPM;
   while (low <= high) {
     const middle = (low + high) >>> 1;
     const segment = segments[middle];

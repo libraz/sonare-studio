@@ -11,6 +11,7 @@
  * descriptor leaves open.
  */
 
+import { errorMessage } from '@/lib/errors';
 import { isSwitchOn } from '@/lib/midi';
 import { formatControlValue } from '@/ui/devices/knob-math';
 import type {
@@ -638,7 +639,7 @@ function assertCoupledKeysAccepted(
       processingSampleRate ?? CONFIGURATION_CHECK_SAMPLE_RATE,
     );
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     const own = info.find((entry) => entry.name === param)?.coupledWith ?? [];
     const related = [
       ...own,

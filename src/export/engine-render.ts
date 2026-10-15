@@ -80,6 +80,7 @@ import {
   type MixdownStem,
 } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import {
@@ -524,7 +525,7 @@ export async function renderProjectWithEngine(
         kind: 'soundfont',
         id,
         reason: 'missing-or-unreadable',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       });
     },
   );

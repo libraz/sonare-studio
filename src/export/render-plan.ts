@@ -11,7 +11,12 @@ import {
   type ActiveSoundFontUsage,
   collectActiveSoundFontUsage,
 } from '@/project/soundfont-conflicts';
-import { type NormalizedTempoMap, ppqToSamples, samplesToPpq } from '@/project/tempo-map';
+import {
+  DEFAULT_TEMPO_BPM,
+  type NormalizedTempoMap,
+  ppqToSamples,
+  samplesToPpq,
+} from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
 import {
   activeMidiTrackIndicesForRange,
@@ -20,7 +25,7 @@ import {
   documentRenderContributorIndices,
   type RenderPpqRange,
 } from './engine-render-context';
-import { DEFAULT_TEMPO_BPM, MAX_PREROLL_SECONDS, PREROLL_SECONDS } from './engine-render-types';
+import { MAX_PREROLL_SECONDS, PREROLL_SECONDS } from './engine-render-types';
 
 export interface ExportRenderPlanInput {
   /** Program-output document (see `programOutputDocument`). */

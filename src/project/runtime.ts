@@ -19,9 +19,6 @@ type WasmModule = typeof import('@/wasm/index.js');
 
 export type { WasmModule };
 
-/** Default project tempo in BPM. */
-export const DEFAULT_TEMPO_BPM = 120;
-
 /** Default clip length: eight 4/4 bars expressed in quarter-note PPQ. */
 export const DEFAULT_CLIP_LENGTH_PPQ = 32;
 

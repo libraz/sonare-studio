@@ -21,14 +21,13 @@ import { cloneStrip, createDefaultStrip } from './mixer';
 import { isValidPitchRange } from './pitch-range';
 import {
   DEFAULT_SAMPLE_RATE,
-  DEFAULT_TEMPO_BPM,
   finiteAtLeast,
   notesToProjectEvents,
   PROJECT_MAX_UNDO_DEPTH,
   placeholderSourceAudio,
 } from './runtime';
 import type { DocumentClip, DocumentNote, ProjectDocument } from './serialization';
-import { normalizeTempoMap } from './tempo-map';
+import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from './tempo-map';
 import type {
   ClipCcLane,
   ClipChannelPressureLane,

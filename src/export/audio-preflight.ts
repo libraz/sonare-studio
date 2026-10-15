@@ -1,5 +1,6 @@
 /** Audio-export preflight for omissions that would otherwise become silence. */
 
+import { errorMessage } from '@/lib/errors';
 import {
   type AudioAssetMeta,
   type LoadedAudioAsset,
@@ -372,7 +373,7 @@ export async function audioExportPreflight(
       await validateAudio(use.id);
     } catch (error) {
       options.signal?.throwIfAborted();
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = errorMessage(error);
       blockers.push({
         kind: 'media-missing',
         labels: [...use.labels.values()],
@@ -392,7 +393,7 @@ export async function audioExportPreflight(
       blockers.push({
         kind: 'soundfont-missing',
         fontId,
-        reason: error instanceof Error ? error.message : String(error),
+        reason: errorMessage(error),
       });
     }
   }

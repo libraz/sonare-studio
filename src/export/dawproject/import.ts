@@ -13,6 +13,7 @@ import { strFromU8 } from 'fflate';
 import { SECTION_MARKER_PREFIX } from '@/export/constants';
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
 import { dbToLinear, linearToDb } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
 import {
   preflightXmlBytes,
   preflightXmlDocument,
@@ -1313,7 +1314,7 @@ async function ingestEmbeddedAudio(
         path: file.path,
         external: file.external,
         reason: 'resolve-failed',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       });
       continue;
     }
@@ -1338,7 +1339,7 @@ async function ingestEmbeddedAudio(
         path: file.path,
         external: file.external,
         reason: 'ingest-failed',
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       });
     }
   }

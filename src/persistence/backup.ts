@@ -8,6 +8,7 @@
  */
 
 import { strToU8 } from 'fflate';
+import { errorMessage } from '@/lib/errors';
 import { createStreamingZipWriter } from '@/lib/streaming-zip';
 import { preflightAndUnzipInWorker } from '@/persistence/archive-preflight';
 import {
@@ -159,7 +160,7 @@ export class BrowserBackupRecoveryError extends Error {
     readonly restoreError: unknown,
     readonly rollbackFailures: readonly unknown[],
   ) {
-    const reason = restoreError instanceof Error ? restoreError.message : String(restoreError);
+    const reason = errorMessage(restoreError);
     super(
       `Browser backup restore failed (${reason}); ${rollbackFailures.length} rollback operation(s) also failed`,
       { cause: restoreError },

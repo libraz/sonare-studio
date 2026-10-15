@@ -1,3 +1,4 @@
+import { clampInt } from '@/lib/math';
 import type { DocumentClip } from '@/project/serialization';
 import type { NormalizedTempoMap } from '@/project/tempo-map';
 import {
@@ -8,7 +9,7 @@ import {
 } from './audio-time';
 import { DEFAULT_IMPORTED_CLIP_LENGTH_PPQ, MIN_IMPORTED_LENGTH_PPQ } from './format';
 import type { DawprojectImportLoss, FlattenedClipLeaf, FlattenedClipPlacement } from './import';
-import { clampInt, readMidiExpressionPoints } from './midi-expression-import';
+import { readMidiExpressionPoints } from './midi-expression-import';
 import { boolAttr, children, numberAttr } from './xml-read';
 
 function normalizedVelocity(value: number | null): number {

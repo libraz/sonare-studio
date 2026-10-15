@@ -1,10 +1,7 @@
+import { clampInt } from '@/lib/math';
 import type { DocumentClip } from '@/project/serialization';
 import type { DawprojectImportLoss } from './import';
 import { children } from './xml-read';
-
-export function clampInt(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
 
 type MidiExpressionName =
   | 'channelController'

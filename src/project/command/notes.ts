@@ -1,5 +1,6 @@
 import { shallowRef } from 'vue';
 import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
+import { clampInt } from '@/lib/math';
 import {
   applyGrooveToPosition,
   DEFAULT_GROOVE_STEPS,
@@ -743,11 +744,6 @@ export function quantizeSelection(strength?: number): void {
     return { ...note, startPpq: Math.max(0, sourcePpq) };
   });
   if (changed) commit(next, { writeNotes: true });
-}
-
-/** Clamps a value to an inclusive integer range. */
-function clampInt(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 /**

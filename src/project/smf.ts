@@ -1,4 +1,5 @@
 import { keyMarkerName, keySignatureFromName } from '@/compose/key-name';
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import {
   type FieldDispositions,
   type LossReport,
@@ -6,6 +7,7 @@ import {
   tallyFields,
 } from '@/export/loss-descriptor';
 import { dbToLinear, linearToDb } from '@/lib/db';
+import { clampInt } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
 import { GM2_DRUM_BANK, GM2_DRUM_BANK_MSB, gmProgramForPreset, isGm2DrumBank } from './instrument';
@@ -30,10 +32,10 @@ import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
 } from './serialization';
+import { DEFAULT_TEMPO_BPM } from './tempo-map';
 import { type SmfSysExPacket, TRACK_COLOR_PALETTE } from './types';
 
 const DEFAULT_SAMPLE_RATE = 48000;
-const DEFAULT_BPM = 120;
 /** First GM program of the sound-effects family; lower percussive programs map to the drum kit. */
 const GM_SOUND_EFFECTS_PROGRAM = 120;
 const DEFAULT_CLIP_LENGTH_PPQ = 1;
@@ -463,10 +465,6 @@ function data2(event: SerializedMidiEvent): number {
   return eventWord(event) & 0x7f;
 }
 
-function clampInt(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(Number.isFinite(value) ? value : min)));
-}
-
 function finiteNonNegative(value: number, fallback = 0): number {
   return Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
@@ -484,7 +482,7 @@ function displayClipLength(lengthPpq: number): number {
 }
 
 function presetForGmProgram(program: number, ch: number, bank?: number): string {
-  if (ch === 9 || isGm2DrumBank(bank)) return 'drum-kit';
+  if (ch === GM_PERCUSSION_CHANNEL || isGm2DrumBank(bank)) return 'drum-kit';
   if (program === 4 || program === 5) return 'e-piano';
   if (program < 8) return 'acoustic-piano';
   if (program < 16) return 'e-piano';
@@ -548,7 +546,7 @@ function programAt(
 }
 
 function groupKey(programs: ReadonlyArray<ProgramEntry>, ch: number, ppq: number): TrackGroupKey {
-  if (ch === 9) return { channel: ch, bank: GM2_DRUM_BANK, program: 0 };
+  if (ch === GM_PERCUSSION_CHANNEL) return { channel: ch, bank: GM2_DRUM_BANK, program: 0 };
   const program = programAt(programs, ch, ppq);
   return {
     channel: ch,
@@ -786,11 +784,13 @@ function trackDocument(
         }
       : undefined;
   const firstProgram =
-    programs.find((entry) => entry.channel === 9 || isGm2DrumBank(entry.bank)) ??
+    programs.find(
+      (entry) => entry.channel === GM_PERCUSSION_CHANNEL || isGm2DrumBank(entry.bank),
+    ) ??
     programs[0] ??
     defaultProgram ??
-    (events.some((event) => channel(event) === 9)
-      ? { ppq: 0, channel: 9, program: 0, bank: GM2_DRUM_BANK }
+    (events.some((event) => channel(event) === GM_PERCUSSION_CHANNEL)
+      ? { ppq: 0, channel: GM_PERCUSSION_CHANNEL, program: 0, bank: GM2_DRUM_BANK }
       : undefined);
   const instrument = firstProgram
     ? {
@@ -843,7 +843,7 @@ function splitTrackByChannelAndProgram(
     )
     .map((group, offset) => {
       const suffix =
-        group.key.channel === 9 || isGm2DrumBank(group.key.bank)
+        group.key.channel === GM_PERCUSSION_CHANNEL || isGm2DrumBank(group.key.bank)
           ? ` Ch ${group.key.channel + 1} Drums`
           : ` Ch ${group.key.channel + 1} ${presetForGmProgram(group.key.program ?? 0, group.key.channel, group.key.bank)}`;
       return trackDocument(track, clip, group.events, index + offset, suffix);
@@ -914,7 +914,7 @@ function documentFromProjectJson(
       startPpq: segment.start_ppq,
       bpm: segment.bpm,
       ...(segment.end_bpm !== undefined && segment.end_bpm > 0 ? { endBpm: segment.end_bpm } : {}),
-    })) ?? [{ startPpq: 0, bpm: DEFAULT_BPM }],
+    })) ?? [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }],
     timeSignatures:
       parsed.time_signatures?.map((signature) => ({
         startPpq: signature.start_ppq,
@@ -1088,11 +1088,11 @@ function scratchClipLength(clip: DocumentClip): number {
  */
 export function sampleTempoRampsForSmf(doc: ProjectDocument): DocumentTempoSegment[] {
   const input = (
-    doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_BPM }]
+    doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }]
   )
     .map((segment) => ({
       startPpq: finiteNonNegative(segment.startPpq),
-      bpm: Number.isFinite(segment.bpm) && segment.bpm > 0 ? segment.bpm : DEFAULT_BPM,
+      bpm: Number.isFinite(segment.bpm) && segment.bpm > 0 ? segment.bpm : DEFAULT_TEMPO_BPM,
       ...(segment.endBpm !== undefined && Number.isFinite(segment.endBpm) && segment.endBpm > 0
         ? { endBpm: segment.endBpm }
         : {}),

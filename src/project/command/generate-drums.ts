@@ -19,14 +19,12 @@ import {
   MIN_DIFFICULTY,
 } from '@libraz/libcantus';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { normalizeTempoMap, tempoAtPpq } from '../tempo-map';
 import { isFourFourBarRange } from '../time-signature';
 import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
-
-/** GM percussion channel (MIDI channel 10, zero-based). */
-const GM_PERCUSSION_CHANNEL = 9;
 
 /** Beats per bar the drum generator assumes (4/4). */
 const BEATS_PER_BAR = 4;

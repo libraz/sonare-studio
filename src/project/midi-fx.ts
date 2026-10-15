@@ -15,6 +15,8 @@
  * All PPQ values are in the editor convention where 1.0 = one quarter note.
  */
 
+import { clamp, clampInt } from '@/lib/math';
+
 /** A complete MIDI-FX transform configuration (UI-facing, pre-serialization). */
 export interface MidiFxConfig {
   /** Pitch shift in semitones (0 = off). */
@@ -141,20 +143,10 @@ const ARP_INTERVAL_MAX = 48;
 /** Maximum arpeggio steps the engine accepts (ArpeggiatorConfig::kMaxArpSteps). */
 const ARP_INTERVAL_MAX_COUNT = 16;
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 /** Clamps to a finite number in [min, max] (non-finite returns `fallback`). */
 function clampFinite(value: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   return clamp(value, min, max);
-}
-
-/** Clamps to an integer in [min, max] (non-finite returns `fallback`). */
-function clampInt(value: number, min: number, max: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return clamp(Math.round(value), min, max);
 }
 
 /**

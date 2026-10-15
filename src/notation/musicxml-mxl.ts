@@ -1,5 +1,6 @@
 /** Bounded extraction of compressed MusicXML (.mxl) archives. */
 
+import { errorMessage } from '@/lib/errors';
 import {
   DEFAULT_XML_LIMITS,
   preflightXmlBytes,
@@ -50,7 +51,7 @@ export function extractMusicXmlFromMxl(bytes: Uint8Array, fileName = 'MusicXML a
   try {
     entries = preflightAndUnzip(bytes, MXL_LIMITS).entries;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     throw new MusicXmlImportError(`Invalid compressed MusicXML archive: ${message}`);
   }
   const containerBytes = entries[MXL_CONTAINER_PATH];

@@ -41,9 +41,6 @@ export const PREROLL_SECONDS = 0.5;
 /** Maximum stateful-DSP history rendered before a windowed export begins. */
 export const MAX_PREROLL_SECONDS = 10;
 
-/** Tempo assumed when the document carries no tempo segment. */
-export const DEFAULT_TEMPO_BPM = 120;
-
 /** Minimal, real-ABI-derived surface of RealtimeEngine used by the renderer. */
 export type OfflineRenderEngine = Pick<
   RealtimeEngine,

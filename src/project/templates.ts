@@ -14,6 +14,7 @@ import type {
   ProjectDocument,
 } from './serialization';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './serialization';
+import { DEFAULT_TEMPO_BPM } from './tempo-map';
 import { TRACK_COLOR_PALETTE } from './types';
 
 /**
@@ -48,9 +49,6 @@ export const TEMPLATE_NAMES = [
 
 /** A built-in template identifier. */
 export type TemplateName = (typeof TEMPLATE_NAMES)[number];
-
-/** Default tempo for template documents, in BPM. */
-const TEMPLATE_TEMPO_BPM = 120;
 
 /** Default sample rate for template documents, in Hz. */
 const TEMPLATE_SAMPLE_RATE = 48000;
@@ -135,7 +133,7 @@ function baseDocument(
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name,
     sampleRate: TEMPLATE_SAMPLE_RATE,
-    tempoSegments: [{ startPpq: 0, bpm: options.tempoBpm ?? TEMPLATE_TEMPO_BPM }],
+    tempoSegments: [{ startPpq: 0, bpm: options.tempoBpm ?? DEFAULT_TEMPO_BPM }],
     timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
     tracks,
     markers: [],

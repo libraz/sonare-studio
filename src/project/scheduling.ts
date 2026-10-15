@@ -16,6 +16,7 @@
 
 import type { EngineHandle } from '@/engine/engine';
 import type { MidiNote } from '@/engine/instruments';
+import { errorMessage } from '@/lib/errors';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import {
   type AudioAssetMeta,
@@ -1048,7 +1049,7 @@ export async function scheduleProjectClips(
           role: 'frozen',
           reason: 'unreadable',
           trackId: track.id,
-          message: error instanceof Error ? error.message : String(error),
+          message: errorMessage(error),
         });
         continue;
       }
@@ -1082,7 +1083,7 @@ export async function scheduleProjectClips(
         reason: 'unreadable',
         trackId: track.id,
         clipId: clip.id,
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       });
       continue;
     }

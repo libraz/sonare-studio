@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { downloadBlob } from '@/lib/download';
 import { ensureFileExtension, exportMusicXml } from '@/notation/io';
 import {
   buildPrintPageCss,
   createPdfPageWriter,
   createPrintPageWriter,
-  downloadBlob,
   type PageLayout,
   type PdfMetadata,
   PRINT_CLEANUP_FALLBACK_MS,

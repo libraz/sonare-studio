@@ -61,7 +61,6 @@ import {
   DEFAULT_PROJECT_NAME,
   DEFAULT_SAMPLE_RATE,
   DEFAULT_SNAP_DIVISION,
-  DEFAULT_TEMPO_BPM,
   DEFAULT_TRACK_NAME,
   getAudioSourceId,
   getProject,
@@ -91,6 +90,7 @@ import {
   refreshTempoMeter,
   type SerializedProjectDoc,
 } from './store-refresh';
+import { DEFAULT_TEMPO_BPM } from './tempo-map';
 import {
   DEFAULT_SECTION_COLOR,
   type EditorClip,

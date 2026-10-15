@@ -7,6 +7,7 @@
  * their baked pre-fader render from the timeline start instead of their clips.
  */
 
+import { errorMessage } from '@/lib/errors';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { audioClipSegments } from '@/project/comping';
 import {
@@ -222,7 +223,7 @@ export async function buildAudioClips(
             kind: 'audio-asset',
             id: segment.assetId,
             reason: 'missing-or-unreadable',
-            message: error instanceof Error ? error.message : String(error),
+            message: errorMessage(error),
           });
         }
         // Missing or unreadable asset: leave the slice silent, like live playback.
@@ -275,7 +276,7 @@ export async function buildAudioClips(
             kind: 'audio-asset',
             id: track.frozen.assetId,
             reason: 'missing-or-unreadable',
-            message: error instanceof Error ? error.message : String(error),
+            message: errorMessage(error),
           });
         }
         // Missing or unreadable frozen asset: the track stays silent.

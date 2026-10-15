@@ -39,6 +39,7 @@ import { strToU8 } from 'fflate';
 import { SECTION_MARKER_PREFIX } from '@/export/constants';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
+import { clamp01 } from '@/lib/math';
 import { createStreamingZipWriter, DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import {
@@ -70,7 +71,7 @@ import type {
   DocumentClip,
   ProjectDocument,
 } from '@/project/serialization';
-import { type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
+import { DEFAULT_TEMPO_BPM, type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
 import { translateTempoMapForExport } from '@/project/tempo-map-export';
 import { DEFAULT_TIME_SIGNATURE } from '@/project/time-signature';
 import type { TempoSegment, TimeSignatureSegment } from '@/project/types';
@@ -96,9 +97,6 @@ const APPLICATION_NAME = 'sonare-studio';
 
 /** Default application version (override via options.applicationVersion). */
 const DEFAULT_APPLICATION_VERSION = '0.1.0';
-
-/** Tempo assumed when the document carries no tempo segment. */
-const DEFAULT_TEMPO_BPM = 120;
 
 /** Id of the Transport tempo parameter (tempo automation targets it). */
 const TEMPO_PARAMETER_ID = 'tempo';
@@ -182,11 +180,6 @@ const DEFAULT_VOLUME_MAX = 2;
 /** Maps a [-1, 1] balance pan to the DAWproject normalized [0, 1] range. */
 function panToNormalized(pan: number): number {
   return (clampPan(pan) + 1) / 2;
-}
-
-/** Clamps a value to [0, 1]. */
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 /** Sanitizes a dynamic segment used inside DAWproject XML ids. */

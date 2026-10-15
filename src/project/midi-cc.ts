@@ -9,6 +9,7 @@
  * discrete CC events, so the lane is genuinely audible during transport.
  */
 
+import { clamp, clampInt } from '@/lib/math';
 import type {
   ClipCcLane,
   ClipCcPoint,
@@ -56,16 +57,6 @@ export const PIANO_ROLL_CC_LANES: readonly CcLaneOption[] = [
 
 /** Expression-lane interpolation modes stored on breakpoints. */
 export const CLIP_EXPRESSION_CURVES: readonly ClipExpressionCurve[] = ['hold', 'linear', 's-curve'];
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-/** Clamps to an integer in [min, max] (non-finite returns min). */
-function clampInt(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  return clamp(Math.round(value), min, max);
-}
 
 /** Returns true when `curve` is a supported clip expression curve. */
 export function isClipExpressionCurve(curve: unknown): curve is ClipExpressionCurve {

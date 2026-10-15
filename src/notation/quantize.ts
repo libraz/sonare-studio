@@ -30,6 +30,7 @@
  * time signature.
  */
 
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { estimateFingeringForUnits } from '@/notation/fingering';
 import { assignGrandStaffUnits } from '@/notation/grand-staff';
 import {
@@ -46,7 +47,6 @@ import {
   type NoteValue,
   noteValueToPpq,
 } from '@/notation/model';
-import { GM_PERCUSSION_CHANNEL } from '@/notation/musicxml-percussion';
 import { type AssignedVoiceUnits, EPSILON, meanPitch, type VoiceUnit } from '@/notation/voice-unit';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
 import { clipMeasureGrid } from '@/project/time-signature';

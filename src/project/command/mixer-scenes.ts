@@ -1,3 +1,5 @@
+import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import { isBusAutomationTarget, parseInsertAutomationParam } from '../automation';
 import {
   assertValidMixerBusId,
@@ -151,10 +153,6 @@ function finiteNumber(value: unknown): number | undefined {
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 /** Reads an EQ object from a scene while dropping malformed band entries. */
@@ -485,9 +483,7 @@ function parseSceneJson(sceneJson: string): MixerScene {
   try {
     parsed = JSON.parse(sceneJson);
   } catch (err) {
-    throw new Error(
-      `Invalid mixer scene JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    throw new Error(`Invalid mixer scene JSON: ${errorMessage(err)}`);
   }
   const root = objectRecord(parsed);
   if (!root) throw new Error('Invalid mixer scene JSON: expected an object');

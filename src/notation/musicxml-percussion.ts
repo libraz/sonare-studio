@@ -7,13 +7,11 @@
  * part.
  */
 
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import type { NotatedEvent, NotatedPart } from './model';
 import type { ScoreInstrumentDefinition } from './musicxml-shared';
 import { escapeXml } from './musicxml-xml';
 import type { Step } from './pitch-spelling';
-/** General MIDI percussion channel (MIDI channel 10, stored as 0-based 9). */
-export const GM_PERCUSSION_CHANNEL = 9;
-
 export interface PercussionDisplay {
   step: Step;
   octave: number;

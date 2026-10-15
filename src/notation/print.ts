@@ -372,6 +372,3 @@ function appendPdfPageOverlay(
     );
   }
 }
-
-/** @deprecated Import {@link downloadBlob} from `@/lib/download` in new code. */
-export { downloadBlob } from '@/lib/download';
