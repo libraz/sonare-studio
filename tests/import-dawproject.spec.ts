@@ -394,7 +394,7 @@ describe('importDawproject', () => {
     ]);
   });
 
-  it('keeps a final open-ended tempo ramp idempotent across round-trips', async () => {
+  it('holds a final segment with a stale end tempo, idempotently across round-trips', async () => {
     const readTempoPoints = (bytes: Uint8Array): Array<[number, number, string | null]> => {
       const project = new DOMParser().parseFromString(
         strFromU8(unzipSync(bytes)['project.xml']),
@@ -413,10 +413,10 @@ describe('importDawproject', () => {
     const imported1 = importDawproject(exported1);
     const exported2 = await exportDawproject(imported1, { includeAudio: false });
 
-    // The open-ended ramp emits a single linear start and one hold terminator.
-    expect(readTempoPoints(exported1)).toHaveLength(2);
-    // Re-exporting the imported ramp must not accrete a duplicate terminator
-    // point at the content end.
+    // Playback holds the final segment, so no ramp is written for it.
+    expect(readTempoPoints(exported1)).toEqual([]);
+    expect(imported1.tempoSegments.map((segment) => segment.bpm)).toEqual([120]);
+    // Re-exporting must not accrete tempo points.
     expect(readTempoPoints(exported2)).toEqual(readTempoPoints(exported1));
   });
 

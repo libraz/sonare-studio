@@ -424,7 +424,7 @@ describe('DeviceRack.vue', () => {
     await wrapper.findAll('.font-option')[1].trigger('click');
 
     expect(wrapper.find('.sf2-slot-warning').text()).toBe(
-      'This project uses 2 SoundFonts, but playback and export share one global SF2 slot. The last SF2 track wins: GM Bank.sf2.',
+      'This project uses 2 SoundFonts, but playback has one global SF2 slot and uses the font of the last SF2 track: GM Bank.sf2. Export renders each SF2 track with its own font, so it can sound different.',
     );
     expect(store.tracks[0].instrument).not.toEqual({ kind: 'sf2', fontId: 'fontbbbb00000002' });
   });
