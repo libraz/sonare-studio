@@ -123,7 +123,9 @@ export function takeIndexAtPpq(selection: ReadonlyArray<ClipCompSegment>, ppq: n
  * it. The result is sanitized (see {@link sanitizeCompSegments}).
  */
 export function compSegmentsWithRange(
-  clip: CompableClipFields,
+  clip: Pick<CompableClipFields, 'lengthPpq' | 'compSegments'> & {
+    takes?: ReadonlyArray<unknown>;
+  },
   rangeStartPpq: number,
   rangeEndPpq: number,
   takeIndex: number,

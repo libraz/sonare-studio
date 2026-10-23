@@ -131,6 +131,11 @@ export interface UseClipInteractionsOptions {
   getTool?(): EditorToolId;
   /** Reports why the split tool could not edit the hit clip. */
   onSplitBlocked?(clipId: number, reason: ClipSplitBlockReason): void;
+  /**
+   * Reports a gesture whose command refused the edit; without it the error
+   * propagates out of the pointer handler.
+   */
+  onCommandError?(cause: unknown): void;
   /** Mutation commands invoked when gestures commit. */
   commands: ClipInteractionCommands;
   /**
@@ -347,6 +352,16 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   }
 
   /** Deletes the clip under the pointer, if any (erase tool). */
+  /** Runs a gesture's command, routing a refusal to {@link ClipInteractionOptions.onCommandError}. */
+  function commit(run: () => void): void {
+    try {
+      run();
+    } catch (cause) {
+      if (!options.onCommandError) throw cause;
+      options.onCommandError(cause);
+    }
+  }
+
   function eraseAt(point: ClipPoint): void {
     if (!commands.deleteClip) return;
     const hit = hitTestClip(toRects(), point, view, hitOptions());
@@ -621,12 +636,12 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
   function onPointerDown(point: ClipPoint, modifiers: ClipModifiers = {}): void {
     const tool = currentTool();
     if (tool === 'erase') {
-      eraseAt(point);
+      commit(() => eraseAt(point));
       gesture = { kind: 'none' };
       return;
     }
     if (tool === 'split') {
-      splitAt(point, modifiers);
+      commit(() => splitAt(point, modifiers));
       gesture = { kind: 'none' };
       return;
     }
@@ -799,6 +814,11 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     previewDraft.value = null;
     previewMarquee.value = null;
     cursor.value = 'default';
+    commit(() => commitGesture(g, point, modifiers));
+  }
+
+  /** Applies a finished gesture through the project commands. */
+  function commitGesture(g: Gesture, point: ClipPoint, modifiers: ClipModifiers): void {
     if (g.kind === 'draw-clip') {
       if (options.canEditTrack?.(g.trackId) === false) return;
       const lengthPpq = drawClipLength(g, point, modifiers);
@@ -871,8 +891,10 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
     if (options.canEditTrack?.(trackIds[lane]) === false) return;
     const ppq = Math.max(0, view.xToPpq(point.x));
     const bar = options.getBarRange(ppq);
-    const id = commands.createClip(trackIds[lane], bar.startPpq, bar.lengthPpq);
-    if (id !== null) commands.selectClip(id);
+    commit(() => {
+      const id = commands.createClip(trackIds[lane], bar.startPpq, bar.lengthPpq);
+      if (id !== null) commands.selectClip(id);
+    });
   }
 
   /** Returns the topmost clip id under a point, or null when none is hit. */

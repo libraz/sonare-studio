@@ -9,7 +9,7 @@
  */
 
 import { computed, type Ref, ref } from 'vue';
-import { countInStartPpq } from './time-signature';
+import { countInStartPpq, measureRangeAt } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 
 export interface LoopRecordingSplit {
@@ -172,10 +172,18 @@ export function resolveRecordingStartPlan(
     options.startedFromRest &&
     Number.isFinite(options.countInBars) &&
     options.countInBars > 0;
+  const timeSignatures = options.timeSignatures ?? [];
+  // A mid-bar punch counts in from an earlier bar line, so every requested bar plays in full.
+  const midBar =
+    countInEnabled && measureRangeAt(timeSignatures, punchInPpq).startPpq < punchInPpq - 1e-6;
   const countInStart = countInEnabled
     ? Math.max(
         0,
-        countInStartPpq(options.timeSignatures ?? [], punchInPpq, Math.max(0, options.countInBars)),
+        countInStartPpq(
+          timeSignatures,
+          punchInPpq,
+          Math.max(0, Math.floor(options.countInBars)) + (midBar ? 1 : 0),
+        ),
       )
     : punchInPpq;
   const countInPpq = Math.max(0, punchInPpq - countInStart);

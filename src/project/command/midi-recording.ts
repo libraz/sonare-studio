@@ -21,7 +21,12 @@ import type {
 } from '../types';
 import { clearLaneRangeWithin, makeRoomForRecordingWithin } from './clip-lane';
 import { execute, executeAtomic } from './history';
-import { requireTrack, windowLanePoints, windowMidiNotes } from './utils';
+import {
+  requireEditableClip,
+  requireEditableTrack,
+  windowLanePoints,
+  windowMidiNotes,
+} from './utils';
 
 /** Copies app-level MIDI take data so callers cannot mutate the clip mirror. */
 function cloneMidiTake(take: MidiClipTake): MidiClipTake {
@@ -84,7 +89,7 @@ function storeRecordedMidiClip(
   makeRoom: typeof clearLaneRangeWithin,
 ): number {
   const store = useProjectStore();
-  const track = requireTrack(store, input.trackId);
+  const track = requireEditableTrack(store, input.trackId);
   if (track.kind !== 'midi') {
     throw new RangeError(`Track ${input.trackId} is not a MIDI track`);
   }
@@ -160,9 +165,8 @@ function storeRecordedMidiClip(
 /** Selects one captured MIDI cycle take and makes it the playable clip content. */
 export function setClipMidiActiveTake(clipId: number, takeIndex: number): void {
   const store = useProjectStore();
-  const clipIndex = store.clips.findIndex((clip) => clip.id === clipId);
-  if (clipIndex < 0) throw new RangeError(`Unknown clip ${clipId}`);
-  const clip = store.clips[clipIndex];
+  const clip = requireEditableClip(store, clipId);
+  const clipIndex = store.clips.indexOf(clip);
   if ((clip.kind ?? 'midi') !== 'midi') throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   const takes = clip.midiTakes;
   if (takes === undefined || takes.length === 0)
@@ -181,6 +185,8 @@ export function setClipMidiActiveTake(clipId: number, takeIndex: number): void {
         midiTakes: takes.map(cloneMidiTake),
         midiActiveTakeIndex: takeIndex,
       };
+      // A whole take replaces any comp, as one audio take selection does.
+      delete next.midiCompSegments;
       const fields = next as Partial<Record<MidiLaneField, unknown>>;
       for (const { field } of MIDI_LANE_KINDS) {
         const lanes = activeTake[field];
@@ -199,9 +205,8 @@ export function setClipMidiCompSegments(
   segments: ReadonlyArray<ClipCompSegment>,
 ): void {
   const store = useProjectStore();
-  const clipIndex = store.clips.findIndex((clip) => clip.id === clipId);
-  if (clipIndex < 0) throw new RangeError(`Unknown clip ${clipId}`);
-  const clip = store.clips[clipIndex];
+  const clip = requireEditableClip(store, clipId);
+  const clipIndex = store.clips.indexOf(clip);
   const takes = clip.midiTakes;
   if (takes === undefined || takes.length === 0)
     throw new RangeError(`Clip ${clipId} has no MIDI takes`);
@@ -243,9 +248,8 @@ export function setClipMidiCompSegments(
 /** Commits the current MIDI comp by removing its reversible take metadata. */
 export function flattenClipMidiComp(clipId: number): void {
   const store = useProjectStore();
-  const index = store.clips.findIndex((clip) => clip.id === clipId);
-  if (index < 0) throw new RangeError(`Unknown clip ${clipId}`);
-  const clip = store.clips[index];
+  const clip = requireEditableClip(store, clipId);
+  const index = store.clips.indexOf(clip);
   if ((clip.midiTakes?.length ?? 0) === 0) throw new RangeError(`Clip ${clipId} has no MIDI takes`);
   execute(0, () => {
     store.clips = store.clips.map((entry, entryIndex) => {

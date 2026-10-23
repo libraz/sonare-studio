@@ -699,6 +699,9 @@ const interactions = useClipInteractions({
   onSplitBlocked: (_clipId, reason) => {
     if (reason === 'loop') error.value = t.value.shell.arrangement.loopSplitUnavailable;
   },
+  onCommandError: (cause) => {
+    error.value = describeError(cause, t.value.notices.errors);
+  },
   commands: {
     selectClip: (clipId) => setActiveClip(clipId),
     selectClips: (clipIds, activeClipId) => setClipSelection(clipIds, activeClipId),
@@ -865,14 +868,21 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
   if (payload.kind === 'select') return;
   const track = store.tracks.find((item) => item.id === clip.trackId);
   if (track?.frozen !== undefined) return;
+  // A key press that lands on the current value records no undo step.
+  const moveClipTo = (startPpq: number): void => {
+    if (startPpq !== clip.startPpq) moveClip(clip.id, startPpq);
+  };
+  const trimClipTo = (lengthPpq: number): void => {
+    if (lengthPpq !== clip.lengthPpq) trimClip(clip.id, clip.startPpq, lengthPpq);
+  };
   try {
     if (payload.kind === 'set') {
       if (payload.controlId === 'start') {
-        moveClip(clip.id, Math.max(0, payload.value));
+        moveClipTo(Math.max(0, payload.value));
       } else if (payload.controlId === 'length') {
         const bounds = sourceBoundsFor(clip.id);
         const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
-        trimClip(clip.id, clip.startPpq, Math.max(0.25, Math.min(maximum, payload.value)));
+        trimClipTo(Math.max(0.25, Math.min(maximum, payload.value)));
       }
       return;
     }
@@ -888,9 +898,9 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
       if (resize) {
         const bounds = sourceBoundsFor(clip.id);
         const maximum = bounds ? bounds.maxEndPpq - clip.startPpq : Number.POSITIVE_INFINITY;
-        trimClip(clip.id, clip.startPpq, Math.max(0.25, Math.min(maximum, clip.lengthPpq + delta)));
+        trimClipTo(Math.max(0.25, Math.min(maximum, clip.lengthPpq + delta)));
       } else {
-        moveClip(clip.id, Math.max(0, clip.startPpq + delta));
+        moveClipTo(Math.max(0, clip.startPpq + delta));
       }
       return;
     }

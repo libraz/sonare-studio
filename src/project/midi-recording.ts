@@ -97,47 +97,34 @@ export function lastCompleteLoopPassStartPpq(
   );
 }
 
-/** Returns the loop-pass start containing the latest captured event, or null. */
+/**
+ * True for a captured event that starts material in its pass. A note-off,
+ * including the implicit release added at stop, only ends a note begun
+ * earlier, so it never makes a pass a take on its own.
+ */
+function isLoopPassOnset<T extends { ppq: number }>(event: T, recordingStartPpq: number): boolean {
+  return (
+    Number.isFinite(event.ppq) &&
+    event.ppq >= recordingStartPpq - 1e-9 &&
+    !('kind' in event && (event as { kind?: unknown }).kind === 'off')
+  );
+}
+
+/** Returns the loop-pass start containing the latest captured onset, or null. */
 export function lastLoopPassWithEventsStartPpq<T extends { ppq: number }>(
   events: ReadonlyArray<T>,
   recordingStartPpq: number,
   loopLengthPpq: number,
 ): number | null {
-  if (
-    !Number.isFinite(recordingStartPpq) ||
-    !Number.isFinite(loopLengthPpq) ||
-    loopLengthPpq <= 0
-  ) {
-    return null;
-  }
-  let latestPpq = Number.NEGATIVE_INFINITY;
-  let latestEvent: T | undefined;
-  for (const event of events) {
-    if (Number.isFinite(event.ppq) && event.ppq >= recordingStartPpq - 1e-9) {
-      if (event.ppq >= latestPpq) {
-        latestPpq = event.ppq;
-        latestEvent = event;
-      }
-    }
-  }
-  if (!Number.isFinite(latestPpq)) return null;
-  const closesAtBoundary =
-    latestEvent !== undefined &&
-    'kind' in latestEvent &&
-    (latestEvent as { kind?: unknown }).kind === 'off' &&
-    Math.abs((latestPpq - recordingStartPpq) % loopLengthPpq) < 1e-9;
-  const offset = closesAtBoundary ? 1e-9 : 0;
-  return (
-    recordingStartPpq +
-    Math.max(0, Math.floor((latestPpq - recordingStartPpq - offset) / loopLengthPpq)) *
-      loopLengthPpq
-  );
+  const starts = loopPassStartsWithEvents(events, recordingStartPpq, loopLengthPpq);
+  return starts.length > 0 ? starts[starts.length - 1] : null;
 }
 
 /**
- * Lists the loop passes that contain captured events, in chronological order.
- * Each pass is reported once even when it contains several MIDI event kinds,
- * allowing note and expression buffers to share an identical take boundary.
+ * Lists the loop passes that contain captured onsets (note-on, CC, bend,
+ * pressure, program change), in chronological order. Each pass is reported
+ * once even when it contains several MIDI event kinds, allowing note and
+ * expression buffers to share an identical take boundary.
  */
 export function loopPassStartsWithEvents<T extends { ppq: number }>(
   events: ReadonlyArray<T>,
@@ -153,13 +140,8 @@ export function loopPassStartsWithEvents<T extends { ppq: number }>(
   }
   const starts = new Set<number>();
   for (const event of events) {
-    if (!Number.isFinite(event.ppq) || event.ppq < recordingStartPpq - 1e-9) continue;
-    const closesAtBoundary =
-      'kind' in event &&
-      (event as { kind?: unknown }).kind === 'off' &&
-      Math.abs((event.ppq - recordingStartPpq) % loopLengthPpq) < 1e-9;
-    const offset = closesAtBoundary ? 1e-9 : 0;
-    const pass = Math.max(0, Math.floor((event.ppq - recordingStartPpq - offset) / loopLengthPpq));
+    if (!isLoopPassOnset(event, recordingStartPpq)) continue;
+    const pass = Math.max(0, Math.floor((event.ppq - recordingStartPpq) / loopLengthPpq));
     starts.add(recordingStartPpq + pass * loopLengthPpq);
   }
   return [...starts].sort((left, right) => left - right);

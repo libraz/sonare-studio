@@ -7,10 +7,19 @@
  * tolerance, and runs its destructive steps in the order the engine accepts.
  */
 
+import { remapClipScoreAnnotations } from '../annotations';
+import { audibleMidiSourceWindow } from '../midi-projection';
 import { getProject, useProjectStore } from '../store';
 import type { EditorClip } from '../types';
-import { moveClipWithin, removeClipWithin, splitClipWithin } from './clips-internal';
+import { clearProjectClipWarp } from '../warp';
+import {
+  moveClipWithin,
+  removeClipWithin,
+  splitClipWithin,
+  trimClipWithin,
+} from './clips-internal';
 import type { AtomicProjectEdit } from './history';
+import { withDerivedClipMetadata } from './utils';
 
 /** Tolerance below which two clip edges count as touching. */
 export const CLIP_LANE_EPSILON = 1e-9;
@@ -202,10 +211,117 @@ export function replaceClipsWithin<T>(
   return create();
 }
 
+/** Copies a clip past the end of its lane, carrying its app metadata; returns the copy's id. */
+function duplicateClipParkedWithin(edit: AtomicProjectEdit, source: EditorClip): number {
+  const store = useProjectStore();
+  const project = getProject();
+  let laneEnd = 0;
+  for (const clip of store.clips) {
+    if (clip.trackId === source.trackId)
+      laneEnd = Math.max(laneEnd, clip.startPpq + clip.lengthPpq);
+  }
+  const copyId = edit(1, () => project.duplicateClip(source.id, laneEnd + 1));
+  // The engine copies the warp link; the trim that follows installs the copy's own map.
+  clearProjectClipWarp(project, copyId, (mutation) => edit(1, mutation));
+  store.refresh();
+  store.clips = store.clips.map((clip) =>
+    clip.id === copyId ? withDerivedClipMetadata({ ...clip, name: source.name }, source) : clip,
+  );
+  const copy = store.clips.find((clip) => clip.id === copyId);
+  if (copy !== undefined) {
+    const annotations = remapClipScoreAnnotations(
+      store.scoreAnnotations[source.id],
+      source.notes,
+      copy.notes,
+    );
+    if (Object.keys(annotations).length > 0) {
+      store.scoreAnnotations = { ...store.scoreAnnotations, [copyId]: annotations };
+    }
+  }
+  return copyId;
+}
+
+/** Sets a clip's fades when they differ, pinning the mirror like setClipFades does. */
+function setClipFadesWithin(
+  edit: AtomicProjectEdit,
+  clipId: number,
+  fadeInPpq: number,
+  fadeOutPpq: number,
+): void {
+  const store = useProjectStore();
+  const clip = store.clips.find((entry) => entry.id === clipId);
+  if (clip === undefined) return;
+  if ((clip.fadeInPpq ?? 0) === fadeInPpq && (clip.fadeOutPpq ?? 0) === fadeOutPpq) return;
+  edit(1, () =>
+    getProject().setClipFade(clipId, { lengthPpq: fadeInPpq }, { lengthPpq: fadeOutPpq }),
+  );
+  store.refresh();
+  store.clips = store.clips.map((entry) => {
+    if (entry.id !== clipId) return entry;
+    const { fadeInPpq: _in, fadeOutPpq: _out, ...rest } = entry;
+    return {
+      ...rest,
+      ...(fadeInPpq > 0 ? { fadeInPpq } : {}),
+      ...(fadeOutPpq > 0 ? { fadeOutPpq } : {}),
+    };
+  });
+}
+
+/**
+ * Removes the part of a looped clip inside a range. The Project refuses to
+ * split loop clips, so the left remainder is an end trim (which keeps the
+ * loop phase) and the right remainder is rebuilt from copies: the partial
+ * pass as an unlooped window, then the loop again from the next pass start.
+ * Remainders keep only the outer fades, as a split would leave them.
+ */
+function clearLoopClipRangeWithin(
+  edit: AtomicProjectEdit,
+  source: EditorClip,
+  startPpq: number,
+  endPpq: number,
+): void {
+  const store = useProjectStore();
+  const clipEndPpq = source.startPpq + source.lengthPpq;
+  const fadeInPpq = source.fadeInPpq ?? 0;
+  const fadeOutPpq = source.fadeOutPpq ?? 0;
+  const placements: Array<{ clipId: number; startPpq: number }> = [];
+  if (clipEndPpq > endPpq + CLIP_LANE_EPSILON) {
+    const passPpq = audibleMidiSourceWindow(source).lengthPpq;
+    let phasePpq = (endPpq - source.startPpq) % passPpq;
+    if (phasePpq <= CLIP_LANE_EPSILON || passPpq - phasePpq <= CLIP_LANE_EPSILON) phasePpq = 0;
+    const passEndPpq = phasePpq > 0 ? Math.min(clipEndPpq, endPpq + passPpq - phasePpq) : endPpq;
+    if (phasePpq > 0) {
+      const headId = duplicateClipParkedWithin(edit, source);
+      const parkedPpq = store.clips.find((clip) => clip.id === headId)?.startPpq ?? 0;
+      edit(1, () => getProject().setClipLoop(headId, 'off'));
+      store.refresh();
+      trimClipWithin(edit, headId, parkedPpq + phasePpq, passEndPpq - endPpq);
+      setClipFadesWithin(edit, headId, 0, passEndPpq < clipEndPpq ? 0 : fadeOutPpq);
+      placements.push({ clipId: headId, startPpq: endPpq });
+    }
+    if (passEndPpq < clipEndPpq - CLIP_LANE_EPSILON) {
+      const tailId = duplicateClipParkedWithin(edit, source);
+      const parkedPpq = store.clips.find((clip) => clip.id === tailId)?.startPpq ?? 0;
+      trimClipWithin(edit, tailId, parkedPpq, clipEndPpq - passEndPpq);
+      setClipFadesWithin(edit, tailId, 0, fadeOutPpq);
+      placements.push({ clipId: tailId, startPpq: passEndPpq });
+    }
+  }
+  if (source.startPpq < startPpq - CLIP_LANE_EPSILON) {
+    trimClipWithin(edit, source.id, source.startPpq, startPpq - source.startPpq);
+    setClipFadesWithin(edit, source.id, fadeInPpq, 0);
+  } else {
+    removeClipWithin(edit, source.id);
+  }
+  for (const placement of placements) moveClipWithin(edit, placement.clipId, placement.startPpq);
+  store.refresh();
+}
+
 /**
  * Makes a range of a track's lane empty: every clip crossing it is split at
  * the range edges and the middle part removed, leaving the material outside
- * untouched. Runs inside the caller's atomic transaction.
+ * untouched. A looped clip, which cannot be split, is trimmed and rebuilt
+ * instead. Runs inside the caller's atomic transaction.
  */
 export function clearLaneRangeWithin(
   edit: AtomicProjectEdit,
@@ -224,6 +340,10 @@ export function clearLaneRangeWithin(
     if (source === undefined) continue;
     const overlapStart = Math.max(startPpq, source.startPpq);
     const overlapEnd = Math.min(endPpq, source.startPpq + source.lengthPpq);
+    if (source.loopEnabled) {
+      clearLoopClipRangeWithin(edit, source, overlapStart, overlapEnd);
+      continue;
+    }
     let middleId = clipId;
     if (source.startPpq < overlapStart - CLIP_LANE_EPSILON)
       middleId = splitClipWithin(edit, middleId, overlapStart);

@@ -601,6 +601,10 @@ export function useMidiRecording(
       error.value = t.value.notices.recording.midiTrackRequired;
       return false;
     }
+    if (track.frozen !== undefined) {
+      error.value = t.value.reasons.trackFrozen;
+      return false;
+    }
     const suppliedPlan = typeof startAtPpq === 'object' && startAtPpq !== null ? startAtPpq : null;
     const legacyStart = typeof startAtPpq === 'number' ? startAtPpq : undefined;
     const plan = resolveTransportRecordingPlan({

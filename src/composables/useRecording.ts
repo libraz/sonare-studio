@@ -364,12 +364,15 @@ export function useRecording(
     unsubscribeMicLost = recorder.onMicrophoneLost(() => {
       // The capture device disappeared: stop any in-flight take, drop the mic
       // state and prompt the user to reconnect (the recorder already discarded
-      // the partial take, so no silent all-zero clip lands).
-      finishCountIn();
-      recordingOperations.invalidate(new DOMException('Microphone disconnected.', 'AbortError'));
-      activeOperation = null;
-      clearTakeState();
-      state.value = 'idle';
+      // the partial take, so no silent all-zero clip lands). Once stop has
+      // begun, the captured frames belong to the save and are kept.
+      if (state.value !== 'stopping' && state.value !== 'ingesting') {
+        finishCountIn();
+        recordingOperations.invalidate(new DOMException('Microphone disconnected.', 'AbortError'));
+        activeOperation = null;
+        clearTakeState();
+        state.value = 'idle';
+      }
       micReady.value = false;
       inputLevel.value = 0;
       error.value = t.value.notices.recording.micDisconnected;
@@ -634,6 +637,10 @@ export function useRecording(
       })
     ) {
       error.value = t.value.notices.recording.audioTrackRequired;
+      return false;
+    }
+    if (targetTrackIds.some((id) => store.tracks.find((t) => t.id === id)?.frozen !== undefined)) {
+      error.value = t.value.reasons.trackFrozen;
       return false;
     }
     const identity = recordingIdentity(targetTrackIds, startAtPpq, endAtPpq);

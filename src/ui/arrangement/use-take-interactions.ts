@@ -28,6 +28,8 @@ export interface TakeLaneClip extends CompableClipFields {
   trackId: number;
   /** MIDI cycle takes; these are selected as whole takes rather than ranged comps. */
   midiTakes?: ReadonlyArray<unknown>;
+  /** Take playing where no comp segment applies; defaults to the last take. */
+  midiActiveTakeIndex?: number;
   midiCompSegments?: ClipCompSegment[];
   /** Timeline start of the clip, in PPQ. */
   startPpq: number;
@@ -217,10 +219,21 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
     if (g.clip.midiTakes !== undefined) {
       if (end - start < MIN_COMP_DRAG_PPQ) commands.setActiveMidiTake?.(g.clip.id, g.takeIndex);
       else {
+        // Without a comp the whole clip plays the active take, as the take lanes draw it.
+        const activeTakeIndex = Math.min(
+          Math.max(0, g.clip.midiActiveTakeIndex ?? g.clip.midiTakes.length - 1),
+          g.clip.midiTakes.length - 1,
+        );
         commands.setMidiCompSegments?.(
           g.clip.id,
           compSegmentsWithRange(
-            { ...g.clip, compSegments: g.clip.midiCompSegments ?? [{ startPpq: 0, takeIndex: 0 }] },
+            {
+              ...g.clip,
+              takes: g.clip.midiTakes,
+              compSegments: g.clip.midiCompSegments ?? [
+                { startPpq: 0, takeIndex: activeTakeIndex },
+              ],
+            },
             start,
             end,
             g.takeIndex,

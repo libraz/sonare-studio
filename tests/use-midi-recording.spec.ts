@@ -278,9 +278,43 @@ describe('useMidiRecording', () => {
     expect(calls[0]).toMatchObject({
       startPpq: 4,
       lengthPpq: 4,
-      notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 0.5, channel: 0 }],
+      notes: [{ pitch: 60, velocity: 96, startPpq: 3.5, durationPpq: 0.5, channel: 0 }],
     });
+    expect(calls[0].midiTakes).toBeUndefined();
   });
+
+  it.each(['keep-last', 'takes'] as const)(
+    'keeps the full pass when a chord is released after the loop wraps (%s)',
+    (mode) => {
+      const { recording, positionPpq, transport, calls } = setup();
+      recording.arm(store.tracks[0].id);
+      recording.cycleRecordMode.value = mode;
+      transport.loopEnabled.value = true;
+      transport.loopStartPpq.value = 4;
+      transport.loopEndPpq.value = 8;
+      positionPpq.value = 4;
+      recording.record();
+
+      positionPpq.value = 4.5;
+      recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0 });
+      positionPpq.value = 5;
+      recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0 });
+      positionPpq.value = 7;
+      recording.captureNoteOn({ pitch: 64, velocity: 90, channel: 0 });
+      recording.captureNoteOn({ pitch: 67, velocity: 90, channel: 0 });
+      positionPpq.value = 4.5; // wrapped into the next pass
+      recording.captureNoteOff({ pitch: 64, velocity: 0, channel: 0 });
+      positionPpq.value = 5; // the other key is still held at stop
+      recording.stopRecord();
+
+      expect(calls[0].notes.map((note) => [note.pitch, note.startPpq])).toEqual([
+        [60, 0.5],
+        [64, 3],
+        [67, 3],
+      ]);
+      expect(calls[0].midiTakes).toBeUndefined();
+    },
+  );
 
   it('offers overdub and keep-last cycle-recording modes', () => {
     const recordTwoPasses = (mode: 'overdub' | 'keep-last') => {
@@ -577,5 +611,102 @@ describe('useMidiRecording', () => {
     recording.arm(null);
     expect(recording.record()).toBe(false);
     expect(recording.error.value).toMatch(/Arm a MIDI track/);
+  });
+
+  it('refuses to record a frozen track before capture starts', () => {
+    const { recording, play } = setup();
+    const track = store.tracks[0];
+    recording.arm(track.id);
+    store.tracks = store.tracks.map((entry) =>
+      entry.id === track.id ? { ...entry, frozen: { assetId: 'render' } } : entry,
+    );
+
+    expect(recording.record()).toBe(false);
+    expect(recording.error.value).toMatch(/frozen/);
+    expect(recording.isRecording.value).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  describe('cycle-recording modes', () => {
+    /** Records pitch 60 in the first pass and 64 in the second of a 4-8 loop. */
+    const recordTwoPasses = (
+      mode: 'takes' | 'overwrite',
+      commands: {
+        add?: (input: AddRecordedMidiClipInput) => number;
+        overwrite?: (input: AddRecordedMidiClipInput) => number;
+      } = {},
+    ) => {
+      const t = makeTransport();
+      const added: AddRecordedMidiClipInput[] = [];
+      const overwritten: AddRecordedMidiClipInput[] = [];
+      const recording = useMidiRecording(t.transport, {
+        addRecordedMidiClip:
+          commands.add ??
+          ((input) => {
+            added.push(input);
+            return 1;
+          }),
+        overwriteRecordedMidiClip:
+          commands.overwrite ??
+          ((input) => {
+            overwritten.push(input);
+            return 2;
+          }),
+      });
+      recording.arm(store.tracks[0].id);
+      recording.cycleRecordMode.value = mode;
+      t.transport.loopEnabled.value = true;
+      t.transport.loopStartPpq.value = 4;
+      t.transport.loopEndPpq.value = 8;
+      t.positionPpq.value = 4;
+      recording.record();
+      t.positionPpq.value = 4.5;
+      recording.captureNoteOn({ pitch: 60, velocity: 90, channel: 0 });
+      t.positionPpq.value = 5;
+      recording.captureNoteOff({ pitch: 60, velocity: 0, channel: 0 });
+      t.positionPpq.value = 4.5;
+      recording.captureNoteOn({ pitch: 64, velocity: 90, channel: 0 });
+      t.positionPpq.value = 5;
+      recording.captureNoteOff({ pitch: 64, velocity: 0, channel: 0 });
+      const result = recording.stopRecord();
+      return { recording, result, added, overwritten };
+    };
+
+    it('stores each pass as a take with the last one active in takes mode', () => {
+      const { result, added, overwritten } = recordTwoPasses('takes');
+      expect(result).toBe(1);
+      expect(overwritten).toHaveLength(0);
+      expect(added).toHaveLength(1);
+      const [input] = added;
+      expect(input.midiTakes?.map((take) => take.notes.map((note) => note.pitch))).toEqual([
+        [60],
+        [64],
+      ]);
+      expect(input.activeMidiTakeIndex).toBe(1);
+      expect(input.notes).toEqual(input.midiTakes?.[1].notes);
+      expect(input).toMatchObject({ startPpq: 4, lengthPpq: 4 });
+    });
+
+    it('replaces the cycle range through the overwrite command in overwrite mode', () => {
+      const { result, added, overwritten } = recordTwoPasses('overwrite');
+      expect(result).toBe(2);
+      expect(added).toHaveLength(0);
+      expect(overwritten).toHaveLength(1);
+      expect(overwritten[0]).toMatchObject({ startPpq: 4, lengthPpq: 4 });
+      expect(overwritten[0].notes.map((note) => note.pitch)).toEqual([64]);
+      expect(overwritten[0].midiTakes).toBeUndefined();
+    });
+
+    it('reports a failed store and returns no clip', () => {
+      const { recording, result } = recordTwoPasses('takes', {
+        add: () => {
+          throw new Error('lane refused');
+        },
+      });
+      expect(result).toBeNull();
+      expect(recording.error.value).toMatch(/Failed to store the recording/);
+      expect(recording.error.value).toMatch(/lane refused/);
+      expect(recording.isRecording.value).toBe(false);
+    });
   });
 });
