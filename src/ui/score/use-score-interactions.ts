@@ -11,7 +11,7 @@
  * the injected `onAnnotateClick` before the seek/select still runs.
  */
 
-import { clamp } from '@/lib/math';
+import { scoreOnsetResolver } from '@/notation/score-clip-window';
 import { scoreSourceIdentitiesFromXmlId } from '@/notation/source-identity';
 import type { VerovioTimemapEntry } from '@/notation/verovio';
 import { setActiveClip, setSelection } from '@/project/commands';
@@ -85,17 +85,19 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
   let suppressNextClick = false;
 
   /**
-   * Quantized onset of an editor note, mirroring the display quantizer's grid
-   * rounding (nearest grid step anchored at the clip start, clamped into the
-   * clip window). Returns null for notes outside the notated window.
+   * Quantized onset of each editor note, from the display quantizer's own
+   * per-measure grid and window. Returns null for notes outside the window.
    */
-  function quantizedOnsetPpq(note: { startPpq: number; durationPpq: number }): number | null {
-    const clipStart = store.clipStartPpq;
-    const clipEnd = clipStart + store.clipLengthPpq;
-    if (note.startPpq + note.durationPpq <= clipStart || note.startPpq >= clipEnd) return null;
-    const grid = options.getDivisionPpq();
-    const snapped = clipStart + Math.round((note.startPpq - clipStart) / grid) * grid;
-    return clamp(snapped, clipStart, clipEnd - grid);
+  function onsetResolver(): (note: { startPpq: number; durationPpq: number }) => number | null {
+    return scoreOnsetResolver(
+      {
+        clipStartPpq: store.clipStartPpq,
+        clipLengthPpq: store.clipLengthPpq,
+        pickupLengthPpq: store.pickupLengthPpq,
+        timeSignatures: store.timeSignatures,
+      },
+      options.getDivisionPpq(),
+    );
   }
 
   /**
@@ -107,6 +109,7 @@ export function useScoreInteractions(options: ScoreInteractionsOptions): ScoreIn
     const exact: number[] = [];
     const sounding: number[] = [];
     const notes = store.activeClip ? projectMidiNoteOccurrences(store.activeClip) : store.notes;
+    const quantizedOnsetPpq = onsetResolver();
     for (const note of notes) {
       const onset = quantizedOnsetPpq(note);
       if (onset !== null && Math.abs(onset - ppq) < ONSET_MATCH_EPSILON_PPQ) exact.push(note.id);

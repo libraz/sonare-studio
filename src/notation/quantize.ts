@@ -30,7 +30,7 @@
  * time signature.
  */
 
-import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
+import { notatedChannel, percussionNoteTest } from '@/compose/tracks';
 import { estimateFingeringForUnits } from '@/notation/fingering';
 import { assignGrandStaffUnits } from '@/notation/grand-staff';
 import {
@@ -49,7 +49,12 @@ import {
 } from '@/notation/model';
 import { type AssignedVoiceUnits, EPSILON, meanPitch, type VoiceUnit } from '@/notation/voice-unit';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
-import { clipMeasureGrid } from '@/project/time-signature';
+import {
+  clipMeasureGrid,
+  meterBarLengthPpq,
+  snapPpqToBarGrid,
+  timeSignatureAt,
+} from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 
 export {
@@ -129,6 +134,12 @@ export interface QuantizeOptions {
    * {@link NotatedEvent.fingering} and {@link NotatedEvent.handCross}.
    */
   estimateFingering?: boolean;
+  /**
+   * Which notes are percussion, engraved on the drum map without display
+   * transpose. Defaults to the channel-only test of {@link percussionNoteTest};
+   * callers that know the track pass its classification.
+   */
+  isPercussionNote?: (note: ScoreInputNote) => boolean;
 }
 
 /** A note after grid quantization and clip clamping. */
@@ -136,7 +147,7 @@ interface GridNote {
   pitch: number;
   startPpq: number;
   endPpq: number;
-  /** MIDI channel from the source note (0-based). */
+  /** Notated MIDI channel (0-based, see {@link notatedChannel}). */
   channel: number;
   /** Source note-on velocity. */
   velocity: number;
@@ -152,13 +163,27 @@ interface DurationPiece {
   value: NoteValue;
 }
 
+/** One notated measure of the score window. */
+interface ScoreMeasure {
+  index: number;
+  startPpq: number;
+  lengthPpq: number;
+  timeSig: NotatedTimeSig;
+}
+
+/** The notated clip window: origin, end barline and the measures between them. */
+interface ScoreWindow {
+  startPpq: number;
+  endPpq: number;
+  measures: ScoreMeasure[];
+}
+
 /** Validated and grid-snapped options. */
 interface ResolvedOptions {
   grid: number;
   timeSig: NotatedTimeSig;
   keyFifths: number;
-  clipStartPpq: number;
-  clipEndPpq: number;
+  window: ScoreWindow;
   maxVoices: number;
   partId: string;
   partName: string;
@@ -166,8 +191,6 @@ interface ResolvedOptions {
   grandStaffSplitPitch: number;
   displayTransposeSemitones: number;
   estimateFingering: boolean;
-  pickupLengthPpq: number;
-  timeSignatures: ReadonlyArray<TimeSignatureSegment>;
 }
 
 /** All 21 representable note values, longest first, with their PPQ lengths. */
@@ -201,9 +224,9 @@ function isMultipleOf(value: number, step: number): boolean {
   return Math.abs(ratio - Math.round(ratio)) <= EPSILON;
 }
 
-/** Snaps `value` to the nearest integral multiple of `step`. */
-function snapToStep(value: number, step: number): number {
-  return Math.round(value / step) * step;
+/** Rounds `value` to the nearest point of a lattice anchored at zero. */
+function roundToLattice(value: number, lattice: number): number {
+  return Math.round(value / lattice) * lattice;
 }
 
 /** Returns true when `ppq` is a duration the model can spell directly. */
@@ -283,24 +306,13 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     );
   }
   const grid = isMultipleOf(divisionPpq, SIXTY_FOURTH_PPQ)
-    ? snapToStep(divisionPpq, SIXTY_FOURTH_PPQ)
+    ? roundToLattice(divisionPpq, SIXTY_FOURTH_PPQ)
     : divisionPpq;
-  const start = snapToStep(clipStartPpq, SIXTY_FOURTH_PPQ);
-  // The display grid governs every engraved boundary.  Keeping the clip end
-  // only on the 64th lattice can leave a sub-grid tail after a triplet pickup,
-  // which no note value can cover.
-  const length = snapToStep(clipLengthPpq, grid);
-  if (length <= 0) {
-    throw new RangeError(
-      `quantizeToScore: clipLengthPpq rounds to zero on the 64th-note lattice, got ${clipLengthPpq}`,
-    );
-  }
   return {
     grid,
     timeSig: { beats: timeSig.beats, beatUnit: timeSig.beatUnit },
     keyFifths,
-    clipStartPpq: start,
-    clipEndPpq: start + length,
+    window: resolveScoreWindow(options, grid),
     maxVoices,
     partId: options.partId ?? 'P1',
     partName: options.partName ?? '',
@@ -308,45 +320,142 @@ function resolveOptions(options: QuantizeOptions): ResolvedOptions {
     grandStaffSplitPitch,
     displayTransposeSemitones,
     estimateFingering: options.estimateFingering ?? false,
-    pickupLengthPpq:
-      Number.isFinite(options.pickupLengthPpq) && (options.pickupLengthPpq ?? 0) > 0
-        ? Math.min(length, snapToStep(options.pickupLengthPpq ?? 0, grid))
-        : 0,
-    timeSignatures: options.timeSignatures ?? [],
   };
 }
 
 /**
- * Pipeline step 1: snap note starts/ends to the display grid (anchored at the
- * clip start so the grid aligns with barlines) and clamp to the clip window.
- *
- * Zero-length results are kept at one grid step (minimum duration) rather
- * than dropped, so very short notes stay visible in the score. Notes wholly
- * outside the clip are dropped. The input is never mutated.
+ * Resolves the notated window once: its origin on the 64th lattice, its end
+ * (see {@link windowEndPpq}) and the measure grid between them. Note snapping,
+ * note inclusion and the measure count all read this one window.
  */
-function quantizeToGrid(notes: readonly ScoreInputNote[], opts: ResolvedOptions): GridNote[] {
-  const { grid, clipStartPpq: cs, clipEndPpq: ce, displayTransposeSemitones: shift } = opts;
+function resolveScoreWindow(options: QuantizeOptions, grid: number): ScoreWindow {
+  const startPpq = roundToLattice(options.clipStartPpq, SIXTY_FOURTH_PPQ);
+  const changes: TimeSignatureSegment[] = [
+    { startPpq: 0, numerator: options.timeSig.beats, denominator: options.timeSig.beatUnit },
+    ...(options.timeSignatures ?? []),
+  ];
+  // Only a window opening at PPQ 0 has a pickup, as in the measure grid.
+  const requestedPickup =
+    startPpq === 0 && Number.isFinite(options.pickupLengthPpq) && (options.pickupLengthPpq ?? 0) > 0
+      ? (options.pickupLengthPpq ?? 0)
+      : 0;
+  // A pickup off the display grid would leave a tail no note value covers.
+  const pickupLengthPpq = roundToLattice(requestedPickup, grid);
+  // Moving the pickup barline moves every later barline, the window end included.
+  const pickupShift =
+    pickupLengthPpq < options.clipLengthPpq - EPSILON ? pickupLengthPpq - requestedPickup : 0;
+  const endPpq = windowEndPpq(
+    changes,
+    startPpq,
+    startPpq + options.clipLengthPpq + pickupShift,
+    pickupLengthPpq,
+    grid,
+  );
+  if (endPpq - startPpq <= EPSILON) {
+    throw new RangeError(
+      `quantizeToScore: clipLengthPpq rounds to zero on the display grid, got ${options.clipLengthPpq}`,
+    );
+  }
+  const ranges = clipMeasureGrid(
+    changes,
+    startPpq,
+    endPpq,
+    Math.min(pickupLengthPpq, endPpq - startPpq),
+  );
+  const measures =
+    ranges.length === 0
+      ? [{ index: 0, startPpq, lengthPpq: SIXTY_FOURTH_PPQ, timeSig: { ...options.timeSig } }]
+      : ranges.map((range, index) => ({
+          index,
+          startPpq: range.startPpq,
+          lengthPpq: Math.max(SIXTY_FOURTH_PPQ, range.lengthPpq),
+          timeSig: { beats: range.numerator, beatUnit: range.denominator },
+        }));
+  return { startPpq, endPpq, measures };
+}
+
+/**
+ * Ends the window exactly on the requested position when it is a barline of
+ * the measure grid, whatever the display grid; a partial last measure is
+ * rounded to the display grid from its own barline, so it leaves no sub-grid
+ * tail.
+ */
+function windowEndPpq(
+  changes: readonly TimeSignatureSegment[],
+  startPpq: number,
+  requestedEndPpq: number,
+  pickupLengthPpq: number,
+  grid: number,
+): number {
+  // The bar holding the requested end is no longer than a bar of the meter there.
+  const searchEndPpq =
+    requestedEndPpq + meterBarLengthPpq(timeSignatureAt(changes, requestedEndPpq));
+  const last = clipMeasureGrid(changes, startPpq, searchEndPpq, pickupLengthPpq).find(
+    (measure) => measure.startPpq + measure.lengthPpq > requestedEndPpq - EPSILON,
+  );
+  if (!last) return requestedEndPpq;
+  const barlinePpq = last.startPpq + last.lengthPpq;
+  if (Math.abs(barlinePpq - requestedEndPpq) <= EPSILON) return barlinePpq;
+  return last.startPpq + roundToLattice(requestedEndPpq - last.startPpq, grid);
+}
+
+/** Snaps a position to the display grid anchored at the start of its measure. */
+function snapToMeasureGrid(window: ScoreWindow, ppq: number, grid: number): number {
+  const { measures } = window;
+  let measure = measures[0];
+  for (const candidate of measures) {
+    if (candidate.startPpq > ppq + EPSILON) break;
+    measure = candidate;
+  }
+  return snapPpqToBarGrid(measure, ppq, grid);
+}
+
+/** Last display-grid position before the window end, inside the last measure. */
+function lastGridOnsetPpq(window: ScoreWindow, grid: number): number {
+  const last = window.measures[window.measures.length - 1];
+  const steps = Math.max(1, Math.ceil(last.lengthPpq / grid - EPSILON)) - 1;
+  return last.startPpq + steps * grid;
+}
+
+/**
+ * Pipeline step 1: snap note starts/ends to the display grid (anchored at the
+ * start of each measure, so every barline is a grid point whatever the clip
+ * start) and clamp to the clip window.
+ *
+ * A note is kept exactly when its sounding interval overlaps the window; a
+ * start that rounds onto the window end falls back to the last grid onset
+ * before it. Zero-length results are kept at one grid step (minimum duration)
+ * rather than dropped, so very short notes stay visible in the score. The
+ * input is never mutated.
+ */
+function quantizeToGrid(
+  notes: readonly ScoreInputNote[],
+  opts: ResolvedOptions,
+  percussion: boolean,
+): GridNote[] {
+  const { grid, window } = opts;
+  const shift = percussion ? 0 : opts.displayTransposeSemitones;
+  const { startPpq: ws, endPpq: we } = window;
   const out: GridNote[] = [];
   for (const note of notes) {
-    let start = cs + snapToStep(note.startPpq - cs, grid);
-    let end = cs + snapToStep(note.startPpq + note.durationPpq - cs, grid);
+    const rawEnd = note.startPpq + note.durationPpq;
+    if (rawEnd <= ws + EPSILON || note.startPpq >= we - EPSILON) continue;
+    let start = Math.max(ws, snapToMeasureGrid(window, note.startPpq, grid));
+    if (start >= we - EPSILON) start = lastGridOnsetPpq(window, grid);
+    let end = snapToMeasureGrid(window, rawEnd, grid);
     if (end - start < grid - EPSILON) {
-      end = start + grid; // Minimum duration: one grid step.
+      // Minimum duration: one grid step.
+      end = Math.max(end, snapToMeasureGrid(window, start + grid, grid));
     }
-    if (start < cs - EPSILON) {
-      if (end <= cs + EPSILON) continue; // Ends before the clip: drop.
-      start = cs; // Starts before the clip but sounds into it: clamp.
-    }
-    if (start >= ce - EPSILON) continue; // Starts at/after the clip end: drop.
-    if (end > ce + EPSILON) end = ce; // Sounds past the clip end: clamp.
+    end = Math.min(we, end);
     if (end - start <= EPSILON) continue;
-    // Display transpose shifts the engraved pitch only; the input is untouched.
+    // Display transpose shifts the engraved pitch only (never a drum); the input is untouched.
     const pitch = Math.min(127, Math.max(0, note.pitch + shift));
     out.push({
       pitch,
       startPpq: start,
       endPpq: end,
-      channel: note.channel,
+      channel: notatedChannel(note.channel, percussion),
       velocity: note.velocity,
       id: note.id,
       ...(note.scoreSourceIdentity ? { sourceIdentity: { ...note.scoreSourceIdentity } } : {}),
@@ -367,7 +476,7 @@ function quantizeToGrid(notes: readonly ScoreInputNote[], opts: ResolvedOptions)
  * deduplicate. Units keep onset order; simultaneous units stay ordered by
  * descending top pitch (consumed by voice assignment).
  */
-function clusterChords(notes: GridNote[]): VoiceUnit[] {
+function clusterChords(notes: GridNote[], percussion: boolean): VoiceUnit[] {
   const units: VoiceUnit[] = [];
   let i = 0;
   while (i < notes.length) {
@@ -391,7 +500,7 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
         if (
           Math.abs(group[b].endPpq - top.endPpq) <= EPSILON &&
           top.pitch - group[b].pitch <= CHORD_PITCH_SPAN &&
-          canClusterTogether(top, group[b])
+          canClusterTogether(top, group[b], percussion)
         ) {
           pitches.add(group[b].pitch);
           channels.add(group[b].channel);
@@ -418,15 +527,13 @@ function clusterChords(notes: GridNote[]): VoiceUnit[] {
 }
 
 /** Returns true when simultaneous notes should share one chord event. */
-function canClusterTogether(a: GridNote, b: GridNote): boolean {
+function canClusterTogether(a: GridNote, b: GridNote, percussion: boolean): boolean {
   if (a.channel !== b.channel) {
     // MusicXML instrument/channel metadata is event-scoped. Keeping channels
     // in separate units prevents a chord merge from erasing that identity.
     return false;
   }
-  if (a.channel !== GM_PERCUSSION_CHANNEL && b.channel !== GM_PERCUSSION_CHANNEL) return true;
-  if (a.channel !== b.channel) return false;
-  return percussionVoiceGroup(a.pitch) === percussionVoiceGroup(b.pitch);
+  return !percussion || percussionVoiceGroup(a.pitch) === percussionVoiceGroup(b.pitch);
 }
 
 /** Drum-set voice group: 1 = upper kit voice, 2 = kick/low-foot voice. */
@@ -559,12 +666,10 @@ function assignVoiceUnits(
   clef: NotatedClef | undefined,
   maxVoices: number,
   grandStaffSplitPitch: number,
+  percussion: boolean,
 ): AssignedVoiceUnits[] {
   if (clef !== 'grand') {
-    const percussionOnly = units.every(
-      (unit) => unit.channels.length === 1 && unit.channels[0] === GM_PERCUSSION_CHANNEL,
-    );
-    if (percussionOnly && maxVoices >= 2) return separatePercussionVoices(units);
+    if (percussion && maxVoices >= 2) return separatePercussionVoices(units);
     return separateVoices(units, maxVoices).map((voiceUnits, index) => ({
       voice: (index + 1) as NotatedVoiceNumber,
       units: voiceUnits,
@@ -603,41 +708,6 @@ function assignVoiceUnits(
 function nextGroupBoundary(ppq: number, measureStartPpq: number, groupLen: number): number {
   const rel = ppq - measureStartPpq;
   return measureStartPpq + (Math.floor(rel / groupLen + EPSILON) + 1) * groupLen;
-}
-
-/**
- * Pipeline step 4: build the measure grid from the time signature.
- *
- * Measures start at the clip start. When the clip length is not a multiple of
- * the measure length, the final measure is short (incomplete) and
- * `lengthPpq < timeSigLengthPpq(timeSig)`. A pickup at the front can be
- * realized by the caller via `clipStartPpq` placement; this function only
- * models the trailing incomplete measure.
- */
-function buildMeasureGrid(
-  opts: ResolvedOptions,
-): Array<{ index: number; startPpq: number; lengthPpq: number; timeSig: NotatedTimeSig }> {
-  const changes: TimeSignatureSegment[] = [
-    { startPpq: 0, numerator: opts.timeSig.beats, denominator: opts.timeSig.beatUnit },
-    ...opts.timeSignatures,
-  ];
-  const ranges = clipMeasureGrid(changes, opts.clipStartPpq, opts.clipEndPpq, opts.pickupLengthPpq);
-  if (ranges.length === 0) {
-    return [
-      {
-        index: 0,
-        startPpq: opts.clipStartPpq,
-        lengthPpq: SIXTY_FOURTH_PPQ,
-        timeSig: opts.timeSig,
-      },
-    ];
-  }
-  return ranges.map((range, index) => ({
-    index,
-    startPpq: range.startPpq,
-    lengthPpq: Math.max(SIXTY_FOURTH_PPQ, range.lengthPpq),
-    timeSig: { beats: range.numerator, beatUnit: range.denominator },
-  }));
 }
 
 /**
@@ -775,7 +845,7 @@ function decomposeRest(
  */
 function splitUnitsIntoMeasures(
   units: VoiceUnit[],
-  measures: Array<{ index: number; startPpq: number; lengthPpq: number; timeSig: NotatedTimeSig }>,
+  measures: readonly ScoreMeasure[],
   voice: NotatedVoiceNumber,
   staff?: 1 | 2,
 ): NotatedEvent[][] {
@@ -937,10 +1007,11 @@ export function quantizeToScore(
   notes: readonly ScoreInputNote[],
   options: QuantizeOptions,
 ): NotatedScore {
-  const pitchedNotes = notes.filter((note) => note.channel !== GM_PERCUSSION_CHANNEL);
-  const percussionNotes = notes.filter((note) => note.channel === GM_PERCUSSION_CHANNEL);
+  const isPercussionNote = options.isPercussionNote ?? percussionNoteTest(null, notes);
+  const pitchedNotes = notes.filter((note) => !isPercussionNote(note));
+  const percussionNotes = notes.filter(isPercussionNote);
   if (pitchedNotes.length > 0 && percussionNotes.length > 0) {
-    const pitched = quantizeToScore(pitchedNotes, options);
+    const pitched = quantizeToScore(pitchedNotes, { ...options, isPercussionNote: () => false });
     const basePartId = options.partId ?? 'P1';
     const basePartName = options.partName?.trim() ?? '';
     const percussion = quantizeToScore(percussionNotes, {
@@ -948,21 +1019,26 @@ export function quantizeToScore(
       partId: `${basePartId}-percussion`,
       partName: basePartName === '' ? 'Percussion' : `${basePartName} Percussion`,
       clef: 'treble',
+      isPercussionNote: () => true,
     });
     return { ...pitched, parts: [...pitched.parts, ...percussion.parts] };
   }
+  const percussion = percussionNotes.length > 0;
   const opts = resolveOptions(options);
-  const gridNotes = quantizeToGrid(notes, opts);
-  const units = clusterChords(gridNotes);
-  const clef =
-    percussionNotes.length > 0 && pitchedNotes.length === 0
-      ? 'treble'
-      : (opts.clef ?? chooseClef(gridNotes));
-  const voiceUnits = assignVoiceUnits(units, clef, opts.maxVoices, opts.grandStaffSplitPitch);
+  const gridNotes = quantizeToGrid(notes, opts, percussion);
+  const units = clusterChords(gridNotes, percussion);
+  const clef = percussion ? 'treble' : (opts.clef ?? chooseClef(gridNotes));
+  const voiceUnits = assignVoiceUnits(
+    units,
+    clef,
+    opts.maxVoices,
+    opts.grandStaffSplitPitch,
+    percussion,
+  );
   if (opts.estimateFingering) {
     estimateFingeringForUnits(voiceUnits, clef, opts.grandStaffSplitPitch);
   }
-  const measures = buildMeasureGrid(opts);
+  const measures = opts.window.measures;
 
   const perVoiceMeasureEvents = voiceUnits.map((entry) => ({
     voice: entry.voice,

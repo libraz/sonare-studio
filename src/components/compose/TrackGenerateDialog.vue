@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { toSafetyProfile } from '@/compose/guidance-profile';
-import { harmonicNotes, isDrumTrack } from '@/compose/tracks';
+import { editableDrumTracks, harmonicNotes, isDrumTrack } from '@/compose/tracks';
 import { describeError } from '@/lib/errors';
 import { clamp01 } from '@/lib/math';
 import {
@@ -241,6 +241,16 @@ const activeMidiClip = computed(() => {
   const clip = store.activeClip;
   const track = clip ? store.tracks.find((entry) => entry.id === clip.trackId) : null;
   return clip !== null && clipKind(clip) === 'midi' && track?.frozen === undefined ? clip : null;
+});
+
+/** True when the active editable MIDI clip belongs to a percussion track (no motif target). */
+const activeClipIsDrum = computed(() => {
+  const clip = activeMidiClip.value;
+  if (clip === null) return false;
+  return isDrumTrack(
+    store.tracks.find((entry) => entry.id === clip.trackId),
+    clip.notes,
+  );
 });
 
 /** Active MIDI clip used as the counter-melody source, including frozen clips. */
@@ -720,7 +730,7 @@ function replaceCandidates(part: TrackPart): { value: string; label: string }[] 
 /** Full target dropdown for a part. */
 function targetOptions(part: TrackPart): { value: string; label: string }[] {
   const options: { value: string; label: string }[] = [{ value: 'new', label: g.value.targetNew }];
-  if (part === 'motif' && activeMidiClip.value !== null) {
+  if (part === 'motif' && activeMidiClip.value !== null && !activeClipIsDrum.value) {
     options.push(
       { value: 'clip:append', label: g.value.targetClipAppend },
       { value: 'clip:replace', label: g.value.targetClipReplace },
@@ -729,13 +739,9 @@ function targetOptions(part: TrackPart): { value: string; label: string }[] {
   const replacements = replaceCandidates(part);
   options.push(...replacements);
   if (part === 'drums') {
-    for (const option of replacements) {
-      const trackId = targetTrackId(option.value, 'replace');
-      if (trackId === null) continue;
-      const track = store.tracks.find((entry) => entry.id === trackId);
-      if (track === undefined || partForTrack(track) !== 'drums') continue;
+    for (const track of editableDrumTracks(store.tracks, store.clips)) {
       options.push({
-        value: `range:${trackId}`,
+        value: `range:${track.id}`,
         label: formatMessage(g.value.targetReplaceRange, { name: track.name }),
       });
     }

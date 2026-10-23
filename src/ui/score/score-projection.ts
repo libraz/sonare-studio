@@ -1,4 +1,4 @@
-import { harmonicTracksOnly } from '@/compose/tracks';
+import { harmonicTracksOnly, percussionNoteTest } from '@/compose/tracks';
 import { DEFAULT_DIVISIONS, type NotatedScore } from '@/notation/model';
 import { quantizeToScore, type ScoreInputNote } from '@/notation/quantize';
 import type { ScoreAnnotations, ScoreNoteAnnotation } from '@/project/annotations';
@@ -8,12 +8,14 @@ import {
   projectMidiNoteOccurrences,
 } from '@/project/midi-projection';
 import type { useProjectStore } from '@/project/store';
-import { clipKind, type EditorClip, type TimeSignatureSegment } from '@/project/types';
+import {
+  clipKind,
+  type EditorClip,
+  type EditorTrack,
+  type TimeSignatureSegment,
+} from '@/project/types';
 
 export type ProjectStore = ReturnType<typeof useProjectStore>;
-
-/** Zero-based General MIDI percussion channel. */
-const GM_PERCUSSION_CHANNEL = 9;
 
 export interface FullScoreBuildOptions {
   divisionPpq: number;
@@ -33,6 +35,8 @@ export interface ScorePartBuildOptions extends FullScoreBuildOptions {
   partId?: string;
   partName: string;
   clef?: 'treble' | 'bass' | 'grand';
+  /** Source track, whose percussion classification decides the drum-map notes. */
+  track?: EditorTrack | null;
 }
 
 /**
@@ -57,6 +61,7 @@ export function buildScorePart(
     displayTransposeSemitones: options.displayTransposeSemitones,
     grandStaffSplitPitch: options.grandStaffSplitPitch,
     estimateFingering: options.estimateFingering,
+    isPercussionNote: percussionNoteTest(options.track, notes),
   });
 }
 
@@ -171,8 +176,9 @@ export function fullScorePartTrackIds(
     .filter((track) => track.kind === 'midi')
     .flatMap((track) => {
       const notes = projection.notesByTrack.get(track.id) ?? [];
-      const hasPitched = notes.some((note) => note.channel !== GM_PERCUSSION_CHANNEL);
-      const hasPercussion = notes.some((note) => note.channel === GM_PERCUSSION_CHANNEL);
+      const isPercussion = percussionNoteTest(track, notes);
+      const hasPitched = notes.some((note) => !isPercussion(note));
+      const hasPercussion = notes.some(isPercussion);
       return hasPitched && hasPercussion ? [track.id, track.id] : [track.id];
     });
 }
@@ -212,6 +218,7 @@ export function buildFullScore(
         pickupLengthPpq: options.pickupLengthPpq,
         partId,
         partName: track.name || `Track ${index + 1}`,
+        track,
         displayTransposeSemitones: options.displayTransposeSemitones,
         grandStaffSplitPitch: options.grandStaffSplitPitch,
         estimateFingering: options.estimateFingering,

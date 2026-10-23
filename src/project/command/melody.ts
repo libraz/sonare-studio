@@ -22,7 +22,7 @@ import {
   StaleProjectOperationError,
 } from '../operation';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
-import { meterBarLengthPpq, snapPpqToMeterGrid, timeSignatureAt } from '../time-signature';
+import { advanceBarsPpq, type MeterGridStep, snapPpqToMeterGrid } from '../time-signature';
 import { transcribeAudioInWorker } from '../transcribe-client';
 import { clipKind, type TempoSegment, TRACK_COLOR_PALETTE } from '../types';
 import { assertNoNewClipOverlaps } from './clips-editing';
@@ -186,9 +186,9 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
     };
     assertCurrent();
     if (typeof wasm.analyzeMelody !== 'function') return -1;
-    const rhythmQuantizePpq = store.snapEnabled
+    const rhythmQuantizePpq: MeterGridStep | undefined = store.snapEnabled
       ? store.snapBar
-        ? meterBarLengthPpq(timeSignatureAt(store.timeSignatures, clip.startPpq))
+        ? 'bar'
         : 4 / store.snapDivision
       : undefined;
     const notes = await analyzeAudioClipMelody(
@@ -200,7 +200,7 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
         detectKey: wasm.detectKey,
         scaleQuantizeMidi: wasm.scaleQuantizeMidi,
       },
-      { rhythmQuantizePpq },
+      { rhythmQuantizePpq, timeSignatures: store.timeSignatures },
       store.tempoSegments,
     );
     assertCurrent();
@@ -299,9 +299,9 @@ export async function transcribeAudioClipToMidi(
     );
   const linked = linkedAbortSignal(operation.token.signal, options.signal);
   try {
-    const rhythmQuantizePpq = store.snapEnabled
+    const rhythmQuantizePpq: MeterGridStep | undefined = store.snapEnabled
       ? store.snapBar
-        ? meterBarLengthPpq(timeSignatureAt(store.timeSignatures, clip.startPpq))
+        ? 'bar'
         : 4 / store.snapDivision
       : undefined;
     const loadAudioAsset = async (assetId: string) => {
@@ -341,6 +341,7 @@ export async function transcribeAudioClipToMidi(
       signal: linked.signal,
       // A matched grid is only known once the onsets are read, so it snaps below.
       rhythmQuantizePpq: grid ? undefined : rhythmQuantizePpq,
+      timeSignatures: store.timeSignatures,
       referenceHz: options.referenceHz,
       minNoteDivision: options.minNoteDivision,
       maxPolyphony: options.maxPolyphony,
@@ -382,12 +383,17 @@ export async function transcribeAudioClipToMidi(
         );
       const absoluteDownbeat = clip.startPpq + musicalDownbeat;
       let barLine = snapPpqToMeterGrid(store.timeSignatures, absoluteDownbeat, 'bar');
-      if (barLine - musicalDownbeat < 0)
-        barLine += meterBarLengthPpq(timeSignatureAt(store.timeSignatures, barLine));
+      if (barLine - musicalDownbeat < 0) barLine = advanceBarsPpq(store.timeSignatures, barLine, 1);
       startPpq = barLine - musicalDownbeat;
       tempoSegments = gridTempoSegments(grid, barLine, beatsPerBar);
       validateTempoSegments(tempoSegments);
-      notes = quantizeNotes(notes, rhythmQuantizePpq, clip.lengthPpq, musicalDownbeat);
+      notes = quantizeNotes(
+        notes,
+        rhythmQuantizePpq,
+        clip.lengthPpq,
+        startPpq,
+        store.timeSignatures,
+      );
       if (getProject().getOverlapPolicy() === 1) {
         assertNoNewClipOverlaps(store.clips, [
           { clipId, startPpq, lengthPpq: clip.lengthPpq, trackId: clip.trackId },

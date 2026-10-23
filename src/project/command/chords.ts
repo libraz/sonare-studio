@@ -7,7 +7,9 @@ import {
   harmonicTracksOnly,
   isDrumTrack,
   isMelodyTrack,
+  percussionNoteTest,
   type TrackWithNotes,
+  trackMidiNotes,
 } from '@/compose/tracks';
 import { ensureWasm } from '@/lib/wasm';
 import { estimateChordSymbols } from '@/notation/chords';
@@ -191,7 +193,7 @@ function writeProjectChordPlan(
 /**
  * Works out how the tracks following the chord track must be re-voiced for a
  * pending chord edit, their parked lead-follow notes included. Percussion
- * tracks, frozen tracks and looping clips are skipped: a looping clip sounds
+ * tracks and notes, frozen tracks and looping clips are skipped: a looping clip sounds
  * one note under several chord regions, so no single pitch could follow them all.
  */
 function planChordFollowEdits(
@@ -203,16 +205,21 @@ function planChordFollowEdits(
   const stashes = new Map<number, LeadFollowStashEntry[]>();
   for (const track of store.tracks) {
     const mode = track.chordFollow;
-    if (mode === undefined || track.frozen !== undefined || track.percussion === true) continue;
+    if (mode === undefined || track.frozen !== undefined) continue;
+    const trackNotes = trackMidiNotes(store.clips, track.id);
+    if (isDrumTrack(track, trackNotes)) continue;
+    const isPercussion = percussionNoteTest(track, trackNotes);
     for (const clip of store.clips) {
       if (clip.trackId !== track.id || clipKind(clip) !== 'midi') continue;
       if (clip.loopEnabled || clip.notes.length === 0) continue;
       const updates = chordFollowUpdates(
-        clip.notes.map((note) => ({
-          id: note.id,
-          pitch: note.pitch,
-          timelinePpq: midiSourcePpqToTimeline(clip, note.startPpq),
-        })),
+        clip.notes
+          .filter((note) => !isPercussion(note))
+          .map((note) => ({
+            id: note.id,
+            pitch: note.pitch,
+            timelinePpq: midiSourcePpqToTimeline(clip, note.startPpq),
+          })),
         before,
         after,
         mode,
@@ -228,7 +235,7 @@ function planChordFollowEdits(
     const stashUpdates = chordFollowUpdates(
       stash.flatMap((entry, index) => {
         const clip = store.clips.find((candidate) => candidate.id === entry.clipId);
-        if (clip === undefined || clip.loopEnabled) return [];
+        if (clip === undefined || clip.loopEnabled || isPercussion(entry.note)) return [];
         const timelinePpq = midiSourcePpqToTimeline(clip, entry.note.startPpq);
         return [{ id: index, pitch: entry.note.pitch, timelinePpq }];
       }),

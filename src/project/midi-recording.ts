@@ -1,16 +1,19 @@
 import { type NoteBoundaryEvent, pairNoteBoundariesIntoNotes, type RawNote } from './midi-events';
 import { snapPpqToSwingMeterGrid } from './time-signature';
+import type { TimeSignatureSegment } from './types';
 
 /**
- * Snaps each note's start to the nearest grid line, preserving its length.
+ * Snaps each note's start to the nearest line of the project meter grid,
+ * preserving its length.
  *
  * Only note starts move (the classic "quantize start" behaviour); durations
  * are kept so a quantized take still phrases like the performance. A start
  * never moves before 0.
  *
- * @param notes Clip-relative notes to quantize.
+ * @param notes Notes positioned on the timeline (absolute PPQ).
  * @param gridPpq Grid spacing in PPQ (e.g. 0.25 for 1/16 notes); <= 0 is a
  *   no-op (returns the notes unchanged).
+ * @param timeSignatures Project meter map the grid is anchored to.
  * @returns Notes with quantized starts, sorted by start position.
  */
 export function quantizeRecordedNotes(
@@ -18,6 +21,7 @@ export function quantizeRecordedNotes(
   gridPpq: number,
   strength = 1,
   swingPercent = 0,
+  timeSignatures: readonly TimeSignatureSegment[] = [],
 ): RawNote[] {
   if (!Number.isFinite(gridPpq) || gridPpq <= 0) return notes.slice();
   const amount = Math.min(1, Math.max(0, strength));
@@ -26,7 +30,8 @@ export function quantizeRecordedNotes(
     startPpq: Math.max(
       0,
       note.startPpq +
-        (snapPpqToSwingMeterGrid([], note.startPpq, gridPpq, swingPercent) - note.startPpq) *
+        (snapPpqToSwingMeterGrid(timeSignatures, note.startPpq, gridPpq, swingPercent) -
+          note.startPpq) *
           amount,
     ),
   }));
@@ -233,14 +238,16 @@ export interface FinalizeRecordingOptions {
   quantizeStrength?: number;
   /** Straight-grid swing amount 0..100; triplet grids ignore it. */
   quantizeSwingPercent?: number;
+  /** Project meter map the quantize grid is anchored to; omitted means 4/4 from PPQ 0. */
+  timeSignatures?: readonly TimeSignatureSegment[];
 }
 
 /**
  * Turns captured note-on/note-off boundaries into clip-relative notes and a
  * clip length, ready for {@link addRecordedMidiClip}.
  *
- * Boundaries are paired into notes, offset to the clip window, optionally
- * quantized, and the clip length is taken as the larger of the capture window
+ * Boundaries are paired into notes, optionally quantized on the timeline grid
+ * (so the punch-in position never shifts it), offset to the clip window, and the clip length is taken as the larger of the capture window
  * and the last note's end (so a note ringing past the punch-out is not cut).
  *
  * @param boundaries Captured note boundaries (timeline PPQ).
@@ -257,16 +264,19 @@ export function finalizeRecording(
     gridPpq = 0,
     quantizeStrength = 1,
     quantizeSwingPercent = 0,
+    timeSignatures = [],
   } = options;
-  const paired = pairNoteBoundariesIntoNotes(boundaries);
-  const relative: RawNote[] = [];
-  for (const note of paired) {
-    const relStart = note.startPpq - startPpq;
-    // A note begins during the capture by construction; guard float drift.
-    if (relStart < -1e-9) continue;
-    relative.push({ ...note, startPpq: Math.max(0, relStart) });
-  }
-  const notes = quantizeRecordedNotes(relative, gridPpq, quantizeStrength, quantizeSwingPercent);
+  // A note begins during the capture by construction; guard float drift.
+  const captured = pairNoteBoundariesIntoNotes(boundaries).filter(
+    (note) => note.startPpq - startPpq >= -1e-9,
+  );
+  const notes = quantizeRecordedNotes(
+    captured,
+    gridPpq,
+    quantizeStrength,
+    quantizeSwingPercent,
+    timeSignatures,
+  ).map((note) => ({ ...note, startPpq: Math.max(0, note.startPpq - startPpq) }));
   if (notes.length === 0) return null;
   const lastEnd = notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
   const lengthPpq = Math.max(stopPpq - startPpq, lastEnd);

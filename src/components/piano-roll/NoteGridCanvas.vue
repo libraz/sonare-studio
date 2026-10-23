@@ -9,6 +9,7 @@ import { useNoteNames } from '@/composables/useNoteNames';
 import type { PlacementColumn } from '@/composables/usePlacementGuidance';
 import type { TheoryCard } from '@/compose/explain';
 import type { GuidanceSegment } from '@/compose/guidance';
+import { meterGridLines } from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import type {
   AccessibleObjectAdjustment,
@@ -402,7 +403,7 @@ function scheduleAll(): void {
   scheduleOverlay();
 }
 
-/** Draws one family of vertical gridlines at `step` PPQ spacing. */
+/** Draws one family of vertical gridlines on the timeline meter grid the snap uses. */
 function drawVerticalLines(
   ctx: CanvasRenderingContext2D,
   step: number,
@@ -411,9 +412,14 @@ function drawVerticalLines(
 ): void {
   if (!(step > 0) || step * props.range.pxPerPpq < MIN_GRID_SPACING_PX) return;
   ctx.fillStyle = color;
-  const first = Math.ceil(props.range.startPpq / step) * step;
-  for (let ppq = first; ppq < props.range.endPpq; ppq += step) {
-    ctx.fillRect(Math.round(props.range.ppqToX(ppq)), 0, 1, height);
+  const origin = props.timeSignatureOriginPpq ?? 0;
+  for (const ppq of meterGridLines(
+    props.timeSignatures,
+    props.range.startPpq + origin,
+    props.range.endPpq + origin,
+    step,
+  )) {
+    ctx.fillRect(Math.round(props.range.ppqToX(ppq - origin)), 0, 1, height);
   }
 }
 

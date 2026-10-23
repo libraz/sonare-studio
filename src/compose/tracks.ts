@@ -22,10 +22,13 @@
 
 import type { NoteEvent } from '@libraz/libcantus';
 import type { TrackInstrument } from '@/project/instrument';
-import type { EditorNote, EditorTrack } from '@/project/types';
+import { clipKind, type EditorClip, type EditorNote, type EditorTrack } from '@/project/types';
 
 /** GM percussion channel (MIDI channel 10, zero-based 9). */
 export const GM_PERCUSSION_CHANNEL = 9;
+
+/** Number of MIDI channels an SF2 channel map can address. */
+const MIDI_CHANNEL_COUNT = 16;
 
 /** Fraction of a track's notes on channel 10 above which it reads as percussion. */
 const PERCUSSION_CHANNEL_FRACTION = 0.5;
@@ -58,17 +61,15 @@ function instrumentDeclaresPercussion(instrument: TrackInstrument | undefined): 
   if (instrument.kind === 'synth-patch') return instrument.patch.preset === 'drum-kit';
   if (instrument.kind === 'sf2') {
     if (isPercussionBank(instrument.bank)) return true;
-    const channelMap = instrument.channelMap;
-    // A multi-timbral SF2 can carry both drums and melodic channels. Only
-    // classify the whole track from its map when every mapped destination is
-    // percussion; mixed maps defer to the notes' channel majority below.
-    return (
-      channelMap !== undefined &&
-      channelMap.length > 0 &&
-      channelMap.every(
-        (entry) => entry.channel === GM_PERCUSSION_CHANNEL || isPercussionBank(entry.bank),
-      )
-    );
+    // Unmapped channels inherit the melodic track-level program, so the map
+    // alone classifies the track only when every channel resolves to a kit.
+    const channelMap = instrument.channelMap ?? [];
+    for (let channel = 0; channel < MIDI_CHANNEL_COUNT; channel++) {
+      const entry = channelMap.find((candidate) => candidate.channel === channel);
+      if (entry === undefined) return false;
+      if (channel !== GM_PERCUSSION_CHANNEL && !isPercussionBank(entry.bank)) return false;
+    }
+    return true;
   }
   return false;
 }
@@ -144,18 +145,73 @@ export function isMelodyTrack(track: EditorTrack): boolean {
 }
 
 /**
- * Drops notes on the GM percussion channel (0-based 9), unless the track is
- * explicitly marked non-percussion ({@link EditorTrack.percussion} === false).
+ * Per-note percussion classification for one track: every note of a drum track
+ * ({@link isDrumTrack}), no note of a track explicitly marked non-percussion,
+ * and otherwise the notes on the GM percussion channel. Without a track only
+ * the channel decides.
+ *
+ * @param track Track providing the classification, if known.
+ * @param trackNotes The track's notes, for the channel-majority test.
+ * @returns A predicate telling whether a note of that track is percussion.
+ */
+export function percussionNoteTest(
+  track: EditorTrack | null | undefined,
+  trackNotes: ReadonlyArray<EditorNote>,
+): (note: Pick<EditorNote, 'channel'>) => boolean {
+  if (isDrumTrack(track, trackNotes)) return () => true;
+  if (track?.percussion === false) return () => false;
+  return (note) => note.channel === GM_PERCUSSION_CHANNEL;
+}
+
+/**
+ * The MIDI channel a note is notated and exported on: the GM percussion channel
+ * for a percussion note; a pitched note keeps its own channel, moved off the
+ * channel General MIDI reserves for drums.
+ *
+ * @param channel Source channel (0-based).
+ * @param percussion Whether the note classifies as percussion ({@link percussionNoteTest}).
+ */
+export function notatedChannel(channel: number, percussion: boolean): number {
+  if (percussion) return GM_PERCUSSION_CHANNEL;
+  return channel === GM_PERCUSSION_CHANNEL ? 0 : channel;
+}
+
+/**
+ * Drops the notes that classify as percussion for the track
+ * ({@link percussionNoteTest}).
  *
  * @param track Track providing the percussion classification.
  * @param notes Notes to filter.
  */
-export function harmonicNotes(
+export function harmonicNotes<T extends EditorNote>(
   track: EditorTrack,
-  notes: ReadonlyArray<EditorNote>,
-): ReadonlyArray<EditorNote> {
-  if (track.percussion === false) return notes;
-  return notes.filter((note) => note.channel !== GM_PERCUSSION_CHANNEL);
+  notes: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  const isPercussion = percussionNoteTest(track, notes);
+  return notes.filter((note) => !isPercussion(note));
+}
+
+/** A track's notes across its MIDI clips, as the drum classification reads them. */
+export function trackMidiNotes(clips: ReadonlyArray<EditorClip>, trackId: number): EditorNote[] {
+  return clips
+    .filter((clip) => clip.trackId === trackId && clipKind(clip) === 'midi')
+    .flatMap((clip) => clip.notes);
+}
+
+/**
+ * Unfrozen MIDI tracks that classify as percussion over their MIDI-clip notes,
+ * in track order: the tracks a drum regeneration may target.
+ */
+export function editableDrumTracks(
+  tracks: ReadonlyArray<EditorTrack>,
+  clips: ReadonlyArray<EditorClip>,
+): EditorTrack[] {
+  return tracks.filter(
+    (track) =>
+      track.kind === 'midi' &&
+      track.frozen === undefined &&
+      isDrumTrack(track, trackMidiNotes(clips, track.id)),
+  );
 }
 
 /**

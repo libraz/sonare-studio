@@ -56,11 +56,7 @@ describe('percussion channel safety', () => {
     expect(
       isDrumTrack(
         track({
-          instrument: {
-            kind: 'sf2',
-            fontId: 'font',
-            channelMap: [{ channel: 9, bank: 120 << 7, program: 0 }],
-          },
+          instrument: { kind: 'sf2', fontId: 'font', bank: 120 << 7 },
         }),
       ),
     ).toBe(true);

@@ -27,7 +27,7 @@ import {
 } from '@/compose/generation-target';
 import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
-import { preferredNoteChannel } from '@/compose/tracks';
+import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
@@ -157,6 +157,8 @@ export function buildMotifPlan(
  * Builds the merged note list for writing a motif into an existing clip
  * (append after its notes, or replace them). Returns null when appending an
  * empty motif (a no-op).
+ *
+ * @throws Error when the clip belongs to a percussion track.
  */
 export function buildMotifClipMerge(
   store: ReturnType<typeof useProjectStore>,
@@ -165,6 +167,9 @@ export function buildMotifClipMerge(
   mode: 'append' | 'replace',
   chords: ReadonlyArray<EditorChordSymbol> = store.chords,
 ): RawNote[] | null {
+  const track = store.tracks.find((entry) => entry.id === clip.trackId);
+  if (isDrumTrack(track, clip.notes))
+    throw new Error('Cannot write a motif into a percussion clip');
   const audible = audibleMidiProjector(clip, { expandLoops: false });
   const sourceWindow = audibleMidiSourceWindow(clip);
   const offset =
@@ -192,10 +197,7 @@ export function buildMotifClipMerge(
       durationBeat: Math.min(note.durationBeat, availablePpq - note.startBeat),
     }))
     .filter((note) => note.durationBeat > 0);
-  const channel = preferredNoteChannel(
-    store.tracks.find((track) => track.id === clip.trackId),
-    clip.notes,
-  );
+  const channel = preferredNoteChannel(track, clip.notes);
   const fresh = noteEventsToNewEditorNotes(bounded, {
     channel,
     beatOffset: -sourceOffset,
@@ -211,6 +213,7 @@ export function buildMotifClipMerge(
  * @param params Generation options (see {@link GenerateMotifParams}).
  * @returns The number of notes written (0 when the motif is empty).
  * @throws RangeError when `bars` is not a positive integer.
+ * @throws Error when the active clip belongs to a percussion track.
  */
 export function generateMotifCommand(params: GenerateMotifParams = {}): number {
   const store = useProjectStore();

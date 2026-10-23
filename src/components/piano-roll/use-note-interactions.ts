@@ -22,6 +22,7 @@ import {
 import { MAX_PITCH, MIN_PITCH, snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { clampMoveDelta } from './nudge-bounds';
+import { floorLocalPpqToMeterGrid } from './timeline-meter';
 import { visibleNotesInWindow } from './visible-notes';
 
 /** Smallest note duration a resize can produce (a sixty-fourth note in PPQ). */
@@ -397,7 +398,9 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
     const step = options.getGridPpq();
     const minLen = drawMinLength();
     const snapped =
-      bypassSnap || !(step > 0) ? ppq : (options.floorPpq?.(ppq) ?? Math.floor(ppq / step) * step);
+      bypassSnap || !(step > 0)
+        ? ppq
+        : (options.floorPpq?.(ppq) ?? floorLocalPpqToMeterGrid([], 0, ppq, step));
     const rawMin = options.getMinPpq?.();
     const min = rawMin !== undefined && Number.isFinite(rawMin) ? rawMin : 0;
     const rawMax = options.getMaxPpq?.();

@@ -3,10 +3,13 @@ import { computed, ref } from 'vue';
 import { preferredNoteChannel } from '@/compose/tracks';
 import { addNote, noteEndLimitPpq } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
+import { measureRangeAt, meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
 
 /** Tolerance when comparing a note end to the clip's growth limit. */
 const END_EPSILON_PPQ = 1e-9;
+
+/** Distance before a barline that the meter map still reads as the previous bar. */
+const PREVIOUS_BAR_EPSILON_PPQ = 1e-6;
 
 /** Step-input state and actions returned by {@link useStepInput}. */
 export interface StepInputHandle {
@@ -45,7 +48,10 @@ export interface StepInputHandle {
   enterNote(pitch: number, velocity?: number): number | null;
   /** Advances the cursor one grid step without writing a note (a rest). */
   rest(): void;
-  /** Moves the cursor back one grid step (clamped at 0). */
+  /**
+   * Moves the cursor back one grid step (clamped at 0); in Bar snap, to the
+   * start of the bar containing it, or of the previous bar from a barline.
+   */
   back(): void;
 }
 
@@ -120,7 +126,9 @@ export function useStepInput(): StepInputHandle {
   }
 
   function back(): void {
-    cursorPpq.value = Math.max(0, cursorPpq.value - stepPpq.value);
+    cursorPpq.value = store.snapBar
+      ? measureRangeAt(store.timeSignatures, cursorPpq.value - PREVIOUS_BAR_EPSILON_PPQ).startPpq
+      : Math.max(0, cursorPpq.value - stepPpq.value);
   }
 
   return { armed, cursorPpq, stepPpq, arm, disarm, toggle, setCursor, enterNote, rest, back };

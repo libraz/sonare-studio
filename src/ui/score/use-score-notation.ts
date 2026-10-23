@@ -349,6 +349,7 @@ export async function buildProjectScore(
         grandStaffSplitPitch: options.grandStaffSplitPitch,
         estimateFingering: options.estimateFingering,
         displayTransposeSemitones,
+        track: store.tracks.find((entry) => entry.id === store.activeClip?.trackId) ?? null,
       });
   if (!fullScore && Object.keys(scoreProjection.annotations).length > 0) {
     score.noteAnnotations = scoreProjection.annotations;

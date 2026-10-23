@@ -179,9 +179,32 @@ export function timeSignatureSegmentAt(
 }
 
 /**
- * Snaps a timeline position to the active meter segment's local grid. Numeric
- * steps are re-anchored at every meter change; `'bar'` follows the actual bar
- * length, including compound and asymmetric meters.
+ * Snaps a position inside one bar to the step grid anchored at the bar's
+ * start. The barline that ends the bar is a candidate too, so a step that does
+ * not divide the bar never lands past it, off the next bar's grid.
+ *
+ * @param bar The bar (or notated measure) containing `ppq`.
+ * @param ppq Position to snap, within the bar.
+ * @param step Grid step in PPQ (> 0).
+ * @returns The nearest grid point or the bar end; ties go to the later point.
+ */
+export function snapPpqToBarGrid(
+  bar: Pick<MeasureRange, 'startPpq' | 'lengthPpq'>,
+  ppq: number,
+  step: number,
+): number {
+  const end = bar.startPpq + bar.lengthPpq;
+  const relative = ppq - bar.startPpq;
+  let grid = bar.startPpq + Math.round(relative / step) * step;
+  if (grid >= end - PPQ_EPSILON) grid -= step;
+  return Math.abs(end - ppq) <= Math.abs(ppq - grid) + PPQ_EPSILON ? end : grid;
+}
+
+/**
+ * Snaps a timeline position to the meter grid: numeric steps are anchored at
+ * the start of the bar containing the position, so they re-anchor at every
+ * meter change and every barline stays a grid point; `'bar'` follows the
+ * actual bar length, including compound and asymmetric meters.
  */
 export function snapPpqToMeterGrid(
   segments: readonly TimeSignatureSegment[],
@@ -189,17 +212,16 @@ export function snapPpqToMeterGrid(
   step: MeterGridStep,
 ): number {
   const position = Math.max(0, ppq);
-  const meter = timeSignatureSegmentAt(segments, position);
-  const localStep = step === 'bar' ? meterBarLengthPpq(meter) : step;
+  const bar = measureRangeAt(segments, position);
+  const localStep = step === 'bar' ? bar.lengthPpq : step;
   if (!(localStep > 0) || !Number.isFinite(localStep)) return position;
-  const relative = position - meter.startPpq;
-  return Math.max(meter.startPpq, meter.startPpq + Math.round(relative / localStep) * localStep);
+  return snapPpqToBarGrid(bar, position, localStep);
 }
 
 /**
- * Snaps to a locally anchored meter grid with optional straight-grid swing.
- * Swing delays odd grid divisions by at most one third of a division; triplet
- * grids and full-bar snapping deliberately ignore it.
+ * Snaps to the bar-anchored meter grid with optional straight-grid swing.
+ * Swing delays odd grid divisions of each bar by at most one third of a
+ * division; triplet grids and full-bar snapping deliberately ignore it.
  */
 export function snapPpqToSwingMeterGrid(
   segments: readonly TimeSignatureSegment[],
@@ -216,23 +238,45 @@ export function snapPpqToSwingMeterGrid(
   }
   const amount = Math.min(100, Math.max(0, swingPercent)) / 100;
   if (amount <= 0) return snapPpqToMeterGrid(segments, position, step);
-  const meter = timeSignatureSegmentAt(segments, position);
-  const relative = position - meter.startPpq;
-  const nearestIndex = Math.round(relative / step);
-  let best = meter.startPpq;
-  let bestDistance = Number.POSITIVE_INFINITY;
+  const bar = measureRangeAt(segments, position);
+  const end = bar.startPpq + bar.lengthPpq;
+  const nearestIndex = Math.round((position - bar.startPpq) / step);
+  let best = end;
+  let bestDistance = Math.abs(end - position);
   for (let index = Math.max(0, nearestIndex - 2); index <= nearestIndex + 2; index += 1) {
-    const candidate = meter.startPpq + index * step + (index % 2 === 0 ? 0 : (amount * step) / 3);
+    const candidate = bar.startPpq + index * step + (index % 2 === 0 ? 0 : (amount * step) / 3);
+    if (candidate >= end - PPQ_EPSILON) break;
     const distance = Math.abs(position - candidate);
-    if (
-      distance < bestDistance - PPQ_EPSILON ||
-      (Math.abs(distance - bestDistance) < PPQ_EPSILON && candidate < best)
-    ) {
+    if (distance < bestDistance - PPQ_EPSILON) {
       best = candidate;
       bestDistance = distance;
     }
   }
   return best;
+}
+
+/**
+ * Snaps a clip-relative position on the project's meter grid. The position is
+ * taken to the timeline through the clip start, snapped there and brought
+ * back, so a clip, punch-in or source window that does not start on a grid
+ * line never shifts the grid.
+ *
+ * @param segments Project time-signature map.
+ * @param clipStartPpq Timeline position of clip-relative PPQ 0.
+ * @param ppq Clip-relative position.
+ * @param step Numeric grid step in PPQ, or `'bar'`.
+ * @param swingPercent Straight-grid swing 0..100; triplet and bar grids ignore it.
+ * @returns The snapped clip-relative position (negative when the nearest grid
+ *   point precedes the clip start).
+ */
+export function snapClipPpqToMeterGrid(
+  segments: readonly TimeSignatureSegment[],
+  clipStartPpq: number,
+  ppq: number,
+  step: MeterGridStep,
+  swingPercent = 0,
+): number {
+  return snapPpqToSwingMeterGrid(segments, clipStartPpq + ppq, step, swingPercent) - clipStartPpq;
 }
 
 /**
@@ -293,6 +337,34 @@ export function measureRangeAt(
   ppq: number,
 ): MeasureRange {
   return measureRangeOnMeterMap(toMeterMap(segments), ppq);
+}
+
+/**
+ * Lists the numeric meter-grid points in `[startPpq, endPpq)`: every bar's
+ * start plus whole steps from it, so each point is a position
+ * {@link snapPpqToMeterGrid} returns.
+ */
+export function meterGridLines(
+  segments: readonly TimeSignatureSegment[],
+  startPpq: number,
+  endPpq: number,
+  step: number,
+): number[] {
+  if (!(step > 0) || !Number.isFinite(startPpq) || !Number.isFinite(endPpq)) return [];
+  const meters = toMeterMap(segments);
+  const lines: number[] = [];
+  let bar = measureRangeOnMeterMap(meters, startPpq);
+  while (bar.startPpq < endPpq) {
+    const barEnd = bar.startPpq + bar.lengthPpq;
+    const first = Math.max(0, Math.ceil((startPpq - bar.startPpq) / step - PPQ_EPSILON));
+    for (let index = first; ; index += 1) {
+      const ppq = bar.startPpq + index * step;
+      if (ppq >= barEnd - PPQ_EPSILON || ppq >= endPpq) break;
+      lines.push(ppq);
+    }
+    bar = measureRangeOnMeterMap(meters, barEnd);
+  }
+  return lines;
 }
 
 /** Builds the shared score/compose grid, truncating a bar at a mid-bar meter change. */

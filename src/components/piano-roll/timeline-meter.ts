@@ -10,12 +10,12 @@ import {
   type MeasureRange,
   type MeterGridStep,
   measureRangeAt,
-  snapPpqToMeterGrid,
+  snapClipPpqToMeterGrid,
 } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
 import { type RulerTick, type RulerTickOptions, rulerTicks } from '@/ui/arrangement/ruler';
 
-/** Tolerance when deciding that a rounded grid line lies past the position. */
+/** Tolerance that keeps a position on a grid line in that line's cell. */
 const CELL_EPSILON_PPQ = 1e-9;
 
 /** Bar containing a local position, with its start in the local frame. */
@@ -35,7 +35,7 @@ export function snapLocalPpqToMeterGrid(
   ppq: number,
   step: MeterGridStep,
 ): number {
-  return snapPpqToMeterGrid(meter, ppq + originPpq, step) - originPpq;
+  return snapClipPpqToMeterGrid(meter, originPpq, ppq, step);
 }
 
 /** Bar and beat ticks for a local range, numbered like the timeline ruler. */
@@ -60,7 +60,10 @@ export function floorLocalPpqToMeterGrid(
   step: MeterGridStep,
 ): number {
   const position = Math.max(0, ppq + originPpq);
-  if (step === 'bar') return measureRangeAt(meter, position).startPpq - originPpq;
-  const snapped = snapPpqToMeterGrid(meter, position, step);
-  return (snapped > position + CELL_EPSILON_PPQ ? snapped - step : snapped) - originPpq;
+  const bar = measureRangeAt(meter, position);
+  if (step === 'bar') return bar.startPpq - originPpq;
+  if (!(step > 0)) return position - originPpq;
+  // Grid points restart at every bar, so the cell is counted from the bar start.
+  const cells = Math.floor((position - bar.startPpq) / step + CELL_EPSILON_PPQ);
+  return bar.startPpq + cells * step - originPpq;
 }

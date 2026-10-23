@@ -27,16 +27,18 @@ describe('generateMotifCommand note channel', () => {
     store.refresh();
   }
 
-  it('writes a drum-track clip on the GM percussion channel in both modes', () => {
+  it('refuses to write pitched motif notes into a drum-track clip in either mode', () => {
     const trackId = addTrack({ name: 'Kit' });
     setTrackPercussion(trackId, true);
     activeClipOn(trackId);
 
-    expect(generateMotifCommand({ bars: 1, mode: 'append', develop: false })).toBeGreaterThan(0);
-    expect(generateMotifCommand({ bars: 1, mode: 'replace', develop: false })).toBeGreaterThan(0);
-    const notes = store.activeClip?.notes ?? [];
-    expect(notes.length).toBeGreaterThan(0);
-    expect(notes.every((note) => note.channel === 9)).toBe(true);
+    expect(() => generateMotifCommand({ bars: 1, mode: 'append', develop: false })).toThrow(
+      /percussion/,
+    );
+    expect(() => generateMotifCommand({ bars: 1, mode: 'replace', develop: false })).toThrow(
+      /percussion/,
+    );
+    expect(store.activeClip?.notes ?? []).toEqual([]);
   });
 
   it('keeps a melodic clip on its own channel', () => {

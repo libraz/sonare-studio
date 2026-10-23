@@ -25,6 +25,7 @@ import {
 } from '@/project/midi-projection';
 import { useProjectStore } from '@/project/store';
 import type { ClipCcPoint, ClipPitchBendPoint, ClipPressurePoint } from '@/project/types';
+import { snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { PianoRollLanes } from './use-piano-roll-lanes';
 
 /** Reactive curve data and commits returned by {@link usePianoRollCcLanes}. */
@@ -194,7 +195,7 @@ export function usePianoRollCcLanes(options: UsePianoRollCcLanesOptions): PianoR
     if (!store.snapEnabled) return clamped;
     const step = gridPpq.value;
     const snapped =
-      step > 0 ? (options.snapPpq?.(clamped) ?? Math.round(clamped / step) * step) : clamped;
+      step > 0 ? (options.snapPpq?.(clamped) ?? snapPpqToStep(clamped, step)) : clamped;
     return window ? clamp(snapped, window.startPpq, window.endPpq) : snapped;
   }
 

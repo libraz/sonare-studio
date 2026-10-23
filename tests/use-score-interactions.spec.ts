@@ -54,6 +54,8 @@ function interactions(overrides: Partial<Parameters<typeof useScoreInteractions>
     store: {
       clipStartPpq: 0,
       clipLengthPpq: 8,
+      pickupLengthPpq: 0,
+      timeSignatures: [],
       notes: [{ id: 11, startPpq: 0, durationPpq: 1 }],
     } as never,
     getTimemap: () => [{ qstamp: 0, on: ['note-1'] }],
@@ -170,6 +172,8 @@ describe('useScoreInteractions', () => {
         clipId: 1,
         clipStartPpq: 8,
         clipLengthPpq: 8,
+        pickupLengthPpq: 0,
+        timeSignatures: [],
         notes: [],
       } as never,
       getTimemap: () => [{ qstamp: 2, on: [xmlId] }],
@@ -199,6 +203,8 @@ describe('useScoreInteractions', () => {
       store: {
         clipStartPpq: 12,
         clipLengthPpq: 4,
+        pickupLengthPpq: 0,
+        timeSignatures: [],
         activeClip: {
           startPpq: 12,
           lengthPpq: 4,
@@ -232,6 +238,8 @@ describe('useScoreInteractions', () => {
       store: {
         clipStartPpq: 8,
         clipLengthPpq: 5,
+        pickupLengthPpq: 0,
+        timeSignatures: [],
         activeClip: {
           startPpq: 8,
           lengthPpq: 5,
@@ -265,6 +273,8 @@ describe('useScoreInteractions', () => {
       store: {
         clipStartPpq: 8,
         clipLengthPpq: 5,
+        pickupLengthPpq: 0,
+        timeSignatures: [],
         activeClip: {
           startPpq: 8,
           lengthPpq: 5,

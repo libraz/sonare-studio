@@ -75,6 +75,7 @@ import { useShortcuts } from '@/composables/useShortcuts';
 import { useStepInput } from '@/composables/useStepInput';
 import { useTransport } from '@/composables/useTransport';
 import { useTransportControls } from '@/composables/useTransportControls';
+import { editableDrumTracks } from '@/compose/tracks';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
@@ -92,7 +93,6 @@ import {
   undo,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
-import { partForTrack } from '@/project/generation';
 import { persistedProjectStateKey } from '@/project/persisted-state';
 import { evaluateProjectCapacity, formatProjectCapacityIssue } from '@/project/project-capacity';
 import { serializeProject } from '@/project/serialization';
@@ -332,12 +332,7 @@ function onRegenerateTrack(trackId: number, part: TrackPart): void {
 function onRegenerateSectionDrums(sectionId: number): void {
   const section = store.sections.find((entry) => entry.id === sectionId);
   if (!section) return;
-  const track = store.tracks.find(
-    (entry) =>
-      entry.kind === 'midi' &&
-      entry.frozen === undefined &&
-      (partForTrack(entry) === 'drums' || entry.percussion === true),
-  );
+  const track = editableDrumTracks(store.tracks, store.clips)[0];
   if (!track) {
     errorMessage.value = t.value.shell.arrangement.regenerateSectionDrumsNoTrack;
     return;

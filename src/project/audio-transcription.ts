@@ -15,8 +15,15 @@ import { audioClipSegments } from './comping';
 import { pairEventsIntoNotes, type RawNote, type SerializedMidiEvent } from './midi-events';
 import { renderAudibleAudioClipWindow } from './scheduling';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq, tempoAtPpq } from './tempo-map';
+import { type MeterGridStep, measureRangeAt, snapClipPpqToMeterGrid } from './time-signature';
 import type { TranscribeWorkerOptions } from './transcribe-client';
-import type { ClipCompSegment, ClipTake, ClipWarp, TempoSegment } from './types';
+import type {
+  ClipCompSegment,
+  ClipTake,
+  ClipWarp,
+  TempoSegment,
+  TimeSignatureSegment,
+} from './types';
 import type { WarpRenderFn } from './warp';
 
 /** Longest span one polyphonic detector request reads; working memory grows about 1.1 MB per second. */
@@ -74,8 +81,10 @@ export interface AudioTranscription {
 export interface AudioTranscriptionOptions {
   polyphonic?: boolean;
   signal?: AbortSignal;
-  /** Clip-relative rhythm grid; omitted preserves detector timing. */
-  rhythmQuantizePpq?: number;
+  /** Rhythm grid step on the project meter grid, or `'bar'`; omitted preserves detector timing. */
+  rhythmQuantizePpq?: MeterGridStep;
+  /** Project meter map the rhythm grid is anchored to; omitted means 4/4 from PPQ 0. */
+  timeSignatures?: readonly TimeSignatureSegment[];
   /** Tuning reference in Hz, or `'auto'` to measure it; omitted means 440 Hz. */
   referenceHz?: number | 'auto';
   /** Shortest note kept, as a `1/n` note at the clip's tempo; omitted keeps the library default. */
@@ -130,27 +139,32 @@ function validateResult(result: TranscribeResult): void {
   }
 }
 
-function snapToGrid(value: number, grid: number): number {
-  return Math.round(value / grid) * grid;
-}
-
 /**
- * Snaps clip-relative notes to a rhythm grid whose lines fall on `originPpq`
- * (clip-relative) and every grid step from it, keeping every note inside the clip.
+ * Snaps clip-relative notes to the project's meter grid, keeping every note
+ * inside the clip. Positions are snapped on the timeline through the clip
+ * start, so a clip that does not start on a grid line gets no shifted grid.
+ *
+ * @param step Grid step in PPQ or `'bar'`; omitted or non-positive keeps the notes.
+ * @param clipStartPpq Timeline position of clip-relative PPQ 0.
+ * @param timeSignatures Project meter map.
  */
-export function quantizeNotes(
-  notes: ReadonlyArray<RawNote>,
-  grid: number | undefined,
+export function quantizeNotes<T extends { startPpq: number; durationPpq: number }>(
+  notes: ReadonlyArray<T>,
+  step: MeterGridStep | undefined,
   clipLengthPpq: number,
-  originPpq = 0,
-): RawNote[] {
-  if (!(grid !== undefined && Number.isFinite(grid) && grid > 0)) {
+  clipStartPpq = 0,
+  timeSignatures: readonly TimeSignatureSegment[] = [],
+): T[] {
+  if (step === undefined || (step !== 'bar' && !(Number.isFinite(step) && step > 0))) {
     return notes.map((note) => ({ ...note }));
   }
-  const snap = (ppq: number): number => originPpq + snapToGrid(ppq - originPpq, grid);
+  const snap = (ppq: number): number =>
+    snapClipPpqToMeterGrid(timeSignatures, clipStartPpq, ppq, step);
   return notes.flatMap((note) => {
     const start = Math.max(0, Math.min(clipLengthPpq, snap(note.startPpq)));
-    let end = Math.max(start + grid, snap(note.startPpq + note.durationPpq));
+    const span =
+      step === 'bar' ? measureRangeAt(timeSignatures, clipStartPpq + start).lengthPpq : step;
+    let end = Math.max(snap(start + span), snap(note.startPpq + note.durationPpq));
     end = Math.min(clipLengthPpq, end);
     if (!(end > start)) return [];
     return [{ ...note, startPpq: start, durationPpq: end - start }];
@@ -441,5 +455,14 @@ export async function transcribeAudioClip(
       if (endPpq > startPpq) notes.push({ ...note, startPpq, durationPpq: endPpq - startPpq });
     }
   }
-  return { notes: quantizeNotes(notes, options.rhythmQuantizePpq, clip.lengthPpq), peak };
+  return {
+    notes: quantizeNotes(
+      notes,
+      options.rhythmQuantizePpq,
+      clip.lengthPpq,
+      clip.startPpq,
+      options.timeSignatures,
+    ),
+    peak,
+  };
 }

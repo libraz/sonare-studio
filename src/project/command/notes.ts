@@ -15,12 +15,7 @@ import {
   notesToProjectEvents,
   useProjectStore,
 } from '../store';
-import {
-  measureRangeAt,
-  snapPpqToMeterGrid,
-  snapPpqToSwingMeterGrid,
-  timeSignatureSegmentAt,
-} from '../time-signature';
+import { measureRangeAt, snapPpqToMeterGrid, snapPpqToSwingMeterGrid } from '../time-signature';
 import {
   clipKind,
   type EditorClip,
@@ -399,9 +394,9 @@ export function addNote(input: NewEditorNote): number {
 /**
  * Captures a groove from notes, measured against the editor's note-division
  * grid. Bar snapping has no groove meaning, so the numeric division is used
- * even while Bar snap is selected. Positions are taken relative to the meter
- * segment each note falls in, so a template captured in one meter still lines
- * up after a meter change.
+ * even while Bar snap is selected. Steps are counted from each note's bar on
+ * the project meter map, so a template captured in one meter still lines up
+ * after a meter change.
  *
  * @param notes Reference performance; the selection or a whole clip.
  * @param steps Template period in grid steps.
@@ -413,12 +408,8 @@ function captureGroove(notes: readonly EditorNote[], steps: number): GrooveTempl
   if (!clip || notes.length === 0) return null;
   const gridPpq = 4 / store.snapDivision;
   if (!(gridPpq > 0) || !Number.isFinite(gridPpq)) return null;
-  const positions = notes.map((note) => {
-    const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
-    const meter = timeSignatureSegmentAt(store.timeSignatures, timelinePpq);
-    return timelinePpq - meter.startPpq;
-  });
-  return extractGrooveTemplate(positions, gridPpq, steps);
+  const positions = notes.map((note) => midiSourcePpqToTimeline(clip, note.startPpq));
+  return extractGrooveTemplate(store.timeSignatures, positions, gridPpq, steps);
 }
 
 /** Captures a groove template from the selected notes. */
@@ -445,9 +436,7 @@ function applyGroove(notes: readonly EditorNote[], groove: GrooveTemplate, stren
   const updates: EditorNoteUpdate[] = [];
   for (const note of notes) {
     const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
-    const meter = timeSignatureSegmentAt(store.timeSignatures, timelinePpq);
-    const grooved =
-      meter.startPpq + applyGrooveToPosition(groove, timelinePpq - meter.startPpq, amount);
+    const grooved = applyGrooveToPosition(groove, store.timeSignatures, timelinePpq, amount);
     const sourcePpq = Math.max(0, grooved - clip.startPpq + clip.sourceOffsetPpq);
     if (Math.abs(sourcePpq - note.startPpq) < 1e-9) continue;
     updates.push({ id: note.id, startPpq: sourcePpq });

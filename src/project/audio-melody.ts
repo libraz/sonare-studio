@@ -15,8 +15,10 @@
 import { nearestStep, noteToPitchClass, tryParseNote } from '@libraz/libcantus';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
+import { quantizeNotes } from './audio-transcription';
 import { ppqToSeconds, secondsToPpq } from './tempo-map';
-import { MAJOR_MODE_MASK, type TempoSegment } from './types';
+import type { MeterGridStep } from './time-signature';
+import { MAJOR_MODE_MASK, type TempoSegment, type TimeSignatureSegment } from './types';
 
 /** One frame of the melody contour returned by the engine. */
 export interface DetectedMelodyPoint {
@@ -68,8 +70,10 @@ export interface MelodyExtractOptions {
   minNoteSeconds?: number;
   /** Prefer pYIN when the engine exposes it. Default true. */
   usePyin?: boolean;
-  /** Quantize note starts/ends to this clip-relative PPQ grid. Omit/0 to keep raw rhythm. */
-  rhythmQuantizePpq?: number;
+  /** Quantize note starts/ends to this step of the project meter grid, or `'bar'`. Omit/0 to keep raw rhythm. */
+  rhythmQuantizePpq?: MeterGridStep;
+  /** Project meter map the rhythm grid is anchored to; omitted means 4/4 from PPQ 0. */
+  timeSignatures?: readonly TimeSignatureSegment[];
   /** Snap detected pitches to the estimated key scale. Default false to preserve chromatic detail. */
   pitchQuantizeToScale?: boolean;
 }
@@ -172,26 +176,6 @@ function velocityFromConfidenceAndLevel(
   return clampVelocity(confidenceVelocity * dynamicFactor);
 }
 
-function snapToGrid(value: number, grid: number): number {
-  return Math.round(value / grid) * grid;
-}
-
-function quantizeMelodyRhythm(
-  notes: ReadonlyArray<MelodyNoteInput>,
-  grid: number | undefined,
-  clipLengthPpq: number,
-): MelodyNoteInput[] {
-  if (!(grid !== undefined && Number.isFinite(grid) && grid > 0))
-    return notes.map((note) => ({ ...note }));
-  return notes.flatMap((note) => {
-    const start = Math.max(0, Math.min(clipLengthPpq, snapToGrid(note.startPpq, grid)));
-    let end = Math.max(start + grid, snapToGrid(note.startPpq + note.durationPpq, grid));
-    end = Math.min(clipLengthPpq, end);
-    if (!(end > start)) return [];
-    return [{ ...note, startPpq: start, durationPpq: end - start }];
-  });
-}
-
 /**
  * Extracts a monophonic melody from an audio clip and returns it as notes in
  * clip-relative PPQ. Returns `[]` when the clip has no asset, the tempo is
@@ -281,5 +265,11 @@ export async function analyzeAudioClipMelody(
   }
   flush(windowEndSeconds); // last run extends to the window end
 
-  return quantizeMelodyRhythm(notes, options.rhythmQuantizePpq, clip.lengthPpq);
+  return quantizeNotes(
+    notes,
+    options.rhythmQuantizePpq,
+    clip.lengthPpq,
+    clip.startPpq,
+    options.timeSignatures,
+  );
 }

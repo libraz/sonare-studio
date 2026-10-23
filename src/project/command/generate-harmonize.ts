@@ -23,7 +23,7 @@ import { type HarmonizeResult, harmonizeMelody, type KeyScale } from '@libraz/li
 import { chordSpanToEditorChord } from '@/compose/chord-io';
 import { createGenerationTargetFrame } from '@/compose/generation-target';
 import { scaleHighlightToKeyScale } from '@/compose/key';
-import { harmonicNotes, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
+import { isDrumTrack, percussionNoteTest, topVoiceOnly } from '@/compose/tracks';
 import { type EditorChordSymbol, sanitizeChordSymbols } from '../chords';
 import type { RawNote } from '../midi-events';
 import { audibleMidiProjector, projectMidiClipNoteOccurrences } from '../midi-projection';
@@ -108,8 +108,9 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   // the bar containing the clip start rather than from the clip start itself.
   const gridOriginPpq = measureRangeAt(target.timeSignatures, target.startPpq).startPpq;
   const gridShiftPpq = target.startPpq - gridOriginPpq;
+  const isPercussion = percussionNoteTest(track, clip.notes);
   const sourceNotes = projectMidiClipNoteOccurrences(clip);
-  const melodyNotes = track === undefined ? sourceNotes : harmonicNotes(track, sourceNotes);
+  const melodyNotes = sourceNotes.filter((note) => !isPercussion(note));
   const melody = topVoiceOnly(
     melodyNotes.map((note) => ({
       pitch: note.pitch,
@@ -137,7 +138,10 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
   let shift = 0;
   const analysisKey = explicitKey;
   let analysisMelody = melody;
-  const audibleOccurrences = audibleMidiProjector(clip, { expandLoops: false });
+  // Only the notes that fed the melody move with the transpose; drum hits keep their pitch.
+  const audibleOccurrences = audibleMidiProjector(clip, { expandLoops: false }).filter(
+    (entry) => !isPercussion(entry.note),
+  );
   if (transpose) {
     // Meter splits used to perform independent transpose searches. That can
     // make adjacent chord regions analyse different pitches while the clip is

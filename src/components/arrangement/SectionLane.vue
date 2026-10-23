@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
+import { editableDrumTracks } from '@/compose/tracks';
 import { duplicateTime, setSections } from '@/project/commands';
-import { partForTrack } from '@/project/generation';
 import { useProjectStore } from '@/project/store';
 import { type EditorSection, TRACK_COLOR_PALETTE } from '@/project/types';
 import { barRangeAt, nearestBarPpq } from '@/ui/arrangement/ruler';
@@ -180,12 +180,7 @@ function onBandClick(band: SectionBand, event: MouseEvent): void {
 /** Mirrors the host's drum-track lookup so the menu says why it cannot vary drums. */
 const drumsBlocked = computed(() =>
   firstBlock([
-    !store.tracks.some(
-      (track) =>
-        track.kind === 'midi' &&
-        track.frozen === undefined &&
-        (partForTrack(track) === 'drums' || track.percussion === true),
-    ),
+    editableDrumTracks(store.tracks, store.clips).length === 0,
     t.value.shell.arrangement.regenerateSectionDrumsNoTrack,
   ]),
 );
