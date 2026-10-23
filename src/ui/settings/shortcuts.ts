@@ -451,6 +451,35 @@ export const SHORTCUT_ACTIONS: ReadonlyArray<ShortcutActionDef> = [
   },
 ];
 
+/** Actions that keep firing while their key is held; every other action fires once per press. */
+const REPEATABLE_ACTIONS: ReadonlySet<string> = new Set([
+  'transport.nudgeBack',
+  'transport.nudgeForward',
+  'edit.undo',
+  'edit.redo',
+  'edit.transposeUp',
+  'edit.transposeDown',
+  'edit.transposeOctaveUp',
+  'edit.transposeOctaveDown',
+  'view.zoomIn',
+  'view.zoomOut',
+]);
+
+/** True when an auto-repeating keydown may re-run the action. */
+export function isRepeatableShortcut(actionId: string): boolean {
+  return REPEATABLE_ACTIONS.has(actionId);
+}
+
+const ACTIVATION_CONTROL_SELECTOR =
+  'button, summary, [role="button"], [role="switch"], [role="checkbox"], [role="menuitem"]';
+
+/** True when a focused native control owns this key (Space or Enter activates it). */
+export function controlOwnsKey(event: KeyboardEvent): boolean {
+  if (event.key !== ' ' && event.key !== 'Enter') return false;
+  const target = event.target;
+  return target instanceof Element && target.closest(ACTIVATION_CONTROL_SELECTOR) !== null;
+}
+
 /** Looks up a registry entry by id. */
 export function getShortcutAction(id: string): ShortcutActionDef | undefined {
   return SHORTCUT_ACTIONS.find((action) => action.id === id);

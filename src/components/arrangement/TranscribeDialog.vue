@@ -3,7 +3,7 @@ import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref,
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { confirmDialog } from '@/composables/useDialogs';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
@@ -375,7 +375,7 @@ async function run(): Promise<void> {
     emit('close');
   } catch (value) {
     if (!currentController.signal.aborted && !isAbortError(value)) {
-      error.value = errorMessage(value);
+      error.value = describeError(value, t.value.notices.errors);
     }
   } finally {
     if (controller.value === currentController) {

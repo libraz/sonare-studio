@@ -18,11 +18,9 @@ import {
   addNotesInNewClip,
   deleteNotes,
   noteEndLimitPpq,
-  redo,
   setActiveClip,
   setSelection,
   splitNote,
-  undo,
   updateNotes,
 } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
@@ -695,15 +693,10 @@ function onKeyDown(event: KeyboardEvent): void {
   ) {
     return;
   }
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
-    event.preventDefault();
-    if (event.shiftKey) redo();
-    else undo();
-    return;
-  }
+  // Undo, redo and delete bubble to the global handler, which resolves them through the registry.
   if (contentReadOnly.value) return;
   if (handleKeyboardEdit(event)) return;
-  if (interactions.onKeyDown(event.key)) event.preventDefault();
+  if (event.key === 'Escape' && interactions.onKeyDown(event.key)) event.preventDefault();
 }
 
 function handleKeyboardEdit(event: KeyboardEvent): boolean {

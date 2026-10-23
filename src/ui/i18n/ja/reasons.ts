@@ -16,6 +16,8 @@ export const reasons = {
   noLocators: '先に左右のロケーターを設定してください。',
   noArmedTrack: '先に録音するトラックをアームしてください。',
   nothingToPaste: '先にクリップをコピーしてください。',
+  playheadOutsideClip: '再生位置がこのトラックのクリップ内にありません。',
+  trackNotRecordable: 'このトラックは録音用にアームできません。',
   noRoomToPaste: 'このトラックの再生位置にはクリップが収まりません。',
   noMidiClipInProject: 'プロジェクトにまだ MIDI クリップがありません。',
   noStorage: 'このブラウザはプロジェクト保存領域 (OPFS) に対応していません。',

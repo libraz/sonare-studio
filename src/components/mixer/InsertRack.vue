@@ -5,7 +5,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import type { MeterSource } from '@/engine/meters';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import {
   assertNoBusRoutingCycle,
   groupBusTopologyId,
@@ -306,7 +306,7 @@ function pasteSlot(index: number): void {
     expandedIndex.value = index;
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -354,7 +354,7 @@ function onDrop(index: number): void {
     expandedIndex.value = null;
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -505,7 +505,7 @@ function onSidechainChange(index: number, value: SidechainSourceValue): void {
     setInsertSidechain(props.target, index, source);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -532,7 +532,7 @@ function onAddProcessor(processorId: string): void {
     expandedIndex.value = index;
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 

@@ -17,7 +17,7 @@ import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { TheoryCard } from '@/compose/explain';
 import { GM_PERCUSSION_CHANNEL, isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
@@ -563,37 +563,23 @@ function onAnnotateStaffDrag(ids: number[], staff: 1 | 2): void {
   }
 }
 
-/** Score-local duration editing for the currently selected source notes. */
+/** Score-local add-note key; delete, undo and locator keys bubble to the global handler. */
 function onScoreKeyDown(event: KeyboardEvent): void {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.key.toLowerCase() !== 'n') return;
   const selected = store.notes.filter((note) => store.selection.has(note.id));
   if (selected.length === 0) return;
-  if (event.key.toLowerCase() === 'n') {
-    const source = selected[selected.length - 1];
-    event.preventDefault();
-    addNote({
-      pitch: source.pitch,
-      velocity: source.velocity,
-      channel: source.channel,
-      startPpq: source.startPpq + source.durationPpq,
-      durationPpq: source.durationPpq,
-      ...(source.offVelocity !== undefined ? { offVelocity: source.offVelocity } : {}),
-    });
-    return;
-  }
-  if (event.key === 'Delete' || event.key === 'Backspace') {
-    event.preventDefault();
-    applyNoteEdits({ deleteIds: selected.map((note) => note.id) });
-    return;
-  }
-  const factor = event.key === '[' ? 0.5 : event.key === ']' ? 2 : null;
-  if (factor === null) return;
   event.preventDefault();
-  applyNoteEdits({
-    updates: selected.map((note) => ({
-      id: note.id,
-      durationPpq: Math.max(1 / 64, note.durationPpq * factor),
-    })),
+  // One note per physical press: a held key must not stack duplicates.
+  if (event.repeat) return;
+  const source = selected[selected.length - 1];
+  addNote({
+    pitch: source.pitch,
+    velocity: source.velocity,
+    channel: source.channel,
+    startPpq: source.startPpq + source.durationPpq,
+    durationPpq: source.durationPpq,
+    ...(source.offVelocity !== undefined ? { offVelocity: source.offVelocity } : {}),
   });
 }
 
@@ -604,7 +590,7 @@ function tryScoreEdit(edit: () => void): boolean {
     notation.setError('');
     return true;
   } catch (err) {
-    notation.setError(errorMessage(err));
+    notation.setError(describeError(err, t.value.notices.errors));
     return false;
   }
 }

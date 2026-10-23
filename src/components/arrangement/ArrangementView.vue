@@ -7,7 +7,7 @@ import { useEditorTool } from '@/composables/useEditorTool';
 import { useFileDownloads } from '@/composables/useFileDownloads';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { buildKeyMap } from '@/compose/key-map';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { TuneToMidiRefusedError } from '@/project/audio-tune-to-midi';
@@ -18,7 +18,7 @@ import {
   DEFAULT_CLIP_CROSSFADE_PPQ,
   planClipCrossfade,
 } from '@/project/clip-crossfade';
-import { clipSplitBlockReason } from '@/project/clip-split';
+import { clipSplitBlockReason, resolveClipSplitTarget } from '@/project/clip-split';
 import { canPasteClipAt, hasCopiedClip } from '@/project/command/clips-clipboard';
 import {
   addMidiClip,
@@ -259,7 +259,7 @@ function detectSections(): void {
       const count = await detectSectionsFromAudioClip(clip.id);
       if (count === 0) error.value = t.value.shell.arrangement.noSectionsDetected;
     } catch (err) {
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     } finally {
       isDetectingSections.value = false;
     }
@@ -294,7 +294,7 @@ function splitToStems(): void {
       if (newClipIds.length === 0) error.value = t.value.shell.arrangement.noStemsSeparated;
       else setActiveClip(newClipIds[0]);
     } catch (err) {
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     } finally {
       isSplittingStems.value = false;
     }
@@ -321,7 +321,7 @@ function splitToComponents(clipId: number, count: number): void {
       if (newClipIds.length === 0) error.value = t.value.shell.arrangement.noStemsSeparated;
       else setActiveClip(newClipIds[0]);
     } catch (err) {
-      if (!controller.signal.aborted) error.value = errorMessage(err);
+      if (!controller.signal.aborted) error.value = describeError(err, t.value.notices.errors);
     } finally {
       isSplittingStems.value = false;
       componentSplitAbort.value = null;
@@ -446,7 +446,7 @@ function tuneToMidi(
           ? formatMessage(t.value.shell.arrangement.tuneToMidiRefused[err.reason], {
               track: trackName,
             })
-          : errorMessage(err);
+          : describeError(err, t.value.notices.errors);
     } finally {
       isTuningToMidi.value = false;
     }
@@ -912,7 +912,7 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
       }
     }
   } catch (cause) {
-    error.value = errorMessage(cause);
+    error.value = describeError(cause, t.value.notices.errors);
   }
 }
 
@@ -1018,7 +1018,10 @@ function runCrossfade(clipId: number): void {
     crossfadeClips(clip.id, partner.id, crossfadeOptionsFor(clip, partner));
   } catch (cause) {
     const plan = planClipCrossfade(clip, partner, crossfadeOptionsFor(clip, partner));
-    error.value = 'reason' in plan ? crossfadeReasonText(plan.reason) : errorMessage(cause);
+    error.value =
+      'reason' in plan
+        ? crossfadeReasonText(plan.reason)
+        : describeError(cause, t.value.notices.errors);
   }
 }
 
@@ -1035,7 +1038,7 @@ async function runTransientSlice(clipId: number, quantize: boolean): Promise<voi
     });
     if (ids.length < 2) error.value = t.value.shell.arrangement.clipActions.sliceNoTransients;
   } catch (cause) {
-    error.value = errorMessage(cause);
+    error.value = describeError(cause, t.value.notices.errors);
   }
 }
 
@@ -1074,7 +1077,7 @@ function alignToReference(clip: EditorClip, reference: EditorClip): void {
         });
       }
     } catch (err) {
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     }
   })();
 }
@@ -1335,7 +1338,7 @@ function exportClipToSmf(clipId: number): void {
         result.filename,
       );
     } catch (err) {
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     }
   })();
 }
@@ -1395,7 +1398,7 @@ function rippleTimeFromPrompt(mode: 'insert' | 'delete', ppq: number): void {
       if (isInsert) insertTime(ppq, lengthPpq);
       else deleteTime(ppq, ppq + lengthPpq);
     } catch (err) {
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     }
   })();
 }
@@ -1410,13 +1413,7 @@ function cutAtPlayhead(): void {
   const getter = props.positionPpq;
   if (!getter) return;
   const ppq = getter();
-  const inside = (clip: { startPpq: number; lengthPpq: number }): boolean =>
-    ppq > clip.startPpq && ppq < clip.startPpq + clip.lengthPpq;
-  const active = store.activeClip;
-  const target =
-    active && inside(active)
-      ? active
-      : (store.clips.find((clip) => clip.trackId === store.activeTrackId && inside(clip)) ?? null);
+  const target = resolveClipSplitTarget(store.clips, store.activeClip, store.activeTrackId, ppq);
   if (!target) return;
   if (clipSplitBlockReason(target, ppq) === 'loop') {
     error.value = t.value.shell.arrangement.loopSplitUnavailable;
@@ -1426,7 +1423,7 @@ function cutAtPlayhead(): void {
     splitClip(target.id, ppq);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -1446,7 +1443,7 @@ onMounted(async () => {
   try {
     await store.init();
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 });
 

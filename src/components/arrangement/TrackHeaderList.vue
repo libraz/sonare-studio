@@ -7,7 +7,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { confirmDestructive, promptDialog } from '@/composables/useDialogs';
 import { isDrumTrack } from '@/compose/tracks';
 import { dbToLinear, linearToDb } from '@/lib/db';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { isOpfsAvailable } from '@/persistence/opfs';
 import {
@@ -252,7 +252,7 @@ async function refreshSavedTrackPresets(): Promise<void> {
 onMounted(() => {
   if (!isOpfsAvailable()) return;
   void refreshSavedTrackPresets().catch((reason: unknown) => {
-    error.value = errorMessage(reason);
+    error.value = describeError(reason, t.value.notices.errors);
   });
 });
 
@@ -295,7 +295,7 @@ function commitRename(): void {
     renameTrack(trackId, name);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -422,7 +422,7 @@ async function savePreset(track: EditorTrack): Promise<void> {
     await refreshSavedTrackPresets();
     error.value = '';
   } catch (reason) {
-    error.value = errorMessage(reason);
+    error.value = describeError(reason, t.value.notices.errors);
   }
 }
 
@@ -432,7 +432,7 @@ async function deletePreset(name: string): Promise<void> {
     await refreshSavedTrackPresets();
     error.value = '';
   } catch (reason) {
-    error.value = errorMessage(reason);
+    error.value = describeError(reason, t.value.notices.errors);
   }
 }
 
@@ -460,7 +460,7 @@ function onGroupChange(track: EditorTrack, value: string | number): void {
     else setTracksGroup(ids, groupId);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -483,7 +483,7 @@ function onVcaChange(track: EditorTrack, value: string): void {
     setTrackVca(track.id, value === VCA_NONE ? null : value);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -513,7 +513,7 @@ function onRecordInputChannelChange(track: EditorTrack, value: number): void {
     setTrackRecordInputChannel(track.id, value === RECORD_INPUT_AUTO ? null : value);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -541,7 +541,7 @@ function onRecordInputDeviceChange(track: EditorTrack, value: string): void {
     setTrackRecordInputDeviceId(track.id, value === RECORD_DEVICE_DEFAULT ? null : value);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 

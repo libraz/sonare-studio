@@ -955,13 +955,6 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       cancel();
       return true;
     }
-    if (key === 'Backspace' || key === 'Delete') {
-      if (options.isReadOnly?.() === true) return false;
-      const selection = options.getSelection();
-      if (selection.size === 0) return false;
-      commands.deleteNotes([...selection]);
-      return true;
-    }
     return false;
   }
 

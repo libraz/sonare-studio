@@ -5,6 +5,7 @@ import type { useShortcuts } from '@/composables/useShortcuts';
 import type { EngineHandle } from '@/engine/engine';
 import { EXPORT_SAMPLE_RATES } from '@/export/options';
 import { describeError } from '@/lib/errors';
+import { clipSplitBlockReason, resolveClipSplitTarget } from '@/project/clip-split';
 import {
   canPasteClipAt,
   clipClipboardVersion,
@@ -35,7 +36,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { clipKind } from '@/project/types';
-import { firstBlock } from '@/ui/disabled-reason';
+import { firstBlock, type Gate } from '@/ui/disabled-reason';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
 import { isEditableTarget } from '@/ui/keyboard';
@@ -48,6 +49,7 @@ import {
 } from '@/ui/menu/menu-bar';
 import { detectPlatform, formatKeyCombo } from '@/ui/settings/key-combo';
 import { localizedLayoutName } from '@/ui/settings/layouts';
+import { controlOwnsKey, isRepeatableShortcut } from '@/ui/settings/shortcuts';
 
 type Recording = ReturnType<typeof useRecording>;
 type MidiRecording = ReturnType<typeof useMidiRecording>;
@@ -152,7 +154,114 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   }
 
   function activeContentReadOnly(): boolean {
-    return store.activeTrack?.frozen !== undefined;
+    const track = store.activeTrack;
+    return track !== null && track.frozen !== undefined;
+  }
+
+  function isTrackArmed(track: { id: number; kind: string }): boolean {
+    return track.kind === 'audio'
+      ? options.recording.armedTrackIds.value.includes(track.id)
+      : options.midiRecording.armedTrackId.value === track.id;
+  }
+
+  /** Target of a split at the playhead: the active clip, else the first clip under it on the active track. */
+  function splitTarget(ppq: number) {
+    return resolveClipSplitTarget(store.clips, store.activeClip, store.activeTrackId, ppq);
+  }
+
+  /**
+   * Why an action cannot run right now, or null when it can. Menu rows, the
+   * command palette and the shortcut handler all read this one answer.
+   */
+  function blockReason(actionId: string): string | null {
+    const r = t.value.reasons;
+    const arrangementFocus = focusZone.value === 'arrange';
+    const engineOff: Gate = [!options.handle.value, r.engineOff];
+    const noOpfs: Gate = [!options.opfsAvailable, r.noStorage];
+    const readOnly: Gate = [activeContentReadOnly(), r.trackFrozen];
+    const noClip: Gate = [!store.activeClip, r.noClipSelection];
+    const noMidiClip: Gate = [
+      !store.activeClip || clipKind(store.activeClip) !== 'midi',
+      r.noMidiClip,
+    ];
+    const noNoteSelection: Gate = [store.selection.size === 0, r.noNoteSelection];
+    const noSelection = arrangementFocus ? noClip : noNoteSelection;
+    const noTrack: Gate = [!store.activeTrack, r.noTrack];
+    const playheadPpq = Math.max(0, options.positionPpq?.value ?? 0);
+    switch (actionId) {
+      case 'transport.toggleRecord':
+        return firstBlock(engineOff, [
+          !(
+            options.canRecord?.value ??
+            (options.recording.armedTrackId.value !== null ||
+              options.midiRecording.armedTrackId.value !== null)
+          ),
+          r.noArmedTrack,
+        ]);
+      case 'transport.toStart':
+      case 'transport.toEnd':
+      case 'transport.nudgeBack':
+      case 'transport.nudgeForward':
+      case 'transport.setLeftLocator':
+      case 'transport.setRightLocator':
+        return firstBlock(engineOff);
+      case 'project.save':
+      case 'project.saveAs':
+      case 'project.open':
+        return firstBlock(noOpfs);
+      case 'edit.undo':
+        return canUndo() ? null : r.nothingToUndo;
+      case 'edit.redo':
+        return canRedo() ? null : r.nothingToRedo;
+      case 'edit.copy':
+        return firstBlock(noSelection);
+      case 'edit.cut':
+        return firstBlock(readOnly, noSelection);
+      case 'edit.paste':
+        if (arrangementFocus) {
+          return firstBlock(
+            readOnly,
+            [!hasCopiedClip(), r.nothingToPaste],
+            [!canPasteClipAt(store.activeTrackId, playheadPpq), r.noRoomToPaste],
+          );
+        }
+        return firstBlock(readOnly, noMidiClip, [!hasCopiedNotes(), r.nothingToPaste]);
+      case 'edit.selectAllNotes':
+        return firstBlock(noMidiClip);
+      case 'edit.quantizeSelection':
+      case 'edit.deleteSelectedNotes':
+      case 'edit.transposeUp':
+      case 'edit.transposeDown':
+      case 'edit.transposeOctaveUp':
+      case 'edit.transposeOctaveDown':
+        return firstBlock(noNoteSelection, readOnly);
+      case 'arrange.duplicateClip':
+      case 'arrange.deleteClip':
+        return firstBlock(readOnly, noClip);
+      case 'arrange.splitClipAtPlayhead': {
+        const target = splitTarget(playheadPpq);
+        return firstBlock(
+          readOnly,
+          [target === null, r.playheadOutsideClip],
+          [
+            target !== null && clipSplitBlockReason(target, playheadPpq) === 'loop',
+            t.value.shell.arrangement.loopSplitUnavailable,
+          ],
+        );
+      }
+      case 'track.toggleMute':
+      case 'track.toggleSolo':
+        return firstBlock(noTrack);
+      case 'track.toggleArm': {
+        const track = store.activeTrack;
+        if (!track) return firstBlock(noTrack);
+        if (track.kind !== 'audio' && track.kind !== 'midi') return r.trackNotRecordable;
+        // Arming a frozen track would record into silenced clips; disarming stays possible.
+        return isTrackArmed(track) ? null : firstBlock(readOnly);
+      }
+      default:
+        return null;
+    }
   }
 
   function reportActionError(error: unknown): void {
@@ -169,6 +278,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   }
 
   function runShortcutAction(actionId: string): boolean {
+    if (blockReason(actionId) !== null) return false;
     switch (actionId) {
       case 'transport.togglePlayback':
         options.togglePlayback();
@@ -195,31 +305,15 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         options.setRightLocator();
         return true;
       case 'transport.toggleRecord':
-        // Mirror the menu item's guard: recording needs both an engine and an
-        // armed track. Without this the shortcut fired a no-op toggle with no
-        // track armed, diverging from the (disabled) menu entry.
-        if (
-          !options.handle.value ||
-          !(
-            options.canRecord?.value ??
-            (options.recording.armedTrackId.value !== null ||
-              options.midiRecording.armedTrackId.value !== null)
-          )
-        ) {
-          return false;
-        }
         options.toggleRecord();
         return true;
       case 'project.save':
-        if (!options.opfsAvailable) return false;
         options.saveProjectAction();
         return true;
       case 'project.saveAs':
-        if (!options.opfsAvailable) return false;
         options.saveProjectAsAction();
         return true;
       case 'project.open':
-        if (!options.opfsAvailable) return false;
         options.openOpenDialog();
         return true;
       case 'edit.undo':
@@ -231,84 +325,62 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'edit.copy':
         return focusZone.value === 'arrange' ? copyActiveClip() : copySelectedNotes();
       case 'edit.cut':
-        if (activeContentReadOnly()) return false;
         return focusZone.value === 'arrange' ? cutActiveClip() : cutSelectedNotes();
       case 'edit.paste':
-        if (activeContentReadOnly()) return false;
         if (focusZone.value === 'arrange') {
-          const startPpq = Math.max(0, options.positionPpq?.value ?? 0);
-          if (!hasCopiedClip() || !canPasteClipAt(store.activeTrackId, startPpq)) return false;
-          return pasteClipAt(store.activeTrackId, startPpq) !== null;
+          return (
+            pasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0)) !== null
+          );
         }
         return pasteNotesAt(Math.max(0, options.positionPpq?.value ?? 0)).length > 0;
       case 'edit.selectAllNotes':
         selectAllNotes();
         return true;
       case 'edit.quantizeSelection':
-        if (activeContentReadOnly() || store.selection.size === 0) return false;
         quantizeSelection();
         return true;
       case 'edit.deleteSelectedNotes':
-        if (activeContentReadOnly() || store.selection.size === 0) return false;
         deleteSelectedNotes();
         return true;
       case 'edit.transposeUp':
-        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(1);
         return true;
       case 'edit.transposeDown':
-        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(-1);
         return true;
       case 'edit.transposeOctaveUp':
-        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(12);
         return true;
       case 'edit.transposeOctaveDown':
-        if (activeContentReadOnly() || store.selection.size === 0) return false;
         transposeSelection(-12);
         return true;
       case 'arrange.duplicateClip': {
         const clip = store.activeClip;
-        if (!clip || activeContentReadOnly()) return false;
+        if (!clip) return false;
         setActiveClip(duplicateClip(clip.id, clip.startPpq + clip.lengthPpq));
         return true;
       }
       case 'arrange.splitClipAtPlayhead':
-        if (activeContentReadOnly()) return false;
         arrangementRef.value?.cutAtPlayhead();
         return true;
       case 'arrange.deleteClip':
-        if (activeContentReadOnly()) return false;
-        if (store.clipId === -1) {
-          if (focusZone.value === 'arrange') return false;
-          if (store.selection.size === 0) return false;
-          deleteSelectedNotes();
-          return true;
-        }
         deleteClip(store.clipId);
         return true;
       case 'track.toggleMute': {
         const track = store.activeTrack;
-        if (!track || track.frozen !== undefined) return false;
+        if (!track) return false;
         setTrackMute(track.id, !track.mute);
         return true;
       }
       case 'track.toggleSolo': {
         const track = store.activeTrack;
-        if (!track || track.frozen !== undefined) return false;
+        if (!track) return false;
         setTrackSolo(track.id, !track.solo);
         return true;
       }
       case 'track.toggleArm': {
         const track = store.activeTrack;
-        if (
-          !track ||
-          track.frozen !== undefined ||
-          (track.kind !== 'audio' && track.kind !== 'midi')
-        ) {
-          return false;
-        }
+        if (!track || (track.kind !== 'audio' && track.kind !== 'midi')) return false;
         // Same recorder calls as the header ARM button: audio toggles only this
         // track, MIDI keeps its single-arm semantics.
         if (track.kind === 'audio') {
@@ -373,13 +445,13 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   function actionItem(
     actionId: string,
     label: string,
-    extra: { reason?: string | null; checked?: boolean } = {},
+    extra: { checked?: boolean } = {},
   ): MenuBarItem {
     return {
       id: actionId,
       label,
       hint: hintFor(actionId),
-      disabledReason: extra.reason,
+      disabledReason: blockReason(actionId),
       checked: extra.checked,
       run: () => {
         runMenuAction(() => runShortcutAction(actionId));
@@ -418,17 +490,17 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       commandItem('file.startScreen', m.startScreen, options.openStartScreen),
       commandItem('file.new', m.new, options.openNewDialog),
       commandItem('file.open', m.open, options.openOpenDialog, {
-        reason: noOpfs,
+        reason: blockReason('project.open'),
         hintFor: 'project.open',
       }),
       commandItem('file.openDemo', m.openDemo, options.openDemo),
       sep('file.sep-save'),
       commandItem('file.save', m.save, options.saveProjectAction, {
-        reason: noOpfs,
+        reason: blockReason('project.save'),
         hintFor: 'project.save',
       }),
       commandItem('file.saveAs', m.saveAs, options.saveProjectAsAction, {
-        reason: noOpfs,
+        reason: blockReason('project.saveAs'),
         hintFor: 'project.saveAs',
       }),
       commandItem('file.revisions', m.revisions, options.openRevisionsDialog, {
@@ -494,59 +566,25 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
     // reactive after a copy made by a keyboard shortcut or another surface.
     void clipClipboardVersion.value;
     void noteClipboardVersion.value;
-    const arrangementFocus = focusZone.value === 'arrange';
-    const r = t.value.reasons;
-    const noNoteSelection = firstBlock([store.selection.size === 0, r.noNoteSelection]);
-    const noSelection = arrangementFocus
-      ? firstBlock([!store.activeClip, r.noClipSelection])
-      : noNoteSelection;
-    const noClip = firstBlock([!store.activeClip, r.noClipSelection]);
-    const readOnly = firstBlock([activeContentReadOnly(), r.trackFrozen]);
-    const pasteUnavailable = arrangementFocus
-      ? firstBlock(
-          [!hasCopiedClip(), r.nothingToPaste],
-          [
-            !canPasteClipAt(store.activeTrackId, Math.max(0, options.positionPpq?.value ?? 0)),
-            r.noRoomToPaste,
-          ],
-        )
-      : firstBlock(noClip, [!hasCopiedNotes(), r.nothingToPaste]);
-    const editSelection = firstBlock(readOnly, noSelection);
-    const editNotes = firstBlock(noNoteSelection, readOnly);
-    const editClip = firstBlock(readOnly, noClip);
     return [
-      actionItem('edit.undo', a['edit.undo'], { reason: canUndo() ? null : r.nothingToUndo }),
-      actionItem('edit.redo', a['edit.redo'], { reason: canRedo() ? null : r.nothingToRedo }),
-      actionItem('edit.copy', a['edit.copy'], { reason: noSelection }),
-      actionItem('edit.cut', a['edit.cut'], { reason: editSelection }),
-      actionItem('edit.paste', a['edit.paste'], { reason: firstBlock(readOnly, pasteUnavailable) }),
+      actionItem('edit.undo', a['edit.undo']),
+      actionItem('edit.redo', a['edit.redo']),
+      actionItem('edit.copy', a['edit.copy']),
+      actionItem('edit.cut', a['edit.cut']),
+      actionItem('edit.paste', a['edit.paste']),
       sep('edit.sep-select'),
       actionItem('edit.selectAllNotes', a['edit.selectAllNotes']),
-      actionItem('edit.quantizeSelection', a['edit.quantizeSelection'], {
-        reason: editNotes,
-      }),
-      actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection, {
-        reason: editNotes,
-      }),
+      actionItem('edit.quantizeSelection', a['edit.quantizeSelection']),
+      actionItem('edit.deleteSelectedNotes', t.value.shortcuts.menu.deleteSelection),
       heading('edit.transpose', t.value.shortcuts.menu.transpose),
-      actionItem('edit.transposeUp', a['edit.transposeUp'], { reason: editNotes }),
-      actionItem('edit.transposeDown', a['edit.transposeDown'], {
-        reason: editNotes,
-      }),
-      actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp'], {
-        reason: editNotes,
-      }),
-      actionItem('edit.transposeOctaveDown', a['edit.transposeOctaveDown'], {
-        reason: editNotes,
-      }),
+      actionItem('edit.transposeUp', a['edit.transposeUp']),
+      actionItem('edit.transposeDown', a['edit.transposeDown']),
+      actionItem('edit.transposeOctaveUp', a['edit.transposeOctaveUp']),
+      actionItem('edit.transposeOctaveDown', a['edit.transposeOctaveDown']),
       heading('edit.clip', t.value.shortcuts.menu.clip),
-      actionItem('arrange.duplicateClip', a['arrange.duplicateClip'], {
-        reason: editClip,
-      }),
-      actionItem('arrange.splitClipAtPlayhead', a['arrange.splitClipAtPlayhead'], {
-        reason: editClip,
-      }),
-      actionItem('arrange.deleteClip', a['arrange.deleteClip'], { reason: editClip }),
+      actionItem('arrange.duplicateClip', a['arrange.duplicateClip']),
+      actionItem('arrange.splitClipAtPlayhead', a['arrange.splitClipAtPlayhead']),
+      actionItem('arrange.deleteClip', a['arrange.deleteClip']),
     ];
   }
 
@@ -587,16 +625,6 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
 
   function transportItems(): MenuBarItem[] {
     const a = t.value.shortcuts.actions;
-    const r = t.value.reasons;
-    const engineOff = options.handle.value ? null : r.engineOff;
-    const recordBlocked = firstBlock(engineOff, [
-      !(
-        options.canRecord?.value ??
-        (options.recording.armedTrackId.value !== null ||
-          options.midiRecording.armedTrackId.value !== null)
-      ),
-      r.noArmedTrack,
-    ]);
     return [
       actionItem(
         'transport.togglePlayback',
@@ -606,22 +634,19 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         checked: options.loopEnabled.value,
       }),
       actionItem('transport.toggleRecord', a['transport.toggleRecord'], {
-        reason: recordBlocked,
         checked:
           options.isRecording?.value ??
           (options.recording.isRecording.value ||
             options.midiRecording.isRecording?.value === true),
       }),
       sep('transport.sep-nav'),
-      actionItem('transport.toStart', a['transport.toStart'], { reason: engineOff }),
-      actionItem('transport.toEnd', a['transport.toEnd'], { reason: engineOff }),
-      actionItem('transport.nudgeBack', a['transport.nudgeBack'], { reason: engineOff }),
-      actionItem('transport.nudgeForward', a['transport.nudgeForward'], { reason: engineOff }),
+      actionItem('transport.toStart', a['transport.toStart']),
+      actionItem('transport.toEnd', a['transport.toEnd']),
+      actionItem('transport.nudgeBack', a['transport.nudgeBack']),
+      actionItem('transport.nudgeForward', a['transport.nudgeForward']),
       heading('transport.locators', t.value.shortcuts.menu.locators),
-      actionItem('transport.setLeftLocator', a['transport.setLeftLocator'], { reason: engineOff }),
-      actionItem('transport.setRightLocator', a['transport.setRightLocator'], {
-        reason: engineOff,
-      }),
+      actionItem('transport.setLeftLocator', a['transport.setLeftLocator']),
+      actionItem('transport.setRightLocator', a['transport.setRightLocator']),
     ];
   }
 
@@ -728,11 +753,16 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   });
 
   function onGlobalKeyDown(event: KeyboardEvent): void {
-    if (event.defaultPrevented || isEditableTarget(event.target)) return;
+    if (event.defaultPrevented || isEditableTarget(event.target) || controlOwnsKey(event)) return;
     if (options.isGlobalShortcutBlocked?.() === true) return;
     const scope = focusZone.value === 'arrange' ? 'arrangement' : 'editor';
     const actionId = options.shortcuts.match(event, scope);
     if (actionId === null) return;
+    // A held key claims the browser event but re-runs only repeat-friendly actions.
+    if (event.repeat && !isRepeatableShortcut(actionId)) {
+      event.preventDefault();
+      return;
+    }
     try {
       if (runShortcutAction(actionId)) event.preventDefault();
     } catch (error) {

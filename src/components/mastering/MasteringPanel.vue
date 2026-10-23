@@ -10,7 +10,7 @@ import { renderMixdownInWorker } from '@/export/client';
 import { formatClippingCensus } from '@/export/export-issue-format';
 import type { MixdownResult } from '@/export/mixdown';
 import { dbToLinear } from '@/lib/db';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import {
   addMasteringProcessor,
@@ -193,7 +193,7 @@ function runCommand(action: () => void): void {
     action();
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -507,7 +507,7 @@ async function onAutoSuggest(): Promise<void> {
     };
     runCommand(() => applyMasteringPresetWithOverrides(preset, overrides));
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   } finally {
     suggesting.value = false;
   }
@@ -578,7 +578,7 @@ async function onCheckTargets(): Promise<void> {
     }
     streamingTargets.value = parseStreamingPreview(json);
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   } finally {
     checkingTargets.value = false;
   }
@@ -842,7 +842,7 @@ async function onPreview(): Promise<void> {
   try {
     doc = serializeProject();
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
     return;
   }
   const range = derivePreviewRange(
@@ -1043,7 +1043,7 @@ async function onReferenceFile(event: Event): Promise<void> {
     referenceAnalysis.value = null;
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -1069,7 +1069,7 @@ async function onCompareReference(): Promise<void> {
       reference.sampleRate,
     );
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   } finally {
     analyzingReference.value = false;
   }

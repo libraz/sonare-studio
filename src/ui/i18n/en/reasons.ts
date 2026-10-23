@@ -16,6 +16,8 @@ export const reasons = {
   noLocators: 'Set the left and right locators first.',
   noArmedTrack: 'Arm a track for recording first.',
   nothingToPaste: 'Copy a clip first.',
+  playheadOutsideClip: 'The playhead is not inside a clip on this track.',
+  trackNotRecordable: 'This track cannot be armed for recording.',
   noRoomToPaste: 'The clip does not fit at the playhead on this track.',
   noMidiClipInProject: 'The project has no MIDI clips yet.',
   noStorage: 'This browser does not provide project storage (OPFS).',

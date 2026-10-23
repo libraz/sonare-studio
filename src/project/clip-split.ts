@@ -28,3 +28,20 @@ export function clipSplitBlockReason(
   }
   return null;
 }
+
+/**
+ * Picks the clip a split at the playhead acts on: the active clip when the
+ * playhead is strictly inside it, otherwise the first clip on the active track
+ * under the playhead.
+ */
+export function resolveClipSplitTarget<T extends ClipSplitCandidate & { trackId: number }>(
+  clips: ReadonlyArray<T>,
+  activeClip: T | null,
+  activeTrackId: number,
+  ppq: number,
+): T | null {
+  const inside = (clip: ClipSplitCandidate): boolean =>
+    ppq > clip.startPpq && ppq < clip.startPpq + clip.lengthPpq;
+  if (activeClip && inside(activeClip)) return activeClip;
+  return clips.find((clip) => clip.trackId === activeTrackId && inside(clip)) ?? null;
+}

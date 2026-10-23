@@ -11,10 +11,11 @@
  */
 
 import { computed, markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
 import { createPainter, type Painter } from '@/ui/canvas/painter';
 import { MAX_PITCH, TimelineRange } from '@/ui/canvas/timeline-range';
+import { useI18n } from '@/ui/i18n';
 import { createNoteExtentCache } from './content-extent';
 import { contentCenterPitch } from './overlay';
 
@@ -137,6 +138,7 @@ export function usePianoRollViewport(options: UsePianoRollViewportOptions = {}):
   );
 
   /** Extent of the note content, cached per note-mirror identity. */
+  const { t } = useI18n();
   const noteExtentPpq = createNoteExtentCache();
 
   function contentPpq(): number {
@@ -147,7 +149,7 @@ export function usePianoRollViewport(options: UsePianoRollViewportOptions = {}):
     try {
       await store.init();
     } catch (err) {
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     }
   });
 

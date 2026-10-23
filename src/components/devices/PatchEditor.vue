@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { setTrackInstrument } from '@/project/commands';
 import { type StoredSynthPatch, trackInstrument } from '@/project/instrument';
@@ -464,7 +464,7 @@ function onApply(): void {
     error.value = '';
     emit('applied');
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -483,7 +483,7 @@ function onAudition(): void {
     })
     .catch((err: unknown) => {
       if (disposed || generation !== auditionGeneration) return;
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     });
 }
 

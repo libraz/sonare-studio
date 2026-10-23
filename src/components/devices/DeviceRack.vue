@@ -8,7 +8,7 @@ import SearchField from '@/components/shell/SearchField.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { useWebMidiOutputs } from '@/composables/useWebMidiOutputs';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { deleteSoundFontIfUnreferenced } from '@/persistence/gc';
 import { readFileBytesBounded } from '@/persistence/local-file';
 import { MAX_SOUNDFONT_FILE_BYTES } from '@/persistence/resource-limits';
@@ -158,7 +158,7 @@ function run(action: () => void): void {
     action();
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -179,7 +179,7 @@ function audition(candidate: NonNullable<typeof instrument.value>): void {
     },
     (err: unknown) => {
       if (disposed || generation !== auditionGeneration) return;
-      error.value = errorMessage(err);
+      error.value = describeError(err, t.value.notices.errors);
     },
   );
 }
@@ -504,7 +504,7 @@ async function refreshFonts(): Promise<void> {
     error.value = '';
   } catch (err) {
     fonts.value = [];
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   } finally {
     fontsLoading.value = false;
   }
@@ -541,7 +541,7 @@ async function removeFont(fontId: string): Promise<void> {
     }
     await refreshFonts();
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -740,7 +740,7 @@ function refreshSf2ManifestProbe(): void {
       .catch((err: unknown) => {
         if (request !== sf2ManifestRequest) return;
         sf2ManifestPresets.value = [];
-        const detail = errorMessage(err);
+        const detail = describeError(err, t.value.notices.errors);
         sf2ManifestProbe.value = {
           state: 'error',
           text: formatMessage(t.value.shell.devicesPanel.soundFontProgramError, { detail }),
@@ -824,7 +824,7 @@ async function onSf2FileChange(event: Event): Promise<void> {
     selectFont(meta.id);
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 

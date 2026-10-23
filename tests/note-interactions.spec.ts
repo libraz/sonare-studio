@@ -503,17 +503,12 @@ describe('useNoteInteractions', () => {
   });
 
   describe('keyboard', () => {
-    it('deletes the selection on Backspace and consumes the key', () => {
+    it('leaves Delete and Backspace to the shortcut registry', () => {
       const { commands, interactions } = makeHarness(
         [makeNote({ id: 1 }), makeNote({ id: 2, pitch: 62 })],
         [1, 2],
       );
-      expect(interactions.onKeyDown('Backspace')).toBe(true);
-      expect(commands.deleteNotes).toHaveBeenCalledWith([1, 2]);
-    });
-
-    it('ignores Delete when nothing is selected', () => {
-      const { commands, interactions } = makeHarness([makeNote({ id: 1 })]);
+      expect(interactions.onKeyDown('Backspace')).toBe(false);
       expect(interactions.onKeyDown('Delete')).toBe(false);
       expect(commands.deleteNotes).not.toHaveBeenCalled();
     });

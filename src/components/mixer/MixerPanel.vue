@@ -6,7 +6,7 @@ import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import type { AnalyserBridge } from '@/engine/analyser';
 import type { MeterSource } from '@/engine/meters';
 import type { ScopeSource } from '@/engine/scope';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import { groupBusTopologyId } from '@/project/bus-topology';
 import {
@@ -164,7 +164,7 @@ function onAddBus(): void {
     addMixerBus();
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -181,7 +181,7 @@ function onAddVca(): void {
     addVcaGroup();
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
@@ -204,7 +204,7 @@ function onApplyScenePreset(preset: string): void {
     sceneMenuOpen.value = false;
     error.value = '';
   } catch (err) {
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 

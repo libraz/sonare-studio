@@ -5,7 +5,7 @@ import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { useGestureTransaction } from '@/composables/useGestureTransaction';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 import { clampInt } from '@/lib/math';
 import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
@@ -418,7 +418,7 @@ async function applyToClip(): Promise<void> {
   try {
     applyNoteEdits(plan);
   } catch (err) {
-    status.value = errorMessage(err);
+    status.value = describeError(err, t.value.notices.errors);
     statusType.value = 'error';
     return;
   }
@@ -440,7 +440,7 @@ function pullFromClip(): void {
   try {
     result = patternFromNotes(store.notes, pattern.value, clip.sourceOffsetPpq);
   } catch (err) {
-    status.value = errorMessage(err);
+    status.value = describeError(err, t.value.notices.errors);
     statusType.value = 'error';
     return;
   }

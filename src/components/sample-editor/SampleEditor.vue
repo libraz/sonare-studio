@@ -1,6 +1,6 @@
 <script lang="ts">
 import { ref as moduleRef } from 'vue';
-import { errorMessage } from '@/lib/errors';
+import { describeError } from '@/lib/errors';
 
 /** Operation groups shown as tabs above the operation toolbar. */
 const OPS_GROUPS = [
@@ -26,6 +26,7 @@ import EmptyState from '@/components/shell/EmptyState.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { useShortcuts } from '@/composables/useShortcuts';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
@@ -333,7 +334,7 @@ async function loadCurrent(assetId: string): Promise<void> {
   } catch (err) {
     if (disposed || generation !== loadGeneration) return;
     asset.value = null;
-    error.value = errorMessage(err);
+    error.value = describeError(err, t.value.notices.errors);
   } finally {
     if (!disposed && generation === loadGeneration) {
       loading.value = false;
@@ -380,14 +381,17 @@ async function onSelectVersion(index: number): Promise<void> {
   await loadCurrent(version.assetId);
 }
 
+const shortcuts = useShortcuts();
+
 /** Handles waveform-local selection keys and version-history undo/redo. */
 function onWaveKeyDown(event: KeyboardEvent): void {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+  const action = shortcuts.match(event, 'editor');
+  if (action === 'edit.undo' || action === 'edit.redo') {
     // The sample editor's immutable asset history is deliberately separate
     // from project history. Consume this even at either history boundary so a
     // waveform-focused shortcut can never undo an unrelated arrangement edit.
     event.preventDefault();
-    const delta = event.shiftKey ? 1 : -1;
+    const delta = action === 'edit.redo' ? 1 : -1;
     const targetIndex = historyState.value.currentIndex + delta;
     if (targetIndex >= 0 && targetIndex < historyState.value.versions.length) {
       void onSelectVersion(targetIndex);
