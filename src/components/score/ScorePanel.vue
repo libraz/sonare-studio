@@ -33,6 +33,7 @@ import {
   addNote,
   applyNoteEdits,
   clearNoteAnnotation,
+  clearTrackMidiFx,
   type NoteAnnotationUpdate,
   setActiveClip,
   setDisplayTranspose,
@@ -63,12 +64,14 @@ import { useScoreInteractions } from '@/ui/score/use-score-interactions';
 import { useScoreNotation } from '@/ui/score/use-score-notation';
 
 /**
- * Read-only engraved score view over the piano-roll clip.
+ * Engraved score view over the piano-roll clip.
  *
- * The notation pipeline is strictly display-only: editor notes are quantized
- * to a NotatedScore (never written back to MIDI), serialized to MusicXML and
+ * The notation pipeline is display-only: editor notes are quantized to a
+ * NotatedScore (never written back to MIDI), serialized to MusicXML and
  * engraved by the Verovio worker. Display Quantize changes only re-run this
- * pipeline; the project's note data is never touched.
+ * pipeline; the project's note data is never touched. The panel's own gestures
+ * (N to add, double-click to insert, vertical drag to re-pitch) are undoable
+ * note commands on the clip.
  *
  * Playhead/click sync uses the Verovio timemap. A timemap `qstamp` counts
  * quarter notes from the start of measure 1, and measure 1 begins at the
@@ -620,6 +623,13 @@ function closePalette(): void {
   lineSpanArmed.value = null;
 }
 
+/** Removes the active track's live MIDI FX as one undoable edit. */
+function clearActiveTrackMidiFx(): void {
+  const trackId = store.activeTrack?.id;
+  if (trackId === undefined) return;
+  tryScoreEdit(() => clearTrackMidiFx(trackId));
+}
+
 /** Layout popover change handler for the display transpose select. */
 function onTransposeChange(value: number): void {
   tryScoreEdit(() => setDisplayTranspose(value));
@@ -683,12 +693,13 @@ function scheduleRetranscribe(): void {
 
 // The active clip is navigation, not a note edit: switch the score immediately
 // so playhead following does not keep scanning the previous clip's timemap.
-watch([() => store.documentGeneration, () => store.clipId], () => {
+watch([() => store.documentGeneration, () => store.clipId], ([generation, clipId], [prior]) => {
   if (retranscribeTimer !== null) {
     clearTimeout(retranscribeTimer);
     retranscribeTimer = null;
   }
-  closePalette();
+  // An annotate click that switched the clip already targeted the new clip.
+  if (generation !== prior || annotationClipId.value !== clipId) closePalette();
   playhead?.resetScan();
   notesHandledForClipId = store.clipId;
   notation.bumpGeneration(true);
@@ -848,6 +859,9 @@ onBeforeUnmount(() => {
     <p v-if="notation.error.value" class="score-error" role="alert">{{ notation.error.value }}</p>
     <p v-if="midiFxNoticeVisible" class="score-notice" role="note">
       {{ t.shell.score.midiFxNotice }}
+      <button type="button" class="score-notice-action" @click="clearActiveTrackMidiFx">
+        {{ t.shell.score.midiFxClear }}
+      </button>
     </p>
     <div class="score-marker-tools" role="group" :aria-label="t.shell.score.markerTools">
       <label>

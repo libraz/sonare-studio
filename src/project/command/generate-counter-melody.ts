@@ -12,7 +12,6 @@
 
 import { type CounterMelodyOptions, generateCounterMelody } from '@libraz/libcantus';
 import { createGenerationTargetFrame } from '@/compose/generation-target';
-import { effectiveKeyScale } from '@/compose/key';
 import { editorNotesToNoteEvents, noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { harmonicNotes, isDrumTrack, topVoiceOnly } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
@@ -21,6 +20,7 @@ import { projectMidiNoteOccurrences } from '../midi-projection';
 import { useProjectStore } from '../store';
 import { clipKind } from '../types';
 import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
+import { generationKeyAt } from './generation-key';
 
 /** NativeSynth preset for generated counter-melody tracks. */
 const COUNTER_PRESET = 'pluck';
@@ -64,7 +64,7 @@ export function buildCounterPlan(
     0,
   );
 
-  const key = effectiveKeyScale(store.scaleHighlight);
+  const key = generationKeyAt(store, clip.startPpq);
   const target = createGenerationTargetFrame({
     startPpq: clip.startPpq,
     endPpq: clip.startPpq + clip.lengthPpq,

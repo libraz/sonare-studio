@@ -73,6 +73,7 @@ export const shellScore = {
     engraving: '譜刻中...',
     empty: 'まだスコアはありません。採譜を押してください。',
     midiFxNotice: 'このトラックではMIDI FXが有効です。譜面は元のクリップノートを表示します。',
+    midiFxClear: 'MIDI FXを解除',
     markerTools: '譜面の歌詞と調号ツール',
     lyricText: '歌詞',
     lyricPlaceholder: '単語または音節',

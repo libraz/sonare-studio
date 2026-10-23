@@ -12,12 +12,12 @@
 
 import { type BassLineOptions, type BassSegment, generateBassLine } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
-import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import { useProjectStore } from '../store';
 import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
+import { generationKeyAt } from './generation-key';
 
 /** NativeSynth preset for generated bass tracks. */
 const BASS_PRESET = 'sub-bass';
@@ -44,7 +44,8 @@ export function buildBassPlan(
 ): TrackPlan | null {
   if (chords.length === 0) return null;
 
-  const key = effectiveKeyScale(store.scaleHighlight);
+  const firstStart = Math.min(...chords.map((symbol) => symbol.startPpq));
+  const key = generationKeyAt(store, firstStart);
   const segments: BassSegment[] = chords.map((symbol) => ({
     startBeat: symbol.startPpq,
     endBeat: symbol.endPpq,

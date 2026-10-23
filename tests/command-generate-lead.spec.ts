@@ -57,14 +57,18 @@ describe('createLeadMelodyCommand', () => {
     expect(store.clips.find((clip) => clip.id === first)).toBeDefined();
   });
 
-  it('preserves the old lead when the chord progression grows', () => {
+  it('adds a spanning clip to the existing lead track when the chord progression grows', () => {
     const first = createLeadMelodyCommand('Lead');
     const firstTrackId = store.activeTrackId;
     setProjectChords([{ startPpq: 0, endPpq: 32, rootPc: 0, quality: 0 }]);
     const second = createLeadMelodyCommand('Lead');
     expect(second).not.toBe(first);
+    expect(store.tracks).toHaveLength(1);
+    expect(store.activeTrackId).toBe(firstTrackId);
     expect(store.activeClip?.lengthPpq).toBe(32);
-    expect(store.activeTrackId).not.toBe(firstTrackId);
     expect(store.clips.find((clip) => clip.id === first)?.lengthPpq).toBe(16);
+    expect(undo()).toBe(true);
+    expect(store.tracks).toHaveLength(1);
+    expect(store.clips.map((clip) => clip.id)).toEqual([first]);
   });
 });

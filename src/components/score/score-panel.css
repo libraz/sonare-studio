@@ -25,6 +25,11 @@
   font-size: var(--fs-sm);
 }
 
+.score-notice-action {
+  margin-left: var(--sp-2);
+  font: inherit;
+}
+
 .score-error,
 .score-notice {
   animation: view-enter var(--dur-2) var(--ease-out);

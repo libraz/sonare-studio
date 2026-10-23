@@ -18,11 +18,11 @@ import {
   type ProgStyle,
 } from '@libraz/libcantus';
 import { chordSpanToEditorChord } from '@/compose/chord-io';
-import { effectiveKeyScale } from '@/compose/key';
 import type { EditorChordSymbol } from '../chords';
 import { useProjectStore } from '../store';
 import { isFourFourBarRange } from '../time-signature';
 import { setProjectChords } from './chords';
+import { generationKeyAt } from './generation-key';
 
 /** Beats per bar libcantus's progression generator assumes (4/4). */
 const BEATS_PER_BAR = 4;
@@ -68,7 +68,6 @@ export function generateProgressionCommand(params: GenerateProgressionParams = {
   if (!Number.isInteger(bars) || bars <= 0) {
     throw new RangeError(`Progression bars must be a positive integer, got ${bars}`);
   }
-  const key = effectiveKeyScale(store.scaleHighlight);
   const mode = params.mode ?? 'replace';
   let existing: EditorChordSymbol[];
   let startPpq: number;
@@ -101,6 +100,7 @@ export function generateProgressionCommand(params: GenerateProgressionParams = {
     throw new RangeError('Progression generation currently supports 4/4 bars only.');
   }
 
+  const key = generationKeyAt(store, startPpq);
   const spans = generateProgressionSpans({
     key,
     style: params.style ?? 'minimal',

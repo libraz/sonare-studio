@@ -2,12 +2,14 @@
  * Creates the empty lead-melody target used after arranging generated parts.
  *
  * The command is intentionally idempotent: a second request selects the
- * existing Lead/主旋律 track instead of adding another one. The track and its
- * clip are still created in one atomic history entry on the first request.
+ * existing Lead/主旋律 track instead of adding another one; when that track has
+ * no clip spanning the progression, it receives one. A new track and its clip
+ * are created in one atomic history entry on the first request.
  */
 
 import { useProjectStore } from '../store';
 import { clipKind } from '../types';
+import { addMidiClip } from './clips-create';
 import { setActiveClip } from './clips-state';
 import { addGeneratedTrack } from './generate-track';
 import { executeAtomic } from './history';
@@ -95,6 +97,17 @@ export function createLeadMelodyCommand(name = DEFAULT_LEAD_NAME): number | null
   if (existingClip !== undefined) {
     setActiveClip(existingClip.id);
     return existingClip.id;
+  }
+
+  if (leadTrack !== undefined) {
+    const clipId = addMidiClip({
+      trackId: leadTrack.id,
+      startPpq: progression.startPpq,
+      lengthPpq: progression.lengthPpq,
+      name: requestedName,
+    });
+    setActiveClip(clipId);
+    return clipId;
   }
 
   const clipId = executeAtomic((edit) =>

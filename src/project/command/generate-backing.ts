@@ -20,12 +20,12 @@ import {
   voiceProgression,
 } from '@libraz/libcantus';
 import { editorChordToChord } from '@/compose/chord-io';
-import { effectiveKeyScale } from '@/compose/key';
 import type { EditorChordSymbol } from '../chords';
 import { trackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { useProjectStore } from '../store';
 import { commitTrackPlan, type TrackPlan } from './generate-track';
+import { generationKeyAt } from './generation-key';
 
 /** Backing voicing mode: smooth SATB leading, or a fixed tertian style. */
 export type BackingStyle = 'smooth' | VoicingStyle;
@@ -91,7 +91,7 @@ export function buildBackingPlan(
 
   const regions = [...chordSymbols].sort((a, b) => a.startPpq - b.startPpq);
   const chords = regions.map(editorChordToChord);
-  const voicings = voicingsFor(chords, params, effectiveKeyScale(store.scaleHighlight));
+  const voicings = voicingsFor(chords, params, generationKeyAt(store, regions[0].startPpq));
 
   const notes: RawNote[] = [];
   regions.forEach((region, index) => {

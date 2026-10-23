@@ -25,7 +25,6 @@ import {
   createGenerationTargetFrame,
   type GenerationTargetFrame,
 } from '@/compose/generation-target';
-import { effectiveKeyScale } from '@/compose/key';
 import { noteEventsToNewEditorNotes } from '@/compose/notes-io';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import type { EditorChordSymbol } from '../chords';
@@ -36,6 +35,7 @@ import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { isFourFourBarRange, timeSignatureAt } from '../time-signature';
 import type { EditorClip } from '../types';
 import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-track';
+import { generationKeyAt } from './generation-key';
 import { executeAtomic } from './history';
 import { requireEditableClip } from './utils';
 
@@ -97,7 +97,7 @@ export function buildMotifCell(
   if (!isFourFourBarRange(target.timeSignatures, target.startPpq, bars)) {
     throw new RangeError('Motif generation currently supports 4/4 bars only.');
   }
-  const key = effectiveKeyScale(store.scaleHighlight);
+  const key = generationKeyAt(store, target.startPpq);
   let cell: MotifCell = generateMotif({
     key,
     bars,

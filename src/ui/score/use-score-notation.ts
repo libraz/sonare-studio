@@ -132,10 +132,21 @@ export interface ScoreNotationOptions {
   createExportClient?: () => VerovioClient;
 }
 
-/** The document as a MusicXML export engraves it: every track, or the active clip. */
-export function musicXmlScoredDocument(store: ProjectStore, fullScore: boolean): ProjectDocument {
+/**
+ * The document as a MusicXML export engraves it: every track, or the active clip.
+ * With `trackId` in Full Score mode, only that track (a single-part export).
+ */
+export function musicXmlScoredDocument(
+  store: ProjectStore,
+  fullScore: boolean,
+  trackId?: number,
+): ProjectDocument {
   const doc = serializeProject();
-  if (fullScore) return doc;
+  if (fullScore) {
+    if (trackId === undefined) return doc;
+    const only = store.tracks.findIndex((track) => track.id === trackId);
+    return { ...doc, tracks: doc.tracks[only] ? [doc.tracks[only]] : [] };
+  }
   const clip = store.activeClip;
   const trackIndex = clip ? store.tracks.findIndex((track) => track.id === clip.trackId) : -1;
   const track = doc.tracks[trackIndex];
@@ -319,6 +330,10 @@ export async function buildProjectScore(
         store.activeClip && clipKind(store.activeClip) === 'midi' ? [store.activeClip] : [],
         store.scoreAnnotations,
       );
+  const midiTracks = store.tracks.filter((track) => track.kind === 'midi');
+  const activeTrackIndex = midiTracks.findIndex((track) => track.id === store.activeClip?.trackId);
+  const activePartName =
+    midiTracks[activeTrackIndex]?.name || `Track ${Math.max(activeTrackIndex, 0) + 1}`;
   const score = fullScore
     ? buildFullScore(
         store,
@@ -344,7 +359,7 @@ export async function buildProjectScore(
         clipLengthPpq: options.clipLengthPpq,
         timeSignatures: options.timeSignatures,
         pickupLengthPpq: options.pickupLengthPpq,
-        partName: 'Piano',
+        partName: activePartName,
         clef: 'grand',
         grandStaffSplitPitch: options.grandStaffSplitPitch,
         estimateFingering: options.estimateFingering,
@@ -810,9 +825,9 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
   }
 
   /** Asks before a MusicXML file drops content the engraved score cannot carry. */
-  function confirmMusicXmlLoss(fullScore: boolean): Promise<boolean> {
+  function confirmMusicXmlLoss(fullScore: boolean, trackId?: number): Promise<boolean> {
     const loss = inspectMusicXmlExportLoss(
-      musicXmlScoredDocument(store, fullScore),
+      musicXmlScoredDocument(store, fullScore, trackId),
       options.getDivisionPpq(),
     );
     return confirmLossReport(loss, t.value.shell.project.musicXmlExportLoss);
@@ -840,7 +855,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     const part = artifact.score.parts[partIndices[0]];
     if (!part) return;
     void runExport(async () => {
-      if (!(await confirmMusicXmlLoss(false))) return;
+      if (!(await confirmMusicXmlLoss(artifact.fullScore, store.activeTrackId))) return;
       if (artifactForCurrentState() !== artifact) return;
       const partScore = extractPartsScore(artifact.score, partIndices);
       const xml = serializeMusicXml(partScore);

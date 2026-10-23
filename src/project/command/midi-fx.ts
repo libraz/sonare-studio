@@ -89,8 +89,8 @@ function withoutMidiFx(track: EditorTrack): EditorTrack {
 /**
  * Sets a track's live, non-destructive MIDI-FX transform as one undoable edit.
  * The transform is mirrored to the engine in realtime (and applied at offline
- * render) without rewriting any stored notes, so it can be re-edited or cleared
- * freely. A sanitized no-op transform clears any existing transform instead of
+ * render) without rewriting any stored notes, so it can be replaced or cleared
+ * without touching them. A sanitized no-op transform clears any existing transform instead of
  * storing an identity entry.
  *
  * @param trackId Target track id.

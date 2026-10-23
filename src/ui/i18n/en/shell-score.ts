@@ -73,6 +73,7 @@ export const shellScore = {
     engraving: 'Engraving...',
     empty: 'No score yet - press Transcribe.',
     midiFxNotice: 'MIDI FX are active on this track; the score shows the original clip notes.',
+    midiFxClear: 'Clear MIDI FX',
     markerTools: 'Score lyrics and key tools',
     lyricText: 'Lyric',
     lyricPlaceholder: 'word or syllable',

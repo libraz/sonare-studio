@@ -9,12 +9,8 @@
  * makes the drum classification durable: the name heuristic stays, but only as
  * the fallback for tracks written before a record existed.
  *
- * `algorithmVersion` is what lets a generated part be reproduced later. The
- * library promises that a fixed version plus the same inputs gives the same
- * output from any build that accepts that version, and raises the number rather
- * than changing what an accepted version returns; so a track carrying the
- * version it was made under can be regenerated as the part it was, instead of
- * as whatever the current build would write today.
+ * `algorithmVersion` is recorded provenance: the libcantus algorithm version the
+ * track was written under. Nothing reads it back to regenerate the part.
  *
  * Pure module: no store access, no wasm.
  */
@@ -42,7 +38,7 @@ export const PART_TRACK_NAMES: Readonly<Record<TrackPart, string>> = {
   backing: 'Backing',
 };
 
-/** How a track was generated, recorded so it can be reproduced. */
+/** How a track was generated, recorded as provenance. */
 export interface TrackProvenance {
   /** The part that wrote the track. */
   part: TrackPart;

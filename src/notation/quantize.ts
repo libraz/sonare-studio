@@ -218,6 +218,9 @@ const BINARY_VALUES_DESC = VALUES_DESC.filter(({ value }) => value.tuplet === un
 /** Tuplet values only, used as a second exact-cover family when binary fails. */
 const TUPLET_VALUES_DESC = VALUES_DESC.filter(({ value }) => value.tuplet !== undefined);
 
+/** Length of the shortest binary value; binary onsets are multiples of it. */
+const SMALLEST_BINARY_PPQ = BINARY_VALUES_DESC[BINARY_VALUES_DESC.length - 1].ppq;
+
 /** Returns true when `value` is an integral multiple of `step` within tolerance. */
 function isMultipleOf(value: number, step: number): boolean {
   const ratio = value / step;
@@ -770,7 +773,10 @@ function decomposeNote(
   groupLen: number,
 ): DurationPiece[] {
   const exact = exactNoteValue(end - start);
-  if (exact) {
+  const crossesBoundary = nextGroupBoundary(start, measureStartPpq, groupLen) < end - EPSILON;
+  // A value starting off the binary lattice cannot stay whole across a beat boundary.
+  const startsOffLattice = !isMultipleOf(start - measureStartPpq, SMALLEST_BINARY_PPQ);
+  if (exact && !(startsOffLattice && crossesBoundary)) {
     const groupPosition = (start - measureStartPpq) / groupLen;
     const startsOnGroupBoundary = Math.abs(groupPosition - Math.round(groupPosition)) <= EPSILON;
     if (end - start <= groupLen + EPSILON || startsOnGroupBoundary) {

@@ -224,9 +224,18 @@ export function harmonizeFromMelodyCommand(params: HarmonizeFromMelodyParams = {
     );
   }
   const clipEndPpq = target.endPpq;
-  const keptChords = store.chords.filter(
-    (chord) => chord.endPpq <= clip.startPpq || chord.startPpq >= clipEndPpq,
-  );
+  // Chords straddling a clip edge keep their portion outside the clip.
+  const keptChords = store.chords.flatMap((chord) => {
+    const before =
+      chord.startPpq < clip.startPpq
+        ? [{ ...chord, endPpq: Math.min(chord.endPpq, clip.startPpq) }]
+        : [];
+    const after =
+      chord.endPpq > clipEndPpq
+        ? [{ ...chord, startPpq: Math.max(chord.startPpq, clipEndPpq) }]
+        : [];
+    return [...before, ...after];
+  });
   const sanitized = sanitizeChordSymbols([...keptChords, ...generated]);
   const project = getProject();
 

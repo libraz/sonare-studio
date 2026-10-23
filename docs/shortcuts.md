@@ -75,6 +75,17 @@ These act on the active arrangement track.
 | `Mod+-` | Zoom out <!-- shortcut-action: view.zoomOut --> | global |
 | `Mod+Shift+F` | Zoom to fit <!-- shortcut-action: view.zoomToFit --> | global |
 
+## Score
+
+These apply while the score panel has focus. Each edit is an undoable command on the active clip.
+
+| Keys | Action | Scope |
+| --- | --- | --- |
+| `N` | Add a note after the selected note, same pitch and length | score |
+| Double-click | Insert a note at the clicked position (copies the selected note, or middle C) | score |
+| Vertical drag on a note | Change its pitch by one semitone per drag step | score |
+| `Backspace` / `Delete` | Delete selected notes (editor dock shortcut) | editor dock |
+
 ## Tools
 
 | Keys | Action | Scope |

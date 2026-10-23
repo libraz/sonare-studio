@@ -561,18 +561,6 @@ export function validateTrackInstrument(instrument: TrackInstrument): void {
   }
 }
 
-/**
- * Deterministic identity segment for prerender cache keys.
- *
- * The segment covers everything in the instrument that influences the bounced
- * audio: preset name, the full patch content (canonicalized and hashed), or
- * the SoundFont id plus bank/program. The synth-preset form intentionally
- * matches the historical `preset=<name>` cache-key segment when GM mode is
- * disabled; GM mode appends its initial bank/program selection.
- *
- * @param instrument Instrument to identify.
- * @returns A stable key segment.
- */
 /** Smallest positive engine gain; the engine reads a gain of 0 as "use the default". */
 export const SF2_MUTE_GAIN = 1e-6;
 
@@ -638,6 +626,18 @@ export function sf2ChannelProgram(
   return null;
 }
 
+/**
+ * Deterministic identity segment for prerender cache keys.
+ *
+ * The segment covers everything in the instrument that influences the bounced
+ * audio: preset name, the full patch content (canonicalized and hashed), or
+ * the SoundFont id plus bank/program. The synth-preset form intentionally
+ * matches the historical `preset=<name>` cache-key segment when GM mode is
+ * disabled; GM mode appends its initial bank/program selection.
+ *
+ * @param instrument Instrument to identify.
+ * @returns A stable key segment.
+ */
 export function instrumentCacheSegment(instrument: TrackInstrument): string {
   switch (instrument.kind) {
     case 'synth-preset':
