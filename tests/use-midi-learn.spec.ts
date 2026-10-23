@@ -648,12 +648,12 @@ describe('useMidiLearn', () => {
     const delayId = midiLearnStripControlTargetId(7, 'channelDelaySamples');
     learn.armId(delayId);
     learn.handleCc({ channel: 0, controller: 26, value: 127 });
-    expect(setStripChannelDelaySamples).toHaveBeenCalledWith(7, 96000);
+    expect(setStripChannelDelaySamples).toHaveBeenCalledWith(7, 96000, { commit: false });
 
     const dualRightId = midiLearnStripControlTargetId(7, 'dualPanRight');
     learn.armId(dualRightId);
     learn.handleCc({ channel: 0, controller: 27, value: 0 });
-    expect(setStripDualPan).toHaveBeenCalledWith(7, -1, -1);
+    expect(setStripDualPan).toHaveBeenCalledWith(7, -1, -1, { commit: false });
   });
 
   it('binds and drives strip polarity switches from CC thresholds', () => {

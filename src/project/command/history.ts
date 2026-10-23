@@ -670,9 +670,28 @@ interface PendingGesture {
 
 const pendingGesture = shallowRef<PendingGesture | null>(null);
 
-/** True when an uncommitted gesture with this key is in flight. */
+/** Key that overrides every gesture key while a group scope is active. */
+let activeGestureGroup: string | null = null;
+
+/**
+ * Runs `action` with every gesture command inside it sharing one pending
+ * gesture under `groupKey`, so several targets moved by one controller stream
+ * coalesce into a single history entry instead of flushing each other.
+ */
+export function withGestureGroup<T>(groupKey: string, action: () => T): T {
+  const previous = activeGestureGroup;
+  activeGestureGroup = groupKey;
+  try {
+    return action();
+  } finally {
+    activeGestureGroup = previous;
+  }
+}
+
+/** True when an uncommitted gesture with this key (or the active group) is in flight. */
 export function hasPendingGesture(key: string): boolean {
-  return pendingGesture.value !== null && pendingGesture.value.key === key;
+  const pending = pendingGesture.value;
+  return pending !== null && (pending.key === key || pending.key === activeGestureGroup);
 }
 
 /**
@@ -768,8 +787,12 @@ export interface CommandGestureOptions {
  * gesture coalescing: same-key non-commit calls share one history entry whose
  * `before` snapshot is the gesture start.
  */
-export function executeApp<T>(action: () => T, gesture?: { key: string; commit: boolean }): T {
+export function executeApp<T>(action: () => T, ownGesture?: { key: string; commit: boolean }): T {
   const store = useProjectStore();
+  const gesture =
+    ownGesture && activeGestureGroup !== null
+      ? { key: activeGestureGroup, commit: ownGesture.commit }
+      : ownGesture;
   if (gesture && !gesture.commit) {
     if (pendingGesture.value && pendingGesture.value.key !== gesture.key) flushPendingGesture();
     if (!pendingGesture.value) {

@@ -1,6 +1,7 @@
 import type { InjectionKey, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref } from 'vue';
 import { isSwitchOn } from '@/lib/midi';
+import { withGestureGroup } from '@/project/command/history';
 import { mixerBusStripTarget } from '@/project/command/mixer-internal';
 import {
   clearAllMidiCcBindings,
@@ -500,6 +501,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
               setStripChannelDelaySamples(
                 stripControl.scope,
                 Math.round(ccToRange(value, 0, MAX_CHANNEL_DELAY_SAMPLES)),
+                { commit },
               );
             } else {
               const next = ccToPan(value);
@@ -511,7 +513,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
                 stripControl.param === 'dualPanRight'
                   ? next
                   : (strip?.dualPan?.right ?? DEFAULT_DUAL_PAN.right);
-              setStripDualPan(stripControl.scope, left, right);
+              setStripDualPan(stripControl.scope, left, right, { commit });
             }
           }
         }
@@ -569,9 +571,24 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     return slot !== null && (slot.param === 'arm' || slot.param === 'select');
   }
 
+  /** Gesture group shared by every target one controller drives, so they share one undo entry. */
+  function gestureGroupFor(id: string): string | null {
+    const binding = bindings.get(id);
+    if (!binding) return null;
+    return `midi-learn:${binding.channel}:${binding.kind ?? 'cc'}:${binding.controller}:${binding.parameter ?? ''}`;
+  }
+
+  /** Dispatches inside the controller's gesture group so multi-target moves coalesce. */
+  function dispatchGrouped(id: string, value: number, commit: boolean): boolean {
+    const group = gestureGroupFor(id);
+    return group === null
+      ? dispatch(id, value, commit)
+      : withGestureGroup(group, () => dispatch(id, value, commit));
+  }
+
   /** Applies a CC value to a bound target, coalescing the gesture's commit. */
   function apply(id: string, value: number): void {
-    if (!dispatch(id, value, false)) {
+    if (!dispatchGrouped(id, value, false)) {
       clearTimer(id);
       // Stale targets are project metadata too: remove them through the
       // command layer so the cleanup is undoable like an explicit clear.
@@ -586,7 +603,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
         commitTimers.delete(id);
         // The target may have disappeared while the gesture was pending. Keep
         // the same command/history guarantee as the immediate apply path.
-        if (!dispatch(id, value, true)) clearMidiCcBinding(id);
+        if (!dispatchGrouped(id, value, true)) clearMidiCcBinding(id);
       }, COMMIT_DELAY_MS),
     );
   }

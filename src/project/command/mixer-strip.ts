@@ -371,8 +371,13 @@ export function setSend(
  *
  * @param trackId Id of the track.
  * @param samples Delay in samples (integer in [0, MAX_CHANNEL_DELAY_SAMPLES]).
+ * @param options Gesture coalescing for continuous controllers.
  */
-export function setStripChannelDelaySamples(trackId: number, samples: number): void {
+export function setStripChannelDelaySamples(
+  trackId: number,
+  samples: number,
+  options?: CommandGestureOptions,
+): void {
   const store = useProjectStore();
   const strip = currentStrip(store, trackId);
   if (!Number.isInteger(samples) || samples < 0 || samples > MAX_CHANNEL_DELAY_SAMPLES) {
@@ -380,8 +385,9 @@ export function setStripChannelDelaySamples(trackId: number, samples: number): v
       `Channel delay must be an integer in [0, ${MAX_CHANNEL_DELAY_SAMPLES}] samples, got ${samples}`,
     );
   }
-  if ((strip.channelDelaySamples ?? 0) === samples) return;
-  executeApp(() => {
+  const key = `strip-channel-delay:${trackId}`;
+  if ((strip.channelDelaySamples ?? 0) === samples && !hasPendingGesture(key)) return;
+  patchMixerMirror(key, options, () => {
     const next = cloneStrip(strip);
     // Keep the field absent at 0 so neutral strips stay neutral.
     if (samples === 0) delete next.channelDelaySamples;
