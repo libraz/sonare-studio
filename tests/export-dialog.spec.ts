@@ -408,10 +408,44 @@ describe('ExportDialog', () => {
     await clickExport();
     await flushPromises();
     expect(control.render).not.toHaveBeenCalled();
-    expect(dialogQueue[0]?.message).toContain('Mastering automation was evaluated at render start');
+    expect(dialogQueue[0]?.message).toContain('maximizer.truePeakLimiter.ceilingDb');
 
     resolveDialog(dialogQueue[0].id, true);
     await flushPromises();
+    expect(control.render).toHaveBeenCalledTimes(1);
+    control.resolve(makeResult());
+    await flushPromises();
+  });
+
+  it('does not warn about frozen mastering automation when the master chain is excluded', async () => {
+    const control = makeRender();
+    const doc = makeDocument();
+    doc.mixer = {
+      master: { gainDb: 0, pan: 0, inserts: [] },
+      masteringChain: {
+        processors: [
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+        ],
+      },
+    } as ProjectDocument['mixer'];
+    doc.masterAutomation = [
+      {
+        param: 'mastering:0:ceilingDb',
+        enabled: true,
+        points: [
+          { ppq: 0, value: -1 },
+          { ppq: 4, value: -3 },
+        ],
+      },
+    ];
+    mountDialog(control, { getDocument: () => doc });
+
+    q('.include-master-chain')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushPromises();
+    await clickExport();
+    await flushPromises();
+
+    expect(dialogQueue).toHaveLength(0);
     expect(control.render).toHaveBeenCalledTimes(1);
     control.resolve(makeResult());
     await flushPromises();

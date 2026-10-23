@@ -15,6 +15,7 @@ import {
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_SURROUND_PAN,
+  hasAudibleOutputRoute,
   type InsertSlot,
   isMixerChannelLayout,
   MAX_CHANNEL_DELAY_SAMPLES,
@@ -695,7 +696,7 @@ function buildScenePlan(
     }
     replacedTrackIds.add(track.id);
     const id = sceneId(sceneStrip);
-    const outputBusId = id ? outputBusByStrip.get(id) : undefined;
+    const outputBusId = id && hasAudibleOutputRoute(track) ? outputBusByStrip.get(id) : undefined;
     const mixer = sceneStripToMixerStrip(
       sceneStrip,
       busIds,
@@ -759,7 +760,7 @@ function buildScenePlan(
     (masterBus !== undefined &&
       (sceneStripHasDsp({ ...masterBus, inserts: [] }) || sceneEntryHasPanner(masterBus)));
 
-  assertEngineBusCapacity(mixerBuses.length, nextTracks);
+  assertEngineBusCapacity(mixerBuses, nextTracks);
 
   return {
     mixer: {

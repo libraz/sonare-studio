@@ -477,23 +477,70 @@ export function laneGainDb(
   return linearToDb(volume) + (stripGainDb ?? 0) + vcaOffset;
 }
 
+/** Group membership as live tracks (`groupId`) or document tracks (`groupIndex`) record it. */
+interface GroupMembership {
+  groupId?: number;
+  groupIndex?: number;
+}
+
+/**
+ * True when a track's own output-bus route is audible. A group member always
+ * feeds its group bus, so a route stored on it plays nowhere.
+ */
+export function hasAudibleOutputRoute(track: GroupMembership): boolean {
+  return track.groupId === undefined && track.groupIndex === undefined;
+}
+
+/** The output bus a track's lane or group bus actually feeds; undefined = master or group. */
+export function audibleOutputBusId(
+  track: GroupMembership & { mixer?: Pick<MixerStrip, 'outputBusId'> },
+): string | undefined {
+  return hasAudibleOutputRoute(track) ? track.mixer?.outputBusId : undefined;
+}
+
+/**
+ * The buses a signal entering `busId` passes on its way to master, following
+ * each bus strip's own output route. Stops at an unknown id or a repeated bus,
+ * so a cycle contributes each bus once.
+ */
+export function busOutputChain<B extends { strip?: Pick<MixerStrip, 'outputBusId'> }>(
+  busId: string | undefined,
+  busesById: ReadonlyMap<string, B>,
+): B[] {
+  const chain: B[] = [];
+  const seen = new Set<string>();
+  let next = busId;
+  while (next !== undefined && !seen.has(next)) {
+    const bus = busesById.get(next);
+    if (!bus) break;
+    seen.add(next);
+    chain.push(bus);
+    next = bus.strip?.outputBusId;
+  }
+  return chain;
+}
+
 /** Maximum number of send buses (the realtime engine's bus lane limit). */
 export const MAX_MIXER_BUSES = 8;
 
-/** Counts the engine bus lanes consumed by send buses plus group tracks. */
+/**
+ * Counts the engine bus slots a mixer plan occupies: send buses, group tracks,
+ * and the discard sink a return solo parks direct outputs on.
+ */
 export function engineBusCount(
-  sendBusCount: number,
+  buses: ReadonlyArray<{ solo?: boolean }>,
   tracks: ReadonlyArray<{ kind: string }>,
 ): number {
-  return sendBusCount + tracks.filter((track) => track.kind === 'group').length;
+  const groups = tracks.filter((track) => track.kind === 'group').length;
+  return buses.length + groups + (buses.some((bus) => bus.solo === true) ? 1 : 0);
 }
 
 /** Validates a complete mixer/track plan against the realtime bus limit. */
 export function assertEngineBusCapacity(
-  sendBusCount: number,
+  buses: ReadonlyArray<{ solo?: boolean }>,
   tracks: ReadonlyArray<{ kind: string }>,
 ): void {
-  const count = engineBusCount(sendBusCount, tracks);
+  const count = engineBusCount(buses, tracks);
   if (count > MAX_MIXER_BUSES) {
     throw new RangeError(`Mixer bus limit exceeded (${count}/${MAX_MIXER_BUSES})`);
   }
@@ -501,13 +548,28 @@ export function assertEngineBusCapacity(
 
 /** Throws when adding more engine bus lanes would exceed the realtime limit. */
 export function assertCanAddEngineBus(
-  sendBusCount: number,
+  buses: ReadonlyArray<{ solo?: boolean }>,
   tracks: ReadonlyArray<{ kind: string }>,
 ): void {
-  const count = engineBusCount(sendBusCount, tracks);
-  if (count >= MAX_MIXER_BUSES) {
+  if (engineBusCount(buses, tracks) >= MAX_MIXER_BUSES) {
     throw new RangeError(`Mixer bus limit reached (${MAX_MIXER_BUSES})`);
   }
+}
+
+/**
+ * Drops a return solo that has no engine slot left for its discard sink, so a
+ * loaded plan never shows a solo the engine cannot route.
+ */
+export function busesWithRoutableSolo<B extends { solo?: boolean }>(
+  buses: ReadonlyArray<B>,
+  tracks: ReadonlyArray<{ kind: string }>,
+): ReadonlyArray<B> {
+  if (engineBusCount(buses, tracks) <= MAX_MIXER_BUSES) return buses;
+  return buses.map((bus) => {
+    if (bus.solo !== true) return bus;
+    const { solo: _solo, ...unsoloed } = bus;
+    return unsoloed as B;
+  });
 }
 
 /**
@@ -521,7 +583,7 @@ export function canRouteReturnSolo(
   sendBusCount: number,
   tracks: ReadonlyArray<{ kind: string }>,
 ): boolean {
-  return engineBusCount(sendBusCount, tracks) < MAX_MIXER_BUSES;
+  return sendBusCount + tracks.filter((track) => track.kind === 'group').length < MAX_MIXER_BUSES;
 }
 
 /** Maximum number of VCA control groups (UI/sanity bound, not an engine limit). */

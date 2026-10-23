@@ -86,6 +86,27 @@ function isWorkletSyncErrorMessage(value: unknown): value is WorkletSyncErrorMes
   );
 }
 
+/**
+ * Logs a worklet's `runtimeError` port message and re-dispatches it as the
+ * node's standard `processorerror`, so a thrown `process()` reaches the same
+ * listeners however the browser reports it. The caller starts the port.
+ *
+ * @param label Prefix naming the processor in the log line.
+ * @returns Detaches the listener.
+ */
+export function forwardWorkletRuntimeErrors(
+  node: { port: MessagePort; dispatchEvent(event: Event): boolean },
+  label: string,
+): () => void {
+  const onMessage = (event: MessageEvent) => {
+    if (!isWorkletRuntimeErrorMessage(event.data)) return;
+    console.error(`${label} worklet runtime error: ${event.data.message}`);
+    node.dispatchEvent(new Event('processorerror'));
+  };
+  node.port.addEventListener('message', onMessage);
+  return () => node.port.removeEventListener('message', onMessage);
+}
+
 export interface EngineCleanupState {
   nodeDetached: boolean;
   engineDestroyed: boolean;
@@ -354,18 +375,14 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
   // AudioWorkletNode `processorerror`. The entry module sends an explanatory
   // runtimeError first; re-dispatch it through the standard processorerror
   // path so lifecycle ownership and cleanup remain centralized.
-  const onWorkletRuntimeError = (event: MessageEvent) => {
-    if (isWorkletSyncErrorMessage(event.data)) {
-      const message = `Audio engine sync failed (${event.data.syncType}): ${event.data.message}`;
-      console.error(message);
-      engine.node.dispatchEvent(new CustomEvent('processorerror', { detail: message }));
-      return;
-    }
-    if (!isWorkletRuntimeErrorMessage(event.data)) return;
-    console.error(`Engine worklet runtime error: ${event.data.message}`);
-    engine.node.dispatchEvent(new Event('processorerror'));
+  const detachRuntimeErrors = forwardWorkletRuntimeErrors(engine.node, 'Engine');
+  const onWorkletSyncError = (event: MessageEvent) => {
+    if (!isWorkletSyncErrorMessage(event.data)) return;
+    const message = `Audio engine sync failed (${event.data.syncType}): ${event.data.message}`;
+    console.error(message);
+    engine.node.dispatchEvent(new CustomEvent('processorerror', { detail: message }));
   };
-  engine.node.port.addEventListener('message', onWorkletRuntimeError);
+  engine.node.port.addEventListener('message', onWorkletSyncError);
   engine.node.port.start?.();
 
   return {
@@ -373,7 +390,8 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
     ctx,
     capabilities: engine.capabilities,
     dispose: async () => {
-      engine.node.port.removeEventListener('message', onWorkletRuntimeError);
+      detachRuntimeErrors();
+      engine.node.port.removeEventListener('message', onWorkletSyncError);
       await resourceDisposer.dispose();
     },
     cleanupState: resourceDisposer.state,

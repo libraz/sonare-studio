@@ -38,6 +38,7 @@ import {
   withMidiLearnTargetScope,
 } from './midi-learn-targets';
 import {
+  busesWithRoutableSolo,
   cloneMixerState,
   createDefaultMixerState,
   engineBusCount,
@@ -588,7 +589,9 @@ export const useProjectStore = defineStore('project', () => {
     ) {
       throw new Error(`Unsupported project document schema version: ${doc.schemaVersion}`);
     }
-    const engineBusTotal = engineBusCount(doc.mixer?.buses.length ?? 0, doc.tracks);
+    // A stored return solo with no slot left for its discard sink loads unsoloed.
+    const loadedBuses = busesWithRoutableSolo(doc.mixer?.buses ?? [], doc.tracks);
+    const engineBusTotal = engineBusCount(loadedBuses, doc.tracks);
     if (engineBusTotal > MAX_MIXER_BUSES) {
       throw new RangeError(`Mixer bus limit exceeded (${engineBusTotal}/${MAX_MIXER_BUSES})`);
     }
@@ -694,7 +697,7 @@ export const useProjectStore = defineStore('project', () => {
               ? { soloMode: undefined }
               : { soloMode: normalizeMixerSoloMode(doc.mixer.soloMode) }),
             master: { ...doc.mixer.master, sends: [] },
-            buses: doc.mixer.buses.map(({ automation: _automation, ...bus }) => bus),
+            buses: loadedBuses.map(({ automation: _automation, ...bus }) => bus),
           })
         : createDefaultMixerState();
       resolveStripSidechainSourceIds(

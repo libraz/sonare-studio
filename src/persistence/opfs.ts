@@ -8,9 +8,11 @@
  * {@link OpfsUnavailableError} the UI can present.
  */
 
-import { isNotFoundError, isQuotaExceededError, writeOpfsFile } from './fs-utils';
+import { isNotFoundError, writeOpfsFile } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 import { prepareProjectRename } from './revisions';
+
+export { OpfsQuotaExceededError } from './fs-utils';
 
 /** Directory under the OPFS root that holds the project files. */
 const PROJECTS_DIR = 'projects';
@@ -23,14 +25,6 @@ export class OpfsUnavailableError extends Error {
   constructor() {
     super('Project storage is unavailable: this browser does not support the origin file system');
     this.name = 'OpfsUnavailableError';
-  }
-}
-
-/** Thrown when an OPFS project write runs out of origin storage quota. */
-export class OpfsQuotaExceededError extends Error {
-  constructor() {
-    super('Project storage is full. Free browser storage space and try saving again.');
-    this.name = 'OpfsQuotaExceededError';
   }
 }
 
@@ -211,12 +205,7 @@ function projectsDirectory(): Promise<FileSystemDirectoryHandle> {
 export async function saveProjectUnlocked(name: string, bytes: Uint8Array): Promise<void> {
   const fileName = sanitizeProjectName(name) + FILE_EXTENSION;
   const dir = await projectsDirectory();
-  try {
-    await writeOpfsFile(dir, fileName, bytes);
-  } catch (error) {
-    if (isQuotaExceededError(error)) throw new OpfsQuotaExceededError();
-    throw error;
-  }
+  await writeOpfsFile(dir, fileName, bytes);
 }
 
 export function saveProject(name: string, bytes: Uint8Array): Promise<void> {

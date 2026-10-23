@@ -4,7 +4,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { addVcaGroup, setTrackVca, setVcaGroupGain } from '@/project/command/mixer-vca';
 import { addNote, clearHistory, setTrackPan, setTrackVolume } from '@/project/commands';
 import { exportClipSmf } from '@/project/export';
-import type { ProjectDocument } from '@/project/serialization';
+import { type ProjectDocument, serializeProject } from '@/project/serialization';
 import { gmVolumeCc, projectDocumentToSmfWithLoss } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 
@@ -184,5 +184,16 @@ describe('single-clip SMF export', () => {
     setTrackVca(store.activeTrackId, groupId);
     const events = await capture(() => exportClipSmf(store.clipId));
     expect(ccs(events, 7).map((e) => e.d2)).toEqual([gmVolumeCc(10 ** (-6 / 20))]);
+  });
+
+  it('reports the clip fades in the loss report like the whole-project export', async () => {
+    addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
+    const clip = store.clips.find((entry) => entry.id === store.clipId);
+    if (!clip) throw new Error('clip missing');
+    clip.fadeInPpq = 1;
+    const clipLoss = (await exportClipSmf(store.clipId)).loss;
+    const projectLoss = (await projectDocumentToSmfWithLoss(serializeProject())).loss;
+    expect(clipLoss.entries.map((entry) => entry.kind)).toContain('clipFades');
+    expect(clipLoss.entries).toEqual(projectLoss.entries);
   });
 });

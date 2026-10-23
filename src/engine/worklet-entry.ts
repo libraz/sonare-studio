@@ -84,6 +84,19 @@ if (typeof (globalThis as { URL?: unknown }).URL === 'undefined') {
  * asynchronously, buffers early port messages, and posts 'ready'/'error' so the
  * main thread can await a usable engine.
  */
+/**
+ * Ends a processor whose `process()` threw. The browser would otherwise reduce
+ * the exception to an opaque `processorerror` event, so the message crosses the
+ * port first for the host to surface, and the failing block is silenced.
+ *
+ * @returns false, so the processor is not called again.
+ */
+function failProcess(port: MessagePort, outputs: Float32Array[][], error: unknown): boolean {
+  port.postMessage({ type: 'runtimeError', message: errorMessage(error) });
+  for (const channel of outputs[0] ?? []) channel.fill(0);
+  return false;
+}
+
 class SonareEngineWorklet extends AudioWorkletProcessor {
   private bridge: SonareRealtimeEngineWorkletProcessor | null = null;
   private readonly pending: unknown[] = [];
@@ -171,16 +184,7 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
       try {
         return this.bridge.process(inputs, outputs);
       } catch (error) {
-        // A thrown AudioWorklet `process()` exception is otherwise reduced to
-        // the browser's opaque `processorerror` event. Send the native/error
-        // message across the port first so the host can surface it, then end
-        // this processor; the host tears the engine down on that message.
-        this.port.postMessage({
-          type: 'runtimeError',
-          message: errorMessage(error),
-        });
-        for (const channel of outputs[0] ?? []) channel.fill(0);
-        return false;
+        return failProcess(this.port, outputs, error);
       }
     }
     for (const channel of outputs[0] ?? []) {
@@ -251,7 +255,13 @@ class SonareVoiceChangerWorklet extends AudioWorkletProcessor {
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
-    if (this.bridge) return this.bridge.process(inputs, outputs);
+    if (this.bridge) {
+      try {
+        return this.bridge.process(inputs, outputs);
+      } catch (error) {
+        return failProcess(this.port, outputs, error);
+      }
+    }
     for (const channel of outputs[0] ?? []) channel.fill(0);
     return true;
   }
@@ -349,13 +359,17 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
     }
     const input = inputs[0] ?? [];
     const channels = Math.min(output.length, this.retunes.length);
-    for (let ch = 0; ch < channels; ch++) {
-      const dst = output[ch];
-      const src = input[ch] ?? this.zero;
-      const processed = this.retunes[ch].processMono(src);
-      const frames = Math.min(dst.length, processed.length);
-      for (let frame = 0; frame < frames; frame++) dst[frame] = processed[frame];
-      for (let frame = frames; frame < dst.length; frame++) dst[frame] = 0;
+    try {
+      for (let ch = 0; ch < channels; ch++) {
+        const dst = output[ch];
+        const src = input[ch] ?? this.zero;
+        const processed = this.retunes[ch].processMono(src);
+        const frames = Math.min(dst.length, processed.length);
+        for (let frame = 0; frame < frames; frame++) dst[frame] = processed[frame];
+        for (let frame = frames; frame < dst.length; frame++) dst[frame] = 0;
+      }
+    } catch (error) {
+      return failProcess(this.port, outputs, error);
     }
     return true;
   }

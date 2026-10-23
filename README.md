@@ -94,9 +94,10 @@ key and BPM and sorts them by loudness.
 **Move files in and out.** `.szd` projects, DAWproject, Standard MIDI File,
 MIDI 2.0 clip files, MusicXML, separated stems, and WAV / FLAC / MP3 mixdown
 (plus AAC and Opus where the browser provides them). Audio exports can render
-per-track, per-bus and master stems, and report loudness and clipping. Where a
-format cannot carry something, the dialog lists exactly what will be dropped
-before you confirm.
+per-track, per-bus and master stems, and report loudness and clipping; a
+streamed WAV mixdown without a mastering chain reports sample peak only and
+says so in its report. Where a format cannot carry something, the dialog lists
+exactly what will be dropped before you confirm.
 
 **Live in the app.** Installable as a PWA and usable offline, with `.szd` file
 handling from the OS. English and Japanese UI, five note-name systems, light and
@@ -114,7 +115,9 @@ Keyboard reference: [docs/shortcuts.md](docs/shortcuts.md).
   stored per pitch rather than per note.
 - **No plugin hosting.** Instruments and effects are the ones the engine ships;
   there is no VST/AU/CLAP bridge.
-- **The score is display-only.** You cannot enter or edit music from it.
+- **The score is not a notation editor.** It edits notes through a few gestures
+  (add, delete, re-pitch; see [docs/shortcuts.md](docs/shortcuts.md)), but there is
+  no note-value, rest or beam entry, and layout is always derived.
 - **No accounts, sync or collaboration.** One browser profile, one set of
   projects.
 - **Round-trips are lossy** for DAWproject and MusicXML, by the nature of those
@@ -211,10 +214,11 @@ seeded per project, so a reroll is reproducible.
 
 ### Notation is derived, never authored
 
-The score panel quantizes the active clip's notes into a display-only model
+The score panel quantizes the active clip's notes into a display model
 (`src/notation/model.ts`), serializes it to MusicXML and engraves it with
-Verovio in a worker. Nothing in that pipeline writes back to the MIDI, so
-re-transcription is only a re-render. Print and PDF export consume the rendered
+Verovio in a worker. The pipeline itself never writes back to the MIDI, so
+re-transcription is only a re-render. The few edit gestures on the score are
+ordinary undoable note commands on the clip, after which the score is rebuilt. Print and PDF export consume the rendered
 SVG pages.
 
 ### Persistence

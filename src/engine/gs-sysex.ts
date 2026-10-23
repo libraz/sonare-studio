@@ -6,6 +6,8 @@ export const MAX_REALTIME_SYSEX_BYTES = 512;
 /** Minimal clip shape needed to inspect the opaque SMF SysEx sidecar. */
 export interface GsSysExClipSource {
   startPpq: number;
+  /** Clip-relative notes; the earliest one ends the setup window. */
+  notes?: ReadonlyArray<{ startPpq: number }>;
   smfSysEx?: ReadonlyArray<SmfSysExPacket>;
 }
 
@@ -18,7 +20,7 @@ export interface GsSysExDestination {
 
 /** Collected setup frames and packets that cannot be applied at engine setup. */
 export interface GsSetupSysexCollection {
-  /** Complete F0...F7 frames at timeline PPQ 0, with duplicate bytes removed. */
+  /** Complete F0...F7 frames before the first note (or at PPQ 0), with duplicate bytes removed. */
   frames: ReadonlyArray<Uint8Array>;
   /** Sidecar packets retained for SMF roundtrip but not sent to the engine. */
   unsupportedPacketCount: number;
@@ -39,12 +41,19 @@ export interface GsSetupSysexPushResult extends GsSetupSysexCollection {
  * safely. The project sidecar keeps SMF framing opaque, while the engine API
  * needs one complete frame including F0 and F7. Mid-song packets, F7
  * continuations, unterminated fragments and frames over the engine limit stay
- * in the project for SMF re-export and are counted here.
+ * in the project for SMF re-export and are counted here. Setup frames are
+ * those at PPQ 0 or strictly before the first note of any clip.
  */
 export function collectGsSetupSysex(
   clips: ReadonlyArray<GsSysExClipSource>,
 ): GsSetupSysexCollection {
   const frames: Uint8Array[] = [];
+  const setup: Array<{ ppq: number; frame: Uint8Array }> = [];
+  let firstNotePpq = 0;
+  const noteStarts = clips.flatMap((clip) =>
+    (clip.notes ?? []).map((note) => clip.startPpq + note.startPpq),
+  );
+  if (noteStarts.length > 0) firstNotePpq = Math.min(...noteStarts);
   const seen = new Set<string>();
   let unsupportedPacketCount = 0;
 
@@ -55,7 +64,7 @@ export function collectGsSetupSysex(
       const isValidData = data.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff);
       const isCompleteSetupFrame =
         Number.isFinite(timelinePpq) &&
-        timelinePpq === 0 &&
+        (timelinePpq === 0 || (timelinePpq > 0 && timelinePpq < firstNotePpq)) &&
         packet.status === 0xf0 &&
         data.length > 0 &&
         data[data.length - 1] === 0xf7 &&
@@ -70,9 +79,12 @@ export function collectGsSetupSysex(
       const key = bytesKey(frame);
       if (seen.has(key)) continue;
       seen.add(key);
-      frames.push(frame);
+      setup.push({ ppq: timelinePpq, frame });
     }
   }
+  // Array.prototype.sort is stable, so equal-PPQ frames keep packet order.
+  setup.sort((a, b) => a.ppq - b.ppq);
+  for (const entry of setup) frames.push(entry.frame);
 
   return { frames, unsupportedPacketCount };
 }

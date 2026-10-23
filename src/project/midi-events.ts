@@ -119,7 +119,8 @@ export function pairEventsIntoNotesIndexed(
  * The input may be unsorted (live capture arrives in wall-clock order, which
  * is not necessarily PPQ order under a tempo ramp): boundaries are sorted with
  * note-offs before note-ons at the same PPQ so back-to-back repeats pair
- * correctly. Unmatched boundaries and zero/negative-length pairs are dropped.
+ * correctly. An off with no earlier on pairs with an on at its own PPQ as a
+ * zero-length note, which is dropped. Unmatched boundaries are dropped.
  *
  * @param boundaries Note-on/note-off boundaries (decoded or captured).
  * @returns Recovered notes sorted by start position.
@@ -156,16 +157,32 @@ function pairIndexedBoundaries(boundaries: ReadonlyArray<IndexedBoundary>): Inde
   decoded.sort(compareBoundaries);
   const pending = new Map<string, Array<{ startPpq: number; velocity: number; index: number }>>();
   const out: IndexedRawNote[] = [];
+  // Offs at one PPQ that found no earlier on; an on at the same PPQ is their zero-length partner.
+  let heldPpq = Number.NaN;
+  const held = new Map<string, number>();
   for (const event of decoded) {
     const key = `${event.channel}:${event.pitch}`;
+    if (event.ppq !== heldPpq) {
+      held.clear();
+      heldPpq = event.ppq;
+    }
     if (event.kind === 'on') {
+      const heldCount = held.get(key) ?? 0;
+      if (heldCount > 0) {
+        held.set(key, heldCount - 1);
+        continue;
+      }
       const queue = pending.get(key) ?? [];
       queue.push({ startPpq: event.ppq, velocity: event.velocity, index: event.index });
       pending.set(key, queue);
       continue;
     }
     const on = pending.get(key)?.shift();
-    if (!on || event.ppq <= on.startPpq) continue;
+    if (!on) {
+      held.set(key, (held.get(key) ?? 0) + 1);
+      continue;
+    }
+    if (event.ppq <= on.startPpq) continue;
     const note: RawNote = {
       pitch: event.pitch,
       velocity: on.velocity,

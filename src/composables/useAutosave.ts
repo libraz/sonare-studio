@@ -12,7 +12,11 @@ import {
 } from '@/persistence/recovery';
 import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import { persistedProjectStateKey } from '@/project/persisted-state';
-import { loadProjectDocument, serializeProject } from '@/project/serialization';
+import {
+  loadProjectDocument,
+  type ProjectDocument,
+  serializeProject,
+} from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 
 /** Default debounce delay between the last edit and the autosave write. */
@@ -55,11 +59,13 @@ export interface UseAutosaveReturn {
    * Loads the autosave slot back into the project (replacing the open
    * project and clearing the undo history).
    *
+   * @param load Replaces the open document; the caller's document-swap owner,
+   *   so its will-load hooks run. Defaults to a bare document load.
    * @returns True when an autosave was restored; false when no autosave
    *   exists or OPFS is unavailable.
    * @throws Error when the stored bytes are corrupt or fail to replay.
    */
-  restoreAutosave(): Promise<boolean>;
+  restoreAutosave(load?: (document: ProjectDocument) => Promise<void>): Promise<boolean>;
   /**
    * Cancels a pending debounced write without saving. Used when the project
    * reaches a clean state (e.g. just after a load) so the change watcher's
@@ -119,7 +125,11 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
   const toError = (value: unknown): Error =>
     value instanceof Error ? value : new Error(String(value));
 
-  /** Serializes, encodes and writes the current project to the slot. */
+  /**
+   * Serializes, encodes and writes the current project to the slot. A document
+   * this composable already wrote successfully is not rewritten, so a stale tab
+   * never restamps the shared slot with a newer savedAt.
+   */
   const runSave = (): Promise<boolean> => {
     return enqueue(async (): Promise<boolean> => {
       if (disposed || !store.initialized) return false;
@@ -127,6 +137,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
       try {
         const doc = serializeProject();
         const documentKey = JSON.stringify(doc);
+        if (documentKey === lastSavedDocumentKey.value && lastError.value === null) return true;
         const savedAt = new Date().toISOString();
         const bytes = encodeSzd(doc, { savedAt, documentJson: documentKey });
         await saveProject(slotName, bytes);
@@ -167,7 +178,9 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
     return runSave();
   };
 
-  const restoreAutosave = (): Promise<boolean> => {
+  const restoreAutosave = (
+    load: (document: ProjectDocument) => Promise<void> = loadProjectDocument,
+  ): Promise<boolean> => {
     cancelPending();
     return enqueue(async (): Promise<boolean> => {
       if (disposed) return false;
@@ -188,7 +201,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
       }
       if (disposed) return false;
       try {
-        await loadProjectDocument(decodeSzd(bytes));
+        await load(decodeSzd(bytes));
         lastError.value = null;
         return true;
       } catch (error) {

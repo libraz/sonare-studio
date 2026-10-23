@@ -239,13 +239,17 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.mixer.soloMode,
         store.mixer.buses,
       );
+      // Until the rebuild reclaims retired lanes, a new track has no lane to strip.
+      const reclaimLanes = mixerSync.laneReclaimNeeded?.() === true;
+      const lanes = new Set(mixerSync.laneTrackIds());
       stripSync.sync(
-        store.tracks,
+        reclaimLanes ? store.tracks.filter((track) => lanes.has(track.id)) : store.tracks,
         store.mixer,
         mixerSync.sceneGeneration?.(),
         mixerSync.positiveChannelDelayTrackIds(),
       );
       mixerSync.applyChannelDelays(stripSync.sceneGeneration());
+      if (reclaimLanes && !engineRebuildRequired.value) requestEngineRebuild();
     } catch (err) {
       errorMessage.value = describeError(err, t.value.notices.errors);
       if (syncOptions.throwOnError) throw err;

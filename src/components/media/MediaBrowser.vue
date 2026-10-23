@@ -297,10 +297,13 @@ function cancelDelete(): void {
 async function confirmDelete(assetId: string): Promise<void> {
   pendingDeleteId.value = null;
   // Re-check: a clip may have started referencing the asset meanwhile.
-  if (isReferenced(assetId)) return;
+  if (isReferenced(assetId)) {
+    deleteError.value = t.value.shell.media.deleteBlocked;
+    return;
+  }
   if (playingId.value === assetId) preview.stop();
   try {
-    await deleteAudioAssetGuarded(assetId, async () => {
+    const deleted = await deleteAudioAssetGuarded(assetId, async () => {
       if (isReferenced(assetId)) return true;
       // The media store is shared by every project. Re-scan saved documents at
       // the mutation boundary so a project saved after confirmation cannot
@@ -312,6 +315,11 @@ async function confirmDelete(assetId: string): Promise<void> {
       });
       return !references.complete || references.assetIds.has(assetId) || isReferenced(assetId);
     });
+    if (!deleted) {
+      deleteError.value = isReferenced(assetId)
+        ? t.value.shell.media.deleteBlocked
+        : t.value.shell.media.deleteInUse;
+    }
   } catch (error) {
     deleteError.value = errorMessage(error);
   }

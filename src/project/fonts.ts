@@ -18,6 +18,7 @@ import {
   bytesEqual,
   isNotFoundError,
   MEDIA_ID_PATTERN,
+  removeOptionalFile,
   writeOpfsFile,
 } from '@/persistence/fs-utils';
 import { withPersistenceMutationLock } from '@/persistence/mutation-lock';
@@ -428,21 +429,21 @@ export async function saveFontWithStatusUnlocked(
     aliases,
   };
   const created = existingPayload === null;
-  if (created) await writeOpfsFile(dir, id + SF2_EXTENSION, data);
+  const sidecarCreated = existingSidecar === null;
+  if (created) {
+    try {
+      await writeOpfsFile(dir, id + SF2_EXTENSION, data);
+    } catch (error) {
+      // A partial payload would turn the retry into a content collision.
+      await removeOptionalFile(dir, id + SF2_EXTENSION);
+      throw error;
+    }
+  }
   try {
     await writeOpfsFile(dir, id + META_EXTENSION, new TextEncoder().encode(JSON.stringify(record)));
   } catch (error) {
-    if (created) {
-      for (const fileName of [id + SF2_EXTENSION, id + META_EXTENSION]) {
-        try {
-          await dir.removeEntry(fileName);
-        } catch (cleanupError) {
-          if (!isNotFoundError(cleanupError)) {
-            // An orphan payload remains invisible without the sidecar commit marker.
-          }
-        }
-      }
-    }
+    if (sidecarCreated) await removeOptionalFile(dir, id + META_EXTENSION);
+    if (created) await removeOptionalFile(dir, id + SF2_EXTENSION);
     throw error;
   }
   cacheFont(meta, new Uint8Array(data));

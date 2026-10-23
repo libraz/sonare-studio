@@ -45,32 +45,60 @@ export function createRandomId(): string {
 /** Chunk size for streaming bytes into or out of OPFS files. */
 export const OPFS_IO_CHUNK_BYTES = 4 * 1024 * 1024;
 
+/** Thrown when an OPFS write runs out of origin storage quota. */
+export class OpfsQuotaExceededError extends Error {
+  constructor() {
+    super('Project storage is full. Free browser storage space and try saving again.');
+    this.name = 'OpfsQuotaExceededError';
+  }
+}
+
 /**
  * Writes bytes to a (possibly new) file in `dir`, aborting the stream on
  * failure. Each chunk is copied so wasm-backed or shared input is never
  * retained by the stream, while a multi-gigabyte payload is never duplicated
- * at once.
+ * at once. A quota failure surfaces as {@link OpfsQuotaExceededError}; the
+ * file may already exist (empty or partial), so callers that created it
+ * discard it with {@link removeOptionalFile}.
  */
 export async function writeOpfsFile(
   dir: FileSystemDirectoryHandle,
   fileName: string,
   bytes: Uint8Array,
 ): Promise<void> {
-  const handle = await dir.getFileHandle(fileName, { create: true });
-  const writable = await handle.createWritable();
   try {
-    for (let offset = 0; offset < bytes.byteLength; offset += OPFS_IO_CHUNK_BYTES) {
-      await writable.write(
-        bytes.slice(offset, Math.min(bytes.byteLength, offset + OPFS_IO_CHUNK_BYTES)),
-      );
-    }
-    await writable.close();
-  } catch (error) {
+    const handle = await dir.getFileHandle(fileName, { create: true });
+    const writable = await handle.createWritable();
     try {
-      await writable.abort?.();
-    } catch {
-      // Preserve the original write/close failure.
+      for (let offset = 0; offset < bytes.byteLength; offset += OPFS_IO_CHUNK_BYTES) {
+        await writable.write(
+          bytes.slice(offset, Math.min(bytes.byteLength, offset + OPFS_IO_CHUNK_BYTES)),
+        );
+      }
+      await writable.close();
+    } catch (error) {
+      try {
+        await writable.abort?.();
+      } catch {
+        // Preserve the original write/close failure.
+      }
+      throw error;
     }
+  } catch (error) {
+    if (isQuotaExceededError(error)) throw new OpfsQuotaExceededError();
     throw error;
+  }
+}
+
+/** Best-effort removal used to discard an unpublished or partial file. */
+export async function removeOptionalFile(
+  dir: FileSystemDirectoryHandle,
+  fileName: string,
+): Promise<void> {
+  try {
+    await dir.removeEntry(fileName);
+  } catch {
+    // Preserve the original write error. An orphan payload has no sidecar
+    // publish marker and remains visible to the media GC on the next pass.
   }
 }

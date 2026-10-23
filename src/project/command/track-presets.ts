@@ -2,7 +2,7 @@
 
 import { cloneInstrument } from '../instrument';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from '../midi-fx';
-import { cloneStrip, createProcessorId, type MixerStrip } from '../mixer';
+import { cloneStrip, createProcessorId, hasAudibleOutputRoute, type MixerStrip } from '../mixer';
 import { useProjectStore } from '../store';
 import { reconcileProcessorTargetReferences } from '../target-reference-registry';
 import {
@@ -40,7 +40,12 @@ export function pasteTrackChannelPreset(trackId: number): void {
  * each copied insert gets a new identity so destination automation and MIDI
  * learn bindings cannot accidentally point at pasted processors.
  */
-function stripForDestination(source: MixerStrip, trackId: number, groupTrack: boolean): MixerStrip {
+function stripForDestination(
+  source: MixerStrip,
+  trackId: number,
+  groupTrack: boolean,
+  routable: boolean,
+): MixerStrip {
   const store = useProjectStore();
   const validBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
   const validTrackIds = new Set(store.tracks.map((track) => track.id));
@@ -61,7 +66,7 @@ function stripForDestination(source: MixerStrip, trackId: number, groupTrack: bo
     delete next.outputBusId;
   } else {
     next.sends = next.sends.filter((send) => validBusIds.has(send.busId));
-    if (next.outputBusId !== undefined && !validBusIds.has(next.outputBusId)) {
+    if (!routable || (next.outputBusId !== undefined && !validBusIds.has(next.outputBusId))) {
       delete next.outputBusId;
     }
   }
@@ -73,7 +78,12 @@ export function applyTrackChannelPreset(trackId: number, source: TrackChannelPre
   const store = useProjectStore();
   const track = requireTrack(store, trackId);
   const preset = normalizeTrackChannelPreset(source);
-  const mixer = stripForDestination(preset.strip, trackId, track.kind === 'group');
+  const mixer = stripForDestination(
+    preset.strip,
+    trackId,
+    track.kind === 'group',
+    hasAudibleOutputRoute(track),
+  );
   executeApp(
     () => {
       store.tracks = store.tracks.map((entry) => {

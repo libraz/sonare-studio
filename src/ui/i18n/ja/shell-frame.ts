@@ -259,7 +259,7 @@ export const shellFrame = {
       },
       score: {
         title: 'スコア表示',
-        body: 'アクティブなクリップを譜面として描画します。表示専用で、MIDIは変更されません。',
+        body: 'アクティブなクリップを譜面として描画します。譜面上で音符を追加、ドラッグ、削除すると、クリップのMIDIが変わります。',
       },
       menu: {
         title: 'プロジェクトメニュー',
@@ -336,6 +336,7 @@ export const shellFrame = {
     add: '追加',
     addTitle: '再生ヘッドの位置にクリップとして配置',
     deleteBlocked: 'プロジェクト内のクリップで使用中です。先にそのクリップを削除してください。',
+    deleteInUse: '別のタブまたは保存済みプロジェクトで使われているため、削除しませんでした。',
     deleteAsset: 'アセットを削除',
     deleteAssetNamed: '{name} を削除',
     reasons: {

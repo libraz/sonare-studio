@@ -58,6 +58,7 @@ export function createWavStreamWriter(options: {
           channels,
           options.bitDepth,
           options.encodeOptions,
+          offsetFrames,
         ) as Uint8Array<ArrayBuffer>;
         if (encoded.byteLength !== byteLength) {
           throw new Error('WAV chunk size changed while encoding');

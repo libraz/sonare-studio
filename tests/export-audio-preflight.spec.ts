@@ -126,6 +126,53 @@ describe('audioExportPreflight', () => {
     ]);
   });
 
+  it('counts master-strip tails only when the master chain is rendered', async () => {
+    const source = doc();
+    source.tracks.push({
+      name: 'Keys',
+      color: '#000',
+      kind: 'midi',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      instrument: { kind: 'synth-preset', preset: 'saw-lead' },
+      clips: [
+        {
+          name: 'Notes',
+          startPpq: 0,
+          lengthPpq: 4,
+          sourceOffsetPpq: 0,
+          gain: 1,
+          loopEnabled: false,
+          loopLengthPpq: 0,
+          kind: 'midi',
+          notes: [{ pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 }],
+        },
+      ],
+    });
+    source.mixer = {
+      master: {
+        gainDb: 0,
+        pan: 0,
+        sends: [],
+        inserts: [{ processor: 'effects.reverb.plate', enabled: true, params: {} }],
+      },
+    } as unknown as ProjectDocument['mixer'];
+    const run = (includeMasterChain: boolean) =>
+      audioExportPreflight(source, {
+        range: 'project',
+        releaseTailSeconds: 2,
+        includeMasterChain,
+        insertTail: () => 8,
+        loadAudioAsset: async (id) => loaded(id),
+      });
+    expect((await run(false)).warnings).toEqual([]);
+    expect((await run(true)).warnings).toEqual([
+      { kind: 'release-tail-short', currentSeconds: 2, suggestedSeconds: 8 },
+    ]);
+  });
+
   it('accepts validated media and a sufficiently long tail', async () => {
     const source = doc();
     source.tracks.push({

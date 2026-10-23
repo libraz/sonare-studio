@@ -379,7 +379,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   function continueSession(): void {
     void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      const restored = await autosave.restoreAutosave();
+      const restored = await autosave.restoreAutosave(replaceProjectDocument);
       if (restored) {
         savedProjectSlot.value = null;
         savedProjectRevision.value = null;
@@ -939,19 +939,11 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     void (async () => {
       if (!(await confirmDiscard())) return;
       void runAction(async () => {
-        // Restoring a revision replaces only the live document; the named
-        // project slot remains untouched until the user saves. Re-read that
-        // slot's current content revision so the subsequent Save can compare
-        // against a real baseline instead of passing null (which means
-        // "create a new slot" to saveProjectChecked).
-        const savedSlot = savedProjectSlot.value;
-        const savedBaseline =
-          savedSlot === null ? null : (await loadProjectWithRevision(savedSlot)).revision;
+        // Restoring a revision replaces only the live document. The slot and
+        // the revision this tab last loaded or saved stay the Save baseline,
+        // so a save from another tab since then still raises a conflict.
         const bytes = await loadProjectRevision(slot);
         await replaceProjectDocument(await decodeSzdInWorker(bytes));
-        // The restored document is unsaved work against the project slot: the
-        // stored project keeps whatever it had until the user saves.
-        savedProjectRevision.value = savedBaseline;
         const documentKey = await saveLoadedProjectToAutosave();
         await markClean(documentKey);
         // The autosave protects crash recovery, but it is not the named

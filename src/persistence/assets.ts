@@ -18,13 +18,13 @@ import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a
 import {
   bytesEqual,
   isNotFoundError,
-  isQuotaExceededError,
   MEDIA_ID_PATTERN,
   OPFS_IO_CHUNK_BYTES,
+  removeOptionalFile,
   writeOpfsFile,
 } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
-import { OpfsQuotaExceededError, opfsDirectory } from './opfs';
+import { opfsDirectory } from './opfs';
 import {
   BYTES_PER_SAMPLE,
   MAX_AUDIO_CHANNELS,
@@ -434,24 +434,6 @@ function assetsDirectory(): Promise<FileSystemDirectoryHandle> {
   return opfsDirectory(ASSETS_DIR);
 }
 
-/** Maps the browser's raw quota exception to the persistence-facing error. */
-function mapWriteError(error: unknown): never {
-  if (isQuotaExceededError(error)) throw new OpfsQuotaExceededError();
-  throw error;
-}
-
-/** Best-effort removal used to discard an unpublished/partial file. */
-async function removeOptionalFile(dir: FileSystemDirectoryHandle, fileName: string): Promise<void> {
-  try {
-    await dir.removeEntry(fileName);
-  } catch (error) {
-    if (!isNotFoundError(error)) {
-      // Preserve the original write error. An orphan payload has no sidecar
-      // publish marker and remains visible to the media GC on the next pass.
-    }
-  }
-}
-
 function validatedContentMeta(
   value: Partial<AudioAssetMeta>,
   id: string,
@@ -732,7 +714,7 @@ export async function saveAssetWithStatusUnlocked(
       // createWritable() may create an empty/truncated entry before write()
       // rejects. Never leave that unpublished payload to become a collision.
       await removeOptionalFile(dir, id + PCM_EXTENSION);
-      mapWriteError(error);
+      throw error;
     }
   }
   try {
@@ -743,7 +725,7 @@ export async function saveAssetWithStatusUnlocked(
     // retry cannot parse a truncated JSON file or collide with partial data.
     if (sidecarCreated) await removeOptionalFile(dir, id + META_EXTENSION);
     if (created) await removeOptionalFile(dir, id + PCM_EXTENSION);
-    mapWriteError(error);
+    throw error;
   }
   cacheSavedAsset(latestMeta, interleaved, numChannels, created);
   return { meta: latestMeta, created };

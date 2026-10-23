@@ -49,6 +49,8 @@ const EMPTY_ENTRY_COMPRESSED_CEILING = 64;
 const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
 const ZIP_CENTRAL_DIRECTORY = 0x02014b50;
 const ZIP64_SENTINEL = 0xffffffff;
+/** ZIP64 end-of-central-directory locator; fflate switches directories when it precedes the EOCD. */
+const ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR = 0x07064b50;
 
 function findEndOfCentralDirectory(view: DataView): number {
   // Match fflate's bounded backwards scan. A ZIP comment is limited to 65,535
@@ -88,6 +90,11 @@ function rejectCentralDirectoryAliases(bytes: Uint8Array, maxEntries: number): v
   const eocd = findEndOfCentralDirectory(view);
   if (!hasRange(view, eocd, 22)) {
     throw new ArchivePreflightError('Archive has a truncated end-of-central-directory record');
+  }
+  // fflate walks the ZIP64 directory whenever its locator sits right before the
+  // EOCD, so the ZIP32 directory checked below would not be the one unpacked.
+  if (eocd >= 20 && view.getUint32(eocd - 20, true) === ZIP64_END_OF_CENTRAL_DIRECTORY_LOCATOR) {
+    throw new ArchivePreflightError('ZIP64 archives are not supported by archive preflight');
   }
   const entryCount = view.getUint16(eocd + 8, true);
   const centralDirectoryBytes = view.getUint32(eocd + 12, true);

@@ -259,7 +259,7 @@ export const shellFrame = {
       },
       score: {
         title: 'Score view',
-        body: 'Engraves the active clip as notation - display-only, your MIDI never changes.',
+        body: 'Engraves the active clip as notation. Adding, dragging or deleting notes in the score edits the MIDI in the clip.',
       },
       menu: {
         title: 'Project menu',
@@ -335,6 +335,7 @@ export const shellFrame = {
     add: 'Add',
     addTitle: 'Place the asset as a clip at the playhead',
     deleteBlocked: 'Clips in the project use this asset. Remove those clips first.',
+    deleteInUse: 'Another open tab or a saved project uses this asset, so it was kept.',
     deleteAsset: 'Delete asset',
     deleteAssetNamed: 'Delete {name}',
     reasons: {

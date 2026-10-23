@@ -87,14 +87,31 @@ interface ExportContext {
   trackCount: number;
 }
 
-function isSidechainKeyExported(slot: InsertSlot, trackCount: number): boolean {
-  const index = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+/** A serialized insert: document track and group references are carried as indices. */
+type DocumentInsertSlot = InsertSlot & {
+  sidechainSourceIndex?: number;
+  sidechainSourceGroupTrackIndex?: number;
+};
+
+/** Insert fields that name a sidechain key source; the sidecar carries only the track index. */
+const SIDECHAIN_KEY_FIELDS = [
+  'sidechainSourceTrackId',
+  'sidechainSourceIndex',
+  'sidechainSourceBusId',
+  'sidechainSourceGroupTrackId',
+  'sidechainSourceGroupTrackIndex',
+] as const satisfies ReadonlyArray<keyof DocumentInsertSlot>;
+
+function isSidechainKeyExported(slot: DocumentInsertSlot, trackCount: number): boolean {
+  const index = slot.sidechainSourceIndex;
+  if (slot.sidechainSourceBusId !== undefined) return false;
+  if (slot.sidechainSourceGroupTrackId !== undefined) return false;
+  if (slot.sidechainSourceGroupTrackIndex !== undefined) return false;
   return typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < trackCount;
 }
 
-function hasSidechainKey(slot: InsertSlot): boolean {
-  const keyed = slot as { sidechainSourceTrackId?: unknown; sidechainSourceIndex?: unknown };
-  return keyed.sidechainSourceTrackId !== undefined || keyed.sidechainSourceIndex !== undefined;
+function hasSidechainKey(slot: DocumentInsertSlot): boolean {
+  return SIDECHAIN_KEY_FIELDS.some((field) => slot[field] !== undefined);
 }
 
 function isAutomationLaneExported(

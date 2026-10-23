@@ -6,6 +6,7 @@
 
 import type { LossReport } from '@/export/loss-descriptor';
 import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
+import { assignMidiLaneFields, cloneMidiLaneFields } from './midi-lane-kinds';
 import { inspectMidi2ClipExportLoss } from './midi2-export-loss';
 import {
   type DocumentClip,
@@ -97,38 +98,9 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
     notes: clip.notes.map(({ id: _id, ...note }) => note),
     kind: 'midi',
   };
-  if (clip.ccLanes !== undefined && clip.ccLanes.length > 0) {
-    documentClip.ccLanes = clip.ccLanes.map((lane) => ({
-      controller: lane.controller,
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.pitchBendLanes !== undefined && clip.pitchBendLanes.length > 0) {
-    documentClip.pitchBendLanes = clip.pitchBendLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.programChangeLanes !== undefined && clip.programChangeLanes.length > 0) {
-    documentClip.programChangeLanes = clip.programChangeLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.channelPressureLanes !== undefined && clip.channelPressureLanes.length > 0) {
-    documentClip.channelPressureLanes = clip.channelPressureLanes.map((lane) => ({
-      channel: lane.channel,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
-  if (clip.polyPressureLanes !== undefined && clip.polyPressureLanes.length > 0) {
-    documentClip.polyPressureLanes = clip.polyPressureLanes.map((lane) => ({
-      channel: lane.channel,
-      pitch: lane.pitch,
-      points: lane.points.map((point) => ({ ...point })),
-    }));
-  }
+  if (clip.fadeInPpq !== undefined) documentClip.fadeInPpq = clip.fadeInPpq;
+  if (clip.fadeOutPpq !== undefined) documentClip.fadeOutPpq = clip.fadeOutPpq;
+  assignMidiLaneFields(documentClip, cloneMidiLaneFields(clip));
   if (clip.smfSysEx !== undefined && clip.smfSysEx.length > 0) {
     documentClip.smfSysEx = clip.smfSysEx.map((packet) => ({
       ppq: packet.ppq,

@@ -56,6 +56,8 @@ export function addTrack(input: AddTrackInput = {}): number {
   const color =
     input.color ?? TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
   const kind = input.kind ?? 'midi';
+  // A group track takes an engine bus slot of its own.
+  if (kind === 'group') assertCanAddEngineBus(store.mixer.buses, store.tracks);
   // Group tracks are an app-level concept; the wasm Project stores them as
   // aux tracks.
   const projectKind = kind === 'group' ? 'aux' : kind;
@@ -170,8 +172,6 @@ export function removeTracks(trackIds: Iterable<number>): void {
  * @returns The new track id.
  */
 export function addGroupTrack(input: Omit<AddTrackInput, 'kind'> = {}): number {
-  const store = useProjectStore();
-  assertCanAddEngineBus(store.mixer.buses.length, store.tracks);
   return addTrack({ ...input, kind: 'group' });
 }
 

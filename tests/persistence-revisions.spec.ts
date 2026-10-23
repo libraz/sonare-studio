@@ -370,7 +370,12 @@ describe('revision entry points', () => {
 
   it('restores into the editor without overwriting the stored project', () => {
     expect(persistence).toContain('const bytes = await loadProjectRevision(slot);');
-    expect(persistence).toContain('savedProjectRevision.value = savedBaseline;');
+    const restore = persistence.slice(
+      persistence.indexOf('function restoreRevision'),
+      persistence.indexOf('function deleteRevision'),
+    );
+    // The Save baseline stays the revision this tab last loaded or saved.
+    expect(restore).not.toMatch(/savedProjectRevision\.value =|loadProjectWithRevision\(/);
   });
 
   it('drops a project’s revisions with the project itself', () => {

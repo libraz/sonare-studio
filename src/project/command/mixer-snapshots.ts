@@ -212,7 +212,7 @@ export function mergeMixerSnapshot(
     if (!isRestoredBus && !isRestoredMasterProcessor && !isRestoredTrackProcessor) continue;
     automationLanes.push(cloneAutomationLane(lane));
   }
-  assertEngineBusCapacity(mixer.buses.length, tracks);
+  assertEngineBusCapacity(mixer.buses, tracks);
   // Group strips are topology nodes too: a reciprocal bus/group route must be
   // refused before any store write, as scene apply does.
   assertValidMixerBusTopology(

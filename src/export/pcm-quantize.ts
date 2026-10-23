@@ -43,3 +43,26 @@ export function quantizePcmSample(
   const quantized = Math.round(scalePcmSample(clamped, positiveMax, negativeMax) + ditherLsb);
   return Math.min(positiveMax, Math.max(-negativeMax, quantized));
 }
+
+function ditherUnit(index: number, salt: number): number {
+  let value = (index + salt) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+  return (value >>> 0) / 0x100000000;
+}
+
+/**
+ * Stateless TPDF dither in LSBs keyed by absolute frame and channel, so every
+ * codec and every chunking of one render draws the same noise.
+ *
+ * @param frame Absolute frame index within the rendered signal.
+ * @param channel Channel index.
+ * @returns A value in (-1, 1) LSB with triangular distribution.
+ */
+export function tpdfDitherLsb(frame: number, channel: number): number {
+  const index = frame * 31 + channel;
+  return ditherUnit(index, 0x9e3779b9) - ditherUnit(index, 0x85ebca6b);
+}

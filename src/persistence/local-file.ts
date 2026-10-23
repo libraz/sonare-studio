@@ -123,6 +123,17 @@ interface OpenFilePickerOptions {
 }
 type ShowOpenFilePicker = (options?: OpenFilePickerOptions) => Promise<FileSystemFileHandle[]>;
 
+/**
+ * Drops extensions the File System Access picker rejects with a TypeError
+ * (longer than 16 characters, or a character other than ASCII alphanumerics,
+ * `+` and `.`). The input-element fallback keeps the full list.
+ */
+function pickerAcceptExtensions(extensions: ReadonlyArray<string>): string[] {
+  return extensions.filter(
+    (extension) => extension.length <= 16 && /^\.[A-Za-z0-9+.]*[A-Za-z0-9+]$/.test(extension),
+  );
+}
+
 export class LocalFileSizeError extends Error {
   constructor(
     readonly fileName: string,
@@ -277,7 +288,12 @@ async function pickAndReadArchive(spec: ArchivePickerSpec): Promise<PickedLocalF
       const [handle] = await picker({
         multiple: false,
         excludeAcceptAllOption: spec.excludeAcceptAllOption,
-        types: [{ description: spec.description, accept: { [SZD_MIME]: spec.extensions } }],
+        types: [
+          {
+            description: spec.description,
+            accept: { [SZD_MIME]: pickerAcceptExtensions(spec.extensions) },
+          },
+        ],
       });
       if (!handle) return null;
       return await readPickedFile(await handle.getFile(), spec.maxBytes);
@@ -357,7 +373,7 @@ export async function pickAndReadExternalAudioFiles(): Promise<PickedExternalAud
         types: [
           {
             description: 'Audio files',
-            accept: { 'audio/*': EXTERNAL_AUDIO_EXTENSIONS },
+            accept: { 'audio/*': pickerAcceptExtensions(EXTERNAL_AUDIO_EXTENSIONS) },
           },
         ],
       });

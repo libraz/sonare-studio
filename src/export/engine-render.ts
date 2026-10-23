@@ -105,6 +105,7 @@ import {
 } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import {
+  audibleOutputBusId,
   clampPan,
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
@@ -153,8 +154,8 @@ export type { EngineRenderOptions, OfflineRenderEngine } from './engine-render-t
  *
  * @param doc The rendered document.
  * @param masteringFrozenParams Mastering parameters this render could not make
- *   time-varying, from {@link planMasteringStages}. Omitted (the preflight
- *   case, where no engine capability is known yet) assumes every time-varying
+ *   time-varying, from {@link planMasteringStages}. Empty when the
+ *   mastering chain is not applied. Omitted assumes every time-varying
  *   mastering lane stays frozen.
  * @returns The limitations, in report order.
  */
@@ -402,7 +403,7 @@ export async function renderProjectWithEngine(
           return !(
             options.busStems === true &&
             track.kind !== 'group' &&
-            track.mixer?.outputBusId !== undefined
+            audibleOutputBusId(track) !== undefined
           );
         })
     : [];
@@ -1433,7 +1434,7 @@ export async function renderProjectWithEngine(
     );
     const report: MixdownReport = { peakDb: peakDb(streamPeak) };
     const limitations: ExportLimitation[] = [
-      ...offlineAutomationLimitations(doc),
+      ...offlineAutomationLimitations(doc, []),
       {
         kind: 'streaming-metering-unavailable',
         measurements: ['lufs', 'true-peak'],
@@ -1537,7 +1538,7 @@ export async function renderProjectWithEngine(
         stemRouting:
           track.kind === 'group'
             ? 'group'
-            : options.busStems === true || track.mixer?.outputBusId === undefined
+            : options.busStems === true || audibleOutputBusId(track) === undefined
               ? 'direct'
               : 'document',
         separateReturnStems: options.busStems === true,
@@ -1667,7 +1668,7 @@ export async function renderProjectWithEngine(
     totalFrames,
     deps?.metering ?? null,
   );
-  const limitations = offlineAutomationLimitations(doc, masteringFrozenParams);
+  const limitations = offlineAutomationLimitations(doc, masteringFrozenParams ?? []);
   if (presetLoudnessLimit) limitations.push(presetLoudnessLimit);
   if (warpOverflows > 0)
     limitations.push({ kind: 'warp-voices-exceeded', overflows: warpOverflows });

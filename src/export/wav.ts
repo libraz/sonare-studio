@@ -13,7 +13,7 @@
 import { utf8ByteLength } from '@/lib/payload-memory';
 import type { AudioFileMetadata } from './audio-file-metadata';
 import { PRODUCER_NAME } from './constants';
-import { quantizePcmSample } from './pcm-quantize';
+import { quantizePcmSample, tpdfDitherLsb } from './pcm-quantize';
 import { assertPlanarChannels } from './planar-channels';
 
 /** Output sample format: integer bit depth, or '32f' for IEEE float. */
@@ -25,7 +25,7 @@ export interface EncodeWavOptions {
   bitDepth?: WavBitDepth;
   /** Apply TPDF dither before 16-bit quantization (default false; ignored for 24/'32f'). */
   dither?: boolean;
-  /** Uniform [0, 1) noise source for the dither (default Math.random; injectable for tests). */
+  /** Uniform [0, 1) noise source overriding the default frame-keyed TPDF dither (tests). */
   random?: () => number;
   /** BWF/cue metadata for a rendered delivery. Omitted for plain asset WAVs. */
   metadata?: AudioFileMetadata;
@@ -329,21 +329,31 @@ function writeSamples(
   channels: ReadonlyArray<Float32Array>,
   bitDepth: WavBitDepth,
   options: EncodeWavOptions,
+  frameOffset = 0,
 ): number {
   const frames = channels[0].length;
   const sampleBytes = bytesPerSample(bitDepth);
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
   const dither = options.dither === true && bitDepth === 16;
-  const random = options.random ?? Math.random;
+  const random = options.random;
   let cursor = offset;
   for (let i = 0; i < frames; i++) {
-    for (const channel of channels) {
-      const sample = channel[i];
+    for (let channelIndex = 0; channelIndex < channels.length; channelIndex++) {
+      const sample = channels[channelIndex][i];
       if (bitDepth === '32f') view.setFloat32(cursor, Number.isFinite(sample) ? sample : 0, true);
       else if (bitDepth === 16) {
         view.setInt16(
           cursor,
-          quantizePcmSample(sample, 0x7fff, 0x8000, dither ? random() - random() : 0),
+          quantizePcmSample(
+            sample,
+            0x7fff,
+            0x8000,
+            dither
+              ? random
+                ? random() - random()
+                : tpdfDitherLsb(frameOffset + i, channelIndex)
+              : 0,
+          ),
           true,
         );
       } else {
@@ -358,15 +368,21 @@ function writeSamples(
   return cursor;
 }
 
-/** Encodes a PCM block for a WAV stream (no RIFF header). */
+/**
+ * Encodes a PCM block for a WAV stream (no RIFF header).
+ *
+ * @param frameOffset Absolute frame index of the block's first frame, so
+ *   dither matches the whole-buffer encode.
+ */
 export function encodeWavChunk(
   channels: ReadonlyArray<Float32Array>,
   bitDepth: WavBitDepth,
   options: EncodeWavOptions = {},
+  frameOffset = 0,
 ): Uint8Array {
   const frames = assertPlanarChannels(channels, 'WAV');
   const out = new Uint8Array(frames * channels.length * bytesPerSample(bitDepth));
-  writeSamples(out, 0, channels, bitDepth, options);
+  writeSamples(out, 0, channels, bitDepth, options, frameOffset);
   return out;
 }
 

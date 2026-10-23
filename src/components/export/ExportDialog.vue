@@ -488,19 +488,19 @@ function workerBackedEncoding(encoder: AudioEncoder): boolean {
 }
 
 /**
- * Checks the whole-buffer mastering limit before starting the export worker.
- * The inexpensive timeline estimate runs first; the WASM catalog is loaded
- * only when the selected window could exceed the stereo frame limit.
+ * Checks the whole-buffer mastering limit before starting the export worker
+ * and returns the mastering parameters the render will leave frozen at the
+ * render start (empty when the chain is not applied).
  */
 async function preflightMasteringBuffer(
   doc: ProjectDocument,
   exportModel: ExportOptionsModel,
   loopRegion: MixdownRangePpq | null | undefined,
   signal: AbortSignal,
-): Promise<void> {
-  if (!exportModel.includeMasterChain) return;
+): Promise<string[]> {
+  if (!exportModel.includeMasterChain) return [];
   const chain = doc.mixer?.masteringChain;
-  if (!chain || !masteringChainIsActive(chain)) return;
+  if (!chain || !masteringChainIsActive(chain)) return [];
 
   const range =
     exportModel.range === 'loop' && loopRegion
@@ -515,7 +515,6 @@ async function preflightMasteringBuffer(
     [],
     documentAudibleTrackIndices(doc),
   );
-  if (renderWindow.totalFrames <= MASTERING_STEREO_FRAME_LIMIT) return;
   signal.throwIfAborted();
 
   const wasm = await ensureWasm();
@@ -527,7 +526,7 @@ async function preflightMasteringBuffer(
   };
   // The renderer skips the rack when the process seam is unavailable. Keep
   // the UI preflight in lockstep with that behavior.
-  if (typeof surface.masteringProcessStereo !== 'function') return;
+  if (typeof surface.masteringProcessStereo !== 'function') return [];
   const catalog = surface.masteringProcessorCatalog?.();
   const plan = planMasteringStages(
     chain,
@@ -535,13 +534,17 @@ async function preflightMasteringBuffer(
     range.startPpq,
     masteringCapabilityFromCatalog(catalog),
   );
-  assertMasteringBufferWithinLimit({
-    totalFrames: renderWindow.totalFrames,
-    sampleRate: exportModel.sampleRate,
-    includeMasterChain: true,
-    usesPreset: chain.preset !== undefined && typeof surface.masterAudioStereo === 'function',
-    wholeBufferProcessorCount: plan.stages.filter((stage) => stage.kind === 'whole-buffer').length,
-  });
+  if (renderWindow.totalFrames > MASTERING_STEREO_FRAME_LIMIT) {
+    assertMasteringBufferWithinLimit({
+      totalFrames: renderWindow.totalFrames,
+      sampleRate: exportModel.sampleRate,
+      includeMasterChain: true,
+      usesPreset: chain.preset !== undefined && typeof surface.masterAudioStereo === 'function',
+      wholeBufferProcessorCount: plan.stages.filter((stage) => stage.kind === 'whole-buffer')
+        .length,
+    });
+  }
+  return plan.frozenParams;
 }
 
 async function onExport(): Promise<void> {
@@ -574,6 +577,7 @@ async function onExport(): Promise<void> {
       range: exportModel.range,
       loopRegion: props.loopRegion,
       releaseTailSeconds: exportModel.releaseTailSeconds,
+      includeMasterChain: exportModel.includeMasterChain,
       signal: controller.signal,
     });
     const issueStrings = t.value.dialogs.exportAudio.issue;
@@ -583,9 +587,14 @@ async function onExport(): Promise<void> {
       );
       throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${lines.join('\n')}`);
     }
-    await preflightMasteringBuffer(doc, exportModel, props.loopRegion, controller.signal);
+    const masteringFrozenParams = await preflightMasteringBuffer(
+      doc,
+      exportModel,
+      props.loopRegion,
+      controller.signal,
+    );
     const acceptedLimitations = [
-      ...offlineAutomationLimitations(doc).map((limitation) =>
+      ...offlineAutomationLimitations(doc, masteringFrozenParams).map((limitation) =>
         formatExportLimitation(limitation, issueStrings),
       ),
       ...preflight.warnings.map((warning) => formatPreflightWarning(warning, issueStrings)),

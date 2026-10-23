@@ -67,4 +67,28 @@ describe('DAWproject export loss parity with the exporter', () => {
     );
     expect(kept.entries).toEqual([]);
   });
+
+  it('counts bus-keyed and group-keyed insert sidechains the sidecar does not carry', () => {
+    const withInsert = (extra: Record<string, unknown>) =>
+      doc([
+        track({
+          mixer: {
+            gainDb: 0,
+            pan: 0,
+            sends: [],
+            inserts: [{ processor: 'dynamics.compressor', enabled: true, params: {}, ...extra }],
+          },
+        }),
+      ]);
+    const expected = [{ kind: 'sidechainKeys', count: 1, details: [] }];
+    expect(
+      inspectDawprojectExportLoss(withInsert({ sidechainSourceBusId: 'bus-a' })).entries,
+    ).toEqual(expected);
+    expect(
+      inspectDawprojectExportLoss(withInsert({ sidechainSourceGroupTrackIndex: 0 })).entries,
+    ).toEqual(expected);
+    expect(inspectDawprojectExportLoss(withInsert({ sidechainSourceIndex: 0 })).entries).toEqual(
+      [],
+    );
+  });
 });

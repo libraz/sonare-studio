@@ -3,7 +3,7 @@ import type {
   RealtimeVoiceChangerConfigInput,
   RealtimeVoiceChangerPodConfig,
 } from '@/wasm/index.js';
-import { fetchWasmBinary, waitForWorkletReady } from './engine';
+import { fetchWasmBinary, forwardWorkletRuntimeErrors, waitForWorkletReady } from './engine';
 import type { MicrophoneBinding } from './recorder';
 import { clampStreamingRetuneSemitones, STREAMING_RETUNE_PROCESSOR } from './streaming-retune';
 
@@ -166,6 +166,7 @@ export async function bindRealtimeVoiceChangerInput(
     throw error;
   }
   const readyNode = node;
+  const detachRuntimeErrors = forwardWorkletRuntimeErrors(readyNode, 'Voice changer');
   return {
     stream: options.stream,
     source,
@@ -176,6 +177,7 @@ export async function bindRealtimeVoiceChangerInput(
       return true;
     },
     close(): void {
+      detachRuntimeErrors();
       readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyNode.disconnect();
@@ -271,6 +273,10 @@ export async function bindRealtimeVoiceChangerRetuneInput(
   }
   const readyVoiceNode = voiceNode;
   const readyRetuneNode = retuneNode;
+  const detachRuntimeErrors = [
+    forwardWorkletRuntimeErrors(readyVoiceNode, 'Voice changer'),
+    forwardWorkletRuntimeErrors(readyRetuneNode, 'Streaming retune'),
+  ];
   return {
     stream: options.stream,
     source,
@@ -284,6 +290,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
       readyRetuneNode.port.postMessage({ type: 'setConfig', config });
     },
     close(): void {
+      for (const detach of detachRuntimeErrors) detach();
       readyVoiceNode.port.postMessage({ type: 'destroy' });
       readyRetuneNode.port.postMessage({ type: 'destroy' });
       source.disconnect();

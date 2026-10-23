@@ -39,7 +39,7 @@ export interface AddMixerBusInput {
  */
 export function addMixerBus(input: AddMixerBusInput = {}): string {
   const store = useProjectStore();
-  assertCanAddEngineBus(store.mixer.buses.length, store.tracks);
+  assertCanAddEngineBus(store.mixer.buses, store.tracks);
   const knownBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
   let id = input.id;
   if (id !== undefined) {

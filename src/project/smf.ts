@@ -379,11 +379,15 @@ export function extractSmfSysEx(bytes: Uint8Array): SmfSysExPacket[] {
   const packets: SmfSysExPacket[] = [];
   let payloadBytes = 0;
   while (offset + 8 <= bytes.length) {
-    if (smfFourCC(bytes, offset) !== 'MTrk') break;
+    const isTrack = smfFourCC(bytes, offset) === 'MTrk';
     const length = smfU32(bytes, offset + 4);
     offset += 8;
     const end = offset + length;
     if (end > bytes.length) break;
+    if (!isTrack) {
+      offset = end;
+      continue;
+    }
     let runningStatus: number | null = null;
     let absoluteTicks = 0;
     while (offset < end) {

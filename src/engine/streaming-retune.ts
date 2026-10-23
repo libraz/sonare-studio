@@ -1,5 +1,5 @@
 import type { StreamingRetuneConfig } from '@/wasm/index.js';
-import { fetchWasmBinary, waitForWorkletReady } from './engine';
+import { fetchWasmBinary, forwardWorkletRuntimeErrors, waitForWorkletReady } from './engine';
 import type { MicrophoneBinding } from './recorder';
 
 export const STREAMING_RETUNE_PROCESSOR = 'sonare-streaming-retune-processor';
@@ -120,6 +120,7 @@ export async function bindStreamingRetuneInput(
     throw error;
   }
   const readyNode = node;
+  const detachRuntimeErrors = forwardWorkletRuntimeErrors(readyNode, 'Streaming retune');
   return {
     stream: options.stream,
     source,
@@ -127,6 +128,7 @@ export async function bindStreamingRetuneInput(
       readyNode.port.postMessage({ type: 'setConfig', config });
     },
     close(): void {
+      detachRuntimeErrors();
       readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyNode.disconnect();

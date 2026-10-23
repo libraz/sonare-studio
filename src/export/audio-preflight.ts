@@ -9,7 +9,12 @@ import {
 import { audioClipSegments } from '@/project/comping';
 import { loadFont } from '@/project/fonts';
 import { effectiveTrackInstrument } from '@/project/instrument';
-import { type InsertSlot, tracksWithVcaSolo } from '@/project/mixer';
+import {
+  audibleOutputBusId,
+  busOutputChain,
+  type InsertSlot,
+  tracksWithVcaSolo,
+} from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import {
@@ -54,6 +59,8 @@ export interface AudioExportPreflightOptions {
   range: 'project' | 'loop';
   /** Required PPQ window when range is `loop`. */
   loopRegion?: MixdownRangePpq | null;
+  /** Whether master-strip and mastering-chain inserts are rendered; defaults to true. */
+  includeMasterChain?: boolean;
   /** Injectable insert tail lookup; defaults to the engine's insert timing query. */
   insertTail?: InsertTailResolver;
   /** Injectable payload validation seam; defaults to an OPFS size/sidecar check. */
@@ -90,7 +97,7 @@ export interface TimeEffectSlotOptions {
 interface ActiveInsertStages {
   /** One chain per audible lane or group strip; lanes run in parallel. */
   lanes: InsertSlot[][];
-  /** One chain per audible return bus; buses run in parallel. */
+  /** One chain per bus entry point, through every bus it routes on into; entries run in parallel. */
   buses: InsertSlot[][];
   master: InsertSlot[];
   mastering: InsertSlot[];
@@ -176,7 +183,7 @@ function activeInsertStages(
   const enabled = (slots: ReadonlyArray<InsertSlot> | undefined): InsertSlot[] =>
     (slots ?? []).filter((slot) => slot.enabled);
   const stages: ActiveInsertStages = { lanes: [], buses: [], master: [], mastering: [] };
-  const activeBusIds = new Set<string>();
+  const entryBusIds = new Set<string>();
   doc.tracks.forEach((track, index) => {
     const carriesAudibleMember =
       track.kind === 'group' &&
@@ -187,16 +194,22 @@ function activeInsertStages(
     if (!audibleTrackIndices.has(index) && !carriesAudibleMember) return;
     stages.lanes.push(enabled(track.mixer?.inserts));
     if (includeBuses) {
-      if (track.mixer?.outputBusId) activeBusIds.add(track.mixer.outputBusId);
+      const outputBusId = audibleOutputBusId(track);
+      if (outputBusId) entryBusIds.add(outputBusId);
       for (const send of track.mixer?.sends ?? []) {
-        if (send.enabled) activeBusIds.add(send.busId);
+        if (send.enabled) entryBusIds.add(send.busId);
       }
     }
   });
   if (includeMaster) stages.master = enabled(doc.mixer?.master.inserts);
   if (includeBuses) {
-    for (const bus of doc.mixer?.buses ?? []) {
-      if (activeBusIds.has(bus.id)) stages.buses.push(enabled(bus.strip?.inserts));
+    // A bus that routes into another bus puts both chains in series.
+    const busesById = new Map((doc.mixer?.buses ?? []).map((bus) => [bus.id, bus]));
+    for (const busId of entryBusIds) {
+      if (!busesById.has(busId)) continue;
+      stages.buses.push(
+        busOutputChain(busId, busesById).flatMap((bus) => enabled(bus.strip?.inserts)),
+      );
     }
   }
   if (includeMastering) stages.mastering = enabled(doc.mixer?.masteringChain?.processors);
@@ -280,6 +293,10 @@ export async function audioExportPreflight(
   const range = resolvePreflightRange(options);
   const tempoMap = normalizeTempoMap(documentTempoSegments(doc));
   // Inserts only matter for the tail (and preroll) when some track can carry one.
+  const tailOptions: TimeEffectSlotOptions = {
+    includeMaster: options.includeMasterChain ?? true,
+    includeMastering: options.includeMasterChain ?? true,
+  };
   const everyTrack = new Set(doc.tracks.map((_, index) => index));
   const anyInserts = activeInsertStages(doc, everyTrack, {});
   const resolveTail = [
@@ -296,7 +313,7 @@ export async function audioExportPreflight(
     tempoMap,
     range,
     estimateTailSeconds: (contributors) =>
-      resolveTail ? estimatedTailSeconds(doc, contributors, resolveTail) : 0,
+      resolveTail ? estimatedTailSeconds(doc, contributors, resolveTail, tailOptions) : 0,
   });
   const { audibleTrackIndices, contributorTrackIndices, contributionRange } = plan;
   const vcaControls = new Map((doc.mixer?.vcaGroups ?? []).map((group) => [group.id, group]));
@@ -399,7 +416,9 @@ export async function audioExportPreflight(
   }
 
   if (options.range === 'project') {
-    const tail = resolveTail ? estimatedTailSeconds(doc, contributorTrackIndices, resolveTail) : 0;
+    const tail = resolveTail
+      ? estimatedTailSeconds(doc, contributorTrackIndices, resolveTail, tailOptions)
+      : 0;
     if (tail > options.releaseTailSeconds) {
       warnings.push({
         kind: 'release-tail-short',

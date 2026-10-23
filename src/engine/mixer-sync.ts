@@ -5,7 +5,10 @@
  *
  * Engine lanes are append-only for the engine's lifetime: a declaration must
  * keep every lane already declared, in order. A deleted track therefore keeps
- * its lane, muted, and takes it back unchanged if the deletion is undone.
+ * its lane, muted, and takes it back unchanged if the deletion is undone. When
+ * those retired lanes would push a declaration past the engine's lane limit,
+ * the sync stops declaring and asks for an engine rebuild, which declares only
+ * the live tracks.
  */
 
 import {
@@ -91,7 +94,15 @@ export interface MixerSync {
   positiveChannelDelayTrackIds(): ReadonlySet<number>;
   /** Sends deferred channel delays after strip-sync has declared the strips. */
   applyChannelDelays(stripSceneGeneration: number): void;
+  /**
+   * True once lanes kept for deleted tracks leave no room for a live track's
+   * lane; only an engine rebuild reclaims them.
+   */
+  laneReclaimNeeded?(): boolean;
 }
+
+/** Track lanes the realtime engine accepts in one declaration. */
+export const MAX_ENGINE_TRACK_LANES = 32;
 
 /** Options for {@link createMixerSync}. */
 export interface MixerSyncOptions {
@@ -148,6 +159,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
   const appliedChannelDelays = new Map<number, number>();
   let appliedStripSceneGeneration: number | undefined;
   const resolveInsertLatency = options.insertLatency ?? zeroInsertLatency;
+  let laneReclaimNeeded = false;
 
   const sync = (
     tracks: ReadonlyArray<EditorTrack>,
@@ -161,7 +173,13 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     // A refused command leaves its value unrecorded so the next pass re-sends it.
     let refused = false;
     const appended = tracks.filter((track) => !laneIds.includes(track.id)).map((track) => track.id);
-    if (appended.length > 0) {
+    if (
+      appended.length > 0 &&
+      laneIds.length + appended.length > MAX_ENGINE_TRACK_LANES &&
+      tracks.length <= MAX_ENGINE_TRACK_LANES
+    ) {
+      laneReclaimNeeded = true;
+    } else if (appended.length > 0) {
       // Record the lanes only once the engine has accepted them.
       handle.engine.setTrackLanes([...laneIds, ...appended]);
       laneIds.push(...appended);
@@ -197,6 +215,8 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     const pdc = createInsertPdcPlan(tracks, pdcBuses ?? [], resolveInsertLatency);
     pendingChannelDelays.clear();
     for (const track of tracks) {
+      // A track waiting for the reclaiming rebuild has no lane to address yet.
+      if (!laneIds.includes(track.id)) continue;
       const trackIndex = tracks.indexOf(track);
       const strip = track.mixer;
       const vcaOffset = vcaOffsetDb(track.vcaId, vcaGainDb);
@@ -287,6 +307,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
 
   return {
     sync,
+    laneReclaimNeeded: () => laneReclaimNeeded,
     laneTrackIds: () => laneIds,
     sceneGeneration: () => sceneGeneration,
     positiveChannelDelayTrackIds: () =>

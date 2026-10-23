@@ -11,6 +11,7 @@ import {
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
+  hasAudibleOutputRoute,
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_STRIP_GAIN_DB,
@@ -511,7 +512,7 @@ export function setStripDualPan(
  * master mix) as one undoable edit. The routing is audible: strip-sync points
  * the engine lane at the bus, which sums into the master mix. Group members
  * ignore this (their group bus always wins), and the master strip has no lane
- * to route, so both are rejected.
+ * to route, so both are rejected; a member may still clear a stored route.
  *
  * @param target Track id (not 'master').
  * @param busId Destination bus id, or null to restore the master mix.
@@ -520,6 +521,13 @@ export function setStripOutputBus(target: MixerStripTarget, busId: string | null
   const store = useProjectStore();
   if (target === 'master') {
     throw new RangeError('The master strip has no output bus to route');
+  }
+  if (
+    busId !== null &&
+    typeof target === 'number' &&
+    !hasAudibleOutputRoute(requireTrack(store, target))
+  ) {
+    throw new RangeError(`Track ${target} is a group member; its group bus sets its output`);
   }
   const sourceBusId = sidechainTargetTopologyId(store, target);
   if (busId !== null && !store.mixer.buses.some((bus) => bus.id === busId)) {

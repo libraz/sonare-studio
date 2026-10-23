@@ -884,7 +884,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     const gsSetup = pushGsSetupSysex(handle.engine, clips, gsDestinations, lastGsSetupSysexKey);
     if (gsSetup.changed && gsSetup.unsupportedPacketCount > 0) {
       console.warn(
-        `MIDI sync: ${gsSetup.unsupportedPacketCount} SMF SysEx packet(s) were kept for SMF roundtrip and not applied to realtime GS instruments (only complete setup frames at PPQ 0 up to ${MAX_REALTIME_SYSEX_BYTES} bytes are supported).`,
+        `MIDI sync: ${gsSetup.unsupportedPacketCount} SMF SysEx packet(s) were kept for SMF roundtrip and not applied to realtime GS instruments (only complete setup frames of up to ${MAX_REALTIME_SYSEX_BYTES} bytes at PPQ 0 or before the first note are applied).`,
       );
     }
     lastGsSetupSysexKey = gsSetup.key;

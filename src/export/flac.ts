@@ -16,7 +16,7 @@ import {
   registerEncoder,
 } from './codecs';
 import { PRODUCER_NAME } from './constants';
-import { quantizePcmSample } from './pcm-quantize';
+import { quantizePcmSample, tpdfDitherLsb } from './pcm-quantize';
 import { assertPlanarChannels } from './planar-channels';
 
 export const FLAC_ENCODER_ID = 'flac';
@@ -333,25 +333,6 @@ function quantizeSample(sample: number, bitDepth: FlacBitDepth, ditherLsb = 0): 
   const positiveMax = bitDepth === 16 ? 0x7fff : 0x7fffff;
   const negativeMax = bitDepth === 16 ? 0x8000 : 0x800000;
   return quantizePcmSample(sample, positiveMax, negativeMax, ditherLsb);
-}
-
-/**
- * A stateless TPDF source keeps FLAC dither reproducible without retaining a
- * second quantized PCM buffer merely to make STREAMINFO's MD5 match frames.
- */
-function ditherUnit(index: number, salt: number): number {
-  let value = (index + salt) >>> 0;
-  value ^= value >>> 16;
-  value = Math.imul(value, 0x7feb352d);
-  value ^= value >>> 15;
-  value = Math.imul(value, 0x846ca68b);
-  value ^= value >>> 16;
-  return (value >>> 0) / 0x100000000;
-}
-
-function tpdfDitherLsb(frame: number, channel: number): number {
-  const index = frame * 31 + channel;
-  return ditherUnit(index, 0x9e3779b9) - ditherUnit(index, 0x85ebca6b);
 }
 
 function writeSigned(writer: BitWriter, value: number, bits: number): void {
