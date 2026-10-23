@@ -9,10 +9,11 @@
  * the transport itself also ends an in-flight recording.
  *
  * Cycle recording: when the transport loop is enabled and recording starts
- * at the loop start, the single linear capture is split at the loop
- * boundaries and every completed pass becomes one take of a single clip
- * spanning the loop window (the last complete take starts selected; see
- * src/project/comping.ts for the comp model).
+ * inside it, the engine captures [punch, loop end) on every pass. The capture
+ * is split at those pass boundaries and every completed pass becomes one take
+ * of a single clip spanning [punch, loop end) (the last complete take starts
+ * selected; see src/project/comping.ts for the comp model). A capture shorter
+ * than two passes stays one clip, clamped to the same window.
  */
 
 import type { MaybeRefOrGetter, Ref } from 'vue';
@@ -41,6 +42,7 @@ import { createInsertPdcPlan, insertLatencyResolverFromCatalog } from '@/project
 import {
   loopRecordingSplits,
   loopRecordingTakeSlices,
+  type RecordingCycleTake,
   type RecordingStartPlan,
 } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
@@ -225,7 +227,7 @@ export function useRecording(
   let recordingInputDeviceKeys: string[] = [];
   let recordingInputChannels: Array<number | undefined> = [];
   let recordingCounter = 0;
-  let recordingLoop: { startPpq: number; endPpq: number } | null = null;
+  let cycleTake: RecordingCycleTake | null = null;
   const recordingOperations = new OperationGeneration();
   const microphoneOperations = new OperationGeneration();
   /** Per-track device signature the current recorder was built with. */
@@ -306,7 +308,8 @@ export function useRecording(
     recordingCaptureSource = captureSource.value;
     recordingInputDeviceKeys = [];
     recordingInputChannels = [];
-    recordingLoop = null;
+    cycleTake?.end();
+    cycleTake = null;
     isRecording.value = false;
   };
 
@@ -742,7 +745,7 @@ export function useRecording(
       const track = store.tracks.find((entry) => entry.id === trackId);
       return track?.kind === 'audio' ? track.recordInputChannel : undefined;
     });
-    recordingLoop = plan.cycle;
+    cycleTake = transport.recordingCycle.begin(plan);
     isRecording.value = true;
     state.value = 'recording';
     // Capture reset/arm/punch is complete before transport can expose the
@@ -781,7 +784,7 @@ export function useRecording(
     const targetTrackIds =
       recordingTrackIds.length > 0 ? recordingTrackIds : [...armedTrackIds.value];
     const recordSource = recordingCaptureSource;
-    const loop = recordingLoop;
+    const loop = cycleTake?.window() ?? null;
     let result: RecordingResult | null;
     try {
       result = await rec.stop();
@@ -797,6 +800,7 @@ export function useRecording(
       return complete(null);
     }
     isRecording.value = false;
+    cycleTake?.end();
     state.value = 'ingesting';
     if (!result || result.channels.length === 0 || result.channels[0].length === 0) {
       return complete(null);
@@ -844,12 +848,12 @@ export function useRecording(
     try {
       const nextRecordingCounter = recordingCounter + 1;
       const name = `Recording ${nextRecordingCounter}`;
-      // Cycle recording: split the linear capture at the loop boundaries and
-      // register every completed pass as one take of a single clip.
+      // Cycle recording: every pass captures [punch, loop end); split the
+      // capture there and register every completed pass as one take of a single clip.
       if (loop) {
-        const loopLengthPpq = loop.endPpq - loop.startPpq;
+        const loopLengthPpq = loop.endPpq - loop.punchInPpq;
         const loopSeconds =
-          ppqToSecondsMap(tempoMap, loop.endPpq) - ppqToSecondsMap(tempoMap, loop.startPpq);
+          ppqToSecondsMap(tempoMap, loop.endPpq) - ppqToSecondsMap(tempoMap, loop.punchInPpq);
         const framesPerCycle = loopSeconds * result.sampleRate;
         const splits = loopRecordingSplits(result.channels[0].length, framesPerCycle);
         if (splits.length >= 2) {
@@ -875,7 +879,7 @@ export function useRecording(
             clipInputs.push({
               trackId: route.trackId,
               assetId: takes[takes.length - 1].assetId,
-              startPpq: loop.startPpq,
+              startPpq: loop.punchInPpq,
               lengthPpq: loopLengthPpq,
               name,
               takes,
@@ -891,7 +895,12 @@ export function useRecording(
       }
       const recordedSeconds = result.channels[0].length / result.sampleRate;
       const startSeconds = ppqToSecondsMap(tempoMap, result.startPpq);
-      const lengthPpq = secondsToPpqMap(tempoMap, startSeconds + recordedSeconds) - result.startPpq;
+      const linearLengthPpq =
+        secondsToPpqMap(tempoMap, startSeconds + recordedSeconds) - result.startPpq;
+      // The transport never played past the loop end, so a short cycle capture stays inside it.
+      const lengthPpq = loop
+        ? Math.min(linearLengthPpq, loop.endPpq - result.startPpq)
+        : linearLengthPpq;
       const routes = recordingChannelRoutes(
         targetTrackIds,
         recordSource,

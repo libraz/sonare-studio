@@ -4,7 +4,21 @@ import { effectScope, nextTick, reactive, ref } from 'vue';
 import { useRecordingControls } from '@/composables/useRecordingControls';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import { addAudioTrack, clearHistory } from '@/project/commands';
+import { createRecordingCycle } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+
+/** Transport loop refs plus the recording-cycle owner derived from them. */
+function loopState() {
+  const loopEnabled = ref(false);
+  const loopStartPpq = ref(0);
+  const loopEndPpq = ref(0);
+  const recordingCycle = createRecordingCycle({
+    enabled: loopEnabled,
+    startPpq: loopStartPpq,
+    endPpq: loopEndPpq,
+  });
+  return { loopEnabled, loopStartPpq, loopEndPpq, recordingCycle };
+}
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -20,9 +34,7 @@ function makeTransport(): UseTransportReturn {
     audiblePositionSeconds: ref(0),
     audiblePositionPpq: ref(8),
     tempo: ref(120),
-    loopEnabled: ref(false),
-    loopStartPpq: ref(0),
-    loopEndPpq: ref(0),
+    ...loopState(),
     metronomeEnabled: ref(false),
     playbackLatencySeconds: ref(0),
     play: vi.fn(() => true),
@@ -32,6 +44,7 @@ function makeTransport(): UseTransportReturn {
     setTempo: vi.fn(),
     setLoop: vi.fn(() => true),
     toggleMetronome: vi.fn(() => false),
+    resumeContext: vi.fn(),
     dispose: vi.fn(),
   };
 }

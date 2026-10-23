@@ -5,8 +5,21 @@ import { useMidiRecording } from '@/composables/useMidiRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import type { AddRecordedMidiClipInput } from '@/project/commands';
 import { addAudioTrack, clearHistory, setTempoSegments } from '@/project/commands';
-import { resolveRecordingStartPlan } from '@/project/loop-recording';
+import { createRecordingCycle, resolveRecordingStartPlan } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+
+/** Transport loop refs plus the recording-cycle owner derived from them. */
+function loopState() {
+  const loopEnabled = ref(false);
+  const loopStartPpq = ref(0);
+  const loopEndPpq = ref(0);
+  const recordingCycle = createRecordingCycle({
+    enabled: loopEnabled,
+    startPpq: loopStartPpq,
+    endPpq: loopEndPpq,
+  });
+  return { loopEnabled, loopStartPpq, loopEndPpq, recordingCycle };
+}
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -34,9 +47,7 @@ function makeTransport(playbackLatency = 0, audiblePosition?: number) {
     audiblePositionSeconds: ref(0),
     audiblePositionPpq,
     tempo: ref(120),
-    loopEnabled: ref(false),
-    loopStartPpq: ref(0),
-    loopEndPpq: ref(0),
+    ...loopState(),
     metronomeEnabled: ref(false),
     playbackLatencySeconds: ref(playbackLatency),
     play,

@@ -148,12 +148,10 @@ describe('useTransport', () => {
     expect(transport.isPlaying.value).toBe(false);
   });
 
-  it('actions are no-ops returning false while the engine is not yet created', () => {
+  it('play and stop are no-ops returning false while the engine is not yet created', () => {
     const { transport, handleRef } = setup(null);
     expect(transport.play()).toBe(false);
     expect(transport.stop()).toBe(false);
-    expect(transport.seek(1)).toBe(false);
-    expect(transport.setLoop(0, 4)).toBe(false);
     expect(transport.isPlaying.value).toBe(false);
 
     const mock = createMockHandle();

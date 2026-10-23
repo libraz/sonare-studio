@@ -57,26 +57,6 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 type Transport = ReturnType<typeof useTransport>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 
-/** Replays UI-owned transport state after a fresh engine becomes current. */
-export function restoreEngineTransportState(
-  transport: Pick<
-    Transport,
-    | 'loopEnabled'
-    | 'loopStartPpq'
-    | 'loopEndPpq'
-    | 'metronomeEnabled'
-    | 'setLoop'
-    | 'toggleMetronome'
-  >,
-): void {
-  transport.setLoop(
-    transport.loopStartPpq.value,
-    transport.loopEndPpq.value,
-    transport.loopEnabled.value,
-  );
-  transport.toggleMetronome(transport.metronomeEnabled.value);
-}
-
 /** Drops playback state when its engine is torn down. */
 export function resetEngineTransportState(transport: Pick<Transport, 'isPlaying'>): void {
   transport.isPlaying.value = false;
@@ -662,7 +642,6 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         options.bridge.value = nextBridge;
         options.analyser.value = nextAnalyser;
         options.scope.value = nextScope;
-        restoreEngineTransportState(options.transport);
         clearAudioContextStateBinding();
         disposeCtxState = bindAudioContextState(stagedHandle.ctx, options.ctxState);
         published = true;

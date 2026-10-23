@@ -67,7 +67,7 @@ describe('resolveRecordingStartPlan', () => {
     loopEndPpq: 12,
   };
 
-  it('resolves one shared cycle/count-in decision from stopped transport state', () => {
+  it('resolves one shared punch/count-in decision from stopped transport state', () => {
     expect(
       resolveRecordingStartPlan({
         positionPpq: 8.4,
@@ -86,12 +86,11 @@ describe('resolveRecordingStartPlan', () => {
       countInEndPpq: 8,
       countInPpq: 4,
       countInMode: 'bars',
-      cycle: { startPpq: 8, endPpq: 12 },
       transportOwner: 'audio',
     });
   });
 
-  it('keeps legacy explicit auto-punch named and cycle/count-in independent', () => {
+  it('keeps legacy explicit auto-punch named and count-in independent', () => {
     const plan = resolveAutoPunchRecordingStartPlan({
       positionPpq: 8.4,
       audiblePositionPpq: 8.35,
@@ -106,12 +105,11 @@ describe('resolveRecordingStartPlan', () => {
       punchInPpq: 8,
       mode: 'auto-punch',
       countInMode: 'none',
-      cycle: null,
       transportOwner: 'midi',
     });
   });
 
-  it('keeps cycle behavior for an explicit-start plan at the cycle boundary', () => {
+  it('keeps an explicit-start plan on the cycle boundary', () => {
     expect(
       resolveExplicitRecordingStartPlan({
         positionPpq: 2,
@@ -125,7 +123,6 @@ describe('resolveRecordingStartPlan', () => {
     ).toMatchObject({
       mode: 'explicit-start',
       punchInPpq: 8,
-      cycle: { startPpq: 8, endPpq: 12 },
     });
   });
 });

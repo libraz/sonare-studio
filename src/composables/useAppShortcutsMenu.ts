@@ -202,9 +202,17 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       case 'transport.toEnd':
       case 'transport.nudgeBack':
       case 'transport.nudgeForward':
+        return null;
+      // The loop is locked while a take records, as on the transport bar.
+      case 'transport.toggleLoop':
       case 'transport.setLeftLocator':
       case 'transport.setRightLocator':
-        return firstBlock(engineOff);
+        return firstBlock([
+          options.isRecording?.value ??
+            (options.recording.isRecording.value ||
+              options.midiRecording.isRecording?.value === true),
+          r.recording,
+        ]);
       case 'project.save':
       case 'project.saveAs':
       case 'project.open':

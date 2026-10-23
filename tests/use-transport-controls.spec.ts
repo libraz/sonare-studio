@@ -197,6 +197,7 @@ describe('useTransportControls playback start races', () => {
       seekPpq: vi.fn(),
       setLoop: vi.fn(),
       setTempo: vi.fn(),
+      resumeContext: vi.fn(),
     } as unknown as Parameters<typeof useTransportControls>[0]['transport'];
     const recording = {
       armedTrackId: ref<number | null>(null),
@@ -270,6 +271,7 @@ describe('useTransportControls project end', () => {
       seekPpq: vi.fn(),
       setLoop: vi.fn(),
       setTempo: vi.fn(),
+      resumeContext: vi.fn(),
     } as unknown as Parameters<typeof useTransportControls>[0]['transport'];
     const recording = {
       armedTrackId: ref<number | null>(null),

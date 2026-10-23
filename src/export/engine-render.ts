@@ -53,6 +53,7 @@ import {
   pushGsSetupSysex,
 } from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
+import { replayMidiStateAt, type ScheduledMidiClip } from '@/engine/midi-sync';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import {
   estimatedTailSeconds,
@@ -585,13 +586,17 @@ export async function renderProjectWithEngine(
   const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
   let renderAudioClips: EngineClipSpec[] = sourceAudioClips;
 
-  /** Replays the pre-built program onto a fresh engine (synchronous). */
+  /**
+   * Replays the pre-built program onto a fresh engine (synchronous).
+   *
+   * @returns The MIDI schedules this pass plays.
+   */
   const configureEngine = (
     engine: OfflineRenderEngine,
     pass: RenderPass,
     pagedClips: ReadonlyArray<PagedClipSpec> = [],
     includeClips = true,
-  ): void => {
+  ): ScheduledMidiClip[] => {
     const supportsBusEq = typeof engine.setBusStripEqBandJson === 'function';
     const supportsBusInsertBypass = typeof engine.setBusStripInsertBypassed === 'function';
     // The engine validates sends against already-declared buses, so the bus
@@ -1110,6 +1115,7 @@ export async function renderProjectWithEngine(
       Math.min(MAX_WARP_VOICES, Math.max(DEFAULT_WARP_VOICES, warpedClips)),
     );
     if (includeClips && passClips.length > 0) engine.setClips(passClips as EngineClipSpec[]);
+    return passMidiSchedules;
   };
 
   // The engine reports the longest audible tail once the program is installed;
@@ -1233,6 +1239,7 @@ export async function renderProjectWithEngine(
    */
   const renderWindow = async (
     engine: OfflineRenderEngine,
+    passMidiSchedules: ReadonlyArray<ScheduledMidiClip>,
     stage: string,
     progressStart: number,
     progressSpan: number,
@@ -1253,6 +1260,14 @@ export async function renderProjectWithEngine(
     const right = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     const windowStart = startSample - prerollFrames;
     engine.seekSample(windowStart);
+    // The seek skips every MIDI message before the window; chase the state in effect there.
+    replayMidiStateAt(
+      passMidiSchedules,
+      tempoSegments,
+      sampleRate,
+      samplesToPpq(tempoMap, windowStart, sampleRate),
+      (destinationId, word0) => engine.pushMidiUmp(destinationId, word0),
+    );
     // The priming block runs stopped, so no clip audio is read yet; the pages
     // only have to be in place before the first block that plays.
     engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
@@ -1333,9 +1348,10 @@ export async function renderProjectWithEngine(
             : {},
         );
       }
-      configureEngine(engine, pass, streams?.clipSpecs());
+      const passMidiSchedules = configureEngine(engine, pass, streams?.clipSpecs());
       return await renderWindow(
         engine,
+        passMidiSchedules,
         stage,
         progressStart,
         progressSpan,

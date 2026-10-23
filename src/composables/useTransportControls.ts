@@ -53,6 +53,8 @@ export function useTransportControls(options: TransportControlsOptions) {
   const bbtDisplay = computed(() => (bbtEditing.value ? bbtDraft.value : positionBbt.value));
 
   let autoPunchArming = false;
+  /** Set when a looping transport closed the auto-punch take; cleared by stop or toggling. */
+  let autoPunchTaken = false;
   let disposed = false;
   let playbackStartGeneration = 0;
 
@@ -70,10 +72,15 @@ export function useTransportControls(options: TransportControlsOptions) {
       const generation = ++playbackStartGeneration;
       void options.ensureEngineStarted().then((h) => {
         if (disposed || generation !== playbackStartGeneration || options.isPlaying.value) return;
-        if (h) options.transport.play();
+        if (h) playFromShownPosition();
       });
       return;
     }
+    options.transport.resumeContext();
+    playFromShownPosition();
+  }
+
+  function playFromShownPosition(): void {
     // Playing from the project end would only run on through silence.
     const end = projectEndPpq();
     if (end > 0 && options.positionPpq.value >= end) options.transport.seekPpq(0);
@@ -153,6 +160,7 @@ export function useTransportControls(options: TransportControlsOptions) {
 
   function toggleAutoPunch(): void {
     autoPunchEnabled.value = !autoPunchEnabled.value;
+    autoPunchTaken = false;
   }
 
   function onSeek(ppq: number): void {
@@ -172,7 +180,9 @@ export function useTransportControls(options: TransportControlsOptions) {
   }
 
   watch(options.isPlaying, (playing) => {
-    if (!playing) options.onStopped();
+    if (playing) return;
+    autoPunchTaken = false;
+    options.onStopped();
   });
 
   watch(
@@ -204,17 +214,23 @@ export function useTransportControls(options: TransportControlsOptions) {
     if (end > 0 && previous < end && ppq >= end) stopPlayback();
   });
 
-  watch(options.positionPpq, (ppq) => {
+  watch(options.positionPpq, (ppq, previous) => {
     if (!autoPunchEnabled.value || !options.isPlaying.value) return;
     if (options.recording.armedTrackId.value === null || !hasLocatorWindow.value) return;
     if (options.recording.isRecording.value) {
       // Close on the recorder's latency-extended boundary: render position
-      // reaches the right locator `offset` samples before capture does.
+      // reaches the right locator `offset` samples before capture does. A
+      // looping transport wraps at the right locator first, so the wrap closes it.
       const closeAtPpq = options.recording.capturePunchOutPpq();
-      if (closeAtPpq !== null && ppq >= closeAtPpq) void options.recording.stopRecord();
+      const wrapped = options.loopEnabled.value && ppq < previous - 1e-9;
+      if (wrapped || (closeAtPpq !== null && ppq >= closeAtPpq)) {
+        autoPunchTaken = wrapped;
+        void options.recording.stopRecord();
+      }
       return;
     }
-    if (autoPunchArming || ppq >= options.loopEndPpq.value) return;
+    // One take per pass of the locator window: a wrap does not punch in again.
+    if (autoPunchArming || autoPunchTaken || ppq >= options.loopEndPpq.value) return;
     // Punch in at the left locator when the playhead is still approaching it
     // (the engine opens a sample-accurate window there), or at the current
     // position when playback started inside the window — otherwise starting

@@ -230,6 +230,9 @@ export function useRecordingControls(options: RecordingControlsOptions) {
     }
     const midiArmed = midiRecording.armedTrackId.value !== null;
     const audioArmed = recording.armedTrackId.value !== null;
+    if (!midiArmed && !audioArmed) return;
+    // Recording starts the transport only after async setup, outside this gesture.
+    transport.resumeContext();
     if (midiArmed && audioArmed) {
       const generation = ++sharedRecordGeneration;
       void (async () => {

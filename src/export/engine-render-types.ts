@@ -73,6 +73,7 @@ export type OfflineRenderEngine = Pick<
   | 'setWarpVoiceCapacity'
   | 'warpStretchOverflowCount'
   | 'setMidiClips'
+  | 'pushMidiUmp'
   | 'setSynthInstrument'
   | 'loadSoundFont'
   | 'setSf2Instrument'

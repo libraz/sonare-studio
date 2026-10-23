@@ -1,9 +1,14 @@
 /**
- * Loop-recording split helpers. The libsonare Project API can create internal
- * takes, but studio recordings must ingest every pass into OPFS assets first,
- * so the asset slicing stays in JS.
+ * Loop-recording split helpers and the recording-cycle owner. The libsonare
+ * Project API can create internal takes, but studio recordings must ingest
+ * every pass into OPFS assets first, so the asset slicing stays in JS.
+ *
+ * Whether a take cycles is decided by {@link createRecordingCycle} from the
+ * live transport loop, and the loop is locked while any take records, so the
+ * loop that interprets a capture is always the loop the transport played.
  */
 
+import { computed, type Ref, ref } from 'vue';
 import { countInStartPpq } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 
@@ -63,14 +68,6 @@ export interface RecordingStartPlan {
   countInSpan: { startPpq: number; endPpq: number } | null;
   /** Short alias for the resolved count-in span. */
   countIn: { startPpq: number; endPpq: number } | null;
-  /** Active cycle window, if this plan starts cycle recording at its boundary. */
-  cycle: { startPpq: number; endPpq: number } | null;
-  /** Explicit name for the resolved cycle bounds. */
-  cycleBounds: { startPpq: number; endPpq: number } | null;
-  /** Cycle start bound, duplicated as scalar fields for lightweight consumers. */
-  cycleStartPpq: number | null;
-  /** Cycle end bound, duplicated as scalar fields for lightweight consumers. */
-  cycleEndPpq: number | null;
   /** Whether this request is normal, explicitly placed, or auto-punch. */
   mode: RecordingStartMode;
   /** The single recorder/coordination owner allowed to seek and play. */
@@ -182,10 +179,6 @@ export function resolveRecordingStartPlan(
       )
     : punchInPpq;
   const countInPpq = Math.max(0, punchInPpq - countInStart);
-  const cycle =
-    mode !== 'auto-punch' && validLoop && Math.abs(punchInPpq - options.loopStartPpq) < 1e-6
-      ? { startPpq: options.loopStartPpq, endPpq: options.loopEndPpq }
-      : null;
   const countInMode: RecordingCountInMode = countInPpq > 0 ? 'bars' : 'none';
   const countInSpan =
     countInMode === 'bars' ? { startPpq: countInStart, endPpq: punchInPpq } : null;
@@ -200,13 +193,83 @@ export function resolveRecordingStartPlan(
     countInMode,
     countInSpan,
     countIn: countInSpan,
-    cycle,
-    cycleBounds: cycle,
-    cycleStartPpq: cycle?.startPpq ?? null,
-    cycleEndPpq: cycle?.endPpq ?? null,
     mode,
     transportOwner: options.transportOwner ?? 'audio',
     originPpq,
+  };
+}
+
+/** The loop a take records through, with the punch it entered the loop at. */
+export interface RecordingCycleWindow {
+  /** Punch-in inside the loop; the first pass covers [punchInPpq, endPpq). */
+  punchInPpq: number;
+  /** Loop start the transport wraps back to. */
+  startPpq: number;
+  /** Loop end where the transport wraps. */
+  endPpq: number;
+}
+
+/** The transport loop a {@link RecordingCycle} derives every window from. */
+export interface RecordingCycleLoop {
+  enabled: Readonly<Ref<boolean>>;
+  startPpq: Readonly<Ref<number>>;
+  endPpq: Readonly<Ref<number>>;
+}
+
+/** One recording take registered with a {@link RecordingCycle}. */
+export interface RecordingCycleTake {
+  /** The cycle this take records through, read from the live loop; null for a linear take. */
+  window(): RecordingCycleWindow | null;
+  /** Releases the take; the loop unlocks once no take remains. Idempotent. */
+  end(): void;
+}
+
+/**
+ * Recording-cycle state for one transport, shared by audio recording, MIDI
+ * recording and auto-punch.
+ */
+export interface RecordingCycle {
+  /** True while any take records; the transport refuses loop edits meanwhile. */
+  readonly active: Readonly<Ref<boolean>>;
+  /** Registers a take started from `plan`. */
+  begin(plan: Pick<RecordingStartPlan, 'punchInPpq' | 'mode'>): RecordingCycleTake;
+}
+
+/**
+ * Creates the recording-cycle owner for a transport loop. A take cycles when
+ * it is not an auto-punch, the loop is enabled and valid, and its punch lies
+ * inside the loop; the transport then wraps from the loop end to its start.
+ */
+export function createRecordingCycle(loop: RecordingCycleLoop): RecordingCycle {
+  const openTakes = ref(0);
+  return {
+    active: computed(() => openTakes.value > 0),
+    begin(plan) {
+      openTakes.value++;
+      let open = true;
+      return {
+        window() {
+          const startPpq = loop.startPpq.value;
+          const endPpq = loop.endPpq.value;
+          const cycles =
+            plan.mode !== 'auto-punch' &&
+            loop.enabled.value &&
+            Number.isFinite(startPpq) &&
+            Number.isFinite(endPpq) &&
+            endPpq > startPpq &&
+            plan.punchInPpq >= startPpq - 1e-6 &&
+            plan.punchInPpq < endPpq - 1e-6;
+          return cycles
+            ? { punchInPpq: Math.max(startPpq, plan.punchInPpq), startPpq, endPpq }
+            : null;
+        },
+        end() {
+          if (!open) return;
+          open = false;
+          openTakes.value--;
+        },
+      };
+    },
   };
 }
 

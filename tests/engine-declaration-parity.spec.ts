@@ -187,6 +187,9 @@ class DeclarationRecorder implements OfflineRenderEngine {
   ): void {
     this.record('setBusStripInsertParamByName', busId, insertIndex, paramName, value);
   }
+  pushMidiUmp(destinationId: number, word0: number): void {
+    this.record('pushMidiUmp', destinationId, word0);
+  }
   seekSample(sample: number): void {
     this.record('seekSample', sample);
   }

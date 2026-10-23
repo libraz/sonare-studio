@@ -85,6 +85,10 @@ const loadBlocked = computed(() =>
 const engineBlocked = computed(() =>
   firstBlock(loadBlocked.value, [!props.handle, t.value.reasons.engineOff]),
 );
+// A take is interpreted with the loop it plays through, so the loop is fixed while one records.
+const loopEditBlocked = computed(() =>
+  firstBlock(loadBlocked.value, [props.isRecording, t.value.reasons.recording]),
+);
 const stopBlocked = computed(() =>
   firstBlock(engineBlocked.value, [!props.isPlaying, t.value.shell.transport.reasons.notPlaying]),
 );
@@ -98,7 +102,7 @@ const recordBlocked = computed(() => {
   );
 });
 const metronomeVolumeBlocked = computed(() =>
-  firstBlock(engineBlocked.value, [
+  firstBlock(loadBlocked.value, [
     !props.metronomeEnabled,
     t.value.shell.transport.reasons.metronomeOff,
   ]),
@@ -238,9 +242,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!!engineBlocked"
+        :disabled="!!loadBlocked"
         :aria-label="t.shell.transport.goToStart"
-        v-tooltip="{ text: t.shell.transport.goToStartTitle, shortcut: 'transport.toStart', reason: engineBlocked }"
+        v-tooltip="{ text: t.shell.transport.goToStartTitle, shortcut: 'transport.toStart', reason: loadBlocked }"
         @click="emit('seekToStart')"
       >
         <TransportIcon name="to-start" />
@@ -248,9 +252,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!!engineBlocked"
+        :disabled="!!loadBlocked"
         :aria-label="t.shell.transport.nudgeBack"
-        v-tooltip="{ text: t.shell.transport.nudgeBackTitle, shortcut: 'transport.nudgeBack', reason: engineBlocked }"
+        v-tooltip="{ text: t.shell.transport.nudgeBackTitle, shortcut: 'transport.nudgeBack', reason: loadBlocked }"
         @click="emit('nudgeByBar', -1)"
       >
         <TransportIcon name="rewind" />
@@ -258,9 +262,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!!engineBlocked"
+        :disabled="!!loadBlocked"
         :aria-label="t.shell.transport.nudgeForward"
-        v-tooltip="{ text: t.shell.transport.nudgeForwardTitle, shortcut: 'transport.nudgeForward', reason: engineBlocked }"
+        v-tooltip="{ text: t.shell.transport.nudgeForwardTitle, shortcut: 'transport.nudgeForward', reason: loadBlocked }"
         @click="emit('nudgeByBar', 1)"
       >
         <TransportIcon name="forward" />
@@ -268,9 +272,9 @@ function onRetuneInput(event: Event): void {
       <button
         type="button"
         class="transport-nav press-feedback"
-        :disabled="!!engineBlocked"
+        :disabled="!!loadBlocked"
         :aria-label="t.shell.transport.goToEnd"
-        v-tooltip="{ text: t.shell.transport.goToEndTitle, shortcut: 'transport.toEnd', reason: engineBlocked }"
+        v-tooltip="{ text: t.shell.transport.goToEndTitle, shortcut: 'transport.toEnd', reason: loadBlocked }"
         @click="emit('seekToEnd')"
       >
         <TransportIcon name="to-end" />
@@ -280,13 +284,13 @@ function onRetuneInput(event: Event): void {
         type="button"
         class="transport-key cycle press-feedback"
         :class="{ active: loopEnabled }"
-        :disabled="!!engineBlocked"
+        :disabled="!!loopEditBlocked"
         :aria-label="t.shell.transport.cycle"
         :aria-pressed="loopEnabled"
         v-tooltip="{
           text: t.shell.transport.cycleTitle,
           shortcut: 'transport.toggleLoop',
-          reason: engineBlocked,
+          reason: loopEditBlocked,
         }"
         @click="emit('toggleLoop')"
       >
@@ -530,10 +534,10 @@ function onRetuneInput(event: Event): void {
         type="button"
         class="click-toggle press-feedback"
         :class="{ active: metronomeEnabled }"
-        :disabled="!!engineBlocked"
+        :disabled="!!loadBlocked"
         :aria-label="t.shell.transport.metronome"
         :aria-pressed="metronomeEnabled"
-        v-tooltip="{ text: t.shell.transport.metronomeTitle, reason: engineBlocked }"
+        v-tooltip="{ text: t.shell.transport.metronomeTitle, reason: loadBlocked }"
         @click="emit('toggleMetronome')"
       >
         <TransportIcon name="metronome" />
@@ -560,12 +564,12 @@ function onRetuneInput(event: Event): void {
         <button
           type="button"
           class="transport-nav locator press-feedback"
-          :disabled="!!engineBlocked"
+          :disabled="!!loopEditBlocked"
           :aria-label="t.shell.transport.setLeftLocator"
           v-tooltip="{
             text: t.shell.transport.setLeftLocatorTitle,
             shortcut: 'transport.setLeftLocator',
-            reason: engineBlocked,
+            reason: loopEditBlocked,
           }"
           @click="emit('setLeftLocator')"
         >
@@ -574,12 +578,12 @@ function onRetuneInput(event: Event): void {
         <button
           type="button"
           class="transport-nav locator press-feedback"
-          :disabled="!!engineBlocked"
+          :disabled="!!loopEditBlocked"
           :aria-label="t.shell.transport.setRightLocator"
           v-tooltip="{
             text: t.shell.transport.setRightLocatorTitle,
             shortcut: 'transport.setRightLocator',
-            reason: engineBlocked,
+            reason: loopEditBlocked,
           }"
           @click="emit('setRightLocator')"
         >

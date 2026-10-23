@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
+import { midiStateAtPpq, type ScheduledMidiClip } from '@/engine/midi-sync';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import type { OfflineRenderEngine } from '@/export/engine-render';
@@ -192,6 +193,9 @@ class FakeEngine implements OfflineRenderEngine {
   }
   pushMidiSysex(destinationId: number, data: Uint8Array, renderFrame = -1): void {
     this.record('pushMidiSysex', destinationId, data, renderFrame);
+  }
+  pushMidiUmp(destinationId: number, word0: number): void {
+    this.record('pushMidiUmp', destinationId, word0);
   }
   seekSample(sample: number): void {
     this.record('seekSample', sample);
@@ -2843,6 +2847,41 @@ describe('renderProjectWithEngine', () => {
     expect(firstProcessIndex).toBeLessThan(settleIndex);
     expect(settleIndex).toBeLessThan(playIndex);
     expect(callNames.lastIndexOf('stop')).toBeGreaterThan(playIndex);
+  });
+
+  it('chases MIDI channel state set before a range that starts past the pre-roll', async () => {
+    const doc = makeDoc();
+    doc.tracks[1].mute = true;
+    const clip = doc.tracks[0].clips[0];
+    clip.lengthPpq = 64;
+    clip.notes = [{ pitch: 60, velocity: 96, startPpq: 48, durationPpq: 1, channel: 0 }];
+    clip.programChangeLanes = [{ channel: 0, points: [{ ppq: 1, program: 12 }] }];
+    clip.ccLanes = [{ controller: 11, channel: 0, points: [{ ppq: 2, value: 40 }] }];
+    const engine = new FakeEngine();
+
+    // PPQ 48 is 24 s in, beyond the 10 s pre-roll ceiling.
+    await renderProjectWithEngine(doc, {
+      ...renderOptions(engine),
+      range: { startPpq: 48, endPpq: 49 },
+    });
+
+    const callNames = engine.calls.map(([name]) => name);
+    const pushed = engine.named('pushMidiUmp').map(([, destinationId, word0]) => ({
+      destinationId,
+      word0,
+    }));
+    const windowStart = engine.named('seekSample')[0][1] as number;
+    const schedules = engine.named('setMidiClips')[0][1] as ScheduledMidiClip[];
+    expect(pushed.map(({ word0 }) => word0)).toEqual(
+      expect.arrayContaining([pcWord(0, 12), ccWord(0, 11, 40)]),
+    );
+    // The same state live playback restores at that position.
+    expect(pushed).toEqual(
+      midiStateAtPpq(schedules, doc.tempoSegments, 48000, windowStart / SAMPLES_PER_PPQ),
+    );
+    expect(callNames.indexOf('seekSample')).toBeLessThan(callNames.indexOf('pushMidiUmp'));
+    expect(callNames.lastIndexOf('pushMidiUmp')).toBeLessThan(callNames.indexOf('process'));
+    expect(callNames.lastIndexOf('pushMidiUmp')).toBeLessThan(callNames.indexOf('play'));
   });
 
   it('reports progress and yields between long render checkpoints', async () => {

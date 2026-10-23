@@ -402,7 +402,7 @@ describe('useAppShortcutsMenu', () => {
     expect(armedTrackIds.value).toEqual([3]);
   });
 
-  it('disables note-only Edit rows without a note selection and locators without an engine', async () => {
+  it('disables note-only Edit rows without a note selection while locators stay available', async () => {
     const store = useProjectStore();
     await store.init();
     store.selection = new Set();
@@ -421,9 +421,31 @@ describe('useAppShortcutsMenu', () => {
     ]) {
       expect(edit(id)?.disabledReason).toBeTruthy();
     }
-    expect(transport('transport.setLeftLocator')?.disabledReason).toBeTruthy();
-    expect(transport('transport.setRightLocator')?.disabledReason).toBeTruthy();
+    expect(transport('transport.setLeftLocator')?.disabledReason).toBeFalsy();
+    expect(transport('transport.setRightLocator')?.disabledReason).toBeFalsy();
     store.dispose();
+  });
+
+  it('keeps seek rows available without an engine and locks the loop rows while recording', () => {
+    const isRecording = ref(false);
+    const { menu } = harness(
+      { value: false },
+      {
+        recording: { armedTrackId: ref<number | null>(null), isRecording } as never,
+      },
+    );
+    const transport = (id: string) =>
+      menu.menuBarModel.value
+        .find((entry) => entry.id === 'transport')
+        ?.items.find((entry) => entry.id === id);
+    const loopRows = ['transport.setLeftLocator', 'transport.setRightLocator'];
+
+    for (const id of ['transport.toStart', 'transport.toEnd', ...loopRows]) {
+      expect(transport(id)?.disabledReason ?? null).toBeNull();
+    }
+    isRecording.value = true;
+    for (const id of loopRows) expect(transport(id)?.disabledReason).toBeTruthy();
+    expect(transport('transport.toStart')?.disabledReason ?? null).toBeNull();
   });
 
   it('disables note Paste until notes have been copied', async () => {

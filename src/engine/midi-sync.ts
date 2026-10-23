@@ -520,33 +520,23 @@ export interface MidiStateEvent {
 }
 
 /**
- * Collects the last stateful MIDI messages at or before a timeline position.
+ * Collects the last stateful MIDI messages at or before a timeline position in
+ * compiled clip schedules.
  *
- * The live engine schedules clip events only once, so a seek skips their prior
- * bank/program and expression messages. Replaying the final value of each
- * state key (CC, program, bend and pressure) recreates the instrument state
- * without retriggering notes.
+ * The engine schedules clip events only once, so starting mid-timeline skips
+ * their prior bank/program and expression messages. Replaying the final value
+ * of each state key (CC, program, bend and pressure) recreates the instrument
+ * state without retriggering notes.
  */
 export function midiStateAtPpq(
-  tracks: ReadonlyArray<EditorTrack>,
-  clips: ReadonlyArray<EditorClip>,
+  schedules: ReadonlyArray<ScheduledMidiClip>,
   tempoSegments: ReadonlyArray<TempoSegment>,
   sampleRate: number,
   ppq: number,
-  projectExternalMidi?: ExternalMidiInstrument | null,
-  midiDestinationForTrack?: (track: EditorTrack) => number,
 ): MidiStateEvent[] {
   if (!Number.isFinite(ppq)) return [];
   const tempoMap = normalizeTempoMap(tempoSegments);
   const targetFrame = ppqToSamples(tempoMap, Math.max(0, ppq), sampleRate);
-  const schedules = buildMidiClipSchedules(
-    tracks,
-    clips,
-    tempoSegments,
-    sampleRate,
-    projectExternalMidi,
-    midiDestinationForTrack,
-  );
   const latest = new Map<string, MidiStateEvent & { frame: number }>();
   for (const schedule of schedules) {
     for (const event of schedule.events) {
@@ -595,6 +585,28 @@ export function midiStateAtPpq(
   return [...latest.values()]
     .sort((a, b) => a.frame - b.frame || a.destinationId - b.destinationId || a.word0 - b.word0)
     .map(({ destinationId, word0 }) => ({ destinationId, word0 }));
+}
+
+/**
+ * Pushes the MIDI channel state in effect at `ppq` to every destination the
+ * schedules play. Every playback or render start at a position goes through
+ * this one entry, so live seeks and offline renders hear the same state.
+ *
+ * @param push Sends one channel-voice word to a destination.
+ * @param destinationIds Limits the replay to these destinations when given.
+ */
+export function replayMidiStateAt(
+  schedules: ReadonlyArray<ScheduledMidiClip>,
+  tempoSegments: ReadonlyArray<TempoSegment>,
+  sampleRate: number,
+  ppq: number,
+  push: (destinationId: number, word0: number) => void,
+  destinationIds?: ReadonlySet<number>,
+): void {
+  for (const event of midiStateAtPpq(schedules, tempoSegments, sampleRate, ppq)) {
+    if (destinationIds && !destinationIds.has(event.destinationId)) continue;
+    push(event.destinationId, event.word0);
+  }
 }
 
 /** Options for {@link createMidiSync}. */
@@ -670,11 +682,8 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
   let reboundDestinations = new Set<number>();
   let lastStateSource:
     | {
-        tracks: ReadonlyArray<EditorTrack>;
-        clips: ReadonlyArray<EditorClip>;
+        schedules: ReadonlyArray<ScheduledMidiClip>;
         tempoSegments: ReadonlyArray<TempoSegment>;
-        projectExternalMidi?: ExternalMidiInstrument | null;
-        destinationByTrack: Map<number, number>;
       }
     | undefined;
 
@@ -926,13 +935,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
       lastClipsKey = clipsKey;
       clipCount = schedules.length;
     }
-    lastStateSource = {
-      tracks,
-      clips,
-      tempoSegments,
-      projectExternalMidi,
-      destinationByTrack,
-    };
+    lastStateSource = { schedules, tempoSegments };
   };
 
   return {
@@ -940,19 +943,14 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     scheduledClipCount: () => clipCount,
     restoreStateAtPpq: (ppq, renderFrame, destinationIds) => {
       if (!lastStateSource) return;
-      const events = midiStateAtPpq(
-        lastStateSource.tracks,
-        lastStateSource.clips,
+      replayMidiStateAt(
+        lastStateSource.schedules,
         lastStateSource.tempoSegments,
         handle.ctx.sampleRate,
         ppq,
-        lastStateSource.projectExternalMidi,
-        (track) => lastStateSource?.destinationByTrack.get(track.id) ?? track.id,
+        (destinationId, word0) => handle.engine.pushMidiUmp(destinationId, word0, renderFrame),
+        destinationIds,
       );
-      for (const event of events) {
-        if (destinationIds && !destinationIds.has(event.destinationId)) continue;
-        handle.engine.pushMidiUmp(event.destinationId, event.word0, renderFrame);
-      }
     },
     reboundDestinations: () => reboundDestinations,
     mediaIssues: () => currentMediaIssues.map((issue) => ({ ...issue })),

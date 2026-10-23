@@ -107,10 +107,14 @@ describe('TransportBar recording settings', () => {
     expect(wrapper.get('.metronome-volume-input').attributes('disabled')).toBeDefined();
   });
 
-  it('disables engine-bound transport controls until the engine boots', () => {
+  it('disables record until the engine boots but keeps held transport state editable', () => {
     const wrapper = mountBar({ handle: null });
     expect(wrapper.get('.record-button').attributes('disabled')).toBeDefined();
-    expect(wrapper.get('.transport-key.cycle').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.transport-key.cycle').attributes('disabled')).toBeUndefined();
+    expect(wrapper.get('.click-toggle').attributes('disabled')).toBeUndefined();
+    for (const nav of wrapper.findAll('.transport-nav')) {
+      expect(nav.attributes('disabled')).toBeUndefined();
+    }
     expect(wrapper.get('.transport-key.play').attributes('disabled')).toBeUndefined();
   });
 

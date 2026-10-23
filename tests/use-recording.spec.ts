@@ -19,9 +19,23 @@ import {
   setTrackRecordInputDeviceId,
   undo,
 } from '@/project/commands';
+import { createRecordingCycle } from '@/project/loop-recording';
 import { getProject, useProjectStore } from '@/project/store';
 import { MESSAGES } from '@/ui/i18n';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
+
+/** Transport loop refs plus the recording-cycle owner derived from them. */
+function loopState() {
+  const loopEnabled = ref(false);
+  const loopStartPpq = ref(0);
+  const loopEndPpq = ref(0);
+  const recordingCycle = createRecordingCycle({
+    enabled: loopEnabled,
+    startPpq: loopStartPpq,
+    endPpq: loopEndPpq,
+  });
+  return { loopEnabled, loopStartPpq, loopEndPpq, recordingCycle };
+}
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -59,9 +73,7 @@ function makeTransport(tempoBpm = 120) {
     audiblePositionSeconds: ref(0),
     audiblePositionPpq: positionPpq,
     tempo,
-    loopEnabled: ref(false),
-    loopStartPpq: ref(0),
-    loopEndPpq: ref(0),
+    ...loopState(),
     metronomeEnabled,
     playbackLatencySeconds: ref(0),
     play,
@@ -1587,7 +1599,7 @@ describe('useRecording', () => {
       expect(clip?.lengthPpq).toBe(1);
     });
 
-    it('falls back to one linear clip when fewer than two passes complete', async () => {
+    it('keeps one clip clamped to the loop when fewer than two passes complete', async () => {
       const { recording, fake, transport } = setup();
       const trackId = addAudioTrack();
       recording.arm(trackId);
@@ -1608,7 +1620,8 @@ describe('useRecording', () => {
       expect(clip?.takes).toBeUndefined();
       expect(clip?.compSegments).toBeUndefined();
       expect(clip?.startPpq).toBe(0);
-      expect(clip?.lengthPpq).toBeCloseTo(6, 10); // 3 s at 120 BPM
+      // The transport wrapped at the loop end, so the clip stays inside the loop.
+      expect(clip?.lengthPpq).toBeCloseTo(4, 10);
     });
 
     it('ignores the loop window when looping is disabled', async () => {
@@ -1630,24 +1643,37 @@ describe('useRecording', () => {
       expect(clip?.lengthPpq).toBeCloseTo(10, 10); // 5 s at 120 BPM
     });
 
-    it('records one linear take when starting away from the loop start', async () => {
+    it('cycles a take punched in mid-loop, keeping every pass inside the loop', async () => {
       const { recording, fake, transport } = setup();
       const trackId = addAudioTrack();
       recording.arm(trackId);
       setLoop(transport, 0, 4);
-      transport.positionSeconds.value = 0.5; // 1 PPQ, not the loop start
-      fake.setResult({
-        channels: [makeCapture(cycleFrames * 2.5)],
-        sampleRate: 48000,
-        startPpq: 0, // overwritten by start() with the real punch position
-      });
+      transport.positionSeconds.value = 0.5; // 1 PPQ, inside the 0..4 loop
+      // The engine captures [1, 4) on every pass: 2.5 passes of 3 PPQ.
+      const passFrames = 72000;
+      const capture = new Float32Array(passFrames * 2.5);
+      for (let i = 0; i < capture.length; i++) capture[i] = Math.floor(i / passFrames) + 1;
+      fake.setResult({ channels: [capture], sampleRate: 48000, startPpq: 0 });
+      ingestMock.mockImplementation(async (channels, sampleRate, name) => ({
+        id: name,
+        name,
+        sampleRate,
+        numChannels: channels.length,
+        numFrames: channels[0]?.length ?? 0,
+      }));
 
       await recording.record();
       const clipId = await recording.stopRecord();
-      expect(ingestMock).toHaveBeenCalledTimes(1);
-      const clip = store.clips.find((c) => c.id === clipId);
-      expect(clip?.takes).toBeUndefined();
-      expect(clip?.startPpq).toBe(1);
+      const clips = store.clips.filter((c) => c.kind === 'audio');
+      expect(clips).toHaveLength(1);
+      expect(clips[0].id).toBe(clipId);
+      expect(clips[0]).toMatchObject({ startPpq: 1, lengthPpq: 3 });
+      expect(clips[0].takes).toHaveLength(2);
+      for (const [index, call] of ingestMock.mock.calls.entries()) {
+        expect(call[0][0].length).toBe(passFrames);
+        expect(call[0][0][0]).toBe(index + 1);
+        expect(call[0][0][passFrames - 1]).toBe(index + 1);
+      }
     });
   });
 });

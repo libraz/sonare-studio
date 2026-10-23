@@ -2,6 +2,7 @@ import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
 import { clamp01 } from '@/lib/math';
+import { createRecordingCycle, type RecordingCycle } from '@/project/loop-recording';
 import {
   DEFAULT_TEMPO_BPM,
   normalizeTempoMap,
@@ -56,6 +57,8 @@ export interface UseTransportReturn {
   loopEndPpq: Ref<number>;
   /** True when the metronome click is enabled. */
   metronomeEnabled: Ref<boolean>;
+  /** Recording-cycle owner over this transport's loop; loop edits are refused while it is active. */
+  recordingCycle: RecordingCycle;
   /**
    * Estimated delay from a transport command to the audible output, in seconds.
    * This is the AudioContext base/output latency and is refreshed when an
@@ -82,7 +85,8 @@ export interface UseTransportReturn {
    *
    * @param seconds Target timeline position in seconds.
    * @param sampleTime Absolute AudioContext sample time to apply the seek at; omit for ASAP.
-   * @returns False when the engine is unavailable or the command was rejected.
+   * @returns False when the engine rejected the command; without an engine the
+   *   position is held and applied when one attaches.
    */
   seek(seconds: number, sampleTime?: number): boolean;
   /**
@@ -90,9 +94,15 @@ export interface UseTransportReturn {
    *
    * @param ppq Target timeline position in quarter-note pulses (fractional allowed).
    * @param sampleTime Absolute AudioContext sample time to apply the seek at; omit for ASAP.
-   * @returns False when the engine is unavailable or the command was rejected.
+   * @returns False when the engine rejected the command; without an engine the
+   *   position is held and applied when one attaches.
    */
   seekPpq(ppq: number, sampleTime?: number): boolean;
+  /**
+   * Asks a suspended AudioContext to resume. Call it synchronously inside the
+   * user gesture that starts sound: a suspended context accepts play but never advances.
+   */
+  resumeContext(): void;
   /** Registers the engine-specific MIDI-state recovery hook used after seeks. */
   setMidiStateRestorer(restorer: ((ppq: number, renderFrame?: number) => void) | null): void;
   /**
@@ -109,7 +119,7 @@ export interface UseTransportReturn {
    * Replaces the tempo map used for PPQ <-> seconds playhead conversions.
    * Keeps the playhead's musical position: `positionPpq` is preserved and
    * `positionSeconds` is re-derived through the new map, so a tempo edit does
-   * not move the playhead in bars.
+   * not move the playhead in bars. A stopped engine is re-seeked to match.
    *
    * @param segments Project tempo segments (normalized internally; the current
    *   `tempo` is the fallback when no usable segment exists).
@@ -121,7 +131,8 @@ export interface UseTransportReturn {
    * @param startPpq Loop start in quarter-note pulses.
    * @param endPpq Loop end in quarter-note pulses.
    * @param enabled Whether the loop is active (default true).
-   * @returns False when the engine is unavailable or the command was rejected.
+   * @returns False while a take is recording or when the engine rejected the
+   *   command; without an engine the region is held and applied when one attaches.
    */
   setLoop(startPpq: number, endPpq: number, enabled?: boolean): boolean;
   /**
@@ -129,7 +140,7 @@ export interface UseTransportReturn {
    *
    * @param enabled Explicit target state; omit to flip the current state.
    * @param beatGain Optional beat-click gain (0..1); accent gain tracks it at 2x.
-   * @returns The resulting metronome state (unchanged when the engine is unavailable).
+   * @returns The resulting metronome state (unchanged when the engine refused it).
    */
   toggleMetronome(enabled?: boolean, beatGain?: number): boolean;
   /** Stops position polling and releases the telemetry subscription. Called automatically on scope dispose. */
@@ -140,8 +151,9 @@ export interface UseTransportReturn {
  * Vue composable wrapping the libsonare engine transport with reactive state.
  *
  * The engine may be created lazily (after a user gesture): pass a ref or getter
- * that resolves to `null`/`undefined` until the engine exists. Actions invoked
- * before the engine is available are no-ops returning `false`.
+ * that resolves to `null`/`undefined` until the engine exists. Position, loop
+ * and metronome are held here and pushed to each engine the first time it is
+ * used; play and stop are no-ops returning `false` without an engine.
  *
  * Units: all musical positions are PPQ (quarter-note pulses, 1.0 = one quarter
  * note, fractions allowed); `sampleTime` arguments are absolute AudioContext
@@ -173,6 +185,11 @@ export function useTransport(
   const loopEndPpq = ref(0);
   const metronomeEnabled = ref(false);
   const playbackLatencySeconds = ref(0);
+  const recordingCycle = createRecordingCycle({
+    enabled: loopEnabled,
+    startPpq: loopStartPpq,
+    endPpq: loopEndPpq,
+  });
 
   /** Tempo map mirroring what the transport sync sends to the engine. */
   let tempoMap = normalizeTempoMap([], DEFAULT_TEMPO_BPM);
@@ -200,6 +217,13 @@ export function useTransport(
     commit: () => void;
   }> = [];
   let restoreMidiState: ((ppq: number, renderFrame?: number) => void) | null = null;
+  /** Last metronome beat gain requested; replayed with the metronome state. */
+  let metronomeBeatGain: number | undefined;
+
+  const metronomeConfig = (enabled: boolean, beatGain: number | undefined) => ({
+    enabled,
+    ...(beatGain === undefined ? {} : { beatGain, accentGain: Math.min(1, beatGain * 2) }),
+  });
 
   const telemetryPositionSample = (telemetry: SonareEngineTelemetryRecord): number => {
     if (Number.isFinite(telemetry.timelineSample)) return telemetry.timelineSample;
@@ -218,7 +242,21 @@ export function useTransport(
     for (const action of due) action.commit();
   };
 
-  /** Subscribes the position listener to the handle's engine (resubscribes when the engine changes). */
+  /**
+   * Pushes the studio-held loop, metronome and position to an engine seeing
+   * them for the first time. The seek is sample-based because the tempo map
+   * reaches the engine over the port, unordered with the command ring.
+   */
+  const applyTransportState = (handle: EngineHandle): void => {
+    handle.engine.transport.setLoop(loopStartPpq.value, loopEndPpq.value, loopEnabled.value);
+    handle.engine.setMetronome(metronomeConfig(metronomeEnabled.value, metronomeBeatGain));
+    handle.engine.transport.seekSeconds(ppqToSeconds(tempoMap, positionPpq.value));
+  };
+
+  /**
+   * Subscribes the position listener to the handle's engine; an engine seen for
+   * the first time also receives the held transport state.
+   */
   const ensureTelemetrySubscription = (handle: EngineHandle): void => {
     updatePlaybackLatency(handle);
     if (subscribedEngine === handle.engine) return;
@@ -241,6 +279,7 @@ export function useTransport(
       },
     );
     subscribedEngine = handle.engine;
+    applyTransportState(handle);
   };
 
   const stopPolling = (): void => {
@@ -319,41 +358,54 @@ export function useTransport(
   };
 
   const seek = (seconds: number, sampleTime?: number): boolean => {
+    const commit = (): void => {
+      positionSeconds.value = seconds;
+      positionPpq.value = secondsToPpq(tempoMap, seconds);
+      audiblePositionSeconds.value = seconds;
+      audiblePositionPpq.value = secondsToPpq(tempoMap, seconds);
+    };
     const handle = resolveHandle();
-    if (!handle) return false;
+    if (!handle) {
+      commit();
+      return true;
+    }
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekSeconds(seconds, sampleTime);
     if (ok) {
       if (sampleTime === undefined) handle.engine.pushMidiPanic();
       else handle.engine.pushMidiPanic(sampleTime);
       restoreMidiState?.(secondsToPpq(tempoMap, seconds), sampleTime);
-      commitAtSampleTime(handle, sampleTime, () => {
-        positionSeconds.value = seconds;
-        positionPpq.value = secondsToPpq(tempoMap, seconds);
-        audiblePositionSeconds.value = seconds;
-        audiblePositionPpq.value = secondsToPpq(tempoMap, seconds);
-      });
+      commitAtSampleTime(handle, sampleTime, commit);
     }
     return ok;
   };
 
   const seekPpq = (ppq: number, sampleTime?: number): boolean => {
+    const commit = (): void => {
+      positionPpq.value = ppq;
+      positionSeconds.value = ppqToSeconds(tempoMap, ppq);
+      audiblePositionPpq.value = ppq;
+      audiblePositionSeconds.value = ppqToSeconds(tempoMap, ppq);
+    };
     const handle = resolveHandle();
-    if (!handle) return false;
+    if (!handle) {
+      commit();
+      return true;
+    }
     ensureTelemetrySubscription(handle);
     const ok = handle.engine.transport.seekPpq(ppq, sampleTime);
     if (ok) {
       if (sampleTime === undefined) handle.engine.pushMidiPanic();
       else handle.engine.pushMidiPanic(sampleTime);
       restoreMidiState?.(ppq, sampleTime);
-      commitAtSampleTime(handle, sampleTime, () => {
-        positionPpq.value = ppq;
-        positionSeconds.value = ppqToSeconds(tempoMap, ppq);
-        audiblePositionPpq.value = ppq;
-        audiblePositionSeconds.value = ppqToSeconds(tempoMap, ppq);
-      });
+      commitAtSampleTime(handle, sampleTime, commit);
     }
     return ok;
+  };
+
+  const resumeContext = (): void => {
+    const ctx = resolveHandle()?.ctx;
+    if (ctx?.state === 'suspended') void ctx.resume().catch(() => undefined);
   };
 
   const setTempo = (bpm: number): void => {
@@ -365,12 +417,18 @@ export function useTransport(
     tempoMap = normalizeTempoMap(segments, tempo.value);
     positionSeconds.value = ppqToSeconds(tempoMap, positionPpq.value);
     audiblePositionSeconds.value = ppqToSeconds(tempoMap, audiblePositionPpq.value);
+    // The engine keeps its sample position across a tempo change; move it back onto the shown bar.
+    const handle = resolveHandle();
+    if (handle && subscribedEngine === handle.engine && !isPlaying.value) {
+      handle.engine.transport.seekSeconds(positionSeconds.value);
+    }
   };
 
   const setLoop = (startPpq: number, endPpq: number, enabled = true): boolean => {
+    // A take is interpreted with the loop the transport plays it through.
+    if (recordingCycle.active.value) return false;
     const handle = resolveHandle();
-    if (!handle) return false;
-    const ok = handle.engine.transport.setLoop(startPpq, endPpq, enabled);
+    const ok = handle ? handle.engine.transport.setLoop(startPpq, endPpq, enabled) : true;
     if (ok) {
       loopStartPpq.value = startPpq;
       loopEndPpq.value = endPpq;
@@ -381,15 +439,13 @@ export function useTransport(
 
   const toggleMetronome = (enabled?: boolean, beatGain?: number): boolean => {
     const handle = resolveHandle();
-    if (!handle) return metronomeEnabled.value;
     const next = enabled ?? !metronomeEnabled.value;
     const gain = Number.isFinite(beatGain) ? clamp01(beatGain as number) : undefined;
-    const queued = handle.engine.setMetronome({
-      enabled: next,
-      ...(gain === undefined ? {} : { beatGain: gain, accentGain: Math.min(1, gain * 2) }),
-    });
     // A full command ring refuses the change; keep the toggle on the engine's state.
-    if (!queued) return metronomeEnabled.value;
+    if (handle && !handle.engine.setMetronome(metronomeConfig(next, gain))) {
+      return metronomeEnabled.value;
+    }
+    if (gain !== undefined) metronomeBeatGain = gain;
     metronomeEnabled.value = next;
     return next;
   };
@@ -418,11 +474,13 @@ export function useTransport(
     loopStartPpq,
     loopEndPpq,
     metronomeEnabled,
+    recordingCycle,
     playbackLatencySeconds,
     play,
     stop,
     seek,
     seekPpq,
+    resumeContext,
     setMidiStateRestorer: (restorer) => {
       restoreMidiState = restorer;
     },

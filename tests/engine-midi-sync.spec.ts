@@ -741,7 +741,12 @@ describe('midiStateAtPpq', () => {
       polyPressureLanes: [{ channel: 2, pitch: 64, points: [{ ppq: 2, value: 80 }] }],
     });
 
-    const state = midiStateAtPpq([track], [clip], TEMPO_120, SAMPLE_RATE, 3);
+    const state = midiStateAtPpq(
+      buildMidiClipSchedules([track], [clip], TEMPO_120, SAMPLE_RATE),
+      TEMPO_120,
+      SAMPLE_RATE,
+      3,
+    );
 
     expect(state.map((event) => event.word0)).toEqual(
       expect.arrayContaining([
@@ -769,8 +774,15 @@ describe('midiStateAtPpq', () => {
       ccLanes: [{ controller: 11, channel: 0, points: [{ ppq: 3, value: 90 }] }],
     });
 
-    const fromDocumentOrder = midiStateAtPpq([track], [earlier, later], TEMPO_120, SAMPLE_RATE, 4);
-    const fromReverseOrder = midiStateAtPpq([track], [later, earlier], TEMPO_120, SAMPLE_RATE, 4);
+    const stateFor = (clips: ReturnType<typeof makeClip>[]) =>
+      midiStateAtPpq(
+        buildMidiClipSchedules([track], clips, TEMPO_120, SAMPLE_RATE),
+        TEMPO_120,
+        SAMPLE_RATE,
+        4,
+      );
+    const fromDocumentOrder = stateFor([earlier, later]);
+    const fromReverseOrder = stateFor([later, earlier]);
 
     expect(fromDocumentOrder).toEqual([{ destinationId: 1, word0: ccWord(0, 11, 90) }]);
     expect(fromReverseOrder).toEqual(fromDocumentOrder);

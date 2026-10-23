@@ -347,6 +347,9 @@ class MasteringPassEngine implements Partial<OfflineRenderEngine> {
     this.calls.push(['setAutomationLane', paramId, points]);
     this.gainByParamId.set(paramId, points as Array<{ ppq: number; value: number }>);
   }
+  pushMidiUmp(destinationId: number, word0: number): void {
+    this.calls.push(['pushMidiUmp', destinationId, word0]);
+  }
   seekSample(sample: number): void {
     this.calls.push(['seekSample', sample]);
     this.cursor = sample;
