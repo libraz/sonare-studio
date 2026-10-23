@@ -341,6 +341,33 @@ describe('useMidiLearn', () => {
     expect(selectTrack).toHaveBeenCalledWith(103);
   });
 
+  it('pages a native-protocol surface by the strips it addresses, reaching every track', () => {
+    const store = useProjectStore();
+    store.tracks = trackList(20);
+    store.controlSurface = {
+      ...store.controlSurface,
+      protocol: 'mcu',
+      bankSize: 16,
+      bankOffset: 0,
+    };
+    const learn = useMidiLearn();
+    learn.armId(midiLearnBankActionTargetId('next'));
+    learn.handleCc({ channel: 0, controller: 47, value: 127 });
+    expect(store.controlSurface.bankOffset).toBe(8);
+    learn.handleCc({ channel: 0, controller: 47, value: 0 });
+    learn.handleCc({ channel: 0, controller: 47, value: 127 });
+    expect(store.controlSurface.bankOffset).toBe(12);
+  });
+
+  it('reports whether a CC was consumed by a learn or a binding', () => {
+    const learn = useMidiLearn();
+    expect(learn.handleCc({ channel: 0, controller: 7, value: 100 })).toBe(false);
+    learn.arm('gain', 'master');
+    expect(learn.handleCc({ channel: 0, controller: 7, value: 100 })).toBe(true);
+    expect(learn.handleCc({ channel: 0, controller: 7, value: 90 })).toBe(true);
+    expect(learn.handleCc({ channel: 0, controller: 8, value: 90 })).toBe(false);
+  });
+
   it('runs a held button action once however long the press lasts', () => {
     const store = useProjectStore();
     store.tracks = trackList(20);

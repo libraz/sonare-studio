@@ -21,6 +21,8 @@ import {
 const PLAYHEAD_FOLLOW_SMOOTHING = 0.42;
 /** Small PPQ threshold below which snapping avoids endless tiny repaints. */
 const PLAYHEAD_FOLLOW_EPSILON_PPQ = 0.0005;
+/** Smoothing settles at 1/smoothing frame advances behind; within one more it is locked on. */
+const PLAYHEAD_FOLLOW_LOCK_STEPS = 1 / PLAYHEAD_FOLLOW_SMOOTHING + 1;
 /** Follow scrolling redraws the full base layer, so cap it below display refresh. */
 const PLAYHEAD_FOLLOW_INTERVAL_MS = 33;
 /** Ignore sub-pixel follow movement; the overlay playhead still updates every frame. */
@@ -62,6 +64,7 @@ export function usePlayheadFollow(options: PlayheadFollowOptions): PlayheadFollo
   const anchorLocalX = Math.max(0, PLAYHEAD_FOLLOW_ANCHOR_X - options.leadingColumnWidthPx);
   let followRaf: number | null = null;
   let lastFollowFrameMs = 0;
+  let lastFollowPpq: number | undefined;
 
   const following = (): boolean => options.isPlaying() && options.followEnabled();
 
@@ -79,13 +82,17 @@ export function usePlayheadFollow(options: PlayheadFollowOptions): PlayheadFollo
     }
     lastFollowFrameMs = now;
     const ppq = options.positionPpq();
+    const advancePpq = ppq !== undefined && lastFollowPpq !== undefined ? ppq - lastFollowPpq : NaN;
+    lastFollowPpq = ppq;
     if (ppq !== undefined) {
       const nextStart = anchoredPlayheadFollowStart(range, ppq, anchorLocalX);
       if (nextStart !== null) {
         const delta = nextStart - range.startPpq;
         if (Math.abs(delta * range.pxPerPpq) >= PLAYHEAD_FOLLOW_MIN_PX) {
+          // Smooth only catch-up jumps; once locked, track the playhead exactly so the pinned line never trails.
+          const locked = Math.abs(delta) <= Math.abs(advancePpq) * PLAYHEAD_FOLLOW_LOCK_STEPS;
           const smoothed =
-            Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
+            locked || Math.abs(delta) <= PLAYHEAD_FOLLOW_EPSILON_PPQ
               ? nextStart
               : range.startPpq + delta * PLAYHEAD_FOLLOW_SMOOTHING;
           range.setStartPpq(smoothed);
@@ -99,6 +106,7 @@ export function usePlayheadFollow(options: PlayheadFollowOptions): PlayheadFollo
   function start(): void {
     if (followRaf !== null || typeof requestAnimationFrame !== 'function') return;
     lastFollowFrameMs = 0;
+    lastFollowPpq = undefined;
     followRaf = requestAnimationFrame(tick);
   }
 

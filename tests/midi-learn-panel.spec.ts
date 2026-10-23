@@ -225,6 +225,21 @@ describe('MidiLearnPanel control surface', () => {
     expect((wrapper as VueWrapper).findAll('.ml-bank-row')).toHaveLength(4);
   });
 
+  it('clamps typed bank sizes to a valid integer strip count', async () => {
+    mountPanel();
+    const store = useProjectStore();
+    const input = (wrapper as VueWrapper).find<HTMLInputElement>('.ml-surface-bank-size');
+    for (const [typed, expected] of [
+      ['20', 8],
+      ['-3', 1],
+      ['2.5', 3],
+      ['', 1],
+    ] as const) {
+      await input.setValue(typed);
+      expect(store.controlSurface.bankSize).toBe(expected);
+    }
+  });
+
   it('pages the bank window from the panel', async () => {
     mountPanel();
     const store = useProjectStore();

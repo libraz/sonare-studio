@@ -27,6 +27,7 @@ import {
   setVcaGroupSolo,
 } from '@/project/commands';
 import {
+  bankPagingSize,
   bankSlotTrackId,
   clampBankOffset,
   nextBankOffset,
@@ -124,8 +125,10 @@ export interface MidiLearnHandle {
   /**
    * Handles an incoming CC: binds it to the armed target, or applies it to
    * every target bound to that channel + controller.
+   *
+   * @returns True when the message was consumed by a learn or a binding.
    */
-  handleCc(message: MidiCcMessage): void;
+  handleCc(message: MidiCcMessage): boolean;
   /**
    * Applies a value to a target without a binding, for a surface whose layout
    * is fixed by its protocol rather than learned. Coalesces into one undo entry
@@ -257,8 +260,8 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
       action === 'home'
         ? 0
         : action === 'next'
-          ? nextBankOffset(surface.bankOffset, count, surface.bankSize)
-          : previousBankOffset(surface.bankOffset, count, surface.bankSize);
+          ? nextBankOffset(surface.bankOffset, count, bankPagingSize(surface))
+          : previousBankOffset(surface.bankOffset, count, bankPagingSize(surface));
     store.controlSurface = { ...surface, bankOffset: offset };
   }
 
@@ -271,7 +274,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
       bankOffset: clampBankOffset(
         surface.bankOffset + Math.round(delta),
         store.tracks.length,
-        surface.bankSize,
+        bankPagingSize(surface),
       ),
     };
   }
@@ -656,7 +659,7 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
     apply(id, value);
   }
 
-  function handleCc(message: MidiCcMessage): void {
+  function handleCc(message: MidiCcMessage): boolean {
     const value = midiCcMessageValue(message);
     if (armed.value !== null) {
       const id = armed.value;
@@ -668,13 +671,16 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
         ...(message.parameter !== undefined ? { parameter: message.parameter } : {}),
       });
       apply(id, value);
-      return;
+      return true;
     }
+    let consumed = false;
     for (const [id, binding] of bindings) {
       if (midiCcBindingMatches(binding, message)) {
         apply(id, value);
+        consumed = true;
       }
     }
+    return consumed;
   }
 
   if (getCurrentScope()) {

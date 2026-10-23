@@ -150,6 +150,18 @@ describe('useInputControls MIDI routing engine lifecycle', () => {
     scope.stop();
   });
 
+  it('keeps a consumed learned CC out of the recording callback', () => {
+    const onRecordControlChange = vi.fn();
+    const scope = effectScope();
+    scope.run(() => {
+      useInputControls({ ...makeOptions(), onRecordControlChange });
+    });
+    handleCc.mockReturnValueOnce(true);
+    webMidiOptions?.onControlChange?.({ controller: 20, value: 64, channel: 0, timeStampMs: 1 });
+    expect(onRecordControlChange).not.toHaveBeenCalled();
+    scope.stop();
+  });
+
   it('routes Web MIDI expression events into recording callbacks', () => {
     const onRecordControlChange = vi.fn();
     const onRecordPitchBend = vi.fn();

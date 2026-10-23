@@ -9,6 +9,7 @@ import {
   type ControlSurfaceProtocol,
   nextBankOffset,
   previousBankOffset,
+  sanitizeControlSurfaceSettings,
 } from '@/project/control-surface';
 import { useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
@@ -196,7 +197,7 @@ const transportRows = computed(() =>
 const surfaceSettings = computed(() => store.controlSurface);
 
 function updateSurface(patch: Partial<typeof store.controlSurface>): void {
-  store.controlSurface = { ...store.controlSurface, ...patch };
+  store.controlSurface = sanitizeControlSurfaceSettings({ ...store.controlSurface, ...patch });
 }
 
 const protocolChoices = computed(() =>
@@ -497,7 +498,12 @@ function clearAll(): void {
             :max="SURFACE_STRIP_COUNT"
             :value="surfaceSettings.bankSize"
             @change="
-              updateSurface({ bankSize: Number(($event.target as HTMLInputElement).value) || 1 })
+              updateSurface({
+                bankSize: Math.min(
+                  SURFACE_STRIP_COUNT,
+                  Number(($event.target as HTMLInputElement).value),
+                ),
+              })
             "
           />
         </label>

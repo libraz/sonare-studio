@@ -192,6 +192,8 @@ interface PendingMarqueeGesture {
   kind: 'pending-marquee';
   start: InteractionPoint;
   baseSelection: number[];
+  /** Selection before the pointer went down; restored when the marquee is cancelled. */
+  priorSelection: number[];
   additive: boolean;
 }
 
@@ -199,6 +201,8 @@ interface MarqueeGesture {
   kind: 'marquee';
   start: InteractionPoint;
   baseSelection: number[];
+  /** Selection before the pointer went down; restored when the marquee is cancelled. */
+  priorSelection: number[];
   additive: boolean;
 }
 
@@ -681,6 +685,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         kind: 'pending-marquee',
         start: point,
         baseSelection: modifiers.shift ? [...options.getSelection()] : [],
+        priorSelection: [...options.getSelection()],
         additive: modifiers.shift === true,
       };
       return;
@@ -739,6 +744,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       kind: 'marquee',
       start: pending.start,
       baseSelection: pending.baseSelection,
+      priorSelection: pending.priorSelection,
       additive: pending.additive,
     };
   }
@@ -944,6 +950,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   function cancel(): void {
+    if (gesture.kind === 'marquee') commands.setSelection(gesture.priorSelection);
     gesture = { kind: 'none' };
     marquee.value = null;
     previewNotes.value = null;

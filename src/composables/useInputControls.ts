@@ -149,6 +149,8 @@ export function useInputControls(options: InputControlsOptions) {
       options.onRecordNoteOff?.(event);
     },
     onControlChange: (event) => {
+      // A learned CC is control-only: it neither plays the instrument nor lands in a take.
+      if (midiLearn.handleCc(event)) return;
       void previewChannelVoice({
         kind: 'cc',
         controller: event.controller,
@@ -156,7 +158,6 @@ export function useInputControls(options: InputControlsOptions) {
         channel: event.channel,
         timeStampMs: event.timeStampMs,
       });
-      midiLearn.handleCc(event);
       options.onRecordControlChange?.(event);
     },
     onPitchBend: (event) => {

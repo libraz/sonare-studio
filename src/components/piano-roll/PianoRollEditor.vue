@@ -11,6 +11,7 @@ import { usePlacementGuidance } from '@/composables/usePlacementGuidance';
 import { useReactiveReharmonization } from '@/composables/useReactiveReharmonization';
 import { buildKeyMap } from '@/compose/key-map';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
+import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import {
   addNote,
@@ -40,6 +41,7 @@ import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
+import { changedNoteUpdates } from './keyboard-note-updates';
 import { LANE_PARAMS, type LaneParamId } from './lane-params';
 import NoteGridCanvas from './NoteGridCanvas.vue';
 import { clampMoveDelta, clampResizedDuration } from './nudge-bounds';
@@ -481,6 +483,12 @@ const { onNoteContext } = usePianoRollNoteMenu({
   barLengthPpq: (ppq) => pianoRollMeasureAt(ppq).lengthPpq,
 });
 
+/** Commits keyboard note updates, skipping those that change nothing. */
+function applyKeyboardUpdates(updates: Parameters<typeof updateNotes>[0]): void {
+  const changed = changedNoteUpdates(audibleSourceNotes.value, updates);
+  if (changed.length > 0) updateNotes(changed);
+}
+
 type NoteKeyboardAction =
   | { noteId: number; kind: 'select' }
   | { noteId: number; kind: 'adjust'; adjustment: AccessibleObjectAdjustment }
@@ -496,23 +504,23 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   const maximum = sourceWindowEndPpq.value;
   if (payload.kind === 'set') {
     if (payload.controlId === 'pitch') {
-      updateNotes([{ id: note.id, pitch: clamp(Math.round(payload.value), 0, 127) }]);
+      applyKeyboardUpdates([{ id: note.id, pitch: clamp(Math.round(payload.value), 0, 127) }]);
     } else if (payload.controlId === 'start') {
-      updateNotes([
+      applyKeyboardUpdates([
         {
           id: note.id,
           startPpq: clamp(payload.value, minimum, maximum - note.durationPpq),
         },
       ]);
     } else if (payload.controlId === 'duration') {
-      updateNotes([
+      applyKeyboardUpdates([
         {
           id: note.id,
           durationPpq: Math.min(maximum - note.startPpq, Math.max(0.0625, payload.value)),
         },
       ]);
     } else if (payload.controlId === 'velocity') {
-      updateNotes([{ id: note.id, velocity: clamp(Math.round(payload.value), 1, 127) }]);
+      applyKeyboardUpdates([{ id: note.id, velocity: clamp(Math.round(payload.value), 1, 127) }]);
     }
     return;
   }
@@ -520,7 +528,7 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   const step = Math.max(0.0625, store.snapEnabled ? gridPpq.value : 0.0625) * (coarse ? 4 : 1);
   if (direction === 'up' || direction === 'down') {
     const delta = direction === 'up' ? (coarse ? 12 : 1) : coarse ? -12 : -1;
-    updateNotes([{ id: note.id, pitch: clamp(note.pitch + delta, 0, 127) }]);
+    applyKeyboardUpdates([{ id: note.id, pitch: clamp(note.pitch + delta, 0, 127) }]);
     return;
   }
   const delta =
@@ -530,9 +538,11 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
         ? -step
         : step;
   if (resize) {
-    updateNotes([{ id: note.id, durationPpq: clampResizedDuration(note, delta, maximum) }]);
+    applyKeyboardUpdates([
+      { id: note.id, durationPpq: clampResizedDuration(note, delta, maximum) },
+    ]);
   } else {
-    updateNotes([
+    applyKeyboardUpdates([
       { id: note.id, startPpq: note.startPpq + clampMoveDelta(delta, [note], minimum, maximum) },
     ]);
   }
@@ -627,9 +637,17 @@ function resolveScalePitch(pitch: number): number {
   return pitch;
 }
 
-/** Without an open clip, drawn notes land in a new clip spanning the visible bars. */
+/**
+ * Without an open clip, drawn notes land in a new clip spanning the visible
+ * bars. A refused draw adds nothing and shows its reason in the error line.
+ */
 function addDrawnNotes(inputs: ReadonlyArray<NewEditorNote>): number[] {
-  return store.activeClip ? addNotes(inputs) : addNotesInNewClip(inputs, range.startPpq);
+  try {
+    return store.activeClip ? addNotes(inputs) : addNotesInNewClip(inputs, range.startPpq);
+  } catch (err) {
+    error.value = describeError(err, t.value.notices.errors);
+    return [];
+  }
 }
 
 const interactions = useNoteInteractions({
@@ -720,6 +738,10 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
       noteEndLimit.value,
     );
     if (event.altKey) {
+      if (delta === 0) {
+        event.preventDefault();
+        return true;
+      }
       const ids = addNotes(
         selected.map((note) => ({
           pitch: note.pitch,
@@ -747,7 +769,7 @@ function handleKeyboardEdit(event: KeyboardEvent): boolean {
     return false;
   }
   event.preventDefault();
-  if (updates.length > 0) updateNotes(updates);
+  if (updates.length > 0) applyKeyboardUpdates(updates);
   return true;
 }
 

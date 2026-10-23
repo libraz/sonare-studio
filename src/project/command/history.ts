@@ -762,6 +762,8 @@ export function executeAtomic<T>(action: (edit: AtomicProjectEdit) => T): T {
     return result;
   } catch (error) {
     for (let index = 0; index < completedProjectEdits; index++) project.undo();
+    // The partial edits invalidated native redo; keeping the local entries would replay the rolled-back edit.
+    if (completedProjectEdits > 0) clearRedoStack();
     restoreSnapshot(store, before, {
       activeTrackId: before.activeTrackId,
       activeClipId: before.activeClipId,

@@ -513,6 +513,20 @@ describe('useNoteInteractions', () => {
       expect(commands.deleteNotes).not.toHaveBeenCalled();
     });
 
+    it('restores the pre-gesture selection when Escape cancels a marquee', () => {
+      const notes = [
+        makeNote({ id: 1 }),
+        makeNote({ id: 2, pitch: 115, startPpq: 3.5, durationPpq: 0.5 }),
+      ];
+      const { commands, interactions } = makeHarness(notes, [1]);
+      interactions.onPointerDown({ x: 300, y: 100 });
+      interactions.onPointerMove({ x: 500, y: 150 });
+      expect(commands.setSelection).toHaveBeenLastCalledWith([2]);
+      expect(interactions.onKeyDown('Escape')).toBe(true);
+      expect(commands.setSelection).toHaveBeenLastCalledWith([1]);
+      expect(interactions.marquee.value).toBeNull();
+    });
+
     it('cancels an in-flight gesture on Escape without committing', () => {
       const { commands, interactions } = makeHarness([makeNote({ id: 1 })]);
       interactions.onPointerDown({ x: 150, y: 675 });

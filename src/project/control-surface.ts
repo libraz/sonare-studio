@@ -9,6 +9,7 @@
  * which track a slot points at.
  */
 
+import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
 import { MAX_CONTROL_SURFACE_SLOTS } from './midi-learn-targets';
 
 /**
@@ -116,6 +117,18 @@ export function clampBankOffset(offset: number, trackCount: number, bankSize: nu
   const size = Math.max(1, Math.floor(bankSize));
   const highest = Math.max(0, trackCount - size);
   return Math.min(highest, Math.max(0, Math.floor(offset)));
+}
+
+/**
+ * Tracks one bank step moves over: the full bank size without a protocol, but
+ * never more than the strips an MCU/HUI surface physically addresses.
+ */
+export function bankPagingSize(
+  surface: Pick<ControlSurfaceSettings, 'protocol' | 'bankSize'>,
+): number {
+  return surface.protocol === 'none'
+    ? surface.bankSize
+    : Math.min(SURFACE_STRIP_COUNT, surface.bankSize);
 }
 
 /** Offset after paging one bank towards the end of the track list. */
