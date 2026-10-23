@@ -17,13 +17,69 @@ function normalizedVelocity(value: number | null): number {
   return clampInt(value * 127, 1, 127);
 }
 
+/** The content-window attributes of a clip; the only place they are read. */
+function readContentWindow(clip: Element): {
+  playStart: number | null;
+  loopStart: number | null;
+  loopEnd: number | null;
+} {
+  return {
+    playStart: numberAttr(clip, 'playStart'),
+    loopStart: numberAttr(clip, 'loopStart'),
+    loopEnd: numberAttr(clip, 'loopEnd'),
+  };
+}
+
+/** Tolerance when comparing a loop start with the play start. */
+const LOOP_START_EPSILON = 1e-6;
+
+/**
+ * Sonare loops [sourceOffset, sourceOffset + loopLength). A loop that begins
+ * after the play start is aligned by starting the source at the loop start; the
+ * pre-roll before it cannot be kept, so the clip is reported.
+ */
+function alignLoopStart(
+  windowStart: number,
+  loopStart: number | null,
+  loopEnd: number | null,
+  clipName: string,
+  losses: DawprojectImportLoss[],
+): number {
+  if (
+    loopStart === null ||
+    loopEnd === null ||
+    !(loopEnd > loopStart) ||
+    Math.abs(loopStart - windowStart) < LOOP_START_EPSILON
+  ) {
+    return windowStart;
+  }
+  losses.push({ kind: 'unsupported-nested-clip', clipName, reason: 'loop-start-offset' });
+  return loopStart > windowStart ? loopStart : windowStart;
+}
+
+/** Moves expression points from content time to clip-window time, dropping those before the window. */
+function shiftExpressionLanes(clip: DocumentClip, offsetPpq: number): void {
+  if (offsetPpq === 0) return;
+  const shift = <T extends { points: Array<{ ppq: number }> }>(lanes: T[] | undefined): void => {
+    for (const lane of lanes ?? []) {
+      lane.points = lane.points
+        .map((point) => ({ ...point, ppq: point.ppq - offsetPpq }))
+        .filter((point) => point.ppq >= 0);
+    }
+  };
+  shift(clip.ccLanes);
+  shift(clip.pitchBendLanes);
+  shift(clip.programChangeLanes);
+  shift(clip.channelPressureLanes);
+  shift(clip.polyPressureLanes);
+}
+
 function clipLoopState(
   clip: Element,
   inherited?: Pick<FlattenedClipPlacement, 'loopEnabled' | 'loopLengthPpq'>,
 ): Pick<FlattenedClipPlacement, 'loopEnabled' | 'loopLengthPpq'> {
   const contentTimeUnit = clip.getAttribute('contentTimeUnit')?.trim() || 'beats';
-  const loopStart = numberAttr(clip, 'loopStart');
-  const loopEnd = numberAttr(clip, 'loopEnd');
+  const { loopStart, loopEnd } = readContentWindow(clip);
   if (
     contentTimeUnit === 'beats' &&
     loopStart !== null &&
@@ -74,7 +130,7 @@ export function flattenClipLeaves(
   const initial: FlattenedClipPlacement = {
     startPpq: rootStart,
     lengthPpq: rootLength,
-    contentWindowStart: numberAttr(root, 'playStart') ?? 0,
+    contentWindowStart: readContentWindow(root).playStart ?? 0,
     contentTimeUnit: rootUnit,
     name: rootName,
     ...rootLoop,
@@ -127,7 +183,7 @@ export function flattenClipLeaves(
       return walk(child, {
         startPpq: placement.startPpq + visibleStart - windowStart,
         lengthPpq: visibleEnd - visibleStart,
-        contentWindowStart: (numberAttr(child, 'playStart') ?? 0) + (visibleStart - childTime),
+        contentWindowStart: (readContentWindow(child).playStart ?? 0) + (visibleStart - childTime),
         contentTimeUnit: childUnit,
         name: child.getAttribute('name') || placement.name,
         ...childLoop,
@@ -147,11 +203,18 @@ export function readMidiClip(
   placement: FlattenedClipPlacement | undefined,
   losses: DawprojectImportLoss[],
 ): DocumentClip {
-  const playStart = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
-  const loopStart = numberAttr(clip, 'loopStart');
-  const loopEnd = numberAttr(clip, 'loopEnd');
+  const window = readContentWindow(clip);
+  const { loopStart, loopEnd } = window;
+  const clipName = placement?.name ?? clip.getAttribute('name') ?? 'MIDI clip';
+  const playStart = alignLoopStart(
+    placement?.contentWindowStart ?? window.playStart ?? 0,
+    loopStart,
+    loopEnd,
+    clipName,
+    losses,
+  );
   const out: DocumentClip = {
-    name: placement?.name ?? clip.getAttribute('name') ?? 'MIDI clip',
+    name: clipName,
     startPpq: placement?.startPpq ?? numberAttr(clip, 'time') ?? 0,
     lengthPpq:
       placement?.lengthPpq ??
@@ -182,6 +245,7 @@ export function readMidiClip(
     }),
   };
   readMidiExpressionPoints(clip, out, losses);
+  shiftExpressionLanes(out, playStart);
   return out;
 }
 
@@ -221,13 +285,11 @@ function reportUnknownTimeUnit(
 }
 
 function clipContentPpq(
-  clip: Element,
-  attr: string,
+  value: number | null,
   tempoMap: NormalizedTempoMap,
   contentOriginPpq: number,
   contentTimeUnit: string | null,
 ): number | null {
-  const value = numberAttr(clip, attr);
   if (value === null) return null;
   return contentTimeUnit === 'seconds'
     ? audioContentSecondsToPpq(tempoMap, contentOriginPpq, value)
@@ -276,14 +338,15 @@ export function readAudioClip(
     ['beats', 'seconds'],
     losses,
   );
-  const playStartValue = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
+  const window = readContentWindow(clip);
+  const playStartValue = placement?.contentWindowStart ?? window.playStart ?? 0;
   const contentOriginPpq =
     contentTimeUnit === 'seconds'
       ? audioContentOriginFromPlayStartSeconds(tempoMap, startPpq, playStartValue)
       : audioContentOriginPpq(startPpq, Math.max(0, playStartValue));
-  const playStart = clipContentPpq(clip, 'playStart', tempoMap, contentOriginPpq, contentTimeUnit);
-  const loopStart = clipContentPpq(clip, 'loopStart', tempoMap, contentOriginPpq, contentTimeUnit);
-  const loopEnd = clipContentPpq(clip, 'loopEnd', tempoMap, contentOriginPpq, contentTimeUnit);
+  const playStart = clipContentPpq(playStartValue, tempoMap, contentOriginPpq, contentTimeUnit);
+  const loopStart = clipContentPpq(window.loopStart, tempoMap, contentOriginPpq, contentTimeUnit);
+  const loopEnd = clipContentPpq(window.loopEnd, tempoMap, contentOriginPpq, contentTimeUnit);
   const fadeElement = placement?.fadeElement ?? clip;
   const fadeTimeUnit = reportUnknownTimeUnit(
     fadeElement,
@@ -307,12 +370,16 @@ export function readAudioClip(
     lengthPpq,
     fadeTimeUnit,
   );
-  const warp = readAudioWarp(clip, placement, lengthPpq, losses);
+  const warp = readAudioWarp(clip, placement, playStartValue, lengthPpq, losses);
+  const clipName = placement?.name ?? clip.getAttribute('name') ?? 'Audio clip';
   return {
-    name: placement?.name ?? clip.getAttribute('name') ?? 'Audio clip',
+    name: clipName,
     startPpq,
     lengthPpq,
-    sourceOffsetPpq: Math.max(0, warp?.sourceOffsetPpq ?? playStart ?? 0),
+    sourceOffsetPpq: Math.max(
+      0,
+      warp?.sourceOffsetPpq ?? alignLoopStart(playStart ?? 0, loopStart, loopEnd, clipName, losses),
+    ),
     gain: 1,
     loopEnabled:
       placement?.loopEnabled ?? (loopStart !== null && loopEnd !== null && loopEnd > loopStart),
@@ -333,6 +400,7 @@ export function readAudioClip(
 function readAudioWarp(
   clip: Element,
   placement: FlattenedClipPlacement | undefined,
+  windowStart: number,
   lengthPpq: number,
   losses: DawprojectImportLoss[],
 ): { sourceOffsetPpq: number; warp: NonNullable<DocumentClip['warp']> } | null {
@@ -386,7 +454,6 @@ function readAudioWarp(
     }
     return null;
   };
-  const windowStart = placement?.contentWindowStart ?? numberAttr(clip, 'playStart') ?? 0;
   const windowEnd = windowStart + lengthPpq;
   const sourceStartSeconds = interpolate(windowStart);
   const sourceEndSeconds = interpolate(windowEnd);

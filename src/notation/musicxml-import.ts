@@ -30,6 +30,7 @@ import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
 } from '@/project/serialization';
+import { presetForGmProgram } from '@/project/smf';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
 import { NOTE_VALUE_BASE_PPQ } from './model';
@@ -193,25 +194,6 @@ function childNumber(parent: XmlElement, tag: string, maxNumericAbs: number): nu
   const value = Number(text);
   if (!Number.isFinite(value) || Math.abs(value) > maxNumericAbs) return null;
   return value;
-}
-
-/** Maps a GM program to the closest built-in synth preset. */
-function presetForGmProgram(program: number, channel: number): string {
-  if (channel === GM_PERCUSSION_CHANNEL) return 'drum-kit';
-  if (program < 8) return 'acoustic-piano';
-  if (program < 16) return 'e-piano';
-  if (program < 24) return 'organ';
-  if (program < 32) return 'electric-guitar';
-  if (program < 40) return 'sub-bass';
-  if (program < 56) return 'warm-pad';
-  if (program < 64) return 'brass';
-  if (program < 80) return 'organ';
-  if (program === 80) return 'square-lead';
-  if (program < 88) return 'saw-lead';
-  if (program < 96) return 'warm-pad';
-  if (program < 112) return 'pluck';
-  if (program < 120) return 'drum-kit';
-  return 'sine';
 }
 
 function descendants(parent: XmlElement, tag: string): XmlElement[] {
@@ -1087,6 +1069,7 @@ export function importMusicXmlWithReport(
         : {
             kind: 'synth-preset' as const,
             preset: presetForGmProgram(primaryInstrument.program, primaryInstrument.channel ?? 0),
+            useGmPrograms: true as const,
             gmProgram: primaryInstrument.program,
           };
     tracks.push({

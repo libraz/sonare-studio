@@ -146,7 +146,11 @@ export type DawprojectImportLoss =
   | {
       kind: 'unsupported-nested-clip';
       clipName: string;
-      reason: 'mixed-time-units' | 'loop-with-multiple-events' | 'missing-content';
+      reason:
+        | 'mixed-time-units'
+        | 'loop-with-multiple-events'
+        | 'missing-content'
+        | 'loop-start-offset';
     }
   | {
       /** Sonare has no disabled-clip model, so disabled content is skipped. */

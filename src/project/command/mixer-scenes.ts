@@ -38,7 +38,11 @@ import {
   type SurroundPan,
 } from '../mixer';
 import { getWasmModule, useProjectStore } from '../store';
-import { reconcileProcessorTargetReferences } from '../target-reference-registry';
+import {
+  pruneStripBusReferences,
+  reconcileProcessorTargetReferences,
+  reconcileStructureTargetReferences,
+} from '../target-reference-registry';
 import type { EditorTrack } from '../types';
 import { executeApp } from './history';
 
@@ -681,7 +685,14 @@ function buildScenePlan(
   const replacedTrackIds = new Set<number>();
   const nextTracks = tracks.map((track, index) => {
     const sceneStrip = stripForTrack(track, index);
-    if (!sceneStrip) return track;
+    if (!sceneStrip) {
+      // The scene owns bus and VCA structure; a track it does not map keeps
+      // neither membership nor routing into structure that was replaced.
+      const kept: EditorTrack = { ...track };
+      delete kept.vcaId;
+      if (track.mixer) kept.mixer = pruneStripBusReferences(track.mixer, busIds);
+      return kept;
+    }
     replacedTrackIds.add(track.id);
     const id = sceneId(sceneStrip);
     const outputBusId = id ? outputBusByStrip.get(id) : undefined;
@@ -821,6 +832,7 @@ export function applyMixerSceneJson(
       return true;
     });
     reconcileProcessorTargetReferences(store);
+    reconcileStructureTargetReferences(store);
     store.refresh();
     return plan.result;
   });

@@ -34,8 +34,10 @@ import {
 import { useProjectStore } from '../store';
 import {
   normalizeProcessorAutomationLanes,
+  pruneStripBusReferences,
   pruneStripTrackReferences,
   reconcileProcessorTargetReferences,
+  reconcileStructureTargetReferences,
   registerTargetReferenceContributor,
 } from '../target-reference-registry';
 import type { EditorTrack } from '../types';
@@ -128,29 +130,6 @@ export function buildMixerSnapshot(
 }
 
 /**
- * Restores a track's send routing against a valid bus-id set: drops sends to
- * buses that no longer exist and clears an output-bus that is gone (routing it
- * back to the master mix), so the restored strip never references a missing
- * bus (which the engine would reject).
- */
-function sanitizeStripRouting(strip: MixerStrip, validBusIds: ReadonlySet<string>): MixerStrip {
-  const next = cloneStrip(strip);
-  next.sends = next.sends.filter((send) => validBusIds.has(send.busId));
-  if (next.outputBusId !== undefined && !validBusIds.has(next.outputBusId)) {
-    delete next.outputBusId;
-  }
-  next.inserts = next.inserts.map((slot) => {
-    if (slot.sidechainSourceBusId === undefined || validBusIds.has(slot.sidechainSourceBusId)) {
-      return slot;
-    }
-    const cleared = { ...slot };
-    delete cleared.sidechainSourceBusId;
-    return cleared;
-  });
-  return next;
-}
-
-/**
  * Computes the store state to apply when restoring a snapshot (pure; exported
  * for tests). Restores the project mixer state wholesale and, for each current
  * track also present in the snapshot, its captured strip and mix flags. Tracks
@@ -172,9 +151,9 @@ export function mergeMixerSnapshot(
   const validBusIds = new Set(mixer.buses.map((bus) => bus.id));
   const validVcaIds = new Set((mixer.vcaGroups ?? []).map((group) => group.id));
   const byId = new Map(snapshot.tracks.map((entry) => [entry.id, entry]));
-  mixer.master = sanitizeStripRouting(mixer.master, validBusIds);
+  mixer.master = pruneStripBusReferences(mixer.master, validBusIds);
   mixer.buses = mixer.buses.map((bus) =>
-    bus.strip ? { ...bus, strip: sanitizeStripRouting(bus.strip, validBusIds) } : bus,
+    bus.strip ? { ...bus, strip: pruneStripBusReferences(bus.strip, validBusIds) } : bus,
   );
   const tracks = currentTracks.map((track) => {
     const entry = byId.get(track.id);
@@ -194,7 +173,7 @@ export function mergeMixerSnapshot(
       if (entry.vcaId !== undefined) next.vcaId = entry.vcaId;
       else delete next.vcaId;
     }
-    if (next.mixer) next.mixer = sanitizeStripRouting(next.mixer, validBusIds);
+    if (next.mixer) next.mixer = pruneStripBusReferences(next.mixer, validBusIds);
     if (next.vcaId !== undefined && !validVcaIds.has(next.vcaId)) delete next.vcaId;
     return next;
   });
@@ -274,6 +253,7 @@ export function applyMixerSnapshot(snapshot: MixerSnapshot, onApply?: () => void
     store.tracks = plan.tracks;
     store.automationLanes = plan.automationLanes;
     reconcileProcessorTargetReferences(store);
+    reconcileStructureTargetReferences(store);
     store.refresh();
   });
 }

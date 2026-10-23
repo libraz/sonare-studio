@@ -10,7 +10,14 @@ import { dbToLinear, linearToDb } from '@/lib/db';
 import { clampInt } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import type { ProjectMidiEvent } from '@/wasm/index.js';
-import { GM2_DRUM_BANK, GM2_DRUM_BANK_MSB, gmProgramForPreset, isGm2DrumBank } from './instrument';
+import {
+  effectiveTrackInstrument,
+  GM2_DRUM_BANK,
+  GM2_DRUM_BANK_MSB,
+  gmProgramForPreset,
+  isGm2DrumBank,
+  sf2ChannelProgram,
+} from './instrument';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from './midi-cc';
 import {
   notesToProjectMidiEvents,
@@ -481,7 +488,8 @@ function displayClipLength(lengthPpq: number): number {
   return Math.max(DEFAULT_CLIP_LENGTH_PPQ, Math.ceil(lengthPpq));
 }
 
-function presetForGmProgram(program: number, ch: number, bank?: number): string {
+/** Maps a GM program, channel and bank to the closest built-in synth preset. */
+export function presetForGmProgram(program: number, ch: number, bank?: number): string {
   if (ch === GM_PERCUSSION_CHANNEL || isGm2DrumBank(bank)) return 'drum-kit';
   if (program === 4 || program === 5) return 'e-piano';
   if (program < 8) return 'acoustic-piano';
@@ -1137,6 +1145,147 @@ export function sampleTempoRampsForSmf(doc: ProjectDocument): DocumentTempoSegme
   return result;
 }
 
+/** Rewrites every channel-voice event of the clip onto one MIDI channel. */
+function clipOnChannel(clip: DocumentClip, channel: number): DocumentClip {
+  const remapLanes = <T extends { channel: number }>(lanes: T[] | undefined): T[] | undefined =>
+    lanes?.map((lane) => ({ ...lane, channel }));
+  const out: DocumentClip = {
+    ...clip,
+    notes: clip.notes.map((note) => ({ ...note, channel })),
+  };
+  if (clip.ccLanes) out.ccLanes = remapLanes(clip.ccLanes);
+  if (clip.pitchBendLanes) out.pitchBendLanes = remapLanes(clip.pitchBendLanes);
+  if (clip.programChangeLanes) out.programChangeLanes = remapLanes(clip.programChangeLanes);
+  if (clip.channelPressureLanes) out.channelPressureLanes = remapLanes(clip.channelPressureLanes);
+  if (clip.polyPressureLanes) out.polyPressureLanes = remapLanes(clip.polyPressureLanes);
+  return out;
+}
+
+/**
+ * Stacks the track's static level on the clip's own CC7/CC10 lanes: a lane
+ * value would otherwise replace the static CC for the rest of the file, while
+ * playback keeps the fader and pan as separate stages.
+ */
+function clipWithStaticMix(
+  clip: DocumentClip,
+  staticVolume: number,
+  staticPan: number,
+): DocumentClip {
+  if (!clip.ccLanes?.some((lane) => lane.controller === 7 || lane.controller === 10)) return clip;
+  const volumeScale = gmVolumeCc(staticVolume) / 127;
+  const panShift = staticPan * 63.5;
+  return {
+    ...clip,
+    ccLanes: clip.ccLanes.map((lane) => {
+      if (lane.controller === 7 && staticVolume !== 1) {
+        return {
+          ...lane,
+          points: lane.points.map((p) => ({
+            ...p,
+            value: clampInt(p.value * volumeScale, 0, 127),
+          })),
+        };
+      }
+      if (lane.controller === 10 && staticPan !== 0) {
+        return {
+          ...lane,
+          points: lane.points.map((p) => ({ ...p, value: clampInt(p.value + panShift, 0, 127) })),
+        };
+      }
+      return lane;
+    }),
+  };
+}
+
+/**
+ * Builds the setup of one track from its configuration: the transmit channel
+ * of an external-MIDI instrument, the CC7/CC10 mix of fader, strip gain, pan
+ * and VCA, and the bank/program selection per channel. Returns the clips as
+ * written and the setup events that lead the track.
+ */
+function trackSetup(
+  track: DocumentTrack,
+  midiClips: DocumentClip[],
+  externalMidiDefault: ProjectDocument['externalMidiDefault'],
+  trackContext: MidiExportTrackContext,
+  wasm: WasmModule,
+  loss: LossTally<MidiExportLossKind>,
+): { clips: DocumentClip[]; prelude: ProjectMidiEvent[][] } {
+  const prelude: ProjectMidiEvent[][] = [];
+  const instrument = track.instrument;
+  const transmit = effectiveTrackInstrument(track, externalMidiDefault);
+  const transmitChannel =
+    transmit.kind === 'external-midi' ? clampInt(transmit.channel, 0, 15) : undefined;
+  const preset =
+    instrument?.kind === 'synth-preset'
+      ? instrument.preset
+      : instrument?.kind === 'synth-patch' && instrument.patch.preset
+        ? instrument.patch.preset
+        : undefined;
+  // CC7 and CC10 are the interoperable SMF equivalents of Sonare's static
+  // track gain/pan. Emit them before program and note events so external
+  // sequencers reproduce the mix balance even though SMF has no strip model.
+  const staticVolume = dbToLinear(
+    linearToDb(track.volume) +
+      (track.mixer?.gainDb ?? 0) +
+      vcaOffsetDb(track.vcaId, trackContext.vcaGainDb),
+  );
+  const staticPan = track.mixer?.pan ?? track.pan;
+  const clips = midiClips.map((clip) =>
+    clipWithStaticMix(
+      transmitChannel === undefined ? clip : clipOnChannel(clip, transmitChannel),
+      staticVolume,
+      staticPan,
+    ),
+  );
+  const channels = new Set(clips.flatMap((clip) => [...usedMidiChannels(clip)]));
+  if (staticVolume > 1 && channels.size > 0) loss.add('clampedTrackGains', 1, track.name);
+  if (staticVolume !== 1 || staticPan !== 0) {
+    for (const ch of channels) {
+      if (staticPan !== 0) {
+        prelude.push([wasm.Project.midiCc(0, 0, ch, 10, clampInt((staticPan + 1) * 63.5, 0, 127))]);
+      }
+      if (staticVolume !== 1) {
+        prelude.push([wasm.Project.midiCc(0, 0, ch, 7, gmVolumeCc(staticVolume))]);
+      }
+    }
+  }
+  if (preset) {
+    const importedBank =
+      instrument?.kind === 'synth-preset' && instrument.gmBank !== undefined
+        ? clampInt(instrument.gmBank, 0, 16383)
+        : undefined;
+    const program =
+      instrument?.kind === 'synth-preset' && instrument.gmProgram !== undefined
+        ? clampInt(instrument.gmProgram, 0, 127)
+        : clampInt(gmProgramForPreset(preset), 0, 127);
+    for (const ch of channels) {
+      if (importedBank !== undefined) {
+        prelude.push(
+          wasm.Project.midiBankProgram(0, 0, ch, importedBank >> 7, importedBank & 0x7f, program),
+        );
+      } else if (preset === 'drum-kit') {
+        prelude.push(wasm.Project.midiBankProgram(0, 0, ch, GM2_DRUM_BANK_MSB, 0, program));
+      } else {
+        prelude.push([wasm.Project.midiProgram(0, 0, ch, program)]);
+      }
+    }
+  } else if (instrument?.kind === 'sf2') {
+    for (const ch of channels) {
+      const selection = sf2ChannelProgram(instrument, ch);
+      if (!selection) continue;
+      const program = clampInt(selection.program ?? 0, 0, 127);
+      if (selection.bank === undefined) {
+        prelude.push([wasm.Project.midiProgram(0, 0, ch, program)]);
+      } else {
+        const bank = clampInt(selection.bank, 0, 16383);
+        prelude.push(wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program));
+      }
+    }
+  }
+  return { clips, prelude };
+}
+
 async function projectFromDocument(
   doc: ProjectDocument,
   loss: LossTally<MidiExportLossKind>,
@@ -1196,12 +1345,14 @@ async function projectFromDocument(
   for (const track of doc.tracks.filter((entry) => entry.kind === 'midi')) {
     tallyFields(loss, SMF_TRACK_FIELDS, track, trackContext);
     const trackId = project.addTrack({ kind: 'midi', name: track.name });
-    const clips = track.clips.filter((entry) => (entry.kind ?? 'midi') === 'midi');
-    for (const clip of clips) {
+    const midiClips = track.clips.filter((entry) => (entry.kind ?? 'midi') === 'midi');
+    for (const clip of midiClips) {
       tallyFields(loss, SMF_CLIP_FIELDS, clip, undefined);
       if (!clipHasMidiEvents(clip)) loss.add('emptyMidiClips', 1, clip.name);
     }
-    if (!clips.some(clipHasMidiEvents)) loss.add('emptyMidiTracks', 1, track.name);
+    if (!midiClips.some(clipHasMidiEvents)) loss.add('emptyMidiTracks', 1, track.name);
+    const setup = trackSetup(track, midiClips, doc.externalMidiDefault, trackContext, wasm, loss);
+    const clips = setup.clips;
     // SMF tracks are linear event streams, not arrangement clip containers.
     // Materialize all clips from one project track into one spanning scratch
     // clip so libsonare writes one MTrk and a later import retains track count.
@@ -1227,70 +1378,12 @@ async function projectFromDocument(
       sourceOffsetPpq: 0,
       gain: 1,
     });
-    const events = clips.flatMap((clip) => {
+    const events = setup.clips.flatMap((clip) => {
       const offset = finiteNonNegative(clip.startPpq) - startPpq;
       return clipEvents(clip, wasm).map((event) => ({ ...event, ppq: event.ppq + offset }));
     });
     // Setup events lead the track; each chunk lands ahead of the previous one.
-    const prelude: (typeof events)[] = [];
-    const instrument = track.instrument;
-    const preset =
-      instrument?.kind === 'synth-preset'
-        ? instrument.preset
-        : instrument?.kind === 'synth-patch' && instrument.patch.preset
-          ? instrument.patch.preset
-          : undefined;
-    const channels = new Set(clips.flatMap((clip) => [...usedMidiChannels(clip)]));
-    // CC7 and CC10 are the interoperable SMF equivalents of Sonare's static
-    // track gain/pan. Emit them before program and note events so external
-    // sequencers reproduce the mix balance even though SMF has no strip model.
-    const staticVolume = dbToLinear(
-      linearToDb(track.volume) +
-        (track.mixer?.gainDb ?? 0) +
-        vcaOffsetDb(track.vcaId, trackContext.vcaGainDb),
-    );
-    const staticPan = track.mixer?.pan ?? track.pan;
-    if (staticVolume > 1 && channels.size > 0) loss.add('clampedTrackGains', 1, track.name);
-    if (staticVolume !== 1 || staticPan !== 0) {
-      for (const ch of channels) {
-        if (staticPan !== 0) {
-          prelude.push([
-            wasm.Project.midiCc(0, 0, ch, 10, clampInt((staticPan + 1) * 63.5, 0, 127)),
-          ]);
-        }
-        if (staticVolume !== 1) {
-          prelude.push([wasm.Project.midiCc(0, 0, ch, 7, gmVolumeCc(staticVolume))]);
-        }
-      }
-    }
-    if (preset) {
-      const importedBank =
-        instrument?.kind === 'synth-preset' && instrument.gmBank !== undefined
-          ? clampInt(instrument.gmBank, 0, 16383)
-          : undefined;
-      const program =
-        instrument?.kind === 'synth-preset' && instrument.gmProgram !== undefined
-          ? clampInt(instrument.gmProgram, 0, 127)
-          : clampInt(gmProgramForPreset(preset), 0, 127);
-      for (const ch of channels) {
-        if (importedBank !== undefined) {
-          prelude.push(
-            wasm.Project.midiBankProgram(0, 0, ch, importedBank >> 7, importedBank & 0x7f, program),
-          );
-        } else if (preset === 'drum-kit') {
-          prelude.push(wasm.Project.midiBankProgram(0, 0, ch, GM2_DRUM_BANK_MSB, 0, program));
-        } else {
-          prelude.push([wasm.Project.midiProgram(0, 0, ch, program)]);
-        }
-      }
-    } else if (instrument?.kind === 'sf2') {
-      const bank = clampInt(instrument.bank ?? 0, 0, 16383);
-      const program = clampInt(instrument.program ?? 0, 0, 127);
-      for (const ch of channels) {
-        prelude.push(wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program));
-      }
-    }
-    const ordered = [...prelude.reverse().flat(), ...events];
+    const ordered = [...setup.prelude.reverse().flat(), ...events];
     ordered.sort((a, b) => a.ppq - b.ppq);
     project.setMidiEvents(clipId, ordered);
   }

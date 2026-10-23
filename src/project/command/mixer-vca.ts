@@ -1,6 +1,7 @@
 import type { VcaGroup } from '../mixer';
 import { MAX_STRIP_GAIN_DB, MAX_VCA_GROUPS, MIN_STRIP_GAIN_DB } from '../mixer';
 import { useProjectStore } from '../store';
+import { reconcileStructureTargetReferences } from '../target-reference-registry';
 import { type CommandGestureOptions, executeApp, hasPendingGesture } from './history';
 import { patchMixerMirror } from './mixer-internal';
 import { requireTrack } from './utils';
@@ -65,6 +66,7 @@ export function removeVcaGroup(groupId: string): void {
       ...store.mixer,
       vcaGroups: groups.filter((group) => group.id !== groupId),
     };
+    reconcileStructureTargetReferences(store);
     store.refresh();
   });
 }

@@ -12,8 +12,11 @@ import {
   midiLearnInsertTargetId,
   midiLearnMasteringTargetId,
   midiLearnTargetScope,
+  parseMidiLearnBusStripControlTargetId,
   parseMidiLearnInsertTargetId,
   parseMidiLearnMasteringTargetId,
+  parseMidiLearnSendTargetId,
+  parseMidiLearnVcaTargetId,
 } from './midi-learn-targets';
 import { cloneStrip, type MixerStrip, type ProjectMixerState } from './mixer';
 import type { useProjectStore } from './store';
@@ -99,6 +102,82 @@ export function pruneTrackTargetReferences(store: ProjectStore, trackId: number)
     store.mixer = { ...store.mixer, master, buses };
   }
   for (const contributor of contributors) contributor.pruneTrack(trackId);
+}
+
+/**
+ * Returns a strip whose sends, output route and insert sidechain keys name only
+ * buses in `validBusIds`: sends to missing buses drop out and a missing output
+ * routes back to the master mix.
+ */
+export function pruneStripBusReferences(
+  strip: MixerStrip,
+  validBusIds: ReadonlySet<string>,
+): MixerStrip {
+  const next = cloneStrip(strip);
+  next.sends = next.sends.filter((send) => validBusIds.has(send.busId));
+  if (next.outputBusId !== undefined && !validBusIds.has(next.outputBusId)) {
+    delete next.outputBusId;
+  }
+  next.inserts = next.inserts.map((slot) => {
+    if (slot.sidechainSourceBusId === undefined || validBusIds.has(slot.sidechainSourceBusId)) {
+      return slot;
+    }
+    const cleared = { ...slot };
+    delete cleared.sidechainSourceBusId;
+    return cleared;
+  });
+  return next;
+}
+
+/**
+ * Scrubs every reference to a bus or VCA group the current mixer no longer
+ * declares: strip sends, output routes and bus sidechains (tracks, master and
+ * bus returns), track VCA membership, and MIDI-learn bindings that embed a bus
+ * or group id. Run after any edit that removes or replaces buses or groups.
+ */
+export function reconcileStructureTargetReferences(store: ProjectStore): void {
+  const validBusIds = new Set(store.mixer.buses.map((bus) => bus.id));
+  const validVcaIds = new Set((store.mixer.vcaGroups ?? []).map((group) => group.id));
+  const references = (strip: MixerStrip): boolean =>
+    strip.sends.some((send) => !validBusIds.has(send.busId)) ||
+    (strip.outputBusId !== undefined && !validBusIds.has(strip.outputBusId)) ||
+    strip.inserts.some(
+      (slot) =>
+        slot.sidechainSourceBusId !== undefined && !validBusIds.has(slot.sidechainSourceBusId),
+    );
+  const scrub = (strip: MixerStrip): MixerStrip =>
+    references(strip) ? pruneStripBusReferences(strip, validBusIds) : strip;
+  store.tracks = store.tracks.map((track) => {
+    let next = track;
+    if (track.mixer) {
+      const mixer = scrub(track.mixer);
+      if (mixer !== track.mixer) next = { ...next, mixer };
+    }
+    if (track.vcaId !== undefined && !validVcaIds.has(track.vcaId)) {
+      next = { ...next };
+      delete next.vcaId;
+    }
+    return next;
+  });
+  const master = scrub(store.mixer.master);
+  const buses = store.mixer.buses.map((bus) => {
+    if (!bus.strip) return bus;
+    const strip = scrub(bus.strip);
+    return strip === bus.strip ? bus : { ...bus, strip };
+  });
+  if (
+    master !== store.mixer.master ||
+    buses.some((bus, index) => bus !== store.mixer.buses[index])
+  ) {
+    store.mixer = { ...store.mixer, master, buses };
+  }
+  remapMidiTargets(store, (id) => {
+    const bus =
+      parseMidiLearnBusStripControlTargetId(id)?.busId ?? parseMidiLearnSendTargetId(id)?.busId;
+    if (bus !== undefined && !validBusIds.has(bus)) return null;
+    const group = parseMidiLearnVcaTargetId(id)?.groupId;
+    return group !== undefined && !validVcaIds.has(group) ? null : id;
+  });
 }
 
 function sameMidiScope(target: ProcessorReferenceTarget, scope: MidiLearnScope): boolean {

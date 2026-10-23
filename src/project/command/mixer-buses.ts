@@ -1,22 +1,17 @@
 import { busAutomationTarget } from '../automation';
 import { assertKnownBusDestination, assertValidMixerBusId } from '../bus-topology';
 import {
-  parseMidiLearnBusStripControlTargetId,
-  parseMidiLearnSendTargetId,
-} from '../midi-learn-targets';
-import {
   assertCanAddEngineBus,
   canRouteReturnSolo,
-  cloneStrip,
   createDefaultStrip,
   isMixerChannelLayout,
   MAX_MIXER_BUSES,
   MAX_STRIP_GAIN_DB,
   MIN_STRIP_GAIN_DB,
   type MixerChannelLayout,
-  type MixerStrip,
 } from '../mixer';
 import { useProjectStore } from '../store';
+import { reconcileStructureTargetReferences } from '../target-reference-registry';
 import type { EditorTrack } from '../types';
 import { type CommandGestureOptions, execute, executeApp, hasPendingGesture } from './history';
 import { patchMixerMirror } from './mixer-internal';
@@ -96,52 +91,15 @@ export function removeMixerBus(busId: string): void {
     throw new RangeError(`Unknown mixer bus id: ${busId}`);
   }
   executeApp(() => {
-    // Drop sends to the bus and reset any output routing pointed at it, so no
-    // strip is left referencing a bus the engine no longer declares.
-    const detachBus = (strip: MixerStrip): MixerStrip => {
-      const sendsBus = strip.sends.some((send) => send.busId === busId);
-      const routesBus = strip.outputBusId === busId;
-      const sidechainBus = strip.inserts.some((slot) => slot.sidechainSourceBusId === busId);
-      if (!sendsBus && !routesBus && !sidechainBus) return strip;
-      const next = cloneStrip(strip);
-      if (sendsBus) next.sends = next.sends.filter((send) => send.busId !== busId);
-      if (routesBus) delete next.outputBusId;
-      if (sidechainBus) {
-        next.inserts = next.inserts.map((slot) => {
-          if (slot.sidechainSourceBusId !== busId) return slot;
-          const cleared = { ...slot };
-          delete cleared.sidechainSourceBusId;
-          return cleared;
-        });
-      }
-      return next;
-    };
-    store.tracks = store.tracks.map((track) =>
-      track.mixer ? { ...track, mixer: detachBus(track.mixer) } : track,
-    );
     store.mixer = {
       ...store.mixer,
-      master: detachBus(store.mixer.master),
-      // Surviving bus return strips can themselves send to (or route into) the
-      // removed bus; detach those too so no strip references a dropped bus.
-      buses: store.mixer.buses
-        .filter((bus) => bus.id !== busId)
-        .map((bus) => {
-          return bus.strip ? { ...bus, strip: detachBus(bus.strip) } : bus;
-        }),
+      buses: store.mixer.buses.filter((bus) => bus.id !== busId),
     };
+    // Sends, output routes, sidechain keys and learn bindings naming the bus go
+    // with it, so no strip is left referencing a bus the engine no longer declares.
+    reconcileStructureTargetReferences(store);
     const target = busAutomationTarget(busId);
     store.automationLanes = store.automationLanes.filter((lane) => lane.target !== target);
-    // Bus-strip and send learn targets embed a stable bus id, so remove only
-    // bindings belonging to the bus that has just been removed.
-    for (const targetId of store.midiCcBindings.keys()) {
-      if (
-        parseMidiLearnBusStripControlTargetId(targetId)?.busId === busId ||
-        parseMidiLearnSendTargetId(targetId)?.busId === busId
-      ) {
-        store.midiCcBindings.delete(targetId);
-      }
-    }
     store.refresh();
   });
 }

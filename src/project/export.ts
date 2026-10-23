@@ -143,27 +143,21 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
     store.timeSignatures,
     clip.startPpq,
   );
+  // The real track's configuration comes from the serialized document, so the
+  // setup events match the whole-project export of the same track.
+  const source = serializeProject();
+  const documentTrack = source.tracks[store.tracks.findIndex((entry) => entry.id === track.id)];
   const exported = await projectDocumentToSmfWithLoss({
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name,
     sampleRate: 48000,
     tempoSegments: tempoMap.tempoSegments,
     timeSignatures: tempoMap.timeSignatures,
-    tracks: [
-      {
-        name: track.name,
-        color: track.color,
-        kind: 'midi',
-        mute: false,
-        solo: false,
-        volume: 1,
-        pan: 0,
-        ...(track.instrument ? { instrument: track.instrument } : {}),
-        clips: [documentClip],
-      },
-    ],
+    tracks: [{ ...documentTrack, mute: false, solo: false, clips: [documentClip] }],
     markers: [],
     sections: [],
+    ...(source.externalMidiDefault ? { externalMidiDefault: source.externalMidiDefault } : {}),
+    ...(source.mixer ? { mixer: source.mixer } : {}),
   });
   return { ...exported, filename: ensureFileExtension(name, '.mid') };
 }
