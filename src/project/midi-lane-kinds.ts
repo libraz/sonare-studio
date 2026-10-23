@@ -2,11 +2,15 @@
  * Descriptor table for the five MIDI clip lane kinds (CC, pitch bend, program
  * change, channel pressure, polyphonic pressure) plus the generic join, clone
  * and window-transform helpers that iterate it. A kind differs only in its lane
- * identity key, ordering, point sanitizer and the identity fields of a lane.
+ * identity key, ordering, point sanitizer, the identity fields of a lane and the
+ * point a cut places (interpolated on ramping lanes, held on program changes).
  * Pure and canvas-free.
  */
 
 import {
+  curveT,
+  isValidChannel,
+  isValidController,
   sanitizeCcPoints,
   sanitizePitchBendPoints,
   sanitizePressurePoints,
@@ -15,6 +19,7 @@ import {
 import type {
   ClipCcLane,
   ClipChannelPressureLane,
+  ClipExpressionCurve,
   ClipPitchBendLane,
   ClipPolyPressureLane,
   ClipProgramChangeLane,
@@ -53,15 +58,60 @@ export interface MidiLaneKind<F extends MidiLaneField> {
   ): MidiLaneOf<F>['points'];
   /** Copy of the lane's identity fields with an empty point list. */
   shell(lane: MidiLaneOf<F>): MidiLaneOf<F>;
+  /** Validated {@link shell} of an untrusted stored lane, or null when its identity is invalid. */
+  parseShell(lane: StoredLane): MidiLaneOf<F> | null;
+  /** True when the segment starting at `point` ramps toward the next point. */
+  ramps(point: MidiLaneOf<F>['points'][number]): boolean;
+  /** Point a cut at `ppq` places: what `previous` has reached there on its way to `next`. */
+  pointAt(
+    previous: MidiLaneOf<F>['points'][number],
+    next: MidiLaneOf<F>['points'][number] | undefined,
+    ppq: number,
+  ): MidiLaneOf<F>['points'][number];
   /** True when cloning drops lanes that have no points. */
   dropEmptyOnClone: boolean;
 }
 
-/** Kind with its lane type erased, for the loops below. */
-type ErasedKind = MidiLaneKind<MidiLaneField>;
+/** A lane as read from stored data, before validation. */
+type StoredLane = { readonly [field: string]: unknown };
+
+/** Kind with its lane type erased, for loops over every kind. */
+export type AnyMidiLaneKind = MidiLaneKind<MidiLaneField>;
+type ErasedKind = AnyMidiLaneKind;
 
 function defineKind<F extends MidiLaneField>(kind: MidiLaneKind<F>): ErasedKind {
   return kind as unknown as ErasedKind;
+}
+
+interface RampPoint {
+  ppq: number;
+  value: number;
+  curve?: ClipExpressionCurve;
+}
+
+function rampCurve(point: RampPoint): boolean {
+  return point.curve === 'linear' || point.curve === 's-curve';
+}
+
+function rampPointAt<P extends RampPoint>(previous: P, next: P | undefined, ppq: number): P {
+  if (next === undefined || !rampCurve(previous) || !(next.ppq > previous.ppq)) {
+    return { ...previous, ppq };
+  }
+  const t = Math.min(1, Math.max(0, (ppq - previous.ppq) / (next.ppq - previous.ppq)));
+  return {
+    ...previous,
+    ppq,
+    value: Math.round(previous.value + (next.value - previous.value) * curveT(previous.curve, t)),
+  };
+}
+
+function channelShell(lane: StoredLane): { channel: number; points: [] } | null {
+  const channel = lane.channel as number;
+  return isValidChannel(channel) ? { channel, points: [] } : null;
+}
+
+function holdPointAt<P extends { ppq: number }>(previous: P, _next: P | undefined, ppq: number): P {
+  return { ...previous, ppq };
 }
 
 /** Lane kinds in canonical field order. */
@@ -76,6 +126,15 @@ export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
       channel: lane.channel,
       points: [],
     }),
+    parseShell: (lane: StoredLane): ClipCcLane | null => {
+      const controller = lane.controller as number;
+      const channel = lane.channel as number;
+      return isValidController(controller) && isValidChannel(channel)
+        ? { controller, channel, points: [] }
+        : null;
+    },
+    ramps: rampCurve,
+    pointAt: rampPointAt,
     dropEmptyOnClone: true,
   }),
   defineKind({
@@ -84,6 +143,9 @@ export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
     compare: (a: ClipPitchBendLane, b: ClipPitchBendLane) => a.channel - b.channel,
     sanitize: sanitizePitchBendPoints,
     shell: (lane: ClipPitchBendLane): ClipPitchBendLane => ({ channel: lane.channel, points: [] }),
+    parseShell: channelShell,
+    ramps: rampCurve,
+    pointAt: rampPointAt,
     dropEmptyOnClone: false,
   }),
   defineKind({
@@ -95,6 +157,9 @@ export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
       channel: lane.channel,
       points: [],
     }),
+    parseShell: channelShell,
+    ramps: () => false,
+    pointAt: holdPointAt,
     dropEmptyOnClone: false,
   }),
   defineKind({
@@ -106,6 +171,9 @@ export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
       channel: lane.channel,
       points: [],
     }),
+    parseShell: channelShell,
+    ramps: rampCurve,
+    pointAt: rampPointAt,
     dropEmptyOnClone: false,
   }),
   defineKind({
@@ -119,6 +187,15 @@ export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
       pitch: lane.pitch,
       points: [],
     }),
+    parseShell: (lane: StoredLane): ClipPolyPressureLane | null => {
+      const channel = lane.channel as number;
+      const pitch = Math.round(Number(lane.pitch));
+      return isValidChannel(channel) && Number.isInteger(pitch) && pitch >= 0 && pitch <= 127
+        ? { channel, pitch, points: [] }
+        : null;
+    },
+    ramps: rampCurve,
+    pointAt: rampPointAt,
     dropEmptyOnClone: false,
   }),
 ];
@@ -126,7 +203,10 @@ export const MIDI_LANE_KINDS: readonly ErasedKind[] = [
 type LaneRecord = Partial<Record<MidiLaneField, AnyLane[]>>;
 
 /** Maps lane points through `transform`, keeping each lane's identity fields. */
-type PointsTransform = <P extends { ppq: number }>(points: ReadonlyArray<P>) => P[];
+type PointsTransform = <P extends { ppq: number }>(
+  points: ReadonlyArray<P>,
+  kind: AnyMidiLaneKind,
+) => P[];
 
 /**
  * Merges the lanes of several source clips into one lane list per kind. Lanes
@@ -141,7 +221,7 @@ type PointsTransform = <P extends { ppq: number }>(points: ReadonlyArray<P>) => 
 export function joinMidiLaneFields<S extends Partial<MidiLaneFields>>(
   sources: readonly S[],
   lengthPpq: number,
-  placePoints: (points: ReadonlyArray<AnyPoint>, source: S) => AnyPoint[],
+  placePoints: (points: ReadonlyArray<AnyPoint>, source: S, kind: AnyMidiLaneKind) => AnyPoint[],
 ): Partial<MidiLaneFields> {
   const out: LaneRecord = {};
   for (const kind of MIDI_LANE_KINDS) {
@@ -150,7 +230,7 @@ export function joinMidiLaneFields<S extends Partial<MidiLaneFields>>(
       for (const lane of source[kind.field] ?? []) {
         const key = kind.key(lane);
         const current = lanes.get(key) ?? kind.shell(lane);
-        (current.points as AnyPoint[]).push(...placePoints(lane.points, source));
+        (current.points as AnyPoint[]).push(...placePoints(lane.points, source, kind));
         lanes.set(key, current);
       }
     }
@@ -161,6 +241,32 @@ export function joinMidiLaneFields<S extends Partial<MidiLaneFields>>(
     if (joined.length > 0) out[kind.field] = joined;
   }
   return out as Partial<MidiLaneFields>;
+}
+
+/**
+ * Rebuilds lane lists from untrusted stored data: lanes with an invalid
+ * identity drop, lanes sharing a key merge, points are sanitized to
+ * `[0, lengthPpq]`, empty lanes drop and every list is sorted.
+ *
+ * @returns Only the kinds that kept at least one lane.
+ */
+export function loadMidiLaneFields(
+  stored: { readonly [F in MidiLaneField]?: unknown },
+  lengthPpq: number,
+): Partial<MidiLaneFields> {
+  const parsed: LaneRecord = {};
+  for (const kind of MIDI_LANE_KINDS) {
+    const lanes = stored[kind.field];
+    if (!Array.isArray(lanes)) continue;
+    parsed[kind.field] = lanes.flatMap((lane: StoredLane | null) => {
+      const shell = lane !== null && typeof lane === 'object' ? kind.parseShell(lane) : null;
+      if (shell === null) return [];
+      return [{ ...shell, points: Array.isArray(lane?.points) ? lane.points : [] } as AnyLane];
+    });
+  }
+  return joinMidiLaneFields([parsed as Partial<MidiLaneFields>], lengthPpq, (points) => [
+    ...points,
+  ]);
 }
 
 /**
@@ -220,7 +326,7 @@ export function transformMidiLaneFields(
         (lane) =>
           ({
             ...kind.shell(lane),
-            points: transform(lane.points as ReadonlyArray<AnyPoint>),
+            points: transform(lane.points as ReadonlyArray<AnyPoint>, kind),
           }) as AnyLane,
       )
       .filter((lane) => lane.points.length > 0);

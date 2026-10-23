@@ -1,5 +1,9 @@
 import { sanitizeCompSegments } from '../comping';
-import { assignMidiLaneFields, transformMidiLaneFields } from '../midi-lane-kinds';
+import {
+  type AnyMidiLaneKind,
+  assignMidiLaneFields,
+  transformMidiLaneFields,
+} from '../midi-lane-kinds';
 import type { useProjectStore } from '../store';
 import type {
   ClipCompSegment,
@@ -117,36 +121,56 @@ function clampedTakeIndex(index: number | undefined, takeCount: number): number 
   return Math.min(Math.max(0, candidate), takeCount - 1);
 }
 
-function transformLanePoints<T extends PpqPoint>(
-  points: ReadonlyArray<T>,
+/**
+ * Cuts lane points to the range `[startPpq, endPpq]`, keeping their positions.
+ * Each edge inside a segment gets the point the kind places there (the value a
+ * ramp has reached, or the held value), so the window plays what the source
+ * played over it.
+ */
+export function windowLanePoints<P extends PpqPoint>(
+  kind: AnyMidiLaneKind,
+  points: ReadonlyArray<P>,
+  startPpq: number,
+  endPpq: number,
+): P[] {
+  const pointAt = kind.pointAt as unknown as (previous: P, next: P | undefined, ppq: number) => P;
+  const ramps = kind.ramps as unknown as (point: P) => boolean;
+  const sorted = points.filter((point) => Number.isFinite(point.ppq)).sort((a, b) => a.ppq - b.ppq);
+  const before = sorted.filter((point) => point.ppq < startPpq).at(-1);
+  const inside = sorted.filter((point) => point.ppq >= startPpq && point.ppq <= endPpq);
+  const after = sorted.find((point) => point.ppq > endPpq);
+  const out = inside.map((point) => ({ ...point }));
+  if (before !== undefined && inside[0]?.ppq !== startPpq) {
+    out.unshift(pointAt(before, inside[0] ?? after, startPpq));
+  }
+  const last = out.at(-1);
+  if (last !== undefined && after !== undefined && last.ppq < endPpq && ramps(last)) {
+    out.push(pointAt(inside.at(-1) ?? (before as P), after, endPpq));
+  }
+  return out;
+}
+
+/** Lane points of the window starting at `windowStartPpq`, rebased to it. */
+function transformLanePoints<P extends PpqPoint>(
+  kind: AnyMidiLaneKind,
+  points: ReadonlyArray<P>,
   windowStartPpq: number,
   windowLengthPpq: number,
-): T[] {
+): P[] {
   const length = Number.isFinite(windowLengthPpq) && windowLengthPpq > 0 ? windowLengthPpq : 0;
-  const windowEndPpq = windowStartPpq + length;
-  const byPpq = new Map<number, T>();
-  let held: T | undefined;
-  for (const point of points) {
-    if (!Number.isFinite(point.ppq)) continue;
-    if (point.ppq < windowStartPpq) {
-      if (!held || point.ppq >= held.ppq) held = point;
-      continue;
-    }
-    if (point.ppq > windowEndPpq) continue;
-    byPpq.set(point.ppq - windowStartPpq, { ...point, ppq: point.ppq - windowStartPpq });
-  }
-  if (held && !byPpq.has(0)) byPpq.set(0, { ...held, ppq: 0 });
-  return [...byPpq.values()].sort((a, b) => a.ppq - b.ppq);
+  return windowLanePoints(kind, points, windowStartPpq, windowStartPpq + length).map((point) => ({
+    ...point,
+    ppq: point.ppq - windowStartPpq,
+  }));
 }
 
 /**
- * Keeps MIDI take notes in the source-relative coordinate frame while
- * clipping them to the derived source window. The native Project uses this
- * same frame for clip notes after a split/trim; rebasing them to zero would
- * make switching the derived clip's active take play at the wrong source
- * offset.
+ * Clips notes to the source range `[sourceWindowStartPpq, sourceWindowEndPpq)`,
+ * keeping the source-relative frame: a note crossing an edge is cut there
+ * rather than dropped. The native Project uses this frame for clip notes after
+ * a split/trim, so rebasing would make a derived take play at the wrong offset.
  */
-function transformMidiTakeNotes(
+export function windowMidiNotes(
   notes: MidiClipTake['notes'],
   sourceWindowStartPpq: number,
   sourceWindowEndPpq: number,
@@ -171,12 +195,12 @@ function transformMidiTake(
 ): MidiClipTake {
   const next: MidiClipTake = {
     name: take.name,
-    notes: transformMidiTakeNotes(take.notes, sourceWindowStartPpq, sourceWindowEndPpq),
+    notes: windowMidiNotes(take.notes, sourceWindowStartPpq, sourceWindowEndPpq),
   };
   Object.assign(
     next,
-    transformMidiLaneFields(take, (points) =>
-      transformLanePoints(points, windowStartPpq, windowLengthPpq),
+    transformMidiLaneFields(take, (points, kind) =>
+      transformLanePoints(kind, points, windowStartPpq, windowLengthPpq),
     ),
   );
   return next;
@@ -345,8 +369,8 @@ export function withDerivedClipMetadata(
 
   assignMidiLaneFields(
     next,
-    transformMidiLaneFields(source, (points) =>
-      transformLanePoints(points, windowStartPpq, windowLengthPpq),
+    transformMidiLaneFields(source, (points, kind) =>
+      transformLanePoints(kind, points, windowStartPpq, windowLengthPpq),
     ),
   );
   const windowEndPpq = windowStartPpq + windowLengthPpq;

@@ -3,10 +3,10 @@ import type { RawNote } from '../midi-events';
 import {
   assignMidiLaneFields,
   copyMidiLaneFields,
+  joinMidiLaneFields,
   MIDI_LANE_KINDS,
   type MidiLaneField,
   type MidiLaneFields,
-  type MidiLaneOf,
 } from '../midi-lane-kinds';
 import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import type {
@@ -21,7 +21,7 @@ import type {
 } from '../types';
 import { clearLaneRangeWithin, makeRoomForRecordingWithin } from './clip-lane';
 import { execute, executeAtomic } from './history';
-import { requireTrack } from './utils';
+import { requireTrack, windowLanePoints, windowMidiNotes } from './utils';
 
 /** Copies app-level MIDI take data so callers cannot mutate the clip mirror. */
 function cloneMidiTake(take: MidiClipTake): MidiClipTake {
@@ -207,47 +207,22 @@ export function setClipMidiCompSegments(
     throw new RangeError(`Clip ${clipId} has no MIDI takes`);
   const selected = sanitizeCompSegments(segments, takes.length, clip.lengthPpq);
   if (selected.length === 0) throw new RangeError('MIDI comp needs a valid selection');
-  const notes: RawNote[] = [];
-  for (let i = 0; i < selected.length; i++) {
-    const start = selected[i].startPpq;
-    const end = selected[i + 1]?.startPpq ?? clip.lengthPpq;
-    // MIDI take notes use the clip's source-relative coordinate frame, while
-    // comp segments are relative to the audible clip window. Offset only the
-    // note comparison; expression lanes below are already clip-window-local.
-    const sourceStart = clip.sourceOffsetPpq + start;
-    const sourceEnd = clip.sourceOffsetPpq + end;
-    for (const note of takes[selected[i].takeIndex].notes) {
-      const noteStart = Math.max(sourceStart, note.startPpq);
-      const noteEnd = Math.min(sourceEnd, note.startPpq + note.durationPpq);
-      if (noteEnd > noteStart)
-        notes.push({ ...note, startPpq: noteStart, durationPpq: noteEnd - noteStart });
-    }
-  }
-  const composeLanes = <Lane extends { points: Array<{ ppq: number }> }>(
-    getLanes: (take: MidiClipTake) => Lane[] | undefined,
-  ): Lane[] => {
-    const out: Lane[] = [];
-    for (let i = 0; i < selected.length; i++) {
-      const start = selected[i].startPpq;
-      const end = selected[i + 1]?.startPpq ?? clip.lengthPpq;
-      for (const lane of getLanes(takes[selected[i].takeIndex]) ?? []) {
-        const points = lane.points.filter((point) => point.ppq >= start && point.ppq < end);
-        const previous = lane.points.filter((point) => point.ppq < start).at(-1);
-        const rebased = [
-          ...(previous === undefined ? [] : [{ ...previous, ppq: start }]),
-          ...points.map((point) => ({ ...point })),
-        ];
-        if (rebased.length > 0) out.push({ ...lane, points: rebased });
-      }
-    }
-    return out;
-  };
-  const composed: Partial<Record<MidiLaneField, MidiLaneOf<MidiLaneField>[]>> = {};
-  for (const { field } of MIDI_LANE_KINDS) {
-    composed[field] = composeLanes<MidiLaneOf<MidiLaneField>>(
-      (take) => take[field] as MidiLaneOf<MidiLaneField>[] | undefined,
-    );
-  }
+  // Comp segments are clip-window-local; take notes are source-relative, take lanes clip-window-local.
+  const windows = selected.map((segment, i) => ({
+    ...takes[segment.takeIndex],
+    startPpq: segment.startPpq,
+    endPpq: selected[i + 1]?.startPpq ?? clip.lengthPpq,
+  }));
+  const notes: RawNote[] = windows.flatMap((window) =>
+    windowMidiNotes(
+      window.notes,
+      clip.sourceOffsetPpq + window.startPpq,
+      clip.sourceOffsetPpq + window.endPpq,
+    ),
+  );
+  const composed = joinMidiLaneFields(windows, clip.lengthPpq, (points, window, kind) =>
+    windowLanePoints(kind, points, window.startPpq, window.endPpq),
+  );
   const project = getProject();
   execute(1, () => {
     project.setMidiEvents(clipId, notesToProjectEvents(notes));
@@ -258,7 +233,7 @@ export function setClipMidiCompSegments(
         midiTakes: takes.map(cloneMidiTake),
         midiCompSegments: selected,
       };
-      assignMidiLaneFields(next, composed as Partial<MidiLaneFields>);
+      assignMidiLaneFields(next, composed);
       return next;
     });
     store.refresh();

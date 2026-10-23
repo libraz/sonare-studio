@@ -204,7 +204,8 @@ export function sanitizeProgramChangePoints(
     .sort((a, b) => a.ppq - b.ppq);
 }
 
-function curveT(curve: ClipExpressionCurve | undefined, t: number): number {
+/** Eases a segment fraction t in [0, 1] by the breakpoint's curve. */
+export function curveT(curve: ClipExpressionCurve | undefined, t: number): number {
   if (curve === 's-curve') return t * t * (3 - 2 * t);
   return t;
 }

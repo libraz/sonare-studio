@@ -1,12 +1,11 @@
 import { computed, getCurrentScope, onScopeDispose, type Ref, ref } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
-import { downmixToMono } from '@/lib/audio-channels';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { createAssetReferenceGuard } from '@/project/asset-references';
-import { clipSourceWindowFrames } from '@/project/audible-clip-window';
+import { clipSourceWindowMono } from '@/project/audible-clip-window';
 import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
 import { decodeAndIngest, decodeAudioFile } from '@/project/audio-import';
 import { clipsCollidingWith } from '@/project/command/clip-lane';
@@ -215,17 +214,15 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
       const isCurrent = (): boolean => tempoDetectionOperations.isCurrent(token, identity());
       const asset = await loadAsset(assetId);
       if (!isCurrent()) return;
-      const window = clipSourceWindowFrames(
+      const { mono, sampleRate } = clipSourceWindowMono(
         clip,
-        asset.channels[0]?.length ?? 0,
-        asset.meta.sampleRate,
+        asset,
         store.tempoBpm,
         store.tempoSegments,
       );
-      const tags = await analyzeAudioTagsInWorker(
-        downmixToMono(asset.channels.map((channel) => channel.slice(window.start, window.end))),
-        asset.meta.sampleRate,
-      ).catch(() => ({ bpm: undefined }));
+      const tags = await analyzeAudioTagsInWorker(mono, sampleRate).catch(() => ({
+        bpm: undefined,
+      }));
       if (!isCurrent()) return;
       if (tags.bpm === undefined) {
         renderInfo.value = t.value.dialogs.prompts.tempoDetectionFailed;

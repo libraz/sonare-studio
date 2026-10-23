@@ -181,8 +181,14 @@ describe('derived MIDI cycle-take metadata', () => {
       { id: expect.any(Number), pitch: 69, velocity: 82, startPpq: 7, durationPpq: 1, channel: 0 },
     ]);
     expect(right.ccLanes).toEqual([
-      { controller: 1, channel: 0, points: [{ ppq: 1, value: 55 }] },
-      { controller: 1, channel: 0, points: [{ ppq: 3, value: 77 }] },
+      {
+        controller: 1,
+        channel: 0,
+        points: [
+          { ppq: 1, value: 55 },
+          { ppq: 3, value: 77 },
+        ],
+      },
     ]);
     expect(
       right.notes.every(

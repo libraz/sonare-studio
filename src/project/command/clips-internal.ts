@@ -10,12 +10,13 @@
 
 import { remapClipScoreAnnotations } from '../annotations';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
-import { getProject, useProjectStore } from '../store';
+import { getProject, notesToProjectEvents, useProjectStore } from '../store';
 import { normalizeTempoMap } from '../tempo-map';
+import { clipKind, type EditorClip } from '../types';
 import { clearProjectClipWarp, installProjectClipWarp } from '../warp';
 import type { AtomicProjectEdit } from './history';
 import { pruneClipScoreAnnotations } from './tracks';
-import { requireEditableClip, withDerivedClipMetadata } from './utils';
+import { requireEditableClip, windowMidiNotes, withDerivedClipMetadata } from './utils';
 
 /** Reinstalls derived app metadata after a native clip split. */
 export function splitClipWithin(edit: AtomicProjectEdit, clipId: number, splitPpq: number): number {
@@ -32,8 +33,21 @@ export function splitClipWithin(edit: AtomicProjectEdit, clipId: number, splitPp
   // The engine refuses to split or trim a clip bound to a warp map; each side is reinstalled below.
   clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
   const rightId = edit(1, () => project.splitClip(clipId, splitPpq));
-  store.refresh();
   const splitOffsetPpq = splitPpq - source.startPpq;
+  const splitSourcePpq = source.sourceOffsetPpq + splitOffsetPpq;
+  // The engine partitions note-on and note-off events, which drops a note crossing the cut from both halves.
+  if (
+    clipKind(source) === 'midi' &&
+    source.notes.some(
+      (note) => note.startPpq < splitSourcePpq && note.startPpq + note.durationPpq > splitSourcePpq,
+    )
+  ) {
+    const left = windowMidiNotes(source.notes, Number.NEGATIVE_INFINITY, splitSourcePpq);
+    const right = windowMidiNotes(source.notes, splitSourcePpq, Number.POSITIVE_INFINITY);
+    edit(1, () => project.setMidiEvents(clipId, notesToProjectEvents(left)));
+    edit(1, () => project.setMidiEvents(rightId, notesToProjectEvents(right)));
+  }
+  store.refresh();
   store.clips = store.clips.map((clip) => {
     if (clip.id === clipId) {
       return withDerivedClipMetadata(clip, sourceMeta, {
@@ -136,4 +150,30 @@ export function removeClipWithin(edit: AtomicProjectEdit, clipId: number): void 
   clearProjectClipWarp(project, clipId, (mutation) => edit(1, mutation));
   edit(1, () => project.removeClip(clipId));
   pruneClipScoreAnnotations(store, [clipId]);
+}
+
+/** Clip fields a new clip takes over from the clip it was derived from. */
+export type ClipShape = Pick<
+  EditorClip,
+  'lengthPpq' | 'fadeInPpq' | 'fadeOutPpq' | 'loopEnabled' | 'loopLengthPpq'
+>;
+
+/**
+ * Replays fades and loop onto a freshly added clip, which the Project creates
+ * with neither. Gain and source offset are addClip fields and are passed there.
+ */
+export function shapeClipWithin(edit: AtomicProjectEdit, clipId: number, shape: ClipShape): void {
+  const project = getProject();
+  if ((shape.fadeInPpq ?? 0) > 0 || (shape.fadeOutPpq ?? 0) > 0) {
+    edit(1, () =>
+      project.setClipFade(
+        clipId,
+        { lengthPpq: shape.fadeInPpq ?? 0 },
+        { lengthPpq: shape.fadeOutPpq ?? 0 },
+      ),
+    );
+  }
+  if (shape.loopEnabled) {
+    edit(1, () => project.setClipLoop(clipId, 'loop', shape.loopLengthPpq || shape.lengthPpq));
+  }
 }

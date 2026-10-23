@@ -117,15 +117,22 @@ function median(values: number[]): number | null {
 }
 
 /**
- * Converts detected beat/downbeat source times into a clip warp map. Beat
- * positions become target quarter-note PPQ values; irregular source spacing
- * is captured as anchors while the median beat interval becomes sourceBpm.
+ * Converts detected beat/downbeat source times into a clip warp map. The first
+ * beat becomes the clip start and beat k lands on PPQ k; irregular source
+ * spacing is captured as anchors while the median beat interval becomes
+ * sourceBpm and sets the source end. Start and end are in the beat times' own
+ * time base, anchors relative to the start.
  */
 export function autoWarpFromBeatTimes(
   beatTimes: ReadonlyArray<number>,
   downbeatTimes: ReadonlyArray<number> = [],
   lengthPpq: number,
-): Pick<ClipWarp, 'sourceBpm' | 'anchors'> | null {
+):
+  | (Pick<ClipWarp, 'sourceBpm' | 'anchors'> & {
+      sourceStartSeconds: number;
+      sourceEndSeconds: number;
+    })
+  | null {
   const beats = [...new Set(beatTimes.filter((time) => Number.isFinite(time) && time >= 0))].sort(
     (a, b) => a - b,
   );
@@ -138,23 +145,20 @@ export function autoWarpFromBeatTimes(
   if (medianInterval === null || !(medianInterval > 0)) return null;
   const sourceBpm = 60 / medianInterval;
   const firstBeat = beats[0];
-  const anchors = beats
-    .map((sourceSeconds) => ({
-      ppq: Math.round((sourceSeconds - firstBeat) / medianInterval),
-      sourceSeconds,
-    }))
-    .filter((anchor) => anchor.ppq > 0 && anchor.ppq < lengthPpq);
-
+  const toAnchor = (time: number) => ({
+    ppq: Math.round((time - firstBeat) / medianInterval),
+    sourceSeconds: time - firstBeat,
+  });
+  const anchors = beats.map(toAnchor).filter((anchor) => anchor.ppq > 0 && anchor.ppq < lengthPpq);
   const downbeatAnchors = downbeatTimes
     .filter((time) => Number.isFinite(time) && time >= 0)
-    .map((sourceSeconds) => ({
-      ppq: Math.round((sourceSeconds - firstBeat) / medianInterval),
-      sourceSeconds,
-    }))
+    .map(toAnchor)
     .filter((anchor) => anchor.ppq > 0 && anchor.ppq < lengthPpq);
   return {
     sourceBpm,
     anchors: sanitizeWarpAnchors([...anchors, ...downbeatAnchors], lengthPpq),
+    sourceStartSeconds: firstBeat,
+    sourceEndSeconds: firstBeat + lengthPpq * medianInterval,
   };
 }
 

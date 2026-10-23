@@ -211,7 +211,10 @@ describe('MIDI lane kinds across load, refresh, serialize and recording', () => 
       const clip = clipNamed(clipId);
       const [a, b] = [lanes(0, 10), lanes(2, 30)];
       for (const field of LANE_FIELDS) {
-        const expected = [...a[field]!, ...b[field]!];
+        // Both takes carry the same lane identity, so the comp holds one merged lane.
+        const expected = [
+          { ...a[field]![0], points: [...a[field]![0].points, ...b[field]![0].points] },
+        ];
         expect(clip[field]).toEqual(expected);
       }
     });

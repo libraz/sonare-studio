@@ -14,6 +14,7 @@ import { canTrackContainClip, clipKind, type EditorClip } from '../types';
 import { installProjectClipWarp } from '../warp';
 import { clipsCollidingWith } from './clip-lane';
 import { deleteClip } from './clips-editing';
+import { shapeClipWithin } from './clips-internal';
 import { executeAtomic } from './history';
 import { requireEditableTrack, validatePpq } from './utils';
 
@@ -109,16 +110,16 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
   validatePpq(startPpq, 'Clip startPpq');
 
   return executeAtomic((edit) => {
+    const placement = {
+      trackId,
+      startPpq,
+      lengthPpq: source.lengthPpq,
+      sourceOffsetPpq: source.sourceOffsetPpq,
+      gain: source.gain,
+    };
     const newClipId =
       kind === 'midi'
-        ? edit(1, () =>
-            project.addClip({
-              trackId,
-              isMidi: true,
-              startPpq,
-              lengthPpq: source.lengthPpq,
-            }),
-          )
+        ? edit(1, () => project.addClip({ ...placement, isMidi: true }))
         : (() => {
             const assetId = source.assetId;
             if (assetId === undefined || assetId.length === 0) {
@@ -133,45 +134,27 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
                 : undefined;
             const id = edit(1, () =>
               project.addClip({
-                trackId,
+                ...placement,
                 isMidi: false,
-                startPpq,
-                lengthPpq: source.lengthPpq,
-                sourceOffsetPpq: source.sourceOffsetPpq,
-                gain: source.gain,
                 ...placeholderSourceAudio(),
                 ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
               }),
             );
             if (sourceId === undefined) setAudioSourceId(assetId, project.sourceCount());
             else edit(1, () => project.setClipSource(id, sourceId));
-            if ((source.fadeInPpq ?? 0) > 0 || (source.fadeOutPpq ?? 0) > 0) {
-              edit(1, () =>
-                project.setClipFade(
-                  id,
-                  { lengthPpq: source.fadeInPpq ?? 0 },
-                  { lengthPpq: source.fadeOutPpq ?? 0 },
-                ),
-              );
-            }
-            if (source.loopEnabled) {
-              edit(1, () =>
-                project.setClipLoop(id, 'loop', source.loopLengthPpq || source.lengthPpq),
-              );
-            }
-            if (source.warp !== undefined) {
-              const { trackId: _sourceTrackId, ...warpClip } = source;
-              installProjectClipWarp(
-                project,
-                { ...warpClip, id, startPpq },
-                normalizeTempoMap(store.tempoSegments, store.tempoBpm),
-                (mutation) => edit(1, mutation),
-              );
-            }
             return id;
           })();
+    shapeClipWithin(edit, newClipId, source);
     if (kind === 'midi') {
       edit(1, () => project.setMidiEvents(newClipId, notesToProjectEvents(source.notes)));
+    } else if (source.warp !== undefined) {
+      const { trackId: _sourceTrackId, ...warpClip } = source;
+      installProjectClipWarp(
+        project,
+        { ...warpClip, id: newClipId, startPpq },
+        normalizeTempoMap(store.tempoSegments, store.tempoBpm),
+        (mutation) => edit(1, mutation),
+      );
     }
 
     // Seed every app-level field, then recover native note ids from Project.

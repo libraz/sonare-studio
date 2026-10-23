@@ -1,4 +1,3 @@
-import { downmixToMono } from '@/lib/audio-channels';
 import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
@@ -9,6 +8,7 @@ import {
   remapClipScoreAnnotations,
 } from '../annotations';
 import { createAssetReferenceGuard } from '../asset-references';
+import { renderAudibleClipMono } from '../audible-clip-window';
 import { ingestAudioBuffer } from '../audio-import';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '../audio-slice';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
@@ -55,6 +55,7 @@ import { assertNoNewClipOverlaps, moveClipsWithin, replaceClipsWithin } from './
 import {
   moveClipWithin,
   removeClipWithin,
+  shapeClipWithin,
   splitClipWithin,
   trimClipWithin,
 } from './clips-internal';
@@ -330,6 +331,37 @@ function joinedScoreAnnotations(
 }
 
 /**
+ * Gain and edge fades the glued clip takes over, or a throw when the sources
+ * shape their sound in a way one clip cannot reproduce.
+ */
+function gluedClipShape(ordered: readonly EditorClip[]): {
+  gain: number;
+  fadeInPpq?: number;
+  fadeOutPpq?: number;
+} {
+  const audible = ordered.filter((clip) => clip.gain > 0);
+  const gain = audible[0]?.gain ?? ordered[0].gain;
+  if (audible.some((clip) => Math.abs(clip.gain - gain) > 1e-9)) {
+    throw new RangeError('Can only glue clips that share the same gain');
+  }
+  const first = ordered[0];
+  const last = ordered.reduce((latest, clip) =>
+    clip.startPpq + clip.lengthPpq >= latest.startPpq + latest.lengthPpq ? clip : latest,
+  );
+  const interiorFade = ordered.some(
+    (clip) =>
+      (clip !== first && (clip.fadeInPpq ?? 0) > 0) ||
+      (clip !== last && (clip.fadeOutPpq ?? 0) > 0),
+  );
+  if (interiorFade) throw new RangeError('Can only glue clips whose fades sit at the outer edges');
+  return {
+    gain,
+    ...((first.fadeInPpq ?? 0) > 0 ? { fadeInPpq: first.fadeInPpq } : {}),
+    ...((last.fadeOutPpq ?? 0) > 0 ? { fadeOutPpq: last.fadeOutPpq } : {}),
+  };
+}
+
+/**
  * Glues several MIDI clips on one track into a single consolidated MIDI clip
  * spanning their combined timeline range. Looped clips are flattened into
  * explicit note/expression repeats inside the glued clip.
@@ -357,8 +389,24 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
   if (!Number.isFinite(lengthPpq) || lengthPpq <= 0) {
     throw new RangeError('Glued clip length must be finite and > 0');
   }
-  const occurrences = joinedNoteOccurrences(ordered, startPpq, lengthPpq);
+  const shape = gluedClipShape(ordered);
+  // A silenced source plays no notes, so the glued clip must not either.
+  const occurrences = joinedNoteOccurrences(
+    ordered.filter((clip) => clip.gain > 0),
+    startPpq,
+    lengthPpq,
+  );
   const notes = joinedNotes(occurrences);
+  const smfSysEx = ordered
+    .flatMap((clip) =>
+      (clip.smfSysEx ?? []).map((packet) => ({
+        ...packet,
+        ppq: packet.ppq + clip.startPpq - startPpq,
+        data: [...packet.data],
+      })),
+    )
+    .filter((packet) => packet.ppq >= 0 && packet.ppq < lengthPpq)
+    .sort((a, b) => a.ppq - b.ppq);
   const name = ordered[0].name;
   return executeAtomic((edit) => {
     const sourceAnnotations = store.scoreAnnotations;
@@ -366,8 +414,14 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
     // transaction, so it contributes one Project history entry.
     const newClipId = replaceClipsWithin(edit, uniqueIds, () => {
       const createdId = edit(1, () =>
-        project.addClip({ trackId, isMidi: true, startPpq, lengthPpq }),
+        project.addClip({ trackId, isMidi: true, startPpq, lengthPpq, gain: shape.gain }),
       );
+      shapeClipWithin(edit, createdId, {
+        ...shape,
+        lengthPpq,
+        loopEnabled: false,
+        loopLengthPpq: 0,
+      });
       edit(1, () => project.setMidiEvents(createdId, notesToProjectEvents(notes)));
       return createdId;
     });
@@ -386,6 +440,8 @@ export function glueMidiClips(clipIds: ReadonlyArray<number>): number {
           offsetPoints(points, source, startPpq),
         ),
       );
+      if (smfSysEx.length > 0) next.smfSysEx = smfSysEx;
+      else delete next.smfSysEx;
       return next;
     });
     const joined = store.clips.find((clip) => clip.id === newClipId);
@@ -755,6 +811,8 @@ export interface SliceAudioClipOptions {
   loadAudioAsset?: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Onset detector override; defaults to the wasm detector. */
   detectOnsets?: (samples: Float32Array, sampleRate: number) => ArrayLike<number>;
+  /** Warped-clip render override for tests; production renders through the engine. */
+  renderWarp?: WarpRenderFn;
 }
 
 /**
@@ -790,19 +848,35 @@ export async function sliceAudioClipAtTransients(
     ).detectOnsets ??
     null;
   if (detect === null) throw new Error('Onset detection is unavailable in this libsonare build');
-  const asset = await (options.loadAudioAsset ?? loadAsset)(clip.assetId);
+  const loadAudioAsset = options.loadAudioAsset ?? loadAsset;
+  // Detect on what plays, so warp and comp takes place the onsets where they are heard.
+  const audible = await renderAudibleClipMono(
+    clip,
+    store.tempoBpm,
+    store.tempoSegments,
+    loadAudioAsset,
+    { renderWarp: options.renderWarp },
+  );
+  if (audible === null) return [clipId];
   const current = requireEditableClip(store, clipId);
-  const tempo = normalizeTempoMap(store.tempoSegments, store.tempoBpm);
+  const tempo = audible.map;
+  const clipEndPpq = current.startPpq + current.lengthPpq;
+  // Rendered onsets are clip-local, so the clip start is their origin.
   const cuts = transientCutsPpq(
-    detect(downmixToMono(asset.channels), asset.meta.sampleRate),
-    current,
+    detect(audible.mono, audible.sampleRate),
+    { ...current, sourceOffsetPpq: 0 },
     tempo,
   );
   if (cuts.length === 0) return [clipId];
 
-  const sourceStartPpq = current.startPpq - current.sourceOffsetPpq;
-  const assetSeconds = asset.meta.numFrames / asset.meta.sampleRate;
-  const sourceEndPpq = secondsToPpq(tempo, ppqToSeconds(tempo, sourceStartPpq) + assetSeconds);
+  // Beyond the clip end only a plain clip's own asset is known to continue.
+  let sourceEndPpq = clipEndPpq;
+  if (!current.warp?.enabled && (current.takes?.length ?? 0) === 0) {
+    const asset = await loadAudioAsset(clip.assetId);
+    const sourceStartPpq = current.startPpq - current.sourceOffsetPpq;
+    const assetSeconds = asset.meta.numFrames / asset.meta.sampleRate;
+    sourceEndPpq = secondsToPpq(tempo, ppqToSeconds(tempo, sourceStartPpq) + assetSeconds);
+  }
 
   return executeAtomic((edit) => {
     const ids = [clipId];

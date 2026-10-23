@@ -239,8 +239,14 @@ describe('addRecordedMidiClip', () => {
       [64, 2, 2],
     ]);
     expect(store.activeClip?.ccLanes).toEqual([
-      { controller: 1, channel: 0, points: [{ ppq: 0, value: 10 }] },
-      { controller: 1, channel: 0, points: [{ ppq: 2, value: 90 }] },
+      {
+        controller: 1,
+        channel: 0,
+        points: [
+          { ppq: 0, value: 10 },
+          { ppq: 2, value: 90 },
+        ],
+      },
     ]);
   });
 

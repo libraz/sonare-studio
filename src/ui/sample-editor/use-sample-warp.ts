@@ -6,13 +6,12 @@
  */
 
 import { computed, onScopeDispose, ref, watch } from 'vue';
-import { downmixToMono } from '@/lib/audio-channels';
 import { errorMessage } from '@/lib/errors';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { loadAsset } from '@/persistence/assets';
-import { clipSourceWindowFrames } from '@/project/audible-clip-window';
+import { clipSourceWindowMono } from '@/project/audible-clip-window';
 import { setClipWarp } from '@/project/commands';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
@@ -179,31 +178,24 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
       if (typeof deps.detectBeats !== 'function') throw new Error('Auto-Warp requires detectBeats');
       const asset = await deps.loadAudioAsset(clip.assetId);
       if (!isCurrent()) return;
-      const sampleRate = asset.meta.sampleRate;
-      const window = clipSourceWindowFrames(
-        clip,
-        asset.channels[0]?.length ?? 0,
-        sampleRate,
-        project.tempoBpm,
-        project.tempoSegments,
-      );
-      const mono = downmixToMono(
-        asset.channels.map((channel) => channel.slice(window.start, window.end)),
-      );
-      if (mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');
+      const source = clipSourceWindowMono(clip, asset, project.tempoBpm, project.tempoSegments);
+      if (source.mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');
+      const { mono, sampleRate } = source;
       const beats = deps.detectBeats(mono, sampleRate);
       const downbeats =
         typeof deps.detectDownbeats === 'function' ? deps.detectDownbeats(mono, sampleRate) : [];
       const warp = autoWarpFromBeatTimes(beats, downbeats, clip.lengthPpq);
       if (!warp) throw new Error('Auto-Warp could not detect enough beats');
       if (!isCurrent()) return;
-      // Anchors are seconds into the analysed window, so the warp must start there.
+      // Beat times are seconds into the analysed window; the warp starts on its first beat.
+      const windowStartSeconds = source.start / sampleRate;
+      const assetSeconds = (asset.channels[0]?.length ?? 0) / sampleRate;
       commitWarp({
         enabled: true,
         sourceBpm: warp.sourceBpm,
         anchors: warp.anchors,
-        sourceStartSeconds: window.start / sampleRate,
-        sourceEndSeconds: window.end / sampleRate,
+        sourceStartSeconds: windowStartSeconds + warp.sourceStartSeconds,
+        sourceEndSeconds: Math.min(assetSeconds, windowStartSeconds + warp.sourceEndSeconds),
       });
     } catch (err) {
       if (!isCurrent()) return;

@@ -9,15 +9,9 @@ import { sanitizeExpressionMap } from './expression-map';
 import { isExternalStemRole } from './external-stems';
 import { sanitizeProvenance } from './generation';
 import { loadInstrument } from './instrument';
-import {
-  isValidChannel,
-  isValidController,
-  sanitizeCcPoints,
-  sanitizePitchBendPoints,
-  sanitizePressurePoints,
-} from './midi-cc';
+import { isValidChannel } from './midi-cc';
 import { isMidiFxNoop, sanitizeMidiFxConfig } from './midi-fx';
-import { copyMidiLaneFields } from './midi-lane-kinds';
+import { copyMidiLaneFields, loadMidiLaneFields } from './midi-lane-kinds';
 import { cloneStrip, createDefaultStrip } from './mixer';
 import { isValidPitchRange } from './pitch-range';
 import {
@@ -30,12 +24,7 @@ import {
 import type { DocumentClip, DocumentNote, ProjectDocument } from './serialization';
 import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from './tempo-map';
 import type {
-  ClipCcLane,
-  ClipChannelPressureLane,
   ClipKind,
-  ClipPitchBendLane,
-  ClipPolyPressureLane,
-  ClipProgramChangeLane,
   EditorClip,
   EditorTrack,
   LeadFollowStashEntry,
@@ -186,110 +175,8 @@ export function applyDocumentClipMetadata(
         }
       }
     }
-    // CC lanes are MIDI-clip metadata; hydrate and re-sanitize them against
-    // the clip window (malformed lanes/points drop out).
-    if (kind === 'midi' && Array.isArray(meta.ccLanes) && meta.ccLanes.length > 0) {
-      const lanes: ClipCcLane[] = [];
-      for (const lane of meta.ccLanes) {
-        if (!isValidController(lane.controller) || !isValidChannel(lane.channel)) continue;
-        const points = sanitizeCcPoints(
-          Array.isArray(lane.points) ? lane.points : [],
-          clip.lengthPpq,
-        );
-        if (points.length > 0) {
-          lanes.push({ controller: lane.controller, channel: lane.channel, points });
-        }
-      }
-      if (lanes.length > 0) {
-        lanes.sort((a, b) => a.controller - b.controller);
-        next.ccLanes = lanes;
-      }
-    }
-    if (kind === 'midi' && Array.isArray(meta.pitchBendLanes) && meta.pitchBendLanes.length > 0) {
-      const lanes: ClipPitchBendLane[] = [];
-      for (const lane of meta.pitchBendLanes) {
-        if (!isValidChannel(lane.channel)) continue;
-        const points = sanitizePitchBendPoints(
-          Array.isArray(lane.points) ? lane.points : [],
-          clip.lengthPpq,
-        );
-        if (points.length > 0) lanes.push({ channel: lane.channel, points });
-      }
-      if (lanes.length > 0) {
-        lanes.sort((a, b) => a.channel - b.channel);
-        next.pitchBendLanes = lanes;
-      }
-    }
-    if (
-      kind === 'midi' &&
-      Array.isArray(meta.programChangeLanes) &&
-      meta.programChangeLanes.length > 0
-    ) {
-      const lanes: ClipProgramChangeLane[] = [];
-      for (const lane of meta.programChangeLanes) {
-        if (!isValidChannel(lane.channel)) continue;
-        const points = (Array.isArray(lane.points) ? lane.points : [])
-          .map((point) => ({
-            ppq: Number(point.ppq),
-            program: Math.round(Number(point.program)),
-          }))
-          .filter(
-            (point) =>
-              Number.isFinite(point.ppq) &&
-              point.ppq >= 0 &&
-              point.ppq <= clip.lengthPpq &&
-              Number.isInteger(point.program) &&
-              point.program >= 0 &&
-              point.program <= 127,
-          )
-          .sort((a, b) => a.ppq - b.ppq);
-        if (points.length > 0) lanes.push({ channel: lane.channel, points });
-      }
-      if (lanes.length > 0) {
-        lanes.sort((a, b) => a.channel - b.channel);
-        next.programChangeLanes = lanes;
-      }
-    }
-    if (
-      kind === 'midi' &&
-      Array.isArray(meta.channelPressureLanes) &&
-      meta.channelPressureLanes.length > 0
-    ) {
-      const lanes: ClipChannelPressureLane[] = [];
-      for (const lane of meta.channelPressureLanes) {
-        if (!isValidChannel(lane.channel)) continue;
-        const points = sanitizePressurePoints(
-          Array.isArray(lane.points) ? lane.points : [],
-          clip.lengthPpq,
-        );
-        if (points.length > 0) lanes.push({ channel: lane.channel, points });
-      }
-      if (lanes.length > 0) {
-        lanes.sort((a, b) => a.channel - b.channel);
-        next.channelPressureLanes = lanes;
-      }
-    }
-    if (
-      kind === 'midi' &&
-      Array.isArray(meta.polyPressureLanes) &&
-      meta.polyPressureLanes.length > 0
-    ) {
-      const lanes: ClipPolyPressureLane[] = [];
-      for (const lane of meta.polyPressureLanes) {
-        if (!isValidChannel(lane.channel)) continue;
-        const pitch = Math.round(Number(lane.pitch));
-        if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) continue;
-        const points = sanitizePressurePoints(
-          Array.isArray(lane.points) ? lane.points : [],
-          clip.lengthPpq,
-        );
-        if (points.length > 0) lanes.push({ channel: lane.channel, pitch, points });
-      }
-      if (lanes.length > 0) {
-        lanes.sort((a, b) => a.channel - b.channel || a.pitch - b.pitch);
-        next.polyPressureLanes = lanes;
-      }
-    }
+    // Lanes are MIDI-clip metadata; hydrate and re-sanitize them against the clip window.
+    if (kind === 'midi') Object.assign(next, loadMidiLaneFields(meta, clip.lengthPpq));
     if (kind === 'midi' && Array.isArray(meta.smfSysEx) && meta.smfSysEx.length > 0) {
       const packets: SmfSysExPacket[] = [];
       let totalBytes = 0;
