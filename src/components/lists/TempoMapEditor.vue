@@ -75,8 +75,8 @@ function addRow(): void {
  * song-start (1.1) BPM, leaving the existing rows for review before Apply.
  */
 function detectFromClip(): Promise<void> {
-  return guardedDetect(async (clip, isCurrent) => {
-    const bpm = await detectActiveAudioClipTempo(clip.id);
+  return guardedDetect(async (clip, isCurrent, signal) => {
+    const bpm = await detectActiveAudioClipTempo(clip.id, signal);
     if (!isCurrent()) return;
     if (bpm === null) {
       errors.value = [t.value.shell.lists.tempo.noneDetected];
@@ -100,11 +100,12 @@ function detectFromClip(): Promise<void> {
  * interval, anchored at song start). The draft awaits review before Apply.
  */
 function detectMapFromClip(): Promise<void> {
-  return guardedDetect(async (clip, isCurrent) => {
-    const segments = await detectActiveAudioClipTempoMap(clip.id, {
-      minBpm: MIN_BPM,
-      maxBpm: MAX_BPM,
-    });
+  return guardedDetect(async (clip, isCurrent, signal) => {
+    const segments = await detectActiveAudioClipTempoMap(
+      clip.id,
+      { minBpm: MIN_BPM, maxBpm: MAX_BPM },
+      signal,
+    );
     if (!isCurrent()) return;
     if (segments.length === 0) {
       errors.value = [t.value.shell.lists.tempo.noBeatsDetected];

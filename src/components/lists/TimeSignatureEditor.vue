@@ -124,12 +124,14 @@ function addRow(): void {
  * anchored at song start). The draft awaits review before Apply.
  */
 function detectFromClip(): Promise<void> {
-  return guardedDetect(async (clip, isCurrent) => {
+  return guardedDetect(async (clip, isCurrent, signal) => {
     const segments = detectOddMeters.value
-      ? await estimateActiveAudioClipMeter(clip.id, ODD_METER_CANDIDATES)
-      : await detectActiveAudioClipTimeSignatures(clip.id, {
-          maxNumerator: MAX_TIME_SIGNATURE_NUMERATOR,
-        });
+      ? await estimateActiveAudioClipMeter(clip.id, ODD_METER_CANDIDATES, signal)
+      : await detectActiveAudioClipTimeSignatures(
+          clip.id,
+          { maxNumerator: MAX_TIME_SIGNATURE_NUMERATOR },
+          signal,
+        );
     if (!isCurrent()) return;
     if (segments.length === 0) {
       errors.value = [t.value.shell.lists.meter.noneDetected];

@@ -50,7 +50,7 @@ const workerBeatDetector: AudioBeatDetector = (mono, sampleRate, signal) =>
 export interface AudioBeatGridDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
   /** Tracks beats and downbeats in a mono buffer (the analysis worker by default). */
-  detectBeats: (mono: Float32Array, sampleRate: number) => Promise<DetectedBeats>;
+  detectBeats: AudioBeatDetector;
 }
 
 /**
@@ -61,6 +61,7 @@ export interface AudioBeatGridDeps {
  * @param clip Audio clip to analyze.
  * @param tempo The project tempo map the window is rendered under.
  * @param beatsPerBar Beats in one bar of the meter at the clip.
+ * @param signal Aborts the analysis.
  * @returns The grid, or null when nothing is audible or too few beats are found.
  */
 export async function detectAudioClipBeatGrid(
@@ -68,6 +69,7 @@ export async function detectAudioClipBeatGrid(
   tempo: ReadonlyArray<TempoSegment>,
   beatsPerBar: number,
   deps: AudioBeatGridDeps,
+  signal?: AbortSignal,
 ): Promise<BeatGrid | null> {
   const window = await renderAudibleAudioClipWindow(
     clip,
@@ -77,7 +79,7 @@ export async function detectAudioClipBeatGrid(
   if (!window) return null;
   const mono = downmixToMono(window.channels, { copy: true });
   if (mono.length === 0) return null;
-  const { beats, downbeats } = await deps.detectBeats(mono, window.sampleRate);
+  const { beats, downbeats } = await deps.detectBeats(mono, window.sampleRate, signal);
   return fitBeatGrid(beats, downbeats, beatsPerBar);
 }
 
@@ -94,9 +96,13 @@ export function quarterBeatsPerBar(
  * carrying an asset. Returns null when no such clip is active or no grid is found.
  *
  * @param clipId Editor id of the clip to analyze.
+ * @param signal Aborts the analysis.
  * @returns The fitted BPM, or null.
  */
-export async function detectActiveAudioClipTempo(clipId: number): Promise<number | null> {
+export async function detectActiveAudioClipTempo(
+  clipId: number,
+  signal?: AbortSignal,
+): Promise<number | null> {
   const store = useProjectStore();
   const clip = store.clips.find((c) => c.id === clipId);
   if (!clip || !isAudioClip(clip) || clip.assetId === undefined) return null;
@@ -104,7 +110,8 @@ export async function detectActiveAudioClipTempo(clipId: number): Promise<number
     clip,
     store.tempoSegments.length > 0 ? store.tempoSegments : [{ startPpq: 0, bpm: store.tempoBpm }],
     quarterBeatsPerBar(store.timeSignatures, clip.startPpq),
-    { loadAudioAsset: loadAsset, detectBeats: detectBeatsInWorker },
+    { loadAudioAsset: loadAsset, detectBeats: workerBeatDetector },
+    signal,
   );
   return grid?.bpm ?? null;
 }

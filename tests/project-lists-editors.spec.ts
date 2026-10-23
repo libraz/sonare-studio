@@ -40,12 +40,18 @@ function buttonByText(wrapper: VueWrapper, text: string) {
   return button;
 }
 
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+} {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function audioClip(id: number, assetId = `asset-${id}`) {
@@ -162,10 +168,51 @@ describe('project list editors', () => {
       pending.resolve(144);
       await flushPromises();
 
-      expect(audioTempoMock.detectActiveAudioClipTempo).toHaveBeenCalledWith(7);
+      expect(audioTempoMock.detectActiveAudioClipTempo).toHaveBeenCalledWith(
+        7,
+        expect.any(AbortSignal),
+      );
       expect(
         (wrapper.findAll('tbody tr')[0].findAll('input')[1].element as HTMLInputElement).value,
       ).toBe('120');
+      wrapper.unmount();
+    });
+
+    it('aborts a running detection on unmount and applies nothing', async () => {
+      const pending = deferred<number | null>();
+      audioTempoMock.detectActiveAudioClipTempo.mockReturnValueOnce(pending.promise);
+      store.tracks = [{ ...store.tracks[0], id: 1 }];
+      store.clips = [audioClip(7)];
+      store.clipId = 7;
+      const wrapper = mount(TempoMapEditor);
+
+      await buttonByText(wrapper, 'Detect from clip').trigger('click');
+      const signal = audioTempoMock.detectActiveAudioClipTempo.mock.calls[0][1] as AbortSignal;
+      expect(signal.aborted).toBe(false);
+      wrapper.unmount();
+
+      expect(signal.aborted).toBe(true);
+    });
+
+    it('aborts the detection when the active clip changes and shows no error', async () => {
+      const pending = deferred<number | null>();
+      audioTempoMock.detectActiveAudioClipTempo.mockImplementationOnce(
+        (_id: number, signal: AbortSignal) => {
+          signal.addEventListener('abort', () => pending.reject(new Error('aborted')));
+          return pending.promise;
+        },
+      );
+      store.tracks = [{ ...store.tracks[0], id: 1 }];
+      store.clips = [audioClip(7), audioClip(8, 'asset-2')];
+      store.clipId = 7;
+      const wrapper = mount(TempoMapEditor);
+
+      await buttonByText(wrapper, 'Detect from clip').trigger('click');
+      store.clipId = 8;
+      await flushPromises();
+
+      expect(wrapper.find('[role="alert"], .list-errors, .list-error').exists()).toBe(false);
+      expect(wrapper.text()).not.toContain('aborted');
       wrapper.unmount();
     });
   });
@@ -271,11 +318,30 @@ describe('project list editors', () => {
       pending.resolve([{ startPpq: 0, numerator: 3, denominator: 4 }]);
       await flushPromises();
 
-      expect(audioTempoMock.detectActiveAudioClipTimeSignatures).toHaveBeenCalledWith(7, {
-        maxNumerator: 32,
-      });
+      expect(audioTempoMock.detectActiveAudioClipTimeSignatures).toHaveBeenCalledWith(
+        7,
+        { maxNumerator: 32 },
+        expect.any(AbortSignal),
+      );
       expect(wrapper.findAll('tbody tr')).toHaveLength(0);
       wrapper.unmount();
+    });
+
+    it('aborts a running meter detection on unmount', async () => {
+      const pending = deferred<never[]>();
+      audioTempoMock.detectActiveAudioClipTimeSignatures.mockReturnValueOnce(pending.promise);
+      store.tracks = [{ ...store.tracks[0], id: 1 }];
+      store.clips = [audioClip(7)];
+      store.clipId = 7;
+      const wrapper = mount(TimeSignatureEditor);
+
+      await buttonByText(wrapper, 'Detect from clip').trigger('click');
+      const signal = audioTempoMock.detectActiveAudioClipTimeSignatures.mock
+        .calls[0][2] as AbortSignal;
+      expect(signal.aborted).toBe(false);
+      wrapper.unmount();
+
+      expect(signal.aborted).toBe(true);
     });
   });
 

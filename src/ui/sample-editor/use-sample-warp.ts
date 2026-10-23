@@ -8,10 +8,10 @@
 import { computed, onScopeDispose, ref, watch } from 'vue';
 import { errorMessage } from '@/lib/errors';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
-import { ensureWasm } from '@/lib/wasm';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { loadAsset } from '@/persistence/assets';
 import { clipSourceWindowMono } from '@/project/audible-clip-window';
+import { type DetectedBeats, detectBeatsInWorker } from '@/project/audio-analysis-client';
 import { setClipWarp } from '@/project/commands';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
@@ -52,6 +52,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
   const { project, assetId, setError } = options;
   let disposed = false;
   const autoWarpOperations = new OperationGeneration();
+  let autoWarpAbort: AbortController | null = null;
 
   const warpClip = computed(() => findWarpClip(project.clips, project.clipId, assetId()));
   const warpEnabled = computed(() => warpClip.value?.warp?.enabled ?? false);
@@ -125,26 +126,20 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
     commitWarp({ anchors: [...warpAnchors.value, anchor] });
   }
 
-  async function resolveAutoWarpDeps(): Promise<
-    Required<Pick<AutoWarpDeps, 'loadAudioAsset'>> &
-      Pick<AutoWarpDeps, 'detectBeats' | 'detectDownbeats'>
-  > {
-    if (options.autoWarp?.detectBeats) {
-      return {
-        loadAudioAsset: options.autoWarp.loadAudioAsset ?? loadAsset,
-        detectBeats: options.autoWarp.detectBeats,
-        detectDownbeats: options.autoWarp.detectDownbeats,
-      };
+  /** The injected detectors when given (tests, alternate runtimes), else the analysis worker. */
+  function resolveBeatDetector(): (
+    mono: Float32Array,
+    sampleRate: number,
+    signal: AbortSignal,
+  ) => Promise<DetectedBeats> {
+    const injected = options.autoWarp;
+    if (!injected?.detectBeats) {
+      return (mono, sampleRate, signal) => detectBeatsInWorker(mono, sampleRate, { signal });
     }
-    const wasm = (await ensureWasm()) as unknown as {
-      detectBeats?: BeatDetector;
-      detectDownbeats?: BeatDetector;
-    };
-    return {
-      loadAudioAsset: options.autoWarp?.loadAudioAsset ?? loadAsset,
-      detectBeats: wasm.detectBeats,
-      detectDownbeats: wasm.detectDownbeats,
-    };
+    return async (mono, sampleRate) => ({
+      beats: injected.detectBeats?.(mono, sampleRate) ?? [],
+      downbeats: injected.detectDownbeats?.(mono, sampleRate) ?? [],
+    });
   }
 
   async function onAutoWarp(): Promise<void> {
@@ -168,22 +163,21 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
           : null,
       };
     };
+    autoWarpAbort?.abort();
+    const abort = new AbortController();
+    autoWarpAbort = abort;
     const token = autoWarpOperations.begin(identity());
     const isCurrent = (): boolean => {
       return !disposed && autoWarpOperations.isCurrent(token, identity());
     };
     try {
-      const deps = await resolveAutoWarpDeps();
-      if (!isCurrent()) return;
-      if (typeof deps.detectBeats !== 'function') throw new Error('Auto-Warp requires detectBeats');
-      const asset = await deps.loadAudioAsset(clip.assetId);
+      const loadAudioAsset = options.autoWarp?.loadAudioAsset ?? loadAsset;
+      const asset = await loadAudioAsset(clip.assetId);
       if (!isCurrent()) return;
       const source = clipSourceWindowMono(clip, asset, project.tempoBpm, project.tempoSegments);
       if (source.mono.length === 0) throw new Error('Auto-Warp requires a non-empty audio window');
       const { mono, sampleRate } = source;
-      const beats = deps.detectBeats(mono, sampleRate);
-      const downbeats =
-        typeof deps.detectDownbeats === 'function' ? deps.detectDownbeats(mono, sampleRate) : [];
+      const { beats, downbeats } = await resolveBeatDetector()(mono, sampleRate, abort.signal);
       const warp = autoWarpFromBeatTimes(beats, downbeats, clip.lengthPpq);
       if (!warp) throw new Error('Auto-Warp could not detect enough beats');
       if (!isCurrent()) return;
@@ -205,6 +199,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
 
   onScopeDispose(() => {
     disposed = true;
+    autoWarpAbort?.abort();
     autoWarpOperations.dispose();
   });
 

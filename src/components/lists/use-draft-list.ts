@@ -5,7 +5,7 @@
  * wrapper.
  */
 
-import { computed, type Ref, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, type Ref, ref, watch } from 'vue';
 import { errorMessage } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, isAudioClip } from '@/project/types';
@@ -46,10 +46,12 @@ export interface DraftList<Row extends { key: number }> {
   /**
    * Runs a detection against the active audio clip. The callback must check
    * `isCurrent()` after each await before touching the draft; errors thrown
-   * by a still-current run surface in `errors`.
+   * by a still-current run surface in `errors`. The signal aborts when the
+   * owner unmounts, the active clip changes or a newer run starts; an aborted
+   * run is no longer current.
    */
   guardedDetect: (
-    run: (clip: EditorClip, isCurrent: () => boolean) => Promise<void>,
+    run: (clip: EditorClip, isCurrent: () => boolean, signal: AbortSignal) => Promise<void>,
   ) => Promise<void>;
 }
 
@@ -67,6 +69,7 @@ export function useDraftList<Row extends { key: number }>(
   const errors = ref<string[]>([]);
   const isDetecting = ref(false);
   let detectGeneration = 0;
+  let detectController: AbortController | null = null;
 
   /** The active clip when it is an audio clip carrying an asset, else null. */
   const detectableAudioClip = computed(() => {
@@ -94,6 +97,12 @@ export function useDraftList<Row extends { key: number }>(
     },
     { immediate: true },
   );
+
+  watch(
+    () => detectableAudioClip.value?.id,
+    () => detectController?.abort(),
+  );
+  onBeforeUnmount(() => detectController?.abort());
 
   function markDirty(): void {
     dirty.value = true;
@@ -134,22 +143,28 @@ export function useDraftList<Row extends { key: number }>(
   }
 
   async function guardedDetect(
-    run: (clip: EditorClip, isCurrent: () => boolean) => Promise<void>,
+    run: (clip: EditorClip, isCurrent: () => boolean, signal: AbortSignal) => Promise<void>,
   ): Promise<void> {
     const clip = detectableAudioClip.value;
     if (!clip || isDetecting.value) return;
     const generation = ++detectGeneration;
+    detectController?.abort();
+    const controller = new AbortController();
+    detectController = controller;
     errors.value = [];
     isDetecting.value = true;
     const isCurrent = () =>
-      generation === detectGeneration && detectableAudioClip.value?.id === clip.id;
+      generation === detectGeneration &&
+      !controller.signal.aborted &&
+      detectableAudioClip.value?.id === clip.id;
     try {
-      await run(clip, isCurrent);
+      await run(clip, isCurrent, controller.signal);
     } catch (err) {
       if (!isCurrent()) return;
       errors.value = [errorMessage(err)];
     } finally {
       if (generation === detectGeneration) isDetecting.value = false;
+      if (detectController === controller) detectController = null;
     }
   }
 
