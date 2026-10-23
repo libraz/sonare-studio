@@ -456,15 +456,21 @@ export function duplicateRange(
  * Replaces the range with a replacement segment, which may have a different
  * length (used to splice processed audio such as a time stretch back in).
  *
+ * Where the range has untouched audio on a side, that edge of the replacement
+ * is crossfaded with the audio it replaces, so the seam does not step and the
+ * result keeps its length. An edge on the file boundary is left as is.
+ *
  * @param channels Planar channel buffers (not mutated).
  * @param range Frame range to replace (clamped).
  * @param replacement One segment per channel, all of equal length.
+ * @param fadeFrames Crossfade length; see {@link cutCrossfadeFrames}.
  * @returns New channel buffers with the range replaced.
  */
 export function spliceRange(
   channels: ReadonlyArray<Float32Array>,
   range: SampleRange,
   replacement: ReadonlyArray<Float32Array>,
+  fadeFrames = 0,
 ): Float32Array[] {
   assertPlanar(channels);
   if (replacement.length !== channels.length) {
@@ -478,12 +484,30 @@ export function spliceRange(
       throw new RangeError('All replacement channels must have the same length');
     }
   }
-  const { startFrame, endFrame } = clampRange(range, frameCount(channels));
+  const total = frameCount(channels);
+  const { startFrame, endFrame } = clampRange(range, total);
+  // Both edges need a full fade of their own half; a shorter selection keeps its hard join.
+  const wanted = Math.max(0, Math.floor(fadeFrames));
+  const fade =
+    wanted > 0 && 2 * wanted <= endFrame - startFrame && 2 * wanted <= segmentFrames ? wanted : 0;
+  const fadeIn = startFrame > 0 ? fade : 0;
+  const fadeOut = endFrame < total ? fade : 0;
   return channels.map((channel, c) => {
     const out = new Float32Array(channel.length - (endFrame - startFrame) + segmentFrames);
     out.set(channel.subarray(0, startFrame), 0);
     out.set(replacement[c], startFrame);
     out.set(channel.subarray(endFrame), startFrame + segmentFrames);
+    for (let i = 0; i < fadeIn; i += 1) {
+      const mix = (i + 1) / (fadeIn + 1);
+      out[startFrame + i] = channel[startFrame + i] * (1 - mix) + replacement[c][i] * mix;
+    }
+    for (let i = 0; i < fadeOut; i += 1) {
+      const mix = (i + 1) / (fadeOut + 1);
+      const at = startFrame + segmentFrames - fadeOut + i;
+      out[at] =
+        replacement[c][segmentFrames - fadeOut + i] * (1 - mix) +
+        channel[endFrame - fadeOut + i] * mix;
+    }
     return out;
   });
 }

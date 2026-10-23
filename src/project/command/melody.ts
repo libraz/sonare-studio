@@ -12,6 +12,7 @@ import {
 import { detectAudioClipBeatGrid, quarterBeatsPerBar } from '../audio-tempo';
 import {
   type AudioTranscriptionOptions,
+  preflightBeatGridDetection,
   quantizeNotes,
   transcribeAudioClip,
 } from '../audio-transcription';
@@ -323,6 +324,17 @@ export async function transcribeAudioClipToMidi(
         options.detectBeats ??
         ((mono: Float32Array, sampleRate: number) =>
           detectBeatsInWorker(mono, sampleRate, { signal: linked.signal }));
+      // The whole-window render and mono mixdown must fit the transcription budget.
+      await preflightBeatGridDetection(
+        clip,
+        tempoSegments,
+        async (assetId) => {
+          const meta = await loadAssetMeta(assetId);
+          assertCurrent();
+          return meta;
+        },
+        linked.signal,
+      );
       grid = await detectAudioClipBeatGrid(clip, tempoSegments, beatsPerBar, {
         loadAudioAsset,
         detectBeats,

@@ -28,8 +28,12 @@ import type { WarpRenderFn } from './warp';
 
 /** Longest span one polyphonic detector request reads; working memory grows about 1.1 MB per second. */
 export const MAX_POLYPHONIC_SECONDS = 300;
-/** A polyphonic chunk reads this far past each cut, so a note crossing it keeps its onset and length. */
+/** A polyphonic chunk reads this far past each cut, so the next chunk can see a note crossing it. */
 const POLYPHONIC_CHUNK_OVERLAP_SECONDS = 2;
+/** A note ending this close to a chunk's read end was cut off by the buffer, not released. */
+const CHUNK_END_TOLERANCE_SECONDS = 0.1;
+/** Two chunks hearing the same note place its onset this close together. */
+const CHUNK_ONSET_TOLERANCE_SECONDS = 0.25;
 /** Shortest chunk worth reading; a budget that cannot hold one refuses the clip. */
 const MIN_POLYPHONIC_CHUNK_SECONDS = 30;
 /** The detector receives at most this sample rate. */
@@ -215,10 +219,10 @@ function validateAudioAssetMeta(meta: AudioAssetMeta): void {
   }
 }
 
-async function preflightTranscription(
+/** Clip segments, asset metadata and the PCM a render of the clip holds regardless of window. */
+async function measureClipPcm(
   clip: AudioTranscriptionClip,
   map: ReturnType<typeof normalizeTempoMap>,
-  polyphonic: boolean,
   loadMeta: (assetId: string) => Promise<AudioAssetMeta>,
   signal?: AbortSignal,
 ): Promise<{
@@ -226,16 +230,18 @@ async function preflightTranscription(
   metadata: Map<string, AudioAssetMeta>;
   /** Sample rate the clip window renders at; 0 when nothing is audible. */
   renderRate: number;
-  /** Longest window one detector request may read. */
-  requestSeconds: number;
+  renderedChannels: number;
+  /** Source assets, plus the whole-segment warp render when the clip is warped. */
+  fixedBytes: number;
   audibleSeconds: number;
 }> {
   const segments = audioClipSegments(clip, { tempoMap: map, clipStartPpq: clip.startPpq });
   const empty = {
     segments,
-    metadata: new Map(),
+    metadata: new Map<string, AudioAssetMeta>(),
     renderRate: 0,
-    requestSeconds: 0,
+    renderedChannels: 0,
+    fixedBytes: 0,
     audibleSeconds: 0,
   };
   if (segments.length === 0) return empty;
@@ -255,7 +261,6 @@ async function preflightTranscription(
   const firstMeta = metadata.get(segments[0]?.assetId ?? '');
   if (!firstMeta) return { ...empty, metadata };
   const renderRate = firstMeta.sampleRate;
-  const targetRate = Math.min(renderRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
   const sourceBytes = addSafeBytes(
     assetIds.map((assetId) => {
       const meta = metadata.get(assetId);
@@ -266,8 +271,6 @@ async function preflightTranscription(
     1,
     ...assetIds.map((assetId) => metadata.get(assetId)?.numChannels ?? 0),
   );
-  const framesOf = (seconds: number, rate: number): number =>
-    Math.max(0, Math.round(seconds * rate));
   const fixedBytes = addSafeBytes([
     sourceBytes,
     // The warp renderer produces each warped segment whole, whatever the window.
@@ -275,6 +278,63 @@ async function preflightTranscription(
       ? safePcmBytes(framesOf(audibleSeconds, renderRate), renderedChannels)
       : 0,
   ]);
+  return { segments, metadata, renderRate, renderedChannels, fixedBytes, audibleSeconds };
+}
+
+function framesOf(seconds: number, rate: number): number {
+  return Math.max(0, Math.round(seconds * rate));
+}
+
+/**
+ * Refuses, before any render, a beat-grid detection whose whole-window render
+ * and mono mixdown would not fit the transcription memory budget.
+ *
+ * @throws PayloadMemoryLimitError when the window cannot be held.
+ */
+export async function preflightBeatGridDetection(
+  clip: AudioTranscriptionClip,
+  tempoSegments: ReadonlyArray<TempoSegment>,
+  loadMeta: (assetId: string) => Promise<AudioAssetMeta>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const plan = await measureClipPcm(clip, normalizeTempoMap(tempoSegments), loadMeta, signal);
+  if (plan.renderRate === 0) return;
+  const frames = framesOf(plan.audibleSeconds, plan.renderRate);
+  const bytes = addSafeBytes([
+    plan.fixedBytes,
+    safePcmBytes(frames, plan.renderedChannels),
+    safePcmBytes(frames, 1),
+  ]);
+  if (bytes > DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES) {
+    throw new PayloadMemoryLimitError(
+      'transcription',
+      bytes,
+      DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES,
+    );
+  }
+}
+
+async function preflightTranscription(
+  clip: AudioTranscriptionClip,
+  map: ReturnType<typeof normalizeTempoMap>,
+  polyphonic: boolean,
+  loadMeta: (assetId: string) => Promise<AudioAssetMeta>,
+  signal?: AbortSignal,
+): Promise<{
+  segments: ReturnType<typeof audioClipSegments>;
+  metadata: Map<string, AudioAssetMeta>;
+  /** Sample rate the clip window renders at; 0 when nothing is audible. */
+  renderRate: number;
+  /** Longest window one detector request may read. */
+  requestSeconds: number;
+  audibleSeconds: number;
+}> {
+  const { segments, metadata, renderRate, renderedChannels, fixedBytes, audibleSeconds } =
+    await measureClipPcm(clip, map, loadMeta, signal);
+  if (renderRate === 0) {
+    return { segments, metadata, renderRate: 0, requestSeconds: 0, audibleSeconds };
+  }
+  const targetRate = Math.min(renderRate, MAX_TRANSCRIPTION_SAMPLE_RATE);
   // One request holds its rendered window, the mono mixdown, the copy
   // transcribe-client transfers, and the worker's resampled input.
   const requestBytes = (seconds: number): number =>
@@ -346,6 +406,13 @@ function detectorSpans(seconds: number, requestSeconds: number): DetectorSpan[] 
   });
 }
 
+/** An owned note the detector closed at its chunk's read end, open to its continuation in the next chunk. */
+interface CutNote {
+  note: RawNote;
+  onsetSeconds: number;
+  releaseSeconds: number;
+}
+
 /**
  * Transcribes one audio clip into clip-relative editor notes.
  *
@@ -400,7 +467,12 @@ export async function transcribeAudioClip(
   let peak = 0;
   let referenceHz = options.referenceHz;
   let tuningReported = false;
+  let cutNotes: CutNote[] = [];
   for (const span of spans) {
+    const spanCutNotes: CutNote[] = [];
+    const readsToEnd = span.readTo >= plan.audibleSeconds - CHUNK_END_TOLERANCE_SECONDS;
+    const isCut = (releaseSeconds: number): boolean =>
+      !readsToEnd && releaseSeconds >= span.readTo - CHUNK_END_TOLERANCE_SECONDS;
     // Each request renders only its own window, so a long clip never holds
     // more than one request's PCM at a time.
     const startFrame = Math.round(span.readFrom * plan.renderRate);
@@ -448,12 +520,35 @@ export async function transcribeAudioClip(
     const secondsPerBeat = 60 / result.tempoBpm;
     for (const note of eventNotes(result.events)) {
       const onsetSeconds = span.readFrom + Math.max(0, note.startPpq) * secondsPerBeat;
-      if (onsetSeconds < span.ownFrom || onsetSeconds >= span.ownTo) continue;
+      if (onsetSeconds >= span.ownTo) continue;
       const releaseSeconds = span.readFrom + (note.startPpq + note.durationPpq) * secondsPerBeat;
-      const startPpq = Math.max(0, Math.min(clip.lengthPpq, secondsToClipPpq(onsetSeconds)));
       const endPpq = Math.min(clip.lengthPpq, secondsToClipPpq(releaseSeconds));
-      if (endPpq > startPpq) notes.push({ ...note, startPpq, durationPpq: endPpq - startPpq });
+      if (onsetSeconds < span.ownFrom) {
+        // The previous chunk's cut-off note, heard again from the read start or from its own onset.
+        const soundingAtStart = onsetSeconds <= span.readFrom + CHUNK_END_TOLERANCE_SECONDS;
+        const cut = cutNotes.find(
+          (entry) =>
+            entry.note.pitch === note.pitch &&
+            entry.note.channel === note.channel &&
+            (soundingAtStart ||
+              Math.abs(onsetSeconds - entry.onsetSeconds) <= CHUNK_ONSET_TOLERANCE_SECONDS),
+        );
+        if (!cut) continue;
+        cutNotes.splice(cutNotes.indexOf(cut), 1);
+        cut.note.durationPpq = Math.max(cut.note.durationPpq, endPpq - cut.note.startPpq);
+        cut.releaseSeconds = releaseSeconds;
+        if (isCut(releaseSeconds)) spanCutNotes.push(cut);
+        continue;
+      }
+      const startPpq = Math.max(0, Math.min(clip.lengthPpq, secondsToClipPpq(onsetSeconds)));
+      if (!(endPpq > startPpq)) continue;
+      const owned = { ...note, startPpq, durationPpq: endPpq - startPpq };
+      notes.push(owned);
+      if (isCut(releaseSeconds)) {
+        spanCutNotes.push({ note: owned, onsetSeconds, releaseSeconds });
+      }
     }
+    cutNotes = spanCutNotes;
   }
   return {
     notes: quantizeNotes(

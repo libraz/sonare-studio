@@ -1,6 +1,6 @@
 /**
  * Asset tag analysis: tempo, key, meter, rhythm, dynamics, timbre and loudness
- * read from a mono buffer.
+ * read from a mono buffer (loudness from the stored channels).
  *
  * Each tag comes from its dedicated detector. The library's one-call full
  * analysis is not used: it adds only a form label nothing reads, and spends
@@ -74,6 +74,20 @@ export interface AudioAnalysisFunctions {
   };
   /** Returns the EBU R128 loudness (mono samples + sample rate). */
   lufs?: (samples: Float32Array, sampleRate?: number) => { integratedLufs: number };
+  /** Returns the BS.1770 channel-summed loudness of an interleaved buffer. */
+  lufsInterleaved?: (
+    samples: Float32Array,
+    channels: number,
+    sampleRate?: number,
+  ) => { integratedLufs: number };
+}
+
+/** The stored channels, interleaved, for the loudness measurement. */
+export interface LoudnessInput {
+  /** Frame-major samples of every channel. */
+  interleaved: Float32Array;
+  /** Channel count of `interleaved`. */
+  channels: number;
 }
 
 /** Receives the share of the analysis done so far, in [0, 1]. */
@@ -110,6 +124,9 @@ function attempt(run: () => void): void {
  * @param sampleRate Sample rate in Hz.
  * @param analysis Detectors (skipped when absent).
  * @param onProgress Called after each step with the share done.
+ * @param loudness Stored channels to measure loudness on; without them the mono
+ *   buffer is measured. A multichannel input needs `lufsInterleaved`, since a
+ *   downmix reads quieter than the channel-summed loudness.
  * @returns Tags with the successful detections (possibly empty).
  */
 export function analyzeAudioTags(
@@ -117,6 +134,7 @@ export function analyzeAudioTags(
   sampleRate: number,
   analysis: AudioAnalysisFunctions | null | undefined,
   onProgress?: AnalysisProgress,
+  loudness?: LoudnessInput,
 ): AudioAssetTags {
   const tags: AudioAssetTags = {};
   if (!analysis || mono.length === 0) return tags;
@@ -195,10 +213,14 @@ export function analyzeAudioTags(
   });
 
   step(STEP_COST.lufs, () => {
-    if (typeof analysis.lufs !== 'function') return;
     // Silence yields -Infinity; only keep a finite measurement.
-    const loudness = analysis.lufs(mono, sampleRate);
-    if (finite(loudness?.integratedLufs)) tags.lufs = loudness.integratedLufs;
+    let measured: { integratedLufs: number } | undefined;
+    if (loudness !== undefined && typeof analysis.lufsInterleaved === 'function') {
+      measured = analysis.lufsInterleaved(loudness.interleaved, loudness.channels, sampleRate);
+    } else if ((loudness === undefined || loudness.channels === 1) && analysis.lufs) {
+      measured = analysis.lufs(mono, sampleRate);
+    }
+    if (finite(measured?.integratedLufs)) tags.lufs = measured.integratedLufs;
   });
 
   return tags;

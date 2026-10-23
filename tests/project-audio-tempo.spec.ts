@@ -105,9 +105,9 @@ describe('detectAudioClipTempoMap', () => {
     const seen: { length: number; sampleRate?: number }[] = [];
     const segments = await detectAudioClipTempoMap(clipWindow({ lengthPpq: 16 }), 120, {
       loadAudioAsset: async () => asset(48000 * 20),
-      detectBeats: (samples, sampleRate) => {
+      detectBeats: async (samples, sampleRate) => {
         seen.push({ length: samples.length, sampleRate });
-        return [0, 0.5, 1, 1.5];
+        return { beats: [0, 0.5, 1, 1.5], downbeats: [] };
       },
     });
     expect(segments).toEqual([{ startPpq: 0, bpm: 120 }]);
@@ -122,9 +122,9 @@ describe('detectAudioClipTempoMap', () => {
       120,
       {
         loadAudioAsset: async () => asset(48000 * 20),
-        detectBeats: (samples) => {
+        detectBeats: async (samples) => {
           seen.push(samples.length);
-          return [0, 1];
+          return { beats: [0, 1], downbeats: [] };
         },
       },
       undefined,
@@ -137,7 +137,10 @@ describe('detectAudioClipTempoMap', () => {
   });
 
   it('returns an empty map without an asset, at non-positive tempo, or on an empty window', async () => {
-    const deps = { loadAudioAsset: async () => asset(48000), detectBeats: () => [0, 0.5, 1] };
+    const deps = {
+      loadAudioAsset: async () => asset(48000),
+      detectBeats: async () => ({ beats: [0, 0.5, 1], downbeats: [] }),
+    };
     expect(await detectAudioClipTempoMap(clipWindow({ assetId: undefined }), 120, deps)).toEqual(
       [],
     );
@@ -153,7 +156,7 @@ describe('detectAudioClipTempoMap', () => {
   it('returns an empty map when fewer than two beats are tracked', async () => {
     const segments = await detectAudioClipTempoMap(clipWindow(), 120, {
       loadAudioAsset: async () => asset(48000),
-      detectBeats: () => [0.5],
+      detectBeats: async () => ({ beats: [0.5], downbeats: [] }),
     });
     expect(segments).toEqual([]);
   });
@@ -195,8 +198,7 @@ describe('detectAudioClipTimeSignatures', () => {
   it('tracks beats and downbeats over the window and derives the meter', async () => {
     const segments = await detectAudioClipTimeSignatures(clipWindow({ lengthPpq: 16 }), 120, {
       loadAudioAsset: async () => asset(48000 * 20),
-      detectBeats: () => [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5],
-      detectDownbeats: () => [0, 2],
+      detectBeats: async () => ({ beats: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5], downbeats: [0, 2] }),
     });
     expect(segments).toEqual([{ startPpq: 0, numerator: 4, denominator: 4 }]);
   });
@@ -204,8 +206,7 @@ describe('detectAudioClipTimeSignatures', () => {
   it('returns an empty map without an asset, at non-positive tempo, or on an empty window', async () => {
     const deps = {
       loadAudioAsset: async () => asset(48000),
-      detectBeats: () => [0, 0.5, 1, 1.5],
-      detectDownbeats: () => [0, 1.5],
+      detectBeats: async () => ({ beats: [0, 0.5, 1, 1.5], downbeats: [0, 1.5] }),
     };
     expect(
       await detectAudioClipTimeSignatures(clipWindow({ assetId: undefined }), 120, deps),
@@ -221,8 +222,8 @@ describe('detectAudioClipTimeSignatures', () => {
 });
 
 describe('estimateAudioClipMeter', () => {
-  const beats = Array.from({ length: 14 }, (_, index) => ({ time: index * 0.5 }));
-  const analysis = { beats, beatObservations: { onsetStrength: beats.map(() => 1) } };
+  const beatTimes = Array.from({ length: 14 }, (_, index) => index * 0.5);
+  const analysis = { beatTimes, beatStrengths: beatTimes.map(() => 1) };
 
   it('reads one meter with its grouping over the clip, from the requested candidates', async () => {
     const estimateMeter = vi.fn(() => ({
@@ -233,7 +234,11 @@ describe('estimateAudioClipMeter', () => {
     const segments = await estimateAudioClipMeter(
       clipWindow(),
       120,
-      { loadAudioAsset: async () => asset(48000 * 8), analyze: () => analysis, estimateMeter },
+      {
+        loadAudioAsset: async () => asset(48000 * 8),
+        analyze: async () => analysis,
+        estimateMeter,
+      },
       ODD_METER_CANDIDATES,
     );
     expect(segments).toEqual([{ startPpq: 0, numerator: 7, denominator: 4, grouping: [3, 2, 2] }]);
@@ -250,11 +255,59 @@ describe('estimateAudioClipMeter', () => {
     });
     const deps = { loadAudioAsset: async () => asset(48000 * 8), estimateMeter: unsearched };
     expect(
-      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: () => analysis }),
+      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: async () => analysis }),
     ).toEqual([]);
-    const misaligned = { beats, beatObservations: { onsetStrength: [1] } };
+    const misaligned = { beatTimes, beatStrengths: [1] };
     expect(
-      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: () => misaligned }),
+      await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: async () => misaligned }),
     ).toEqual([]);
+  });
+});
+
+describe('clip analysis signal', () => {
+  it('hands the abort signal to the off-thread detectors', async () => {
+    const controller = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const detectBeats = async (_mono: Float32Array, _rate: number, signal?: AbortSignal) => {
+      seen.push(signal);
+      return { beats: [0, 0.5, 1], downbeats: [0, 1] };
+    };
+    const loadAudioAsset = async () => asset(48000 * 8);
+    await detectAudioClipTempoMap(
+      clipWindow(),
+      120,
+      { loadAudioAsset, detectBeats },
+      undefined,
+      [],
+      controller.signal,
+    );
+    await detectAudioClipTimeSignatures(
+      clipWindow(),
+      120,
+      { loadAudioAsset, detectBeats },
+      undefined,
+      [],
+      controller.signal,
+    );
+    await estimateAudioClipMeter(
+      clipWindow(),
+      120,
+      {
+        loadAudioAsset,
+        analyze: async (_mono, _rate, signal) => {
+          seen.push(signal);
+          return { beatTimes: [], beatStrengths: [] };
+        },
+        estimateMeter: () => ({
+          timeSignature: { numerator: 4, denominator: 4 },
+          grouping: [],
+          searched: false,
+        }),
+      },
+      undefined,
+      [],
+      controller.signal,
+    );
+    expect(seen).toEqual([controller.signal, controller.signal, controller.signal]);
   });
 });

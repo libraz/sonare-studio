@@ -11,7 +11,12 @@
 
 import { downmixToMono } from '@/lib/audio-channels';
 import type { AudioAssetTransaction } from '@/persistence/asset-transaction';
-import { type AudioAssetMeta, type AudioAssetTags, saveAsset } from '@/persistence/assets';
+import {
+  type AudioAssetMeta,
+  type AudioAssetTags,
+  interleaveChannels,
+  saveAsset,
+} from '@/persistence/assets';
 import {
   MAX_AUDIO_CHANNELS,
   MAX_AUDIO_SAMPLE_RATE,
@@ -84,11 +89,16 @@ async function detectTags(
 ): Promise<AudioAssetTags> {
   if (options.analysis === null) return {};
   const mono = downmixToMono(channels, { copy: true });
+  // Loudness is channel-summed on the stored channels; the detectors read the mono mixdown.
+  const loudness = { interleaved: interleaveChannels(channels), channels: channels.length };
   if (options.analysis !== undefined) {
-    return analyzeAudioTags(mono, sampleRate, options.analysis, options.onProgress);
+    return analyzeAudioTags(mono, sampleRate, options.analysis, options.onProgress, loudness);
   }
   try {
-    return await analyzeAudioTagsInWorker(mono, sampleRate, { onProgress: options.onProgress });
+    return await analyzeAudioTagsInWorker(mono, sampleRate, {
+      onProgress: options.onProgress,
+      loudness,
+    });
   } catch {
     return {};
   }

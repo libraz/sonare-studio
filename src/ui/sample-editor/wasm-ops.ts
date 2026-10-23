@@ -29,7 +29,7 @@ import {
   parseTonalBalance,
 } from './match-eq-analysis';
 import { type DetectedNote, onsetSecondsToFrames, silenceSplitMarkers } from './onsets';
-import { resolveRange, type SampleRange, spliceRange } from './ops';
+import { cutCrossfadeFrames, resolveRange, type SampleRange, spliceRange } from './ops';
 
 /** F0 hop for note detection, matching the pitch-correction contour. */
 export const NOTE_DETECT_HOP = 512;
@@ -226,6 +226,7 @@ function toPlanar(segments: ReadonlyArray<Float32Array>): Float32Array[] {
  */
 function applyToRange(
   channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
   range: SampleRange | null | undefined,
   transform: (segment: Float32Array) => Float32Array,
 ): Float32Array[] {
@@ -234,7 +235,7 @@ function applyToRange(
     transform(channel.slice(resolved.startFrame, resolved.endFrame)),
   );
   const planar = toPlanar(segments);
-  return spliceRange(channels, resolved, planar);
+  return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
 }
 
 /**
@@ -244,18 +245,25 @@ function applyToRange(
  */
 function applyRepairToRange(
   channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
   range: SampleRange | null | undefined,
   mono: (segment: Float32Array) => Float32Array,
   stereo?: (left: Float32Array, right: Float32Array) => { left: Float32Array; right: Float32Array },
 ): Float32Array[] {
-  if (channels.length !== 2 || stereo === undefined) return applyToRange(channels, range, mono);
+  if (channels.length !== 2 || stereo === undefined)
+    return applyToRange(channels, sampleRate, range, mono);
   const resolved = resolveNonEmptyRange(channels, range);
   const out = stereo(
     channels[0].slice(resolved.startFrame, resolved.endFrame),
     channels[1].slice(resolved.startFrame, resolved.endFrame),
   );
   const frames = Math.min(out.left.length, out.right.length);
-  return spliceRange(channels, resolved, [out.left.slice(0, frames), out.right.slice(0, frames)]);
+  return spliceRange(
+    channels,
+    resolved,
+    [out.left.slice(0, frames), out.right.slice(0, frames)],
+    cutCrossfadeFrames(sampleRate),
+  );
 }
 
 /**
@@ -277,7 +285,7 @@ export function pitchShiftRange(
   if (!Number.isFinite(semitones)) {
     throw new RangeError(`semitones must be finite, got ${semitones}`);
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate, semitones));
+  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate, semitones));
 }
 
 /**
@@ -303,7 +311,9 @@ export function pitchCorrectRange(
   if (!Number.isInteger(targetMidi) || targetMidi < 0 || targetMidi > 127) {
     throw new RangeError(`targetMidi must be an integer in [0, 127], got ${targetMidi}`);
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate, undefined, targetMidi));
+  return applyToRange(channels, sampleRate, range, (segment) =>
+    fn(segment, sampleRate, undefined, targetMidi),
+  );
 }
 
 /**
@@ -358,7 +368,7 @@ export function pitchCorrectTimevaryingRange(
     correct(segment, f0, targetMidi, sampleRate, NOTE_DETECT_HOP, voiced),
   );
   const planar = toPlanar(corrected);
-  return spliceRange(channels, resolved, planar);
+  return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
 }
 
 /**
@@ -391,7 +401,7 @@ export function tuneToReferenceRange(
   const semitones = -tuning;
   const corrected = segments.map((segment) => shift(segment, sampleRate, semitones));
   const planar = toPlanar(corrected);
-  return spliceRange(channels, resolved, planar);
+  return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
 }
 
 /**
@@ -439,7 +449,7 @@ export function scaleCorrectRange(
     correct(segment, sampleRate, currentMidi, targetMidi),
   );
   const planar = toPlanar(corrected);
-  return spliceRange(channels, resolved, planar);
+  return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
 }
 
 /**
@@ -476,7 +486,10 @@ export function autoTuneRange(
       .slice(1)
       .map((samples) => fn({ samples, sampleRate, key: shared, strength }).samples),
   ];
-  return { channels: spliceRange(channels, resolved, tuned), key: first.key };
+  return {
+    channels: spliceRange(channels, resolved, tuned, cutCrossfadeFrames(sampleRate)),
+    key: first.key,
+  };
 }
 
 /**
@@ -510,7 +523,7 @@ export function voiceChangeRange(
   if (!Number.isFinite(formantFactor) || formantFactor <= 0) {
     throw new RangeError(`formantFactor must be > 0, got ${formantFactor}`);
   }
-  return applyToRange(channels, range, (segment) =>
+  return applyToRange(channels, sampleRate, range, (segment) =>
     fn(segment, sampleRate, { pitchSemitones, formantFactor, formantMode }),
   );
 }
@@ -532,7 +545,7 @@ export function harmonicRange(
   if (typeof fn !== 'function') {
     throw new Error('Harmonic separation is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate));
 }
 
 /**
@@ -552,7 +565,7 @@ export function percussiveRange(
   if (typeof fn !== 'function') {
     throw new Error('Percussive separation is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate));
 }
 
 /**
@@ -657,7 +670,7 @@ export function timeStretchRange(
   if (!Number.isFinite(rate) || rate <= 0) {
     throw new RangeError(`rate must be > 0, got ${rate}`);
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate, rate));
+  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate, rate));
 }
 
 /**
@@ -765,6 +778,7 @@ export function declickRange(
   const stereo = ops.masteringRepairDeclickStereo;
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => fn(segment, sampleRate),
     stereo && ((left, right) => stereo(left, right, sampleRate)),
@@ -792,6 +806,7 @@ export function restoreRange(
   }
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => mono(segment, sampleRate, preset).samples,
     (left, right) => stereo(left, right, sampleRate, preset),
@@ -820,6 +835,7 @@ export function denoiseRange(
   const options = reductionDb === undefined ? undefined : { reductionDb };
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => fn(segment, sampleRate, options),
     stereo && ((left, right) => stereo(left, right, sampleRate, options)),
@@ -839,6 +855,7 @@ export function declipRange(
   const stereo = ops.masteringRepairDeclipStereo;
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => fn(segment, sampleRate),
     stereo && ((left, right) => stereo(left, right, sampleRate)),
@@ -858,6 +875,7 @@ export function decrackleRange(
   const stereo = ops.masteringRepairDecrackleStereo;
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => fn(segment, sampleRate),
     stereo && ((left, right) => stereo(left, right, sampleRate)),
@@ -877,6 +895,7 @@ export function dehumRange(
   const stereo = ops.masteringRepairDehumStereo;
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => fn(segment, sampleRate),
     stereo && ((left, right) => stereo(left, right, sampleRate)),
@@ -896,6 +915,7 @@ export function dereverbRange(
   const stereo = ops.masteringRepairDereverbClassicalStereo;
   return applyRepairToRange(
     channels,
+    sampleRate,
     range,
     (segment) => fn(segment, sampleRate),
     stereo && ((left, right) => stereo(left, right, sampleRate)),
@@ -912,7 +932,7 @@ export function trimSilenceRange(
   if (typeof fn !== 'function') {
     throw new Error('Trim silence is unavailable in this libsonare build');
   }
-  return applyToRange(channels, range, (segment) => fn(segment, sampleRate));
+  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate));
 }
 
 /**
@@ -965,7 +985,7 @@ export function repairStagesRange(
     sampleRate,
     stages: [...stages],
   });
-  return spliceRange(channels, resolved, out.channels);
+  return spliceRange(channels, resolved, out.channels, cutCrossfadeFrames(sampleRate));
 }
 
 /**
@@ -1145,7 +1165,7 @@ export function matchEqToReference(
     throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
   }
   const mix = Number.isFinite(amount) ? clamp(amount, 0, 1) : 1;
-  return applyToRange(channels, range, (segment) => {
+  return applyToRange(channels, sampleRate, range, (segment) => {
     if (mix <= 0) return segment;
     const matched = fn({
       processorName: MATCH_EQ_PROCESSOR,

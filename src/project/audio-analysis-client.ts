@@ -3,7 +3,7 @@ import type {
   AudioAnalysisWorkerRequest,
   AudioAnalysisWorkerResponse,
 } from '@/workers/audio-analysis.worker';
-import type { AnalysisProgress } from './audio-tags';
+import type { AnalysisProgress, LoudnessInput } from './audio-tags';
 
 /** Factory override used by tests and non-browser embeddings. */
 export type AudioAnalysisWorkerFactory = () => Worker;
@@ -14,12 +14,20 @@ export interface AudioAnalysisWorkerOptions {
   /** Aborts the request and terminates its disposable worker. */
   signal?: AbortSignal;
   workerFactory?: AudioAnalysisWorkerFactory;
+  /** Stored channels for the loudness step; transferred like the mono buffer. */
+  loudness?: LoudnessInput;
 }
 
 /** Beat and downbeat times, in seconds from the start of the analysed buffer. */
 export interface DetectedBeats {
   beats: number[];
   downbeats: number[];
+}
+
+/** Beat times and the onset strength of each, for scoring a meter. */
+export interface DetectedBeatAccents {
+  beatTimes: number[];
+  beatStrengths: number[];
 }
 
 function createWorker(): Worker {
@@ -101,8 +109,17 @@ function runAnalysis<T>(
       worker.addEventListener('message', onMessage as EventListener);
       worker.addEventListener('error', onError as EventListener);
       signal?.addEventListener('abort', onAbort, { once: true });
-      const request: AudioAnalysisWorkerRequest = { kind, samples: mono, sampleRate };
-      worker.postMessage(request, [mono.buffer]);
+      const { loudness } = options;
+      const request: AudioAnalysisWorkerRequest = {
+        kind,
+        samples: mono,
+        sampleRate,
+        ...(loudness !== undefined ? { loudness } : {}),
+      };
+      worker.postMessage(
+        request,
+        loudness !== undefined ? [mono.buffer, loudness.interleaved.buffer] : [mono.buffer],
+      );
     } catch (error) {
       settle({ error });
     }
@@ -116,6 +133,8 @@ function runAnalysis<T>(
  * @param mono Mono samples; the buffer is transferred to the worker and
  *   detached here, so pass one the caller does not keep (a fresh mixdown).
  * @param sampleRate Sample rate in Hz.
+ * @param options.loudness Stored channels measured for the loudness tag; detached
+ *   like `mono`.
  * @returns The detected tags (possibly empty).
  */
 export function analyzeAudioTagsInWorker(
@@ -150,6 +169,33 @@ export function detectBeatsInWorker(
     (response) =>
       response.type === 'beats' && Array.isArray(response.beats)
         ? { beats: response.beats, downbeats: response.downbeats ?? [] }
+        : undefined,
+  );
+}
+
+/**
+ * Tracks a buffer's beats and their onset-strength accents in a disposable
+ * worker, for meter estimation.
+ *
+ * @param mono Mono samples; transferred and detached like {@link analyzeAudioTagsInWorker}.
+ * @param sampleRate Sample rate in Hz.
+ */
+export function analyzeBeatAccentsInWorker(
+  mono: Float32Array,
+  sampleRate: number,
+  options: Omit<AudioAnalysisWorkerOptions, 'onProgress'> = {},
+): Promise<DetectedBeatAccents> {
+  return runAnalysis(
+    'meter',
+    mono,
+    sampleRate,
+    { beatTimes: [], beatStrengths: [] },
+    options,
+    (response) =>
+      response.type === 'meter' &&
+      Array.isArray(response.beatTimes) &&
+      Array.isArray(response.beatStrengths)
+        ? { beatTimes: response.beatTimes, beatStrengths: response.beatStrengths }
         : undefined,
   );
 }

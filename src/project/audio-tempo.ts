@@ -1,7 +1,7 @@
 /**
  * Audio-driven tempo detection: a clip's beat grid (tempo and first downbeat,
  * see {@link fitBeatGrid}) tracked in the analysis worker, or a variable tempo
- * map from libsonare's `detectBeats` beat tracker.
+ * map from libsonare's beat tracker, which also runs in the worker.
  *
  * The constant tempo is the beat grid's fitted line rather than a one-shot
  * estimate, which drifts most of a beat over a long piece. The tempo-map
@@ -19,7 +19,12 @@ import { downmixToMono } from '@/lib/audio-channels';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
-import { type DetectedBeats, detectBeatsInWorker } from './audio-analysis-client';
+import {
+  analyzeBeatAccentsInWorker,
+  type DetectedBeatAccents,
+  type DetectedBeats,
+  detectBeatsInWorker,
+} from './audio-analysis-client';
 import { type BeatGrid, fitBeatGrid } from './beat-grid';
 import { type AudibleAudioClipFields, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
@@ -27,8 +32,19 @@ import { normalizeTempoMap } from './tempo-map';
 import { meterBarLengthPpq, timeSignatureAt } from './time-signature';
 import { isAudioClip, type TempoSegment, type TimeSignatureSegment } from './types';
 
-/** The beat detector signature (libsonare `detectBeats`): beat times in seconds. */
-export type AudioBeatDetector = (samples: Float32Array, sampleRate?: number) => ArrayLike<number>;
+/**
+ * Tracks beats and downbeats (seconds) in a mono buffer off the main thread;
+ * the signal aborts the analysis.
+ */
+export type AudioBeatDetector = (
+  mono: Float32Array,
+  sampleRate: number,
+  signal?: AbortSignal,
+) => Promise<DetectedBeats>;
+
+/** The analysis-worker beat detector. */
+const workerBeatDetector: AudioBeatDetector = (mono, sampleRate, signal) =>
+  detectBeatsInWorker(mono, sampleRate, { signal });
 
 /** Injectable dependencies for {@link detectAudioClipBeatGrid}. */
 export interface AudioBeatGridDeps {
@@ -193,6 +209,7 @@ export function beatTimesToTempoSegments(
  * @param deps Injected asset loader and beat detector.
  * @param options BPM clamp bounds forwarded to the conversion.
  * @param tempoSegments Project tempo map the window is rendered under.
+ * @param signal Aborts the analysis.
  * @returns The detected tempo segments anchored at PPQ 0.
  */
 export async function detectAudioClipTempoMap(
@@ -201,38 +218,40 @@ export async function detectAudioClipTempoMap(
   deps: AudioTempoMapDeps,
   options?: BeatTempoMapOptions,
   tempoSegments: ReadonlyArray<TempoSegment> = [],
+  signal?: AbortSignal,
 ): Promise<TempoSegment[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
   if (!audible) return [];
-  return beatTimesToTempoSegments(deps.detectBeats(audible.mono, audible.sampleRate), options);
+  const { beats } = await deps.detectBeats(audible.mono, audible.sampleRate, signal);
+  return beatTimesToTempoSegments(beats, options);
 }
 
 /**
- * Resolves the wasm beat detector and asset loader and detects a variable
- * tempo map for the active clip, when it is an audio clip carrying an asset.
- * Returns an empty array when no such clip is active or the detector is
- * unavailable.
+ * Detects a variable tempo map for the active clip in the analysis worker,
+ * when it is an audio clip carrying an asset. Returns an empty array when no
+ * such clip is active.
  *
  * @param clipId Editor id of the clip to analyze.
  * @param options BPM clamp bounds forwarded to the conversion.
+ * @param signal Aborts the analysis.
  * @returns The detected tempo segments anchored at PPQ 0.
  */
 export async function detectActiveAudioClipTempoMap(
   clipId: number,
   options?: BeatTempoMapOptions,
+  signal?: AbortSignal,
 ): Promise<TempoSegment[]> {
   const store = useProjectStore();
   const clip = store.clips.find((c) => c.id === clipId);
   if (!clip || !isAudioClip(clip) || clip.assetId === undefined) return [];
-  const wasm = (await ensureWasm()) as unknown as { detectBeats?: AudioBeatDetector };
-  if (typeof wasm.detectBeats !== 'function') return [];
   return detectAudioClipTempoMap(
     clip,
     store.tempoBpm,
-    { loadAudioAsset: loadAsset, detectBeats: wasm.detectBeats },
+    { loadAudioAsset: loadAsset, detectBeats: workerBeatDetector },
     options,
     store.tempoSegments,
+    signal,
   );
 }
 
@@ -240,10 +259,8 @@ export async function detectActiveAudioClipTempoMap(
 export interface AudioTimeSignatureDeps {
   /** Loads an audio asset's PCM (defaults to the OPFS asset store). */
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
-  /** The beat detector (defines the quarter-note grid). */
+  /** The beat and downbeat detector (beats define the quarter-note grid). */
   detectBeats: AudioBeatDetector;
-  /** The downbeat detector (libsonare `detectDownbeats`): bar-start times. */
-  detectDownbeats: AudioBeatDetector;
 }
 
 /** Numerator bound for {@link beatsToTimeSignatures}. */
@@ -321,6 +338,7 @@ export function beatsToTimeSignatures(
  * @param deps Injected asset loader and beat/downbeat detectors.
  * @param options Numerator bound forwarded to the conversion.
  * @param tempoSegments Project tempo map the window is rendered under.
+ * @param signal Aborts the analysis.
  * @returns The detected meter segments anchored at PPQ 0.
  */
 export async function detectAudioClipTimeSignatures(
@@ -329,52 +347,40 @@ export async function detectAudioClipTimeSignatures(
   deps: AudioTimeSignatureDeps,
   options?: BeatTimeSignatureOptions,
   tempoSegments: ReadonlyArray<TempoSegment> = [],
+  signal?: AbortSignal,
 ): Promise<TimeSignatureSegment[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
   if (!audible) return [];
-  const { mono, sampleRate } = audible;
-  return beatsToTimeSignatures(
-    deps.detectBeats(mono, sampleRate),
-    deps.detectDownbeats(mono, sampleRate),
-    options,
-  );
+  const { beats, downbeats } = await deps.detectBeats(audible.mono, audible.sampleRate, signal);
+  return beatsToTimeSignatures(beats, downbeats, options);
 }
 
 /**
- * Resolves the wasm beat/downbeat detectors and asset loader and detects a
- * time-signature map for the active clip, when it is an audio clip carrying an
- * asset. Returns an empty array when no such clip is active or a detector is
- * unavailable.
+ * Detects a time-signature map for the active clip in the analysis worker,
+ * when it is an audio clip carrying an asset. Returns an empty array when no
+ * such clip is active.
  *
  * @param clipId Editor id of the clip to analyze.
  * @param options Numerator bound forwarded to the conversion.
+ * @param signal Aborts the analysis.
  * @returns The detected meter segments anchored at PPQ 0.
  */
 export async function detectActiveAudioClipTimeSignatures(
   clipId: number,
   options?: BeatTimeSignatureOptions,
+  signal?: AbortSignal,
 ): Promise<TimeSignatureSegment[]> {
   const store = useProjectStore();
   const clip = store.clips.find((c) => c.id === clipId);
   if (!clip || !isAudioClip(clip) || clip.assetId === undefined) return [];
-  const wasm = (await ensureWasm()) as unknown as {
-    detectBeats?: AudioBeatDetector;
-    detectDownbeats?: AudioBeatDetector;
-  };
-  if (typeof wasm.detectBeats !== 'function' || typeof wasm.detectDownbeats !== 'function') {
-    return [];
-  }
   return detectAudioClipTimeSignatures(
     clip,
     store.tempoBpm,
-    {
-      loadAudioAsset: loadAsset,
-      detectBeats: wasm.detectBeats,
-      detectDownbeats: wasm.detectDownbeats,
-    },
+    { loadAudioAsset: loadAsset, detectBeats: workerBeatDetector },
     options,
     store.tempoSegments,
+    signal,
   );
 }
 
@@ -384,11 +390,12 @@ export const ODD_METER_CANDIDATES: readonly number[] = [2, 3, 4, 5, 6, 7];
 /** Injectable dependencies for {@link estimateAudioClipMeter}. */
 export interface AudioMeterEstimateDeps {
   loadAudioAsset: (assetId: string) => Promise<LoadedAudioAsset>;
-  /** Full analysis, read for its beats and their onset-strength accents. */
+  /** Full analysis off the main thread, read for its beats and their accents. */
   analyze: (
-    samples: Float32Array,
+    mono: Float32Array,
     sampleRate: number,
-  ) => { beats: ReadonlyArray<{ time: number }>; beatObservations: { onsetStrength: number[] } };
+    signal?: AbortSignal,
+  ) => Promise<DetectedBeatAccents>;
   estimateMeter: (request: {
     beatTimes: number[];
     beatStrengths: number[];
@@ -408,6 +415,7 @@ export interface AudioMeterEstimateDeps {
  *
  * @param candidates Numerators to consider; omitted keeps the library default.
  * @param tempoSegments Project tempo map the window is rendered under.
+ * @param signal Aborts the analysis.
  */
 export async function estimateAudioClipMeter(
   clip: AudibleAudioClipFields,
@@ -415,13 +423,12 @@ export async function estimateAudioClipMeter(
   deps: AudioMeterEstimateDeps,
   candidates?: readonly number[],
   tempoSegments: ReadonlyArray<TempoSegment> = [],
+  signal?: AbortSignal,
 ): Promise<TimeSignatureSegment[]> {
   if (clip.assetId === undefined || !(tempoBpm > 0)) return [];
   const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
   if (!audible) return [];
-  const analysis = deps.analyze(audible.mono, audible.sampleRate);
-  const beatTimes = analysis.beats.map((beat) => beat.time);
-  const beatStrengths = analysis.beatObservations.onsetStrength;
+  const { beatTimes, beatStrengths } = await deps.analyze(audible.mono, audible.sampleRate, signal);
   if (beatStrengths.length !== beatTimes.length) return [];
   const estimate = deps.estimateMeter({
     beatTimes,
@@ -441,12 +448,13 @@ export async function estimateAudioClipMeter(
 }
 
 /**
- * Resolves the wasm analysis and meter estimator and reads one meter for the
- * active audio clip (see {@link estimateAudioClipMeter}).
+ * Reads one meter for the active audio clip, analysing in the worker and
+ * scoring with the wasm meter estimator (see {@link estimateAudioClipMeter}).
  */
 export async function estimateActiveAudioClipMeter(
   clipId: number,
   candidates?: readonly number[],
+  signal?: AbortSignal,
 ): Promise<TimeSignatureSegment[]> {
   const store = useProjectStore();
   const clip = store.clips.find((c) => c.id === clipId);
@@ -457,10 +465,12 @@ export async function estimateActiveAudioClipMeter(
     store.tempoBpm,
     {
       loadAudioAsset: loadAsset,
-      analyze: (samples, sampleRate) => wasm.analyze(samples, sampleRate),
+      analyze: (mono, sampleRate, abort) =>
+        analyzeBeatAccentsInWorker(mono, sampleRate, { signal: abort }),
       estimateMeter: (request) => wasm.estimateMeter(request),
     },
     candidates,
     store.tempoSegments,
+    signal,
   );
 }
