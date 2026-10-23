@@ -1,5 +1,10 @@
 import type { StreamingRetuneConfig } from '@/wasm/index.js';
-import { fetchWasmBinary, forwardWorkletRuntimeErrors, waitForWorkletReady } from './engine';
+import {
+  fetchWasmBinary,
+  forwardWorkletRuntimeErrors,
+  listenProcessorError,
+  waitForWorkletReady,
+} from './engine';
 import type { MicrophoneBinding } from './recorder';
 
 export const STREAMING_RETUNE_PROCESSOR = 'sonare-streaming-retune-processor';
@@ -64,6 +69,8 @@ export interface StreamingRetuneInputOptions extends StreamingRetuneConfig {
   blockSize?: number;
   signal?: AbortSignal;
   readyTimeoutMs?: number;
+  /** Called when the processor crashes after startup. */
+  onProcessorError?: () => void;
 }
 
 /** Connects microphone input through libsonare's StreamingRetune before the engine input. */
@@ -121,6 +128,7 @@ export async function bindStreamingRetuneInput(
   }
   const readyNode = node;
   const detachRuntimeErrors = forwardWorkletRuntimeErrors(readyNode, 'Streaming retune');
+  const detachProcessorError = listenProcessorError([readyNode], options.onProcessorError);
   return {
     stream: options.stream,
     source,
@@ -129,6 +137,7 @@ export async function bindStreamingRetuneInput(
     },
     close(): void {
       detachRuntimeErrors();
+      detachProcessorError();
       readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyNode.disconnect();

@@ -107,6 +107,32 @@ export function forwardWorkletRuntimeErrors(
   return () => node.port.removeEventListener('message', onMessage);
 }
 
+/**
+ * Invokes `onError` once when any of the nodes reports `processorerror`
+ * (native or re-dispatched by {@link forwardWorkletRuntimeErrors}).
+ *
+ * @returns Detaches the listeners.
+ */
+export function listenProcessorError(
+  nodes: ReadonlyArray<{
+    addEventListener(type: 'processorerror', listener: () => void): void;
+    removeEventListener(type: 'processorerror', listener: () => void): void;
+  }>,
+  onError: (() => void) | undefined,
+): () => void {
+  if (!onError) return () => {};
+  let fired = false;
+  const listener = (): void => {
+    if (fired) return;
+    fired = true;
+    onError();
+  };
+  for (const node of nodes) node.addEventListener('processorerror', listener);
+  return () => {
+    for (const node of nodes) node.removeEventListener('processorerror', listener);
+  };
+}
+
 export interface EngineCleanupState {
   nodeDetached: boolean;
   engineDestroyed: boolean;

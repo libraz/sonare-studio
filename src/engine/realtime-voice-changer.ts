@@ -3,7 +3,12 @@ import type {
   RealtimeVoiceChangerConfigInput,
   RealtimeVoiceChangerPodConfig,
 } from '@/wasm/index.js';
-import { fetchWasmBinary, forwardWorkletRuntimeErrors, waitForWorkletReady } from './engine';
+import {
+  fetchWasmBinary,
+  forwardWorkletRuntimeErrors,
+  listenProcessorError,
+  waitForWorkletReady,
+} from './engine';
 import type { MicrophoneBinding } from './recorder';
 import { clampStreamingRetuneSemitones, STREAMING_RETUNE_PROCESSOR } from './streaming-retune';
 
@@ -18,6 +23,8 @@ export interface RealtimeVoiceChangerInputOptions {
   blockSize?: number;
   signal?: AbortSignal;
   readyTimeoutMs?: number;
+  /** Called when a processor in the chain crashes after startup. */
+  onProcessorError?: () => void;
 }
 
 export interface RealtimeVoiceChangerRetuneInputOptions extends RealtimeVoiceChangerInputOptions {
@@ -167,6 +174,7 @@ export async function bindRealtimeVoiceChangerInput(
   }
   const readyNode = node;
   const detachRuntimeErrors = forwardWorkletRuntimeErrors(readyNode, 'Voice changer');
+  const detachProcessorError = listenProcessorError([readyNode], options.onProcessorError);
   return {
     stream: options.stream,
     source,
@@ -178,6 +186,7 @@ export async function bindRealtimeVoiceChangerInput(
     },
     close(): void {
       detachRuntimeErrors();
+      detachProcessorError();
       readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyNode.disconnect();
@@ -276,6 +285,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
   const detachRuntimeErrors = [
     forwardWorkletRuntimeErrors(readyVoiceNode, 'Voice changer'),
     forwardWorkletRuntimeErrors(readyRetuneNode, 'Streaming retune'),
+    listenProcessorError([readyVoiceNode, readyRetuneNode], options.onProcessorError),
   ];
   return {
     stream: options.stream,

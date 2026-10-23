@@ -26,10 +26,14 @@ export const notices = {
     },
   },
   webMidiConnectFailed: 'Web MIDI に接続できませんでした: {detail}',
+  gsSetupUnapplied:
+    'GS/SysExのセットアップメッセージ {count} 件が再生用シンセに適用されませんでした。適用されるのは、曲頭で最初のノートより前にある {limit} バイト以内の完結したセットアップメッセージのみです。これらはMIDI書き出しでは保持されます。',
   recording: {
     engineNotStarted: '録音の前にエンジンを起動してください。',
     micDisconnected:
       'マイクが切断されました。デバイスを接続し直して、もう一度リクエストしてください。',
+    inputProcessorCrashed:
+      'ボイスチェンジャーまたはピッチ補正が異常終了したため停止しました。マイクを再リクエストすると再開できます。',
     armedTrackLocked: '録音中はアームしたトラックを変更できません。',
     unknownTrack: '不明なトラック ID: {id}',
     unknownSource: '不明な録音ソース: {source}',

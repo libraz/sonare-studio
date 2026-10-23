@@ -25,9 +25,13 @@ export const notices = {
     },
   },
   webMidiConnectFailed: 'Could not connect to Web MIDI: {detail}',
+  gsSetupUnapplied:
+    '{count} GS/SysEx setup message(s) were not applied to the playback synth. Only complete setup messages of up to {limit} bytes at the start of the song, before the first note, are applied; they are kept for MIDI export.',
   recording: {
     engineNotStarted: 'Start the engine before recording.',
     micDisconnected: 'The microphone was disconnected. Reconnect a device and request it again.',
+    inputProcessorCrashed:
+      'The voice changer or pitch correction crashed and was stopped. Request the microphone again to resume.',
     armedTrackLocked: 'Cannot change the armed track while recording.',
     unknownTrack: 'Unknown track id: {id}',
     unknownSource: 'Unknown recording source: {source}',

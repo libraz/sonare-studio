@@ -361,22 +361,32 @@ export function useRecording(
     unsubscribeLevel = recorder.onLevel((peak) => {
       inputLevel.value = peak;
     });
-    unsubscribeMicLost = recorder.onMicrophoneLost(() => {
-      // The capture device disappeared: stop any in-flight take, drop the mic
-      // state and prompt the user to reconnect (the recorder already discarded
-      // the partial take, so no silent all-zero clip lands). Once stop has
-      // begun, the captured frames belong to the save and are kept.
+    // The capture input went away: stop any in-flight take, drop the mic state
+    // and prompt the user to re-request it (the recorder already discarded the
+    // partial take, so no silent all-zero clip lands). Once stop has begun, the
+    // captured frames belong to the save and are kept.
+    const handleInputLost = (reason: string, message: string): void => {
       if (state.value !== 'stopping' && state.value !== 'ingesting') {
         finishCountIn();
-        recordingOperations.invalidate(new DOMException('Microphone disconnected.', 'AbortError'));
+        recordingOperations.invalidate(new DOMException(reason, 'AbortError'));
         activeOperation = null;
         clearTakeState();
         state.value = 'idle';
       }
       micReady.value = false;
       inputLevel.value = 0;
-      error.value = t.value.notices.recording.micDisconnected;
-    });
+      error.value = message;
+    };
+    const unsubscribeMic = recorder.onMicrophoneLost(() =>
+      handleInputLost('Microphone disconnected.', t.value.notices.recording.micDisconnected),
+    );
+    const unsubscribeProcessor = recorder.onInputProcessorError(() =>
+      handleInputLost('Input effect crashed.', t.value.notices.recording.inputProcessorCrashed),
+    );
+    unsubscribeMicLost = () => {
+      unsubscribeMic();
+      unsubscribeProcessor();
+    };
     recorder.setMonitor(monitorEnabled.value);
     return recorder;
   };

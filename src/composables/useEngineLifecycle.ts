@@ -8,6 +8,7 @@ import type { useTransport } from '@/composables/useTransport';
 import { type AnalyserBridge, createAnalyserBridge } from '@/engine/analyser';
 import { createAutomationSync } from '@/engine/automation-sync';
 import { createEngine, type EngineHandle } from '@/engine/engine';
+import { MAX_REALTIME_SYSEX_BYTES } from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMidiSync } from '@/engine/midi-sync';
@@ -313,6 +314,12 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         };
         const nextMidiSync = createMidiSync(stagedHandle, {
           resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
+          onGsSetupUnapplied: (count) => {
+            options.errorMessage.value = formatMessage(t.value.notices.gsSetupUnapplied, {
+              count,
+              limit: MAX_REALTIME_SYSEX_BYTES,
+            });
+          },
         });
         // Re-pushes a cleared automation lane's manual value. A value the
         // engine's command ring refuses is retried until accepted.

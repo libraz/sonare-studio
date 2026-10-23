@@ -82,6 +82,7 @@ function makeRecorder() {
     setVoiceChangerPreset: vi.fn(() => true),
     setStreamingRetuneSemitones: vi.fn(() => true),
     onLevel: vi.fn(() => () => {}),
+    onInputProcessorError: vi.fn(() => () => {}),
     onMicrophoneLost: vi.fn((listener: () => void) => {
       micLost = listener;
       return () => {

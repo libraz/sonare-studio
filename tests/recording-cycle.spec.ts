@@ -50,6 +50,7 @@ function fakeRecorder(result: () => RecordingResult): Recorder {
     setVoiceChangerPreset: vi.fn(() => true),
     setStreamingRetuneSemitones: vi.fn(() => true),
     onLevel: vi.fn(() => () => {}),
+    onInputProcessorError: vi.fn(() => () => {}),
     onMicrophoneLost: vi.fn(() => () => {}),
     start: vi.fn(async (options: StartRecordingOptions) => {
       start = options;

@@ -300,6 +300,7 @@ describe('createRecorder microphone acquisition', () => {
       stream,
       stopTracksOnClose: true,
       signal: expect.any(AbortSignal),
+      onProcessorError: expect.any(Function),
     });
     // The idle config: a 1-second raw-input buffer with the monitor off.
     expect(configureCapture).toHaveBeenCalledTimes(1);

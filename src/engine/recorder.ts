@@ -216,7 +216,12 @@ export interface RecorderOptions {
   bindInput?: (
     ctx: AudioContext,
     engineNode: AudioWorkletNode,
-    options: { stream: MediaStream; stopTracksOnClose: boolean; signal?: AbortSignal },
+    options: {
+      stream: MediaStream;
+      stopTracksOnClose: boolean;
+      signal?: AbortSignal;
+      onProcessorError?: () => void;
+    },
   ) => Promise<MicrophoneBinding>;
   /** Optional realtime voice changer preset inserted between microphone and engine input. */
   voiceChangerPreset?: RealtimeVoiceChangerConfigInput | null;
@@ -301,6 +306,14 @@ export interface Recorder {
    * @returns An unsubscribe function.
    */
   onMicrophoneLost(listener: () => void): () => void;
+  /**
+   * Subscribes to a voice changer / StreamingRetune processor crashing while
+   * bound. The binding is torn down exactly as for a lost microphone before
+   * listeners run; callers should surface an error and let the user retry.
+   *
+   * @returns An unsubscribe function.
+   */
+  onInputProcessorError(listener: () => void): () => void;
   /**
    * Starts capturing the armed track through the engine record path: sizes
    * the capture buffer for the full take, resets the capture counters, arms
@@ -500,6 +513,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   let levelPeak = 0;
   let lastLevelEmit = 0;
   const micLostListeners = new Set<() => void>();
+  const inputProcessorErrorListeners = new Set<() => void>();
   /** Removes the device `ended` listeners attached to the current binding. */
   let detachTrackListeners: (() => void) | null = null;
 
@@ -562,8 +576,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
    * take, tears down the binding so hasMicrophone() reports false, and lets
    * subscribers (UI) prompt the user to reconnect. Idempotent.
    */
-  const handleMicrophoneLost = (): void => {
-    if (!binding) return;
+  const releaseLostBinding = (): boolean => {
+    if (!binding) return false;
     operationGeneration += 1;
     detachTrackListeners?.();
     detachTrackListeners = null;
@@ -581,7 +595,17 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
     micPromise = null;
     resetLevel();
+    return true;
+  };
+
+  const handleMicrophoneLost = (): void => {
+    if (!releaseLostBinding()) return;
     for (const listener of [...micLostListeners]) listener();
+  };
+
+  const handleInputProcessorError = (): void => {
+    if (!releaseLostBinding()) return;
+    for (const listener of [...inputProcessorErrorListeners]) listener();
   };
 
   /**
@@ -779,6 +803,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         stream,
         stopTracksOnClose: true,
         signal,
+        onProcessorError: handleInputProcessorError,
       });
     } catch (error) {
       stopStreamTracks(stream);
@@ -1051,6 +1076,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     micPromise = null;
     levelListeners.clear();
     micLostListeners.clear();
+    inputProcessorErrorListeners.clear();
   };
 
   return {
@@ -1084,6 +1110,12 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       micLostListeners.add(listener);
       return () => {
         micLostListeners.delete(listener);
+      };
+    },
+    onInputProcessorError(listener: () => void): () => void {
+      inputProcessorErrorListeners.add(listener);
+      return () => {
+        inputProcessorErrorListeners.delete(listener);
       };
     },
     start,

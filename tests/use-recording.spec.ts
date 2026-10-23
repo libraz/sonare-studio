@@ -95,6 +95,7 @@ function makeFakeRecorder() {
   let recording = false;
   let levelListener: ((peak: number) => void) | null = null;
   let micLostListener: (() => void) | null = null;
+  let processorErrorListener: (() => void) | null = null;
   let nextResult: RecordingResult | null = {
     channels: [new Float32Array(24000)],
     sampleRate: 48000,
@@ -125,6 +126,12 @@ function makeFakeRecorder() {
         levelListener = null;
       };
     }),
+    onInputProcessorError: vi.fn((listener: () => void) => {
+      processorErrorListener = listener;
+      return () => {
+        processorErrorListener = null;
+      };
+    }),
     onMicrophoneLost: vi.fn((listener: () => void) => {
       micLostListener = listener;
       return () => {
@@ -149,6 +156,11 @@ function makeFakeRecorder() {
       mic = false;
       recording = false;
       micLostListener?.();
+    },
+    emitProcessorError: () => {
+      mic = false;
+      recording = false;
+      processorErrorListener?.();
     },
     setResult: (result: RecordingResult | null) => {
       nextResult = result;
@@ -1303,6 +1315,18 @@ describe('useRecording', () => {
     expect(recording.isRecording.value).toBe(false);
     expect(recording.inputLevel.value).toBe(0);
     expect(recording.error.value).toMatch(/disconnected/i);
+  });
+
+  it('surfaces an input effect crash: clears mic state and shows its own error', async () => {
+    const { recording, fake } = setup();
+    await recording.requestMic();
+    fake.emitLevel(0.3);
+
+    fake.emitProcessorError();
+
+    expect(recording.micReady.value).toBe(false);
+    expect(recording.inputLevel.value).toBe(0);
+    expect(recording.error.value).toMatch(/crashed/i);
   });
 
   it('lengths a take through the tempo map when the project tempo varies', async () => {
