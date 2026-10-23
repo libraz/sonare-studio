@@ -1,3 +1,4 @@
+import { activeTakeIndex } from './comping';
 import {
   noteKey,
   pairEventsIntoNotes,
@@ -350,9 +351,9 @@ export function buildClipMirror(
           notes: take.notes.map((note) => ({ ...note })),
           ...copyMidiLaneFields(take),
         }));
-        entry.midiActiveTakeIndex = Math.min(
-          Math.max(0, previous.midiActiveTakeIndex ?? previous.midiTakes.length - 1),
-          previous.midiTakes.length - 1,
+        entry.midiActiveTakeIndex = activeTakeIndex(
+          previous.midiActiveTakeIndex,
+          previous.midiTakes.length,
         );
         if (previous.midiCompSegments !== undefined) {
           entry.midiCompSegments = previous.midiCompSegments.map((segment) => ({ ...segment }));

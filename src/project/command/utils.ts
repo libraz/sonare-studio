@@ -1,4 +1,4 @@
-import { sanitizeCompSegments } from '../comping';
+import { activeTakeIndex, sanitizeCompSegments } from '../comping';
 import {
   type AnyMidiLaneKind,
   assignMidiLaneFields,
@@ -113,12 +113,6 @@ interface DerivedClipMetadataOptions {
 
 interface PpqPoint {
   ppq: number;
-}
-
-function clampedTakeIndex(index: number | undefined, takeCount: number): number {
-  if (takeCount <= 0) return 0;
-  const candidate = Number.isFinite(index) ? Math.floor(index as number) : takeCount - 1;
-  return Math.min(Math.max(0, candidate), takeCount - 1);
 }
 
 /**
@@ -342,13 +336,13 @@ export function withDerivedClipMetadata(
         windowLengthPpq,
       ),
     );
-    const activeTakeIndex = clampedTakeIndex(source.midiActiveTakeIndex, source.midiTakes.length);
-    next.midiActiveTakeIndex = activeTakeIndex;
+    const activeIndex = activeTakeIndex(source.midiActiveTakeIndex, source.midiTakes.length);
+    next.midiActiveTakeIndex = activeIndex;
     if (source.midiCompSegments !== undefined && source.midiCompSegments.length > 0) {
       const midiCompSegments = transformTakeCompSegments(
         source.midiCompSegments,
         source.midiTakes.length,
-        activeTakeIndex,
+        activeIndex,
         source.lengthPpq,
         windowStartPpq,
         windowLengthPpq,

@@ -4,7 +4,8 @@ import type { Project } from '@/wasm/index.js';
 import { annotationsFromDocument, type ScoreAnnotations } from './annotations';
 import { type AutomationLaneState, sanitizeAutomationEntries } from './automation';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from './chords';
-import { sanitizeCompSegments } from './comping';
+import { activeTakeIndex, sanitizeCompSegments } from './comping';
+import type { DocumentInsertSlot } from './document-mixer-references';
 import { sanitizeExpressionMap } from './expression-map';
 import { isExternalStemRole } from './external-stems';
 import { sanitizeProvenance } from './generation';
@@ -159,9 +160,9 @@ export function applyDocumentClipMetadata(
       }
       if (takes.length > 0) {
         next.midiTakes = takes;
-        next.midiActiveTakeIndex = Math.min(
-          Math.max(0, Math.floor(Number(meta.midiActiveTakeIndex) || 0)),
-          takes.length - 1,
+        next.midiActiveTakeIndex = activeTakeIndex(
+          meta.midiActiveTakeIndex === undefined ? undefined : Number(meta.midiActiveTakeIndex),
+          takes.length,
         );
         if (Array.isArray(meta.midiCompSegments) && meta.midiCompSegments.length > 0) {
           next.midiCompSegments = sanitizeCompSegments(
@@ -606,7 +607,7 @@ export function hydrateProjectFromDocument(
     }
     const inserts = track.mixer?.inserts ?? [];
     inserts.forEach((slot, slotIndex) => {
-      const sourceIndex = (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
+      const sourceIndex = (slot as DocumentInsertSlot).sidechainSourceIndex;
       if (
         sourceIndex === undefined ||
         !Number.isInteger(sourceIndex) ||
@@ -622,7 +623,7 @@ export function hydrateProjectFromDocument(
     // The positional document field must not survive in the mirror (it
     // would re-serialize stale after track reorders).
     for (const slot of entry.mixer?.inserts ?? []) {
-      delete (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex;
+      delete (slot as DocumentInsertSlot).sidechainSourceIndex;
     }
   });
 

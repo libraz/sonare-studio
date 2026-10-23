@@ -26,6 +26,7 @@ import {
   defaultControlSurfaceSettings,
   sanitizeControlSurfaceSettings,
 } from './control-surface';
+import type { DocumentInsertSlot } from './document-mixer-references';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from './document-schema';
 import { normalizeGenerationSeed } from './generation';
 import type { GrooveTemplate } from './groove';
@@ -106,13 +107,6 @@ import {
   TRACK_COLOR_PALETTE,
 } from './types';
 
-type InsertWithDocumentSidechainIndex = {
-  sidechainSourceIndex?: number;
-  sidechainSourceTrackId?: number;
-  sidechainSourceGroupTrackIndex?: number;
-  sidechainSourceGroupTrackId?: number;
-};
-
 function isDocumentMarker(value: unknown): value is { ppq: number; name: string } {
   if (typeof value !== 'object' || value === null) return false;
   const marker = value as Record<string, unknown>;
@@ -142,7 +136,7 @@ function isDocumentSection(
 }
 
 function resolveStripSidechainSourceIds(
-  inserts: InsertWithDocumentSidechainIndex[] | undefined,
+  inserts: DocumentInsertSlot[] | undefined,
   trackMirror: EditorTrack[],
 ): void {
   for (const slot of inserts ?? []) {
@@ -701,18 +695,18 @@ export const useProjectStore = defineStore('project', () => {
           })
         : createDefaultMixerState();
       resolveStripSidechainSourceIds(
-        mixer.value.master.inserts as InsertWithDocumentSidechainIndex[],
+        mixer.value.master.inserts as DocumentInsertSlot[],
         trackMirror,
       );
       for (const bus of mixer.value.buses) {
         resolveStripSidechainSourceIds(
-          bus.strip?.inserts as InsertWithDocumentSidechainIndex[] | undefined,
+          bus.strip?.inserts as DocumentInsertSlot[] | undefined,
           trackMirror,
         );
       }
       for (const track of trackMirror) {
         resolveStripSidechainSourceIds(
-          track.mixer?.inserts as InsertWithDocumentSidechainIndex[] | undefined,
+          track.mixer?.inserts as DocumentInsertSlot[] | undefined,
           trackMirror,
         );
       }

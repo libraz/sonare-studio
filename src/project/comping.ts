@@ -107,6 +107,16 @@ export function sanitizeCompSegments(
   return merged;
 }
 
+/**
+ * Index of the MIDI take a clip plays when no comp selection overrides it:
+ * the stored active index, else the last take, clamped into range.
+ */
+export function activeTakeIndex(index: number | undefined, takeCount: number): number {
+  if (takeCount <= 0) return 0;
+  const candidate = Number.isFinite(index) ? Math.floor(index as number) : takeCount - 1;
+  return Math.min(Math.max(0, candidate), takeCount - 1);
+}
+
 /** Returns the take index playing at a clip-relative position. */
 export function takeIndexAtPpq(selection: ReadonlyArray<ClipCompSegment>, ppq: number): number {
   let take = selection[0]?.takeIndex ?? 0;

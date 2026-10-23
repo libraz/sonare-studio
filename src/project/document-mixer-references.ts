@@ -25,12 +25,47 @@ import type {
 import {
   cloneMixerState,
   cloneStrip,
+  type InsertSlot,
   type MixerStrip,
   type ProjectMixerState,
   renameRetiredMixerProcessors,
   renameRetiredProcessors,
 } from './mixer';
 import type { TrackKind } from './types';
+
+/** Serialized insert fields that carry a document track position instead of a session id. */
+export const DOCUMENT_SIDECHAIN_INDEX_FIELDS = [
+  'sidechainSourceIndex',
+  'sidechainSourceGroupTrackIndex',
+] as const;
+
+/** A serialized insert: track and group sidechain references are carried as indices. */
+export type DocumentInsertSlot = InsertSlot & {
+  [K in (typeof DOCUMENT_SIDECHAIN_INDEX_FIELDS)[number]]?: number;
+};
+
+/** Every insert field that names a sidechain key source, in session and document form. */
+export const SIDECHAIN_KEY_FIELDS = [
+  'sidechainSourceTrackId',
+  'sidechainSourceBusId',
+  'sidechainSourceGroupTrackId',
+  ...DOCUMENT_SIDECHAIN_INDEX_FIELDS,
+] as const satisfies ReadonlyArray<keyof DocumentInsertSlot>;
+
+// Compile-time guard: a new `sidechainSource*` slot field must be listed above.
+type UnlistedSidechainField = Exclude<
+  Extract<keyof DocumentInsertSlot, `sidechainSource${string}`>,
+  (typeof SIDECHAIN_KEY_FIELDS)[number]
+>;
+const _allSidechainFieldsListed: [UnlistedSidechainField] extends [never] ? true : never = true;
+void _allSidechainFieldsListed;
+
+/** Removes every document-index sidechain field from an insert. */
+export function deleteDocumentSidechainIndices(slot: InsertSlot): void {
+  for (const field of DOCUMENT_SIDECHAIN_INDEX_FIELDS) {
+    delete (slot as DocumentInsertSlot)[field];
+  }
+}
 
 /** Converts track-scoped insert sidechain ids to document track indices. */
 export function stripWithSidechainSourceIndices(
@@ -44,7 +79,7 @@ export function stripWithSidechainSourceIndices(
       const sourceIndex = tracks.findIndex((entry) => entry.id === slot.sidechainSourceTrackId);
       delete slot.sidechainSourceTrackId;
       if (allowSidechain && sourceIndex >= 0) {
-        (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = sourceIndex;
+        (slot as DocumentInsertSlot).sidechainSourceIndex = sourceIndex;
       }
     }
     if (slot.sidechainSourceGroupTrackId !== undefined) {
@@ -53,8 +88,7 @@ export function stripWithSidechainSourceIndices(
       );
       delete slot.sidechainSourceGroupTrackId;
       if (allowSidechain && sourceIndex >= 0) {
-        (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex =
-          sourceIndex;
+        (slot as DocumentInsertSlot).sidechainSourceGroupTrackIndex = sourceIndex;
       }
     }
   }
@@ -69,15 +103,13 @@ export function stripWithSidechainSourceIds(
 ): MixerStrip {
   const out = cloneStrip(strip);
   for (const slot of out.inserts) {
-    const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
-    delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    const { sidechainSourceIndex: sourceIndex, sidechainSourceGroupTrackIndex: groupSourceIndex } =
+      slot as DocumentInsertSlot;
+    deleteDocumentSidechainIndices(slot);
     if (allowSidechain && typeof sourceIndex === 'number' && Number.isInteger(sourceIndex)) {
       const source = tracks[sourceIndex];
       if (source) slot.sidechainSourceTrackId = source.id;
     }
-    const groupSourceIndex = (slot as { sidechainSourceGroupTrackIndex?: unknown })
-      .sidechainSourceGroupTrackIndex;
-    delete (slot as { sidechainSourceGroupTrackIndex?: unknown }).sidechainSourceGroupTrackIndex;
     if (
       allowSidechain &&
       typeof groupSourceIndex === 'number' &&
@@ -111,8 +143,11 @@ export function resolveMixerSidechainSourceIds(
 ): void {
   const resolveStrip = (strip: MixerStrip): void => {
     for (const slot of strip.inserts) {
-      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
-      delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      const {
+        sidechainSourceIndex: sourceIndex,
+        sidechainSourceGroupTrackIndex: groupSourceIndex,
+      } = slot as DocumentInsertSlot;
+      deleteDocumentSidechainIndices(slot);
       if (
         typeof sourceIndex === 'number' &&
         Number.isInteger(sourceIndex) &&
@@ -121,9 +156,6 @@ export function resolveMixerSidechainSourceIds(
       ) {
         slot.sidechainSourceTrackId = tracks[sourceIndex].id;
       }
-      const groupSourceIndex = (slot as { sidechainSourceGroupTrackIndex?: unknown })
-        .sidechainSourceGroupTrackIndex;
-      delete (slot as { sidechainSourceGroupTrackIndex?: unknown }).sidechainSourceGroupTrackIndex;
       if (
         typeof groupSourceIndex === 'number' &&
         Number.isInteger(groupSourceIndex) &&
@@ -153,7 +185,7 @@ function normalizeDocumentGroupSidechainKeys(
 ): void {
   if (!strip) return;
   for (const slot of strip.inserts) {
-    const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+    const sourceIndex = (slot as DocumentInsertSlot).sidechainSourceIndex;
     if (
       typeof sourceIndex !== 'number' ||
       !Number.isInteger(sourceIndex) ||
@@ -168,9 +200,8 @@ function normalizeDocumentGroupSidechainKeys(
         `Track sidechain source ${sourceIndex} is a group bus; use a group sidechain key`,
       );
     }
-    delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
-    (slot as { sidechainSourceGroupTrackIndex?: number }).sidechainSourceGroupTrackIndex =
-      sourceIndex;
+    delete (slot as DocumentInsertSlot).sidechainSourceIndex;
+    (slot as DocumentInsertSlot).sidechainSourceGroupTrackIndex = sourceIndex;
   }
 }
 
@@ -218,8 +249,7 @@ export function validateDocumentMixerRouting(
     if (!strip) return undefined;
     const next = cloneStrip(strip);
     for (const slot of next.inserts) {
-      const groupIndex = (slot as { sidechainSourceGroupTrackIndex?: unknown })
-        .sidechainSourceGroupTrackIndex;
+      const groupIndex = (slot as DocumentInsertSlot).sidechainSourceGroupTrackIndex;
       if (groupIndex !== undefined) {
         slot.sidechainSourceGroupTrackId =
           typeof groupIndex === 'number' && Number.isInteger(groupIndex) ? groupIndex : -1;

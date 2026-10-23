@@ -20,6 +20,7 @@ import {
 import { type AutomationLaneState, busAutomationTarget, isBusAutomationTarget } from './automation';
 import { exportMixerSnapshotSlots, importMixerSnapshotSlots } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
+import { activeTakeIndex } from './comping';
 import { controlSurfaceSettingsAreDefault } from './control-surface';
 import {
   fromDocumentMixerSnapshotSlots,
@@ -89,10 +90,7 @@ function toDocumentClip(
       notes: take.notes.map((note) => ({ ...note })),
       ...copyMidiLaneFields(take),
     }));
-    out.midiActiveTakeIndex = Math.min(
-      Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes.length - 1),
-      clip.midiTakes.length - 1,
-    );
+    out.midiActiveTakeIndex = activeTakeIndex(clip.midiActiveTakeIndex, clip.midiTakes.length);
     if (clip.midiCompSegments !== undefined && clip.midiCompSegments.length > 0) {
       out.midiCompSegments = clip.midiCompSegments.map((segment) => ({
         startPpq: segment.startPpq,

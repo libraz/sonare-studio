@@ -17,11 +17,11 @@ import {
   parseMasteringAutomationParam,
 } from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
+import { type DocumentInsertSlot, SIDECHAIN_KEY_FIELDS } from '@/project/document-mixer-references';
 import {
   DEFAULT_PAN_LAW,
   DEFAULT_PAN_MODE,
   DEFAULT_STRIP_WIDTH,
-  type InsertSlot,
   type MixerStrip,
 } from '@/project/mixer';
 import type {
@@ -86,21 +86,6 @@ export type DawprojectExportLossKind = (typeof DAWPROJECT_EXPORT_LOSS_KINDS)[num
 interface ExportContext {
   trackCount: number;
 }
-
-/** A serialized insert: document track and group references are carried as indices. */
-type DocumentInsertSlot = InsertSlot & {
-  sidechainSourceIndex?: number;
-  sidechainSourceGroupTrackIndex?: number;
-};
-
-/** Insert fields that name a sidechain key source; the sidecar carries only the track index. */
-const SIDECHAIN_KEY_FIELDS = [
-  'sidechainSourceTrackId',
-  'sidechainSourceIndex',
-  'sidechainSourceBusId',
-  'sidechainSourceGroupTrackId',
-  'sidechainSourceGroupTrackIndex',
-] as const satisfies ReadonlyArray<keyof DocumentInsertSlot>;
 
 function isSidechainKeyExported(slot: DocumentInsertSlot, trackCount: number): boolean {
   const index = slot.sidechainSourceIndex;

@@ -7,6 +7,7 @@
  */
 
 import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
+import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
 import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from '@/project/smf';
@@ -54,7 +55,7 @@ function finite(value: number | undefined): number | undefined {
 }
 
 function sidechainSourceIndex(slot: InsertSlot, trackCount: number): number | undefined {
-  const index = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+  const index: unknown = (slot as DocumentInsertSlot).sidechainSourceIndex;
   return typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < trackCount
     ? index
     : undefined;

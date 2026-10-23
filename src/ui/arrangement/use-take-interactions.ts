@@ -13,7 +13,7 @@
 
 import { type Ref, ref } from 'vue';
 import { clamp } from '@/lib/math';
-import { type CompableClipFields, compSegmentsWithRange } from '@/project/comping';
+import { activeTakeIndex, type CompableClipFields, compSegmentsWithRange } from '@/project/comping';
 import type { ClipCompSegment } from '@/project/types';
 import type { ClipPoint } from './clip-hit';
 
@@ -220,19 +220,14 @@ export function useTakeInteractions(options: UseTakeInteractionsOptions): TakeIn
       if (end - start < MIN_COMP_DRAG_PPQ) commands.setActiveMidiTake?.(g.clip.id, g.takeIndex);
       else {
         // Without a comp the whole clip plays the active take, as the take lanes draw it.
-        const activeTakeIndex = Math.min(
-          Math.max(0, g.clip.midiActiveTakeIndex ?? g.clip.midiTakes.length - 1),
-          g.clip.midiTakes.length - 1,
-        );
+        const activeIndex = activeTakeIndex(g.clip.midiActiveTakeIndex, g.clip.midiTakes.length);
         commands.setMidiCompSegments?.(
           g.clip.id,
           compSegmentsWithRange(
             {
               ...g.clip,
               takes: g.clip.midiTakes,
-              compSegments: g.clip.midiCompSegments ?? [
-                { startPpq: 0, takeIndex: activeTakeIndex },
-              ],
+              compSegments: g.clip.midiCompSegments ?? [{ startPpq: 0, takeIndex: activeIndex }],
             },
             start,
             end,

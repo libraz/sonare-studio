@@ -15,7 +15,7 @@ import {
   RULER_HEIGHT_PX,
 } from '@/components/arrangement/theme';
 import { fillRoundRect, strokeRoundRect } from '@/components/piano-roll/theme';
-import { sanitizeCompSegments } from '@/project/comping';
+import { activeTakeIndex, sanitizeCompSegments } from '@/project/comping';
 import type { PpqSpan } from '@/project/take-silence';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import { clipRenderWidthPx } from '@/ui/arrangement/audio-fades';
@@ -121,10 +121,7 @@ export function drawClipTakeBlocks(
           clip.midiCompSegments ?? [
             {
               startPpq: 0,
-              takeIndex: Math.min(
-                Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes.length - 1),
-                clip.midiTakes.length - 1,
-              ),
+              takeIndex: activeTakeIndex(clip.midiActiveTakeIndex, clip.midiTakes.length),
             },
           ],
           clip.midiTakes.length,

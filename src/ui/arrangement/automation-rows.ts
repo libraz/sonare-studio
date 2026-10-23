@@ -17,6 +17,7 @@ import {
   clampAutomationValue,
   parseInstrumentAutomationParam,
 } from '@/project/automation';
+import { activeTakeIndex } from '@/project/comping';
 import type { MixerStrip } from '@/project/mixer';
 import { insertAutomationDomain } from '@/project/processor-controls';
 import { patchFieldSpec } from '@/ui/devices/patch-draft';
@@ -113,10 +114,7 @@ export function trackActiveTakeIndex(clips: ReadonlyArray<TakeRowClip>, trackId:
   for (const clip of clips) {
     if (clip.trackId !== trackId) continue;
     if ((clip.midiTakes?.length ?? 0) > 0) {
-      const index = Math.min(
-        Math.max(0, clip.midiActiveTakeIndex ?? clip.midiTakes!.length - 1),
-        clip.midiTakes!.length - 1,
-      );
+      const index = activeTakeIndex(clip.midiActiveTakeIndex, clip.midiTakes!.length);
       if (active === -1) active = index;
       else if (active !== index) return -1;
       continue;

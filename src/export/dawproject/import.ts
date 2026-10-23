@@ -37,6 +37,7 @@ import {
   parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
 } from '@/project/automation';
+import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import { isAutomatableSynthParam } from '@/project/instrument';
 import {
   createDefaultStrip,
@@ -382,7 +383,7 @@ function readInsertDevices(
           params[name] = boolAttr(parameter, 'value');
         }
       }
-      const slot: InsertSlot & { sidechainSourceIndex?: number } = {
+      const slot: DocumentInsertSlot = {
         processor,
         params,
         enabled:
@@ -591,14 +592,14 @@ function scrubImportedSidechainSourceIndexes(
   const trackCount = tracks.length;
   const scrubStrip = (strip: { inserts: InsertSlot[] }): void => {
     for (const slot of strip.inserts) {
-      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      const sourceIndex = (slot as DocumentInsertSlot).sidechainSourceIndex;
       if (
         typeof sourceIndex !== 'number' ||
         !Number.isInteger(sourceIndex) ||
         sourceIndex < 0 ||
         sourceIndex >= trackCount
       ) {
-        delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+        delete (slot as DocumentInsertSlot).sidechainSourceIndex;
       }
     }
   };
@@ -621,11 +622,11 @@ function rebindImportedSidechainSourceIndexes(
   const importedIndexById = new Map(tracks.map((track, index) => [track.id, index]));
   const rebindStrip = (strip: { inserts: InsertSlot[] }): void => {
     for (const slot of strip.inserts) {
-      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      const sourceIndex = (slot as DocumentInsertSlot).sidechainSourceIndex;
       if (typeof sourceIndex !== 'number' || !Number.isInteger(sourceIndex)) continue;
       const stableSourceIndex = importedIndexById.get(`track-${sourceIndex}`);
       if (stableSourceIndex !== undefined) {
-        (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = stableSourceIndex;
+        (slot as DocumentInsertSlot).sidechainSourceIndex = stableSourceIndex;
       }
     }
   };
@@ -641,13 +642,13 @@ function rebindDocumentSidechainSourceIndexes(
 ): void {
   const rebindStrip = (strip: { inserts: InsertSlot[] }): void => {
     for (const slot of strip.inserts) {
-      const sourceIndex = (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+      const sourceIndex = (slot as DocumentInsertSlot).sidechainSourceIndex;
       if (typeof sourceIndex !== 'number' || !Number.isInteger(sourceIndex)) continue;
       const documentIndex = documentIndexByImportedIndex.get(sourceIndex);
       if (documentIndex === undefined) {
-        delete (slot as { sidechainSourceIndex?: unknown }).sidechainSourceIndex;
+        delete (slot as DocumentInsertSlot).sidechainSourceIndex;
       } else {
-        (slot as { sidechainSourceIndex?: number }).sidechainSourceIndex = documentIndex;
+        (slot as DocumentInsertSlot).sidechainSourceIndex = documentIndex;
       }
     }
   };

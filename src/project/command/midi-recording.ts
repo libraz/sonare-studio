@@ -1,4 +1,4 @@
-import { sanitizeCompSegments } from '../comping';
+import { activeTakeIndex, sanitizeCompSegments } from '../comping';
 import type { RawNote } from '../midi-events';
 import {
   assignMidiLaneFields,
@@ -102,10 +102,7 @@ function storeRecordedMidiClip(
   const midiTakes = input.midiTakes?.map(cloneMidiTake);
   const activeMidiTakeIndex =
     midiTakes && midiTakes.length > 0
-      ? Math.min(
-          Math.max(0, input.activeMidiTakeIndex ?? midiTakes.length - 1),
-          midiTakes.length - 1,
-        )
+      ? activeTakeIndex(input.activeMidiTakeIndex, midiTakes.length)
       : undefined;
   const activeTake =
     activeMidiTakeIndex === undefined ? undefined : midiTakes?.[activeMidiTakeIndex];
