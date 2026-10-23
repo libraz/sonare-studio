@@ -30,7 +30,7 @@ import {
   MAX_PROJECT_ARCHIVE_ENTRY_BYTES,
   MAX_PROJECT_ARCHIVE_EXPANDED_BYTES,
 } from '@/persistence/resource-limits';
-import { decodeAndIngest } from '@/project/audio-import';
+import { decodeAndIngest, type IngestAudioOptions } from '@/project/audio-import';
 import {
   type AutomationParam,
   insertAutomationParam,
@@ -102,6 +102,8 @@ export interface DawprojectAudioMedia {
 export interface DawprojectImportOptions {
   /** Decodes/stores one embedded audio file and returns its asset id. */
   ingestAudio?: (media: DawprojectAudioMedia) => Promise<{ id: string }>;
+  /** Asset writer for the default ingester; pass a transaction's save to lease each asset. */
+  save?: IngestAudioOptions['save'];
   /** Resolves an external File path to raw bytes. Omitted paths stay placement-only. */
   resolveExternalAudio?: (path: string) => Promise<Uint8Array | null | undefined>;
   /** Cancels archive/media processing between every asynchronous boundary. */
@@ -1368,7 +1370,11 @@ export async function importDawprojectWithMediaResult(
   const ingestAudio =
     options.ingestAudio ??
     (async (media: DawprojectAudioMedia) =>
-      decodeAndIngest(new Uint8Array(media.bytes).buffer, { name: media.name, analysis: null }));
+      decodeAndIngest(new Uint8Array(media.bytes).buffer, {
+        name: media.name,
+        analysis: null,
+        ...(options.save !== undefined ? { save: options.save } : {}),
+      }));
   const media = await ingestEmbeddedAudio(
     project,
     entries,

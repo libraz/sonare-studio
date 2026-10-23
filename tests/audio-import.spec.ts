@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downmixToMono } from '@/lib/audio-channels';
+import { clearAudioAssetLeases, isAudioAssetLeased } from '@/persistence/asset-leases';
+import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { clearAudioAssetCache, loadAsset } from '@/persistence/assets';
+import { garbageCollectMedia } from '@/persistence/gc';
 import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
 import { decodeAndIngest, ingestAudioBuffer } from '@/project/audio-import';
 import { analyzeAudioTags } from '@/project/audio-tags';
@@ -253,6 +256,45 @@ describe('ingestAudioBuffer', () => {
       analysis: null,
     });
     expect(meta.id).toBe('fixed-id');
+  });
+});
+
+describe('ingestAudioBuffer under an asset transaction', () => {
+  beforeEach(() => {
+    installMockOpfs();
+    clearAudioAssetCache();
+    clearAudioAssetLeases();
+  });
+
+  afterEach(() => {
+    clearAudioAssetLeases();
+    uninstallMockOpfs();
+    clearAudioAssetCache();
+  });
+
+  it('leases the asset before the store write and keeps it from GC until commit', async () => {
+    const transaction = createAudioAssetTransaction();
+    let leasedAtResolve = false;
+    const meta = await ingestAudioBuffer(stereo(), 44100, 'Imported', {
+      analysis: null,
+      save: (input, audio) =>
+        transaction.save(
+          {
+            ...input,
+            onIdResolved: (assetId) => {
+              leasedAtResolve = isAudioAssetLeased(assetId);
+            },
+          },
+          audio,
+        ),
+    });
+
+    expect(leasedAtResolve).toBe(true);
+    expect((await garbageCollectMedia()).removedAssetIds).not.toContain(meta.id);
+    expect((await loadAsset(meta.id)).meta.name).toBe('Imported');
+
+    transaction.commit();
+    expect((await garbageCollectMedia()).removedAssetIds).toContain(meta.id);
   });
 });
 

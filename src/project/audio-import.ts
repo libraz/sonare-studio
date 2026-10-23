@@ -10,6 +10,7 @@
  */
 
 import { downmixToMono } from '@/lib/audio-channels';
+import type { AudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type AudioAssetMeta, type AudioAssetTags, saveAsset } from '@/persistence/assets';
 import {
   MAX_AUDIO_CHANNELS,
@@ -33,6 +34,11 @@ export interface IngestAudioOptions {
   analysis?: AudioAnalysisFunctions | null;
   /** Receives the share of the tag analysis done so far, in [0, 1]. */
   onProgress?: AnalysisProgress;
+  /**
+   * Asset writer; pass a transaction's save so the asset is leased before the
+   * store's awaits. Defaults to an unleased saveAsset.
+   */
+  save?: AudioAssetTransaction['save'];
 }
 
 /** Options for {@link decodeAndIngest}. */
@@ -107,7 +113,8 @@ export async function ingestAudioBuffer(
   const detected = await detectTags(channels, sampleRate, options);
   const tags: AudioAssetTags = { ...detected, ...options.tags };
   const hasTags = Object.values(tags).some((value) => value !== undefined);
-  return saveAsset(
+  const save = options.save ?? saveAsset;
+  return save(
     {
       name,
       sampleRate,

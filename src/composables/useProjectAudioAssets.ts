@@ -3,7 +3,9 @@ import { confirmDialog } from '@/composables/useDialogs';
 import { downmixToMono } from '@/lib/audio-channels';
 import { OperationGeneration, type OperationIdentity } from '@/lib/operation-generation';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
+import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
+import { createAssetReferenceGuard } from '@/project/asset-references';
 import { clipSourceWindowFrames } from '@/project/audible-clip-window';
 import { analyzeAudioTagsInWorker } from '@/project/audio-analysis-client';
 import { decodeAndIngest, decodeAudioFile } from '@/project/audio-import';
@@ -97,8 +99,15 @@ export function useProjectAudioAssets(options: ProjectAudioAssetsOptions) {
     if (files.length === 0) return;
     void runAction(async () => {
       for (const file of files) {
-        const meta = await decodeAndIngest(file);
-        await placeAssetAtPlayhead(meta.id);
+        const assets = createAudioAssetTransaction();
+        try {
+          const meta = await decodeAndIngest(file, { save: assets.save });
+          await placeAssetAtPlayhead(meta.id);
+          assets.commit();
+        } catch (error) {
+          await assets.rollback(createAssetReferenceGuard(store));
+          throw error;
+        }
       }
     });
   }

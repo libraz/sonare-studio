@@ -17,6 +17,7 @@ import { preflightXmlBytes } from '@/lib/xml-preflight';
 import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
 import { extractMusicXmlFromMxl } from '@/notation/musicxml-mxl';
 import { leaseAudioAssets, leaseFonts } from '@/persistence/asset-leases';
+import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import {
   createBrowserBackupWithReport,
   reclaimOrphanedRestoreStagesAtStartup,
@@ -71,7 +72,10 @@ import {
   encodeSzdStreaming,
   SZD_FILE_EXTENSION,
 } from '@/persistence/szd';
-import { collectReferencedAudioAssetIds } from '@/project/asset-references';
+import {
+  collectReferencedAudioAssetIds,
+  createAssetReferenceGuard,
+} from '@/project/asset-references';
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
 import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
@@ -711,21 +715,30 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         });
         return;
       }
-      const imported = await importDawprojectWithMediaResult(picked.bytes, {
-        resolveExternalAudio: createExternalAudioResolver(),
-      });
-      if (
-        !(await confirmLossReport(
-          imported.loss,
-          t.value.shell.project.dawprojectImportLoss,
-          confirmLossAction,
-        ))
-      ) {
-        // Media ingested for the declined import is referenced by nothing.
-        await reclaimUnusedMedia();
-        return;
+      // Leases hold every ingested asset through the loss dialog until the
+      // imported document references it.
+      const assets = createAudioAssetTransaction();
+      try {
+        const imported = await importDawprojectWithMediaResult(picked.bytes, {
+          resolveExternalAudio: createExternalAudioResolver(),
+          save: assets.save,
+        });
+        if (
+          !(await confirmLossReport(
+            imported.loss,
+            t.value.shell.project.dawprojectImportLoss,
+            confirmLossAction,
+          ))
+        ) {
+          await assets.rollback();
+          return;
+        }
+        await replaceProjectDocument(imported.document);
+        assets.commit();
+      } catch (error) {
+        await assets.rollback(createAssetReferenceGuard(store));
+        throw error;
       }
-      await replaceProjectDocument(imported.document);
       savedProjectSlot.value = null;
       savedProjectRevision.value = null;
       const documentKey = await saveLoadedProjectToAutosave();
