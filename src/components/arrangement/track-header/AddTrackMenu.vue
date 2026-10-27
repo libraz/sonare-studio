@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
-import { useI18n } from '@/ui/i18n';
+import { MAX_TRACK_LANES } from '@/project/mixer';
+import { useProjectStore } from '@/project/store';
+import { firstBlock } from '@/ui/disabled-reason';
+import { formatMessage, useI18n } from '@/ui/i18n';
 
 const emit = defineEmits<{
   add: [kind: 'midi' | 'audio' | 'group'];
@@ -10,6 +13,13 @@ const emit = defineEmits<{
 const open = ref(false);
 const menu = ref<HTMLDivElement | null>(null);
 const { t } = useI18n();
+const store = useProjectStore();
+const limitBlocked = computed(() =>
+  firstBlock([
+    store.tracks.length >= MAX_TRACK_LANES,
+    formatMessage(t.value.reasons.trackLimit, { limit: MAX_TRACK_LANES }),
+  ]),
+);
 
 function onAdd(kind: 'midi' | 'audio' | 'group'): void {
   open.value = false;
@@ -30,7 +40,8 @@ useOutsidePointerDown(
     <button
       type="button"
       class="add-track"
-      v-tooltip="t.shell.arrangement.addTrack.title"
+      v-tooltip="{ text: t.shell.arrangement.addTrack.title, reason: limitBlocked }"
+      :disabled="!!limitBlocked"
       aria-haspopup="menu"
       :aria-expanded="open"
       @click="open = !open"

@@ -2,6 +2,7 @@ import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type AudioAssetMeta, audioAssetUri } from '@/persistence/assets';
 import { createAssetReferenceGuard } from '../asset-references';
 import { type ExternalStemRole, externalStemTrackName } from '../external-stems';
+import { assertCanAddTracks } from '../mixer';
 import {
   getAudioSourceId,
   getProject,
@@ -63,6 +64,7 @@ export async function importExternalStems(
     }
   }
   if (stems.length === 0) return [];
+  assertCanAddTracks(store.tracks.length, stems.length);
 
   const project = getProject();
   const startPpq = options.startPpq;

@@ -38,6 +38,7 @@
  * while keeping bus, master and mastering processing in the one final pass.
  */
 
+import { resolveAutomationId } from '@/engine/automation-ids';
 import {
   engineAutomationPoints,
   engineBusInsertAutomationIndex,
@@ -53,7 +54,6 @@ import {
   pushGsSetupSysex,
 } from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
-import { replayMidiStateAt, type ScheduledMidiClip } from '@/engine/midi-sync';
 import { busSceneJson, stripSceneJson } from '@/engine/strip-sync';
 import {
   estimatedTailSeconds,
@@ -105,6 +105,7 @@ import {
 } from '@/project/instrument';
 import { midiFxConfigJson } from '@/project/midi-fx';
 import {
+  assertCanAddTracks,
   audibleOutputBusId,
   clampPan,
   DEFAULT_PAN_LAW,
@@ -597,7 +598,7 @@ export async function renderProjectWithEngine(
     pass: RenderPass,
     pagedClips: ReadonlyArray<PagedClipSpec> = [],
     includeClips = true,
-  ): ScheduledMidiClip[] => {
+  ): void => {
     const supportsBusEq = typeof engine.setBusStripEqBandJson === 'function';
     const supportsBusInsertBypass = typeof engine.setBusStripInsertBypassed === 'function';
     // The engine validates sends against already-declared buses, so the bus
@@ -651,6 +652,7 @@ export async function renderProjectWithEngine(
                 };
               })
             : isolatedLanes;
+    assertCanAddTracks(0, passLanes.length);
     engine.setTrackLanes(passLanes);
 
     for (const bus of doc.mixer?.buses ?? []) {
@@ -928,20 +930,20 @@ export async function renderProjectWithEngine(
               supportsBusInsertBypass,
             );
             if (insertIndex === undefined) continue;
-            const id = engine.resolveBusInsertAutomationId(
-              groupBusId,
-              insertIndex,
-              insertRef.paramName,
+            const id = resolveAutomationId(() =>
+              engine.resolveBusInsertAutomationId(groupBusId, insertIndex, insertRef.paramName),
             );
-            if (id >= 0) engine.setAutomationLane(id, points);
+            if (id !== undefined) engine.setAutomationLane(id, points);
             continue;
           }
-          const id = engine.resolveTrackInsertAutomationId(
-            trackIds[index],
-            storeInsertIndex,
-            insertRef.paramName,
+          const id = resolveAutomationId(() =>
+            engine.resolveTrackInsertAutomationId(
+              trackIds[index],
+              storeInsertIndex,
+              insertRef.paramName,
+            ),
           );
-          if (id >= 0) engine.setAutomationLane(id, points);
+          if (id !== undefined) engine.setAutomationLane(id, points);
           continue;
         }
         if (parseInstrumentAutomationParam(lane.param)) continue;
@@ -972,8 +974,10 @@ export async function renderProjectWithEngine(
             insertRef,
           );
           if (storeInsertIndex === undefined) continue;
-          const id = engine.resolveMasterInsertAutomationId(storeInsertIndex, insertRef.paramName);
-          if (id >= 0) engine.setAutomationLane(id, points);
+          const id = resolveAutomationId(() =>
+            engine.resolveMasterInsertAutomationId(storeInsertIndex, insertRef.paramName),
+          );
+          if (id !== undefined) engine.setAutomationLane(id, points);
           continue;
         }
         if (parseMasteringAutomationParam(lane.param)) continue;
@@ -1006,8 +1010,10 @@ export async function renderProjectWithEngine(
             supportsBusInsertBypass,
           );
           if (insertIndex === undefined) continue;
-          const id = engine.resolveBusInsertAutomationId(busId, insertIndex, insertRef.paramName);
-          if (id >= 0) engine.setAutomationLane(id, points);
+          const id = resolveAutomationId(() =>
+            engine.resolveBusInsertAutomationId(busId, insertIndex, insertRef.paramName),
+          );
+          if (id !== undefined) engine.setAutomationLane(id, points);
           continue;
         }
         if (lane.param !== 'faderDb') continue;
@@ -1061,8 +1067,10 @@ export async function renderProjectWithEngine(
           const ref = lane.enabled ? parseInstrumentAutomationParam(lane.param) : undefined;
           if (!ref) continue;
           const points = engineAutomationPoints(lane.points);
-          const id = engine.resolveInstrumentAutomationId(destinationId, ref.paramName);
-          if (points.length > 0 && id >= 0) engine.setAutomationLane(id, points);
+          const id = resolveAutomationId(() =>
+            engine.resolveInstrumentAutomationId(destinationId, ref.paramName),
+          );
+          if (points.length > 0 && id !== undefined) engine.setAutomationLane(id, points);
         }
       }
       // External-MIDI tracks have no internal instrument and no external device
@@ -1116,7 +1124,6 @@ export async function renderProjectWithEngine(
       Math.min(MAX_WARP_VOICES, Math.max(DEFAULT_WARP_VOICES, warpedClips)),
     );
     if (includeClips && passClips.length > 0) engine.setClips(passClips as EngineClipSpec[]);
-    return passMidiSchedules;
   };
 
   // The engine reports the longest audible tail once the program is installed;
@@ -1240,7 +1247,6 @@ export async function renderProjectWithEngine(
    */
   const renderWindow = async (
     engine: OfflineRenderEngine,
-    passMidiSchedules: ReadonlyArray<ScheduledMidiClip>,
     stage: string,
     progressStart: number,
     progressSpan: number,
@@ -1261,14 +1267,6 @@ export async function renderProjectWithEngine(
     const right = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     const windowStart = startSample - prerollFrames;
     engine.seekSample(windowStart);
-    // The seek skips every MIDI message before the window; chase the state in effect there.
-    replayMidiStateAt(
-      passMidiSchedules,
-      tempoSegments,
-      sampleRate,
-      samplesToPpq(tempoMap, windowStart, sampleRate),
-      (destinationId, word0) => engine.pushMidiUmp(destinationId, word0),
-    );
     // The priming block runs stopped, so no clip audio is read yet; the pages
     // only have to be in place before the first block that plays.
     engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
@@ -1349,10 +1347,9 @@ export async function renderProjectWithEngine(
             : {},
         );
       }
-      const passMidiSchedules = configureEngine(engine, pass, streams?.clipSpecs());
+      configureEngine(engine, pass, streams?.clipSpecs());
       return await renderWindow(
         engine,
-        passMidiSchedules,
         stage,
         progressStart,
         progressSpan,

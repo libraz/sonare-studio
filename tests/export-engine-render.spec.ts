@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
-import { midiStateAtPpq, type ScheduledMidiClip } from '@/engine/midi-sync';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import type { OfflineRenderEngine } from '@/export/engine-render';
@@ -2849,7 +2848,7 @@ describe('renderProjectWithEngine', () => {
     expect(callNames.lastIndexOf('stop')).toBeGreaterThan(playIndex);
   });
 
-  it('chases MIDI channel state set before a range that starts past the pre-roll', async () => {
+  it('leaves the MIDI channel-state chase at the window start to the engine seek', async () => {
     const doc = makeDoc();
     doc.tracks[1].mute = true;
     const clip = doc.tracks[0].clips[0];
@@ -2865,23 +2864,11 @@ describe('renderProjectWithEngine', () => {
       range: { startPpq: 48, endPpq: 49 },
     });
 
+    // The engine resends the state the clips set before a seek once it rolls,
+    // so the render seeks before play and pushes no state of its own.
     const callNames = engine.calls.map(([name]) => name);
-    const pushed = engine.named('pushMidiUmp').map(([, destinationId, word0]) => ({
-      destinationId,
-      word0,
-    }));
-    const windowStart = engine.named('seekSample')[0][1] as number;
-    const schedules = engine.named('setMidiClips')[0][1] as ScheduledMidiClip[];
-    expect(pushed.map(({ word0 }) => word0)).toEqual(
-      expect.arrayContaining([pcWord(0, 12), ccWord(0, 11, 40)]),
-    );
-    // The same state live playback restores at that position.
-    expect(pushed).toEqual(
-      midiStateAtPpq(schedules, doc.tempoSegments, 48000, windowStart / SAMPLES_PER_PPQ),
-    );
-    expect(callNames.indexOf('seekSample')).toBeLessThan(callNames.indexOf('pushMidiUmp'));
-    expect(callNames.lastIndexOf('pushMidiUmp')).toBeLessThan(callNames.indexOf('process'));
-    expect(callNames.lastIndexOf('pushMidiUmp')).toBeLessThan(callNames.indexOf('play'));
+    expect(engine.named('pushMidiUmp')).toEqual([]);
+    expect(callNames.indexOf('seekSample')).toBeLessThan(callNames.indexOf('play'));
   });
 
   it('reports progress and yields between long render checkpoints', async () => {

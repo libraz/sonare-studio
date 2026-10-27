@@ -13,6 +13,7 @@ export const reasons = {
   noMidiClip: '先にアレンジで MIDI クリップを選択してください。',
   noTrack: '先にトラックを追加または選択してください。',
   trackFrozen: 'このトラックはフリーズ中です。編集するにはフリーズを解除してください。',
+  trackLimit: 'トラック数が上限の {limit} に達しています。先にトラックを削除してください。',
   noLocators: '先に左右のロケーターを設定してください。',
   noArmedTrack: '先に録音するトラックをアームしてください。',
   nothingToPaste: '先にクリップをコピーしてください。',

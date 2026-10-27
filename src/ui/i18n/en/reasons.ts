@@ -13,6 +13,7 @@ export const reasons = {
   noMidiClip: 'Select a MIDI clip in the arrangement first.',
   noTrack: 'Add or select a track first.',
   trackFrozen: 'This track is frozen. Unfreeze it to edit.',
+  trackLimit: 'The project is at its limit of {limit} tracks. Delete a track first.',
   noLocators: 'Set the left and right locators first.',
   noArmedTrack: 'Arm a track for recording first.',
   nothingToPaste: 'Copy a clip first.',

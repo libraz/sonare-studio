@@ -3,6 +3,7 @@
  * offline export renderer (see engine-render.ts).
  */
 
+import { resolveAutomationId } from '@/engine/automation-ids';
 import type { InsertTailResolver } from '@/export/audio-preflight';
 import type { ClipPageBindingFactory } from '@/export/clip-page-stream';
 import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
@@ -310,8 +311,8 @@ export function trackLaneParamId(
   trackId: number,
   param: 'faderDb' | 'pan',
 ): number {
-  const id = engine.resolveTrackLaneAutomationId(trackId, param);
-  if (id < 0) throw new Error(`Engine has no lane for track ${trackId}`);
+  const id = resolveAutomationId(() => engine.resolveTrackLaneAutomationId(trackId, param));
+  if (id === undefined) throw new Error(`Engine has no lane for track ${trackId}`);
   return id;
 }
 
@@ -324,8 +325,8 @@ export function masterParamId(
   engine: Pick<OfflineRenderEngine, 'resolveMasterAutomationId'>,
   param: 'faderDb' | 'pan',
 ): number {
-  const id = engine.resolveMasterAutomationId(param);
-  if (id < 0) throw new Error(`Engine has no master ${param} parameter`);
+  const id = resolveAutomationId(() => engine.resolveMasterAutomationId(param));
+  if (id === undefined) throw new Error(`Engine has no master ${param} parameter`);
   return id;
 }
 
@@ -339,7 +340,7 @@ export function busFaderParamId(
   engine: Pick<OfflineRenderEngine, 'resolveBusAutomationId'>,
   busId: number,
 ): number {
-  const id = engine.resolveBusAutomationId(busId, 'faderDb');
-  if (id < 0) throw new Error(`Engine has no bus ${busId}`);
+  const id = resolveAutomationId(() => engine.resolveBusAutomationId(busId, 'faderDb'));
+  if (id === undefined) throw new Error(`Engine has no bus ${busId}`);
   return id;
 }

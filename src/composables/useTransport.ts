@@ -103,8 +103,6 @@ export interface UseTransportReturn {
    * user gesture that starts sound: a suspended context accepts play but never advances.
    */
   resumeContext(): void;
-  /** Registers the engine-specific MIDI-state recovery hook used after seeks. */
-  setMidiStateRestorer(restorer: ((ppq: number, renderFrame?: number) => void) | null): void;
   /**
    * Updates the local `tempo` ref only (display and metronome conversions
    * depend on it). The engine's tempo is owned by the transport sync
@@ -216,7 +214,6 @@ export function useTransport(
     sequence: number;
     commit: () => void;
   }> = [];
-  let restoreMidiState: ((ppq: number, renderFrame?: number) => void) | null = null;
   /** Last metronome beat gain requested; replayed with the metronome state. */
   let metronomeBeatGain: number | undefined;
 
@@ -331,7 +328,6 @@ export function useTransport(
     if (!handle) return false;
     updatePlaybackLatency(handle);
     ensureTelemetrySubscription(handle);
-    restoreMidiState?.(positionPpq.value, sampleTime);
     const ok = handle.engine.transport.play(sampleTime);
     if (ok) {
       commitAtSampleTime(handle, sampleTime, () => {
@@ -374,7 +370,6 @@ export function useTransport(
     if (ok) {
       if (sampleTime === undefined) handle.engine.pushMidiPanic();
       else handle.engine.pushMidiPanic(sampleTime);
-      restoreMidiState?.(secondsToPpq(tempoMap, seconds), sampleTime);
       commitAtSampleTime(handle, sampleTime, commit);
     }
     return ok;
@@ -397,7 +392,6 @@ export function useTransport(
     if (ok) {
       if (sampleTime === undefined) handle.engine.pushMidiPanic();
       else handle.engine.pushMidiPanic(sampleTime);
-      restoreMidiState?.(ppq, sampleTime);
       commitAtSampleTime(handle, sampleTime, commit);
     }
     return ok;
@@ -481,9 +475,6 @@ export function useTransport(
     seek,
     seekPpq,
     resumeContext,
-    setMidiStateRestorer: (restorer) => {
-      restoreMidiState = restorer;
-    },
     setTempo,
     setTempoMap,
     setLoop,

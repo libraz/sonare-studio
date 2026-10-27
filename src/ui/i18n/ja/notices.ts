@@ -25,6 +25,8 @@ export const notices = {
         '採譜に約 {required} MiB の作業メモリーが必要で、ブラウザーの上限 {budget} MiB を超えています。オーディオの短い区間で採譜してください。',
     },
   },
+  trackLaneOverflow:
+    '{limit} トラックの上限を超えた {count} トラックにはミキサーのレーンがなく、音が出ません。トラックを削除して上限内に収めてください。',
   webMidiConnectFailed: 'Web MIDI に接続できませんでした: {detail}',
   gsSetupUnapplied:
     'GS/SysExのセットアップメッセージ {count} 件が再生用シンセに適用されませんでした。適用されるのは、曲頭で最初のノートより前にある {limit} バイト以内の完結したセットアップメッセージのみです。これらはMIDI書き出しでは保持されます。',

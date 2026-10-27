@@ -1,5 +1,6 @@
 import { audioAssetUri, loadAssetMeta } from '@/persistence/assets';
 import { validateClipFadePair } from '../clip-fades';
+import { assertCanAddTracks } from '../mixer';
 import {
   getAudioSourceId,
   getProject,
@@ -312,6 +313,7 @@ export function addBouncedClip(input: AddBouncedClipInput): number {
   if (!Number.isFinite(input.lengthPpq) || input.lengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${input.lengthPpq}`);
   }
+  assertCanAddTracks(store.tracks.length);
   const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
   const known = getAudioSourceId(input.assetId);
   const sourceId =

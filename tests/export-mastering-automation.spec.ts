@@ -341,7 +341,10 @@ class MasteringPassEngine implements Partial<OfflineRenderEngine> {
   }
   resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number {
     this.calls.push(['resolveTrackInsertAutomationId', trackId, insertIndex, paramName]);
-    return this.unresolvable.has(paramName) ? -1 : (0xe000_0000 | (insertIndex << 8)) >>> 0;
+    if (this.unresolvable.has(paramName)) {
+      throw new RangeError(`paramName '${paramName}' does not resolve to an automation id`);
+    }
+    return (0xe000_0000 | (insertIndex << 8)) >>> 0;
   }
   setAutomationLane(paramId: number, points: unknown): void {
     this.calls.push(['setAutomationLane', paramId, points]);

@@ -17,6 +17,7 @@ import {
   transcribeAudioClip,
 } from '../audio-transcription';
 import { type BeatGrid, gridTempoSegments, onsetPhaseOffsetBeats } from '../beat-grid';
+import { assertCanAddTracks } from '../mixer';
 import {
   assertProjectOperationCurrent,
   beginProjectOperation,
@@ -207,6 +208,7 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
     assertCurrent();
     if (notes.length === 0) return -1;
 
+    assertCanAddTracks(store.tracks.length);
     const project = getProject();
     const trackName = `${clip.name} melody`;
     const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
@@ -413,6 +415,7 @@ export async function transcribeAudioClipToMidi(
       }
     }
 
+    assertCanAddTracks(store.tracks.length);
     const project = getProject();
     const trackName = `${clip.name} ${options.polyphonic === true ? 'polyphonic' : 'melody'}`;
     const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];

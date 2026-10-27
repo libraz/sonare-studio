@@ -6,6 +6,7 @@ import type {
 } from '@/composables/useEngineProjectSync';
 import type { useTransport } from '@/composables/useTransport';
 import { type AnalyserBridge, createAnalyserBridge } from '@/engine/analyser';
+import { resolveAutomationId } from '@/engine/automation-ids';
 import { createAutomationSync } from '@/engine/automation-sync';
 import { createEngine, type EngineHandle } from '@/engine/engine';
 import { MAX_REALTIME_SYSEX_BYTES } from '@/engine/gs-sysex';
@@ -342,11 +343,13 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                 effectiveTrackInstrument(track, store.projectExternalMidi),
                 instrumentRef.paramName,
               );
-              const paramId = stagedHandle.engine.resolveInstrumentAutomationId(
-                destinationId,
-                instrumentRef.paramName,
+              const paramId = resolveAutomationId(() =>
+                stagedHandle.engine.resolveInstrumentAutomationId(
+                  destinationId,
+                  instrumentRef.paramName,
+                ),
               );
-              if (value !== null && paramId >= 0) {
+              if (value !== null && paramId !== undefined) {
                 stagedHandle.engine.setParam('instrument', paramId, value);
               }
               return;

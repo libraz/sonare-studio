@@ -17,6 +17,7 @@ import {
 } from '@/project/commands';
 import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/generation';
 import { projectMidiNoteOccurrences } from '@/project/midi-projection';
+import { MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds, secondsToPpq } from '@/project/tempo-map';
 import {
@@ -755,11 +756,24 @@ const selectedCount = computed(
   () => PART_IDS.filter((id) => parts[id].checked && isPartAvailable(id)).length,
 );
 
+/** Parts that will create a track of their own. */
+const newTrackCount = computed(
+  () =>
+    PART_IDS.filter(
+      (id) =>
+        parts[id].checked && isPartAvailable(id) && decodeTarget(parts[id].target).kind === 'new',
+    ).length,
+);
+
 /** Why Generate cannot run: nothing ticked, a run in flight, or an invalid field. */
 const generateBlocked = computed(() =>
   firstBlock(
     [selectedCount.value === 0, g.value.noPartSelected],
     [generating.value, t.value.reasons.busy],
+    [
+      store.tracks.length + newTrackCount.value > MAX_TRACK_LANES,
+      formatMessage(t.value.reasons.trackLimit, { limit: MAX_TRACK_LANES }),
+    ],
     partBarsError.value,
     appliesWholeLength.value ? wholeLengthError.value : null,
     parts.drums.checked ? drumRangeValidation.value : null,

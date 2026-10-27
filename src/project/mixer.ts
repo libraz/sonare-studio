@@ -22,7 +22,11 @@
  */
 
 import { linearToDb, SILENCE_DB } from '@/lib/db';
-import type { EqBand, SendTiming } from '@/wasm/index.js';
+import type {
+  MAX_TRACK_LANES as ENGINE_MAX_TRACK_LANES,
+  EqBand,
+  SendTiming,
+} from '@/wasm/index.js';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
@@ -518,6 +522,18 @@ export function busOutputChain<B extends { strip?: Pick<MixerStrip, 'outputBusId
     next = bus.strip?.outputBusId;
   }
   return chain;
+}
+
+/** Most tracks the project can hold: one engine lane each. Mirrors the engine's published cap. */
+export const MAX_TRACK_LANES: typeof ENGINE_MAX_TRACK_LANES = 32;
+
+/** Throws when adding `count` tracks to `existing` would exceed the engine lane cap. */
+export function assertCanAddTracks(existing: number, count = 1): void {
+  if (existing + count > MAX_TRACK_LANES) {
+    throw new RangeError(
+      `Track limit reached: ${existing + count} tracks requested, at most ${MAX_TRACK_LANES} are supported`,
+    );
+  }
 }
 
 /** Maximum number of send buses (the realtime engine's bus lane limit). */

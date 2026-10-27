@@ -20,6 +20,7 @@
  * can actually be driven there.
  */
 
+import { resolveAutomationId } from '@/engine/automation-ids';
 import { engineAutomationPoints } from '@/engine/engine-declaration';
 import { stripSceneJson } from '@/engine/strip-sync';
 import {
@@ -339,12 +340,16 @@ export async function runMasteringEnginePass(
     ]);
     stage.slots.forEach((slot, insertIndex) => {
       for (const binding of slot.bindings) {
-        const paramId = engine.resolveTrackInsertAutomationId(
-          MASTERING_PASS_TRACK_ID,
-          insertIndex,
-          binding.paramName,
+        const paramId = resolveAutomationId(() =>
+          engine.resolveTrackInsertAutomationId(
+            MASTERING_PASS_TRACK_ID,
+            insertIndex,
+            binding.paramName,
+          ),
         );
-        if (paramId >= 0) engine.setAutomationLane(paramId, engineAutomationPoints(binding.points));
+        if (paramId !== undefined) {
+          engine.setAutomationLane(paramId, engineAutomationPoints(binding.points));
+        }
       }
     });
 

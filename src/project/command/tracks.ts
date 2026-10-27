@@ -1,7 +1,7 @@
 import { linearToDb } from '@/lib/db';
 import type { ChordFollowMode } from '../chord-follow';
 import { sanitizeExpressionMap, type TrackExpressionMap } from '../expression-map';
-import { assertCanAddEngineBus, createDefaultStrip } from '../mixer';
+import { assertCanAddEngineBus, assertCanAddTracks, createDefaultStrip } from '../mixer';
 import { isValidPitchRange, type PitchRange } from '../pitch-range';
 import { getProject, useProjectStore } from '../store';
 import { pruneTrackTargetReferences } from '../target-reference-registry';
@@ -52,6 +52,7 @@ export function pruneClipScoreAnnotations(
 export function addTrack(input: AddTrackInput = {}): number {
   const store = useProjectStore();
   const project = getProject();
+  assertCanAddTracks(store.tracks.length);
   const name = input.name ?? `Track ${store.tracks.length + 1}`;
   const color =
     input.color ?? TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];

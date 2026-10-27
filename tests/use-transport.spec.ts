@@ -193,18 +193,6 @@ describe('useTransport', () => {
     expect(transport.positionSeconds.value).toBe(1);
   });
 
-  it('restores MIDI state for seeks and playback from a parked position', () => {
-    const mock = createMockHandle();
-    const { transport } = setup(mock.handle);
-    const restore = vi.fn();
-    transport.setMidiStateRestorer(restore);
-
-    transport.seekPpq(2);
-    expect(restore).toHaveBeenCalledWith(2, undefined);
-    transport.play(960);
-    expect(restore).toHaveBeenLastCalledWith(2, 960);
-  });
-
   it('setTempo() updates the local tempo ref without calling the engine', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);

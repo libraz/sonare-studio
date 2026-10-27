@@ -37,20 +37,25 @@ function makeHandle(): {
     busAutomationParamId: vi.fn((busId: number) => 3000 + busId),
     setAutomationLane: vi.fn(),
     resolveTrackInsertAutomationId: vi.fn((trackId: number, _insert: number, name: string) =>
-      name === 'unknown' ? -1 : 5000 + Number(trackId),
+      name === 'unknown' ? unresolved(name) : 5000 + Number(trackId),
     ),
     resolveMasterInsertAutomationId: vi.fn((_insert: number, name: string) =>
-      name === 'unknown' ? -1 : 6000,
+      name === 'unknown' ? unresolved(name) : 6000,
     ),
     resolveBusInsertAutomationId: vi.fn((busId: number, _insert: number, name: string) =>
-      name === 'unknown' ? -1 : 7000 + busId,
+      name === 'unknown' ? unresolved(name) : 7000 + busId,
     ),
     resolveInstrumentAutomationId: vi.fn((destinationId: number, name: string) =>
-      name === 'unknown' ? -1 : 8000 + destinationId,
+      name === 'unknown' ? unresolved(name) : 8000 + destinationId,
     ),
   };
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
+}
+
+/** Mirrors the engine refusing an unknown parameter name. */
+function unresolved(name: string): never {
+  throw new RangeError(`paramName '${name}' does not resolve to an automation id for this target`);
 }
 
 /** Builds a lane with overridable fields. */
@@ -536,7 +541,7 @@ describe('createAutomationSync', () => {
     expect(sync.installedParamIds()).toStrictEqual([5001]);
   });
 
-  it('skips an insert lane the engine cannot resolve (negative id)', () => {
+  it('skips an insert lane the engine cannot resolve', () => {
     const { handle, engine } = makeHandle();
     const sync = createAutomationSync(handle, {
       knownTrackIds: () => [1],

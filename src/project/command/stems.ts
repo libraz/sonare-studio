@@ -10,6 +10,7 @@ import {
   separateAudioClipStems,
 } from '../audio-stems';
 import { decomposeStemsInWorker } from '../decompose-stems-client';
+import { assertCanAddTracks } from '../mixer';
 import {
   getAudioSourceId,
   getProject,
@@ -101,6 +102,7 @@ async function placeSeparatedStems(
   signal?: AbortSignal,
 ): Promise<number[]> {
   const store = useProjectStore();
+  assertCanAddTracks(store.tracks.length, stems.length);
   const assets = createAudioAssetTransaction();
   const isReferenced = createAssetReferenceGuard(store);
   try {
@@ -128,6 +130,7 @@ async function placeSeparatedStems(
       return { stem, meta, sourceId };
     });
 
+    assertCanAddTracks(store.tracks.length, plans.length);
     const result = executeAtomic((edit) => {
       const newClipIds: number[] = [];
       for (const { stem, meta, sourceId } of plans) {

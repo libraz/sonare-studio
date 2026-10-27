@@ -7,6 +7,7 @@ import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
+import { MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { isAudioClip } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
@@ -82,10 +83,14 @@ const matchTempoBlocked = computed(() =>
 );
 const runBlocked = computed(() => {
   const current = clip.value;
-  return firstBlock(runningBlocked.value, [
-    current === null || !isAudioClip(current),
-    t.value.reasons.noAudioClip,
-  ]);
+  return firstBlock(
+    runningBlocked.value,
+    [current === null || !isAudioClip(current), t.value.reasons.noAudioClip],
+    [
+      store.tracks.length >= MAX_TRACK_LANES,
+      formatMessage(t.value.reasons.trackLimit, { limit: MAX_TRACK_LANES }),
+    ],
+  );
 });
 /** Other material whose timing a new project tempo would move. */
 const otherContent = computed(() =>

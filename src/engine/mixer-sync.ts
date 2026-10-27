@@ -22,6 +22,7 @@ import {
   DEFAULT_PAN_MODE,
   effectiveTrackMute,
   laneGainDb,
+  MAX_TRACK_LANES,
   type MixerSoloMode,
   type MixerStrip,
   normalizeMixerSoloMode,
@@ -99,10 +100,12 @@ export interface MixerSync {
    * lane; only an engine rebuild reclaims them.
    */
   laneReclaimNeeded?(): boolean;
+  /**
+   * Tracks beyond {@link MAX_TRACK_LANES} that were left without a lane on the
+   * last sync; they stay silent until the project is back under the cap.
+   */
+  laneOverflowCount?(): number;
 }
-
-/** Track lanes the realtime engine accepts in one declaration. */
-export const MAX_ENGINE_TRACK_LANES = 32;
 
 /** Options for {@link createMixerSync}. */
 export interface MixerSyncOptions {
@@ -160,6 +163,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
   let appliedStripSceneGeneration: number | undefined;
   const resolveInsertLatency = options.insertLatency ?? zeroInsertLatency;
   let laneReclaimNeeded = false;
+  let laneOverflowCount = 0;
 
   const sync = (
     tracks: ReadonlyArray<EditorTrack>,
@@ -172,12 +176,13 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     lastArgs = [tracks, master, vcaGainDb, vcaControls, soloMode, pdcBuses];
     // A refused command leaves its value unrecorded so the next pass re-sends it.
     let refused = false;
-    const appended = tracks.filter((track) => !laneIds.includes(track.id)).map((track) => track.id);
-    if (
-      appended.length > 0 &&
-      laneIds.length + appended.length > MAX_ENGINE_TRACK_LANES &&
-      tracks.length <= MAX_ENGINE_TRACK_LANES
-    ) {
+    // Tracks past the cap get no lane; the rest keep syncing.
+    const laneTracks = tracks.slice(0, MAX_TRACK_LANES);
+    laneOverflowCount = tracks.length - laneTracks.length;
+    const appended = laneTracks
+      .filter((track) => !laneIds.includes(track.id))
+      .map((track) => track.id);
+    if (appended.length > 0 && laneIds.length + appended.length > MAX_TRACK_LANES) {
       laneReclaimNeeded = true;
     } else if (appended.length > 0) {
       // Record the lanes only once the engine has accepted them.
@@ -308,6 +313,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
   return {
     sync,
     laneReclaimNeeded: () => laneReclaimNeeded,
+    laneOverflowCount: () => laneOverflowCount,
     laneTrackIds: () => laneIds,
     sceneGeneration: () => sceneGeneration,
     positiveChannelDelayTrackIds: () =>

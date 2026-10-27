@@ -28,6 +28,7 @@ import {
   parseInstrumentAutomationParam,
   parseMasteringAutomationParam,
 } from '@/project/automation';
+import { resolveAutomationId } from './automation-ids';
 import type { EngineHandle } from './engine';
 import { engineAutomationPoints, engineFaderAutomationPoints } from './engine-declaration';
 
@@ -176,11 +177,10 @@ export function createAutomationSync(
         if (typeof lane.target !== 'number') continue;
         const destinationId = options.instrumentDestinationFor?.(lane.target);
         if (destinationId === undefined) continue;
-        const instrumentId = handle.engine.resolveInstrumentAutomationId(
-          destinationId,
-          instrumentRef.paramName,
+        const instrumentId = resolveAutomationId(() =>
+          handle.engine.resolveInstrumentAutomationId(destinationId, instrumentRef.paramName),
         );
-        if (!Number.isFinite(instrumentId) || instrumentId < 0) continue;
+        if (instrumentId === undefined) continue;
         const points = engineAutomationPoints(lane.points);
         if (points.length === 0) continue;
         publishLane(instrumentId, lane, points, false);
@@ -199,18 +199,17 @@ export function createAutomationSync(
         if (processorIndex === undefined) continue;
         const insertIndex = options.masteringInsertIndexFor?.(processorIndex);
         if (insertIndex === undefined) continue;
-        const insertId = handle.engine.resolveMasterInsertAutomationId(
-          insertIndex,
-          masteringRef.paramName,
+        const insertId = resolveAutomationId(() =>
+          handle.engine.resolveMasterInsertAutomationId(insertIndex, masteringRef.paramName),
         );
-        if (!Number.isFinite(insertId) || insertId < 0) continue;
+        if (insertId === undefined) continue;
         paramId = insertId;
       }
       const insertRef = parseInsertAutomationParam(lane.param);
       if (paramId === undefined && insertRef) {
         // Insert-parameter lane: the engine resolves the JSON-key name to the
         // reserved insert-automation id (and the strip selector) from its own
-        // strip state. A negative result means the strip, insert, or key is not
+        // strip state. An unresolved id means the strip, insert, or key is not
         // (yet) known to the engine, so the lane is skipped this pass.
         const storeInsertIndex =
           insertRef.insertIndex ??
@@ -218,11 +217,10 @@ export function createAutomationSync(
             ? options.insertStoreIndexFor?.(lane.target, insertRef.processorId)
             : undefined);
         if (storeInsertIndex === undefined) continue;
-        let insertId: number;
+        let insertId: number | undefined;
         if (lane.target === 'master') {
-          insertId = handle.engine.resolveMasterInsertAutomationId(
-            storeInsertIndex,
-            insertRef.paramName,
+          insertId = resolveAutomationId(() =>
+            handle.engine.resolveMasterInsertAutomationId(storeInsertIndex, insertRef.paramName),
           );
         } else if (isBusAutomationTarget(lane.target)) {
           const storeBusId = busIdFromAutomationTarget(lane.target);
@@ -233,10 +231,8 @@ export function createAutomationSync(
             options.busInsertIndexFor?.(storeBusId, storeInsertIndex) ??
             (options.busInsertIndexFor ? undefined : storeInsertIndex);
           if (insertIndex === undefined) continue;
-          insertId = handle.engine.resolveBusInsertAutomationId(
-            busId,
-            insertIndex,
-            insertRef.paramName,
+          insertId = resolveAutomationId(() =>
+            handle.engine.resolveBusInsertAutomationId(busId, insertIndex, insertRef.paramName),
           );
         } else {
           const groupBusId =
@@ -247,12 +243,14 @@ export function createAutomationSync(
               options.groupInsertIndexFor?.(lane.target as number, storeInsertIndex) ??
               (options.groupInsertIndexFor ? undefined : storeInsertIndex);
             if (insertIndex === undefined) continue;
-            insertId = handle.engine.resolveBusInsertAutomationId(
-              groupBusId,
-              insertIndex,
-              insertRef.paramName,
+            insertId = resolveAutomationId(() =>
+              handle.engine.resolveBusInsertAutomationId(
+                groupBusId,
+                insertIndex,
+                insertRef.paramName,
+              ),
             );
-            if (!Number.isFinite(insertId) || insertId < 0) continue;
+            if (insertId === undefined) continue;
             paramId = insertId;
             const points = engineAutomationPoints(lane.points);
             if (points.length === 0) continue;
@@ -260,20 +258,24 @@ export function createAutomationSync(
             continue;
           }
           if (!knownTracks.has(lane.target)) continue;
-          insertId = handle.engine.resolveTrackInsertAutomationId(
-            lane.target,
-            storeInsertIndex,
-            insertRef.paramName,
+          const trackId = lane.target;
+          insertId = resolveAutomationId(() =>
+            handle.engine.resolveTrackInsertAutomationId(
+              trackId,
+              storeInsertIndex,
+              insertRef.paramName,
+            ),
           );
         }
-        if (!Number.isFinite(insertId) || insertId < 0) continue;
+        if (insertId === undefined) continue;
         paramId = insertId;
       } else if (paramId === undefined && isBusAutomationTarget(lane.target)) {
         if (lane.param !== 'faderDb') continue;
         const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
         if (busId === undefined) continue;
         mappingSensitive = true;
-        paramId = handle.engine.busAutomationParamId(busId);
+        paramId = resolveAutomationId(() => handle.engine.busAutomationParamId(busId));
+        if (paramId === undefined) continue;
       } else if (paramId === undefined) {
         if (!isMixerAutomationParam(lane.param)) continue;
         const groupBusId =
@@ -281,13 +283,17 @@ export function createAutomationSync(
         if (groupBusId !== undefined) {
           if (lane.param !== 'faderDb') continue;
           mappingSensitive = true;
-          paramId = handle.engine.busAutomationParamId(groupBusId);
+          paramId = resolveAutomationId(() => handle.engine.busAutomationParamId(groupBusId));
         } else {
           const mixerTarget = lane.target;
+          const mixerParam = lane.param;
           if (mixerTarget !== 'master' && typeof mixerTarget !== 'number') continue;
           if (mixerTarget !== 'master' && !knownTracks.has(mixerTarget)) continue;
-          paramId = handle.engine.automationParamId(mixerTarget, lane.param);
+          paramId = resolveAutomationId(() =>
+            handle.engine.automationParamId(mixerTarget, mixerParam),
+          );
         }
+        if (paramId === undefined) continue;
       }
       const points =
         typeof lane.target === 'number' && lane.param === 'faderDb'

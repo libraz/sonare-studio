@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { effectScope, ref, shallowRef } from 'vue';
 import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
 import type { EngineHandle } from '@/engine/engine';
-import { createMixerSync, MAX_ENGINE_TRACK_LANES, type MixerSync } from '@/engine/mixer-sync';
+import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
 import type { StripSync } from '@/engine/strip-sync';
-import { createDefaultStrip } from '@/project/mixer';
+import { createDefaultStrip, MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
 
@@ -33,7 +33,7 @@ function makeHandle() {
   const declared: number[] = [];
   const engine = {
     setTrackLanes: vi.fn((lanes: number[]) => {
-      if (lanes.length > MAX_ENGINE_TRACK_LANES) throw new Error('too many lanes');
+      if (lanes.length > MAX_TRACK_LANES) throw new Error('too many lanes');
       if (declared.some((id, index) => lanes[index] !== id)) throw new Error('append-only');
       declared.splice(0, declared.length, ...lanes);
     }),
@@ -54,7 +54,7 @@ describe('engine lane reclaim', () => {
     const sync = createMixerSync(handle);
     const live: EditorTrack[] = [];
     // Add and delete one track at a time; the engine keeps every retired lane.
-    for (let id = 1; id <= MAX_ENGINE_TRACK_LANES; id++) {
+    for (let id = 1; id <= MAX_TRACK_LANES; id++) {
       live.splice(0, live.length, track(id));
       expect(() => sync.sync(live, createDefaultStrip())).not.toThrow();
     }
@@ -67,13 +67,13 @@ describe('engine lane reclaim', () => {
     // The live track that still has a lane keeps receiving updates.
     live[0] = { ...live[0], volume: 0.5 };
     sync.sync(live, createDefaultStrip());
-    expect(engine.setStripGain).toHaveBeenCalledWith(MAX_ENGINE_TRACK_LANES, expect.any(Number));
+    expect(engine.setStripGain).toHaveBeenCalledWith(MAX_TRACK_LANES, expect.any(Number));
     expect(engine.setStripGain).not.toHaveBeenCalledWith(100, expect.any(Number));
 
     const rebuilt = makeHandle();
     const fresh = createMixerSync(rebuilt.handle);
     fresh.sync(live, createDefaultStrip());
-    expect(rebuilt.engine.setTrackLanes).toHaveBeenLastCalledWith([MAX_ENGINE_TRACK_LANES, 100]);
+    expect(rebuilt.engine.setTrackLanes).toHaveBeenLastCalledWith([MAX_TRACK_LANES, 100]);
     expect(fresh.laneReclaimNeeded?.()).toBe(false);
   });
 

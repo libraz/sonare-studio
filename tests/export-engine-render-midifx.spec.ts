@@ -26,6 +26,8 @@ function makeRecordingEngine(): {
       get(_target, prop: string) {
         return (...args: unknown[]) => {
           calls.push([prop, ...args]);
+          // Automation ids are numbers on the real engine; any resolvable id will do here.
+          if (prop.startsWith('resolve') && prop.endsWith('AutomationId')) return 0;
           return realReturns[prop]?.(...args);
         };
       },

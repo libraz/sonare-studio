@@ -523,10 +523,10 @@ export interface MidiStateEvent {
  * Collects the last stateful MIDI messages at or before a timeline position in
  * compiled clip schedules.
  *
- * The engine schedules clip events only once, so starting mid-timeline skips
- * their prior bank/program and expression messages. Replaying the final value
- * of each state key (CC, program, bend and pressure) recreates the instrument
- * state without retriggering notes.
+ * The engine chases this state itself after a seek, stop or loop wrap, but an
+ * instrument bound mid-playback starts from default channel state. Replaying
+ * the final value of each state key (CC, program, bend and pressure) recreates
+ * it without retriggering notes.
  */
 export function midiStateAtPpq(
   schedules: ReadonlyArray<ScheduledMidiClip>,
@@ -589,8 +589,7 @@ export function midiStateAtPpq(
 
 /**
  * Pushes the MIDI channel state in effect at `ppq` to every destination the
- * schedules play. Every playback or render start at a position goes through
- * this one entry, so live seeks and offline renders hear the same state.
+ * schedules play.
  *
  * @param push Sends one channel-voice word to a destination.
  * @param destinationIds Limits the replay to these destinations when given.
@@ -647,8 +646,8 @@ export interface MidiSync {
   /** Number of MIDI clip schedules in the last setMidiClips call (0 before any). */
   scheduledClipCount(): number;
   /**
-   * Replays the current bank/program/expression state after a seek, a parked
-   * play or an instrument swap; `destinationIds` limits it to those destinations.
+   * Replays the bank/program/expression state at `ppq` to a freshly bound
+   * instrument; `destinationIds` limits it to those destinations.
    */
   restoreStateAtPpq(ppq: number, renderFrame?: number, destinationIds?: ReadonlySet<number>): void;
   /** Destinations whose instrument the latest sync bound; a swap starts from default channel state. */

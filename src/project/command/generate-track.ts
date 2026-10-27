@@ -14,6 +14,7 @@
 
 import type { TrackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
+import { assertCanAddTracks } from '../mixer';
 import { getProject, notesToProjectEvents, type useProjectStore } from '../store';
 import { type NewEditorNote, TRACK_COLOR_PALETTE } from '../types';
 import { type AtomicProjectEdit, executeAtomic } from './history';
@@ -94,6 +95,7 @@ export function addGeneratedTrack(
   track: GeneratedTrack,
   edit: AtomicProjectEdit,
 ): number {
+  assertCanAddTracks(store.tracks.length);
   const project = getProject();
   const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
   const trackId = edit(1, () => project.addTrack({ kind: 'midi', name: track.name }));

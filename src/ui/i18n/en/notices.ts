@@ -24,6 +24,8 @@ export const notices = {
         'Transcription needs about {required} MiB of working memory, exceeding the {budget} MiB browser budget. Transcribe a shorter section of the audio.',
     },
   },
+  trackLaneOverflow:
+    '{count} track(s) beyond the {limit}-track limit have no mixer lane and stay silent. Delete tracks to bring the project under the limit.',
   webMidiConnectFailed: 'Could not connect to Web MIDI: {detail}',
   gsSetupUnapplied:
     '{count} GS/SysEx setup message(s) were not applied to the playback synth. Only complete setup messages of up to {limit} bytes at the start of the song, before the first note, are applied; they are kept for MIDI export.',

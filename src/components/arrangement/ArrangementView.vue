@@ -62,6 +62,7 @@ import {
 import { exportClipSmf } from '@/project/export';
 import { unfreezeTrack } from '@/project/freeze';
 import { grooveTemplateIsUsable } from '@/project/groove';
+import { MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { snapPpqToMeterGrid } from '@/project/time-signature';
@@ -227,10 +228,14 @@ const sectionsFromNotesBlocked = computed(() =>
 const transcribeBlocked = computed(() => audioClipBlocked.value);
 /** A running components split stays clickable: the button then cancels it. */
 const splitStemsBlocked = computed(() =>
-  firstBlock(audioClipBlocked.value, [
-    isSplittingStems.value && componentSplitAbort.value === null,
-    t.value.reasons.busy,
-  ]),
+  firstBlock(
+    audioClipBlocked.value,
+    [
+      store.tracks.length >= MAX_TRACK_LANES,
+      formatMessage(t.value.reasons.trackLimit, { limit: MAX_TRACK_LANES }),
+    ],
+    [isSplittingStems.value && componentSplitAbort.value === null, t.value.reasons.busy],
+  ),
 );
 
 /**

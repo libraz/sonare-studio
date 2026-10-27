@@ -1,8 +1,13 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue';
 
 describe('AddTrackMenu', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+  });
+
   it('emits the selected track kind and closes the menu', async () => {
     const wrapper = mount(AddTrackMenu, {
       global: {

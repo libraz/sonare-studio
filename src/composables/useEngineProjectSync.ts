@@ -24,6 +24,7 @@ import {
   type MediaCompletenessIssue,
   type MediaCompletenessReport,
 } from '@/project/media-completeness';
+import { MAX_TRACK_LANES } from '@/project/mixer';
 import {
   AudioScheduleReplaceError,
   discardUnownedScheduledClips,
@@ -33,7 +34,7 @@ import {
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, type EditorTrack, isAudioClip } from '@/project/types';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import {
   automationStripModeRevision,
   isAutomationStripPlaybackEnabled,
@@ -119,6 +120,8 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
   let midiSyncQueue: Promise<void> = Promise.resolve();
   let audioMediaIssues: MediaCompletenessIssue[] = [];
   let midiMediaIssues: MediaCompletenessIssue[] = [];
+  /** Overflow count last reported, so the notice is set once per change. */
+  let reportedLaneOverflow = 0;
 
   const scheduledCount = ref(0);
   const applyPending = ref(false);
@@ -239,11 +242,22 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         store.mixer.soloMode,
         store.mixer.buses,
       );
-      // Until the rebuild reclaims retired lanes, a new track has no lane to strip.
+      // Until the rebuild reclaims retired lanes, and for tracks past the lane
+      // cap, a track has no lane to strip.
       const reclaimLanes = mixerSync.laneReclaimNeeded?.() === true;
+      const overflow = mixerSync.laneOverflowCount?.() ?? 0;
+      if (overflow > 0 && overflow !== reportedLaneOverflow) {
+        errorMessage.value = formatMessage(t.value.notices.trackLaneOverflow, {
+          count: overflow,
+          limit: MAX_TRACK_LANES,
+        });
+      }
+      reportedLaneOverflow = overflow;
       const lanes = new Set(mixerSync.laneTrackIds());
       stripSync.sync(
-        reclaimLanes ? store.tracks.filter((track) => lanes.has(track.id)) : store.tracks,
+        reclaimLanes || overflow > 0
+          ? store.tracks.filter((track) => lanes.has(track.id))
+          : store.tracks,
         store.mixer,
         mixerSync.sceneGeneration?.(),
         mixerSync.positiveChannelDelayTrackIds(),
@@ -399,11 +413,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     installedStripSync.value = handles.stripSync;
     automationSync = handles.automationSync;
     midiSync = handles.midiSync;
-    transport.setMidiStateRestorer?.(
-      midiSync === null
-        ? null
-        : (ppq, renderFrame) => midiSync?.restoreStateAtPpq(ppq, renderFrame),
-    );
     transportSync = handles.transportSync;
     webMidiOutput = handles.webMidiOutput;
   }
@@ -423,7 +432,6 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
     installedStripSync.value = null;
     automationSync = null;
     midiSync = null;
-    transport.setMidiStateRestorer?.(null);
     transportSync = null;
     webMidiOutput?.dispose();
     webMidiOutput = null;
