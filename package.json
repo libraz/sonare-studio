@@ -4,7 +4,7 @@
   "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
-  "packageManager": "yarn@4.18.0",
+  "packageManager": "yarn@4.18.1",
   "scripts": {
     "dev": "yarn build:worklet && vite",
     "build": "yarn build:worklet && vue-tsc --noEmit && vite build",
@@ -36,9 +36,10 @@
     "vue": "^3.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5",
+    "@biomejs/biome": "^2.6",
     "@vitejs/plugin-vue": "^6",
-    "@vitest/coverage-v8": "^5.0.4",
+    "@vitest/coverage-v8": "^5.0.5",
+    "@vue/compiler-dom": "^3.5",
     "@vue/test-utils": "^2.5",
     "jsdom": "^30",
     "npm-check-updates": "^23.1.1",

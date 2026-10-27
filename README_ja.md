@@ -73,19 +73,19 @@ yarn dev
 
 ## スクリプト
 
-| スクリプト | 内容 |
-| --- | --- |
-| `yarn dev` | クロスオリジン分離ヘッダー付きの Vite 開発サーバー |
-| `yarn build` | ワークレットバンドル、型チェック、本番ビルド |
-| `yarn build:worklet` | 自己完結した AudioWorklet モジュールだけをビルド |
-| `yarn preview` | 本番ビルドをローカルで配信 |
-| `yarn copy:wasm` | `../libsonare` の wasm 成果物を `src/wasm/` へ同期 |
-| `yarn test` · `yarn test:watch` | Vitest（jsdom）のユニット／コンポーネントテスト |
-| `yarn test:coverage` | 同じスイートを v8 カバレッジ付きで実行 |
-| `yarn test:external-formats` | 書き出したファイルを外部ツールで検証 |
-| `yarn lint` · `yarn lint:fix` | Biome のチェック／自動修正 |
-| `yarn typecheck` | `vue-tsc --noEmit` |
-| `yarn verify` | lint、テスト、外部形式テスト、ビルド |
+| スクリプト                      | 内容                                               |
+| ------------------------------- | -------------------------------------------------- |
+| `yarn dev`                      | クロスオリジン分離ヘッダー付きの Vite 開発サーバー |
+| `yarn build`                    | ワークレットバンドル、型チェック、本番ビルド       |
+| `yarn build:worklet`            | 自己完結した AudioWorklet モジュールだけをビルド   |
+| `yarn preview`                  | 本番ビルドをローカルで配信                         |
+| `yarn copy:wasm`                | `../libsonare` の wasm 成果物を `src/wasm/` へ同期 |
+| `yarn test` · `yarn test:watch` | Vitest（jsdom）のユニット／コンポーネントテスト    |
+| `yarn test:coverage`            | 同じスイートを v8 カバレッジ付きで実行             |
+| `yarn test:external-formats`    | 書き出したファイルを外部ツールで検証               |
+| `yarn lint` · `yarn lint:fix`   | Biome のチェック／自動修正                         |
+| `yarn typecheck`                | `vue-tsc --noEmit`                                 |
+| `yarn verify`                   | lint、テスト、外部形式テスト、ビルド               |
 
 ## アーキテクチャ
 

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.3/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
@@ -48,6 +48,18 @@
     }
   },
   "overrides": [
+    {
+      // The 2.6 markdown formatter widens a table cell holding an HTML comment by one
+      // space on every run, and this file keys each row with a shortcut-action comment.
+      "includes": ["docs/shortcuts.md"],
+      "formatter": { "enabled": false }
+    },
+    {
+      // Playwright's locator.innerText() reads rendered text over the protocol;
+      // it is not DOM Node.innerText, and textContent() would include hidden text.
+      "includes": ["scripts/e2e/**"],
+      "linter": { "rules": { "performance": { "useDomNodeTextContent": "off" } } }
+    },
     {
       "includes": ["**/*.vue"],
       "linter": {

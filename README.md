@@ -153,19 +153,19 @@ Press **Play** and the audio engine boots on its own.
 
 ## Scripts
 
-| Script | Description |
-| --- | --- |
-| `yarn dev` | Vite dev server with cross-origin-isolation headers |
-| `yarn build` | Worklet bundle, type check, production build |
-| `yarn build:worklet` | Build the self-contained AudioWorklet module only |
-| `yarn preview` | Serve the production build locally |
-| `yarn copy:wasm` | Sync wasm artifacts from `../libsonare` into `src/wasm/` |
-| `yarn test` · `yarn test:watch` | Vitest (jsdom) unit and component tests |
-| `yarn test:coverage` | The same suite with v8 coverage |
-| `yarn test:external-formats` | Validate exported files with external tools |
-| `yarn lint` · `yarn lint:fix` | Biome check / autofix |
-| `yarn typecheck` | `vue-tsc --noEmit` |
-| `yarn verify` | lint, tests, external-format tests, build |
+| Script                          | Description                                              |
+| ------------------------------- | -------------------------------------------------------- |
+| `yarn dev`                      | Vite dev server with cross-origin-isolation headers      |
+| `yarn build`                    | Worklet bundle, type check, production build             |
+| `yarn build:worklet`            | Build the self-contained AudioWorklet module only        |
+| `yarn preview`                  | Serve the production build locally                       |
+| `yarn copy:wasm`                | Sync wasm artifacts from `../libsonare` into `src/wasm/` |
+| `yarn test` · `yarn test:watch` | Vitest (jsdom) unit and component tests                  |
+| `yarn test:coverage`            | The same suite with v8 coverage                          |
+| `yarn test:external-formats`    | Validate exported files with external tools              |
+| `yarn lint` · `yarn lint:fix`   | Biome check / autofix                                    |
+| `yarn typecheck`                | `vue-tsc --noEmit`                                       |
+| `yarn verify`                   | lint, tests, external-format tests, build                |
 
 ## Architecture
 
