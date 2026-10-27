@@ -299,7 +299,7 @@ describe('ingestAudioBuffer under an asset transaction', () => {
   });
 });
 
-describe('decodeAndIngest', () => {
+describe('decodeAndIngest compressed input limit', () => {
   it('rejects an oversized compressed input before reading it into memory', async () => {
     const arrayBuffer = vi.fn();
     const file = {

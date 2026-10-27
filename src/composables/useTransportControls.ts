@@ -235,7 +235,7 @@ export function useTransportControls(options: TransportControlsOptions) {
     // (the engine opens a sample-accurate window there), or at the current
     // position when playback started inside the window — otherwise starting
     // past the locator would never arm and the take would be missed entirely.
-    const punchAt = ppq <= options.loopStartPpq.value ? options.loopStartPpq.value : ppq;
+    const punchAt = Math.max(ppq, options.loopStartPpq.value);
     autoPunchArming = true;
     void options.recording.record(punchAt, options.loopEndPpq.value).finally(() => {
       autoPunchArming = false;

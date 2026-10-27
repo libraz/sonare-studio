@@ -69,7 +69,7 @@ export function createRovingDirective(group: RovingGroup): Directive<HTMLElement
     const options = optionsOf(el);
     if (options.length === 0) return;
     const selected = selectedIndexOf(options);
-    const stop = selected >= 0 ? selected : 0;
+    const stop = Math.max(selected, 0);
     options.forEach((option, index) => {
       option.tabIndex = index === stop ? 0 : -1;
     });

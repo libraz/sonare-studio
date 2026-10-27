@@ -217,7 +217,7 @@ describe('project list editors', () => {
     });
   });
 
-  describe('ProjectListsPanel', () => {
+  describe('ProjectListsPanel drafts', () => {
     it('keeps an uncommitted editor draft while switching list tabs', async () => {
       const wrapper = mount(ProjectListsPanel);
       const tempo = wrapper.findComponent(TempoMapEditor);
