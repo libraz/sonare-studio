@@ -14,21 +14,21 @@ import {
   patchFieldsForSection,
   sanitizePatchDraft,
 } from '@/ui/devices/patch-draft';
-import {
-  FALLBACK_SYNTH_ENUMS,
-  resolveSynthEnums,
-  SYNTH_RETRIGGER_OPTIONS,
-} from '@/ui/devices/synth-enums';
+import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 import {
   ARTICULATIONS,
   CONTROLLER_AXES,
   CONTROLLER_INPUTS,
   MPE_DIMENSIONS,
   NOTE_TRACKINGS,
+  PART_RIG_MODES,
+  SAMPLE_KEY_TRACKS,
+  SAMPLE_LOOP_MODES,
   SYNTH_BODY_TYPES,
   SYNTH_ENGINE_MODES,
   SYNTH_FILTER_MODELS,
   SYNTH_FILTER_OUTPUTS,
+  SYNTH_LFO_SHAPES,
   SYNTH_MOD_DESTINATIONS,
   SYNTH_MOD_SOURCES,
   SYNTH_OSC_WAVEFORMS,
@@ -348,11 +348,13 @@ describe('resolveSynthEnums', () => {
       articulations: [...ARTICULATIONS],
       mpeDimensions: [...MPE_DIMENSIONS],
       noteTrackings: [...NOTE_TRACKINGS],
+      sampleLoopModes: [...SAMPLE_LOOP_MODES],
+      sampleKeyTracks: [...SAMPLE_KEY_TRACKS],
+      retriggers: [...SYNTH_RETRIGGERS],
+      lfoShapes: [...SYNTH_LFO_SHAPES],
+      partRigModes: [...PART_RIG_MODES],
+      sampleDescLoopModes: ['none', 'continuous', 'key-down'],
     });
-  });
-
-  it('mirrors the published voice seed modes', () => {
-    expect(SYNTH_RETRIGGER_OPTIONS).toEqual([...SYNTH_RETRIGGERS]);
   });
 
   it('overrides only the non-empty runtime tables', () => {

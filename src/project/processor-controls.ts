@@ -229,6 +229,7 @@ const UNIT_LABELS: Readonly<Record<MasteringInsertParamUnit, string>> = {
   ratio: '',
   bits: 'bit',
   count: '',
+  N: 'N',
   none: '',
 };
 

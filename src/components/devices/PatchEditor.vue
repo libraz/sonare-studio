@@ -34,7 +34,7 @@ import {
   wasmEngineParamInfo,
   wasmPatchParamInfo,
 } from '@/ui/devices/patch-draft';
-import { resolveSynthEnums, SYNTH_RETRIGGER_OPTIONS } from '@/ui/devices/synth-enums';
+import { resolveSynthEnums } from '@/ui/devices/synth-enums';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
@@ -188,7 +188,7 @@ const FILTER_ENUM_FIELDS: EnumFieldView[] = [
 const GLOBAL_ENUM_FIELDS: EnumFieldView[] = [
   { id: 'engineMode', labelKey: 'engine', options: () => enums.value.engineModes },
   { id: 'body', labelKey: 'body', options: () => enums.value.bodyTypes },
-  { id: 'retrigger', labelKey: 'retrigger', options: () => [...SYNTH_RETRIGGER_OPTIONS] },
+  { id: 'retrigger', labelKey: 'retrigger', options: () => enums.value.retriggers },
 ];
 
 function enumValue(field: EnumFieldView): string {

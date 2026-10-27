@@ -35,7 +35,7 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
   // Custom built-in waves are discovered from the WASM catalog. There is no
   // stable static list to offer before it is loaded.
   builtinWaveforms: [],
-  filterModels: ['default', 'svf', 'transistor-ladder', 'diode-ladder', 'sallen-key'],
+  filterModels: ['default', 'svf', 'transistor-ladder', 'diode-ladder', 'sallen-key', 'svf-4-pole'],
   filterOutputs: ['default', 'lowpass', 'bandpass', 'highpass'],
   bodyTypes: ['default', 'none', 'guitar', 'violin', 'wood-tube', 'brass-bell', 'vocal'],
   modSources: [
@@ -88,14 +88,13 @@ export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {
   articulations: ['poly', 'mono-retrigger', 'mono-legato'],
   mpeDimensions: ['bend', 'pressure', 'timbre'],
   noteTrackings: ['last', 'lowest', 'highest', 'all'],
+  sampleLoopModes: ['default', 'none', 'continuous', 'key-down'],
+  sampleKeyTracks: ['default', 'on', 'off'],
+  retriggers: ['default', 'free', 'note'],
+  lfoShapes: ['default', 'triangle', 'sine', 'random'],
+  partRigModes: ['bank', 'none', 'chain'],
+  sampleDescLoopModes: ['none', 'continuous', 'key-down'],
 };
-
-/**
- * Voice seed modes mirroring the published SYNTH_RETRIGGERS: 'note' restarts
- * each voice's randomness from the note, so a repeated note renders the same
- * samples; 'free' keeps it running.
- */
-export const SYNTH_RETRIGGER_OPTIONS: readonly string[] = ['default', 'free', 'note'];
 
 /**
  * Merges runtime enum tables over the fallbacks. Empty or missing table
