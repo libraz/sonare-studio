@@ -20,7 +20,9 @@
     "ncu": "NO_UPDATE_NOTIFIER=1 ncu",
     "ncu:update": "NO_UPDATE_NOTIFIER=1 ncu -u",
     "typecheck": "vue-tsc --noEmit",
-    "verify": "yarn lint && yarn test && yarn test:external-formats && yarn build"
+    "verify": "yarn lint && yarn test && yarn test:external-formats && yarn build",
+    "e2e": "node scripts/e2e-local.mjs",
+    "ci": "yarn verify && yarn e2e"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",

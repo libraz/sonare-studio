@@ -45,6 +45,30 @@ export async function run(ctx) {
     console.info('welcome tour auto-opened on first run and was dismissed');
   }
 
+  // Every playback scenario needs the engine; a start failure must stop the run
+  // here with the app's own message, not as a meter timeout far downstream.
+  await page.click('.transport-bar .transport-key.play');
+  await page.waitForFunction(
+    () => window.__sonareDebug.engineStarted() || window.__sonareDebug.lastError() !== '',
+    null,
+    { timeout: 30000 },
+  );
+  const engineError = await page.evaluate(() =>
+    window.__sonareDebug.engineStarted() ? '' : window.__sonareDebug.lastError(),
+  );
+  if (engineError) throw new Error(`audio engine failed to start: ${engineError}`);
+  await page.waitForFunction(
+    () => {
+      const peak = window.__sonareDebug.meterPeakDb();
+      return peak !== null && peak > -90;
+    },
+    null,
+    { timeout: 10000 },
+  );
+  await page.click('.transport-bar .transport-key.stop');
+  await page.evaluate(() => window.__sonareDebug.seekPpq(0));
+  console.info('audio engine started and the demo played');
+
   ctx.state.seededCount = seededCount;
   ctx.state.demoTrackCount = demoTrackCount;
 }
