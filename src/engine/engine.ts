@@ -21,8 +21,8 @@ export function isEngineVersionMismatchError(error: unknown): boolean {
 
 /** Default scope telemetry interval in frames (~47 Hz at 48 kHz). */
 const DEFAULT_SCOPE_INTERVAL_FRAMES = 1024;
-/** Default scope spectrum band count. */
-const DEFAULT_SCOPE_BANDS = 96;
+/** Default scope spectrum band count: the engine's maximum (it refuses more than 64). */
+const DEFAULT_SCOPE_BANDS = 64;
 
 /** Options for {@link createEngine}. */
 export interface CreateEngineOptions {
