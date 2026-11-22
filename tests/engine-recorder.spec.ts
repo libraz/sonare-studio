@@ -704,6 +704,52 @@ describe('createRecorder capture', () => {
     }
   });
 
+  it.each([
+    ['a device-like 10 ms', 10],
+    ['the headless 2 s', 2000],
+  ])('keeps the whole requested span at %s record offset', async (_label, offsetMs) => {
+    vi.useFakeTimers();
+    try {
+      // 1 kHz, so one millisecond is one sample.
+      const { handle, armCapture, captureStatus, capturedAudio } = makeHandle(1000);
+      // The engine captures what arrives `offset` after the render position,
+      // from the punch-in until the disarm reaches it.
+      let armedAt: number | null = null;
+      let disarmedAt: number | null = null;
+      armCapture.mockImplementation(({ armed }: { armed: boolean }) => {
+        if (armed) armedAt = Date.now();
+        else disarmedAt = Date.now();
+      });
+      const capturedFrames = (): number => {
+        if (armedAt === null) return 0;
+        const end = disarmedAt ?? Date.now();
+        return Math.max(0, end - armedAt - offsetMs);
+      };
+      captureStatus.mockImplementation(async () => ({
+        capturedFrames: capturedFrames(),
+        overflowCount: 0,
+        armed: disarmedAt === null,
+        punchEnabled: true,
+        source: 'input' as const,
+        recordOffsetSamples: offsetMs,
+      }));
+      capturedAudio.mockImplementation(async () => [new Float32Array(60_000)]);
+      const { deps } = makeDeps();
+      const recorder = createRecorder(handle, deps);
+      await recorder.requestMicrophone();
+      recorder.arm(1);
+      await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: offsetMs });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      const stopping = recorder.stop({ captureTail: true });
+      await vi.advanceTimersByTimeAsync(offsetMs + 100);
+      const result = await stopping;
+      expect(result?.channels[0].length).toBe(1000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads the take and restores the idle config only once the disarm has landed', async () => {
     const { handle, setStatus, setAudio, captureStatus, capturedAudio, configureCapture } =
       makeHandle(100);
