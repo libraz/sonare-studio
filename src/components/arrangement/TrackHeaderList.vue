@@ -8,13 +8,7 @@ import { confirmDestructive } from '@/composables/useDialogs';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
-import {
-  type AutomationLaneState,
-  type AutomationParam,
-  insertAutomationParam,
-  instrumentAutomationParam,
-  isAutomationParam,
-} from '@/project/automation';
+import type { AutomationParam } from '@/project/automation';
 import {
   addAudioTrack,
   addGroupTrack,
@@ -25,7 +19,6 @@ import {
   renameTrack,
   reorderTracks,
   setActiveTrack,
-  setAutomationLaneEnabled,
   setStripPan,
   setTrackColor,
   setTrackGroup,
@@ -41,14 +34,6 @@ import {
   type TrackPart,
 } from '@/project/commands';
 import { flattenTrackComps } from '@/project/comp-flatten';
-import {
-  AUTOMATABLE_SYNTH_PARAMS,
-  type AutomatableSynthParam,
-  isNativeSynthInstrument,
-  synthParamReachesSoundingVoices,
-  trackInstrument,
-} from '@/project/instrument';
-import { catalogParamInfo } from '@/project/processor-controls';
 import { useProjectStore } from '@/project/store';
 import {
   type EditorClip,
@@ -63,9 +48,9 @@ import {
   trackActiveTakeIndex,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { useTrackAutomationStrip } from '@/ui/arrangement/use-track-automation-strip';
 import { useTrackFreezeBounce } from '@/ui/arrangement/use-track-freeze-bounce';
 import { useTrackHeaderMenu } from '@/ui/arrangement/use-track-header-menu';
-import { patchFieldSpec } from '@/ui/devices/patch-draft';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
@@ -489,32 +474,19 @@ function onToggleArm(track: EditorTrack): void {
 
 // --- Automation sublane ------------------------------------------------------
 
-/** True when the container reports the track's automation sublane as expanded. */
-function isAutomationExpanded(track: EditorTrack): boolean {
-  return props.automationExpandedIds?.includes(track.id) ?? false;
-}
-
-/** Parameter the track's automation sublane currently edits. */
-function automationParamFor(track: EditorTrack): AutomationParam {
-  const param = props.automationParams?.[track.id] ?? 'faderDb';
-  return track.kind === 'group' && param === 'pan' ? 'faderDb' : param;
-}
-
-/** Store lane behind the track's sublane, or null when none exists yet. */
-function automationLaneFor(track: EditorTrack): AutomationLaneState | null {
-  const param = automationParamFor(track);
-  return (
-    store.automationLanes.find((lane) => lane.target === track.id && lane.param === param) ?? null
-  );
-}
+const {
+  isAutomationExpanded,
+  automationParamFor,
+  automationLaneFor,
+  automationParamOptions,
+  onToggleAutomation,
+  onAutomationParamChange,
+  onAutomationEnabledChange,
+} = useTrackAutomationStrip({ props, emit });
 
 /** Full header row height: lane plus take rows and the automation strip when expanded. */
 function rowHeight(index: number): number {
   return props.rowLayout.rowHeight(index);
-}
-
-function onToggleAutomation(track: EditorTrack): void {
-  emit('toggleAutomation', track.id, !isAutomationExpanded(track));
 }
 
 // --- Take sub-rows (comping) -------------------------------------------------
@@ -596,74 +568,6 @@ function armBlocked(track: EditorTrack): string | null {
 
 function flattenBlocked(track: EditorTrack): string | null {
   return frozenReason(track);
-}
-
-/**
- * Parameter choices for a track's automation sublane picker: the fader and pan
- * lanes plus, per insert slot, that processor's realtime-safe parameters as
- * insert-parameter automation targets.
- */
-function automationParamOptions(
-  track: EditorTrack,
-): ReadonlyArray<{ value: AutomationParam; label: string }> {
-  const options: { value: AutomationParam; label: string }[] = [
-    { value: 'faderDb', label: t.value.shell.arrangement.trackHeader.volumeDb },
-  ];
-  if (track.kind !== 'group') {
-    options.push({ value: 'pan', label: t.value.shell.arrangement.trackHeader.pan });
-  }
-  (track.mixer?.inserts ?? []).forEach((slot, index) => {
-    for (const param of catalogParamInfo(slot.processor)) {
-      if (!param.rtSafe) continue;
-      options.push({
-        value: insertAutomationParam(slot.id ?? index, param.name),
-        label: `${slot.processor} · ${param.name}`,
-      });
-    }
-  });
-  if (
-    track.kind === 'midi' &&
-    track.frozen === undefined &&
-    isNativeSynthInstrument(trackInstrument(track))
-  ) {
-    for (const param of AUTOMATABLE_SYNTH_PARAMS) {
-      options.push({ value: instrumentAutomationParam(param), label: synthParamLabel(param) });
-    }
-  }
-  return options;
-}
-
-/** Patch-editor section each synth field sits under, as its lane-label prefix. */
-const SYNTH_SECTION_LABEL_KEYS = {
-  osc: 'oscillator',
-  filter: 'filter',
-  amp: 'ampEnvelope',
-  'filter-env': 'filterEnvelope',
-  lfo: 'lfo',
-  global: 'global',
-} as const;
-
-/**
- * "Section · Field" label for a synth parameter lane, e.g. "Amp envelope ·
- * Attack", marked when the lane only reaches notes that start after it moves.
- */
-function synthParamLabel(param: AutomatableSynthParam): string {
-  const spec = patchFieldSpec(param);
-  if (!spec) return param;
-  const editor = t.value.shell.patchEditor;
-  const section = editor.sections[SYNTH_SECTION_LABEL_KEYS[spec.section]];
-  const label = `${section} · ${editor.fields[spec.labelKey] ?? spec.label}`;
-  return synthParamReachesSoundingVoices(param)
-    ? label
-    : formatMessage(t.value.shell.arrangement.trackHeader.synthParamNextNote, { label });
-}
-
-function onAutomationParamChange(track: EditorTrack, value: string): void {
-  if (isAutomationParam(value)) emit('automationParam', track.id, value);
-}
-
-function onAutomationEnabledChange(track: EditorTrack, enabled: boolean): void {
-  setAutomationLaneEnabled(track.id, automationParamFor(track), enabled);
 }
 
 function onAddTrack(kind: 'midi' | 'audio' | 'group'): void {
