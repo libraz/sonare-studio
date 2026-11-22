@@ -30,7 +30,6 @@ import { useShortcuts } from '@/composables/useShortcuts';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
-import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatChannels, formatSampleRate } from '@/ui/media/asset-list';
 import {
@@ -44,6 +43,7 @@ import { declipWithheld, repairChannelSummaries } from '@/ui/sample-editor/repai
 import { roomEstimateHasGeometry } from '@/ui/sample-editor/room-acoustics';
 import { MODE_OPTIONS, rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
+import { useSampleEditorAvailability } from '@/ui/sample-editor/use-sample-editor-availability';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
 import {
   MATCH_EQ_CURVE_HEIGHT,
@@ -58,8 +58,6 @@ import {
   loadSampleEditorWasm,
   type SampleEditorWasmOps,
   type SpectralEditMode,
-  type WasmOpAvailability,
-  wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
 import type { MasteringRepairStageName } from '@libraz/libsonare';
 
@@ -114,7 +112,6 @@ let loadGeneration = 0;
 
 const wasmOps = shallowRef<SampleEditorWasmOps | null>(null);
 const wasmFailed = ref(false);
-const wasmAvail = computed(() => wasmOpAvailability(wasmOps.value));
 
 const markers = useSampleMarkers({
   wasmOps: () => wasmOps.value,
@@ -445,148 +442,52 @@ const {
 
 const se = computed(() => t.value.shell.sampleEditor);
 
-/** Gates anything that reads the loaded audio (view, selection, apply). */
-const assetBlocked = computed(() =>
-  firstBlock([loading.value, se.value.reasons.loading], [!asset.value, se.value.reasons.loadFailed]),
-);
-
-/** Gates every operation that writes a new version or runs an analysis. */
-const editBlocked = computed(() =>
-  firstBlock(
-    assetBlocked.value,
-    [asset.value?.meta.numFrames === 0, se.value.reasons.emptyAudio],
-    [busy.value, t.value.reasons.busy],
-  ),
-);
-
-type OpKey = keyof WasmOpAvailability;
-
-/** Per-operation gate: the edit gate, then whether this build provides the processor. */
-const opBlocked = computed(() => {
-  const tools = firstBlock(
-    [wasmFailed.value, se.value.reasons.toolsFailed],
-    [!wasmOps.value, se.value.reasons.toolsLoading],
-  );
-  const gates = {} as Record<OpKey, string | null>;
-  for (const key of Object.keys(wasmAvail.value) as OpKey[]) {
-    gates[key] = firstBlock(editBlocked.value, tools, [!wasmAvail.value[key], se.value.unavailable]);
-  }
-  return gates;
+const {
+  assetBlocked,
+  editBlocked,
+  opBlocked,
+  clearSelectionBlocked,
+  applyBlocked,
+  trimBlocked,
+  deleteBlocked,
+  noteStretchBlocked,
+  noteMoveBlocked,
+  stretchInputBlocked,
+  restoreBlocked,
+  analyzeRepairBlocked,
+  repairStagesBlocked,
+  applyRepairBlocked,
+  spectralGainBlocked,
+  referencePickerBlocked,
+  matchEqBlocked,
+  matchEqAnalyzeBlocked,
+  estimateRoomBlocked,
+  analyzeImpulseBlocked,
+  detectAcousticBlocked,
+  warpOffBlocked,
+  addAnchorBlocked,
+  historyBlocked,
+} = useSampleEditorAvailability({
+  project,
+  loading,
+  asset,
+  busy,
+  wasmOps,
+  wasmFailed,
+  selRange,
+  currentAssetId,
+  restorePresetOptions,
+  analyzingRepair,
+  repairAnyChecked,
+  spectralModeInput,
+  referenceOptions,
+  referenceAssetId,
+  analyzingMatchEq,
+  estimatingRoom,
+  analyzingAcoustic,
+  warpEnabled,
+  nextWarpAnchor,
 });
-
-const selectionBlocked = computed(() =>
-  firstBlock([!selRange.value, se.value.reasons.noSelection]),
-);
-const selectionIsWhole = computed(() => {
-  const range = selRange.value;
-  const total = asset.value?.meta.numFrames ?? 0;
-  return range !== null && range.startFrame <= 0 && range.endFrame >= total;
-});
-
-const clearSelectionBlocked = computed(() =>
-  firstBlock(assetBlocked.value, selectionBlocked.value),
-);
-const applyBlocked = computed(() =>
-  firstBlock(
-    assetBlocked.value,
-    [busy.value, t.value.reasons.busy],
-    [project.activeClip?.assetId === currentAssetId.value, se.value.reasons.alreadyInUse],
-  ),
-);
-const trimBlocked = computed(() =>
-  firstBlock(editBlocked.value, selectionBlocked.value, [
-    selectionIsWhole.value,
-    se.value.reasons.selectionIsWhole,
-  ]),
-);
-const deleteBlocked = computed(() =>
-  firstBlock(editBlocked.value, selectionBlocked.value, [
-    selectionIsWhole.value,
-    se.value.reasons.deleteWhole,
-  ]),
-);
-
-// Note stretch and move act on one note, so the whole file is not a valid target.
-const noteSelectionBlocked = computed(() =>
-  firstBlock([!selRange.value, se.value.reasons.noNoteSelection]),
-);
-const noteStretchBlocked = computed(() =>
-  firstBlock(opBlocked.value.noteStretch, noteSelectionBlocked.value),
-);
-const noteMoveBlocked = computed(() =>
-  firstBlock(opBlocked.value.noteMove, noteSelectionBlocked.value),
-);
-/** The stretch rate feeds both Stretch and Note; usable while either is. */
-const stretchInputBlocked = computed(() =>
-  opBlocked.value.timeStretch === null ? null : opBlocked.value.noteStretch,
-);
-
-const restoreBlocked = computed(() =>
-  firstBlock(opBlocked.value.restore, [
-    restorePresetOptions.value.length === 0,
-    se.value.unavailable,
-  ]),
-);
-
-const analyzeRepairBlocked = computed(() =>
-  firstBlock(opBlocked.value.repairSession, [analyzingRepair.value, se.value.reasons.analyzing]),
-);
-const repairStagesBlocked = computed(() => editBlocked.value);
-const applyRepairBlocked = computed(() =>
-  firstBlock(repairStagesBlocked.value, [!repairAnyChecked.value, se.value.reasons.noRepairStage]),
-);
-
-const spectralGainBlocked = computed(() =>
-  firstBlock(opBlocked.value.spectralEdit, [
-    spectralModeInput.value === 'mute' || spectralModeInput.value === 'heal',
-    se.value.reasons.spectralGainUnused,
-  ]),
-);
-
-/** The reference picker list holds a placeholder plus every other stored asset. */
-const referencePickerBlocked = computed(() =>
-  firstBlock(opBlocked.value.matchEq, [
-    referenceOptions.value.length <= 1,
-    se.value.reasons.noReferenceAssets,
-  ]),
-);
-const noReferenceGate = computed(() =>
-  firstBlock([referenceAssetId.value === '', se.value.reasons.noReference]),
-);
-const matchEqBlocked = computed(() =>
-  firstBlock(referencePickerBlocked.value, noReferenceGate.value),
-);
-const matchEqAnalyzeBlocked = computed(() =>
-  firstBlock(
-    opBlocked.value.matchEqAnalyze,
-    referencePickerBlocked.value,
-    noReferenceGate.value,
-    [analyzingMatchEq.value, se.value.reasons.analyzing],
-  ),
-);
-
-const estimateRoomBlocked = computed(() =>
-  firstBlock(opBlocked.value.estimateRoom, [estimatingRoom.value, se.value.reasons.analyzing]),
-);
-const analyzeImpulseBlocked = computed(() =>
-  firstBlock(opBlocked.value.analyzeImpulseResponse, [
-    analyzingAcoustic.value,
-    se.value.reasons.analyzing,
-  ]),
-);
-const detectAcousticBlocked = computed(() =>
-  firstBlock(opBlocked.value.detectAcoustic, [
-    analyzingAcoustic.value,
-    se.value.reasons.analyzing,
-  ]),
-);
-
-const warpOffBlocked = computed(() => firstBlock([!warpEnabled.value, se.value.reasons.warpOff]));
-const addAnchorBlocked = computed(() =>
-  firstBlock(warpOffBlocked.value, [nextWarpAnchor.value === null, se.value.reasons.noAnchorRoom]),
-);
-
-const historyBlocked = computed(() => firstBlock([busy.value, t.value.reasons.busy]));
 
 const opsGroups = OPS_GROUPS;
 const opsGroup = lastOpsGroup;
