@@ -283,7 +283,7 @@ describe('vendored libsonare surface', () => {
 const DOCUMENT_TYPE_NAMES = ['ProjectDocument', 'ProjectJson', 'ProjectJsonDocument'];
 
 describe('hand-written mirrors of core vocabulary', () => {
-  const runtimeLists = Object.entries(core).filter(
+  const runtimeLists = Object.entries<unknown>(core).filter(
     (entry): entry is [string, readonly string[]] =>
       Array.isArray(entry[1]) && entry[1].every((value) => typeof value === 'string'),
   );

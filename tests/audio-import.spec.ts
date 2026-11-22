@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downmixToMono } from '@/lib/audio-channels';
 import { clearAudioAssetLeases, isAudioAssetLeased } from '@/persistence/asset-leases';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
@@ -7,6 +8,8 @@ import { garbageCollectMedia } from '@/persistence/gc';
 import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
 import { decodeAndIngest, ingestAudioBuffer } from '@/project/audio-import';
 import { analyzeAudioTags } from '@/project/audio-tags';
+import * as core from '@/wasm/index.js';
+import { rhythmResult } from './fakes/analysis';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
@@ -70,11 +73,13 @@ describe('ingestAudioBuffer', () => {
     const detectKeyCandidates = vi.fn(() => [
       { key: { name: 'D minor', shortName: 'Dm', confidence: 0.74 } },
     ]);
-    const analyzeRhythm = vi.fn(() => ({
-      bpm: 127,
-      timeSignature: { numerator: 7, denominator: 8, confidence: 0.66 },
-      grooveType: 'breakbeat',
-    }));
+    const analyzeRhythm = vi.fn(() =>
+      rhythmResult({
+        bpm: 127,
+        timeSignature: { numerator: 7, denominator: 8, confidence: 0.66 },
+        grooveType: 'shuffle',
+      }),
+    );
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Detailed loop', {
       analysis: { analyzeBpm, detectBpm, detectKeyCandidates, analyzeRhythm },
     });
@@ -86,7 +91,10 @@ describe('ingestAudioBuffer', () => {
       keyConfidence: 0.74,
       timeSignature: '7/8',
       timeSignatureConfidence: 0.66,
-      grooveType: 'breakbeat',
+      grooveType: 'shuffle',
+      syncopation: 0,
+      patternRegularity: 1,
+      tempoStability: 1,
     });
     expect(detectBpm).not.toHaveBeenCalled();
     clearAudioAssetCache();
@@ -96,13 +104,14 @@ describe('ingestAudioBuffer', () => {
   it('stores rhythm, dynamics and timbre tags for the asset inspector', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Detailed analysis', {
       analysis: {
-        analyzeRhythm: () => ({
-          timeSignature: { numerator: 4, denominator: 4, confidence: 0.7 },
-          syncopation: 0.42,
-          grooveType: 'straight',
-          patternRegularity: 0.86,
-          tempoStability: 0.93,
-        }),
+        analyzeRhythm: () =>
+          rhythmResult({
+            timeSignature: { numerator: 4, denominator: 4, confidence: 0.7 },
+            syncopation: 0.42,
+            grooveType: 'straight',
+            patternRegularity: 0.86,
+            tempoStability: 0.93,
+          }),
         analyzeDynamics: () => ({
           dynamicRangeDb: 9.5,
           peakDb: -1.2,
@@ -122,6 +131,7 @@ describe('ingestAudioBuffer', () => {
     });
 
     expect(meta.tags).toEqual({
+      bpm: 120,
       timeSignature: '4/4',
       timeSignatureConfidence: 0.7,
       syncopation: 0.42,
@@ -179,11 +189,12 @@ describe('ingestAudioBuffer', () => {
   it('persists rhythm, dynamics, timbre and caller tags without bpm/key/lufs', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Untuned one-shot', {
       analysis: {
-        analyzeRhythm: () => ({
-          timeSignature: { numerator: 5, denominator: 8, confidence: 0.73 },
-          syncopation: 0.58,
-          grooveType: 'broken',
-        }),
+        analyzeRhythm: () =>
+          rhythmResult({
+            timeSignature: { numerator: 5, denominator: 8, confidence: 0.73 },
+            syncopation: 0.58,
+            grooveType: 'swing',
+          }),
         analyzeDynamics: () => ({
           dynamicRangeDb: 12.4,
           peakDb: -0.8,
@@ -204,6 +215,9 @@ describe('ingestAudioBuffer', () => {
     });
 
     expect(meta.tags).toEqual({
+      bpm: 120,
+      patternRegularity: 1,
+      tempoStability: 1,
       timeSignature: '5/8',
       timeSignatureConfidence: 0.73,
       syncopation: 0.58,
@@ -350,16 +364,18 @@ describe('decodeAndIngest', () => {
   });
 
   it('rejects an oversized decoded buffer before copying channel data', async () => {
-    const getChannelData = vi.fn();
-    const decodeAudioData = vi.fn(
-      async () =>
-        ({
-          numberOfChannels: 2,
-          length: 33_554_433,
-          sampleRate: 48_000,
-          getChannelData,
-        }) as AudioBuffer,
-    );
+    const getChannelData = vi.fn<(channel: number) => Float32Array<ArrayBuffer>>();
+    const length = 33_554_433;
+    const decoded: AudioBuffer = {
+      numberOfChannels: 2,
+      length,
+      sampleRate: 48_000,
+      duration: length / 48_000,
+      getChannelData,
+      copyFromChannel: () => undefined,
+      copyToChannel: () => undefined,
+    };
+    const decodeAudioData = vi.fn(async () => decoded);
     vi.stubGlobal(
       'OfflineAudioContext',
       class {
@@ -370,5 +386,38 @@ describe('decodeAndIngest', () => {
     await expect(decodeAndIngest(new ArrayBuffer(8))).rejects.toThrow(/Decoded audio sample count/);
     expect(getChannelData).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
+  });
+});
+
+describe('analyzeAudioTags with the real core', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('reads tempo, key, meter and loudness tags from a click track', () => {
+    const sampleRate = 22050;
+    const bpm = 120;
+    const samples = new Float32Array(sampleRate * 8);
+    const beat = Math.round((60 / bpm) * sampleRate);
+    for (let start = 0; start < samples.length; start += beat) {
+      for (let i = 0; i < 400 && start + i < samples.length; i++) {
+        samples[start + i] = 0.8 * Math.sin((2 * Math.PI * 880 * i) / sampleRate) * (1 - i / 400);
+      }
+    }
+
+    const tags = analyzeAudioTags(samples, sampleRate, {
+      analyzeBpm: core.analyzeBpm,
+      detectKey: core.detectKey,
+      analyzeRhythm: core.analyzeRhythm,
+      analyzeDynamics: core.analyzeDynamics,
+      analyzeTimbre: core.analyzeTimbre,
+      lufs: core.lufs,
+    });
+
+    expect(tags.bpm).toBeGreaterThan(55);
+    expect(tags.timeSignature).toMatch(/^\d+\/\d+$/);
+    expect(['straight', 'shuffle', 'swing']).toContain(tags.grooveType);
+    expect(typeof tags.key).toBe('string');
+    expect(Number.isFinite(tags.lufs)).toBe(true);
   });
 });

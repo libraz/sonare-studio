@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useWebMidi } from '@/composables/useWebMidi';
-import type { WebMidiBinding } from '@/wasm/index.js';
+import type { WebMidiBinding, WebMidiEngine } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import { webMidiInputInfo } from './fakes/analysis';
 
 class FakeMidiInput {
   readonly listeners = new Set<(event: { data: Uint8Array; timeStamp: number }) => void>();
@@ -53,7 +55,7 @@ vi.mock('@/lib/wasm', () => ({
 function makeBinding(input: FakeMidiInput | FakeLegacyMidiInput) {
   return {
     access: { inputs: new Map([['input-1', input]]) },
-    inputs: () => [{ id: 'input-1', name: 'Controller' }],
+    inputs: () => [webMidiInputInfo()],
     destroy: wasmMock.destroy,
   } satisfies Partial<Omit<WebMidiBinding, 'access'>> & { access: unknown };
 }
@@ -121,8 +123,8 @@ describe('useWebMidi', () => {
         ]),
       },
       inputs: () => [
-        { id: 'first', name: 'First' },
-        { id: 'second', name: 'Second' },
+        webMidiInputInfo({ id: 'first', name: 'First' }),
+        webMidiInputInfo({ id: 'second', name: 'Second' }),
       ],
       destroy: wasmMock.destroy,
     });
@@ -309,10 +311,7 @@ describe('useWebMidi', () => {
           ['surface-1', surface],
         ]),
       },
-      inputs: () => [
-        { id: 'input-1', name: 'Controller' },
-        { id: 'surface-1', name: 'MCU' },
-      ],
+      inputs: () => [webMidiInputInfo(), webMidiInputInfo({ id: 'surface-1', name: 'MCU' })],
       destroy: wasmMock.destroy,
     }));
     (navigator as unknown as Record<string, unknown>).requestMIDIAccess = async () => ({
@@ -385,5 +384,61 @@ describe('useWebMidi', () => {
     expect(wasmMock.destroy).toHaveBeenCalledTimes(1);
     expect(webMidi.connected.value).toBe(false);
     await expect(webMidi.connect({} as never)).resolves.toBe(false);
+  });
+});
+
+describe('useWebMidi against the real core binding', () => {
+  const requestMIDIAccess = Object.getOwnPropertyDescriptor(navigator, 'requestMIDIAccess');
+
+  afterEach(() => {
+    if (requestMIDIAccess) Object.defineProperty(navigator, 'requestMIDIAccess', requestMIDIAccess);
+    else Reflect.deleteProperty(navigator, 'requestMIDIAccess');
+  });
+
+  it('lists the ports the core reports and routes a note-on into the engine', async () => {
+    const keyboard = new FakeMidiInput();
+    Object.defineProperty(navigator, 'requestMIDIAccess', {
+      configurable: true,
+      value: async () => ({
+        inputs: new Map([
+          [
+            'in-1',
+            Object.assign(keyboard, {
+              id: 'in-1',
+              name: 'Keys',
+              manufacturer: 'Acme',
+              state: 'connected' as const,
+            }),
+          ],
+        ]),
+        onstatechange: null,
+      }),
+    });
+    wasmMock.isWebMidiAvailable.mockImplementation(() => core.isWebMidiAvailable());
+    wasmMock.bindWebMidi.mockImplementation((engine, options) => core.bindWebMidi(engine, options));
+    const engine = {
+      bindMidiCc: vi.fn(),
+      setMidiInputSource: vi.fn(),
+      clearMidiInputSource: vi.fn(),
+      pushMidiInputNoteOn: vi.fn(),
+      pushMidiInputNoteOff: vi.fn(),
+      pushMidiInputCc: vi.fn(),
+    } satisfies WebMidiEngine;
+    const scope = effectScope();
+    let webMidi!: ReturnType<typeof useWebMidi>;
+    scope.run(() => {
+      webMidi = useWebMidi();
+    });
+
+    // The composable takes the full realtime engine; the core only drives this slice.
+    await expect(webMidi.connect(engine as never)).resolves.toBe(true);
+
+    expect(webMidi.inputs.value).toEqual([
+      webMidiInputInfo({ id: 'in-1', name: 'Keys', manufacturer: 'Acme' }),
+    ]);
+    keyboard.send([0x90, 60, 100]);
+    expect(engine.pushMidiInputNoteOn).toHaveBeenCalled();
+    expect(engine.pushMidiInputNoteOn.mock.calls[0].slice(0, 4)).toEqual([0, 0, 60, 100]);
+    scope.stop();
   });
 });

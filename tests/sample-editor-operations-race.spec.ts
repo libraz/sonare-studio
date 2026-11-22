@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { createPinia, setActivePinia } from 'pinia';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import { clearAudioAssetLeases, isAudioAssetLeased } from '@/persistence/asset-leases';
 import type { AudioAssetMeta, LoadedAudioAsset, SaveAssetInput } from '@/persistence/assets';
@@ -8,7 +9,9 @@ import type { SampleRange } from '@/ui/sample-editor/ops';
 import { SAMPLE_OPERATION_TIMEOUT_MS } from '@/ui/sample-editor/ops-client';
 import { useSampleOperations } from '@/ui/sample-editor/use-sample-operations';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
-import type { RirDiagnostic } from '@/wasm/index.js';
+import type { RirDiagnostic, RoomMorphRequest } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import { roomMorphFn, roomMorphResult } from './fakes/analysis';
 
 const assetStore = vi.hoisted(() => {
   const deleteAsset = vi.fn<(id: string) => Promise<void>>(async () => undefined);
@@ -207,14 +210,13 @@ describe('sample editor operation ownership', () => {
 
   it('reports room-synthesis diagnostics as notices after the edit commits', async () => {
     assetStore.saveAsset.mockResolvedValue(meta('asset-b'));
-    const roomMorph = vi.fn((samples: Float32Array) => ({
-      audio: samples,
-      sampleRate: 48000,
-      diagnostics: [
-        { code: 'acoustic.rir_tail_truncated', message: 'raw tail text', severity: 'warning' },
-        { code: 'acoustic.future_code', message: 'raw future text', severity: 'warning' },
-      ] as RirDiagnostic[],
-    }));
+    const diagnostics: RirDiagnostic[] = [
+      { code: 'acoustic.rir_tail_truncated', message: 'raw tail text', severity: 'warning' },
+      { code: 'acoustic.future_code', message: 'raw future text', severity: 'warning' },
+    ];
+    const roomMorph = roomMorphFn((request: RoomMorphRequest) =>
+      roomMorphResult(request.samples, diagnostics),
+    );
     const context = setupOperation(loadedAsset('asset-a'), { roomMorph });
 
     await context.operations.onPlaceInRoom();
@@ -226,5 +228,22 @@ describe('sample editor operation ownership', () => {
 
     await context.operations.onGain();
     expect(context.operations.notices.value).toEqual([]);
+  });
+  describe('with the real core', () => {
+    beforeAll(async () => {
+      await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    });
+
+    // The editor's default room preset is 4 x 3 m, which the core refuses
+    // (listener outside the room), so placing a clip in it fails.
+    it.fails('places a clip in the default room preset', async () => {
+      assetStore.saveAsset.mockResolvedValue(meta('asset-b'));
+      const context = setupOperation(loadedAsset('asset-a'), core);
+
+      await context.operations.onPlaceInRoom();
+
+      expect(context.error.value).toBeNull();
+      expect(assetStore.saveAsset).toHaveBeenCalledOnce();
+    });
   });
 });

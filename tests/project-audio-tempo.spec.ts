@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   beatsToTimeSignatures,
@@ -9,6 +10,9 @@ import {
   estimateAudioClipMeter,
   ODD_METER_CANDIDATES,
 } from '@/project/audio-tempo';
+import type { EstimateMeterRequest } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import { meterEstimate, timeSignature } from './fakes/analysis';
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(
@@ -226,11 +230,13 @@ describe('estimateAudioClipMeter', () => {
   const analysis = { beatTimes, beatStrengths: beatTimes.map(() => 1) };
 
   it('reads one meter with its grouping over the clip, from the requested candidates', async () => {
-    const estimateMeter = vi.fn(() => ({
-      timeSignature: { numerator: 7, denominator: 4 },
-      grouping: [3, 2, 2],
-      searched: true,
-    }));
+    const estimateMeter = vi.fn((_request: EstimateMeterRequest) =>
+      meterEstimate({
+        timeSignature: timeSignature({ numerator: 7, denominator: 4 }),
+        grouping: [3, 2, 2],
+        searched: true,
+      }),
+    );
     const segments = await estimateAudioClipMeter(
       clipWindow(),
       120,
@@ -248,11 +254,8 @@ describe('estimateAudioClipMeter', () => {
   });
 
   it('reports nothing when the series was too short to search or the accents do not line up', async () => {
-    const unsearched = () => ({
-      timeSignature: { numerator: 4, denominator: 4 },
-      grouping: [4],
-      searched: false,
-    });
+    const unsearched = () =>
+      meterEstimate({ timeSignature: timeSignature(), grouping: [4], searched: false });
     const deps = { loadAudioAsset: async () => asset(48000 * 8), estimateMeter: unsearched };
     expect(
       await estimateAudioClipMeter(clipWindow(), 120, { ...deps, analyze: async () => analysis }),
@@ -298,16 +301,31 @@ describe('clip analysis signal', () => {
           seen.push(signal);
           return { beatTimes: [], beatStrengths: [] };
         },
-        estimateMeter: () => ({
-          timeSignature: { numerator: 4, denominator: 4 },
-          grouping: [],
-          searched: false,
-        }),
+        estimateMeter: () => meterEstimate({ grouping: [], searched: false }),
       },
       undefined,
       [],
       controller.signal,
     );
     expect(seen).toEqual([controller.signal, controller.signal, controller.signal]);
+  });
+});
+
+describe('estimateAudioClipMeter with the real core', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('reads a four-beat bar from accents on every fourth beat', async () => {
+    const beatTimes = Array.from({ length: 32 }, (_, index) => index * 0.5);
+    const beatStrengths = beatTimes.map((_, index) => (index % 4 === 0 ? 1 : 0.3));
+    const segments = await estimateAudioClipMeter(clipWindow({ lengthPpq: 32 }), 120, {
+      loadAudioAsset: async () => asset(48000 * 16),
+      analyze: async () => ({ beatTimes, beatStrengths }),
+      estimateMeter: core.estimateMeter,
+    });
+    expect(segments).toHaveLength(1);
+    expect(segments[0].numerator).toBe(4);
+    expect(segments[0].denominator).toBe(4);
   });
 });

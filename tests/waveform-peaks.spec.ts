@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   type ChannelPeaks,
   computePeaks,
@@ -8,6 +9,8 @@ import {
   type WaveformPeaksModule,
 } from '@/ui/waveform/peaks';
 import type { WaveformPeaksReport, WaveformPeaksRequest } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import { waveformPeaksReport } from './fakes/analysis';
 
 /** Shorthand for a peaks pair from plain number arrays. */
 function peaks(min: number[], max: number[]): ChannelPeaks {
@@ -79,12 +82,13 @@ describe('computePeaks (wasm delegation)', () => {
 
   it('falls back when a shorter delegate report would leave blank tail buckets', () => {
     const mod: WaveformPeaksModule = {
-      waveformPeaks: () => ({
-        min: [new Float32Array([-1])],
-        max: [new Float32Array([1])],
-        bucketCount: 1,
-        samplesPerBucket: 4,
-      }),
+      waveformPeaks: () =>
+        waveformPeaksReport({
+          min: [new Float32Array([-1])],
+          max: [new Float32Array([1])],
+          bucketCount: 1,
+          samplesPerBucket: 4,
+        }),
     };
     expect(computePeaks([new Float32Array([1, -1, 1, -1])], 3, { wasm: mod })).toEqual([
       peaks([1, -1, -1], [1, -1, 1]),
@@ -165,24 +169,9 @@ describe('WaveformPeaksCache', () => {
   it('reduces a coarser zoom level from a cached finer one', () => {
     const scan = vi.fn();
     const counting: WaveformPeaksModule = {
-      waveformPeaks: (samples, channels, options) => {
+      waveformPeaks: (request) => {
         scan();
-        const width = options?.samplesPerBucket ?? 1;
-        const frames = samples.length / channels;
-        const buckets = Math.ceil(frames / width);
-        const min = new Float32Array(buckets);
-        const max = new Float32Array(buckets);
-        for (let b = 0; b < buckets; b++) {
-          let lo = Number.POSITIVE_INFINITY;
-          let hi = Number.NEGATIVE_INFINITY;
-          for (let i = b * width; i < Math.min(frames, (b + 1) * width); i++) {
-            lo = Math.min(lo, samples[i * channels]);
-            hi = Math.max(hi, samples[i * channels]);
-          }
-          min[b] = Number.isFinite(lo) ? lo : 0;
-          max[b] = Number.isFinite(hi) ? hi : 0;
-        }
-        return { min, max, channels, bucketCount: buckets, samplesPerBucket: width };
+        return scanningWaveformPeaks(request);
       },
     };
     const cache = createWaveformPeaksCache({ wasm: counting });
@@ -275,5 +264,28 @@ describe('computeWindowPeaks', () => {
       bucketCount,
     );
     expect(computeWindowPeaks(channels, start, end, bucketCount)).toEqual(expected);
+  });
+});
+
+describe('computePeaks against the real core', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('matches the pure path bucket for bucket', () => {
+    const channels = [
+      Float32Array.from({ length: 1000 }, (_, i) => Math.sin(i / 7)),
+      Float32Array.from({ length: 1000 }, (_, i) => Math.cos(i / 11) * 0.5),
+    ];
+    const waveformPeaks = vi.fn(core.waveformPeaks);
+    const viaCore = computePeaks(channels, 100, { wasm: { waveformPeaks } });
+    expect(waveformPeaks).toHaveBeenCalledOnce();
+    const pure = computePeaks(channels, 100);
+    expect(viaCore).toHaveLength(2);
+    viaCore.forEach((channel, c) => {
+      expect(channel.min).toHaveLength(100);
+      expect(Array.from(channel.min)).toEqual(Array.from(pure[c].min));
+      expect(Array.from(channel.max)).toEqual(Array.from(pure[c].max));
+    });
   });
 });

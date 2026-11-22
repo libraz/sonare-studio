@@ -1,23 +1,26 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
+import * as core from '@/wasm/index.js';
+import { noteSegment, pitchResult } from './fakes/analysis';
 
 /** A three-note contour: two legato notes then one after a rest. */
-const CONTOUR = {
+const CONTOUR = pitchResult({
   f0: new Float32Array([220, 220, 262, 262, 0, 330]),
   // Below the segmenter's voicing gate on purpose: the tracker's confidence
   // must not be what decides voicing.
   voicedProb: new Float32Array([0.44, 0.43, 0.42, 0.41, 0.01, 0.4]),
   voicedFlag: [true, true, true, true, false, true],
   medianF0: 262,
-};
+});
 
 const SEGMENTS = [
-  { frameStart: 0, frameEnd: 2, startSec: 0, endSec: 0.25, medianCents: -900 },
-  { frameStart: 2, frameEnd: 4, startSec: 0.25, endSec: 0.5, medianCents: -500 },
-  { frameStart: 5, frameEnd: 6, startSec: 0.75, endSec: 1, medianCents: -200 },
+  noteSegment({ frameStart: 0, frameEnd: 2, startSec: 0, endSec: 0.25, medianCents: -900 }),
+  noteSegment({ frameStart: 2, frameEnd: 4, startSec: 0.25, endSec: 0.5, medianCents: -500 }),
+  noteSegment({ frameStart: 5, frameEnd: 6, startSec: 0.75, endSec: 1, medianCents: -200 }),
 ];
 
 function asset(sampleRate = 48000, numFrames = 48000): LoadedAudioAsset {
@@ -27,12 +30,12 @@ function asset(sampleRate = 48000, numFrames = 48000): LoadedAudioAsset {
   };
 }
 
-function harness(ops: SampleEditorWasmOps | null) {
+function harness(ops: SampleEditorWasmOps | null, loaded: LoadedAudioAsset = asset()) {
   const busy = ref(false);
   const errors: string[] = [];
   const markers = useSampleMarkers({
     wasmOps: () => ops,
-    asset: () => asset(),
+    asset: () => loaded,
     silenceThresholdInput: () => '40',
     busy,
     setError: (message) => {
@@ -133,5 +136,30 @@ describe('useSampleMarkers note detection', () => {
     await markers.onDetectNotes();
     expect(busy.value).toBe(false);
     expect(markers.onsetFrames.value).toEqual([]);
+  });
+});
+
+describe('useSampleMarkers note detection with the real core', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('finds the note of a sustained A4 through pYIN and the segmenter', async () => {
+    const sampleRate = 22050;
+    const tone = Float32Array.from(
+      { length: sampleRate },
+      (_, i) => 0.5 * Math.sin((2 * Math.PI * 440 * i) / sampleRate),
+    );
+    const loaded: LoadedAudioAsset = {
+      meta: { id: 't', name: 't', sampleRate, numChannels: 1, numFrames: tone.length },
+      channels: [tone],
+    };
+    const { markers, errors } = harness(core, loaded);
+
+    await markers.onDetectNotes();
+
+    expect(errors).toEqual([]);
+    expect(markers.noteRegions.value.length).toBeGreaterThan(0);
+    expect(markers.noteRegions.value[0].midi).toBeCloseTo(69, 0);
   });
 });

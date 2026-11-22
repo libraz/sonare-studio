@@ -32,12 +32,15 @@ const LABEL_KINDS = Object.entries(GLOSSARY_KEY_FOR_KIND)
  * Glossary keys the card resolves: the labelled kinds, the chord-scale line's
  * term, and the three functions.
  */
-const GLOSSARY_KEYS = [
-  ...new Set([...Object.values(GLOSSARY_KEY_FOR_KIND).filter((k): k is string => k !== undefined)]),
-  'chordScale',
-  'tonic',
-  'subdominant',
-  'dominant',
+type GlossaryKey = keyof (typeof MESSAGES)['en']['theory']['glossary'];
+const GLOSSARY_KEYS: ReadonlyArray<GlossaryKey> = [
+  ...new Set<GlossaryKey>([
+    ...Object.values(GLOSSARY_KEY_FOR_KIND).filter((k): k is GlossaryKey => k !== undefined),
+    'chordScale',
+    'tonic',
+    'subdominant',
+    'dominant',
+  ]),
 ];
 
 describe('explanation-level wording', () => {

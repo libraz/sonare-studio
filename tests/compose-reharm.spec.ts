@@ -1,4 +1,4 @@
-import { BORROWED_DEGREES, chordPitchClasses } from '@libraz/libcantus';
+import { BORROWED_DEGREES, chordPitchClasses, type ProgressionPreset } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { editorChordToChord } from '@/compose/chord-io';
 import { presetNotation } from '@/compose/preset-notation';
@@ -164,36 +164,36 @@ describe('negativeHarmonyFor', () => {
 
 describe('presetNotation', () => {
   it('uses the borrowed bIII notation for a custom preset degree', () => {
-    const preset = {
+    const preset: ProgressionPreset = {
       id: 'custom-bIII',
       name: 'Custom bIII',
       degrees: [BORROWED_DEGREES.bIII],
       functional: 'loop',
       styles: ['minimal'],
-    } as const;
+    };
     expect(presetNotation(preset, 'minimal', C_MAJOR)).toBe('♭III (E♭)');
   });
 
   it('uses borrowed Roman numerals and flat spellings for Neapolitan presets', () => {
-    const preset = {
+    const preset: ProgressionPreset = {
       id: 'neapolitanPop',
       name: 'Neapolitan Pop',
       // Diatonic degrees are 1-based; 12 and 13 are borrowed-chord codes.
       degrees: [6, 12, 13, 5, 1],
       functional: 'cadenceStrong',
       styles: ['minimal'],
-    } as const;
+    };
     expect(presetNotation(preset, 'minimal', C_MAJOR)).toBe('vi–iv–♭II–V–I (Am–Fm–D♭–G–C)');
   });
 
   it('uses the KeyScale signature for preset chord names in E major', () => {
-    const preset = {
+    const preset: ProgressionPreset = {
       id: 'fourChordPop',
       name: 'Four Chord Pop',
       degrees: [1, 5, 6, 4],
       functional: 'loop',
       styles: ['minimal'],
-    } as const;
+    };
     const eMajor = { rootPc: 4, modeMask12: MAJOR_MODE_MASK };
     expect(presetNotation(preset, 'minimal', eMajor)).toBe('I–V–vi–IV (E–B–C#m–A)');
   });
