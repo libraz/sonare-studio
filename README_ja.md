@@ -15,7 +15,7 @@
 
 ## 土台
 
-**[libsonare](https://github.com/libraz/libsonare)** がオーディオ側です。C++17 のコアを WebAssembly へコンパイルしたもので、プロジェクトモデル、DSP、マスタリングチェイン、解析、オフラインレンダラーを持ちます。このリポジトリは 1.9.1 のビルド成果物を `src/wasm/` に抱えていて、`yarn copy:wasm` で同期します。
+**[libsonare](https://github.com/libraz/libsonare)** がオーディオ側です。C++17 のコアを WebAssembly へコンパイルしたもので、プロジェクトモデル、DSP、マスタリングチェイン、解析、オフラインレンダラーを持ちます。このリポジトリはそのビルド成果物を `src/wasm/` に抱えていて、`yarn copy:wasm` で同期します。
 
 **[libcantus](https://github.com/libraz/libcantus)** が理論側です。`@libraz/libcantus` として公開している依存ゼロの TypeScript ライブラリで、和音の綴り、キーと形式の解析、対位法の規則、ボイシング、パート生成を担当します。`src/compose/` がその結果をプロジェクトモデルと UI の言い回しへ橋渡しします。こちらは wasm を通りません。
 

@@ -24,7 +24,7 @@ the browser's origin-private file system and leave it as ordinary files.
 **[libsonare](https://github.com/libraz/libsonare)** is the audio side: a C++17
 core compiled to WebAssembly that owns the project model, the DSP, the mastering
 chain, the analysis and the offline renderer. This repository carries a copy of
-its 1.9.1 build output under `src/wasm/`, synced with `yarn copy:wasm`.
+its build output under `src/wasm/`, synced with `yarn copy:wasm`.
 
 **[libcantus](https://github.com/libraz/libcantus)** is the theory side: a
 dependency-free TypeScript library, published as `@libraz/libcantus`, that does
