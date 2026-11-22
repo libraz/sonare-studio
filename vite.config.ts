@@ -135,7 +135,13 @@ function buildCommit(): string {
 // a fixed filename would let a stale worklet bundle survive an engine refresh
 // and fail at wasm instantiation with a missing-import LinkError.
 export default defineConfig({
-  plugins: [vue(), pwaPrecacheManifest()],
+  // The E2E build (VITE_SONARE_E2E=1) keeps the element-to-component links the
+  // smoke scenarios read component props through. Debt: that couples them to a
+  // Vue dev-only internal; a scenario should read state from __sonareDebug.
+  plugins: [
+    vue({ features: { prodDevtools: env.VITE_SONARE_E2E === '1' } }),
+    pwaPrecacheManifest(),
+  ],
   resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
   define: {
     __SONARE_WORKLET_MODULE_URL__: JSON.stringify(workletModuleUrl()),

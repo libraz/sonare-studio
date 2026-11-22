@@ -14,12 +14,15 @@
  *   SONARE_E2E_PORT=5300 yarn e2e
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, writeFileSync } from 'node:fs';
 
 const port = Number(process.env.SONARE_E2E_PORT ?? 5299);
 const baseUrl = `http://localhost:${port}`;
 const READY_TIMEOUT_MS = 120_000;
 
 const OUT_DIR = '.e2e-dist';
+/** The preview server's stdout and stderr, kept whole for a server that dies mid-run. */
+const SERVER_LOG = `${OUT_DIR}/preview-server.log`;
 
 for (const args of [['build:worklet'], ['vite', 'build', '--outDir', OUT_DIR, '--emptyOutDir']]) {
   const step = spawnSync('yarn', args, {
@@ -38,17 +41,24 @@ const server = spawn(
   },
 );
 let serverLog = '';
+writeFileSync(SERVER_LOG, '');
 const keepLog = (chunk) => {
   serverLog += chunk;
+  appendFileSync(SERVER_LOG, chunk);
 };
 server.stdout.on('data', keepLog);
 server.stderr.on('data', keepLog);
 let serverExited = false;
-server.on('exit', () => {
+let stopping = false;
+server.on('exit', (code, signal) => {
   serverExited = true;
+  const line = `[preview server exited: code ${code}, signal ${signal}, at ${new Date().toISOString()}]\n`;
+  appendFileSync(SERVER_LOG, line);
+  if (!stopping) process.stderr.write(`${line}server output: ${SERVER_LOG}\n`);
 });
 
 function stopServer() {
+  stopping = true;
   if (serverExited) return;
   try {
     // Negative pid: the whole group, so vite dies along with the yarn wrapper.
