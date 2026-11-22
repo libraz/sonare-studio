@@ -8,8 +8,8 @@
       "!**/dist",
       "!**/coverage",
       "!**/*.css",
-      "!src/wasm",
-      "!src/project/demo/*.json"
+      "!src/project/demo/*.json",
+      "!.github/ISSUE_TEMPLATE"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
@@ -50,8 +50,8 @@
   "overrides": [
     {
       // The 2.6 markdown formatter widens a table cell holding an HTML comment by one
-      // space on every run, and this file keys each row with a shortcut-action comment.
-      "includes": ["docs/shortcuts.md"],
+      // space on every run, and these files key each row with a shortcut-action comment.
+      "includes": ["docs/*/shortcuts.md"],
       "formatter": { "enabled": false }
     },
     {

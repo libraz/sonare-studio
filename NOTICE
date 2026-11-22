@@ -1,0 +1,75 @@
+sonare studio
+Copyright libraz
+
+sonare studio is licensed under the GNU Affero General Public License v3.0 or
+later; see LICENSE. The built app bundles the third-party components below,
+each under its own licence. Development-only tools are not listed.
+
+================================================================================
+libsonare (audio engine, sonare.wasm)
+================================================================================
+
+  Licensed under the Apache License, Version 2.0 (SPDX: Apache-2.0).
+  https://github.com/libraz/libsonare
+
+  The WebAssembly binary includes third-party code attributed in libsonare's
+  own NOTICE: https://github.com/libraz/libsonare/blob/main/NOTICE
+
+================================================================================
+libcantus (music theory)
+================================================================================
+
+  Licensed under the Apache License, Version 2.0 (SPDX: Apache-2.0).
+  https://github.com/libraz/libcantus
+
+================================================================================
+Verovio (score engraving)
+================================================================================
+
+  Licensed under the GNU Lesser General Public License v3.0 or later
+  (SPDX: LGPL-3.0-or-later).
+  https://www.verovio.org
+
+================================================================================
+lamejs, @breezystack/lamejs (MP3 encoding)
+================================================================================
+
+  A JavaScript port of LAME. Licensed under the GNU Lesser General Public
+  License v3.0 (SPDX: LGPL-3.0).
+  https://github.com/shijinyu/lamejs
+
+================================================================================
+Bricolage Grotesque (UI typeface)
+================================================================================
+
+  Copyright 2022 The Bricolage Grotesque Project Authors
+  (https://github.com/ateliertriay/bricolage)
+
+  Licensed under the SIL Open Font License, Version 1.1 (SPDX: OFL-1.1).
+  https://openfontlicense.org
+
+================================================================================
+DOMPurify
+================================================================================
+
+  Licensed under the Mozilla Public License 2.0 or the Apache License,
+  Version 2.0 (SPDX: MPL-2.0 OR Apache-2.0); used here under Apache-2.0.
+  https://github.com/cure53/DOMPurify
+
+================================================================================
+pako
+================================================================================
+
+  Licensed under the MIT License and the zlib License (SPDX: MIT AND Zlib).
+  https://github.com/nodeca/pako
+
+================================================================================
+Components under the MIT, ISC and BSD licences
+================================================================================
+
+  Vue (https://vuejs.org), Pinia (https://pinia.vuejs.org),
+  fflate (https://github.com/101arrowz/fflate),
+  jsPDF (https://github.com/parallax/jsPDF),
+  svg2pdf.js (https://github.com/yWorks/svg2pdf.js),
+  saxes (https://github.com/lddubeau/saxes), and their runtime dependencies.
+  Each package's licence text ships in its npm package.

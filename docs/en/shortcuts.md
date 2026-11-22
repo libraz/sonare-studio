@@ -4,7 +4,7 @@
 input, textarea, select or contenteditable element has focus.
 
 > **Registry source:** the customizable shortcuts below are declared in the
-> registry at [`src/ui/settings/shortcuts.ts`](../src/ui/settings/shortcuts.ts)
+> registry at [`src/ui/settings/shortcuts.ts`](../../src/ui/settings/shortcuts.ts)
 > (`SHORTCUT_ACTIONS`); user overrides replace an action's default keys per
 > action. When you add or change an action there, update this table.
 

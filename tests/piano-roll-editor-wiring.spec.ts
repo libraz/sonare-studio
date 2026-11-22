@@ -6,7 +6,7 @@ const read = (path: string): string => readFileSync(resolve(process.cwd(), path)
 
 const editor = read('src/components/piano-roll/PianoRollEditor.vue');
 const arrangement = read('src/components/arrangement/ArrangementView.vue');
-const shortcuts = read('docs/shortcuts.md');
+const shortcuts = read('docs/en/shortcuts.md');
 
 describe('piano-roll editor wiring', () => {
   it('gives the note lane the same color resolver as the grid', () => {

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md
+    about: What the app does, how to run it, and its keyboard shortcuts
+  - name: Audio engine issues
+    url: https://github.com/libraz/libsonare/issues
+    about: DSP, analysis and rendering belong to the libsonare engine
+  - name: Security vulnerabilities
+    url: https://github.com/libraz/sonare-studio/blob/main/SECURITY.md
+    about: Report privately as described in the security policy

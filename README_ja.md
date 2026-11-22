@@ -1,166 +1,60 @@
 # sonare studio
 
-ブラウザだけで完結するデジタルオーディオワークステーションです。[libsonare](https://github.com/libraz/libsonare) の WebAssembly エンジンと [libcantus](https://github.com/libraz/libcantus) の音楽理論ライブラリの上に作っています。
-
-[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](./LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](https://github.com/libraz/sonare-studio/blob/main/LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![Platform](https://img.shields.io/badge/platform-browser%20%7C%20WebAssembly-lightgrey)](https://github.com/libraz/sonare-studio)
 
-サーバーはなく、どこにもアップロードしません。オーディオエンジン、プロジェクトモデル、オフラインレンダラー、書き出しのすべてがタブの中で動きます。プロジェクトはブラウザの origin-private file system に保存し、そこから普通のファイルとして取り出せます。
+**sonare studio は、ブラウザの中だけで動き、何もアップロードしない DAW です。** アレンジ、ピアノロール、ミキサー、マスタリング、浄書した譜面、理論に基づく作曲のすべてが、WebAssembly のオーディオエンジンでタブの中で動きます。プロジェクトは、普通のファイルとして書き出すまで、ブラウザ自身のストレージに置かれます。
 
-![シェルの模式図。メニューバー、アレンジとその下のタブ式エディタードック、隣のデバイスラック、最下段のトランスポートバー](docs/assets/shell-layout.svg)
+📖 **[ドキュメント](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md)** &nbsp;·&nbsp; **[はじめに](https://github.com/libraz/sonare-studio/blob/main/docs/ja/getting-started.md)** &nbsp;·&nbsp; **[キーボードショートカット](https://github.com/libraz/sonare-studio/blob/main/docs/ja/shortcuts.md)**
 
-> **ステータス** — 個人の試作であり、無保証の実験的なソフトウェアです。1.0 前なので、`.szd` プロジェクト形式もエンジンの ABI もコミット間で変わることがあります。第三者によるレビューや監査は受けていません。
+> 1.0 前の実験的なソフトウェアで、無保証です。`.szd` プロジェクト形式はリリース間で変わることがあり、コードは第三者による監査を受けていません。
 
-## 土台
-
-**[libsonare](https://github.com/libraz/libsonare)** がオーディオ側です。C++17 のコアを WebAssembly へコンパイルしたもので、プロジェクトモデル、DSP、マスタリングチェイン、解析、オフラインレンダラーを持ちます。このリポジトリはそのビルド成果物を `src/wasm/` に抱えていて、`yarn copy:wasm` で同期します。
-
-**[libcantus](https://github.com/libraz/libcantus)** が理論側です。`@libraz/libcantus` として公開している依存ゼロの TypeScript ライブラリで、和音の綴り、キーと形式の解析、対位法の規則、ボイシング、パート生成を担当します。`src/compose/` がその結果をプロジェクトモデルと UI の言い回しへ橋渡しします。こちらは wasm を通りません。
-
-譜面の浄書は Verovio、UI は Vue 3 と Pinia です。
+![シェルの模式図。メニューバー、アレンジとその下のタブ式エディタードック、隣のデバイスラック、最下段のトランスポートバー](docs/images/shell-layout.svg)
 
 ## できること
 
-**アレンジ**。MIDI クリップとオーディオクリップ、セクション、マーカー、コードレーン、テンポ／拍子マップを持つマルチトラックのタイムラインです。クリップは分割・クロスフェード・ワープ・フリーズができます。セクションは素材から検出でき、繰り返し方に応じて色が付きます。
+- **アレンジ** — セクション、マーカー、コードレーン、テンポ／拍子マップ、ワープ、フリーズを備えた、マルチトラックの MIDI／オーディオタイムライン。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **ノートを編集する** — コントローラーレーン、装飾、MIDI FX、エクスプレッションマップ、グルーヴ、ステップ入力、ステップシーケンサーを備えたピアノロール。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **音を鳴らす** — 内蔵シンセ、GM/GS 音色とドラムキット、SoundFont（SF2）再生、マルチティンバー構成。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **ミックスとマスタリング** — インサート、センド、オートメーション、メーターを備えたチャンネル／バス／VCA ストリップと、ラウドネスターゲット付きのマスタリングチェイン。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **譜面を読む** — アクティブクリップを Verovio で浄書し、コードシンボル、印刷、PDF、MusicXML 書き出しに対応。[アーキテクチャ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/architecture.md#譜面は導出物で入力手段ではない)
+- **作曲する** — 1 つの再現可能なシードから生成するコード進行とパート、リハーモナイズ、ノートごとの理論ガイダンス。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **録音してオーディオを解析する** — テイクとコンピング、テンポ／コード／セクションの解析、オーディオから MIDI への採譜、ステム分離。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **ファイルを出し入れする** — `.szd`、DAWproject、Standard MIDI File、MIDI 2.0 クリップ、MusicXML、ステム、WAV / FLAC / MP3 のミックスダウン。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
+- **オフラインで使う** — インストール可能な PWA、英語と日本語の UI、再割り当て可能なショートカット、自動保存と名前付きリビジョン。[キーボードショートカット](https://github.com/libraz/sonare-studio/blob/main/docs/ja/shortcuts.md)
 
-**ノートを編集する**。ピアノロールにはスナップグリッド、ベロシティとコントローラーのレーン、ゴーストノート、装飾、MIDI FX、エクスプレッションマップ、グルーヴ、QWERTY キーでの音符入力とステップ入力があります。パターン、ユークリッド、ランダマイズはステップシーケンサーが受け持ちます。
+## はじめに
 
-**音を鳴らす**。トラックごとの音源として、内蔵シンセのプリセット、内蔵 GM/GS 音色とドラムキット、SoundFont（SF2）再生、チャンネル 10 をドラムキットとする GM 相当のマルチティンバー構成を選べます。読み込んだ MIDI に GS EFX SysEx が含まれる場合、SF2 音源の GS インサートエフェクトを Modern／Classic から選べます。各トラックにはインサートチェインとクイックコントロールがデバイスラックに並びます。
-
-**ミックスとマスタリング**。チャンネルストリップはゲイン、パン、センド、EQ、インサートを備え、バスストリップと VCA ストリップ、ミキサースナップショット、サイドチェインキー、ソロセーフ、ストリップ単位のオートメーションが使えます。メーターはレベル、ゲインリダクション、スペクトラム、ゴニオメーターをマスターと全ストリップで表示します。マスターバスには EQ、マルチバンドダイナミクス、サチュレーション、ステレオツール、トゥルーピークマキシマイザーからなるマスタリングチェインがあり、A/B プレビューと配信ラウドネスターゲットが付きます。
-
-**譜面を読む**。アクティブクリップを Verovio で浄書し、コードシンボルの推定、ページレイアウト、印刷、PDF・MusicXML 書き出しに対応します。強弱、アーティキュレーション、スラーといった注記と浄書だけの移調はスコアパネルから、ゴースト、フラム、ドラッグ、スライド、アクセントは拍子が許す位置へピアノロールの Decorate パネルからクリップ全体にまとめて置けます。いずれも MIDI には書き戻しません（[譜面は導出物](#譜面は導出物で入力手段ではない)を参照）。
-
-**作曲する**。スタイルとプリセットからコード進行を生成するか、既存のメロディーに合わせて付けたうえで、その上にパートを生成します。モチーフ、ドラム、ベース、対旋律、コードバッキングがあり、それぞれにグルーヴ、コンター、レジスター、ボイシングを指定できます。アレンジ全体は 1 つのプロジェクトシードから引くので、振り直しても同じ結果を再現できます。リハーモナイズはダイアトニックでも、セカンダリードミナントや借用和音を使ってもでき、編集に追従して自動で走らせることもできます。ガイダンスカードは、カーソル下の音を現在のコードとキーに照らして読み、スケール度数、コードトーンかテンションか、終止の到達点、転調のピボット、下声部に対する対位法を、初心者・通常・理論の 3 段階の言い回しで示します。音符を置く前には、配置ガイドが置こうとしている列の各音高を、打楽器を除く他のすべてのパートに対して安全・警告・NG の 3 段階で塗り分けます。プロファイルは対位法とポップスから選べます。伴奏トラックに「追従する旋律」を設定すると、旋律と衝突するルート以外の音を間引き、衝突がなくなれば元に戻します（伴奏の追従）。間引きと復元は、元の編集と同じ undo の 1 手に収まります。「調の変化を検出」はノートから転調候補を推定し、選んだものを Key: マーカーとして追加します。トラックの音域は声部や楽器のプリセットに固定できます。
-
-**録音してオーディオを解析する**。マイク録音はモニタリング、カウントイン、メトロノーム、パンチ、サイクル録音によるテイク取りに対応し、テイク間のコンピングもできます。読み込んだオーディオからはテンポ、コード、セクションを解析し、メロディ／ポリフォニックのモードを選んで MIDI クリップへ採譜したり、ハーモニック・パーカッシブ・残差のステムに分離したりできます。採譜はキャンセル可能なワーカーで実行し、トラックとノートを一度の Undo で戻せます。ポリフォニックモードは長いクリップを重なりのあるチャンクに分けて読み、1 チャンクが 256 MiB のメモリ予算に収まらない場合だけ拒否します。クリップの中身はサンプルエディターで編集でき、メディアブラウザーはキーと BPM でアセットを絞り込み、ラウドネスで並べ替えます。
-
-**ファイルを出し入れする**。`.szd` プロジェクト、DAWproject、Standard MIDI File、MIDI 2.0 クリップファイル、MusicXML、分離済みステム、WAV / FLAC / MP3 のミックスダウン（ブラウザが用意していれば AAC と Opus も）を扱います。オーディオ書き出しではトラック別・バス別・マスターのステムをレンダリングし、ラウドネスとクリップを報告できます。形式が表現できないものがある場合は、確定前にダイアログが落ちる内容を列挙します。
-
-**アプリとして使う**。PWA としてインストールでき、オフラインでも動き、OS 側から `.szd` を開けます。UI は英語と日本語、音名は 5 方式、テーマはライトとダーク、ショートカットは再割り当て可能で `?` のチートシートが出ます。ほかにコマンドパレット、MIDI ラーンとコントロールサーフェスの割り当て、初回起動ツアー、キャンバス面をキーボードで辿るオブジェクトナビゲーター、名前付きワークスペースレイアウト（Compose、Mix、Score、Arrange）があります。ブラウザストレージに対しては自動保存と名前付きリビジョンが動き、ブラウザのバックアップの書き出しと読み込みでストレージ全体を 1 つのファイルで移せます。
-
-キーボードリファレンス: [docs/shortcuts.md](docs/shortcuts.md)
-
-## できないこと
-
-- **MPE には対応していません**。エクスプレッションレーンは MIDI 1.0 のチャンネルを使い、ポリフォニックプレッシャーはノート単位ではなくピッチ単位で保持します。
-- **プラグインはホストしません**。音源とエフェクトはエンジンに入っているものだけで、VST/AU/CLAP のブリッジはありません。
-- **譜面は表示専用です**。そこから音符を入力・編集することはできません。
-- **アカウント、同期、共同編集はありません**。1 つのブラウザプロファイルに 1 組のプロジェクトです。
-- **DAWproject と MusicXML の往復は不可逆です**。これは形式側の性質によるものです。黙って落とすのではなく、落とす内容を提示します。
-
-## 動作要件
-
-- Chromium 系または Firefox 系の最近のブラウザ。AudioWorklet、WebAssembly、OPFS、および利用できる場合は SharedArrayBuffer を使います。
-- **クロスオリジン分離**。開発サーバーとプレビューサーバー、および同梱の `public/_headers` が `Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` を送ります。SharedArrayBuffer にはこれが必要です。分離されていない環境ではエンジンは postMessage 経由に切り替わり、動作は続きます。
-- Node 24 と Yarn 4。[mise](https://mise.jdx.dev) を使って `mise.toml` で固定しています。
-
-## はじめかた
+アプリの実行には、最近の Chromium 系または Firefox 系のブラウザが必要です。ローカルで動かすには、Node 24 と Yarn 4（`mise.toml` で固定）が必要です。
 
 ```sh
 yarn install
-
-# libsonare の wasm 成果物をコピーします。../libsonare に
-# bindings/wasm/dist をビルド済みのチェックアウトがある前提です。
-yarn copy:wasm
-
-yarn dev
+yarn dev      # dev server with cross-origin-isolation headers; open the printed URL
+yarn build    # production build into dist/
 ```
 
-表示された URL を開きます。スタート画面から新規プロジェクト、同梱デモ（トッカータとフーガ ニ短調 BWV 565）、ブラウザストレージにある既存プロジェクトのいずれかを選べます。**Play** を押せばオーディオエンジンは自動で起動します。
+スタート画面では、新規プロジェクトか同梱デモを選べます。**Play** を押すと、オーディオエンジンが自動で起動します。ビルドの配信方法は[デプロイ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/deployment.md)にあります。
 
-## スクリプト
+## 関連プロジェクト
 
-| スクリプト                      | 内容                                               |
-| ------------------------------- | -------------------------------------------------- |
-| `yarn dev`                      | クロスオリジン分離ヘッダー付きの Vite 開発サーバー |
-| `yarn build`                    | ワークレットバンドル、型チェック、本番ビルド       |
-| `yarn build:worklet`            | 自己完結した AudioWorklet モジュールだけをビルド   |
-| `yarn preview`                  | 本番ビルドをローカルで配信                         |
-| `yarn copy:wasm`                | `../libsonare` の wasm 成果物を `src/wasm/` へ同期 |
-| `yarn test` · `yarn test:watch` | Vitest（jsdom）のユニット／コンポーネントテスト    |
-| `yarn test:coverage`            | 同じスイートを v8 カバレッジ付きで実行             |
-| `yarn test:external-formats`    | 書き出したファイルを外部ツールで検証               |
-| `yarn lint` · `yarn lint:fix`   | Biome のチェック／自動修正                         |
-| `yarn typecheck`                | `vue-tsc --noEmit`                                 |
-| `yarn verify`                   | lint、テスト、外部形式テスト、ビルド               |
+- **[libsonare](https://github.com/libraz/libsonare)** — このアプリが動作の土台とする、WebAssembly にコンパイルした C++17 のオーディオエンジン。プロジェクトモデル、DSP、マスタリング、解析、オフラインレンダリングを担当します。[ドキュメント](https://libsonare.libraz.net)
+- **[libsonare-mcp](https://github.com/libraz/libsonare-mcp)** — AI アシスタントが libsonare を通じて、オーディオと MIDI の解析、編集、マスタリング、ミックス、作曲を行うための MCP サーバー。
+- **[libcantus](https://github.com/libraz/libcantus)** — 作曲機能とガイダンス機能を支える TypeScript の音楽理論ライブラリ。
 
-## アーキテクチャ
+## ドキュメント
 
-UI は Vue 3 と Pinia で動かします。アレンジ、ピアノロール、波形といった重い面は canvas-2d のレイヤーで、`src/ui/canvas/` の requestAnimationFrame バッチャーを通して再描画します。
+ドキュメントは [`docs/`](https://github.com/libraz/sonare-studio/tree/main/docs) 以下の Markdown で、英語版と日本語版があります。
 
-![エンジン構成。1 つの wasm バイナリをメインスレッドと AudioWorklet でインスタンス化し、ワーカーと OPFS が並ぶ](docs/assets/engine-topology.svg)
+- **学ぶ** — [概要](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md) · [はじめに](https://github.com/libraz/sonare-studio/blob/main/docs/ja/getting-started.md)
+- **ガイド** — [キーボードショートカット](https://github.com/libraz/sonare-studio/blob/main/docs/ja/shortcuts.md) · [デプロイ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/deployment.md)
+- **リファレンス** — [アーキテクチャ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/architecture.md) · [Contributing](https://github.com/libraz/sonare-studio/blob/main/CONTRIBUTING.md)（英語のみ）
 
-### 1 つの wasm バイナリを 2 回インスタンス化する
+## 含まないもの（Non-goals）
 
-libsonare は `sonare.wasm` として配布されます。これを `src/wasm/`（生成物、読み取り専用）へコピーし、同じバイトから 2 回インスタンス化します。
-
-メインスレッド、および書き出し用のワーカーでは、プロジェクトモデルとオフラインレンダラーとして働きます。トラック、クリップ、ノート、テンポ、SMF と MIDI 2.0 のコーデックがここにあります。AudioWorklet の中ではリアルタイムエンジンとして働き、トランスポートに合わせてスケジュール済みのオーディオクリップと MIDI を鳴らし、メーターとテレメトリを返します。制御の通信はクロスオリジン分離が有効なら SharedArrayBuffer を使い、そうでなければ postMessage に落とします（`src/engine/engine.ts`）。
-
-ワークレットのスコープからは fetch できないため、wasm のバイト列はメインスレッドが `processorOptions.wasmBinary` で渡します。ワークレットのバンドルは内容アドレス方式で（`public/assets/sonare-engine-worklet-<hash>.js`、`yarn build:worklet` が生成）、その URL は `.worklet-build/manifest.json` 経由でアプリに届きます。更新後のエンジンが古いワークレットと組み合わさることはありません。
-
-オーディオクリップは PCM としてリアルタイムエンジンへスケジュールします。MIDI クリップもエンジンの状態で、`src/engine/midi-sync.ts` がクリップのゲインとフェードを付けてノートをスケジュールし、各トラックの出力先に結び付けたエンジン内の音源が鳴らします。
-
-### 編集はすべてコマンド層を通る
-
-wasm の `Project` インスタンスは意図的にリアクティブにしていません。編集はすべて `src/project/commands.ts` を通ります。ここが wasm 側の編集とアプリ側メタデータのスナップショットという二層の undo 履歴を持ち、コンポーネントが読む Pinia のリアクティブなミラーを更新します。
-
-### 理論はエンジンの中ではなく隣で動く
-
-`src/compose/` は libcantus の上に載る素の TypeScript で、wasm には触れません。ここに双方向のアダプターが入っています。プロジェクトのノートとテンポ／拍子マップを libcantus の入力へ変換し、返ってきたコード、キー、セクション、終止、対位法の判定、生成されたパートをコマンドと UI の文言へ戻します。生成はプロジェクト単位のシードで動くので、振り直しても結果を再現できます。
-
-### 譜面は導出物で、入力手段ではない
-
-スコアパネルはアクティブクリップのノートを表示専用のモデルへクオンタイズし（`src/notation/model.ts`）、MusicXML へ直列化して、ワーカー内の Verovio で浄書します。この経路は MIDI へ一切書き戻さないので、採譜し直しても再描画にすぎません。印刷と PDF 書き出しは、浄書された SVG ページをそのまま使います。
-
-### 永続化
-
-プロジェクトは `.szd` アーカイブ（JSON とアセットを zip でまとめたもの）として、OPFS の `projects/<name>.szd` に保存します。デバウンス付きの自動保存スロット、名前付きリビジョン、ストレージ全体のバックアップがあり、ローカルディスクとのダウンロード／アップロードもできます。オーディオアセットと SoundFont は `assets/` と `fonts/` に内容アドレスで置きます。
-
-## テスト
-
-ユニットテストとコンポーネントテストは Vitest と jsdom で動かします。そこでは本物の `AudioContext` と canvas-2d が使えないので、DSP と幾何のロジックは純粋な TS モジュールに置き、コンポーネントはモックに対してテストします。`tests/fake-wasm.ts` が共有の `Project` モック、`tests/fake-audio-context.ts` がオーディオグラフの偽物です。
-
-ブラウザ E2E は、ヘッドレス Chromium を開発サーバーに対して走らせ、本物のエンジンを通してシナリオを実行します。起動とクロスオリジン分離、ノート編集と undo、浄書と注記、ショートカットとレイアウト、OPFS の永続化、オーディオ読み込みと録音、ミキサー、デバイスラック、ステップシーケンサー、オートメーション、サイクル録音、ルーティング、ワープ、フリーズ、マスタリング、オーディオ・MIDI・DAWproject の書き出しまでを対象にします。サンプル編集 Worker と undo、ミキサースナップショットの呼び出し、オーディオと SoundFont を含む SZD の書き出しと再読み込み、名前付きリビジョンの復元も検証します。多くのシナリオは 1 つのページを共有して順に走ります。SZD とリビジョンのシナリオは新しいブラウザコンテキストを使い、他のシナリオが残したアセットや状態に依存せずに永続化を確認します。
-
-DAW 制作フローの E2E は空のブラウザストレージから始め、音声の MIDI 化と楽器への置き換え、複数トラックのミックスとステム納品、サンプル加工からマスタリングまでを検証します。各フローでプロジェクトを保存して再読み込みし、実際にダウンロードした WAV・MIDI・ZIP を解析します。修正したノートの音程・開始位置・長さとミキサー設定の保持、ステムの加算とミックスの一致、再読み込み前後のマスタリング済み PCM の一致を確認します。
-
-```sh
-yarn dev --port 5199   # バックグラウンドで
-
-node scripts/e2e-smoke.mjs
-node scripts/e2e-smoke.mjs --list
-node scripts/e2e-smoke.mjs --only=boot,piano-roll,score
-node scripts/e2e-smoke.mjs --through=audio-record
-node scripts/e2e-smoke.mjs --only=boot,gs-efx-sf2,audio-transcribe
-node scripts/e2e-smoke.mjs --only=audio-to-midi-production,multitrack-stems-handoff,audio-edit-to-master
-```
-
-本番リリースの E2E は、ビルド済みアセットを Cloudflare Pages 相当の HTML リダイレクトと SPA フォールバック付きで配信し、実際の Service Worker の導入、リリース切り替え、キャッシュ修復、オフラインでの再訪を検証します。開発サーバーでは Service Worker が無効なので、別途実行します。
-
-```sh
-yarn build
-node scripts/e2e-pages.mjs
-```
-
-Playwright はまず一時ディレクトリ、次にプロジェクトディレクトリの順で解決します。
-
-`src/wasm/**` は libsonare が生成した出力です。手で編集せず、`yarn copy:wasm` を実行し直してください。
-
-## デプロイ
-
-静的サイトですが、クロスオリジン分離された状態で配信する必要があります。
-
-- `public/_headers`（Cloudflare Pages 形式）が全パスに対して `Cross-Origin-Opener-Policy: same-origin`、`Cross-Origin-Embedder-Policy: require-corp`、`Cross-Origin-Resource-Policy: cross-origin` と `application/wasm` の Content-Type を設定します。`public/_redirects` はすべてを `index.html` へ振ります。
-- `require-corp` があるため、**アセットはすべて same-origin でなければなりません**。CDN のスクリプトもクロスオリジンのフォントも使えません。
-- このキャッチオールの rewrite があるので、現在のデプロイが提供しなくなったパスは `404` ではなく `200 text/html` を返します。Service Worker はドキュメント以外の URL の下にあるドキュメントを古いアセットとして扱い、プリキャッシュを拒み、リリースキャッシュにも入れず、`404` を返します。おかげでアプリは、解析できないスクリプトで落ちる代わりにリロードを提案できます。
-- `_headers` はリリースモデルが前提とするキャッシュの取り決めも固定します。`/assets/*` は immutable、`sw.js`・`precache-manifest.json`・`worklet-manifest.json`、そして `/` と `/index.html` の両方のドキュメントは毎回再検証します。これでワーカーが別リリースのマニフェストやドキュメントと組み合わさることはありません。
-- Service Worker は `/` を正規のドキュメントとして使います。Cloudflare Pages は `/index.html` を `/` にリダイレクトするため、追従した応答をブラウザのナビゲーションへ返す前に再構築します。新 Worker の導入時には旧キャッシュに残ったリダイレクト応答も修復し、Worker のテンプレートもキャッシュのリリース識別子に含めます。
-- 既に壊れた旧 Worker が導入済みの場合、新 Worker を取得する前の再訪リクエストは失敗することがあります。新 Worker は保存済みプロジェクトを消さずにキャッシュを修復し、その後は通常のナビゲーションで復旧できます。ドキュメントが読み込まれる前の失敗は、画面内の復旧スクリプトでは扱えません。
-- デプロイするファイルは 1 つ 25 MiB 未満に保ってください（Cloudflare Pages の 1 ファイル上限）。最大の成果物は同梱の Verovio 浄書ワーカーでおよそ 7.5 MiB、`sonare.wasm` はおよそ 7.4 MiB（gzip 圧縮時は 2.5 MiB）です。
+MPE、プラグインのホスト（VST/AU/CLAP）、譜面上の少数のノート操作を超える記譜エディター、アカウント、同期、共同編集は対象外です。DAWproject と MusicXML の往復は、それらの形式の性質上、不可逆です。アプリは、書き出しで失われる内容を、確定する前に一覧で示します。[できないこと](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できないこと)
 
 ## ライセンス
 
-GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）。[LICENSE](./LICENSE) を参照してください。
+[AGPL-3.0-or-later](LICENSE)
