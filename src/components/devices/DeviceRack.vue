@@ -1658,3 +1658,4 @@ const instrumentSourceCaption = computed(() => {
 </template>
 
 <style scoped src="./device-rack.css"></style>
+<style scoped src="./device-chain.css"></style>

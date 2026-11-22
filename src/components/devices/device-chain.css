@@ -1,0 +1,23 @@
+/* Section chrome shared by the device rack and the components it hosts. */
+.chain-title {
+  margin: 0;
+  font-size: var(--fs-chrome-lg);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.chain-empty {
+  margin: 0;
+  padding: var(--sp-4);
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-4);
+}
+
+/* Frame the insert drop target so an empty chain reads as a slot to fill. */
+.chain-empty {
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
