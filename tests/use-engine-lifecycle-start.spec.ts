@@ -37,7 +37,7 @@ vi.mock('@/engine/web-midi-output', () => ({
 vi.mock('@/lib/wasm', () => ({ ensureWasm: mocks.ensureWasm }));
 
 import { ErrorCode, SonareError } from '@libraz/libsonare';
-import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
+import { type EngineLifecycleOptions, useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
 import { fakeEngineHandle } from './fakes/engine';
@@ -84,7 +84,7 @@ function setupLifecycle() {
   const bridge = shallowRef(null);
   const analyser = shallowRef(null);
   const scope = shallowRef(null);
-  const applyToEngine = vi.fn(async () => undefined);
+  const applyToEngine = vi.fn<EngineLifecycleOptions['applyToEngine']>(async () => undefined);
   const resetEngineProjectSync = vi.fn();
   const setEngineSyncHandles = vi.fn();
   const syncAutomationState = vi.fn();

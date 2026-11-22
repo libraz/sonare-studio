@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cloneJson } from '@/project/clone-json';
 import { overwriteRecordedMidiClip } from '@/project/command/midi-recording';
 import {
   addAudioTrack,
@@ -13,7 +14,11 @@ import {
   trimClip,
   undo,
 } from '@/project/commands';
-import { loadProjectDocument, serializeProject } from '@/project/serialization';
+import {
+  loadProjectDocument,
+  type ProjectDocument,
+  serializeProject,
+} from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 
 vi.mock('@/lib/wasm', async () => {
@@ -21,6 +26,13 @@ vi.mock('@/lib/wasm', async () => {
   const fakeModule = createFakeWasmModule();
   return { ensureWasm: async () => fakeModule };
 });
+
+/** The MIDI takes of the first track's clip called `name`; throws when it has none. */
+function documentTakes(doc: ProjectDocument, name: string) {
+  const takes = doc.tracks[0].clips.find((clip) => clip.name === name)?.midiTakes;
+  if (!takes) throw new Error(`clip ${name} has no MIDI takes`);
+  return takes;
+}
 
 describe('addRecordedMidiClip', () => {
   let store: ReturnType<typeof useProjectStore>;
@@ -160,7 +172,7 @@ describe('addRecordedMidiClip', () => {
     expect(
       store.clips.find((clip) => clip.id === clipId)?.midiTakes?.map((take) => take.name),
     ).toEqual(['Verse', 'Chorus']);
-    const document = JSON.parse(JSON.stringify(serializeProject()));
+    const document = cloneJson(serializeProject());
     const documentClip = document.tracks[0].clips.find((clip) => clip.name === `Clip ${clipId}`);
     expect(documentClip?.midiTakes?.map((take) => take.name)).toEqual(['Verse', 'Chorus']);
     await loadProjectDocument(document);
@@ -194,18 +206,13 @@ describe('addRecordedMidiClip', () => {
     });
     trimClip(clipId, 0, 4);
 
-    const before = JSON.parse(JSON.stringify(serializeProject()));
-    const beforeTakeNotes = before.tracks[0].clips.find(
-      (clip: { name: string }) => clip.name === `Clip ${clipId}`,
-    ).midiTakes[1].notes;
+    const before = cloneJson(serializeProject());
+    const beforeTakeNotes = documentTakes(before, `Clip ${clipId}`)[1].notes;
 
     await loadProjectDocument(before);
 
-    const after = JSON.parse(JSON.stringify(serializeProject()));
-    const restoredClip = after.tracks[0].clips.find(
-      (clip: { name: string }) => clip.name === `Clip ${clipId}`,
-    );
-    expect(restoredClip.midiTakes[1].notes).toEqual(beforeTakeNotes);
+    const after = cloneJson(serializeProject());
+    expect(documentTakes(after, `Clip ${clipId}`)[1].notes).toEqual(beforeTakeNotes);
     expect(after).toEqual(before);
   });
 

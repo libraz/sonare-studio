@@ -92,7 +92,7 @@ describe('SoundFont store', () => {
     const original = MemoryFileHandle.prototype.createWritable;
     const spy = vi
       .spyOn(MemoryFileHandle.prototype, 'createWritable')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: MemoryFileHandle) {
         if (this.name.endsWith('.json')) {
           return {
             write: async () => {

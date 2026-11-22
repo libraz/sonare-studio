@@ -122,7 +122,7 @@ describe('audio asset store', () => {
     const pcmWriteSizes: number[] = [];
     const spy = vi
       .spyOn(MemoryFileHandle.prototype, 'createWritable')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: MemoryFileHandle) {
         const writable = await original.call(this);
         if (!this.name.endsWith('.pcm')) return writable;
         const write = writable.write.bind(writable);
@@ -227,7 +227,7 @@ describe('audio asset store', () => {
     const original = MemoryFileHandle.prototype.createWritable;
     const spy = vi
       .spyOn(MemoryFileHandle.prototype, 'createWritable')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: MemoryFileHandle) {
         if (this.name.endsWith('.json')) {
           return {
             write: async () => {
@@ -254,7 +254,7 @@ describe('audio asset store', () => {
     const quota = new DOMException('storage quota exhausted', 'QuotaExceededError');
     const spy = vi
       .spyOn(MemoryFileHandle.prototype, 'createWritable')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: MemoryFileHandle) {
         const writable = await original.call(this);
         if (!this.name.endsWith('.pcm') || failed) return writable;
         failed = true;

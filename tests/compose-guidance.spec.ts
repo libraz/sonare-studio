@@ -1,7 +1,12 @@
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
-import { buildGuidance, type GuidanceInput, resolutionTargetOf } from '@/compose/guidance';
+import {
+  buildGuidance,
+  type GuidanceInput,
+  type NoteAnalysis,
+  resolutionTargetOf,
+} from '@/compose/guidance';
 import { buildKeyMap } from '@/compose/key-map';
 import { keyMarkerName } from '@/compose/key-name';
 import { harmonicTracksOnly } from '@/compose/tracks';

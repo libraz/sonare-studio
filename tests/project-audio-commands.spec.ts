@@ -982,7 +982,7 @@ describe('audio track and clip commands', () => {
     let stemSidecars = 0;
     const spy = vi
       .spyOn(MemoryFileHandle.prototype, 'createWritable')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: MemoryFileHandle) {
         if (this.name.endsWith('.json') && this.name !== 'stem-source.json') {
           stemSidecars += 1;
           if (stemSidecars === 2) {
