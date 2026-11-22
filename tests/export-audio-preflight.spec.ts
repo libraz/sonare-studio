@@ -509,6 +509,7 @@ describe('audioExportPreflight', () => {
       expect(
         resolver({ processor: 'effects.delay.stereo', params: { feedback: 0.5, mix: 0.3 } }),
       ).toBe(2);
+      // @ts-expect-error a document from a newer build can name a processor this catalog lacks
       expect(resolver({ processor: 'unknown', params: {} })).toBe(0);
       const refusing = insertTailResolverFromTiming(catalog, 48000, () => {
         throw new Error('refused');
