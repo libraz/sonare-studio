@@ -1,6 +1,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  type DawprojectImportOptions,
   exportDawproject,
   importDawproject,
   importDawprojectWithMedia,
@@ -1181,7 +1182,9 @@ describe('importDawproject', () => {
         }),
       },
     );
-    const ingestAudio = vi.fn(async () => ({ id: 'ingested-vox' }));
+    const ingestAudio = vi.fn<NonNullable<DawprojectImportOptions['ingestAudio']>>(async () => ({
+      id: 'ingested-vox',
+    }));
 
     const imported = await importDawprojectWithMedia(exported, { ingestAudio });
     const clips = imported.tracks[0].clips;

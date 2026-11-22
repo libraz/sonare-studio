@@ -90,7 +90,7 @@ interface FakeRenderCall {
   doc: ProjectDocument;
   options: ExportRenderOptions;
   onProgress?: MixdownProgressFn;
-  cancel: ReturnType<typeof vi.fn>;
+  cancel: Mock<() => void>;
   resolve: (result: MixdownResult) => void;
   reject: (error: Error) => void;
 }
@@ -109,7 +109,7 @@ function makeFakeRender() {
       resolve = res;
       reject = rej;
     });
-    const call: FakeRenderCall = { doc, options, cancel: vi.fn(), resolve, reject };
+    const call: FakeRenderCall = { doc, options, cancel: vi.fn<() => void>(), resolve, reject };
     if (onProgress) call.onProgress = onProgress;
     calls.push(call);
     return { result, cancel: call.cancel };

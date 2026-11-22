@@ -2,6 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MixSuggestDialog from '@/components/mixer/MixSuggestDialog.vue';
+import type { renderMixdownInWorker } from '@/export/client';
 import { insertAutomationParam, instrumentAutomationParam } from '@/project/automation';
 import {
   addInsert,
@@ -173,7 +174,7 @@ describe('MixSuggestDialog', () => {
     const ampId = store.tracks[0].mixer?.inserts[0].id;
     clearHistory();
     const channel = new Float32Array(8).fill(0.2);
-    const render = vi.fn(() => ({
+    const render = vi.fn<typeof renderMixdownInWorker>(() => ({
       result: Promise.resolve({
         channels: [channel, channel],
         sampleRate: 48000,
@@ -181,7 +182,7 @@ describe('MixSuggestDialog', () => {
         report: { peakDb: -12 },
         stems: [{ source: 'track', trackIndex: 0, name: 'Keys', channels: [channel, channel] }],
       }),
-      cancel: vi.fn(),
+      cancel: vi.fn<() => void>(),
     }));
     mixingAssistantSuggest.mockReturnValue({
       scene: {
@@ -249,7 +250,7 @@ describe('MixSuggestDialog', () => {
       mix: {},
       explanation: [],
     } as never);
-    const render = vi.fn(() => ({
+    const render = vi.fn<typeof renderMixdownInWorker>(() => ({
       result: Promise.resolve({
         channels: [channel, channel],
         sampleRate: 48000,
@@ -257,7 +258,7 @@ describe('MixSuggestDialog', () => {
         report: { peakDb: -12 },
         stems: [{ source: 'track', trackIndex: 0, name: 'Keys', channels: [channel, channel] }],
       }),
-      cancel: vi.fn(),
+      cancel: vi.fn<() => void>(),
     }));
     const wrapper = mount(MixSuggestDialog, {
       props: { open: true, loopEnabled: false, loopStartPpq: 0, loopEndPpq: 0, render },

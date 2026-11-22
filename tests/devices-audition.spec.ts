@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TrackInstrument } from '@/project/instrument';
 import {
+  type AuditionRenderer,
   createPatchAudition,
   DEFAULT_AUDITION_NOTE,
   DEFAULT_AUDITION_VELOCITY,
@@ -85,7 +86,7 @@ describe('createPatchAudition', () => {
   it('ignores a stale render that resolves after a newer audition', async () => {
     const context = createFakeAudioContext();
     const renders: Array<(channels: Float32Array[]) => void> = [];
-    const render = vi.fn(
+    const render = vi.fn<AuditionRenderer>(
       () =>
         new Promise<Float32Array[]>((resolve) => {
           renders.push(resolve);

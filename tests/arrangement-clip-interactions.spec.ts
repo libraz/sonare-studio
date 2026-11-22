@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 import {
   type ArrangeClip,
   type ClipInteractionCommands,
@@ -19,9 +19,13 @@ const view: ClipInteractionsView = {
 
 interface Setup {
   interactions: ReturnType<typeof useClipInteractions>;
-  commands: { [K in keyof ClipInteractionCommands]-?: ReturnType<typeof vi.fn> };
+  commands: {
+    [K in Exclude<keyof ClipInteractionCommands, 'selectClips' | 'moveClips'>]-?: Mock<
+      NonNullable<ClipInteractionCommands[K]>
+    >;
+  };
   clips: ArrangeClip[];
-  onSplitBlocked: ReturnType<typeof vi.fn>;
+  onSplitBlocked: Mock<() => void>;
   setTool: (tool: EditorToolId) => void;
 }
 
@@ -39,17 +43,17 @@ function makeSetup(
     },
   ];
   let tool: EditorToolId = 'select';
-  const onSplitBlocked = vi.fn();
+  const onSplitBlocked = vi.fn<() => void>();
   const commands = {
-    selectClip: vi.fn(),
-    clearClipSelection: vi.fn(),
-    moveClip: vi.fn(),
-    trimClip: vi.fn(),
-    duplicateClip: vi.fn(() => 99),
-    createClip: vi.fn(() => 77),
-    setClipFades: vi.fn(),
-    deleteClip: vi.fn(),
-    splitClip: vi.fn(() => 88),
+    selectClip: vi.fn<NonNullable<ClipInteractionCommands['selectClip']>>(),
+    clearClipSelection: vi.fn<NonNullable<ClipInteractionCommands['clearClipSelection']>>(),
+    moveClip: vi.fn<NonNullable<ClipInteractionCommands['moveClip']>>(),
+    trimClip: vi.fn<NonNullable<ClipInteractionCommands['trimClip']>>(),
+    duplicateClip: vi.fn<NonNullable<ClipInteractionCommands['duplicateClip']>>(() => 99),
+    createClip: vi.fn<NonNullable<ClipInteractionCommands['createClip']>>(() => 77),
+    setClipFades: vi.fn<NonNullable<ClipInteractionCommands['setClipFades']>>(),
+    deleteClip: vi.fn<NonNullable<ClipInteractionCommands['deleteClip']>>(),
+    splitClip: vi.fn<NonNullable<ClipInteractionCommands['splitClip']>>(() => 88),
   };
   const interactions = useClipInteractions({
     view,
@@ -113,9 +117,9 @@ describe('useClipInteractions selection', () => {
 interface MultiSelectionSetup {
   interactions: ReturnType<typeof useClipInteractions>;
   commands: {
-    selectClips: ReturnType<typeof vi.fn>;
-    clearClipSelection: ReturnType<typeof vi.fn>;
-    moveClips: ReturnType<typeof vi.fn>;
+    selectClips: Mock<NonNullable<ClipInteractionCommands['selectClips']>>;
+    clearClipSelection: Mock<NonNullable<ClipInteractionCommands['clearClipSelection']>>;
+    moveClips: Mock<NonNullable<ClipInteractionCommands['moveClips']>>;
   };
   selected: () => ReadonlySet<number>;
 }
@@ -129,13 +133,15 @@ function makeMultiSelectionSetup(initialSelection: number[] = []): MultiSelectio
   ];
   let selection = new Set(initialSelection);
   const commands = {
-    selectClips: vi.fn((ids: readonly number[]) => {
-      selection = new Set(ids);
-    }),
-    clearClipSelection: vi.fn(() => {
+    selectClips: vi.fn<NonNullable<ClipInteractionCommands['selectClips']>>(
+      (ids: readonly number[]) => {
+        selection = new Set(ids);
+      },
+    ),
+    clearClipSelection: vi.fn<NonNullable<ClipInteractionCommands['clearClipSelection']>>(() => {
       selection = new Set();
     }),
-    moveClips: vi.fn(),
+    moveClips: vi.fn<NonNullable<ClipInteractionCommands['moveClips']>>(),
   };
   const interactions = useClipInteractions({
     view,
@@ -145,12 +151,12 @@ function makeMultiSelectionSetup(initialSelection: number[] = []): MultiSelectio
     getGridPpq: () => 1,
     getBarRange: (ppq) => ({ startPpq: Math.floor(ppq / 4) * 4, lengthPpq: 4 }),
     commands: {
-      selectClip: vi.fn(),
+      selectClip: vi.fn<NonNullable<ClipInteractionCommands['selectClip']>>(),
       ...commands,
-      moveClip: vi.fn(),
-      trimClip: vi.fn(),
-      duplicateClip: vi.fn(() => 99),
-      createClip: vi.fn(() => null),
+      moveClip: vi.fn<NonNullable<ClipInteractionCommands['moveClip']>>(),
+      trimClip: vi.fn<NonNullable<ClipInteractionCommands['trimClip']>>(),
+      duplicateClip: vi.fn<NonNullable<ClipInteractionCommands['duplicateClip']>>(() => 99),
+      createClip: vi.fn<NonNullable<ClipInteractionCommands['createClip']>>(() => null),
     },
   });
   return { interactions, commands, selected: () => selection };
@@ -228,11 +234,11 @@ describe('useClipInteractions move', () => {
       xToPpq: (x) => viewportStartPpq + x / 10,
     };
     const commands = {
-      selectClip: vi.fn(),
-      moveClip: vi.fn(),
-      trimClip: vi.fn(),
-      duplicateClip: vi.fn(() => 99),
-      createClip: vi.fn(() => null),
+      selectClip: vi.fn<NonNullable<ClipInteractionCommands['selectClip']>>(),
+      moveClip: vi.fn<NonNullable<ClipInteractionCommands['moveClip']>>(),
+      trimClip: vi.fn<NonNullable<ClipInteractionCommands['trimClip']>>(),
+      duplicateClip: vi.fn<NonNullable<ClipInteractionCommands['duplicateClip']>>(() => 99),
+      createClip: vi.fn<NonNullable<ClipInteractionCommands['createClip']>>(() => null),
     };
     const interactions = useClipInteractions({
       view: scrollingView,
@@ -433,7 +439,10 @@ describe('useClipInteractions double-click', () => {
 
 interface AudioSetup {
   interactions: ReturnType<typeof useClipInteractions>;
-  commands: Setup['commands'] & { setClipFades: ReturnType<typeof vi.fn> };
+  commands: Pick<
+    Setup['commands'],
+    'selectClip' | 'moveClip' | 'trimClip' | 'duplicateClip' | 'createClip' | 'setClipFades'
+  >;
   clips: ArrangeClip[];
 }
 
@@ -449,12 +458,12 @@ function makeAudioSetup(
     { id: 2, trackId: 10, startPpq: 4, lengthPpq, kind: 'audio', fadeInPpq: 1 },
   ];
   const commands = {
-    selectClip: vi.fn(),
-    moveClip: vi.fn(),
-    trimClip: vi.fn(),
-    duplicateClip: vi.fn(() => 99),
-    createClip: vi.fn(() => null),
-    setClipFades: vi.fn(),
+    selectClip: vi.fn<NonNullable<ClipInteractionCommands['selectClip']>>(),
+    moveClip: vi.fn<NonNullable<ClipInteractionCommands['moveClip']>>(),
+    trimClip: vi.fn<NonNullable<ClipInteractionCommands['trimClip']>>(),
+    duplicateClip: vi.fn<NonNullable<ClipInteractionCommands['duplicateClip']>>(() => 99),
+    createClip: vi.fn<NonNullable<ClipInteractionCommands['createClip']>>(() => null),
+    setClipFades: vi.fn<NonNullable<ClipInteractionCommands['setClipFades']>>(),
   };
   const interactions = useClipInteractions({
     view,

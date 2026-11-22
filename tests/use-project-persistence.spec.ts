@@ -176,7 +176,9 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
     return saved;
   });
   const errorMessage = ref('');
-  const confirmAction = vi.fn(async () => true);
+  const confirmAction = vi.fn<Parameters<typeof useProjectPersistence>[0]['confirmAction']>(
+    async () => true,
+  );
   const downloadBlobFile = vi.fn();
   const autosave = {
     lastSavedAt: ref<Date | null>(null),

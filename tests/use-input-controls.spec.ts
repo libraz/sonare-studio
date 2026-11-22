@@ -91,7 +91,9 @@ function makeOptions() {
     previewNote: vi.fn(async () => {}),
     previewNoteOn: vi.fn(async () => {}),
     previewNoteOff: vi.fn(),
-    previewChannelVoice: vi.fn(async () => {}),
+    previewChannelVoice: vi.fn<Parameters<typeof useInputControls>[0]['previewChannelVoice']>(
+      async () => {},
+    ),
     runAction: (action: () => Promise<void>) => action(),
   };
 }

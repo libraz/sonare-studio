@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { commonTakeSilence, snapToCommonSilence } from '@/project/take-silence';
+import {
+  commonTakeSilence,
+  snapToCommonSilence,
+  type TakeSilenceDeps,
+} from '@/project/take-silence';
 import { normalizeTempoMap } from '@/project/tempo-map';
 
 const TEMPO_60 = normalizeTempoMap([{ startPpq: 0, bpm: 60 }]);
@@ -25,7 +29,9 @@ const clip = {
 describe('commonTakeSilence', () => {
   it('turns the gaps between shared sounding intervals into clip-relative PPQ', async () => {
     // 60 BPM at 1 kHz: one quarter is 1000 frames.
-    const splitSilenceCommon = vi.fn(() => Int32Array.from([0, 400, 900, 2000]));
+    const splitSilenceCommon = vi.fn<TakeSilenceDeps['splitSilenceCommon']>(() =>
+      Int32Array.from([0, 400, 900, 2000]),
+    );
     const spans = await commonTakeSilence(clip, TEMPO_60, {
       loadAudioAsset: async (id) => asset(id, 2000),
       splitSilenceCommon,

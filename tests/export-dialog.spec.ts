@@ -1,10 +1,11 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { unzipSync } from 'fflate';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ExportDialog from '@/components/export/ExportDialog.vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import { type ExportRenderHandle, MasteringBufferLimitError } from '@/export/client';
+import type { AudioEncoder } from '@/export/codecs';
 import { type EncodeFlacOptions, encodeFlac } from '@/export/flac';
 import {
   MixdownCancelledError,
@@ -177,11 +178,15 @@ function makeResult(overrides: Partial<MixdownResult> = {}): MixdownResult {
   };
 }
 
+type RenderFn = NonNullable<InstanceType<typeof ExportDialog>['$props']['render']>;
+
+type EncodeFn = AudioEncoder['encode'];
+
 interface RenderControl {
-  render: ReturnType<typeof vi.fn>;
+  render: Mock<RenderFn>;
   resolve: (result: MixdownResult) => void;
   reject: (error: Error) => void;
-  cancel: ReturnType<typeof vi.fn>;
+  cancel: Mock<() => void>;
   progress: () => MixdownProgressFn | undefined;
   options: () => ExportRenderOptions;
   emitStem: (
@@ -200,7 +205,7 @@ interface RenderControl {
 function makeRender(): RenderControl {
   let resolveFn: (result: MixdownResult) => void = () => {};
   let rejectFn: (error: Error) => void = () => {};
-  const cancel = vi.fn();
+  const cancel = vi.fn<() => void>();
   let onStemFn:
     | ((
         stem: NonNullable<MixdownResult['stems']>[number],
@@ -215,7 +220,7 @@ function makeRender(): RenderControl {
         totalFrames: number,
       ) => Promise<void> | void)
     | undefined;
-  const render = vi.fn(
+  const render = vi.fn<RenderFn>(
     (
       _doc: ProjectDocument,
       _options: ExportRenderOptions,
@@ -1013,7 +1018,7 @@ describe('ExportDialog', () => {
 
   it('normalizes mixdown loudness to the app target before encoding', async () => {
     const control = makeRender();
-    const encode = vi.fn(() => new Uint8Array([1]));
+    const encode = vi.fn<EncodeFn>(() => new Uint8Array([1]));
     const { wrapper } = mountDialog(control, {
       encoders: [
         {
@@ -1043,7 +1048,7 @@ describe('ExportDialog', () => {
 
   it('disables dither outside 16-bit WAV and leaves the encoder option false', async () => {
     const control = makeRender();
-    const encode = vi.fn(() => new Uint8Array([1]));
+    const encode = vi.fn<EncodeFn>(() => new Uint8Array([1]));
     mountDialog(control, {
       encoders: [
         {
@@ -1309,7 +1314,7 @@ describe('ExportDialog', () => {
 
   it('exports stems at unity even when normalization is on, preserving mix balance', async () => {
     const control = makeRender();
-    const encode = vi.fn(() => new Uint8Array([1]));
+    const encode = vi.fn<EncodeFn>(() => new Uint8Array([1]));
     mountDialog(control, {
       encoders: [
         {

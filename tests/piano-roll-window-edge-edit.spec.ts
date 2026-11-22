@@ -102,7 +102,7 @@ describe('pointer drag of a note that straddles the left window edge', () => {
 describe('draw start on the meter-aware grid', () => {
   function drawHarness(origin: number, bar: boolean) {
     const view = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
-    const addNote = vi.fn(() => 100);
+    const addNote = vi.fn<InteractionCommands['addNote']>(() => 100);
     const step = bar ? 'bar' : 0.25;
     const interactions = useNoteInteractions({
       view,

@@ -339,9 +339,7 @@ describe('createRecorder microphone acquisition', () => {
     vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode);
     const { handle, ctx, node } = makeHandle(48_000);
     const source = new FakeAudioNode();
-    (
-      ctx as AudioContext & { createMediaStreamSource: ReturnType<typeof vi.fn> }
-    ).createMediaStreamSource = vi.fn(() => source);
+    Object.assign(ctx, { createMediaStreamSource: vi.fn(() => source) });
     const { stream, getUserMedia } = makeDeps();
     const recorder = createRecorder(handle, {
       getUserMedia,

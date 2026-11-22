@@ -1,11 +1,14 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, nextTick, reactive, ref } from 'vue';
+import type { useRecording } from '@/composables/useRecording';
 import { useRecordingControls } from '@/composables/useRecordingControls';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import { addAudioTrack, clearHistory } from '@/project/commands';
 import { createRecordingCycle } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+
+type Recording = ReturnType<typeof useRecording>;
 
 /** Transport loop refs plus the recording-cycle owner derived from them. */
 function loopState() {
@@ -298,7 +301,7 @@ describe('useRecordingControls', () => {
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
       requestMic: vi.fn(async () => true),
-      record: vi.fn(async () => true),
+      record: vi.fn<Recording['record']>(async () => true),
       stopRecord: vi.fn(async () => null),
     };
     const midiRecording = {
@@ -355,7 +358,7 @@ describe('useRecordingControls', () => {
       setStreamingRetuneSemitones: vi.fn(),
       setTrackArmed: vi.fn(),
       requestMic: vi.fn(() => micReady.promise),
-      record: vi.fn(async () => true),
+      record: vi.fn<Recording['record']>(async () => true),
       stopRecord: vi.fn(async () => null),
     };
     const midiRecording = {

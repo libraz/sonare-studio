@@ -30,6 +30,7 @@ import {
   modMatrixRows,
   modRowsToRoutings,
   PATCH_FIELD_SPECS,
+  type PresetPatchResolver,
   patchEditCount,
   patchFieldSpec,
   patchFieldsForSection,
@@ -144,7 +145,11 @@ describe('mod matrix rows', () => {
 
 describe('createPatchDraft', () => {
   it('seeds a preset instrument with the resolved base values', () => {
-    const resolve = vi.fn(() => ({ cutoffHz: 12000, ampSustain: 0.6, waveform: 'saw' }));
+    const resolve = vi.fn<PresetPatchResolver>(() => ({
+      cutoffHz: 12000,
+      ampSustain: 0.6,
+      waveform: 'saw',
+    }));
     const draft = createPatchDraft({ kind: 'synth-preset', preset: 'sawLead' }, resolve);
     expect(resolve).toHaveBeenCalledWith('sawLead');
     expect(draft).toMatchObject({
