@@ -1,7 +1,7 @@
 import { clampInt } from '@/lib/math';
 import { MIDI_CC_MAX, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import type { DocumentClip } from '@/project/serialization';
-import type { DawprojectImportLoss } from './import';
+import type { DawprojectImportLoss } from './import-loss';
 import { children } from './xml-read';
 
 type MidiExpressionName =

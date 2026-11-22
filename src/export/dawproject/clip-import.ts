@@ -8,9 +8,26 @@ import {
   audioFadeSecondsToPpq,
 } from './audio-time';
 import { DEFAULT_IMPORTED_CLIP_LENGTH_PPQ, MIN_IMPORTED_LENGTH_PPQ } from './format';
-import type { DawprojectImportLoss, FlattenedClipLeaf, FlattenedClipPlacement } from './import';
+import type { DawprojectImportLoss } from './import-loss';
 import { readMidiExpressionPoints } from './midi-expression-import';
 import { boolAttr, children, numberAttr } from './xml-read';
+
+export interface FlattenedClipPlacement {
+  startPpq: number;
+  lengthPpq: number;
+  /** Visible start in this clip's content coordinate. */
+  contentWindowStart: number;
+  contentTimeUnit: string;
+  name: string;
+  loopEnabled?: boolean;
+  loopLengthPpq?: number;
+  fadeElement: Element;
+}
+
+export interface FlattenedClipLeaf {
+  element: Element;
+  placement: FlattenedClipPlacement;
+}
 
 function normalizedVelocity(value: number | null): number {
   if (value === null) return 96;
