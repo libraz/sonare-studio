@@ -287,10 +287,18 @@ const OVERRIDE_ORDINALS: {
   'saturation.exciter.aliasing': ['none', undefined, undefined, 'oversample4x'],
 };
 
+/**
+ * Ordinals of chain fields the core reads but its `MasteringChainConfig` type
+ * omits; each moves into {@link OVERRIDE_ORDINALS} once the type carries it.
+ */
+export const UNTYPED_OVERRIDE_ORDINALS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  'dynamics.compressor.detector': ['peak', 'rms', 'logRms'],
+};
+
 function overrideValue(path: string, value: number | boolean): unknown {
-  const tokens = (OVERRIDE_ORDINALS as Readonly<Record<string, ReadonlyArray<string | undefined>>>)[
-    path
-  ];
+  const tokens =
+    (OVERRIDE_ORDINALS as Readonly<Record<string, ReadonlyArray<string | undefined>>>)[path] ??
+    UNTYPED_OVERRIDE_ORDINALS[path];
   return tokens !== undefined && typeof value === 'number' ? tokens[value] : value;
 }
 
@@ -303,6 +311,7 @@ const MULTIBAND_CUTOFFS: Readonly<Record<string, number>> = {
 };
 const COMPRESSOR_HPF_ENABLED = 'dynamics.compressor.sidechainHpfEnabled';
 const COMPRESSOR_HPF_HZ = 'dynamics.compressor.sidechainHpfHz';
+const EMPTY_CHAIN_CONFIG = JSON.stringify({ version: 2, params: {} });
 const lowerFirst = (s: string): string => s.charAt(0).toLowerCase() + s.slice(1);
 
 function nest(path: string, value: unknown): Json {
@@ -319,78 +328,133 @@ function mergeInto(target: Json, source: Json): void {
   }
 }
 
-/** The core's reader of a serialized chain configuration (`masteringChainConfigFromJson`). */
-export type ChainConfigReader = (document: string) => MasteringChainConfig;
+/** The core calls the upgrade reads mastering presets and chain configurations through. */
+export type UpgradeCore = Pick<
+  typeof import('@/wasm/index.js'),
+  'masteringChainConfigFromJson' | 'masteringPresetNames' | 'masteringPresetParams'
+>;
+
+/** A stored 1.x setting the upgrade could not carry into 2.0. */
+export interface UpgradeDrop {
+  /** Document path of the object the setting was stored in. */
+  readonly location: string;
+  /** The setting's 1.x key. */
+  readonly key: string;
+  readonly value: unknown;
+  /** Why it was dropped; for a core refusal, the core's message. */
+  readonly reason: string;
+}
+
+type OverrideDrop = Omit<UpgradeDrop, 'location'>;
+
+/** The chain a 1.x override was applied over: the preset's, or the core defaults. */
+function baseChain(preset: unknown, core: UpgradeCore): MasteringChainConfig {
+  const known = core.masteringPresetNames().find((name) => name === preset);
+  return known !== undefined
+    ? core.masteringPresetParams(known)
+    : core.masteringChainConfigFromJson(EMPTY_CHAIN_CONFIG);
+}
 
 /**
  * Converts a 1.x flat dotted-key mastering override map to the nested 2.0
- * `MasteringChainConfig`. Each converted entry goes through the core's own
- * chain-config reader; an entry 2.0 refuses (a key with no 2.0 home, or a
- * value outside its domain) is dropped rather than left to fail the render.
+ * `MasteringChainConfig`. 2.0 replaces the multiband band and cutoff lists
+ * whole, so the entries 1.x left to the preset are filled from `preset`'s
+ * chain. Each converted entry goes through the core's chain-config reader;
+ * an entry it refuses is dropped and returned with the refusal.
  */
-export function upgradeMasteringOverrides(flat: Json, read: ChainConfigReader): Json {
-  const fragments: Json[] = [];
+export function upgradeMasteringOverrides(
+  flat: Json,
+  preset: unknown,
+  core: UpgradeCore,
+): { overrides: Json; dropped: OverrideDrop[] } {
+  const fragments: Array<{ keys: string[]; fragment: Json }> = [];
+  const dropped: OverrideDrop[] = [];
   const bands: Json[] = [];
+  const bandKeys: string[] = [];
   const cutoffs: number[] = [];
+  const cutoffKeys: string[] = [];
   for (const [key, value] of Object.entries(flat)) {
-    if (typeof value !== 'number' && typeof value !== 'boolean') continue;
+    if (typeof value !== 'number' && typeof value !== 'boolean') {
+      dropped.push({ key, value, reason: 'not a number or boolean' });
+      continue;
+    }
     const band = key.match(MULTIBAND_KEY);
     if (band) {
       const index = MULTIBAND_BANDS.indexOf(band[1]);
       bands[index] ??= {};
       bands[index][lowerFirst(band[2])] = value;
+      bandKeys.push(key);
     } else if (Object.hasOwn(MULTIBAND_CUTOFFS, key) && typeof value === 'number') {
       cutoffs[MULTIBAND_CUTOFFS[key]] = value;
+      cutoffKeys.push(key);
     } else if (key === 'repair.declip.clipThreshold' && typeof value === 'number') {
-      fragments.push(nest('repair.declip.clipThresholdDb', linearToThresholdDb(value)));
+      fragments.push({
+        keys: [key],
+        fragment: nest('repair.declip.clipThresholdDb', linearToThresholdDb(value)),
+      });
     } else if (
       (key === 'repair.gainFloor' || key === 'repair.denoise.gainFloor') &&
       typeof value === 'number'
     ) {
-      fragments.push(nest('repair.denoise.reductionDb', gainFloorToReductionDb(value)));
+      fragments.push({
+        keys: [key],
+        fragment: nest('repair.denoise.reductionDb', gainFloorToReductionDb(value)),
+      });
     } else if (key === COMPRESSOR_HPF_ENABLED || key === COMPRESSOR_HPF_HZ) {
       // Folded below: 2.0 keeps only the corner frequency, absent = off.
     } else {
       const path = Object.hasOwn(OVERRIDE_PATHS, key) ? OVERRIDE_PATHS[key] : key;
       // An ordinal with no token stays numeric, and the reader refuses it.
-      fragments.push(nest(path, overrideValue(path, value) ?? value));
+      fragments.push({ keys: [key], fragment: nest(path, overrideValue(path, value) ?? value) });
     }
   }
+  const hpfKeys = [COMPRESSOR_HPF_ENABLED, COMPRESSOR_HPF_HZ].filter((k) => Object.hasOwn(flat, k));
   if (flat[COMPRESSOR_HPF_ENABLED] === true) {
     const hz = flat[COMPRESSOR_HPF_HZ];
     const cornerHz = typeof hz === 'number' ? hz : SIDECHAIN_HPF_DEFAULT_HZ['dynamics.compressor'];
-    fragments.push(nest('dynamics.compressor.sidechainHighPassHz', cornerHz));
+    fragments.push({
+      keys: hpfKeys,
+      fragment: nest('dynamics.compressor.sidechainHighPassHz', cornerHz),
+    });
   }
-  // 2.0 replaces the whole band list, so the 1.x three-band layout is kept whole.
-  if (bands.length > 0) {
-    fragments.push(
-      nest(
-        'dynamics.multibandComp.bands',
-        MULTIBAND_BANDS.map((_, i) => bands[i] ?? {}),
-      ),
-    );
-  }
-  if (cutoffs[0] !== undefined && cutoffs[1] !== undefined) {
-    fragments.push(nest('dynamics.multibandComp.crossover.cutoffsHz', cutoffs));
+  if (bandKeys.length > 0 || cutoffKeys.length > 0) {
+    const multiband = baseChain(preset, core).dynamics?.multibandComp;
+    if (bandKeys.length > 0) {
+      const baseBands = multiband?.bands ?? [];
+      const merged = MULTIBAND_BANDS.map((_, i) => ({ ...baseBands[i], ...bands[i] }));
+      fragments.push({ keys: bandKeys, fragment: nest('dynamics.multibandComp.bands', merged) });
+    }
+    if (cutoffKeys.length > 0) {
+      const baseCutoffs = multiband?.crossover?.cutoffsHz ?? [];
+      const merged = [cutoffs[0] ?? baseCutoffs[0], cutoffs[1] ?? baseCutoffs[1]];
+      fragments.push({
+        keys: cutoffKeys,
+        fragment: nest('dynamics.multibandComp.crossover.cutoffsHz', merged),
+      });
+    }
   }
   // The reader answers with the whole canonical chain, defaults included, so
   // it only decides acceptance; the stored override stays the fragment itself.
-  const nested: Json = {};
-  for (const fragment of fragments) {
+  const overrides: Json = {};
+  for (const { keys, fragment } of fragments) {
     try {
-      read(JSON.stringify({ version: 2, params: fragment }));
-    } catch {
+      core.masteringChainConfigFromJson(JSON.stringify({ version: 2, params: fragment }));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      for (const key of keys) dropped.push({ key, value: flat[key], reason });
       continue;
     }
-    mergeInto(nested, fragment);
+    mergeInto(overrides, fragment);
   }
-  return nested;
+  return { overrides, dropped };
 }
 
 function upgradeMixerState(
   mixer: unknown,
+  location: string,
   processorsById: Map<string, string>,
-  read: ChainConfigReader,
+  core: UpgradeCore,
+  dropped: UpgradeDrop[],
 ): void {
   if (!isObject(mixer)) return;
   upgradeStrip(mixer.master, processorsById);
@@ -399,7 +463,10 @@ function upgradeMixerState(
   if (!isObject(chain)) return;
   upgradeInsertSlots(chain.processors, processorsById);
   if (isObject(chain.presetOverrides)) {
-    chain.presetOverrides = upgradeMasteringOverrides(chain.presetOverrides, read);
+    const result = upgradeMasteringOverrides(chain.presetOverrides, chain.preset, core);
+    chain.presetOverrides = result.overrides;
+    const at = `${location}.masteringChain.presetOverrides`;
+    for (const drop of result.dropped) dropped.push({ location: at, ...drop });
   }
 }
 
@@ -571,18 +638,26 @@ function upgradeLearnTarget(
  * vocabulary.
  *
  * @param doc Parsed schema-4 document.
- * @param read The core's chain-config reader, used for mastering overrides.
- * @returns A deep copy with every 1.x token rewritten and `schemaVersion` 5.
+ * @param core The core calls used for mastering overrides.
+ * @returns A deep copy with every 1.x token rewritten and `schemaVersion` 5,
+ *   and every stored setting the upgrade had to drop.
  */
-export function upgradeDocumentToV5(doc: Json, read: ChainConfigReader): Json {
+export function upgradeDocumentToV5(
+  doc: Json,
+  core: UpgradeCore,
+): { document: Json; dropped: UpgradeDrop[] } {
   const out = structuredClone(doc);
+  const dropped: UpgradeDrop[] = [];
   const processorsById = new Map<string, string>();
   const tracks = Array.isArray(out.tracks) ? out.tracks : [];
   const mixer = isObject(out.mixer) ? out.mixer : {};
-  const slots =
+  const slotEntries =
     isObject(out.mixerSnapshots) && isObject(out.mixerSnapshots.slots)
-      ? Object.values(out.mixerSnapshots.slots).filter(isObject)
+      ? Object.entries(out.mixerSnapshots.slots).filter((entry): entry is [string, Json] =>
+          isObject(entry[1]),
+        )
       : [];
+  const slots = slotEntries.map(([, slot]) => slot);
 
   // Live strips first, so live processor ids win over snapshot copies.
   eachObject(tracks, (track) => {
@@ -593,9 +668,10 @@ export function upgradeDocumentToV5(doc: Json, read: ChainConfigReader): Json {
       eachObject(clip.midiTakes, upgradeClipCurves);
     });
   });
-  upgradeMixerState(mixer, processorsById, read);
-  for (const snapshot of slots) {
-    upgradeMixerState(snapshot.mixer, processorsById, read);
+  upgradeMixerState(mixer, 'mixer', processorsById, core, dropped);
+  for (const [slotKey, snapshot] of slotEntries) {
+    const location = `mixerSnapshots.slots.${slotKey}.mixer`;
+    upgradeMixerState(snapshot.mixer, location, processorsById, core, dropped);
     eachObject(snapshot.tracks, (entry) => upgradeStrip(entry.mixer, processorsById));
   }
 
@@ -636,7 +712,7 @@ export function upgradeDocumentToV5(doc: Json, read: ChainConfigReader): Json {
   eachObject(out.midiCcBindings, (binding) => upgradeLearnTarget(binding, live, processorsById));
 
   out.schemaVersion = 5;
-  return out;
+  return { document: out, dropped };
 }
 
 /**

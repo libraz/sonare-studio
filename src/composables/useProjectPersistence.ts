@@ -161,7 +161,13 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
 
   async function replaceProjectDocument(document: ProjectDocument): Promise<void> {
     options.onProjectDocumentWillLoad?.();
-    await loadProjectDocument(document);
+    const dropped = await loadProjectDocument(document);
+    if (dropped.length === 0) return;
+    console.warn('Settings the project schema upgrade could not carry over', dropped);
+    errorMessage.value = formatMessage(t.value.notices.upgradeDroppedSettings, {
+      count: dropped.length,
+      keys: [...new Set(dropped.map((drop) => drop.key))].join(', '),
+    });
   }
 
   watch(

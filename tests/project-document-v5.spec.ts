@@ -9,6 +9,7 @@ import {
   upgradePresetName,
   upgradeTrackPresetToV2,
 } from '@/project/document-schema-v5';
+import { setWasmModule } from '@/project/runtime';
 import type { ProjectDocument } from '@/project/serialization';
 import * as wasm from '@/wasm/index.js';
 
@@ -16,10 +17,23 @@ type Json = Record<string, unknown>;
 
 const read = (json: string) => wasm.masteringChainConfigFromJson(json);
 
+/** Every leaf of a nested object, keyed by its dotted path; arrays are leaves. */
+function leaves(value: unknown, prefix = '', out: Json = {}): Json {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    for (const [key, inner] of Object.entries(value)) {
+      leaves(inner, prefix ? `${prefix}.${key}` : key, out);
+    }
+  } else {
+    out[prefix] = value;
+  }
+  return out;
+}
+
 beforeAll(async () => {
   await wasm.init({
     wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`),
   } as Parameters<typeof wasm.init>[0]);
+  setWasmModule(wasm);
 });
 
 describe('unit conversions', () => {
@@ -40,12 +54,13 @@ describe('unit conversions', () => {
 
 describe('mastering overrides', () => {
   it('nests 1.x dotted keys under their 2.0 paths, units and tokens', () => {
-    const nested = upgradeMasteringOverrides(
+    const { overrides, dropped } = upgradeMasteringOverrides(
       {
         'loudness.targetLufs': -14,
         'loudness.ceilingDb': -1,
         'maximizer.truePeakLimiter.ceilingDb': -0.5,
         'dynamics.deesser.bandpassQ': 2,
+        'dynamics.compressor.detector': 2,
         'repair.declip.clipThreshold': 0.5,
         'repair.denoise.gainFloor': 0.1,
         'repair.denoise.mode': 1,
@@ -58,16 +73,20 @@ describe('mastering overrides', () => {
         'dynamics.compressor.sidechainHpfEnabled': true,
         'dynamics.compressor.sidechainHpfHz': 80,
       },
-      read,
+      'pop',
+      wasm,
     );
-    expect(nested).toEqual({
+    const popBands = wasm.masteringPresetParams('pop').dynamics?.multibandComp?.bands ?? [];
+    expect(popBands).toHaveLength(3);
+    expect(dropped).toEqual([]);
+    expect(overrides).toEqual({
       loudness: { targetLufs: -14, ceilingDbtp: -1 },
       maximizer: { truePeakLimiter: { ceilingDbtp: -0.5 } },
       dynamics: {
         deesser: { bandPassQ: 2 },
-        compressor: { sidechainHighPassHz: 80 },
+        compressor: { detector: 'logRms', sidechainHighPassHz: 80 },
         multibandComp: {
-          bands: [{ ratio: 2 }, {}, { attackMs: 5 }],
+          bands: [{ ...popBands[0], ratio: 2 }, popBands[1], { ...popBands[2], attackMs: 5 }],
           crossover: { cutoffsHz: [120, 4000] },
         },
       },
@@ -78,27 +97,96 @@ describe('mastering overrides', () => {
       saturation: { exciter: { aliasing: 'oversample4x' } },
       eq: { tilt: { tiltDb: 1.5 } },
     });
-    expect(() => read(JSON.stringify({ version: 2, params: nested }))).not.toThrow();
+    expect(() => read(JSON.stringify({ version: 2, params: overrides }))).not.toThrow();
   });
 
-  it('drops what 2.0 refuses instead of storing it', () => {
-    expect(
-      upgradeMasteringOverrides(
-        {
-          'retired.stage.knob': 1,
-          'saturation.exciter.aliasing': 1,
-          'dynamics.compressor.sidechainHpfEnabled': false,
-          'dynamics.compressor.sidechainHpfHz': 80,
-          'dynamics.multibandComp.lowCutoffHz': 120,
+  it('takes the crossover point 1.x left to the preset from the preset', () => {
+    const cutoffs = wasm.masteringPresetParams('edm').dynamics?.multibandComp?.crossover?.cutoffsHz;
+    const { overrides, dropped } = upgradeMasteringOverrides(
+      { 'dynamics.multibandComp.lowCutoffHz': 150 },
+      'edm',
+      wasm,
+    );
+    expect(dropped).toEqual([]);
+    expect(overrides).toEqual({
+      dynamics: { multibandComp: { crossover: { cutoffsHz: [150, cutoffs?.[1]] } } },
+    });
+  });
+
+  it('migrates every 1.x preset parameter set without a drop, onto the 2.0 preset values', () => {
+    // masteringPresetParams of every preset, recorded from the 1.x core.
+    const recorded: { keys: string[]; presets: Record<string, Array<number | boolean>> } =
+      JSON.parse(
+        readFileSync(`${process.cwd()}/tests/fixtures/mastering-preset-params-1x.json`, 'utf8'),
+      );
+    const presetNames = new Set<string>(wasm.masteringPresetNames());
+    for (const [name, values] of Object.entries(recorded.presets)) {
+      expect(presetNames.has(name), name).toBe(true);
+      const flat = Object.fromEntries(recorded.keys.map((key, i) => [key, values[i]]));
+      const { overrides, dropped } = upgradeMasteringOverrides(flat, name, wasm);
+      expect(dropped, name).toEqual([]);
+      const current = leaves(wasm.masteringPresetParams(name as wasm.MasteringPreset));
+      for (const [path, value] of Object.entries(leaves(overrides))) {
+        if (typeof value === 'number')
+          expect(current[path], `${name} ${path}`).toBeCloseTo(value, 4);
+        else expect(current[path], `${name} ${path}`).toEqual(value);
+      }
+    }
+  });
+
+  it('migrates the studio-only 1.x override spellings without a drop', () => {
+    const { overrides, dropped } = upgradeMasteringOverrides(
+      {
+        'repair.reductionDb': 12,
+        'repair.nFft': 2048,
+        'repair.hopLength': 512,
+        'repair.ddAlpha': 0.98,
+        'repair.gainFloor': 0.1,
+        'eq.tiltDb': 1,
+        'eq.pivotHz': 1000,
+      },
+      'pop',
+      wasm,
+    );
+    expect(dropped).toEqual([]);
+    expect(overrides).toEqual({
+      repair: {
+        denoise: {
+          reductionDb: gainFloorToReductionDb(0.1),
+          nFft: 2048,
+          hopLength: 512,
+          ddAlpha: 0.98,
         },
-        read,
-      ),
-    ).toEqual({});
+      },
+      eq: { tilt: { tiltDb: 1, pivotHz: 1000 } },
+    });
+  });
+
+  it('drops only what 2.0 refuses or 1.x could not hold, and reports each with its reason', () => {
+    const { overrides, dropped } = upgradeMasteringOverrides(
+      {
+        'retired.stage.knob': 1,
+        'saturation.exciter.aliasing': 1,
+        'loudness.targetLufs': 'loud',
+        'dynamics.compressor.sidechainHpfEnabled': false,
+        'dynamics.compressor.sidechainHpfHz': 80,
+      },
+      'pop',
+      wasm,
+    );
+    expect(overrides).toEqual({});
+    expect(dropped.map(({ key, value }) => [key, value])).toEqual([
+      ['loudness.targetLufs', 'loud'],
+      ['retired.stage.knob', 1],
+      ['saturation.exciter.aliasing', 1],
+    ]);
+    for (const drop of dropped) expect(drop.reason).not.toBe('');
   });
 
   it('turns an enabled sidechain filter without a stored corner into the 1.x default', () => {
     expect(
-      upgradeMasteringOverrides({ 'dynamics.compressor.sidechainHpfEnabled': true }, read),
+      upgradeMasteringOverrides({ 'dynamics.compressor.sidechainHpfEnabled': true }, 'pop', wasm)
+        .overrides,
     ).toEqual({ dynamics: { compressor: { sidechainHighPassHz: 100 } } });
   });
 });
@@ -135,7 +223,7 @@ function docWithInserts(inserts: Json[]): Json {
 }
 
 function upgradedInserts(inserts: Json[]): Json[] {
-  const out = upgradeDocumentToV5(docWithInserts(inserts), read);
+  const out = upgradeDocumentToV5(docWithInserts(inserts), wasm).document;
   return ((out.tracks as Json[])[0].mixer as Json).inserts as Json[];
 }
 
@@ -319,7 +407,8 @@ describe('document walk', () => {
   it('rewrites every 1.x token of a schema-4 document and marks it schema 5', () => {
     const input = v4Document();
     const before = structuredClone(input);
-    const out = upgradeDocumentToV5(input, read);
+    const { document: out, dropped } = upgradeDocumentToV5(input, wasm);
+    expect(dropped).toEqual([]);
     expect(input).toEqual(before);
     expect(out.schemaVersion).toBe(5);
 
@@ -389,8 +478,42 @@ describe('document walk', () => {
     expect((snapshot.automationLanes as Json[])[0].param).toBe('insert:1:pitchCents');
   });
 
+  it('reports each dropped override with the document path it was stored under', () => {
+    const { document, dropped } = upgradeDocumentToV5(
+      {
+        schemaVersion: 4,
+        tracks: [],
+        mixer: {
+          masteringChain: { preset: 'pop', presetOverrides: { 'retired.knob': 1 }, processors: [] },
+        },
+        mixerSnapshots: {
+          slots: {
+            B: {
+              mixer: {
+                masteringChain: {
+                  preset: 'pop',
+                  presetOverrides: { 'loudness.targetLufs': -12, 'retired.knob': 2 },
+                  processors: [],
+                },
+              },
+            },
+          },
+        },
+      },
+      wasm,
+    );
+    expect(dropped.map(({ location, key, value }) => [location, key, value])).toEqual([
+      ['mixer.masteringChain.presetOverrides', 'retired.knob', 1],
+      ['mixerSnapshots.slots.B.mixer.masteringChain.presetOverrides', 'retired.knob', 2],
+    ]);
+    const slot = ((document.mixerSnapshots as Json).slots as Json).B as Json;
+    expect(((slot.mixer as Json).masteringChain as Json).presetOverrides).toEqual({
+      loudness: { targetLufs: -12 },
+    });
+  });
+
   it('pins a pre-v4 default instrument to the 2.0 spelling of the 1.x electric piano', () => {
-    const doc = upgradeProjectDocument({
+    const { document: doc } = upgradeProjectDocument({
       schemaVersion: 2,
       tracks: [{ kind: 'midi', clips: [] }],
     } as unknown as ProjectDocument);

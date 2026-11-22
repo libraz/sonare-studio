@@ -13,7 +13,7 @@ import type {
   MixerSnapshotTrack,
 } from './command/mixer-snapshots';
 import type { ControlSurfaceSettings } from './control-surface';
-import { upgradeDocumentToV5 } from './document-schema-v5';
+import { type UpgradeDrop, upgradeDocumentToV5 } from './document-schema-v5';
 import type { TrackExpressionMap } from './expression-map';
 import type { ExternalStemRole } from './external-stems';
 import type { TrackProvenance } from './generation';
@@ -136,12 +136,16 @@ const PRE_V4_DEFAULT_SYNTH_PRESET = 'e-piano';
  * Returns a current-version document unchanged; never mutates its input.
  *
  * @param doc Document of any supported schema version.
- * @returns A document whose implicit values mean the same as when it was written.
+ * @returns A document whose implicit values mean the same as when it was
+ *   written, and every stored setting the upgrade had to drop.
  */
-export function upgradeProjectDocument(doc: ProjectDocument): ProjectDocument {
+export function upgradeProjectDocument(doc: ProjectDocument): {
+  document: ProjectDocument;
+  dropped: UpgradeDrop[];
+} {
   // An unsupported version is the loader's to refuse, not ours to relabel.
   if (!Number.isInteger(doc.schemaVersion) || doc.schemaVersion < 1 || doc.schemaVersion >= 5) {
-    return doc;
+    return { document: doc, dropped: [] };
   }
   const pinned: ProjectDocument =
     doc.schemaVersion < 4 &&
@@ -159,9 +163,11 @@ export function upgradeProjectDocument(doc: ProjectDocument): ProjectDocument {
         }
       : doc;
   // The tables are frozen 1.x spellings, so the result is typed only after the walk.
-  return upgradeDocumentToV5(pinned as unknown as Record<string, unknown>, (json) =>
-    getWasmModule().masteringChainConfigFromJson(json),
-  ) as unknown as ProjectDocument;
+  const { document, dropped } = upgradeDocumentToV5(
+    pinned as unknown as Record<string, unknown>,
+    getWasmModule(),
+  );
+  return { document: document as unknown as ProjectDocument, dropped };
 }
 
 /** One note inside a document clip (an {@link EditorNote} without its id). */

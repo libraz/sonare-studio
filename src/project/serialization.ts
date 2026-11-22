@@ -42,6 +42,7 @@ import type {
   ProjectDocument,
 } from './document-schema';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, upgradeProjectDocument } from './document-schema';
+import type { UpgradeDrop } from './document-schema-v5';
 import {
   cloneInstrument,
   type ExternalMidiInstrument,
@@ -433,10 +434,11 @@ export function serializeProject(): ProjectDocument {
  * the new baseline, not an undoable edit).
  *
  * @param doc Document from {@link serializeProject} or a template.
+ * @returns The stored settings the schema upgrade had to drop.
  */
-export async function loadProjectDocument(input: ProjectDocument): Promise<void> {
+export async function loadProjectDocument(input: ProjectDocument): Promise<UpgradeDrop[]> {
   const store = useProjectStore();
-  const doc = upgradeProjectDocument(input);
+  const { document: doc, dropped } = upgradeProjectDocument(input);
   if (doc.externalMidiDefault !== undefined) {
     validateTrackInstrument(doc.externalMidiDefault);
     if (doc.externalMidiDefault.kind !== 'external-midi') {
@@ -467,4 +469,5 @@ export async function loadProjectDocument(input: ProjectDocument): Promise<void>
   });
   clearHistory();
   importMixerSnapshotSlots(fromDocumentMixerSnapshotSlots(doc.mixerSnapshots, store.tracks));
+  return dropped;
 }

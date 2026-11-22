@@ -65,7 +65,7 @@ export interface UseAutosaveReturn {
    *   exists or OPFS is unavailable.
    * @throws Error when the stored bytes are corrupt or fail to replay.
    */
-  restoreAutosave(load?: (document: ProjectDocument) => Promise<void>): Promise<boolean>;
+  restoreAutosave(load?: (document: ProjectDocument) => Promise<unknown>): Promise<boolean>;
   /**
    * Cancels a pending debounced write without saving. Used when the project
    * reaches a clean state (e.g. just after a load) so the change watcher's
@@ -179,7 +179,7 @@ export function useAutosave(options: UseAutosaveOptions = {}): UseAutosaveReturn
   };
 
   const restoreAutosave = (
-    load: (document: ProjectDocument) => Promise<void> = loadProjectDocument,
+    load: (document: ProjectDocument) => Promise<unknown> = loadProjectDocument,
   ): Promise<boolean> => {
     cancelPending();
     return enqueue(async (): Promise<boolean> => {

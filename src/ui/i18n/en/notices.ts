@@ -27,6 +27,8 @@ export const notices = {
   trackLaneOverflow:
     '{count} track(s) beyond the {limit}-track limit have no mixer lane and stay silent. Delete tracks to bring the project under the limit.',
   webMidiConnectFailed: 'Could not connect to Web MIDI: {detail}',
+  upgradeDroppedSettings:
+    '{count} mastering setting(s) saved by an earlier version could not be carried over, so the preset value applies instead: {keys}. The browser console lists each one with the reason.',
   gsSetupUnapplied:
     '{count} GS/SysEx setup message(s) were not applied to the playback synth. Only complete setup messages of up to {limit} bytes at the start of the song, before the first note, are applied; they are kept for MIDI export.',
   recording: {

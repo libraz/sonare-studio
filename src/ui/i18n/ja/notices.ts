@@ -28,6 +28,8 @@ export const notices = {
   trackLaneOverflow:
     '{limit} トラックの上限を超えた {count} トラックにはミキサーのレーンがなく、音が出ません。トラックを削除して上限内に収めてください。',
   webMidiConnectFailed: 'Web MIDI に接続できませんでした: {detail}',
+  upgradeDroppedSettings:
+    '以前のバージョンで保存されたマスタリング設定 {count} 件を引き継げなかったため、プリセットの値を使います: {keys}。各設定と理由はブラウザのコンソールに出力しています。',
   gsSetupUnapplied:
     'GS/SysExのセットアップメッセージ {count} 件が再生用シンセに適用されませんでした。適用されるのは、曲頭で最初のノートより前にある {limit} バイト以内の完結したセットアップメッセージのみです。これらはMIDI書き出しでは保持されます。',
   recording: {
