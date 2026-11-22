@@ -99,6 +99,7 @@ describe('component error banners', () => {
       'src/components/piano-roll/use-piano-roll-viewport.ts',
       'src/components/sample-editor/SampleEditor.vue',
       'src/components/score/ScorePanel.vue',
+      'src/ui/devices/use-sound-font-manifest-probe.ts',
     ]) {
       const source = readSource(path);
       expect(source, path).not.toMatch(/\berrorMessage\(/);
