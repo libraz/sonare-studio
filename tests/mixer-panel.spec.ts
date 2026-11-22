@@ -219,6 +219,7 @@ describe('MixerPanel.vue', () => {
     const targetId = store.tracks[0].id;
     const groupId = addGroupTrack({ name: 'Drum Bus' });
     addMixerBus({ name: 'Verb' });
+    addTrack({ name: 'Kick' });
     addInsert(targetId, 'dynamics.sidechainRouter');
 
     const ordinaryWrapper = mount(InsertRack, {
@@ -231,8 +232,8 @@ describe('MixerPanel.vue', () => {
     await ordinaryWrapper.find('.insert-name').trigger('click');
     await ordinaryWrapper.find('.insert-sidechain-select .select-trigger').trigger('click');
     const ordinaryOptions = ordinaryWrapper.findAll('.select-option');
-    expect(ordinaryOptions.map((option) => option.text())).not.toContain('Verb · BUS');
-    expect(ordinaryOptions.map((option) => option.text())).not.toContain('Drum Bus · GROUP');
+    // A track strip keys only from other tracks: no bus or group sources.
+    expect(ordinaryOptions.map((option) => option.text())).toEqual(['No key', 'Kick']);
     ordinaryWrapper.unmount();
 
     const groupOutput = addMixerBus({ name: 'Group out' });
