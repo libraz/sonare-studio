@@ -14,7 +14,7 @@ RUNTIME_FILES=("sonare.wasm" "sonare.js" "index.js" "worklet.js")
 SKIP_DECLS=("sonare-analysis.d.ts")
 
 # Files kept in DEST_DIR that the sync must not delete.
-KEEP_FILES=("meta.json")
+KEEP_FILES=("meta.json" "migration-ledger.toml" "migration-ledger.json")
 
 echo "📦 Copying WASM files from libsonare..."
 
@@ -66,6 +66,8 @@ RSYNC_ARGS=(-rc --delete)
 for keep in "${KEEP_FILES[@]}"; do
   RSYNC_ARGS+=(--exclude "/$keep")
 done
+
+./scripts/copy-migration-ledger.sh
 
 CHANGES=$(rsync "${RSYNC_ARGS[@]}" --dry-run --itemize-changes "$STAGE_DIR/" "$DEST_DIR/")
 if [ -z "$CHANGES" ]; then
