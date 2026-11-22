@@ -80,8 +80,8 @@ describe('audio analysis command stale clip guards', () => {
     Object.assign(wasmModule.current ?? {}, {
       analyzeMelody: () => ({
         points: [
-          { time: 0, frequency: 440, confidence: 1 },
-          { time: 0.5, frequency: 0, confidence: 0 },
+          { timeSec: 0, frequencyHz: 440, confidence: 1 },
+          { timeSec: 0.5, confidence: 0 },
         ],
       }),
     });
@@ -142,8 +142,8 @@ describe('audio analysis command stale clip guards', () => {
     Object.assign(wasmModule.current ?? {}, {
       analyzeMelody: () => ({
         points: [
-          { time: 0, frequency: 440, confidence: 1 },
-          { time: 0.5, frequency: 0, confidence: 0 },
+          { timeSec: 0, frequencyHz: 440, confidence: 1 },
+          { timeSec: 0.5, confidence: 0 },
         ],
       }),
     });

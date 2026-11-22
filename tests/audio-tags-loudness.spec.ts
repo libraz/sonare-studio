@@ -45,8 +45,8 @@ function channelSummedLufs(samples: Float32Array, channels: number): number {
 
 const analysis: AudioAnalysisFunctions = {
   lufs: (samples) => ({ integratedLufs: channelSummedLufs(samples, 1) }),
-  lufsInterleaved: (samples, channels) => ({
-    integratedLufs: channelSummedLufs(samples, channels),
+  lufsMultichannel: ({ channels }) => ({
+    integratedLufs: channelSummedLufs(interleaveChannels(channels), channels.length),
   }),
 };
 
@@ -58,7 +58,7 @@ describe('asset loudness tag', () => {
     expect(tags?.lufs).toBeCloseTo(monoLufs + 3.0103, 3);
   });
 
-  it('matches lufsInterleaved on the stored PCM for a wide stereo asset', async () => {
+  it('matches lufsMultichannel on the stored PCM for a wide stereo asset', async () => {
     const left = sine();
     const right = left.map((v) => -v);
     const tags = await importedTags([left, right]);

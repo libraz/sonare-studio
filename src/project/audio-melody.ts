@@ -7,35 +7,26 @@
  * analyzed buffer is cut with the same fixed-tempo slice as playback, and frame
  * times (seconds, relative to the window start) map to clip-relative PPQ with
  * that same constant tempo. Consecutive voiced frames that round to the same
- * MIDI pitch are merged into one note; unvoiced frames (frequency 0) break the
+ * MIDI pitch are merged into one note; unvoiced frames (no frequency) break the
  * run. Side-effect-free and dependency-injected for testing; the clip/track
  * creation lives in command/melody.
  */
 
 import { nearestStep, noteToPitchClass, tryParseNote } from '@libraz/libcantus';
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { KeyDetection, MelodyOptions, MelodyPoint, MelodyResult } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { quantizeNotes } from './audio-transcription';
 import { ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { MeterGridStep } from './time-signature';
 import { MAJOR_MODE_MASK, type TempoSegment, type TimeSignatureSegment } from './types';
 
-/** One frame of the melody contour returned by the engine. */
-export interface DetectedMelodyPoint {
-  /** Window-relative frame time in seconds. */
-  time: number;
-  /** Estimated f0 in Hz; 0 marks an unvoiced frame. */
-  frequency: number;
-  /** Voicing confidence in [0, 1]. */
-  confidence: number;
-}
-
 /** The melody analyzer signature (libsonare `analyzeMelody`). */
 export type AudioMelodyAnalyzer = (
   samples: Float32Array,
-  sampleRate?: number,
-  options?: { usePyin?: boolean },
-) => { points: ReadonlyArray<DetectedMelodyPoint> };
+  sampleRate: number,
+  options?: Pick<MelodyOptions, 'usePyin'>,
+) => Pick<MelodyResult, 'points'>;
 
 /** A detected note ready for a new MIDI clip (clip-relative PPQ). */
 export interface MelodyNoteInput {
@@ -58,8 +49,8 @@ export interface AudioMelodyDeps {
   /** Optional key detector used to choose the scale for pitch quantization. */
   detectKey?: (
     samples: Float32Array,
-    sampleRate?: number,
-  ) => { name?: string; shortName?: string } | null | undefined;
+    sampleRate: number,
+  ) => Pick<KeyDetection, 'name' | 'shortName'>;
   /** Optional scale quantizer; receives root pitch class and a 12-bit mode mask. */
   scaleQuantizeMidi?: (root: number, modeMask: number, midi: number) => number;
 }
@@ -68,7 +59,7 @@ export interface AudioMelodyDeps {
 export interface MelodyExtractOptions {
   /** Drop notes shorter than this (seconds) to suppress blips. Default 0.05. */
   minNoteSeconds?: number;
-  /** Prefer pYIN when the engine exposes it. Default true. */
+  /** Use the pYIN tracker. Default true. */
   usePyin?: boolean;
   /** Quantize note starts/ends to this step of the project meter grid, or `'bar'`. Omit/0 to keep raw rhythm. */
   rhythmQuantizePpq?: MeterGridStep;
@@ -86,10 +77,11 @@ interface MelodyScale {
 const NATURAL_MINOR_MODE_MASK = 0b010110101101;
 
 /** True when a frame is voiced and its pitch lands in the MIDI range. */
-function pitchOf(point: DetectedMelodyPoint): number | null {
-  if (!(point.frequency > 0)) return null;
+function pitchOf(point: MelodyPoint): number | null {
+  const hz = point.frequencyHz;
+  if (hz === undefined || !(hz > 0)) return null;
   // 12-TET step index is the MIDI number: A4 = 440 Hz = 69.
-  const midi = nearestStep(point.frequency);
+  const midi = nearestStep(hz);
   return midi >= 0 && midi <= 127 ? midi : null;
 }
 
@@ -97,10 +89,8 @@ function clampMidi(value: number): number {
   return Math.min(127, Math.max(0, Math.round(value)));
 }
 
-function parseDetectedScale(
-  key: { name?: string; shortName?: string } | null | undefined,
-): MelodyScale | null {
-  const label = (key?.shortName || key?.name || '').trim();
+function parseDetectedScale(key: Pick<KeyDetection, 'name' | 'shortName'>): MelodyScale | null {
+  const label = (key.shortName || key.name).trim();
   const match = label.match(/^([A-Ga-g])([#b]?)(?:\s*(major|minor|maj|min|m))?/);
   if (!match) return null;
   // The label comes from the audio analyzer's own shorthand ("C#m", "Amaj"),
@@ -123,9 +113,7 @@ function detectMelodyScale(
   sampleRate: number,
   deps: AudioMelodyDeps,
 ): MelodyScale | null {
-  if (typeof deps.detectKey !== 'function' || typeof deps.scaleQuantizeMidi !== 'function') {
-    return null;
-  }
+  if (deps.detectKey === undefined || deps.scaleQuantizeMidi === undefined) return null;
   try {
     return parseDetectedScale(deps.detectKey(mono, sampleRate));
   } catch {
@@ -134,7 +122,7 @@ function detectMelodyScale(
 }
 
 function quantizePitch(midi: number, scale: MelodyScale | null, deps: AudioMelodyDeps): number {
-  if (!scale || typeof deps.scaleQuantizeMidi !== 'function') return midi;
+  if (!scale || deps.scaleQuantizeMidi === undefined) return midi;
   const snapped = deps.scaleQuantizeMidi(scale.root, scale.modeMask, midi);
   return Number.isFinite(snapped) ? clampMidi(snapped) : midi;
 }
@@ -201,8 +189,7 @@ export async function analyzeAudioClipMelody(
   const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
   if (!audible) return [];
   const { mono, sampleRate, map } = audible;
-  const points =
-    deps.analyzeMelody(mono, sampleRate, { usePyin: options.usePyin ?? true }).points ?? [];
+  const { points } = deps.analyzeMelody(mono, sampleRate, { usePyin: options.usePyin ?? true });
   const scale = options.pitchQuantizeToScale ? detectMelodyScale(mono, sampleRate, deps) : null;
   const minNoteSeconds = options.minNoteSeconds ?? 0.05;
   // Map window-relative frame seconds to clip-relative PPQ through the tempo
@@ -251,14 +238,14 @@ export async function analyzeAudioClipMelody(
   for (const point of points) {
     const midi = pitchOf(point);
     if (midi === null) {
-      flush(point.time); // unvoiced frame ends the run here
+      flush(point.timeSec); // unvoiced frame ends the run here
       continue;
     }
     const snappedMidi = quantizePitch(midi, scale, deps);
     if (snappedMidi !== runMidi) {
-      flush(point.time); // pitch change: previous note ends at this frame
+      flush(point.timeSec); // pitch change: previous note ends at this frame
       runMidi = snappedMidi;
-      runStart = point.time;
+      runStart = point.timeSec;
     }
     confSum += Math.min(1, Math.max(0, point.confidence));
     confCount += 1;

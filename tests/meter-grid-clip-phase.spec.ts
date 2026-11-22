@@ -254,8 +254,8 @@ describe('audio-to-MIDI rhythm quantize', () => {
           }) as LoadedAudioAsset,
         analyzeMelody: () => ({
           points: [
-            { time: 1.86, frequency: 440, confidence: 1 },
-            { time: 1.96, frequency: 0, confidence: 0 },
+            { timeSec: 1.86, frequencyHz: 440, confidence: 1 },
+            { timeSec: 1.96, confidence: 0 },
           ],
         }),
       },

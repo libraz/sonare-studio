@@ -15,16 +15,12 @@ import type {
   DynamicsResult,
   KeyCandidate,
   KeyDetection,
+  KeyDetectionOptions,
+  LufsMultichannelRequest,
   LufsResult,
   RhythmResult,
   TimbreResult,
 } from '@/wasm/index.js';
-
-interface MeterReading {
-  numerator?: number;
-  denominator?: number;
-  confidence?: number;
-}
 
 /**
  * The analysis functions consumed on import. Each result is typed from the
@@ -35,35 +31,35 @@ export interface AudioAnalysisFunctions {
   /** Detailed tempo analysis; preferred over detectBpm when present. */
   analyzeBpm?: (
     samples: Float32Array,
-    sampleRate?: number,
+    sampleRate: number,
   ) => Pick<BpmAnalysisResult, 'bpm'> & Partial<Pick<BpmAnalysisResult, 'confidence'>>;
   /** Returns the detected tempo in BPM (mono samples + sample rate). */
-  detectBpm?: (samples: Float32Array, sampleRate?: number) => number;
+  detectBpm?: (samples: Float32Array, sampleRate: number) => number;
   /** Returns the detected key; an off-pitch recording is read on its own pitch grid. */
   detectKey?: (
     samples: Float32Array,
-    sampleRate?: number,
-    options?: { tuning?: number | 'auto' },
+    sampleRate: number,
+    options?: Pick<KeyDetectionOptions, 'tuningCents'>,
   ) => Pick<KeyDetection, 'name'> & Partial<Pick<KeyDetection, 'shortName' | 'confidence'>>;
   /** Detailed key candidates; used when detectKey is absent. */
   detectKeyCandidates?: (
     samples: Float32Array,
-    sampleRate?: number,
+    sampleRate: number,
   ) => Array<{ key?: Partial<Pick<KeyCandidate['key'], 'name' | 'shortName' | 'confidence'>> }>;
   /** Rhythm analysis; used for meter, groove and rhythm-feel tags. */
   analyzeRhythm?: (
     samples: Float32Array,
-    sampleRate?: number,
+    sampleRate: number,
   ) => Partial<
     Pick<
       RhythmResult,
       'bpm' | 'grooveType' | 'syncopation' | 'patternRegularity' | 'tempoStability'
     >
-  > & { timeSignature?: MeterReading };
+  > & { timeSignature?: Partial<RhythmResult['timeSignature']> };
   /** Dynamics analysis; used for asset inspector tags. */
   analyzeDynamics?: (
     samples: Float32Array,
-    sampleRate?: number,
+    sampleRate: number,
   ) => Partial<
     Pick<
       DynamicsResult,
@@ -73,18 +69,14 @@ export interface AudioAnalysisFunctions {
   /** Timbre analysis; used for asset inspector tags. */
   analyzeTimbre?: (
     samples: Float32Array,
-    sampleRate?: number,
+    sampleRate: number,
   ) => Partial<
     Pick<TimbreResult, 'brightness' | 'warmth' | 'density' | 'roughness' | 'complexity'>
   >;
   /** Returns the EBU R128 loudness (mono samples + sample rate). */
-  lufs?: (samples: Float32Array, sampleRate?: number) => Pick<LufsResult, 'integratedLufs'>;
-  /** Returns the BS.1770 channel-summed loudness of an interleaved buffer. */
-  lufsInterleaved?: (
-    samples: Float32Array,
-    channels: number,
-    sampleRate?: number,
-  ) => Pick<LufsResult, 'integratedLufs'>;
+  lufs?: (samples: Float32Array, sampleRate: number) => Pick<LufsResult, 'integratedLufs'>;
+  /** Returns the BS.1770 channel-summed loudness of planar channels. */
+  lufsMultichannel?: (request: LufsMultichannelRequest) => Pick<LufsResult, 'integratedLufs'>;
 }
 
 /** The stored channels, interleaved, for the loudness measurement. */
@@ -113,6 +105,16 @@ function finite(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+/** Splits a frame-major buffer into one array per channel. */
+function splitChannels(interleaved: Float32Array, channels: number): Float32Array[] {
+  const frames = Math.floor(interleaved.length / channels);
+  return Array.from({ length: channels }, (_, channel) => {
+    const out = new Float32Array(frames);
+    for (let i = 0; i < frames; i += 1) out[i] = interleaved[i * channels + channel];
+    return out;
+  });
+}
+
 /** Runs a detector, swallowing its failure: a missing tag is the answer. */
 function attempt(run: () => void): void {
   try {
@@ -130,7 +132,7 @@ function attempt(run: () => void): void {
  * @param analysis Detectors (skipped when absent).
  * @param onProgress Called after each step with the share done.
  * @param loudness Stored channels to measure loudness on; without them the mono
- *   buffer is measured. A multichannel input needs `lufsInterleaved`, since a
+ *   buffer is measured. A multichannel input needs `lufsMultichannel`, since a
  *   downmix reads quieter than the channel-summed loudness.
  * @returns Tags with the successful detections (possibly empty).
  */
@@ -165,7 +167,7 @@ export function analyzeAudioTags(
   step(STEP_COST.key, () => {
     let key: { name?: string; shortName?: string; confidence?: number } | undefined;
     if (typeof analysis.detectKey === 'function') {
-      key = analysis.detectKey(mono, sampleRate, { tuning: 'auto' });
+      key = analysis.detectKey(mono, sampleRate, { tuningCents: 'auto' });
     } else if (typeof analysis.detectKeyCandidates === 'function') {
       key = analysis.detectKeyCandidates(mono, sampleRate).find((candidate) => candidate.key)?.key;
     }
@@ -220,8 +222,11 @@ export function analyzeAudioTags(
   step(STEP_COST.lufs, () => {
     // Silence yields -Infinity; only keep a finite measurement.
     let measured: { integratedLufs: number } | undefined;
-    if (loudness !== undefined && typeof analysis.lufsInterleaved === 'function') {
-      measured = analysis.lufsInterleaved(loudness.interleaved, loudness.channels, sampleRate);
+    if (loudness !== undefined && typeof analysis.lufsMultichannel === 'function') {
+      measured = analysis.lufsMultichannel({
+        channels: splitChannels(loudness.interleaved, loudness.channels),
+        sampleRate,
+      });
     } else if ((loudness === undefined || loudness.channels === 1) && analysis.lufs) {
       measured = analysis.lufs(mono, sampleRate);
     }

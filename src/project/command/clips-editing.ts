@@ -839,15 +839,7 @@ export async function sliceAudioClipAtTransients(
     throw new RangeError(`Clip ${clipId} is not an audio clip with an asset`);
   }
   if (clip.loopEnabled) throw new Error(LOOP_CLIP_SPLIT_ERROR);
-  const detect =
-    options.detectOnsets ??
-    (
-      (await ensureWasm()) as unknown as {
-        detectOnsets?: (samples: Float32Array, sampleRate: number) => ArrayLike<number>;
-      }
-    ).detectOnsets ??
-    null;
-  if (detect === null) throw new Error('Onset detection is unavailable in this libsonare build');
+  const detect = options.detectOnsets ?? (await ensureWasm()).detectOnsets;
   const loadAudioAsset = options.loadAudioAsset ?? loadAsset;
   // Detect on what plays, so warp and comp takes place the onsets where they are heard.
   const audible = await renderAudibleClipMono(

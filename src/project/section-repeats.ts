@@ -18,14 +18,6 @@ export interface ChromaFeatures {
   features: Float32Array;
 }
 
-/** The chroma feature extractor signature (libsonare `chroma`). */
-export type ChromaAnalyzer = (
-  samples: Float32Array,
-  sampleRate?: number,
-  nFft?: number,
-  hopLength?: number,
-) => ChromaFeatures;
-
 /**
  * STFT window and hop for the comparison.
  *

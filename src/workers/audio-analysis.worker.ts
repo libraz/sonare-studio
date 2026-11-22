@@ -1,11 +1,7 @@
 import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import type { AudioAssetTags } from '@/persistence/assets';
-import {
-  type AudioAnalysisFunctions,
-  analyzeAudioTags,
-  type LoudnessInput,
-} from '@/project/audio-tags';
+import { analyzeAudioTags, type LoudnessInput } from '@/project/audio-tags';
 
 /** One disposable request over a mono buffer: its asset tags, beats, or beat accents. */
 export interface AudioAnalysisWorkerRequest {
@@ -23,18 +19,6 @@ export type AudioAnalysisWorkerResponse =
   | { type: 'beats'; beats: number[]; downbeats: number[] }
   | { type: 'meter'; beatTimes: number[]; beatStrengths: number[] }
   | { type: 'error'; error: string };
-
-interface BeatAnalyzer {
-  analyze: (
-    samples: Float32Array,
-    sampleRate: number,
-  ) => { beats: ReadonlyArray<{ time: number }>; beatObservations: { onsetStrength: number[] } };
-}
-
-interface BeatDetectors {
-  detectBeats: (samples: Float32Array, sampleRate?: number) => ArrayLike<number>;
-  detectDownbeats: (samples: Float32Array, sampleRate?: number) => ArrayLike<number>;
-}
 
 function validRequest(value: unknown): value is AudioAnalysisWorkerRequest {
   if (typeof value !== 'object' || value === null) return false;
@@ -64,19 +48,18 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
   ensureWasm()
     .then((wasm) => {
       if (kind === 'beats') {
-        const detectors = wasm as unknown as BeatDetectors;
         postMessage({
           type: 'beats',
-          beats: Array.from(detectors.detectBeats(samples, sampleRate)),
-          downbeats: Array.from(detectors.detectDownbeats(samples, sampleRate)),
+          beats: Array.from(wasm.detectBeats(samples, sampleRate)),
+          downbeats: Array.from(wasm.detectDownbeats(samples, sampleRate)),
         } satisfies AudioAnalysisWorkerResponse);
         return;
       }
       if (kind === 'meter') {
-        const analysis = (wasm as unknown as BeatAnalyzer).analyze(samples, sampleRate);
+        const analysis = wasm.analyze(samples, sampleRate);
         postMessage({
           type: 'meter',
-          beatTimes: analysis.beats.map((beat) => beat.time),
+          beatTimes: analysis.beats.map((beat) => beat.timeSec),
           beatStrengths: Array.from(analysis.beatObservations.onsetStrength),
         } satisfies AudioAnalysisWorkerResponse);
         return;
@@ -84,7 +67,7 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
       const tags = analyzeAudioTags(
         samples,
         sampleRate,
-        wasm as unknown as AudioAnalysisFunctions,
+        wasm,
         (fraction) =>
           postMessage({ type: 'progress', fraction } satisfies AudioAnalysisWorkerResponse),
         loudness,

@@ -4,11 +4,7 @@ import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { type DetectedBeats, detectBeatsInWorker } from '../audio-analysis-client';
-import {
-  type AudioMelodyAnalyzer,
-  type AudioMelodyDeps,
-  analyzeAudioClipMelody,
-} from '../audio-melody';
+import { analyzeAudioClipMelody } from '../audio-melody';
 import { detectAudioClipBeatGrid, quarterBeatsPerBar } from '../audio-tempo';
 import {
   type AudioTranscriptionOptions,
@@ -155,8 +151,8 @@ function melodySourceRevision(
  * single `execute`, so undo reverts the whole transcription at once.
  *
  * @param clipId Id of the audio clip to transcribe.
- * @returns The new MIDI clip id, or -1 when `analyzeMelody` is unavailable or
- *   no notes were detected (nothing is created in either case).
+ * @returns The new MIDI clip id, or -1 when no notes were detected (nothing is
+ *   created).
  * @throws RangeError when the clip is not an audio clip.
  */
 export async function extractMelodyFromAudioClip(clipId: number): Promise<number> {
@@ -181,13 +177,8 @@ export async function extractMelodyFromAudioClip(clipId: number): Promise<number
       melodySourceRevision(store, clipId),
     );
   try {
-    const wasm = (await ensureWasm()) as unknown as {
-      analyzeMelody?: AudioMelodyAnalyzer;
-      detectKey?: AudioMelodyDeps['detectKey'];
-      scaleQuantizeMidi?: AudioMelodyDeps['scaleQuantizeMidi'];
-    };
+    const wasm = await ensureWasm();
     assertCurrent();
-    if (typeof wasm.analyzeMelody !== 'function') return -1;
     const rhythmQuantizePpq: MeterGridStep | undefined = store.snapEnabled
       ? store.snapBar
         ? 'bar'

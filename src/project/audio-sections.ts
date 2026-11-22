@@ -15,9 +15,10 @@
  */
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { ChromaResult, Section, SectionAnalysis, SectionType } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import {
-  type ChromaAnalyzer,
+  type ChromaFeatures,
   groupSectionRepeats,
   SECTION_CHROMA_FFT,
   SECTION_CHROMA_HOP,
@@ -26,12 +27,21 @@ import {
 import { ppqToSeconds, secondsToPpq } from './tempo-map';
 import { type TempoSegment, TRACK_COLOR_PALETTE } from './types';
 
-export type { ChromaAnalyzer, ChromaFeatures } from './section-repeats';
+export type { ChromaFeatures } from './section-repeats';
 
-/**
- * Section labels indexed by libsonare `SectionType` ordinal
- * (Intro=0 .. Unknown=7).
- */
+/** Section types in the order of the labels below; the position is the fallback color key. */
+const SECTION_TYPE_ORDER: readonly SectionType[] = [
+  'intro',
+  'verse',
+  'preChorus',
+  'chorus',
+  'bridge',
+  'instrumental',
+  'outro',
+  'unknown',
+];
+
+/** Display labels of the core's section types, in {@link SECTION_TYPE_ORDER} order. */
 export const SECTION_TYPE_NAMES = [
   'Intro',
   'Verse',
@@ -43,21 +53,15 @@ export const SECTION_TYPE_NAMES = [
   'Section',
 ] as const;
 
-/** A section returned by the engine detector (the fields we consume). */
-export interface DetectedAudioSection {
-  /** SectionType ordinal (Intro=0 .. Unknown=7). */
-  type: number;
-  /** Window-relative start in seconds. */
-  start: number;
-  /** Window-relative end in seconds. */
-  end: number;
-}
-
 /** The audio section detector signature (libsonare `analyzeSections`). */
-export type AudioSectionAnalyzer = (
+export type AudioSectionAnalyzer = (samples: Float32Array, sampleRate: number) => SectionAnalysis;
+
+/** The chroma extractor signature (libsonare `chroma`). */
+export type AudioChromaAnalyzer = (
   samples: Float32Array,
-  sampleRate?: number,
-) => ReadonlyArray<DetectedAudioSection>;
+  sampleRate: number,
+  options: { nFft: number; hopLength: number },
+) => ChromaResult;
 
 /** A detected section ready for `setSections` (id allocated by the command). */
 export interface DetectedSectionInput {
@@ -78,13 +82,19 @@ export interface AudioSectionDeps {
    * type, which cannot distinguish two different parts the detector gave the
    * same type ordinal.
    */
-  chroma?: ChromaAnalyzer;
+  chroma?: AudioChromaAnalyzer;
 }
 
-/** Maps a SectionType ordinal to its stable label. */
-function sectionLabel(type: number): string {
-  const index = Number.isInteger(type) && type >= 0 ? type : SECTION_TYPE_NAMES.length - 1;
-  return SECTION_TYPE_NAMES[index] ?? SECTION_TYPE_NAMES[SECTION_TYPE_NAMES.length - 1];
+/** Position of a section type in {@link SECTION_TYPE_ORDER}. */
+function sectionTypeIndex(type: SectionType): number {
+  return SECTION_TYPE_ORDER.indexOf(type);
+}
+
+/** Maps a section type to its stable label. */
+function sectionLabel(type: SectionType): string {
+  return (
+    SECTION_TYPE_NAMES[sectionTypeIndex(type)] ?? SECTION_TYPE_NAMES[SECTION_TYPE_NAMES.length - 1]
+  );
 }
 
 /** Palette entry for a repeat group (or, without chroma, for a type). */
@@ -115,7 +125,7 @@ export async function analyzeAudioClipSections(
   const audible = await renderAudibleClipMono(clip, tempoBpm, tempoSegments, deps.loadAudioAsset);
   if (!audible) return [];
   const { mono, sampleRate, map } = audible;
-  const sections = deps.analyzeSections(mono, sampleRate);
+  const { sections } = deps.analyzeSections(mono, sampleRate);
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
   // Map window-relative detection seconds onto the timeline through the tempo
   // map (the inverse of how playback positions the clip), so sections stay
@@ -123,10 +133,10 @@ export async function analyzeAudioClipSections(
   const clipStartSeconds = ppqToSeconds(map, clip.startPpq);
   const secondsToTimelinePpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));
-  const placed: Array<{ section: DetectedAudioSection; startPpq: number; endPpq: number }> = [];
-  for (const section of sections ?? []) {
-    const startPpq = secondsToTimelinePpq(section.start);
-    const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(section.end));
+  const placed: Array<{ section: Section; startPpq: number; endPpq: number }> = [];
+  for (const section of sections) {
+    const startPpq = secondsToTimelinePpq(section.startSec);
+    const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(section.endSec));
     if (!(endPpq > startPpq)) continue;
     placed.push({ section, startPpq, endPpq });
   }
@@ -134,19 +144,27 @@ export async function analyzeAudioClipSections(
   // The detector's type ordinal repeats across genuinely different parts, so
   // coloring by it claims two parts are the same when they are not. Compare the
   // audio instead and color by what actually recurs.
-  const chroma = deps.chroma?.(mono, sampleRate, SECTION_CHROMA_FFT, SECTION_CHROMA_HOP);
+  const chromaResult = deps.chroma?.(mono, sampleRate, {
+    nFft: SECTION_CHROMA_FFT,
+    hopLength: SECTION_CHROMA_HOP,
+  });
+  const chroma: ChromaFeatures | undefined = chromaResult && {
+    nChroma: chromaResult.features.rows,
+    nFrames: chromaResult.features.cols,
+    features: chromaResult.features.data,
+  };
   const framesPerSecond = chroma ? sampleRate / SECTION_CHROMA_HOP : 0;
   const groups = chroma
     ? groupSectionRepeats(
         placed.map(({ section }) =>
           sectionChromaVector(
             chroma,
-            Math.floor(section.start * framesPerSecond),
-            Math.ceil(section.end * framesPerSecond),
+            Math.floor(section.startSec * framesPerSecond),
+            Math.ceil(section.endSec * framesPerSecond),
           ),
         ),
       )
-    : placed.map(({ section }) => (Number.isInteger(section.type) ? section.type : 0));
+    : placed.map(({ section }) => sectionTypeIndex(section.type));
 
   // Number each label's occurrences so repeats read in order; the color says
   // which of them are the same music.

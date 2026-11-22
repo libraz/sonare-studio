@@ -58,7 +58,7 @@ describe('analysis worker meter request', () => {
 
   it('runs the full analysis in the worker and returns the beat accents', async () => {
     const analyze = vi.fn(() => ({
-      beats: [{ time: 0 }, { time: 0.5 }],
+      beats: [{ timeSec: 0 }, { timeSec: 0.5 }],
       beatObservations: { onsetStrength: [0.9, 0.3] },
     }));
     ensureWasmMock.mockResolvedValue({ analyze });

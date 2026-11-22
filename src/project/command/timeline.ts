@@ -3,11 +3,7 @@ import { OperationGeneration } from '@/lib/operation-generation';
 import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { remapClipScoreAnnotations } from '../annotations';
-import {
-  type AudioSectionAnalyzer,
-  analyzeAudioClipSections,
-  type ChromaAnalyzer,
-} from '../audio-sections';
+import { analyzeAudioClipSections } from '../audio-sections';
 import type { AutomationLaneState } from '../automation';
 import { type EditorChordSymbol, toProjectChordSymbols } from '../chords';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
@@ -378,8 +374,7 @@ export function setSections(sections: ReadonlyArray<SectionInput>): void {
  * Detects song sections from an audio clip with libsonare's `analyzeSections`
  * and merges them into the section list (one undoable edit), replacing any
  * existing sections that start within the clip's region so re-running is
- * idempotent. Resolves to 0 when the analyzer is unavailable or nothing is
- * detected.
+ * idempotent. Resolves to 0 when nothing is detected.
  *
  * @param clipId Editor id of an audio clip.
  * @returns The number of sections detected in the clip.
@@ -406,19 +401,15 @@ export async function detectSectionsFromAudioClip(clipId: number): Promise<numbe
       sectionSourceRevision(store, clipId),
     );
   try {
-    const wasm = (await ensureWasm()) as unknown as {
-      analyzeSections?: AudioSectionAnalyzer;
-      chroma?: ChromaAnalyzer;
-    };
+    const wasm = await ensureWasm();
     assertCurrent();
-    if (typeof wasm.analyzeSections !== 'function') return 0;
     const detected = await analyzeAudioClipSections(
       clip,
       store.tempoBpm,
       {
         loadAudioAsset: loadAsset,
         analyzeSections: wasm.analyzeSections,
-        chroma: typeof wasm.chroma === 'function' ? wasm.chroma : undefined,
+        chroma: wasm.chroma,
       },
       store.tempoSegments,
     );

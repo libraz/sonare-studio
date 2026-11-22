@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
+  type AudioChromaAnalyzer,
   analyzeAudioClipSections,
-  type ChromaAnalyzer,
-  type DetectedAudioSection,
   SECTION_TYPE_NAMES,
 } from '@/project/audio-sections';
 import { groupSectionRepeats, sectionChromaVector } from '@/project/section-repeats';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
+import type { Section } from '@/wasm/index.js';
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(
@@ -30,15 +30,24 @@ function asset(frames: number, sampleRate = 48000): LoadedAudioAsset {
 }
 
 /** Section analyzer stub capturing the buffers it saw. */
-function analyzer(sections: DetectedAudioSection[]): {
-  fn: (samples: Float32Array, sampleRate?: number) => DetectedAudioSection[];
+function analyzer(sections: Array<Pick<Section, 'type' | 'startSec' | 'endSec'>>): {
+  fn: (samples: Float32Array, sampleRate: number) => { sections: Section[]; form: string };
   seen: { length: number; sampleRate?: number }[];
 } {
   const seen: { length: number; sampleRate?: number }[] = [];
   return {
     fn: (samples, sampleRate) => {
       seen.push({ length: samples.length, sampleRate });
-      return sections;
+      return {
+        sections: sections.map((section, index) => ({
+          energyLevel: 0,
+          confidence: 1,
+          group: index,
+          name: section.type,
+          ...section,
+        })),
+        form: '',
+      };
     },
     seen,
   };
@@ -48,8 +57,8 @@ describe('analyzeAudioClipSections', () => {
   it('maps section seconds to PPQ and labels/colors by type', async () => {
     // 120 BPM => seconds * 2 = PPQ.
     const an = analyzer([
-      { type: 0, start: 0, end: 2 }, // Intro -> [8, 12)
-      { type: 3, start: 2, end: 4 }, // Chorus -> [12, 16)
+      { type: 'intro', startSec: 0, endSec: 2 }, // Intro -> [8, 12)
+      { type: 'chorus', startSec: 2, endSec: 4 }, // Chorus -> [12, 16)
     ]);
     const sections = await analyzeAudioClipSections(clipWindow({ startPpq: 8 }), 120, {
       loadAudioAsset: async () => asset(48000),
@@ -71,8 +80,8 @@ describe('analyzeAudioClipSections', () => {
     // second 4 lands on PPQ 4 and each later second is two quarters, so a
     // section ending at second 6 reaches PPQ 8 — not PPQ 12 at a constant tempo.
     const an = analyzer([
-      { type: 0, start: 0, end: 4 },
-      { type: 3, start: 4, end: 6 },
+      { type: 'intro', startSec: 0, endSec: 4 },
+      { type: 'chorus', startSec: 4, endSec: 6 },
     ]);
     const sections = await analyzeAudioClipSections(
       clipWindow({ startPpq: 0, lengthPpq: 16 }),
@@ -94,8 +103,8 @@ describe('analyzeAudioClipSections', () => {
     ]);
   });
 
-  it('labels an out-of-range type as the trailing fallback', async () => {
-    const an = analyzer([{ type: 99, start: 0, end: 1 }]);
+  it('labels an unnamed type as the trailing fallback', async () => {
+    const an = analyzer([{ type: 'unknown', startSec: 0, endSec: 1 }]);
     const [section] = await analyzeAudioClipSections(clipWindow(), 120, {
       loadAudioAsset: async () => asset(48000),
       analyzeSections: an.fn,
@@ -105,8 +114,8 @@ describe('analyzeAudioClipSections', () => {
 
   it('clamps ends to the clip region and drops empty regions', async () => {
     const an = analyzer([
-      { type: 1, start: 0, end: 100 }, // runs past the 16-PPQ clip
-      { type: 2, start: 50, end: 60 }, // entirely past the window
+      { type: 'verse', startSec: 0, endSec: 100 }, // runs past the 16-PPQ clip
+      { type: 'preChorus', startSec: 50, endSec: 60 }, // entirely past the window
     ]);
     const sections = await analyzeAudioClipSections(clipWindow({ lengthPpq: 16 }), 120, {
       loadAudioAsset: async () => asset(48000),
@@ -127,7 +136,7 @@ describe('analyzeAudioClipSections', () => {
   });
 
   it('returns nothing without an asset, at non-positive tempo, or on an empty window', async () => {
-    const an = analyzer([{ type: 0, start: 0, end: 1 }]);
+    const an = analyzer([{ type: 'intro', startSec: 0, endSec: 1 }]);
     const deps = { loadAudioAsset: async () => asset(48000), analyzeSections: an.fn };
 
     expect(await analyzeAudioClipSections(clipWindow({ assetId: undefined }), 120, deps)).toEqual(
@@ -148,15 +157,15 @@ describe('analyzeAudioClipSections', () => {
  * Frames are laid out row-major [bin][frame] like the real extractor's output.
  */
 function chromaStub(perSecond: ReadonlyArray<ReadonlyArray<number>>): {
-  fn: ChromaAnalyzer;
+  fn: AudioChromaAnalyzer;
   calls: { nFft?: number; hopLength?: number; sampleRate?: number }[];
 } {
   const calls: { nFft?: number; hopLength?: number; sampleRate?: number }[] = [];
   return {
     calls,
-    fn: (_samples, sampleRate, nFft, hopLength) => {
+    fn: (_samples, sampleRate, { nFft, hopLength }) => {
       calls.push({ sampleRate, nFft, hopLength });
-      const framesPerSecond = (sampleRate ?? 48000) / (hopLength ?? 2048);
+      const framesPerSecond = sampleRate / hopLength;
       const nFrames = Math.max(1, Math.round(perSecond.length * framesPerSecond));
       const features = new Float32Array(12 * nFrames);
       for (let frame = 0; frame < nFrames; frame += 1) {
@@ -165,7 +174,12 @@ function chromaStub(perSecond: ReadonlyArray<ReadonlyArray<number>>): {
           features[bin * nFrames + frame] = perSecond[second][bin] ?? 0;
         }
       }
-      return { nChroma: 12, nFrames, features };
+      return {
+        sampleRate,
+        hopLength,
+        features: { data: features, rows: 12, cols: nFrames },
+        meanEnergy: [],
+      };
     },
   };
 }
@@ -202,10 +216,10 @@ describe('analyzeAudioClipSections repeat coloring', () => {
     // Four seconds: A, B, A, C. The detector types both B and C as 4, which is
     // exactly the case coloring by type gets wrong.
     const an = analyzer([
-      { type: 3, start: 0, end: 1 },
-      { type: 4, start: 1, end: 2 },
-      { type: 3, start: 2, end: 3 },
-      { type: 4, start: 3, end: 4 },
+      { type: 'chorus', startSec: 0, endSec: 1 },
+      { type: 'bridge', startSec: 1, endSec: 2 },
+      { type: 'chorus', startSec: 2, endSec: 3 },
+      { type: 'bridge', startSec: 3, endSec: 4 },
     ]);
     const chroma = chromaStub([part(0), part(4), part(0), part(7)]);
     const sections = await analyzeAudioClipSections(clipWindow({ lengthPpq: 8 }), 120, {
@@ -228,8 +242,8 @@ describe('analyzeAudioClipSections repeat coloring', () => {
 
   it('keeps the type coloring and unnumbered labels when no chroma is available', async () => {
     const an = analyzer([
-      { type: 3, start: 0, end: 1 },
-      { type: 4, start: 1, end: 2 },
+      { type: 'chorus', startSec: 0, endSec: 1 },
+      { type: 'bridge', startSec: 1, endSec: 2 },
     ]);
     const sections = await analyzeAudioClipSections(clipWindow({ lengthPpq: 4 }), 120, {
       loadAudioAsset: async () => asset(48000 * 2),
@@ -244,8 +258,8 @@ describe('analyzeAudioClipSections repeat coloring', () => {
 
   it('does not group two sections merely because both are silent', async () => {
     const an = analyzer([
-      { type: 1, start: 0, end: 1 },
-      { type: 1, start: 1, end: 2 },
+      { type: 'verse', startSec: 0, endSec: 1 },
+      { type: 'verse', startSec: 1, endSec: 2 },
     ]);
     const chroma = chromaStub([new Array(12).fill(0), new Array(12).fill(0)]);
     const sections = await analyzeAudioClipSections(clipWindow({ lengthPpq: 4 }), 120, {

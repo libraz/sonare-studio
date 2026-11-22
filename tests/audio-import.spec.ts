@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downmixToMono } from '@/lib/audio-channels';
 import { clearAudioAssetLeases, isAudioAssetLeased } from '@/persistence/asset-leases';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
-import { clearAudioAssetCache, interleaveChannels, loadAsset } from '@/persistence/assets';
+import { clearAudioAssetCache, loadAsset } from '@/persistence/assets';
 import { garbageCollectMedia } from '@/persistence/gc';
 import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
 import { decodeAndIngest, ingestAudioBuffer } from '@/project/audio-import';
@@ -52,16 +52,16 @@ describe('ingestAudioBuffer', () => {
   it('runs the provided analysis functions and stores their tags', async () => {
     const detectBpm = vi.fn(() => 123.5);
     const detectKey = vi.fn(() => ({ name: 'A minor', shortName: 'Am' }));
-    const lufsInterleaved = vi.fn(() => ({ integratedLufs: -14.2 }));
+    const lufsMultichannel = vi.fn(() => ({ integratedLufs: -14.2 }));
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Loop', {
-      analysis: { detectBpm, detectKey, lufsInterleaved },
+      analysis: { detectBpm, detectKey, lufsMultichannel },
     });
     expect(meta.tags).toEqual({ bpm: 123.5, key: 'Am', lufs: -14.2 });
     // Analysis sees a mono mixdown at the asset rate.
     expect(detectBpm).toHaveBeenCalledWith(downmixToMono(stereo()), 44100);
-    expect(detectKey).toHaveBeenCalledWith(downmixToMono(stereo()), 44100, { tuning: 'auto' });
-    // Loudness reads the stored channels, interleaved, not the mixdown.
-    expect(lufsInterleaved).toHaveBeenCalledWith(interleaveChannels(stereo()), 2, 44100);
+    expect(detectKey).toHaveBeenCalledWith(downmixToMono(stereo()), 44100, { tuningCents: 'auto' });
+    // Loudness reads the stored channels, not the mixdown.
+    expect(lufsMultichannel).toHaveBeenCalledWith({ channels: stereo(), sampleRate: 44100 });
   });
 
   it('uses detailed analyzeBpm, key candidates and rhythm tags when available', async () => {
@@ -168,7 +168,7 @@ describe('ingestAudioBuffer', () => {
 
   it('persists a loudness-only measurement (no bpm/key detected)', async () => {
     const meta = await ingestAudioBuffer(stereo(), 44100, 'Loud loop', {
-      analysis: { lufsInterleaved: () => ({ integratedLufs: -11.7 }) },
+      analysis: { lufsMultichannel: () => ({ integratedLufs: -11.7 }) },
     });
     expect(meta.tags).toEqual({ lufs: -11.7 });
     clearAudioAssetCache(); // force the OPFS read path

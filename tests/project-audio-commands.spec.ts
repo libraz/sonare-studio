@@ -417,8 +417,8 @@ describe('audio track and clip commands', () => {
     ]);
     const analyzeMelody = vi.fn(() => ({
       points: [
-        { time: 0.12, frequency: midiToHz(66), confidence: 1 },
-        { time: 0.38, frequency: 0, confidence: 0 },
+        { timeSec: 0.12, frequencyHz: midiToHz(66), confidence: 1 },
+        { timeSec: 0.38, confidence: 0 },
       ],
     }));
     const detectKey = vi.fn(() => ({ name: 'C major' }));
