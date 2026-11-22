@@ -776,6 +776,23 @@ describe('ExportDialog', () => {
     ]);
   });
 
+  it('reads a silent render as -∞ in the export report', async () => {
+    const control = makeRender();
+    mountDialog(control);
+    await clickExport();
+
+    control.resolve(
+      makeResult({
+        report: { peakDb: -Infinity, truePeakDbtp: -Infinity, lufs: -Infinity },
+      }),
+    );
+    await flushPromises();
+
+    expect(q('.report-peak')?.textContent).toBe('-∞ dBFS');
+    expect(q('.report-true-peak')?.textContent).toBe('-∞ dBTP');
+    expect(q('.report-lufs')?.textContent).toBe('-∞ LUFS');
+  });
+
   it('shows the typed streaming-metering limitation in the export report', async () => {
     const control = makeRender();
     mountDialog(control);

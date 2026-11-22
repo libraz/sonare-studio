@@ -19,7 +19,6 @@ import { documentBusStemsBlock } from '@/export/engine-render-context';
 import {
   formatClippingCensus,
   formatExportLimitation,
-  formatLevel,
   formatPreflightBlocker,
   formatPreflightWarning,
 } from '@/export/export-issue-format';
@@ -57,6 +56,7 @@ import { isAbortError, errorMessage as thrownMessage } from '@/lib/errors';
 import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import type { ProjectDocument } from '@/project/serialization';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { formatLevel } from '@/ui/mastering/loudness';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 
 /** Render seam shape: the export worker client facade. */

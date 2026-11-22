@@ -7,7 +7,6 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { isBrowserMediaEncoderId, registerBrowserMediaEncoders } from '@/export/browser-media';
 import { type AudioEncoder, listEncoders, WAV_ENCODER_ID } from '@/export/codecs';
 import { documentBusStemsBlock } from '@/export/engine-render-context';
-import { formatLevel } from '@/export/export-issue-format';
 import { formatExportStage } from '@/export/export-stage';
 import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
 import type { MixdownRangePpq, MixdownReport } from '@/export/mixdown';
@@ -28,6 +27,7 @@ import type { ProjectDocument } from '@/project/serialization';
 import { firstBlock } from '@/ui/disabled-reason';
 import { type RenderFn, useAudioExportRun } from '@/ui/export/use-audio-export-run';
 import { useI18n } from '@/ui/i18n';
+import { formatLevel } from '@/ui/mastering/loudness';
 import { formatSampleRate } from '@/ui/media/asset-list';
 
 /**
