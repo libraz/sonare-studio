@@ -53,6 +53,26 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
+const liveLeaseFailure = vi.hoisted(() => ({ error: null as Error | null }));
+
+vi.mock('@/persistence/asset-leases', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/persistence/asset-leases')>();
+  return {
+    ...actual,
+    // The live-document asset lease, with an update that can be made to fail.
+    leaseAudioAssets: (assetIds: Iterable<string>) => {
+      const lease = actual.leaseAudioAssets(assetIds);
+      return {
+        ...lease,
+        update: (ids: Iterable<string>) => {
+          if (liveLeaseFailure.error) throw liveLeaseFailure.error;
+          lease.update(ids);
+        },
+      };
+    },
+  };
+});
+
 vi.mock('@/persistence/opfs', () => ({
   InvalidProjectNameError: class InvalidProjectNameError extends Error {},
   deleteProject: vi.fn(),
@@ -916,6 +936,30 @@ describe('useProjectPersistence autosave refresh after load', () => {
     // references. The tab-lifetime lease owns protection after handoff.
     expect(restoreLease.rollback).not.toHaveBeenCalled();
     expect(restoreLease.release).toHaveBeenCalledOnce();
+  });
+
+  it('holds an imported bundle lease until the live lease can take it over', async () => {
+    vi.mocked(pickAndReadSzd).mockResolvedValue({
+      name: 'imported.szd',
+      bytes: encodeSzd(makeDocument('Imported Project')),
+    });
+    const restoreLease = makeRestoreLease();
+    vi.mocked(restoreProjectBundle).mockResolvedValue(restoreLease);
+    const { errorMessage, persistence } = setup();
+    liveLeaseFailure.error = new Error('lease storage unavailable');
+    try {
+      await persistence.importSzdFile();
+      await flushPromises();
+      expect(errorMessage.value).toContain('lease storage unavailable');
+      expect(restoreLease.release).not.toHaveBeenCalled();
+      expect(restoreLease.rollback).not.toHaveBeenCalled();
+    } finally {
+      liveLeaseFailure.error = null;
+    }
+
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 1_200));
+    expect(restoreLease.release).toHaveBeenCalledOnce();
+    expect(restoreLease.rollback).not.toHaveBeenCalled();
   });
 
   it('saves freshly after deleting the open project instead of a stale revision', async () => {
