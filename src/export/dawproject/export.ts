@@ -66,6 +66,7 @@ import {
   type MixerStrip,
   type StripSend,
 } from '@/project/mixer';
+import { catalogParamInfo } from '@/project/processor-controls';
 import type {
   DocumentAutomationLane,
   DocumentClip,
@@ -348,7 +349,22 @@ function insertDeviceElement(slot: InsertSlot, id: string): XmlElement {
         },
       ];
     }
-    return [];
+    const choices =
+      catalogParamInfo(slot.processor).find((info) => info.name === name)?.choices ?? [];
+    const index = choices.findIndex((choice) => choice.name === value);
+    if (index < 0) return [];
+    return [
+      {
+        name: 'EnumParameter',
+        attributes: {
+          id: `${id}-param-${xmlIdSegment(name)}`,
+          name,
+          count: choices.length,
+          labels: choices.map((choice) => choice.name).join(' '),
+          value: index,
+        },
+      },
+    ];
   });
   return {
     name: 'BuiltinDevice',

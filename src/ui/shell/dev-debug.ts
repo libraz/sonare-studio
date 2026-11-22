@@ -47,7 +47,7 @@ import {
 } from '@/project/commands';
 import { flattenClipComp } from '@/project/comp-flatten';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
-import type { MixerSidechainSource } from '@/project/mixer';
+import type { InsertParamValue, MixerSidechainSource } from '@/project/mixer';
 import type { ScheduledProjectClip } from '@/project/scheduling';
 import { serializeProject } from '@/project/serialization';
 import type { useProjectStore } from '@/project/store';
@@ -203,7 +203,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     trackInsertStates: () =>
       store.tracks.map((track) => (track.mixer?.inserts ?? []).map((slot) => slot.enabled)),
     masterInsertCount: () => store.mixer.master.inserts.length,
-    addMasterInsert: (processor: string, params?: Record<string, number | boolean>) =>
+    addMasterInsert: (processor: string, params?: Record<string, InsertParamValue>) =>
       addInsert('master', processor, params),
     setMasterInsertEnabled: (index: number, enabled: boolean) =>
       setInsertEnabled('master', index, enabled),
@@ -292,7 +292,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     addTrackInsert: (
       trackId: number,
       processor: string,
-      params?: Record<string, number | boolean>,
+      params?: Record<string, InsertParamValue>,
     ) => addInsert(trackId, processor, params),
     removeTrackInsert: (trackId: number, index: number) => removeInsert(trackId, index),
     setInsertSidechain: (
@@ -363,7 +363,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       return ingestTone(sampleRate, seconds, frequencyHz, amplitude);
     },
     addMixerBus: (name?: string) => addMixerBus(name !== undefined ? { name } : {}),
-    addBusInsert: (busId: string, processor: string, params?: Record<string, number | boolean>) =>
+    addBusInsert: (busId: string, processor: string, params?: Record<string, InsertParamValue>) =>
       addInsert(mixerBusStripTarget(busId), processor, params),
     removeBusInsert: (busId: string, index: number) =>
       removeInsert(mixerBusStripTarget(busId), index),

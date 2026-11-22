@@ -18,6 +18,13 @@
  *   and source ids are allocated as 1, 2, 3, ... in registration order.
  */
 
+import type {
+  ProjectChordQuality,
+  ProjectLoopMode,
+  ProjectMarkerKind,
+  ProjectTrackKind,
+  ProjectWarpMode,
+} from '@/wasm/index.js';
 import { MASTERING_INSERT_NAMES } from '@/wasm/index.js';
 
 interface FakeEvent {
@@ -30,7 +37,7 @@ type ProjectOverlapPolicy = 'disallow' | 'allow';
 
 interface FakeTrack {
   id: number;
-  kind: number;
+  kind: ProjectTrackKind;
   name: string;
 }
 
@@ -41,13 +48,13 @@ interface FakeClip {
   length_ppq: number;
   source_offset_ppq: number;
   gain: number;
-  loop_mode: number;
+  loop_mode: ProjectLoopMode;
   loop_length_ppq: number;
   source_id: number;
   fade_in_ppq: number;
   fade_out_ppq: number;
   warp_ref_id?: number;
-  warp_mode?: number;
+  warp_mode?: Exclude<ProjectWarpMode, 'off'>;
 }
 
 /** One registered audio/MIDI source (inline audio or by-reference URI). */
@@ -65,7 +72,7 @@ interface FakeMarker {
   id: number;
   ppq: number;
   name: string;
-  kind?: number;
+  kind?: ProjectMarkerKind;
   key_fifths?: number;
   key_minor?: boolean;
 }
@@ -75,7 +82,7 @@ interface FakeAnnotationChord {
   startPpq: number;
   endPpq: number;
   rootPc: number;
-  quality: number;
+  quality: ProjectChordQuality;
   slashBassPc: number;
   romanNumeral: string;
   extensions: number[];
@@ -183,39 +190,37 @@ function midiFxTimeShifts(
   return shifts;
 }
 
-function trackKindOrdinal(kind: unknown): number {
-  if (kind === undefined || kind === 'midi') return 1;
-  if (kind === 'audio') return 0;
-  if (kind === 'aux') return 2;
+function trackKind(kind: unknown): ProjectTrackKind {
+  if (kind === undefined) return 'midi';
+  if (kind === 'audio' || kind === 'midi' || kind === 'aux') return kind;
   throw new TypeError(`track kind must be a name, got ${String(kind)}`);
 }
 
-const MARKER_KIND_ORDINALS: Record<string, number> = {
-  marker: 0,
-  text: 1,
-  lyric: 2,
-  cuePoint: 3,
-  keySignature: 4,
-};
+const MARKER_KINDS: readonly ProjectMarkerKind[] = [
+  'marker',
+  'text',
+  'lyric',
+  'cuePoint',
+  'keySignature',
+];
 
-/** Project-encoding quality ordinals of the chord-quality names (0 = unknown). */
-const CHORD_QUALITY_ORDINALS: Record<string, number> = {
-  unknown: 0,
-  major: 1,
-  minor: 2,
-  diminished: 3,
-  augmented: 4,
-  dominant: 5,
-  halfDiminished: 6,
-  suspended: 7,
-};
+const CHORD_QUALITIES: readonly ProjectChordQuality[] = [
+  'unknown',
+  'major',
+  'minor',
+  'diminished',
+  'augmented',
+  'dominant',
+  'halfDiminished',
+  'suspended',
+];
 
-const WARP_MODE_ORDINALS: Record<string, number> = {
-  off: 0,
-  repitch: 1,
-  tempoSync: 2,
-  timeStretch: 3,
-};
+const WARP_MODES: readonly ProjectWarpMode[] = ['off', 'repitch', 'tempoSync', 'timeStretch'];
+
+/** True when `value` is one of the core's `values` tokens. */
+function oneOf<T extends string>(values: readonly T[], value: unknown): value is T {
+  return (values as readonly unknown[]).includes(value);
+}
 
 /** The serialized event shape `toJson()` emits. */
 function serializedEvent(event: FakeEvent): { ppq: number; word0: number; word1: number } {
@@ -372,7 +377,7 @@ export class FakeProject {
       const id = this.nextTrackId++;
       this.state.tracks.push({
         id,
-        kind: trackKindOrdinal(desc.kind),
+        kind: trackKind(desc.kind),
         name: desc.name ?? '',
       });
       return id;
@@ -437,7 +442,7 @@ export class FakeProject {
         length_ppq: desc.lengthPpq,
         source_offset_ppq: desc.sourceOffsetPpq ?? 0,
         gain: desc.gain ?? 1,
-        loop_mode: 0,
+        loop_mode: 'off',
         loop_length_ppq: 0,
         source_id: sourceId,
         fade_in_ppq: 0,
@@ -509,7 +514,7 @@ export class FakeProject {
     // The native addMidiClip transaction contains the track, source and clip.
     return this.edit(() => {
       const trackId = this.nextTrackId++;
-      this.state.tracks.push({ id: trackId, kind: 1, name: 'midi' });
+      this.state.tracks.push({ id: trackId, kind: 'midi', name: 'midi' });
       const sourceId = this.state.sourceCount + 1;
       this.state.sourceCount = sourceId;
       this.state.sources.set(sourceId, { id: sourceId });
@@ -521,7 +526,7 @@ export class FakeProject {
         length_ppq: lengthPpq,
         source_offset_ppq: 0,
         gain: 1,
-        loop_mode: 0,
+        loop_mode: 'off',
         loop_length_ppq: 0,
         source_id: sourceId,
         fade_in_ppq: 0,
@@ -608,7 +613,7 @@ export class FakeProject {
 
   splitClip(clipId: number, splitPpq: number): number {
     const source = this.requireClip(clipId);
-    if (source.loop_mode !== 0) {
+    if (source.loop_mode !== 'off') {
       throw new Error('Turn Loop off before splitting this clip.');
     }
     this.assertNotWarped(source);
@@ -674,8 +679,8 @@ export class FakeProject {
   ): void {
     this.edit(() => {
       const clip = this.requireClip(clipId);
-      clip.loop_mode = input.loopMode === 'loop' ? 1 : 0;
-      clip.loop_length_ppq = clip.loop_mode === 1 ? (input.loopLengthPpq ?? 0) : 0;
+      clip.loop_mode = input.loopMode === 'loop' ? 'loop' : 'off';
+      clip.loop_length_ppq = clip.loop_mode === 'loop' ? (input.loopLengthPpq ?? 0) : 0;
     });
   }
 
@@ -688,12 +693,12 @@ export class FakeProject {
   }
 
   setClipWarpMode(clipId: number, mode: 'off' | 'repitch' | 'tempoSync' | 'timeStretch'): void {
-    const value = WARP_MODE_ORDINALS[mode];
-    if (value === undefined) throw new TypeError(`warp mode must be a name, got ${String(mode)}`);
+    if (!oneOf(WARP_MODES, mode))
+      throw new TypeError(`warp mode must be a name, got ${String(mode)}`);
     this.edit(() => {
       const clip = this.requireClip(clipId);
-      if (value === 0) delete clip.warp_mode;
-      else clip.warp_mode = value;
+      if (mode === 'off') delete clip.warp_mode;
+      else clip.warp_mode = mode;
     });
   }
 
@@ -830,10 +835,9 @@ export class FakeProject {
         name: input.name ?? '',
       };
       if (input.kind !== undefined) {
-        const ordinal = MARKER_KIND_ORDINALS[input.kind];
-        if (ordinal === undefined)
+        if (!oneOf(MARKER_KINDS, input.kind))
           throw new TypeError(`marker kind must be a name, got ${input.kind}`);
-        entry.kind = ordinal;
+        entry.kind = input.kind;
       }
       if (input.keyFifths !== undefined) entry.key_fifths = input.keyFifths;
       if (input.keyMinor !== undefined) entry.key_minor = input.keyMinor;
@@ -865,11 +869,11 @@ export class FakeProject {
     }>,
   ): void {
     const qualities = chords.map((c) => {
-      const ordinal = CHORD_QUALITY_ORDINALS[c.quality ?? 'unknown'];
-      if (ordinal === undefined) {
+      const quality = c.quality ?? 'unknown';
+      if (!oneOf(CHORD_QUALITIES, quality)) {
         throw new TypeError(`chord quality must be a name, got ${String(c.quality)}`);
       }
-      return ordinal;
+      return quality;
     });
     this.edit(() => {
       this.state.chords = chords.map((c, index) => ({
@@ -1046,10 +1050,10 @@ export class FakeProject {
         loopMode: c.loop_mode,
         loopLengthPpq: c.loop_length_ppq,
         sourceId: c.source_id,
-        fadeIn: { curve: 0, lengthPpq: c.fade_in_ppq },
-        fadeOut: { curve: 0, lengthPpq: c.fade_out_ppq },
+        fadeIn: { curve: 'linear', lengthPpq: c.fade_in_ppq },
+        fadeOut: { curve: 'linear', lengthPpq: c.fade_out_ppq },
         warpRefId: c.warp_ref_id ?? 0,
-        warpMode: c.warp_mode ?? 0,
+        warpMode: c.warp_mode ?? 'off',
       })),
       warpMaps: [...this.state.warpMaps.values()].map((map) => ({
         id: map.id,
@@ -1437,9 +1441,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       inputDb: 0,
       levelDb: 0,
       cab: true,
-      ampModel: 1,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'cleanCombo',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.15,
       sag: 30 / 440,
       nfb: 0.4,
@@ -1457,9 +1461,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 3.5,
       presenceDb: 2,
       cab: true,
-      ampModel: 4,
-      cabModel: 0,
-      micModel: 3,
+      ampModel: 'classAChime',
+      cabModel: 'guitar4x12',
+      micModel: 'condenser',
       power: 0.35,
       sag: 24 / 320,
       nfb: 0,
@@ -1477,9 +1481,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 0,
       presenceDb: 1,
       cab: true,
-      ampModel: 0,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'classicCrunch',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.4,
       sag: 26 / 440,
       nfb: 0.3,
@@ -1497,9 +1501,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: -2,
       presenceDb: 0,
       cab: true,
-      ampModel: 3,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'vintageCombo',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.65,
       sag: 50 / 350,
       nfb: 0,
@@ -1518,9 +1522,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 3,
       presenceDb: 2,
       cab: true,
-      ampModel: 0,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'classicCrunch',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.6,
       sag: 21.6 / 470,
       nfb: 0.35,
@@ -1538,9 +1542,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 4,
       presenceDb: 3,
       cab: true,
-      ampModel: 2,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'modernHiGain',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.55,
       sag: 20 / 480,
       nfb: 0.45,
@@ -1559,9 +1563,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 2,
       presenceDb: 1,
       cab: true,
-      ampModel: 5,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'heavyHiGain',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.7,
       sag: 59.4 / 480,
       nfb: 0.2,
@@ -1580,9 +1584,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 0,
       presenceDb: 0,
       cab: true,
-      ampModel: 0,
-      cabModel: 0,
-      micModel: 1,
+      ampModel: 'classicCrunch',
+      cabModel: 'guitar4x12',
+      micModel: 'dynamic',
       power: 0.75,
       sag: 20 / 320,
       nfb: 0.15,
@@ -1600,9 +1604,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 1,
       presenceDb: 0,
       cab: false,
-      ampModel: 1,
-      cabModel: 0,
-      micModel: 0,
+      ampModel: 'cleanCombo',
+      cabModel: 'guitar4x12',
+      micModel: 'none',
       power: 0.2,
       sag: 15 / 450,
       nfb: 0.3,
@@ -1621,9 +1625,9 @@ export const FAKE_AMP_PRESET_CATALOG = [
       trebleDb: 1,
       presenceDb: 0,
       cab: true,
-      ampModel: 0,
-      cabModel: 1,
-      micModel: 1,
+      ampModel: 'classicCrunch',
+      cabModel: 'bass8x10',
+      micModel: 'dynamic',
       power: 0.45,
       sag: 21 / 600,
       nfb: 0.25,

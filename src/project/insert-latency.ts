@@ -4,7 +4,14 @@ import type {
   MasteringInsertTiming,
   MasteringInsertTimingRequest,
 } from '@/wasm/index.js';
-import { audibleOutputBusId, busOutputChain, type InsertSlot, type MixerStrip } from './mixer';
+import {
+  audibleOutputBusId,
+  busOutputChain,
+  type InsertParamValue,
+  type InsertSlot,
+  isInsertParamValue,
+  type MixerStrip,
+} from './mixer';
 
 /** Minimal catalog shape needed to derive processor latency. */
 export interface InsertLatencyCatalogEntry {
@@ -81,9 +88,9 @@ export function insertLatencyResolverFromCatalog(
     const buildKeys = new Set(
       (entry.params ?? []).filter((param) => param.id === undefined).map((param) => param.name),
     );
-    const buildParams: Record<string, number | boolean> = {};
+    const buildParams: Record<string, InsertParamValue> = {};
     for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
-      if (buildKeys.has(key) && (typeof value === 'number' || typeof value === 'boolean')) {
+      if (buildKeys.has(key) && isInsertParamValue(value)) {
         buildParams[key] = value;
       }
     }

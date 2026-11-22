@@ -17,7 +17,9 @@ import {
   DEFAULT_PAN_MODE,
   DEFAULT_SURROUND_PAN,
   hasAudibleOutputRoute,
+  type InsertParamValue,
   type InsertSlot,
+  isInsertParamValue,
   isMixerChannelLayout,
   isSoloProcessor,
   MAX_CHANNEL_DELAY_SAMPLES,
@@ -178,7 +180,7 @@ function sceneEq(value: unknown): StripEq | undefined {
   return { enabled: booleanValue(record.enabled) ?? true, bands };
 }
 
-function readParams(value: unknown): Record<string, number | boolean> {
+function readParams(value: unknown): Record<string, InsertParamValue> {
   let raw: unknown = value;
   if (typeof value === 'string' && value.length > 0) {
     try {
@@ -189,10 +191,9 @@ function readParams(value: unknown): Record<string, number | boolean> {
   }
   const record = objectRecord(raw);
   if (!record) return {};
-  const params: Record<string, number | boolean> = {};
+  const params: Record<string, InsertParamValue> = {};
   for (const [key, entry] of Object.entries(record)) {
-    if (typeof entry === 'boolean') params[key] = entry;
-    else if (typeof entry === 'number' && Number.isFinite(entry)) params[key] = entry;
+    if (isInsertParamValue(entry)) params[key] = entry;
   }
   return params;
 }

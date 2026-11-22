@@ -149,8 +149,8 @@ describe('project store mirror boundaries', () => {
     const result = buildTrackMirror(
       {
         tracks: [
-          { id: 10, kind: 2, name: 'Renamed' },
-          { id: 11, kind: 0, name: 'Audio' },
+          { id: 10, kind: 'aux', name: 'Renamed' },
+          { id: 11, kind: 'audio', name: 'Audio' },
         ],
       },
       previous,
@@ -223,7 +223,7 @@ describe('project store mirror boundaries', () => {
     ];
     const [refreshed] = buildClipMirror(
       {
-        tracks: [{ id: 1, kind: 1, name: 'MIDI' }],
+        tracks: [{ id: 1, kind: 'midi', name: 'MIDI' }],
         clips: [
           {
             id: 1,
@@ -232,7 +232,7 @@ describe('project store mirror boundaries', () => {
             lengthPpq: 4,
             sourceOffsetPpq: 0,
             gain: 1,
-            loopMode: 0,
+            loopMode: 'off',
             loop_lengthPpq: 0,
           },
         ],

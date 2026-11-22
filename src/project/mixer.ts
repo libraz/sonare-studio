@@ -43,6 +43,18 @@ export type MixerSidechainSource =
   | { kind: 'bus'; busId: string }
   | { kind: 'group'; trackId: number };
 
+/** A stored insert parameter value; a closed-set parameter holds its catalog choice name. */
+export type InsertParamValue = number | boolean | string;
+
+/** True for a value an insert parameter can hold: a finite number, a boolean or a choice name. */
+export function isInsertParamValue(value: unknown): value is InsertParamValue {
+  return (
+    typeof value === 'boolean' ||
+    typeof value === 'string' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  );
+}
+
 /** One insert effect slot referencing the wasm processor catalog by name. */
 export interface InsertSlot {
   /** Stable identity used by automation lanes across reorder/serialization. */
@@ -50,7 +62,7 @@ export interface InsertSlot {
   /** Processor catalog name (e.g. 'dynamics.compressor', 'saturation.tape'). */
   processor: SoloProcessor;
   /** Parameter overrides passed to the processor (camelCase keys). */
-  params: Record<string, number | boolean>;
+  params: Record<string, InsertParamValue>;
   /** False bypasses the slot without losing its parameters. */
   enabled: boolean;
   /**

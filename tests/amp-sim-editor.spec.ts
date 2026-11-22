@@ -92,7 +92,10 @@ describe('AmpSimEditor.vue', () => {
 
     expect(wrapper.find('input[aria-label="Drive"]').element).toHaveProperty('value', '0.8');
     expect(wrapper.find('input[aria-label="Middle"]').element).toHaveProperty('value', '-3');
-    expect(wrapper.findAll('.amp-advanced select')[0].element).toHaveProperty('value', '2');
+    expect(wrapper.findAll('.amp-advanced select')[0].element).toHaveProperty(
+      'value',
+      'modernHiGain',
+    );
     expect(wrapper.find('.amp-cab-actions button:first-child').attributes('aria-pressed')).toBe(
       'true',
     );
@@ -103,7 +106,10 @@ describe('AmpSimEditor.vue', () => {
     const customIndex = addInsert(trackId, 'saturation.ampSim', {});
     const custom = mount(AmpSimEditor, { props: { trackId, insertIndex: customIndex } });
     expect(custom.find('input[aria-label="Drive"]').element).toHaveProperty('value', '0.5');
-    expect(custom.findAll('.amp-advanced select')[0].element).toHaveProperty('value', '0');
+    expect(custom.findAll('.amp-advanced select')[0].element).toHaveProperty(
+      'value',
+      'classicCrunch',
+    );
     expect(custom.find('.amp-cab-actions button:first-child').attributes('aria-pressed')).toBe(
       'true',
     );
@@ -112,7 +118,10 @@ describe('AmpSimEditor.vue', () => {
     const unknownIndex = addInsert(trackId, 'saturation.ampSim', { presetIndex: 99 });
     const unknown = mount(AmpSimEditor, { props: { trackId, insertIndex: unknownIndex } });
     expect(unknown.find('input[aria-label="Drive"]').element).toHaveProperty('value', '0.5');
-    expect(unknown.findAll('.amp-advanced select')[0].element).toHaveProperty('value', '0');
+    expect(unknown.findAll('.amp-advanced select')[0].element).toHaveProperty(
+      'value',
+      'classicCrunch',
+    );
     expect(custom.find('.amp-control-source').text()).toBe('Default');
     expect(unknown.find('.amp-control-source').text()).toBe('Default');
   });
@@ -197,12 +206,12 @@ describe('AmpSimEditor.vue', () => {
   it('offers advanced amp, cabinet, and microphone models without inventing inherited values', async () => {
     const wrapper = mount(AmpSimEditor, { props: { trackId, insertIndex: 0 } });
     const model = wrapper.findAll('.amp-advanced select')[0];
-    expect(model.element).toHaveProperty('value', '1');
-    await model.setValue('2');
+    expect(model.element).toHaveProperty('value', 'cleanCombo');
+    await model.setValue('modernHiGain');
     await wrapper.find('input[aria-label="Mic distance (cm)"]').setValue('8');
     expect(store.tracks[0].mixer?.inserts[0].params).toMatchObject({
       presetIndex: 0,
-      ampModel: 2,
+      ampModel: 'modernHiGain',
       micDistanceCm: 8,
     });
   });

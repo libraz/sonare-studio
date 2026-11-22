@@ -10,6 +10,7 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
+import type { InsertParamValue } from '@/project/mixer';
 import type {
   LufsResult,
   MasteringChainConfig,
@@ -52,7 +53,7 @@ export interface MasteringDeps {
     left: Float32Array,
     right: Float32Array,
     sampleRate: number,
-    params: Record<string, number | boolean>,
+    params: Record<string, InsertParamValue>,
   ): { left: Float32Array; right: Float32Array };
   /**
    * Whole-chain preset application (masterAudioStereo shape). Omit when the

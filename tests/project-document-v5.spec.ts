@@ -272,6 +272,56 @@ describe('insert slots', () => {
     expect(voiceAuto.params).toEqual({});
     expect(dynEq.params).toEqual({ 'band0.detectorDelayMs': 5 });
   });
+
+  it('stores a closed-set parameter as the catalog name its 1.x ordinal meant', () => {
+    const [eq, compressor, tape, unknown] = upgradedInserts(
+      [
+        { processor: 'eq.parametric', params: { 'band0.type': 4, 'band1.type': 9, 'band0.q': 1 } },
+        { processor: 'dynamics.compressor', params: { detector: 1 } },
+        { processor: 'saturation.tape', params: { oversampleFactor: 4 } },
+        { processor: 'dynamics.compressor', params: { detector: 7 } },
+      ].map((slot) => ({ ...slot, enabled: true })),
+    );
+    expect(eq.params).toEqual({ 'band0.type': 'highPass', 'band1.type': 'allPass', 'band0.q': 1 });
+    expect(compressor.params).toEqual({ detector: 'rms' });
+    // A numeric setting offered as a menu keeps its number.
+    expect(tape.params).toEqual({ oversampleFactor: 4 });
+    // An ordinal 1.x could not hold either is left for the core to refuse.
+    expect(unknown.params).toEqual({ detector: 7 });
+  });
+
+  it('names the closed-set parameters of mastering-chain and snapshot processors too', () => {
+    const doc = docWithInserts([]);
+    doc.mixer = {
+      masteringChain: {
+        processors: [{ id: 'c1', processor: 'dynamics.compressor', params: { detector: 2 } }],
+      },
+    };
+    doc.mixerSnapshots = {
+      slots: {
+        a: {
+          mixer: { master: { gainDb: 0, pan: 0, sends: [], inserts: [] } },
+          tracks: [
+            {
+              trackIndex: 0,
+              mixer: {
+                gainDb: 0,
+                pan: 0,
+                sends: [],
+                inserts: [{ processor: 'eq.parametric', params: { 'band0.type': 3 } }],
+              },
+            },
+          ],
+        },
+      },
+    };
+    const out = upgradeDocumentToV5(doc, wasm).document as Json;
+    const chain = (out.mixer as Json).masteringChain as Json;
+    expect((chain.processors as Json[])[0].params).toEqual({ detector: 'logRms' });
+    const snapshot = ((out.mixerSnapshots as Json).slots as Json).a as Json;
+    const entry = (snapshot.tracks as Json[])[0].mixer as Json;
+    expect((entry.inserts as Json[])[0].params).toEqual({ 'band0.type': 'lowPass' });
+  });
 });
 
 function v4Document(): Json {
@@ -533,18 +583,21 @@ describe('document walk', () => {
 
 describe('track presets', () => {
   it('upgrades a version-1 preset strip and instrument to version 2', () => {
-    const out = upgradeTrackPresetToV2({
-      schemaVersion: 1,
-      name: 'Legacy',
-      strip: {
-        gainDb: 0,
-        pan: 0,
-        panLaw: 'const6dB',
-        sends: [],
-        inserts: [{ processor: 'eq.pultec', params: {}, enabled: true }],
+    const out = upgradeTrackPresetToV2(
+      {
+        schemaVersion: 1,
+        name: 'Legacy',
+        strip: {
+          gainDb: 0,
+          pan: 0,
+          panLaw: 'const6dB',
+          sends: [],
+          inserts: [{ processor: 'eq.pultec', params: {}, enabled: true }],
+        },
+        instrument: { kind: 'synth-patch', patch: { filterModel: 'moog-ladder' } },
       },
-      instrument: { kind: 'synth-patch', patch: { filterModel: 'moog-ladder' } },
-    });
+      wasm,
+    );
     expect(out).toEqual({
       schemaVersion: 2,
       name: 'Legacy',
@@ -557,5 +610,22 @@ describe('track presets', () => {
       },
       instrument: { kind: 'synth-patch', patch: { filterModel: 'transistorLadder' } },
     });
+  });
+
+  it('names the closed-set parameters of a version-1 preset strip', () => {
+    const out = upgradeTrackPresetToV2(
+      {
+        schemaVersion: 1,
+        name: 'Legacy',
+        strip: {
+          gainDb: 0,
+          pan: 0,
+          sends: [],
+          inserts: [{ processor: 'dynamics.compressor', params: { detector: 0 }, enabled: true }],
+        },
+      },
+      wasm,
+    );
+    expect(((out.strip as Json).inserts as Json[])[0].params).toEqual({ detector: 'peak' });
   });
 });

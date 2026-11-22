@@ -180,11 +180,11 @@ describe('quick controls', () => {
       });
       expect(controls.find((c) => c.id === 'detector')).toMatchObject({
         kind: 'enum',
-        value: 1,
+        value: 'rms',
         options: [
-          { value: 0, label: 'Peak' },
-          { value: 1, label: 'RMS' },
-          { value: 2, label: 'Log RMS' },
+          { value: 'peak', label: 'Peak' },
+          { value: 'rms', label: 'RMS' },
+          { value: 'logRms', label: 'Log RMS' },
         ],
       });
       expect(controls.find((c) => c.id === 'sidechainHpfEnabled')).toMatchObject({
@@ -235,7 +235,7 @@ describe('quick controls', () => {
       addInsert(trackId, 'eq.parametric', {
         'band0.frequencyHz': 1000,
         'band0.enabled': true,
-        'band0.type': 5,
+        'band0.type': 'bandPass',
       });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
@@ -248,8 +248,8 @@ describe('quick controls', () => {
         expect.objectContaining({
           kind: 'enum',
           id: 'band0.type',
-          value: 5,
-          options: expect.arrayContaining([{ value: 5, label: 'Band Pass' }]),
+          value: 'bandPass',
+          options: expect.arrayContaining([{ value: 'bandPass', label: 'Band Pass' }]),
         }),
       ]);
     });
@@ -375,18 +375,18 @@ describe('quick controls', () => {
       addInsert(trackId, 'dynamics.compressor');
 
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'autoMakeup', true);
-      setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 2);
+      setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 'logRms');
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'sidechainHpfEnabled', true);
 
       expect(store.tracks[0].mixer?.inserts[0].params).toMatchObject({
         autoMakeup: true,
-        detector: 2,
+        detector: 'logRms',
         sidechainHpfEnabled: true,
       });
       expect(() => setQuickControl({ type: 'insert', trackId, index: 0 }, 'autoMakeup', 1)).toThrow(
         RangeError,
       );
-      expect(() => setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 3)).toThrow(
+      expect(() => setQuickControl({ type: 'insert', trackId, index: 0 }, 'detector', 2)).toThrow(
         RangeError,
       );
     });

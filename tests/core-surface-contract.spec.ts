@@ -18,9 +18,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { AUTOMATION_CURVES } from '@/project/automation';
-import { UNTYPED_OVERRIDE_ORDINALS } from '@/project/document-schema-v5';
 import { PAN_LAW_IDS } from '@/project/mixer';
-import { PROJECT_CHORD_QUALITY_BY_ORDINAL } from '@/project/native-document';
 import * as core from '@/wasm/index.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -291,7 +289,6 @@ describe('hand-written mirrors of core vocabulary', () => {
   it.each([
     ['PAN_LAW_IDS', PAN_LAW_IDS],
     ['AUTOMATION_CURVES', [...AUTOMATION_CURVES]],
-    ['PROJECT_CHORD_QUALITY_BY_ORDINAL', PROJECT_CHORD_QUALITY_BY_ORDINAL],
   ])('%s has no core runtime list to take its place', (_name, mirror) => {
     const covering = runtimeLists.filter(([, values]) => {
       const listed = new Set<string>(values);
@@ -301,37 +298,17 @@ describe('hand-written mirrors of core vocabulary', () => {
   });
 
   it("the Project.toJson() document has no core type to take the mirror's place", () => {
-    const exported = coreExports().symbols.map((symbol) => symbol.name);
+    const exported = coreExports().map((symbol) => symbol.name);
     expect(exported.length).toBeGreaterThan(0);
     expect(exported.filter((name) => DOCUMENT_TYPE_NAMES.includes(name))).toEqual([]);
   });
-
-  it('each untyped override ordinal names a chain field the core type still omits', () => {
-    const { checker, symbols } = coreExports();
-    const config = symbols.find((symbol) => symbol.name === 'MasteringChainConfig');
-    expect(config).toBeDefined();
-    const configType = checker.getDeclaredTypeOfSymbol(
-      config!.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(config!) : config!,
-    );
-    const typed = (dotted: string): boolean => {
-      let type: ts.Type = configType;
-      for (const segment of dotted.split('.')) {
-        const property = checker.getPropertyOfType(checker.getNonNullableType(type), segment);
-        if (property === undefined) return false;
-        type = checker.getTypeOfSymbol(property);
-      }
-      return true;
-    };
-    expect(typed('dynamics.compressor.ratio')).toBe(true);
-    expect(Object.keys(UNTYPED_OVERRIDE_ORDINALS).filter(typed)).toEqual([]);
-  });
 });
 
-/** The exports of the vendored `index.d.ts`, with a checker over them. */
-function coreExports(): { checker: ts.TypeChecker; symbols: ts.Symbol[] } {
+/** The exports of the vendored `index.d.ts`. */
+function coreExports(): ts.Symbol[] {
   const index = path.join(WASM_DIR, 'index.d.ts');
   const program = ts.createProgram([index], { noEmit: true, skipLibCheck: true, types: [] });
   const checker = program.getTypeChecker();
   const moduleSymbol = checker.getSymbolAtLocation(program.getSourceFile(index)!);
-  return { checker, symbols: checker.getExportsOfModule(moduleSymbol!) };
+  return checker.getExportsOfModule(moduleSymbol!);
 }

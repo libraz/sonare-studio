@@ -12,7 +12,9 @@ import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   audibleOutputBusId,
   busOutputChain,
+  type InsertParamValue,
   type InsertSlot,
+  isInsertParamValue,
   tracksWithVcaSolo,
 } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
@@ -119,7 +121,7 @@ export interface InsertTailCatalogEntry {
 /** Engine query for the tail a configured insert reports (masteringInsertTiming). */
 export type InsertTailTimingQuery = (request: {
   insert: MasteringInsertName;
-  params: Record<string, number | boolean>;
+  params: Record<string, InsertParamValue>;
   sampleRate: number;
 }) => { tailSamples: number };
 
@@ -141,7 +143,7 @@ export function insertTailResolverFromTiming(
 ): InsertTailResolver {
   const byProcessor = new Map((entries ?? []).map((entry) => [entry.id, entry]));
   const answers = new Map<string, number>();
-  const ask = (processor: string, params: Record<string, number | boolean>): number | undefined => {
+  const ask = (processor: string, params: Record<string, InsertParamValue>): number | undefined => {
     try {
       return tailSecondsFromSamples(
         timing({ insert: processor as MasteringInsertName, params, sampleRate }).tailSamples,
@@ -154,9 +156,9 @@ export function insertTailResolverFromTiming(
   return (slot) => {
     const entry = byProcessor.get(slot.processor);
     if (!entry) return 0;
-    const params: Record<string, number | boolean> = {};
+    const params: Record<string, InsertParamValue> = {};
     for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
-      if (typeof value === 'number' || typeof value === 'boolean') params[key] = value;
+      if (isInsertParamValue(value)) params[key] = value;
     }
     const cacheKey = `${slot.processor}|${JSON.stringify(params)}`;
     let tail = answers.get(cacheKey);

@@ -23,7 +23,7 @@ import {
 } from '@/compose/chord-quality';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
 import type { ProjectChordQuality, ProjectChordSymbol } from '@/wasm/index.js';
-import { type NativeAnnotationChord, PROJECT_CHORD_QUALITY_BY_ORDINAL } from './native-document';
+import type { NativeAnnotationChord } from './native-document';
 
 /** One selectable chord quality: audio-domain ordinal, name suffix, and label. */
 export interface ChordQualityChoice {
@@ -374,7 +374,7 @@ export function chordFromAnnotationEntry(
   hint?: EditorChordSymbol,
 ): EditorChordSymbol | null {
   if (typeof raw.rootPc !== 'number' || raw.rootPc < 0 || raw.rootPc > 11) return null;
-  const family = PROJECT_CHORD_QUALITY_BY_ORDINAL[raw.quality] ?? 'unknown';
+  const family = raw.quality;
   const degrees = Array.isArray(raw.extensions)
     ? raw.extensions.filter((e) => Number.isInteger(e))
     : [];

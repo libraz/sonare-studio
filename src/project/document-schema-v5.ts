@@ -19,6 +19,7 @@ import type {
   EqCoeffMode,
   EqStereoPlacement,
   MasteringChainConfig,
+  MasteringInsertName,
   PanLaw,
   SampleLoopMode,
   SoloProcessor,
@@ -208,7 +209,39 @@ export function upgradeParamName(processor: string, param: string): string {
   return param;
 }
 
-function upgradeInsertParams(processor: string, params: Json): void {
+/** Catalog name of a closed-set insert parameter's stored ordinal, or undefined when it has none. */
+type ChoiceNamer = (processor: string, param: string, ordinal: number) => string | undefined;
+
+/**
+ * Names stored ordinals through the 2.0 catalog: 1.x wrote the engine value
+ * itself, and the catalog pairs each value with the name 2.0 stores.
+ */
+function catalogChoiceNamer(
+  core: Pick<UpgradeCore, 'masteringInsertNames' | 'masteringInsertParamInfo'>,
+): ChoiceNamer {
+  const byProcessor = new Map<string, ReadonlyMap<string, ReadonlyMap<number, string>>>();
+  const choicesOf = (processor: string): ReadonlyMap<string, ReadonlyMap<number, string>> => {
+    let params = byProcessor.get(processor);
+    if (params === undefined) {
+      const entries = core.masteringInsertNames().includes(processor as MasteringInsertName)
+        ? core.masteringInsertParamInfo({ insert: processor as MasteringInsertName })
+        : [];
+      params = new Map(
+        entries
+          .filter((info) => info.type === 'enum' && info.choices !== undefined)
+          .map((info) => [
+            info.name,
+            new Map((info.choices ?? []).map((choice) => [choice.value, choice.name])),
+          ]),
+      );
+      byProcessor.set(processor, params);
+    }
+    return params;
+  };
+  return (processor, param, ordinal) => choicesOf(processor).get(param)?.get(ordinal);
+}
+
+function upgradeInsertParams(processor: string, params: Json, names: ChoiceNamer): void {
   const linear = LINEAR_TO_DB_PARAMS[processor];
   if (linear !== undefined && typeof params[linear] === 'number') {
     params[linear] = linearToThresholdDb(params[linear]);
@@ -228,14 +261,22 @@ function upgradeInsertParams(processor: string, params: Json): void {
     const next = upgradeParamName(processor, key);
     if (next !== key) renameKey(params, key, next);
   }
+  for (const [key, value] of Object.entries(params)) {
+    const name = typeof value === 'number' ? names(processor, key, value) : undefined;
+    if (name !== undefined) params[key] = name;
+  }
 }
 
 /** Upgrades one insert list; returns each slot's (upgraded) processor id. */
-function upgradeInsertSlots(slots: unknown, processorsById: Map<string, string>): void {
+function upgradeInsertSlots(
+  slots: unknown,
+  processorsById: Map<string, string>,
+  names: ChoiceNamer,
+): void {
   eachObject(slots, (slot) => {
     mapValue(slot, 'processor', RENAMED_PROCESSORS);
     const processor = typeof slot.processor === 'string' ? slot.processor : '';
-    if (isObject(slot.params)) upgradeInsertParams(processor, slot.params);
+    if (isObject(slot.params)) upgradeInsertParams(processor, slot.params, names);
     if (typeof slot.id === 'string' && !processorsById.has(slot.id)) {
       processorsById.set(slot.id, processor);
     }
@@ -250,7 +291,11 @@ function upgradeEqBand(band: Json): void {
   renameKey(band, 'lookaheadMs', 'detectorDelayMs');
 }
 
-function upgradeStrip(strip: unknown, processorsById: Map<string, string>): void {
+function upgradeStrip(
+  strip: unknown,
+  processorsById: Map<string, string>,
+  names: ChoiceNamer,
+): void {
   if (!isObject(strip)) return;
   mapValue(strip, 'panLaw', PAN_LAWS);
   if (isObject(strip.eq)) eachObject(strip.eq.bands, upgradeEqBand);
@@ -259,7 +304,7 @@ function upgradeStrip(strip: unknown, processorsById: Map<string, string>): void
     delete strip.surroundPan.elevation;
     delete strip.surroundPan.distance;
   }
-  upgradeInsertSlots(strip.inserts, processorsById);
+  upgradeInsertSlots(strip.inserts, processorsById, names);
 }
 
 /** 1.x dotted mastering override keys whose 2.0 path is not the key itself. */
@@ -285,20 +330,13 @@ const OVERRIDE_ORDINALS: {
   'repair.dehum.mode': ['subtract', 'notch'],
   // 1.x already refused the two ADAA ordinals.
   'saturation.exciter.aliasing': ['none', undefined, undefined, 'oversample4x'],
-};
-
-/**
- * Ordinals of chain fields the core reads but its `MasteringChainConfig` type
- * omits; each moves into {@link OVERRIDE_ORDINALS} once the type carries it.
- */
-export const UNTYPED_OVERRIDE_ORDINALS: Readonly<Record<string, ReadonlyArray<string>>> = {
   'dynamics.compressor.detector': ['peak', 'rms', 'logRms'],
 };
 
 function overrideValue(path: string, value: number | boolean): unknown {
-  const tokens =
-    (OVERRIDE_ORDINALS as Readonly<Record<string, ReadonlyArray<string | undefined>>>)[path] ??
-    UNTYPED_OVERRIDE_ORDINALS[path];
+  const tokens = (OVERRIDE_ORDINALS as Readonly<Record<string, ReadonlyArray<string | undefined>>>)[
+    path
+  ];
   return tokens !== undefined && typeof value === 'number' ? tokens[value] : value;
 }
 
@@ -331,7 +369,11 @@ function mergeInto(target: Json, source: Json): void {
 /** The core calls the upgrade reads mastering presets and chain configurations through. */
 export type UpgradeCore = Pick<
   typeof import('@/wasm/index.js'),
-  'masteringChainConfigFromJson' | 'masteringPresetNames' | 'masteringPresetParams'
+  | 'masteringChainConfigFromJson'
+  | 'masteringInsertNames'
+  | 'masteringInsertParamInfo'
+  | 'masteringPresetNames'
+  | 'masteringPresetParams'
 >;
 
 /** A stored 1.x setting the upgrade could not carry into 2.0. */
@@ -453,15 +495,16 @@ function upgradeMixerState(
   mixer: unknown,
   location: string,
   processorsById: Map<string, string>,
+  names: ChoiceNamer,
   core: UpgradeCore,
   dropped: UpgradeDrop[],
 ): void {
   if (!isObject(mixer)) return;
-  upgradeStrip(mixer.master, processorsById);
-  eachObject(mixer.buses, (bus) => upgradeStrip(bus.strip, processorsById));
+  upgradeStrip(mixer.master, processorsById, names);
+  eachObject(mixer.buses, (bus) => upgradeStrip(bus.strip, processorsById, names));
   const chain = mixer.masteringChain;
   if (!isObject(chain)) return;
-  upgradeInsertSlots(chain.processors, processorsById);
+  upgradeInsertSlots(chain.processors, processorsById, names);
   if (isObject(chain.presetOverrides)) {
     const result = upgradeMasteringOverrides(chain.presetOverrides, chain.preset, core);
     chain.presetOverrides = result.overrides;
@@ -649,6 +692,7 @@ export function upgradeDocumentToV5(
   const out = structuredClone(doc);
   const dropped: UpgradeDrop[] = [];
   const processorsById = new Map<string, string>();
+  const names = catalogChoiceNamer(core);
   const tracks = Array.isArray(out.tracks) ? out.tracks : [];
   const mixer = isObject(out.mixer) ? out.mixer : {};
   const slotEntries =
@@ -661,18 +705,18 @@ export function upgradeDocumentToV5(
 
   // Live strips first, so live processor ids win over snapshot copies.
   eachObject(tracks, (track) => {
-    upgradeStrip(track.mixer, processorsById);
+    upgradeStrip(track.mixer, processorsById, names);
     upgradeInstrument(track.instrument);
     eachObject(track.clips, (clip) => {
       upgradeClipCurves(clip);
       eachObject(clip.midiTakes, upgradeClipCurves);
     });
   });
-  upgradeMixerState(mixer, 'mixer', processorsById, core, dropped);
+  upgradeMixerState(mixer, 'mixer', processorsById, names, core, dropped);
   for (const [slotKey, snapshot] of slotEntries) {
     const location = `mixerSnapshots.slots.${slotKey}.mixer`;
-    upgradeMixerState(snapshot.mixer, location, processorsById, core, dropped);
-    eachObject(snapshot.tracks, (entry) => upgradeStrip(entry.mixer, processorsById));
+    upgradeMixerState(snapshot.mixer, location, processorsById, names, core, dropped);
+    eachObject(snapshot.tracks, (entry) => upgradeStrip(entry.mixer, processorsById, names));
   }
 
   const live: MixerContext = {
@@ -720,11 +764,15 @@ export function upgradeDocumentToV5(
  * carry no automation or learn targets, so only stored values change.
  *
  * @param preset Parsed version-1 preset.
+ * @param core The catalog that names closed-set insert parameters.
  * @returns A deep copy with its strip and instrument upgraded.
  */
-export function upgradeTrackPresetToV2(preset: Json): Json {
+export function upgradeTrackPresetToV2(
+  preset: Json,
+  core: Pick<UpgradeCore, 'masteringInsertNames' | 'masteringInsertParamInfo'>,
+): Json {
   const out = structuredClone(preset);
-  upgradeStrip(out.strip, new Map());
+  upgradeStrip(out.strip, new Map(), catalogChoiceNamer(core));
   upgradeInstrument(out.instrument);
   out.schemaVersion = 2;
   return out;

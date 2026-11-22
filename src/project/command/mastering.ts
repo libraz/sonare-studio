@@ -3,6 +3,7 @@ import {
   cloneMasteringChain,
   createDefaultMasteringChain,
   createProcessorId,
+  type InsertParamValue,
   type InsertSlot,
   isDefaultMasteringChain,
   type MasteringChainState,
@@ -131,7 +132,7 @@ export function applyMasteringPresetWithOverrides(
  */
 export function addMasteringProcessor(
   processor: SoloProcessor,
-  params: Record<string, number | boolean> = {},
+  params: Record<string, InsertParamValue> = {},
 ): number {
   const store = useProjectStore();
   if (typeof processor !== 'string' || processor.length === 0) {
@@ -217,13 +218,13 @@ export function setMasteringEnabled(index: number, enabled: boolean): void {
  *
  * @param index Slot index.
  * @param param Parameter name (camelCase, see masteringInsertParamNames).
- * @param value New value (finite number or boolean).
+ * @param value New value (finite number, boolean or choice name).
  * @param options Gesture coalescing for knob drags.
  */
 export function setMasteringParam(
   index: number,
   param: string,
-  value: number | boolean,
+  value: InsertParamValue,
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();

@@ -5,6 +5,7 @@ import {
   insertTailResolverFromTiming,
 } from '@/export/audio-preflight';
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { InsertParamValue } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 
 function doc(): ProjectDocument {
@@ -492,7 +493,7 @@ describe('audioExportPreflight', () => {
     });
 
     it('asks the engine with every key, then build keys, then the catalog default', () => {
-      const timing = vi.fn(({ params }: { params: Record<string, number | boolean> }) => {
+      const timing = vi.fn(({ params }: { params: Record<string, InsertParamValue> }) => {
         if ('mix' in params) throw new Error('key not read at build time');
         return { tailSamples: params.feedback === 0.5 ? 96000 : 48000 };
       });

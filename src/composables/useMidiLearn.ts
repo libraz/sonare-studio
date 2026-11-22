@@ -447,7 +447,6 @@ export function useMidiLearn(options: MidiLearnOptions = {}): MidiLearnHandle {
           control.kind === 'boolean' || control.kind === 'enum'
             ? processorControlValueFromMidi(control, value)
             : ccToRange(value, control.min, control.max);
-        if (typeof mapped === 'string') return false;
         setMasteringParam(index, mastering.paramId, mapped, { commit });
         return true;
       } catch {

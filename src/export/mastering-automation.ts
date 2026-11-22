@@ -31,7 +31,12 @@ import {
   sanitizeAutomationPoints,
 } from '@/project/automation';
 import { masteringIndexForAutomationRef } from '@/project/automation-insert';
-import type { InsertSlot, MasteringChainState, MixerStrip } from '@/project/mixer';
+import type {
+  InsertParamValue,
+  InsertSlot,
+  MasteringChainState,
+  MixerStrip,
+} from '@/project/mixer';
 import {
   BLOCKS_PER_CHECKPOINT,
   type OfflineRenderEngine,
@@ -114,7 +119,7 @@ export interface MasteringEngineSlot {
   /** Processor id. */
   processor: InsertSlot['processor'];
   /** Static parameter values, including frozen values for un-drivable lanes. */
-  params: Record<string, number | boolean>;
+  params: Record<string, InsertParamValue>;
   /** Parameters the engine drives; never empty. */
   bindings: MasteringAutomationBinding[];
 }
@@ -126,7 +131,7 @@ export type MasteringStage =
       kind: 'whole-buffer';
       processorIndex: number;
       processor: InsertSlot['processor'];
-      params: Record<string, number | boolean>;
+      params: Record<string, InsertParamValue>;
     }
   | {
       /** Applied by one offline engine pass whose strip holds these slots. */
@@ -209,7 +214,7 @@ export function planMasteringStages(
   for (let processorIndex = 0; processorIndex < chain.processors.length; processorIndex += 1) {
     const slot = chain.processors[processorIndex];
     if (!slot.enabled) continue;
-    const params: Record<string, number | boolean> = { ...slot.params };
+    const params: Record<string, InsertParamValue> = { ...slot.params };
     const bindings: MasteringAutomationBinding[] = [];
     const support = capability(slot.processor);
     const insertable = support?.realtimeInsertable === true;

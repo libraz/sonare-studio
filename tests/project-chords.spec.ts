@@ -11,10 +11,7 @@ import {
   toProjectChordSymbol,
   toProjectChordSymbols,
 } from '@/project/chords';
-import {
-  type NativeAnnotationChord,
-  PROJECT_CHORD_QUALITY_BY_ORDINAL,
-} from '@/project/native-document';
+import type { NativeAnnotationChord } from '@/project/native-document';
 import type { ProjectChordSymbol } from '@/wasm/index.js';
 
 describe('sameChord', () => {
@@ -207,7 +204,7 @@ function toStored(symbol: ProjectChordSymbol): NativeAnnotationChord {
     startPpq: symbol.startPpq,
     endPpq: symbol.endPpq,
     rootPc: symbol.rootPc ?? 255,
-    quality: PROJECT_CHORD_QUALITY_BY_ORDINAL.indexOf(symbol.quality ?? 'unknown'),
+    quality: symbol.quality ?? 'unknown',
     slashBassPc: symbol.slashBassPc ?? 255,
     romanNumeral: symbol.romanNumeral ?? '',
     extensions: [...(symbol.extensions ?? [])],
@@ -222,7 +219,7 @@ describe('chordsFromAnnotation', () => {
           startPpq: 4,
           endPpq: 8,
           rootPc: 7,
-          quality: 5,
+          quality: 'dominant',
           slashBassPc: 0,
           romanNumeral: 'V',
           extensions: [7, 13],
@@ -231,7 +228,7 @@ describe('chordsFromAnnotation', () => {
           startPpq: 0,
           endPpq: 4,
           rootPc: 0,
-          quality: 1,
+          quality: 'major',
           slashBassPc: 255,
           romanNumeral: '',
         },
@@ -279,7 +276,7 @@ describe('chordsFromAnnotation', () => {
 
   it('skips entries with an out-of-range root', () => {
     const symbols = chordsFromAnnotation({
-      chords: [{ startPpq: 0, endPpq: 4, rootPc: 255, quality: 0, slashBassPc: 255 }],
+      chords: [{ startPpq: 0, endPpq: 4, rootPc: 255, quality: 'unknown', slashBassPc: 255 }],
     });
     expect(symbols).toEqual([]);
   });

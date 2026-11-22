@@ -41,6 +41,7 @@ import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import { isAutomatableSynthParam } from '@/project/instrument';
 import {
   createDefaultStrip,
+  type InsertParamValue,
   type InsertSlot,
   isSoloProcessor,
   type MixerBus,
@@ -374,7 +375,7 @@ function readInsertDevices(
         losses.push({ kind: 'foreign-device', trackName, device: processor || device.tagName });
         return null;
       }
-      const params: Record<string, number | boolean> = {};
+      const params: Record<string, InsertParamValue> = {};
       for (const parameter of children(children(device, 'Parameters')[0])) {
         const name = parameter.getAttribute('name')?.trim();
         if (!name) continue;
@@ -383,6 +384,11 @@ function readInsertDevices(
           if (value !== null) params[name] = value;
         } else if (parameter.tagName === 'BoolParameter') {
           params[name] = boolAttr(parameter, 'value');
+        } else if (parameter.tagName === 'EnumParameter') {
+          const labels = parameter.getAttribute('labels')?.trim().split(/\s+/) ?? [];
+          const index = numberAttr(parameter, 'value');
+          const label = index !== null && Number.isInteger(index) ? labels[index] : undefined;
+          if (label) params[name] = label;
         }
       }
       const slot: DocumentInsertSlot = {

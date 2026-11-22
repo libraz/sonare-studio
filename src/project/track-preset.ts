@@ -22,6 +22,7 @@ import {
   MIN_STRIP_GAIN_DB,
   type MixerStrip,
 } from './mixer';
+import { getWasmModule } from './runtime';
 import type { EditorTrack } from './types';
 
 /**
@@ -81,7 +82,7 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
     throw new RangeError('Track preset must be an object');
   }
   const stored = value as Record<string, unknown>;
-  const raw = stored.schemaVersion === 1 ? upgradeTrackPresetToV2(stored) : stored;
+  const raw = stored.schemaVersion === 1 ? upgradeTrackPresetToV2(stored, getWasmModule()) : stored;
   if (raw.schemaVersion !== TRACK_CHANNEL_PRESET_SCHEMA_VERSION) {
     throw new RangeError('Unsupported track preset schema version');
   }

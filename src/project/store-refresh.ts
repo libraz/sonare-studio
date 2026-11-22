@@ -12,7 +12,6 @@ import {
   type NativeProjectDocument,
   type NativeTrack,
   nativeClipLoops,
-  nativeTrackKind,
 } from './native-document';
 import {
   type EditorClip,
@@ -34,7 +33,7 @@ function defaultTrackMirror(serialized: NativeTrack, index: number): EditorTrack
     id: serialized.id,
     name: serialized.name ?? `Track ${index + 1}`,
     color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
-    kind: nativeTrackKind(serialized.kind),
+    kind: serialized.kind,
     mute: false,
     solo: false,
     volume: 1,
@@ -197,7 +196,7 @@ export function buildTrackMirror(
     if (!serialized) continue;
     // Group tracks live as aux tracks in the Project; the app-level 'group'
     // kind survives refresh as long as the Project still reports aux.
-    const projectKind = nativeTrackKind(serialized.kind);
+    const projectKind = serialized.kind;
     nextTracks.push({
       ...previous,
       name: serialized.name ?? previous.name,

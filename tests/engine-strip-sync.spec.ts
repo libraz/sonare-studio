@@ -88,7 +88,6 @@ vi.mock('@/project/processor-controls', async (importOriginal) => ({
       default: null,
       unit: null,
       choices: null,
-      slot: null,
     }));
   },
   isConstructionOnlyParam: (processor: string, param: string) =>

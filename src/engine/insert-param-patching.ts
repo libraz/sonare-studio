@@ -1,5 +1,9 @@
-import type { InsertSlot, MixerChannelLayout, MixerStrip } from '@/project/mixer';
-import { catalogParamInfo, isConstructionOnlyParam } from '@/project/processor-controls';
+import type { InsertParamValue, InsertSlot, MixerChannelLayout, MixerStrip } from '@/project/mixer';
+import {
+  catalogParamInfo,
+  choiceValue,
+  isConstructionOnlyParam,
+} from '@/project/processor-controls';
 import { currentWasmModule } from '@/project/runtime';
 import { engineBusPanState } from './engine-declaration';
 
@@ -16,7 +20,7 @@ type InsertParamKind = 'structural' | 'patchableRoot' | 'patchableConditional';
  * would otherwise leave the engine and the persisted strip out of sync.
  */
 function insertParamKind(slot: InsertSlot, key: string, value: unknown): InsertParamKind {
-  if (typeof value !== 'number') return 'structural';
+  if (typeof value !== 'number' && typeof value !== 'string') return 'structural';
   // A preset changes the entire amplifier configuration. Even on older WASM
   // catalogs that do not describe presetIndex, patching one numeric parameter
   // cannot replace the active rig: the insert must be constructed again.
@@ -26,9 +30,11 @@ function insertParamKind(slot: InsertSlot, key: string, value: unknown): InsertP
   const info = entries.find((entry) => entry.name === key);
   if (info !== undefined) {
     if (info.id === undefined || info.rtSafe === false) return 'structural';
-    return info.slot === null ? 'patchableRoot' : 'patchableConditional';
+    if (typeof value === 'string' && choiceValue(info, value) === undefined) return 'structural';
+    return info.slot === undefined ? 'patchableRoot' : 'patchableConditional';
   }
 
+  if (typeof value === 'string') return 'structural';
   // Before the catalog is initialized, preserve the previous behaviour for
   // known construction-only checks. An initialized catalog makes unknown
   // keys structural so a saved extra cannot be mistaken for a live target.
@@ -42,18 +48,21 @@ function insertParamKind(slot: InsertSlot, key: string, value: unknown): InsertP
   return 'structural';
 }
 
-/** True for a numeric insert param the engine can patch without rebuilding. */
-function isPatchableParam(slot: InsertSlot, key: string, value: unknown): value is number {
+/** The value the realtime setter takes for a param the engine can patch without rebuilding. */
+function patchableValue(slot: InsertSlot, key: string, value: unknown): number | undefined {
   const kind = insertParamKind(slot, key, value);
-  return kind === 'patchableRoot' || kind === 'patchableConditional';
+  if (kind !== 'patchableRoot' && kind !== 'patchableConditional') return undefined;
+  if (typeof value === 'number') return value;
+  const info = catalogParamInfo(slot.processor).find((entry) => entry.name === key);
+  return typeof value === 'string' ? choiceValue(info, value) : undefined;
 }
 
 /**
  * Insert params that affect scene structure: every value the engine reads only
  * while building the insert. Patchable numeric values are masked out.
  */
-export function insertParamStructure(slot: InsertSlot): Record<string, number | boolean | null> {
-  const entries: Array<[string, number | boolean | null]> = [];
+export function insertParamStructure(slot: InsertSlot): Record<string, InsertParamValue | null> {
+  const entries: Array<[string, InsertParamValue | null]> = [];
   for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
     const kind = insertParamKind(slot, key, value);
     // A top-level realtime value does not affect construction, so its
@@ -73,7 +82,10 @@ export function insertNumericParams(
   return inserts.map((slot) =>
     Object.fromEntries(
       Object.entries(slot.params)
-        .filter((entry): entry is [string, number] => isPatchableParam(slot, entry[0], entry[1]))
+        .flatMap(([key, value]): Array<[string, number]> => {
+          const patchable = patchableValue(slot, key, value);
+          return patchable === undefined ? [] : [[key, patchable]];
+        })
         .sort(([a], [b]) => a.localeCompare(b)),
     ),
   );

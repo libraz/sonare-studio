@@ -608,7 +608,7 @@ export function setQuickControl(
     throw new RangeError(`Unknown insert control "${id}" requires a finite number`);
   }
   if (control?.kind !== 'number') {
-    setInsertParam(target.trackId, target.index, id, value as number | boolean, options);
+    setInsertParam(target.trackId, target.index, id, value, options);
     return;
   }
   // The display range only draws the knob; the accepted bounds and the

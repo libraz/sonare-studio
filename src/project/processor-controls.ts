@@ -28,7 +28,7 @@ import {
   type InsertParamDomain,
   insertParamDomain,
 } from './insert-param-domains';
-import type { MixerStrip } from './mixer';
+import { type InsertParamValue, isInsertParamValue, type MixerStrip } from './mixer';
 import { getWasmModule } from './runtime';
 
 /** Values accepted by a processor parameter command. */
@@ -460,17 +460,27 @@ export function processorControlSpec(
 ): ProcessorControlSpec | null {
   if (info?.type === 'string' || info?.type === 'array') return null;
   if (info?.choices && info.choices.length > 0) {
+    // A closed set is stored by choice name; a numeric setting offered as a menu keeps its number.
+    const named = info.type === 'enum';
     const options = info.choices.map((choice) => ({
-      value: choice.value,
+      value: named ? choice.name : choice.value,
       label: choiceLabel(choice.name),
     }));
-    const declared = options.find((option) => option.value === info.default);
-    return { kind: 'enum', options, defaultValue: (declared ?? options[0]).value };
+    const declared = info.choices.findIndex((choice) => choice.value === info.default);
+    return { kind: 'enum', options, defaultValue: options[Math.max(0, declared)].value };
   }
   if (info?.type === 'boolean') {
     return { kind: 'boolean', defaultValue: info.default === true };
   }
   return processorNumberSpec(processor, param, info);
+}
+
+/** The engine value a stored choice name stands for, or undefined when the catalog lists no such choice. */
+export function choiceValue(
+  info: Pick<MasteringInsertParamInfo, 'choices'> | undefined,
+  name: string,
+): number | undefined {
+  return info?.choices?.find((choice) => choice.name === name)?.value;
 }
 
 /** Builds a descriptor for one parameter using its saved ABI value. */
@@ -562,7 +572,7 @@ export function editedProcessorParams<T extends Readonly<Record<string, unknown>
   processor: string,
   params: T,
   param: string,
-  value: number | boolean,
+  value: InsertParamValue,
 ): T {
   const bounded =
     typeof value === 'number' ? withinSiblings(processor, params, param, value) : value;
@@ -635,10 +645,10 @@ function assertCoupledKeysAccepted(
   const group = coupledGroup(info, param);
   if (group.length < 2) return;
   const wasm = getWasmModule();
-  const subset: Record<string, number | boolean> = {};
+  const subset: Record<string, InsertParamValue> = {};
   for (const key of group) {
     const value = params[key];
-    if (typeof value === 'number' || typeof value === 'boolean') subset[key] = value;
+    if (isInsertParamValue(value)) subset[key] = value;
   }
   try {
     wasm.masteringInsertTiming({

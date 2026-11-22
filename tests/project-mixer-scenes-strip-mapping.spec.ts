@@ -71,3 +71,30 @@ describe('applyMixerSceneJson strip mapping', () => {
     expect(store.tracks.every((track) => track.mixer?.gainDb === -1)).toBe(true);
   });
 });
+
+describe('applyMixerSceneJson insert params', () => {
+  beforeEach(async () => {
+    setActivePinia(createPinia());
+    const store = useProjectStore();
+    store.dispose();
+    clearHistory();
+    await store.init();
+  });
+
+  it('keeps a closed-set insert param the scene names', () => {
+    const store = useProjectStore();
+    const trackId = store.tracks[0].id;
+    applyMixerSceneJson(
+      JSON.stringify({
+        strips: [
+          {
+            id: `track-${trackId}`,
+            inserts: [{ processor: 'dynamics.compressor', params: { detector: 'rms', ratio: 4 } }],
+          },
+        ],
+        buses: [],
+      }),
+    );
+    expect(store.tracks[0].mixer?.inserts[0]?.params).toEqual({ detector: 'rms', ratio: 4 });
+  });
+});

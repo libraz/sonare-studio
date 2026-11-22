@@ -174,9 +174,9 @@ describe('QuickControls.vue', () => {
     await wrapper.find('.qc-toggle').trigger('click');
     expect(store.tracks[0].mixer?.inserts[0].params.autoMakeup).toBe(true);
 
-    wrapper.findComponent({ name: 'SelectMenu' }).vm.$emit('change', 2);
+    wrapper.findComponent({ name: 'SelectMenu' }).vm.$emit('change', 'logRms');
     await wrapper.vm.$nextTick();
-    expect(store.tracks[0].mixer?.inserts[0].params.detector).toBe(2);
+    expect(store.tracks[0].mixer?.inserts[0].params.detector).toBe('logRms');
   });
 
   it('touch-records an insert knob into an automation lane in a write mode', async () => {

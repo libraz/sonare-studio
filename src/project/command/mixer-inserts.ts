@@ -7,6 +7,7 @@ import {
 import {
   cloneStrip,
   createProcessorId,
+  type InsertParamValue,
   type InsertSlot,
   isSoloProcessor,
   type MixerSidechainSource,
@@ -225,7 +226,7 @@ function sidechainSourceFields(
 export function addInsert(
   target: MixerStripTarget,
   processor: string,
-  params: Record<string, number | boolean> = {},
+  params: Record<string, InsertParamValue> = {},
 ): number {
   const store = useProjectStore();
   const strip = currentStrip(store, target);
@@ -409,14 +410,14 @@ export function setInsertSidechain(
  * @param target Track id or 'master'.
  * @param index Slot index.
  * @param param Parameter name (camelCase, see masteringInsertParamNames).
- * @param value New value (finite number or boolean).
+ * @param value New value (finite number, boolean or choice name).
  * @param options Gesture coalescing for knob drags.
  */
 export function setInsertParam(
   target: MixerStripTarget,
   index: number,
   param: string,
-  value: number | boolean,
+  value: InsertParamValue,
   options?: CommandGestureOptions,
 ): void {
   const store = useProjectStore();

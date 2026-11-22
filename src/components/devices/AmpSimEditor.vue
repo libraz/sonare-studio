@@ -4,6 +4,7 @@ import { ensureWasm } from '@/lib/wasm';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import { insertAutomationParam } from '@/project/automation';
 import { setAutomationLanePoints, setInsertEnabled, setInsertParam } from '@/project/commands';
+import { type InsertParamValue, isInsertParamValue } from '@/project/mixer';
 import { getWasmModule, useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
@@ -53,13 +54,19 @@ type AmpNumberKey =
 
 type AmpModelKey = 'ampModel' | 'cabModel' | 'micModel';
 type AmpParameterKey = AmpNumberKey | AmpModelKey | 'cab';
-type AmpParameterValue = number | boolean;
+type AmpParameterValue = InsertParamValue;
 type AmpParameterSource = 'explicit' | 'preset' | 'default' | 'unavailable';
 
 interface AmpPresetCatalogEntry {
   index: number;
   name: string;
   params: Record<string, AmpParameterValue>;
+}
+
+/** One catalog choice of a model selector. */
+interface AmpModelChoice {
+  name: string;
+  value: number;
 }
 
 type AmpPresetCatalogModule = Pick<
@@ -89,6 +96,7 @@ const store = useProjectStore();
 const error = ref('');
 const presetCatalog = ref<readonly AmpPresetCatalogEntry[]>([]);
 const normalDefaults = ref<Readonly<Record<string, AmpParameterValue>>>({});
+const modelChoices = ref<Readonly<Partial<Record<AmpModelKey, readonly AmpModelChoice[]>>>>({});
 const catalogError = ref(false);
 const pendingRangeValues = ref<Partial<Record<AmpNumberKey, number>>>({});
 let disposed = false;
@@ -116,9 +124,7 @@ const currentPresetIndex = computed<number | null>(() => {
 /** Named preset values need the runtime catalog to be trustworthy. */
 const showCatalogError = computed(() => catalogError.value && currentPresetIndex.value !== null);
 
-function isAmpParameterValue(value: unknown): value is AmpParameterValue {
-  return typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
-}
+const AMP_MODEL_KEYS: readonly AmpModelKey[] = ['ampModel', 'cabModel', 'micModel'];
 
 function normalizePresetCatalog(value: unknown): AmpPresetCatalogEntry[] {
   if (!Array.isArray(value)) return [];
@@ -142,7 +148,7 @@ function normalizePresetCatalog(value: unknown): AmpPresetCatalogEntry[] {
       }
       const cleanParams: Record<string, AmpParameterValue> = {};
       for (const [key, candidate] of Object.entries(params)) {
-        if (isAmpParameterValue(candidate)) cleanParams[key] = candidate;
+        if (isInsertParamValue(candidate)) cleanParams[key] = candidate;
       }
       return [{ index, name, params: cleanParams }];
     })
@@ -153,21 +159,35 @@ function readPresetCatalog(module: AmpPresetCatalogModule): AmpPresetCatalogEntr
   return normalizePresetCatalog(module.masteringAmpPresetCatalog());
 }
 
-function readNormalDefaults(module: AmpPresetCatalogModule): Record<string, AmpParameterValue> {
+function readParamInfo(module: AmpPresetCatalogModule): {
+  defaults: Record<string, AmpParameterValue>;
+  models: Partial<Record<AmpModelKey, readonly AmpModelChoice[]>>;
+} {
   const info = module.masteringInsertParamInfo({ insert: 'saturation.ampSim' });
   const defaults: Record<string, AmpParameterValue> = {};
+  const models: Partial<Record<AmpModelKey, readonly AmpModelChoice[]>> = {};
   for (const entry of info) {
-    if (isAmpParameterValue(entry.default)) defaults[entry.name] = entry.default;
+    // A closed set is stored by choice name, so its numeric default is named too.
+    const named =
+      entry.type === 'enum'
+        ? entry.choices?.find((choice) => choice.value === entry.default)?.name
+        : entry.default;
+    if (isInsertParamValue(named)) defaults[entry.name] = named;
+    const key = AMP_MODEL_KEYS.find((model) => model === entry.name);
+    if (key !== undefined && entry.choices) models[key] = entry.choices;
   }
-  return defaults;
+  return { defaults, models };
 }
 
 function setPresetCatalog(module: AmpPresetCatalogModule): void {
   try {
     try {
-      normalDefaults.value = readNormalDefaults(module);
+      const info = readParamInfo(module);
+      normalDefaults.value = info.defaults;
+      modelChoices.value = info.models;
     } catch {
       normalDefaults.value = {};
+      modelChoices.value = {};
     }
     const entries = readPresetCatalog(module);
     if (entries.length === 0) {
@@ -231,7 +251,7 @@ function presetLabel(option: AmpPresetCatalogEntry): string {
 
 function explicitValue(param: AmpParameterKey): AmpParameterValue | undefined {
   const value = params.value[param];
-  return isAmpParameterValue(value) ? value : undefined;
+  return isInsertParamValue(value) ? value : undefined;
 }
 
 function resolvedParameter(param: AmpParameterKey): {
@@ -312,7 +332,7 @@ function run(action: () => void): void {
   }
 }
 
-function apply(param: string, value: number | boolean, commit = true): void {
+function apply(param: string, value: AmpParameterValue, commit = true): void {
   if (!slot.value) return;
   // A static edit (preset/model/cab or a manual range change) closes any
   // unfinished write draft before it changes the construction state.
@@ -450,14 +470,25 @@ function onRangeCancel(param: string): void {
   clearPendingRangeValue(param);
 }
 
-function modelValue(param: AmpModelKey): number | '' {
+function modelValue(param: AmpModelKey): string {
   const value = resolvedParameter(param).value;
-  return typeof value === 'number' && Number.isInteger(value) ? value : '';
+  return typeof value === 'string' ? value : '';
+}
+
+/** A model selector's catalog choices with their menu labels. */
+function modelOptions(
+  param: AmpModelKey,
+  labels: Readonly<Record<string, string>>,
+): Array<{ name: string; label: string }> {
+  return (modelChoices.value[param] ?? []).map((choice) => ({
+    name: choice.name,
+    label: labels[choice.name] ?? humanizePresetName(choice.name),
+  }));
 }
 
 function onModelChange(param: AmpModelKey, event: Event): void {
   const raw = (event.target as HTMLSelectElement).value;
-  if (raw !== '') apply(param, Number(raw));
+  if (raw !== '') apply(param, raw);
 }
 
 const cabState = computed(() => resolvedParameter('cab'));
@@ -670,7 +701,7 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.devicesPanel.ampModel"
             @change="onModelChange('ampModel', $event)"
           >
-            <option v-for="(name, index) in t.shell.devicesPanel.ampModels" :key="index" :value="Number(index)">{{ name }}</option>
+            <option v-for="option in modelOptions('ampModel', t.shell.devicesPanel.ampModels)" :key="option.name" :value="option.name">{{ option.label }}</option>
           </select>
         </label>
         <label class="amp-control">
@@ -687,7 +718,7 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.devicesPanel.ampCabModel"
             @change="onModelChange('cabModel', $event)"
           >
-            <option v-for="(name, index) in t.shell.devicesPanel.ampCabModels" :key="index" :value="Number(index)">{{ name }}</option>
+            <option v-for="option in modelOptions('cabModel', t.shell.devicesPanel.ampCabModels)" :key="option.name" :value="option.name">{{ option.label }}</option>
           </select>
         </label>
         <label class="amp-control">
@@ -704,7 +735,7 @@ onBeforeUnmount(() => {
             :aria-label="t.shell.devicesPanel.ampMicModel"
             @change="onModelChange('micModel', $event)"
           >
-            <option v-for="(name, index) in t.shell.devicesPanel.ampMicModels" :key="index" :value="Number(index)">{{ name }}</option>
+            <option v-for="option in modelOptions('micModel', t.shell.devicesPanel.ampMicModels)" :key="option.name" :value="option.name">{{ option.label }}</option>
           </select>
         </label>
         <label

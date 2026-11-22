@@ -1,12 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { InsertSlot } from '@/project/mixer';
 import {
+  catalogParamInfo,
   choiceLabel,
   insertAutomationDomain,
   type ProcessorParamInfo,
+  processorControl,
   processorControlSpec,
   processorNumberSpec,
 } from '@/project/processor-controls';
+import { setWasmModule } from '@/project/runtime';
+import * as core from '@/wasm/index.js';
 
 /** Strip-shaped value carrying a single insert slot. */
 function stripWith(processor: string): { inserts: InsertSlot[] } {
@@ -97,10 +102,10 @@ describe('processorControlSpec', () => {
     ).toEqual({
       kind: 'enum',
       options: [
-        { value: 0, label: 'None' },
-        { value: 3, label: '4x Oversampling' },
+        { value: 'none', label: 'None' },
+        { value: 'oversample4x', label: '4x Oversampling' },
       ],
-      defaultValue: 3,
+      defaultValue: 'oversample4x',
     });
   });
 
@@ -177,3 +182,48 @@ describe('insertAutomationDomain', () => {
     });
   });
 });
+
+describe('closed-set parameters on the real catalog', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    setWasmModule(core);
+  });
+
+  it('shows the name a core scene preset stores, not the default', () => {
+    const inserts = core
+      .mixingScenePresetNames()
+      .flatMap((name) => sceneInsertsOf(core.mixingScenePreset(name)));
+    const named = inserts.flatMap(({ processor, params }) =>
+      Object.entries(params)
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+        .map(([key, value]) => ({ processor, key, value })),
+    );
+    expect(named.length).toBeGreaterThan(0);
+    for (const { processor, key, value } of named) {
+      const info = catalogParamInfo(processor).find((entry) => entry.name === key);
+      expect(processorControl(processor, key, value, info)).toMatchObject({ kind: 'enum', value });
+    }
+  });
+
+  it('defaults a closed-set parameter to the name of the catalog default', () => {
+    const info = catalogParamInfo('dynamics.compressor').find((entry) => entry.name === 'detector');
+    expect(processorControl('dynamics.compressor', 'detector', undefined, info)).toMatchObject({
+      value: 'rms',
+      defaultValue: 'rms',
+    });
+  });
+});
+
+/** Every insert slot a mixing scene document carries, wherever it sits. */
+function sceneInsertsOf(
+  doc: unknown,
+): Array<{ processor: string; params: Record<string, unknown> }> {
+  if (Array.isArray(doc)) return doc.flatMap(sceneInsertsOf);
+  if (typeof doc !== 'object' || doc === null) return [];
+  const record = doc as Record<string, unknown>;
+  const own =
+    typeof record.processor === 'string' && typeof record.params === 'object' && record.params
+      ? [{ processor: record.processor, params: record.params as Record<string, unknown> }]
+      : [];
+  return [...own, ...Object.values(record).flatMap(sceneInsertsOf)];
+}
