@@ -57,6 +57,8 @@ export const notices = {
       'Recording input changed before the take could be stopped. The take was discarded.',
     inputChangedBeforeSave:
       'Recording input changed before the take could be saved. The take was discarded.',
+    emptyTake:
+      'The take captured no audio. Record for longer than the input latency, or check the input device.',
     overflow: 'Recording reached the capture buffer limit; the end of the take was dropped.',
     storeFailed: 'Failed to store the recording: {detail}',
     storeFailedCleanup:

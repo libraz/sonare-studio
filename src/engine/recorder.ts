@@ -326,11 +326,15 @@ export interface Recorder {
    * Disarms the engine record path, reads the captured take, resets the
    * engine capture and restores the idle capture config.
    *
+   * @param options.captureTail Whether the transport is still running, so the
+   *   take stays armed for the record offset first: capture runs that far
+   *   behind the render position, and disarming at once would drop the input
+   *   played up to the stop.
    * @returns The recorded frames, or null when nothing usable was captured
    *   (for example when stopped during the count-in).
    * @throws RecorderStateError When no recording is in progress.
    */
-  stop(): Promise<RecordingResult | null>;
+  stop(options?: { captureTail?: boolean }): Promise<RecordingResult | null>;
   /**
    * The render position, in PPQ, at which the engine has captured the whole
    * punch window of the take in progress (punch-out plus the record offset),
@@ -345,6 +349,11 @@ export interface Recorder {
    */
   dispose(): void;
 }
+
+/** Status polls a stop makes while the disarm crosses to the audio thread. */
+const DISARM_POLL_ATTEMPTS = 50;
+/** Pause between those polls; a ring command lands within one render quantum. */
+const DISARM_POLL_INTERVAL_MS = 10;
 
 /**
  * Estimates the record-latency offset for a context: the playback path delay
@@ -461,6 +470,8 @@ interface ActiveTake {
   capturePunchOutPpq: number;
   /** Capture sample rate at start time. */
   sampleRate: number;
+  /** Samples the capture runs behind the render position. */
+  offsetSamples: number;
 }
 
 /**
@@ -988,7 +999,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       // of the buffer and lets auto-punch close sample-accurately at R.
       handle.engine.armCapture({ armed: true });
       engineArmed = true;
-      take = { trackId, startPpq, capturePunchOutPpq, sampleRate };
+      take = { trackId, startPpq, capturePunchOutPpq, sampleRate, offsetSamples };
       phase = 'recording';
     } catch (error) {
       capturePunch = undefined;
@@ -999,18 +1010,41 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
   };
 
-  const stop = async (): Promise<RecordingResult | null> => {
+  /**
+   * Reads the capture status once the disarm has reached the audio thread.
+   * The disarm travels the command ring and the reads and the idle config the
+   * port, with no ordering between them; the engine refuses a capture config
+   * while still armed, and a read before the disarm misses the last frames.
+   */
+  const captureStatusOnceDisarmed = async (): Promise<EngineCaptureStatus> => {
+    for (let attempt = 0; attempt < DISARM_POLL_ATTEMPTS; attempt++) {
+      const status = await handle.engine.captureStatus();
+      if (!status.armed) return status;
+      await new Promise((resolve) => setTimeout(resolve, DISARM_POLL_INTERVAL_MS));
+    }
+    throw new RecorderStateError('The engine did not disarm the capture');
+  };
+
+  const stop = async (options: { captureTail?: boolean } = {}): Promise<RecordingResult | null> => {
     const active = take;
     if (!active || phase !== 'recording') {
       throw new RecorderStateError('No recording in progress');
     }
     const generation = operationGeneration;
     phase = 'stopping';
+    if (options.captureTail && active.offsetSamples > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, (active.offsetSamples / active.sampleRate) * 1000),
+      );
+      if (disposed || generation !== operationGeneration) {
+        throw new RecorderStateError('Recorder stop was cancelled');
+      }
+    }
     handle.engine.armCapture({ armed: false });
     let status: Awaited<ReturnType<EngineHandle['engine']['captureStatus']>>;
     let captured: Float32Array[];
     try {
-      status = await handle.engine.captureStatus();
+      status = await captureStatusOnceDisarmed();
       if (disposed || generation !== operationGeneration) {
         throw new RecorderStateError('Recorder stop was cancelled');
       }

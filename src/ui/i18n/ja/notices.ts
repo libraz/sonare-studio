@@ -57,6 +57,8 @@ export const notices = {
     transportRejected: 'エンジンが再生コマンドを拒否しました。',
     inputChangedBeforeStop: 'テイクを停止する前に録音入力が変わりました。テイクは破棄されました。',
     inputChangedBeforeSave: 'テイクを保存する前に録音入力が変わりました。テイクは破棄されました。',
+    emptyTake:
+      'テイクに音声が録音されませんでした。入力レイテンシより長く録音するか、入力デバイスを確認してください。',
     overflow:
       '録音がキャプチャーバッファーの上限に達したため、テイクの終わりが切り捨てられました。',
     storeFailed: '録音を保存できませんでした: {detail}',

@@ -797,6 +797,7 @@ export function useRecording(
       return clipId;
     };
     state.value = 'stopping';
+    const stoppedDuringCountIn = isCountingIn.value;
     finishCountIn();
     const targetTrackIds =
       recordingTrackIds.length > 0 ? recordingTrackIds : [...armedTrackIds.value];
@@ -804,7 +805,7 @@ export function useRecording(
     const loop = cycleTake?.window() ?? null;
     let result: RecordingResult | null;
     try {
-      result = await rec.stop();
+      result = await rec.stop({ captureTail: transport.isPlaying.value });
     } catch (err) {
       if (current()) {
         state.value = 'recording';
@@ -820,6 +821,7 @@ export function useRecording(
     cycleTake?.end();
     state.value = 'ingesting';
     if (!result || result.channels.length === 0 || result.channels[0].length === 0) {
+      if (!stoppedDuringCountIn) error.value = t.value.notices.recording.emptyTake;
       return complete(null);
     }
     if (targetTrackIds.length === 0) return complete(null);
@@ -860,6 +862,8 @@ export function useRecording(
     };
     const cancelIngest = async (): Promise<number | null> => {
       await rollbackAssets();
+      if (!recordingOperations.disposed)
+        error.value = t.value.notices.recording.inputChangedBeforeSave;
       return complete(null);
     };
     try {

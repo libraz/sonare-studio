@@ -681,6 +681,105 @@ describe('createRecorder capture', () => {
     expect(channel[29]).toBe(29);
   });
 
+  it('stays armed for the record offset when stopped while the transport runs', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, armCapture } = makeHandle(100);
+      const { deps } = makeDeps();
+      const recorder = createRecorder(handle, deps);
+      await recorder.requestMicrophone();
+      recorder.arm(1);
+      await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 50 });
+      armCapture.mockClear();
+
+      const stopping = recorder.stop({ captureTail: true });
+      // 50 samples at 100 Hz: the input played up to the stop arrives 500 ms later.
+      await vi.advanceTimersByTimeAsync(499);
+      expect(armCapture).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await stopping;
+      expect(armCapture).toHaveBeenCalledWith({ armed: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reads the take and restores the idle config only once the disarm has landed', async () => {
+    const { handle, setStatus, setAudio, captureStatus, capturedAudio, configureCapture } =
+      makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+    setAudio(rampChannels(1, 10));
+    setStatus({ capturedFrames: 10, armed: true });
+    configureCapture.mockClear();
+    // The ring disarm reaches the audio thread after two port round trips.
+    captureStatus.mockImplementationOnce(async () => ({
+      capturedFrames: 8,
+      overflowCount: 0,
+      armed: true,
+      punchEnabled: true,
+      source: 'input' as const,
+      recordOffsetSamples: 0,
+    }));
+    captureStatus.mockImplementationOnce(async () => ({
+      capturedFrames: 9,
+      overflowCount: 0,
+      armed: true,
+      punchEnabled: true,
+      source: 'input' as const,
+      recordOffsetSamples: 0,
+    }));
+    setStatus({ armed: false });
+
+    const result = await recorder.stop();
+    expect(captureStatus).toHaveBeenCalledTimes(3);
+    expect(capturedAudio.mock.invocationCallOrder[0]).toBeGreaterThan(
+      captureStatus.mock.invocationCallOrder[2],
+    );
+    expect(configureCapture.mock.invocationCallOrder[0]).toBeGreaterThan(
+      captureStatus.mock.invocationCallOrder[2],
+    );
+    expect(result?.channels[0].length).toBe(10);
+  });
+
+  it('fails the stop when the engine never confirms the disarm', async () => {
+    vi.useFakeTimers();
+    try {
+      const { handle, setStatus } = makeHandle(100);
+      const { deps } = makeDeps();
+      const recorder = createRecorder(handle, deps);
+      await recorder.requestMicrophone();
+      recorder.arm(1);
+      await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 0 });
+      setStatus({ armed: true });
+
+      const stopping = recorder.stop();
+      const outcome = expect(stopping).rejects.toThrow('The engine did not disarm the capture');
+      await vi.advanceTimersByTimeAsync(1000);
+      await outcome;
+      expect(recorder.isRecording()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disarms at once when the transport has already stopped', async () => {
+    const { handle, armCapture } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(1);
+    await recorder.start({ startPpq: 0, tempoBpm: 120, recordOffsetSamples: 50 });
+    armCapture.mockClear();
+
+    const stopping = recorder.stop({ captureTail: false });
+    expect(armCapture).toHaveBeenCalledWith({ armed: false });
+    await stopping;
+  });
+
   it('sends the punch window unextended because the engine compensates the record offset', async () => {
     const { handle, configureCapture, setStatus, setAudio } = makeHandle(100);
     const { deps } = makeDeps();

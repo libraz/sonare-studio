@@ -24,6 +24,7 @@ import {
 import { createRecordingCycle } from '@/project/loop-recording';
 import { getProject, useProjectStore } from '@/project/store';
 import { MESSAGES } from '@/ui/i18n';
+import { en } from '@/ui/i18n/en';
 import {
   CUSTOM_VOICE_PRESET_TEMPLATE,
   parseCustomVoicePreset,
@@ -1047,6 +1048,25 @@ describe('useRecording', () => {
     expect(recording.state.value).toBe('idle');
   });
 
+  it('reports a take dropped because the engine was replaced during its ingest', async () => {
+    const { recording, fake, handleRef } = setup();
+    const trackId = addAudioTrack();
+    fake.setResult({ channels: [new Float32Array([1, 1])], sampleRate: 48_000, startPpq: 0 });
+    const ingest = deferred<AudioAssetMeta>();
+    ingestMock.mockImplementationOnce(() => ingest.promise);
+    recording.arm(trackId);
+    await recording.record();
+
+    const stopping = recording.stopRecord();
+    await vi.waitFor(() => expect(ingestMock).toHaveBeenCalledTimes(1));
+    handleRef.value = { ...fakeHandle } as EngineHandle;
+    ingest.resolve({ id: 'late', name: 'Late', sampleRate: 48_000, numChannels: 1, numFrames: 2 });
+
+    await expect(stopping).resolves.toBeNull();
+    expect(store.clips.some((clip) => clip.kind === 'audio')).toBe(false);
+    expect(recording.error.value).toBe(en.notices.recording.inputChangedBeforeSave);
+  });
+
   it('does not ingest a stop result that resolves after disposal', async () => {
     const { recording, fake } = setup();
     const trackId = addAudioTrack({ name: 'Vox' });
@@ -1080,6 +1100,36 @@ describe('useRecording', () => {
     expect(recording.isRecording.value).toBe(false);
     expect(ingestMock).not.toHaveBeenCalled();
     expect(store.clips.some((c) => c.kind === 'audio')).toBe(false);
+    expect(recording.error.value).toBe(en.notices.recording.emptyTake);
+  });
+
+  it('stopRecord() reports nothing for a take stopped during the count-in', async () => {
+    vi.useFakeTimers();
+    const { recording, fake, transport } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    recording.countInBars.value = 1;
+    transport.positionSeconds.value = 4;
+    await recording.record();
+    expect(recording.isCountingIn.value).toBe(true);
+    fake.setResult(null);
+
+    expect(await recording.stopRecord()).toBeNull();
+    expect(recording.error.value).toBeNull();
+  });
+
+  it('asks the recorder to capture the tail only while the transport runs', async () => {
+    const { recording, fake, transport } = setup();
+    const trackId = addAudioTrack();
+    recording.arm(trackId);
+    await recording.record();
+    transport.isPlaying.value = true;
+    await recording.stopRecord();
+    expect(fake.rec.stop).toHaveBeenLastCalledWith({ captureTail: true });
+
+    await recording.record();
+    transport.isPlaying.value = false;
+    await vi.waitFor(() => expect(fake.rec.stop).toHaveBeenLastCalledWith({ captureTail: false }));
   });
 
   it('stopRecord() surfaces ingestion failures as an error', async () => {
