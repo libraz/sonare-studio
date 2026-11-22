@@ -378,12 +378,12 @@ describe('useProjectExport', () => {
     };
     store.mixer.soloMode = 'pfl';
     store.mixer.masteringChain = {
-      preset: 'streaming-balanced',
-      presetOverrides: { 'loudness.targetLufs': -14 },
+      preset: 'streaming',
+      presetOverrides: { loudness: { targetLufs: -14 } },
       processors: [
         {
           processor: 'dynamics.limiter',
-          params: { ceilingDb: -1 },
+          params: { thresholdDb: -1 },
           enabled: true,
         },
       ],

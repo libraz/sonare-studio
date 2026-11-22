@@ -89,10 +89,10 @@ describe('project templates', () => {
     expect(doc.name).toBe('J-pop song');
     expect(doc.tracks.map((track) => track.name)).toEqual(['Drums', 'Bass', 'Backing', 'Lead']);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
-      { kind: 'synth-preset', preset: 'drum-kit' },
-      { kind: 'synth-preset', preset: 'sub-bass' },
-      { kind: 'synth-preset', preset: 'acoustic-piano' },
-      { kind: 'synth-preset', preset: 'saw-lead' },
+      { kind: 'synth-preset', preset: 'drumKit' },
+      { kind: 'synth-preset', preset: 'subBass' },
+      { kind: 'synth-preset', preset: 'acousticPiano' },
+      { kind: 'synth-preset', preset: 'sawLead' },
     ]);
     expect(doc.tracks[0].percussion).toBe(true);
     expect(doc.tracks[1].pitchRange).toEqual({ low: 40, high: 60 });
@@ -112,7 +112,7 @@ describe('project templates', () => {
       'Manual II Tenor',
       'Pedal Bass',
     ]);
-    expect(doc.tracks.every((track) => track.instrument?.preset === 'church-organ')).toBe(true);
+    expect(doc.tracks.every((track) => track.instrument?.preset === 'churchOrgan')).toBe(true);
     expect(doc.tracks.map((track) => track.pitchRange)).toEqual([
       { low: 60, high: 79 },
       { low: 55, high: 74 },

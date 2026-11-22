@@ -45,7 +45,7 @@ describe('track channel presets', () => {
     addInsert(sourceId, 'dynamics.compressor', { thresholdDb: -18 });
     setInsertSidechain(sourceId, 0, keyId);
     setSend(sourceId, busId, { levelDb: -9, enabled: true });
-    setTrackInstrument(sourceId, { kind: 'synth-preset', preset: 'warm-pad' });
+    setTrackInstrument(sourceId, { kind: 'synth-preset', preset: 'warmPad' });
     setTrackMidiFx(sourceId, { ...store.tracks[0].midiFx!, transposeSemitones: 7 });
 
     const source = store.tracks.find((track) => track.id === sourceId)!;
@@ -54,7 +54,7 @@ describe('track channel presets', () => {
     pasteTrackChannelPreset(targetId);
 
     const target = store.tracks.find((track) => track.id === targetId)!;
-    expect(target.instrument).toEqual({ kind: 'synth-preset', preset: 'warm-pad' });
+    expect(target.instrument).toEqual({ kind: 'synth-preset', preset: 'warmPad' });
     expect(target.midiFx?.transposeSemitones).toBe(7);
     expect(target.mixer).toMatchObject({ sends: [{ busId, levelDb: -9, enabled: true }] });
     expect(target.mixer?.inserts[0]).toMatchObject({

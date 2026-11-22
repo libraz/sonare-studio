@@ -7,7 +7,7 @@ import {
 } from '@/ui/devices/audition';
 import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
 
-const INSTRUMENT: TrackInstrument = { kind: 'synth-patch', patch: { preset: 'saw-lead' } };
+const INSTRUMENT: TrackInstrument = { kind: 'synth-patch', patch: { preset: 'sawLead' } };
 
 /** Builds an audition wired to a fake context and a deterministic renderer. */
 function setup(channels?: Float32Array[]) {

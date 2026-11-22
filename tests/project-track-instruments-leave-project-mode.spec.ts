@@ -17,7 +17,7 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
-const PRESET: TrackInstrument = { kind: 'synth-preset', preset: 'sub-bass' };
+const PRESET: TrackInstrument = { kind: 'synth-preset', preset: 'subBass' };
 
 describe('picking an instrument on a track in project External MIDI mode', () => {
   let store: ReturnType<typeof useProjectStore>;

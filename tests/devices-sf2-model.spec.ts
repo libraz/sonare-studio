@@ -64,7 +64,7 @@ describe('clampGain / clampPolyphony', () => {
 describe('createSf2Selection', () => {
   it('starts empty for non-sf2 instruments', () => {
     expect(createSf2Selection(null)).toEqual(EMPTY);
-    expect(createSf2Selection({ kind: 'synth-preset', preset: 'e-piano' })).toEqual(EMPTY);
+    expect(createSf2Selection({ kind: 'synth-preset', preset: 'ePiano' })).toEqual(EMPTY);
   });
 
   it('restores font, bank, program, gain and polyphony from an sf2 instrument', () => {

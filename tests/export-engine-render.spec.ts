@@ -1569,7 +1569,9 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[0].mixer = {
       gainDb: 0,
       pan: 0,
-      inserts: [{ id: 'track-gain', processor: 'gain.gain', params: { gainDb: 0 }, enabled: true }],
+      inserts: [
+        { id: 'track-gain', processor: 'utility.gain', params: { levelDb: 0 }, enabled: true },
+      ],
       sends: [],
     };
     doc.mixer = doc.mixer ?? {
@@ -1577,18 +1579,18 @@ describe('renderProjectWithEngine', () => {
       buses: [],
     };
     doc.mixer.master.inserts = [
-      { id: 'master-gain', processor: 'gain.gain', params: { gainDb: 0 }, enabled: true },
+      { id: 'master-gain', processor: 'utility.gain', params: { levelDb: 0 }, enabled: true },
     ];
     doc.tracks[0].automation = [
       {
-        param: insertAutomationParam('track-gain', 'gainDb'),
+        param: insertAutomationParam('track-gain', 'levelDb'),
         enabled: true,
         points: [{ ppq: 0, value: 3 }],
       },
     ];
     doc.masterAutomation = [
       {
-        param: insertAutomationParam('master-gain', 'gainDb'),
+        param: insertAutomationParam('master-gain', 'levelDb'),
         enabled: true,
         points: [{ ppq: 0, value: 3 }],
       },
@@ -2425,7 +2427,7 @@ describe('renderProjectWithEngine', () => {
   it('binds synth patch instruments before audible MIDI playback', async () => {
     const doc = makeDoc();
     doc.tracks[1].mute = true;
-    const patch = { preset: 'saw-lead', cutoffHz: 800 };
+    const patch = { preset: 'sawLead', cutoffHz: 800 };
     doc.tracks[0].instrument = { kind: 'synth-patch', patch };
     const engine = new AudibilityEngine();
 
@@ -2440,7 +2442,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[1].mute = true;
     doc.tracks[0].instrument = {
       kind: 'synth-preset',
-      preset: 'saw-lead',
+      preset: 'sawLead',
       useGmPrograms: true,
       gmBank: 128,
       gmProgram: 25,
@@ -2450,7 +2452,7 @@ describe('renderProjectWithEngine', () => {
     await renderProjectWithEngine(doc, renderOptions(engine));
 
     expect(engine.named('setSynthInstrument')).toEqual([
-      ['setSynthInstrument', { preset: 'saw-lead', useGmPrograms: true }, 1],
+      ['setSynthInstrument', { preset: 'sawLead', useGmPrograms: true }, 1],
     ]);
     const midi = engine.named('setMidiClips')[0][1] as Array<{
       events: Array<{ renderFrame: number; word0: number; wordCount: number }>;
@@ -2472,7 +2474,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[1].mute = true;
     doc.tracks[0].instrument = {
       kind: 'synth-patch',
-      patch: { preset: 'saw-lead', cutoffHz: 800, drive: 0.2 },
+      patch: { preset: 'sawLead', cutoffHz: 800, drive: 0.2 },
     };
     doc.tracks[0].automation = [
       {
@@ -2494,7 +2496,7 @@ describe('renderProjectWithEngine', () => {
     const result = await renderProjectWithEngine(doc, renderOptions(engine));
 
     expect(engine.named('setSynthInstrument')).toEqual([
-      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 800, drive: 0.2 }, 1],
+      ['setSynthInstrument', { preset: 'sawLead', cutoffHz: 800, drive: 0.2 }, 1],
     ]);
     // Resolved against the instrument just bound; the disabled lane is never resolved.
     expect(engine.named('resolveInstrumentAutomationId')).toEqual([
@@ -2571,7 +2573,7 @@ describe('renderProjectWithEngine', () => {
     const doc = makeDoc();
     doc.tracks[0].instrument = {
       kind: 'synth-patch',
-      patch: { preset: 'saw-lead', cutoffHz: 800 },
+      patch: { preset: 'sawLead', cutoffHz: 800 },
     };
     doc.tracks[0].automation = [
       {
@@ -2768,7 +2770,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[1].mute = true;
     doc.tracks[0].automation = [];
     doc.tracks[0].volume = 1;
-    doc.tracks[0].instrument = { kind: 'synth-preset', preset: 'e-piano' };
+    doc.tracks[0].instrument = { kind: 'synth-preset', preset: 'ePiano' };
     doc.tracks[0].clips[0].notes = [
       { pitch: 60, velocity: 64, startPpq: 0, durationPpq: 1, channel: 0 },
     ];
@@ -2780,7 +2782,7 @@ describe('renderProjectWithEngine', () => {
       solo: false,
       volume: 0.25,
       pan: 0,
-      instrument: { kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 1200 } },
+      instrument: { kind: 'synth-patch', patch: { preset: 'sawLead', cutoffHz: 1200 } },
       clips: [
         {
           name: 'lead',
@@ -2809,12 +2811,12 @@ describe('renderProjectWithEngine', () => {
     const instrumentCalls = engines.flatMap((engine) => engine.named('setSynthInstrument'));
 
     expect(instrumentCalls).toEqual([
-      ['setSynthInstrument', { preset: 'e-piano' }, 1],
-      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
-      ['setSynthInstrument', { preset: 'e-piano' }, 1],
-      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
-      ['setSynthInstrument', { preset: 'e-piano' }, 1],
-      ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
+      ['setSynthInstrument', { preset: 'ePiano' }, 1],
+      ['setSynthInstrument', { preset: 'sawLead', cutoffHz: 1200 }, 3],
+      ['setSynthInstrument', { preset: 'ePiano' }, 1],
+      ['setSynthInstrument', { preset: 'sawLead', cutoffHz: 1200 }, 3],
+      ['setSynthInstrument', { preset: 'ePiano' }, 1],
+      ['setSynthInstrument', { preset: 'sawLead', cutoffHz: 1200 }, 3],
     ]);
     expect(result.channels[0][0]).toBeCloseTo(
       (midiAmplitude(64) + midiAmplitude(96) * leadGain) * defaultMasterGain(),

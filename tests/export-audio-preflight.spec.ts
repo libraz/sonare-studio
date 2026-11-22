@@ -136,7 +136,7 @@ describe('audioExportPreflight', () => {
       solo: false,
       volume: 1,
       pan: 0,
-      instrument: { kind: 'synth-preset', preset: 'saw-lead' },
+      instrument: { kind: 'synth-preset', preset: 'sawLead' },
       clips: [
         {
           name: 'Notes',

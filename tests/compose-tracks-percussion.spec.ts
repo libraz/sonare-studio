@@ -38,7 +38,7 @@ describe('percussion channel safety', () => {
   });
 
   it('recognizes drum-kit and GM2 drum-bank instruments even without notes', () => {
-    expect(isDrumTrack(track({ instrument: { kind: 'synth-preset', preset: 'drum-kit' } }))).toBe(
+    expect(isDrumTrack(track({ instrument: { kind: 'synth-preset', preset: 'drumKit' } }))).toBe(
       true,
     );
     expect(
@@ -46,7 +46,7 @@ describe('percussion channel safety', () => {
         track({
           instrument: {
             kind: 'synth-preset',
-            preset: 'e-piano',
+            preset: 'ePiano',
             useGmPrograms: true,
             gmBank: 120 << 7,
           },

@@ -30,7 +30,7 @@ vi.mock('@/lib/wasm', async () => {
 function stripWithInserts(count: number): MixerStrip {
   const strip = createDefaultStrip();
   for (let i = 0; i < count; i++) {
-    strip.inserts.push({ processor: 'gain.gain', params: {}, enabled: true });
+    strip.inserts.push({ processor: 'utility.gain', params: {}, enabled: true });
   }
   return strip;
 }
@@ -38,29 +38,29 @@ function stripWithInserts(count: number): MixerStrip {
 describe('remapInsertLanesAfterRemoval', () => {
   const target = 1;
   const lanes: AutomationLaneState[] = [
-    { target, param: insertAutomationParam(0, 'gainDb'), points: [], enabled: true },
-    { target, param: insertAutomationParam(1, 'gainDb'), points: [], enabled: true },
-    { target, param: insertAutomationParam(2, 'gainDb'), points: [], enabled: true },
+    { target, param: insertAutomationParam(0, 'levelDb'), points: [], enabled: true },
+    { target, param: insertAutomationParam(1, 'levelDb'), points: [], enabled: true },
+    { target, param: insertAutomationParam(2, 'levelDb'), points: [], enabled: true },
     { target, param: 'faderDb', points: [], enabled: true },
-    { target: 2, param: insertAutomationParam(1, 'gainDb'), points: [], enabled: true },
+    { target: 2, param: insertAutomationParam(1, 'levelDb'), points: [], enabled: true },
   ];
 
   it('drops the removed slot lane, shifts later slots down, keeps the rest', () => {
     const result = remapInsertLanesAfterRemoval(lanes, target, 1);
     expect(result.map((l) => `${l.target}:${l.param}`)).toEqual([
-      '1:insert:0:gainDb',
+      '1:insert:0:levelDb',
       // slot 1 dropped, slot 2 -> slot 1
-      '1:insert:1:gainDb',
+      '1:insert:1:levelDb',
       '1:faderDb',
       // other target untouched
-      '2:insert:1:gainDb',
+      '2:insert:1:levelDb',
     ]);
   });
 
   it('leaves lanes on other strips and non-insert lanes untouched', () => {
     const result = remapInsertLanesAfterRemoval(lanes, target, 0);
     const other = result.find((l) => l.target === 2);
-    expect(other?.param).toBe(insertAutomationParam(1, 'gainDb'));
+    expect(other?.param).toBe(insertAutomationParam(1, 'levelDb'));
     expect(result.some((l) => l.target === target && l.param === 'faderDb')).toBe(true);
   });
 });
@@ -68,32 +68,32 @@ describe('remapInsertLanesAfterRemoval', () => {
 describe('remapInsertLanesAfterReorder', () => {
   const target = 1;
   const lanes: AutomationLaneState[] = [
-    { target, param: insertAutomationParam(0, 'gainDb'), points: [], enabled: true },
-    { target, param: insertAutomationParam(1, 'gainDb'), points: [], enabled: true },
-    { target, param: insertAutomationParam(2, 'gainDb'), points: [], enabled: true },
+    { target, param: insertAutomationParam(0, 'levelDb'), points: [], enabled: true },
+    { target, param: insertAutomationParam(1, 'levelDb'), points: [], enabled: true },
+    { target, param: insertAutomationParam(2, 'levelDb'), points: [], enabled: true },
     { target, param: 'faderDb', points: [], enabled: true },
-    { target: 2, param: insertAutomationParam(1, 'gainDb'), points: [], enabled: true },
+    { target: 2, param: insertAutomationParam(1, 'levelDb'), points: [], enabled: true },
   ];
 
   it('moves the dragged slot lane to the destination, shifting crossed slots down', () => {
     const result = remapInsertLanesAfterReorder(lanes, target, 0, 2);
     expect(result.map((l) => `${l.target}:${l.param}`)).toEqual([
-      '1:insert:2:gainDb', // was slot 0, moved to 2
-      '1:insert:0:gainDb', // was slot 1, shifted to 0
-      '1:insert:1:gainDb', // was slot 2, shifted to 1
+      '1:insert:2:levelDb', // was slot 0, moved to 2
+      '1:insert:0:levelDb', // was slot 1, shifted to 0
+      '1:insert:1:levelDb', // was slot 2, shifted to 1
       '1:faderDb',
-      '2:insert:1:gainDb', // other strip untouched
+      '2:insert:1:levelDb', // other strip untouched
     ]);
   });
 
   it('shifts crossed slots up when the slot moves earlier', () => {
     const result = remapInsertLanesAfterReorder(lanes, target, 2, 0);
     expect(result.map((l) => `${l.target}:${l.param}`)).toEqual([
-      '1:insert:1:gainDb', // was slot 0, shifted to 1
-      '1:insert:2:gainDb', // was slot 1, shifted to 2
-      '1:insert:0:gainDb', // was slot 2, moved to 0
+      '1:insert:1:levelDb', // was slot 0, shifted to 1
+      '1:insert:2:levelDb', // was slot 1, shifted to 2
+      '1:insert:0:levelDb', // was slot 2, moved to 0
       '1:faderDb',
-      '2:insert:1:gainDb',
+      '2:insert:1:levelDb',
     ]);
   });
 
@@ -108,9 +108,9 @@ describe('remapInsertLanesAfterReorder', () => {
 describe('pruneInsertLanesAgainstStrips', () => {
   it('drops insert lanes whose slot index exceeds the strip insert count', () => {
     const lanes: AutomationLaneState[] = [
-      { target: 1, param: insertAutomationParam(0, 'gainDb'), points: [], enabled: true },
-      { target: 1, param: insertAutomationParam(2, 'gainDb'), points: [], enabled: true },
-      { target: 'master', param: insertAutomationParam(0, 'gainDb'), points: [], enabled: true },
+      { target: 1, param: insertAutomationParam(0, 'levelDb'), points: [], enabled: true },
+      { target: 1, param: insertAutomationParam(2, 'levelDb'), points: [], enabled: true },
+      { target: 'master', param: insertAutomationParam(0, 'levelDb'), points: [], enabled: true },
       { target: 1, param: 'faderDb', points: [], enabled: true },
     ];
     const result = pruneInsertLanesAgainstStrips(lanes, {
@@ -118,7 +118,10 @@ describe('pruneInsertLanesAgainstStrips', () => {
       master: stripWithInserts(0),
       busStrips: new Map(),
     });
-    expect(result.map((l) => `${l.target}:${l.param}`)).toEqual(['1:insert:0:gainDb', '1:faderDb']);
+    expect(result.map((l) => `${l.target}:${l.param}`)).toEqual([
+      '1:insert:0:levelDb',
+      '1:faderDb',
+    ]);
   });
 });
 
@@ -126,9 +129,9 @@ describe('enabledInsertAutomationIndex', () => {
   it('maps store slot indexes to enabled-only engine indexes', () => {
     const strip = createDefaultStrip();
     strip.inserts = [
-      { processor: 'gain.gain', params: {}, enabled: false },
-      { processor: 'gain.gain', params: {}, enabled: true },
-      { processor: 'gain.gain', params: {}, enabled: true },
+      { processor: 'utility.gain', params: {}, enabled: false },
+      { processor: 'utility.gain', params: {}, enabled: true },
+      { processor: 'utility.gain', params: {}, enabled: true },
     ];
 
     expect(enabledInsertAutomationIndex(strip, 0)).toBeUndefined();
@@ -149,11 +152,11 @@ describe('removeInsert lane remapping', () => {
     clearHistory();
     await store.init();
     trackId = store.tracks[0].id;
-    addInsert(trackId, 'gain.gain');
-    addInsert(trackId, 'gain.gain');
-    addInsert(trackId, 'gain.gain');
-    setAutomationLanePoints(trackId, insertAutomationParam(1, 'gainDb'), [{ ppq: 0, value: 3 }]);
-    setAutomationLanePoints(trackId, insertAutomationParam(2, 'gainDb'), [{ ppq: 0, value: 6 }]);
+    addInsert(trackId, 'utility.gain');
+    addInsert(trackId, 'utility.gain');
+    addInsert(trackId, 'utility.gain');
+    setAutomationLanePoints(trackId, insertAutomationParam(1, 'levelDb'), [{ ppq: 0, value: 3 }]);
+    setAutomationLanePoints(trackId, insertAutomationParam(2, 'levelDb'), [{ ppq: 0, value: 6 }]);
   });
 
   it('drops the removed slot lane and shifts the later slot down', () => {
@@ -161,11 +164,11 @@ describe('removeInsert lane remapping', () => {
     const params = store.automationLanes
       .filter((lane) => lane.target === trackId)
       .map((lane) => lane.param);
-    expect(params).toContain(insertAutomationParam(1, 'gainDb'));
-    expect(params).not.toContain(insertAutomationParam(2, 'gainDb'));
+    expect(params).toContain(insertAutomationParam(1, 'levelDb'));
+    expect(params).not.toContain(insertAutomationParam(2, 'levelDb'));
     // The lane originally on slot 2 (value 6) is now on slot 1.
     const moved = store.automationLanes.find(
-      (lane) => lane.target === trackId && lane.param === insertAutomationParam(1, 'gainDb'),
+      (lane) => lane.target === trackId && lane.param === insertAutomationParam(1, 'levelDb'),
     );
     expect(moved?.points).toEqual([{ ppq: 0, value: 6 }]);
   });
@@ -179,45 +182,45 @@ describe('removeInsert lane remapping', () => {
       .map((lane) => lane.param)
       .sort();
     expect(params).toEqual([
-      insertAutomationParam(1, 'gainDb'),
-      insertAutomationParam(2, 'gainDb'),
+      insertAutomationParam(1, 'levelDb'),
+      insertAutomationParam(2, 'levelDb'),
     ]);
   });
 
   it('addInsert and bypass leave insert lanes untouched', () => {
-    addInsert(trackId, 'gain.gain');
+    addInsert(trackId, 'utility.gain');
     setInsertEnabled(trackId, 0, false);
     const params = store.automationLanes
       .filter((lane) => lane.target === trackId)
       .map((lane) => lane.param)
       .sort();
     expect(params).toEqual([
-      insertAutomationParam(1, 'gainDb'),
-      insertAutomationParam(2, 'gainDb'),
+      insertAutomationParam(1, 'levelDb'),
+      insertAutomationParam(2, 'levelDb'),
     ]);
   });
 
   it('drops only the stable lane owned by the removed processor', () => {
     const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
     store.automationLanes = [];
-    setAutomationLanePoints(trackId, insertAutomationParam(ids[1], 'gainDb'), [
+    setAutomationLanePoints(trackId, insertAutomationParam(ids[1], 'levelDb'), [
       { ppq: 0, value: 3 },
     ]);
-    setAutomationLanePoints(trackId, insertAutomationParam(ids[2], 'gainDb'), [
+    setAutomationLanePoints(trackId, insertAutomationParam(ids[2], 'levelDb'), [
       { ppq: 0, value: 6 },
     ]);
 
     removeInsert(trackId, 1);
 
     expect(store.automationLanes.map((lane) => lane.param)).toEqual([
-      insertAutomationParam(ids[2], 'gainDb'),
+      insertAutomationParam(ids[2], 'levelDb'),
     ]);
   });
 
   it('drops only the removed stable MIDI target and restores it on undo', () => {
     const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
-    const removedTarget = midiLearnInsertTargetId(trackId, ids[1], 'gainDb');
-    const keptTarget = midiLearnInsertTargetId(trackId, ids[2], 'gainDb');
+    const removedTarget = midiLearnInsertTargetId(trackId, ids[1], 'levelDb');
+    const keptTarget = midiLearnInsertTargetId(trackId, ids[2], 'levelDb');
     store.midiCcBindings.set(removedTarget, { channel: 0, controller: 20 });
     store.midiCcBindings.set(keptTarget, { channel: 0, controller: 21 });
     clearHistory();
@@ -245,17 +248,17 @@ describe('reorderInsert lane remapping', () => {
     trackId = store.tracks[0].id;
     // Three inserts; lanes on slot 1 (value 3) and slot 2 (value 6) so each
     // lane's identity is traceable through the move by its point value.
-    addInsert(trackId, 'gain.gain');
-    addInsert(trackId, 'gain.gain');
-    addInsert(trackId, 'gain.gain');
-    setAutomationLanePoints(trackId, insertAutomationParam(1, 'gainDb'), [{ ppq: 0, value: 3 }]);
-    setAutomationLanePoints(trackId, insertAutomationParam(2, 'gainDb'), [{ ppq: 0, value: 6 }]);
+    addInsert(trackId, 'utility.gain');
+    addInsert(trackId, 'utility.gain');
+    addInsert(trackId, 'utility.gain');
+    setAutomationLanePoints(trackId, insertAutomationParam(1, 'levelDb'), [{ ppq: 0, value: 3 }]);
+    setAutomationLanePoints(trackId, insertAutomationParam(2, 'levelDb'), [{ ppq: 0, value: 6 }]);
   });
 
   /** Point value of the lane on a given slot, or undefined. */
   function laneValue(slot: number): number | undefined {
     return store.automationLanes.find(
-      (lane) => lane.target === trackId && lane.param === insertAutomationParam(slot, 'gainDb'),
+      (lane) => lane.target === trackId && lane.param === insertAutomationParam(slot, 'levelDb'),
     )?.points[0]?.value;
   }
 
@@ -273,8 +276,8 @@ describe('reorderInsert lane remapping', () => {
     const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
     store.automationLanes = [];
     const params = [
-      insertAutomationParam(ids[1], 'gainDb'),
-      insertAutomationParam(ids[2], 'gainDb'),
+      insertAutomationParam(ids[1], 'levelDb'),
+      insertAutomationParam(ids[2], 'levelDb'),
     ];
     setAutomationLanePoints(trackId, params[0], [{ ppq: 0, value: 3 }]);
     setAutomationLanePoints(trackId, params[1], [{ ppq: 0, value: 6 }]);
@@ -287,7 +290,7 @@ describe('reorderInsert lane remapping', () => {
 
   it('keeps stable MIDI targets unchanged while processor order changes', () => {
     const ids = store.tracks[0].mixer?.inserts.map((slot) => slot.id as string) ?? [];
-    const target = midiLearnInsertTargetId(trackId, ids[2], 'gainDb');
+    const target = midiLearnInsertTargetId(trackId, ids[2], 'levelDb');
     store.midiCcBindings.set(target, { channel: 2, controller: 24 });
     clearHistory();
 

@@ -18,7 +18,7 @@ describe('soundfont-conflicts', () => {
   it('collects active distinct SF2 fonts and marks the last track as the winner', () => {
     const usage = collectActiveSoundFontUsage([
       track({ id: 1, instrument: { kind: 'sf2', fontId: 'font-a' } }),
-      track({ id: 2, instrument: { kind: 'synth-preset', preset: 'e-piano' } }),
+      track({ id: 2, instrument: { kind: 'synth-preset', preset: 'ePiano' } }),
       track({ id: 3, instrument: { kind: 'sf2', fontId: 'font-b' } }),
     ]);
 

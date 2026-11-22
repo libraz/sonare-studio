@@ -114,7 +114,7 @@ afterEach(() => {
 describe('routesFromTracks', () => {
   it('extracts a route per external-midi track and ignores other kinds', () => {
     const tracks = [
-      { id: 1, kind: 'midi', instrument: { kind: 'synth-preset', preset: 'e-piano' } },
+      { id: 1, kind: 'midi', instrument: { kind: 'synth-preset', preset: 'ePiano' } },
       {
         id: 2,
         kind: 'midi',

@@ -33,7 +33,7 @@ describe('makeBwv565Document', () => {
 
     doc.tracks.forEach((track, index) => {
       expect(track.kind).toBe('midi');
-      expect(track.instrument).toEqual({ kind: 'synth-preset', preset: 'church-organ' });
+      expect(track.instrument).toEqual({ kind: 'synth-preset', preset: 'churchOrgan' });
       expect(track.clips).toHaveLength(1);
       const clip = track.clips[0];
       expect(clip.startPpq).toBe(0);

@@ -40,20 +40,22 @@ describe('insert automation command validation', () => {
     await store.init();
     trackId = store.tracks[0].id;
     busId = addMixerBus({ name: 'FX' });
-    addInsert(trackId, 'gain.gain');
-    addInsert('master', 'gain.gain');
-    addInsert(busAutomationTarget(busId), 'gain.gain');
+    addInsert(trackId, 'utility.gain');
+    addInsert('master', 'utility.gain');
+    addInsert(busAutomationTarget(busId), 'utility.gain');
   });
 
   it('accepts an insert lane on a track, master and bus', () => {
     expect(() =>
-      setAutomationLanePoints(trackId, insertAutomationParam(0, 'gainDb'), [{ ppq: 0, value: 1 }]),
+      setAutomationLanePoints(trackId, insertAutomationParam(0, 'levelDb'), [{ ppq: 0, value: 1 }]),
     ).not.toThrow();
     expect(() =>
-      setAutomationLanePoints('master', insertAutomationParam(0, 'gainDb'), [{ ppq: 0, value: 1 }]),
+      setAutomationLanePoints('master', insertAutomationParam(0, 'levelDb'), [
+        { ppq: 0, value: 1 },
+      ]),
     ).not.toThrow();
     expect(() =>
-      setAutomationLanePoints(busAutomationTarget(busId), insertAutomationParam(0, 'gainDb'), [
+      setAutomationLanePoints(busAutomationTarget(busId), insertAutomationParam(0, 'levelDb'), [
         { ppq: 0, value: 1 },
       ]),
     ).not.toThrow();
@@ -62,7 +64,7 @@ describe('insert automation command validation', () => {
 
   it('rejects an insert lane whose slot index is out of range', () => {
     expect(() =>
-      setAutomationLanePoints(trackId, insertAutomationParam(5, 'gainDb'), [{ ppq: 0, value: 1 }]),
+      setAutomationLanePoints(trackId, insertAutomationParam(5, 'levelDb'), [{ ppq: 0, value: 1 }]),
     ).toThrow(RangeError);
   });
 
@@ -96,9 +98,9 @@ describe('insert automation command validation', () => {
       (param = instrumentAutomationParam('cutoffHz')) =>
       () =>
         setAutomationLanePoints(trackId, param, [{ ppq: 0, value: 1200 }]);
-    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead' } });
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'sawLead' } });
     expect(lane()).not.toThrow();
-    setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'saw-lead' });
+    setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'sawLead' });
     expect(lane()).not.toThrow();
     expect(lane(instrumentAutomationParam('unison'))).toThrow(/not automatable/);
     setTrackInstrument(trackId, { kind: 'sf2', fontId: 'gm' });
@@ -125,17 +127,17 @@ describe('insert automation serialization', () => {
   it('round-trips track, master and bus insert lanes', async () => {
     const trackId = store.tracks[0].id;
     const busId = addMixerBus({ name: 'FX' });
-    addInsert(trackId, 'gain.gain');
-    addInsert('master', 'gain.gain');
-    addInsert(busAutomationTarget(busId), 'gain.gain');
+    addInsert(trackId, 'utility.gain');
+    addInsert('master', 'utility.gain');
+    addInsert(busAutomationTarget(busId), 'utility.gain');
     addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
-    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead' } });
-    setAutomationLanePoints(trackId, insertAutomationParam(0, 'gainDb'), [{ ppq: 0, value: 2 }]);
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'sawLead' } });
+    setAutomationLanePoints(trackId, insertAutomationParam(0, 'levelDb'), [{ ppq: 0, value: 2 }]);
     setAutomationLanePoints(trackId, instrumentAutomationParam('cutoffHz'), [
       { ppq: 2, value: 1800 },
     ]);
-    setAutomationLanePoints('master', insertAutomationParam(0, 'gainDb'), [{ ppq: 4, value: -3 }]);
-    setAutomationLanePoints(busAutomationTarget(busId), insertAutomationParam(0, 'gainDb'), [
+    setAutomationLanePoints('master', insertAutomationParam(0, 'levelDb'), [{ ppq: 4, value: -3 }]);
+    setAutomationLanePoints(busAutomationTarget(busId), insertAutomationParam(0, 'levelDb'), [
       { ppq: 8, value: 5 },
     ]);
     setAutomationLanePoints('master', masteringAutomationParam(0, 'ceilingDb'), [
@@ -158,23 +160,23 @@ describe('insert automation serialization', () => {
     const keyed = store.automationLanes.map((lane) => `${lane.target}:${lane.param}`).sort();
     expect(keyed).toEqual(
       [
-        `${reTrackId}:${insertAutomationParam(trackProcessorId as string, 'gainDb')}`,
+        `${reTrackId}:${insertAutomationParam(trackProcessorId as string, 'levelDb')}`,
         `${reTrackId}:${instrumentAutomationParam('cutoffHz')}`,
-        `master:${insertAutomationParam(masterProcessorId as string, 'gainDb')}`,
+        `master:${insertAutomationParam(masterProcessorId as string, 'levelDb')}`,
         `master:${masteringAutomationParam(masteringProcessorId as string, 'ceilingDb')}`,
-        `${busAutomationTarget(reBusId)}:${insertAutomationParam(busProcessorId as string, 'gainDb')}`,
+        `${busAutomationTarget(reBusId)}:${insertAutomationParam(busProcessorId as string, 'levelDb')}`,
       ].sort(),
     );
   });
 
   it('prunes a loaded insert lane whose slot exceeds the strip insert count', async () => {
     const trackId = store.tracks[0].id;
-    addInsert(trackId, 'gain.gain');
-    setAutomationLanePoints(trackId, insertAutomationParam(0, 'gainDb'), [{ ppq: 0, value: 1 }]);
+    addInsert(trackId, 'utility.gain');
+    setAutomationLanePoints(trackId, insertAutomationParam(0, 'levelDb'), [{ ppq: 0, value: 1 }]);
     const doc = serializeProject();
     // Inject an out-of-range insert lane into the document track entry.
     (doc.tracks[0].automation ?? []).push({
-      param: insertAutomationParam(3, 'gainDb'),
+      param: insertAutomationParam(3, 'levelDb'),
       points: [{ ppq: 0, value: 1 }],
       enabled: true,
     });
@@ -183,9 +185,9 @@ describe('insert automation serialization', () => {
 
     const params = store.automationLanes.map((lane) => lane.param);
     expect(params).toContain(
-      insertAutomationParam(store.tracks[0].mixer?.inserts[0].id as string, 'gainDb'),
+      insertAutomationParam(store.tracks[0].mixer?.inserts[0].id as string, 'levelDb'),
     );
-    expect(params).not.toContain(insertAutomationParam(3, 'gainDb'));
+    expect(params).not.toContain(insertAutomationParam(3, 'levelDb'));
   });
 
   it('leaves a fader/pan-only document byte-stable across a round-trip', async () => {

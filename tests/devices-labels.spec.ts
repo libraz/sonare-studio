@@ -10,20 +10,18 @@ import { formatControlValue, knobRotationDeg, knobValueForDrag } from '@/ui/devi
 
 describe('instrumentLabel', () => {
   it('shows the preset name for synth presets', () => {
-    expect(instrumentLabel({ kind: 'synth-preset', preset: 'warm-pad' })).toBe('warm-pad');
+    expect(instrumentLabel({ kind: 'synth-preset', preset: 'warmPad' })).toBe('warmPad');
   });
 
   it('marks edited patches with their base preset', () => {
     expect(
-      instrumentLabel({ kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 400 } }),
-    ).toBe('saw-lead (edited)');
+      instrumentLabel({ kind: 'synth-patch', patch: { preset: 'sawLead', cutoffHz: 400 } }),
+    ).toBe('sawLead (edited)');
     expect(instrumentLabel({ kind: 'synth-patch', patch: { cutoffHz: 400 } })).toBe(
       'init (edited)',
     );
     // A patch carrying only the preset reference is not "edited".
-    expect(instrumentLabel({ kind: 'synth-patch', patch: { preset: 'saw-lead' } })).toBe(
-      'saw-lead',
-    );
+    expect(instrumentLabel({ kind: 'synth-patch', patch: { preset: 'sawLead' } })).toBe('sawLead');
   });
 
   it('shows the font name with bank:program for sf2', () => {

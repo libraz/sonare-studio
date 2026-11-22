@@ -23,7 +23,7 @@ function preset(name: string, gainDb = 0): TrackChannelPreset {
     schemaVersion: TRACK_CHANNEL_PRESET_SCHEMA_VERSION,
     name,
     strip: { ...createDefaultStrip(), gainDb },
-    instrument: { kind: 'synth-preset', preset: 'warm-pad' },
+    instrument: { kind: 'synth-preset', preset: 'warmPad' },
   };
 }
 

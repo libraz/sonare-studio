@@ -254,8 +254,8 @@ describe('quick controls', () => {
       ]);
     });
 
-    it('falls back to explicitly set params for unknown processors', () => {
-      addInsert(trackId, 'custom.unknown', { mix: 0.4, depthMs: 12 });
+    it('falls back to explicitly set params for a processor without catalog params', () => {
+      addInsert(trackId, 'utility.gain', { mix: 0.4, depthMs: 12 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => [] },
@@ -290,7 +290,7 @@ describe('quick controls', () => {
     });
 
     it('infers the Q-factor range only for a real Q parameter', () => {
-      addInsert(trackId, 'custom.filter');
+      addInsert(trackId, 'utility.gain');
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => ['resonanceQ', 'q'] },
@@ -304,7 +304,7 @@ describe('quick controls', () => {
     });
 
     it('does not misread a param merely starting with q as a Q factor', () => {
-      addInsert(trackId, 'custom.weird');
+      addInsert(trackId, 'utility.gain');
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => ['quantize', 'quality'] },
@@ -316,7 +316,7 @@ describe('quick controls', () => {
 
     it('exposes every catalog and explicitly saved parameter', () => {
       const names = Array.from({ length: 12 }, (_, i) => `param${i}`);
-      addInsert(trackId, 'custom.many', { savedParam: 0.75 });
+      addInsert(trackId, 'utility.gain', { savedParam: 0.75 });
       const controls = listQuickControls(
         { type: 'insert', trackId, index: 0 },
         { resolveInsertParams: () => names },
@@ -392,7 +392,7 @@ describe('quick controls', () => {
     });
 
     it('does not clamp an un-catalogued processor parameter to a display heuristic', () => {
-      addInsert(trackId, 'custom.tremolo', { rateHz: 0.8 });
+      addInsert(trackId, 'utility.gain', { rateHz: 0.8 });
 
       setQuickControl({ type: 'insert', trackId, index: 0 }, 'rateHz', 2);
 

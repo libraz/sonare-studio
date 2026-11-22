@@ -83,7 +83,7 @@ describe('bundle id collection', () => {
   it('collects SoundFont ids from sf2 instruments only', () => {
     expect([...collectReferencedFontIds(makeDocument())]).toEqual(['fontA']);
     const doc = makeDocument();
-    doc.tracks[0].instrument = { kind: 'synth-preset', preset: 'saw-lead' };
+    doc.tracks[0].instrument = { kind: 'synth-preset', preset: 'sawLead' };
     expect([...collectReferencedFontIds(doc)]).toEqual([]);
   });
 });

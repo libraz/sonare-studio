@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   exportDawproject,
   importDawproject,
@@ -7,9 +7,11 @@ import {
   importDawprojectWithMediaResult,
 } from '@/export/dawproject';
 import type { InsertSlot } from '@/project/mixer';
+import { setWasmModule } from '@/project/runtime';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap, ppqRangeSeconds } from '@/project/tempo-map';
 import { warpedClipSource, warpSegments } from '@/project/warp';
+import { createFakeWasmModule } from './fake-wasm';
 
 function makeMidiClip(overrides: Partial<DocumentClip> = {}): DocumentClip {
   return {
@@ -323,6 +325,11 @@ function makeNestedWarpDawproject(
 </Project>`),
   });
 }
+
+// Sonare insert devices are checked against the processor catalog on import.
+beforeAll(() => {
+  setWasmModule(createFakeWasmModule());
+});
 
 describe('importDawproject', () => {
   it('rejects deeply nested project XML before constructing a DOM tree', () => {

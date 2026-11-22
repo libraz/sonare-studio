@@ -145,7 +145,7 @@ describe('mixer commands', () => {
 
   describe('setTrackInstrument', () => {
     it('sets, undoes and redoes as one edit', () => {
-      const instrument: TrackInstrument = { kind: 'synth-preset', preset: 'saw-lead' };
+      const instrument: TrackInstrument = { kind: 'synth-preset', preset: 'sawLead' };
       setTrackInstrument(trackId, instrument);
       expect(store.tracks[0].instrument).toEqual(instrument);
       expect(undo()).toBe(true);

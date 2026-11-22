@@ -90,7 +90,7 @@ describe('scheduleProjectClips with mixer state', () => {
   });
 
   it('does not schedule MIDI clips regardless of instrument and mixer state', async () => {
-    const instrument: TrackInstrument = { kind: 'synth-preset', preset: 'saw-lead' };
+    const instrument: TrackInstrument = { kind: 'synth-preset', preset: 'sawLead' };
     store.tracks = [makeTrack(1, { instrument }), makeTrack(2, { mixer: dspStrip({ pan: 0.5 }) })];
     store.clips = [makeClip(10, 1), makeClip(20, 2)];
     store.mixer.master.gainDb = -6;

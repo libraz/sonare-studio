@@ -146,16 +146,16 @@ describe('mixer drag gestures patch the mirror in place', () => {
   }
 
   it('patches insert param drags in place, one undo step, equal to a refresh', () => {
-    const index = addInsert(trackId, 'gain.gain');
+    const index = addInsert(trackId, 'utility.gain');
     clearHistory();
     dragKeepsIdentity(
       [
-        () => setInsertParam(trackId, index, 'gainDb', -3, { commit: false }),
-        () => setInsertParam(trackId, index, 'gainDb', -6, { commit: false }),
+        () => setInsertParam(trackId, index, 'levelDb', -3, { commit: false }),
+        () => setInsertParam(trackId, index, 'levelDb', -6, { commit: false }),
       ],
-      () => setInsertParam(trackId, index, 'gainDb', -9),
+      () => setInsertParam(trackId, index, 'levelDb', -9),
     );
-    expect(store.tracks[0].mixer?.inserts[index].params.gainDb).toBe(-9);
+    expect(store.tracks[0].mixer?.inserts[index].params.levelDb).toBe(-9);
     const patched = snapshot();
     store.refresh();
     expect(snapshot()).toBe(patched);
@@ -186,13 +186,13 @@ describe('mixer drag gestures patch the mirror in place', () => {
     dragKeepsIdentity(
       [
         () => setMasteringPreset('streaming', { commit: false }),
-        () => setMasteringParam(index, 'gainDb', -3, { commit: false }),
+        () => setMasteringParam(index, 'levelDb', -3, { commit: false }),
       ],
-      () => setMasteringParam(index, 'gainDb', -6),
+      () => setMasteringParam(index, 'levelDb', -6),
     );
     expect(store.mixer.masteringChain?.preset).toBe('streaming');
     expect(store.mixer.masteringChain?.presetOverrides?.loudness?.targetLufs).toBe(-14);
-    expect(store.mixer.masteringChain?.processors[index].params.gainDb).toBe(-6);
+    expect(store.mixer.masteringChain?.processors[index].params.levelDb).toBe(-6);
     const patched = snapshot();
     store.refresh();
     expect(snapshot()).toBe(patched);
