@@ -10,7 +10,9 @@ export async function run(ctx) {
     // completed pass.
     // Headless Chromium reports a 2 s output latency, and the record offset
     // built from it outlasts the 2 s loop pass, so nothing would be captured.
-    // Hold a device-like latency for this take only.
+    // Hold a device-like latency for this take only. Interim: whether the engine
+    // should refuse or capture an offset longer than the loop pass is still open,
+    // and this hold goes once that is settled.
     await page.evaluate(() => {
       window.__nativeOutputLatency = Object.getOwnPropertyDescriptor(
         AudioContext.prototype,
