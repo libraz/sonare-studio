@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { saveAsset } from '@/persistence/assets';
 import {
   crossfadePartner,
   DEFAULT_CLIP_CROSSFADE_PPQ,
@@ -17,9 +18,13 @@ import {
 } from '@/project/commands';
 import { getProject, useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
+import { requestAudioAsset } from '@/ui/arrangement/audio-clip-data';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
-import { readSource } from './helpers/source-text';
+import {
+  type ArrangementViewHarness,
+  mountArrangementView,
+} from './helpers/arrangement-view-mount';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -195,19 +200,87 @@ describe('crossfadeClips command', () => {
 });
 
 describe('crossfade entry point', () => {
-  const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
+  const actions = en.shell.arrangement.clipActions;
+  let view: ArrangementViewHarness | null = null;
 
-  it('offers the action from the clip context menu with the blocking reason', () => {
-    expect(arrangementView).toContain("id: 'crossfade'");
-    expect(arrangementView).toContain(
-      '[crossfade.partnerId === null, actions.crossfadeNoPartner],',
-    );
-    expect(arrangementView).toContain('crossfadeReasonText(crossfade.reason)');
+  beforeEach(() => {
+    installMockOpfs();
   });
 
-  it('feeds the source limit of the earlier clip into the plan', () => {
-    expect(arrangementView).toContain('const bounds = sourceBoundsFor(leftId);');
-    expect(arrangementView).toContain('leftSourceEndPpq: bounds.maxEndPpq');
+  afterEach(() => {
+    view?.unmount();
+    view = null;
+    uninstallMockOpfs();
+  });
+
+  /** Stores an 8 s mono asset (16 PPQ at 120 BPM) and loads it into the render cache. */
+  async function loadLongAsset(id: string): Promise<void> {
+    await saveAsset({ id, name: id, sampleRate: 48000 }, new Float32Array(48000 * 8));
+    await new Promise<void>((resolve) => {
+      if (requestAudioAsset(id, resolve)) resolve();
+    });
+  }
+
+  /** Mounts the view over audio clips placed by `place` on one fresh audio track. */
+  async function mountAudioClips(
+    place: (trackId: number) => Promise<Record<string, number>>,
+  ): Promise<{ view: ArrangementViewHarness; ids: Record<string, number> }> {
+    let ids: Record<string, number> = {};
+    view = await mountArrangementView({
+      seed: async () => {
+        ids = await place(addAudioTrack());
+      },
+    });
+    return { view, ids };
+  }
+
+  const crossfadeReason = async (harness: ArrangementViewHarness, clipId: number) =>
+    (await harness.openClipMenu(clipId)).find((item) => item.id === 'crossfade')?.disabledReason;
+
+  it('offers the action from the clip context menu with the blocking reason', async () => {
+    const { view, ids } = await mountAudioClips(async (trackId) => ({
+      lone: await addAudioClip({ trackId, assetId: 'a', lengthPpq: 4, startPpq: 0 }),
+      touching: await addAudioClip({ trackId, assetId: 'b', lengthPpq: 4, startPpq: 8 }),
+      next: await addAudioClip({ trackId, assetId: 'c', lengthPpq: 4, startPpq: 12 }),
+    }));
+
+    expect(await crossfadeReason(view, ids.lone)).toBe(actions.crossfadeNoPartner);
+    // Touching clips need source material past the earlier clip's end, unknown here.
+    expect(await crossfadeReason(view, ids.touching)).toBe(actions.crossfadeReasons['no-source']);
+  });
+
+  it('crossfades an overlapping pair from the clip context menu', async () => {
+    const { view, ids } = await mountAudioClips(async (trackId) => ({
+      left: await addAudioClip({ trackId, assetId: 'a', lengthPpq: 4, startPpq: 0 }),
+      right: await addAudioClip({ trackId, assetId: 'b', lengthPpq: 4, startPpq: 3 }),
+    }));
+
+    expect(await crossfadeReason(view, ids.left)).toBeNull();
+    await view.runMenuItem('crossfade');
+
+    expect(view.errorLine()).toBe('');
+    expect(view.store.clips.find((c) => c.id === ids.left)).toMatchObject({ fadeOutPpq: 1 });
+    expect(view.store.clips.find((c) => c.id === ids.right)).toMatchObject({ fadeInPpq: 1 });
+  });
+
+  it('feeds the source limit of the earlier clip into the plan', async () => {
+    const { view, ids } = await mountAudioClips(async (trackId) => {
+      await loadLongAsset('long');
+      return {
+        left: await addAudioClip({ trackId, assetId: 'long', lengthPpq: 4, startPpq: 0 }),
+        right: await addAudioClip({ trackId, assetId: 'b', lengthPpq: 4, startPpq: 4 }),
+      };
+    });
+    view.store.snapDivision = 16;
+
+    expect(await crossfadeReason(view, ids.left)).toBeNull();
+    await view.runMenuItem('crossfade');
+
+    // One sixteenth-grid step of the earlier clip's remaining source becomes the fade.
+    expect(view.store.clips.find((c) => c.id === ids.left)).toMatchObject({
+      lengthPpq: 4.25,
+      fadeOutPpq: 0.25,
+    });
   });
 
   it('localizes every refusal reason', () => {

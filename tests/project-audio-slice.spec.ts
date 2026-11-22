@@ -1,9 +1,12 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { saveAsset } from '@/persistence/assets';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '@/project/audio-slice';
 import {
   addAudioClip,
   addAudioTrack,
+  addMidiClip,
+  addTrack,
   clearHistory,
   setClipLoop,
   sliceAudioClipAtTransients,
@@ -13,7 +16,11 @@ import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
-import { readSource } from './helpers/source-text';
+import {
+  type ArrangementViewHarness,
+  mountArrangementView,
+} from './helpers/arrangement-view-mount';
+import { selectOption } from './helpers/select-menu';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -195,20 +202,109 @@ describe('sliceAudioClipAtTransients', () => {
 });
 
 describe('transient slice entry points', () => {
-  const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
+  const actions = en.shell.arrangement.clipActions;
+  let view: ArrangementViewHarness | null = null;
 
-  it('offers plain and quantizing slicing for unlooped audio clips', () => {
-    expect(arrangementView).toContain("id: 'slice-transients'");
-    expect(arrangementView).toContain("id: 'slice-transients-quantize'");
-    expect(arrangementView).toContain(
-      'const sliceBlocked = firstBlock(\n    frozenBlock,\n    [!audio, why.audioClipsOnly],\n    [clip.loopEnabled, why.loopOn],\n  );',
-    );
-    expect(arrangementView).toContain('disabledReason: sliceBlocked,');
-    expect(arrangementView).toContain('runTransientSlice(clip.id, true)');
+  beforeEach(() => {
+    installMockOpfs();
   });
 
-  it('passes the arrangement grid snap into the command', () => {
-    expect(arrangementView).toContain('snap: snapArrangementPpq,');
+  afterEach(() => {
+    view?.unmount();
+    view = null;
+    if (wasmModule.current) delete wasmModule.current.detectOnsets;
+    uninstallMockOpfs();
+  });
+
+  /**
+   * An unlooped and a looped audio clip over a stored 4 s take (8 PPQ at
+   * 120 BPM), plus a MIDI clip. Onset detection reports 1.1 s and 2.6 s,
+   * PPQ 2.2 and 5.2: both slightly behind the beat.
+   */
+  async function mountSliceDocument() {
+    const ids = { plain: -1, looped: -1, midi: -1 };
+    view = await mountArrangementView({
+      seed: async () => {
+        await saveAsset(
+          { id: 'take', name: 'take', sampleRate: 48000 },
+          new Float32Array(48000 * 4),
+        );
+        const audioTrack = addAudioTrack();
+        ids.plain = await addAudioClip({ trackId: audioTrack, assetId: 'take', lengthPpq: 8 });
+        ids.looped = await addAudioClip({
+          trackId: audioTrack,
+          assetId: 'take',
+          lengthPpq: 8,
+          startPpq: 16,
+        });
+        setClipLoop(ids.looped, true, 4);
+        ids.midi = addMidiClip({ trackId: addTrack({ name: 'Keys' }), startPpq: 0, lengthPpq: 4 });
+      },
+    });
+    if (wasmModule.current) wasmModule.current.detectOnsets = () => [1.1, 2.6];
+    const sliceStarts = (trackId: number) =>
+      view?.store.clips
+        .filter((clip) => clip.trackId === trackId && clip.startPpq < 16)
+        .map((clip) => clip.startPpq)
+        .sort((a, b) => a - b);
+    const audioTrackId = view.store.clips.find((clip) => clip.id === ids.plain)?.trackId ?? -1;
+    return { view, ids, sliceStarts: () => sliceStarts(audioTrackId) };
+  }
+
+  const sliceItems = async (harness: ArrangementViewHarness, clipId: number) =>
+    (await harness.openClipMenu(clipId))
+      .filter((item) => item.id.startsWith('slice-transients'))
+      .map(({ id, label, disabledReason }) => ({ id, label, disabledReason }));
+
+  it('offers plain and quantizing slicing for unlooped audio clips', async () => {
+    const { view, ids } = await mountSliceDocument();
+    const why = en.shell.arrangement.reasons;
+
+    expect(await sliceItems(view, ids.plain)).toEqual([
+      { id: 'slice-transients', label: actions.sliceTransients, disabledReason: null },
+      {
+        id: 'slice-transients-quantize',
+        label: actions.sliceTransientsQuantize,
+        disabledReason: null,
+      },
+    ]);
+    for (const item of await sliceItems(view, ids.looped)) {
+      expect(item.disabledReason).toBe(why.loopOn);
+    }
+    for (const item of await sliceItems(view, ids.midi)) {
+      expect(item.disabledReason).toBe(why.audioClipsOnly);
+    }
+  });
+
+  it('slices at the detected transients without snapping on the plain action', async () => {
+    const { view, ids, sliceStarts } = await mountSliceDocument();
+
+    await view.openClipMenu(ids.plain);
+    await view.runMenuItem('slice-transients');
+
+    expect(view.errorLine()).toBe('');
+    const starts = sliceStarts() ?? [];
+    expect(starts).toHaveLength(3);
+    expect(starts[1]).toBeCloseTo(2.2, 6);
+    expect(starts[2]).toBeCloseTo(5.2, 6);
+  });
+
+  it('passes the arrangement grid snap into the command', async () => {
+    const quarter = await mountSliceDocument();
+    await selectOption(quarter.view.wrapper, '.arrangement-snap', '1/4');
+    await quarter.view.openClipMenu(quarter.ids.plain);
+    await quarter.view.runMenuItem('slice-transients-quantize');
+
+    expect(quarter.sliceStarts()).toEqual([0, 2, 5]);
+    quarter.view.unmount();
+    view = null;
+
+    const half = await mountSliceDocument();
+    await selectOption(half.view.wrapper, '.arrangement-snap', '1/2');
+    await half.view.openClipMenu(half.ids.plain);
+    await half.view.runMenuItem('slice-transients-quantize');
+
+    expect(half.sliceStarts()).toEqual([0, 2, 6]);
   });
 
   it('labels the actions and the empty result in every locale', () => {
