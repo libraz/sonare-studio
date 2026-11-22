@@ -53,8 +53,8 @@ export function engineBusPanHasDsp(strip: MixerStrip | undefined): boolean {
   );
 }
 
-/** Master fader pan is sent separately; these panner details need a strip scene. */
-export function engineMasterPannerHasDsp(strip: MixerStrip | undefined): boolean {
+/** True when a strip's pan law, mode or dual pan differs from the defaults; those setters need a strip scene. */
+export function enginePannerNeedsStrip(strip: MixerStrip | undefined): boolean {
   const state = engineBusPanState(strip);
   return (
     state.panLaw !== ENGINE_DEFAULT_PAN_LAW ||

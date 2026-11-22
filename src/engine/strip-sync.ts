@@ -60,7 +60,7 @@ import {
   engineBusPanHasDsp,
   engineBusPanState,
   engineEqBands,
-  engineMasterPannerHasDsp,
+  enginePannerNeedsStrip,
   stripSceneFieldsHaveDsp,
 } from './engine-declaration';
 import {
@@ -339,7 +339,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     const hasSceneDsp =
       stripSceneFieldsHaveDsp(strip) ||
       stripSceneMetadataHasDsp(strip) ||
-      (target === 'master' && engineMasterPannerHasDsp(strip));
+      (target === 'master' && enginePannerNeedsStrip(strip));
     if (
       !memory &&
       !ensureScene &&

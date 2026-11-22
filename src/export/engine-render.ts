@@ -48,7 +48,7 @@ import {
   engineBusStripHasDsp,
   engineEqBands,
   engineFaderAutomationPoints,
-  engineMasterPannerHasDsp,
+  enginePannerNeedsStrip,
 } from '@/engine/engine-declaration';
 import {
   type GsSysExDestination,
@@ -715,10 +715,14 @@ export async function renderProjectWithEngine(
         });
       }
       const channelDelay = pdc.delayFor(pdcTracks[index]);
-      if (pass.freezeIndex !== index && channelDelay > 0 && !hasDeclaredTrackStrip) {
-        // libsonare rejects channel-delay setters for lanes without a strip
-        // scene. Install this neutral scene before the panner setters below;
-        // replacing a scene must not erase a lane's pan mode or dual-pan.
+      if (
+        pass.freezeIndex !== index &&
+        !hasDeclaredTrackStrip &&
+        (channelDelay > 0 || enginePannerNeedsStrip(strip))
+      ) {
+        // libsonare rejects channel-delay and panner setters for lanes without
+        // a strip scene. Install this neutral scene before the panner setters
+        // below; replacing a scene must not erase a lane's pan mode or dual-pan.
         engine.setStrip(trackId, stripScene(trackId, undefined));
       }
       if (pass.stemIndices === null) {
@@ -756,7 +760,7 @@ export async function renderProjectWithEngine(
         if (panner.panMode !== ENGINE_DEFAULT_PAN_MODE) {
           engine.setStripPanMode(trackId, panner.panMode);
         }
-        if (strip?.dualPan) {
+        if (panner.dualPanLeft !== -1 || panner.dualPanRight !== 1) {
           engine.setStripDualPan(trackId, panner.dualPanLeft, panner.dualPanRight);
         }
         // The pre-rendered SF2 PCM contains the insert processor's own
@@ -857,7 +861,7 @@ export async function renderProjectWithEngine(
     if (
       pass.masterStrip &&
       masterStrip &&
-      (stripHasDsp(masterStrip) || engineMasterPannerHasDsp(masterStrip))
+      (stripHasDsp(masterStrip) || enginePannerNeedsStrip(masterStrip))
     ) {
       engine.setStrip('master', stripScene('master', masterStrip));
       masterStrip.inserts.forEach((slot, insertIndex) => {
@@ -1320,13 +1324,11 @@ export async function renderProjectWithEngine(
       sampleRate,
       RENDER_BLOCK_FRAMES,
     );
-    // Page providers belong to the engine that reads them, so every pass opens
-    // (and releases) its own set.
+    // Each pass opens (and releases) its own page providers.
     let streams: AudioClipStreamSession | undefined;
     try {
       if (clipStreamPlans.length > 0 && options.createClipPageStream) {
         streams = await AudioClipStreamSession.open(
-          engine,
           clipStreamPlans,
           options.createClipPageStream,
           options.clipStreamResidentBudgetBytes !== undefined

@@ -118,9 +118,8 @@ export interface ClipPageBinding {
   close(): void;
 }
 
-/** Creates a page provider on `engine` for one clip. */
+/** Creates a page provider for one clip. */
 export type ClipPageBindingFactory = (
-  engine: unknown,
   request: ClipPageBindingRequest,
 ) => ClipPageBinding | Promise<ClipPageBinding>;
 
@@ -169,15 +168,13 @@ export class AudioClipStreamSession {
   }
 
   /**
-   * Creates a provider per plan on `engine`.
+   * Creates a provider per plan; one session serves one render pass.
    *
-   * @param engine Engine the providers belong to (one session per pass).
    * @param plans Streamable clips from {@link planAudioClipStreams}.
    * @param createBinding Provider factory seam.
    * @param options Resident budget override.
    */
   static async open(
-    engine: unknown,
     plans: ReadonlyArray<AudioClipStreamPlan>,
     createBinding: ClipPageBindingFactory,
     options: { residentBudgetBytes?: number } = {},
@@ -187,7 +184,7 @@ export class AudioClipStreamSession {
     try {
       for (const plan of plans) {
         const pageFrames = clipStreamPageFrames(plan.numChannels, plan.frameCount, pageBudget);
-        const binding = await createBinding(engine, {
+        const binding = await createBinding({
           assetId: plan.assetId,
           numChannels: plan.numChannels,
           numSamples: plan.frameCount,

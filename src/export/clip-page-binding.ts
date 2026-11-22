@@ -10,32 +10,8 @@
  * the provider primitive plus a reader.
  */
 
+import { ClipPageProvider } from '@/wasm/index.js';
 import type { ClipPageBinding, ClipPageBindingFactory } from './clip-page-stream';
-
-/** The provider handle libsonare's `createClipPageProvider` returns. */
-export interface EngineClipPageProvider {
-  supply(pageIndex: number, channels: Float32Array[]): void;
-  clear(pageIndex: number): void;
-  destroy(): void;
-}
-
-/** The engine surface a page-backed clip needs. */
-export interface ClipPageProviderEngine {
-  createClipPageProvider(
-    numChannels: number,
-    numSamples: number,
-    pageFrames: number,
-  ): EngineClipPageProvider;
-}
-
-/** True when this engine build can serve clips from a page provider. */
-export function supportsClipPageProviders(engine: unknown): engine is ClipPageProviderEngine {
-  return (
-    typeof engine === 'object' &&
-    engine !== null &&
-    typeof (engine as ClipPageProviderEngine).createClipPageProvider === 'function'
-  );
-}
 
 /** Reads a frame range of a stored asset as planar channel buffers. */
 export type AssetFrameReader = (
@@ -63,15 +39,12 @@ export type AssetFrameReader = (
 export function createAssetClipPageBindingFactory(
   readFrames: AssetFrameReader,
 ): ClipPageBindingFactory {
-  return (engine, request): ClipPageBinding => {
-    if (!supportsClipPageProviders(engine)) {
-      throw new TypeError('This engine build cannot serve clips from a page provider');
-    }
-    const provider = engine.createClipPageProvider(
-      request.numChannels,
-      request.numSamples,
-      request.pageFrames,
-    );
+  return (request): ClipPageBinding => {
+    const provider = new ClipPageProvider({
+      numChannels: request.numChannels,
+      numSamples: request.numSamples,
+      pageFrames: request.pageFrames,
+    });
     const lastPage = Math.ceil(request.numSamples / request.pageFrames) - 1;
     let queue: Promise<unknown> = Promise.resolve();
     let closed = false;

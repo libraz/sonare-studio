@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
@@ -22,6 +23,12 @@ import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
 import { neutralMixDocument } from '@/ui/mixer/mix-assistant';
 import type { LufsResult } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import {
+  recordedClipPageProvider,
+  recordedClipPageProviders,
+  resetRecordedClipPageProviders,
+} from './recording-clip-page-provider';
 
 const resample = vi.hoisted(() =>
   vi.fn((samples: Float32Array, sourceRate: number, targetRate: number): Float32Array => {
@@ -43,6 +50,11 @@ const resample = vi.hoisted(() =>
     return out;
   }),
 );
+
+vi.mock('@/wasm/index.js', async (importOriginal) => {
+  const { withRecordingClipPageProvider } = await import('./recording-clip-page-provider');
+  return withRecordingClipPageProvider(await importOriginal());
+});
 
 vi.mock('@/lib/wasm', () => ({
   ensureWasm: async () => ({ resample }),
@@ -2956,6 +2968,39 @@ describe('renderProjectWithEngine', () => {
     });
   });
 
+  it('sends no dual pan for a track strip holding only the default positions', async () => {
+    const doc = makeDoc();
+    const drums = doc.tracks[1].mixer;
+    if (!drums) throw new Error('fixture strip is missing');
+    drums.dualPan = { left: -1, right: 1 };
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    expect(engine.named('setStripDualPan')).toEqual([]);
+    expect(trackStrips(engine)).toEqual([]);
+  });
+
+  it('declares a neutral track strip before its panner setters', async () => {
+    const doc = makeDoc();
+    const drums = doc.tracks[1].mixer;
+    if (!drums) throw new Error('fixture strip is missing');
+    drums.panMode = 'dualPan';
+    drums.dualPan = { left: -0.5, right: 0.5 };
+    const engine = new FakeEngine();
+
+    await renderProjectWithEngine(doc, renderOptions(engine));
+
+    const dual = engine.named('setStripDualPan');
+    expect(dual).toHaveLength(1);
+    const [, ref] = dual[0];
+    const order = engine.calls.filter(
+      ([name, target]) =>
+        target === ref && ['setStrip', 'setStripPanMode', 'setStripDualPan'].includes(name),
+    );
+    expect(order.map(([name]) => name)).toEqual(['setStrip', 'setStripPanMode', 'setStripDualPan']);
+  });
+
   it('renders stems as isolated engine passes without the master stage', async () => {
     const engines: FakeEngine[] = [];
     const result = await renderProjectWithEngine(makeDoc(), {
@@ -5585,7 +5630,8 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
     expect(engine.named('setStripPanLaw')).toEqual([['setStripPanLaw', 2, 'const6Db']]);
     expect(engine.named('setStripPanMode')).toEqual([['setStripPanMode', 2, 'dualPan']]);
-    expect(engine.named('setStripDualPan')).toEqual([['setStripDualPan', 2, -1, 1]]);
+    // (-1, 1) is where every fresh lane's dual pan already sits.
+    expect(engine.named('setStripDualPan')).toEqual([]);
     expect(engine.named('setStripChannelDelaySamples')).toEqual([
       ['setStripChannelDelaySamples', 2, 128],
     ]);
@@ -5895,54 +5941,13 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
  * render can be compared sample for sample against a decoded one.
  */
 class PagingAudibilityEngine extends AudibilityEngine {
-  readonly providers: Array<{
-    id: number;
-    numChannels: number;
-    numSamples: number;
-    pageFrames: number;
-    pages: Map<number, Float32Array[]>;
-    destroyed: boolean;
-  }> = [];
-  /** Highest page count any single provider held at once. */
-  peakResidentPages = 0;
-
-  createClipPageProvider(numChannels: number, numSamples: number, pageFrames: number) {
-    const entry = {
-      id: this.providers.length + 1,
-      numChannels,
-      numSamples,
-      pageFrames,
-      pages: new Map<number, Float32Array[]>(),
-      destroyed: false,
-    };
-    this.providers.push(entry);
-    const track = () => {
-      this.peakResidentPages = Math.max(this.peakResidentPages, entry.pages.size);
-    };
-    return {
-      id: entry.id,
-      supply: (pageIndex: number, channels: Float32Array[]) => {
-        entry.pages.set(pageIndex, channels);
-        track();
-      },
-      clear: (pageIndex: number) => {
-        entry.pages.delete(pageIndex);
-      },
-      destroy: () => {
-        entry.destroyed = true;
-        entry.pages.clear();
-      },
-    };
-  }
-
   protected clipSample(
     clip: { channels: Float32Array[]; pageProvider?: unknown },
     channelIndex: number,
     clipFrame: number,
     fallback: number,
   ): number {
-    const providerId = (clip.pageProvider as { id?: number } | undefined)?.id;
-    if (providerId === undefined) {
+    if (clip.pageProvider === undefined) {
       return super.clipSample(
         clip as Parameters<AudibilityEngine['clipSample']>[0],
         channelIndex,
@@ -5950,7 +5955,7 @@ class PagingAudibilityEngine extends AudibilityEngine {
         fallback,
       );
     }
-    const entry = this.providers.find((candidate) => candidate.id === providerId);
+    const entry = recordedClipPageProvider(clip.pageProvider);
     if (!entry) return 0;
     const page = entry.pages.get(Math.floor(clipFrame / entry.pageFrames));
     // A page the render failed to keep resident reads as silence, which is
@@ -5962,6 +5967,11 @@ class PagingAudibilityEngine extends AudibilityEngine {
 }
 
 describe('renderProjectWithEngine paged audio clips', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+  beforeEach(resetRecordedClipPageProviders);
+
   // Past the streaming length floor, so the planner has something to page.
   const SOURCE_FRAMES = 48000 * 20;
   const RATE = 48000;
@@ -6067,11 +6077,14 @@ describe('renderProjectWithEngine paged audio clips', () => {
     expect(Array.from(paged.channels[1])).toEqual(Array.from(decoded.channels[1]));
     // Nothing decoded the asset, and the resident window stayed bounded.
     expect(loadAudioAsset).not.toHaveBeenCalled();
-    expect(pagedEngine.peakResidentPages).toBeLessThanOrEqual(3);
+    expect(
+      Math.max(...recordedClipPageProviders.map((entry) => entry.peakPages)),
+    ).toBeLessThanOrEqual(3);
     expect(stream.reads.length).toBeGreaterThan(3);
     // Reads start at the clip's own window, not the head of the asset.
     expect(stream.reads[0].startFrame).toBe(24000);
-    expect(pagedEngine.providers.every((provider) => provider.destroyed)).toBe(true);
+    expect(recordedClipPageProviders.length).toBeGreaterThan(0);
+    expect(recordedClipPageProviders.every((provider) => provider.destroyed)).toBe(true);
   });
 
   it('is not louder or quieter than the decoded path', async () => {
@@ -6105,6 +6118,6 @@ describe('renderProjectWithEngine paged audio clips', () => {
     const loadAudioAsset = vi.fn(async () => ({ meta: assetMeta, channels: sourceChannels() }));
     await renderProjectWithEngine(pagedDoc(), options(engine, { loadAudioAsset }));
     expect(loadAudioAsset).toHaveBeenCalled();
-    expect(engine.providers).toEqual([]);
+    expect(recordedClipPageProviders).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import {
   audioClipSegmentKey,
@@ -21,6 +22,16 @@ import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { sliceAudioClipWindow } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
+import * as core from '@/wasm/index.js';
+import {
+  recordedClipPageProviders,
+  resetRecordedClipPageProviders,
+} from './recording-clip-page-provider';
+
+vi.mock('@/wasm/index.js', async (importOriginal) => {
+  const { withRecordingClipPageProvider } = await import('./recording-clip-page-provider');
+  return withRecordingClipPageProvider(await importOriginal());
+});
 
 const SAMPLE_RATE = 48000;
 /** 20 s at 120 BPM: comfortably past the streaming length floor. */
@@ -313,7 +324,7 @@ function recordingFactory(options: { fail?: (pageIndex: number) => boolean } = {
   const resident = new Set<number>();
   const requests: Array<{ pageFrames: number; numSamples: number; dataOffsetFrames: number }> = [];
   const state = { closed: 0 };
-  const factory: ClipPageBindingFactory = (_engine, request): ClipPageBinding => {
+  const factory: ClipPageBindingFactory = (request): ClipPageBinding => {
     requests.push({
       pageFrames: request.pageFrames,
       numSamples: request.numSamples,
@@ -363,7 +374,7 @@ const PAGE_PLAN = {
 describe('AudioClipStreamSession', () => {
   it('schedules the clip from its provider at its planned position', async () => {
     const recorder = recordingFactory();
-    const session = await AudioClipStreamSession.open({}, [PAGE_PLAN], recorder.factory);
+    const session = await AudioClipStreamSession.open([PAGE_PLAN], recorder.factory);
     expect(session.clipSpecs()).toEqual([
       {
         trackId: 7,
@@ -382,7 +393,7 @@ describe('AudioClipStreamSession', () => {
 
   it('slides a bounded window along the render position', async () => {
     const recorder = recordingFactory();
-    const session = await AudioClipStreamSession.open({}, [PAGE_PLAN], recorder.factory, {
+    const session = await AudioClipStreamSession.open([PAGE_PLAN], recorder.factory, {
       // Forces several pages over the 100k-frame clip.
       residentBudgetBytes: MIN_CLIP_STREAM_PAGE_BYTES * CLIP_STREAM_WINDOW_PAGES,
     });
@@ -406,7 +417,7 @@ describe('AudioClipStreamSession', () => {
 
   it('holds the opening pages before the clip starts', async () => {
     const recorder = recordingFactory();
-    const session = await AudioClipStreamSession.open({}, [PAGE_PLAN], recorder.factory);
+    const session = await AudioClipStreamSession.open([PAGE_PLAN], recorder.factory);
     await session.advance(0, 1024);
     expect([...recorder.resident].sort((a, b) => a - b)).toEqual([0, 1]);
     session.close();
@@ -414,7 +425,7 @@ describe('AudioClipStreamSession', () => {
 
   it('covers a block that straddles a page boundary', async () => {
     const recorder = recordingFactory();
-    const session = await AudioClipStreamSession.open({}, [PAGE_PLAN], recorder.factory, {
+    const session = await AudioClipStreamSession.open([PAGE_PLAN], recorder.factory, {
       residentBudgetBytes: MIN_CLIP_STREAM_PAGE_BYTES * CLIP_STREAM_WINDOW_PAGES,
     });
     const pageFrames = recorder.requests[0].pageFrames;
@@ -425,7 +436,7 @@ describe('AudioClipStreamSession', () => {
 
   it('fails the render rather than playing a page it could not read', async () => {
     const recorder = recordingFactory({ fail: (pageIndex) => pageIndex === 1 });
-    const session = await AudioClipStreamSession.open({}, [PAGE_PLAN], recorder.factory, {
+    const session = await AudioClipStreamSession.open([PAGE_PLAN], recorder.factory, {
       residentBudgetBytes: MIN_CLIP_STREAM_PAGE_BYTES * CLIP_STREAM_WINDOW_PAGES,
     });
     await expect(session.advance(PAGE_PLAN.timelineStartFrame, 1024)).rejects.toBeInstanceOf(
@@ -447,7 +458,7 @@ describe('AudioClipStreamSession', () => {
         close: () => closed.push(index),
       };
     };
-    await expect(AudioClipStreamSession.open({}, [PAGE_PLAN, PAGE_PLAN], factory)).rejects.toThrow(
+    await expect(AudioClipStreamSession.open([PAGE_PLAN, PAGE_PLAN], factory)).rejects.toThrow(
       'no provider',
     );
     expect(closed).toEqual([1]);
@@ -455,7 +466,7 @@ describe('AudioClipStreamSession', () => {
 
   it('reports the resident bytes its window can reach', async () => {
     const recorder = recordingFactory();
-    const session = await AudioClipStreamSession.open({}, [PAGE_PLAN], recorder.factory, {
+    const session = await AudioClipStreamSession.open([PAGE_PLAN], recorder.factory, {
       residentBudgetBytes: MIN_CLIP_STREAM_PAGE_BYTES * CLIP_STREAM_WINDOW_PAGES,
     });
     expect(session.residentBytesUpperBound()).toBe(
@@ -466,33 +477,12 @@ describe('AudioClipStreamSession', () => {
 });
 
 describe('createAssetClipPageBindingFactory', () => {
-  interface FakeProvider {
-    supplied: Array<{ pageIndex: number; channels: Float32Array[] }>;
-    cleared: number[];
-    destroyed: boolean;
-  }
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+  beforeEach(resetRecordedClipPageProviders);
 
-  function fakeEngine(): { engine: unknown; providers: FakeProvider[] } {
-    const providers: FakeProvider[] = [];
-    const engine = {
-      createClipPageProvider() {
-        const provider: FakeProvider = { supplied: [], cleared: [], destroyed: false };
-        providers.push(provider);
-        return {
-          supply(pageIndex: number, channels: Float32Array[]) {
-            provider.supplied.push({ pageIndex, channels });
-          },
-          clear(pageIndex: number) {
-            provider.cleared.push(pageIndex);
-          },
-          destroy() {
-            provider.destroyed = true;
-          },
-        };
-      },
-    };
-    return { engine, providers };
-  }
+  const providers = recordedClipPageProviders;
 
   const request = {
     assetId: 'asset-1',
@@ -513,23 +503,21 @@ describe('createAssetClipPageBindingFactory', () => {
       reads.push([assetId, startFrame, frameCount, numChannels]);
       return [new Float32Array(frameCount), new Float32Array(frameCount)];
     };
-    const { engine, providers } = fakeEngine();
-    const binding = await createAssetClipPageBindingFactory(readFrames)(engine, request);
+    const binding = await createAssetClipPageBindingFactory(readFrames)(request);
     expect(await binding.supplyPage(0)).toBe(true);
     expect(await binding.supplyPage(2)).toBe(true);
     expect(reads).toEqual([
       ['asset-1', 40, 1000, 2],
       ['asset-1', 2040, 500, 2],
     ]);
-    expect(providers[0].supplied.map((entry) => entry.pageIndex)).toEqual([0, 2]);
+    expect(providers[0].supplied).toEqual([0, 2]);
     binding.close();
     expect(providers[0].destroyed).toBe(true);
   });
 
   it('refuses a page outside the clip', async () => {
     const readFrames = vi.fn();
-    const { engine } = fakeEngine();
-    const binding = await createAssetClipPageBindingFactory(readFrames)(engine, request);
+    const binding = await createAssetClipPageBindingFactory(readFrames)(request);
     expect(await binding.supplyPage(-1)).toBe(false);
     expect(await binding.supplyPage(3)).toBe(false);
     expect(readFrames).not.toHaveBeenCalled();
@@ -545,8 +533,7 @@ describe('createAssetClipPageBindingFactory', () => {
       inFlight -= 1;
       return [new Float32Array(frameCount), new Float32Array(frameCount)];
     };
-    const { engine } = fakeEngine();
-    const binding = await createAssetClipPageBindingFactory(readFrames)(engine, request);
+    const binding = await createAssetClipPageBindingFactory(readFrames)(request);
     await Promise.all([binding.supplyPage(0), binding.supplyPage(1), binding.supplyPage(2)]);
     expect(peak).toBe(1);
     binding.close();
@@ -557,11 +544,10 @@ describe('createAssetClipPageBindingFactory', () => {
       if (startFrame === 1040) throw new Error('short read');
       return [new Float32Array(frameCount), new Float32Array(frameCount)];
     };
-    const { engine, providers } = fakeEngine();
-    const binding = await createAssetClipPageBindingFactory(readFrames)(engine, request);
+    const binding = await createAssetClipPageBindingFactory(readFrames)(request);
     await expect(binding.supplyPage(1)).rejects.toThrow('short read');
     expect(await binding.supplyPage(2)).toBe(true);
-    expect(providers[0].supplied.map((entry) => entry.pageIndex)).toEqual([2]);
+    expect(providers[0].supplied).toEqual([2]);
     binding.close();
   });
 
@@ -573,16 +559,11 @@ describe('createAssetClipPageBindingFactory', () => {
       });
       return [new Float32Array(frameCount), new Float32Array(frameCount)];
     };
-    const { engine, providers } = fakeEngine();
-    const binding = await createAssetClipPageBindingFactory(readFrames)(engine, request);
+    const binding = await createAssetClipPageBindingFactory(readFrames)(request);
     const pending = binding.supplyPage(0);
     binding.close();
     release?.();
     expect(await pending).toBe(false);
     expect(providers[0].supplied).toEqual([]);
-  });
-
-  it('rejects an engine build without page providers', async () => {
-    expect(() => createAssetClipPageBindingFactory(vi.fn())({}, request)).toThrow(TypeError);
   });
 });
