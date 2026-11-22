@@ -35,6 +35,7 @@ import {
 } from '@/project/serialization';
 import { getProject, useProjectStore } from '@/project/store';
 import { type WarpedClipSource, warpSourceSecondsAt } from '@/project/warp';
+import type { HpssRequest } from '@/wasm/index.js';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -133,11 +134,11 @@ async function layDownStemSource(name: string): Promise<number> {
     name,
   });
   Object.assign(wasmModule.current ?? {}, {
-    hpssWithResidual: (samples: Float32Array, sampleRate?: number) => ({
+    hpss: ({ samples, sampleRate }: HpssRequest) => ({
       harmonic: samples.map((value) => value * 2),
       percussive: samples.map((value) => value * 3),
       residual: samples.map((value) => value * 4),
-      sampleRate: sampleRate ?? 4,
+      sampleRate,
     }),
   });
   return clipId;
@@ -902,7 +903,7 @@ describe('audio track and clip commands', () => {
     });
     const initialTrackCount = store.tracks.length;
     const initialClipIds = store.clips.map((clip) => clip.id);
-    const hpssWithResidual = vi.fn((samples: Float32Array, sampleRate?: number) => {
+    const hpss = vi.fn(({ samples, sampleRate }: HpssRequest) => {
       store.clips = store.clips.map((clip) =>
         clip.id === clipId ? { ...clip, assetId: 'stem-replaced' } : clip,
       );
@@ -910,14 +911,14 @@ describe('audio track and clip commands', () => {
         harmonic: new Float32Array(samples),
         percussive: new Float32Array(samples),
         residual: new Float32Array(samples),
-        sampleRate: sampleRate ?? 4,
+        sampleRate,
       };
     });
-    Object.assign(wasmModule.current ?? {}, { hpssWithResidual });
+    Object.assign(wasmModule.current ?? {}, { hpss });
 
     await expect(splitAudioClipToStems(clipId)).resolves.toEqual([]);
 
-    expect(hpssWithResidual).toHaveBeenCalled();
+    expect(hpss).toHaveBeenCalled();
     expect(store.tracks).toHaveLength(initialTrackCount);
     expect(store.clips.map((clip) => clip.id)).toEqual(initialClipIds);
     expect(store.clips.find((clip) => clip.id === clipId)?.assetId).toBe('stem-replaced');
@@ -938,13 +939,13 @@ describe('audio track and clip commands', () => {
     });
     const initialTrackCount = store.tracks.length;
     Object.assign(wasmModule.current ?? {}, {
-      hpssWithResidual: (samples: Float32Array, sampleRate?: number) => {
+      hpss: ({ samples, sampleRate }: HpssRequest) => {
         store.tempoBpm = 90;
         return {
           harmonic: samples.slice(),
           percussive: new Float32Array(samples.length),
           residual: new Float32Array(samples.length),
-          sampleRate: sampleRate ?? 4,
+          sampleRate,
         };
       },
     });
@@ -969,11 +970,11 @@ describe('audio track and clip commands', () => {
       name: 'Loop',
     });
     Object.assign(wasmModule.current ?? {}, {
-      hpssWithResidual: (samples: Float32Array, sampleRate?: number) => ({
+      hpss: ({ samples, sampleRate }: HpssRequest) => ({
         harmonic: samples.map((value) => value * 2),
         percussive: samples.map((value) => value * 3),
         residual: samples.map((value) => value * 4),
-        sampleRate: sampleRate ?? 4,
+        sampleRate,
       }),
     });
     clearHistory();
@@ -1020,11 +1021,11 @@ describe('audio track and clip commands', () => {
       name: 'Loop',
     });
     Object.assign(wasmModule.current ?? {}, {
-      hpssWithResidual: (samples: Float32Array, sampleRate?: number) => ({
+      hpss: ({ samples, sampleRate }: HpssRequest) => ({
         harmonic: samples.map((value) => value * 2),
         percussive: samples.map((value) => value * 3),
         residual: samples.map((value) => value * 4),
-        sampleRate: sampleRate ?? 4,
+        sampleRate,
       }),
     });
     clearHistory();

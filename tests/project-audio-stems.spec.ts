@@ -40,26 +40,27 @@ function separator(): {
   seen: { length: number; sampleRate?: number; first?: number }[];
 } {
   const seen: { length: number; sampleRate?: number; first?: number }[] = [];
-  const fn: AudioStemSeparator = (samples, sampleRate) => {
+  const fn: AudioStemSeparator = ({ samples, sampleRate, withResidual }) => {
+    if (withResidual !== true) throw new Error('separator called without withResidual');
     seen.push({ length: samples.length, sampleRate, first: samples[0] });
     return {
       harmonic: samples.map((v) => v * 2) as Float32Array,
       percussive: samples.map((v) => v * 3) as Float32Array,
       residual: samples.map((v) => v * 4) as Float32Array,
-      sampleRate: sampleRate ?? 0,
+      sampleRate,
     };
   };
   return { fn, seen };
 }
 
 function sumPreservingSeparator(capture: (samples: Float32Array) => void): AudioStemSeparator {
-  return (samples, sampleRate) => {
+  return ({ samples, sampleRate }) => {
     capture(samples.slice());
     return {
       harmonic: samples.map((value) => value * 0.5),
       percussive: samples.map((value) => value * 0.3),
       residual: samples.map((value) => value * 0.2),
-      sampleRate: sampleRate ?? 0,
+      sampleRate,
     };
   };
 }
@@ -116,11 +117,11 @@ describe('separateAudioClipStems', () => {
             new Float32Array(WINDOW_FRAMES).fill(-1),
           ],
         }) as LoadedAudioAsset,
-      separateStems: (samples, sampleRate) => ({
+      separateStems: ({ samples, sampleRate }) => ({
         harmonic: samples.slice(),
         percussive: new Float32Array(samples.length),
         residual: new Float32Array(samples.length),
-        sampleRate: sampleRate ?? 0,
+        sampleRate,
       }),
     });
 
@@ -145,14 +146,14 @@ describe('separateAudioClipStems', () => {
             new Float32Array(WINDOW_FRAMES).fill(-0.5),
           ],
         }) as LoadedAudioAsset,
-      separateStems: (samples, sampleRate) => {
+      separateStems: ({ samples, sampleRate }) => {
         callIndex += 1;
         const isMid = callIndex === 1;
         return {
           harmonic: isMid ? samples.slice() : new Float32Array(samples.length),
           percussive: isMid ? new Float32Array(samples.length) : samples.slice(),
           residual: new Float32Array(samples.length),
-          sampleRate: sampleRate ?? 0,
+          sampleRate,
         };
       },
     });
@@ -303,15 +304,15 @@ describe('separateAudioClipStems', () => {
     const phaseCalls: Array<{ length: number; sampleRate: number; rate: number }> = [];
     const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
       loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
-      separateStems: (samples, sampleRate) => ({
+      separateStems: ({ samples, sampleRate }) => ({
         harmonic: new Float32Array(samples.length + 100).fill(1),
         percussive: new Float32Array(samples.length - 100).fill(2),
         residual: new Float32Array(samples.length).fill(3),
-        sampleRate: sampleRate ?? 0,
+        sampleRate,
       }),
       enhancers: {
-        phaseVocoder: (samples, sampleRate, rate) => {
-          phaseCalls.push({ length: samples.length, sampleRate, rate });
+        phaseVocoder: (samples, sampleRate, { speedRatio }) => {
+          phaseCalls.push({ length: samples.length, sampleRate, rate: speedRatio });
           return new Float32Array(48000).fill(samples[0] ?? 0);
         },
       },
@@ -330,11 +331,11 @@ describe('separateAudioClipStems', () => {
   it('crops or pads drifted separator outputs when phaseVocoder is unavailable', async () => {
     const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
       loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
-      separateStems: (samples, sampleRate) => ({
+      separateStems: ({ samples, sampleRate }) => ({
         harmonic: new Float32Array(samples.length + 1).fill(1),
         percussive: new Float32Array(samples.length - 1).fill(2),
         residual: new Float32Array(samples.length).fill(3),
-        sampleRate: sampleRate ?? 0,
+        sampleRate,
       }),
     });
 
@@ -348,16 +349,16 @@ describe('separateAudioClipStems', () => {
     const calls: Array<{ length: number; nFeatures: number; nFrames: number }> = [];
     const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
       loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
-      separateStems: (samples, sampleRate) => ({
+      separateStems: ({ samples, sampleRate }) => ({
         harmonic: new Float32Array(samples.length).fill(1),
         percussive: new Float32Array(samples.length).fill(2),
         residual: new Float32Array(samples.length).fill(3),
-        sampleRate: sampleRate ?? 0,
+        sampleRate,
       }),
       enhancers: {
-        nnFilter: (samples, nFeatures, nFrames) => {
-          calls.push({ length: samples.length, nFeatures, nFrames });
-          return { data: samples.map((value) => value + 0.25) as Float32Array };
+        nnFilter: ({ s }) => {
+          calls.push({ length: s.data.length, nFeatures: s.rows, nFrames: s.cols });
+          return { ...s, data: s.data.map((value) => value + 0.25) };
         },
       },
     });
@@ -375,17 +376,18 @@ describe('separateAudioClipStems', () => {
   it('keeps separator waveform stems when nnFilter cannot produce a same-length result', async () => {
     const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
       loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
-      separateStems: (samples, sampleRate) => ({
+      separateStems: ({ samples, sampleRate }) => ({
         harmonic: new Float32Array(samples.length).fill(1),
         percussive: new Float32Array(samples.length).fill(2),
         residual: new Float32Array(samples.length).fill(3),
-        sampleRate: sampleRate ?? 0,
+        sampleRate,
       }),
       enhancers: {
-        nnFilter: (samples) => {
-          if (samples[0] === 1) return { data: new Float32Array(samples.length - 1).fill(9) };
-          if (samples[0] === 2) throw new Error('nnFilter failed');
-          return null;
+        nnFilter: ({ s }) => {
+          const cols = s.cols - 1;
+          if (s.data[0] === 1) return { data: new Float32Array(cols).fill(9), rows: 1, cols };
+          if (s.data[0] === 2) throw new Error('nnFilter failed');
+          return { data: new Float32Array(0), rows: 1, cols: 0 };
         },
       },
     });

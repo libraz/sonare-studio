@@ -1,10 +1,9 @@
 /**
- * Audio stem separation: runs libsonare's `hpssWithResidual` over an audio
+ * Audio stem separation: runs libsonare's `hpss` (with its residual) over an audio
  * clip's played source window, splitting it into harmonic, percussive and
- * residual stems (each keeping the source channel count). When available, a
- * phase-vocoder seam is used as a length repair for separators that return
- * slightly drifted buffers, and an NN-filter seam can refine each waveform stem
- * only when it returns an equal-length matrix.
+ * residual stems (each keeping the source channel count). `phaseVocoder`
+ * repairs a band whose length drifted from the source window, and `nnFilter`
+ * refines each band only when it returns an equal-length matrix.
  *
  * `separateAudioClipComponents` splits the same rendered window into an
  * arbitrary number of NMF components through an injected async `decompose`
@@ -25,6 +24,13 @@
  */
 
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type {
+  HpssRequest,
+  HpssResult,
+  Matrix2D,
+  NnFilterRequest,
+  PhaseVocoderRequest,
+} from '@/wasm/index.js';
 import {
   type AudibleAudioClipFields,
   type AudioClipSliceTempo,
@@ -32,58 +38,28 @@ import {
 } from './scheduling';
 import type { WarpRenderFn } from './warp';
 
-/** The three bands `hpssWithResidual` separates a signal into. */
+/** The three bands `hpss` with `withResidual` separates a signal into. */
 export type StemKind = 'harmonic' | 'percussive' | 'residual';
 
 /** Stem bands in the order they are laid down as tracks. */
 export const STEM_KINDS: ReadonlyArray<StemKind> = ['harmonic', 'percussive', 'residual'];
 
 /**
- * The stem separator signature (libsonare `hpssWithResidual`): splits one mono
- * channel into three equal-length bands at the same sample rate.
+ * The stem separator: libsonare `hpss`, called with `withResidual: true` so one
+ * mono channel splits into three equal-length bands at the same sample rate.
  */
-export type AudioStemSeparator = (
-  samples: Float32Array,
-  sampleRate?: number,
-) => {
-  harmonic: Float32Array;
-  percussive: Float32Array;
-  residual: Float32Array;
-  sampleRate: number;
-};
+export type AudioStemSeparator = (request: HpssRequest) => HpssResult;
 
-/** Optional enhancement/repair seams available in newer libsonare builds. */
+/** Optional repair/refinement functions (libsonare `phaseVocoder`, `nnFilter`). */
 export interface AudioStemEnhancers {
-  /**
-   * Phase-vocoder time-scale modification. Used conservatively to repair
-   * separator output length drift back to the source window length.
-   */
+  /** Repairs separator output length drift back to the source window length. */
   phaseVocoder?: (
     samples: Float32Array,
     sampleRate: number,
-    rate: number,
-    nFft?: number,
-    hopLength?: number,
+    options: Pick<PhaseVocoderRequest, 'speedRatio'>,
   ) => Float32Array;
-  nnFilter?: (
-    s: Float32Array,
-    nFeatures: number,
-    nFrames: number,
-    aggregate?: string,
-    k?: number,
-    width?: number,
-  ) =>
-    | Float32Array
-    | {
-        data?: Float32Array;
-        values?: Float32Array;
-        rows?: number;
-        cols?: number;
-        nFeatures?: number;
-        nFrames?: number;
-      }
-    | null
-    | undefined;
+  /** Refines a band in place when it returns an equal-length matrix. */
+  nnFilter?: (request: NnFilterRequest) => Matrix2D;
 }
 
 /** Injectable dependencies for {@link separateAudioClipStems}. */
@@ -120,9 +96,9 @@ function fitStemLength(
   if (targetFrames <= 0) return new Float32Array(0);
   let repaired = samples;
   if (typeof phaseVocoder === 'function' && samples.length > 0) {
-    const rate = samples.length / targetFrames;
-    if (Number.isFinite(rate) && rate > 0) {
-      repaired = phaseVocoder(samples, sampleRate, rate);
+    const speedRatio = samples.length / targetFrames;
+    if (Number.isFinite(speedRatio) && speedRatio > 0) {
+      repaired = phaseVocoder(samples, sampleRate, { speedRatio });
     }
   }
   if (repaired.length === targetFrames) return repaired;
@@ -131,23 +107,19 @@ function fitStemLength(
   return out;
 }
 
-function matrixData(
-  result: ReturnType<NonNullable<AudioStemEnhancers['nnFilter']>>,
-): Float32Array | null {
-  if (result instanceof Float32Array) return result;
-  if (result && result.data instanceof Float32Array) return result.data;
-  if (result && result.values instanceof Float32Array) return result.values;
-  return null;
-}
-
 function refineStemWaveform(
   samples: Float32Array,
   nnFilter?: AudioStemEnhancers['nnFilter'],
 ): Float32Array {
   if (typeof nnFilter !== 'function' || samples.length === 0) return samples;
   try {
-    const refined = matrixData(nnFilter(samples, 1, samples.length, 'mean', 7, 1));
-    return refined?.length === samples.length ? refined : samples;
+    const refined = nnFilter({
+      s: { data: samples, rows: 1, cols: samples.length },
+      aggregate: 'mean',
+      k: 7,
+      width: 1,
+    }).data;
+    return refined.length === samples.length ? refined : samples;
   } catch {
     return samples;
   }
@@ -158,7 +130,9 @@ function processStemChannel(
   sampleRate: number,
   deps: AudioStemsDeps,
 ): Record<StemKind, Float32Array> {
-  const split = deps.separateStems(channel, sampleRate);
+  const split = deps.separateStems({ samples: channel, sampleRate, withResidual: true });
+  if (!split.residual) throw new Error('hpss returned no residual despite withResidual');
+  const residual = split.residual;
   return {
     harmonic: refineStemWaveform(
       fitStemLength(split.harmonic, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
@@ -169,7 +143,7 @@ function processStemChannel(
       deps.enhancers?.nnFilter,
     ),
     residual: refineStemWaveform(
-      fitStemLength(split.residual, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
+      fitStemLength(residual, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
       deps.enhancers?.nnFilter,
     ),
   };

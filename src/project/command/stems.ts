@@ -3,8 +3,6 @@ import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type AudioAssetMeta, audioAssetUri, loadAsset } from '@/persistence/assets';
 import { createAssetReferenceGuard } from '../asset-references';
 import {
-  type AudioStemEnhancers,
-  type AudioStemSeparator,
   type SeparatedStem,
   separateAudioClipComponents,
   separateAudioClipStems,
@@ -200,9 +198,9 @@ async function placeSeparatedStems(
  * edit.
  *
  * The clip's played source window is separated with libsonare's
- * `hpssWithResidual` (delegated; see {@link separateAudioClipStems}); newer
- * builds can also provide phase-vocoder length repair and an NN filter that
- * refines a band in place. Neither reconstructs a waveform, so the bands laid
+ * `hpss` with its residual (delegated; see {@link separateAudioClipStems}),
+ * with phase-vocoder length repair and an NN filter that refines a band in
+ * place. Neither reconstructs a waveform, so the bands laid
  * down here are always the separator's own. Each band is stored as a new
  * audio asset and placed as a clip at the source clip's start with its length
  * and gain. The async work (separation and asset stores) runs first; the
@@ -210,8 +208,8 @@ async function placeSeparatedStems(
  * `execute`, so undo reverts the whole split at once.
  *
  * @param clipId Id of the audio clip to split.
- * @returns The new clip ids (one per stem, in band order), or [] when stem
- *   separation is unavailable or the clip has no audible window.
+ * @returns The new clip ids (one per stem, in band order), or [] when the clip
+ *   has no audible window.
  * @throws RangeError when the clip is not an audio clip.
  */
 export async function splitAudioClipToStems(clipId: number): Promise<number[]> {
@@ -222,16 +220,13 @@ export async function splitAudioClipToStems(clipId: number): Promise<number[]> {
   }
   const project = getProject();
   const sourceToken = stemSourceToken(store, clip);
-  const wasm = (await ensureWasm()) as unknown as {
-    hpssWithResidual?: AudioStemSeparator;
-  } & AudioStemEnhancers;
-  if (typeof wasm.hpssWithResidual !== 'function') return [];
+  const wasm = await ensureWasm();
   const stems = await separateAudioClipStems(
     clip,
     normalizeTempoMap(store.tempoSegments, store.tempoBpm),
     {
       loadAudioAsset: loadAsset,
-      separateStems: wasm.hpssWithResidual,
+      separateStems: wasm.hpss,
       enhancers: {
         phaseVocoder: wasm.phaseVocoder,
         nnFilter: wasm.nnFilter,
