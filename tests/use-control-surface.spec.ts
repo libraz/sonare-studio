@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { effectScope, nextTick, ref } from 'vue';
+import { effectScope, nextTick, type Ref, ref } from 'vue';
 import type { ControlSurfaceHandle } from '@/composables/useControlSurface';
 import { useControlSurface } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
@@ -150,7 +150,7 @@ function flushFrame(): void {
 async function mountSurface(
   overrides: Partial<ReturnType<typeof useProjectStore>['controlSurface']> = {},
   options: {
-    isPlaying?: ReturnType<typeof ref<boolean>>;
+    isPlaying?: Ref<boolean>;
     trackMeterSource?: (trackId: number) => MeterSource | null;
   } = {},
 ): Promise<ControlSurfaceHandle> {

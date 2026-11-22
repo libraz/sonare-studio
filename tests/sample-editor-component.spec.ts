@@ -126,19 +126,19 @@ describe('SampleEditor async loading', () => {
     await wrapper.find('.selection-start').setValue('4');
     await wrapper.find('.selection-end').setValue('12');
 
-    expect(wrapper.find('.selection-start').element.value).toBe('4');
-    expect(wrapper.find('.selection-end').element.value).toBe('12');
+    expect(wrapper.find<HTMLInputElement>('.selection-start').element.value).toBe('4');
+    expect(wrapper.find<HTMLInputElement>('.selection-end').element.value).toBe('12');
     expect(trim?.attributes('disabled')).toBeUndefined();
     expect(wrapper.find('.readout').attributes('aria-live')).toBe('polite');
 
     const waveform = wrapper.find('.wave-wrap');
     await waveform.trigger('keydown', { key: 'ArrowRight' });
-    expect(wrapper.find('.selection-end').element.value).toBe('13');
+    expect(wrapper.find<HTMLInputElement>('.selection-end').element.value).toBe('13');
     await waveform.trigger('keydown', { key: 'Home' });
-    expect(wrapper.find('.selection-start').element.value).toBe('0');
+    expect(wrapper.find<HTMLInputElement>('.selection-start').element.value).toBe('0');
     await waveform.trigger('keydown', { key: 'a', ctrlKey: true });
-    expect(wrapper.find('.selection-start').element.value).toBe('0');
-    expect(wrapper.find('.selection-end').element.value).toBe('16');
+    expect(wrapper.find<HTMLInputElement>('.selection-start').element.value).toBe('0');
+    expect(wrapper.find<HTMLInputElement>('.selection-end').element.value).toBe('16');
     await waveform.trigger('keydown', { key: 'Escape' });
 
     expect(trim?.attributes('disabled')).toBeDefined();

@@ -5,6 +5,7 @@ import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
 import * as tempoMapModule from '@/project/tempo-map';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
+import type { ClipCursor } from '@/ui/arrangement/use-clip-interactions';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 
@@ -62,7 +63,7 @@ function mountCanvas(overrides: Record<string, unknown> = {}) {
         previewFades: ref(null),
         previewDraft: ref(null),
         previewMarquee: ref(null),
-        cursor: ref('default'),
+        cursor: ref<ClipCursor>('default'),
         cancel: vi.fn(),
       },
       automationExpandedIds: [],

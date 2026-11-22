@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, ref } from 'vue';
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { SelectionDraft } from '@/ui/sample-editor/selection';
 import {
   LANE_HEIGHT_PX,
   MAX_VISIBLE_PEAK_CACHE_ENTRIES,
@@ -55,7 +56,7 @@ describe('useSampleViewport', () => {
     );
 
     const asset = ref<LoadedAudioAsset | null>(null);
-    const selection = ref<null | { startFrame: number; endFrame: number }>(null);
+    const selection = ref<SelectionDraft | null>(null);
     const Host = defineComponent({
       setup() {
         const wrapRef = ref<HTMLDivElement | null>(null);
@@ -120,7 +121,7 @@ describe('useSampleViewport', () => {
     vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
     vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame);
 
-    const selection = ref<null | { startFrame: number; endFrame: number }>(null);
+    const selection = ref<SelectionDraft | null>(null);
     const Host = defineComponent({
       setup() {
         const wrapRef = ref<HTMLDivElement | null>(null);
@@ -140,7 +141,7 @@ describe('useSampleViewport', () => {
     });
 
     const wrapper = mount(Host);
-    selection.value = { startFrame: 0, endFrame: 128 };
+    selection.value = { anchorFrame: 0, headFrame: 128 };
     await wrapper.vm.$nextTick();
 
     expect(requestAnimationFrame).toHaveBeenCalledTimes(1);
@@ -176,7 +177,7 @@ describe('useSampleViewport', () => {
     );
 
     const asset = ref<LoadedAudioAsset | null>(null);
-    const selection = ref<null | { startFrame: number; endFrame: number }>(null);
+    const selection = ref<SelectionDraft | null>(null);
     const Host = defineComponent({
       setup() {
         const wrapRef = ref<HTMLDivElement | null>(null);
@@ -189,7 +190,11 @@ describe('useSampleViewport', () => {
           onsetFrames: ref([]),
           noteRegions: ref([]),
           formatNote: (midi: number) => String(Math.round(midi)),
-          selRange: () => selection.value,
+          selRange: () =>
+            selection.value && {
+              startFrame: Math.min(selection.value.anchorFrame, selection.value.headFrame),
+              endFrame: Math.max(selection.value.anchorFrame, selection.value.headFrame),
+            },
         });
         viewport.syncViewportToFrames(40);
         return () => h('div', { ref: wrapRef }, [h('canvas', { ref: canvasRef })]);
@@ -209,7 +214,7 @@ describe('useSampleViewport', () => {
       ).length;
       fillRect.mockClear();
 
-      selection.value = { startFrame: 4, endFrame: 20 };
+      selection.value = { anchorFrame: 4, headFrame: 20 };
       await wrapper.vm.$nextTick();
       pendingFrames.shift()?.(0);
 

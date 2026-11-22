@@ -128,8 +128,8 @@ describe('PatchEditor.vue', () => {
 
     const rows = wrapper.findAll('.mod-row');
     expect(rows).toHaveLength(2);
-    await selectOption(rows[0], '.mod-source', 'lfo1');
-    await selectOption(rows[0], '.mod-destination', 'pitchCents');
+    await selectOption(wrapper, '.mod-row .mod-source', 'lfo1');
+    await selectOption(wrapper, '.mod-row .mod-destination', 'pitchCents');
     await rows[0].find('.mod-depth').setValue('0.5');
     // The second row stays inert (none -> none) and must not be committed.
 

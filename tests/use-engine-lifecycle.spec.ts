@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ref } from 'vue';
+import { ref, shallowRef } from 'vue';
 import { SILENCE_DB } from '@/lib/db';
 import { busAutomationTarget } from '@/project/automation';
 import type { EditorTrack } from '@/project/types';
@@ -51,7 +51,10 @@ import {
   resetEngineTransportState,
   useEngineLifecycle,
 } from '@/composables/useEngineLifecycle';
+import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
+import type { MeterBridge } from '@/engine/meters';
+import type { ScopeBridge } from '@/engine/scope';
 import { useProjectStore } from '@/project/store';
 import { fakeEngineHandle } from './fakes/engine';
 
@@ -145,17 +148,17 @@ function setupLifecycleForAutomationTest(): {
     automationSync = handles.automationSync;
   });
   const options: EngineLifecycleOptions = {
-    analyser: { value: null },
+    analyser: shallowRef<AnalyserBridge | null>(null),
     applyToEngine: vi.fn(async () => undefined),
     bootPromise: () => null,
-    bridge: { value: null },
+    bridge: shallowRef<MeterBridge | null>(null),
     ctxState: ref(''),
     errorMessage: ref(''),
-    handle: { value: null },
+    handle: shallowRef<EngineHandle | null>(null),
     renderInfo: ref(''),
     resetEngineProjectSync: vi.fn(),
     runAction: async (action) => action(),
-    scope: { value: null },
+    scope: shallowRef<ScopeBridge | null>(null),
     setEngineSyncHandles: setEngineSyncHandles as EngineLifecycleOptions['setEngineSyncHandles'],
     syncAutomationState: vi.fn(),
     syncMidiState: vi.fn(async () => undefined),

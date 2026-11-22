@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
+import type { MidiCycleRecordMode } from '@/composables/useMidiRecording';
 import { fakeEngineHandle } from './fakes/engine';
 
 function recording() {
@@ -49,7 +50,7 @@ describe('TransportBar position readout', () => {
         midiRecording: {
           isRecording: ref(false),
           inputQuantizeDenominator: ref(0),
-          cycleRecordMode: ref('takes'),
+          cycleRecordMode: ref<MidiCycleRecordMode>('takes'),
         },
         recordMenuOpen: false,
         storeInitialized: true,

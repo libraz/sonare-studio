@@ -508,7 +508,7 @@ describe('project list editors', () => {
         { startPpq: 8, endPpq: 12, rootPc: 7, quality: 0 },
       ]);
       const wrapper = mount(ChordListEditor);
-      const checkboxes = () => wrapper.findAll('.cell-checkbox input');
+      const checkboxes = () => wrapper.findAll<HTMLInputElement>('.cell-checkbox input');
       await checkboxes()[0].trigger('click');
       await checkboxes()[2].trigger('click', { shiftKey: true });
       expect(wrapper.find('.selection-summary').text()).toContain('3 selected');

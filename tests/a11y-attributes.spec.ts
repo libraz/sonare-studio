@@ -5,9 +5,11 @@ import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
+import type { InteractionCursor } from '@/components/piano-roll/use-note-interactions';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
+import type { ClipCursor } from '@/ui/arrangement/use-clip-interactions';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { FADER_MAX_DB, FADER_MIN_DB } from '@/ui/mixer/db-scale';
@@ -203,7 +205,7 @@ describe('Canvas editor live regions', () => {
           previewClip: ref(null),
           previewDraft,
           previewFades: ref(null),
-          cursor: ref('default'),
+          cursor: ref<ClipCursor>('default'),
           cancel: vi.fn(),
         },
         automationExpandedIds: [],
@@ -239,7 +241,7 @@ describe('Canvas editor live regions', () => {
         interactions: {
           marquee: ref(null),
           previewNotes: ref(null),
-          cursor: ref('default'),
+          cursor: ref<InteractionCursor>('default'),
           onPointerDown: () => {},
           onPointerMove: () => {},
           onPointerUp: () => {},
@@ -273,7 +275,7 @@ describe('Canvas editor live regions', () => {
         interactions: {
           marquee: ref(null),
           previewNotes: ref(null),
-          cursor: ref('default'),
+          cursor: ref<InteractionCursor>('default'),
           onPointerDown: () => {},
           onPointerMove: () => {},
           onPointerUp: () => {},
@@ -312,7 +314,7 @@ describe('Canvas editor live regions', () => {
         interactions: {
           previewClip: ref(null),
           previewFades: ref(null),
-          cursor: ref('default'),
+          cursor: ref<ClipCursor>('default'),
           cancel: vi.fn(),
         },
         automationExpandedIds: [],
@@ -353,7 +355,7 @@ describe('Canvas editor live regions', () => {
         interactions: {
           previewClip: ref(null),
           previewFades: ref(null),
-          cursor: ref('default'),
+          cursor: ref<ClipCursor>('default'),
           cancel: vi.fn(),
         },
         automationExpandedIds: [],

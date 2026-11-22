@@ -645,7 +645,7 @@ describe('MasteringPanel.vue', () => {
 
     setMasteringPreset('pop');
     await nextTick();
-    expect(wrapper.get('.preview-stale').exists()).toBe(true);
+    expect(wrapper.find('.preview-stale').exists()).toBe(true);
     expect(wrapper.get('.level-match-status').text()).toBe('Unavailable');
   });
 
@@ -674,7 +674,7 @@ describe('MasteringPanel.vue', () => {
     setMasteringPreset('pop');
     await flush();
     expect(wrapper.get('.level-match-status').text()).toBe('Unavailable');
-    expect(wrapper.get('.preview-stale').exists()).toBe(true);
+    expect(wrapper.find('.preview-stale').exists()).toBe(true);
     // The monitor follows the same short clickless ramp as an A/B switch.
     context.currentTime = 0.04;
     expect(context.gains[0].gain.value).toBeCloseTo(DEFAULT_PREVIEW_GAIN);

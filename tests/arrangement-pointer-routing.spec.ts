@@ -4,6 +4,7 @@ import { ref } from 'vue';
 import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
+import type { ClipCursor } from '@/ui/arrangement/use-clip-interactions';
 import { usePointerRouting } from '@/ui/arrangement/use-pointer-routing';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
@@ -53,7 +54,7 @@ function mountCanvas(options: {
         previewFades: ref(null),
         previewDraft: ref(null),
         previewMarquee: ref(null),
-        cursor: ref('default'),
+        cursor: ref<ClipCursor>('default'),
         cancel: vi.fn(),
         onPointerDown: vi.fn(),
         onPointerMove: vi.fn(),
@@ -202,7 +203,7 @@ describe('ArrangementCanvas cancellation', () => {
       takes: idleTakes(),
       automationExpandedIds: [1],
     });
-    const canvas = wrapper.get('.arrangement-canvas');
+    const canvas = wrapper.get<HTMLElement>('.arrangement-canvas');
 
     dispatchPointer(canvas.element, 'pointerdown', {
       button: 0,
@@ -256,7 +257,7 @@ describe('ArrangementCanvas cancellation', () => {
       takesExpandedIds: [1],
       clips,
     });
-    const canvas = wrapper.get('.arrangement-canvas');
+    const canvas = wrapper.get<HTMLElement>('.arrangement-canvas');
 
     dispatchPointer(canvas.element, 'pointerdown', {
       button: 0,
@@ -287,7 +288,7 @@ describe('ArrangementCanvas cancellation', () => {
       automation: idleAutomation(),
       takes: idleTakes(),
     });
-    const canvas = wrapper.get('.arrangement-canvas');
+    const canvas = wrapper.get<HTMLElement>('.arrangement-canvas');
 
     dispatchPointer(canvas.element, 'pointerdown', {
       button: 0,
