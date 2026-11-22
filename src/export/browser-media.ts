@@ -6,6 +6,7 @@
  * by `MediaRecorder.isTypeSupported()` are registered.
  */
 
+import { isFiniteNumber } from '@/lib/math';
 import {
   type AudioEncodeOptions,
   type AudioEncoder,
@@ -200,7 +201,7 @@ export async function encodeBrowserMedia(
     const chunks: Blob[] = [];
     const recorderOptions: MediaRecorderOptions = { mimeType };
     const bitrate = options['bitrate'];
-    if (typeof bitrate === 'number' && Number.isFinite(bitrate) && bitrate > 0) {
+    if (isFiniteNumber(bitrate) && bitrate > 0) {
       recorderOptions.audioBitsPerSecond = bitrate * 1000;
     }
     const recorder = new RecorderCtor(destination.stream, recorderOptions);

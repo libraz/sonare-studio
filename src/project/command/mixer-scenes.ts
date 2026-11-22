@@ -1,6 +1,6 @@
 import type { PanLaw } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
-import { clamp } from '@/lib/math';
+import { clamp, isFiniteNumber } from '@/lib/math';
 import { isBusAutomationTarget, parseInsertAutomationParam } from '../automation';
 import {
   assertValidMixerBusId,
@@ -156,7 +156,7 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function finiteNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return isFiniteNumber(value) ? value : undefined;
 }
 
 function booleanValue(value: unknown): boolean | undefined {
@@ -173,7 +173,7 @@ function sceneEq(value: unknown): StripEq | undefined {
     const clean: Record<string, number | boolean | string> = {};
     for (const [key, field] of Object.entries(band)) {
       if (typeof field === 'boolean' || typeof field === 'string') clean[key] = field;
-      else if (typeof field === 'number' && Number.isFinite(field)) clean[key] = field;
+      else if (isFiniteNumber(field)) clean[key] = field;
     }
     return [clean];
   });

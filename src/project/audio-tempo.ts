@@ -17,6 +17,7 @@
 
 import type { EstimateMeterRequest, MeterEstimate } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
+import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
@@ -183,13 +184,9 @@ export function beatTimesToTempoSegments(
   options: BeatTempoMapOptions = {},
 ): TempoSegment[] {
   const minBpm =
-    typeof options.minBpm === 'number' && Number.isFinite(options.minBpm) && options.minBpm > 0
-      ? options.minBpm
-      : DEFAULT_MIN_BPM;
+    isFiniteNumber(options.minBpm) && options.minBpm > 0 ? options.minBpm : DEFAULT_MIN_BPM;
   const maxBpm =
-    typeof options.maxBpm === 'number' &&
-    Number.isFinite(options.maxBpm) &&
-    options.maxBpm >= minBpm
+    isFiniteNumber(options.maxBpm) && options.maxBpm >= minBpm
       ? options.maxBpm
       : Math.max(minBpm, DEFAULT_MAX_BPM);
   const times = ascendingTimes(beatTimes);

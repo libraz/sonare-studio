@@ -9,7 +9,7 @@
  */
 
 import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@libraz/libsonare';
-import { clamp } from '@/lib/math';
+import { clamp, isFiniteNumber } from '@/lib/math';
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { getWasmModule } from '@/project/runtime';
 
@@ -485,7 +485,7 @@ function finiteEngineParams(raw: unknown): Record<string, number> {
   const out: Record<string, number> = {};
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return out;
   for (const [key, value] of Object.entries(raw)) {
-    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    if (isFiniteNumber(value)) out[key] = value;
   }
   return out;
 }
@@ -699,7 +699,7 @@ function copyPatchFields(target: StoredSynthPatch, source: StoredSynthPatch): vo
   const record = source as Record<string, unknown>;
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
-    if (typeof value === 'number' && Number.isFinite(value)) {
+    if (isFiniteNumber(value)) {
       (target as Record<string, unknown>)[spec.id] = decodePatchFieldValue(spec.id, value);
     }
   }
@@ -799,7 +799,7 @@ export function patchEditCount(patch: StoredSynthPatch): number {
   let count = 0;
   for (const spec of PATCH_FIELD_SPECS) {
     const value = record[spec.id];
-    if (typeof value === 'number' && Number.isFinite(value)) count += 1;
+    if (isFiniteNumber(value)) count += 1;
   }
   for (const field of ENUM_PATCH_FIELDS) {
     const value = record[field];

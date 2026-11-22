@@ -18,7 +18,7 @@ import { computed, type Ref, ref, type ShallowRef, shallowRef } from 'vue';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import { downloadBlob } from '@/lib/download';
-import { errorMessage } from '@/lib/errors';
+import { errorMessage, isAbortError } from '@/lib/errors';
 import { projectFilename } from '@/lib/filename';
 import { clamp } from '@/lib/math';
 import {
@@ -776,7 +776,7 @@ export function useScoreNotation(options: ScoreNotationOptions): ScoreNotation {
     try {
       await action();
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (isAbortError(err)) return;
       error.value = errorMessage(err);
     } finally {
       exportOperations.invalidate();

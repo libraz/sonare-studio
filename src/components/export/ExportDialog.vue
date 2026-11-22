@@ -72,7 +72,7 @@ import { createWavStreamWriter, type WavStreamWriter } from '@/export/wav-stream
 import { MEBIBYTE } from '@/lib/bytes';
 import { peakDb } from '@/lib/db';
 import { downloadBlob } from '@/lib/download';
-import { errorMessage as thrownMessage } from '@/lib/errors';
+import { isAbortError, errorMessage as thrownMessage } from '@/lib/errors';
 import { PayloadMemoryMeter } from '@/lib/payload-memory';
 import { ensureWasm } from '@/lib/wasm';
 import { masteringChainIsActive } from '@/project/mixer';
@@ -989,10 +989,7 @@ async function onExport(): Promise<void> {
   } catch (error) {
     wavStream?.abort();
     if (!controller.signal.aborted) controller.abort(error);
-    if (
-      error instanceof MixdownCancelledError ||
-      (error instanceof DOMException && error.name === 'AbortError')
-    ) {
+    if (error instanceof MixdownCancelledError || isAbortError(error)) {
       cancelled.value = true;
     } else if (error instanceof ExportWorkerError) {
       errorMessage.value = t.value.dialogs.exportAudio.workerError;

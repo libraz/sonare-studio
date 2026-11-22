@@ -19,7 +19,7 @@ import { SaxesParser } from 'saxes';
 import { keyMarkerName } from '@/compose/key-name';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
-import { clampInt } from '@/lib/math';
+import { clamp01, clampInt } from '@/lib/math';
 import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import { MAX_XML_DOCUMENT_BYTES, preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
@@ -361,7 +361,7 @@ function readPartList(root: XmlElement, maxNumericAbs: number): Map<string, Part
         ...(midiChannel !== null ? { channel: midiChannel - 1 } : {}),
         ...(midiUnpitched !== null ? { unpitched: midiUnpitched - 1 } : {}),
         ...(midiProgram !== null ? { program: clampInt(midiProgram - 1, 0, 127) } : {}),
-        ...(volume !== null ? { volume: Math.min(1, Math.max(0, volume / 100)) } : {}),
+        ...(volume !== null ? { volume: clamp01(volume / 100) } : {}),
         ...(pan !== null ? { pan: Math.min(1, Math.max(-1, pan / 90)) } : {}),
       });
     }

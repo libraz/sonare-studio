@@ -35,6 +35,7 @@ import type {
 } from '@libraz/libsonare';
 import { dbToLinear } from '@/lib/db';
 import { errorMessage } from '@/lib/errors';
+import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import type { EngineHandle } from './engine';
@@ -364,11 +365,9 @@ const DISARM_POLL_INTERVAL_MS = 10;
  * @returns Offset in samples (>= 0).
  */
 export function defaultRecordOffsetSamples(ctx: AudioContext): number {
-  const base =
-    typeof ctx.baseLatency === 'number' && Number.isFinite(ctx.baseLatency) ? ctx.baseLatency : 0;
+  const base = isFiniteNumber(ctx.baseLatency) ? ctx.baseLatency : 0;
   const outputLatency = (ctx as AudioContext & { outputLatency?: number }).outputLatency;
-  const output =
-    typeof outputLatency === 'number' && Number.isFinite(outputLatency) ? outputLatency : 0;
+  const output = isFiniteNumber(outputLatency) ? outputLatency : 0;
   return Math.max(0, Math.round((base + output) * ctx.sampleRate));
 }
 
@@ -388,7 +387,7 @@ export function inputLatencySamples(stream: MediaStream, sampleRate: number): nu
   let maxLatencySeconds = 0;
   for (const track of stream.getAudioTracks()) {
     const latency = (track.getSettings() as MediaTrackSettings & { latency?: number }).latency;
-    if (typeof latency === 'number' && Number.isFinite(latency) && latency > maxLatencySeconds) {
+    if (isFiniteNumber(latency) && latency > maxLatencySeconds) {
       maxLatencySeconds = latency;
     }
   }

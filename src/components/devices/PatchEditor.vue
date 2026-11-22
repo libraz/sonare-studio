@@ -3,7 +3,7 @@ import type { SynthEnumTables, SynthParamCondition, SynthParamInfo } from '@libr
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { describeError } from '@/lib/errors';
-import { clamp } from '@/lib/math';
+import { clamp, isFiniteNumber } from '@/lib/math';
 import { setTrackInstrument } from '@/project/commands';
 import { type StoredSynthPatch, trackInstrument } from '@/project/instrument';
 import { unitLabel } from '@/project/processor-controls';
@@ -157,7 +157,7 @@ const globalFields = patchFieldsForSection('global');
 
 function fieldValue(spec: PatchFieldSpec): number {
   const value = (draft.value as Record<string, unknown>)[spec.id];
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  return isFiniteNumber(value) ? value : 0;
 }
 
 /** Resolves numeric patch field captions from the active locale. */
@@ -373,7 +373,7 @@ function envelopeInputs(): {
   };
   const timed = (id: 'ampDelayMs' | 'ampHoldMs') => {
     const raw = (draft.value as Record<string, unknown>)[id];
-    return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
+    return isFiniteNumber(raw) ? raw : 0;
   };
   return {
     delayMs: timed('ampDelayMs'),

@@ -16,6 +16,7 @@
 
 import { MEBIBYTE } from '@/lib/bytes';
 import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a';
+import { isFiniteNumber } from '@/lib/math';
 import {
   bytesEqual,
   isNotFoundError,
@@ -308,7 +309,7 @@ function sanitizeAudioAssetTags(raw: AudioAssetTags | undefined): AudioAssetTags
   const tags: AudioAssetTags = {};
   for (const key of NUMERIC_TAG_KEYS) {
     const value = raw[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
+    if (isFiniteNumber(value)) {
       if (key !== 'bpm' || value > 0) tags[key] = value;
     }
   }

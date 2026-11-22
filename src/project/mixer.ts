@@ -33,7 +33,7 @@ import type {
   SoloProcessor,
 } from '@libraz/libsonare';
 import { linearToDb, SILENCE_DB } from '@/lib/db';
-import { clamp } from '@/lib/math';
+import { clamp, isFiniteNumber } from '@/lib/math';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 import { getWasmModule } from './runtime';
@@ -49,11 +49,7 @@ export type InsertParamValue = number | boolean | string;
 
 /** True for a value an insert parameter can hold: a finite number, a boolean or a choice name. */
 export function isInsertParamValue(value: unknown): value is InsertParamValue {
-  return (
-    typeof value === 'boolean' ||
-    typeof value === 'string' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  );
+  return typeof value === 'boolean' || typeof value === 'string' || isFiniteNumber(value);
 }
 
 /** One insert effect slot referencing the wasm processor catalog by name. */

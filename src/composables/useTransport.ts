@@ -4,7 +4,7 @@ import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
 import { tryQueue } from '@/engine/mixer-sync';
-import { clamp01 } from '@/lib/math';
+import { clamp01, isFiniteNumber } from '@/lib/math';
 import { createRecordingCycle, type RecordingCycle } from '@/project/loop-recording';
 import {
   DEFAULT_TEMPO_BPM,
@@ -199,9 +199,8 @@ export function useTransport(
   const updatePlaybackLatency = (handle: EngineHandle): void => {
     const baseLatency = handle.ctx.baseLatency;
     const outputLatency = (handle.ctx as AudioContext & { outputLatency?: number }).outputLatency;
-    const base = typeof baseLatency === 'number' && Number.isFinite(baseLatency) ? baseLatency : 0;
-    const output =
-      typeof outputLatency === 'number' && Number.isFinite(outputLatency) ? outputLatency : 0;
+    const base = isFiniteNumber(baseLatency) ? baseLatency : 0;
+    const output = isFiniteNumber(outputLatency) ? outputLatency : 0;
     playbackLatencySeconds.value = Math.max(0, base + output);
   };
 

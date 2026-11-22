@@ -16,7 +16,7 @@ import type { ScopeBridge, ScopeSource } from '@/engine/scope';
 import type { StripSync } from '@/engine/strip-sync';
 import type { TransportSync } from '@/engine/transport-sync';
 import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
-import { describeError } from '@/lib/errors';
+import { describeError, isAbortError } from '@/lib/errors';
 import { clipArticulations } from '@/project/annotations';
 import {
   createMediaCompletenessReport,
@@ -191,7 +191,7 @@ export function useEngineProjectSync(options: EngineProjectSyncOptions) {
         scheduledCount.value = scheduledClips.length;
         if (!stagedHandle) requestEngineRebuild();
       }
-      if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) {
+      if (controller.signal.aborted || isAbortError(err)) {
         if (applyOptions.throwOnError) throw err;
         return;
       }

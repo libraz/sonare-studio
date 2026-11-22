@@ -4,6 +4,7 @@ import type {
   MasteringInsertTiming,
   MasteringInsertTimingRequest,
 } from '@libraz/libsonare';
+import { isFiniteNumber } from '@/lib/math';
 import {
   audibleOutputBusId,
   busOutputChain,
@@ -55,7 +56,7 @@ export interface InsertPdcTrack {
 
 /** Returns a non-negative whole-sample latency, tolerating missing/invalid metadata. */
 function sanitizeLatencySamples(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
+  return isFiniteNumber(value) && value > 0 ? Math.round(value) : 0;
 }
 
 /** Answered timing queries per query function; one configuration always reports the same latency. */

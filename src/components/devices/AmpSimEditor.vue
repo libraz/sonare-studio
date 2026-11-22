@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue';
+import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import type { AutomationParam, AutomationTarget } from '@/project/automation';
 import { insertAutomationParam } from '@/project/automation';
@@ -302,7 +303,7 @@ function parameterBlocked(param: AmpParameterKey): string | null {
 
 function numberValue(param: AmpNumberKey): number | null {
   const value = resolvedParameter(param).value;
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  return isFiniteNumber(value) ? value : null;
 }
 
 function pendingOrResolvedNumberValue(param: AmpNumberKey): number | null {

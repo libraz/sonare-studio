@@ -12,7 +12,7 @@
  * which are mirrored to the engine faders in realtime — genuinely audible.
  */
 
-import { clamp, clampInt } from '@/lib/math';
+import { clamp, clampInt, isFiniteNumber } from '@/lib/math';
 import { MIDI_VALUE_MAX, type MidiCcBinding } from '@/project/midi-learn-targets';
 
 export * from '@/project/midi-learn-targets';
@@ -51,7 +51,7 @@ export function clampCcValue(value: number): number {
 
 /** Maps a 7-bit or optional 14-bit CC message to the legacy 0..127 control range. */
 export function midiCcMessageValue(message: Pick<MidiCcMessage, 'value' | 'value14'>): number {
-  if (typeof message.value14 === 'number' && Number.isFinite(message.value14)) {
+  if (isFiniteNumber(message.value14)) {
     return clampCcValue((message.value14 / 16383) * MIDI_VALUE_MAX);
   }
   return clampCcValue(message.value);

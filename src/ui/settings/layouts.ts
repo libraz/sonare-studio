@@ -9,7 +9,7 @@
  */
 
 import type { Ref } from 'vue';
-import { clamp } from '@/lib/math';
+import { clamp, isFiniteNumber } from '@/lib/math';
 
 /** Editor dock tabs (mirrors the shell's dock tab union). */
 export const DOCK_TABS = [
@@ -134,10 +134,9 @@ export function sanitizeLayoutState(raw: unknown): WorkspaceLayoutState | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const source = raw as Record<string, unknown>;
   const fallback = LAYOUT_PRESETS[0].state;
-  const height =
-    typeof source.arrangeHeightPx === 'number' && Number.isFinite(source.arrangeHeightPx)
-      ? clamp(Math.round(source.arrangeHeightPx), ARRANGE_HEIGHT_MIN_PX, ARRANGE_HEIGHT_MAX_PX)
-      : fallback.arrangeHeightPx;
+  const height = isFiniteNumber(source.arrangeHeightPx)
+    ? clamp(Math.round(source.arrangeHeightPx), ARRANGE_HEIGHT_MIN_PX, ARRANGE_HEIGHT_MAX_PX)
+    : fallback.arrangeHeightPx;
   const dockTab = DOCK_TABS.includes(source.dockTab as DockTabId)
     ? (source.dockTab as DockTabId)
     : fallback.dockTab;

@@ -9,6 +9,7 @@
  * timestamp; if the index is ever lost the slots remain readable projects.
  */
 
+import { isFiniteNumber } from '@/lib/math';
 import { isNotFoundError, writeOpfsFile } from './fs-utils';
 import { deleteSlotsGuarded } from './guarded-delete';
 import { withPersistenceMutationLock } from './mutation-lock';
@@ -100,7 +101,7 @@ function parseRevisionIndex(raw: unknown): ProjectRevision[] {
       projectName: record.projectName,
       label: record.label,
       savedAt: record.savedAt,
-      size: typeof record.size === 'number' && Number.isFinite(record.size) ? record.size : 0,
+      size: isFiniteNumber(record.size) ? record.size : 0,
     });
   }
   return entries;

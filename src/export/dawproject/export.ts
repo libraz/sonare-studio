@@ -39,7 +39,7 @@ import { strToU8 } from 'fflate';
 import { SECTION_MARKER_PREFIX } from '@/export/constants';
 import { encodeWav } from '@/export/wav';
 import { projectFilename } from '@/lib/filename';
-import { clamp01 } from '@/lib/math';
+import { clamp01, isFiniteNumber } from '@/lib/math';
 import { createStreamingZipWriter, DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import {
@@ -333,7 +333,7 @@ function realParameter(
 /** Builds one generic DAWproject device for a sonare insert slot. */
 function insertDeviceElement(slot: InsertSlot, id: string): XmlElement {
   const parameters = Object.entries(slot.params).flatMap(([name, value]): XmlElement[] => {
-    if (typeof value === 'number' && Number.isFinite(value)) {
+    if (isFiniteNumber(value)) {
       return [
         {
           name: 'RealParameter',

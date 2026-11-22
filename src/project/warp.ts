@@ -8,6 +8,7 @@
  */
 
 import type { Project, ProjectWarpMapDesc } from '@libraz/libsonare';
+import { clamp01 } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { nativeClipWarps, readNativeDocument } from './native-document';
 import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
@@ -270,7 +271,7 @@ export function warpSourceSecondsAt(clip: WarpableClipFields, clipLocalPpq: numb
     segments.find(
       (candidate) => ppq >= candidate.ppq && ppq <= candidate.ppq + candidate.lengthPpq + 1e-9,
     ) ?? segments[segments.length - 1];
-  const progress = Math.max(0, Math.min(1, (ppq - segment.ppq) / segment.lengthPpq));
+  const progress = clamp01((ppq - segment.ppq) / segment.lengthPpq);
   return segment.sourceStartSeconds + segment.sourceLengthSeconds * progress;
 }
 

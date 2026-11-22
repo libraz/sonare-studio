@@ -1,3 +1,4 @@
+import { isFiniteNumber } from '@/lib/math';
 import { activeTakeIndex } from './comping';
 import {
   noteKey,
@@ -149,7 +150,7 @@ export function refreshTempoMeter(
     return segment;
   });
   const bpm = tempoDoc[0]?.bpm;
-  const tempoBpm = typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
+  const tempoBpm = isFiniteNumber(bpm) && bpm > 0 ? bpm : null;
   const meterDoc = Array.isArray(doc.timeSignatures) ? doc.timeSignatures : [];
   const groupingByMeter = new Map(
     previousTimeSignatures

@@ -8,6 +8,7 @@
 
 import type { EngineAutomationPoint, EqBandInput, PanLaw, PanMode } from '@libraz/libsonare';
 import { SILENCE_DB } from '@/lib/db';
+import { isFiniteNumber } from '@/lib/math';
 import type { AutomationCurve } from '@/project/automation';
 import { clampPan, DEFAULT_PAN_LAW, DEFAULT_PAN_MODE, type MixerStrip } from '@/project/mixer';
 
@@ -25,7 +26,7 @@ export const ENGINE_DEFAULT_PAN_LAW: PanLaw = DEFAULT_PAN_LAW;
 export const ENGINE_DEFAULT_PAN_MODE: PanMode = DEFAULT_PAN_MODE;
 
 function finitePan(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? clampPan(value) : fallback;
+  return isFiniteNumber(value) ? clampPan(value) : fallback;
 }
 
 /** Fills one app strip's optional panner fields with the engine defaults. */

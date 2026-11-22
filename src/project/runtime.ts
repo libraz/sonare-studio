@@ -13,6 +13,7 @@
  */
 
 import type { Project, ProjectMidiEvent } from '@libraz/libsonare';
+import { isFiniteNumber } from '@/lib/math';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
 
 type WasmModule = typeof import('@libraz/libsonare');
@@ -43,7 +44,7 @@ export const PROJECT_MAX_UNDO_DEPTH = 512;
 
 /** Keeps malformed persisted numeric fields from reaching the wasm ABI. */
 export function finiteAtLeast(value: unknown, minimum: number, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= minimum ? value : fallback;
+  return isFiniteNumber(value) && value >= minimum ? value : fallback;
 }
 
 let wasmModule: WasmModule | null = null;

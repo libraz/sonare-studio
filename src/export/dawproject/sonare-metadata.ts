@@ -7,6 +7,7 @@
  */
 
 import { MEBIBYTE } from '@/lib/bytes';
+import { isFiniteNumber } from '@/lib/math';
 import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
 import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
@@ -168,7 +169,7 @@ function object(value: unknown): Record<string, unknown> | null {
 }
 
 function optionalFinite(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  return isFiniteNumber(value) ? value : undefined;
 }
 
 function sections(value: unknown): DocumentSection[] {

@@ -41,6 +41,26 @@ const RULES: Rule[] = [
     home: 'src/lib/pitch.ts',
   },
   {
+    name: 'finite-number guard spelled out',
+    pattern: /typeof\s+([\w.]+)\s*===\s*'number'\s*&&\s*Number\.isFinite\(\1\)/,
+    home: 'src/lib/math.ts',
+  },
+  {
+    name: 'unit clamp spelled out',
+    pattern: /Math\.(min\(\s*1\s*,\s*Math\.max\(\s*0|max\(\s*0\s*,\s*Math\.min\(\s*1)\s*,/,
+    home: 'src/lib/math.ts',
+  },
+  {
+    name: 'AbortError name check spelled out',
+    pattern: /\.name\s*===\s*['"]AbortError['"]/,
+    home: 'src/lib/errors.ts',
+  },
+  {
+    name: 'direct localStorage access',
+    pattern: /localStorage\.(getItem|setItem|removeItem)\(/,
+    home: 'src/lib/local-storage.ts',
+  },
+  {
     name: 'local copy of a shared helper',
     pattern:
       /\bfunction\s+(clamp|clamp01|clampInt|isFiniteNumber|isAbortError|tryEval|fnv1a32|fnv1a32Bytes|cloneJson|pitchClassOf)\s*[<(]/,

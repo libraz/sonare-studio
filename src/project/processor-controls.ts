@@ -19,7 +19,7 @@ import type {
   MasteringInsertSlot,
 } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
-import { clamp } from '@/lib/math';
+import { clamp, isFiniteNumber } from '@/lib/math';
 import { isSwitchOn } from '@/lib/midi';
 import { formatControlValue } from '@/ui/devices/knob-math';
 import { type AutomationParam, parseInsertAutomationParam } from './automation';
@@ -499,7 +499,7 @@ export function processorControl(
     const value =
       typeof rawValue === 'boolean'
         ? rawValue
-        : typeof rawValue === 'number' && Number.isFinite(rawValue)
+        : isFiniteNumber(rawValue)
           ? rawValue !== 0
           : spec.defaultValue;
     return { kind: 'boolean', id: param, name, value, defaultValue: spec.defaultValue };
@@ -517,7 +517,7 @@ export function processorControl(
       defaultValue: spec.defaultValue,
     };
   }
-  const raw = typeof rawValue === 'number' && Number.isFinite(rawValue) ? rawValue : undefined;
+  const raw = isFiniteNumber(rawValue) ? rawValue : undefined;
   return {
     kind: 'number',
     id: param,
