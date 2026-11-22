@@ -37,6 +37,107 @@ import { TRACK_COLOR_PALETTE } from './types';
 import { installProjectClipWarp, sanitizeClipWarp } from './warp';
 
 /**
+ * Copies a document audio clip's takes and comp segments onto `next`,
+ * dropping takes without an asset.
+ *
+ * @param next Clip mirror entry being built.
+ * @param meta Document clip metadata.
+ * @param lengthPpq Clip length the comp segments are sanitized against.
+ */
+function applyAudioTakeMetadata(next: EditorClip, meta: DocumentClip, lengthPpq: number): void {
+  // Takes/comping are document metadata; malformed selections are
+  // re-sanitized on expansion (src/project/comping.ts).
+  if (Array.isArray(meta.takes) && meta.takes.length > 0) {
+    next.takes = meta.takes
+      .filter((take) => typeof take?.assetId === 'string' && take.assetId.length > 0)
+      .map((take) => ({ assetId: take.assetId, name: String(take.name ?? '') }));
+    if (next.takes.length === 0) {
+      delete next.takes;
+    } else if (Array.isArray(meta.compSegments) && meta.compSegments.length > 0) {
+      next.compSegments = sanitizeCompSegments(
+        meta.compSegments.map((segment) => ({
+          startPpq: Number(segment.startPpq),
+          takeIndex: Number(segment.takeIndex),
+          ...(Number.isFinite(segment.crossfadePpq)
+            ? { crossfadePpq: Number(segment.crossfadePpq) }
+            : {}),
+        })),
+        next.takes.length,
+        lengthPpq,
+      );
+      if (next.compSegments.length === 0) delete next.compSegments;
+    }
+  }
+}
+
+/**
+ * Copies a document MIDI clip's takes, active take and comp segments onto
+ * `next`, dropping malformed takes and notes.
+ *
+ * @param next Clip mirror entry being built.
+ * @param meta Document clip metadata.
+ * @param lengthPpq Clip length the comp segments are sanitized against.
+ */
+function applyMidiTakeMetadata(next: EditorClip, meta: DocumentClip, lengthPpq: number): void {
+  if (!Array.isArray(meta.midiTakes) || meta.midiTakes.length === 0) return;
+  const takes: MidiClipTake[] = [];
+  for (const take of meta.midiTakes) {
+    if (typeof take?.name !== 'string' || !Array.isArray(take.notes)) continue;
+    const notes = take.notes
+      .map((note) => ({
+        pitch: Math.round(Number(note.pitch)),
+        velocity: Math.round(Number(note.velocity)),
+        startPpq: Number(note.startPpq),
+        durationPpq: Number(note.durationPpq),
+        channel: Math.round(Number(note.channel)),
+        ...(Number.isFinite(note.offVelocity)
+          ? { offVelocity: Math.round(Number(note.offVelocity)) }
+          : {}),
+      }))
+      .filter(
+        (note) =>
+          Number.isInteger(note.pitch) &&
+          note.pitch >= 0 &&
+          note.pitch <= 127 &&
+          Number.isInteger(note.velocity) &&
+          note.velocity >= 1 &&
+          note.velocity <= 127 &&
+          Number.isFinite(note.startPpq) &&
+          note.startPpq >= 0 &&
+          Number.isFinite(note.durationPpq) &&
+          note.durationPpq > 0 &&
+          isValidChannel(note.channel) &&
+          (note.offVelocity === undefined ||
+            (Number.isInteger(note.offVelocity) &&
+              note.offVelocity >= 1 &&
+              note.offVelocity <= 127)),
+      );
+    takes.push({
+      name: take.name,
+      notes,
+      ...copyMidiLaneFields(take),
+    });
+  }
+  if (takes.length > 0) {
+    next.midiTakes = takes;
+    next.midiActiveTakeIndex = activeTakeIndex(
+      meta.midiActiveTakeIndex === undefined ? undefined : Number(meta.midiActiveTakeIndex),
+      takes.length,
+    );
+    if (Array.isArray(meta.midiCompSegments) && meta.midiCompSegments.length > 0) {
+      next.midiCompSegments = sanitizeCompSegments(
+        meta.midiCompSegments.map((segment) => ({
+          startPpq: Number(segment.startPpq),
+          takeIndex: Number(segment.takeIndex),
+        })),
+        takes.length,
+        lengthPpq,
+      );
+    }
+  }
+}
+
+/**
  * Applies document-only clip metadata onto the refreshed clip mirror.
  *
  * Clip names, kinds and asset references are app metadata the Project does not
@@ -68,29 +169,7 @@ export function applyDocumentClipMetadata(
       }
       if ((meta.fadeInPpq ?? 0) > 0) next.fadeInPpq = meta.fadeInPpq as number;
       if ((meta.fadeOutPpq ?? 0) > 0) next.fadeOutPpq = meta.fadeOutPpq as number;
-      // Takes/comping are document metadata; malformed selections are
-      // re-sanitized on expansion (src/project/comping.ts).
-      if (Array.isArray(meta.takes) && meta.takes.length > 0) {
-        next.takes = meta.takes
-          .filter((take) => typeof take?.assetId === 'string' && take.assetId.length > 0)
-          .map((take) => ({ assetId: take.assetId, name: String(take.name ?? '') }));
-        if (next.takes.length === 0) {
-          delete next.takes;
-        } else if (Array.isArray(meta.compSegments) && meta.compSegments.length > 0) {
-          next.compSegments = sanitizeCompSegments(
-            meta.compSegments.map((segment) => ({
-              startPpq: Number(segment.startPpq),
-              takeIndex: Number(segment.takeIndex),
-              ...(Number.isFinite(segment.crossfadePpq)
-                ? { crossfadePpq: Number(segment.crossfadePpq) }
-                : {}),
-            })),
-            next.takes.length,
-            clip.lengthPpq,
-          );
-          if (next.compSegments.length === 0) delete next.compSegments;
-        }
-      }
+      applyAudioTakeMetadata(next, meta, clip.lengthPpq);
       if (
         meta.warp !== undefined &&
         typeof meta.warp.enabled === 'boolean' &&
@@ -120,63 +199,7 @@ export function applyDocumentClipMetadata(
         );
       }
     }
-    if (kind === 'midi' && Array.isArray(meta.midiTakes) && meta.midiTakes.length > 0) {
-      const takes: MidiClipTake[] = [];
-      for (const take of meta.midiTakes) {
-        if (typeof take?.name !== 'string' || !Array.isArray(take.notes)) continue;
-        const notes = take.notes
-          .map((note) => ({
-            pitch: Math.round(Number(note.pitch)),
-            velocity: Math.round(Number(note.velocity)),
-            startPpq: Number(note.startPpq),
-            durationPpq: Number(note.durationPpq),
-            channel: Math.round(Number(note.channel)),
-            ...(Number.isFinite(note.offVelocity)
-              ? { offVelocity: Math.round(Number(note.offVelocity)) }
-              : {}),
-          }))
-          .filter(
-            (note) =>
-              Number.isInteger(note.pitch) &&
-              note.pitch >= 0 &&
-              note.pitch <= 127 &&
-              Number.isInteger(note.velocity) &&
-              note.velocity >= 1 &&
-              note.velocity <= 127 &&
-              Number.isFinite(note.startPpq) &&
-              note.startPpq >= 0 &&
-              Number.isFinite(note.durationPpq) &&
-              note.durationPpq > 0 &&
-              isValidChannel(note.channel) &&
-              (note.offVelocity === undefined ||
-                (Number.isInteger(note.offVelocity) &&
-                  note.offVelocity >= 1 &&
-                  note.offVelocity <= 127)),
-          );
-        takes.push({
-          name: take.name,
-          notes,
-          ...copyMidiLaneFields(take),
-        });
-      }
-      if (takes.length > 0) {
-        next.midiTakes = takes;
-        next.midiActiveTakeIndex = activeTakeIndex(
-          meta.midiActiveTakeIndex === undefined ? undefined : Number(meta.midiActiveTakeIndex),
-          takes.length,
-        );
-        if (Array.isArray(meta.midiCompSegments) && meta.midiCompSegments.length > 0) {
-          next.midiCompSegments = sanitizeCompSegments(
-            meta.midiCompSegments.map((segment) => ({
-              startPpq: Number(segment.startPpq),
-              takeIndex: Number(segment.takeIndex),
-            })),
-            takes.length,
-            clip.lengthPpq,
-          );
-        }
-      }
-    }
+    if (kind === 'midi') applyMidiTakeMetadata(next, meta, clip.lengthPpq);
     // Lanes are MIDI-clip metadata; hydrate and re-sanitize them against the clip window.
     if (kind === 'midi') Object.assign(next, loadMidiLaneFields(meta, clip.lengthPpq));
     if (kind === 'midi' && Array.isArray(meta.smfSysEx) && meta.smfSysEx.length > 0) {
