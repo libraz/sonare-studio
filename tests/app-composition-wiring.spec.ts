@@ -32,7 +32,7 @@ describe('application composition wiring', () => {
     ]) {
       expect(app).toContain(action);
     }
-    expect(app).toContain('} = useAppShortcutsMenu({');
+    expect(app).toMatch(/\}\s*=\s*useAppShortcutsMenu\(\{/);
     expect(app).toContain(':layout-menu="layoutMenu"');
   });
 
