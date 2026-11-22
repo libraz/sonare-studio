@@ -47,7 +47,6 @@ import type { SmfSysExPacket } from './types';
 export {
   extractSmfSysEx,
   inspectSmfSysEx,
-  presetForGmProgram,
   smfToProjectDocument,
 } from './smf-import';
 export { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from './smf-shared';

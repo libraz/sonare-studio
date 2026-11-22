@@ -3,7 +3,7 @@ import { keyMarkerName } from '@/compose/key-name';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { ensureWasm } from '@/lib/wasm';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION } from './document-schema';
-import { GM2_DRUM_BANK, isGm2DrumBank } from './instrument';
+import { GM2_DRUM_BANK, isGm2DrumBank, presetForGmProgram } from './instrument';
 import { pairEventsIntoNotes, projectMidiContent, type SerializedMidiEvent } from './midi-events';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from './serialization';
 import {
@@ -16,8 +16,6 @@ import {
 } from './smf-shared';
 import { type SmfSysExPacket, TRACK_COLOR_PALETTE } from './types';
 
-/** First GM program of the sound-effects family; lower percussive programs map to the drum kit. */
-const GM_SOUND_EFFECTS_PROGRAM = 120;
 const PPQ_INTEGER_EPSILON = 1 / 256;
 const STATUS_POLY_PRESSURE = 0xa;
 const STATUS_NOTE_OFF = 0x8;
@@ -172,26 +170,6 @@ function displayClipLength(lengthPpq: number): number {
     return Math.max(DEFAULT_CLIP_LENGTH_PPQ, rounded);
   }
   return Math.max(DEFAULT_CLIP_LENGTH_PPQ, Math.ceil(lengthPpq));
-}
-
-/** Maps a GM program, channel and bank to the closest built-in synth preset. */
-export function presetForGmProgram(program: number, ch: number, bank?: number): string {
-  if (ch === GM_PERCUSSION_CHANNEL || isGm2DrumBank(bank)) return 'drumKit';
-  if (program === 4 || program === 5) return 'ePiano';
-  if (program < 8) return 'acousticPiano';
-  if (program < 16) return 'ePiano';
-  if (program < 24) return 'organ';
-  if (program < 32) return 'electricGuitar';
-  if (program < 40) return 'subBass';
-  if (program < 56) return 'warmPad';
-  if (program < 64) return 'brass';
-  if (program < 80) return 'organ';
-  if (program === 80) return 'squareLead';
-  if (program < 88) return 'sawLead';
-  if (program < 96) return 'warmPad';
-  if (program < 112) return 'pluck';
-  if (program < GM_SOUND_EFFECTS_PROGRAM) return 'drumKit';
-  return 'sine';
 }
 
 function programsFromEvents(events: ReadonlyArray<SerializedMidiEvent>): ProgramEntry[] {

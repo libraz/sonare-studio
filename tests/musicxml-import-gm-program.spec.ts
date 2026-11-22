@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { importMusicXml } from '@/notation/musicxml-import';
-import { presetForGmProgram } from '@/project/smf';
+import { presetForGmProgram } from '@/project/instrument';
 
 function instrumentFor(program: number, channel: number) {
   const xml =

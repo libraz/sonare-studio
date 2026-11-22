@@ -16,13 +16,13 @@
  */
 
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
+import { presetForGmProgram } from '@/project/instrument';
 import {
   type DocumentTempoSegment,
   type DocumentTimeSignature,
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
 } from '@/project/serialization';
-import { presetForGmProgram } from '@/project/smf';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
 import {

@@ -17,6 +17,7 @@
  */
 
 import type { SynthPatch } from '@libraz/libsonare';
+import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 
@@ -42,6 +43,29 @@ export interface SynthPresetInstrument {
 /** Program used when a catalog preset is converted to a GM instrument or exported as SMF. */
 export function gmProgramForPreset(preset: string): number {
   return PRESET_GM_PROGRAM[preset] ?? 4;
+}
+
+/** First GM program of the sound-effects family; lower percussive programs map to the drum kit. */
+const GM_SOUND_EFFECTS_PROGRAM = 120;
+
+/** Maps a GM program, channel and bank to the closest built-in synth preset. */
+export function presetForGmProgram(program: number, ch: number, bank?: number): string {
+  if (ch === GM_PERCUSSION_CHANNEL || isGm2DrumBank(bank)) return 'drumKit';
+  if (program === 4 || program === 5) return 'ePiano';
+  if (program < 8) return 'acousticPiano';
+  if (program < 16) return 'ePiano';
+  if (program < 24) return 'organ';
+  if (program < 32) return 'electricGuitar';
+  if (program < 40) return 'subBass';
+  if (program < 56) return 'warmPad';
+  if (program < 64) return 'brass';
+  if (program < 80) return 'organ';
+  if (program === 80) return 'squareLead';
+  if (program < 88) return 'sawLead';
+  if (program < 96) return 'warmPad';
+  if (program < 112) return 'pluck';
+  if (program < GM_SOUND_EFFECTS_PROGRAM) return 'drumKit';
+  return 'sine';
 }
 
 /** NativeSynth's named presets and their nearest standard GM address. */
