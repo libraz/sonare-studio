@@ -224,11 +224,33 @@ function isCoreModule(specifier: string): boolean {
   return /(^|\/)wasm(\/|$)/.test(specifier.replace(/\/index\.js$/, ''));
 }
 
+/**
+ * Whether parsing `text` could change the scan: it spells a retired export, or a
+ * retired member right after a dot, that is not vocabulary or is vocabulary not
+ * yet recorded as suppressed. Skipping every other file leaves the hits and the
+ * suppressed set as a full scan would.
+ */
+function mayReach(
+  text: string,
+  exports: Set<string>,
+  members: Set<string>,
+  vocabulary: Set<string>,
+): boolean {
+  for (const [, dot, word] of text.matchAll(/(\.\s*)?([A-Za-z_$][\w$]*)/g)) {
+    if (!exports.has(word) && !(dot && members.has(word))) continue;
+    if (!vocabulary.has(word) || !suppressed.has(word)) return true;
+  }
+  return false;
+}
+
 /** Uses of retired names: `file:line kind name`. */
 function retiredUses(exports: Set<string>, members: Set<string>): string[] {
   const hits: string[] = [];
+  const vocabulary = new Set(STUDIO_VOCABULARY.map(({ name }) => name));
   for (const file of trackedSources()) {
-    const sf = ts.createSourceFile(file, scriptText(file), ts.ScriptTarget.ESNext, true);
+    const text = scriptText(file);
+    if (!mayReach(text, exports, members, vocabulary)) continue;
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true);
     const report = (node: ts.Node, kind: string, name: string): void => {
       if (studioOwned(file, name)) return;
       const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
