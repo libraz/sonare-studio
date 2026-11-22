@@ -48,12 +48,14 @@ trap 'rm -rf "$STAGE_DIR"' EXIT
 for file in "${RUNTIME_FILES[@]}"; do
   cp "$DIST_DIR/$file" "$STAGE_DIR/"
 done
-mkdir -p "$STAGE_DIR/worklet"
-for decl in "$DIST_DIR"/*.d.ts; do
-  [[ " ${SKIP_DECLS[*]} " == *" $(basename "$decl") "* ]] && continue
-  cp "$decl" "$STAGE_DIR/"
+# Every declaration in every subdirectory: public declarations import from
+# sibling directories (worklet/, internal/), so none may be left behind.
+DECL_FILTER=(--include='*/')
+for skip in "${SKIP_DECLS[@]}"; do
+  DECL_FILTER+=(--exclude "/$skip")
 done
-cp "$DIST_DIR"/worklet/*.d.ts "$STAGE_DIR/worklet/"
+DECL_FILTER+=(--include='*.d.ts' --exclude='*' --prune-empty-dirs)
+rsync -r "${DECL_FILTER[@]}" "$DIST_DIR/" "$STAGE_DIR/"
 
 # Source maps are not vendored.
 find "$STAGE_DIR" \( -name '*.js' -o -name '*.d.ts' \) -print0 |
