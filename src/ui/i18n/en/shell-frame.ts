@@ -40,6 +40,7 @@ export const shellFrame = {
     exportSmf: 'Export SMF',
     exportMidi2: 'Export MIDI 2.0 clip file',
     exportMusicXml: 'Export clip as MusicXML...',
+    exportMxl: 'Export clip as compressed MusicXML (.mxl)...',
     exportAudio: 'Export Audio...',
     exportDawproject: 'Export DAWproject',
     unsavedChanges: 'Unsaved changes',

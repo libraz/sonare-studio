@@ -5,6 +5,7 @@ import { ref } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
 import { useProjectExport } from '@/composables/useProjectExport';
+import { extractMusicXmlFromMxl } from '@/notation/musicxml-mxl';
 import { createBrowserBackupWithReport } from '@/persistence/backup';
 import { gatherProjectBundleWithReport } from '@/persistence/bundle';
 import { downloadBrowserBackup, downloadSzd } from '@/persistence/local-file';
@@ -180,6 +181,34 @@ describe('useProjectExport', () => {
     const [blob, filename] = downloadBlobFile.mock.calls[0] as [Blob, string];
     expect(filename).toBe('Score Export.musicxml');
     await expect(blob.text()).resolves.toContain('<score-partwise version="4.0">');
+  });
+
+  it('exports the active MIDI clip as a compressed .mxl through the same path', async () => {
+    await loadProjectDocument(makeDoc('midi'));
+    const { closeProjectMenu, downloadBlobFile, projectExport } = setup();
+
+    const availability = projectExport.exportMxlAction();
+    await flushPromises();
+
+    expect(availability).toEqual(projectExport.musicXmlAvailability.value);
+    expect(closeProjectMenu).toHaveBeenCalledTimes(1);
+    expect(downloadBlobFile).toHaveBeenCalledTimes(1);
+    const [blob, filename] = downloadBlobFile.mock.calls[0] as [Blob, string];
+    expect(filename).toBe('Score Export.mxl');
+    expect(blob.type).toBe('application/vnd.recordare.musicxml');
+    const xml = extractMusicXmlFromMxl(new Uint8Array(await blob.arrayBuffer()));
+    expect(xml).toContain('<score-partwise version="4.0">');
+  });
+
+  it('does not export .mxl when the active clip is audio', async () => {
+    await loadProjectDocument(makeDoc('audio'));
+    const { downloadBlobFile, projectExport } = setup();
+
+    const availability = projectExport.exportMxlAction();
+    await flushPromises();
+
+    expect(availability).toMatchObject({ available: false, reason: 'active-midi-clip-required' });
+    expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 
   it('uses the same key-aware score artifact settings as the score panel', async () => {

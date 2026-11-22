@@ -97,6 +97,7 @@ export interface AppShortcutsMenuOptions {
   exportBrowserBackup: () => void;
   exportMidi2: () => void;
   exportMusicXml: () => void;
+  exportMxl: () => void;
   exportSmf: () => void;
   exportSzd: () => void;
   importAudio: () => void;
@@ -560,6 +561,9 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
       commandItem('file.exportSmf', m.exportSmf, options.exportSmf),
       commandItem('file.exportMidi2', m.exportMidi2, options.exportMidi2),
       commandItem('file.exportMusicXml', m.exportMusicXml, options.exportMusicXml, {
+        reason: noMidiClip,
+      }),
+      commandItem('file.exportMxl', m.exportMxl, options.exportMxl, {
         reason: noMidiClip,
       }),
       commandItem('file.exportAudio', m.exportAudio, options.openExportDialog),

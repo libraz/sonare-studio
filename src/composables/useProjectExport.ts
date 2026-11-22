@@ -5,6 +5,7 @@ import { dawprojectFilename, exportDawprojectWithReport } from '@/export/dawproj
 import { inspectDawprojectExportLoss } from '@/export/dawproject/export-loss';
 import type { MixdownRangePpq } from '@/export/mixdown';
 import { projectFilename } from '@/lib/filename';
+import { musicXmlBlob, mxlBlob } from '@/notation/io';
 import { inspectMusicXmlExportLoss, serializeMusicXml } from '@/notation/musicxml';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { createBrowserBackupWithReport } from '@/persistence/backup';
@@ -33,7 +34,7 @@ type ConfirmAction = (
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type DownloadBlobFile = (blob: Blob, filename: string) => void;
 
-const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
+type ScoreFileFormat = 'musicxml' | 'mxl';
 
 export interface ProjectExportOptions {
   closeProjectMenu: () => void;
@@ -55,6 +56,7 @@ export interface ProjectExport {
   musicXmlAvailability: ComputedRef<ScoreExportAvailability>;
   exportDawprojectAction(): void;
   exportMusicXmlAction(): ScoreExportAvailability;
+  exportMxlAction(): ScoreExportAvailability;
   exportSzdAction(): void;
   exportBrowserBackupAction(): void;
   exportSmfAction(): void;
@@ -144,11 +146,12 @@ export function useProjectExport(options: ProjectExportOptions): ProjectExport {
   }
 
   /**
-   * Starts MusicXML export and returns the same eligibility result consumed by
-   * menu callers. An unavailable action is therefore observable even when a
-   * caller invokes it directly rather than through a disabled menu row.
+   * Starts a MusicXML (.musicxml or compressed .mxl) export and returns the
+   * same eligibility result consumed by menu callers. An unavailable action is
+   * therefore observable even when a caller invokes it directly rather than
+   * through a disabled menu row.
    */
-  function exportMusicXmlAction(): ScoreExportAvailability {
+  function exportScoreFileAction(format: ScoreFileFormat): ScoreExportAvailability {
     options.closeProjectMenu();
     const availability = musicXmlAvailability.value;
     if (!availability.available) {
@@ -190,13 +193,17 @@ export function useProjectExport(options: ProjectExportOptions): ProjectExport {
         grandStaffSplitPitch: store.scoreDisplaySettings.grandStaffSplitPitch,
         layoutSettings: store.scoreDisplaySettings,
       });
+      const xml = serializeMusicXml(score);
       options.downloadBlobFile(
-        new Blob([serializeMusicXml(score)], { type: MUSICXML_MIME }),
-        projectFilename(store.projectName, '.musicxml', 'score'),
+        format === 'mxl' ? mxlBlob(xml) : musicXmlBlob(xml),
+        projectFilename(store.projectName, format === 'mxl' ? '.mxl' : '.musicxml', 'score'),
       );
     });
     return availability;
   }
+
+  const exportMusicXmlAction = (): ScoreExportAvailability => exportScoreFileAction('musicxml');
+  const exportMxlAction = (): ScoreExportAvailability => exportScoreFileAction('mxl');
 
   function exportSzdAction(): void {
     options.closeProjectMenu();
@@ -269,6 +276,7 @@ export function useProjectExport(options: ProjectExportOptions): ProjectExport {
     musicXmlAvailability,
     exportDawprojectAction,
     exportMusicXmlAction,
+    exportMxlAction,
     exportSzdAction,
     exportBrowserBackupAction,
     exportSmfAction,

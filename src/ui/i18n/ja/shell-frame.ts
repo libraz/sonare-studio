@@ -41,6 +41,7 @@ export const shellFrame = {
     exportSmf: 'SMFを書き出し',
     exportMidi2: 'MIDI 2.0クリップファイルを書き出し',
     exportMusicXml: 'クリップをMusicXMLとして書き出し...',
+    exportMxl: 'クリップを圧縮MusicXML (.mxl) として書き出し...',
     exportAudio: 'オーディオを書き出し...',
     exportDawproject: 'DAWprojectを書き出し',
     unsavedChanges: '未保存の変更',

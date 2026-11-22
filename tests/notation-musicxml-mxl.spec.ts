@@ -1,7 +1,7 @@
-import { strToU8, zipSync } from 'fflate';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 import { MusicXmlImportError } from '@/notation/musicxml-import';
-import { extractMusicXmlFromMxl } from '@/notation/musicxml-mxl';
+import { extractMusicXmlFromMxl, packMusicXmlToMxl } from '@/notation/musicxml-mxl';
 
 const SCORE = '<score-partwise version="4.0"><part-list/></score-partwise>';
 const CONTAINER =
@@ -57,5 +57,38 @@ describe('extractMusicXmlFromMxl', () => {
     });
 
     expect(() => extractMusicXmlFromMxl(archive)).toThrow(MusicXmlImportError);
+  });
+});
+
+describe('packMusicXmlToMxl', () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<score-partwise version="4.0"><part-list/>${'<a/>'.repeat(200)}</score-partwise>`;
+
+  it('round-trips through the reader to the identical XML', () => {
+    expect(extractMusicXmlFromMxl(packMusicXmlToMxl(xml))).toBe(xml);
+  });
+
+  it('leads with a stored mimetype entry holding the exact media type', () => {
+    const bytes = packMusicXmlToMxl(xml);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    expect(view.getUint32(0, true)).toBe(0x04034b50);
+    expect(view.getUint16(8, true)).toBe(0); // compression method: stored
+    const nameLength = view.getUint16(26, true);
+    const extraLength = view.getUint16(28, true);
+    expect(strFromU8(bytes.subarray(30, 30 + nameLength))).toBe('mimetype');
+    const dataStart = 30 + nameLength + extraLength;
+    expect(strFromU8(bytes.subarray(dataStart, dataStart + view.getUint32(22, true)))).toBe(
+      'application/vnd.recordare.musicxml',
+    );
+  });
+
+  it('names an archived score in the container rootfile', () => {
+    const entries = unzipSync(packMusicXmlToMxl(xml));
+    const container = new DOMParser().parseFromString(
+      strFromU8(entries['META-INF/container.xml']),
+      'application/xml',
+    );
+    const rootfile = container.querySelector('rootfile');
+    expect(rootfile?.getAttribute('media-type')).toBe('application/vnd.recordare.musicxml+xml');
+    expect(entries[rootfile?.getAttribute('full-path') ?? '']).toBeDefined();
   });
 });

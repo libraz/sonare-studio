@@ -21,6 +21,7 @@ describe('application composition wiring', () => {
       'exportBrowserBackupAction',
       'exportMidi2Action',
       'exportMusicXmlAction',
+      'exportMxlAction',
       'exportSmfAction',
       'exportSzdAction',
       'importAudioAction',

@@ -8,6 +8,7 @@
 
 import { downloadBlob } from '@/lib/download';
 import { ensureFileExtension } from '@/lib/filename';
+import { MXL_MIME, packMusicXmlToMxl } from './musicxml-mxl';
 
 export {
   importMusicXml,
@@ -17,6 +18,16 @@ export {
 
 /** MIME type for MusicXML downloads. */
 const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
+
+/** Builds the .musicxml download Blob. */
+export function musicXmlBlob(xml: string): Blob {
+  return new Blob([xml], { type: MUSICXML_MIME });
+}
+
+/** Builds the compressed .mxl download Blob. */
+export function mxlBlob(xml: string): Blob {
+  return new Blob([new Uint8Array(packMusicXmlToMxl(xml))], { type: MXL_MIME });
+}
 
 /**
  * Appends a file extension unless the name already ends with it
@@ -35,6 +46,5 @@ export { ensureFileExtension } from '@/lib/filename';
  * @param filename Suggested file name; ".musicxml" is appended when missing.
  */
 export function exportMusicXml(xml: string, filename: string): void {
-  const blob = new Blob([xml], { type: MUSICXML_MIME });
-  downloadBlob(blob, ensureFileExtension(filename, '.musicxml'));
+  downloadBlob(musicXmlBlob(xml), ensureFileExtension(filename, '.musicxml'));
 }

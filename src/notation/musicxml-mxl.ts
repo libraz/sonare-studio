@@ -1,6 +1,8 @@
-/** Bounded extraction of compressed MusicXML (.mxl) archives. */
+/** Bounded extraction and packing of compressed MusicXML (.mxl) archives. */
 
+import { strToU8, zipSync } from 'fflate';
 import { errorMessage } from '@/lib/errors';
+import { DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import {
   DEFAULT_XML_LIMITS,
   preflightXmlBytes,
@@ -11,6 +13,14 @@ import { preflightAndUnzip } from '@/persistence/archive-preflight';
 import { DEFAULT_MUSICXML_IMPORT_LIMITS, MusicXmlImportError } from './musicxml-import';
 
 const MXL_CONTAINER_PATH = 'META-INF/container.xml';
+const MXL_SCORE_PATH = 'score.musicxml';
+const MXL_MIMETYPE_PATH = 'mimetype';
+/** Content of the archive's leading `mimetype` entry; also the .mxl download MIME type. */
+export const MXL_MIME = 'application/vnd.recordare.musicxml';
+const MXL_SCORE_MEDIA_TYPE = 'application/vnd.recordare.musicxml+xml';
+const MXL_CONTAINER_XML =
+  '<?xml version="1.0" encoding="UTF-8"?>\n' +
+  `<container><rootfiles><rootfile full-path="${MXL_SCORE_PATH}" media-type="${MXL_SCORE_MEDIA_TYPE}"/></rootfiles></container>\n`;
 const MXL_LIMITS = {
   maxCompressedBytes: DEFAULT_XML_LIMITS.maxBytes,
   maxUncompressedBytes: DEFAULT_XML_LIMITS.maxBytes,
@@ -70,4 +80,20 @@ export function extractMusicXmlFromMxl(bytes: Uint8Array, fileName = 'MusicXML a
     throw new MusicXmlImportError('Compressed MusicXML container does not name an embedded score');
   }
   return xmlText(entries[path], fileName);
+}
+
+/**
+ * Packs score XML into a compressed MusicXML (.mxl) archive: a stored
+ * `mimetype` entry first, then the container file naming the score, then the
+ * deflated score.
+ */
+export function packMusicXmlToMxl(xml: string): Uint8Array {
+  return zipSync(
+    {
+      [MXL_MIMETYPE_PATH]: [strToU8(MXL_MIME), { level: 0 }],
+      [MXL_CONTAINER_PATH]: strToU8(MXL_CONTAINER_XML),
+      [MXL_SCORE_PATH]: strToU8(xml),
+    },
+    { level: 6, mtime: DETERMINISTIC_ZIP_MTIME },
+  );
 }
