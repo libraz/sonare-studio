@@ -1,3 +1,4 @@
+import { untilDoneAcceptingConfirms } from '../harness.mjs';
 import { downloadBytes, inspectWav } from '../wav-inspection.mjs';
 
 /** Walk the complete audio-to-MIDI production path in an isolated browser context. */
@@ -538,7 +539,20 @@ async function exportSmf(page) {
   const item = page.locator('[id="menubar-file-file_2e_exportSmf"]');
   await item.waitFor({ state: 'visible' });
   const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+  let downloaded = false;
+  void downloadPromise.then(
+    () => {
+      downloaded = true;
+    },
+    () => undefined,
+  );
   await item.click();
+  // The source audio track cannot go into an SMF, so the export first asks to drop it.
+  const accepted = await untilDoneAcceptingConfirms(page, async () => downloaded, 60000);
+  assert(
+    accepted.some((message) => message.includes(AUDIO_FILE_NAME.replace(/\.wav$/, ''))),
+    `SMF export did not announce the omitted audio track: ${JSON.stringify(accepted)}`,
+  );
   const download = await downloadPromise;
   const bytes = await downloadBytes(download);
   const parsed = parseSmfNotes(bytes);
