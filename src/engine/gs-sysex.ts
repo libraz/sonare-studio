@@ -1,4 +1,5 @@
 import type { SmfSysExPacket } from '@/project/types';
+import type { RealtimeEngine } from '@/wasm/index.js';
 
 /** Maximum SysEx frame accepted by libsonare's realtime engine. */
 export const MAX_REALTIME_SYSEX_BYTES = 512;
@@ -100,9 +101,7 @@ export function collectGsSetupSysex(
  * effect active before that packet's musical position.
  */
 export function pushGsSetupSysex(
-  engine: {
-    pushMidiSysex?: (destinationId: number, data: Uint8Array, renderFrame?: number) => void;
-  },
+  engine: Partial<Pick<RealtimeEngine, 'pushMidiSysex'>>,
   clips: ReadonlyArray<GsSysExClipSource>,
   destinations: ReadonlyArray<GsSysExDestination>,
   previousKey?: string,

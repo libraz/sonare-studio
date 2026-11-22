@@ -76,14 +76,11 @@ export type OfflineRenderEngine = Pick<
   | 'play'
   | 'stop'
   | 'destroy'
-> & {
-  /** Renders one block in place; the monitor-bus form is not used offline. */
-  process(channels: Float32Array[]): Float32Array[];
-  /** Longest audible tail after the last input, in samples (2147483647 = unbounded). */
-  readonly tailSamples?: number;
-  /** Apply one complete setup SysEx frame to an already-bound SF2 player. */
-  pushMidiSysex?: (destinationId: number, data: Uint8Array, renderFrame?: number) => void;
-};
+> &
+  Partial<Pick<RealtimeEngine, 'tailSamples' | 'pushMidiSysex'>> & {
+    /** Renders one block in place; the monitor-bus form is not used offline. */
+    process(channels: Parameters<RealtimeEngine['process']>[0]): Float32Array[];
+  };
 
 /** One engine track send (numeric engine bus id). */
 export type SendSpec = EngineTrackSend;

@@ -150,12 +150,111 @@ function coreCaused(checker: ts.TypeChecker, sf: ts.SourceFile, d: ts.Diagnostic
   return false;
 }
 
+let studioProgram: ts.Program | undefined;
+
+/** One program over every tracked studio and test source, shared by the checks below. */
+function studio(): ts.Program {
+  studioProgram ??= createProgram(trackedSources());
+  return studioProgram;
+}
+
+/** True when any type reference inside `node` names a core type. */
+function mentionsCore(checker: ts.TypeChecker, node: ts.Node): boolean {
+  let found = false;
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (ts.isTypeReferenceNode(n) || ts.isExpressionWithTypeArguments(n) || ts.isTypeQueryNode(n)) {
+      const name = ts.isTypeReferenceNode(n)
+        ? n.typeName
+        : ts.isTypeQueryNode(n)
+          ? n.exprName
+          : n.expression;
+      let symbol = checker.getSymbolAtLocation(name);
+      if (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+      if (declaredInCore(symbol?.declarations)) found = true;
+    }
+    if (!found) ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/** True when an interface extends a core type (`Pick<RealtimeEngine, ...>` and the like). */
+function extendsCore(checker: ts.TypeChecker, node: ts.InterfaceDeclaration): boolean {
+  return (node.heritageClauses ?? []).some((clause) => mentionsCore(checker, clause));
+}
+
+/**
+ * Local object types a core class instance would satisfy: every member is one
+ * the class has, at least one is a method, and the type is not built from the
+ * core type itself (an interface extending `Pick<...>` of it). Interfaces and
+ * type literals are both checked, inline ones included. Such a type is a hand-declared seam the import check
+ * cannot see through, so a core rename or removal behind it goes unnoticed.
+ */
+function handDeclaredCoreMirrors(): string[] {
+  const program = studio();
+  const checker = program.getTypeChecker();
+  const index = program.getSourceFile(path.join(WASM_DIR, 'index.d.ts'));
+  const moduleSymbol = index && checker.getSymbolAtLocation(index);
+  if (!moduleSymbol) throw new Error('vendored index.d.ts is not in the program');
+  const classes = checker
+    .getExportsOfModule(moduleSymbol)
+    .map((symbol) =>
+      symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol,
+    )
+    .filter((symbol) => symbol.flags & ts.SymbolFlags.Class)
+    .map((symbol) => ({ name: symbol.name, type: checker.getDeclaredTypeOfSymbol(symbol) }));
+  const found: string[] = [];
+  for (const sf of program.getSourceFiles()) {
+    const file = path.relative(ROOT, sf.fileName).replace(/\.vue\.ts$/, '.vue');
+    if (!file.startsWith('src/') || file.startsWith('src/wasm/')) continue;
+    const visit = (node: ts.Node): void => {
+      const candidate = ts.isInterfaceDeclaration(node)
+        ? !extendsCore(checker, node)
+        : ts.isTypeLiteralNode(node);
+      if (candidate) {
+        const local = checker.getTypeAtLocation(ts.isInterfaceDeclaration(node) ? node.name : node);
+        const members = checker.getPropertiesOfType(local);
+        // A member typed through the core (`Parameters<RealtimeEngine['process']>`)
+        // is derived; only members written out by hand count against the type.
+        const hasMethod = members.some((member) =>
+          (member.declarations ?? []).some(
+            (d) =>
+              !declaredInCore([d]) &&
+              !mentionsCore(checker, d) &&
+              (ts.isMethodSignature(d) ||
+                (ts.isPropertySignature(d) &&
+                  d.type !== undefined &&
+                  ts.isFunctionTypeNode(d.type))),
+          ),
+        );
+        if (hasMethod) {
+          for (const core of classes) {
+            const names = new Set(checker.getPropertiesOfType(core.type).map((m) => m.name));
+            if (!members.every((member) => names.has(member.name))) continue;
+            if (!checker.isTypeAssignableTo(core.type, local)) continue;
+            const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+            const label = ts.isInterfaceDeclaration(node)
+              ? node.name.text
+              : ts.isTypeAliasDeclaration(node.parent)
+                ? node.parent.name.text
+                : '(inline type)';
+            found.push(`${file}:${line + 1} ${label} mirrors ${core.name}`);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+  return found;
+}
+
 describe('vendored libsonare surface', () => {
   it('every studio and test use of the core matches the vendored declarations', {
     timeout: 180_000,
   }, () => {
-    const files = trackedSources();
-    const program = createProgram(files);
+    const program = studio();
     const checker = program.getTypeChecker();
     const roots = new Set(program.getRootFileNames());
     const failures: string[] = [];
@@ -171,6 +270,12 @@ describe('vendored libsonare surface', () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  it('no studio type re-declares the members of a core class by hand', {
+    timeout: 180_000,
+  }, () => {
+    expect(handDeclaredCoreMirrors()).toEqual([]);
   });
 });
 
