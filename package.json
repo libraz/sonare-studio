@@ -19,7 +19,7 @@
     "ncu": "NO_UPDATE_NOTIFIER=1 ncu",
     "ncu:update": "NO_UPDATE_NOTIFIER=1 ncu -u",
     "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.node.json",
-    "typecheck:tests": "node scripts/typecheck-tests.mjs",
+    "typecheck:tests": "vue-tsc --noEmit -p tsconfig.tests.json",
     "verify": "yarn lint && yarn typecheck:tests && yarn test && yarn test:external-formats && yarn build",
     "e2e": "node scripts/e2e-local.mjs",
     "ci": "yarn verify && yarn e2e"
