@@ -20,6 +20,7 @@ import { keyMarkerName } from '@/compose/key-name';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import { type LossReport, LossTally } from '@/export/loss-descriptor';
 import { clampInt } from '@/lib/math';
+import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import { MAX_XML_DOCUMENT_BYTES, preflightXmlBytes, XmlPreflightError } from '@/lib/xml-preflight';
 import {
   type DocumentClip,
@@ -37,9 +38,6 @@ import { NOTE_VALUE_BASE_PPQ } from './model';
 
 /** Sample rate assigned to imported projects (matches the SMF importer). */
 const DEFAULT_SAMPLE_RATE = 48000;
-
-/** Default note-on velocity when a note carries no dynamics hint. */
-const DEFAULT_VELOCITY = 96;
 
 /**
  * Divisions per quarter note assumed when a part omits `<divisions>` entirely.
@@ -826,7 +824,7 @@ function importPartNotes(
     measureStartPpq: 0,
     timeSigLengthPpq: 4,
     chromaticTranspose: 0,
-    velocity: DEFAULT_VELOCITY,
+    velocity: DEFAULT_NOTE_VELOCITY,
   };
   for (const [measureIndex, measure] of childElements(partEl, 'measure').entries()) {
     let cursorPpq = state.measureStartPpq;

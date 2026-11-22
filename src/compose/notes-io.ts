@@ -16,17 +16,16 @@
  */
 
 import type { NoteEvent } from '@libraz/libcantus';
+import { clamp } from '@/lib/math';
+import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import type { EditorNote, NewEditorNote } from '@/project/types';
 
-/** Default note-on velocity for generated notes without an explicit velocity. */
-const DEFAULT_VELOCITY = 96;
-
 function clampPitch(pitch: number): number {
-  return Math.max(0, Math.min(127, Math.round(pitch)));
+  return clamp(Math.round(pitch), 0, 127);
 }
 
 function clampVelocity(velocity: number): number {
-  return Math.max(1, Math.min(127, Math.round(velocity)));
+  return clamp(Math.round(velocity), 1, 127);
 }
 
 /**
@@ -63,7 +62,7 @@ export function editorNotesToNoteEvents(
 
 /**
  * Converts a libcantus note event to an editor note-creation payload. Pitch is
- * clamped to the MIDI range, velocity defaults to {@link DEFAULT_VELOCITY} when
+ * clamped to the MIDI range, velocity defaults to {@link DEFAULT_NOTE_VELOCITY} when
  * absent, and non-positive durations are dropped by returning null.
  *
  * @param event Note event (timeline beats).
@@ -82,7 +81,7 @@ export function noteEventToNewEditorNote(
     pitch: clampPitch(event.pitch),
     startPpq,
     durationPpq: event.durationBeat,
-    velocity: clampVelocity(event.velocity ?? DEFAULT_VELOCITY),
+    velocity: clampVelocity(event.velocity ?? DEFAULT_NOTE_VELOCITY),
   };
   if (options.channel !== undefined) payload.channel = options.channel;
   return payload;

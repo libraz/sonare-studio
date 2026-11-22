@@ -23,6 +23,11 @@ import {
 
 export type { NoteNameSystem };
 
+/** Pitch class 0..11 of a semitone count; negative inputs wrap upward. */
+export function pitchClassOf(semitones: number): number {
+  return ((semitones % 12) + 12) % 12;
+}
+
 /**
  * Sharp-based pitch class names indexed by pitch class (0 = C ... 11 = B).
  *

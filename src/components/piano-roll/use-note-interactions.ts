@@ -10,6 +10,7 @@
 
 import { type Ref, ref, shallowRef } from 'vue';
 import { clamp, clampInt } from '@/lib/math';
+import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/types';
 import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import {
@@ -27,9 +28,6 @@ import { visibleNotesInWindow } from './visible-notes';
 
 /** Smallest note duration a resize can produce (a sixty-fourth note in PPQ). */
 const DEFAULT_MIN_DURATION_PPQ = 0.0625;
-
-/** Velocity given to notes created with the draw tool. */
-const DEFAULT_DRAW_VELOCITY = 96;
 
 /** A pointer position in note-grid viewport px coordinates. */
 export interface InteractionPoint {
@@ -105,7 +103,7 @@ export interface UseNoteInteractionsOptions {
   /**
    * Optional velocity resolver for newly drawn notes. When omitted, drawing
    * inherits the selected note velocity, then the latest note velocity, and
-   * finally falls back to {@link DEFAULT_DRAW_VELOCITY}.
+   * finally falls back to {@link DEFAULT_NOTE_VELOCITY}.
    */
   getDrawVelocity?(): number;
   /** Mutation commands invoked when gestures commit. */
@@ -376,7 +374,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
   }
 
   function clampVelocity(value: number): number {
-    if (!Number.isFinite(value)) return DEFAULT_DRAW_VELOCITY;
+    if (!Number.isFinite(value)) return DEFAULT_NOTE_VELOCITY;
     return Math.max(1, Math.min(127, Math.round(value)));
   }
 
@@ -389,7 +387,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       if (selection.has(notes[i].id)) return clampVelocity(notes[i].velocity);
     }
     const latest = notes[notes.length - 1];
-    return latest ? clampVelocity(latest.velocity) : DEFAULT_DRAW_VELOCITY;
+    return latest ? clampVelocity(latest.velocity) : DEFAULT_NOTE_VELOCITY;
   }
 
   /** Resolves the grid-snapped start cell of a draw at the pointer x. */
@@ -798,7 +796,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         const nextPitch = grabbed ? editedPitch(grabbed.pitch + deltas.deltaPitch) : null;
         if (nextPitch !== null && nextPitch !== lastDragAuditionPitch) {
           lastDragAuditionPitch = nextPitch;
-          options.onAudition?.(nextPitch, grabbed?.velocity ?? DEFAULT_DRAW_VELOCITY);
+          options.onAudition?.(nextPitch, grabbed?.velocity ?? DEFAULT_NOTE_VELOCITY);
         }
       }
       return;
@@ -841,7 +839,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
         pitch: g.pitch,
         startPpq: g.startPpq,
         durationPpq: drawLength(g, point, modifiers),
-        ...(velocity === DEFAULT_DRAW_VELOCITY ? {} : { velocity }),
+        ...(velocity === DEFAULT_NOTE_VELOCITY ? {} : { velocity }),
         ...(g.channel === 0 ? {} : { channel: g.channel }),
       };
       const id = commands.addNote(input);
@@ -935,7 +933,7 @@ export function useNoteInteractions(options: UseNoteInteractionsOptions): NoteIn
       pitch,
       startPpq,
       durationPpq,
-      ...(velocity === DEFAULT_DRAW_VELOCITY ? {} : { velocity }),
+      ...(velocity === DEFAULT_NOTE_VELOCITY ? {} : { velocity }),
       ...(channel === 0 ? {} : { channel }),
     };
     const id = commands.addNote(input);

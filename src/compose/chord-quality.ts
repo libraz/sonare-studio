@@ -22,6 +22,7 @@
  */
 
 import { type ChordQuality, chordPitchClasses, makeChord } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 
 /**
  * Chord-symbol suffix per libcantus quality. Exhaustive over the union so a
@@ -77,7 +78,7 @@ export const QUALITY_SUFFIX: Readonly<Record<ChordQuality, string>> = {
 
 /** Reduces an integer semitone offset to pitch-class space. */
 function extensionPitchClass(value: number): number {
-  return ((value % 12) + 12) % 12;
+  return pitchClassOf(value);
 }
 
 /**

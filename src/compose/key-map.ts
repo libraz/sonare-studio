@@ -13,6 +13,7 @@
  */
 
 import { isMinorKey, type KeyScale, keyFromFifths } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 import type { EditorMarker, ScaleHighlightConfig } from '@/project/types';
 import { effectiveKeyScale, keyScaleToKeyFifths } from './key';
 import { keySignatureFromMarker } from './key-name';
@@ -39,14 +40,9 @@ export interface KeyMap {
   keyFifthsAt(absPpq: number): number;
 }
 
-/** Normalizes a pitch class to 0..11. */
-function pitchClass(pc: number): number {
-  return ((pc % 12) + 12) % 12;
-}
-
 /** True when two keys share a tonic pitch class and major/minor quality. */
 export function sameKeyName(a: KeyScale, b: KeyScale): boolean {
-  return pitchClass(a.rootPc) === pitchClass(b.rootPc) && isMinorKey(a) === isMinorKey(b);
+  return pitchClassOf(a.rootPc) === pitchClassOf(b.rootPc) && isMinorKey(a) === isMinorKey(b);
 }
 
 /**

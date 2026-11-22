@@ -12,6 +12,7 @@
  * Pure data module: no store, no wasm, no history.
  */
 
+import { pitchClassOf } from '@/lib/pitch';
 import { chordTonePitchClasses, type EditorChordSymbol } from './chords';
 
 /** How a track tracks the chord track. */
@@ -31,7 +32,7 @@ export interface ChordFollowNote {
 
 /** Signed shortest interval between two pitch classes, in -6..+5 semitones. */
 export function shortestPitchClassDelta(fromPc: number, toPc: number): number {
-  const raw = (((toPc - fromPc) % 12) + 12) % 12;
+  const raw = pitchClassOf(toPc - fromPc);
   return raw > 6 ? raw - 12 : raw;
 }
 
@@ -55,12 +56,12 @@ export function chordAt(
  */
 export function snapPitchToPitchClasses(pitch: number, pitchClasses: readonly number[]): number {
   if (pitchClasses.length === 0) return pitch;
-  const allowed = new Set(pitchClasses.map((pc) => ((pc % 12) + 12) % 12));
+  const allowed = new Set(pitchClasses.map((pc) => pitchClassOf(pc)));
   for (let distance = 0; distance <= 6; distance += 1) {
     const up = pitch + distance;
-    if (up <= 127 && allowed.has(((up % 12) + 12) % 12)) return up;
+    if (up <= 127 && allowed.has(pitchClassOf(up))) return up;
     const down = pitch - distance;
-    if (down >= 0 && allowed.has(((down % 12) + 12) % 12)) return down;
+    if (down >= 0 && allowed.has(pitchClassOf(down))) return down;
   }
   return pitch;
 }

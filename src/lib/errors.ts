@@ -43,3 +43,12 @@ export function isAbortError(error: unknown): boolean {
     (typeof DOMException !== 'undefined' && error instanceof DOMException);
   return thrown && (error as Error).name === 'AbortError';
 }
+
+/** Runs `fn`, reading a throw as "no answer". */
+export function tryEval<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch {
+    return undefined;
+  }
+}

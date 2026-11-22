@@ -12,6 +12,7 @@
  */
 
 import { chordToRoman, type KeyScale } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 import type { EditorChordSymbol } from '@/project/chords';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 
@@ -23,7 +24,7 @@ export function secondaryDominantOf(
   target: EditorChordSymbol,
   region: { startPpq: number; endPpq: number },
 ): EditorChordSymbol {
-  const rootPc = ((target.rootPc % 12) + 12) % 12;
+  const rootPc = pitchClassOf(target.rootPc);
   return chordSpanToEditorChord(
     { rootPc: (rootPc + 7) % 12, quality: 'dom7', startBeat: 0 },
     region.startPpq,

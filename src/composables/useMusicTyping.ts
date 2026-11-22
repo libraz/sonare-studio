@@ -1,6 +1,7 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, getCurrentScope, onScopeDispose, ref } from 'vue';
 import { clamp } from '@/lib/math';
+import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import { isEditableTarget } from '@/ui/keyboard';
 import { shortcutBlockingOverlayOpen } from '@/ui/overlay-registry';
 import type { StepInputHandle } from './useStepInput';
@@ -54,7 +55,6 @@ export const MAX_BASE_OCTAVE = 9;
 export const VELOCITY_STEP = 10;
 
 const DEFAULT_BASE_OCTAVE = 4;
-const DEFAULT_VELOCITY = 96;
 
 /** Note-on emitted when a note key goes down. */
 export interface MusicTypingNoteOnEvent {
@@ -125,7 +125,7 @@ export function useMusicTyping(options: UseMusicTypingOptions = {}): MusicTyping
   const target = options.target ?? window;
   const enabled = ref(false);
   const baseOctave = ref(DEFAULT_BASE_OCTAVE);
-  const velocity = ref(DEFAULT_VELOCITY);
+  const velocity = ref(DEFAULT_NOTE_VELOCITY);
   /** Held note keys → the pitch their note-on was emitted with. */
   const held = ref<ReadonlyMap<string, number>>(new Map());
 

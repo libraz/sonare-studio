@@ -10,6 +10,7 @@
 
 import { type NoteNameSystem, namedScaleMask, type ScaleName } from '@libraz/libcantus';
 import type { KeyMode } from '@libraz/libsonare';
+import { pitchClassOf } from '@/lib/pitch';
 import { pitchClassNames } from './note-names';
 
 /**
@@ -87,6 +88,6 @@ export const MODE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = MOD
  * @param system - Note-name system for the root; English by default.
  */
 export function scaleName(root: number, mode: number, system: NoteNameSystem = 'english'): string {
-  const pc = ((root % 12) + 12) % 12;
+  const pc = pitchClassOf(root);
   return `${pitchClassNames(system)[pc]} ${(MODES[mode] ?? MODES[0]).name}`;
 }

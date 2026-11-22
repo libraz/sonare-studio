@@ -9,6 +9,7 @@ import { useNoteNames } from '@/composables/useNoteNames';
 import type { PlacementColumn } from '@/composables/usePlacementGuidance';
 import type { TheoryCard } from '@/compose/explain';
 import type { GuidanceSegment } from '@/compose/guidance';
+import { pitchClassOf } from '@/lib/pitch';
 import { meterGridLines } from '@/project/time-signature';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import type {
@@ -506,7 +507,7 @@ function drawBackground(): void {
       ctx.fillStyle = COLORS.rowBlackKey;
       ctx.fillRect(0, y, w, range.rowHeight);
     }
-    if (props.highlightedPitchClasses[((pitch % 12) + 12) % 12]) {
+    if (props.highlightedPitchClasses[pitchClassOf(pitch)]) {
       ctx.fillStyle = COLORS.rowScale;
       ctx.fillRect(0, y, w, range.rowHeight);
     }
@@ -524,7 +525,7 @@ function drawBackground(): void {
     const x1 = Math.min(w, range.ppqToX(segment.endBeat));
     if (x1 <= x0) continue;
     for (let pitch = lowPitch; pitch <= highPitch; pitch++) {
-      const safety = segment.safetyByPc[((pitch % 12) + 12) % 12];
+      const safety = segment.safetyByPc[pitchClassOf(pitch)];
       ctx.fillStyle =
         safety === NoteSafety.Safe
           ? COLORS.guidanceSafe
@@ -598,7 +599,7 @@ function drawNotes(): void {
     ctx.strokeStyle = selected ? COLORS.noteSelectedBorder : COLORS.noteBorder;
     strokeRoundRect(ctx, x + 0.5, y + 1.5, noteW - 1, noteH - 1, 2);
 
-    const pitchClass = ((note.pitch % 12) + 12) % 12;
+    const pitchClass = pitchClassOf(note.pitch);
     const offScale = scaleMaskActive && !props.highlightedPitchClasses[pitchClass];
     const tooShort = note.durationPpq <= SHORT_NOTE_WARNING_PPQ;
     const overlap = overlapIds.has(note.id);

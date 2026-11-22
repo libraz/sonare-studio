@@ -1,4 +1,5 @@
 import { keySignatureFromMarker } from '@/compose/key-name';
+import { pitchClassOf } from '@/lib/pitch';
 import {
   measureHasMultiRestStructure,
   type NotatedChordSymbol,
@@ -221,7 +222,7 @@ export function applyLyricMarks(
 /** Transposes a MusicXML fifths value while keeping an enharmonic conventional spelling. */
 export function transposeKeyFifths(fifths: number, semitones: number): number {
   const shifted = fifths + semitones * 7;
-  const modulo = ((shifted % 12) + 12) % 12;
+  const modulo = pitchClassOf(shifted);
   return modulo > 6 ? modulo - 12 : modulo;
 }
 
@@ -234,7 +235,7 @@ export function transposeChordSymbols(
   semitones: number,
   displayKeyFifths = 0,
 ): NotatedChordSymbol[] {
-  const shift = ((semitones % 12) + 12) % 12;
+  const shift = pitchClassOf(semitones);
   if (shift === 0) return [...symbols];
   const isPitchClass = (pitchClass: number | undefined): pitchClass is number =>
     pitchClass !== undefined && Number.isInteger(pitchClass) && pitchClass >= 0 && pitchClass <= 11;

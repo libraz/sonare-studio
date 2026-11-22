@@ -12,6 +12,7 @@
  * partial failure then rolls back exactly the calls that completed.
  */
 
+import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import type { TrackProvenance } from '../generation';
 import type { RawNote } from '../midi-events';
 import { assertCanAddTracks } from '../mixer';
@@ -21,9 +22,6 @@ import { type AtomicProjectEdit, executeAtomic } from './history';
 
 /** The project store instance type (Pinia setup store). */
 type ProjectStore = ReturnType<typeof useProjectStore>;
-
-/** Default note-on velocity for generated notes without an explicit one. */
-const DEFAULT_VELOCITY = 96;
 
 /**
  * Fills a note-creation payload's optional fields to a full {@link RawNote}
@@ -35,7 +33,7 @@ export function materializeNote(note: NewEditorNote): RawNote {
     pitch: note.pitch,
     startPpq: note.startPpq,
     durationPpq: note.durationPpq,
-    velocity: note.velocity ?? DEFAULT_VELOCITY,
+    velocity: note.velocity ?? DEFAULT_NOTE_VELOCITY,
     channel: note.channel ?? 0,
   };
 }

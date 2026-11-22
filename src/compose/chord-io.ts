@@ -36,6 +36,7 @@ import {
   normalizedChordExtensions,
   normalizedChordOmissions,
 } from '@/compose/chord-quality';
+import { pitchClassOf } from '@/lib/pitch';
 import type { EditorChordSymbol } from '@/project/chords';
 
 export { audioQualityToLibcantus, type EditorQuality, libcantusQualityToEditor };
@@ -50,7 +51,7 @@ function appendExtensionIntervals(
   intervals: number[],
   extensions: ReadonlyArray<number>,
 ): number[] {
-  const pitchClasses = new Set(intervals.map((interval) => ((interval % 12) + 12) % 12));
+  const pitchClasses = new Set(intervals.map((interval) => pitchClassOf(interval)));
   const out = [...intervals];
   for (const extension of extensions) {
     if (pitchClasses.has(extension)) continue;
@@ -67,7 +68,7 @@ function removeOmittedIntervals(
 ): number[] {
   if (omissions.length === 0) return [...intervals];
   const silent = new Set(omissions);
-  return intervals.filter((interval) => !silent.has(((interval % 12) + 12) % 12));
+  return intervals.filter((interval) => !silent.has(pitchClassOf(interval)));
 }
 
 /**
@@ -76,13 +77,13 @@ function removeOmittedIntervals(
  * interval set with the omitted tones removed.
  */
 export function editorChordToChord(symbol: EditorChordSymbol): ChordData {
-  const rootPc = ((symbol.rootPc % 12) + 12) % 12;
+  const rootPc = pitchClassOf(symbol.rootPc);
   const exactQuality = editorExtensionQuality(symbol.quality, symbol.extensions, symbol.omissions);
   const quality = exactQuality ?? audioQualityToLibcantus(symbol.quality);
   const bassPc =
     symbol.bassPc === undefined || symbol.bassPc === rootPc
       ? undefined
-      : ((symbol.bassPc % 12) + 12) % 12;
+      : pitchClassOf(symbol.bassPc);
   const chord = makeChord(rootPc, quality, bassPc);
   if (exactQuality !== undefined) return chord;
   const extensions = normalizedChordExtensions(symbol.quality, symbol.extensions);
@@ -116,7 +117,7 @@ function toneSetToEditorQuality(quality: number, intervals: ReadonlyArray<number
   const sounded = new Set(
     intervals
       .filter((interval) => Number.isInteger(interval))
-      .map((interval) => ((interval % 12) + 12) % 12),
+      .map((interval) => pitchClassOf(interval)),
   );
   const silent = Array.from({ length: 12 }, (_, pc) => pc).filter((pc) => !sounded.has(pc));
   return {
@@ -145,15 +146,15 @@ export function chordSpanToEditorChord(
     span.intervals === undefined || span.intervals.length === 0
       ? named
       : toneSetToEditorQuality(named.quality, span.intervals);
-  const rootPc = ((span.rootPc % 12) + 12) % 12;
+  const rootPc = pitchClassOf(span.rootPc);
   const symbol: EditorChordSymbol = {
     startPpq,
     endPpq,
     rootPc,
     quality: mapped.quality,
   };
-  if (span.bassPc !== undefined && ((span.bassPc % 12) + 12) % 12 !== rootPc) {
-    symbol.bassPc = ((span.bassPc % 12) + 12) % 12;
+  if (span.bassPc !== undefined && pitchClassOf(span.bassPc) !== rootPc) {
+    symbol.bassPc = pitchClassOf(span.bassPc);
   }
   if (mapped.extensions !== undefined && mapped.extensions.length > 0) {
     symbol.extensions = [...mapped.extensions];

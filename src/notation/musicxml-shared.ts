@@ -7,6 +7,7 @@
  * import the serializer that uses them.
  */
 
+import { pitchClassOf } from '@/lib/pitch';
 import type { NotatedEvent, NotatedMeasure, NotatedVoiceNumber } from './model';
 
 /** Staff number within a grand staff (1 = treble, 2 = bass). */
@@ -46,8 +47,7 @@ export function inferChordRootMidi(pitches: readonly number[]): number | undefin
   let bestScore = -1;
   for (const candidate of pitches) {
     const score = pitches.reduce(
-      (total, pitch) =>
-        total + (chordIntervals.has((((pitch - candidate) % 12) + 12) % 12) ? 1 : 0),
+      (total, pitch) => total + (chordIntervals.has(pitchClassOf(pitch - candidate)) ? 1 : 0),
       0,
     );
     if (score > bestScore) {

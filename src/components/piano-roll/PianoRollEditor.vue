@@ -13,6 +13,7 @@ import { buildKeyMap } from '@/compose/key-map';
 import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
+import { pitchClassOf } from '@/lib/pitch';
 import {
   addNotes,
   addNotesInNewClip,
@@ -627,12 +628,12 @@ function barKeyboardDelta(ppq: number, direction: 'left' | 'right', coarse: bool
 function resolveScalePitch(pitch: number): number {
   if (activeTrackIsDrum.value || !snapToScaleEnabled.value) return pitch;
   const mask = store.highlightedPitchClasses;
-  if (!mask.some(Boolean) || mask[((pitch % 12) + 12) % 12]) return pitch;
+  if (!mask.some(Boolean) || mask[pitchClassOf(pitch)]) return pitch;
   for (let distance = 1; distance <= 12; distance++) {
     const up = pitch + distance;
-    if (up <= MAX_PITCH && mask[((up % 12) + 12) % 12]) return up;
+    if (up <= MAX_PITCH && mask[pitchClassOf(up)]) return up;
     const down = pitch - distance;
-    if (down >= MIN_PITCH && mask[((down % 12) + 12) % 12]) return down;
+    if (down >= MIN_PITCH && mask[pitchClassOf(down)]) return down;
   }
   return pitch;
 }

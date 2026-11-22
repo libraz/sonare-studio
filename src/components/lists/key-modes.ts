@@ -6,7 +6,7 @@
 
 import { type NoteNameSystem, namedScaleMask, type ScaleName } from '@libraz/libcantus';
 import { keyScaleToKeyFifths, scaleHighlightToKeyScale } from '@/compose/key';
-import { PITCH_CLASS_NAMES, pitchClassNames } from '@/lib/pitch';
+import { PITCH_CLASS_NAMES, pitchClassNames, pitchClassOf } from '@/lib/pitch';
 import type { ScaleHighlightConfig } from '@/project/types';
 
 export { keyScaleToKeyFifths } from '@/compose/key';
@@ -132,7 +132,7 @@ export function keyLabel(
   labels: Readonly<{ modes: Readonly<Record<string, string>>; customScale: string }>,
   system: NoteNameSystem = 'english',
 ): string {
-  const root = pitchClassNames(system)[((rootPc % 12) + 12) % 12];
+  const root = pitchClassNames(system)[pitchClassOf(rootPc)];
   const mode = KEY_MODE_CHOICES.find((c) => c.id === modeId);
   return `${root} ${mode ? (labels.modes[mode.id] ?? mode.id) : labels.customScale}`;
 }

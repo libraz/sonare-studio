@@ -22,7 +22,7 @@ import {
   spellPitchClass,
 } from '@libraz/libcantus';
 import { keyFifthsToSpelledKey, tonicPcFromKeyFifths } from '@/compose/key';
-import { formatSpelledPitch } from '@/lib/pitch';
+import { formatSpelledPitch, pitchClassOf } from '@/lib/pitch';
 
 /** Diatonic step letter (MusicXML `<step>`). */
 export type Step = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
@@ -146,7 +146,7 @@ export interface PitchSpellingContext {
 }
 
 function signedPitchClassDistance(from: number, to: number): number {
-  const distance = (((to - from) % 12) + 12) % 12;
+  const distance = pitchClassOf(to - from);
   return distance > 6 ? distance - 12 : distance;
 }
 
@@ -222,7 +222,7 @@ export function spellPitchWithContext(
         if (candidate.step === rootSpelling.step && candidate.alter === rootSpelling.alter)
           value += 10;
       } else {
-        const semitones = (((midi - rootMidi) % 12) + 12) % 12;
+        const semitones = pitchClassOf(midi - rootMidi);
         const expectedSteps = [0, 1, 1, 2, 2, 3, 3, 4, 5, 5, 6, 6][semitones];
         if (ascendingStepDistance(rootSpelling.step, candidate.step) === expectedSteps) value += 10;
       }
@@ -353,7 +353,7 @@ export function spellChordPitchClass(
   pitchClass: number,
   keyFifths: number,
 ): Pick<SpelledPitch, 'step' | 'alter'> {
-  const normalized = ((Math.round(pitchClass) % 12) + 12) % 12;
+  const normalized = pitchClassOf(Math.round(pitchClass));
   const diatonic = signatureSpelling(normalized, keyFifths);
   if (diatonic) return diatonic;
 

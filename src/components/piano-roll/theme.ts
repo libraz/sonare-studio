@@ -3,6 +3,7 @@
  * components. Kept local to the piano roll until a global theme exists.
  */
 
+import { pitchClassOf } from '@/lib/pitch';
 import type { EditorNote } from '@/project/types';
 import { colorWithAlpha, TOKENS } from '@/ui/theme/tokens';
 
@@ -110,7 +111,7 @@ const BLACK_KEY_PCS = new Set([1, 3, 6, 8, 10]);
  * @param pitch - MIDI pitch (0..127).
  */
 export function isBlackKey(pitch: number): boolean {
-  return BLACK_KEY_PCS.has(((pitch % 12) + 12) % 12);
+  return BLACK_KEY_PCS.has(pitchClassOf(pitch));
 }
 
 /**

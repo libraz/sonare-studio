@@ -29,6 +29,7 @@ import {
   pivotChords,
   spelledKeyOf,
 } from '@libraz/libcantus';
+import { tryEval } from '@/lib/errors';
 import type { EditorChordSymbol } from '@/project/chords';
 import { buildChordTimeline } from './chord-at-tick';
 import { editorChordToChord } from './chord-io';
@@ -121,15 +122,6 @@ export interface HarmonicAnalysis {
    * the project already declares.
    */
   keySpans: KeySpan[];
-}
-
-/** Runs a libcantus call that may throw; undefined signals "no result". */
-function tryEval<T>(fn: () => T): T | undefined {
-  try {
-    return fn();
-  } catch {
-    return undefined;
-  }
 }
 
 /**

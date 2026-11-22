@@ -40,6 +40,7 @@ import {
   phrasesFromTimeline,
   structuralCadences,
 } from '@libraz/libcantus';
+import { tryEval } from '@/lib/errors';
 import type { EditorChordSymbol } from '@/project/chords';
 import {
   meterBarLengthPpq,
@@ -127,15 +128,6 @@ export const SEGMENT_REGULARITY_MIN = 0.75;
  * suppressed and the reported material sit well inside it.
  */
 const MEDIAN_RHYTHM_FACTOR = 4;
-
-/** Runs a libcantus call that may throw; undefined signals "no result". */
-function tryEval<T>(fn: () => T): T | undefined {
-  try {
-    return fn();
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * The chord length the inference is expected to find: the opening bar, which is

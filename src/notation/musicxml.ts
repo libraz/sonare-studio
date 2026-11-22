@@ -17,6 +17,7 @@ import {
   LossTally,
   tallyFields,
 } from '@/export/loss-descriptor';
+import { clamp } from '@/lib/math';
 import type {
   NoteArticulation,
   NoteDynamics,
@@ -1035,7 +1036,7 @@ function pushNoteEvent(
 }
 
 function clampMidiVelocity(value: number): number {
-  return Math.min(127, Math.max(1, Math.round(value)));
+  return clamp(Math.round(value), 1, 127);
 }
 
 /** Builds MusicXML lyric elements for one note event. */

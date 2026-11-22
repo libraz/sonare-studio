@@ -30,6 +30,7 @@ import {
   type Phrase,
   phrasesFromTimeline,
 } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 import type { EditorChordSymbol } from '@/project/chords';
 import { measureRangeAt, snapPpqToMeterGrid, toMeterMap } from '@/project/time-signature';
 import type { TimeSignatureSegment } from '@/project/types';
@@ -302,7 +303,7 @@ export function tidyNotes<T extends TidyNote>(notes: readonly T[], options: Tidy
   const segments = timeline === null ? [] : [...timeline.segments];
   const inHarmony = (pitch: number, ppq: number): boolean | null => {
     const chord = timeline?.at(ppq) ?? null;
-    return chord === null ? null : chordPitchClasses(chord).includes(((pitch % 12) + 12) % 12);
+    return chord === null ? null : chordPitchClasses(chord).includes(pitchClassOf(pitch));
   };
   const harmonicCap = (pitch: number, start: number): number => {
     for (const segment of segments) {

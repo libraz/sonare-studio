@@ -26,6 +26,7 @@ import {
   substituteChord,
   type TimeSignature,
 } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 import { type EditorChordSymbol, sameChord } from '@/project/chords';
 import { chordSpanToEditorChord, editorChordToChord } from './chord-io';
 
@@ -58,7 +59,7 @@ function topVoiceLine(
   let groupStart = Number.NEGATIVE_INFINITY;
   for (const note of sorted) {
     if (note.startPpq - groupStart <= epsilon) continue;
-    line.push({ ...note, pc: ((note.pitch % 12) + 12) % 12 });
+    line.push({ ...note, pc: pitchClassOf(note.pitch) });
     groupStart = note.startPpq;
   }
   return line;

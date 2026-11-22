@@ -30,6 +30,8 @@ import {
   ReasonFlag,
   type SafetyResult,
 } from '@libraz/libcantus';
+import { tryEval } from '@/lib/errors';
+import { pitchClassOf } from '@/lib/pitch';
 import type { EditorNote, TimeSignatureSegment } from '@/project/types';
 import { type GuidanceProfile, toSafetyProfile } from './guidance-profile';
 import { DEFAULT_KEY_SCALE } from './key';
@@ -144,18 +146,6 @@ const LEVEL_RANK: Record<PlacementLevel, number> = { safe: 0, warn: 1, ng: 2 };
 /** Harmonic flags read from evaluateSafety; the verdict itself is not used. */
 const HARMONIC_MEMBER = ReasonFlag.ChordTone | ReasonFlag.Tension;
 
-function pitchClass(pitch: number): number {
-  return ((pitch % 12) + 12) % 12;
-}
-
-function tryEval<T>(fn: () => T): T | undefined {
-  try {
-    return fn();
-  } catch {
-    return undefined;
-  }
-}
-
 /** Membership per chord object, then per key and pitch. */
 const memberCache = new WeakMap<ChordData, Map<string, boolean>>();
 
@@ -215,9 +205,9 @@ export function thinsAccompaniment(acc: TimedPitch, lead: TimedPitch, env: Thinn
   if (overlap <= 0) return false;
   const chord = env.chordAt(at);
   if (chord === null) return false;
-  const pc = pitchClass(acc.pitch);
-  if (pc === pitchClass(chord.rootPc)) return false;
-  if (chord.bassPc !== undefined && pc === pitchClass(chord.bassPc)) return false;
+  const pc = pitchClassOf(acc.pitch);
+  if (pc === pitchClassOf(chord.rootPc)) return false;
+  if (chord.bassPc !== undefined && pc === pitchClassOf(chord.bassPc)) return false;
   if (env.anchors(at).has(acc.pitch)) return false;
   let lowest = lead.pitch;
   for (const sounding of env.sounding.soundingAt(at)) lowest = Math.min(lowest, sounding.pitch);
@@ -468,10 +458,10 @@ export function evaluatePlacementColumn(
           following,
         };
       }
-      const pc = pitchClass(other.pitch);
+      const pc = pitchClassOf(other.pitch);
       const isRoot =
-        pc === pitchClass(chord.rootPc) ||
-        (chord.bassPc !== undefined && pc === pitchClass(chord.bassPc));
+        pc === pitchClassOf(chord.rootPc) ||
+        (chord.bassPc !== undefined && pc === pitchClassOf(chord.bassPc));
       if (isRoot) {
         return {
           pitch: other.pitch,

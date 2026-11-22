@@ -20,6 +20,7 @@ import {
   spelledKeyOf,
   spellPitch,
 } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 import { audibleMidiProjector } from '@/project/midi-projection';
 import { meterBarLengthPpq, timeSignatureAt } from '@/project/time-signature';
 import type { EditorClip, EditorNote, EditorTrack, TimeSignatureSegment } from '@/project/types';
@@ -385,7 +386,7 @@ export function doublingRunOf(
   };
   return (other) => {
     const separation = candidate - other.pitch;
-    const pc = ((separation % 12) + 12) % 12;
+    const pc = pitchClassOf(separation);
     if (pc !== 0 && pc !== 7) return 0;
     let run = 0;
     for (const step of chain) {

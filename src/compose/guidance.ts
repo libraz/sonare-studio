@@ -35,6 +35,7 @@ import {
   type VoiceNote,
   type VoiceSnapshot,
 } from '@libraz/libcantus';
+import { tryEval } from '@/lib/errors';
 import { type SpelledPitch, spellLineInKeySignature } from '@/notation/pitch-spelling';
 import type { EditorChordSymbol } from '@/project/chords';
 import {
@@ -158,15 +159,6 @@ function harmonicSafetyOf(analysis: NoteAnalysis): HarmonicSafety | undefined {
   const onsetSafety =
     onset === NoteSafety.Warning || onset === NoteSafety.Dissonant ? onset : undefined;
   return maxHarmonicSafety(onsetSafety, analysis.sustainedSafety?.safety);
-}
-
-/** Runs a libcantus call that may throw; undefined signals "no result". */
-function tryEval<T>(fn: () => T): T | undefined {
-  try {
-    return fn();
-  } catch {
-    return undefined;
-  }
 }
 
 /**

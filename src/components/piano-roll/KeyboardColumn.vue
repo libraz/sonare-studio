@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
+import { pitchClassOf } from '@/lib/pitch';
 import type { Painter } from '@/ui/canvas/painter';
 import { MAX_PITCH, MIN_PITCH, type TimelineRange } from '@/ui/canvas/timeline-range';
 import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
@@ -87,7 +88,7 @@ function draw(): void {
   const highPitch = range.yToPitch(0);
   for (let pitch = lowPitch; pitch <= highPitch; pitch++) {
     const y = range.pitchToY(pitch);
-    const pc = ((pitch % 12) + 12) % 12;
+    const pc = pitchClassOf(pitch);
     if (isBlackKey(pitch)) {
       ctx.fillStyle = COLORS.keyBlack;
       ctx.fillRect(0, y, surface.widthPx * BLACK_KEY_WIDTH_RATIO, range.rowHeight);

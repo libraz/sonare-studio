@@ -26,6 +26,7 @@ import {
   type NoteEvent,
   spelledKeyOf,
 } from '@libraz/libcantus';
+import { pitchClassOf } from '@/lib/pitch';
 import { MAJOR_MODE_MASK, type ScaleHighlightConfig } from '@/project/types';
 import { harmonicTracksOnly, type TrackWithNotes } from './tracks';
 
@@ -39,7 +40,7 @@ export const DEFAULT_KEY_SCALE: KeyScale = { rootPc: 0, modeMask12: MAJOR_MODE_M
  * treat a disabled highlight as "no key" (falling back to {@link DEFAULT_KEY_SCALE}).
  */
 export function scaleHighlightToKeyScale(config: ScaleHighlightConfig): KeyScale {
-  return { rootPc: ((config.rootPc % 12) + 12) % 12, modeMask12: config.modeMask };
+  return { rootPc: pitchClassOf(config.rootPc), modeMask12: config.modeMask };
 }
 
 /**
@@ -49,7 +50,7 @@ export function scaleHighlightToKeyScale(config: ScaleHighlightConfig): KeyScale
  * @param enabled Whether highlighting should be active (default true).
  */
 export function keyScaleToScaleHighlight(key: KeyScale, enabled = true): ScaleHighlightConfig {
-  return { enabled, rootPc: ((key.rootPc % 12) + 12) % 12, modeMask: key.modeMask12 };
+  return { enabled, rootPc: pitchClassOf(key.rootPc), modeMask: key.modeMask12 };
 }
 
 /**
@@ -143,7 +144,7 @@ export function detectScaleHighlightFromTracks(
  */
 export function keyScaleToKeyFifths(key: KeyScale): number {
   const normalized: KeyScale = {
-    rootPc: ((key.rootPc % 12) + 12) % 12,
+    rootPc: pitchClassOf(key.rootPc),
     modeMask12: key.modeMask12,
   };
   return keySignatureFifths(spelledKeyOf(normalized).tonic, normalized);
@@ -155,7 +156,7 @@ export function keyScaleToKeyFifths(key: KeyScale): number {
  * functions a tonic derived from the score's `keyFifths`.
  */
 export function tonicPcFromKeyFifths(keyFifths: number): number {
-  return (((keyFifths * 7) % 12) + 12) % 12;
+  return pitchClassOf(keyFifths * 7);
 }
 
 /** A key signature expressed the way libcantus's spelling functions take it. */

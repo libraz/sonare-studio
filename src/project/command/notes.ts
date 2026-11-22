@@ -1,6 +1,8 @@
 import { shallowRef } from 'vue';
 import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
 import { clamp01, clampInt } from '@/lib/math';
+import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
+import { pitchClassOf } from '@/lib/pitch';
 import {
   applyGrooveToPosition,
   DEFAULT_GROOVE_STEPS,
@@ -27,8 +29,6 @@ import { CLIP_LANE_EPSILON, laneGapAround } from './clip-lane';
 import { cloneNotes, executeAtomic } from './history';
 import { requireEditableClip, requireEditableTrack } from './utils';
 
-/** Default note-on velocity for newly created notes. */
-const DEFAULT_VELOCITY = 96;
 const MIN_DURATION_PPQ = 0.0625;
 
 /** Process-local note clipboard; entries stay detached from mutable store notes. */
@@ -232,7 +232,7 @@ export function pasteNotesAt(positionPpq: number): number[] {
 function newNoteDraft(input: NewEditorNote): Omit<EditorNote, 'id'> {
   const note: Omit<EditorNote, 'id'> = {
     pitch: input.pitch,
-    velocity: input.velocity ?? DEFAULT_VELOCITY,
+    velocity: input.velocity ?? DEFAULT_NOTE_VELOCITY,
     startPpq: input.startPpq,
     durationPpq: input.durationPpq,
     channel: input.channel ?? 0,
@@ -835,7 +835,7 @@ export function selectOutOfScale(): void {
   const mask = store.highlightedPitchClasses;
   if (!mask.some(Boolean)) return;
   setSelection(
-    store.notes.filter((note) => !mask[((note.pitch % 12) + 12) % 12]).map((note) => note.id),
+    store.notes.filter((note) => !mask[pitchClassOf(note.pitch)]).map((note) => note.id),
   );
 }
 
@@ -975,7 +975,7 @@ export function transposeSelectionDiatonic(steps: number): void {
     let pitch = note.pitch;
     for (let step = 0; step < count; step++) {
       let next = pitch + dir;
-      while (next >= 0 && next <= 127 && !mask[((next % 12) + 12) % 12]) next += dir;
+      while (next >= 0 && next <= 127 && !mask[pitchClassOf(next)]) next += dir;
       pitch = Math.min(127, Math.max(0, next));
     }
     if (pitch !== note.pitch) updates.push({ id: note.id, pitch });

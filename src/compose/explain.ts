@@ -12,7 +12,7 @@
 
 import type { HarmonyRole, LockLevel, NoteNameSystem, TheoryLabel } from '@libraz/libcantus';
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
-import { formatSpelledPitch, pitchClassNames } from '@/lib/pitch';
+import { formatSpelledPitch, pitchClassNames, pitchClassOf } from '@/lib/pitch';
 import { type SpelledPitch, spellPitchInKeySignature } from '@/notation/pitch-spelling';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 import type { CadenceType } from './harmonic-analysis';
@@ -262,7 +262,7 @@ const SAFETY_KEY: Readonly<Record<NoteSafety, 'safe' | 'warning' | 'dissonant'>>
  * the bare name whichever system named it.
  */
 function pitchClassName(pc: number, keyFifths?: number, system?: NoteNameSystem): string {
-  return pitchName(60 + (((pc % 12) + 12) % 12), keyFifths, system).replace(/-?\d+$/, '');
+  return pitchName(60 + pitchClassOf(pc), keyFifths, system).replace(/-?\d+$/, '');
 }
 
 /** Joins pitch classes into a name list (e.g. "D, A"). */
@@ -433,7 +433,7 @@ function pitchName(
 ): string {
   if (spelled !== undefined) return formatPitch(spelled, system);
   if (keyFifths === undefined) {
-    const pc = ((midi % 12) + 12) % 12;
+    const pc = pitchClassOf(midi);
     return `${pitchClassNames(system)[pc]}${Math.floor(midi / 12) - 1}`;
   }
   return formatPitch(spellPitchInKeySignature(midi, keyFifths), system);
