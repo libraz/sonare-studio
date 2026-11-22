@@ -801,6 +801,268 @@ function planRevisionRestore(
   return { mergedIndex, slotsToPublish };
 }
 
+type BackupEntries = Record<string, Uint8Array>;
+type BackupPayload = { name: string; bytes: Uint8Array };
+type BrowserRestoreStage = Awaited<ReturnType<typeof prepareBrowserRestoreStage>>;
+
+/** Cumulative nested-expansion allowance shared by every nested archive decode. */
+interface BackupExpansionBudget {
+  expandedBytes: number;
+  entries: number;
+}
+
+/** Parses and validates the backup manifest, including its inventory when versioned. */
+function validateBackupMeta(entries: BackupEntries): void {
+  const meta = entries[META_ENTRY]
+    ? parseJson<Partial<BrowserBackupMeta>>(entries[META_ENTRY])
+    : null;
+  if (
+    meta?.app !== BACKUP_APP_ID ||
+    meta.kind !== BACKUP_KIND ||
+    (meta.version !== 1 && meta.version !== BACKUP_VERSION)
+  ) {
+    throw new Error('Invalid sonare browser backup.');
+  }
+  if (meta.version === BACKUP_VERSION) validateBrowserBackupInventory(entries, meta);
+}
+
+/** Decodes a nested archive against the cumulative budget, consuming it. */
+function consumeExpansionBudget(
+  data: Uint8Array,
+  budget: BackupExpansionBudget,
+  exhaustedMessage: string,
+): void {
+  if (budget.expandedBytes <= 0 || budget.entries <= 0) throw new Error(exhaustedMessage);
+  const decoded = decodeSzdWithResourceReport(data, {
+    maxEntries: budget.entries,
+    maxEntryBytes: Math.min(MAX_PROJECT_ARCHIVE_ENTRY_BYTES, budget.expandedBytes),
+    maxUncompressedBytes: budget.expandedBytes,
+  });
+  budget.expandedBytes -= decoded.report.uncompressedBytes;
+  budget.entries -= decoded.report.entries;
+}
+
+/** Collects the nested project archives, enforcing name and expansion limits. */
+function collectBackupProjects(
+  entries: BackupEntries,
+  budget: BackupExpansionBudget,
+  signal?: AbortSignal,
+): BackupPayload[] {
+  const projects: BackupPayload[] = [];
+  const projectNames = new Set<string>();
+  for (const [entryName, data] of Object.entries(entries)) {
+    signal?.throwIfAborted();
+    const archiveName = projectNameFromEntry(entryName);
+    if (!archiveName) continue;
+    const name = sanitizeProjectName(archiveName);
+    // Autosave/session recovery belongs to the current browser session and is
+    // deliberately never replaced by a portable browser-backup import.
+    if (isReservedProjectName(name)) continue;
+    if (projectNames.has(name)) {
+      throw new Error(`Browser backup contains colliding project name: "${name}"`);
+    }
+    projectNames.add(name);
+    consumeExpansionBudget(
+      data,
+      budget,
+      'Browser backup nested project expansion exceeds the cumulative budget',
+    );
+    projects.push({ name, bytes: data });
+  }
+  return projects;
+}
+
+/** Collects the nested revision slot archives, enforcing uniqueness and expansion limits. */
+function collectBackupRevisionSlots(
+  entries: BackupEntries,
+  budget: BackupExpansionBudget,
+  signal?: AbortSignal,
+): BackupPayload[] {
+  const revisionSlots: BackupPayload[] = [];
+  const revisionSlotNames = new Set<string>();
+  for (const [entryName, data] of Object.entries(entries)) {
+    signal?.throwIfAborted();
+    const slot = revisionSlotFromEntry(entryName) ?? revisionSlotFromProjectEntry(entryName);
+    if (slot === null) continue;
+    if (revisionSlotNames.has(slot)) invalidBackup();
+    consumeExpansionBudget(
+      data,
+      budget,
+      'Browser backup nested revision expansion exceeds the cumulative budget',
+    );
+    revisionSlotNames.add(slot);
+    revisionSlots.push({ name: slot, bytes: data });
+  }
+  return revisionSlots;
+}
+
+/** Lists the sorted, well-formed media ids under an archive prefix. */
+function backupMediaIds(
+  entries: BackupEntries,
+  prefix: string,
+  payloadExtension: string,
+): string[] {
+  return [
+    ...new Set(
+      Object.keys(entries).flatMap((entryName) => {
+        if (!entryName.startsWith(prefix)) return [];
+        const basename = entryName.slice(prefix.length);
+        const id = basename.endsWith(payloadExtension)
+          ? basename.slice(0, -payloadExtension.length)
+          : basename.endsWith('.json')
+            ? basename.slice(0, -'.json'.length)
+            : null;
+        return id !== null && MEDIA_ID_PATTERN.test(id) ? [id] : [];
+      }),
+    ),
+  ].sort();
+}
+
+/** Prepares asset and font restores, skipping incomplete or unreadable entries. */
+function prepareBackupMedia(entries: BackupEntries): {
+  assets: PreparedAssetRestore[];
+  fonts: PreparedFontRestore[];
+  skippedAssetIds: string[];
+  skippedFontIds: string[];
+} {
+  const skippedAssetIds: string[] = [];
+  const assets: PreparedAssetRestore[] = [];
+  for (const id of backupMediaIds(entries, ASSETS_PREFIX, '.pcm')) {
+    const pcm = entries[`${ASSETS_PREFIX}${id}.pcm`];
+    const assetMeta = entries[`${ASSETS_PREFIX}${id}.json`];
+    if (!pcm || !assetMeta) {
+      skippedAssetIds.push(id);
+      continue;
+    }
+    try {
+      assets.push(prepareAssetRestore({ id, meta: assetMeta, pcm }));
+    } catch {
+      skippedAssetIds.push(id);
+    }
+  }
+  const skippedFontIds: string[] = [];
+  const fonts: PreparedFontRestore[] = [];
+  for (const id of backupMediaIds(entries, FONTS_PREFIX, '.sf2')) {
+    const sf2 = entries[`${FONTS_PREFIX}${id}.sf2`];
+    const fontMeta = entries[`${FONTS_PREFIX}${id}.json`];
+    if (!sf2 || !fontMeta) {
+      skippedFontIds.push(id);
+      continue;
+    }
+    try {
+      fonts.push(prepareFontRestore({ id, meta: fontMeta, sf2 }));
+    } catch {
+      skippedFontIds.push(id);
+    }
+  }
+  return { assets, fonts, skippedAssetIds, skippedFontIds };
+}
+
+/** Preflights media restores and returns the ids already present locally. */
+async function findExistingBackupMedia(
+  assets: PreparedAssetRestore[],
+  fonts: PreparedFontRestore[],
+  signal?: AbortSignal,
+): Promise<{ existingAssets: Set<string>; existingFonts: Set<string> }> {
+  const existingAssets = new Set<string>();
+  const existingFonts = new Set<string>();
+  for (const entry of assets) {
+    if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
+    signal?.throwIfAborted();
+  }
+  for (const entry of fonts) {
+    if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
+    signal?.throwIfAborted();
+  }
+  return { existingAssets, existingFonts };
+}
+
+/** Reads each project's current bytes (null when absent) as its rollback pre-image. */
+async function loadPreviousProjects(
+  stageProjects: BackupPayload[],
+  signal?: AbortSignal,
+): Promise<Map<string, Uint8Array | null>> {
+  const previousProjects = new Map<string, Uint8Array | null>();
+  for (const project of stageProjects) {
+    try {
+      previousProjects.set(project.name, await loadProject(project.name));
+      signal?.throwIfAborted();
+    } catch (error) {
+      if (error instanceof ProjectNotFoundError) previousProjects.set(project.name, null);
+      else throw error;
+    }
+  }
+  return previousProjects;
+}
+
+/** Publishes the staged live mutations in order, then commits the stage. */
+async function publishBrowserRestore(
+  stage: BrowserRestoreStage,
+  plan: {
+    assets: PreparedAssetRestore[];
+    fonts: PreparedFontRestore[];
+    existingAssets: Set<string>;
+    existingFonts: Set<string>;
+    stageProjects: BackupPayload[];
+    revisionRestore: unknown;
+  },
+  progress: {
+    createdAssets: string[];
+    createdFonts: string[];
+    markRevisionIndexIntentStarted: () => void;
+  },
+  signal?: AbortSignal,
+): Promise<void> {
+  const { assets, fonts, existingAssets, existingFonts, stageProjects, revisionRestore } = plan;
+  const { createdAssets, createdFonts } = progress;
+  for (const entry of assets) {
+    if (existingAssets.has(entry.id)) continue;
+    await stage.beginAssetPublish(entry.id);
+    await injectRestoreCrash('asset-intent');
+    createdAssets.push(entry.id);
+    await saveAssetWithStatusUnlocked(
+      {
+        id: entry.id,
+        name: entry.meta.name,
+        sampleRate: entry.meta.sampleRate,
+        numChannels: entry.meta.numChannels,
+        ...(entry.meta.tags ? { tags: entry.meta.tags } : {}),
+      },
+      audioFromPreparedAssetRestore(entry),
+    );
+    await injectRestoreCrash('asset-published');
+    signal?.throwIfAborted();
+  }
+  for (const entry of fonts) {
+    if (existingFonts.has(entry.id)) continue;
+    await stage.beginFontPublish(entry.id);
+    await injectRestoreCrash('font-intent');
+    createdFonts.push(entry.id);
+    await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);
+    await injectRestoreCrash('font-published');
+    signal?.throwIfAborted();
+  }
+  for (const project of stageProjects) {
+    await stage.beginProjectPublish(project.name);
+    await injectRestoreCrash('project-intent');
+    await saveProjectUnlocked(project.name, await stage.loadProject(project.name));
+    await injectRestoreCrash('project-published');
+    signal?.throwIfAborted();
+  }
+  if (revisionRestore) {
+    progress.markRevisionIndexIntentStarted();
+    await stage.beginRevisionIndexPublish();
+    await injectRestoreCrash('revision-index-intent');
+    await writeProjectRevisionIndexBytesUnlocked(await stage.loadRevisionIndex());
+    await injectRestoreCrash('revision-index-published');
+    signal?.throwIfAborted();
+  }
+  // The final marker is the one commit point: a restart before it rolls
+  // every intended live mutation back to its staged pre-image.
+  await stage.finalize();
+  await injectRestoreCrash('finalized');
+}
+
 /** Restores a browser backup as one preflighted, rollback-capable transaction. */
 async function restoreBrowserBackupUnlocked(
   bytes: Uint8Array,
@@ -820,129 +1082,23 @@ async function restoreBrowserBackupUnlocked(
     signal,
   );
   const entries = outerArchive.entries;
-  let remainingExpandedBytes =
-    MAX_BACKUP_TOTAL_EXPANDED_BYTES - outerArchive.report.uncompressedBytes;
-  let remainingEntries = MAX_BACKUP_ARCHIVE_ENTRIES - outerArchive.report.entries;
-  const meta = entries[META_ENTRY]
-    ? parseJson<Partial<BrowserBackupMeta>>(entries[META_ENTRY])
-    : null;
-  if (
-    meta?.app !== BACKUP_APP_ID ||
-    meta.kind !== BACKUP_KIND ||
-    (meta.version !== 1 && meta.version !== BACKUP_VERSION)
-  ) {
-    throw new Error('Invalid sonare browser backup.');
-  }
-  if (meta.version === BACKUP_VERSION) validateBrowserBackupInventory(entries, meta);
+  const budget: BackupExpansionBudget = {
+    expandedBytes: MAX_BACKUP_TOTAL_EXPANDED_BYTES - outerArchive.report.uncompressedBytes,
+    entries: MAX_BACKUP_ARCHIVE_ENTRIES - outerArchive.report.entries,
+  };
+  validateBackupMeta(entries);
 
-  const projects: Array<{ name: string; bytes: Uint8Array }> = [];
-  const projectNames = new Set<string>();
-  for (const [entryName, data] of Object.entries(entries)) {
-    signal?.throwIfAborted();
-    const archiveName = projectNameFromEntry(entryName);
-    if (!archiveName) continue;
-    const name = sanitizeProjectName(archiveName);
-    // Autosave/session recovery belongs to the current browser session and is
-    // deliberately never replaced by a portable browser-backup import.
-    if (isReservedProjectName(name)) continue;
-    if (projectNames.has(name)) {
-      throw new Error(`Browser backup contains colliding project name: "${name}"`);
-    }
-    projectNames.add(name);
-    if (remainingExpandedBytes <= 0 || remainingEntries <= 0) {
-      throw new Error('Browser backup nested project expansion exceeds the cumulative budget');
-    }
-    const decoded = decodeSzdWithResourceReport(data, {
-      maxEntries: remainingEntries,
-      maxEntryBytes: Math.min(MAX_PROJECT_ARCHIVE_ENTRY_BYTES, remainingExpandedBytes),
-      maxUncompressedBytes: remainingExpandedBytes,
-    });
-    remainingExpandedBytes -= decoded.report.uncompressedBytes;
-    remainingEntries -= decoded.report.entries;
-    projects.push({ name, bytes: data });
-  }
+  const projects = collectBackupProjects(entries, budget, signal);
 
   const revisionIndexBytes = entries[REVISION_INDEX_ENTRY];
   const archiveRevisionIndex = revisionIndexBytes
     ? parseRevisionIndex(revisionIndexBytes)
     : undefined;
-  const revisionSlots: Array<{ name: string; bytes: Uint8Array }> = [];
-  const revisionSlotNames = new Set<string>();
-  for (const [entryName, data] of Object.entries(entries)) {
-    signal?.throwIfAborted();
-    const slot = revisionSlotFromEntry(entryName) ?? revisionSlotFromProjectEntry(entryName);
-    if (slot === null) continue;
-    if (revisionSlotNames.has(slot)) invalidBackup();
-    if (remainingExpandedBytes <= 0 || remainingEntries <= 0) {
-      throw new Error('Browser backup nested revision expansion exceeds the cumulative budget');
-    }
-    const decoded = decodeSzdWithResourceReport(data, {
-      maxEntries: remainingEntries,
-      maxEntryBytes: Math.min(MAX_PROJECT_ARCHIVE_ENTRY_BYTES, remainingExpandedBytes),
-      maxUncompressedBytes: remainingExpandedBytes,
-    });
-    remainingExpandedBytes -= decoded.report.uncompressedBytes;
-    remainingEntries -= decoded.report.entries;
-    revisionSlotNames.add(slot);
-    revisionSlots.push({ name: slot, bytes: data });
-  }
+  const revisionSlots = collectBackupRevisionSlots(entries, budget, signal);
 
-  const mediaIds = (prefix: string, payloadExtension: string): string[] =>
-    [
-      ...new Set(
-        Object.keys(entries).flatMap((entryName) => {
-          if (!entryName.startsWith(prefix)) return [];
-          const basename = entryName.slice(prefix.length);
-          const id = basename.endsWith(payloadExtension)
-            ? basename.slice(0, -payloadExtension.length)
-            : basename.endsWith('.json')
-              ? basename.slice(0, -'.json'.length)
-              : null;
-          return id !== null && MEDIA_ID_PATTERN.test(id) ? [id] : [];
-        }),
-      ),
-    ].sort();
-  const skippedAssetIds: string[] = [];
-  const assets: PreparedAssetRestore[] = [];
-  for (const id of mediaIds(ASSETS_PREFIX, '.pcm')) {
-    const pcm = entries[`${ASSETS_PREFIX}${id}.pcm`];
-    const assetMeta = entries[`${ASSETS_PREFIX}${id}.json`];
-    if (!pcm || !assetMeta) {
-      skippedAssetIds.push(id);
-      continue;
-    }
-    try {
-      assets.push(prepareAssetRestore({ id, meta: assetMeta, pcm }));
-    } catch {
-      skippedAssetIds.push(id);
-    }
-  }
-  const skippedFontIds: string[] = [];
-  const fonts: PreparedFontRestore[] = [];
-  for (const id of mediaIds(FONTS_PREFIX, '.sf2')) {
-    const sf2 = entries[`${FONTS_PREFIX}${id}.sf2`];
-    const fontMeta = entries[`${FONTS_PREFIX}${id}.json`];
-    if (!sf2 || !fontMeta) {
-      skippedFontIds.push(id);
-      continue;
-    }
-    try {
-      fonts.push(prepareFontRestore({ id, meta: fontMeta, sf2 }));
-    } catch {
-      skippedFontIds.push(id);
-    }
-  }
+  const { assets, fonts, skippedAssetIds, skippedFontIds } = prepareBackupMedia(entries);
 
-  const existingAssets = new Set<string>();
-  const existingFonts = new Set<string>();
-  for (const entry of assets) {
-    if (await preflightAssetRestore(entry)) existingAssets.add(entry.id);
-    signal?.throwIfAborted();
-  }
-  for (const entry of fonts) {
-    if (await preflightFontRestore(entry)) existingFonts.add(entry.id);
-    signal?.throwIfAborted();
-  }
+  const { existingAssets, existingFonts } = await findExistingBackupMedia(assets, fonts, signal);
   const existingRevisionStore = await readProjectRevisionStoreUnlocked();
   const revisionPlan = planRevisionRestore(
     archiveRevisionIndex,
@@ -950,16 +1106,7 @@ async function restoreBrowserBackupUnlocked(
     existingRevisionStore,
   );
   const stageProjects = [...projects, ...revisionPlan.slotsToPublish];
-  const previousProjects = new Map<string, Uint8Array | null>();
-  for (const project of stageProjects) {
-    try {
-      previousProjects.set(project.name, await loadProject(project.name));
-      signal?.throwIfAborted();
-    } catch (error) {
-      if (error instanceof ProjectNotFoundError) previousProjects.set(project.name, null);
-      else throw error;
-    }
-  }
+  const previousProjects = await loadPreviousProjects(stageProjects, signal);
 
   const revisionRestore =
     revisionPlan.mergedIndex !== undefined
@@ -982,52 +1129,18 @@ async function restoreBrowserBackupUnlocked(
   const createdFonts: string[] = [];
   let revisionIndexIntentStarted = false;
   try {
-    for (const entry of assets) {
-      if (existingAssets.has(entry.id)) continue;
-      await stage.beginAssetPublish(entry.id);
-      await injectRestoreCrash('asset-intent');
-      createdAssets.push(entry.id);
-      await saveAssetWithStatusUnlocked(
-        {
-          id: entry.id,
-          name: entry.meta.name,
-          sampleRate: entry.meta.sampleRate,
-          numChannels: entry.meta.numChannels,
-          ...(entry.meta.tags ? { tags: entry.meta.tags } : {}),
+    await publishBrowserRestore(
+      stage,
+      { assets, fonts, existingAssets, existingFonts, stageProjects, revisionRestore },
+      {
+        createdAssets,
+        createdFonts,
+        markRevisionIndexIntentStarted: () => {
+          revisionIndexIntentStarted = true;
         },
-        audioFromPreparedAssetRestore(entry),
-      );
-      await injectRestoreCrash('asset-published');
-      signal?.throwIfAborted();
-    }
-    for (const entry of fonts) {
-      if (existingFonts.has(entry.id)) continue;
-      await stage.beginFontPublish(entry.id);
-      await injectRestoreCrash('font-intent');
-      createdFonts.push(entry.id);
-      await saveFontWithStatusUnlocked({ id: entry.id, name: entry.meta.name }, entry.data);
-      await injectRestoreCrash('font-published');
-      signal?.throwIfAborted();
-    }
-    for (const project of stageProjects) {
-      await stage.beginProjectPublish(project.name);
-      await injectRestoreCrash('project-intent');
-      await saveProjectUnlocked(project.name, await stage.loadProject(project.name));
-      await injectRestoreCrash('project-published');
-      signal?.throwIfAborted();
-    }
-    if (revisionRestore) {
-      revisionIndexIntentStarted = true;
-      await stage.beginRevisionIndexPublish();
-      await injectRestoreCrash('revision-index-intent');
-      await writeProjectRevisionIndexBytesUnlocked(await stage.loadRevisionIndex());
-      await injectRestoreCrash('revision-index-published');
-      signal?.throwIfAborted();
-    }
-    // The final marker is the one commit point: a restart before it rolls
-    // every intended live mutation back to its staged pre-image.
-    await stage.finalize();
-    await injectRestoreCrash('finalized');
+      },
+      signal,
+    );
   } catch (error) {
     // A fault-injection crash intentionally represents process death, so no
     // in-process cleanup runs. The next startup must use the durable journal.
