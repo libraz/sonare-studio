@@ -74,7 +74,7 @@ export async function run(ctx) {
     const ampEditor = page.locator('.device-rack .amp-sim-editor');
     const cleanBass = await ampEditor.locator('input[aria-label="Bass"]').inputValue();
     const cleanModel = await ampEditor.locator('.amp-advanced select').first().inputValue();
-    if (cleanBass !== '2' || cleanModel !== '1') {
+    if (cleanBass !== '2' || cleanModel !== 'cleanCombo') {
       fail(`Clean Combo controls did not show DSP values: bass=${cleanBass}, model=${cleanModel}`);
     }
 
@@ -86,7 +86,7 @@ export async function run(ctx) {
     const leadDrive = await ampEditor.locator('input[aria-label="Drive"]').inputValue();
     const leadMiddle = await ampEditor.locator('input[aria-label="Middle"]').inputValue();
     const leadModel = await ampEditor.locator('.amp-advanced select').first().inputValue();
-    if (leadDrive !== '0.8' || leadMiddle !== '-3' || leadModel !== '2') {
+    if (leadDrive !== '0.8' || leadMiddle !== '-3' || leadModel !== 'modernHiGain') {
       fail(
         `Modern Lead controls did not follow its sound: drive=${leadDrive}, middle=${leadMiddle}, model=${leadModel}`,
       );
