@@ -23,7 +23,6 @@ import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
-import { readSource } from './helpers/source-text';
 
 const wasmModule = vi.hoisted(() => ({
   current: undefined as undefined | Record<string, unknown>,
@@ -192,15 +191,7 @@ describe('chord follow through the chord command', () => {
   });
 });
 
-describe('chord follow entry point', () => {
-  const headers = readSource('src/components/arrangement/TrackHeaderList.vue');
-
-  it('offers the three modes from the track header menu', () => {
-    expect(headers).toContain("id: 'chord-follow-off'");
-    expect(headers).toContain("setTrackChordFollow(track.id, 'chordTones')");
-    expect(headers).toContain("setTrackChordFollow(track.id, 'root')");
-  });
-
+describe('chord follow labels', () => {
   it('labels the modes in every locale', () => {
     for (const bundle of [en, ja]) {
       const header = bundle.shell.arrangement.trackHeader;

@@ -21,7 +21,6 @@ import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
-import { readSource } from './helpers/source-text';
 
 const wasmModule = vi.hoisted(() => ({
   current: undefined as undefined | Record<string, unknown>,
@@ -237,13 +236,7 @@ describe('expression map command and entry point', () => {
     expect(store.tracks.find((track) => track.id === trackId)?.expressionMap).toBeUndefined();
   });
 
-  it('offers off and both presets from the track header menu', () => {
-    const headers = readSource('src/components/arrangement/TrackHeaderList.vue');
-
-    expect(headers).toContain("id: 'expression-map-off'");
-    expect(headers).toContain('setTrackExpressionMap(track.id, null)');
-    expect(headers).toContain('setTrackExpressionMap(track.id, preset.map)');
-
+  it('labels off and every preset in every locale', () => {
     for (const bundle of [en, ja]) {
       const header = bundle.shell.arrangement.trackHeader;
       expect(header.expressionMap.length).toBeGreaterThan(0);

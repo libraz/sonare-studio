@@ -75,6 +75,8 @@ export interface ArrangementViewHarness {
   openClipMenu(clipId: number, atPpq?: number): Promise<MenuEntry[]>;
   /** Right-clicks a track's lane at `ppq` (no clip there) and returns the menu shown. */
   openLaneMenu(trackId: number, ppq: number): Promise<MenuEntry[]>;
+  /** Right-clicks a track's header row and returns the menu shown. */
+  openTrackHeaderMenu(trackId: number): Promise<MenuEntry[]>;
   /** Right-clicks the bar ruler at `ppq` and returns the menu shown. */
   openRulerMenu(ppq: number): Promise<MenuEntry[]>;
   /** Runs an enabled entry of the open menu, as a click on it does. */
@@ -236,6 +238,18 @@ export async function mountArrangementView(
     async openLaneMenu(trackId, ppq) {
       const point = lanePoint(trackId, ppq);
       return contextMenuAt(point.x, point.y);
+    },
+    async openTrackHeaderMenu(trackId) {
+      const index = canvas()
+        .props()
+        .tracks.findIndex((track) => track.id === trackId);
+      const row = headers().findAll('.track-header')[index];
+      if (!row) throw new Error(`track ${trackId} has no visible header row`);
+      closeContextMenu();
+      await row.trigger('contextmenu', { clientX: 10, clientY: 10 });
+      await flushPromises();
+      const state = useContextMenuState();
+      return state.open ? state.items.filter((item) => !item.separator).map(toEntry) : [];
     },
     async openRulerMenu(ppq) {
       return contextMenuAt(canvas().props().range.ppqToX(ppq), RULER_HEIGHT_PX / 2);
