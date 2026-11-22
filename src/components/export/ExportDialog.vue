@@ -101,22 +101,22 @@ function normalizeSelectedEncoder(): void {
   if (fallback) model.value.encoderId = fallback.id;
 }
 
+/** New defaults seeded from the project, against the current encoder list. */
+function resetForm(): void {
+  model.value = createDefaultExportOptions(props.projectName, props.projectSampleRate);
+  encoderList.value = resolveEncoders();
+  normalizeSelectedEncoder();
+}
+
 normalizeSelectedEncoder();
 
 watch(
   () => props.open,
   (open) => {
     if (!open) return;
-    // Fresh state per session: new defaults seeded from the project name.
-    // Focus, the trap and restoration are owned by AppModal.
-    model.value = createDefaultExportOptions(props.projectName, props.projectSampleRate);
-    encoderList.value = resolveEncoders();
-    normalizeSelectedEncoder();
-    errorMessage.value = '';
-    cancelled.value = false;
-    report.value = null;
-    progress.value = 0;
-    stage.value = '';
+    // Fresh state per session; focus, the trap and restoration are owned by AppModal.
+    resetForm();
+    resetRun();
   },
 );
 
@@ -164,6 +164,7 @@ const {
   reportClippingCensus,
   onExport,
   onCancelRender,
+  reset: resetRun,
 } = useAudioExportRun(props, emit, {
   model,
   busy,

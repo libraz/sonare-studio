@@ -1570,4 +1570,17 @@ describe('ExportDialog', () => {
     await wrapper.setProps({ open: true });
     expect(q<HTMLInputElement>('.filename-input')?.value).toBe('My Song');
   });
+
+  it('clears the previous export report when reopened', async () => {
+    const control = makeRender();
+    const { wrapper } = mountDialog(control);
+    await clickExport();
+    control.resolve(makeResult({ report: { peakDb: -6 } }));
+    await flushPromises();
+    expect(q('.export-report')).not.toBeNull();
+
+    await wrapper.setProps({ open: false });
+    await wrapper.setProps({ open: true });
+    expect(q('.export-report')).toBeNull();
+  });
 });

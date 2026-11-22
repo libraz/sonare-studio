@@ -101,11 +101,16 @@ function formatMasteringDuration(frames: number, sampleRate: number): string {
   return (frames / sampleRate).toFixed(1);
 }
 
+/** The built-in WAV, FLAC and MP3 encoders, which embed the project metadata. */
+function isBuiltInEncoder(encoderId: string): boolean {
+  return (
+    encoderId === WAV_ENCODER_ID || encoderId === FLAC_ENCODER_ID || encoderId === MP3_ENCODER_ID
+  );
+}
+
 function isIntegerPcmExport(encoderId: string, model: ExportOptionsModel): boolean {
   return (
-    (encoderId === WAV_ENCODER_ID && model.wavBitDepth !== '32f') ||
-    encoderId === FLAC_ENCODER_ID ||
-    encoderId === MP3_ENCODER_ID
+    isBuiltInEncoder(encoderId) && !(encoderId === WAV_ENCODER_ID && model.wavBitDepth === '32f')
   );
 }
 
@@ -236,16 +241,22 @@ export function useAudioExportRun(
     );
   }
 
+  /** Clears the previous run's progress, error and report. */
+  function reset(): void {
+    errorMessage.value = '';
+    cancelled.value = false;
+    report.value = null;
+    progress.value = 0;
+    stage.value = '';
+  }
+
   async function onExport(): Promise<void> {
     if (!canExport.value) return;
     const encoders = selectedEncoders.value;
     const primaryEncoder = encoders[0];
     if (!primaryEncoder) return;
     busy.value = true;
-    errorMessage.value = '';
-    cancelled.value = false;
-    report.value = null;
-    progress.value = 0;
+    reset();
     stage.value = 'render';
     const renderFn = props.render ?? renderMixdownInWorker;
     const downloadFn = props.download ?? downloadViaAnchor;
@@ -306,11 +317,7 @@ export function useAudioExportRun(
         const encodeOptions = encodeOptionsForModel(targetModel, {
           compressedEncoderIds: compressedEncoderIds.value,
         });
-        if (
-          encoder.id === WAV_ENCODER_ID ||
-          encoder.id === FLAC_ENCODER_ID ||
-          encoder.id === MP3_ENCODER_ID
-        ) {
+        if (isBuiltInEncoder(encoder.id)) {
           encodeOptions.metadata = audioFileMetadataForDocument(doc, {
             sampleRate: exportModel.sampleRate,
             startPpq: range.startPpq,
@@ -705,5 +712,6 @@ export function useAudioExportRun(
     reportClippingCensus,
     onExport,
     onCancelRender,
+    reset,
   };
 }
