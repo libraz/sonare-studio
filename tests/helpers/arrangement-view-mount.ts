@@ -30,8 +30,8 @@ import { vTooltip } from '@/ui/tooltip';
  * reports a fixed content box once per observed element (so the shared
  * timeline gets a real viewport), and `requestAnimationFrame` never fires.
  *
- * `store.init()` loads the real libsonare module, which runs under jsdom; a
- * spec that mocks `@/lib/wasm` with the fake module gets that one instead.
+ * `store.init()` loads the real libsonare module, which runs under jsdom;
+ * specs built on this mount use it by convention instead of the fake module.
  */
 
 /** Content box the stubbed ResizeObserver reports for every observed element. */
@@ -73,6 +73,8 @@ export interface ArrangementViewHarness {
   store: ReturnType<typeof useProjectStore>;
   /** Right-clicks a clip (at `atPpq`, default its midpoint) and returns the menu shown. */
   openClipMenu(clipId: number, atPpq?: number): Promise<MenuEntry[]>;
+  /** Right-clicks a track's lane at `ppq` (no clip there) and returns the menu shown. */
+  openLaneMenu(trackId: number, ppq: number): Promise<MenuEntry[]>;
   /** Right-clicks the bar ruler at `ppq` and returns the menu shown. */
   openRulerMenu(ppq: number): Promise<MenuEntry[]>;
   /** Runs an enabled entry of the open menu, as a click on it does. */
@@ -183,17 +185,22 @@ export async function mountArrangementView(
   const headers = () => wrapper.getComponent(TrackHeaderList);
   const canvasElement = () => canvas().get('.arrangement-canvas').element as HTMLElement;
 
-  /** Viewport point (the canvas sits at the origin in jsdom) of a clip's lane at `ppq`. */
-  function clipPoint(clipId: number, ppq: number): { x: number; y: number } {
-    const clip = store.clips.find((entry) => entry.id === clipId);
-    if (!clip) throw new Error(`no clip ${clipId}`);
+  /** Viewport point (the canvas sits at the origin in jsdom) of a track's lane at `ppq`. */
+  function lanePoint(trackId: number, ppq: number): { x: number; y: number } {
     const { range, tracks, rowLayout, scrollY, laneHeight } = canvas().props();
-    const index = tracks.findIndex((track) => track.id === clip.trackId);
-    if (index < 0) throw new Error(`track of clip ${clipId} is not visible`);
+    const index = tracks.findIndex((track) => track.id === trackId);
+    if (index < 0) throw new Error(`track ${trackId} is not visible`);
     return {
       x: range.ppqToX(ppq),
       y: RULER_HEIGHT_PX + rowLayout.rowTop(index) - scrollY + laneHeight / 2,
     };
+  }
+
+  /** Viewport point of a clip's lane at `ppq`. */
+  function clipPoint(clipId: number, ppq: number): { x: number; y: number } {
+    const clip = store.clips.find((entry) => entry.id === clipId);
+    if (!clip) throw new Error(`no clip ${clipId}`);
+    return lanePoint(clip.trackId, ppq);
   }
 
   async function contextMenuAt(x: number, y: number): Promise<MenuEntry[]> {
@@ -224,6 +231,10 @@ export async function mountArrangementView(
       const clip = store.clips.find((entry) => entry.id === clipId);
       if (!clip) throw new Error(`no clip ${clipId}`);
       const point = clipPoint(clipId, atPpq ?? clip.startPpq + clip.lengthPpq / 2);
+      return contextMenuAt(point.x, point.y);
+    },
+    async openLaneMenu(trackId, ppq) {
+      const point = lanePoint(trackId, ppq);
       return contextMenuAt(point.x, point.y);
     },
     async openRulerMenu(ppq) {
