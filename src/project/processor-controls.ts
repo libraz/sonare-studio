@@ -119,6 +119,10 @@ export type ProcessorParamInfo = Pick<
       | 'maxExclusive'
       | 'dependsOn'
       | 'coupledWith'
+      | 'domainMin'
+      | 'domainMinExclusive'
+      | 'domainMax'
+      | 'domainMaxExclusive'
     >
   >;
 
@@ -404,14 +408,16 @@ export function processorNumberSpec(
     typeof info?.default === 'number' && Number.isFinite(info.default) ? info.default : undefined;
   const coupledWith =
     info?.coupledWith && info.coupledWith.length > 0 ? info.coupledWith : undefined;
-  // A coupled key's bounds hold only at its siblings' defaults, so they draw the knob but do not clamp.
+  // A coupled key's min/max hold only at its siblings' defaults; it clamps to its own domain instead.
+  const acceptMin = coupledWith ? (info?.domainMin ?? null) : hardMin;
+  const acceptMax = coupledWith ? (info?.domainMax ?? null) : hardMax;
   const accepts: NumberAcceptance | undefined =
-    info && !coupledWith && (hardMin !== null || hardMax !== null)
+    info && (acceptMin !== null || acceptMax !== null)
       ? {
-          min: hardMin,
-          max: hardMax,
-          minExclusive: info.minExclusive === true,
-          maxExclusive: info.maxExclusive === true,
+          min: acceptMin,
+          max: acceptMax,
+          minExclusive: (coupledWith ? info.domainMinExclusive : info.minExclusive) === true,
+          maxExclusive: (coupledWith ? info.domainMaxExclusive : info.maxExclusive) === true,
         }
       : undefined;
   const dependsOn = info?.dependsOn && info.dependsOn.length > 0 ? info.dependsOn : undefined;

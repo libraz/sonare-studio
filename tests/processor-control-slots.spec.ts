@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   catalogParamInfo,
   catalogSlots,
+  clampToAccepted,
   editedProcessorParams,
   InsertConfigurationRefusedError,
   processorControls,
@@ -155,12 +156,27 @@ describe('coupled keys', () => {
     });
   });
 
-  it('draws a coupled key from its stated bounds without clamping to them', () => {
-    const length = rack(room, {}).find((control) => control.id === 'lengthM');
-    expect(length).toMatchObject({
-      kind: 'number',
+  function numberControl(processor: string, id: string) {
+    const control = rack(processor, {}).find((entry) => entry.id === id);
+    if (control?.kind !== 'number') throw new Error(`${id} is not a number control`);
+    return control;
+  }
+
+  it('clamps a coupled key to its own domain, not to the bounds at default placement', () => {
+    expect(numberControl(room, 'lengthM')).toMatchObject({
       coupledWith: expect.arrayContaining(['listenerX']),
+      accepts: { min: 0, max: 10000, minExclusive: true, maxExclusive: false },
     });
-    expect(length && 'accepts' in length ? length.accepts : undefined).toBeUndefined();
+    const spacing = numberControl(room, 'receiverSpacingM');
+    expect(spacing.accepts).toEqual({ min: 0, max: 4, minExclusive: true, maxExclusive: false });
+    expect(clampToAccepted(spacing, 9)).toBe(4);
+  });
+
+  it('surfaces the refusal of a value inside the domain that the relation rejects', () => {
+    const spacing = numberControl(room, 'receiverSpacingM');
+    expect(clampToAccepted(spacing, 3)).toBe(3);
+    expect(() => editedProcessorParams(room, {}, 'receiverSpacingM', 3)).toThrow(
+      InsertConfigurationRefusedError,
+    );
   });
 });
