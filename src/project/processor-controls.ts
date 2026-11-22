@@ -18,6 +18,7 @@ import type {
   MasteringInsertParamUnit,
   MasteringInsertSlot,
 } from '@libraz/libsonare';
+import { shallowRef } from 'vue';
 import { errorMessage } from '@/lib/errors';
 import { clamp, isFiniteNumber } from '@/lib/math';
 import { isSwitchOn } from '@/lib/midi';
@@ -261,15 +262,15 @@ const catalogCache = new WeakMap<object, Map<string, MasteringInsertParamInfo[]>
 /** Construction-only key names per cached catalog entry list. */
 const constructionOnlyCache = new WeakMap<object, ReadonlySet<string>>();
 
-/** Rate the Nyquist-bounded ceilings are resolved at; undefined until the engine runs. */
-let processingSampleRate: number | undefined;
+/** Rate the Nyquist-bounded ceilings are resolved at; reactive so controls re-read when it changes. */
+const processingSampleRate = shallowRef<number | undefined>(undefined);
 
 /**
  * Sets the project/engine rate that Nyquist-bounded insert ceilings resolve
- * at. Controls built afterwards use the matching ceiling.
+ * at. Controls computed from the catalog re-read their ceiling when it changes.
  */
 export function setProcessingSampleRate(rate: number | undefined): void {
-  processingSampleRate = rate !== undefined && rate > 0 ? rate : undefined;
+  processingSampleRate.value = rate !== undefined && rate > 0 ? rate : undefined;
 }
 
 /**
@@ -277,6 +278,7 @@ export function setProcessingSampleRate(rate: number | undefined): void {
  * rate, or [] before the module is initialized.
  */
 export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] {
+  const sampleRate = processingSampleRate.value;
   let wasm: ReturnType<typeof getWasmModule>;
   try {
     wasm = getWasmModule();
@@ -289,13 +291,13 @@ export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] 
     byProcessor = new Map();
     catalogCache.set(wasm, byProcessor);
   }
-  const key = `${processor}@${processingSampleRate ?? ''}`;
+  const key = `${processor}@${sampleRate ?? ''}`;
   let entries = byProcessor.get(key);
   if (!entries) {
     try {
       entries = wasm.masteringInsertParamInfo({
         insert: processor as MasteringInsertName,
-        ...(processingSampleRate !== undefined ? { sampleRate: processingSampleRate } : {}),
+        ...(sampleRate !== undefined ? { sampleRate } : {}),
       });
     } catch {
       // A rate outside the supported range still has a rate-less answer.
@@ -662,7 +664,7 @@ function assertCoupledKeysAccepted(
     wasm.masteringInsertTiming({
       insert: processor as MasteringInsertName,
       params: subset,
-      sampleRate: processingSampleRate ?? CONFIGURATION_CHECK_SAMPLE_RATE,
+      sampleRate: processingSampleRate.value ?? CONFIGURATION_CHECK_SAMPLE_RATE,
     });
   } catch (error) {
     const detail = errorMessage(error);

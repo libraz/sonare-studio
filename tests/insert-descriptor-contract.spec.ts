@@ -1,5 +1,6 @@
 import * as wasm from '@libraz/libsonare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { computed } from 'vue';
 import {
   catalogParamInfo,
   clampToAccepted,
@@ -84,6 +85,35 @@ describe('insert descriptor drives the controls', () => {
     expect(control.accepts?.max).toBe(8000);
     expect(control.accepts?.maxExclusive).toBe(true);
     expect(control.max).toBeLessThan(8000);
+  });
+
+  it('refuses the 44.1 kHz Nyquist and accepts just under it', () => {
+    setProcessingSampleRate(44100);
+    const control = numberControl('eq.parametric', 'band0.frequencyHz');
+    setProcessingSampleRate(undefined);
+    expect(() => validateProcessorControlValue(control, 22050)).toThrow(RangeError);
+    expect(() => validateProcessorControlValue(control, 22049)).not.toThrow();
+    expect(clampToAccepted(control, 24000)).toBeLessThan(22050);
+  });
+
+  it('accepts a frequency above 24 kHz at 96 kHz', () => {
+    setProcessingSampleRate(96000);
+    const control = numberControl('eq.parametric', 'band0.frequencyHz');
+    setProcessingSampleRate(undefined);
+    expect(() => validateProcessorControlValue(control, 30000)).not.toThrow();
+    expect(clampToAccepted(control, 30000)).toBe(30000);
+  });
+
+  it('re-reads a control built before the engine rate is known once the rate arrives', () => {
+    const ceiling = computed(
+      () => numberControl('eq.parametric', 'band0.frequencyHz').accepts?.max,
+    );
+    const rateless = ceiling.value;
+    setProcessingSampleRate(44100);
+    const resolved = ceiling.value;
+    setProcessingSampleRate(undefined);
+    expect(rateless).not.toBe(22050);
+    expect(resolved).toBe(22050);
   });
 
   it('holds hopLength to half the live nFft', () => {
