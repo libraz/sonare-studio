@@ -34,7 +34,7 @@ describe('arrangement keyboard clip move', () => {
     const handler = sourceWindow(
       arrangement,
       'function onClipKeyboardAction',
-      'function glueClusterClipIds',
+      'const { onClipContext } = useArrangementClipMenu',
     );
     expect(handler).toContain('const lanes = visibleTracks.value;');
     expect(handler).not.toContain('store.tracks[');
