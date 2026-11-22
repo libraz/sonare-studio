@@ -149,8 +149,6 @@ const hasContent = computed(() =>
   store.clips.some((clip) => clip.notes.length > 0 || isAudioClip(clip)),
 );
 
-const viewReasons = computed(() => t.value.shell.arrangement.reasons);
-
 const {
   detectSectionsBlocked,
   sectionsFromNotesBlocked,
@@ -165,7 +163,7 @@ const {
   closeTranscribeDialog,
   onSplitStemsClick,
   openTuneToMidiMenu,
-} = useArrangementProcessing({ error, notice, viewReasons, isTrackFrozen });
+} = useArrangementProcessing({ error, notice, isTrackFrozen });
 
 function isTrackFrozen(trackId: number | undefined): boolean {
   return store.tracks.find((track) => track.id === trackId)?.frozen !== undefined;
@@ -357,10 +355,11 @@ const laneView: ClipInteractionsView = {
   },
 };
 
-/** Resolves the content track under a context-menu point, excluding sublanes. */
-function trackIdAtPoint(point: { x: number; y: number }): number | null {
-  if (point.y < RULER_HEIGHT_PX) return null;
-  const hit = rowLayout.value.hitTest(point.y - RULER_HEIGHT_PX + scrollY.value);
+/** Resolves the content track under a viewport y coordinate on the canvas, excluding sublanes. */
+function trackIdAtClientY(clientY: number): number | null {
+  const y = clientY - (canvasCell.value?.getBoundingClientRect().top ?? 0);
+  if (y < RULER_HEIGHT_PX) return null;
+  const hit = rowLayout.value.hitTest(y - RULER_HEIGHT_PX + scrollY.value);
   if (hit?.zone !== 'track') return null;
   return visibleTracks.value[hit.index]?.id ?? null;
 }
@@ -647,13 +646,11 @@ function onClipKeyboardAction(payload: ClipKeyboardAction): void {
 const { onClipContext } = useArrangementClipMenu({
   error,
   notice,
-  viewReasons,
   isTrackFrozen,
   gridPpq,
   snapPpq: snapArrangementPpq,
   sourceBoundsFor,
-  canvasCell,
-  trackIdAtPoint,
+  trackIdAtClientY,
 });
 const { onRulerContext } = useArrangementRulerMenu({ error });
 

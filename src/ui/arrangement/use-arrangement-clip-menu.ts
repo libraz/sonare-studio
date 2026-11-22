@@ -14,6 +14,7 @@ import {
   DEFAULT_CLIP_CROSSFADE_PPQ,
   planClipCrossfade,
 } from '@/project/clip-crossfade';
+import { touchingClipRunIds } from '@/project/clip-runs';
 import { clipSplitBlockReason } from '@/project/clip-split';
 import { canPasteClipAt, hasCopiedClip } from '@/project/command/clips-clipboard';
 import {
@@ -41,7 +42,7 @@ import { useProjectStore } from '@/project/store';
 import { clipKind, type EditorClip, isAudioClip } from '@/project/types';
 import type { AudioClipSourceBounds } from '@/ui/arrangement/audio-clip-content';
 import { firstBlock } from '@/ui/disabled-reason';
-import { formatMessage, type Messages, useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { shortcutHint } from '@/ui/settings/shortcut-hint';
 
@@ -51,8 +52,6 @@ export interface UseArrangementClipMenuOptions {
   error: Ref<string>;
   /** Result line shown above the view until the next action. */
   notice: Ref<string>;
-  /** Localized reasons the arrangement controls are unavailable. */
-  viewReasons: Ref<Messages['shell']['arrangement']['reasons']>;
   /** Whether the track with this id is frozen. */
   isTrackFrozen(trackId: number | undefined): boolean;
   /** Current snap grid step in PPQ (0 when snapping is off). */
@@ -61,10 +60,8 @@ export interface UseArrangementClipMenuOptions {
   snapPpq(ppq: number): number;
   /** Trim bounds of a clip against its backing asset; null when unbounded. */
   sourceBoundsFor(clipId: number): AudioClipSourceBounds | null;
-  /** The element holding the clip canvas, used to localize pointer coordinates. */
-  canvasCell: Ref<HTMLDivElement | null>;
-  /** Resolves the content track under a canvas-local point, or null. */
-  trackIdAtPoint(point: { x: number; y: number }): number | null;
+  /** Resolves the content track under a viewport (client) y coordinate, or null. */
+  trackIdAtClientY(clientY: number): number | null;
 }
 
 /** Clip context-menu handler returned by {@link useArrangementClipMenu}. */
@@ -85,13 +82,11 @@ export function useArrangementClipMenu(
   const {
     error,
     notice,
-    viewReasons,
     isTrackFrozen,
     gridPpq,
     snapPpq: snapArrangementPpq,
     sourceBoundsFor,
-    canvasCell,
-    trackIdAtPoint,
+    trackIdAtClientY,
   } = options;
   const store = useProjectStore();
   const { t } = useI18n();
@@ -100,56 +95,22 @@ export function useArrangementClipMenu(
   function glueClusterClipIds(clipId: number): number[] {
     const source = store.clips.find((clip) => clip.id === clipId);
     if (!source || isAudioClip(source)) return [];
-    const candidates = store.clips
-      .filter(
+    return touchingClipRunIds(
+      store.clips.filter(
         (clip) =>
           clip.trackId === source.trackId && !isAudioClip(clip) && clipKind(clip) === 'midi',
-      )
-      .sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
-    const sourceIndex = candidates.findIndex((clip) => clip.id === clipId);
-    if (sourceIndex < 0) return [];
-    const EPSILON = 1e-6;
-    let first = sourceIndex;
-    let last = sourceIndex;
-    while (first > 0) {
-      const prev = candidates[first - 1];
-      const current = candidates[first];
-      if (prev.startPpq + prev.lengthPpq + EPSILON < current.startPpq) break;
-      first--;
-    }
-    while (last < candidates.length - 1) {
-      const current = candidates[last];
-      const next = candidates[last + 1];
-      if (current.startPpq + current.lengthPpq + EPSILON < next.startPpq) break;
-      last++;
-    }
-    return candidates.slice(first, last + 1).map((clip) => clip.id);
+      ),
+      clipId,
+    );
   }
 
   function audioConsolidateClipIds(clipId: number): number[] {
     const source = store.clips.find((clip) => clip.id === clipId);
     if (!source || !isAudioClip(source)) return [];
-    const candidates = store.clips
-      .filter((clip) => clip.trackId === source.trackId && isAudioClip(clip))
-      .sort((a, b) => a.startPpq - b.startPpq || a.id - b.id);
-    const sourceIndex = candidates.findIndex((clip) => clip.id === clipId);
-    if (sourceIndex < 0) return [];
-    const EPSILON = 1e-6;
-    let first = sourceIndex;
-    let last = sourceIndex;
-    while (first > 0) {
-      const prev = candidates[first - 1];
-      const current = candidates[first];
-      if (prev.startPpq + prev.lengthPpq + EPSILON < current.startPpq) break;
-      first--;
-    }
-    while (last < candidates.length - 1) {
-      const current = candidates[last];
-      const next = candidates[last + 1];
-      if (current.startPpq + current.lengthPpq + EPSILON < next.startPpq) break;
-      last++;
-    }
-    return candidates.slice(first, last + 1).map((entry) => entry.id);
+    return touchingClipRunIds(
+      store.clips.filter((clip) => clip.trackId === source.trackId && isAudioClip(clip)),
+      clipId,
+    );
   }
 
   /**
@@ -273,11 +234,7 @@ export function useArrangementClipMenu(
   }): void {
     const clip = payload.clipId === null ? null : store.clips.find((c) => c.id === payload.clipId);
     if (!clip) {
-      const canvasRect = canvasCell.value?.getBoundingClientRect();
-      const trackId = trackIdAtPoint({
-        x: payload.x - (canvasRect?.left ?? 0),
-        y: payload.y - (canvasRect?.top ?? 0),
-      });
+      const trackId = trackIdAtClientY(payload.y);
       if (trackId === null) return;
       const pastePpq = snapArrangementPpq(payload.ppq);
       if (!canPasteClipAt(trackId, pastePpq)) return;
@@ -300,7 +257,7 @@ export function useArrangementClipMenu(
     const frozen = isTrackFrozen(clip.trackId);
     const crossfade = crossfadeStateFor(clip.id);
     const r = t.value.reasons;
-    const why = viewReasons.value;
+    const why = t.value.shell.arrangement.reasons;
     const actions = t.value.shell.arrangement.clipActions;
     const frozenBlock = firstBlock([frozen, r.trackFrozen]);
     const audio = isAudioClip(clip);

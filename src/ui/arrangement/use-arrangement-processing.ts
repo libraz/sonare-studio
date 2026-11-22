@@ -20,7 +20,7 @@ import { MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { clipKind, type EditorClip, isAudioClip } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
-import { formatMessage, type Messages, useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 
 /** Configuration for {@link useArrangementProcessing}. */
@@ -29,8 +29,6 @@ export interface UseArrangementProcessingOptions {
   error: Ref<string>;
   /** Result line shown above the view until the next action. */
   notice: Ref<string>;
-  /** Localized reasons the arrangement controls are unavailable. */
-  viewReasons: Ref<Messages['shell']['arrangement']['reasons']>;
   /** Whether the track with this id is frozen. */
   isTrackFrozen(trackId: number | undefined): boolean;
 }
@@ -74,7 +72,7 @@ export interface ArrangementProcessing {
 export function useArrangementProcessing(
   options: UseArrangementProcessingOptions,
 ): ArrangementProcessing {
-  const { error, notice, viewReasons, isTrackFrozen } = options;
+  const { error, notice, isTrackFrozen } = options;
   const store = useProjectStore();
   const { t } = useI18n();
 
@@ -113,7 +111,7 @@ export function useArrangementProcessing(
     firstBlock(audioClipBlocked.value, [isDetectingSections.value, t.value.reasons.busy]),
   );
   const sectionsFromNotesBlocked = computed(() =>
-    firstBlock([!hasWrittenNotes.value, viewReasons.value.noWrittenNotes]),
+    firstBlock([!hasWrittenNotes.value, t.value.shell.arrangement.reasons.noWrittenNotes]),
   );
   const transcribeBlocked = computed(() => audioClipBlocked.value);
   /** A running components split stays clickable: the button then cancels it. */
@@ -269,7 +267,7 @@ export function useArrangementProcessing(
       [clip?.warp?.enabled === true, refused.warped],
       [clip?.loopEnabled === true, refused.looped],
       [(clip?.takes?.length ?? 0) > 0, refused.comped],
-      [midiTracks.value.length === 0, viewReasons.value.noMidiTrack],
+      [midiTracks.value.length === 0, t.value.shell.arrangement.reasons.noMidiTrack],
       [isTuningToMidi.value, t.value.reasons.busy],
     );
   });
