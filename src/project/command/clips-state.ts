@@ -106,16 +106,16 @@ export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
 export function setClipLoop(clipId: number, loopEnabled: boolean, loopLengthPpq?: number): void {
   const store = useProjectStore();
   const project = getProject();
-  requireEditableClip(store, clipId);
+  const clip = requireEditableClip(store, clipId);
   if (loopLengthPpq !== undefined && (!Number.isFinite(loopLengthPpq) || loopLengthPpq <= 0)) {
     throw new RangeError(`Loop length must be finite and > 0, got ${loopLengthPpq}`);
   }
   execute(1, () => {
     if (loopEnabled) {
-      project.setClipLoop(
-        clipId,
-        loopLengthPpq === undefined ? { loopMode: 'loop' } : { loopMode: 'loop', loopLengthPpq },
-      );
+      project.setClipLoop(clipId, {
+        loopMode: 'loop',
+        loopLengthPpq: loopLengthPpq ?? clip.lengthPpq,
+      });
     } else project.setClipLoop(clipId, { loopMode: 'off' });
     store.refresh();
   });
