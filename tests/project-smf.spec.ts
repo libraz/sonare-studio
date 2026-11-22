@@ -7,8 +7,17 @@ import {
   SMF_TEMPO_RAMP_MAX_ERROR_BPM,
   sampleTempoRampsForSmf,
 } from '@/project/smf';
-import { extractSmfSysEx, inspectSmfSysEx, smfToProjectDocument } from '@/project/smf-import';
+import { extractSmfSysEx, smfToProjectDocument } from '@/project/smf-import';
 import { coreWasmBinary } from './core-package';
+
+/** SysEx packet and payload-byte counts of an SMF. */
+function sysExCounts(bytes: Uint8Array): { packets: number; payloadBytes: number } {
+  const packets = extractSmfSysEx(bytes);
+  return {
+    packets: packets.length,
+    payloadBytes: packets.reduce((total, packet) => total + packet.data.length, 0),
+  };
+}
 
 vi.mock('@/lib/wasm', async () => {
   const wasm = await import('@libraz/libsonare');
@@ -655,7 +664,7 @@ describe('smfToProjectDocument', () => {
       ],
     ]);
 
-    expect(inspectSmfSysEx(bytes)).toEqual({ packets: 2, payloadBytes: 7 });
+    expect(sysExCounts(bytes)).toEqual({ packets: 2, payloadBytes: 7 });
     const document = await smfToProjectDocument(bytes, 'xg.mid');
     const packets = document.tracks.flatMap((track) =>
       track.clips.flatMap((clip) => clip.smfSysEx ?? []),
@@ -667,7 +676,7 @@ describe('smfToProjectDocument', () => {
 
     const exported = await projectDocumentToSmf(document);
     expect(extractSmfSysEx(exported)).toEqual(packets);
-    expect(inspectSmfSysEx(exported)).toEqual({ packets: 2, payloadBytes: 7 });
+    expect(sysExCounts(exported)).toEqual({ packets: 2, payloadBytes: 7 });
   });
 
   it('round-trips a 200,000-byte F0 packet without an argument-spread limit', async () => {

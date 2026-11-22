@@ -135,15 +135,6 @@ export function extractSmfSysEx(bytes: Uint8Array): SmfSysExPacket[] {
   return packets;
 }
 
-/** Returns SysEx packet and payload counts without exposing packet bodies. */
-export function inspectSmfSysEx(bytes: Uint8Array): { packets: number; payloadBytes: number } {
-  const packets = extractSmfSysEx(bytes);
-  return {
-    packets: packets.length,
-    payloadBytes: packets.reduce((total, packet) => total + packet.data.length, 0),
-  };
-}
-
 function eventWord(event: SerializedMidiEvent): number {
   return event.word0 >>> 0;
 }
