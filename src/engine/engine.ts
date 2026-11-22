@@ -1,7 +1,8 @@
 import sonareWasmUrl from '@libraz/libsonare/wasm?url';
 import type { SonareRealtimeEngineNodeCapabilities } from '@libraz/libsonare/worklet';
-import { init as initWorkletModule, SonareEngine } from '@libraz/libsonare/worklet';
+import { SonareEngine } from '@libraz/libsonare/worklet';
 import { errorMessage } from '@/lib/errors';
+import { ensureWasm } from '@/lib/wasm';
 import { requestPwaEngineRecovery } from '@/pwa';
 
 /**
@@ -325,9 +326,9 @@ export function waitForWorkletReady(
 /**
  * Creates an AudioContext, loads the engine worklet module, and returns a ready engine.
  *
- * The sonare WASM bytes are fetched once and used twice: to initialize the worklet
- * module's main-thread copy (SonareEngine keeps an offline engine mirror there), and
- * passed via processorOptions into the AudioWorklet, whose scope has no fetch().
+ * The main thread's shared module backs SonareEngine's offline engine mirror, and
+ * the sonare WASM bytes are passed via processorOptions into the AudioWorklet,
+ * whose scope has no fetch().
  * Resolution waits for the worklet to confirm its own WASM initialization, and the
  * engine node is connected to the destination, so the returned engine is audible.
  *
@@ -340,9 +341,9 @@ export function waitForWorkletReady(
 export async function createEngine(options: CreateEngineOptions = {}): Promise<EngineHandle> {
   const wasmBinary = await fetchWasmBinary();
   options.signal?.throwIfAborted();
-  // The published init() type only declares locateFile, but options pass through to
-  // the Emscripten factory, which accepts wasmBinary.
-  await (initWorkletModule as (opts?: object) => Promise<void>)({ wasmBinary });
+  // Every entry shares this realm's module, so the engine's mirror uses the one
+  // the rest of the app initializes.
+  await ensureWasm();
   options.signal?.throwIfAborted();
 
   const ctx = new AudioContext();

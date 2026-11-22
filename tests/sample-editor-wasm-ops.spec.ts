@@ -2121,18 +2121,17 @@ describe('against the real core', () => {
     expect(synthesizeRirChannels(ops, sampleRate, largeRoom).channels[0].length).toBeGreaterThan(0);
   }, 30_000);
 
-  // The core's default listener sits outside a 4 x 3 m room, so the editor's
-  // default "small room" preset is refused for mono, stereo and RIR synthesis
-  // alike (wasm-ops.ts roomMorph, roomMorphStereo and synthesizeRir pass no placement).
-  it.fails('morphs a stereo pair into the small-room preset', () => {
+  // The editor's default "small room" preset passes no placement, so the core
+  // places the source and listener inside the room.
+  it('morphs a stereo pair into the small-room preset', () => {
     expect(roomMorphChannels(ops, stereoTone, sampleRate, preset, 0.5).channels).toHaveLength(2);
   });
 
-  it.fails('synthesizes the small-room preset RIR', () => {
+  it('synthesizes the small-room preset RIR', () => {
     expect(synthesizeRirChannels(ops, sampleRate, preset).channels[0].length).toBeGreaterThan(0);
   });
 
-  it.fails('morphs a mono clip into the small-room preset', () => {
+  it('morphs a mono clip into the small-room preset', () => {
     expect(roomMorphChannels(ops, [tone], sampleRate, preset, 0.5).channels).toHaveLength(1);
   });
 

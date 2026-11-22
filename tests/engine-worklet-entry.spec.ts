@@ -1,4 +1,4 @@
-import type { StreamingRetuneConfig } from '@libraz/libsonare';
+import type { StreamingRetuneConfig } from '@libraz/libsonare/worklet';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { coreWasmBinary } from './core-package';
 
@@ -10,8 +10,6 @@ const {
   receiveCaptureRequest,
   receiveTransportRequest,
   voiceReceiveMessage,
-  indexInit,
-  indexIsInitialized,
   retuneSetConfig,
   retuneReset,
   retuneDestroy,
@@ -25,8 +23,6 @@ const {
   receiveCaptureRequest: vi.fn(),
   receiveTransportRequest: vi.fn(),
   voiceReceiveMessage: vi.fn(),
-  indexInit: vi.fn(() => Promise.resolve()),
-  indexIsInitialized: vi.fn(() => false),
   retuneSetConfig: vi.fn(),
   retuneReset: vi.fn(),
   retuneDestroy: vi.fn(),
@@ -50,13 +46,8 @@ vi.mock('@libraz/libsonare/worklet', () => ({
       return true;
     }
   },
-}));
-
-vi.mock('@libraz/libsonare', () => ({
-  init: indexInit,
-  isInitialized: indexIsInitialized,
   StreamingRetune: class
-    implements Partial<InstanceType<typeof import('@libraz/libsonare').StreamingRetune>>
+    implements Partial<InstanceType<typeof import('@libraz/libsonare/worklet').StreamingRetune>>
   {
     constructor(readonly initialConfig?: StreamingRetuneConfig) {}
     prepare = vi.fn();
@@ -109,9 +100,6 @@ beforeEach(() => {
   receiveCaptureRequest.mockClear();
   receiveTransportRequest.mockClear();
   voiceReceiveMessage.mockClear();
-  indexInit.mockClear();
-  indexIsInitialized.mockClear();
-  indexIsInitialized.mockReturnValue(false);
   retuneSetConfig.mockClear();
   retuneReset.mockClear();
   retuneDestroy.mockClear();
@@ -120,7 +108,6 @@ beforeEach(() => {
   bridgeProcess.mockClear();
   bridgeProcess.mockReturnValue(true);
   delete (globalThis as Record<string, unknown>).SonareEmbindInitPromise;
-  delete (globalThis as Record<string, unknown>).SonareEmbindModuleFactory;
 });
 
 /** Instantiates the registered processor and drains its async init chain. */
@@ -219,10 +206,9 @@ describe('worklet-entry dispatch', () => {
     expect(voiceReceiveMessage).toHaveBeenNthCalledWith(3, destroy);
   });
 
-  it('initializes embind with supplied wasm bytes and the bundled module factory', async () => {
+  it('initializes embind with supplied wasm bytes and the package module factory', async () => {
     const wasmBinary = new ArrayBuffer(8);
-    const moduleFactory = vi.fn();
-    (globalThis as Record<string, unknown>).SonareEmbindModuleFactory = moduleFactory;
+    const { default: moduleFactory } = await import('@libraz/libsonare/module');
     const ctor = registered.get('sonare-realtime-engine-processor');
     expect(ctor).toBeDefined();
     const instance = new (ctor as RegisteredCtor)({ processorOptions: { wasmBinary } });
@@ -360,7 +346,9 @@ describe('worklet-entry dispatch', () => {
 
 describe('streaming retune config against the real core', () => {
   it('applies the config the worklet forwards', async () => {
-    const actual = await vi.importActual<typeof import('@libraz/libsonare')>('@libraz/libsonare');
+    const actual = await vi.importActual<typeof import('@libraz/libsonare/worklet')>(
+      '@libraz/libsonare/worklet',
+    );
     await actual.init({ wasmBinary: coreWasmBinary() });
     const retune = new actual.StreamingRetune();
     try {

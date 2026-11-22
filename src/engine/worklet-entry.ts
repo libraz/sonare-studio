@@ -1,18 +1,15 @@
-import {
-  init as initIndexModule,
-  isInitialized as isIndexInitialized,
-  StreamingRetune,
-  type StreamingRetuneConfig,
-} from '@libraz/libsonare';
+import createSonareModule from '@libraz/libsonare/module';
 import type {
   SonareRealtimeEngineWorkletProcessorOptions,
   SonareRealtimeVoiceChangerWorkletProcessorOptions,
+  StreamingRetuneConfig,
 } from '@libraz/libsonare/worklet';
 import {
   init,
   isInitialized,
   SonareRealtimeEngineWorkletProcessor,
   SonareRealtimeVoiceChangerWorkletProcessor,
+  StreamingRetune,
 } from '@libraz/libsonare/worklet';
 import { errorMessage } from '@/lib/errors';
 
@@ -39,29 +36,21 @@ type EngineProcessor = InstanceType<typeof SonareRealtimeEngineWorkletProcessor>
 
 type WorkletGlobal = typeof globalThis & {
   SonareEmbindInitPromise?: Promise<void>;
-  SonareEmbindModuleFactory?: (opts?: object) => Promise<unknown>;
 };
 
-// The AudioWorkletGlobalScope has no URL constructor, but the bundled Emscripten
-// glue computes a wasm path with `new URL(..., import.meta.url)` during init even
-// though the bytes always arrive via processorOptions.wasmBinary and the resulting
-// href is never fetched. A minimal href-carrying stub keeps that bookkeeping alive.
-if (typeof (globalThis as { URL?: unknown }).URL === 'undefined') {
-  class WorkletUrlStub {
-    readonly href: string;
-    constructor(path: unknown, base?: unknown) {
-      const p = String(path);
-      if (base === undefined || /^(?:[a-z]+:)?\/\//i.test(p) || /^(?:data|blob):/i.test(p)) {
-        this.href = p;
-      } else {
-        this.href = `${String(base).replace(/[^/]*$/, '')}${p}`;
-      }
-    }
-    toString(): string {
-      return this.href;
-    }
-  }
-  (globalThis as { URL?: unknown }).URL = WorkletUrlStub;
+/**
+ * Initializes this realm's module from the bytes the main thread posted; the
+ * worklet scope cannot fetch, so the factory builds it from `wasmBinary`.
+ */
+async function initRealm(wasmBinary: ArrayBuffer | Uint8Array | undefined): Promise<void> {
+  const scope = globalThis as WorkletGlobal;
+  if (scope.SonareEmbindInitPromise) await scope.SonareEmbindInitPromise;
+  if (isInitialized()) return;
+  await init({
+    locateFile: (path) => path,
+    ...(wasmBinary ? { wasmBinary } : {}),
+    moduleFactory: createSonareModule,
+  });
 }
 
 /**
@@ -111,24 +100,7 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
       port.onmessage = onMessage;
     }
     const { wasmBinary } = processorOptions;
-    // The published init() type only declares locateFile, but options pass through
-    // to the Emscripten factory, which accepts wasmBinary.
-    const scope = globalThis as WorkletGlobal;
-    const initOptions = {
-      locateFile: (path: string) => path,
-      ...(wasmBinary ? { wasmBinary } : {}),
-      ...(scope.SonareEmbindModuleFactory
-        ? { moduleFactory: scope.SonareEmbindModuleFactory }
-        : {}),
-    };
-    const initPromise = (async () => {
-      if (scope.SonareEmbindInitPromise) {
-        await scope.SonareEmbindInitPromise;
-      }
-      if (!isInitialized()) {
-        await (init as (opts?: object) => Promise<void>)(initOptions);
-      }
-    })();
+    const initPromise = initRealm(wasmBinary);
     void initPromise
       .then(() => {
         this.bridge = new SonareRealtimeEngineWorkletProcessor({
@@ -214,22 +186,7 @@ class SonareVoiceChangerWorklet extends AudioWorkletProcessor {
       port.onmessage = onMessage;
     }
     const { wasmBinary } = processorOptions;
-    const scope = globalThis as WorkletGlobal;
-    const initOptions = {
-      locateFile: (path: string) => path,
-      ...(wasmBinary ? { wasmBinary } : {}),
-      ...(scope.SonareEmbindModuleFactory
-        ? { moduleFactory: scope.SonareEmbindModuleFactory }
-        : {}),
-    };
-    const initPromise = (async () => {
-      if (scope.SonareEmbindInitPromise) {
-        await scope.SonareEmbindInitPromise;
-      }
-      if (!isInitialized()) {
-        await (init as (opts?: object) => Promise<void>)(initOptions);
-      }
-    })();
+    const initPromise = initRealm(wasmBinary);
     void initPromise
       .then(() => {
         this.bridge = new SonareRealtimeVoiceChangerWorkletProcessor(processorOptions);
@@ -303,20 +260,7 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
       numChannels: _numChannels,
       ...config
     } = processorOptions;
-    const scope = globalThis as WorkletGlobal;
-    const initOptions = {
-      locateFile: (path: string) => path,
-      ...(wasmBinary ? { wasmBinary } : {}),
-      ...(scope.SonareEmbindModuleFactory
-        ? { moduleFactory: scope.SonareEmbindModuleFactory }
-        : {}),
-    };
-    void (async () => {
-      if (scope.SonareEmbindInitPromise) await scope.SonareEmbindInitPromise;
-      if (!isIndexInitialized()) {
-        await (initIndexModule as (opts?: object) => Promise<void>)(initOptions);
-      }
-    })()
+    void initRealm(wasmBinary)
       .then(() => {
         this.retunes = Array.from({ length: this.numChannels }, () => {
           const retune = new StreamingRetune(config);

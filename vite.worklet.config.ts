@@ -24,10 +24,34 @@ function dropWasmAssets(): Plugin {
   };
 }
 
+/**
+ * Fails the build when the processor graph emits anything beside its entry.
+ * An AudioWorkletGlobalScope cannot start workers, so an emitted worker script
+ * means the graph reached the core's main-thread entry instead of its worklet one.
+ */
+function workletEntryOnly(): Plugin {
+  return {
+    name: 'worklet-entry-only',
+    generateBundle(_options, bundle) {
+      const extra = Object.values(bundle).filter(
+        (output) => !(output.type === 'chunk' && output.isEntry),
+      );
+      if (extra.length > 0) {
+        this.error(
+          `AudioWorklet build emitted more than its entry: ${extra.map((o) => o.fileName).join(', ')}`,
+        );
+      }
+    },
+  };
+}
+
 const WORKLET_ASSET_PREFIX = 'sonare-engine-worklet-';
+// Worker scripts an earlier processor graph emitted beside the entry; removed so
+// they do not linger in public/assets and ship with the app build.
+const STALE_ASSET_PREFIXES = [WORKLET_ASSET_PREFIX, 'worker-', 'vocal_edit_worker-'];
 const workletManifestPath = resolve('.worklet-build/manifest.json');
 
-/** Removes obsolete content-addressed worklets and records the new URL for the app build. */
+/** Removes obsolete worklet assets and records the new URL for the app build. */
 function workletManifest(): Plugin {
   return {
     name: 'worklet-manifest',
@@ -35,7 +59,10 @@ function workletManifest(): Plugin {
       const assetsDir = resolve('public/assets');
       try {
         for (const fileName of readdirSync(assetsDir)) {
-          if (fileName.startsWith(WORKLET_ASSET_PREFIX) && fileName.endsWith('.js')) {
+          if (
+            STALE_ASSET_PREFIXES.some((prefix) => fileName.startsWith(prefix)) &&
+            fileName.endsWith('.js')
+          ) {
             rmSync(resolve(assetsDir, fileName));
           }
         }
@@ -63,7 +90,7 @@ function workletManifest(): Plugin {
 
 export default defineConfig({
   resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
-  plugins: [dropWasmAssets(), workletManifest()],
+  plugins: [dropWasmAssets(), workletEntryOnly(), workletManifest()],
   build: {
     target: 'esnext',
     emptyOutDir: false,

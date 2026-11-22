@@ -234,9 +234,7 @@ describe('sample editor operation ownership', () => {
       await core.init({ wasmBinary: coreWasmBinary() });
     });
 
-    // The editor's default room preset is 4 x 3 m, which the core refuses
-    // (listener outside the room), so placing a clip in it fails.
-    it.fails('places a clip in the default room preset', async () => {
+    it('places a clip in the default room preset', async () => {
       assetStore.saveAsset.mockResolvedValue(meta('asset-b'));
       const context = setupOperation(loadedAsset('asset-a'), core);
 

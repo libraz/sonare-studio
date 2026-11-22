@@ -15,11 +15,6 @@ vi.mock('@libraz/libsonare/worklet', () => ({
   SonareRealtimeVoiceChangerWorkletProcessor: class {
     process = voiceProcess;
   },
-}));
-
-vi.mock('@libraz/libsonare', () => ({
-  init: vi.fn(() => Promise.resolve()),
-  isInitialized: vi.fn(() => false),
   StreamingRetune: class {
     prepare = vi.fn();
     processMono = retuneProcessMono;
