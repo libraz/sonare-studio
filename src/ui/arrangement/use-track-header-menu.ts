@@ -428,24 +428,22 @@ export function useTrackHeaderMenu(options: UseTrackHeaderMenuOptions): TrackHea
       }
     }
     const groups = store.mixer.vcaGroups ?? [];
-    if (groups.length > 0 || groups.length < MAX_VCA_GROUPS) {
-      items.push({ id: 'sep-vca', separator: true });
-      for (const group of groups) {
-        const assigned = track.vcaId === group.id;
-        items.push({
-          id: `vca-${group.id}`,
-          label: group.name,
-          checked: assigned,
-          run: () => setTrackVca(track.id, assigned ? null : group.id),
-        });
-      }
-      if (groups.length < MAX_VCA_GROUPS) {
-        items.push({
-          id: 'vca-new',
-          label: t.value.shell.arrangement.trackHeader.newVcaGroup,
-          run: () => setTrackVca(track.id, addVcaGroup()),
-        });
-      }
+    items.push({ id: 'sep-vca', separator: true });
+    for (const group of groups) {
+      const assigned = track.vcaId === group.id;
+      items.push({
+        id: `vca-${group.id}`,
+        label: group.name,
+        checked: assigned,
+        run: () => setTrackVca(track.id, assigned ? null : group.id),
+      });
+    }
+    if (groups.length < MAX_VCA_GROUPS) {
+      items.push({
+        id: 'vca-new',
+        label: t.value.shell.arrangement.trackHeader.newVcaGroup,
+        run: () => setTrackVca(track.id, addVcaGroup()),
+      });
     }
     const generatedPart = partForTrack(track);
     if (generatedPart !== null) {
