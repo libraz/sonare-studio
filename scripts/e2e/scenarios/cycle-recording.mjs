@@ -8,6 +8,19 @@ export async function run(ctx) {
     // Record ~2.3 loop passes onto a fresh audio track: the linear capture
     // must split at the loop boundaries into one clip with one take per
     // completed pass.
+    // Headless Chromium reports a 2 s output latency, and the record offset
+    // built from it outlasts the 2 s loop pass, so nothing would be captured.
+    // Hold a device-like latency for this take only.
+    await page.evaluate(() => {
+      window.__nativeOutputLatency = Object.getOwnPropertyDescriptor(
+        AudioContext.prototype,
+        'outputLatency',
+      );
+      Object.defineProperty(AudioContext.prototype, 'outputLatency', {
+        configurable: true,
+        get: () => 0.02,
+      });
+    });
     const recTrackId = await page.evaluate(() => {
       const id = window.__sonareDebug.addAudioTrack('Cycle rec');
       window.__sonareDebug.armTrack(id);
@@ -28,6 +41,9 @@ export async function run(ctx) {
       { timeout: 10000 },
     );
     await page.click('.transport-bar .transport-key.stop');
+    await page.evaluate(() => {
+      Object.defineProperty(AudioContext.prototype, 'outputLatency', window.__nativeOutputLatency);
+    });
     const recInfo = (
       await page.evaluate((id) => window.__sonareDebug.clipTakesInfo(id), recTrackId)
     )[0];
