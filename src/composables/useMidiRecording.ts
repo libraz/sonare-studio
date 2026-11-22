@@ -200,6 +200,14 @@ export function useMidiRecording(
   let programChangeBuffer: Array<CapturedProgramChangeEvent & { ppq: number }> = [];
   let channelPressureBuffer: Array<CapturedChannelPressureEvent & { ppq: number }> = [];
   let polyPressureBuffer: Array<CapturedPolyPressureEvent & { ppq: number }> = [];
+  const clearCaptureBuffers = (): void => {
+    buffer = [];
+    ccBuffer = [];
+    pitchBendBuffer = [];
+    programChangeBuffer = [];
+    channelPressureBuffer = [];
+    polyPressureBuffer = [];
+  };
   let held = new Map<string, CapturedNoteEvent>();
   // Notes pressed during a count-in are tracked separately. They are not
   // recorded unless the key is still held when the punch-in boundary is
@@ -629,12 +637,7 @@ export function useMidiRecording(
         return false;
       }
     }
-    buffer = [];
-    ccBuffer = [];
-    pitchBendBuffer = [];
-    programChangeBuffer = [];
-    channelPressureBuffer = [];
-    polyPressureBuffer = [];
+    clearCaptureBuffers();
     held = new Map();
     preRollHeld = new Map();
     recordingStartPpq = startPpq;
@@ -711,12 +714,7 @@ export function useMidiRecording(
     const capturedProgramChange = programChangeBuffer;
     const capturedChannelPressure = channelPressureBuffer;
     const capturedPolyPressure = polyPressureBuffer;
-    buffer = [];
-    ccBuffer = [];
-    pitchBendBuffer = [];
-    programChangeBuffer = [];
-    channelPressureBuffer = [];
-    polyPressureBuffer = [];
+    clearCaptureBuffers();
     held = new Map();
     preRollHeld = new Map();
     if (trackId === null) return null;
@@ -1023,12 +1021,7 @@ export function useMidiRecording(
     stopWatching();
     finishCountIn();
     isRecording.value = false;
-    buffer = [];
-    ccBuffer = [];
-    pitchBendBuffer = [];
-    programChangeBuffer = [];
-    channelPressureBuffer = [];
-    polyPressureBuffer = [];
+    clearCaptureBuffers();
     held = new Map();
     preRollHeld = new Map();
     cycleTake?.end();

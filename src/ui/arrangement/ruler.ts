@@ -71,11 +71,6 @@ function barStrideForSpacing(barSpacingPx: number, minSpacingPx: number): number
   return stride;
 }
 
-/** Length of one bar of a meter segment in PPQ. */
-export function barLengthPpq(segment: MeterSegment): number {
-  return meterBarLengthPpq(segment);
-}
-
 /**
  * Normalizes a meter map: drops invalid segments, sorts by start, keeps the
  * last segment at duplicate starts and guarantees coverage from PPQ 0 by
@@ -153,7 +148,7 @@ export function rulerTicks(
     const segment = segments[i];
     if (segment.startPpq >= endPpq) break;
     const segmentEnd = segments[i + 1]?.startPpq ?? Number.POSITIVE_INFINITY;
-    const bar = barLengthPpq(segment);
+    const bar = meterBarLengthPpq(segment);
     const beat = meterBeatLengthPpq(segment);
     const visibleStart = Math.max(segment.startPpq, startPpq);
     const visibleEnd = Math.min(segmentEnd, endPpq);

@@ -5,6 +5,7 @@ import { getCanvasContext } from '@/components/piano-roll/theme';
 import type { AutomationLaneState, AutomationParam } from '@/project/automation';
 import type { PpqSpan } from '@/project/take-silence';
 import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from '@/project/tempo-map';
+import { meterBarLengthPpq } from '@/project/time-signature';
 import type {
   EditorClip,
   EditorMarker,
@@ -17,7 +18,7 @@ import type {
   AccessibleObjectItem,
 } from '@/ui/accessibility/object-navigation';
 import { type ArrangementRowLayout } from '@/ui/arrangement/automation-rows';
-import { barLengthPpq, createRulerTickCache } from '@/ui/arrangement/ruler';
+import { createRulerTickCache } from '@/ui/arrangement/ruler';
 import type { AutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import { drawAutomationLanes } from '@/ui/arrangement/use-automation-sublane';
 import type { ClipInteractions } from '@/ui/arrangement/use-clip-interactions';
@@ -158,7 +159,7 @@ const trackIndexById = computed(() => {
 /** Bar length in PPQ from the first meter segment (density bucket size). */
 const barPpq = computed(() => {
   const segment = props.timeSignatures[0];
-  return segment ? barLengthPpq(segment) : 4;
+  return segment ? meterBarLengthPpq(segment) : 4;
 });
 
 /** Tempo map for audio source mapping, rebuilt only when its inputs change. */

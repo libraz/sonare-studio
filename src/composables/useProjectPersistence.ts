@@ -314,6 +314,16 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     throw autosave.lastError.value ?? new Error(t.value.shell.autosaveFailed);
   }
 
+  /** Makes the project just loaded the clean saved state and closes the open/start surfaces. */
+  async function settleLoadedProject(): Promise<void> {
+    savedProjectSlot.value = null;
+    savedProjectRevision.value = null;
+    const documentKey = await saveLoadedProjectToAutosave();
+    await markClean(documentKey);
+    openDialogOpen.value = false;
+    startScreenOpen.value = false;
+  }
+
   async function confirmIncompletePortableExport(
     report: MediaCompletenessReport,
   ): Promise<boolean> {
@@ -655,12 +665,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         return;
       }
       await replaceProjectDocument(imported.document);
-      savedProjectSlot.value = null;
-      savedProjectRevision.value = null;
-      const documentKey = await saveLoadedProjectToAutosave();
-      await markClean(documentKey);
-      openDialogOpen.value = false;
-      startScreenOpen.value = false;
+      await settleLoadedProject();
     });
   }
 
@@ -745,12 +750,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         await assets.rollback(createAssetReferenceGuard(store));
         throw error;
       }
-      savedProjectSlot.value = null;
-      savedProjectRevision.value = null;
-      const documentKey = await saveLoadedProjectToAutosave();
-      await markClean(documentKey);
-      openDialogOpen.value = false;
-      startScreenOpen.value = false;
+      await settleLoadedProject();
     });
   }
 
@@ -766,12 +766,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
         file.name,
       );
       await replaceProjectDocument(doc);
-      savedProjectSlot.value = null;
-      savedProjectRevision.value = null;
-      const documentKey = await saveLoadedProjectToAutosave();
-      await markClean(documentKey);
-      openDialogOpen.value = false;
-      startScreenOpen.value = false;
+      await settleLoadedProject();
     });
   }
 
