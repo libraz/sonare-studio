@@ -17,3 +17,6 @@ public/assets/
 public/worklet-manifest.json
 .worklet-build/
 .e2e-dist/
+
+# TypeScript incremental build state -> ignored.
+*.tsbuildinfo
