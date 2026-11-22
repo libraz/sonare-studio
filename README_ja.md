@@ -7,7 +7,7 @@
 
 **sonare studio は、ブラウザの中だけで動き、何もアップロードしない DAW です。** アレンジ、ピアノロール、ミキサー、マスタリング、浄書した譜面、理論に基づく作曲のすべてが、WebAssembly のオーディオエンジンでタブの中で動きます。プロジェクトは、普通のファイルとして書き出すまで、ブラウザ自身のストレージに置かれます。
 
-📖 **[ドキュメント](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md)** &nbsp;·&nbsp; **[はじめに](https://github.com/libraz/sonare-studio/blob/main/docs/ja/getting-started.md)** &nbsp;·&nbsp; **[キーボードショートカット](https://github.com/libraz/sonare-studio/blob/main/docs/ja/shortcuts.md)**
+🎧 **[アプリを開く](https://sonare-studio.libraz.net)** &nbsp;·&nbsp; 📖 **[ドキュメント](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md)** &nbsp;·&nbsp; **[はじめに](https://github.com/libraz/sonare-studio/blob/main/docs/ja/getting-started.md)** &nbsp;·&nbsp; **[キーボードショートカット](https://github.com/libraz/sonare-studio/blob/main/docs/ja/shortcuts.md)**
 
 > 1.0 前の実験的なソフトウェアで、無保証です。`.szd` プロジェクト形式はリリース間で変わることがあり、コードは第三者による監査を受けていません。
 
@@ -19,7 +19,7 @@
 - **ノートを編集する** — コントローラーレーン、装飾、MIDI FX、エクスプレッションマップ、グルーヴ、ステップ入力、ステップシーケンサーを備えたピアノロール。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
 - **音を鳴らす** — 内蔵シンセ、GM/GS 音色とドラムキット、SoundFont（SF2）再生、マルチティンバー構成。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
 - **ミックスとマスタリング** — インサート、センド、オートメーション、メーターを備えたチャンネル／バス／VCA ストリップと、ラウドネスターゲット付きのマスタリングチェイン。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
-- **譜面を読む** — アクティブクリップを Verovio で浄書し、コードシンボル、印刷、PDF、MusicXML 書き出しに対応。[アーキテクチャ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/architecture.md#譜面は導出物で入力手段ではない)
+- **譜面を読む** — アクティブクリップを Verovio で浄書し、コードシンボル、印刷、PDF に対応。MusicXML と `.mxl` の読み書きはアプリ自身の記譜レイヤーが担います。[アーキテクチャ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/architecture.md#譜面は導出物で入力手段ではない)
 - **作曲する** — 1 つの再現可能なシードから生成するコード進行とパート、リハーモナイズ、ノートごとの理論ガイダンス。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
 - **録音してオーディオを解析する** — テイクとコンピング、テンポ／コード／セクションの解析、オーディオから MIDI への採譜、ステム分離。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
 - **ファイルを出し入れする** — `.szd`、DAWproject、Standard MIDI File、MIDI 2.0 クリップ、MusicXML、ステム、WAV / FLAC / MP3 のミックスダウン。[できること](https://github.com/libraz/sonare-studio/blob/main/docs/ja/introduction.md#できること)
@@ -27,7 +27,7 @@
 
 ## はじめに
 
-アプリの実行には、最近の Chromium 系または Firefox 系のブラウザが必要です。ローカルで動かすには、Node 24 と Yarn 4（`mise.toml` で固定）が必要です。
+[sonare-studio.libraz.net](https://sonare-studio.libraz.net) でこのリポジトリのビルドを公開しているので、インストールせずに使えます。そこで開いたファイルはどこにもアップロードされません。アプリの実行には、最近の Chromium 系または Firefox 系のブラウザが必要です。ローカルで動かすには、Node 24 と Yarn 4（`mise.toml` で固定）が必要です。
 
 ```sh
 yarn install

@@ -7,7 +7,7 @@
 
 **sonare studio is a DAW that runs entirely in the browser, with nothing uploaded.** Arrangement, piano roll, mixer, mastering, an engraved score and theory-driven composition all run inside the tab on a WebAssembly audio engine, and projects stay in the browser's own storage until you export them as ordinary files.
 
-📖 **[Documentation](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md)** &nbsp;·&nbsp; **[Getting started](https://github.com/libraz/sonare-studio/blob/main/docs/en/getting-started.md)** &nbsp;·&nbsp; **[Keyboard shortcuts](https://github.com/libraz/sonare-studio/blob/main/docs/en/shortcuts.md)**
+🎧 **[Open the app](https://sonare-studio.libraz.net)** &nbsp;·&nbsp; 📖 **[Documentation](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md)** &nbsp;·&nbsp; **[Getting started](https://github.com/libraz/sonare-studio/blob/main/docs/en/getting-started.md)** &nbsp;·&nbsp; **[Keyboard shortcuts](https://github.com/libraz/sonare-studio/blob/main/docs/en/shortcuts.md)**
 
 > Pre-1.0 and experimental, with no warranty: the `.szd` project format can still change between releases, and the code has not been independently audited.
 
@@ -19,7 +19,7 @@
 - **Edit notes** — piano roll with controller lanes, ornaments, MIDI FX, expression maps, groove, step input and a step sequencer. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
 - **Play sound** — built-in synths, GM/GS programs and drum kits, SoundFont (SF2) playback and multi-timbral setups. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
 - **Mix and master** — channel, bus and VCA strips with inserts, sends, automation and metering, and a mastering chain with loudness targets. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
-- **Read the score** — the active clip engraved with Verovio, with chord symbols, print, PDF and MusicXML export. [Architecture](https://github.com/libraz/sonare-studio/blob/main/docs/en/architecture.md#notation-is-derived-never-authored)
+- **Read the score** — the active clip engraved with Verovio, with chord symbols, print and PDF; the app's own notation layer reads and writes MusicXML and `.mxl`. [Architecture](https://github.com/libraz/sonare-studio/blob/main/docs/en/architecture.md#notation-is-derived-never-authored)
 - **Compose** — chord progressions and generated parts from one reproducible seed, reharmonization, and note-by-note theory guidance. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
 - **Record and analyse audio** — takes and comping, tempo/chord/section analysis, audio-to-MIDI transcription and stem separation. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
 - **Move files in and out** — `.szd`, DAWproject, Standard MIDI File, MIDI 2.0 clips, MusicXML, stems, and WAV / FLAC / MP3 mixdown. [What it does](https://github.com/libraz/sonare-studio/blob/main/docs/en/introduction.md#what-it-does)
@@ -27,7 +27,7 @@
 
 ## Getting started
 
-The app needs a current Chromium- or Firefox-based browser. To run it locally you need Node 24 and Yarn 4 (pinned in `mise.toml`):
+[sonare-studio.libraz.net](https://sonare-studio.libraz.net) serves the hosted build of this repository, so there is nothing to install to use it, and nothing you open there is uploaded. The app needs a current Chromium- or Firefox-based browser. To run it locally you need Node 24 and Yarn 4 (pinned in `mise.toml`):
 
 ```sh
 yarn install
