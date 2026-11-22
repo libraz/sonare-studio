@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue';
 import { clamp } from '@/lib/math';
 import { useI18n } from '@/ui/i18n';
+import { type NumericInputValue, parseNumber } from '@/ui/numeric-input';
 
 /**
  * Compact value readout that becomes a bounded number input when clicked.
@@ -41,7 +42,7 @@ const emit = defineEmits<{
 }>();
 
 const editing = ref(false);
-const draft = ref('');
+const draft = ref<NumericInputValue>('');
 const input = ref<HTMLInputElement | null>(null);
 
 function startEditing(): void {
@@ -58,9 +59,8 @@ function finish(commit: boolean): void {
   if (!editing.value) return;
   editing.value = false;
   if (!commit || locked.value) return;
-  const text = String(draft.value).trim();
-  const value = text === '' ? Number.NaN : Number(text);
-  if (Number.isFinite(value)) emit('change', clamp(value, props.min, props.max));
+  const value = parseNumber(draft.value);
+  if (value !== null) emit('change', clamp(value, props.min, props.max));
 }
 
 function onKeyDown(event: KeyboardEvent): void {

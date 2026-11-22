@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import { MODE_OPTIONS } from '@/ui/sample-editor/scales';
 import type { WasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
 
@@ -20,12 +21,14 @@ const emit = defineEmits<{
   'auto-tune': [];
 }>();
 
-const pitchInput = defineModel<string>('pitchInput', { required: true });
+const pitchInput = defineModel<NumericInputValue>('pitchInput', { required: true });
 const tuneNoteInput = defineModel<string>('tuneNoteInput', { required: true });
 const scaleRootInput = defineModel<string>('scaleRootInput', { required: true });
 const scaleModeInput = defineModel<string>('scaleModeInput', { required: true });
 const autoTuneDetect = defineModel<boolean>('autoTuneDetect', { required: true });
-const autoTuneStrengthInput = defineModel<string>('autoTuneStrengthInput', { required: true });
+const autoTuneStrengthInput = defineModel<NumericInputValue>('autoTuneStrengthInput', {
+  required: true,
+});
 
 const { t } = useI18n();
 const se = computed(() => t.value.shell.sampleEditor);

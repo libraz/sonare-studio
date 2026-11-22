@@ -15,6 +15,7 @@ import { type DetectedBeats, detectBeatsInWorker } from '@/project/audio-analysi
 import { setClipWarp } from '@/project/commands';
 import type { useProjectStore } from '@/project/store';
 import type { ClipWarp } from '@/project/types';
+import { type NumericInputValue, parseNumber } from '@/ui/numeric-input';
 import {
   autoWarpFromBeatTimes,
   defaultWarpAnchor,
@@ -65,7 +66,7 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
       .join(' · ');
   });
 
-  const warpBpmInput = ref('');
+  const warpBpmInput = ref<NumericInputValue>('');
   watch(
     () => [warpClip.value?.id, warpClip.value?.warp?.sourceBpm] as const,
     () => {
@@ -90,8 +91,8 @@ export function useSampleWarp(options: UseSampleWarpOptions) {
   }
 
   function onWarpBpmChange(): void {
-    const bpm = Number(warpBpmInput.value);
-    if (!(warpBpmInput.value.trim().length > 0 && Number.isFinite(bpm)) || bpm <= 0) {
+    const bpm = parseNumber(warpBpmInput.value);
+    if (bpm === null || bpm <= 0) {
       warpBpmInput.value = String(warpClip.value?.warp?.sourceBpm ?? project.tempoBpm);
       return;
     }

@@ -6,6 +6,7 @@ import { useProjectStore } from '@/project/store';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isBlankInput, type NumericInputValue } from '@/ui/numeric-input';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 import { MAX_BPM, MIN_BPM, mergeTempoSegments, validateTempoRows } from './row-validation';
@@ -25,8 +26,8 @@ const { t } = useI18n();
 interface DraftRow {
   key: number;
   position: string;
-  bpm: string;
-  endBpm: string;
+  bpm: NumericInputValue;
+  endBpm: NumericInputValue;
 }
 
 /** Formats a BPM value without floating-point noise. */
@@ -133,7 +134,7 @@ function apply(): void {
       return;
     }
     const segment: TempoSegment = { startPpq, bpm: Number(row.bpm) };
-    if (row.endBpm.trim() !== '') segment.endBpm = Number(row.endBpm);
+    if (!isBlankInput(row.endBpm)) segment.endBpm = Number(row.endBpm);
     parsed.push(segment);
   });
   if (issues.length === 0) issues.push(...formatIssues(validateTempoRows(parsed)));

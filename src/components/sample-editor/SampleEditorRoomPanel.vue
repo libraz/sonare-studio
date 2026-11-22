@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import type { WasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
 
 defineProps<{
@@ -22,7 +23,7 @@ const emit = defineEmits<{
 }>();
 
 const roomPresetId = defineModel<string>('roomPresetId', { required: true });
-const roomWetInput = defineModel<string>('roomWetInput', { required: true });
+const roomWetInput = defineModel<NumericInputValue>('roomWetInput', { required: true });
 const roomAirAbsorption = defineModel<boolean>('roomAirAbsorption', { required: true });
 
 const { t } = useI18n();

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import type { WasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
 
 defineProps<{
@@ -15,7 +16,9 @@ const emit = defineEmits<{
   'clear-transients': [];
 }>();
 
-const silenceThresholdInput = defineModel<string>('silenceThresholdInput', { required: true });
+const silenceThresholdInput = defineModel<NumericInputValue>('silenceThresholdInput', {
+  required: true,
+});
 
 const { t } = useI18n();
 const se = computed(() => t.value.shell.sampleEditor);

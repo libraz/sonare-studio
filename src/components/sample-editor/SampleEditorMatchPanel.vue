@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 
 defineProps<{
   referencePickerBlocked: string | null;
@@ -16,7 +17,7 @@ const emit = defineEmits<{
 }>();
 
 const referenceAssetId = defineModel<string>('referenceAssetId', { required: true });
-const matchEqAmountInput = defineModel<string>('matchEqAmountInput', { required: true });
+const matchEqAmountInput = defineModel<NumericInputValue>('matchEqAmountInput', { required: true });
 
 const { t } = useI18n();
 const se = computed(() => t.value.shell.sampleEditor);

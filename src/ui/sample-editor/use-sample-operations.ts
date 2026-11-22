@@ -30,8 +30,9 @@ import {
 } from '@/persistence/assets';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { humanizePresetName, restorationPresets } from '@/ui/mastering/preset-catalog';
+import { type NumericInputValue, parseNumber } from '@/ui/numeric-input';
 import type { VersionHistoryState } from './history';
-import { parseNumber, parsePercentFraction } from './input-parse';
+import { parsePercentFraction } from './input-parse';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { formatMidiNote, parseMidiNote } from './note-names';
 
@@ -177,40 +178,40 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   const runner = createSampleOperationRunner(options, () => referenceAssetId.value);
   const { notices, resultStatus, beginOperation, operationIsCurrent, runOp, runBuiltinOp } = runner;
 
-  const gainDbInput = ref('3');
+  const gainDbInput = ref<NumericInputValue>('3');
   const normalizeTargetInput = ref('-1');
-  const pitchInput = ref('0');
+  const pitchInput = ref<NumericInputValue>('0');
   const tuneNoteInput = ref('A4');
   /** "Tune to scale" target: root pitch class and Mode ordinal (as strings). */
   const scaleRootInput = ref('0');
   const scaleModeInput = ref('0');
   /** Voice-change controls: pitch transpose (semitones) and formant scale. */
-  const voicePitchInput = ref('0');
-  const voiceFormantInput = ref('1');
+  const voicePitchInput = ref<NumericInputValue>('0');
+  const voiceFormantInput = ref<NumericInputValue>('1');
   /** Formant factor taken relative to the input whatever the pitch shift. */
   const voiceFormantAbsolute = ref(false);
   /** Auto-tune: detect the key (true) or use the scale picker's root and mode. */
   const autoTuneDetect = ref(true);
   /** Auto-tune correction strength as a percentage string (100 = full snap). */
-  const autoTuneStrengthInput = ref('100');
-  const stretchInput = ref('1');
+  const autoTuneStrengthInput = ref<NumericInputValue>('100');
+  const stretchInput = ref<NumericInputValue>('1');
   /** Note-move nudge in milliseconds (negative moves the note earlier). */
-  const noteShiftMsInput = ref('0');
+  const noteShiftMsInput = ref<NumericInputValue>('0');
   /** Denoise depth in dB, starting at the library's own default. */
-  const denoiseDepthInput = ref('26');
+  const denoiseDepthInput = ref<NumericInputValue>('26');
   /** Silence-split threshold in dB below the peak. */
-  const silenceThresholdInput = ref('40');
+  const silenceThresholdInput = ref<NumericInputValue>('40');
   /** Rectangular spectral edit controls: frequency band, gain and edit mode. */
-  const spectralLowHzInput = ref('4000');
-  const spectralHighHzInput = ref('0');
-  const spectralGainDbInput = ref('-18');
+  const spectralLowHzInput = ref<NumericInputValue>('4000');
+  const spectralHighHzInput = ref<NumericInputValue>('0');
+  const spectralGainDbInput = ref<NumericInputValue>('-18');
   const spectralModeInput = ref<SpectralEditMode>('attenuate');
 
   /** Selected room shape id (see {@link ROOM_PRESETS}). */
   const roomPresetId = ref(ROOM_PRESETS[0].id);
   const restorePresetId = ref<string>(restorationPresets()[0] ?? '');
   /** Room reverb wet/dry mix as a percentage string (0 = dry, 100 = fully wet). */
-  const roomWetInput = ref(String(DEFAULT_ROOM_WET_PERCENT));
+  const roomWetInput = ref<NumericInputValue>(String(DEFAULT_ROOM_WET_PERCENT));
   const roomAirAbsorption = ref(false);
 
   /** Stored audio assets offered as the Match EQ reference. */
@@ -218,7 +219,7 @@ export function useSampleOperations(options: UseSampleOperationsOptions) {
   /** Selected reference asset id ('' = none picked). */
   const referenceAssetId = ref('');
   /** Parallel match strength as a percentage string (100 = fully matched). */
-  const matchEqAmountInput = ref(String(DEFAULT_MATCH_EQ_AMOUNT_PERCENT));
+  const matchEqAmountInput = ref<NumericInputValue>(String(DEFAULT_MATCH_EQ_AMOUNT_PERCENT));
   /** Latest Match EQ analysis against the reference (null = none run). */
   const matchEqAnalysis = ref<MatchEqAnalysis | null>(null);
   /** True while a Match EQ analysis is awaiting the engine. */

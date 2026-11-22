@@ -12,6 +12,7 @@ import { useProjectStore } from '@/project/store';
 import type { TimeSignatureSegment } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 import {
@@ -45,7 +46,7 @@ const DENOMINATOR_OPTIONS = TIME_SIGNATURE_DENOMINATORS.map((denominator) => ({
 interface DraftRow {
   key: number;
   position: string;
-  numerator: string;
+  numerator: NumericInputValue;
   denominator: string;
   /** Additive beat groups, e.g. `2+2+3`; blank means conventional grouping. */
   grouping: string;

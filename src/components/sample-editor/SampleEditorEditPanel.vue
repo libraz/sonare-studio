@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import { NORMALIZE_TARGET_OPTIONS } from '@/ui/sample-editor/use-sample-operations';
 
 defineProps<{
@@ -22,7 +23,7 @@ const emit = defineEmits<{
   duplicate: [];
 }>();
 
-const gainDbInput = defineModel<string>('gainDbInput', { required: true });
+const gainDbInput = defineModel<NumericInputValue>('gainDbInput', { required: true });
 const normalizeTargetInput = defineModel<string>('normalizeTargetInput', { required: true });
 
 const { t } = useI18n();

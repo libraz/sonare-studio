@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SampleEditor from '@/components/sample-editor/SampleEditor.vue';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
+import { MESSAGES } from '@/ui/i18n';
 
 const assetStore = vi.hoisted(() => {
   const deleteAsset = vi.fn(async () => undefined);
@@ -84,6 +85,24 @@ describe('SampleEditor async loading', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it('applies a gain typed into the number input', async () => {
+    const loaded = asset('asset-a', 'Vocal');
+    loaded.channels[0].fill(0.25);
+    assetStore.loadAsset.mockResolvedValue(loaded);
+    const wrapper = mountEditor('asset-a');
+    await flushPromises();
+    const panel = wrapper.find(
+      `[role="tabpanel"][aria-label="${MESSAGES.en.shell.sampleEditor.opsGroups.edit}"]`,
+    );
+    await panel.find('input.num').setValue('6');
+    await panel.find('button').trigger('click');
+    await flushPromises();
+
+    expect(assetStore.saveAsset).toHaveBeenCalledTimes(1);
+    const channels = assetStore.saveAsset.mock.calls[0][1] as ReadonlyArray<Float32Array>;
+    expect(channels[0][0]).toBeCloseTo(0.25 * 10 ** (6 / 20), 5);
   });
 
   it('ignores a stale asset load after the editor switches assets', async () => {

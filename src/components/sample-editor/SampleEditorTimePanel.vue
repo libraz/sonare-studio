@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
 import { useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import type { WasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
 
 defineProps<{
@@ -18,10 +19,10 @@ const emit = defineEmits<{
   'voice-change': [];
 }>();
 
-const stretchInput = defineModel<string>('stretchInput', { required: true });
-const noteShiftMsInput = defineModel<string>('noteShiftMsInput', { required: true });
-const voicePitchInput = defineModel<string>('voicePitchInput', { required: true });
-const voiceFormantInput = defineModel<string>('voiceFormantInput', { required: true });
+const stretchInput = defineModel<NumericInputValue>('stretchInput', { required: true });
+const noteShiftMsInput = defineModel<NumericInputValue>('noteShiftMsInput', { required: true });
+const voicePitchInput = defineModel<NumericInputValue>('voicePitchInput', { required: true });
+const voiceFormantInput = defineModel<NumericInputValue>('voiceFormantInput', { required: true });
 const voiceFormantAbsolute = defineModel<boolean>('voiceFormantAbsolute', { required: true });
 
 const { t } = useI18n();

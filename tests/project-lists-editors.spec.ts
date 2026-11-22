@@ -104,6 +104,14 @@ describe('project list editors', () => {
       wrapper.unmount();
     });
 
+    it('commits a ramp end typed into the end BPM input', async () => {
+      const wrapper = mount(TempoMapEditor);
+      await wrapper.findAll('tbody tr')[0].findAll('input')[2].setValue('140');
+      await buttonByText(wrapper, 'Apply').trigger('click');
+      expect(store.tempoSegments).toEqual([{ startPpq: 0, bpm: 120, endBpm: 140 }]);
+      wrapper.unmount();
+    });
+
     it('resyncs the clean draft after undo', async () => {
       const wrapper = mount(TempoMapEditor);
       await buttonByText(wrapper, 'Add tempo').trigger('click');

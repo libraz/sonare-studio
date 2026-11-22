@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useI18n } from '@/ui/i18n';
+import type { NumericInputValue } from '@/ui/numeric-input';
 import type { SpectralEditMode, WasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
 
 defineProps<{
@@ -18,9 +19,13 @@ const emit = defineEmits<{
 }>();
 
 const spectralModeInput = defineModel<SpectralEditMode>('spectralModeInput', { required: true });
-const spectralLowHzInput = defineModel<string>('spectralLowHzInput', { required: true });
-const spectralHighHzInput = defineModel<string>('spectralHighHzInput', { required: true });
-const spectralGainDbInput = defineModel<string>('spectralGainDbInput', { required: true });
+const spectralLowHzInput = defineModel<NumericInputValue>('spectralLowHzInput', { required: true });
+const spectralHighHzInput = defineModel<NumericInputValue>('spectralHighHzInput', {
+  required: true,
+});
+const spectralGainDbInput = defineModel<NumericInputValue>('spectralGainDbInput', {
+  required: true,
+});
 
 const { t } = useI18n();
 const se = computed(() => t.value.shell.sampleEditor);

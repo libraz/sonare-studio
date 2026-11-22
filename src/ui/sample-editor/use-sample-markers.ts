@@ -9,7 +9,7 @@
 import { nextTick, type Ref, ref } from 'vue';
 import { errorMessage } from '@/lib/errors';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { parseNumber } from './input-parse';
+import { type NumericInputValue, parseNumber } from '@/ui/numeric-input';
 import type { DetectedNote } from './onsets';
 import { noteRegionMarkers } from './onsets';
 import {
@@ -26,7 +26,7 @@ export interface UseSampleMarkersOptions {
   /** Currently loaded asset (null when none). */
   asset: () => LoadedAudioAsset | null;
   /** Silence-split threshold in dB below the peak, as a string. */
-  silenceThresholdInput: () => string;
+  silenceThresholdInput: () => NumericInputValue;
   /** Editor-wide busy flag, held while a detection pass blocks the thread. */
   busy: Ref<boolean>;
   /** Surfaces an error message to the editor's shared error banner. */
