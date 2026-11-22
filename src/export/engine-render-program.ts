@@ -29,7 +29,7 @@ import {
   parseMasteringAutomationParam,
 } from '@/project/automation';
 import { insertIndexForAutomationRef } from '@/project/automation-insert';
-import type { createInsertPdcPlan } from '@/project/insert-latency';
+import { createInsertPdcPlan, type InsertLatencyResolver } from '@/project/insert-latency';
 import {
   type effectiveTrackInstrument,
   isNativeSynthInstrument,
@@ -42,9 +42,9 @@ import {
   effectiveTrackMute,
   laneGainDb,
   type MixerStrip,
-  type returnSoloRouting,
+  returnSoloRouting,
   stripHasDsp,
-  type tracksWithVcaSolo,
+  tracksWithVcaSolo,
   vcaOffsetDb,
 } from '@/project/mixer';
 import { DEFAULT_WARP_VOICES, expandedSoloStates, MAX_WARP_VOICES } from '@/project/scheduling';
@@ -66,11 +66,9 @@ export interface RenderProgram {
   trackIds: number[];
   /** The whole bus/send routing result. */
   routing: BusRouting;
-  tracksForSolo: ReturnType<typeof tracksWithVcaSolo<ProjectDocument['tracks'][number]>>;
   conflictingSf2TrackIndices: ReadonlySet<number>;
-  pdc: ReturnType<typeof createInsertPdcPlan>;
-  pdcTracks: Parameters<ReturnType<typeof createInsertPdcPlan>['delayFor']>[0][];
-  returnSolo: ReturnType<typeof returnSoloRouting>;
+  /** Insert latency per slot, for the delay compensation plan. */
+  resolveInsertLatency: InsertLatencyResolver;
   tempoSegments: ReturnType<typeof documentTempoSegments>;
   resolvePreset: (preset: string) => string;
   effectiveInstruments: (ReturnType<typeof effectiveTrackInstrument> | undefined)[];
@@ -95,11 +93,8 @@ export function createProgramInstaller(
   const {
     doc,
     trackIds,
-    tracksForSolo,
     conflictingSf2TrackIndices,
-    pdc,
-    pdcTracks,
-    returnSolo,
+    resolveInsertLatency,
     tempoSegments,
     resolvePreset,
     effectiveInstruments,
@@ -115,6 +110,22 @@ export function createProgramInstaller(
     lanes,
     discardBusId,
   } = program.routing;
+  const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
+  // Project documents use positional `groupIndex` membership while the live
+  // editor plan uses stable numeric track ids in `groupId`. Build the exact
+  // equivalent identity graph before deriving PDC, otherwise group-bus insert
+  // latency is silently omitted from offline compensation.
+  const pdcTracks = doc.tracks.map((track, index) => ({
+    id: trackIds[index],
+    kind: track.kind,
+    ...(track.frozen !== undefined ? { frozen: track.frozen } : {}),
+    ...(track.groupIndex !== undefined && trackIds[track.groupIndex] !== undefined
+      ? { groupId: trackIds[track.groupIndex] }
+      : {}),
+    ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
+  }));
+  const pdc = createInsertPdcPlan(pdcTracks, doc.mixer?.buses ?? [], resolveInsertLatency);
+  const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
   const documentSoloExpansion = {
     isGroup: (track: ProjectDocument['tracks'][number]) => track.kind === 'group',
     groupKey: (_track: ProjectDocument['tracks'][number], index: number) => index,

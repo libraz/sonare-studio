@@ -69,18 +69,11 @@ import { loadAsset, loadAssetMeta } from '@/persistence/assets';
 import { parseMasteringAutomationParam, sanitizeAutomationPoints } from '@/project/automation';
 import { loadFont } from '@/project/fonts';
 import {
-  createInsertPdcPlan,
   type InsertLatencyResolver,
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
 import { effectiveTrackInstrument } from '@/project/instrument';
-import {
-  audibleOutputBusId,
-  effectiveTrackMute,
-  masteringChainIsActive,
-  returnSoloRouting,
-  tracksWithVcaSolo,
-} from '@/project/mixer';
+import { audibleOutputBusId, effectiveTrackMute, masteringChainIsActive } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { hasSoundFontSlotConflict } from '@/project/soundfont-conflicts';
 import { normalizeTempoMap, samplesToPpq } from '@/project/tempo-map';
@@ -274,7 +267,6 @@ export async function renderProjectWithEngine(
   // ordering: send buses first, then one bus per group track).
   const routing = buildBusRouting(doc, trackIds);
   const { vcaControlsById, busNumberById, buses, discardBusId } = routing;
-  const tracksForSolo = tracksWithVcaSolo(doc.tracks, vcaControlsById);
   const renderPlan = planExportRender({
     doc,
     sampleRate,
@@ -534,32 +526,14 @@ export async function renderProjectWithEngine(
     streamedKeys,
   });
 
-  // Project documents use positional `groupIndex` membership while the live
-  // editor plan uses stable numeric track ids in `groupId`. Build the exact
-  // equivalent identity graph before deriving PDC, otherwise group-bus insert
-  // latency is silently omitted from offline compensation.
-  const pdcTracks = doc.tracks.map((track, index) => ({
-    id: trackIds[index],
-    kind: track.kind,
-    ...(track.frozen !== undefined ? { frozen: track.frozen } : {}),
-    ...(track.groupIndex !== undefined && trackIds[track.groupIndex] !== undefined
-      ? { groupId: trackIds[track.groupIndex] }
-      : {}),
-    ...(track.mixer !== undefined ? { mixer: track.mixer } : {}),
-  }));
-  const pdc = createInsertPdcPlan(pdcTracks, doc.mixer?.buses ?? [], resolveInsertLatency);
-  const returnSolo = returnSoloRouting(doc.mixer?.buses ?? []);
   let renderAudioClips: EngineClipSpec[] = sourceAudioClips;
 
   const configureEngine = createProgramInstaller({
     doc,
     trackIds,
     routing,
-    tracksForSolo,
     conflictingSf2TrackIndices,
-    pdc,
-    pdcTracks,
-    returnSolo,
+    resolveInsertLatency,
     tempoSegments,
     resolvePreset,
     effectiveInstruments,
