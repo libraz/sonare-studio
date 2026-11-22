@@ -23,14 +23,21 @@ const lastOpsGroup = moduleRef<OpsGroup>('edit');
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
-import SelectMenu from '@/components/shell/SelectMenu.vue';
 import ToggleButton from '@/components/shell/ToggleButton.vue';
+import SampleEditorEditPanel from './SampleEditorEditPanel.vue';
+import SampleEditorMarkersPanel from './SampleEditorMarkersPanel.vue';
+import SampleEditorMatchPanel from './SampleEditorMatchPanel.vue';
+import SampleEditorPitchPanel from './SampleEditorPitchPanel.vue';
+import SampleEditorRepairPanel from './SampleEditorRepairPanel.vue';
+import SampleEditorRoomPanel from './SampleEditorRoomPanel.vue';
+import SampleEditorSpectralPanel from './SampleEditorSpectralPanel.vue';
+import SampleEditorTimePanel from './SampleEditorTimePanel.vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { leaseAudioAssets } from '@/persistence/asset-leases';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
-import { formatMessage, useI18n } from '@/ui/i18n';
+import { useI18n } from '@/ui/i18n';
 import { formatChannels, formatSampleRate } from '@/ui/media/asset-list';
 import {
   type AssetVersion,
@@ -41,14 +48,13 @@ import {
 import { formatMidiNote } from '@/ui/sample-editor/note-names';
 import { declipWithheld, repairChannelSummaries } from '@/ui/sample-editor/repair-analysis';
 import { roomEstimateHasGeometry } from '@/ui/sample-editor/room-acoustics';
-import { MODE_OPTIONS, rootOptions } from '@/ui/sample-editor/scales';
+import { rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
 import { useSampleEditorAvailability } from '@/ui/sample-editor/use-sample-editor-availability';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
 import {
   MATCH_EQ_CURVE_HEIGHT,
   MATCH_EQ_CURVE_WIDTH,
-  NORMALIZE_TARGET_OPTIONS,
   useSampleOperations,
 } from '@/ui/sample-editor/use-sample-operations';
 import { useSampleSelection } from '@/ui/sample-editor/use-sample-selection';
@@ -57,7 +63,6 @@ import { useSampleWarp } from '@/ui/sample-editor/use-sample-warp';
 import {
   loadSampleEditorWasm,
   type SampleEditorWasmOps,
-  type SpectralEditMode,
 } from '@/ui/sample-editor/wasm-ops';
 import type { MasteringRepairStageName } from '@libraz/libsonare';
 
@@ -406,10 +411,6 @@ function onApply(): void {
   if (asset.value) emit('apply-asset', currentAssetId.value);
 }
 
-function setSpectralMode(value: string): void {
-  spectralModeInput.value = value as SpectralEditMode;
-}
-
 function versionTitle(version: AssetVersion): string {
   return `${version.label} — ${version.assetId}`;
 }
@@ -619,703 +620,133 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div v-show="opsGroup === 'edit'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.edit">
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.gainTitle, reason: editBlocked }">
-            {{ se.gain }}
-            <input v-model="gainDbInput" class="num" type="number" step="0.5" :disabled="!!editBlocked" />
-            <span class="unit">dB</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.gainTitle, reason: editBlocked }"
-            @click="onGain"
-          >
-            {{ t.common.apply }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label>
-            {{ se.normalize }}
-            <SelectMenu
-              v-model="normalizeTargetInput"
-              :options="NORMALIZE_TARGET_OPTIONS"
-              :aria-label="se.normalizeTarget"
-              :disabled="!!editBlocked"
-              :reason="editBlocked"
-              size="sm"
-            />
-          </label>
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.normalizeTitle, reason: editBlocked }"
-            @click="onNormalize"
-          >
-            {{ t.common.apply }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.fadeInTitle, reason: editBlocked }"
-            @click="onFadeIn"
-          >
-            <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2 14 14 2v12Z" fill="currentColor" />
-            </svg>
-            {{ se.fadeIn }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.fadeOutTitle, reason: editBlocked }"
-            @click="onFadeOut"
-          >
-            <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M2 2 14 14H2Z" fill="currentColor" />
-            </svg>
-            {{ se.fadeOut }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.reverseTitle, reason: editBlocked }"
-            @click="onReverse"
-          >
-            <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M3 5h8l-2-2M13 11H5l2 2"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-            {{ se.reverse }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.silenceTitle, reason: editBlocked }"
-            @click="onSilence"
-          >
-            {{ se.silence }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!trimBlocked"
-            v-tooltip="{ text: se.trimTitle, reason: trimBlocked }"
-            @click="onTrim"
-          >
-            <svg class="btn-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path
-                d="M14 3 6.5 9M14 13 6.5 7"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-              <circle cx="4" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
-              <circle cx="4" cy="11" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
-            </svg>
-            {{ se.trim }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!deleteBlocked"
-            v-tooltip="{ text: se.deleteTitle, reason: deleteBlocked }"
-            @click="onDelete"
-          >
-            {{ t.common.delete }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!editBlocked"
-            v-tooltip="{ text: se.duplicateTitle, reason: editBlocked }"
-            @click="onDuplicate"
-          >
-            {{ se.duplicate }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorEditPanel
+        v-show="opsGroup === 'edit'"
+        v-model:gain-db-input="gainDbInput"
+        v-model:normalize-target-input="normalizeTargetInput"
+        :edit-blocked="editBlocked"
+        :trim-blocked="trimBlocked"
+        :delete-blocked="deleteBlocked"
+        @gain="onGain"
+        @normalize="onNormalize"
+        @fade-in="onFadeIn"
+        @fade-out="onFadeOut"
+        @reverse="onReverse"
+        @silence="onSilence"
+        @trim="onTrim"
+        @delete="onDelete"
+        @duplicate="onDuplicate"
+      />
 
-      <div v-show="opsGroup === 'pitch'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.pitch">
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.pitchTitle, reason: opBlocked.pitchShift }">
-            {{ se.pitch }}
-            <input
-              v-model="pitchInput"
-              class="num"
-              type="number"
-              step="1"
-              :disabled="!!opBlocked.pitchShift"
-            />
-            <span class="unit">st</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.pitchShift"
-            v-tooltip="{ text: se.pitchTitle, reason: opBlocked.pitchShift }"
-            @click="onPitchShift"
-          >
-            {{ t.common.apply }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.tuneNoteTitle, reason: opBlocked.pitchCorrect }">
-            {{ se.tune }}
-            <input
-              v-model="tuneNoteInput"
-              class="num"
-              type="text"
-              :disabled="!!opBlocked.pitchCorrect"
-            />
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.pitchCorrect"
-            v-tooltip="{ text: se.tuneTitle, reason: opBlocked.pitchCorrect }"
-            @click="onPitchCorrect"
-          >
-            {{ t.common.apply }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.pitchCorrectTimevarying"
-            v-tooltip="{ text: se.tuneContourTitle, reason: opBlocked.pitchCorrectTimevarying }"
-            @click="onPitchCorrectTimevarying"
-          >
-            {{ se.tuneContour }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.tuneReference"
-            v-tooltip="{ text: se.tuneReferenceTitle, reason: opBlocked.tuneReference }"
-            @click="onTuneReference"
-          >
-            {{ se.tuneReference }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <span class="cluster-label">{{ se.tuneScale }}</span>
-          <SelectMenu
-            :model-value="scaleRootInput"
-            size="sm"
-            :options="ROOT_OPTIONS"
-            :disabled="!!opBlocked.scaleCorrect"
-            :reason="opBlocked.scaleCorrect"
-            :aria-label="se.scaleRoot"
-            @change="(value: string) => (scaleRootInput = value)"
-          />
-          <SelectMenu
-            :model-value="scaleModeInput"
-            size="sm"
-            :options="MODE_OPTIONS"
-            :disabled="!!opBlocked.scaleCorrect"
-            :reason="opBlocked.scaleCorrect"
-            :aria-label="se.scaleMode"
-            @change="(value: string) => (scaleModeInput = value)"
-          />
-          <button
-            type="button"
-            :disabled="!!opBlocked.scaleCorrect"
-            v-tooltip="{ text: se.tuneScaleTitle, reason: opBlocked.scaleCorrect }"
-            @click="onScaleCorrect"
-          >
-            {{ t.common.apply }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <ToggleButton
-            v-model="autoTuneDetect"
-            :label="se.autoTuneDetect"
-            :title="se.autoTuneDetectTitle"
-            :reason="opBlocked.autoTune"
-            size="sm"
-          />
-          <label v-tooltip="{ text: se.autoTuneStrengthTitle, reason: opBlocked.autoTune }">
-            {{ se.autoTuneStrength }}
-            <input
-              v-model="autoTuneStrengthInput"
-              class="num"
-              type="number"
-              step="5"
-              min="0"
-              max="100"
-              :disabled="!!opBlocked.autoTune"
-            />
-            <span class="unit">%</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.autoTune"
-            v-tooltip="{ text: se.autoTuneTitle, reason: opBlocked.autoTune }"
-            @click="onAutoTune"
-          >
-            {{ se.autoTune }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorPitchPanel
+        v-show="opsGroup === 'pitch'"
+        v-model:pitch-input="pitchInput"
+        v-model:tune-note-input="tuneNoteInput"
+        v-model:scale-root-input="scaleRootInput"
+        v-model:scale-mode-input="scaleModeInput"
+        v-model:auto-tune-detect="autoTuneDetect"
+        v-model:auto-tune-strength-input="autoTuneStrengthInput"
+        :op-blocked="opBlocked"
+        :root-options="ROOT_OPTIONS"
+        @pitch-shift="onPitchShift"
+        @pitch-correct="onPitchCorrect"
+        @pitch-correct-timevarying="onPitchCorrectTimevarying"
+        @tune-reference="onTuneReference"
+        @scale-correct="onScaleCorrect"
+        @auto-tune="onAutoTune"
+      />
 
-      <div v-show="opsGroup === 'time'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.time">
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.stretchTitle, reason: stretchInputBlocked }">
-            {{ se.stretch }}
-            <input
-              v-model="stretchInput"
-              class="num"
-              type="number"
-              step="0.05"
-              min="0.1"
-              :disabled="!!stretchInputBlocked"
-            />
-            <span class="unit">×</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.timeStretch"
-            v-tooltip="{ text: se.stretchTitle, reason: opBlocked.timeStretch }"
-            @click="onTimeStretch"
-          >
-            {{ t.common.apply }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!noteStretchBlocked"
-            v-tooltip="{ text: se.noteStretchTitle, reason: noteStretchBlocked }"
-            @click="onNoteStretch"
-          >
-            {{ se.noteStretch }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.noteMoveTitle, reason: noteMoveBlocked }">
-            {{ se.noteShift }}
-            <input
-              v-model="noteShiftMsInput"
-              class="num"
-              type="number"
-              step="5"
-              :disabled="!!noteMoveBlocked"
-            />
-            <span class="unit">ms</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!noteMoveBlocked"
-            v-tooltip="{ text: se.noteMoveTitle, reason: noteMoveBlocked }"
-            @click="onNoteMove"
-          >
-            {{ se.noteMove }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label v-tooltip="{ reason: opBlocked.voiceChange }">
-            {{ se.voicePitch }}
-            <input
-              v-model="voicePitchInput"
-              class="num"
-              type="number"
-              step="1"
-              :disabled="!!opBlocked.voiceChange"
-            />
-            <span class="unit">st</span>
-          </label>
-          <label v-tooltip="{ reason: opBlocked.voiceChange }">
-            {{ se.voiceFormant }}
-            <input
-              v-model="voiceFormantInput"
-              class="num"
-              type="number"
-              step="0.05"
-              min="0.1"
-              :disabled="!!opBlocked.voiceChange"
-            />
-            <span class="unit">×</span>
-          </label>
-          <ToggleButton
-            v-model="voiceFormantAbsolute"
-            :label="se.voiceFormantAbsolute"
-            :title="se.voiceFormantAbsoluteTitle"
-            :reason="opBlocked.voiceChange"
-            size="sm"
-          />
-          <button
-            type="button"
-            :disabled="!!opBlocked.voiceChange"
-            v-tooltip="{ text: se.voiceTitle, reason: opBlocked.voiceChange }"
-            @click="onVoiceChange"
-          >
-            {{ se.voice }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorTimePanel
+        v-show="opsGroup === 'time'"
+        v-model:stretch-input="stretchInput"
+        v-model:note-shift-ms-input="noteShiftMsInput"
+        v-model:voice-pitch-input="voicePitchInput"
+        v-model:voice-formant-input="voiceFormantInput"
+        v-model:voice-formant-absolute="voiceFormantAbsolute"
+        :op-blocked="opBlocked"
+        :stretch-input-blocked="stretchInputBlocked"
+        :note-stretch-blocked="noteStretchBlocked"
+        :note-move-blocked="noteMoveBlocked"
+        @time-stretch="onTimeStretch"
+        @note-stretch="onNoteStretch"
+        @note-move="onNoteMove"
+        @voice-change="onVoiceChange"
+      />
 
-      <div v-show="opsGroup === 'repair'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.repair">
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!analyzeRepairBlocked"
-            v-tooltip="{ text: se.analyzeRepairTitle, reason: analyzeRepairBlocked }"
-            @click="onAnalyzeRepair"
-          >
-            {{ se.analyzeRepair }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!opBlocked.declick"
-            v-tooltip="{ text: se.declickTitle, reason: opBlocked.declick }"
-            @click="onDeclick"
-          >
-            {{ se.declick }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.declip"
-            v-tooltip="{ text: se.declipTitle, reason: opBlocked.declip }"
-            @click="onDeclip"
-          >
-            {{ se.declip }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.decrackle"
-            v-tooltip="{ text: se.decrackleTitle, reason: opBlocked.decrackle }"
-            @click="onDecrackle"
-          >
-            {{ se.decrackle }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.dehum"
-            v-tooltip="{ text: se.dehumTitle, reason: opBlocked.dehum }"
-            @click="onDehum"
-          >
-            {{ se.dehum }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.dereverb"
-            v-tooltip="{ text: se.dereverbTitle, reason: opBlocked.dereverb }"
-            @click="onDereverb"
-          >
-            {{ se.dereverb }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.trimSilence"
-            v-tooltip="{ text: se.trimSilenceTitle, reason: opBlocked.trimSilence }"
-            @click="onTrimSilenceRepair"
-          >
-            {{ se.trimSilence }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.denoiseDepthTitle, reason: opBlocked.denoise }">
-            {{ se.denoiseDepth }}
-            <input
-              v-model="denoiseDepthInput"
-              class="num"
-              type="number"
-              min="0"
-              step="1"
-              :disabled="!!opBlocked.denoise"
-            />
-            <span class="unit">dB</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.denoise"
-            v-tooltip="{ text: se.denoiseTitle, reason: opBlocked.denoise }"
-            @click="onDenoise"
-          >
-            {{ se.denoise }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <SelectMenu
-            :model-value="restorePresetId"
-            size="sm"
-            :options="restorePresetOptions"
-            :disabled="!!restoreBlocked"
-            :reason="restoreBlocked"
-            :aria-label="se.restorePreset"
-            @change="selectRestorePreset"
-          />
-          <button
-            type="button"
-            :disabled="!!restoreBlocked"
-            v-tooltip="{ text: se.restoreTitle, reason: restoreBlocked }"
-            @click="onRestore"
-          >
-            {{ se.restore }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorRepairPanel
+        v-show="opsGroup === 'repair'"
+        v-model:denoise-depth-input="denoiseDepthInput"
+        :op-blocked="opBlocked"
+        :analyze-repair-blocked="analyzeRepairBlocked"
+        :restore-blocked="restoreBlocked"
+        :restore-preset-id="restorePresetId"
+        :restore-preset-options="restorePresetOptions"
+        @analyze-repair="onAnalyzeRepair"
+        @declick="onDeclick"
+        @declip="onDeclip"
+        @decrackle="onDecrackle"
+        @dehum="onDehum"
+        @dereverb="onDereverb"
+        @trim-silence-repair="onTrimSilenceRepair"
+        @denoise="onDenoise"
+        @restore="onRestore"
+        @select-restore-preset="selectRestorePreset"
+      />
 
-      <div v-show="opsGroup === 'spectral'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.spectral">
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!opBlocked.harmonic"
-            v-tooltip="{ text: se.harmonicTitle, reason: opBlocked.harmonic }"
-            @click="onHarmonic"
-          >
-            {{ se.harmonic }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.percussive"
-            v-tooltip="{ text: se.percussiveTitle, reason: opBlocked.percussive }"
-            @click="onPercussive"
-          >
-            {{ se.percussive }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.spectralEdit"
-            v-tooltip="{ text: se.spectralDenoiseTitle, reason: opBlocked.spectralEdit }"
-            @click="onSpectralDenoise"
-          >
-            {{ se.spectralDenoise }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <SelectMenu
-            :model-value="spectralModeInput"
-            size="sm"
-            :options="spectralModeOptions"
-            :disabled="!!opBlocked.spectralEdit"
-            :reason="opBlocked.spectralEdit"
-            :aria-label="se.spectralMode"
-            @change="setSpectralMode"
-          />
-          <label v-tooltip="{ text: se.spectralLowTitle, reason: opBlocked.spectralEdit }">
-            {{ se.spectralLow }}
-            <input
-              v-model="spectralLowHzInput"
-              class="num freq"
-              type="number"
-              step="100"
-              min="0"
-              :disabled="!!opBlocked.spectralEdit"
-            />
-          </label>
-          <label v-tooltip="{ text: se.spectralHighTitle, reason: opBlocked.spectralEdit }">
-            {{ se.spectralHigh }}
-            <input
-              v-model="spectralHighHzInput"
-              class="num freq"
-              type="number"
-              step="100"
-              min="0"
-              :disabled="!!opBlocked.spectralEdit"
-            />
-            <span class="unit">Hz</span>
-          </label>
-          <label v-tooltip="{ text: se.spectralGainTitle, reason: spectralGainBlocked }">
-            {{ se.spectralGain }}
-            <input
-              v-model="spectralGainDbInput"
-              class="num"
-              type="number"
-              step="1"
-              :disabled="!!spectralGainBlocked"
-            />
-            <span class="unit">dB</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.spectralEdit"
-            v-tooltip="{ text: se.spectralEditTitle, reason: opBlocked.spectralEdit }"
-            @click="onSpectralEdit"
-          >
-            {{ se.spectralEdit }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorSpectralPanel
+        v-show="opsGroup === 'spectral'"
+        v-model:spectral-mode-input="spectralModeInput"
+        v-model:spectral-low-hz-input="spectralLowHzInput"
+        v-model:spectral-high-hz-input="spectralHighHzInput"
+        v-model:spectral-gain-db-input="spectralGainDbInput"
+        :op-blocked="opBlocked"
+        :spectral-gain-blocked="spectralGainBlocked"
+        :spectral-mode-options="spectralModeOptions"
+        @harmonic="onHarmonic"
+        @percussive="onPercussive"
+        @spectral-denoise="onSpectralDenoise"
+        @spectral-edit="onSpectralEdit"
+      />
 
-      <div v-show="opsGroup === 'match'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.match">
-        <div class="op-cluster">
-          <SelectMenu
-            :model-value="referenceAssetId"
-            size="sm"
-            :options="referenceOptions"
-            :disabled="!!referencePickerBlocked"
-            :reason="referencePickerBlocked"
-            :aria-label="se.matchReference"
-            @change="(value: string) => (referenceAssetId = value)"
-          />
-          <button
-            type="button"
-            :disabled="!!matchEqAnalyzeBlocked"
-            v-tooltip="{ text: se.matchEqAnalyzeTitle, reason: matchEqAnalyzeBlocked }"
-            @click="onAnalyzeMatchEq"
-          >
-            {{ se.matchEqAnalyze }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.matchEqAmountTitle, reason: matchEqBlocked }">
-            {{ se.matchEqAmount }}
-            <input
-              v-model="matchEqAmountInput"
-              class="num"
-              type="number"
-              step="5"
-              min="0"
-              max="100"
-              :disabled="!!matchEqBlocked"
-            />
-            <span class="unit">%</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!matchEqBlocked"
-            v-tooltip="{ text: se.matchEqTitle, reason: matchEqBlocked }"
-            @click="onMatchEq"
-          >
-            {{ se.matchEq }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorMatchPanel
+        v-show="opsGroup === 'match'"
+        v-model:reference-asset-id="referenceAssetId"
+        v-model:match-eq-amount-input="matchEqAmountInput"
+        :reference-picker-blocked="referencePickerBlocked"
+        :match-eq-analyze-blocked="matchEqAnalyzeBlocked"
+        :match-eq-blocked="matchEqBlocked"
+        :reference-options="referenceOptions"
+        @analyze-match-eq="onAnalyzeMatchEq"
+        @match-eq="onMatchEq"
+      />
 
-      <div v-show="opsGroup === 'markers'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.markers">
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!opBlocked.detectOnsets"
-            v-tooltip="{ text: se.detectTransientsTitle, reason: opBlocked.detectOnsets }"
-            @click="onDetectTransients"
-          >
-            {{ se.detectTransients }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.detectNotes"
-            v-tooltip="{ text: se.detectNotesTitle, reason: opBlocked.detectNotes }"
-            @click="onDetectNotes"
-          >
-            {{ se.detectNotes }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <label v-tooltip="{ text: se.silenceThresholdTitle, reason: opBlocked.splitSilence }">
-            {{ se.silenceThreshold }}
-            <input
-              v-model="silenceThresholdInput"
-              class="num"
-              type="number"
-              step="1"
-              min="1"
-              :disabled="!!opBlocked.splitSilence"
-            />
-            <span class="unit">dB</span>
-          </label>
-          <button
-            type="button"
-            :disabled="!!opBlocked.splitSilence"
-            v-tooltip="{ text: se.splitSilenceTitle, reason: opBlocked.splitSilence }"
-            @click="onSplitSilence"
-          >
-            {{ se.splitSilence }}
-          </button>
-        </div>
-        <div v-if="onsetFrames.length > 0" class="op-cluster">
-          <button
-            type="button"
-            v-tooltip="se.clearTransientsTitle"
-            @click="onClearTransients"
-          >
-            {{ formatMessage(se.clearTransients, { count: onsetFrames.length }) }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorMarkersPanel
+        v-show="opsGroup === 'markers'"
+        v-model:silence-threshold-input="silenceThresholdInput"
+        :op-blocked="opBlocked"
+        :onset-frames="onsetFrames"
+        @detect-transients="onDetectTransients"
+        @detect-notes="onDetectNotes"
+        @split-silence="onSplitSilence"
+        @clear-transients="onClearTransients"
+      />
 
-      <div v-show="opsGroup === 'room'" class="toolbar ops" role="tabpanel" :aria-label="se.opsGroups.room">
-        <div class="op-cluster">
-          <SelectMenu
-            :model-value="roomPresetId"
-            size="sm"
-            :options="roomPresetOptions"
-            :disabled="!!opBlocked.roomMorph"
-            :reason="opBlocked.roomMorph"
-            :aria-label="se.roomPreset"
-            @change="(value: string) => (roomPresetId = value)"
-          />
-          <label v-tooltip="{ text: se.roomWetTitle, reason: opBlocked.roomMorph }">
-            {{ se.roomWet }}
-            <input
-              v-model="roomWetInput"
-              class="num"
-              type="number"
-              step="5"
-              min="0"
-              max="100"
-              :disabled="!!opBlocked.roomMorph"
-            />
-            <span class="unit">%</span>
-          </label>
-          <ToggleButton
-            v-model="roomAirAbsorption"
-            :label="se.roomAirAbsorption"
-            :title="se.roomAirAbsorptionTitle"
-            :reason="opBlocked.roomMorph"
-            size="sm"
-          />
-          <button
-            type="button"
-            :disabled="!!opBlocked.roomMorph"
-            v-tooltip="{ text: se.placeInRoomTitle, reason: opBlocked.roomMorph }"
-            @click="onPlaceInRoom"
-          >
-            {{ se.placeInRoom }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!opBlocked.synthesizeRir"
-            v-tooltip="{ text: se.synthesizeRirTitle, reason: opBlocked.synthesizeRir }"
-            @click="onSynthesizeRir"
-          >
-            {{ se.synthesizeRir }}
-          </button>
-        </div>
-        <div class="op-cluster">
-          <button
-            type="button"
-            :disabled="!!estimateRoomBlocked"
-            v-tooltip="{ text: se.estimateRoomTitle, reason: estimateRoomBlocked }"
-            @click="onEstimateRoom"
-          >
-            {{ se.estimateRoom }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!analyzeImpulseBlocked"
-            v-tooltip="{ text: se.analyzeImpulseTitle, reason: analyzeImpulseBlocked }"
-            @click="onAnalyzeImpulseResponse"
-          >
-            {{ se.analyzeImpulse }}
-          </button>
-          <button
-            type="button"
-            :disabled="!!detectAcousticBlocked"
-            v-tooltip="{ text: se.detectAcousticTitle, reason: detectAcousticBlocked }"
-            @click="onDetectAcoustic"
-          >
-            {{ se.detectAcoustic }}
-          </button>
-        </div>
-      </div>
+      <SampleEditorRoomPanel
+        v-show="opsGroup === 'room'"
+        v-model:room-preset-id="roomPresetId"
+        v-model:room-wet-input="roomWetInput"
+        v-model:room-air-absorption="roomAirAbsorption"
+        :op-blocked="opBlocked"
+        :estimate-room-blocked="estimateRoomBlocked"
+        :analyze-impulse-blocked="analyzeImpulseBlocked"
+        :detect-acoustic-blocked="detectAcousticBlocked"
+        :room-preset-options="roomPresetOptions"
+        @place-in-room="onPlaceInRoom"
+        @synthesize-rir="onSynthesizeRir"
+        @estimate-room="onEstimateRoom"
+        @analyze-impulse-response="onAnalyzeImpulseResponse"
+        @detect-acoustic="onDetectAcoustic"
+      />
     </div>
     <p v-if="error" class="error">{{ error }}</p>
     <p v-for="notice in notices" :key="notice" class="notice" role="status">{{ notice }}</p>
@@ -1600,6 +1031,8 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
+<style scoped src="./sample-editor-panel.css"></style>
+
 <style scoped>
 .sample-editor {
   display: flex;
@@ -1610,96 +1043,8 @@ onBeforeUnmount(() => {
   font: var(--fs-sm) var(--font-sans);
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
-}
-
-/* A bare select sizes to its value; at full width it would take a wrapped row of its own. */
-.toolbar > .select-menu {
-  width: auto;
-}
-
-.toolbar label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  white-space: nowrap;
-}
-
-.toolbar .num {
-  width: 56px;
-  /* Steady digit width so scrubbed numeric values don't jitter. */
-  font-variant-numeric: tabular-nums;
-}
-
-.toolbar .num.freq {
-  width: 72px;
-}
-
 .toolbar .num.frames {
   width: 88px;
-}
-
-.unit {
-  color: var(--text-3);
-}
-
-/* Dense pro-tool controls on the shared raised-face recipe (no drawn border). */
-.toolbar input {
-  background: var(--surface-inset);
-  color: var(--text-1);
-  border: none;
-  border-radius: var(--radius-md);
-  padding: var(--sp-1) var(--sp-2);
-  font: inherit;
-  box-shadow: var(--control-edge), var(--inset-well);
-}
-
-.toolbar button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  background: var(--control-bg);
-  color: var(--text-1);
-  border: none;
-  border-radius: var(--radius-md);
-  padding: var(--sp-1) var(--sp-3);
-  font: inherit;
-  cursor: pointer;
-  box-shadow: var(--control-lift);
-  transition:
-    background-color var(--dur-1) var(--ease-out),
-    box-shadow var(--dur-1) var(--ease-out);
-}
-
-/* Inline glyph that scans by shape; inherits the button's text color. */
-.btn-icon {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--text-3);
-}
-
-.toolbar button:not(:disabled):hover .btn-icon {
-  color: currentColor;
-}
-
-.toolbar button:disabled .btn-icon {
-  color: currentColor;
-}
-
-.toolbar button:disabled {
-  color: var(--text-4);
-  box-shadow: var(--control-edge);
-  cursor: default;
-}
-
-.toolbar button:not(:disabled):hover {
-  background: var(--control-bg-hover);
-  box-shadow: var(--control-lift-hover);
 }
 
 /* The one action that leaves the editor carries the accent face. */
@@ -1776,36 +1121,6 @@ onBeforeUnmount(() => {
   padding: var(--sp-2) var(--sp-3);
   font: var(--fw-medium) var(--fs-sm) var(--font-sans);
   cursor: pointer;
-}
-
-.toolbar.ops {
-  gap: var(--sp-3) 0;
-  padding: var(--sp-3);
-  /* Every group keeps the panel at one height so switching tabs never jumps. */
-  min-height: 46px;
-}
-
-/* One purpose per cluster; a hairline divides neighbours on the same row. */
-.op-cluster {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-  padding: 0 var(--sp-4);
-  border-left: 1px solid var(--border);
-}
-
-.op-cluster:first-child {
-  padding-left: 0;
-  border-left: none;
-}
-
-.op-cluster > .select-menu {
-  width: auto;
-}
-
-.cluster-label {
-  color: var(--text-2);
 }
 
 .spacer {

@@ -1,0 +1,109 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+/* A bare select sizes to its value; at full width it would take a wrapped row of its own. */
+.toolbar > .select-menu {
+  width: auto;
+}
+
+.toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  white-space: nowrap;
+}
+
+.toolbar .num {
+  width: 56px;
+  /* Steady digit width so scrubbed numeric values don't jitter. */
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  color: var(--text-3);
+}
+
+/* Dense pro-tool controls on the shared raised-face recipe (no drawn border). */
+.toolbar input {
+  background: var(--surface-inset);
+  color: var(--text-1);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-2);
+  font: inherit;
+  box-shadow: var(--control-edge), var(--inset-well);
+}
+
+.toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--control-bg);
+  color: var(--text-1);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--sp-1) var(--sp-3);
+  font: inherit;
+  cursor: pointer;
+  box-shadow: var(--control-lift);
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+/* Inline glyph that scans by shape; inherits the button's text color. */
+.btn-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--text-3);
+}
+
+.toolbar button:not(:disabled):hover .btn-icon {
+  color: currentColor;
+}
+
+.toolbar button:disabled .btn-icon {
+  color: currentColor;
+}
+
+.toolbar button:disabled {
+  color: var(--text-4);
+  box-shadow: var(--control-edge);
+  cursor: default;
+}
+
+.toolbar button:not(:disabled):hover {
+  background: var(--control-bg-hover);
+  box-shadow: var(--control-lift-hover);
+}
+
+.toolbar.ops {
+  gap: var(--sp-3) 0;
+  padding: var(--sp-3);
+  /* Every group keeps the panel at one height so switching tabs never jumps. */
+  min-height: 46px;
+}
+
+/* One purpose per cluster; a hairline divides neighbours on the same row. */
+.op-cluster {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4);
+  border-left: 1px solid var(--border);
+}
+
+.op-cluster:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.op-cluster > .select-menu {
+  width: auto;
+}
