@@ -3,7 +3,8 @@
  * render state behind the busy toggles, and the range a bounce covers.
  */
 
-import { ref } from 'vue';
+import { type Ref, ref } from 'vue';
+import { describeError } from '@/lib/errors';
 import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
@@ -18,6 +19,8 @@ export interface UseTrackFreezeBounceOptions {
     readonly loopStartPpq?: number;
     readonly loopEndPpq?: number;
   };
+  /** The header list's error banner, set when a render fails. */
+  error: Ref<string>;
 }
 
 /** Freeze/bounce state and actions returned by {@link useTrackFreezeBounce}. */
@@ -41,11 +44,11 @@ export interface TrackFreezeBounce {
 /**
  * Creates the freeze and bounce-in-place actions for one track header list.
  *
- * @param options - The loop props a bounce reads its range from.
+ * @param options - The loop props a bounce reads its range from and the error banner.
  * @returns Busy state, actions and their disabled reasons.
  */
 export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): TrackFreezeBounce {
-  const { props } = options;
+  const { props, error } = options;
   const store = useProjectStore();
   const { t } = useI18n();
 
@@ -76,8 +79,9 @@ export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): Trac
     freezingIds.value.add(track.id);
     try {
       await freezeTrack(track.id);
+      error.value = '';
     } catch (err) {
-      console.warn(`Freezing track ${track.id} failed`, err);
+      error.value = describeError(err, t.value.notices.errors);
     } finally {
       freezingIds.value.delete(track.id);
     }
@@ -122,8 +126,9 @@ export function useTrackFreezeBounce(options: UseTrackFreezeBounceOptions): Trac
     bouncingIds.value.add(track.id);
     try {
       await bounceTrackRange(track.id, range.startPpq, range.endPpq);
+      error.value = '';
     } catch (err) {
-      console.warn(`Bouncing track ${track.id} failed`, err);
+      error.value = describeError(err, t.value.notices.errors);
     } finally {
       bouncingIds.value.delete(track.id);
     }

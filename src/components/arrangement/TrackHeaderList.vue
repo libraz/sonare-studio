@@ -568,12 +568,13 @@ async function onFlattenTakes(track: EditorTrack): Promise<void> {
     } else {
       await flattenTrackComps(track.id);
     }
+    error.value = '';
   } catch (err) {
-    console.warn(`Flattening track ${track.id} failed`, err);
+    error.value = describeError(err, t.value.notices.errors);
   }
 }
 
-const freezeBounce = useTrackFreezeBounce({ props });
+const freezeBounce = useTrackFreezeBounce({ props, error });
 const {
   isFreezing,
   isBouncing,

@@ -22,6 +22,7 @@ import { closeContextMenu, useContextMenuState } from '@/ui/menu/context-menu';
 import { isItemDisabled } from '@/ui/menu/menu-items';
 import { dbToFaderPosition } from '@/ui/mixer/db-scale';
 import { vTooltip } from '@/ui/tooltip';
+import { editorClip } from './fakes/project';
 import { selectOption, selectValueText } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -37,6 +38,13 @@ const freezeMock = vi.hoisted(() => ({
 }));
 
 vi.mock('@/project/freeze', () => freezeMock);
+
+const flattenMock = vi.hoisted(() => ({ flattenTrackComps: vi.fn(async () => {}) }));
+
+vi.mock('@/project/comp-flatten', async (importActual) => ({
+  ...(await importActual<typeof import('@/project/comp-flatten')>()),
+  flattenTrackComps: flattenMock.flattenTrackComps,
+}));
 
 /** Mounts the header list with the geometry props it requires. */
 function mountHeaders(loop?: { enabled: boolean; startPpq: number; endPpq: number }) {
@@ -326,16 +334,14 @@ describe('track freeze / bounce UI', () => {
       expect(button.classes()).not.toContain('busy');
     });
 
-    it('re-enables the toggle and warns when the freeze render fails', async () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('re-enables the toggle and shows the error when the freeze render fails', async () => {
       freezeMock.freezeTrack.mockRejectedValueOnce(new Error('render failed'));
       const wrapper = mountHeaders();
       const button = wrapper.find('.toggle.freeze');
       await button.trigger('click');
       await flushPromises();
-      expect(warn).toHaveBeenCalled();
+      expect(wrapper.find('.headers-error').text()).toBe('render failed');
       expect(button.attributes('disabled')).toBeUndefined();
-      warn.mockRestore();
     });
 
     it('marks frozen headers and unfreezes on click', async () => {
@@ -390,16 +396,52 @@ describe('track freeze / bounce UI', () => {
       expect(freezeMock.bounceTrackRange).toHaveBeenCalledWith(bounceTrackId, 480, 2400);
     });
 
-    it('re-enables the button and warns when the bounce render fails', async () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('re-enables the button and shows the error when the bounce render fails', async () => {
       freezeMock.bounceTrackRange.mockRejectedValueOnce(new Error('render failed'));
       addMidiClip({ trackId: bounceTrackId, startPpq: 0, lengthPpq: 960 });
       const button = bounceButton();
       await button.trigger('click');
       await flushPromises();
-      expect(warn).toHaveBeenCalled();
+      expect(
+        button.element.closest('.track-headers')?.querySelector('.headers-error')?.textContent,
+      ).toBe('render failed');
       expect(button.attributes('disabled')).toBeUndefined();
-      warn.mockRestore();
+    });
+  });
+
+  describe('TrackHeaderList take flatten', () => {
+    it('shows the error when flattening an audio track fails', async () => {
+      const audioId = addAudioTrack();
+      store.clips = [
+        ...store.clips,
+        editorClip({
+          id: 9001,
+          trackId: audioId,
+          kind: 'audio',
+          takes: [
+            { assetId: 'take-a', name: 'Take 1' },
+            { assetId: 'take-b', name: 'Take 2' },
+          ],
+        }),
+      ];
+      flattenMock.flattenTrackComps.mockRejectedValueOnce(new Error('flatten failed'));
+      const wrapper = mount(TrackHeaderList, {
+        props: {
+          laneHeight: 48,
+          scrollY: 0,
+          rulerOffset: 24,
+          rowLayout: buildRowLayout(
+            store.tracks.map(() => false),
+            48,
+          ),
+          takesExpandedIds: [audioId],
+        },
+        global: { directives: { tooltip: vTooltip } },
+      });
+      await wrapper.find('.takes-flatten').trigger('click');
+      await flushPromises();
+      expect(flattenMock.flattenTrackComps).toHaveBeenCalledWith(audioId);
+      expect(wrapper.find('.headers-error').text()).toBe('flatten failed');
     });
   });
 
