@@ -53,11 +53,12 @@ export function childElements(parent: XmlElement, tag?: string): XmlElement[] {
   return out;
 }
 
-/** Returns the trimmed text of the first `tag` child, or null when absent. */
+/** Text of the element and all its descendants, concatenated in document order. */
 export function elementText(element: XmlElement): string {
   return element.text + element.children.map(elementText).join('');
 }
 
+/** Returns the trimmed text of the first `tag` child, or null when absent. */
 export function childText(parent: XmlElement, tag: string): string | null {
   const child = childElements(parent, tag)[0];
   const text = child === undefined ? undefined : elementText(child).trim();
@@ -103,15 +104,12 @@ export function descendants(parent: XmlElement, tag: string): XmlElement[] {
  * Parses a MusicXML string into a DOM document.
  *
  * @param xml MusicXML source text.
+ * @param resolved Import limits with every default filled in.
  * @returns The root `score-partwise` element.
  * @throws MusicXmlImportError When the input is not well-formed XML or is not
  *   a `score-partwise` document.
  */
-export function parseScoreRoot(
-  xml: string,
-  limits: Partial<MusicXmlImportLimits> = {},
-): XmlElement {
-  const resolved = { ...DEFAULT_MUSICXML_IMPORT_LIMITS, ...limits };
+export function parseScoreRoot(xml: string, resolved: MusicXmlImportLimits): XmlElement {
   try {
     preflightXmlBytes(new TextEncoder().encode(xml).byteLength, 'MusicXML', {
       maxBytes: resolved.maxBytes,
