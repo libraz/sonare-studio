@@ -1,4 +1,4 @@
-import { computed, type Ref, ref } from 'vue';
+import { type ComputedRef, computed, type Ref, ref } from 'vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { dawprojectFilename, exportDawprojectWithReport } from '@/export/dawproject';
@@ -47,12 +47,27 @@ export interface ProjectExportOptions {
   runAction: RunAction;
 }
 
+/** Export state and actions returned by {@link useProjectExport}. */
+export interface ProjectExport {
+  exportDialogOpen: Ref<boolean>;
+  /** The loop range offered as an export region, or null when the loop is off or empty. */
+  exportLoopRegion: ComputedRef<MixdownRangePpq | null>;
+  musicXmlAvailability: ComputedRef<ScoreExportAvailability>;
+  exportDawprojectAction(): void;
+  exportMusicXmlAction(): ScoreExportAvailability;
+  exportSzdAction(): void;
+  exportBrowserBackupAction(): void;
+  exportSmfAction(): void;
+  exportMidi2Action(): void;
+  openExportDialog(): void;
+}
+
 /**
  * Project-menu exports that leave the browser: DAWproject, MusicXML, the
  * portable .szd archive, the whole-browser backup, and Standard MIDI / MIDI 2.0
  * clip files. Incomplete media and reported loss are confirmed before writing.
  */
-export function useProjectExport(options: ProjectExportOptions) {
+export function useProjectExport(options: ProjectExportOptions): ProjectExport {
   const store = useProjectStore();
   const { t } = useI18n();
   const exportDialogOpen = ref(false);
@@ -252,7 +267,6 @@ export function useProjectExport(options: ProjectExportOptions) {
     exportDialogOpen,
     exportLoopRegion,
     musicXmlAvailability,
-    scoreExportAvailability: musicXmlAvailability,
     exportDawprojectAction,
     exportMusicXmlAction,
     exportSzdAction,

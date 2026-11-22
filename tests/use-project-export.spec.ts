@@ -223,7 +223,7 @@ describe('useProjectExport', () => {
     const availability = projectExport.exportMusicXmlAction();
     await flushPromises();
 
-    expect(availability).toEqual(projectExport.scoreExportAvailability.value);
+    expect(availability).toEqual(projectExport.musicXmlAvailability.value);
     expect(availability).toMatchObject({
       available: false,
       mode: 'part',
