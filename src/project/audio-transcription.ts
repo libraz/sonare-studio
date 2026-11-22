@@ -39,9 +39,9 @@ const CHUNK_ONSET_TOLERANCE_SECONDS = 0.25;
 /** Shortest chunk worth reading; a budget that cannot hold one refuses the clip. */
 const MIN_POLYPHONIC_CHUNK_SECONDS = 30;
 /** The detector receives at most this sample rate. */
-export const MAX_TRANSCRIPTION_SAMPLE_RATE = 48_000;
+const MAX_TRANSCRIPTION_SAMPLE_RATE = 48_000;
 /** Conservative preparation budget for decoded/rendered/transferred PCM. */
-export const DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES = 256 * MEBIBYTE;
+const DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES = 256 * MEBIBYTE;
 
 export interface AudioTranscriptionClip {
   id?: number;
@@ -171,10 +171,6 @@ export function quantizeNotes<T extends { startPpq: number; durationPpq: number 
     if (!(end > start)) return [];
     return [{ ...note, startPpq: start, durationPpq: end - start }];
   });
-}
-
-function eventNotes(events: ReadonlyArray<ProjectMidiEvent>): RawNote[] {
-  return pairEventsIntoNotes(events);
 }
 
 function safePcmBytes(frames: number, channels: number): number {
@@ -511,7 +507,7 @@ export async function transcribeAudioClip(
     // Detector PPQ sits on a constant grid at the reported tempo; take it to
     // elapsed seconds, through the project's map and back to the clip's origin.
     const secondsPerBeat = 60 / result.tempoBpm;
-    for (const note of eventNotes(result.events)) {
+    for (const note of pairEventsIntoNotes(result.events)) {
       const onsetSeconds = span.readFrom + Math.max(0, note.startPpq) * secondsPerBeat;
       if (onsetSeconds >= span.ownTo) continue;
       const releaseSeconds = span.readFrom + (note.startPpq + note.durationPpq) * secondsPerBeat;

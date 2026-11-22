@@ -4,6 +4,7 @@ import type {
   DecomposeStemsWorkerRequest,
   DecomposeStemsWorkerResponse,
 } from '@/workers/decompose-stems.worker';
+import { workerEventError } from './worker-client-errors';
 
 export type DecomposeStemsWorkerFactory = () => Worker;
 
@@ -26,10 +27,6 @@ function abortError(reason: unknown): Error {
     return new DOMException('Component split was aborted', 'AbortError');
   }
   return new Error('Component split was aborted');
-}
-
-function errorFromWorkerEvent(event: ErrorEvent): Error {
-  return new Error(event.message || 'Component split worker failed');
 }
 
 /**
@@ -90,7 +87,7 @@ export function decomposeStemsInWorker(
     };
 
     const onError = (event: ErrorEvent): void => {
-      settle({ error: errorFromWorkerEvent(event) });
+      settle({ error: workerEventError(event, 'Component split worker failed') });
     };
 
     const onAbort = (): void => {

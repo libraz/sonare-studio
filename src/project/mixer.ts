@@ -33,6 +33,7 @@ import type {
   SoloProcessor,
 } from '@libraz/libsonare';
 import { linearToDb, SILENCE_DB } from '@/lib/db';
+import { clamp } from '@/lib/math';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 import { getWasmModule } from './runtime';
@@ -344,7 +345,7 @@ export interface MixerBus {
 export type MixerSoloMode = 'inPlace' | 'pfl';
 
 /** Default solo mode: existing in-place after-fader solo in the main mix. */
-export const DEFAULT_MIXER_SOLO_MODE: MixerSoloMode = 'inPlace';
+const DEFAULT_MIXER_SOLO_MODE: MixerSoloMode = 'inPlace';
 
 /**
  * A VCA control group: a named fader/mute/solo controller for every track
@@ -399,7 +400,7 @@ export function vcaOffsetDb(
 export type VcaControlState = Pick<VcaGroup, 'mute' | 'solo'>;
 
 /** True when the assigned VCA group currently mutes its member tracks. */
-export function vcaGroupMuted(
+function vcaGroupMuted(
   vcaId: string | undefined,
   vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
 ): boolean {
@@ -407,7 +408,7 @@ export function vcaGroupMuted(
 }
 
 /** True when the assigned VCA group currently solos its member tracks. */
-export function vcaGroupSoloed(
+function vcaGroupSoloed(
   vcaId: string | undefined,
   vcaControls: ReadonlyMap<string, VcaControlState> | undefined,
 ): boolean {
@@ -594,7 +595,7 @@ export const MAX_STRIP_GAIN_DB = 24;
  * silence floor rather than changing its stored fader value, so undo and an
  * unmute restore the exact previous mix level.
  */
-export function effectiveMixerBusGainDb(bus: Pick<MixerBus, 'gainDb' | 'mute'>): number {
+function effectiveMixerBusGainDb(bus: Pick<MixerBus, 'gainDb' | 'mute'>): number {
   return bus.mute === true ? SILENCE_DB : bus.gainDb;
 }
 
@@ -671,7 +672,7 @@ export function cloneMixerState(state: ProjectMixerState): ProjectMixerState {
 }
 
 /** True when a strip is neutral (no audible or UI-only deviation). */
-export function isDefaultStrip(strip: MixerStrip): boolean {
+function isDefaultStrip(strip: MixerStrip): boolean {
   const surroundPan = strip.surroundPan;
   const hasNonDefaultSurroundPan =
     surroundPan !== undefined &&
@@ -735,11 +736,11 @@ export { dbToLinear } from '@/lib/db';
 
 /** Clamps a pan value to [-1, 1]. */
 export function clampPan(pan: number): number {
-  return Math.min(1, Math.max(-1, pan));
+  return clamp(pan, -1, 1);
 }
 
 /** True when an EQ is active: enabled with at least one non-bypassed band. */
-export function eqIsActive(eq: StripEq | undefined): boolean {
+function eqIsActive(eq: StripEq | undefined): boolean {
   if (!eq?.enabled) return false;
   return eq.bands.some((band) => band.enabled !== false && band.bypassed !== true);
 }

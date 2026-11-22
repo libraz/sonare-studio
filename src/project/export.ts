@@ -27,11 +27,6 @@ export interface MidiExportResult {
   loss: LossReport<MidiExportLossKind>;
 }
 
-/** Replaces characters that are unsafe in filenames and trims whitespace. */
-function sanitizeBaseName(name: string, fallback: string): string {
-  return sanitizeFilenameBase(name, fallback);
-}
-
 /** Copies a wasm-owned byte buffer into JS-owned memory. */
 function copyBytes(bytes: Uint8Array): Uint8Array {
   return new Uint8Array(bytes);
@@ -46,7 +41,7 @@ function copyBytes(bytes: Uint8Array): Uint8Array {
  */
 export async function exportProjectSmf(baseName?: string): Promise<MidiExportResult> {
   const store = useProjectStore();
-  const name = sanitizeBaseName(baseName ?? store.projectName, 'project');
+  const name = sanitizeFilenameBase(baseName ?? store.projectName, 'project');
   const exported = await projectDocumentToSmfWithLoss(serializeProject());
   return { ...exported, filename: ensureFileExtension(name, '.mid') };
 }
@@ -61,7 +56,7 @@ export async function exportProjectSmf(baseName?: string): Promise<MidiExportRes
 export function exportProjectClipFile(baseName?: string): MidiExportResult {
   const store = useProjectStore();
   const project = getProject();
-  const name = sanitizeBaseName(baseName ?? store.projectName, 'project');
+  const name = sanitizeFilenameBase(baseName ?? store.projectName, 'project');
   return {
     bytes: copyBytes(project.exportClipFile()),
     filename: ensureFileExtension(name, '.midi2'),
@@ -109,7 +104,7 @@ export async function exportClipSmf(clipId: number, baseName?: string): Promise<
     }));
   }
 
-  const name = sanitizeBaseName(baseName ?? clip.name, 'clip');
+  const name = sanitizeFilenameBase(baseName ?? clip.name, 'clip');
   const tempoMap = translateTempoMapForExport(
     store.tempoSegments,
     store.timeSignatures,

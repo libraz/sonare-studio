@@ -9,6 +9,7 @@
  * modulo its period.
  */
 
+import { clamp01 } from '@/lib/math';
 import { measureRangeAt, snapPpqToBarGrid } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 
@@ -113,7 +114,7 @@ export function applyGrooveToPosition(
   positionPpq: number,
   strength = 1,
 ): number {
-  const amount = Math.min(1, Math.max(0, strength));
+  const amount = clamp01(strength);
   if (amount === 0) return positionPpq;
   const period = groove.offsetsPpq.length;
   if (!(groove.gridPpq > 0) || period === 0) return positionPpq;

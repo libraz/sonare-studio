@@ -17,7 +17,7 @@ import {
   createDefaultScoreDisplaySettings,
   type DocumentScoreSettings,
 } from './annotations';
-import { type AutomationLaneState, busAutomationTarget, isBusAutomationTarget } from './automation';
+import { type AutomationLaneState, busAutomationTarget } from './automation';
 import { exportMixerSnapshotSlots, importMixerSnapshotSlots } from './command/mixer-snapshots';
 import { clearHistory } from './commands';
 import { activeTakeIndex } from './comping';
@@ -323,9 +323,7 @@ export function serializeProject(): ProjectDocument {
     mixer.master.sends = [];
     for (const bus of mixer.buses) {
       const target = busAutomationTarget(bus.id);
-      const automation = store.automationLanes.filter(
-        (lane) => lane.target === target && isBusAutomationTarget(lane.target),
-      );
+      const automation = store.automationLanes.filter((lane) => lane.target === target);
       if (automation.length > 0) bus.automation = automation.map(toDocumentAutomationLane);
     }
     doc.mixer = mixer;

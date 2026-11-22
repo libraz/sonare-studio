@@ -451,10 +451,7 @@ export async function saveFontWithStatusUnlocked(
   return { meta: { ...meta }, created };
 }
 
-export function saveFontWithStatus(
-  input: SaveFontInput,
-  data: Uint8Array,
-): Promise<SavedSoundFont> {
+function saveFontWithStatus(input: SaveFontInput, data: Uint8Array): Promise<SavedSoundFont> {
   return withPersistenceMutationLock(() => saveFontWithStatusUnlocked(input, data));
 }
 

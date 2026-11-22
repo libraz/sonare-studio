@@ -164,20 +164,6 @@ export function timeSignatureAt(
   return { numerator: meter.numerator, denominator: meter.denominator };
 }
 
-/** Resolves the complete meter-map segment governing an absolute PPQ position. */
-export function timeSignatureSegmentAt(
-  segments: readonly TimeSignatureSegment[],
-  ppq: number,
-): TimeSignatureSegment {
-  const normalized = normalizeTimeSignatureMap(segments);
-  let current = normalized[0];
-  for (const segment of normalized) {
-    if (segment.startPpq > ppq) break;
-    current = segment;
-  }
-  return { ...current };
-}
-
 /**
  * Snaps a position inside one bar to the step grid anchored at the bar's
  * start. The barline that ends the bar is a candidate too, so a step that does

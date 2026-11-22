@@ -1,6 +1,6 @@
 import { shallowRef } from 'vue';
 import { tidyGridPpq, tidyNotes } from '@/compose/tidy-notes';
-import { clampInt } from '@/lib/math';
+import { clamp01, clampInt } from '@/lib/math';
 import {
   applyGrooveToPosition,
   DEFAULT_GROOVE_STEPS,
@@ -82,7 +82,10 @@ function nextClipStartPpq(clip: EditorClip): number | undefined {
   let next: number | undefined;
   for (const other of useProjectStore().clips) {
     if (other.id === clip.id || other.trackId !== clip.trackId) continue;
-    if (other.startPpq >= end - 1e-9 && (next === undefined || other.startPpq < next)) {
+    if (
+      other.startPpq >= end - CLIP_LANE_EPSILON &&
+      (next === undefined || other.startPpq < next)
+    ) {
       next = other.startPpq;
     }
   }
@@ -108,7 +111,7 @@ function grownClipLengthPpq(clip: EditorClip, notes: readonly EditorNote[]): num
   if (clip.loopEnabled || notes.length === 0) return undefined;
   const lastEnd = Math.max(...notes.map((note) => note.startPpq + note.durationPpq));
   const endPpq = midiSourcePpqToTimeline(clip, lastEnd);
-  if (endPpq <= clip.startPpq + clip.lengthPpq + 1e-9) return undefined;
+  if (endPpq <= clip.startPpq + clip.lengthPpq + CLIP_LANE_EPSILON) return undefined;
   const bar = measureRangeAt(useProjectStore().timeSignatures, endPpq - 1e-6);
   const nextStart = nextClipStartPpq(clip) ?? Number.POSITIVE_INFINITY;
   return Math.min(bar.startPpq + bar.lengthPpq, nextStart) - clip.startPpq;
@@ -137,12 +140,14 @@ function commit(
       ? // Notes hidden past a trimmed end stay untouched, so only edited ones can regrow the clip.
         grownClipLengthPpq(clip, addedOrRespannedNotes(clip.notes, nextNotes))
       : undefined);
-  const resize = resizeLengthPpq !== undefined && Math.abs(resizeLengthPpq - clip.lengthPpq) > 1e-9;
+  const resize =
+    resizeLengthPpq !== undefined && Math.abs(resizeLengthPpq - clip.lengthPpq) > CLIP_LANE_EPSILON;
   const loopChange =
     options.loop !== undefined &&
     (clip.loopEnabled !== options.loop.enabled ||
       (options.loop.enabled &&
-        Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (options.loop.lengthPpq ?? 0)) > 1e-9));
+        Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (options.loop.lengthPpq ?? 0)) >
+          CLIP_LANE_EPSILON));
   const projectEdits = Number(options.writeNotes) + Number(resize) + Number(loopChange);
   if (projectEdits === 0) return;
   executeAtomic((edit) => {
@@ -301,11 +306,12 @@ export function applyNoteEdits(plan: NoteEditPlan): number[] {
     return [merged];
   });
   const windowChanged =
-    (lengthPpq !== undefined && Math.abs(lengthPpq - clip.lengthPpq) > 1e-9) ||
+    (lengthPpq !== undefined && Math.abs(lengthPpq - clip.lengthPpq) > CLIP_LANE_EPSILON) ||
     (loopEnabled !== undefined &&
       (loopEnabled !== clip.loopEnabled ||
         (loopEnabled &&
-          Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (loopLengthPpq ?? 0)) > 1e-9)));
+          Math.abs((clip.loopLengthPpq || clip.lengthPpq) - (loopLengthPpq ?? 0)) >
+            CLIP_LANE_EPSILON)));
   if (!notesChanged && !windowChanged) return [];
   const additions = additionDrafts.map((draft) => ({ ...draft, id: allocateNoteId() }));
   commit([...next, ...additions], {
@@ -435,13 +441,13 @@ function applyGroove(notes: readonly EditorNote[], groove: GrooveTemplate, stren
   const store = useProjectStore();
   if (notes.length === 0) return;
   const clip = requireEditableClip(store, store.clipId);
-  const amount = Math.min(1, Math.max(0, strength));
+  const amount = clamp01(strength);
   const updates: EditorNoteUpdate[] = [];
   for (const note of notes) {
     const timelinePpq = midiSourcePpqToTimeline(clip, note.startPpq);
     const grooved = applyGrooveToPosition(groove, store.timeSignatures, timelinePpq, amount);
     const sourcePpq = Math.max(0, grooved - clip.startPpq + clip.sourceOffsetPpq);
-    if (Math.abs(sourcePpq - note.startPpq) < 1e-9) continue;
+    if (Math.abs(sourcePpq - note.startPpq) < CLIP_LANE_EPSILON) continue;
     updates.push({ id: note.id, startPpq: sourcePpq });
   }
   if (updates.length === 0) return;
@@ -580,7 +586,7 @@ export function mergeSelection(): void {
       lastId !== undefined
         ? (merged.get(lastId) ?? store.notes.find((n) => n.id === lastId))
         : undefined;
-    if (last && note.startPpq <= last.startPpq + last.durationPpq + 1e-9) {
+    if (last && note.startPpq <= last.startPpq + last.durationPpq + CLIP_LANE_EPSILON) {
       const end = Math.max(last.startPpq + last.durationPpq, note.startPpq + note.durationPpq);
       merged.set(last.id, { ...last, durationPpq: end - last.startPpq });
       drop.add(note.id);
@@ -718,7 +724,7 @@ export function quantizeSelection(strength?: number): void {
   if (store.selection.size === 0) return;
   const clip = requireEditableClip(store, store.clipId);
   const gridPpq = store.snapBar ? 'bar' : 4 / store.snapDivision;
-  const amount = Math.min(1, Math.max(0, strength ?? store.quantizeStrength));
+  const amount = clamp01(strength ?? store.quantizeStrength);
   let changed = false;
   const next = store.notes.map((note) => {
     if (!store.selection.has(note.id)) return { ...note };

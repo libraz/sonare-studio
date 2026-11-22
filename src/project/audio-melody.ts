@@ -14,6 +14,7 @@
 
 import { nearestStep, noteToPitchClass, tryParseNote } from '@libraz/libcantus';
 import type { KeyDetection, MelodyOptions, MelodyPoint, MelodyResult } from '@libraz/libsonare';
+import { clamp01 } from '@/lib/math';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { quantizeNotes } from './audio-transcription';
@@ -157,7 +158,7 @@ function velocityFromConfidenceAndLevel(
   noteRms: number,
   referenceRms: number,
 ): number {
-  const confidence = Math.min(1, Math.max(0, meanConfidence));
+  const confidence = clamp01(meanConfidence);
   const confidenceVelocity = 48 + confidence * 79;
   const levelRatio = referenceRms > 1e-9 ? noteRms / referenceRms : 1;
   const dynamicFactor = Math.min(1.25, Math.max(0.6, Math.sqrt(levelRatio)));
@@ -247,7 +248,7 @@ export async function analyzeAudioClipMelody(
       runMidi = snappedMidi;
       runStart = point.timeSec;
     }
-    confSum += Math.min(1, Math.max(0, point.confidence));
+    confSum += clamp01(point.confidence);
     confCount += 1;
   }
   flush(windowEndSeconds); // last run extends to the window end

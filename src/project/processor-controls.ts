@@ -19,6 +19,7 @@ import type {
   MasteringInsertSlot,
 } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
+import { clamp } from '@/lib/math';
 import { isSwitchOn } from '@/lib/midi';
 import { formatControlValue } from '@/ui/devices/knob-math';
 import { type AutomationParam, parseInsertAutomationParam } from './automation';
@@ -28,6 +29,7 @@ import {
   type InsertParamDomain,
   insertParamDomain,
 } from './insert-param-domains';
+import { MIDI_CC_MAX } from './midi-cc';
 import { type InsertParamValue, isInsertParamValue, type MixerStrip } from './mixer';
 import { getWasmModule } from './runtime';
 
@@ -431,7 +433,7 @@ export function processorNumberSpec(
  * then parameter-info-only names, then saved extras. Duplicate names retain
  * their first occurrence.
  */
-export function processorControlNames(
+function processorControlNames(
   catalogNames: ReadonlyArray<string>,
   paramInfo: ReadonlyArray<ProcessorParamInfo>,
   params: Readonly<Record<string, unknown>>,
@@ -877,13 +879,13 @@ export function processorControlValueFromMidi(
   control: ProcessorControl,
   midiValue: number,
 ): ProcessorControlValue {
-  const cc = Math.min(127, Math.max(0, Number.isFinite(midiValue) ? midiValue : 0));
+  const cc = clamp(Number.isFinite(midiValue) ? midiValue : 0, 0, MIDI_CC_MAX);
   if (control.kind === 'number') {
     if (control.scale === 'log' && control.min > 0 && control.max > control.min) {
-      const t = cc / 127;
+      const t = cc / MIDI_CC_MAX;
       return control.min * (control.max / control.min) ** t;
     }
-    return control.min + (cc / 127) * (control.max - control.min);
+    return control.min + (cc / MIDI_CC_MAX) * (control.max - control.min);
   }
   if (control.kind === 'boolean') return isSwitchOn(cc);
   const index = Math.min(

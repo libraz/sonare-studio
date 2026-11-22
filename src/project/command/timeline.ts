@@ -4,7 +4,7 @@ import { ensureWasm } from '@/lib/wasm';
 import { loadAsset } from '@/persistence/assets';
 import { remapClipScoreAnnotations } from '../annotations';
 import { analyzeAudioClipSections } from '../audio-sections';
-import type { AutomationLaneState } from '../automation';
+import { type AutomationLaneState, automationLaneKey } from '../automation';
 import { type EditorChordSymbol, toProjectChordSymbols } from '../chords';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
 import { projectMidiNoteOccurrences } from '../midi-projection';
@@ -185,10 +185,6 @@ function reinstallTimelineWarps(edit: AtomicProjectEdit): void {
   }
 }
 
-function automationLaneKey(lane: AutomationLaneState): string {
-  return `${typeof lane.target === 'object' ? JSON.stringify(lane.target) : lane.target}:${lane.param}`;
-}
-
 /** Appends the source-window automation points after an inserted copy of that window. */
 function duplicateAutomationWindow(
   lanes: ReadonlyArray<AutomationLaneState>,
@@ -197,9 +193,11 @@ function duplicateAutomationWindow(
   endPpq: number,
 ): AutomationLaneState[] {
   const lengthPpq = endPpq - startPpq;
-  const sourceByKey = new Map(sourceLanes.map((lane) => [automationLaneKey(lane), lane]));
+  const sourceByKey = new Map(
+    sourceLanes.map((lane) => [automationLaneKey(lane.target, lane.param), lane]),
+  );
   return lanes.map((lane) => {
-    const source = sourceByKey.get(automationLaneKey(lane));
+    const source = sourceByKey.get(automationLaneKey(lane.target, lane.param));
     if (!source) return lane;
     const copied = source.points
       .filter((point) => point.ppq >= startPpq && point.ppq < endPpq)

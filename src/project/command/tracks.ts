@@ -264,6 +264,16 @@ export function setTracksGroup(trackIds: Iterable<number>, groupId: number | nul
   patchTracks(store, ids, 'groupId', groupId ?? undefined);
 }
 
+function setTrackFlag(trackId: number, key: 'mute' | 'solo', value: boolean): void {
+  const store = useProjectStore();
+  const track = requireTrack(store, trackId);
+  if (track[key] === value) return;
+  execute(0, () => {
+    store.tracks = store.tracks.map((t) => (t.id === trackId ? { ...t, [key]: value } : t));
+    store.refresh();
+  });
+}
+
 /**
  * Sets a track's mute flag as one undoable edit. Mute is mirrored to the
  * engine mixer lane in realtime (no re-scheduling).
@@ -272,13 +282,7 @@ export function setTracksGroup(trackIds: Iterable<number>, groupId: number | nul
  * @param mute New mute state.
  */
 export function setTrackMute(trackId: number, mute: boolean): void {
-  const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (track.mute === mute) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => (t.id === trackId ? { ...t, mute } : t));
-    store.refresh();
-  });
+  setTrackFlag(trackId, 'mute', mute);
 }
 
 /**
@@ -289,13 +293,7 @@ export function setTrackMute(trackId: number, mute: boolean): void {
  * @param solo New solo state.
  */
 export function setTrackSolo(trackId: number, solo: boolean): void {
-  const store = useProjectStore();
-  const track = requireTrack(store, trackId);
-  if (track.solo === solo) return;
-  execute(0, () => {
-    store.tracks = store.tracks.map((t) => (t.id === trackId ? { ...t, solo } : t));
-    store.refresh();
-  });
+  setTrackFlag(trackId, 'solo', solo);
 }
 
 /** Makes one track the only soloed source, clearing track and VCA solos atomically. */

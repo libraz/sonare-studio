@@ -7,6 +7,7 @@
  * Pure and canvas-free.
  */
 
+import { clamp01 } from '@/lib/math';
 import {
   curveT,
   isValidChannel,
@@ -97,7 +98,7 @@ function rampPointAt<P extends RampPoint>(previous: P, next: P | undefined, ppq:
   if (next === undefined || !rampCurve(previous) || !(next.ppq > previous.ppq)) {
     return { ...previous, ppq };
   }
-  const t = Math.min(1, Math.max(0, (ppq - previous.ppq) / (next.ppq - previous.ppq)));
+  const t = clamp01((ppq - previous.ppq) / (next.ppq - previous.ppq));
   return {
     ...previous,
     ppq,

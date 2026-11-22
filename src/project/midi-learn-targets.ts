@@ -7,6 +7,8 @@
  * serializer and by the MIDI-learn UI.
  */
 
+import { MIDI_CC_MAX } from './midi-cc';
+
 /** The mixer parameter a CC binding drives. */
 export type MidiLearnParam = 'gain' | 'pan';
 
@@ -56,7 +58,7 @@ export function midiCcBindingsKey(bindings: ReadonlyMap<string, MidiCcBinding>):
 }
 
 /** Lowest / highest 7-bit MIDI value. */
-export const MIDI_VALUE_MAX = 127;
+export const MIDI_VALUE_MAX = MIDI_CC_MAX;
 
 /** Encodes a learn target into a stable string id (e.g. `gain:master`, `pan:7`). */
 export function midiLearnTargetId(param: MidiLearnParam, scope: MidiLearnScope): string {

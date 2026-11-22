@@ -4,6 +4,7 @@ import type {
   TranscribeWorkerRequest,
   TranscribeWorkerResponse,
 } from '@/workers/transcribe.worker';
+import { workerEventError } from './worker-client-errors';
 
 /** Factory override used by tests and non-browser embeddings. */
 export type TranscribeWorkerFactory = () => Worker;
@@ -39,10 +40,6 @@ function abortError(reason: unknown): Error {
   const error = new Error('Transcription was aborted');
   error.name = 'AbortError';
   return error;
-}
-
-function errorFromWorkerEvent(event: ErrorEvent): Error {
-  return new Error(event.message || 'Transcription worker failed');
 }
 
 function validEvent(value: unknown): value is ProjectMidiEvent {
@@ -146,7 +143,7 @@ export function transcribeAudioInWorker(
     };
 
     const onError = (event: ErrorEvent): void => {
-      settle({ error: errorFromWorkerEvent(event) });
+      settle({ error: workerEventError(event, 'Transcription worker failed') });
     };
 
     const onAbort = (): void => {

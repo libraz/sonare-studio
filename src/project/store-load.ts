@@ -23,6 +23,7 @@ import {
   placeholderSourceAudio,
 } from './runtime';
 import type { DocumentClip, DocumentNote, ProjectDocument } from './serialization';
+import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from './smf';
 import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from './tempo-map';
 import type {
   ClipKind,
@@ -193,7 +194,7 @@ export function applyDocumentClipMetadata(
         const data = packet.data.map((byte) => Math.round(Number(byte)));
         if (data.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 0xff)) continue;
         totalBytes += data.length;
-        if (packets.length >= 4096 || totalBytes > 1024 * 1024) break;
+        if (packets.length >= MAX_SMF_SYSEX_PACKETS || totalBytes > MAX_SMF_SYSEX_BYTES) break;
         packets.push({ ppq: packet.ppq, status: packet.status, data });
       }
       if (packets.length > 0) next.smfSysEx = packets;

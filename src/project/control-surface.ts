@@ -9,6 +9,7 @@
  * which track a slot points at.
  */
 
+import { clampInt } from '@/lib/math';
 import { SURFACE_STRIP_COUNT } from '@/ui/midi/surface-protocol';
 import { MAX_CONTROL_SURFACE_SLOTS } from './midi-learn-targets';
 
@@ -70,12 +71,6 @@ export function controlSurfaceSettingsAreDefault(settings: ControlSurfaceSetting
   );
 }
 
-function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(numeric)));
-}
-
 function portId(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
@@ -95,8 +90,13 @@ export function sanitizeControlSurfaceSettings(value: unknown): ControlSurfaceSe
     protocol: CONTROL_SURFACE_PROTOCOLS.includes(record.protocol as ControlSurfaceProtocol)
       ? (record.protocol as ControlSurfaceProtocol)
       : defaults.protocol,
-    bankSize: clampInteger(record.bankSize, 1, MAX_CONTROL_SURFACE_SLOTS, defaults.bankSize),
-    bankOffset: clampInteger(record.bankOffset, 0, Number.MAX_SAFE_INTEGER, defaults.bankOffset),
+    bankSize: clampInt(Number(record.bankSize), 1, MAX_CONTROL_SURFACE_SLOTS, defaults.bankSize),
+    bankOffset: clampInt(
+      Number(record.bankOffset),
+      0,
+      Number.MAX_SAFE_INTEGER,
+      defaults.bankOffset,
+    ),
     inputPortId: portId(record.inputPortId),
     outputPortId: portId(record.outputPortId),
     feedback: record.feedback === true,

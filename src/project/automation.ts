@@ -6,6 +6,8 @@
  */
 
 import type { AutomationCurve as EngineAutomationCurve } from '@libraz/libsonare';
+import { SILENCE_DB } from '@/lib/db';
+import { clamp01 } from '@/lib/math';
 
 /** A mixer bus automation target encoded with its stable project bus id. */
 export type BusAutomationTarget = `bus:${string}`;
@@ -107,7 +109,7 @@ export const AUTOMATION_CURVES: ReadonlySet<string> = new Set<AutomationCurve>([
 ]);
 
 /** Minimum fader automation value in dB (treated as -inf by the fader law). */
-export const AUTOMATION_FADER_DB_MIN = -120;
+export const AUTOMATION_FADER_DB_MIN = SILENCE_DB;
 
 /** Maximum fader automation value in dB. */
 export const AUTOMATION_FADER_DB_MAX = 24;
@@ -399,7 +401,7 @@ export function evaluateAutomationValue(
   const a = points[index];
   const b = points[index + 1];
   const span = b.ppq - a.ppq;
-  const t = span > 0 ? Math.min(1, Math.max(0, (ppq - a.ppq) / span)) : 0;
+  const t = span > 0 ? clamp01((ppq - a.ppq) / span) : 0;
   switch (a.curve ?? 'linear') {
     case 'hold':
       return a.value;

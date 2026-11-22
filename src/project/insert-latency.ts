@@ -128,7 +128,7 @@ export function insertChainLatencySamples(
 }
 
 /** Sums enabled insert latency for a strip. */
-export function stripInsertLatencySamples(
+function stripInsertLatencySamples(
   strip: Pick<MixerStrip, 'inserts'> | undefined,
   resolveLatency: InsertLatencyResolver,
 ): number {

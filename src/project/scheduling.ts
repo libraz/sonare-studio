@@ -239,7 +239,7 @@ export function audioClipWindowFrames(
  * a ramp and would silence a clip edge, so it counts as none; fades are
  * clamped to the window.
  */
-export function audioClipFadeFrames(
+function audioClipFadeFrames(
   frames: number,
   sampleRate: number,
   tempo: AudioClipSliceTempo,
@@ -523,7 +523,7 @@ export function engineClipPlayback(source: AudioClipSegmentSource): {
  * for offline consumers; a warped segment renders through the engine's
  * time-stretch mode so it matches playback.
  */
-export async function renderAudioClipSegment(
+async function renderAudioClipSegment(
   asset: LoadedAudioAsset,
   clip: SegmentRenderableAudioClip,
   segment: AudioClipSegment,
@@ -651,7 +651,7 @@ export interface ScheduledProjectClip {
 }
 
 /** Peak budget for one decoded source asset + next schedule + old schedule. */
-export const DEFAULT_LIVE_SCHEDULE_MEMORY_BUDGET_BYTES = 512 * MEBIBYTE;
+const DEFAULT_LIVE_SCHEDULE_MEMORY_BUDGET_BYTES = 512 * MEBIBYTE;
 
 /** Options for {@link scheduleProjectClips}. */
 export interface ScheduleProjectClipsOptions {
@@ -706,7 +706,7 @@ export class AudioScheduleReplaceError extends Error {
 }
 
 /** Best-effort cleanup that returns only clips still owned after a failed removal. */
-export function cleanupScheduledProjectClips(
+function cleanupScheduledProjectClips(
   handle: EngineHandle,
   clips: ReadonlyArray<ScheduledProjectClip>,
   phase: AudioScheduleCleanupFailure['phase'] = 'rollback',

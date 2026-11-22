@@ -1,3 +1,5 @@
+import { clamp01 } from '@/lib/math';
+import { CLIP_LANE_EPSILON } from './command/clip-lane';
 import { type NoteBoundaryEvent, pairNoteBoundariesIntoNotes, type RawNote } from './midi-events';
 import { snapPpqToSwingMeterGrid } from './time-signature';
 import type { TimeSignatureSegment } from './types';
@@ -24,7 +26,7 @@ export function quantizeRecordedNotes(
   timeSignatures: readonly TimeSignatureSegment[] = [],
 ): RawNote[] {
   if (!Number.isFinite(gridPpq) || gridPpq <= 0) return notes.slice();
-  const amount = Math.min(1, Math.max(0, strength));
+  const amount = clamp01(strength);
   const quantized = notes.map((note) => ({
     ...note,
     startPpq: Math.max(
@@ -55,13 +57,13 @@ export function foldRecordedNotesIntoLoop(
   for (const note of notes) {
     const endPpq = note.startPpq + note.durationPpq;
     let cursor = note.startPpq;
-    while (cursor < endPpq - 1e-9) {
+    while (cursor < endPpq - CLIP_LANE_EPSILON) {
       const loopIndex = Math.floor(cursor / loopLengthPpq);
       const loopStart = loopIndex * loopLengthPpq;
       const inLoopStart = cursor - loopStart;
       const segmentEnd = Math.min(endPpq, loopStart + loopLengthPpq);
       const durationPpq = segmentEnd - cursor;
-      if (durationPpq > 1e-9) {
+      if (durationPpq > CLIP_LANE_EPSILON) {
         out.push({
           ...note,
           startPpq: Math.max(0, inLoopStart),
@@ -90,10 +92,10 @@ export function lastCompleteLoopPassStartPpq(
     return null;
   }
   const elapsedPpq = stopPpq - recordingStartPpq;
-  if (elapsedPpq < -1e-9) return null;
+  if (elapsedPpq < -CLIP_LANE_EPSILON) return null;
   return (
     recordingStartPpq +
-    Math.max(0, Math.ceil(elapsedPpq / loopLengthPpq - 1e-9) - 1) * loopLengthPpq
+    Math.max(0, Math.ceil(elapsedPpq / loopLengthPpq - CLIP_LANE_EPSILON) - 1) * loopLengthPpq
   );
 }
 
@@ -105,7 +107,7 @@ export function lastCompleteLoopPassStartPpq(
 function isLoopPassOnset<T extends { ppq: number }>(event: T, recordingStartPpq: number): boolean {
   return (
     Number.isFinite(event.ppq) &&
-    event.ppq >= recordingStartPpq - 1e-9 &&
+    event.ppq >= recordingStartPpq - CLIP_LANE_EPSILON &&
     !('kind' in event && (event as { kind?: unknown }).kind === 'off')
   );
 }
@@ -168,7 +170,10 @@ export function selectLastCompleteLoopPassEvents<T extends { ppq: number }>(
   const passEnd = passStart + loopLengthPpq;
   const offset = passStart - recordingStartPpq;
   return events
-    .filter((event) => event.ppq >= passStart - 1e-9 && event.ppq < passEnd - 1e-9)
+    .filter(
+      (event) =>
+        event.ppq >= passStart - CLIP_LANE_EPSILON && event.ppq < passEnd - CLIP_LANE_EPSILON,
+    )
     .map((event) => ({ ...event, ppq: event.ppq - offset }));
 }
 
@@ -193,7 +198,7 @@ export function selectLastCompleteLoopPassNotes(
   for (const note of notes) {
     const start = Math.max(note.startPpq, relativeStart);
     const end = Math.min(note.startPpq + note.durationPpq, relativeEnd);
-    if (end <= start + 1e-9) continue;
+    if (end <= start + CLIP_LANE_EPSILON) continue;
     out.push({ ...note, startPpq: start - relativeStart, durationPpq: end - start });
   }
   out.sort((a, b) => a.startPpq - b.startPpq || a.pitch - b.pitch || a.channel - b.channel);
@@ -250,7 +255,7 @@ export function finalizeRecording(
   } = options;
   // A note begins during the capture by construction; guard float drift.
   const captured = pairNoteBoundariesIntoNotes(boundaries).filter(
-    (note) => note.startPpq - startPpq >= -1e-9,
+    (note) => note.startPpq - startPpq >= -CLIP_LANE_EPSILON,
   );
   const notes = quantizeRecordedNotes(
     captured,
