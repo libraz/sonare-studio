@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { createPinia, setActivePinia } from 'pinia';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computed, effectScope, ref } from 'vue';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { computed, effectScope, ref, shallowRef } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useRecording } from '@/composables/useRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
@@ -22,6 +23,13 @@ import {
 import { createRecordingCycle } from '@/project/loop-recording';
 import { getProject, useProjectStore } from '@/project/store';
 import { MESSAGES } from '@/ui/i18n';
+import {
+  CUSTOM_VOICE_PRESET_TEMPLATE,
+  parseCustomVoicePreset,
+} from '@/ui/shell/custom-voice-preset';
+import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import { fakeEngineHandle } from './fakes/engine';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 /** Transport loop refs plus the recording-cycle owner derived from them. */
@@ -83,6 +91,9 @@ function makeTransport(tempoBpm = 120) {
     setTempo: vi.fn(),
     setLoop: vi.fn(() => true),
     toggleMetronome,
+    tempoSegments: ref([]),
+    resumeContext: vi.fn(),
+    setTempoMap: vi.fn(),
     dispose: vi.fn(),
   };
   return { transport, play, stop, seekPpq, toggleMetronome };
@@ -169,7 +180,7 @@ function makeFakeRecorder() {
   };
 }
 
-const fakeHandle = { engine: {}, ctx: { sampleRate: 48000 } } as unknown as EngineHandle;
+const fakeHandle = fakeEngineHandle({ ctx: { sampleRate: 48000 } });
 
 const defaultIngest = async (
   channels: Float32Array[],
@@ -201,7 +212,7 @@ describe('useRecording', () => {
 
   /** Wires the composable with a fake recorder, transport and ingest. */
   function setup(handle: EngineHandle | null = fakeHandle, useInjectedIngest = true) {
-    const handleRef = ref<EngineHandle | null>(handle);
+    const handleRef = shallowRef<EngineHandle | null>(handle);
     const fake = makeFakeRecorder();
     const factory = vi.fn(() => fake.rec);
     const { transport, play, stop, seekPpq, toggleMetronome } = makeTransport();
@@ -417,7 +428,7 @@ describe('useRecording', () => {
     let sidecars = 0;
     const writeSpy = vi
       .spyOn(MemoryFileHandle.prototype, 'createWritable')
-      .mockImplementation(async function () {
+      .mockImplementation(async function (this: MemoryFileHandle) {
         if (this.name.endsWith('.json')) {
           sidecars += 1;
           if (sidecars === 2) {
@@ -1153,11 +1164,12 @@ describe('useRecording', () => {
   it('passes custom realtime voice changer JSON presets to new recorders', async () => {
     const { recording, factory } = setup();
     const preset = {
-      schemaVersion: 1 as const,
+      schemaVersion: 4,
+      id: 'telephone',
       name: 'Telephone',
-      macros: { wet: 0.8 },
-      dsp: { formantFactor: 1.2 },
-    };
+      category: 'custom',
+      macros: { pitch: 2, intensity: 0.8 },
+    } satisfies RealtimeVoiceChangerConfigInput;
 
     recording.setVoiceChangerPreset(preset);
     await recording.requestMic();
@@ -1699,5 +1711,34 @@ describe('useRecording', () => {
         expect(call[0][0][passFrames - 1]).toBe(index + 1);
       }
     });
+  });
+});
+
+describe('custom voice changer presets against the real core', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  const build = (config: RealtimeVoiceChangerConfigInput) =>
+    new core.RealtimeVoiceChanger({ sampleRate: 48000, maxBlockSize: 128, numChannels: 1, config });
+
+  it('accepts the preset document the recording tests feed the recorder', () => {
+    const changer = build({
+      schemaVersion: 4,
+      id: 'telephone',
+      name: 'Telephone',
+      category: 'custom',
+      macros: { pitch: 2, intensity: 0.8 },
+    });
+    changer.destroy();
+  });
+
+  // Known break: TransportBar.vue offers a schemaVersion 1 template and only
+  // accepts schemaVersion 1, while the core requires schemaVersion 4 with an id
+  // and a category, so a custom preset written in the panel cannot start.
+  it('accepts the custom preset template the transport bar offers', () => {
+    const template = parseCustomVoicePreset(core, CUSTOM_VOICE_PRESET_TEMPLATE);
+    expect(template).not.toBeNull();
+    build(template!).destroy();
   });
 });

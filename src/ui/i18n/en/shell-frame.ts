@@ -464,7 +464,7 @@ export const shellFrame = {
     voiceChangerJson: 'Voice preset JSON',
     voiceChangerApply: 'Apply voice JSON',
     voiceChangerJsonInvalid:
-      'Enter a JSON object with schemaVersion: 1 and optional macros/dsp objects.',
+      'Enter a preset document with schemaVersion: 4, an id, a name, a category, and either macros or dsp.',
     retune: 'Retune st',
     retuneTitle: 'Shift the input pitch by semitones (-24 to 24)',
     autoPunch: 'Auto-punch (locators)',

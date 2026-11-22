@@ -41,10 +41,6 @@ const SRC_ALLOWED: Record<string, { count: number; reason: string }> = {
     reason: 'studio controls stored before the kind discriminant existed',
   },
   'src/export/engine-render.ts': { count: 1, reason: 'cropped planes returned as the caller T' },
-  'src/components/shell/TransportBar.vue': {
-    count: 1,
-    reason: 'user-pasted voice preset JSON; the core validates it on apply',
-  },
   'src/ui/devices/synth-enums.ts': { count: 1, reason: 'Object.fromEntries over fallback tables' },
 };
 

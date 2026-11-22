@@ -15,13 +15,16 @@ import {
   STREAMING_RETUNE_MAX_SEMITONES,
   STREAMING_RETUNE_MIN_SEMITONES,
 } from '@/engine/streaming-retune';
+import { ensureWasm } from '@/lib/wasm';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+import {
+  CUSTOM_VOICE_PRESET_TEMPLATE,
+  parseCustomVoicePreset,
+} from '@/ui/shell/custom-voice-preset';
 
 type Recording = ReturnType<typeof useRecording>;
 type MidiRecording = ReturnType<typeof useMidiRecording>;
-type CustomVoiceChangerPreset = Exclude<RealtimeVoiceChangerConfigInput, string>;
 
 const props = defineProps<{
   autoPunchEnabled: boolean;
@@ -182,7 +185,7 @@ function setMidiCycleRecordMode(value: string | number): void {
 }
 
 const customVoiceOpen = ref(false);
-const customVoiceJson = ref('{\n  "schemaVersion": 1,\n  "macros": {},\n  "dsp": {}\n}');
+const customVoiceJson = ref(CUSTOM_VOICE_PRESET_TEMPLATE);
 const customVoiceError = ref('');
 const voiceChangerSelectValue = computed(() =>
   typeof props.recording.voiceChangerPreset.value === 'string'
@@ -205,30 +208,14 @@ function onVoiceChangerChange(value: string | number): void {
   props.recording.setVoiceChangerPreset(next as Recording['voiceChangerPreset']['value']);
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function onApplyCustomVoicePreset(): void {
+async function onApplyCustomVoicePreset(): Promise<void> {
   customVoiceError.value = '';
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(customVoiceJson.value);
-  } catch {
+  const preset = parseCustomVoicePreset(await ensureWasm(), customVoiceJson.value);
+  if (preset === null) {
     customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
     return;
   }
-  if (
-    !isPlainObject(parsed) ||
-    parsed.schemaVersion !== 1 ||
-    ('macros' in parsed && !isPlainObject(parsed.macros)) ||
-    ('dsp' in parsed && !isPlainObject(parsed.dsp))
-  ) {
-    customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
-    return;
-  }
-  // JSON boundary: the checks above establish the envelope; the core validates the rest.
-  props.recording.setVoiceChangerPreset(parsed as unknown as CustomVoiceChangerPreset);
+  props.recording.setVoiceChangerPreset(preset);
 }
 
 function onRetuneInput(event: Event): void {

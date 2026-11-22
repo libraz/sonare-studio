@@ -1,8 +1,21 @@
-import { mount, type VueWrapper } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
+import { CUSTOM_VOICE_PRESET_TEMPLATE } from '@/ui/shell/custom-voice-preset';
+import { fakeEngineHandle } from './fakes/engine';
+
+vi.mock('@/lib/wasm', async () => {
+  const core = await import('@/wasm/index.js');
+  return { ensureWasm: async () => core };
+});
+
+beforeAll(async () => {
+  const core = await import('@/wasm/index.js');
+  await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+});
 
 function makeRecording(overrides: Record<string, unknown> = {}) {
   return {
@@ -41,7 +54,7 @@ function mountBar(props: Record<string, unknown> = {}): VueWrapper {
       bridge: null,
       canRecord: true,
       countInChoices: [{ value: 0 }, { value: 1 }],
-      handle: {},
+      handle: fakeEngineHandle(),
       hasLocatorWindow: true,
       isCountingIn: false,
       isPlaying: false,
@@ -191,20 +204,42 @@ describe('TransportBar recording settings', () => {
 
     await wrapper.get('textarea[aria-label="Voice preset JSON"]').setValue(
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 4,
+        id: 'telephone',
         name: 'Telephone',
-        macros: { wet: 0.8 },
-        dsp: { formantFactor: 1.2 },
+        category: 'custom',
+        macros: { pitch: 2 },
       }),
     );
     await menuButton(wrapper, 'Apply voice JSON').trigger('click');
+    await flushPromises();
 
-    expect(recording.setVoiceChangerPreset).toHaveBeenCalledWith({
-      schemaVersion: 1,
-      name: 'Telephone',
-      macros: { wet: 0.8 },
-      dsp: { formantFactor: 1.2 },
-    });
+    expect(recording.setVoiceChangerPreset).toHaveBeenCalledWith(
+      expect.objectContaining({
+        schemaVersion: 4,
+        id: 'telephone',
+        dsp: expect.objectContaining({ retune: expect.objectContaining({ pitchSemitones: 2 }) }),
+      }),
+    );
+  });
+
+  it('refuses a voice JSON preset the core rejects, and the template it offers applies', async () => {
+    const recording = makeRecording();
+    const wrapper = mountBar({ recording });
+    wrapper.findAllComponents(SelectMenu)[5].vm.$emit('change', 'custom-json');
+    await wrapper.vm.$nextTick();
+    const textarea = wrapper.get('textarea[aria-label="Voice preset JSON"]');
+
+    await textarea.setValue(JSON.stringify({ schemaVersion: 1, macros: {}, dsp: {} }));
+    await menuButton(wrapper, 'Apply voice JSON').trigger('click');
+    await flushPromises();
+    expect(recording.setVoiceChangerPreset).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('schemaVersion: 4');
+
+    await textarea.setValue(CUSTOM_VOICE_PRESET_TEMPLATE);
+    await menuButton(wrapper, 'Apply voice JSON').trigger('click');
+    await flushPromises();
+    expect(recording.setVoiceChangerPreset).toHaveBeenCalledTimes(1);
   });
 
   it('updates StreamingRetune semitones from the recording settings', async () => {

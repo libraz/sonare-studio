@@ -465,7 +465,7 @@ export const shellFrame = {
     voiceChangerJson: 'ボイスプリセットJSON',
     voiceChangerApply: 'ボイスJSON適用',
     voiceChangerJsonInvalid:
-      'schemaVersion: 1 と任意の macros/dsp object を持つ JSON object を入力してください。',
+      'schemaVersion: 4、id、name、category と、macros か dsp のどちらかを持つプリセット JSON を入力してください。',
     retune: 'リチューン半音',
     retuneTitle: '入力のピッチを半音単位でずらす（-24〜24）',
     autoPunch: 'オートパンチ（ロケーター）',
