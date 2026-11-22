@@ -80,6 +80,7 @@ import type { AnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
+import { DEBUG_SURFACE_ENABLED } from '@/lib/debug-surface';
 import { describeError, errorMessage as thrownMessage } from '@/lib/errors';
 import { clamp01 } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
@@ -891,8 +892,7 @@ const {
 
 // --- Lifecycle ----------------------------------------------------------------
 
-// The E2E build (VITE_SONARE_E2E=1) keeps the debug surface the smoke scenarios drive.
-if (import.meta.env.DEV || import.meta.env.VITE_SONARE_E2E === '1') {
+if (DEBUG_SURFACE_ENABLED) {
   installSonareDevDebug({
     store,
     recording,
