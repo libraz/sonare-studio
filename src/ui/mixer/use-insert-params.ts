@@ -130,7 +130,6 @@ export function useInsertParams(options: UseInsertParamsOptions): InsertParams {
     });
   }
 
-  /** Formatted knob value with the control's unit. */
   function onBooleanToggle(control: Extract<QuickControl, { kind: 'boolean' }>): void {
     onParamChange(control, !control.value, true);
   }
