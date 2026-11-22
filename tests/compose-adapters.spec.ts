@@ -459,9 +459,13 @@ describe('track hygiene', () => {
   it('recognizes generated drum tracks by generated.part', () => {
     // generated.part === 'drums' marks it as drums even with a harmonic name and channel 0.
     expect(
-      isDrumTrack(track({ name: 'FX Loop 1', generated: { part: 'drums' } }), [
-        note({ channel: 0 }),
-      ]),
+      isDrumTrack(
+        track({
+          name: 'FX Loop 1',
+          generated: { part: 'drums', seed: 0, algorithmVersion: 1 },
+        }),
+        [note({ channel: 0 })],
+      ),
     ).toBe(true);
   });
 

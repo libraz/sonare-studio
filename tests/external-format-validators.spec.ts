@@ -10,6 +10,7 @@ import type { NotatedScore } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { importMusicXmlWithReport } from '@/notation/musicxml-import';
 import type { ProjectDocument } from '@/project/serialization';
+import { documentClip } from './fakes/project';
 
 const ENABLED = process.env.EXTERNAL_VALIDATORS === '1';
 const NOTATION_CLI_BIN = process.env.NOTATION_CLI_BIN?.trim();
@@ -263,7 +264,7 @@ function projectFixture(): ProjectDocument {
         volume: 0.75,
         pan: 0,
         clips: [
-          {
+          documentClip({
             name: 'Phrase',
             kind: 'midi',
             startPpq: 0,
@@ -271,7 +272,7 @@ function projectFixture(): ProjectDocument {
             sourceOffsetPpq: 0,
             gain: 1,
             notes: [{ pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0 }],
-          },
+          }),
         ],
       },
     ],

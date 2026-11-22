@@ -1,13 +1,13 @@
 import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ref } from 'vue';
 import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
 import * as tempoMapModule from '@/project/tempo-map';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
-import type { ClipCursor } from '@/ui/arrangement/use-clip-interactions';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { fakeClipInteractions } from './fakes/interactions';
+import { editorClip, editorTrack } from './fakes/project';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -34,13 +34,15 @@ function stubEnvironment(): void {
   );
 }
 
-function mountCanvas(overrides: Record<string, unknown> = {}) {
+type CanvasProps = InstanceType<typeof ArrangementCanvas>['$props'];
+
+function mountCanvas(overrides: Partial<CanvasProps> = {}) {
   stubEnvironment();
   const draws: Array<() => void> = [];
   const schedule = vi.fn((layer: string, draw: () => void) => {
     if (layer.startsWith('arrangement-base')) draws.push(draw);
   });
-  const tracks = (overrides.tracks as unknown[]) ?? [{ id: 1, name: 'Piano', color: '#60a5fa' }];
+  const tracks = overrides.tracks ?? [editorTrack({ id: 1, name: 'Piano', color: '#60a5fa' })];
   const wrapper = mount(ArrangementCanvas, {
     props: {
       range: new TimelineRange({ widthPx: 400, heightPx: 240, pxPerPpq: 10, rowHeight: 10 }),
@@ -58,14 +60,7 @@ function mountCanvas(overrides: Record<string, unknown> = {}) {
       loopEnabled: false,
       loopStartPpq: 0,
       loopEndPpq: 4,
-      interactions: {
-        previewClip: ref(null),
-        previewFades: ref(null),
-        previewDraft: ref(null),
-        previewMarquee: ref(null),
-        cursor: ref<ClipCursor>('default'),
-        cancel: vi.fn(),
-      },
+      interactions: fakeClipInteractions(),
       automationExpandedIds: [],
       automationParams: {},
       automationLanes: [],
@@ -119,7 +114,7 @@ describe('ArrangementCanvas accessible clips', () => {
   it('resolves tracks through a map instead of a scan per clip', () => {
     let idReads = 0;
     const tracks = Array.from({ length: 20 }, (_, i) => {
-      const track = { name: `T${i}`, color: '#fff' } as { id: number; name: string; color: string };
+      const track = editorTrack({ name: `T${i}`, color: '#fff' });
       Object.defineProperty(track, 'id', {
         enumerable: true,
         get() {
@@ -129,13 +124,9 @@ describe('ArrangementCanvas accessible clips', () => {
       });
       return track;
     });
-    const clips = Array.from({ length: 100 }, (_, i) => ({
-      id: i + 1,
-      trackId: 20,
-      name: `c${i}`,
-      startPpq: i,
-      lengthPpq: 1,
-    }));
+    const clips = Array.from({ length: 100 }, (_, i) =>
+      editorClip({ id: i + 1, trackId: 20, name: `c${i}`, startPpq: i, lengthPpq: 1 }),
+    );
     mountCanvas({ tracks, clips, activeTrackId: 99 });
     expect(idReads).toBeLessThan(200);
   });

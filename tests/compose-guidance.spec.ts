@@ -743,13 +743,13 @@ describe('resolutionTargetOf', () => {
     // A suspension heard in the voices alone carries no analyzer label, so its
     // target can only come from the safety verdict. Withholding the verdict for
     // a chordless note would silently drop the resolution arrow with it.
-    const analysis = {
+    const analysis: NoteAnalysis = {
       degree: 1,
       isScaleTone: true,
       chordSounding: false,
-      analyzed: { noteId: 1, labels: [] },
-      safety: { reasons: ReasonFlag.Suspension, resolveTo: 71 },
-    } as NoteAnalysis;
+      analyzed: { noteId: 1, pitch: 72, startBeat: 0, durationBeat: 1, labels: [] },
+      safety: { safety: NoteSafety.Warning, reasons: ReasonFlag.Suspension, resolveTo: 71 },
+    };
     expect(resolutionTargetOf(analysis)).toBe(71);
   });
 
@@ -994,11 +994,12 @@ describe('buildTheoryCard', () => {
   });
 
   it('names the chord scale on its root even with no tensions, passing or avoid notes', () => {
-    const analysis = {
+    const analysis: NoteAnalysis = {
       degree: 2,
       isScaleTone: true,
+      chordSounding: true,
       chordScale: { scaleName: 'dorian', rootPc: 2, tensions: [], passing: [], avoid: [] },
-    } as NoteAnalysis;
+    };
     const card = buildTheoryCard(
       analysis,
       { pitch: 62, keySet: true },
@@ -1009,11 +1010,12 @@ describe('buildTheoryCard', () => {
   });
 
   it('spells the chord-scale root with the key signature and localizes its name', () => {
-    const analysis = {
+    const analysis: NoteAnalysis = {
       degree: 1,
       isScaleTone: true,
+      chordSounding: true,
       chordScale: { scaleName: 'melodicMinor', rootPc: 10, tensions: [], passing: [], avoid: [] },
-    } as NoteAnalysis;
+    };
     const card = buildTheoryCard(
       analysis,
       { pitch: 70, keySet: true, keyFifths: -2 },
@@ -1024,11 +1026,12 @@ describe('buildTheoryCard', () => {
   });
 
   it('falls back to the raw scale name when the locale has no name for it', () => {
-    const analysis = {
+    const analysis: NoteAnalysis = {
       degree: 1,
       isScaleTone: true,
+      chordSounding: true,
       chordScale: { scaleName: 'bebopDominant', rootPc: 0, tensions: [], passing: [], avoid: [] },
-    } as NoteAnalysis;
+    };
     const card = buildTheoryCard(
       analysis,
       { pitch: 60, keySet: true },

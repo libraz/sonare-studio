@@ -3,18 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import VelocityLane from '@/components/piano-roll/VelocityLane.vue';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
-import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { TimelineRange } from '@/ui/canvas/timeline-range';
 
 const commands = vi.hoisted(() => ({ setSelection: vi.fn(), updateNotes: vi.fn() }));
 
 vi.mock('@/project/commands', () => commands);
 
-const range: TimelineRange = {
-  startPpq: 0,
-  endPpq: 8,
-  ppqToX: (ppq) => ppq * 100,
-  xToPpq: (x) => x / 100,
-};
+const range = new TimelineRange({ widthPx: 800, heightPx: 100, pxPerPpq: 100 });
 
 const painter: Painter = { dispose: vi.fn(), flush: vi.fn(), schedule: vi.fn() };
 const notes: EditorNote[] = [

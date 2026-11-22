@@ -391,13 +391,14 @@ describe('ExportDialog', () => {
     const control = makeRender();
     const doc = makeDocument();
     doc.mixer = {
-      master: { gainDb: 0, pan: 0, inserts: [] },
+      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+      buses: [],
       masteringChain: {
         processors: [
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
         ],
       },
-    } as ProjectDocument['mixer'];
+    };
     doc.masterAutomation = [
       {
         param: 'mastering:0:ceilingDb',
@@ -426,13 +427,14 @@ describe('ExportDialog', () => {
     const control = makeRender();
     const doc = makeDocument();
     doc.mixer = {
-      master: { gainDb: 0, pan: 0, inserts: [] },
+      master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
+      buses: [],
       masteringChain: {
         processors: [
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
         ],
       },
-    } as ProjectDocument['mixer'];
+    };
     doc.masterAutomation = [
       {
         param: 'mastering:0:ceilingDb',

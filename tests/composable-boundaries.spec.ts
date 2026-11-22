@@ -89,13 +89,18 @@ describe('useOutsidePopovers', () => {
       { close: vi.fn(), open: ref(true), root: ref(null) },
     ]);
 
-    popovers.onWindowPointerDown({ target: document.createElement('button') } as PointerEvent);
+    const pointerDownOn = (target: HTMLElement): void => {
+      target.addEventListener('pointerdown', popovers.onWindowPointerDown, { once: true });
+      target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    };
+
+    pointerDownOn(document.createElement('button'));
     expect(closeFirst).toHaveBeenCalledTimes(1);
     expect(closeSecond).not.toHaveBeenCalled();
 
     closeFirst.mockClear();
     inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    popovers.onWindowPointerDown({ target: inside } as PointerEvent);
+    pointerDownOn(inside);
     expect(closeFirst).not.toHaveBeenCalled();
   });
 });

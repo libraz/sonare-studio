@@ -240,7 +240,13 @@ describe('useLayouts', () => {
       encodeUserLayouts([
         {
           name: 'External',
-          state: { arrangeHeightPx: 150, dockTab: 'lists', deviceRackOpen: true, scoreOpen: false },
+          state: {
+            arrangeHeightPx: 150,
+            dockTab: 'lists',
+            dockCollapsed: false,
+            deviceRackOpen: true,
+            scoreOpen: false,
+          },
         },
       ]),
     );

@@ -30,6 +30,7 @@ function makeInteractions(noteId: number | null): NoteInteractions {
     marquee: ref(null),
     previewNotes: ref(null),
     cursor: ref('default'),
+    gestureReadout: ref(null),
     onPointerDown: vi.fn(),
     onPointerMove: vi.fn(),
     onPointerUp: vi.fn(),

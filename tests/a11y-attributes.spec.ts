@@ -5,14 +5,20 @@ import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
 import MixerFader from '@/components/mixer/MixerFader.vue';
 import MixerKnob from '@/components/mixer/MixerKnob.vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
-import type { InteractionCursor } from '@/components/piano-roll/use-note-interactions';
 import NewProjectDialog from '@/components/project/NewProjectDialog.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
-import type { ClipCursor } from '@/ui/arrangement/use-clip-interactions';
+import type { ClipDraftPreview } from '@/ui/arrangement/use-clip-interactions';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import { FADER_MAX_DB, FADER_MIN_DB } from '@/ui/mixer/db-scale';
+import {
+  fakeAutomationInteractions,
+  fakeClipInteractions,
+  fakeNoteInteractions,
+  fakeTakeInteractions,
+} from './fakes/interactions';
+import { editorClip, editorTrack } from './fakes/project';
 
 /**
  * Accessibility contract of the highest-traffic interactive widgets: slider
@@ -183,13 +189,13 @@ describe('Canvas editor live regions', () => {
   it('redraws the clip layer when a draw-tool draft changes', async () => {
     stubCanvasEnvironment();
     const schedule = vi.fn();
-    const previewDraft = ref(null);
+    const previewDraft = ref<ClipDraftPreview | null>(null);
     const wrapper = mount(ArrangementCanvas, {
       props: {
         range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
         revision: 0,
         painter: { schedule, dispose: () => {} },
-        tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
+        tracks: [editorTrack({ id: 1, name: 'Piano', color: '#60a5fa' })],
         clips: [],
         markers: [],
         activeTrackId: 1,
@@ -201,19 +207,13 @@ describe('Canvas editor live regions', () => {
         loopEnabled: false,
         loopStartPpq: 0,
         loopEndPpq: 4,
-        interactions: {
-          previewClip: ref(null),
-          previewDraft,
-          previewFades: ref(null),
-          cursor: ref<ClipCursor>('default'),
-          cancel: vi.fn(),
-        },
+        interactions: fakeClipInteractions({ previewDraft }),
         automationExpandedIds: [],
         automationParams: {},
         automationLanes: [],
-        automation: { preview: ref(null), hover: ref(null), cursor: ref(null) },
+        automation: fakeAutomationInteractions(),
         takesExpandedIds: [],
-        takes: { preview: ref(null), cursor: ref(null) },
+        takes: fakeTakeInteractions(),
       },
     });
 
@@ -238,18 +238,7 @@ describe('Canvas editor live regions', () => {
         gridPpq: 0.25,
         clipLengthPpq: 16,
         timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
-        interactions: {
-          marquee: ref(null),
-          previewNotes: ref(null),
-          cursor: ref<InteractionCursor>('default'),
-          onPointerDown: () => {},
-          onPointerMove: () => {},
-          onPointerUp: () => {},
-          onDoubleClick: () => {},
-          hitNoteAt: () => null,
-          onKeyDown: () => false,
-          cancel: () => {},
-        },
+        interactions: fakeNoteInteractions(),
       },
     });
 
@@ -272,18 +261,7 @@ describe('Canvas editor live regions', () => {
         gridPpq: 0.25,
         clipLengthPpq: 16,
         timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
-        interactions: {
-          marquee: ref(null),
-          previewNotes: ref(null),
-          cursor: ref<InteractionCursor>('default'),
-          onPointerDown: () => {},
-          onPointerMove: () => {},
-          onPointerUp: () => {},
-          onDoubleClick: () => {},
-          hitNoteAt: () => null,
-          onKeyDown: () => false,
-          cancel: () => {},
-        },
+        interactions: fakeNoteInteractions(),
       },
     });
 
@@ -299,8 +277,8 @@ describe('Canvas editor live regions', () => {
         range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
         revision: 0,
         painter,
-        tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
-        clips: [{ id: 2, trackId: 1, name: 'Intro', startPpq: 0, lengthPpq: 4 }],
+        tracks: [editorTrack({ id: 1, name: 'Piano', color: '#60a5fa' })],
+        clips: [editorClip({ id: 2, trackId: 1, name: 'Intro', startPpq: 0, lengthPpq: 4 })],
         markers: [],
         activeTrackId: 1,
         activeClipId: 2,
@@ -311,18 +289,13 @@ describe('Canvas editor live regions', () => {
         loopEnabled: false,
         loopStartPpq: 0,
         loopEndPpq: 4,
-        interactions: {
-          previewClip: ref(null),
-          previewFades: ref(null),
-          cursor: ref<ClipCursor>('default'),
-          cancel: vi.fn(),
-        },
+        interactions: fakeClipInteractions(),
         automationExpandedIds: [],
         automationParams: {},
         automationLanes: [],
-        automation: { preview: ref(null), hover: ref(null), cursor: ref(null) },
+        automation: fakeAutomationInteractions(),
         takesExpandedIds: [],
-        takes: { preview: ref(null), cursor: ref(null) },
+        takes: fakeTakeInteractions(),
       },
     });
 
@@ -339,8 +312,8 @@ describe('Canvas editor live regions', () => {
         range: new TimelineRange({ widthPx: 800, heightPx: 480, pxPerPpq: 100, rowHeight: 10 }),
         revision: 0,
         painter,
-        tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
-        clips: [{ id: 2, trackId: 1, name: 'Intro', startPpq: 0, lengthPpq: 4 }],
+        tracks: [editorTrack({ id: 1, name: 'Piano', color: '#60a5fa' })],
+        clips: [editorClip({ id: 2, trackId: 1, name: 'Intro', startPpq: 0, lengthPpq: 4 })],
         markers: [],
         activeTrackId: 1,
         activeClipId: 2,
@@ -352,18 +325,13 @@ describe('Canvas editor live regions', () => {
         loopStartPpq: 0,
         loopEndPpq: 4,
         gridPpq: 0.25,
-        interactions: {
-          previewClip: ref(null),
-          previewFades: ref(null),
-          cursor: ref<ClipCursor>('default'),
-          cancel: vi.fn(),
-        },
+        interactions: fakeClipInteractions(),
         automationExpandedIds: [],
         automationParams: {},
         automationLanes: [],
-        automation: { preview: ref(null), hover: ref(null), cursor: ref(null) },
+        automation: fakeAutomationInteractions(),
         takesExpandedIds: [],
-        takes: { preview: ref(null), cursor: ref(null) },
+        takes: fakeTakeInteractions(),
       },
     });
     const navigator = wrapper.get('[role="listbox"]');

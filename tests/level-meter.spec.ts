@@ -8,6 +8,7 @@ import {
   METER_MIN_DB,
   meterFraction,
 } from '@/ui/mixer/meter-model';
+import { fakeMeterSource } from './fakes/engine';
 
 function levels(overrides: Partial<StereoMeterLevels> = {}): StereoMeterLevels {
   return {
@@ -27,10 +28,10 @@ function mutableBridge(initial: StereoMeterLevels): {
 } {
   let latest = initial;
   const source: MeterSource = {
+    ...fakeMeterSource(),
     get latest() {
       return latest;
     },
-    subscribe: () => () => {},
   };
   return {
     bridge: {
@@ -38,6 +39,7 @@ function mutableBridge(initial: StereoMeterLevels): {
         return source.latest;
       },
       subscribe: source.subscribe,
+      subscribeInsertGainReduction: source.subscribeInsertGainReduction,
       forTarget: () => source,
       dispose: () => {},
     },

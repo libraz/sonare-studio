@@ -189,15 +189,15 @@ describe('useAppShellLayout', () => {
 
   it('supports Home and End for both keyboard-resizable splitters', () => {
     const layout = useAppShellLayout();
-    const arrangeHome = { key: 'Home', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
-    const arrangeEnd = { key: 'End', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
+    const arrangeHome = new KeyboardEvent('keydown', { key: 'Home' });
+    const arrangeEnd = new KeyboardEvent('keydown', { key: 'End' });
     layout.onDividerKeydown(arrangeHome);
     expect(layout.arrangeHeight.value).toBe(layout.arrangeHeightMin);
     layout.onDividerKeydown(arrangeEnd);
     expect(layout.arrangeHeight.value).toBe(maximumArrangementHeight(window.innerHeight));
 
-    const scoreHome = { key: 'Home', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
-    const scoreEnd = { key: 'End', shiftKey: false, preventDefault: vi.fn() } as KeyboardEvent;
+    const scoreHome = new KeyboardEvent('keydown', { key: 'Home' });
+    const scoreEnd = new KeyboardEvent('keydown', { key: 'End' });
     layout.onScoreDividerKeydown(scoreHome);
     expect(layout.scoreHeight.value).toBe(layout.scoreHeightMin);
     layout.onScoreDividerKeydown(scoreEnd);

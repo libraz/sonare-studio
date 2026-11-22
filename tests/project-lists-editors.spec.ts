@@ -18,6 +18,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { vTooltip } from '@/ui/tooltip';
+import { editorClip } from './fakes/project';
 import { chooseOption, selectOption } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
@@ -55,19 +56,7 @@ function deferred<T>(): {
 }
 
 function audioClip(id: number, assetId = `asset-${id}`) {
-  return {
-    id,
-    kind: 'audio',
-    assetId,
-    lengthPpq: 8,
-    sourceOffsetPpq: 0,
-    gain: 1,
-    loopEnabled: false,
-    loopLengthPpq: 0,
-    notes: [],
-    trackId: 1,
-    startPpq: 0,
-  };
+  return editorClip({ id, kind: 'audio', assetId, lengthPpq: 8, trackId: 1 });
 }
 
 describe('project list editors', () => {

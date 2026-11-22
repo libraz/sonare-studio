@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import KeyboardColumn from '@/components/piano-roll/KeyboardColumn.vue';
 import type { Painter } from '@/ui/canvas/painter';
-import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { TimelineRange } from '@/ui/canvas/timeline-range';
 
 class ResizeObserverStub {
   disconnect(): void {}
@@ -10,15 +10,7 @@ class ResizeObserverStub {
 }
 
 const painter: Painter = { dispose: vi.fn(), flush: vi.fn(), schedule: vi.fn() };
-const range: TimelineRange = {
-  endPpq: 8,
-  pitchToY: (pitch) => (127 - pitch) * 10,
-  ppqToX: (ppq) => ppq * 100,
-  startPpq: 0,
-  xToPpq: (x) => x / 100,
-  yToPitch: (y) => 127 - y / 10,
-  rowHeight: 10,
-};
+const range = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
 
 describe('KeyboardColumn', () => {
   beforeEach(() => vi.stubGlobal('ResizeObserver', ResizeObserverStub));

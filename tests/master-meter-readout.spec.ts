@@ -2,6 +2,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MasterMeterReadout from '@/components/mixer/MasterMeterReadout.vue';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
+import { fakeMeterSource } from './fakes/engine';
 
 /** A meter source returning fixed levels (a frame-by-frame stream is not needed). */
 function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
@@ -14,7 +15,7 @@ function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
     correlation: 0,
     ...levels,
   };
-  return { latest: full, subscribe: () => () => {} };
+  return fakeMeterSource(full);
 }
 
 let rafCallbacks: FrameRequestCallback[] = [];

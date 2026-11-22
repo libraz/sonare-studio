@@ -5,23 +5,10 @@ import type { useRecording } from '@/composables/useRecording';
 import { useRecordingControls } from '@/composables/useRecordingControls';
 import type { UseTransportReturn } from '@/composables/useTransport';
 import { addAudioTrack, clearHistory } from '@/project/commands';
-import { createRecordingCycle } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+import { fakeTransport } from './fakes/composables';
 
 type Recording = ReturnType<typeof useRecording>;
-
-/** Transport loop refs plus the recording-cycle owner derived from them. */
-function loopState() {
-  const loopEnabled = ref(false);
-  const loopStartPpq = ref(0);
-  const loopEndPpq = ref(0);
-  const recordingCycle = createRecordingCycle({
-    enabled: loopEnabled,
-    startPpq: loopStartPpq,
-    endPpq: loopEndPpq,
-  });
-  return { loopEnabled, loopStartPpq, loopEndPpq, recordingCycle };
-}
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -30,26 +17,7 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 function makeTransport(): UseTransportReturn {
-  return {
-    isPlaying: ref(false),
-    positionSeconds: ref(0),
-    positionPpq: ref(8),
-    audiblePositionSeconds: ref(0),
-    audiblePositionPpq: ref(8),
-    tempo: ref(120),
-    ...loopState(),
-    metronomeEnabled: ref(false),
-    playbackLatencySeconds: ref(0),
-    play: vi.fn(() => true),
-    stop: vi.fn(() => true),
-    seek: vi.fn(() => true),
-    seekPpq: vi.fn(() => true),
-    setTempo: vi.fn(),
-    setLoop: vi.fn(() => true),
-    toggleMetronome: vi.fn(() => false),
-    resumeContext: vi.fn(),
-    dispose: vi.fn(),
-  };
+  return fakeTransport({ positionPpq: ref(8), audiblePositionPpq: ref(8) });
 }
 
 function makeAppSettings(countInBars = 0) {

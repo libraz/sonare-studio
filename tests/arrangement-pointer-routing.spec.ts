@@ -2,12 +2,18 @@ import { mount } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import ArrangementCanvas from '@/components/arrangement/ArrangementCanvas.vue';
+import type { EditorClip } from '@/project/types';
 import { buildRowLayout } from '@/ui/arrangement/automation-rows';
 import { useAutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
-import type { ClipCursor } from '@/ui/arrangement/use-clip-interactions';
 import { usePointerRouting } from '@/ui/arrangement/use-pointer-routing';
 import { useTakeInteractions } from '@/ui/arrangement/use-take-interactions';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import {
+  fakeAutomationInteractions,
+  fakeClipInteractions,
+  fakeTakeInteractions,
+} from './fakes/interactions';
+import { editorClip, editorTrack } from './fakes/project';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -29,7 +35,7 @@ function mountCanvas(options: {
   takes: ReturnType<typeof useTakeInteractions>;
   automationExpandedIds?: readonly number[];
   takesExpandedIds?: readonly number[];
-  clips?: unknown[];
+  clips?: EditorClip[];
 }): ReturnType<typeof mount> {
   stubCanvasEnvironment();
   const wrapper = mount(ArrangementCanvas, {
@@ -37,7 +43,7 @@ function mountCanvas(options: {
       range: new TimelineRange({ widthPx: 400, heightPx: 240, pxPerPpq: 10, rowHeight: 10 }),
       revision: 0,
       painter: { schedule: () => {}, dispose: () => {} },
-      tracks: [{ id: 1, name: 'Piano', color: '#60a5fa' }],
+      tracks: [editorTrack({ id: 1, name: 'Piano', color: '#60a5fa' })],
       clips: options.clips ?? [],
       markers: [],
       activeTrackId: 1,
@@ -49,19 +55,7 @@ function mountCanvas(options: {
       loopEnabled: false,
       loopStartPpq: 0,
       loopEndPpq: 4,
-      interactions: {
-        previewClip: ref(null),
-        previewFades: ref(null),
-        previewDraft: ref(null),
-        previewMarquee: ref(null),
-        cursor: ref<ClipCursor>('default'),
-        cancel: vi.fn(),
-        onPointerDown: vi.fn(),
-        onPointerMove: vi.fn(),
-        onPointerUp: vi.fn(),
-        onDoubleClick: vi.fn(),
-        hitClipAt: vi.fn(() => null),
-      },
+      interactions: fakeClipInteractions(),
       automationExpandedIds: options.automationExpandedIds ?? [],
       automationParams: { 1: 'pan' },
       automationLanes: [],
@@ -137,13 +131,11 @@ describe('usePointerRouting double-clicks', () => {
     const routing = usePointerRouting({
       wrapper: ref({ getBoundingClientRect: () => ({ left: 0, top: 0 }) } as HTMLElement),
       range: () => ({ xToPpq: (x: number) => x }) as never,
-      automation: {
-        cursor: ref(null),
-        onDoubleClick: vi.fn(() => false),
-      } as never,
+      automation: fakeAutomationInteractions(),
       takes,
-      interactions: { cursor: ref('default'), onDoubleClick } as never,
+      interactions: fakeClipInteractions({ onDoubleClick }),
       onRulerSeek: vi.fn(),
+      onRulerLoopRange: vi.fn(),
       onRulerContext: vi.fn(),
       onClipContext: vi.fn(),
     });
@@ -159,24 +151,22 @@ describe('usePointerRouting double-clicks', () => {
     const routing = usePointerRouting({
       wrapper: ref({ getBoundingClientRect: () => ({ left: 0, top: 0 }) } as HTMLElement),
       range: () => ({ xToPpq: (x: number) => x / 10 }) as never,
-      automation: { cursor: ref(null) } as never,
-      takes: {} as never,
-      interactions: { cursor: ref('default') } as never,
+      automation: fakeAutomationInteractions(),
+      takes: fakeTakeInteractions(),
+      interactions: fakeClipInteractions(),
       onRulerSeek,
       onRulerLoopRange,
       onRulerContext: vi.fn(),
       onClipContext: vi.fn(),
     });
-    const target = { setPointerCapture: vi.fn() } as unknown as HTMLElement;
+    const target = document.createElement('div');
+    target.setPointerCapture = vi.fn();
+    target.addEventListener('pointerdown', routing.onPointerDown, { once: true });
 
-    routing.onPointerDown({
-      button: 0,
-      clientX: 80,
-      clientY: 4,
-      currentTarget: target,
-      pointerId: 1,
-    } as PointerEvent);
-    routing.onPointerUp({ button: 0, clientX: 20, clientY: 4 } as PointerEvent);
+    target.dispatchEvent(
+      new PointerEvent('pointerdown', { button: 0, clientX: 80, clientY: 4, pointerId: 1 }),
+    );
+    routing.onPointerUp(new PointerEvent('pointerup', { button: 0, clientX: 20, clientY: 4 }));
 
     expect(onRulerLoopRange).toHaveBeenCalledWith(2, 8, false);
     expect(onRulerSeek).not.toHaveBeenCalled();
@@ -231,14 +221,17 @@ describe('ArrangementCanvas cancellation', () => {
     const setActiveTake = vi.fn();
     const setCompSegments = vi.fn();
     const clips = [
-      {
+      editorClip({
         id: 2,
         trackId: 1,
         name: 'Take clip',
         startPpq: 0,
         lengthPpq: 8,
-        takes: [{}, {}],
-      },
+        takes: [
+          { assetId: 'take-1', name: 'Take 1' },
+          { assetId: 'take-2', name: 'Take 2' },
+        ],
+      }),
     ];
     const takes = useTakeInteractions({
       view: {

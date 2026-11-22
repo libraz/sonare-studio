@@ -11,6 +11,7 @@ import type { EditorTrack } from '@/project/types';
 import { ccToGainDbFine } from '@/ui/midi/midi-learn';
 import { surfaceResetFeedback } from '@/ui/midi/surface-feedback';
 import { encodeSurfaceFeedback } from '@/ui/midi/surface-protocol';
+import { fakeMeterSource } from './fakes/engine';
 
 const setStripGain = vi.fn();
 const setStripPan = vi.fn();
@@ -112,6 +113,7 @@ function mutableMeterSource(levels: Partial<StereoMeterLevels> = {}): {
   let unsubscribed = 0;
   return {
     source: {
+      ...fakeMeterSource(),
       get latest() {
         return latest;
       },

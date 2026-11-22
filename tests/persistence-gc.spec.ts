@@ -18,6 +18,7 @@ import { saveProjectRevision } from '@/persistence/revisions';
 import { encodeSzd } from '@/persistence/szd';
 import { clearFontCache, listFonts, saveFont } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+import { documentClip } from './fakes/project';
 import { installMockOpfs, type MemoryDirectoryHandle, uninstallMockOpfs } from './opfs-mock';
 
 /** A document referencing one clip asset and one SoundFont. */
@@ -39,7 +40,7 @@ function makeDocument(name: string, assetId: string, fontId: string): ProjectDoc
         pan: 0,
         instrument: { kind: 'sf2', fontId },
         clips: [
-          {
+          documentClip({
             name: 'Clip',
             startPpq: 0,
             lengthPpq: 4,
@@ -47,7 +48,7 @@ function makeDocument(name: string, assetId: string, fontId: string): ProjectDoc
             gain: 1,
             notes: [],
             assetId,
-          },
+          }),
         ],
       },
     ],

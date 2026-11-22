@@ -739,7 +739,10 @@ describe('flattenClipComp', () => {
       assetId: 'take-a',
       lengthPpq: 2,
       sourceOffsetPpq: 500,
-      takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+      takes: [
+        { assetId: 'take-a', name: 'Take 1' },
+        { assetId: 'take-b', name: 'Take 2' },
+      ],
       activeTakeIndex: 0,
     });
     setClipCompSegments(clipId, [
@@ -891,7 +894,10 @@ describe('flattenClipComp', () => {
       sourceOffsetPpq: 1,
       loopEnabled: true,
       loopLengthPpq: 2,
-      takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+      takes: [
+        { assetId: 'take-a', name: 'Take 1' },
+        { assetId: 'take-b', name: 'Take 2' },
+      ],
       activeTakeIndex: 0,
     });
     setClipCompSegments(clipId, [
@@ -1053,7 +1059,10 @@ describe('flattenClipComp', () => {
         startPpq,
         lengthPpq: 4,
         name,
-        takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+        takes: [
+          { assetId: 'take-a', name: 'Take 1' },
+          { assetId: 'take-b', name: 'Take 2' },
+        ],
       });
       setClipCompSegments(clipId, [
         { startPpq: 0, takeIndex: 0 },
@@ -1100,7 +1109,10 @@ describe('flattenClipComp', () => {
         startPpq: index * 8,
         lengthPpq: 4,
         name,
-        takes: [{ assetId: 'take-a' }, { assetId: 'take-b' }],
+        takes: [
+          { assetId: 'take-a', name: 'Take 1' },
+          { assetId: 'take-b', name: 'Take 2' },
+        ],
       });
       setClipCompSegments(clipId, [
         { startPpq: 0, takeIndex: 0 },

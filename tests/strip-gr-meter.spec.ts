@@ -2,6 +2,7 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it } from 'vitest';
 import StripGrMeter from '@/components/mixer/StripGrMeter.vue';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
+import { fakeMeterSource } from './fakes/engine';
 
 /** A meter source returning fixed levels. */
 function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
@@ -14,7 +15,7 @@ function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
     correlation: 0,
     ...levels,
   };
-  return { latest: full, subscribe: () => () => {} };
+  return fakeMeterSource(full);
 }
 
 function makeMutableSource(levels: Partial<StereoMeterLevels> = {}): {
@@ -29,6 +30,7 @@ function makeMutableSource(levels: Partial<StereoMeterLevels> = {}): {
   let unsubscribed = 0;
   return {
     source: {
+      ...fakeMeterSource(),
       get latest() {
         return latest;
       },

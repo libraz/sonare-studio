@@ -22,6 +22,7 @@ import {
 import { garbageCollectMedia } from '@/persistence/gc';
 import { clearFontCache, loadFont, loadFontMeta, saveFont } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+import { documentClip } from './fakes/project';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 /** A document referencing audio via clip/take/freeze and a SoundFont instrument. */
@@ -44,7 +45,7 @@ function makeDocument(): ProjectDocument {
         instrument: { kind: 'sf2', fontId: 'fontA' },
         frozen: { assetId: 'frozen1' },
         clips: [
-          {
+          documentClip({
             name: 'Take',
             startPpq: 0,
             lengthPpq: 4,
@@ -53,7 +54,7 @@ function makeDocument(): ProjectDocument {
             notes: [],
             assetId: 'clip1',
             takes: [{ assetId: 'take1', name: 'T1' }],
-          },
+          }),
         ],
       },
     ],

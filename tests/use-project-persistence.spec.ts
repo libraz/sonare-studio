@@ -546,16 +546,10 @@ describe('useProjectPersistence autosave refresh after load', () => {
   });
 
   it('rejects an oversized MusicXML file before reading it into a string', async () => {
-    const text = vi.fn(async () => '<score-partwise version="4.0"/>');
-    vi.mocked(pickViaInputElement).mockImplementationOnce(async (options) =>
-      options.read([
-        {
-          name: 'too-large.musicxml',
-          size: DEFAULT_XML_LIMITS.maxBytes + 1,
-          text,
-        } as File,
-      ]),
-    );
+    const file = new File(['<score-partwise version="4.0"/>'], 'too-large.musicxml');
+    Object.defineProperty(file, 'size', { value: DEFAULT_XML_LIMITS.maxBytes + 1 });
+    const text = vi.spyOn(file, 'text');
+    vi.mocked(pickViaInputElement).mockImplementationOnce(async (options) => options.read([file]));
     const { errorMessage, persistence } = setup();
 
     persistence.importMusicXmlAction();

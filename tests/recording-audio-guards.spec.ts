@@ -7,8 +7,8 @@ import type { Recorder, RecordingResult } from '@/engine/recorder';
 import type { AudioAssetMeta } from '@/persistence/assets';
 import { clearAudioAssetCache } from '@/persistence/assets';
 import { addAudioTrack, clearHistory } from '@/project/commands';
-import { createRecordingCycle } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+import { fakeTransport } from './fakes/composables';
 import { fakeEngineHandle } from './fakes/engine';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
@@ -19,28 +19,12 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 function makeTransport(): UseTransportReturn {
-  const loopEnabled = ref(false);
-  const loopStartPpq = ref(0);
-  const loopEndPpq = ref(0);
   const isPlaying = ref(false);
   const positionPpq = ref(0);
-  return {
+  return fakeTransport({
     isPlaying,
-    positionSeconds: ref(0),
     positionPpq,
-    audiblePositionSeconds: ref(0),
     audiblePositionPpq: positionPpq,
-    tempo: ref(120),
-    loopEnabled,
-    loopStartPpq,
-    loopEndPpq,
-    recordingCycle: createRecordingCycle({
-      enabled: loopEnabled,
-      startPpq: loopStartPpq,
-      endPpq: loopEndPpq,
-    }),
-    metronomeEnabled: ref(false),
-    playbackLatencySeconds: ref(0),
     play: vi.fn(() => {
       isPlaying.value = true;
       return true;
@@ -49,13 +33,7 @@ function makeTransport(): UseTransportReturn {
       isPlaying.value = false;
       return true;
     }),
-    seek: vi.fn(() => true),
-    seekPpq: vi.fn(() => true),
-    setTempo: vi.fn(),
-    setLoop: vi.fn(() => true),
-    toggleMetronome: vi.fn(() => false),
-    dispose: vi.fn(),
-  };
+  });
 }
 
 function makeRecorder() {

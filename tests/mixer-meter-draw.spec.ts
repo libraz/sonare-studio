@@ -2,10 +2,10 @@ import { mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import StripMeter from '@/components/mixer/StripMeter.vue';
-import type { MeterSource } from '@/engine/meters';
 import { FADER_HEIGHT } from '@/ui/mixer/db-scale';
 import { drawMeterBar } from '@/ui/mixer/meter-draw';
 import { createMeterChannel } from '@/ui/mixer/meter-model';
+import { fakeMeterSource } from './fakes/engine';
 
 function recordingContext() {
   const rects: Array<[number, number, number, number]> = [];
@@ -59,17 +59,14 @@ describe('StripMeter peak readout rendering', () => {
   });
 
   it('does not re-render the component while the hold readout decays', async () => {
-    const bridge: MeterSource = {
-      latest: {
-        frame: 0,
-        peakDbL: -6,
-        peakDbR: -6,
-        rmsDbL: -20,
-        rmsDbR: -20,
-        correlation: 0,
-      },
-      subscribe: () => () => {},
-    };
+    const bridge = fakeMeterSource({
+      frame: 0,
+      peakDbL: -6,
+      peakDbR: -6,
+      rmsDbL: -20,
+      rmsDbR: -20,
+      correlation: 0,
+    });
     let updates = 0;
     const wrapper = mount(StripMeter, {
       props: { bridge },

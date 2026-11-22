@@ -1,27 +1,12 @@
 import { mount } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { nextTick, ref } from 'vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
-import type { MidiCycleRecordMode } from '@/composables/useMidiRecording';
+import { fakeMidiRecording, fakeRecording } from './fakes/composables';
 import { fakeEngineHandle } from './fakes/engine';
 
 function recording() {
-  return {
-    armedTrackId: ref(1),
-    countInBars: ref(0),
-    inputLevel: ref(0),
-    isCountingIn: ref(false),
-    isRecording: ref(false),
-    monitorEnabled: ref(false),
-    captureSource: ref('input'),
-    inputDeviceId: ref(''),
-    voiceChangerPreset: ref('off'),
-    streamingRetuneSemitones: ref(0),
-    setMonitor: vi.fn(),
-    setCaptureSource: vi.fn(),
-    setVoiceChangerPreset: vi.fn(),
-    setStreamingRetuneSemitones: vi.fn(),
-  };
+  return fakeRecording({ armedTrackId: ref(1) });
 }
 
 describe('TransportBar position readout', () => {
@@ -47,11 +32,7 @@ describe('TransportBar position readout', () => {
         readPositionSeconds: () => seconds.value,
         recording: recording(),
         recordingInputDeviceOptions: [{ value: '', label: 'Default input' }],
-        midiRecording: {
-          isRecording: ref(false),
-          inputQuantizeDenominator: ref(0),
-          cycleRecordMode: ref<MidiCycleRecordMode>('takes'),
-        },
+        midiRecording: fakeMidiRecording(),
         recordMenuOpen: false,
         storeInitialized: true,
         tempoInput: 120,

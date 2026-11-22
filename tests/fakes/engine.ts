@@ -10,8 +10,12 @@ import type {
   SoloProcessor,
 } from '@libraz/libsonare';
 import type { SonareEngine } from '@libraz/libsonare/worklet';
+import type { AutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
+import type { MidiSync } from '@/engine/midi-sync';
+import type { MixerSync } from '@/engine/mixer-sync';
+import type { WebMidiOutputBridge } from '@/engine/web-midi-output';
 import type { OfflineRenderEngine } from '@/export/engine-render-types';
 
 export const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
@@ -205,6 +209,53 @@ export function fakeMeterSource(levels: Partial<StereoMeterLevels> = {}): MeterS
     },
     subscribe: () => () => {},
     subscribeInsertGainReduction: () => () => {},
+  };
+}
+
+/** A MIDI sync that schedules nothing; override the members a spec drives. */
+export function fakeMidiSync(overrides: Partial<MidiSync> = {}): MidiSync {
+  return {
+    sync: async () => {},
+    nativeSynthDestination: () => undefined,
+    scheduledClipCount: () => 0,
+    restoreStateAtPpq: () => {},
+    ...overrides,
+  };
+}
+
+/** A mixer sync with no lanes; override the members a spec drives. */
+export function fakeMixerSync(overrides: Partial<MixerSync> = {}): MixerSync {
+  return {
+    sync: () => {},
+    laneTrackIds: () => [],
+    positiveChannelDelayTrackIds: () => new Set(),
+    applyChannelDelays: () => {},
+    ...overrides,
+  };
+}
+
+/** An automation sync with no installed lanes; override the members a spec drives. */
+export function fakeAutomationSync(overrides: Partial<AutomationSync> = {}): AutomationSync {
+  return {
+    sync: () => {},
+    installedParamIds: () => [],
+    ...overrides,
+  };
+}
+
+/** A Web MIDI output bridge with no ports; override the members a spec drives. */
+export function fakeWebMidiOutputBridge(
+  overrides: Partial<WebMidiOutputBridge> = {},
+): WebMidiOutputBridge {
+  return {
+    available: () => false,
+    outputs: () => [],
+    setRoutes: () => {},
+    syncRoutes: () => {},
+    sendLive: () => false,
+    start: async () => false,
+    dispose: () => {},
+    ...overrides,
   };
 }
 

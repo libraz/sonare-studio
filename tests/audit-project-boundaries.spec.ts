@@ -13,6 +13,7 @@ import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { applyDocumentClipMetadata } from '@/project/store-load';
 import { buildClipMirror, buildTrackMirror, refreshTempoMeter } from '@/project/store-refresh';
 import type { EditorClip } from '@/project/types';
+import { documentClip } from './fakes/project';
 
 function projectFixture(): ProjectDocument {
   return {
@@ -32,7 +33,7 @@ function projectFixture(): ProjectDocument {
         pan: 0,
         frozen: { assetId: 'frozen-audio' },
         clips: [
-          {
+          documentClip({
             name: 'Take',
             kind: 'audio',
             startPpq: 0,
@@ -42,7 +43,7 @@ function projectFixture(): ProjectDocument {
             assetId: 'clip-audio',
             takes: [{ assetId: 'take-audio', name: 'Take 1' }],
             notes: [],
-          },
+          }),
         ],
       },
       {

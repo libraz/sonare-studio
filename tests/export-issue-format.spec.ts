@@ -29,6 +29,7 @@ const STRINGS: ExportIssueStrings = {
   limitation: {
     masteringAutomationAtStart: 'Mastering automation was evaluated at render start',
     masteringLoudnessTargetLimited: 'Preset stopped short: {lufs} LUFS',
+    warpVoicesExceeded: 'More than {limit} warped clips played at once',
   },
 };
 

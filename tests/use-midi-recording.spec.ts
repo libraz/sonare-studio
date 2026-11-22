@@ -2,24 +2,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, ref } from 'vue';
 import { useMidiRecording } from '@/composables/useMidiRecording';
-import type { UseTransportReturn } from '@/composables/useTransport';
 import type { AddRecordedMidiClipInput } from '@/project/commands';
 import { addAudioTrack, clearHistory, setTempoSegments } from '@/project/commands';
-import { createRecordingCycle, resolveRecordingStartPlan } from '@/project/loop-recording';
+import { resolveRecordingStartPlan } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
-
-/** Transport loop refs plus the recording-cycle owner derived from them. */
-function loopState() {
-  const loopEnabled = ref(false);
-  const loopStartPpq = ref(0);
-  const loopEndPpq = ref(0);
-  const recordingCycle = createRecordingCycle({
-    enabled: loopEnabled,
-    startPpq: loopStartPpq,
-    endPpq: loopEndPpq,
-  });
-  return { loopEnabled, loopStartPpq, loopEndPpq, recordingCycle };
-}
+import { fakeTransport } from './fakes/composables';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -40,28 +27,18 @@ function makeTransport(playbackLatency = 0, audiblePosition?: number) {
     positionPpq.value = ppq;
     return true;
   });
-  const transport: UseTransportReturn = {
+  const transport = fakeTransport({
     isPlaying,
-    positionSeconds: ref(0),
     positionPpq,
-    audiblePositionSeconds: ref(0),
     audiblePositionPpq,
-    tempo: ref(120),
-    ...loopState(),
-    metronomeEnabled: ref(false),
     playbackLatencySeconds: ref(playbackLatency),
     play,
     stop: vi.fn(() => {
       isPlaying.value = false;
       return true;
     }),
-    seek: vi.fn(() => true),
     seekPpq,
-    setTempo: vi.fn(),
-    setLoop: vi.fn(() => true),
-    toggleMetronome: vi.fn(() => false),
-    dispose: vi.fn(),
-  };
+  });
   return { transport, isPlaying, positionPpq, audiblePositionPpq, play, seekPpq };
 }
 

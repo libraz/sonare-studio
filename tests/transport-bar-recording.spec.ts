@@ -3,8 +3,11 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
+import type { UseMidiRecordingReturn } from '@/composables/useMidiRecording';
+import type { UseRecordingReturn } from '@/composables/useRecording';
 import { CUSTOM_VOICE_PRESET_TEMPLATE } from '@/ui/shell/custom-voice-preset';
 import { coreWasmBinary } from './core-package';
+import { fakeMidiRecording, fakeRecording } from './fakes/composables';
 import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
@@ -17,33 +20,14 @@ beforeAll(async () => {
   await core.init({ wasmBinary: coreWasmBinary() });
 });
 
-function makeRecording(overrides: Record<string, unknown> = {}) {
-  return {
-    armedTrackId: ref(1),
-    countInBars: ref(0),
-    inputLevel: ref(0),
-    isCountingIn: ref(false),
-    isRecording: ref(false),
-    monitorEnabled: ref(false),
-    captureSource: ref('input'),
-    inputDeviceId: ref(''),
-    voiceChangerPreset: ref('off'),
-    streamingRetuneSemitones: ref(0),
-    setMonitor: vi.fn(),
-    setCaptureSource: vi.fn(),
-    setVoiceChangerPreset: vi.fn(),
-    setStreamingRetuneSemitones: vi.fn(),
-    ...overrides,
-  };
+function makeRecording(overrides: Partial<UseRecordingReturn> = {}): UseRecordingReturn {
+  return fakeRecording({ armedTrackId: ref<number | null>(1), ...overrides });
 }
 
-function makeMidiRecording(overrides: Record<string, unknown> = {}) {
-  return {
-    isRecording: ref(false),
-    inputQuantizeDenominator: ref(0),
-    cycleRecordMode: ref('takes'),
-    ...overrides,
-  };
+function makeMidiRecording(
+  overrides: Partial<UseMidiRecordingReturn> = {},
+): UseMidiRecordingReturn {
+  return fakeMidiRecording(overrides);
 }
 
 function mountBar(props: Record<string, unknown> = {}): VueWrapper {

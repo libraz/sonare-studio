@@ -13,6 +13,7 @@ import {
   prepareAssetRestore,
 } from '@/persistence/bundle';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+import { documentClip } from './fakes/project';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 function documentReferencing(assetId: string): ProjectDocument {
@@ -32,7 +33,7 @@ function documentReferencing(assetId: string): ProjectDocument {
         volume: 1,
         pan: 0,
         clips: [
-          {
+          documentClip({
             name: 'Clip',
             startPpq: 0,
             lengthPpq: 4,
@@ -40,7 +41,7 @@ function documentReferencing(assetId: string): ProjectDocument {
             gain: 1,
             notes: [],
             assetId,
-          },
+          }),
         ],
       },
     ],

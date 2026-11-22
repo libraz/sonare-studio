@@ -1,3 +1,4 @@
+import { makeChord } from '@libraz/libcantus';
 import { describe, expect, it } from 'vitest';
 import { buildTheoryCard, theoryLabelsFor } from '@/compose/explain';
 import { buildGuidance, type GuidanceInput, type NoteAnalysis } from '@/compose/guidance';
@@ -243,7 +244,7 @@ describe('the segmentation gate', () => {
     // Dense counterpoint that collapses to one chord over the whole span is
     // perfectly regular and says nothing; the median-against-the-bar guard is
     // what rejects it.
-    const oneSegment = [{ startBeat: 0, endBeat: 64 }] as Parameters<typeof segmentationQuality>[0];
+    const oneSegment = [{ startBeat: 0, endBeat: 64, chord: makeChord(0, 'maj') }];
     expect(segmentationQuality(oneSegment, 4).medianBeats).toBe(64);
     expect(
       isSegmentationTrustworthy({
