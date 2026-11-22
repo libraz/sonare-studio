@@ -174,9 +174,9 @@ describe('audio track and clip commands', () => {
     const b = addAudioTrack({ name: 'Vox' });
     expect(store.tracks.find((t) => t.id === a)?.kind).toBe('midi');
     expect(store.tracks.find((t) => t.id === b)?.kind).toBe('audio');
-    // The Project stores the audio ordinal (0).
+    // The Project stores the track kind as its token.
     const doc = readDoc();
-    expect(doc.tracks.find((t) => t.id === b)?.kind).toBe(0);
+    expect(doc.tracks.find((t) => t.id === b)?.kind).toBe('audio');
     // Undoable like any track add.
     undo();
     expect(store.tracks.some((t) => t.id === b)).toBe(false);
@@ -337,7 +337,7 @@ describe('audio track and clip commands', () => {
       fadeIn: { lengthPpq: 0.25 },
       fadeOut: { lengthPpq: 0.5 },
       warpRefId: clipId,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
     expect(readDoc().warpMaps?.map((map) => map.id)).toEqual([clipId]);
   });
@@ -1272,7 +1272,7 @@ describe('audio track and clip commands', () => {
     let doc = readDoc();
     expect(doc.clips.find((c) => c.id === clipId)).toMatchObject({
       warpRefId: clipId,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
     expect(doc.warpMaps).toEqual([
       {
@@ -1291,7 +1291,7 @@ describe('audio track and clip commands', () => {
     expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
     doc = readDoc();
     expect(doc.clips.find((c) => c.id === clipId)?.warpRefId).toBe(0);
-    expect(doc.clips.find((c) => c.id === clipId)?.warpMode).toBe(0);
+    expect(doc.clips.find((c) => c.id === clipId)?.warpMode).toBe('off');
     expect(doc.warpMaps).toEqual([]);
     redo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({
@@ -1300,7 +1300,7 @@ describe('audio track and clip commands', () => {
     });
     expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
       warpRefId: clipId,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
 
     // null clears the warp state, undoably too.
@@ -1311,7 +1311,7 @@ describe('audio track and clip commands', () => {
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({ sourceBpm: 95 });
     expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
       warpRefId: clipId,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
   });
 
@@ -1338,7 +1338,7 @@ describe('audio track and clip commands', () => {
     });
     expect(readDoc().clips.find((clip) => clip.id === copyId)).toMatchObject({
       warpRefId: copyId,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
     expect(
       readDoc()
@@ -1359,7 +1359,7 @@ describe('audio track and clip commands', () => {
     });
     expect(readDoc().clips.find((clip) => clip.id === rightId)).toMatchObject({
       warpRefId: rightId,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
     expect(readDoc().warpMaps?.some((map) => map.id === rightId)).toBe(true);
 

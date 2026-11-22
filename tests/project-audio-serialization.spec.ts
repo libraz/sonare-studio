@@ -216,7 +216,7 @@ describe('project serialization with audio clips (schema v2)', () => {
     };
     expect(native.clips.find((clip) => clip.id === mirror?.id)).toMatchObject({
       warpRefId: mirror?.id,
-      warpMode: 2,
+      warpMode: 'tempoSync',
     });
     expect(native.warpMaps.some((map) => map.id === mirror?.id)).toBe(true);
     expect(serializeProject()).toEqual(doc);
