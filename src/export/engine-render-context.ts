@@ -22,7 +22,7 @@ import {
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { isTrackAudible } from '@/project/scheduling';
+import { trackAudibilityStates } from '@/project/scheduling';
 import type { ProjectDocument } from '@/project/serialization';
 import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
@@ -111,13 +111,8 @@ export function documentAudibleTrackIndices(input: ProjectDocument): Set<number>
     groupKey: (_track: ProjectDocument['tracks'][number], index: number) => index,
     memberGroupKey: (track: ProjectDocument['tracks'][number]) => track.groupIndex,
   };
-  const audible = new Set(
-    doc.tracks.flatMap((_, index) =>
-      isTrackAudible(tracksForAudibility[index], tracksForAudibility, groupExpansion)
-        ? [index]
-        : [],
-    ),
-  );
+  const audibleStates = trackAudibilityStates(tracksForAudibility, groupExpansion);
+  const audible = new Set(doc.tracks.flatMap((_, index) => (audibleStates[index] ? [index] : [])));
   // A member routed into a muted/VCA-muted group bus cannot reach the master
   // even when its own lane is otherwise audible.
   doc.tracks.forEach((track, index) => {

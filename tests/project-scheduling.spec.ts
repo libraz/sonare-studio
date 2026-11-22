@@ -4,9 +4,9 @@ import type { EngineHandle } from '@/engine/engine';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   clipPlaybackNotes,
-  isTrackAudible,
   scheduleProjectClips,
   type TrackAudibilityState,
+  trackAudibilityStates,
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
@@ -47,14 +47,14 @@ function makeClip(id: number, trackId: number, overrides: Partial<EditorClip> = 
   };
 }
 
-describe('isTrackAudible', () => {
+describe('trackAudibilityStates', () => {
   it('without any solo, only mute decides', () => {
     const tracks: TrackAudibilityState[] = [
       { mute: false, solo: false },
       { mute: true, solo: false },
     ];
-    expect(isTrackAudible(tracks[0], tracks)).toBe(true);
-    expect(isTrackAudible(tracks[1], tracks)).toBe(false);
+    expect(trackAudibilityStates(tracks)[0]).toBe(true);
+    expect(trackAudibilityStates(tracks)[1]).toBe(false);
   });
 
   it('with any solo active, only soloed and solo-safe tracks are audible', () => {
@@ -63,9 +63,9 @@ describe('isTrackAudible', () => {
       { mute: false, solo: false },
       { mute: false, solo: false, soloSafe: true },
     ];
-    expect(isTrackAudible(tracks[0], tracks)).toBe(true);
-    expect(isTrackAudible(tracks[1], tracks)).toBe(false);
-    expect(isTrackAudible(tracks[2], tracks)).toBe(true);
+    expect(trackAudibilityStates(tracks)[0]).toBe(true);
+    expect(trackAudibilityStates(tracks)[1]).toBe(false);
+    expect(trackAudibilityStates(tracks)[2]).toBe(true);
   });
 
   it('expands a soloed group to its routed members', () => {
@@ -81,11 +81,11 @@ describe('isTrackAudible', () => {
       memberGroupKey: (track: (typeof tracks)[number]) => track.groupIndex,
     };
 
-    expect(isTrackAudible(tracks[0], tracks, options)).toBe(false);
-    expect(isTrackAudible(tracks[1], tracks, options)).toBe(true);
-    expect(isTrackAudible(tracks[2], tracks, options)).toBe(true);
+    expect(trackAudibilityStates(tracks, options)[0]).toBe(false);
+    expect(trackAudibilityStates(tracks, options)[1]).toBe(true);
+    expect(trackAudibilityStates(tracks, options)[2]).toBe(true);
     const mutedTracks = [tracks[2], { ...tracks[1], mute: true }];
-    expect(isTrackAudible(mutedTracks[1], mutedTracks, options)).toBe(false);
+    expect(trackAudibilityStates(mutedTracks, options)[1]).toBe(false);
   });
 
   it('mute wins over the track’s own solo and solo-safe state', () => {
@@ -94,10 +94,10 @@ describe('isTrackAudible', () => {
       { mute: true, solo: false, soloSafe: true },
       { mute: false, solo: false },
     ];
-    expect(isTrackAudible(tracks[0], tracks)).toBe(false);
-    expect(isTrackAudible(tracks[1], tracks)).toBe(false);
+    expect(trackAudibilityStates(tracks)[0]).toBe(false);
+    expect(trackAudibilityStates(tracks)[1]).toBe(false);
     // The muted solo still counts as "a solo exists" for the others.
-    expect(isTrackAudible(tracks[2], tracks)).toBe(false);
+    expect(trackAudibilityStates(tracks)[2]).toBe(false);
   });
 
   it('covers the full mute x solo x any-solo matrix', () => {
@@ -122,7 +122,7 @@ describe('isTrackAudible', () => {
       { track: { mute: true, solo: true }, others: someSolo, audible: false },
     ];
     for (const { track, others, audible } of cases) {
-      expect(isTrackAudible(track, [track, ...others])).toBe(audible);
+      expect(trackAudibilityStates([track, ...others])[0]).toBe(audible);
     }
   });
 });

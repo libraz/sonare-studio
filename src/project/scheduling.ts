@@ -92,24 +92,22 @@ export function expandedSoloStates<T extends TrackAudibilityState>(
 }
 
 /**
- * Decides whether a track is audible under the solo/mute rules: when any
- * track is soloed only soloed and solo-safe tracks play, and mute always
- * silences a track (mute wins over its own solo/solo-safe status).
+ * Decides audibility for every track under the solo/mute rules in one pass:
+ * when any track is soloed only (expanded) soloed and solo-safe tracks play,
+ * and mute always silences a track (mute wins over its own solo/solo-safe
+ * status).
  *
- * @param track Track to test.
- * @param tracks All tracks of the project (to detect active solos).
- * @returns True when the track's clips should be scheduled.
+ * @param tracks All tracks in project/lane order.
+ * @param options Optional group membership extractors.
+ * @returns One audible flag per track index.
  */
-export function isTrackAudible<T extends TrackAudibilityState>(
-  track: T,
+export function trackAudibilityStates<T extends TrackAudibilityState>(
   tracks: ReadonlyArray<T>,
   options: TrackSoloExpansionOptions<T> = {},
-): boolean {
-  if (track.mute) return false;
+): boolean[] {
   const anySolo = tracks.some((t) => t.solo);
-  if (!anySolo) return true;
-  const index = tracks.indexOf(track);
-  return (expandedSoloStates(tracks, options)[index] ?? track.solo) || track.soloSafe === true;
+  const soloStates = anySolo ? expandedSoloStates(tracks, options) : undefined;
+  return tracks.map((track, index) => !track.mute && (soloStates?.[index] ?? true));
 }
 
 /**
