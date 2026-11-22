@@ -364,7 +364,11 @@ describe.skipIf(!ENABLED)('external format schema release gate', () => {
   });
 
   it('imports and semantically round-trips the pinned DAWproject reference project', async () => {
-    validateXml(join(dawprojectSchemaDir, 'Project.xsd'), referenceProjectXml, 'dawproject-reference.xml');
+    validateXml(
+      join(dawprojectSchemaDir, 'Project.xsd'),
+      referenceProjectXml,
+      'dawproject-reference.xml',
+    );
     const imported = importDawproject(zipSync({ 'project.xml': strToU8(referenceProjectXml) }));
     expect(imported.name).toBe(referenceProjectXml.match(/<Application name="([^"]+)"/)?.[1]);
     expect(imported.tracks.some((track) => track.kind === 'midi')).toBe(true);

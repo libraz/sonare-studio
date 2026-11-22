@@ -22,5 +22,6 @@ yarn test:external-formats
 The notation CLI check converts the current MusicXML fixture with
 `<cli> -o <output> <input>`, revalidates the result and imports it into Sonare.
 The fixture check performs a semantic Sonare import/export/reimport round trip
-on a DAWproject file exported by a desktop DAW. These checks are reported as skipped when their inputs are absent;
-release candidates intended for external interoperability should provide them.
+on a DAWproject file exported by a desktop DAW. These checks are reported as
+skipped when their inputs are absent; release candidates intended for external
+interoperability should provide them.
