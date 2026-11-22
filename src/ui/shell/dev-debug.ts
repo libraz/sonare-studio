@@ -11,6 +11,8 @@ import { encodeWav } from '@/export/wav';
 import { peakDb } from '@/lib/db';
 import { FNV1A_OFFSET_BASIS, FNV1A_PRIME, fnv1a32Bytes } from '@/lib/fnv1a';
 import { clamp } from '@/lib/math';
+import { loadAsset } from '@/persistence/assets';
+import type { NoteArticulation } from '@/project/annotations';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import type { AutomationParam, AutomationPoint, AutomationTarget } from '@/project/automation';
 import {
@@ -40,6 +42,7 @@ import {
   setInsertSidechain,
   setMixerBusChannelLayout,
   setMixerBusGain,
+  setNoteAnnotation,
   setSend,
   setStripGain,
   setStripOutputBus,
@@ -123,6 +126,56 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         startPpq: note.startPpq,
         durationPpq: note.durationPpq,
       })),
+    // Articulation marks of the active clip by editor note id.
+    noteArticulations: () =>
+      Object.fromEntries(
+        Object.entries(store.scoreAnnotations[store.clipId] ?? {}).flatMap(([noteId, mark]) =>
+          mark.articulation === undefined ? [] : [[noteId, mark.articulation]],
+        ),
+      ),
+    // Notes at exact positions: the editor grid cannot place a swung onset.
+    addNoteAt: (pitch: number, startPpq: number, durationPpq: number, velocity = 100) =>
+      addNote({ pitch, startPpq, durationPpq, velocity }),
+    annotateNote: (noteId: number, articulation: NoteArticulation) =>
+      setNoteAnnotation(store.clipId, noteId, { articulation }),
+    // Sample-level comparison of stem assets against their source clip's asset.
+    stemSumStats: async (sourceClipId: number, stemClipIds: number[]) => {
+      const pcm = async (clipId: number) => {
+        const assetId = store.clips.find((clip) => clip.id === clipId)?.assetId;
+        if (assetId === undefined) throw new Error(`clip ${clipId} has no asset`);
+        return (await loadAsset(assetId)).channels;
+      };
+      const rmsOf = (channels: Float32Array[]) => {
+        let sum = 0;
+        let count = 0;
+        for (const channel of channels) {
+          for (const sample of channel) {
+            sum += sample * sample;
+            count += 1;
+          }
+        }
+        return count > 0 ? Math.sqrt(sum / count) : 0;
+      };
+      const source = await pcm(sourceClipId);
+      const stems = await Promise.all(stemClipIds.map(pcm));
+      const frames = source[0]?.length ?? 0;
+      const error = source.map((channel, ch) => {
+        const diff = new Float32Array(frames);
+        for (let i = 0; i < frames; i++) {
+          let mixed = 0;
+          for (const stem of stems) mixed += stem[ch]?.[i] ?? 0;
+          diff[i] = channel[i] - mixed;
+        }
+        return diff;
+      });
+      return {
+        frames,
+        stemFrames: stems.map((stem) => stem[0]?.length ?? 0),
+        sourceRms: rmsOf(source),
+        stemRms: stems.map(rmsOf),
+        errorRms: rmsOf(error),
+      };
+    },
     chordCount: () => store.chords.length,
     chordRanges: () =>
       store.chords.map((chord) => ({
@@ -379,6 +432,18 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       const clipId = addMidiClip({ trackId, startPpq, lengthPpq: 4, name });
       setActiveClip(clipId);
       addNote({ pitch: 60, startPpq: 0, durationPpq: 4, velocity: 100 });
+      return { trackId, clipId };
+    },
+    addNotedMidiClip: (
+      name: string,
+      startPpq: number,
+      lengthPpq: number,
+      notes: { pitch: number; startPpq: number; durationPpq: number }[],
+    ) => {
+      const trackId = addTrack({ kind: 'midi', name });
+      const clipId = addMidiClip({ trackId, startPpq, lengthPpq, name });
+      setActiveClip(clipId);
+      for (const note of notes) addNote({ ...note, velocity: 100 });
       return { trackId, clipId };
     },
     removeMixerBus: (busId: string) => removeMixerBus(busId),

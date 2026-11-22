@@ -12,8 +12,8 @@ import { createRequire } from 'node:module';
 
 const projectRequire = createRequire(new URL('../../package.json', import.meta.url));
 
-/** fflate's unzip, resolved from the project. */
-export const { unzipSync } = projectRequire('fflate');
+/** fflate's unzip and zip, resolved from the project. */
+export const { unzipSync, zipSync, strToU8 } = projectRequire('fflate');
 
 /** Builds a mono 16-bit PCM WAV file containing a sine tone. */
 export function makeWavBytes(seconds, frequencyHz, sampleRate = 44100, amplitude = 0.8) {

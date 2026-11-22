@@ -28,7 +28,9 @@ import * as export_dawproject from './scenarios/export-dawproject.mjs';
 import * as export_dialog from './scenarios/export-dialog.mjs';
 import * as export_equivalence from './scenarios/export-equivalence.mjs';
 import * as export_midi from './scenarios/export-midi.mjs';
+import * as expression_maps from './scenarios/expression-maps.mjs';
 import * as freeze_bounce from './scenarios/freeze-bounce.mjs';
+import * as groove from './scenarios/groove.mjs';
 import * as gs_efx_sf2 from './scenarios/gs-efx-sf2.mjs';
 import * as guitar_amp_di from './scenarios/guitar-amp-di.mjs';
 import * as imported_song_edit from './scenarios/imported-song-edit.mjs';
@@ -36,6 +38,7 @@ import * as input_monitor from './scenarios/input-monitor.mjs';
 import * as jpop_long_form from './scenarios/jpop-long-form.mjs';
 import * as jpop_section_variations from './scenarios/jpop-section-variations.mjs';
 import * as lane_meters from './scenarios/lane-meters.mjs';
+import * as language_ja from './scenarios/language-ja.mjs';
 import * as layouts from './scenarios/layouts.mjs';
 import * as long_master_export_preflight from './scenarios/long-master-export-preflight.mjs';
 import * as master_limiter from './scenarios/master-limiter.mjs';
@@ -45,7 +48,9 @@ import * as mix_suggestion from './scenarios/mix-suggestion.mjs';
 import * as mixer_snapshots from './scenarios/mixer-snapshots.mjs';
 import * as mixer_strips from './scenarios/mixer-strips.mjs';
 import * as multitrack_stems_handoff from './scenarios/multitrack-stems-handoff.mjs';
+import * as musicxml_roundtrip from './scenarios/musicxml-roundtrip.mjs';
 import * as opfs_restore from './scenarios/opfs-restore.mjs';
+import * as ornaments from './scenarios/ornaments.mjs';
 import * as piano_roll from './scenarios/piano-roll.mjs';
 import * as placement_guide from './scenarios/placement-guide.mjs';
 import * as pop_arrangement from './scenarios/pop-arrangement.mjs';
@@ -54,6 +59,7 @@ import * as pop_clipboard from './scenarios/pop-clipboard.mjs';
 import * as portable_project from './scenarios/portable-project.mjs';
 import * as project_revisions from './scenarios/project-revisions.mjs';
 import * as project_save_reopen from './scenarios/project-save-reopen.mjs';
+import * as pwa_offline from './scenarios/pwa-offline.mjs';
 import * as rack_inserts from './scenarios/rack-inserts.mjs';
 import * as rack_instrument from './scenarios/rack-instrument.mjs';
 import * as realtime_midi from './scenarios/realtime-midi.mjs';
@@ -61,15 +67,19 @@ import * as realtime_mute from './scenarios/realtime-mute.mjs';
 import * as sample_editor_flow from './scenarios/sample-editor-flow.mjs';
 import * as score from './scenarios/score.mjs';
 import * as score_annotations from './scenarios/score-annotations.mjs';
+import * as score_print_pdf from './scenarios/score-print-pdf.mjs';
 import * as secondary_dominant_guidance from './scenarios/secondary-dominant-guidance.mjs';
 import * as shortcut_help from './scenarios/shortcut-help.mjs';
 import * as shortcut_persistence from './scenarios/shortcut-persistence.mjs';
 import * as shortcut_remap from './scenarios/shortcut-remap.mjs';
 import * as sidechain from './scenarios/sidechain.mjs';
+import * as stem_separation from './scenarios/stem-separation.mjs';
+import * as step_input from './scenarios/step-input.mjs';
 import * as step_sequencer from './scenarios/step-sequencer.mjs';
 import * as tempo_map from './scenarios/tempo-map.mjs';
 import * as theory_hover from './scenarios/theory-hover.mjs';
 import * as track_and_clip from './scenarios/track-and-clip.mjs';
+import * as vca_strips from './scenarios/vca-strips.mjs';
 import * as warp from './scenarios/warp.mjs';
 
 export const scenarios = [
@@ -79,6 +89,7 @@ export const scenarios = [
   piano_roll,
   score,
   score_annotations,
+  score_print_pdf,
   shortcut_help,
   shortcut_remap,
   layouts,
@@ -112,6 +123,12 @@ export const scenarios = [
   export_dialog,
   export_midi,
   export_dawproject,
+  // Each adds tracks of its own and removes them again.
+  ornaments,
+  expression_maps,
+  groove,
+  step_input,
+  vca_strips,
   // Last: it leaves its own tracks, an empty active clip and a far playhead.
   placement_guide,
   // Standalone new-project journey, kept last because it replaces the demo.
@@ -140,4 +157,10 @@ export const scenarios = [
   audio_to_midi_production,
   multitrack_stems_handoff,
   audio_edit_to_master,
+  // Each opens its own browser context: they replace the project, install a
+  // service worker or change the stored language.
+  musicxml_roundtrip,
+  stem_separation,
+  pwa_offline,
+  language_ja,
 ];
