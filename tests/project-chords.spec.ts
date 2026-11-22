@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import type { ProjectChordSymbol } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import { TONE_PCS_BY_QUALITY } from '@/compose/chord-quality';
@@ -13,6 +11,7 @@ import {
   toProjectChordSymbols,
 } from '@/project/chords';
 import type { NativeAnnotationChord } from '@/project/native-document';
+import { readSource } from './helpers/source-text';
 
 describe('sameChord', () => {
   const base: EditorChordSymbol = { startPpq: 0, endPpq: 4, rootPc: 0, quality: 4 };
@@ -302,8 +301,7 @@ describe('TONE_PCS_BY_QUALITY', () => {
   });
 
   it('chord-quality.ts source does not contain a hand-written pitch class table', () => {
-    const sourceFile = resolve(__dirname, '../src/compose/chord-quality.ts');
-    const source = readFileSync(sourceFile, 'utf-8');
+    const source = readSource('src/compose/chord-quality.ts');
     // Pattern matches: TONE_PCS_BY_QUALITY = { 0: [ (the hand-written table start)
     const handWrittenTablePattern = /TONE_PCS_BY_QUALITY[^=]*=\s*\{\s*0:\s*\[/;
     expect(source).not.toMatch(handWrittenTablePattern);

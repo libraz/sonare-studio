@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyPwaUpdateAndReload,
@@ -13,6 +11,7 @@ import {
   requestPwaEngineRecovery,
   SERVICE_WORKER_URL,
 } from '@/pwa';
+import { readSource } from './helpers/source-text';
 
 let removePreparation: (() => void) | null = null;
 
@@ -266,8 +265,7 @@ describe('PWA registration', () => {
 
 describe('PWA assets', () => {
   it('declares installable standalone app metadata', async () => {
-    const manifestPath = resolve(process.cwd(), 'public/manifest.webmanifest');
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+    const manifest = JSON.parse(readSource('public/manifest.webmanifest')) as {
       id: string;
       display: string;
       start_url: string;
@@ -305,7 +303,7 @@ describe('PWA assets', () => {
   });
 
   it('recovers a shell that cannot load its entry module without a forced reload', async () => {
-    const document = await readFile(resolve(process.cwd(), 'index.html'), 'utf8');
+    const document = readSource('index.html');
 
     expect(document).toContain("const MARKER = 'sonare-shell-recovery'");
     // Resource load errors do not bubble, so the listener must capture.
@@ -318,16 +316,19 @@ describe('PWA assets', () => {
     // guard only sees their load failures while it stays the first script and
     // link of the document.
     const guard = document.indexOf('sonare-shell-recovery');
-    expect(guard).toBeLessThan(document.indexOf('</head>'));
+    const headEnd = document.indexOf('</head>');
+    expect(guard).toBeGreaterThanOrEqual(0);
+    expect(headEnd).toBeGreaterThanOrEqual(0);
+    expect(guard).toBeLessThan(headEnd);
     const tags = [...document.matchAll(/<(?:script|link)\b/g)].map((match) => match.index);
     expect(guard).toBeGreaterThan(tags[0]);
     expect(guard).toBeLessThan(tags[1]);
   });
 
   it('builds a content-addressed AudioWorklet and injects its URL into the app bundle', async () => {
-    const workletConfig = await readFile(resolve(process.cwd(), 'vite.worklet.config.ts'), 'utf8');
-    const appConfig = await readFile(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
-    const engine = await readFile(resolve(process.cwd(), 'src/engine/engine.ts'), 'utf8');
+    const workletConfig = readSource('vite.worklet.config.ts');
+    const appConfig = readSource('vite.config.ts');
+    const engine = readSource('src/engine/engine.ts');
 
     expect(workletConfig).toContain("WORKLET_ASSET_PREFIX = 'sonare-engine-worklet-'");
     expect(workletConfig).toContain('[hash].js');
@@ -342,7 +343,7 @@ describe('PWA assets', () => {
   });
 
   it('serves content-addressed assets immutably and the release contract revalidated', async () => {
-    const headers = await readFile(resolve(process.cwd(), 'public/_headers'), 'utf8');
+    const headers = readSource('public/_headers');
     const rules = new Map<string, Record<string, string>>();
     let path = '';
     for (const line of headers.split('\n')) {
@@ -566,7 +567,7 @@ function releaseManifest(release: string): { assets: string[]; cacheVersion: str
 
 describe('Service Worker release isolation', () => {
   it('starts offline after the first install with every generated bundle class cached', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('a');
     let online = true;
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
@@ -594,7 +595,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('normalizes Cloudflare document redirects before caching and serving the shell', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('redirected');
     manifest.assets.push('/index.html');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
@@ -641,7 +642,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('normalizes a redirected live shell when the release manifest is unavailable', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse('offline', 503);
@@ -672,7 +673,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('rejects a JavaScript response under the canonical shell key', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('wrong-content');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
@@ -696,7 +697,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('repairs a legacy active cache before a new worker can activate', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('new');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
@@ -748,7 +749,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('keeps the active release intact through failed and waiting updates', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifestA = releaseManifest('a');
     const manifestB = releaseManifest('b');
     let activeManifest = manifestA;
@@ -808,7 +809,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('repairs a release cache that lost its shell instead of pinning one document', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('a');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
@@ -836,7 +837,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('admits only content-addressed assets into the release cache on a miss', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('a');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
@@ -865,7 +866,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('refuses to install a release whose assets answer with the app shell', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifestA = releaseManifest('a');
     const manifestB = releaseManifest('b');
     let activeManifest = manifestA;
@@ -908,7 +909,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('answers a stale asset with 404 rather than caching the app shell under its URL', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('a');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
@@ -936,7 +937,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('answers with a recovery document instead of failing the navigation outright', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const manifest = releaseManifest('a');
     let online = true;
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
@@ -968,7 +969,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('returns a live shell when Cache Storage cannot be opened', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
       if (path === '/precache-manifest.json') return new SwResponse('unavailable', 503);
@@ -995,7 +996,7 @@ describe('Service Worker release isolation', () => {
   });
 
   it('returns a normalized cached shell when cache repair cannot be written', async () => {
-    const template = await readFile(resolve(process.cwd(), 'public/sw.js'), 'utf8');
+    const template = readSource('public/sw.js');
     const fetcher = async (request: SwRequest): Promise<SwResponse> => {
       const path = cacheKey(request);
       if (path === '/') {

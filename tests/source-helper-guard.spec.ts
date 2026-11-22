@@ -5,9 +5,9 @@
  * the site cannot use it.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -94,7 +94,7 @@ function sourceFiles(): string[] {
 describe('shared helpers and constants are used, not re-spelled', () => {
   const files = sourceFiles().map((file) => ({
     file,
-    lines: readFileSync(path.join(ROOT, file), 'utf8').split('\n'),
+    lines: readSource(file).split('\n'),
   }));
 
   for (const rule of RULES) {

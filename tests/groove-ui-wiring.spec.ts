@@ -1,17 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource, sourceWindow } from './helpers/source-text';
 
-const pianoRoll = readFileSync(
-  resolve(process.cwd(), 'src/components/piano-roll/use-piano-roll-note-menu.ts'),
-  'utf8',
-);
-const arrangementView = readFileSync(
-  resolve(process.cwd(), 'src/components/arrangement/ArrangementView.vue'),
-  'utf8',
-);
+const pianoRoll = readSource('src/components/piano-roll/use-piano-roll-note-menu.ts');
+const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
 
 describe('groove template entry points', () => {
   it('captures and applies a groove from the piano-roll quantize menu', () => {
@@ -28,7 +21,11 @@ describe('groove template entry points', () => {
   });
 
   it('offers whole-clip capture and apply on MIDI clips only', () => {
-    const midiOnlyBlock = arrangementView.slice(arrangementView.indexOf('if (!isAudioClip(clip))'));
+    const midiOnlyBlock = sourceWindow(
+      arrangementView,
+      'if (!isAudioClip(clip))',
+      "{ id: 'sep-1', separator: true },",
+    );
     expect(midiOnlyBlock).toContain('store.grooveTemplate = captureGrooveFromActiveClip();');
     expect(midiOnlyBlock).toContain('applyGrooveToActiveClip(groove, store.quantizeStrength);');
   });

@@ -1,24 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
-const arrangementView = readFileSync(
-  resolve(process.cwd(), 'src/components/arrangement/ArrangementView.vue'),
-  'utf8',
-);
-const pianoRollEditor = readFileSync(
-  resolve(process.cwd(), 'src/components/piano-roll/PianoRollEditor.vue'),
-  'utf8',
-);
-const scorePanel = readFileSync(
-  resolve(process.cwd(), 'src/components/score/ScorePanel.vue'),
-  'utf8',
-);
+const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
+const pianoRollEditor = readSource('src/components/piano-roll/PianoRollEditor.vue');
+const scorePanel = readSource('src/components/score/ScorePanel.vue');
 
-const playheadFollow = readFileSync(
-  resolve(process.cwd(), 'src/ui/arrangement/use-playhead-follow.ts'),
-  'utf8',
-);
+const playheadFollow = readSource('src/ui/arrangement/use-playhead-follow.ts');
 
 describe('playhead follow preference wiring', () => {
   it('keeps the follow loop in the shared composable', () => {

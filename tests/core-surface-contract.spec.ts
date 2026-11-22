@@ -13,7 +13,6 @@
  * by hand, so each mirror is replaced by the core's own export.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import * as core from '@libraz/libsonare';
 import ts from 'typescript';
@@ -21,6 +20,7 @@ import { describe, expect, it } from 'vitest';
 import { AUTOMATION_CURVES } from '@/project/automation';
 import { PAN_LAW_IDS } from '@/project/mixer';
 import { CORE_DIST_DIR } from './core-package';
+import { readSource } from './helpers/source-text';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -54,7 +54,7 @@ function createProgram(files: string[]): ts.Program {
   const virtual = new Map<string, string>();
   const roots = files.map((f) => {
     if (!f.endsWith('.vue')) return f;
-    virtual.set(`${f}.ts`, vueScript(readFileSync(f, 'utf8')));
+    virtual.set(`${f}.ts`, vueScript(readSource(path.relative(ROOT, f))));
     return `${f}.ts`;
   });
   const options: ts.CompilerOptions = {

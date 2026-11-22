@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CANVAS_FONT_SIZE_PX, CANVAS_FONT_STACK, canvasFont } from '@/ui/theme/tokens';
+import { readSource, sourceWindow } from './helpers/source-text';
 
 /**
  * The type scale has one source of truth, tokens.css, and two consumers that
@@ -12,7 +13,7 @@ import { CANVAS_FONT_SIZE_PX, CANVAS_FONT_STACK, canvasFont } from '@/ui/theme/t
  */
 
 const SRC = resolve(process.cwd(), 'src');
-const css = readFileSync(join(SRC, 'ui/theme/tokens.css'), 'utf8');
+const css = readSource('src/ui/theme/tokens.css');
 
 /** Recursively collects source files under `src` with one of the extensions. */
 function collectFiles(dir: string, exts: ReadonlySet<string>): string[] {
@@ -27,7 +28,7 @@ function collectFiles(dir: string, exts: ReadonlySet<string>): string[] {
 
 /** Reads a `--name: value;` declaration from the first (`:root`) block. */
 function rootVar(name: string): string | null {
-  const root = css.slice(0, css.indexOf('}'));
+  const root = sourceWindow(css, ':root {', '}');
   const match = root.match(new RegExp(`${name}\\s*:\\s*([^;]+);`));
   return match ? match[1].trim() : null;
 }
@@ -50,7 +51,7 @@ describe('type scale', () => {
     for (const file of collectFiles(SRC, new Set(['.css', '.vue']))) {
       const rel = relative(SRC, file);
       if (RAW_SIZE_EXEMPT.includes(rel)) continue;
-      const text = readFileSync(file, 'utf8');
+      const text = readSource(`src/${rel}`);
       for (const match of text.matchAll(FONT_DECLARATION)) {
         // A literal inside var(--x, 13px) is a fallback, not a chosen size.
         const outsideVars = match[1].replace(/var\([^)]*\)/g, '');
@@ -75,8 +76,7 @@ describe('type scale', () => {
     // A canvas draw loop never sees the density attribute. Only --fs-xs of the
     // three mirrored steps is overridden, and the mirror keeps the root value
     // on purpose; this pins that the other two stay density-invariant.
-    const compact = css.slice(css.indexOf(":root[data-density='compact']"));
-    const block = compact.slice(0, compact.indexOf('}'));
+    const block = sourceWindow(css, ":root[data-density='compact']", '}');
     expect(block).toContain('--fs-xs:');
     expect(block).not.toContain('--fs-2xs:');
     expect(block).not.toContain('--fs-chrome-');
@@ -93,7 +93,7 @@ describe('type scale', () => {
     for (const file of collectFiles(SRC, new Set(['.ts', '.vue']))) {
       const rel = relative(SRC, file);
       if (rel.startsWith('wasm/')) continue;
-      const text = readFileSync(file, 'utf8');
+      const text = readSource(`src/${rel}`);
       for (const [index, line] of text.split('\n').entries()) {
         if (/\bctx\.font\s*=/.test(line) && !line.includes('canvasFont')) {
           offenders.push(`${rel}:${index + 1}`);

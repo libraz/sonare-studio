@@ -1,18 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-
-function sourceBetween(file: string, start: string, end: string): string {
-  const source = readFileSync(resolve(process.cwd(), file), 'utf8');
-  const from = source.indexOf(start);
-  expect(from).toBeGreaterThanOrEqual(0);
-  return source.slice(from, source.indexOf(end, from + start.length));
-}
+import { readSource, sourceWindow } from './helpers/source-text';
 
 describe('editor gesture refusals and no-op key edits', () => {
   it('surfaces a refused piano-roll draw in the error line instead of throwing', () => {
-    const body = sourceBetween(
-      'src/components/piano-roll/PianoRollEditor.vue',
+    const body = sourceWindow(
+      readSource('src/components/piano-roll/PianoRollEditor.vue'),
       'function addDrawnNotes',
       '\n}\n',
     );
@@ -23,8 +15,8 @@ describe('editor gesture refusals and no-op key edits', () => {
   });
 
   it('moves or trims an arrangement clip from the keyboard only when the value changes', () => {
-    const body = sourceBetween(
-      'src/components/arrangement/ArrangementView.vue',
+    const body = sourceWindow(
+      readSource('src/components/arrangement/ArrangementView.vue'),
       'function onClipKeyboardAction',
       '\n}\n',
     );

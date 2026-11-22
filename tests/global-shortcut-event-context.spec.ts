@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +7,7 @@ import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
 import { useShortcuts } from '@/composables/useShortcuts';
 import { addNote, clearHistory, setSelection } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { readSource, sourceWindow } from './helpers/source-text';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -213,10 +213,10 @@ describe('registry-owned editing keys', () => {
   });
 
   it('keeps undo, redo and delete out of the piano roll key handler', () => {
-    const source = readFileSync('src/components/piano-roll/PianoRollEditor.vue', 'utf8');
-    const handler = source.slice(
-      source.indexOf('function onKeyDown'),
-      source.indexOf('function handleKeyboardEdit'),
+    const handler = sourceWindow(
+      readSource('src/components/piano-roll/PianoRollEditor.vue'),
+      'function onKeyDown',
+      'function handleKeyboardEdit',
     );
     expect(handler).not.toMatch(/toLowerCase\(\) === 'z'|undo\(|redo\(|Delete|Backspace/);
   });

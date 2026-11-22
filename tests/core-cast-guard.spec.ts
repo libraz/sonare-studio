@@ -9,10 +9,10 @@
  * is either a deliberately invalid input or a fake that drifted.
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -63,7 +63,7 @@ function listed(patterns: string[]): string[] {
 }
 
 function scriptText(file: string): string {
-  const source = readFileSync(path.join(ROOT, file), 'utf8');
+  const source = readSource(file);
   if (!file.endsWith('.vue')) return source;
   let body = '';
   for (const m of source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) body += `${m[1]}\n`;

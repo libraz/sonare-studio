@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -21,6 +19,7 @@ import { getProject, useProjectStore } from '@/project/store';
 import type { EditorClip } from '@/project/types';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource } from './helpers/source-text';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -196,10 +195,7 @@ describe('crossfadeClips command', () => {
 });
 
 describe('crossfade entry point', () => {
-  const arrangementView = readFileSync(
-    resolve(process.cwd(), 'src/components/arrangement/ArrangementView.vue'),
-    'utf8',
-  );
+  const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
 
   it('offers the action from the clip context menu with the blocking reason', () => {
     expect(arrangementView).toContain("id: 'crossfade'");

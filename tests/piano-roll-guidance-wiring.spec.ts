@@ -1,20 +1,15 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource, sourceWindow } from './helpers/source-text';
 
-const source = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8');
-
-const editor = source('src/components/piano-roll/PianoRollEditor.vue');
-const toolbar = source('src/components/piano-roll/PianoRollToolbar.vue');
-const chordLane = source('src/components/arrangement/ChordLane.vue');
+const editor = readSource('src/components/piano-roll/PianoRollEditor.vue');
+const toolbar = readSource('src/components/piano-roll/PianoRollToolbar.vue');
+const chordLane = readSource('src/components/arrangement/ChordLane.vue');
 
 /** The opening tag of the first `<Tag` element in a template, up to its closing `>`. */
 function elementTag(text: string, tag: string): string {
-  const start = text.indexOf(`<${tag}`);
-  expect(start).toBeGreaterThanOrEqual(0);
-  return text.slice(start, text.indexOf('/>', start));
+  return sourceWindow(text, `<${tag}`, '/>');
 }
 
 describe('piano-roll placement guidance wiring', () => {
@@ -41,12 +36,12 @@ describe('piano-roll placement guidance wiring', () => {
     expect(elementTag(editor, 'NoteGridCanvas')).toContain(
       ':unresolved-note-ids="unresolvedNoteIds"',
     );
-    const canvas = source('src/components/piano-roll/NoteGridCanvas.vue');
+    const canvas = readSource('src/components/piano-roll/NoteGridCanvas.vue');
     expect(canvas).toMatch(/\bunresolvedNoteIds\?: ReadonlySet<number>;/);
   });
 
   it('leaves the motion partners to the one status formatter', () => {
-    const cell = source('src/components/piano-roll/use-placement-cell.ts');
+    const cell = readSource('src/components/piano-roll/use-placement-cell.ts');
     expect(cell).toContain('verdict.motionPartners');
     expect(editor).not.toContain('motionPartners');
   });

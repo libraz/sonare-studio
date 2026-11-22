@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -25,6 +23,7 @@ import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource } from './helpers/source-text';
 
 const wasmModule = vi.hoisted(() => ({
   current: undefined as undefined | Record<string, unknown>,
@@ -194,10 +193,7 @@ describe('chord follow through the chord command', () => {
 });
 
 describe('chord follow entry point', () => {
-  const headers = readFileSync(
-    resolve(process.cwd(), 'src/components/arrangement/TrackHeaderList.vue'),
-    'utf8',
-  );
+  const headers = readSource('src/components/arrangement/TrackHeaderList.vue');
 
   it('offers the three modes from the track header menu', () => {
     expect(headers).toContain("id: 'chord-follow-off'");

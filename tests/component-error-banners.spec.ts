@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { shallowMount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +7,7 @@ import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import { clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MESSAGES } from '@/ui/i18n';
+import { readSource } from './helpers/source-text';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -100,7 +100,7 @@ describe('component error banners', () => {
       'src/components/sample-editor/SampleEditor.vue',
       'src/components/score/ScorePanel.vue',
     ]) {
-      const source = readFileSync(path, 'utf8');
+      const source = readSource(path);
       expect(source, path).not.toMatch(/\berrorMessage\(/);
     }
   });

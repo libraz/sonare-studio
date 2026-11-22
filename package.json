@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:source-text": "node scripts/test-source-text.mjs",
     "test:external-formats": "EXTERNAL_VALIDATORS=1 vitest run tests/external-format-validators.spec.ts tests/external-format-fuzz.spec.ts tests/archive-preflight.spec.ts tests/persistence-szd.spec.ts tests/persistence-backup.spec.ts tests/export-dawproject.spec.ts tests/import-dawproject.spec.ts tests/project-smf.spec.ts tests/notation-musicxml.spec.ts tests/notation-musicxml-import.spec.ts tests/export-wav.spec.ts",
     "test:watch": "vitest",
     "lint": "biome check .",
@@ -20,7 +21,7 @@
     "ncu:update": "NO_UPDATE_NOTIFIER=1 ncu -u",
     "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.node.json",
     "typecheck:tests": "vue-tsc --noEmit -p tsconfig.tests.json",
-    "verify": "yarn lint && yarn typecheck:tests && yarn test && yarn test:external-formats && yarn build",
+    "verify": "yarn lint && yarn typecheck:tests && yarn test:source-text && yarn test && yarn test:external-formats && yarn build",
     "e2e": "node scripts/e2e-local.mjs",
     "ci": "yarn verify && yarn e2e"
   },

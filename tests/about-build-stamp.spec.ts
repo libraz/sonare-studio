@@ -1,10 +1,9 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AboutDialog from '@/components/shell/AboutDialog.vue';
 import { formatBuildTime, licenseUrl, sourceTreeUrl } from '@/lib/build-info';
 import { formatTimestamp } from '@/lib/date-format';
+import { readSource } from './helpers/source-text';
 
 // The build stamp is injected by Vite defines, which are absent under Vitest,
 // so the dialog reads it through a module the test replaces.
@@ -81,7 +80,7 @@ describe('About dialog source offer', () => {
 
 describe('build stamp wiring', () => {
   it('injects the version, commit, and build time from the Vite config', async () => {
-    const config = await readFile(resolve(process.cwd(), 'vite.config.ts'), 'utf8');
+    const config = readSource('vite.config.ts');
     expect(config).toContain('__SONARE_APP_VERSION__');
     expect(config).toContain('__SONARE_BUILD_COMMIT__');
     expect(config).toContain('__SONARE_BUILD_TIME__');

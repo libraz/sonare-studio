@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
-const appVue = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8');
-const appShellCss = readFileSync(resolve(process.cwd(), 'src/ui/shell/app-shell.css'), 'utf8');
+const appVue = readSource('src/App.vue');
+const appShellCss = readSource('src/ui/shell/app-shell.css');
 
 describe('editor dock tab strip', () => {
   it('keeps dock tabs in a dedicated scrollable tablist', () => {

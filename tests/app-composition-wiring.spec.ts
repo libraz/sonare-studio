@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
-const app = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8');
-const main = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8');
+const app = readSource('src/App.vue');
+const main = readSource('src/main.ts');
 
 describe('application composition wiring', () => {
   it('boots the App with Pinia, the global directives, and resilient PWA registration', () => {

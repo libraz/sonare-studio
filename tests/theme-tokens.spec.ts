@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TOKENS } from '@/ui/theme/tokens';
+import { readSource } from './helpers/source-text';
 
 /**
  * The canvas/SVG editors (piano roll, arrangement) read their DARK palette from
@@ -12,7 +11,7 @@ import { TOKENS } from '@/ui/theme/tokens';
  * the un-namespaced `--meter-*` / `--playhead` vars.
  */
 
-const css = readFileSync(resolve(process.cwd(), 'src/ui/theme/tokens.css'), 'utf8');
+const css = readSource('src/ui/theme/tokens.css');
 
 /** Maps each TOKENS key to its CSS custom-property name (canvas palette). */
 const CSS_VAR_BY_TOKEN: Record<keyof typeof TOKENS, string> = {

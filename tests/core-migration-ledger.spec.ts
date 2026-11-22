@@ -15,6 +15,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { CORE_DIST_DIR, coreMigrationLedger, type LedgerEntry } from './core-package';
+import { readSource } from './helpers/source-text';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -212,7 +213,7 @@ function trackedSources(): string[] {
 }
 
 function scriptText(file: string): string {
-  const source = readFileSync(path.join(ROOT, file), 'utf8');
+  const source = readSource(file);
   if (!file.endsWith('.vue')) return source;
   let body = '';
   for (const m of source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) body += `${m[1]}\n`;

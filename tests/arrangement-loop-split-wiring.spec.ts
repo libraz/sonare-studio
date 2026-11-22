@@ -1,11 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
-const arrangementView = readFileSync(
-  resolve(process.cwd(), 'src/components/arrangement/ArrangementView.vue'),
-  'utf8',
-);
+const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
 
 describe('arrangement loop split entry-point wiring', () => {
   it('routes split-tool rejection to the localized view error', () => {

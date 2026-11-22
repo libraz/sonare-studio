@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import insertRackSource from '@/components/mixer/InsertRack.vue?raw';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource } from './helpers/source-text';
+
+const insertRackSource = readSource('src/components/mixer/InsertRack.vue');
 
 describe('bus insert bypass notice', () => {
   it('uses a bus-specific tooltip because bus bypass rebuilds the bus chain', () => {

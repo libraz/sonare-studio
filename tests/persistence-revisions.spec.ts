@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetPersistenceMutationLockForTests } from '@/persistence/mutation-lock';
 import {
@@ -22,6 +20,7 @@ import {
 } from '@/persistence/revisions';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource, sourceWindow } from './helpers/source-text';
 import {
   installMockOpfs,
   type MemoryDirectoryHandle,
@@ -358,10 +357,7 @@ describe('project revisions', () => {
 });
 
 describe('revision entry points', () => {
-  const persistence = readFileSync(
-    resolve(process.cwd(), 'src/composables/useProjectPersistence.ts'),
-    'utf8',
-  );
+  const persistence = readSource('src/composables/useProjectPersistence.ts');
 
   it('snapshots the live document under a prompted label', () => {
     expect(persistence).toContain('await saveProjectRevision(');
@@ -370,9 +366,10 @@ describe('revision entry points', () => {
 
   it('restores into the editor without overwriting the stored project', () => {
     expect(persistence).toContain('const bytes = await loadProjectRevision(slot);');
-    const restore = persistence.slice(
-      persistence.indexOf('function restoreRevision'),
-      persistence.indexOf('function deleteRevision'),
+    const restore = sourceWindow(
+      persistence,
+      'function restoreRevision',
+      'function deleteRevision',
     );
     // The Save baseline stays the revision this tab last loaded or saved.
     expect(restore).not.toMatch(/savedProjectRevision\.value =|loadProjectWithRevision\(/);

@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '@/project/audio-slice';
@@ -15,6 +13,7 @@ import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
+import { readSource } from './helpers/source-text';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({
@@ -196,10 +195,7 @@ describe('sliceAudioClipAtTransients', () => {
 });
 
 describe('transient slice entry points', () => {
-  const arrangementView = readFileSync(
-    resolve(process.cwd(), 'src/components/arrangement/ArrangementView.vue'),
-    'utf8',
-  );
+  const arrangementView = readSource('src/components/arrangement/ArrangementView.vue');
 
   it('offers plain and quantizing slicing for unlooped audio clips', () => {
     expect(arrangementView).toContain("id: 'slice-transients'");

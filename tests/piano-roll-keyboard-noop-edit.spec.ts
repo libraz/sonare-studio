@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { changedNoteUpdates } from '@/components/piano-roll/keyboard-note-updates';
 import { addNotes, canRedo, clearHistory, undo, updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { readSource, sourceWindow } from './helpers/source-text';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -46,13 +45,10 @@ describe('keyboard note updates that change nothing', () => {
   });
 
   it('routes every keyboard note edit through the no-op filter and skips zero-delta duplicates', () => {
-    const source = readFileSync(
-      resolve(process.cwd(), 'src/components/piano-roll/PianoRollEditor.vue'),
-      'utf8',
-    );
-    const body = source.slice(
-      source.indexOf('function onNoteKeyboardAction'),
-      source.indexOf('function scrollMinimapTo'),
+    const body = sourceWindow(
+      readSource('src/components/piano-roll/PianoRollEditor.vue'),
+      'function onNoteKeyboardAction',
+      'function scrollMinimapTo',
     );
     expect(body.replace('const changed', '')).not.toMatch(/[^.]\bupdateNotes\(/);
     expect(body).toMatch(/if \(delta === 0\) \{\s+event\.preventDefault\(\);\s+return true;/);

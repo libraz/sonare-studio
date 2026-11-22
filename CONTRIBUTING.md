@@ -40,6 +40,7 @@ yarn dev              # dev server with cross-origin-isolation headers
 yarn test             # unit and component tests (vitest)
 yarn lint             # Biome; yarn lint:fix applies fixes
 yarn typecheck
+yarn test:source-text  # specs that read source as text; run after moving or renaming a file
 ```
 
 The browser end-to-end run drives a headless Chromium through Playwright against a static production build, so it needs Playwright's Chromium installed once:

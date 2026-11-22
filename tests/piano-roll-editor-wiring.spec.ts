@@ -1,12 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource, sourceWindow } from './helpers/source-text';
 
-const read = (path: string): string => readFileSync(resolve(process.cwd(), path), 'utf8');
-
-const editor = read('src/components/piano-roll/PianoRollEditor.vue');
-const arrangement = read('src/components/arrangement/ArrangementView.vue');
-const shortcuts = read('docs/en/shortcuts.md');
+const editor = readSource('src/components/piano-roll/PianoRollEditor.vue');
+const arrangement = readSource('src/components/arrangement/ArrangementView.vue');
+const shortcuts = readSource('docs/en/shortcuts.md');
 
 describe('piano-roll editor wiring', () => {
   it('gives the note lane the same color resolver as the grid', () => {
@@ -34,10 +31,12 @@ describe('piano-roll editor wiring', () => {
 
 describe('arrangement keyboard clip move', () => {
   it('only targets lanes the pointer path can reach', () => {
-    const handler = arrangement.slice(arrangement.indexOf('function onClipKeyboardAction'));
-    expect(handler).toContain('const lanes = visibleTracks.value;');
-    expect(handler.slice(0, handler.indexOf('function glueClusterClipIds'))).not.toContain(
-      'store.tracks[',
+    const handler = sourceWindow(
+      arrangement,
+      'function onClipKeyboardAction',
+      'function glueClusterClipIds',
     );
+    expect(handler).toContain('const lanes = visibleTracks.value;');
+    expect(handler).not.toContain('store.tracks[');
   });
 });

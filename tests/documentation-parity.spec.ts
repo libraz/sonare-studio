@@ -1,19 +1,15 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { normalizeComboString } from '@/ui/settings/key-combo';
 import { LAYOUT_PRESETS } from '@/ui/settings/layouts';
 import { SHORTCUT_ACTIONS, type ShortcutScope } from '@/ui/settings/shortcuts';
+import { readSource } from './helpers/source-text';
 
 const shortcutsDocs = ['en', 'ja'].map((locale) => ({
   locale,
-  text: readFileSync(resolve(process.cwd(), `docs/${locale}/shortcuts.md`), 'utf8'),
+  text: readSource(`docs/${locale}/shortcuts.md`),
 }));
-const introduction = readFileSync(resolve(process.cwd(), 'docs/en/introduction.md'), 'utf8');
-const appMenu = readFileSync(
-  resolve(process.cwd(), 'src/composables/useAppShortcutsMenu.ts'),
-  'utf8',
-);
+const introduction = readSource('docs/en/introduction.md');
+const appMenu = readSource('src/composables/useAppShortcutsMenu.ts');
 
 function documentedShortcutActionIds(markdown: string): string[] {
   return [...markdown.matchAll(/<!-- shortcut-action: ([\w.]+) -->/g)].map((match) => match[1]);

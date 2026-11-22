@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
 /**
  * Guards against referencing a CSS custom property that is defined nowhere.
@@ -41,8 +42,8 @@ const JS_SET_RE = /(?:setProperty\(\s*|["'])(--[a-z0-9-]+)["']\s*(?:,|:)/gi;
 const VAR_RE = /var\(\s*(--[a-z0-9-]+)\s*([,)])/gi;
 
 for (const file of FILES) {
-  const text = readFileSync(file, 'utf8');
   const rel = relative(SRC, file);
+  const text = readSource(`src/${rel}`);
   for (const m of text.matchAll(DEFINE_RE)) defined.add(m[1]);
   for (const m of text.matchAll(JS_SET_RE)) defined.add(m[1]);
   for (const m of text.matchAll(VAR_RE)) {

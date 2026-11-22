@@ -1,16 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readSource } from './helpers/source-text';
 
-const pianoRollEditor = readFileSync(
-  resolve(process.cwd(), 'src/components/piano-roll/PianoRollEditor.vue'),
-  'utf8',
-);
+const pianoRollEditor = readSource('src/components/piano-roll/PianoRollEditor.vue');
 
-const pianoRollEditorStyles = readFileSync(
-  resolve(process.cwd(), 'src/components/piano-roll/piano-roll-editor.css'),
-  'utf8',
-);
+const pianoRollEditorStyles = readSource('src/components/piano-roll/piano-roll-editor.css');
 
 describe('piano roll lane header accessibility', () => {
   it('groups the lane parameter selects instead of claiming an empty tablist', () => {
