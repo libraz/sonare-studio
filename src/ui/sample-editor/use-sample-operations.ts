@@ -49,11 +49,21 @@ import {
   trimToRange,
 } from './ops';
 import { checkedRepairStages } from './repair-analysis';
-import { createSampleOperationRunner } from './sample-operation-runner';
-import { keyModeFor, modeMaskFor, modeOrdinalOf, scaleName } from './scales';
 import {
   type AcousticAnalysisSummary,
   analyzeImpulseResponseRange,
+  detectAcousticRange,
+  estimateRoomRange,
+  type RoomEstimateSummary,
+  type RoomMorphPreset,
+  roomEstimateHasGeometry,
+  roomEstimateToPreset,
+  roomMorphChannels,
+  synthesizeRirChannels,
+} from './room-acoustics';
+import { createSampleOperationRunner } from './sample-operation-runner';
+import { keyModeFor, modeMaskFor, modeOrdinalOf, scaleName } from './scales';
+import {
   analyzeMatchEqToReference,
   analyzeRepairRange,
   autoTuneRange,
@@ -63,8 +73,6 @@ import {
   dehumRange,
   denoiseRange,
   dereverbRange,
-  detectAcousticRange,
-  estimateRoomRange,
   harmonicRange,
   matchEqToReference,
   noteMoveRange,
@@ -73,19 +81,13 @@ import {
   pitchCorrectRange,
   pitchCorrectTimevaryingRange,
   pitchShiftRange,
-  type RoomEstimateSummary,
-  type RoomMorphPreset,
   repairStagesRange,
   restoreRange,
-  roomEstimateHasGeometry,
-  roomEstimateToPreset,
-  roomMorphChannels,
   type SampleEditorWasmOps,
   type SpectralEditMode,
   scaleCorrectRange,
   spectralDenoiseRange,
   spectralEditRange,
-  synthesizeRirChannels,
   timeStretchRange,
   trimSilenceRange,
   tuneToReferenceRange,

@@ -41,6 +41,7 @@ import {
 } from '@/ui/sample-editor/history';
 import { formatMidiNote } from '@/ui/sample-editor/note-names';
 import { declipWithheld, repairChannelSummaries } from '@/ui/sample-editor/repair-analysis';
+import { roomEstimateHasGeometry } from '@/ui/sample-editor/room-acoustics';
 import { MODE_OPTIONS, rootOptions } from '@/ui/sample-editor/scales';
 import { selectionReadout } from '@/ui/sample-editor/selection';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
@@ -55,7 +56,6 @@ import { useSampleViewport } from '@/ui/sample-editor/use-sample-viewport';
 import { useSampleWarp } from '@/ui/sample-editor/use-sample-warp';
 import {
   loadSampleEditorWasm,
-  roomEstimateHasGeometry,
   type SampleEditorWasmOps,
   type SpectralEditMode,
   type WasmOpAvailability,
