@@ -51,8 +51,9 @@ import {
   type MediaCompletenessReport,
   mediaFailureIssues,
 } from '@/project/media-completeness';
-import type { DocumentClip, ProjectDocument } from '@/project/serialization';
+import type { ProjectDocument } from '@/project/serialization';
 import { DEFAULT_TEMPO_BPM, type NormalizedTempoMap, normalizeTempoMap } from '@/project/tempo-map';
+import { isAudioClip } from '@/project/types';
 import { audioContentOriginPpq, audioContentPpqToSeconds } from './audio-time';
 import type { AudioAssetEntry } from './clip-export';
 import { projectElement } from './project-xml';
@@ -119,11 +120,6 @@ export interface DawprojectExportResult {
     embeddedAssetIds: string[];
     missingAssetIds: string[];
   };
-}
-
-/** True when the clip carries audio content. */
-function isAudioClip(clip: DocumentClip): boolean {
-  return (clip.kind ?? 'midi') === 'audio';
 }
 
 /** Builds the zip entry path for an asset id, keeping paths unique. */

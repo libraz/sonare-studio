@@ -32,6 +32,7 @@ import type {
   DocumentTrack,
   ProjectDocument,
 } from '@/project/serialization';
+import { isAudioClip } from '@/project/types';
 import { exportedWarp, hexColor, isGroupPanAutomation } from './export-rules';
 import { IMPORTED_SAMPLE_RATE } from './format';
 
@@ -278,7 +279,7 @@ const CLIP_FIELDS: FieldDispositions<DocumentClip, DawprojectExportLossKind, Exp
   kind: 'written',
   assetId: {
     lost: 'missingAudioAssets',
-    count: (assetId, clip) => advanced(clip.kind === 'audio' && assetId === undefined),
+    count: (assetId, clip) => advanced(isAudioClip(clip) && assetId === undefined),
   },
   externalStemRole: { lost: 'stemRoles' },
   contentHash: 'derived',
@@ -300,7 +301,7 @@ const CLIP_FIELDS: FieldDispositions<DocumentClip, DawprojectExportLossKind, Exp
   warp: {
     lost: 'warpedAudioClips',
     count: (warp, clip) =>
-      advanced(clip.kind === 'audio' && warp !== undefined && exportedWarp(clip) === null),
+      advanced(isAudioClip(clip) && warp !== undefined && exportedWarp(clip) === null),
   },
   ccLanes: 'sidecar',
   pitchBendLanes: 'sidecar',
