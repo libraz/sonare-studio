@@ -396,6 +396,27 @@ export async function saveAsset(
   return (await saveAssetWithStatus(input, audio)).meta;
 }
 
+/** Opens one of an asset's stored files, reading an absent file as a missing asset. */
+async function openAssetFile(id: string, extension: string): Promise<File> {
+  const dir = await assetsDirectory();
+  try {
+    const handle = await dir.getFileHandle(id + extension);
+    return await handle.getFile();
+  } catch (error) {
+    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
+    throw error;
+  }
+}
+
+/** PCM byte length the sidecar promises, refusing a payload past the audio resource limit. */
+function expectedPcmBytes(id: string, meta: AudioAssetMeta, file: File): number {
+  const expectedBytes = meta.numFrames * meta.numChannels * BYTES_PER_SAMPLE;
+  if (expectedBytes > MAX_AUDIO_SAMPLE_BYTES || file.size > MAX_AUDIO_SAMPLE_BYTES) {
+    throw new InvalidAssetError(`Asset "${id}": PCM payload exceeds the audio resource limit`);
+  }
+  return expectedBytes;
+}
+
 /**
  * Reads an asset's metadata sidecar.
  *
@@ -412,15 +433,7 @@ export async function loadAssetMeta(
     const cached = cachedAsset(id);
     if (cached) return cached.meta;
   }
-  const dir = await assetsDirectory();
-  let file: File;
-  try {
-    const handle = await dir.getFileHandle(id + META_EXTENSION);
-    file = await handle.getFile();
-  } catch (error) {
-    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
-    throw error;
-  }
+  const file = await openAssetFile(id, META_EXTENSION);
   let parsed: unknown;
   try {
     parsed = JSON.parse(new TextDecoder().decode(await file.arrayBuffer()));
@@ -438,19 +451,8 @@ export async function loadAssetMeta(
 export async function validateAssetPayload(id: string): Promise<AudioAssetMeta> {
   validateAssetId(id);
   const meta = await loadAssetMeta(id);
-  const dir = await assetsDirectory();
-  let file: File;
-  try {
-    const handle = await dir.getFileHandle(id + PCM_EXTENSION);
-    file = await handle.getFile();
-  } catch (error) {
-    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
-    throw error;
-  }
-  const expectedBytes = meta.numFrames * meta.numChannels * BYTES_PER_SAMPLE;
-  if (expectedBytes > MAX_AUDIO_SAMPLE_BYTES || file.size > MAX_AUDIO_SAMPLE_BYTES) {
-    throw new InvalidAssetError(`Asset "${id}": PCM payload exceeds the audio resource limit`);
-  }
+  const file = await openAssetFile(id, PCM_EXTENSION);
+  const expectedBytes = expectedPcmBytes(id, meta, file);
   if (file.size !== expectedBytes) {
     throw new InvalidAssetError(
       `Asset "${id}": PCM payload is ${file.size} bytes, expected ${expectedBytes}`,
@@ -507,19 +509,8 @@ export async function loadAsset(
 
 /** Reads an asset's PCM payload and checks it against the sidecar's frame and channel counts. */
 async function readValidatedPcm(id: string, meta: AudioAssetMeta): Promise<ArrayBuffer> {
-  const dir = await assetsDirectory();
-  let file: File;
-  try {
-    const handle = await dir.getFileHandle(id + PCM_EXTENSION);
-    file = await handle.getFile();
-  } catch (error) {
-    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
-    throw error;
-  }
-  const expectedBytes = meta.numFrames * meta.numChannels * BYTES_PER_SAMPLE;
-  if (expectedBytes > MAX_AUDIO_SAMPLE_BYTES || file.size > MAX_AUDIO_SAMPLE_BYTES) {
-    throw new InvalidAssetError(`Asset "${id}": PCM payload exceeds the audio resource limit`);
-  }
+  const file = await openAssetFile(id, PCM_EXTENSION);
+  const expectedBytes = expectedPcmBytes(id, meta, file);
   const bytes = await file.arrayBuffer();
   if (bytes.byteLength !== expectedBytes) {
     throw new InvalidAssetError(
@@ -580,15 +571,7 @@ export async function readAssetFrames(
   if (!Number.isInteger(numChannels) || numChannels < 1 || numChannels > MAX_AUDIO_CHANNELS) {
     throw new InvalidAssetError(`Asset "${id}": invalid channel count ${numChannels}`);
   }
-  const dir = await assetsDirectory();
-  let file: File;
-  try {
-    const handle = await dir.getFileHandle(id + PCM_EXTENSION);
-    file = await handle.getFile();
-  } catch (error) {
-    if (isNotFoundError(error)) throw new AssetNotFoundError(id);
-    throw error;
-  }
+  const file = await openAssetFile(id, PCM_EXTENSION);
   const frameBytes = numChannels * BYTES_PER_SAMPLE;
   const from = startFrame * frameBytes;
   const to = from + frameCount * frameBytes;
