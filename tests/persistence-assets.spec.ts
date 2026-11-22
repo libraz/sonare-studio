@@ -126,7 +126,7 @@ describe('audio asset store', () => {
         const writable = await original.call(this);
         if (!this.name.endsWith('.pcm')) return writable;
         const write = writable.write.bind(writable);
-        writable.write = (async (chunk: Uint8Array) => {
+        writable.write = (async (chunk: Uint8Array<ArrayBuffer>) => {
           pcmWriteSizes.push(chunk.byteLength);
           return write(chunk);
         }) as typeof writable.write;
@@ -259,7 +259,7 @@ describe('audio asset store', () => {
         if (!this.name.endsWith('.pcm') || failed) return writable;
         failed = true;
         const write = writable.write.bind(writable);
-        writable.write = (async (chunk: Uint8Array) => {
+        writable.write = (async (chunk: Uint8Array<ArrayBuffer>) => {
           await write(chunk.subarray(0, Math.min(4, chunk.byteLength)));
           throw quota;
         }) as typeof writable.write;

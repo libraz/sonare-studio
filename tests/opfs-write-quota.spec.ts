@@ -26,7 +26,7 @@ function failNextWrite(suffix: string) {
     if (!this.name.endsWith(suffix) || failed) return writable;
     failed = true;
     const write = writable.write.bind(writable);
-    writable.write = (async (chunk: Uint8Array) => {
+    writable.write = (async (chunk: Uint8Array<ArrayBuffer>) => {
       await write(chunk.subarray(0, Math.min(4, chunk.byteLength)));
       throw new DOMException('storage quota exhausted', 'QuotaExceededError');
     }) as typeof writable.write;

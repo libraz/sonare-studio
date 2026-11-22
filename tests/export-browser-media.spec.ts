@@ -45,7 +45,10 @@ class FakeSource extends EventTarget {
   stop(): void {}
 }
 
-function concatBytes(...parts: ReadonlyArray<ReadonlyArray<number>>): Uint8Array {
+/** Fixture bytes, as a plain list or an encoded buffer. */
+type Bytes = ReadonlyArray<number> | Uint8Array;
+
+function concatBytes(...parts: ReadonlyArray<Bytes>): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(parts.flatMap((part) => [...part]));
 }
 
@@ -62,11 +65,11 @@ function ebmlSize(size: number): number[] {
   throw new RangeError(`test EBML fixture is too large: ${size}`);
 }
 
-function ebmlElement(id: number, payload: ReadonlyArray<number>): number[] {
+function ebmlElement(id: number, payload: Bytes): number[] {
   return [...ebmlId(id), ...ebmlSize(payload.length), ...payload];
 }
 
-function createWebmOpusFixture(): Uint8Array {
+function createWebmOpusFixture(): Uint8Array<ArrayBuffer> {
   const opusHead = [
     ...Array.from(new TextEncoder().encode('OpusHead')),
     1,
@@ -141,7 +144,7 @@ function createOggPage(
   sequence: number,
   headerType: number,
   granulePosition = 0,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   const header = concatBytes(
     [...Array.from(new TextEncoder().encode('OggS')), 0, headerType],
     uint64Le(granulePosition),
@@ -155,7 +158,7 @@ function createOggPage(
   return header;
 }
 
-function createOggOpusFixture(): Uint8Array {
+function createOggOpusFixture(): Uint8Array<ArrayBuffer> {
   const head = [
     ...Array.from(new TextEncoder().encode('OpusHead')),
     1,
@@ -186,7 +189,7 @@ function uint32Be(value: number): number[] {
   return [value >>> 24, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
 
-function mp4Box(type: string, payload: ReadonlyArray<number>): number[] {
+function mp4Box(type: string, payload: Bytes): number[] {
   return [
     ...uint32Be(payload.length + 8),
     ...Array.from(new TextEncoder().encode(type)),
@@ -194,19 +197,15 @@ function mp4Box(type: string, payload: ReadonlyArray<number>): number[] {
   ];
 }
 
-function mp4FullBox(type: string, payload: ReadonlyArray<number>): number[] {
+function mp4FullBox(type: string, payload: Bytes): number[] {
   return mp4Box(type, [0, 0, 0, 0, ...payload]);
 }
 
-function mp4FullBoxWithFlags(
-  type: string,
-  flags: number,
-  payload: ReadonlyArray<number>,
-): number[] {
+function mp4FullBoxWithFlags(type: string, flags: number, payload: Bytes): number[] {
   return mp4Box(type, [0, (flags >>> 16) & 0xff, (flags >>> 8) & 0xff, flags & 0xff, ...payload]);
 }
 
-function createM4aFixture(): Uint8Array {
+function createM4aFixture(): Uint8Array<ArrayBuffer> {
   const ftyp = mp4Box('ftyp', [0x4d, 0x34, 0x41, 0x20, 0, 0, 2, 0, 0x4d, 0x34, 0x41, 0x20]);
   const mdat = mp4Box('mdat', [0x01]);
   const makeMoov = (chunkOffset: number): number[] => {
@@ -240,13 +239,13 @@ function createM4aFixture(): Uint8Array {
   return concatBytes(ftyp, moov, mdat);
 }
 
-function fixtureForMimeType(mimeType: string): Uint8Array {
+function fixtureForMimeType(mimeType: string): Uint8Array<ArrayBuffer> {
   if (mimeType.startsWith('audio/mp4')) return createM4aFixture();
   if (mimeType.startsWith('audio/ogg')) return createOggOpusFixture();
   return createWebmOpusFixture();
 }
 
-function corruptM4aChunkOffset(): Uint8Array {
+function corruptM4aChunkOffset(): Uint8Array<ArrayBuffer> {
   const bytes = createM4aFixture();
   const stco = [0x73, 0x74, 0x63, 0x6f];
   for (let index = 0; index <= bytes.length - stco.length; index += 1) {
@@ -258,7 +257,7 @@ function corruptM4aChunkOffset(): Uint8Array {
   throw new Error('M4A fixture has no stco box');
 }
 
-function createFragmentedM4aFixture(dataOffset: number | null = null): Uint8Array {
+function createFragmentedM4aFixture(dataOffset: number | null = null): Uint8Array<ArrayBuffer> {
   const ftyp = mp4Box('ftyp', [0x4d, 0x34, 0x41, 0x20, 0, 0, 2, 0, 0x4d, 0x34, 0x41, 0x20]);
   const stsdEntry = mp4Box('mp4a', [...new Array(28).fill(0), ...mp4Box('esds', [0, 0, 0, 0])]);
   const stbl = mp4Box('stbl', mp4FullBox('stsd', [0, 0, 0, 1, ...stsdEntry]));
@@ -304,7 +303,7 @@ function createFragmentedM4aFixture(dataOffset: number | null = null): Uint8Arra
  * sample data points past the following mdat. Older validation accepted it by
  * checking only that the trun count was nonzero.
  */
-function createFragmentedM4aWithInvalidSampleRange(): Uint8Array {
+function createFragmentedM4aWithInvalidSampleRange(): Uint8Array<ArrayBuffer> {
   return createFragmentedM4aFixture(0x100);
 }
 
@@ -373,7 +372,7 @@ class FakeMediaRecorder extends EventTarget {
     this.state = 'recording';
   }
 
-  protected emitData(data: Uint8Array): void {
+  protected emitData(data: Uint8Array<ArrayBuffer>): void {
     this.state = 'inactive';
     const blob = new Blob([data], { type: this.options.mimeType });
     this.dispatchEvent(Object.assign(new Event('dataavailable'), { data: blob }));

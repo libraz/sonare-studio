@@ -652,7 +652,7 @@ describe('browser backup archives', () => {
     const stage = await staging.getDirectoryHandle('interrupted-publish', { create: true });
     const previousHandle = await stage.getFileHandle('previous-Song%20A.szd', { create: true });
     const previousWritable = await previousHandle.createWritable();
-    await previousWritable.write(previous);
+    await previousWritable.write(previous.slice());
     await previousWritable.close();
     const manifestHandle = await stage.getFileHandle('manifest.json', { create: true });
     const manifestWritable = await manifestHandle.createWritable();

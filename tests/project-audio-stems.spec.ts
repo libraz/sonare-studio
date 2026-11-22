@@ -180,7 +180,7 @@ describe('separateAudioClipStems', () => {
   });
 
   it('renders comp take selection before separation', async () => {
-    let input = new Float32Array();
+    let input: Float32Array = new Float32Array();
     const stems = await separateAudioClipStems(
       {
         assetId: 'take-a',
@@ -215,7 +215,7 @@ describe('separateAudioClipStems', () => {
   });
 
   it('renders loop, fades and tempo changes before separation', async () => {
-    let input = new Float32Array();
+    let input: Float32Array = new Float32Array();
     const tempoMap = normalizeTempoMap([
       { startPpq: 0, bpm: 60 },
       { startPpq: 1, bpm: 120 },
@@ -250,7 +250,7 @@ describe('separateAudioClipStems', () => {
   });
 
   it('renders trimmed warp, fades and a tempo change before separation', async () => {
-    let input = new Float32Array();
+    let input: Float32Array = new Float32Array();
     const tempoMap = normalizeTempoMap([
       { startPpq: 0, bpm: 120 },
       { startPpq: 1, bpm: 60 },
