@@ -1,6 +1,5 @@
 import { computed, type Ref, ref } from 'vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
-import { confirmDialog } from '@/composables/useDialogs';
 import { confirmLossReport } from '@/composables/useLossConfirm';
 import { dawprojectFilename, exportDawprojectWithReport } from '@/export/dawproject';
 import { inspectDawprojectExportLoss } from '@/export/dawproject/export-loss';
@@ -8,8 +7,16 @@ import type { MixdownRangePpq } from '@/export/mixdown';
 import { projectFilename } from '@/lib/filename';
 import { inspectMusicXmlExportLoss, serializeMusicXml } from '@/notation/musicxml';
 import { scoreClipWindow } from '@/notation/score-clip-window';
+import { createBrowserBackupWithReport } from '@/persistence/backup';
+import { gatherProjectBundleWithReport } from '@/persistence/bundle';
+import { downloadBrowserBackup, downloadSzd } from '@/persistence/local-file';
+import { encodeSzdStreaming } from '@/persistence/szd';
 import { SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ } from '@/project/annotations';
-import { formatMediaCompletenessReport } from '@/project/media-completeness';
+import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
+import {
+  formatMediaCompletenessReport,
+  type MediaCompletenessReport,
+} from '@/project/media-completeness';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -19,6 +26,10 @@ import {
 } from '@/ui/score/export-availability';
 import { buildProjectScore, musicXmlScoredDocument } from '@/ui/score/use-score-notation';
 
+type ConfirmAction = (
+  message: string,
+  opts?: { danger?: boolean; confirmLabel?: string; title?: string },
+) => Promise<boolean>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
 type DownloadBlobFile = (blob: Blob, filename: string) => void;
 
@@ -26,13 +37,21 @@ const MUSICXML_MIME = 'application/vnd.recordare.musicxml+xml';
 
 export interface ProjectExportOptions {
   closeProjectMenu: () => void;
+  confirmLossAction: ConfirmAction;
   downloadBlobFile: DownloadBlobFile;
   loopEnabled: Ref<boolean>;
   loopEndPpq: Ref<number>;
   loopStartPpq: Ref<number>;
+  /** Whether OPFS media exists to bundle into a portable archive. */
+  opfsAvailable: boolean;
   runAction: RunAction;
 }
 
+/**
+ * Project-menu exports that leave the browser: DAWproject, MusicXML, the
+ * portable .szd archive, the whole-browser backup, and Standard MIDI / MIDI 2.0
+ * clip files. Incomplete media and reported loss are confirmed before writing.
+ */
 export function useProjectExport(options: ProjectExportOptions) {
   const store = useProjectStore();
   const { t } = useI18n();
@@ -79,6 +98,21 @@ export function useProjectExport(options: ProjectExportOptions) {
       });
   }
 
+  async function confirmIncompletePortableExport(
+    report: MediaCompletenessReport,
+  ): Promise<boolean> {
+    if (report.complete) return true;
+    return options.confirmLossAction(
+      formatMessage(t.value.shell.project.mediaCompleteness.message, {
+        items: formatMediaCompletenessReport(report),
+      }),
+      {
+        title: t.value.shell.project.mediaCompleteness.title,
+        confirmLabel: t.value.shell.project.mediaCompleteness.confirm,
+      },
+    );
+  }
+
   function exportDawprojectAction(): void {
     options.closeProjectMenu();
     void options.runAction(async () => {
@@ -86,16 +120,7 @@ export function useProjectExport(options: ProjectExportOptions) {
       const loss = inspectDawprojectExportLoss(doc);
       if (!(await confirmLossReport(loss, t.value.shell.project.dawprojectLoss))) return;
       const exported = await exportDawprojectWithReport(doc, { includeAudio: true });
-      if (!exported.completeness.complete) {
-        const ok = await confirmDialog({
-          title: t.value.shell.project.mediaCompleteness.title,
-          message: formatMessage(t.value.shell.project.mediaCompleteness.message, {
-            items: formatMediaCompletenessReport(exported.completeness),
-          }),
-          confirmLabel: t.value.shell.project.mediaCompleteness.confirm,
-        });
-        if (!ok) return;
-      }
+      if (!(await confirmIncompletePortableExport(exported.completeness))) return;
       options.downloadBlobFile(
         new Blob([new Uint8Array(exported.bytes)], { type: 'application/zip' }),
         dawprojectFilename(store.projectName),
@@ -158,6 +183,71 @@ export function useProjectExport(options: ProjectExportOptions) {
     return availability;
   }
 
+  function exportSzdAction(): void {
+    options.closeProjectMenu();
+    void options.runAction(async () => {
+      const doc = serializeProject();
+      // Disk exports travel to other machines/browsers, so bundle the
+      // referenced audio + SoundFonts the OPFS store would otherwise hold.
+      const gathered = options.opfsAvailable ? await gatherProjectBundleWithReport(doc) : undefined;
+      if (gathered && !(await confirmIncompletePortableExport(gathered.report))) return;
+      const bundle = gathered?.bundle;
+      const bytes = await encodeSzdStreaming(doc, { savedAt: new Date().toISOString() }, bundle);
+      downloadSzd(store.projectName, bytes);
+    });
+  }
+
+  function exportBrowserBackupAction(): void {
+    options.closeProjectMenu();
+    void options.runAction(async () => {
+      const backup = await createBrowserBackupWithReport();
+      if (!(await confirmIncompletePortableExport(backup.completeness))) return;
+      downloadBrowserBackup('sonare-studio', backup.bytes);
+    });
+  }
+
+  function exportSmfAction(): void {
+    options.closeProjectMenu();
+    void options.runAction(async () => {
+      const result = await exportProjectSmf();
+      const copy = t.value.shell.project.midiExportLoss;
+      if (
+        !(await confirmLossReport(
+          result.loss,
+          { ...copy.smf, items: copy.items },
+          options.confirmLossAction,
+        ))
+      ) {
+        return;
+      }
+      options.downloadBlobFile(
+        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
+        result.filename,
+      );
+    });
+  }
+
+  function exportMidi2Action(): void {
+    options.closeProjectMenu();
+    void options.runAction(async () => {
+      const result = exportProjectClipFile();
+      const copy = t.value.shell.project.midiExportLoss;
+      if (
+        !(await confirmLossReport(
+          result.loss,
+          { ...copy.midi2, items: copy.items },
+          options.confirmLossAction,
+        ))
+      ) {
+        return;
+      }
+      options.downloadBlobFile(
+        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
+        result.filename,
+      );
+    });
+  }
+
   return {
     exportDialogOpen,
     exportLoopRegion,
@@ -165,6 +255,10 @@ export function useProjectExport(options: ProjectExportOptions) {
     scoreExportAvailability: musicXmlAvailability,
     exportDawprojectAction,
     exportMusicXmlAction,
+    exportSzdAction,
+    exportBrowserBackupAction,
+    exportSmfAction,
+    exportMidi2Action,
     openExportDialog,
   };
 }

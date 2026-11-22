@@ -50,7 +50,6 @@ describe('Continue Session', () => {
       autosave: useAutosave(),
       confirmAction: vi.fn(async () => true),
       confirmLossAction: vi.fn(async () => true),
-      downloadBlobFile: vi.fn(),
       errorMessage: ref(''),
       onProjectDocumentWillLoad,
       runAction: async (action) => {

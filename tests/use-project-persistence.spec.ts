@@ -33,13 +33,8 @@ import {
   addNote,
   clearMixerSnapshots,
   saveMixerSnapshot,
-  setAutomationLanePoints,
-  setClipCcLane,
   setProjectExternalMidiDefault,
-  setTrackMidiFx,
-  setTrackMute,
 } from '@/project/commands';
-import { DEFAULT_MIDI_FX_CONFIG } from '@/project/midi-fx';
 import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   type ProjectDocument,
@@ -199,7 +194,6 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
   const confirmAction = vi.fn<Parameters<typeof useProjectPersistence>[0]['confirmAction']>(
     async () => true,
   );
-  const downloadBlobFile = vi.fn();
   const autosave = {
     lastSavedAt: ref<Date | null>(null),
     lastSavedDocumentKey,
@@ -214,7 +208,6 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
     autosave,
     confirmAction,
     confirmLossAction: confirmAction,
-    downloadBlobFile,
     errorMessage,
     runAction: async (action) => {
       try {
@@ -224,7 +217,7 @@ function setup(options: { autosaveResult?: boolean; autosaveError?: Error } = {}
       }
     },
   });
-  return { autosave, confirmAction, downloadBlobFile, errorMessage, persistence };
+  return { autosave, confirmAction, errorMessage, persistence };
 }
 
 describe('useProjectPersistence boot', () => {
@@ -288,55 +281,6 @@ describe('useProjectPersistence autosave refresh after load', () => {
     vi.mocked(restoreProjectBundle).mockReset();
     vi.mocked(restoreProjectBundle).mockResolvedValue(makeRestoreLease());
     localStorage.clear();
-  });
-
-  it('blocks incomplete portable exports until the user explicitly accepts the loss', async () => {
-    await useProjectStore().init();
-    const issue = {
-      kind: 'audio-asset' as const,
-      mediaId: 'missing-audio',
-      role: 'clip' as const,
-      reason: 'missing' as const,
-      trackId: 1,
-      clipId: 2,
-    };
-    vi.mocked(gatherProjectBundleWithReport).mockResolvedValue({
-      bundle: { assets: [], fonts: [] },
-      report: { complete: false, issues: [issue] },
-    });
-    vi.mocked(createBrowserBackupWithReport).mockResolvedValue({
-      bytes: new Uint8Array([1, 2, 3]),
-      completeness: { complete: false, issues: [issue] },
-    });
-    const { confirmAction, persistence } = setup();
-    confirmAction.mockResolvedValue(false);
-
-    persistence.exportSzdAction();
-    await flushPromises();
-    persistence.exportBrowserBackupAction();
-    await flushPromises();
-
-    expect(confirmAction).toHaveBeenCalledTimes(2);
-    expect(confirmAction.mock.calls[0][0]).toContain('missing-audio');
-    expect(downloadSzd).not.toHaveBeenCalled();
-    expect(downloadBrowserBackup).not.toHaveBeenCalled();
-  });
-
-  it('requires loss consent before exporting a MIDI 2.0 clip that omits expression data', async () => {
-    const store = useProjectStore();
-    await store.init();
-    setClipCcLane(store.clipId, 1, 0, [{ ppq: 0, value: 64 }]);
-    const { confirmAction, downloadBlobFile, persistence } = setup();
-    confirmAction.mockResolvedValue(false);
-
-    persistence.exportMidi2Action();
-    await flushPromises();
-
-    expect(confirmAction).toHaveBeenCalledWith(
-      expect.stringContaining('expression'),
-      expect.objectContaining({ confirmLabel: expect.any(String) }),
-    );
-    expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 
   it('reports media ids skipped while restoring a browser backup', async () => {
@@ -683,7 +627,6 @@ describe('useProjectPersistence autosave refresh after load', () => {
       autosave,
       confirmAction: vi.fn(async () => true),
       confirmLossAction: vi.fn(async () => true),
-      downloadBlobFile: vi.fn(),
       errorMessage,
       runAction: async (action) => {
         try {
@@ -1056,26 +999,6 @@ describe('useProjectPersistence autosave refresh after load', () => {
     await flushPromises();
 
     expect(vi.mocked(saveProjectChecked).mock.calls.at(-1)?.[2]).toBe('revision-2');
-  });
-
-  it('lists every SMF loss before writing the file', async () => {
-    const store = useProjectStore();
-    await store.init();
-    const trackId = store.tracks[0].id;
-    setTrackMidiFx(trackId, { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 });
-    setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: 0.5, curve: 'linear' }]);
-    setTrackMute(trackId, true);
-    const { confirmAction, downloadBlobFile, persistence } = setup();
-    confirmAction.mockResolvedValue(false);
-
-    persistence.exportSmfAction();
-    await flushPromises();
-
-    expect(confirmAction).toHaveBeenCalledWith(
-      expect.stringMatching(/1 track mute.+1 MIDI FX transform.+1 automation lane/s),
-      expect.objectContaining({ title: 'SMF export limitations' }),
-    );
-    expect(downloadBlobFile).not.toHaveBeenCalled();
   });
 
   it('renames a saved project through the persistence UI action', async () => {

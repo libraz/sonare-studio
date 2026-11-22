@@ -78,7 +78,6 @@ function setup() {
     },
     confirmAction: vi.fn(async () => true),
     confirmLossAction: vi.fn(async () => true),
-    downloadBlobFile: vi.fn(),
     errorMessage,
     runAction: async (action) => {
       try {

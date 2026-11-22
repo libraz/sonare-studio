@@ -3,7 +3,6 @@ import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
 import { useForeignFormatImports } from '@/composables/useForeignFormatImports';
 import { useLiveMediaLeases } from '@/composables/useLiveMediaLeases';
-import { useProjectFileExports } from '@/composables/useProjectFileExports';
 import { useProjectRevisions } from '@/composables/useProjectRevisions';
 import { describeError } from '@/lib/errors';
 import { reclaimOrphanedRestoreStagesAtStartup, restoreBrowserBackup } from '@/persistence/backup';
@@ -60,13 +59,11 @@ type ConfirmAction = (
   opts?: { danger?: boolean; confirmLabel?: string; title?: string },
 ) => Promise<boolean>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
-type DownloadBlobFile = (blob: Blob, filename: string) => void;
 
 export interface ProjectPersistenceOptions {
   autosave: Autosave;
   confirmAction: ConfirmAction;
   confirmLossAction: ConfirmAction;
-  downloadBlobFile: DownloadBlobFile;
   errorMessage: Ref<string>;
   runAction: RunAction;
   /** Shared persisted-state revision, avoiding duplicate full-document hashes. */
@@ -76,8 +73,7 @@ export interface ProjectPersistenceOptions {
 }
 
 export function useProjectPersistence(options: ProjectPersistenceOptions) {
-  const { autosave, confirmAction, confirmLossAction, downloadBlobFile, errorMessage, runAction } =
-    options;
+  const { autosave, confirmAction, confirmLossAction, errorMessage, runAction } = options;
   const store = useProjectStore();
   const { t } = useI18n();
 
@@ -643,15 +639,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     startScreenOpen,
   });
 
-  const { exportSzdAction, exportBrowserBackupAction, exportSmfAction, exportMidi2Action } =
-    useProjectFileExports({
-      closeProjectMenu,
-      confirmLossAction,
-      downloadBlobFile,
-      opfsAvailable,
-      runAction,
-    });
-
   function importBrowserBackupAction(): void {
     closeProjectMenu();
     void runAction(async () => {
@@ -737,11 +724,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     onMidiImportChange,
     saveProjectAction,
     saveProjectAsAction,
-    exportSzdAction,
-    exportBrowserBackupAction,
     importBrowserBackupAction,
-    exportSmfAction,
-    exportMidi2Action,
     disposeProjectPersistence,
   };
 }

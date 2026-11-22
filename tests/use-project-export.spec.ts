@@ -5,8 +5,17 @@ import { ref } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { confirmDialog } from '@/composables/useDialogs';
 import { useProjectExport } from '@/composables/useProjectExport';
+import { createBrowserBackupWithReport } from '@/persistence/backup';
+import { gatherProjectBundleWithReport } from '@/persistence/bundle';
+import { downloadBrowserBackup, downloadSzd } from '@/persistence/local-file';
 import { saveMixerSnapshot } from '@/project/command/mixer-snapshots';
-import { addTrack } from '@/project/commands';
+import {
+  addTrack,
+  setAutomationLanePoints,
+  setClipCcLane,
+  setTrackMidiFx,
+  setTrackMute,
+} from '@/project/commands';
 import { DEFAULT_MIDI_FX_CONFIG } from '@/project/midi-fx';
 import {
   loadProjectDocument,
@@ -24,6 +33,19 @@ vi.mock('@/lib/wasm', async () => {
 
 vi.mock('@/composables/useDialogs', () => ({
   confirmDialog: vi.fn(),
+}));
+
+vi.mock('@/persistence/backup', () => ({
+  createBrowserBackupWithReport: vi.fn(),
+}));
+
+vi.mock('@/persistence/bundle', () => ({
+  gatherProjectBundleWithReport: vi.fn(),
+}));
+
+vi.mock('@/persistence/local-file', () => ({
+  downloadBrowserBackup: vi.fn(),
+  downloadSzd: vi.fn(),
 }));
 
 function makeDoc(kind: 'midi' | 'audio' = 'midi'): ProjectDocument {
@@ -69,9 +91,20 @@ function makeDoc(kind: 'midi' | 'audio' = 'midi'): ProjectDocument {
 function setup(loop = { enabled: false, startPpq: 0, endPpq: 0 }) {
   const downloadBlobFile = vi.fn();
   const closeProjectMenu = vi.fn();
+  const confirmLossAction = vi.fn(
+    (message: string, opts?: { danger?: boolean; confirmLabel?: string; title?: string }) =>
+      confirmDialog({
+        title: opts?.title,
+        message,
+        danger: opts?.danger ?? false,
+        confirmLabel: opts?.confirmLabel ?? 'Continue',
+      }),
+  );
   const projectExport = useProjectExport({
     closeProjectMenu,
+    confirmLossAction,
     downloadBlobFile,
+    opfsAvailable: true,
     loopEnabled: ref(loop.enabled),
     loopStartPpq: ref(loop.startPpq),
     loopEndPpq: ref(loop.endPpq),
@@ -79,7 +112,7 @@ function setup(loop = { enabled: false, startPpq: 0, endPpq: 0 }) {
       await action();
     },
   });
-  return { closeProjectMenu, downloadBlobFile, projectExport };
+  return { closeProjectMenu, confirmLossAction, downloadBlobFile, projectExport };
 }
 
 describe('useProjectExport', () => {
@@ -87,6 +120,18 @@ describe('useProjectExport', () => {
     setActivePinia(createPinia());
     useProjectStore().dispose();
     vi.mocked(confirmDialog).mockReset();
+    vi.mocked(downloadSzd).mockReset();
+    vi.mocked(downloadBrowserBackup).mockReset();
+    vi.mocked(gatherProjectBundleWithReport).mockReset();
+    vi.mocked(gatherProjectBundleWithReport).mockResolvedValue({
+      bundle: { assets: [], fonts: [] },
+      report: { complete: true, issues: [] },
+    });
+    vi.mocked(createBrowserBackupWithReport).mockReset();
+    vi.mocked(createBrowserBackupWithReport).mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      completeness: { complete: true, issues: [] },
+    });
   });
 
   it('reports an unavailable MusicXML export as the localized reason without a raw code', async () => {
@@ -97,10 +142,12 @@ describe('useProjectExport', () => {
       const errors: string[] = [];
       const projectExport = useProjectExport({
         closeProjectMenu: vi.fn(),
+        confirmLossAction: vi.fn(async () => true),
         downloadBlobFile: vi.fn(),
         loopEnabled: ref(false),
         loopStartPpq: ref(0),
         loopEndPpq: ref(0),
+        opfsAvailable: true,
         runAction: async (action) => {
           try {
             await action();
@@ -506,5 +553,99 @@ describe('useProjectExport', () => {
     expect(downloadBlobFile).toHaveBeenCalledTimes(1);
     const [, filename] = downloadBlobFile.mock.calls[0] as [Blob, string];
     expect(filename).toBe('Score Export.dawproject');
+  });
+
+  it('blocks incomplete portable exports until the user explicitly accepts the loss', async () => {
+    await useProjectStore().init();
+    const issue = {
+      kind: 'audio-asset' as const,
+      mediaId: 'missing-audio',
+      role: 'clip' as const,
+      reason: 'missing' as const,
+      trackId: 1,
+      clipId: 2,
+    };
+    vi.mocked(gatherProjectBundleWithReport).mockResolvedValue({
+      bundle: { assets: [], fonts: [] },
+      report: { complete: false, issues: [issue] },
+    });
+    vi.mocked(createBrowserBackupWithReport).mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      completeness: { complete: false, issues: [issue] },
+    });
+    const { confirmLossAction, projectExport } = setup();
+    confirmLossAction.mockResolvedValue(false);
+
+    projectExport.exportSzdAction();
+    await flushPromises();
+    projectExport.exportBrowserBackupAction();
+    await flushPromises();
+
+    expect(confirmLossAction).toHaveBeenCalledTimes(2);
+    expect(confirmLossAction.mock.calls[0][0]).toContain('missing-audio');
+    expect(downloadSzd).not.toHaveBeenCalled();
+    expect(downloadBrowserBackup).not.toHaveBeenCalled();
+  });
+
+  it('requires loss consent before exporting a MIDI 2.0 clip that omits expression data', async () => {
+    const store = useProjectStore();
+    await store.init();
+    setClipCcLane(store.clipId, 1, 0, [{ ppq: 0, value: 64 }]);
+    const { confirmLossAction, downloadBlobFile, projectExport } = setup();
+    confirmLossAction.mockResolvedValue(false);
+
+    projectExport.exportMidi2Action();
+    await flushPromises();
+
+    expect(confirmLossAction).toHaveBeenCalledWith(
+      expect.stringContaining('expression'),
+      expect.objectContaining({ confirmLabel: expect.any(String) }),
+    );
+    expect(downloadBlobFile).not.toHaveBeenCalled();
+  });
+
+  it('lists every SMF loss before writing the file', async () => {
+    const store = useProjectStore();
+    await store.init();
+    const trackId = store.tracks[0].id;
+    setTrackMidiFx(trackId, { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 });
+    setAutomationLanePoints(trackId, 'pan', [{ ppq: 0, value: 0.5, curve: 'linear' }]);
+    setTrackMute(trackId, true);
+    const { confirmLossAction, downloadBlobFile, projectExport } = setup();
+    confirmLossAction.mockResolvedValue(false);
+
+    projectExport.exportSmfAction();
+    await flushPromises();
+
+    expect(confirmLossAction).toHaveBeenCalledWith(
+      expect.stringMatching(/1 track mute.+1 MIDI FX transform.+1 automation lane/s),
+      expect.objectContaining({ title: 'SMF export limitations' }),
+    );
+    expect(downloadBlobFile).not.toHaveBeenCalled();
+  });
+
+  it('downloads a complete .szd export under the project name', async () => {
+    await useProjectStore().init();
+    const { confirmLossAction, projectExport } = setup();
+
+    projectExport.exportSzdAction();
+    await vi.waitFor(() => expect(downloadSzd).toHaveBeenCalledTimes(1));
+
+    const [name, bytes] = vi.mocked(downloadSzd).mock.calls[0];
+    expect(name).toBe(useProjectStore().projectName);
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes.length).toBeGreaterThan(0);
+    expect(confirmLossAction).not.toHaveBeenCalled();
+  });
+
+  it('downloads a complete browser backup under the app name', async () => {
+    await useProjectStore().init();
+    const { confirmLossAction, projectExport } = setup();
+
+    projectExport.exportBrowserBackupAction();
+    await vi.waitFor(() => expect(downloadBrowserBackup).toHaveBeenCalledTimes(1));
+
+    expect(downloadBrowserBackup).toHaveBeenCalledWith('sonare-studio', new Uint8Array([1, 2, 3]));
+    expect(confirmLossAction).not.toHaveBeenCalled();
   });
 });
