@@ -89,7 +89,6 @@ export const shellArrangement = {
       roleLow: 'Low',
       roleMid: 'Mid',
       roleMidHigh: 'Mid–high',
-      targetLabel: 'Write to',
       targetNew: 'New track',
       targetReplace: 'Replace: {name}',
       targetReplaceRange: 'Replace range: {name}',
@@ -420,7 +419,6 @@ export const shellArrangement = {
     sectionEmptyHint: 'No sections yet. Double-click here to add one, or use Detect / From notes.',
     extractMelody: 'To MIDI',
     extractMelodyTitle: 'Transcribe the active audio clip to a new MIDI clip',
-    noMelodyDetected: 'No melody detected in the active clip.',
     transcribe: {
       title: 'Transcribe audio to MIDI',
       description: 'Choose how the active audio clip should be read into a new MIDI clip.',

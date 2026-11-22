@@ -403,7 +403,6 @@ export const shellEditors = {
       confirmTitle: 'クリップノートを置換',
       confirmMessage:
         'このパターンを適用すると既存のクリップノート {count} 個が削除されます。続けますか？',
-      confirmApply: 'ノートを置換',
       cancelled: 'パターンの適用をキャンセルしました。',
     },
     params: {

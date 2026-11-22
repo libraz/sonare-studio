@@ -350,7 +350,6 @@ export const shellSample = {
     surfaceBank: 'バンク',
     surfaceBankPrev: '前のバンク',
     surfaceBankNext: '次のバンク',
-    surfaceBankHome: '先頭のバンク',
     surfaceBankRange: '全 {total} トラック中 {from}〜{to}',
     surfaceNote:
       'サーフェスのポートは楽器入力から除外されるため、ボタン操作で音が鳴ることはありません。',

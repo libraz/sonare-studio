@@ -1,8 +1,6 @@
 /** Modal dialogs: prompts, confirmations and the export sheets. */
 export const dialogs = {
   prompts: {
-    restoreSessionTitle: 'Restore session',
-    restoreSessionMessage: 'Restore the autosaved project from your last session?',
     restore: 'Restore',
     unsavedChangesTitle: 'Unsaved changes',
     discardUnsavedMessage: 'Discard unsaved changes in the current project?',
@@ -148,9 +146,6 @@ export const dialogs = {
     workerError: 'The export worker stopped unexpectedly. Please try exporting again.',
     masteringBufferLimit:
       'This export is too long for the selected mastering chain ({duration}s; maximum {limit}s). Choose a shorter range or turn off the master chain and export without mastering.',
-    automationWarningTitle: 'Automation export limitation',
-    automationWarningMessage:
-      'Some automation cannot vary during offline export and will be evaluated at the render start. Continue with these limitations?',
     automationWarningContinue: 'Export anyway',
     preflightWarningTitle: 'Audio export limitations',
     preflightWarningMessage: 'The export has known fidelity limitations. Continue?',

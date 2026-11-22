@@ -1,8 +1,6 @@
 /** Modal dialogs: prompts, confirmations and the export sheets. */
 export const dialogs = {
   prompts: {
-    restoreSessionTitle: 'セッションを復元',
-    restoreSessionMessage: '前回セッションの自動保存プロジェクトを復元しますか？',
     restore: '復元',
     unsavedChangesTitle: '未保存の変更',
     discardUnsavedMessage: '現在のプロジェクトの未保存の変更を破棄しますか？',
@@ -150,9 +148,6 @@ export const dialogs = {
     workerError: '書き出し処理が予期せず停止しました。もう一度書き出してください。',
     masteringBufferLimit:
       '選択したマスタリングチェーンでは書き出し範囲が長すぎます（{duration}秒、上限{limit}秒）。範囲を短くするか、「マスターチェーンを適用」をオフにしてマスタリングなしで書き出してください。',
-    automationWarningTitle: 'オートメーション書き出しの制限',
-    automationWarningMessage:
-      '一部のオートメーションはオフライン書き出し中に変化できず、レンダー開始位置の値で固定されます。この制限のまま続行しますか？',
     automationWarningContinue: '制限付きで書き出す',
     preflightWarningTitle: 'オーディオ書き出しの制限',
     preflightWarningMessage: '書き出し品質に影響する既知の制限があります。このまま続行しますか？',

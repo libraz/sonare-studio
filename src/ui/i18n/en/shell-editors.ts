@@ -402,7 +402,6 @@ export const shellEditors = {
     replace: {
       confirmTitle: 'Replace clip notes',
       confirmMessage: 'Applying this pattern will remove {count} existing clip notes. Continue?',
-      confirmApply: 'Replace notes',
       cancelled: 'Pattern apply was cancelled.',
     },
     params: {

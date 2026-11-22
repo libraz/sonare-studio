@@ -357,7 +357,6 @@ export const shellSample = {
     surfaceBank: 'Bank',
     surfaceBankPrev: 'Previous bank',
     surfaceBankNext: 'Next bank',
-    surfaceBankHome: 'First bank',
     surfaceBankRange: 'Tracks {from}-{to} of {total}',
     surfaceNote:
       'A surface port is kept out of the instrument input, so its buttons never play notes.',

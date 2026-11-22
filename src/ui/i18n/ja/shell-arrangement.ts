@@ -88,7 +88,6 @@ export const shellArrangement = {
       roleLow: '低音域',
       roleMid: '中音域',
       roleMidHigh: '中〜高音域',
-      targetLabel: '書き込み先',
       targetNew: '新規トラック',
       targetReplace: '置き換え: {name}',
       targetReplaceRange: '区間を置き換え: {name}',
@@ -418,7 +417,6 @@ export const shellArrangement = {
     duplicateSection: 'セクションを複製',
     extractMelody: 'MIDI化',
     extractMelodyTitle: 'アクティブなオーディオクリップを新規 MIDI クリップへ採譜',
-    noMelodyDetected: 'アクティブクリップからメロディを検出できませんでした。',
     transcribe: {
       title: 'オーディオを MIDI に採譜',
       description: 'アクティブなオーディオクリップを新規 MIDI クリップへ変換します。',
