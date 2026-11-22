@@ -23,10 +23,10 @@ export const DEFAULT_AUDITION_NOTE = 60;
 export const DEFAULT_AUDITION_VELOCITY = 100;
 
 /** Default audition note length in PPQ (a quarter note). */
-export const DEFAULT_AUDITION_DURATION_PPQ = 1;
+const DEFAULT_AUDITION_DURATION_PPQ = 1;
 
 /** Peak the audition playback is normalized to (-6 dBFS). */
-export const DEFAULT_AUDITION_TARGET_PEAK = 0.5;
+const DEFAULT_AUDITION_TARGET_PEAK = 0.5;
 
 /** Render sample rate when none is supplied. */
 const DEFAULT_AUDITION_SAMPLE_RATE = 48000;

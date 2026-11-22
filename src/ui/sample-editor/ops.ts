@@ -56,11 +56,6 @@ export function resolveRange(
   return clampRange(range, frames);
 }
 
-/** Converts decibels to a linear gain factor (0 dB = 1.0). */
-export function dbToGain(db: number): number {
-  return dbToLinear(db);
-}
-
 /** Copies every channel (the shared starting point of all in-range edits). */
 function copyChannels(channels: ReadonlyArray<Float32Array>): Float32Array[] {
   return channels.map((channel) => new Float32Array(channel));
@@ -104,7 +99,7 @@ export function applyGainDb(
   }
   assertPlanar(channels);
   const { startFrame, endFrame } = resolveRange(channels, range);
-  const gain = dbToGain(gainDb);
+  const gain = dbToLinear(gainDb);
   const out = copyChannels(channels);
   for (const channel of out) {
     for (let i = startFrame; i < endFrame; i++) channel[i] *= gain;
@@ -123,7 +118,7 @@ export function applyGainDbInPlace(
   }
   assertPlanar(channels);
   const { startFrame, endFrame } = resolveRange(channels, range);
-  const gain = dbToGain(gainDb);
+  const gain = dbToLinear(gainDb);
   for (const channel of channels) {
     for (let i = startFrame; i < endFrame; i++) channel[i] *= gain;
   }
@@ -154,7 +149,7 @@ export function normalizeToDb(
   const peak = peakAmplitude(channels, resolved);
   const out = copyChannels(channels);
   if (peak === 0) return out;
-  const gain = dbToGain(targetDb) / peak;
+  const gain = dbToLinear(targetDb) / peak;
   for (const channel of out) {
     for (let i = resolved.startFrame; i < resolved.endFrame; i++) channel[i] *= gain;
   }
@@ -174,7 +169,7 @@ export function normalizeToDbInPlace(
   const resolved = resolveRange(channels, range);
   const peak = peakAmplitude(channels, resolved);
   if (peak === 0) return channels;
-  const gain = dbToGain(targetDb) / peak;
+  const gain = dbToLinear(targetDb) / peak;
   for (const channel of channels) {
     for (let i = resolved.startFrame; i < resolved.endFrame; i++) channel[i] *= gain;
   }

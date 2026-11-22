@@ -645,9 +645,7 @@ export function spectralEditRange(
   if (typeof fn !== 'function') {
     throw new Error('Spectral edit is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   if (!Number.isFinite(options.lowHz) || options.lowHz < 0) {
     throw new RangeError(`lowHz must be finite and >= 0, got ${options.lowHz}`);
   }
@@ -700,7 +698,7 @@ export function timeStretchRange(
   if (typeof fn !== 'function') {
     throw new Error('Time stretch is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(rate) || rate <= 0) {
+  if (!finitePositive(rate)) {
     throw new RangeError(`rate must be > 0, got ${rate}`);
   }
   return applyToRange(channels, sampleRate, range, (segment) =>
@@ -733,7 +731,7 @@ export function noteStretchRange(
   if (typeof fn !== 'function') {
     throw new Error('Note stretch is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(rate) || rate <= 0) {
+  if (!finitePositive(rate)) {
     throw new RangeError(`rate must be > 0, got ${rate}`);
   }
   const resolved = resolveNonEmptyRange(channels, range);
@@ -1043,9 +1041,7 @@ export function detectOnsetFrames(
   if (typeof fn !== 'function') {
     throw new Error('Onset detection is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   const mono = downmixToMono(channels);
   return onsetSecondsToFrames(fn(mono, sampleRate), sampleRate, mono.length);
 }
@@ -1124,9 +1120,7 @@ export function detectNoteRegions(
   ) {
     throw new Error('Note detection is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   const mono = downmixToMono(channels);
   const contour = f0Contour(ops, mono, sampleRate);
   const f0 = contour.f0;
@@ -1190,9 +1184,7 @@ export function matchEqToReference(
   if (typeof fn !== 'function') {
     throw new Error('Match EQ is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   if (reference.length === 0) {
     throw new RangeError('Reference audio is empty');
   }
@@ -1257,9 +1249,7 @@ export function analyzeMatchEqToReference(
   if (typeof fn !== 'function') {
     throw new Error('Match EQ analysis is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   if (reference.length === 0) {
     throw new RangeError('Reference audio is empty');
   }
@@ -1342,9 +1332,7 @@ export function roomMorphChannels(
   if (typeof fn !== 'function') {
     throw new Error('Room reverb is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   if (channels.length === 0) {
     throw new RangeError('Cannot process an empty channel list');
   }
@@ -1400,9 +1388,7 @@ export function synthesizeRirChannels(
   if (typeof fn !== 'function') {
     throw new Error('RIR synthesis is unavailable in this libsonare build');
   }
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   const result = fn({
     sampleRate,
     lengthM: preset.lengthM,
@@ -1468,14 +1454,18 @@ function finitePositive(value: number): boolean {
   return Number.isFinite(value) && value > 0;
 }
 
+function assertSampleRate(sampleRate: number): void {
+  if (!finitePositive(sampleRate)) {
+    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
+  }
+}
+
 function monoSelection(
   channels: ReadonlyArray<Float32Array>,
   sampleRate: number,
   range?: SampleRange | null,
 ): Float32Array {
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
-    throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
-  }
+  assertSampleRate(sampleRate);
   const resolved = resolveRange(channels, range);
   if (resolved.endFrame <= resolved.startFrame) {
     throw new RangeError('Cannot analyze an empty range');

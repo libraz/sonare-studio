@@ -17,7 +17,6 @@ import {
   type ProcessorControl,
   type ProcessorParamInfo,
   processorControls,
-  processorControlValueFromMidi,
 } from '@/project/processor-controls';
 import { getWasmModule } from '@/project/store';
 
@@ -80,12 +79,4 @@ export function clampControlValue(control: MasteringControl, value: number): num
     throw new RangeError(`Control "${control.id}" is not numeric`);
   }
   return clamp(value, control.min, control.max);
-}
-
-/** Maps a mastering control's MIDI sweep into its native descriptor value. */
-export function masteringControlValueFromMidi(
-  control: MasteringControl,
-  midiValue: number,
-): number | boolean | string {
-  return processorControlValueFromMidi(control, midiValue);
 }

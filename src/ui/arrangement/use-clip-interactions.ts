@@ -468,8 +468,9 @@ export function useClipInteractions(options: UseClipInteractionsOptions): ClipIn
 
   /** Snapshots the selected group only when the pressed clip belongs to it. */
   function moveOrigins(clip: ArrangeClip, duplicate: boolean): ArrangeClip[] {
-    if (duplicate || !options.getSelectedClipIds?.().has(clip.id)) return [{ ...clip }];
-    const selected = options.getSelectedClipIds();
+    if (duplicate) return [{ ...clip }];
+    const selected = options.getSelectedClipIds?.();
+    if (!selected?.has(clip.id)) return [{ ...clip }];
     const origins = options
       .getClips()
       .filter((candidate) => selected.has(candidate.id))

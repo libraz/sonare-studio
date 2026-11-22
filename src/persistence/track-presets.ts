@@ -55,7 +55,7 @@ export function saveTrackChannelPreset(preset: TrackChannelPreset): Promise<void
 }
 
 /** Saves one preset while the caller owns the persistence mutation lock. */
-export async function saveTrackChannelPresetUnlocked(preset: TrackChannelPreset): Promise<void> {
+async function saveTrackChannelPresetUnlocked(preset: TrackChannelPreset): Promise<void> {
   const normalized = normalizeTrackChannelPreset(preset);
   const existing = await listTrackChannelPresets();
   await writeTrackChannelPresets([
@@ -70,7 +70,7 @@ export function deleteTrackChannelPreset(name: string): Promise<void> {
 }
 
 /** Deletes one preset while the caller owns the persistence mutation lock. */
-export async function deleteTrackChannelPresetUnlocked(name: string): Promise<void> {
+async function deleteTrackChannelPresetUnlocked(name: string): Promise<void> {
   const normalized = normalizeTrackChannelPresetName(name);
   const existing = await listTrackChannelPresets();
   if (!existing.some((entry) => entry.name === normalized)) return;

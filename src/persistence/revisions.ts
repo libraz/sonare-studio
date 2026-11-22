@@ -32,7 +32,7 @@ const INDEX_FILE = 'index.json';
 export const MAX_REVISIONS_PER_PROJECT = 20;
 
 /** Longest accepted revision label. */
-export const MAX_REVISION_LABEL_LENGTH = 60;
+const MAX_REVISION_LABEL_LENGTH = 60;
 
 /** One saved revision. */
 export interface ProjectRevision {
@@ -285,7 +285,7 @@ export function saveProjectRevision(
 }
 
 /** Saves a labelled revision while the caller owns the mutation lock. */
-export async function saveProjectRevisionUnlocked(
+async function saveProjectRevisionUnlocked(
   projectName: string,
   label: string,
   bytes: Uint8Array,
@@ -377,7 +377,7 @@ export function deleteProjectRevision(slot: string): Promise<void> {
 }
 
 /** Deletes one revision while the caller owns the mutation lock. */
-export async function deleteProjectRevisionUnlocked(slot: string): Promise<void> {
+async function deleteProjectRevisionUnlocked(slot: string): Promise<void> {
   const entries = await readIndex();
   if (!entries.some((entry) => entry.slot === slot)) return;
   const existingBytes = await readOptionalProjectSlot(slot);
@@ -415,7 +415,7 @@ export function deleteProjectRevisions(projectName: string): Promise<number> {
 }
 
 /** Drops every revision while the caller owns the mutation lock. */
-export async function deleteProjectRevisionsUnlocked(projectName: string): Promise<number> {
+async function deleteProjectRevisionsUnlocked(projectName: string): Promise<number> {
   const project = sanitizeProjectName(projectName);
   const entries = await readIndex();
   const mine = entries.filter((entry) => entry.projectName === project);

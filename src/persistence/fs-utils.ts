@@ -24,7 +24,7 @@ export function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /** True when an OPFS write ran out of origin storage quota. */
-export function isQuotaExceededError(error: unknown): boolean {
+function isQuotaExceededError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
     error !== null &&

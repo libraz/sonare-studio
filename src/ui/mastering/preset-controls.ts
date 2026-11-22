@@ -98,10 +98,6 @@ export const PRESET_CONTROL_DESCRIPTORS = [
   },
 ] as const satisfies readonly PresetControlDescriptor[];
 
-export const PRESET_CONTROL_KEYS: readonly PresetControlKey[] = PRESET_CONTROL_DESCRIPTORS.map(
-  ({ key }) => key,
-);
-
 const FLOAT32_MAX = 3.4028234663852886e38;
 
 const DEFAULT_PRESET_CONTROL_VALUES: Readonly<Record<PresetControlKey, PresetControlValue>> = {

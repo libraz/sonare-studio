@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { dbToLinear } from '@/lib/db';
 import {
   applyGainDb,
   applyGainDbInPlace,
   clampRange,
   cutCrossfadeFrames,
-  dbToGain,
   deleteRange,
   duplicateRange,
   fadeInLinear,
@@ -74,12 +74,12 @@ describe('range helpers', () => {
   });
 });
 
-describe('dbToGain', () => {
+describe('dbToLinear', () => {
   it('maps decibels to linear gain', () => {
-    expect(dbToGain(0)).toBe(1);
-    expect(dbToGain(20)).toBeCloseTo(10, 10);
-    expect(dbToGain(-20)).toBeCloseTo(0.1, 10);
-    expect(dbToGain(-6)).toBeCloseTo(0.5012, 3);
+    expect(dbToLinear(0)).toBe(1);
+    expect(dbToLinear(20)).toBeCloseTo(10, 10);
+    expect(dbToLinear(-20)).toBeCloseTo(0.1, 10);
+    expect(dbToLinear(-6)).toBeCloseTo(0.5012, 3);
   });
 });
 

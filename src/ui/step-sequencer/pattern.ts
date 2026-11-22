@@ -26,6 +26,9 @@ export const STEP_COUNTS = [8, 16, 32] as const;
 /** One of the selectable pattern lengths. */
 export type StepCount = (typeof STEP_COUNTS)[number];
 
+/** Pattern length of a newly created pattern. */
+export const DEFAULT_STEP_COUNT: StepCount = 16;
+
 /** Row labeling / pitch layout mode. */
 export type SequencerMode = 'drum' | 'pitch';
 
@@ -126,7 +129,7 @@ function createRow(pitch: number, name: string, stepCount: number): PatternRow {
  * @param resolution Step rate (default 1/16).
  */
 export function createDrumPattern(
-  stepCount: StepCount = 16,
+  stepCount: StepCount = DEFAULT_STEP_COUNT,
   resolution: StepResolution = '1/16',
 ): StepPattern {
   return {
@@ -150,7 +153,7 @@ export function createDrumPattern(
  */
 export function createPitchPattern(
   rootPitch = 48,
-  stepCount: StepCount = 16,
+  stepCount: StepCount = DEFAULT_STEP_COUNT,
   resolution: StepResolution = '1/16',
 ): StepPattern {
   const root = clamp(Math.round(rootPitch), 0, 127 - (PITCH_MODE_ROW_COUNT - 1));

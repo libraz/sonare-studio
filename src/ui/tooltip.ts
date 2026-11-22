@@ -75,6 +75,9 @@ function isEmpty(content: TooltipContent): boolean {
 /** Delay before a hovered/focused tooltip appears, in ms. */
 const SHOW_DELAY_MS = 400;
 
+/** Minimum distance between the chip and the viewport edge. */
+const VIEWPORT_MARGIN_PX = 4;
+
 interface TooltipState {
   content: TooltipContent;
   /** True when the directive set aria-label itself (so it can clean it up). */
@@ -116,16 +119,20 @@ function reposition(el: HTMLElement, placement: 'top' | 'end'): void {
   const gap = 8;
   if (placement === 'end') {
     let left = rect.right + gap;
-    if (left + box.width > window.innerWidth - 4) left = rect.left - box.width - gap;
+    if (left + box.width > window.innerWidth - VIEWPORT_MARGIN_PX)
+      left = rect.left - box.width - gap;
     const top = rect.top + rect.height / 2 - box.height / 2;
-    node.style.top = `${Math.round(Math.max(4, Math.min(top, window.innerHeight - box.height - 4)))}px`;
-    node.style.left = `${Math.round(Math.max(4, left))}px`;
+    node.style.top = `${Math.round(Math.max(VIEWPORT_MARGIN_PX, Math.min(top, window.innerHeight - box.height - VIEWPORT_MARGIN_PX)))}px`;
+    node.style.left = `${Math.round(Math.max(VIEWPORT_MARGIN_PX, left))}px`;
     return;
   }
   let top = rect.top - box.height - gap;
-  if (top < 4) top = rect.bottom + gap;
+  if (top < VIEWPORT_MARGIN_PX) top = rect.bottom + gap;
   let left = rect.left + rect.width / 2 - box.width / 2;
-  left = Math.max(4, Math.min(left, window.innerWidth - box.width - 4));
+  left = Math.max(
+    VIEWPORT_MARGIN_PX,
+    Math.min(left, window.innerWidth - box.width - VIEWPORT_MARGIN_PX),
+  );
   node.style.top = `${Math.round(top)}px`;
   node.style.left = `${Math.round(left)}px`;
 }

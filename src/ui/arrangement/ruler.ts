@@ -76,11 +76,6 @@ export function barLengthPpq(segment: MeterSegment): number {
   return meterBarLengthPpq(segment);
 }
 
-/** Length of one beat of a meter segment in PPQ. */
-export function beatLengthPpq(segment: MeterSegment): number {
-  return meterBeatLengthPpq(segment);
-}
-
 /**
  * Normalizes a meter map: drops invalid segments, sorts by start, keeps the
  * last segment at duplicate starts and guarantees coverage from PPQ 0 by
@@ -159,7 +154,7 @@ export function rulerTicks(
     if (segment.startPpq >= endPpq) break;
     const segmentEnd = segments[i + 1]?.startPpq ?? Number.POSITIVE_INFINITY;
     const bar = barLengthPpq(segment);
-    const beat = beatLengthPpq(segment);
+    const beat = meterBeatLengthPpq(segment);
     const visibleStart = Math.max(segment.startPpq, startPpq);
     const visibleEnd = Math.min(segmentEnd, endPpq);
     if (visibleStart < visibleEnd) {

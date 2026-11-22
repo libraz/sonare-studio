@@ -82,6 +82,9 @@ export interface PatchFieldSpec {
   integer?: boolean;
 }
 
+/** Upper bound of every millisecond envelope field. */
+const MAX_ENVELOPE_MS = 5000;
+
 /**
  * Numeric patch fields by editor section. Ranges follow the documented wrapper
  * semantics where declared ([0,1] amounts, unison [1,7], polyphony [1,64]) and
@@ -212,7 +215,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Delay',
     section: 'amp',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -222,7 +225,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Attack',
     section: 'amp',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -232,7 +235,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Hold',
     section: 'amp',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -242,7 +245,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Decay',
     section: 'amp',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -261,7 +264,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Release',
     section: 'amp',
     min: 1,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -271,7 +274,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Delay',
     section: 'filter-env',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -281,7 +284,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Attack',
     section: 'filter-env',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -291,7 +294,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Hold',
     section: 'filter-env',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -301,7 +304,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Decay',
     section: 'filter-env',
     min: 0,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
@@ -320,7 +323,7 @@ export const PATCH_FIELD_SPECS: ReadonlyArray<PatchFieldSpec> = [
     label: 'Release',
     section: 'filter-env',
     min: 1,
-    max: 5000,
+    max: MAX_ENVELOPE_MS,
     step: 1,
     unit: 'ms',
   },
