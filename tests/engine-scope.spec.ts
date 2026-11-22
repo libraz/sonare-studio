@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createScopeBridge } from '@/engine/scope';
-import type { SonareWorkletScopeSnapshot } from '@/wasm/worklet.js';
+import type { WorkletScopeSnapshot } from '@/wasm/worklet.js';
 
 /** One scope snapshot with overridable fields. */
-function makeSnapshot(
-  overrides: Partial<SonareWorkletScopeSnapshot> = {},
-): SonareWorkletScopeSnapshot {
+function makeSnapshot(overrides: Partial<WorkletScopeSnapshot> = {}): WorkletScopeSnapshot {
   return {
     type: 'scope',
     targetId: 0,
@@ -22,15 +20,15 @@ function makeHandle(
   capabilities: { mode?: 'sab' | 'postMessage'; runtimeTarget?: 'embind' | 'sonare-rt' } = {},
 ): {
   handle: EngineHandle;
-  emit: (snapshot: SonareWorkletScopeSnapshot) => void;
+  emit: (snapshot: WorkletScopeSnapshot) => void;
   pollScope: ReturnType<typeof vi.fn>;
   onScope: ReturnType<typeof vi.fn>;
   unsubscribe: ReturnType<typeof vi.fn>;
 } {
-  let captured: ((snapshot: SonareWorkletScopeSnapshot) => void) | null = null;
+  let captured: ((snapshot: WorkletScopeSnapshot) => void) | null = null;
   const unsubscribe = vi.fn();
-  const pollScope = vi.fn(() => [] as SonareWorkletScopeSnapshot[]);
-  const onScope = vi.fn((cb: (snapshot: SonareWorkletScopeSnapshot) => void) => {
+  const pollScope = vi.fn(() => [] as WorkletScopeSnapshot[]);
+  const onScope = vi.fn((cb: (snapshot: WorkletScopeSnapshot) => void) => {
     captured = cb;
     return unsubscribe;
   });

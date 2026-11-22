@@ -6,13 +6,13 @@ import {
   addMixerBus,
   addNote,
   addVcaGroup,
+  applyMasteringPresetWithOverrides,
   canUndo,
   clearHistory,
   mixerBusStripTarget,
   setInsertParam,
   setMasteringParam,
   setMasteringPreset,
-  setMasteringPresetOverride,
   setMixerBusGain,
   setSend,
   setStripEq,
@@ -180,24 +180,22 @@ describe('mixer drag gestures patch the mirror in place', () => {
   });
 
   it('patches mastering preset, override and param drags in place', () => {
-    const index = addMasteringProcessor('gain.gain');
+    const index = addMasteringProcessor('utility.gain');
+    applyMasteringPresetWithOverrides('pop', { loudness: { targetLufs: -14 } });
     clearHistory();
     dragKeepsIdentity(
       [
         () => setMasteringPreset('streaming', { commit: false }),
-        () => setMasteringPresetOverride('loudness.targetLufs', -16, { commit: false }),
-        () => setMasteringPresetOverride('loudness.targetLufs', -14, { commit: false }),
         () => setMasteringParam(index, 'gainDb', -3, { commit: false }),
       ],
       () => setMasteringParam(index, 'gainDb', -6),
     );
     expect(store.mixer.masteringChain?.preset).toBe('streaming');
-    expect(store.mixer.masteringChain?.presetOverrides?.['loudness.targetLufs']).toBe(-14);
+    expect(store.mixer.masteringChain?.presetOverrides?.loudness?.targetLufs).toBe(-14);
     expect(store.mixer.masteringChain?.processors[index].params.gainDb).toBe(-6);
     const patched = snapshot();
     store.refresh();
     expect(snapshot()).toBe(patched);
-    expect(undo()).toBe(true);
     expect(undo()).toBe(true);
     expect(undo()).toBe(true);
     expect(canUndo()).toBe(false);

@@ -122,7 +122,7 @@ async function placeSeparatedStems(
     const startPpq = clip.startPpq;
     const lengthPpq = clip.lengthPpq;
     const gain = clip.gain;
-    const sourceCount = project.sourceCount();
+    const sourceCount = project.sources().length;
     const plans = saved.map(({ stem, meta }) => {
       const known = getAudioSourceId(meta.id);
       const sourceId =
@@ -162,7 +162,7 @@ async function placeSeparatedStems(
             ...(sourceId === undefined ? { sourceUri: audioAssetUri(meta.id) } : {}),
           }),
         );
-        if (sourceId === undefined) setAudioSourceId(meta.id, project.sourceCount());
+        if (sourceId === undefined) setAudioSourceId(meta.id, project.sources().length);
         else edit(1, () => project.setClipSource(newClipId, sourceId));
         store.clips = [
           ...store.clips,

@@ -29,7 +29,7 @@ vi.mock('@/lib/wasm', async () => {
 /** Shape of the fake Project document this spec reads back. */
 interface FakeDoc {
   tracks: Array<{ id: number; kind: number; name: string }>;
-  clips: Array<{ id: number; track_id: number; source_id: number; length_ppq: number }>;
+  clips: Array<{ id: number; trackId: number; sourceId: number; lengthPpq: number }>;
 }
 
 function readDoc(): FakeDoc {
@@ -37,14 +37,17 @@ function readDoc(): FakeDoc {
 }
 
 /** Reads the metadata strings the Project stores for a clip's audio source. */
-function sourceMetadata(clipId: number): { contentHash: string; externalStemRole: string } {
-  const sourceId = readDoc().clips.find((clip) => clip.id === clipId)?.source_id ?? 0;
-  const source = (
-    getProject() as unknown as {
-      sourceByIndex(index: number): { contentHash: string; externalStemRole: string };
-    }
-  ).sourceByIndex(sourceId - 1);
-  return { contentHash: source.contentHash, externalStemRole: source.externalStemRole };
+function sourceMetadata(clipId: number): { contentHash?: string; externalStemRole?: string } {
+  const sourceId = readDoc().clips.find((clip) => clip.id === clipId)?.sourceId ?? 0;
+  const source = getProject()
+    .sources()
+    .find((entry) => entry.id === sourceId);
+  return {
+    ...(source?.contentHash !== undefined ? { contentHash: source.contentHash } : {}),
+    ...(source?.externalStemRole !== undefined
+      ? { externalStemRole: source.externalStemRole }
+      : {}),
+  };
 }
 
 /** One decoded mono stem, four frames at 4 Hz (= 1 s = 2 PPQ at 120 BPM). */
@@ -150,7 +153,7 @@ describe('importExternalStems', () => {
   it('undoes the whole import in one step, native project included', async () => {
     const baselineTracks = readDoc().tracks.length;
     const baselineClips = readDoc().clips.length;
-    const baselineSources = getProject().sourceCount();
+    const baselineSources = getProject().sources().length;
     const mirrorTracks = store.tracks.length;
     const mirrorClips = store.clips.length;
     clearHistory();
@@ -168,7 +171,7 @@ describe('importExternalStems', () => {
     // to its pre-import track, clip and source counts.
     expect(readDoc().tracks).toHaveLength(baselineTracks);
     expect(readDoc().clips).toHaveLength(baselineClips);
-    expect(getProject().sourceCount()).toBe(baselineSources);
+    expect(getProject().sources().length).toBe(baselineSources);
     expect(store.tracks).toHaveLength(mirrorTracks);
     expect(store.clips).toHaveLength(mirrorClips);
     expect(undo()).toBe(false);
@@ -257,7 +260,7 @@ describe('external stem provenance persistence', () => {
     expect(audioClips).toHaveLength(1);
     expect(audioClips[0].externalStemRole).toBeUndefined();
     expect(audioClips[0].contentHash).toBeUndefined();
-    expect(sourceMetadata(audioClips[0].id)).toEqual({ contentHash: '', externalStemRole: '' });
+    expect(sourceMetadata(audioClips[0].id)).toEqual({});
     expect(serializeProject()).toEqual(doc);
   });
 
@@ -276,6 +279,6 @@ describe('external stem provenance persistence', () => {
 
     const audioClips = store.clips.filter((clip) => clip.kind === 'audio');
     expect(audioClips[0].externalStemRole).toBeUndefined();
-    expect(sourceMetadata(audioClips[0].id).externalStemRole).toBe('');
+    expect(sourceMetadata(audioClips[0].id).externalStemRole).toBeUndefined();
   });
 });

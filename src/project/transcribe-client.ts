@@ -51,17 +51,17 @@ function isFiniteNumber(value: unknown): value is number {
 function validEvent(value: unknown): value is ProjectMidiEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Record<string, unknown>;
-  const data0 = event.data0;
-  const data1 = event.data1;
+  const word0 = event.word0;
+  const word1 = event.word1;
   return (
     isFiniteNumber(event.ppq) &&
     event.ppq >= 0 &&
-    isFiniteNumber(data0) &&
-    Number.isInteger(data0) &&
-    data0 >= 0 &&
-    data0 <= 0xffffffff &&
-    (event.data1 === undefined ||
-      (isFiniteNumber(data1) && Number.isInteger(data1) && data1 >= 0 && data1 <= 0xffffffff))
+    isFiniteNumber(word0) &&
+    Number.isInteger(word0) &&
+    word0 >= 0 &&
+    word0 <= 0xffffffff &&
+    (event.word1 === undefined ||
+      (isFiniteNumber(word1) && Number.isInteger(word1) && word1 >= 0 && word1 <= 0xffffffff))
   );
 }
 
@@ -81,7 +81,7 @@ function validResponse(
     noteCount * 2 === response.events.length &&
     isFiniteNumber(response.tempoBpm) &&
     response.tempoBpm > 0 &&
-    isFiniteNumber(response.tuning)
+    isFiniteNumber(response.tuningCents)
   );
 }
 
@@ -143,7 +143,7 @@ export function transcribeAudioInWorker(
           events: response.events,
           noteCount: response.noteCount,
           tempoBpm: response.tempoBpm,
-          tuning: response.tuning,
+          tuningCents: response.tuningCents,
         },
       });
     };

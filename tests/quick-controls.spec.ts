@@ -49,7 +49,7 @@ describe('quick controls', () => {
     it('resolves preset base values through the resolver seam', () => {
       const resolvePresetPatch = vi.fn(() => ({ cutoffHz: 1234, gain: 0.5 }));
       const controls = listQuickControls({ type: 'instrument', trackId }, { resolvePresetPatch });
-      expect(resolvePresetPatch).toHaveBeenCalledWith('acoustic-piano');
+      expect(resolvePresetPatch).toHaveBeenCalledWith('acousticPiano');
       expect(controls.find((c) => c.id === 'cutoffHz')?.value).toBe(1234);
       expect(controls.find((c) => c.id === 'gain')?.value).toBe(0.5);
       // Unresolved fields fall back to the documented defaults.
@@ -59,11 +59,11 @@ describe('quick controls', () => {
     it('prefers explicit patch fields over the preset base', () => {
       setTrackInstrument(trackId, {
         kind: 'synth-patch',
-        patch: { preset: 'saw-lead', cutoffHz: 444 },
+        patch: { preset: 'sawLead', cutoffHz: 444 },
       });
       const resolvePresetPatch = vi.fn(() => ({ cutoffHz: 9999, drive: 0.9 }));
       const controls = listQuickControls({ type: 'instrument', trackId }, { resolvePresetPatch });
-      expect(resolvePresetPatch).toHaveBeenCalledWith('saw-lead');
+      expect(resolvePresetPatch).toHaveBeenCalledWith('sawLead');
       expect(controls.find((c) => c.id === 'cutoffHz')?.value).toBe(444);
       expect(controls.find((c) => c.id === 'drive')?.value).toBe(0.9);
     });
@@ -71,7 +71,7 @@ describe('quick controls', () => {
     it('displays a legacy epsilon-encoded zero sustain as zero', () => {
       setTrackInstrument(trackId, {
         kind: 'synth-patch',
-        patch: { preset: 'saw-lead', ampSustain: 0.0001 },
+        patch: { preset: 'sawLead', ampSustain: 0.0001 },
       });
       const controls = listQuickControls(
         { type: 'instrument', trackId },
@@ -81,7 +81,7 @@ describe('quick controls', () => {
     });
 
     it('prioritizes amp and body controls for guitar and bass presets', () => {
-      setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'electric-guitar' });
+      setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'electricGuitar' });
       const controls = listQuickControls(
         { type: 'instrument', trackId },
         { resolvePresetPatch: () => ({ bodyMix: 0.45, busDrive: 0.25, gain: 0.7 }) },
@@ -221,12 +221,12 @@ describe('quick controls', () => {
     it('keeps amp realtime parameters eligible for QuickControls', () => {
       expect(
         isAmpConstructionOnlyParam('saturation.ampSim', 'biasShift', [
-          { name: 'biasShift', id: 15 },
+          { name: 'biasShift', type: 'number', id: 15 },
         ]),
       ).toBe(false);
       expect(
         isAmpConstructionOnlyParam('saturation.ampSim', 'micDistanceCm', [
-          { name: 'micDistanceCm', id: null },
+          { name: 'micDistanceCm', type: 'number' },
         ]),
       ).toBe(true);
     });
@@ -275,8 +275,6 @@ describe('quick controls', () => {
               name: 'rateHz',
               type: 'number',
               unit: 'Hz',
-              min: null,
-              max: null,
               default: 0.8,
               uiMin: 0,
               uiMax: 10,
@@ -342,7 +340,7 @@ describe('quick controls', () => {
       setQuickControl({ type: 'instrument', trackId }, 'cutoffHz', 800);
       expect(store.tracks[0].instrument).toEqual({
         kind: 'synth-patch',
-        patch: { preset: 'acoustic-piano', cutoffHz: 800 },
+        patch: { preset: 'acousticPiano', cutoffHz: 800 },
       });
     });
 
@@ -359,7 +357,7 @@ describe('quick controls', () => {
       setQuickControl({ type: 'instrument', trackId }, 'ampSustain', 0);
       expect(store.tracks[0].instrument).toEqual({
         kind: 'synth-patch',
-        patch: { preset: 'acoustic-piano', ampSustain: 0 },
+        patch: { preset: 'acousticPiano', ampSustain: 0 },
       });
     });
 

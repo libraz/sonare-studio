@@ -1,3 +1,9 @@
+import type {
+  MasteringInsertName,
+  MasteringInsertParamInfo,
+  MasteringInsertTiming,
+  MasteringInsertTimingRequest,
+} from '@/wasm/index.js';
 import { audibleOutputBusId, busOutputChain, type InsertSlot, type MixerStrip } from './mixer';
 
 /** Minimal catalog shape needed to derive processor latency. */
@@ -5,16 +11,14 @@ export interface InsertLatencyCatalogEntry {
   id: string;
   /** Latency the processor reports at its default parameters and 48 kHz. */
   latencySamples?: number;
-  /** Parameter keys; a null id marks one the insert reads only while it is built. */
-  params?: ReadonlyArray<{ name: string; id: number | null }>;
+  /** Parameter keys; one without an id is read only while the insert is built. */
+  params?: ReadonlyArray<Pick<MasteringInsertParamInfo, 'name' | 'id'>>;
 }
 
 /** Engine query for the latency a configured insert reports (masteringInsertTiming). */
 export type InsertTimingQuery = (
-  processor: string,
-  params: Record<string, number | boolean>,
-  sampleRate: number,
-) => { latencySamples: number };
+  request: MasteringInsertTimingRequest,
+) => Pick<MasteringInsertTiming, 'latencySamples'>;
 
 /** Resolves one insert slot's latency in samples. */
 export type InsertLatencyResolver = (slot: Pick<InsertSlot, 'processor' | 'params'>) => number;
@@ -75,7 +79,7 @@ export function insertLatencyResolverFromCatalog(
     const fallback = sanitizeLatencySamples(entry.latencySamples);
     if (!timing || !answers) return fallback;
     const buildKeys = new Set(
-      (entry.params ?? []).filter((param) => param.id === null).map((param) => param.name),
+      (entry.params ?? []).filter((param) => param.id === undefined).map((param) => param.name),
     );
     const buildParams: Record<string, number | boolean> = {};
     for (const [key, value] of Object.entries(slot.params).sort(([a], [b]) => a.localeCompare(b))) {
@@ -88,7 +92,11 @@ export function insertLatencyResolverFromCatalog(
     if (latency === undefined) {
       try {
         latency = sanitizeLatencySamples(
-          timing(slot.processor, buildParams, sampleRate).latencySamples,
+          timing({
+            insert: slot.processor as MasteringInsertName,
+            params: buildParams as MasteringInsertTimingRequest['params'],
+            sampleRate,
+          }).latencySamples,
         );
       } catch {
         latency = fallback;

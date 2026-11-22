@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { masteringAutomationParam } from '@/project/automation';
 import {
   addMasteringProcessor,
+  applyMasteringPresetWithOverrides,
   clearHistory,
   redo,
   removeMasteringProcessor,
@@ -10,7 +11,6 @@ import {
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
-  setMasteringPresetOverride,
   setStripGain,
   undo,
 } from '@/project/commands';
@@ -23,6 +23,7 @@ import {
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
+import type { MasteringPreset, SoloProcessor } from '@/wasm/index.js';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -71,10 +72,10 @@ describe('mastering chain commands', () => {
   });
 
   it('adds, undoes and redoes a processor as one edit', () => {
-    const index = addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
+    const index = addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDbtp: -1 });
     expect(index).toBe(0);
     expect(store.mixer.masteringChain?.processors).toMatchObject([
-      { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+      { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
     ]);
     expect(undo()).toBe(true);
     expect(store.mixer.masteringChain).toBeUndefined();
@@ -124,32 +125,37 @@ describe('mastering chain commands', () => {
   });
 
   it('sets, clears and undoes mastering preset overrides', () => {
-    expect(() => setMasteringPresetOverride('loudness.targetLufs', -14)).toThrow(RangeError);
     setMasteringPreset('streaming');
-    setMasteringPresetOverride('loudness.targetLufs', -16, { commit: false });
-    setMasteringPresetOverride('loudness.targetLufs', -14);
-    setMasteringPresetOverride('limiter.truePeak', true);
+    applyMasteringPresetWithOverrides('streaming', { loudness: { targetLufs: -14 } });
+    applyMasteringPresetWithOverrides('streaming', {
+      loudness: { targetLufs: -14 },
+      maximizer: { truePeakLimiter: { enabled: true } },
+    });
     expect(store.mixer.masteringChain).toEqual({
       preset: 'streaming',
-      presetOverrides: { 'loudness.targetLufs': -14, 'limiter.truePeak': true },
+      presetOverrides: {
+        loudness: { targetLufs: -14 },
+        maximizer: { truePeakLimiter: { enabled: true } },
+      },
       processors: [],
     });
 
     undo();
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ loudness: { targetLufs: -14 } });
     undo();
+    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
+    applyMasteringPresetWithOverrides('streaming', {});
     expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
   });
 
   it('clears preset overrides when clearing the preset', () => {
-    setMasteringPreset('pop');
-    setMasteringPresetOverride('loudness.targetLufs', -14);
+    applyMasteringPresetWithOverrides('pop', { loudness: { targetLufs: -14 } });
     setMasteringPreset(null);
     expect(store.mixer.masteringChain).toBeUndefined();
     undo();
     expect(store.mixer.masteringChain).toEqual({
       preset: 'pop',
-      presetOverrides: { 'loudness.targetLufs': -14 },
+      presetOverrides: { loudness: { targetLufs: -14 } },
       processors: [],
     });
   });
@@ -277,17 +283,23 @@ describe('mastering chain commands', () => {
   });
 
   it('validates names, params and indices', () => {
-    expect(() => addMasteringProcessor('')).toThrow(RangeError);
+    expect(() => addMasteringProcessor('' as SoloProcessor)).toThrow(RangeError);
     expect(() => addMasteringProcessor('eq.tilt', { tiltDb: Number.NaN })).toThrow(RangeError);
-    expect(() => setMasteringPreset('')).toThrow(RangeError);
+    expect(() => setMasteringPreset('' as MasteringPreset)).toThrow(RangeError);
     expect(() => removeMasteringProcessor(0)).toThrow(RangeError);
     expect(() => setMasteringEnabled(5, true)).toThrow(RangeError);
     addMasteringProcessor('eq.tilt');
     expect(() => setMasteringParam(0, '', 1)).toThrow(RangeError);
     expect(() => setMasteringParam(0, 'tiltDb', Number.POSITIVE_INFINITY)).toThrow(RangeError);
     expect(() => setMasteringParam(1, 'tiltDb', 1)).toThrow(RangeError);
-    expect(() => setMasteringPresetOverride('', -14)).toThrow(RangeError);
-    expect(() => setMasteringPresetOverride('loudness.targetLufs', Number.NaN)).toThrow(RangeError);
+    expect(() =>
+      applyMasteringPresetWithOverrides('pop', { loudness: { targetLufs: Number.NaN } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      applyMasteringPresetWithOverrides('pop', {
+        maximizer: { truePeakLimiter: { ceilingDbtp: Number.POSITIVE_INFINITY } },
+      }),
+    ).toThrow(RangeError);
   });
 });
 
@@ -308,20 +320,19 @@ describe('mastering chain serialization', () => {
   });
 
   it('round-trips the mastering chain through the document', async () => {
-    setMasteringPreset('streaming');
-    setMasteringPresetOverride('loudness.targetLufs', -14);
-    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1, oversampleFactor: 4 });
+    applyMasteringPresetWithOverrides('streaming', { loudness: { targetLufs: -14 } });
+    addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDbtp: -1, oversampleFactor: 4 });
     setMasteringEnabled(0, false);
     setStripGain('master', -2);
 
     const doc = serializeProject();
     expect(doc.mixer?.masteringChain).toMatchObject({
       preset: 'streaming',
-      presetOverrides: { 'loudness.targetLufs': -14 },
+      presetOverrides: { loudness: { targetLufs: -14 } },
       processors: [
         {
           processor: 'maximizer.truePeakLimiter',
-          params: { ceilingDb: -1, oversampleFactor: 4 },
+          params: { ceilingDbtp: -1, oversampleFactor: 4 },
           enabled: false,
         },
       ],

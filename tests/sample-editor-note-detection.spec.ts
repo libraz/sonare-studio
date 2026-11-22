@@ -15,9 +15,9 @@ const CONTOUR = {
 };
 
 const SEGMENTS = [
-  { frameStart: 0, frameEnd: 2, startSeconds: 0, endSeconds: 0.25, medianCents: -900 },
-  { frameStart: 2, frameEnd: 4, startSeconds: 0.25, endSeconds: 0.5, medianCents: -500 },
-  { frameStart: 5, frameEnd: 6, startSeconds: 0.75, endSeconds: 1, medianCents: -200 },
+  { frameStart: 0, frameEnd: 2, startSec: 0, endSec: 0.25, medianCents: -900 },
+  { frameStart: 2, frameEnd: 4, startSec: 0.25, endSec: 0.5, medianCents: -500 },
+  { frameStart: 5, frameEnd: 6, startSec: 0.75, endSec: 1, medianCents: -200 },
 ];
 
 function asset(sampleRate = 48000, numFrames = 48000): LoadedAudioAsset {

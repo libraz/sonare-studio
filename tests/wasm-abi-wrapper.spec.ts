@@ -1,108 +1,74 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it } from 'vitest';
+import * as wasm from '@/wasm/index.js';
 
-import { EXPECTED_ABI_VERSION } from '@/wasm/index.js';
+/** The vendored wrapper turns the core's string tokens into native codes; these run the real module. */
+beforeAll(async () => {
+  await wasm.init({
+    wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`),
+  } as Parameters<typeof wasm.init>[0]);
+});
 
-const ENGINE_ABI_VERSION = 3;
-
-async function importFreshWasm() {
-  vi.resetModules();
-  return import('@/wasm/index.js');
-}
-
-describe('wasm ABI wrapper declarations', () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
-
-  it('converts Project clip loop modes to native ABI codes', async () => {
-    const calls: unknown[][] = [];
-    const wasm = await importFreshWasm();
-
-    class NativeProject {
-      setClipLoop(...args: unknown[]): void {
-        calls.push(args);
-      }
-    }
-
-    await wasm.init({
-      moduleFactory: async () =>
-        ({
-          abiVersion: () => EXPECTED_ABI_VERSION,
-          projectAbiVersion: () => 1,
-          Project: NativeProject,
-        }) as never,
-    });
-
+describe('wasm token conversion against the real module', () => {
+  it('stores Project clip loop modes and reads them back as tokens', () => {
     const project = new wasm.Project();
-    project.setClipLoop(7, 'loop', 4, 0.25);
-    project.setClipLoop(7, 'off');
+    try {
+      const trackId = project.addTrack({ name: 'Loop', kind: 'midi' });
+      const clipId = project.addClip({ trackId, isMidi: true, startPpq: 0, lengthPpq: 4 });
 
-    expect(calls).toEqual([
-      [7, 1, 4, 0.25],
-      [7, 0, 0, 0],
-    ]);
-  });
+      project.setClipLoop(clipId, { loopMode: 'loop', loopLengthPpq: 2, loopCrossfadePpq: 0.25 });
+      const looped = project.clips().find((clip) => clip.id === clipId);
+      expect(looped).toMatchObject({ loopMode: 'loop', loopLengthPpq: 2 });
 
-  it('converts mixer send timing and pan law strings to native ABI codes', async () => {
-    const sendCalls: unknown[][] = [];
-    const panCalls: unknown[][] = [];
-    const wasm = await importFreshWasm();
-    const mixer = new wasm.Mixer({
-      addSend(...args: unknown[]): number {
-        sendCalls.push(args);
-        return 3;
-      },
-      setPanLaw(...args: unknown[]): void {
-        panCalls.push(args);
-      },
-    } as never);
-
-    expect(mixer.addSend(2, 'send-a', 'bus-a', -6, 'preFader')).toBe(3);
-    mixer.addSend(2, 'send-b', 'bus-a', -12, 'postFader');
-    mixer.setPanLaw(2, 'const6dB');
-    mixer.setPanLaw(2, 'linear0dB');
-
-    expect(sendCalls).toEqual([
-      [2, 'send-a', 'bus-a', -6, 1],
-      [2, 'send-b', 'bus-a', -12, 0],
-    ]);
-    expect(panCalls).toEqual([
-      [2, 2],
-      [2, 3],
-    ]);
-  });
-
-  it('converts realtime track strip pan law strings to native ABI codes', async () => {
-    const calls: unknown[][] = [];
-    const wasm = await importFreshWasm();
-
-    class NativeRealtimeEngine {
-      constructor(...args: unknown[]) {
-        calls.push(['constructor', ...args]);
-      }
-
-      setTrackStripPanLaw(...args: unknown[]): void {
-        calls.push(args);
-      }
+      project.setClipLoop(clipId, { loopMode: 'off' });
+      expect(project.clips().find((clip) => clip.id === clipId)?.loopMode).toBe('off');
+    } finally {
+      project.destroy();
     }
+  });
 
-    await wasm.init({
-      moduleFactory: async () =>
-        ({
-          abiVersion: () => EXPECTED_ABI_VERSION,
-          engineAbiVersion: () => ENGINE_ABI_VERSION,
-          RealtimeEngine: NativeRealtimeEngine,
-        }) as never,
-    });
+  it('keeps mixer send timing and pan law tokens in the serialized scene', () => {
+    const mixer = new wasm.Mixer({ sampleRate: 48000 });
+    try {
+      mixer.addBus('bus-a');
+      mixer.addStrip('strip-1');
+      expect(
+        mixer.addSend('strip-1', {
+          id: 'send-a',
+          destinationBusId: 'bus-a',
+          sendDb: -6,
+          timing: 'preFader',
+        }),
+      ).toBe(0);
+      mixer.addSend('strip-1', {
+        id: 'send-b',
+        destinationBusId: 'bus-a',
+        sendDb: -12,
+        timing: 'postFader',
+      });
+      mixer.setPanLaw('strip-1', 'const6Db');
 
-    const engine = new wasm.RealtimeEngine(44100, 256, 32, 64);
-    engine.setTrackStripPanLaw(11, 'const4.5dB');
-    engine.setTrackStripPanLaw(11, 'const6dB');
+      const strip = JSON.parse(mixer.toJson()).strips[0];
+      expect(strip.panLaw).toBe('const6Db');
+      expect(strip.sends.map((send: { timing: string }) => send.timing)).toEqual([
+        'preFader',
+        'postFader',
+      ]);
+    } finally {
+      mixer.destroy();
+    }
+  });
 
-    expect(calls).toEqual([
-      ['constructor', 44100, 256, 32, 64, 64],
-      [11, 1],
-      [11, 2],
-    ]);
+  it('accepts every core pan law on a realtime strip and refuses an unknown one', () => {
+    const engine = new wasm.RealtimeEngine({ sampleRate: 44100, maxBlockSize: 256 });
+    try {
+      engine.setTrackLanes([{ trackId: 11 }]);
+      engine.setStrip(11, { id: 'track-11' });
+      const laws: wasm.PanLaw[] = ['const3Db', 'const4.5Db', 'const6Db', 'linear0Db'];
+      for (const law of laws) expect(() => engine.setStripPanLaw(11, law)).not.toThrow();
+      expect(() => engine.setStripPanLaw(11, 'const3dB' as wasm.PanLaw)).toThrow();
+    } finally {
+      engine.destroy();
+    }
   });
 });

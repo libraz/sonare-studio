@@ -37,7 +37,7 @@ const track: EditorTrack = {
   volume: 1,
   pan: 0,
   order: 1,
-  instrument: { kind: 'synth-preset', preset: 'saw-lead' },
+  instrument: { kind: 'synth-preset', preset: 'sawLead' },
   expressionMap: { entries: [{ articulation: 'staccato', controller: 32, value: 5 }] },
 };
 
@@ -66,8 +66,8 @@ describe('MIDI seek state', () => {
     await sync.sync([track], [makeClip()], TEMPO_120, null, articulations);
     sync.restoreStateAtPpq(3, 100);
 
-    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, ccWord(0, 32, 5), 100);
-    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, ccWord(0, 11, 90), 100);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, [ccWord(0, 32, 5)], 100);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, [ccWord(0, 11, 90)], 100);
   });
 
   it('reads the schedules compiled by sync instead of recompiling the project', async () => {
@@ -80,7 +80,7 @@ describe('MIDI seek state', () => {
     clip.ccLanes = [{ controller: 11, channel: 0, points: [{ ppq: 0, value: 10 }] }];
     sync.restoreStateAtPpq(3, 100);
 
-    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, ccWord(0, 11, 90), 100);
-    expect(engine.pushMidiUmp).not.toHaveBeenCalledWith(1, ccWord(0, 11, 10), 100);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, [ccWord(0, 11, 90)], 100);
+    expect(engine.pushMidiUmp).not.toHaveBeenCalledWith(1, [ccWord(0, 11, 10)], 100);
   });
 });

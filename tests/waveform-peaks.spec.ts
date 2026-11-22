@@ -7,6 +7,7 @@ import {
   mergePeaks,
   type WaveformPeaksModule,
 } from '@/ui/waveform/peaks';
+import type { WaveformPeaksReport, WaveformPeaksRequest } from '@/wasm/index.js';
 
 /** Shorthand for a peaks pair from plain number arrays. */
 function peaks(min: number[], max: number[]): ChannelPeaks {
@@ -48,35 +49,39 @@ describe('computePeaks (pure path)', () => {
   });
 });
 
+/** A core `waveformPeaks` double that scans like the real one: ceil(frames / width) buckets. */
+function scanningWaveformPeaks(request: WaveformPeaksRequest): WaveformPeaksReport {
+  const width = request.samplesPerBucket ?? 512;
+  const frames = request.channels[0]?.length ?? 0;
+  const bucketCount = Math.ceil(frames / width);
+  const min = request.channels.map(() => new Float32Array(bucketCount));
+  const max = request.channels.map(() => new Float32Array(bucketCount));
+  request.channels.forEach((channel, c) => {
+    for (let b = 0; b < bucketCount; b++) {
+      const bucket = channel.subarray(b * width, Math.min(frames, (b + 1) * width));
+      min[c][b] = Math.min(...bucket);
+      max[c][b] = Math.max(...bucket);
+    }
+  });
+  return { min, max, bucketCount, samplesPerBucket: width };
+}
+
 describe('computePeaks (wasm delegation)', () => {
-  it('delegates to waveformPeaks with interleaved input and splits the report', () => {
-    const waveformPeaks = vi.fn(
-      (_samples: Float32Array, channels: number, options?: { samplesPerBucket?: number }) => ({
-        // Channel-major report: ch0 buckets then ch1 buckets.
-        min: new Float32Array([-1, -2, -10, -20]),
-        max: new Float32Array([1, 2, 10, 20]),
-        channels,
-        bucketCount: 2,
-        samplesPerBucket: options?.samplesPerBucket ?? 512,
-      }),
-    );
+  it('delegates to waveformPeaks with planar channels and reads the per-channel report', () => {
+    const waveformPeaks = vi.fn(scanningWaveformPeaks);
     const mod: WaveformPeaksModule = { waveformPeaks };
     const channels = [new Float32Array([1, -1, 2, -2]), new Float32Array([10, -10, 20, -20])];
     const result = computePeaks(channels, 2, { wasm: mod });
     expect(result).toEqual([peaks([-1, -2], [1, 2]), peaks([-10, -20], [10, 20])]);
     expect(waveformPeaks).toHaveBeenCalledTimes(1);
-    const [samples, channelCount, options] = waveformPeaks.mock.calls[0];
-    expect(samples).toEqual(new Float32Array([1, 10, -1, -10, 2, 20, -2, -20]));
-    expect(channelCount).toBe(2);
-    expect(options).toEqual({ samplesPerBucket: 2, validate: false });
+    expect(waveformPeaks).toHaveBeenCalledWith({ channels, samplesPerBucket: 2 });
   });
 
   it('falls back when a shorter delegate report would leave blank tail buckets', () => {
     const mod: WaveformPeaksModule = {
       waveformPeaks: () => ({
-        min: new Float32Array([-1]),
-        max: new Float32Array([1]),
-        channels: 1,
+        min: [new Float32Array([-1])],
+        max: [new Float32Array([1])],
         bucketCount: 1,
         samplesPerBucket: 4,
       }),
@@ -86,8 +91,8 @@ describe('computePeaks (wasm delegation)', () => {
     ]);
   });
 
-  it('avoids interleaving when sparse audio cannot fill the requested bucket count', () => {
-    const waveformPeaks = vi.fn();
+  it('skips the delegate when sparse audio cannot fill the requested bucket count', () => {
+    const waveformPeaks = vi.fn(scanningWaveformPeaks);
     const channel = new Float32Array([1, -1]);
 
     expect(computePeaks([channel], 4, { wasm: { waveformPeaks } })).toEqual([
@@ -105,29 +110,10 @@ describe('computePeaks (wasm delegation)', () => {
     const frames = 100;
     const channel = new Float32Array(frames);
     channel[frames - 1] = 1;
-    const realistic: WaveformPeaksModule = {
-      waveformPeaks: (samples, channels, options) => {
-        const width = options?.samplesPerBucket ?? 1;
-        const buckets = Math.ceil(samples.length / channels / width);
-        const min = new Float32Array(buckets);
-        const max = new Float32Array(buckets);
-        for (let b = 0; b < buckets; b++) {
-          let lo = Number.POSITIVE_INFINITY;
-          let hi = Number.NEGATIVE_INFINITY;
-          for (let i = b * width; i < Math.min(samples.length / channels, (b + 1) * width); i++) {
-            lo = Math.min(lo, samples[i * channels]);
-            hi = Math.max(hi, samples[i * channels]);
-          }
-          min[b] = Number.isFinite(lo) ? lo : 0;
-          max[b] = Number.isFinite(hi) ? hi : 0;
-        }
-        return { min, max, channels, bucketCount: buckets, samplesPerBucket: width };
-      },
-    };
 
     // 100 frames over 30 buckets: width floors to 3, so the delegate reports
     // 34 buckets and the loud one is past a 30-bucket prefix.
-    const result = computePeaks([channel], 30, { wasm: realistic });
+    const result = computePeaks([channel], 30, { wasm: { waveformPeaks: scanningWaveformPeaks } });
     expect(result[0].max).toHaveLength(30);
     expect(result[0].max[29]).toBe(1);
     expect(Array.from(result[0].max.subarray(0, 29))).toEqual(Array(29).fill(0));

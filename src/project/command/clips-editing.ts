@@ -119,10 +119,10 @@ export function moveClip(clipId: number, newStartPpq: number, newTrackId?: numbe
   const store = useProjectStore();
   const project = getProject();
   const placement = validatedClipMove(store, { clipId, newStartPpq, newTrackId });
-  if (project.getOverlapPolicy() === 1) assertNoNewClipOverlaps(store.clips, [placement]);
+  if (project.overlapPolicy === 'allow') assertNoNewClipOverlaps(store.clips, [placement]);
   execute(1, () => {
     if (newTrackId === undefined) project.moveClip(clipId, newStartPpq);
-    else project.moveClip(clipId, newStartPpq, newTrackId);
+    else project.moveClip(clipId, newStartPpq, { trackId: newTrackId });
     store.refresh();
   });
 }
@@ -166,7 +166,7 @@ export function moveClips(
     ids.add(move.clipId);
     return validatedClipMove(store, move);
   });
-  if (project.getOverlapPolicy() === 1) assertNoNewClipOverlaps(store.clips, placements);
+  if (project.overlapPolicy === 'allow') assertNoNewClipOverlaps(store.clips, placements);
   executeAtomic((edit) => {
     moveClipsWithin(
       edit,
@@ -760,7 +760,7 @@ export async function consolidateAudioClips(
               ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
             }),
           );
-          if (sourceId === undefined) registeredSourceId = project.sourceCount();
+          if (sourceId === undefined) registeredSourceId = project.sources().length;
           else edit(1, () => project.setClipSource(createdId, sourceId));
           return createdId;
         });
@@ -951,7 +951,7 @@ export function trimClip(clipId: number, newStartPpq: number, newLengthPpq: numb
   if (!Number.isFinite(newLengthPpq) || newLengthPpq <= 0) {
     throw new RangeError(`Clip lengthPpq must be finite and > 0, got ${newLengthPpq}`);
   }
-  if (project.getOverlapPolicy() === 1) {
+  if (project.overlapPolicy === 'allow') {
     assertNoNewClipOverlaps(store.clips, [
       {
         clipId,

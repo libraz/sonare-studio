@@ -106,13 +106,17 @@ export function setClipWarp(clipId: number, warp: ClipWarp | null): void {
 export function setClipLoop(clipId: number, loopEnabled: boolean, loopLengthPpq?: number): void {
   const store = useProjectStore();
   const project = getProject();
-  const clip = requireEditableClip(store, clipId);
+  requireEditableClip(store, clipId);
   if (loopLengthPpq !== undefined && (!Number.isFinite(loopLengthPpq) || loopLengthPpq <= 0)) {
     throw new RangeError(`Loop length must be finite and > 0, got ${loopLengthPpq}`);
   }
   execute(1, () => {
-    if (loopEnabled) project.setClipLoop(clipId, 'loop', loopLengthPpq ?? clip.lengthPpq);
-    else project.setClipLoop(clipId, 'off');
+    if (loopEnabled) {
+      project.setClipLoop(
+        clipId,
+        loopLengthPpq === undefined ? { loopMode: 'loop' } : { loopMode: 'loop', loopLengthPpq },
+      );
+    } else project.setClipLoop(clipId, { loopMode: 'off' });
     store.refresh();
   });
 }
@@ -173,7 +177,7 @@ export function setClipFades(clipId: number, fadeInPpq?: number, fadeOutPpq?: nu
   const fadeOut = fadeOutPpq ?? 0;
   validateClipFadePair(fadeIn, fadeOut, clip.lengthPpq);
   execute(1, () => {
-    project.setClipFade(clipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut });
+    project.setClipFade(clipId, { fadeInPpq: fadeIn, fadeOutPpq: fadeOut });
     store.refresh();
     // Mirror fallback for bindings that do not serialize fades in toJson():
     // pin the values we just set (0 clears the field).
@@ -220,16 +224,16 @@ export function crossfadeClips(
       // A crossfade of touching clips creates an intentional overlap. The
       // native project otherwise rejects the extension under its default
       // disallow policy. Keep the policy change in the same Undo step.
-      if (project.getOverlapPolicy() === 0) {
-        edit(1, () => project.setOverlapPolicy(1));
+      if (project.overlapPolicy === 'disallow') {
+        edit(1, () => project.setOverlapPolicy('allow'));
       }
       trimClipWithin(edit, left.id, left.startPpq, plan.leftLengthPpq, true);
     }
     edit(1, () =>
-      project.setClipFade(left.id, { lengthPpq: leftFadeIn }, { lengthPpq: plan.lengthPpq }),
+      project.setClipFade(left.id, { fadeInPpq: leftFadeIn, fadeOutPpq: plan.lengthPpq }),
     );
     edit(1, () =>
-      project.setClipFade(right.id, { lengthPpq: plan.lengthPpq }, { lengthPpq: rightFadeOut }),
+      project.setClipFade(right.id, { fadeInPpq: plan.lengthPpq, fadeOutPpq: rightFadeOut }),
     );
     store.refresh();
     // Mirror fallback for bindings that do not serialize fades in toJson().

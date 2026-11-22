@@ -24,12 +24,12 @@ import {
   spectrumDbToFraction,
 } from '@/ui/mixer/spectrum-model';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
-import type { EqBand, EqBandPhase, EqBandType, EqStereoPlacement } from '@/wasm/index.js';
+import type { EqBandInput, EqBandPhase, EqBandType, EqStereoPlacement } from '@/wasm/index.js';
 import MixerKnob from './MixerKnob.vue';
 
 /**
  * Channel EQ section: power toggle, a mini response graph and per-band knobs.
- * The strip EQ is a libsonare EqBand list; enabling the section seeds a neutral
+ * The strip EQ is a libsonare EqBandInput list; enabling the section seeds a neutral
  * three-band layout (low shelf / peak / high shelf). Each band's type can be
  * switched (low/high cut, shelf, bell, notch) and bands can be added or removed
  * — the engine sync mirrors the whole band list per track, group or return bus,
@@ -72,12 +72,12 @@ const BAND_TYPE_CHOICES: ReadonlyArray<{
   type: EqBandType;
   labelKey: keyof typeof t.value.shell.mixer.eq.types;
 }> = [
-  { type: 'HighPass', labelKey: 'lowCut' },
-  { type: 'LowShelf', labelKey: 'lowShelf' },
-  { type: 'Peak', labelKey: 'bell' },
-  { type: 'HighShelf', labelKey: 'highShelf' },
-  { type: 'LowPass', labelKey: 'highCut' },
-  { type: 'Notch', labelKey: 'notch' },
+  { type: 'highPass', labelKey: 'lowCut' },
+  { type: 'lowShelf', labelKey: 'lowShelf' },
+  { type: 'peak', labelKey: 'bell' },
+  { type: 'highShelf', labelKey: 'highShelf' },
+  { type: 'lowPass', labelKey: 'highCut' },
+  { type: 'notch', labelKey: 'notch' },
 ];
 
 /** Stereo placements exposed by the compact strip EQ menu. */
@@ -85,9 +85,9 @@ const PLACEMENT_CHOICES: ReadonlyArray<{
   placement: EqStereoPlacement;
   labelKey: keyof typeof t.value.shell.mixer.eq.placement;
 }> = [
-  { placement: 'Stereo', labelKey: 'stereo' },
-  { placement: 'Mid', labelKey: 'mid' },
-  { placement: 'Side', labelKey: 'side' },
+  { placement: 'stereo', labelKey: 'stereo' },
+  { placement: 'mid', labelKey: 'mid' },
+  { placement: 'side', labelKey: 'side' },
 ];
 
 /** Per-band phase modes supported by the engine EQ. */
@@ -95,18 +95,18 @@ const PHASE_CHOICES: ReadonlyArray<{
   phase: EqBandPhase;
   labelKey: keyof typeof t.value.shell.mixer.eq.phase;
 }> = [
-  { phase: 'Inherit', labelKey: 'inherit' },
-  { phase: 'ZeroLatency', labelKey: 'zeroLatency' },
-  { phase: 'NaturalPhase', labelKey: 'natural' },
-  { phase: 'LinearPhase', labelKey: 'linear' },
+  { phase: 'inherit', labelKey: 'inherit' },
+  { phase: 'zeroLatency', labelKey: 'zeroLatency' },
+  { phase: 'naturalPhase', labelKey: 'natural' },
+  { phase: 'linearPhase', labelKey: 'linear' },
 ];
 
 /** Band types whose gain knob has no audible effect (cut/notch filters). */
-const CUT_TYPES: ReadonlySet<EqBandType> = new Set(['HighPass', 'LowPass', 'Notch', 'BandPass']);
+const CUT_TYPES: ReadonlySet<EqBandType> = new Set(['highPass', 'lowPass', 'notch', 'bandPass']);
 
 /** True when the band's gain knob is meaningful (shelf/bell). */
-function bandUsesGain(band: EqBand): boolean {
-  return !CUT_TYPES.has(band.type ?? 'Peak');
+function bandUsesGain(band: EqBandInput): boolean {
+  return !CUT_TYPES.has(band.type ?? 'peak');
 }
 
 const strip = computed<MixerStrip>(() => {
@@ -122,15 +122,15 @@ const strip = computed<MixerStrip>(() => {
 const eq = computed<StripEq | undefined>(() => strip.value.eq);
 
 /** Frequency knob range per band type. */
-function freqRange(band: EqBand): { min: number; max: number } {
+function freqRange(band: EqBandInput): { min: number; max: number } {
   switch (band.type) {
-    case 'HighPass':
+    case 'highPass':
       return { min: 20, max: 1000 };
-    case 'LowShelf':
+    case 'lowShelf':
       return { min: 30, max: 500 };
-    case 'HighShelf':
+    case 'highShelf':
       return { min: 1000, max: 18000 };
-    case 'LowPass':
+    case 'lowPass':
       return { min: 1000, max: 20000 };
     default:
       return { min: 20, max: 20000 };
@@ -138,19 +138,19 @@ function freqRange(band: EqBand): { min: number; max: number } {
 }
 
 /** Short label per band type. */
-function bandLabel(band: EqBand, index: number): string {
+function bandLabel(band: EqBandInput, index: number): string {
   switch (band.type) {
-    case 'HighPass':
+    case 'highPass':
       return 'LC';
-    case 'LowShelf':
+    case 'lowShelf':
       return 'LF';
-    case 'HighShelf':
+    case 'highShelf':
       return 'HF';
-    case 'LowPass':
+    case 'lowPass':
       return 'HC';
-    case 'Notch':
+    case 'notch':
       return 'NF';
-    case 'Peak':
+    case 'peak':
       return 'MF';
     default:
       return `B${index + 1}`;
@@ -159,11 +159,11 @@ function bandLabel(band: EqBand, index: number): string {
 
 /** Reset frequency and Q per band type; unlisted types use {@link BAND_FALLBACK}. */
 const BAND_DEFAULTS: Partial<Record<EqBandType, { frequencyHz: number; q: number }>> = {
-  HighPass: { frequencyHz: 80, q: Math.SQRT1_2 },
-  LowShelf: { frequencyHz: 120, q: Math.SQRT1_2 },
-  Peak: { frequencyHz: 1000, q: 0.9 },
-  HighShelf: { frequencyHz: 8000, q: Math.SQRT1_2 },
-  LowPass: { frequencyHz: 12000, q: Math.SQRT1_2 },
+  highPass: { frequencyHz: 80, q: Math.SQRT1_2 },
+  lowShelf: { frequencyHz: 120, q: Math.SQRT1_2 },
+  peak: { frequencyHz: 1000, q: 0.9 },
+  highShelf: { frequencyHz: 8000, q: Math.SQRT1_2 },
+  lowPass: { frequencyHz: 12000, q: Math.SQRT1_2 },
 };
 const BAND_FALLBACK = { frequencyHz: 1000, q: Math.SQRT1_2 };
 
@@ -175,8 +175,8 @@ function bandDefaults(type: EqBandType | undefined): { frequencyHz: number; q: n
 }
 
 /** Neutral three-band starting layout when the EQ is first enabled. */
-function defaultEqBands(): EqBand[] {
-  return (['LowShelf', 'Peak', 'HighShelf'] as const).map((type) => ({
+function defaultEqBands(): EqBandInput[] {
+  return (['lowShelf', 'peak', 'highShelf'] as const).map((type) => ({
     type,
     ...bandDefaults(type),
     gainDb: 0,
@@ -185,12 +185,12 @@ function defaultEqBands(): EqBand[] {
 }
 
 /** Reset frequency for a band type (matches the neutral starting layout). */
-function defaultFreq(band: EqBand): number {
+function defaultFreq(band: EqBandInput): number {
   return bandDefaults(band.type).frequencyHz;
 }
 
 /** Reset Q for a band type. */
-function defaultQ(band: EqBand): number {
+function defaultQ(band: EqBandInput): number {
   return bandDefaults(band.type).q;
 }
 
@@ -313,12 +313,12 @@ async function applyMatchFlat(): Promise<void> {
 // --- Band type / add / remove -------------------------------------------------
 
 /** Current bands, seeding the neutral layout when the EQ is not yet present. */
-function currentBands(): EqBand[] {
+function currentBands(): EqBandInput[] {
   return eq.value?.bands ?? defaultEqBands();
 }
 
 /** Commits a new band list as one undoable edit, keeping the EQ enabled. */
-function commitBands(bands: EqBand[]): void {
+function commitBands(bands: EqBandInput[]): void {
   setStripEq(props.target, { enabled: eq.value?.enabled ?? true, bands });
 }
 
@@ -331,7 +331,7 @@ function setBandType(index: number, type: EqBandType): void {
   const band = bands[index];
   if (!band || band.type === type) return;
   const range = freqRange({ ...band, type });
-  const next: EqBand = {
+  const next: EqBandInput = {
     ...band,
     type,
     frequencyHz: clampToRange(band.frequencyHz ?? 1000, range),
@@ -343,9 +343,9 @@ function setBandType(index: number, type: EqBandType): void {
 function setBandPlacement(index: number, placement: EqStereoPlacement): void {
   const bands = currentBands();
   const band = bands[index];
-  if (!band || (band.placement ?? 'Stereo') === placement) return;
-  const next: EqBand = { ...band };
-  if (placement === 'Stereo') delete next.placement;
+  if (!band || (band.placement ?? 'stereo') === placement) return;
+  const next: EqBandInput = { ...band };
+  if (placement === 'stereo') delete next.placement;
   else next.placement = placement;
   commitBands(bands.map((b, i) => (i === index ? next : b)));
 }
@@ -354,9 +354,9 @@ function setBandPlacement(index: number, placement: EqStereoPlacement): void {
 function setBandPhase(index: number, phase: EqBandPhase): void {
   const bands = currentBands();
   const band = bands[index];
-  if (!band || (band.phase ?? 'Inherit') === phase) return;
-  const next: EqBand = { ...band };
-  if (phase === 'Inherit') delete next.phase;
+  if (!band || (band.phase ?? 'inherit') === phase) return;
+  const next: EqBandInput = { ...band };
+  if (phase === 'inherit') delete next.phase;
   else next.phase = phase;
   commitBands(bands.map((b, i) => (i === index ? next : b)));
 }
@@ -364,7 +364,7 @@ function setBandPhase(index: number, phase: EqBandPhase): void {
 type DynamicMode = 'off' | 'down' | 'up';
 
 /** Maps a band to the compact dynamic EQ mode shown in the menu. */
-function dynamicMode(band: EqBand): DynamicMode {
+function dynamicMode(band: EqBandInput): DynamicMode {
   if (!band.dynamic) return 'off';
   return (band.rangeDb ?? -6) > 0 ? 'up' : 'down';
 }
@@ -374,7 +374,7 @@ function setBandDynamicMode(index: number, mode: DynamicMode): void {
   const bands = currentBands();
   const band = bands[index];
   if (!band || dynamicMode(band) === mode) return;
-  const next: EqBand = { ...band };
+  const next: EqBandInput = { ...band };
   if (mode === 'off') {
     delete next.dynamic;
     delete next.thresholdDb;
@@ -383,7 +383,7 @@ function setBandDynamicMode(index: number, mode: DynamicMode): void {
     delete next.rangeDb;
     delete next.attackMs;
     delete next.releaseMs;
-    delete next.lookaheadMs;
+    delete next.detectorDelayMs;
     delete next.externalSidechain;
     delete next.sidechainFreqHz;
     delete next.sidechainQ;
@@ -403,9 +403,9 @@ function setBandDynamicMode(index: number, mode: DynamicMode): void {
 function addBand(): void {
   const bands = currentBands();
   if (bands.length >= MAX_BANDS) return;
-  const band: EqBand = {
-    type: 'Peak',
-    ...bandDefaults('Peak'),
+  const band: EqBandInput = {
+    type: 'peak',
+    ...bandDefaults('peak'),
     frequencyHz: ADDED_BAND_FREQ,
     gainDb: 0,
     enabled: true,
@@ -440,7 +440,7 @@ function learnEqId(index: number, param: MidiLearnEqParam): string {
   return midiLearnEqTargetId(props.target, index, param);
 }
 
-function appendMidiLearnItems(items: ContextMenuItem[], index: number, band: EqBand): void {
+function appendMidiLearnItems(items: ContextMenuItem[], index: number, band: EqBandInput): void {
   if (!midiLearn || (typeof props.target !== 'number' && props.target !== 'master')) return;
   const params: MidiLearnEqParam[] = bandUsesGain(band)
     ? ['frequencyHz', 'gainDb', 'q']
@@ -477,7 +477,7 @@ function openBandMenu(index: number, event: MouseEvent): void {
   const items: ContextMenuItem[] = BAND_TYPE_CHOICES.map((choice) => ({
     id: `type:${choice.type}`,
     label: t.value.shell.mixer.eq.types[choice.labelKey],
-    checked: (band.type ?? 'Peak') === choice.type,
+    checked: (band.type ?? 'peak') === choice.type,
     run: () => setBandType(index, choice.type),
   }));
   items.push({ id: 'sep-placement', separator: true });
@@ -485,7 +485,7 @@ function openBandMenu(index: number, event: MouseEvent): void {
     items.push({
       id: `placement:${choice.placement}`,
       label: t.value.shell.mixer.eq.placement[choice.labelKey],
-      checked: (band.placement ?? 'Stereo') === choice.placement,
+      checked: (band.placement ?? 'stereo') === choice.placement,
       run: () => setBandPlacement(index, choice.placement),
     });
   }
@@ -494,7 +494,7 @@ function openBandMenu(index: number, event: MouseEvent): void {
     items.push({
       id: `phase:${choice.phase}`,
       label: t.value.shell.mixer.eq.phase[choice.labelKey],
-      checked: (band.phase ?? 'Inherit') === choice.phase,
+      checked: (band.phase ?? 'inherit') === choice.phase,
       run: () => setBandPhase(index, choice.phase),
     });
   }

@@ -66,14 +66,14 @@ export function setAssistSidecar(
   }
   const project = getProject();
   execute(1, () => {
-    project.setAssistSidecar(
+    project.setAssistSidecar({
       moduleId,
       schemaVersion,
       targetTrackId,
       regionStartPpq,
       regionEndPpq,
       payload,
-    );
+    });
   });
 }
 
@@ -84,9 +84,5 @@ export function setAssistSidecar(
  * @returns The stored sidecars (empty when none).
  */
 export function listAssistSidecars(): AssistSidecar[] {
-  const project = getProject();
-  const count = project.assistSidecarCount();
-  const sidecars: AssistSidecar[] = [];
-  for (let i = 0; i < count; i++) sidecars.push(project.getAssistSidecar(i));
-  return sidecars;
+  return getProject().assistSidecars();
 }

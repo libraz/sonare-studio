@@ -18,6 +18,7 @@
 import { downmixToMono } from '@/lib/audio-channels';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
+import type { EstimateMeterRequest, MeterEstimate } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import {
   analyzeBeatAccentsInWorker,
@@ -403,15 +404,9 @@ export interface AudioMeterEstimateDeps {
     sampleRate: number,
     signal?: AbortSignal,
   ) => Promise<DetectedBeatAccents>;
-  estimateMeter: (request: {
-    beatTimes: number[];
-    beatStrengths: number[];
-    candidateNumerators?: number[];
-  }) => {
-    timeSignature: { numerator: number; denominator: number };
-    grouping: number[];
-    searched: boolean;
-  };
+  estimateMeter: (
+    request: EstimateMeterRequest,
+  ) => Pick<MeterEstimate, 'timeSignature' | 'grouping' | 'searched'>;
 }
 
 /**
@@ -438,8 +433,7 @@ export async function estimateAudioClipMeter(
   const { beatTimes, beatStrengths } = await deps.analyze(audible.mono, audible.sampleRate, signal);
   if (beatStrengths.length !== beatTimes.length) return [];
   const estimate = deps.estimateMeter({
-    beatTimes,
-    beatStrengths,
+    beats: beatTimes.map((timeSec, index) => ({ timeSec, strength: beatStrengths[index] })),
     ...(candidates ? { candidateNumerators: [...candidates] } : {}),
   });
   if (!estimate.searched) return [];

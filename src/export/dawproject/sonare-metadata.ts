@@ -265,7 +265,9 @@ function expressionPoints(value: unknown, field: 'value' | 'program', max: numbe
       {
         ppq,
         [field]: amount,
-        ...(curve === 'linear' || curve === 's-curve' ? { curve } : {}),
+        // Files written before the engine spelling carry 's-curve'.
+        ...(curve === 'linear' || curve === 'sCurve' ? { curve } : {}),
+        ...(curve === 's-curve' ? { curve: 'sCurve' as const } : {}),
       },
     ];
   });

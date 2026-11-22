@@ -14,7 +14,7 @@ describe('matchFlatEqBands', () => {
     const bands = matchFlatEqBands(spectrum, { sampleRate: 48000, maxBands: 4 });
 
     expect(bands.length).toBeGreaterThanOrEqual(2);
-    expect(bands.every((band) => band.type === 'Peak' && band.enabled === true)).toBe(true);
+    expect(bands.every((band) => band.type === 'peak' && band.enabled === true)).toBe(true);
     expect(bands.some((band) => (band.frequencyHz ?? 0) < 1000 && (band.gainDb ?? 0) < 0)).toBe(
       true,
     );
@@ -32,8 +32,8 @@ describe('matchFlatEqBands', () => {
   it('removes a post-EQ response before deriving a replacement correction', () => {
     const sampleRate = 48000;
     const existingBands = [
-      { type: 'Peak' as const, frequencyHz: 1000, gainDb: 8, q: 1, enabled: true },
-      { type: 'Peak' as const, frequencyHz: 5000, gainDb: -7, q: 1, enabled: true },
+      { type: 'peak' as const, frequencyHz: 1000, gainDb: 8, q: 1, enabled: true },
+      { type: 'peak' as const, frequencyHz: 5000, gainDb: -7, q: 1, enabled: true },
     ];
     const spectrum = new Float32Array(256);
     for (let index = 0; index < spectrum.length; index += 1) {

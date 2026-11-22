@@ -5,9 +5,12 @@ import { useMusicTyping } from '@/composables/useMusicTyping';
 import type { LiveMidiChannelVoiceMessage } from '@/composables/useNotePreview';
 import type { useStepInput } from '@/composables/useStepInput';
 import { useWebMidi } from '@/composables/useWebMidi';
+import { DEFAULT_SAMPLE_RATE } from '@/project/runtime';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MidiLearnTransportAction } from '@/ui/midi/midi-learn';
 import type { RealtimeEngine } from '@/wasm/index.js';
+
+type WasmModule = typeof import('@/wasm/index.js');
 
 type StepInput = ReturnType<typeof useStepInput>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;
@@ -27,7 +30,7 @@ export interface InputControlsOptions {
   errorMessage: Ref<string>;
   positionPpq: Ref<number>;
   stepInput: StepInput;
-  ensureWasm: () => Promise<{ RealtimeEngine: new () => RealtimeEngine }>;
+  ensureWasm: () => Promise<Pick<WasmModule, 'RealtimeEngine'>>;
   previewNote: (pitch: number, velocity: number) => Promise<void>;
   /** Starts a sustained live note (held MIDI key) on the audible engine. */
   previewNoteOn: (
@@ -216,7 +219,9 @@ export function useInputControls(options: InputControlsOptions) {
   function connectWebMidi(): Promise<void> {
     return runAction(async () => {
       const wasm = await options.ensureWasm();
-      if (!midiRoutingEngine) midiRoutingEngine = new wasm.RealtimeEngine();
+      if (!midiRoutingEngine)
+        // Routing-only instance: it never renders, so the rate is nominal.
+        midiRoutingEngine = new wasm.RealtimeEngine({ sampleRate: DEFAULT_SAMPLE_RATE });
       // The surface claims its port first so the musical binding can exclude it
       // in the same pass instead of briefly routing it to the instrument.
       await controlSurface.refresh();

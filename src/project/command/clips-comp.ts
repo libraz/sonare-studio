@@ -189,7 +189,7 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
       if (!clip) continue;
       const known = getAudioSourceId(bakedAssetId);
       const sourceId =
-        known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+        known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
       // The rebased clip occupies the original's range, and a track holds no
       // two overlapping clips, so the original steps aside until it is dropped.
       parkClipForReplacement(store, clip, (startPpq) =>
@@ -207,15 +207,14 @@ export function dropClipTakesBatch(inputs: ReadonlyArray<DropClipTakesInput>): v
           ...(sourceId === undefined ? { sourceUri: audioAssetUri(bakedAssetId) } : {}),
         }),
       );
-      if (sourceId === undefined) setAudioSourceId(bakedAssetId, project.sourceCount());
+      if (sourceId === undefined) setAudioSourceId(bakedAssetId, project.sources().length);
       else edit(1, () => project.setClipSource(newClipId, sourceId));
       if ((clip.fadeInPpq ?? 0) > 0 || (clip.fadeOutPpq ?? 0) > 0) {
         edit(1, () =>
-          project.setClipFade(
-            newClipId,
-            { lengthPpq: clip.fadeInPpq ?? 0 },
-            { lengthPpq: clip.fadeOutPpq ?? 0 },
-          ),
+          project.setClipFade(newClipId, {
+            fadeInPpq: clip.fadeInPpq ?? 0,
+            fadeOutPpq: clip.fadeOutPpq ?? 0,
+          }),
         );
       }
       // Destructive step last: the replacement clip is fully valid by now.

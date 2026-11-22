@@ -174,7 +174,7 @@ export function serializeProject(): ProjectDocument {
   const doc: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: store.projectName,
-    sampleRate: project.getSampleRate(),
+    sampleRate: project.sampleRate,
     tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
     timeSignatures: store.timeSignatures.map((segment) => ({ ...segment })),
     tracks: store.tracks.map((track) => {

@@ -83,8 +83,8 @@ const DRAW_MIN_PX = 6;
 
 const NEXT_CURVE: Record<ClipExpressionCurve, ClipExpressionCurve> = {
   hold: 'linear',
-  linear: 's-curve',
-  's-curve': 'hold',
+  linear: 'sCurve',
+  sCurve: 'hold',
 };
 
 /** In-flight working copy of the points while a gesture runs. */
@@ -138,7 +138,7 @@ function pointWithCurve(ppq: number, value: number, curve = props.curveMode): Cl
 }
 
 function segmentValue(start: number, end: number, t: number, curve: ClipExpressionCurve): number {
-  if (curve === 's-curve') {
+  if (curve === 'sCurve') {
     const eased = t * t * (3 - 2 * t);
     return start + (end - start) * eased;
   }

@@ -92,11 +92,11 @@ describe('bindStreamingRetuneInput', () => {
 
     const binding = await bindStreamingRetuneInput(ctx, engineNode, {
       stream,
-      stopTracksOnClose: true,
-      semitones: 7,
+      stopTracksOnDestroy: true,
+      pitchSemitones: 7,
       mix: 0.75,
-      channelCount: 1,
-      blockSize: 256,
+      numChannels: 1,
+      maxBlockSize: 256,
     });
 
     const retuneNode = FakeAudioWorkletNode.instances[0];
@@ -104,11 +104,11 @@ describe('bindStreamingRetuneInput', () => {
     expect(retuneNode.options).toMatchObject({
       channelCount: 1,
       processorOptions: {
-        semitones: 7,
+        pitchSemitones: 7,
         mix: 0.75,
         sampleRate: 48_000,
-        blockSize: 256,
-        channelCount: 1,
+        maxBlockSize: 256,
+        numChannels: 1,
       },
     });
     // The worklet cannot fetch its own WASM; the bytes must ride processorOptions.
@@ -116,12 +116,12 @@ describe('bindStreamingRetuneInput', () => {
     expect(source.connect).toHaveBeenCalledWith(retuneNode);
     expect(retuneNode.connect).toHaveBeenCalledWith(engineNode);
 
-    binding.setStreamingRetuneConfig?.({ semitones: -5, mix: 1 });
-    binding.close();
+    binding.setStreamingRetuneConfig?.({ pitchSemitones: -5, mix: 1 });
+    binding.destroy();
 
     expect(retuneNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
-      config: { semitones: -5, mix: 1 },
+      config: { pitchSemitones: -5, mix: 1 },
     });
     expect(retuneNode.port.postMessage).toHaveBeenCalledWith({ type: 'destroy' });
     expect(source.disconnect).toHaveBeenCalledTimes(1);
@@ -140,12 +140,12 @@ describe('bindStreamingRetuneInput', () => {
 
     await bindStreamingRetuneInput(ctx, engineNode, {
       stream: makeStream(),
-      stopTracksOnClose: false,
-      semitones: 99,
+      stopTracksOnDestroy: false,
+      pitchSemitones: 99,
     });
 
     expect(FakeAudioWorkletNode.instances[0].options.processorOptions).toMatchObject({
-      semitones: 24,
+      pitchSemitones: 24,
     });
   });
 
@@ -163,7 +163,7 @@ describe('bindStreamingRetuneInput', () => {
 
     const pending = bindStreamingRetuneInput(ctx, engineNode, {
       stream,
-      stopTracksOnClose: true,
+      stopTracksOnDestroy: true,
       readyTimeoutMs: 25,
     });
     const rejection = expect(pending).rejects.toThrow('Timed out waiting for Streaming retune');

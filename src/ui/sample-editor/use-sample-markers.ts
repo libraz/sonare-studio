@@ -104,7 +104,12 @@ export function useSampleMarkers(options: UseSampleMarkersOptions) {
     const topDb = parseNumber(silenceThresholdInput());
     noteRegions.value = [];
     try {
-      onsetFrames.value = splitSilenceFrames(ops, loaded.channels, topDb ?? undefined);
+      onsetFrames.value = splitSilenceFrames(
+        ops,
+        loaded.channels,
+        loaded.meta.sampleRate,
+        topDb ?? undefined,
+      );
     } catch (err) {
       setError(errorMessage(err));
     }

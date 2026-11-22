@@ -1,6 +1,6 @@
 /**
  * Mixing-assistant suggestions: renders each track dry, hands the stems to
- * libsonare's `suggestMixScene`, and returns the suggested scene with the
+ * libsonare's `mixingAssistantSuggest`, and returns the suggested scene with the
  * reasoning behind it. Nothing is applied here — the scene reaches the mixer
  * only through the user's explicit Apply (applyMixerSceneJson), one undoable
  * edit, because a mix has no single right answer.
@@ -18,7 +18,7 @@ import {
 } from '@/project/automation';
 import { createDefaultStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
-import type { MixAssistantResult, MixAssistantTrack } from '@/wasm/index.js';
+import type { MixAssistantResult, MixingAssistantSuggestRequest } from '@/wasm/index.js';
 
 /** A track's dry render as the assistant reads it. */
 export interface MixAssistantStem {
@@ -102,20 +102,15 @@ export function suggestMixFromStems(
   stems: ReadonlyArray<MixAssistantStem>,
   sampleRate: number,
   tempoBpm: number,
-  suggest: (request: {
-    tracks: MixAssistantTrack[];
-    sampleRate: number;
-    options?: { tempoBpm?: number };
-  }) => MixAssistantResult,
+  suggest: (request: MixingAssistantSuggestRequest) => MixAssistantResult,
 ): MixAssistantResult {
   return suggest({
     tracks: stems.map((stem) => ({
       id: mixAssistantStripId(stem.trackId),
       name: stem.name,
-      left: stem.left,
-      right: stem.right,
+      channels: [stem.left, stem.right],
     })),
     sampleRate,
-    options: { tempoBpm },
+    tempoBpm,
   });
 }

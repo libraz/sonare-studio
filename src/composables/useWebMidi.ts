@@ -251,7 +251,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
     const previous = binding;
     binding = null;
     try {
-      previous?.close();
+      previous?.destroy();
     } catch (err) {
       error.value = errorMessage(err);
     } finally {
@@ -334,7 +334,7 @@ export function useWebMidi(options: UseWebMidiOptions = {}): WebMidiHandle {
       createdBinding = created;
       if (!active()) {
         try {
-          created.close();
+          created.destroy();
         } catch {
           // The stale binding is never published; continue invalidation.
         }

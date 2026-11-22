@@ -1,4 +1,5 @@
-import type { ProjectMidiEvent } from '@/wasm/index.js';
+import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
+import { readNativeDocument } from './native-document';
 import type { EditorNote } from './types';
 
 /** UMP message-type nibble for MIDI 1.0 channel-voice words. */
@@ -8,11 +9,15 @@ const STATUS_NOTE_OFF = 0x8;
 /** MIDI 1.0 note-on status nibble. */
 const STATUS_NOTE_ON = 0x9;
 
-/** Shape of one serialized MIDI event inside the Project JSON document. */
-export interface SerializedMidiEvent {
-  ppq: number;
-  data0: number;
-  data1: number;
+/** One MIDI event inside the Project JSON document's `midiContent`. */
+export type SerializedMidiEvent = ProjectMidiEvent;
+
+/**
+ * Every clip's stored events keyed by clip id, read from the Project JSON
+ * document: the Project has no getter for MIDI content.
+ */
+export function projectMidiContent(project: Project): Record<string, SerializedMidiEvent[]> {
+  return readNativeDocument(project).midiContent ?? {};
 }
 
 /**
@@ -51,15 +56,15 @@ export interface IndexedRawNote {
  * Decodes a packed UMP MIDI 1.0 channel-voice word into a note boundary.
  *
  * @param ppq Event position in PPQ.
- * @param data0 Packed 32-bit UMP word.
+ * @param word0 Packed 32-bit UMP word.
  * @returns The decoded boundary, or null for non-note events.
  */
-function decodeNoteEvent(ppq: number, data0: number): NoteBoundaryEvent | null {
-  if (((data0 >>> 28) & 0xf) !== UMP_MIDI1_CHANNEL_VOICE) return null;
-  const status = (data0 >>> 20) & 0xf;
-  const channel = (data0 >>> 16) & 0xf;
-  const pitch = (data0 >>> 8) & 0x7f;
-  const velocity = data0 & 0x7f;
+function decodeNoteEvent(ppq: number, word0: number): NoteBoundaryEvent | null {
+  if (((word0 >>> 28) & 0xf) !== UMP_MIDI1_CHANNEL_VOICE) return null;
+  const status = (word0 >>> 20) & 0xf;
+  const channel = (word0 >>> 16) & 0xf;
+  const pitch = (word0 >>> 8) & 0x7f;
+  const velocity = word0 & 0x7f;
   if (status === STATUS_NOTE_ON && velocity > 0) {
     return { ppq, kind: 'on', channel, pitch, velocity };
   }
@@ -107,7 +112,7 @@ export function pairEventsIntoNotesIndexed(
 ): IndexedRawNote[] {
   const decoded: IndexedBoundary[] = [];
   events.forEach((event, index) => {
-    const note = decodeNoteEvent(event.ppq, event.data0);
+    const note = decodeNoteEvent(event.ppq, event.word0);
     if (note) decoded.push({ ...note, index });
   });
   return pairIndexedBoundaries(decoded);
@@ -211,24 +216,8 @@ interface NoteBoundary {
   velocity: number;
 }
 
-interface MidiEventFactory {
-  Project: {
-    midiNoteOn(
-      ppq: number,
-      group: number,
-      channel: number,
-      note: number,
-      velocity: number,
-    ): ProjectMidiEvent;
-    midiNoteOff(
-      ppq: number,
-      group: number,
-      channel: number,
-      note: number,
-      velocity?: number,
-    ): ProjectMidiEvent;
-  };
-}
+/** The module's note-message builders. */
+type MidiEventFactory = Pick<typeof import('@/wasm/index.js'), 'midiNoteOn' | 'midiNoteOff'>;
 
 /**
  * Expands editor notes into a sorted flat event list for Project.setMidiEvents.
@@ -257,11 +246,16 @@ export function notesToProjectMidiEvents(
     });
   }
   boundaries.sort(compareBoundaries);
-  return boundaries.map((b) =>
-    b.kind === 'on'
-      ? wasm.Project.midiNoteOn(b.ppq, 0, b.channel, b.pitch, b.velocity)
-      : wasm.Project.midiNoteOff(b.ppq, 0, b.channel, b.pitch, b.velocity),
-  );
+  return boundaries.map((b) => {
+    const message = {
+      ppq: b.ppq,
+      group: 0,
+      channel: b.channel,
+      note: b.pitch,
+      velocity: b.velocity,
+    };
+    return b.kind === 'on' ? wasm.midiNoteOn(message) : wasm.midiNoteOff(message);
+  });
 }
 
 /** PPQ values are keyed at micro-PPQ resolution to absorb float round-trip noise. */

@@ -1,7 +1,7 @@
 /**
  * General MIDI percussion map (channel 10, key range 27-87) used to label
  * drum-mode rows. The names follow the GM2 percussion key map, which keeps the
- * GM1 sound set on 35-81 — those match what the wasm Project.gmDrumName helper
+ * GM1 sound set on 35-81 — those match what the wasm gmDrumName helper
  * reports, so labels stay consistent across the app without loading the wasm
  * module here — and extends it with 27-34 and 82-87. The extension is not
  * cosmetic: the drum generator writes a shaker on 82.
@@ -96,17 +96,16 @@ export function gm2DrumBank(kitLsb: number): number {
  * Minimal shape of the wasm GM2 percussion helpers, injected by UI callers so
  * this module stays free of a hard dependency on the wasm store.
  */
-export interface DrumKitNameSource {
-  gm2DrumSetName?: (bankLsb: number) => string | null;
-  gm2DrumName?: (bankLsb: number, note: number) => string | null;
-}
+export type DrumKitNameSource = Partial<
+  Pick<typeof import('@/wasm/index.js'), 'gm2DrumSetName' | 'gm2DrumName'>
+>;
 
 /**
  * Display name of a GM2 drum/SFX kit (bank LSB), via the wasm helper. Returns
  * null when the kit is unnamed or the helper is unavailable.
  *
  * @param kitLsb Kit index (bank LSB, 0-127).
- * @param source wasm Project helpers (e.g. `getWasmModule().Project`).
+ * @param source wasm module (e.g. `getWasmModule()`).
  */
 export function gm2DrumKitName(
   kitLsb: number,
@@ -126,7 +125,7 @@ export function gm2DrumKitName(
  *
  * @param pitch MIDI note number.
  * @param kitLsb Kit index (bank LSB, 0-127); omitted uses the standard map only.
- * @param source wasm Project helpers (e.g. `getWasmModule().Project`).
+ * @param source wasm module (e.g. `getWasmModule()`).
  */
 export function drumNoteName(
   pitch: number,
@@ -135,7 +134,7 @@ export function drumNoteName(
 ): string | null {
   if (kitLsb !== undefined && source) {
     try {
-      const name = source.gm2DrumName?.(kitLsb & 0x7f, pitch);
+      const name = source.gm2DrumName?.({ bankLsb: kitLsb & 0x7f, note: pitch });
       if (name) return name;
     } catch {
       // fall through to the GM1 map

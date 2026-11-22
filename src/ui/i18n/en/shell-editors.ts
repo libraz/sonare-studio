@@ -230,7 +230,7 @@ export const shellEditors = {
     expressionCurve: {
       hold: 'Hold',
       linear: 'Linear',
-      's-curve': 'S-curve',
+      sCurve: 'S-curve',
     },
     parameterLane: 'Note parameter lane',
     laneGroupNote: 'Note',

@@ -32,11 +32,7 @@ import {
 } from '@/export/export-issue-format';
 import { formatExportStage } from '@/export/export-stage';
 import { FLAC_ENCODER_ID, type FlacBitDepth, registerFlacEncoder } from '@/export/flac';
-import {
-  type MasteringCatalogEntry,
-  masteringCapabilityFromCatalog,
-  planMasteringStages,
-} from '@/export/mastering-automation';
+import { masteringCapabilityFromCatalog, planMasteringStages } from '@/export/mastering-automation';
 import {
   assertMasteringBufferWithinLimit,
   MASTERING_STEREO_FRAME_LIMIT,
@@ -183,7 +179,7 @@ const reportLimitations = computed(() => {
   ];
 });
 const reportClipping = computed(
-  () => Math.max(report.value?.peakDb ?? -Infinity, report.value?.truePeakDb ?? -Infinity) > 0,
+  () => Math.max(report.value?.peakDb ?? -Infinity, report.value?.truePeakDbtp ?? -Infinity) > 0,
 );
 /** Sample rate the shown report was measured at, for the clipping positions. */
 const reportSampleRate = ref(0);
@@ -442,7 +438,7 @@ function stemPeakDb(stem: MixdownStem): number {
       if (magnitude > peak) peak = magnitude;
     }
   }
-  return Math.max(peakDb(peak), stem.report?.truePeakDb ?? -Infinity);
+  return Math.max(peakDb(peak), stem.report?.truePeakDbtp ?? -Infinity);
 }
 
 /** Default download seam: transient anchor around an object URL. */
@@ -519,15 +515,7 @@ async function preflightMasteringBuffer(
 
   const wasm = await ensureWasm();
   signal.throwIfAborted();
-  const surface = wasm as unknown as {
-    masteringProcessStereo?: unknown;
-    masterAudioStereo?: unknown;
-    masteringProcessorCatalog?: () => Array<MasteringCatalogEntry>;
-  };
-  // The renderer skips the rack when the process seam is unavailable. Keep
-  // the UI preflight in lockstep with that behavior.
-  if (typeof surface.masteringProcessStereo !== 'function') return [];
-  const catalog = surface.masteringProcessorCatalog?.();
+  const catalog = wasm.masteringProcessorCatalog();
   const plan = planMasteringStages(
     chain,
     doc.masterAutomation ?? [],
@@ -539,7 +527,7 @@ async function preflightMasteringBuffer(
       totalFrames: renderWindow.totalFrames,
       sampleRate: exportModel.sampleRate,
       includeMasterChain: true,
-      usesPreset: chain.preset !== undefined && typeof surface.masterAudioStereo === 'function',
+      usesPreset: chain.preset !== undefined,
       wholeBufferProcessorCount: plan.stages.filter((stage) => stage.kind === 'whole-buffer')
         .length,
     });
@@ -789,7 +777,7 @@ async function onExport(): Promise<void> {
     for (const stem of result.stems ?? []) stemsPeakDb = Math.max(stemsPeakDb, stemPeakDb(stem));
     const clippingPeak =
       exportModel.mode === 'mixdown'
-        ? Math.max(normalizedReport.peakDb, normalizedReport.truePeakDb ?? -Infinity)
+        ? Math.max(normalizedReport.peakDb, normalizedReport.truePeakDbtp ?? -Infinity)
         : stemsPeakDb;
     if (
       targets.some((target) => isIntegerPcmExport(target.encoder.id, exportModel)) &&
@@ -1288,9 +1276,9 @@ function onKeydown(event: KeyboardEvent): void {
         <dl class="report-grid">
           <dt>{{ t.dialogs.exportAudio.peak }}</dt>
           <dd class="report-peak">{{ formatLevel(report.peakDb) }} dBFS</dd>
-          <template v-if="report.truePeakDb !== undefined">
+          <template v-if="report.truePeakDbtp !== undefined">
             <dt>{{ t.dialogs.exportAudio.truePeak }}</dt>
-            <dd class="report-true-peak">{{ formatLevel(report.truePeakDb) }} dBTP</dd>
+            <dd class="report-true-peak">{{ formatLevel(report.truePeakDbtp) }} dBTP</dd>
           </template>
           <template v-if="report.lufs !== undefined">
             <dt>{{ t.dialogs.exportAudio.loudness }}</dt>

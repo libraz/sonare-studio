@@ -9,7 +9,7 @@ import {
   gainReductionFraction,
   hasLoudnessData,
   loudnessDeltaLu,
-  maxTruePeakDb,
+  maxTruePeakDbtp,
 } from '@/ui/mixer/master-meter';
 
 /**
@@ -131,11 +131,11 @@ watch(
     </div>
     <div
       class="mm-tp"
-      :class="{ risk: isClippingRisk(maxTruePeakDb(levels)) }"
+      :class="{ risk: isClippingRisk(maxTruePeakDbtp(levels)) }"
       v-tooltip="t.shell.mixer.loudness.truePeakHint"
     >
       <span class="mm-label">{{ t.shell.mixer.loudness.truePeak }}</span>
-      <span class="mm-value">{{ formatLevel(maxTruePeakDb(levels)) }}</span>
+      <span class="mm-value">{{ formatLevel(maxTruePeakDbtp(levels)) }}</span>
       <span class="mm-unit-inline">{{ t.shell.mixer.loudness.dbtp }}</span>
     </div>
     <div

@@ -42,7 +42,7 @@ function documentWithMarkers(names: readonly string[]): ProjectDocument {
         solo: false,
         volume: 0.8,
         pan: 0,
-        instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+        instrument: { kind: 'synth-preset', preset: 'acousticPiano' },
         clips: [
           {
             name: 'Lead',

@@ -53,31 +53,38 @@ describe('gm-catalog', () => {
   });
 
   it('reads names through the module and masks the bank to its LSB', () => {
-    const gm2InstrumentName = vi.fn((bank: number, program: number) => `v${bank}:${program}`);
+    const gm2InstrumentName = vi.fn(
+      (request: { bankLsb: number; program: number }) => `v${request.bankLsb}:${request.program}`,
+    );
     wasm.current = {
-      Project: {
-        gmInstrumentName: (program: number) => `gm${program}`,
-        gm2InstrumentName,
-        gm2DrumSetName: (lsb: number) => `kit${lsb}`,
-      },
+      gmInstrumentName: (program: number) => `gm${program}`,
+      gm2InstrumentName,
+      gm2DrumSetName: (lsb: number) => `kit${lsb}`,
     };
     expect(gmProgramName(5)).toBe('gm5');
     expect(gm2ProgramName((121 << 7) | 8, 3)).toBe('v8:3');
     expect(gm2DrumSetName(2)).toBe('kit2');
   });
 
-  it('lists 16 families only when the module exposes both family helpers', () => {
-    wasm.current = { Project: { gmFamilyName: () => 'Piano' } };
-    expect(gmFamilies()).toEqual([]);
+  it('yields no name when the core names nothing or throws', () => {
     wasm.current = {
-      Project: {
-        gmFamilyName: (family: number) => (family === 1 ? null : `F${family}`),
-        gmFamilyFirstProgram: (family: number) => family * 8,
+      gmInstrumentName: () => {
+        throw new RangeError('program');
       },
+      gm2InstrumentName: () => undefined,
+    };
+    expect(gmProgramName(200)).toBeNull();
+    expect(gm2ProgramName(0, 0)).toBeNull();
+  });
+
+  it('lists the 16 families through the module', () => {
+    wasm.current = {
+      gmFamilyName: (family: number) => `F${family}`,
+      gmFamilyFirstProgram: (family: number) => family * 8,
     };
     const families = gmFamilies();
     expect(families).toHaveLength(16);
     expect(families[0]).toEqual({ index: 0, name: 'F0', firstProgram: 0 });
-    expect(families[1].name).toBe('Family 2');
+    expect(families[1]).toEqual({ index: 1, name: 'F1', firstProgram: 8 });
   });
 });

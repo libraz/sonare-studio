@@ -504,7 +504,7 @@ export function engineClipPlayback(source: AudioClipSegmentSource): {
   lengthSamples: number;
   fadeInSamples: number;
   fadeOutSamples: number;
-  warpMode?: 'time-stretch';
+  warpMode?: 'timeStretch';
   warpAnchors?: WarpAnchorFrames[];
 } {
   return {
@@ -512,7 +512,7 @@ export function engineClipPlayback(source: AudioClipSegmentSource): {
     fadeInSamples: source.fadeInFrames,
     fadeOutSamples: source.fadeOutFrames,
     ...(source.warpAnchors && source.warpAnchors.length >= 2
-      ? { warpMode: 'time-stretch' as const, warpAnchors: source.warpAnchors }
+      ? { warpMode: 'timeStretch' as const, warpAnchors: source.warpAnchors }
       : {}),
   };
 }
@@ -1126,7 +1126,9 @@ export async function scheduleProjectClips(
       const clip = prepared.get(unit.key);
       if (!clip) continue;
       signal?.throwIfAborted();
-      const engineClipId = handle.engine.addClip(clip.trackId, clip.channels, clip.startPpq, {
+      const engineClipId = handle.engine.addClip(clip.trackId, {
+        channels: clip.channels,
+        startPpq: clip.startPpq,
         gain: clip.gain,
         ...clip.playback,
       });

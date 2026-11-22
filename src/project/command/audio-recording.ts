@@ -78,7 +78,7 @@ export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput
     for (const input of prepared) {
       const known = getAudioSourceId(input.assetId);
       const sourceId =
-        known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+        known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
       const clipId = edit(1, () =>
         project.addClip({
           trackId: input.trackId,
@@ -89,7 +89,7 @@ export function addRecordedAudioClips(inputs: readonly AddRecordedAudioClipInput
           ...(sourceId === undefined ? { sourceUri: audioAssetUri(input.assetId) } : {}),
         }),
       );
-      if (sourceId === undefined) setAudioSourceId(input.assetId, project.sourceCount());
+      if (sourceId === undefined) setAudioSourceId(input.assetId, project.sources().length);
       else edit(1, () => project.setClipSource(clipId, sourceId));
 
       store.clips = [

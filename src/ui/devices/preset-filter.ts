@@ -37,8 +37,8 @@ export function presetCategory(name: string): PresetCategory {
   const lower = name.toLowerCase();
   if (lower.includes('harpsichord')) return 'keys';
   if (lower.includes('bassoon')) return 'winds';
-  if (lower.includes('english-horn')) return 'winds';
-  if (lower.includes('french-horn')) return 'orchestral';
+  if (lower.includes('englishhorn')) return 'winds';
+  if (lower.includes('frenchhorn')) return 'orchestral';
   if (lower.includes('guitar') || lower.includes('harp') || lower.includes('pluck')) {
     return 'guitars';
   }
@@ -56,7 +56,7 @@ export function presetCategory(name: string): PresetCategory {
     lower.includes('flute') ||
     lower.includes('reed') ||
     lower.includes('bassoon') ||
-    lower.includes('english-horn') ||
+    lower.includes('englishhorn') ||
     lower.includes('sax') ||
     lower.includes('clarinet') ||
     lower.includes('oboe')
@@ -65,7 +65,7 @@ export function presetCategory(name: string): PresetCategory {
   }
   if (
     lower.includes('brass') ||
-    lower.includes('french-horn') ||
+    lower.includes('frenchhorn') ||
     lower.includes('violin') ||
     lower.includes('string') ||
     lower.includes('cello')

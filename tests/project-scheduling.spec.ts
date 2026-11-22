@@ -216,7 +216,7 @@ describe('scheduleProjectClips', () => {
     });
     expect(scheduled).toEqual([{ engineClipId: 500, clipId: 20, trackId: 2 }]);
     expect(addClip).toHaveBeenCalledTimes(1);
-    const [trackId, , startPpq, opts] = addClip.mock.calls[0];
+    const [trackId, { startPpq, ...opts }] = addClip.mock.calls[0];
     expect(trackId).toBe(2);
     expect(startPpq).toBe(4);
     expect(opts).toMatchObject({ gain: 0.8 });

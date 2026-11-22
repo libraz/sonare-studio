@@ -49,9 +49,9 @@ const restorationPresets = computed(() => props.filteredPresets.filter(isRestora
 /** Loudness target and ceiling of a mastering preset, when the catalog has them. */
 function presetTargets(id: string): { lufs: string; title: string } | null {
   const info = masteringPresetInfo(id);
-  if (info?.targetLufs == null || info.truePeakCeilingDb == null) return null;
+  if (info?.targetLufs === undefined || info.truePeakCeilingDbtp === undefined) return null;
   const lufs = String(Math.round(info.targetLufs * 10) / 10);
-  const ceiling = String(Math.round(info.truePeakCeilingDb * 10) / 10);
+  const ceiling = String(Math.round(info.truePeakCeilingDbtp * 10) / 10);
   return {
     lufs,
     title: formatMessage(t.value.shell.mastering.presetTargetTitle, { lufs, ceiling }),

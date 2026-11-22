@@ -49,9 +49,9 @@ describe('deriving a MIDI clip from a window of another clip', () => {
 
   function engineEventPpqs(clipId: number): number[] {
     const doc = JSON.parse(getProject().toJson()) as {
-      midi_content?: Record<string, Array<{ ppq: number }>>;
+      midiContent?: Record<string, Array<{ ppq: number }>>;
     };
-    return (doc.midi_content?.[String(clipId)] ?? []).map((event) => event.ppq).sort();
+    return (doc.midiContent?.[String(clipId)] ?? []).map((event) => event.ppq).sort();
   }
 
   function expanded(points: ReadonlyArray<ClipCcPoint>, lengthPpq: number, shift = 0) {

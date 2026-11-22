@@ -6,7 +6,7 @@ import {
   MIDI_FX_CHORD_PRESETS,
   MIDI_FX_QUANTIZE_GRIDS,
   type MidiFxConfig,
-  midiFxConfigJson,
+  midiFxConfig,
   sanitizeArpIntervals,
   sanitizeChordIntervals,
   sanitizeMidiFxConfig,
@@ -80,63 +80,60 @@ describe('sanitizeMidiFxConfig', () => {
   });
 });
 
-describe('midiFxConfigJson', () => {
+describe('midiFxConfig', () => {
   it('returns null for the identity transform', () => {
-    expect(midiFxConfigJson(config())).toBeNull();
+    expect(midiFxConfig(config())).toBeNull();
     expect(isMidiFxNoop(config())).toBe(true);
   });
 
   it('emits only the keys that change the notes', () => {
-    const json = midiFxConfigJson(config({ transposeSemitones: 12 }));
-    expect(json).not.toBeNull();
-    expect(JSON.parse(json as string)).toEqual({ transpose_semitones: 12 });
+    const json = midiFxConfig(config({ transposeSemitones: 12 }));
+    expect(json).toEqual({ transposeSemitones: 12 });
   });
 
-  it('pairs quantize_ppq with quantize_strength only when strength is positive', () => {
-    expect(midiFxConfigJson(config({ quantizeStrength: 0, quantizeGrid: 0.5 }))).toBeNull();
-    const json = midiFxConfigJson(config({ quantizeStrength: 1, quantizeGrid: 0.5 }));
-    expect(JSON.parse(json as string)).toEqual({ quantize_ppq: 0.5, quantize_strength: 1 });
+  it('pairs quantizePpq with quantizeStrength only when strength is positive', () => {
+    expect(midiFxConfig(config({ quantizeStrength: 0, quantizeGrid: 0.5 }))).toBeNull();
+    const json = midiFxConfig(config({ quantizeStrength: 1, quantizeGrid: 0.5 }));
+    expect(json).toEqual({ quantizePpq: 0.5, quantizeStrength: 1 });
   });
 
   it('omits a root-only chord but keeps a real harmonization', () => {
-    expect(midiFxConfigJson(config({ chordIntervals: [0] }))).toBeNull();
-    const json = midiFxConfigJson(config({ chordIntervals: [0, 4, 7] }));
-    expect(JSON.parse(json as string)).toEqual({ chord_intervals: [0, 4, 7] });
+    expect(midiFxConfig(config({ chordIntervals: [0] }))).toBeNull();
+    const json = midiFxConfig(config({ chordIntervals: [0, 4, 7] }));
+    expect(json).toEqual({ chordIntervals: [0, 4, 7] });
   });
 
   it('omits the arpeggiator until a step list is set, then emits rate + steps', () => {
-    expect(midiFxConfigJson(config({ arpeggiatorIntervals: [] }))).toBeNull();
-    const json = midiFxConfigJson(
-      config({ arpeggiatorIntervals: [0, 4, 7], arpeggiatorRate: 0.25 }),
-    );
+    expect(midiFxConfig(config({ arpeggiatorIntervals: [] }))).toBeNull();
+    const json = midiFxConfig(config({ arpeggiatorIntervals: [0, 4, 7], arpeggiatorRate: 0.25 }));
     // A full gate is the engine's legato default, so no gate key is emitted.
-    expect(JSON.parse(json as string)).toEqual({
-      arpeggiator_intervals: [0, 4, 7],
-      arpeggiator_step_ppq: 0.25,
+    expect(json).toEqual({
+      arpeggiatorIntervals: [0, 4, 7],
+      arpeggiatorStepPpq: 0.25,
     });
   });
 
   it('treats a single repeating arpeggiator step as effective (a note repeat)', () => {
-    const json = midiFxConfigJson(config({ arpeggiatorIntervals: [0], arpeggiatorRate: 0.5 }));
-    expect(JSON.parse(json as string)).toEqual({
-      arpeggiator_intervals: [0],
-      arpeggiator_step_ppq: 0.5,
+    const json = midiFxConfig(config({ arpeggiatorIntervals: [0], arpeggiatorRate: 0.5 }));
+    expect(json).toEqual({
+      arpeggiatorIntervals: [0],
+      arpeggiatorStepPpq: 0.5,
     });
   });
 
-  it('emits arpeggiator_gate_ppq only when the gate shortens the step', () => {
-    const json = midiFxConfigJson(
+  it('emits arpeggiatorGatePpq only when the gate shortens the step', () => {
+    const json = midiFxConfig(
       config({ arpeggiatorIntervals: [0, 12], arpeggiatorRate: 0.25, arpeggiatorGate: 0.5 }),
     );
-    expect(JSON.parse(json as string)).toEqual({
-      arpeggiator_intervals: [0, 12],
-      arpeggiator_step_ppq: 0.25,
-      arpeggiator_gate_ppq: 0.125,
+    expect(json).toEqual({
+      arpeggiatorIntervals: [0, 12],
+      arpeggiatorStepPpq: 0.25,
+      arpeggiatorGatePpq: 0.125,
     });
   });
 
   it('serializes a combined transform with every effective key', () => {
-    const json = midiFxConfigJson(
+    const json = midiFxConfig(
       config({
         transposeSemitones: -12,
         velocityScale: 1.1,
@@ -147,14 +144,14 @@ describe('midiFxConfigJson', () => {
         chordIntervals: [0, 7],
       }),
     );
-    expect(JSON.parse(json as string)).toEqual({
-      transpose_semitones: -12,
-      velocity_scale: 1.1,
-      velocity_offset: -5,
-      velocity_gamma: 2,
-      humanize_ppq: 0.05,
-      humanize_velocity: 8,
-      chord_intervals: [0, 7],
+    expect(json).toEqual({
+      transposeSemitones: -12,
+      velocityScale: 1.1,
+      velocityOffset: -5,
+      velocityGamma: 2,
+      humanizePpq: 0.05,
+      humanizeVelocity: 8,
+      chordIntervals: [0, 7],
     });
   });
 });

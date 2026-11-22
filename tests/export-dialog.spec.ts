@@ -172,7 +172,7 @@ function makeResult(overrides: Partial<MixdownResult> = {}): MixdownResult {
     channels: [new Float32Array([0.25, -0.25]), new Float32Array([0.5, -0.5])],
     sampleRate: 48000,
     totalFrames: 2,
-    report: { peakDb: -6.0, truePeakDb: -5.8, lufs: -14.2 },
+    report: { peakDb: -6.0, truePeakDbtp: -5.8, lufs: -14.2 },
     ...overrides,
   };
 }
@@ -488,7 +488,7 @@ describe('ExportDialog', () => {
     const { download } = mountDialog(control);
 
     await clickExport();
-    control.resolve(makeResult({ report: { peakDb: 1.5, truePeakDb: 1.8 } }));
+    control.resolve(makeResult({ report: { peakDb: 1.5, truePeakDbtp: 1.8 } }));
     await flushPromises();
 
     expect(dialogQueue[0]?.message).toContain('1.8 dBFS');
@@ -508,7 +508,7 @@ describe('ExportDialog', () => {
       makeResult({
         report: {
           peakDb: 1.5,
-          truePeakDb: 1.8,
+          truePeakDbtp: 1.8,
           clipping: {
             clippedSamples: 1024,
             clippingRatio: 0.0125,
@@ -537,7 +537,7 @@ describe('ExportDialog', () => {
     mountDialog(control);
 
     await clickExport();
-    control.resolve(makeResult({ report: { peakDb: 1.5, truePeakDb: 1.8 } }));
+    control.resolve(makeResult({ report: { peakDb: 1.5, truePeakDbtp: 1.8 } }));
     await flushPromises();
     resolveDialog(dialogQueue[0].id, true);
     await flushPromises();
@@ -680,7 +680,7 @@ describe('ExportDialog', () => {
     const result = makeResult({
       report: {
         peakDb: -6.0,
-        truePeakDb: -5.8,
+        truePeakDbtp: -5.8,
         lufs: -14.2,
         limitations: [{ kind: 'mastering-automation-at-render-start' }],
       },
@@ -736,7 +736,7 @@ describe('ExportDialog', () => {
     const result = makeResult({
       report: {
         peakDb: -6.0,
-        truePeakDb: -5.8,
+        truePeakDbtp: -5.8,
         lufs: -14.2,
         limitations: [{ kind: 'mastering-automation-at-render-start' }],
       },
@@ -1030,7 +1030,7 @@ describe('ExportDialog', () => {
     await nextTick();
     await clickExport();
 
-    control.resolve(makeResult({ report: { peakDb: -6, truePeakDb: -5.8, lufs: -20 } }));
+    control.resolve(makeResult({ report: { peakDb: -6, truePeakDbtp: -5.8, lufs: -20 } }));
     await flushPromises();
 
     const channels = encode.mock.calls[0][0] as ReadonlyArray<Float32Array>;
@@ -1336,7 +1336,7 @@ describe('ExportDialog', () => {
               Float32Array,
               Float32Array,
             ],
-            report: { peakDb: -6, truePeakDb: -5.5, lufs: -20 },
+            report: { peakDb: -6, truePeakDbtp: -5.5, lufs: -20 },
           },
           {
             trackIndex: 1,

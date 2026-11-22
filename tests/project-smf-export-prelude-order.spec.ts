@@ -66,11 +66,11 @@ describe('projectDocumentToSmf channel prelude', () => {
       tempoSegments: [{ startPpq: 0, bpm: 100 }],
       timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
       tracks: [
-        midiTrack('Bass', { kind: 'synth-preset', preset: 'sub-bass' }, [0, 1, 2], {
+        midiTrack('Bass', { kind: 'synth-preset', preset: 'subBass' }, [0, 1, 2], {
           volume: 0.5,
           pan: -0.5,
         }),
-        midiTrack('Kit', { kind: 'synth-preset', preset: 'drum-kit' }, [9, 10], {
+        midiTrack('Kit', { kind: 'synth-preset', preset: 'drumKit' }, [9, 10], {
           volume: 1,
           pan: 0.25,
         }),

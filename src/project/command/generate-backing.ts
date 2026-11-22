@@ -34,7 +34,7 @@ export type BackingStyle = 'smooth' | VoicingStyle;
 const BACKING_VELOCITY = 72;
 
 /** NativeSynth preset for generated backing tracks (sustained chord voicings). */
-const BACKING_PRESET = 'warm-pad';
+const BACKING_PRESET = 'warmPad';
 
 /** Options for {@link generateBackingCommand}. */
 export interface GenerateBackingParams {

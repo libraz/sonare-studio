@@ -22,10 +22,10 @@ import {
 } from '@/ui/sample-editor/wasm-ops';
 import type {
   AssignNoteTargetsRequest,
+  AssignNoteTargetsResult,
   ExtractNotesRequest,
   NoteObject,
   NoteTarget,
-  NoteTargetAssignResult,
   NoteTargetUnmatchedPolicy,
   RenderNotesRequest,
 } from '@/wasm/index.js';
@@ -54,7 +54,7 @@ export interface TuneToMidiDeps {
     hopLength: number,
   ) => { f0: Float32Array; voicedFlag: ArrayLike<boolean | number> };
   extractNotes: (request: ExtractNotesRequest) => NoteObject[];
-  assignNoteTargets: (request: AssignNoteTargetsRequest) => NoteTargetAssignResult;
+  assignNoteTargets: (request: AssignNoteTargetsRequest) => AssignNoteTargetsResult;
   renderNotes: (request: RenderNotesRequest) => Float32Array;
 }
 

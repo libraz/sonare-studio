@@ -3,6 +3,8 @@ import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB, SILENCE_DB } from '@/engine/mixer-sync';
 import { createDefaultStrip, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
+import { ErrorCode, SonareError } from '@/wasm/index.js';
+import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -20,38 +22,44 @@ function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrac
   };
 }
 
+/** The engine calls the mixer lane sync makes. */
+type MixerLaneEngine = Pick<
+  SonareEngine,
+  | 'setTrackLanes'
+  | 'setStripFaderDb'
+  | 'setStripPan'
+  | 'setTrackSoloMute'
+  | 'setStripChannelDelaySamples'
+  | 'setStripPanLaw'
+  | 'setStripPanMode'
+  | 'setStripDualPan'
+>;
+
 /** EngineHandle stub capturing the mixer-lane commands. */
 function makeHandle(): {
   handle: EngineHandle;
   engine: {
-    setTrackLanes: ReturnType<typeof vi.fn>;
-    setStripGain: ReturnType<typeof vi.fn>;
-    setStripPan: ReturnType<typeof vi.fn>;
-    setSoloMute: ReturnType<typeof vi.fn>;
-    setTrackStripChannelDelaySamples: ReturnType<typeof vi.fn>;
-    setTrackStripPanLaw: ReturnType<typeof vi.fn>;
-    setTrackStripPanMode: ReturnType<typeof vi.fn>;
-    setTrackStripDualPan: ReturnType<typeof vi.fn>;
+    [K in keyof MixerLaneEngine]: ReturnType<typeof vi.fn>;
   };
 } {
   // Enforces the engine's append-only lane contract, which a permissive stub
   // would let a redeclaration break unnoticed.
   const declared: number[] = [];
   const engine = {
-    setTrackLanes: vi.fn((lanes: number[]) => {
-      if (declared.some((id, index) => lanes[index] !== id)) {
+    setTrackLanes: vi.fn((lanes: Array<{ trackId: number }>) => {
+      if (declared.some((id, index) => lanes[index]?.trackId !== id)) {
         throw new Error('Mixer lanes are append-only');
       }
-      declared.splice(0, declared.length, ...lanes);
+      declared.splice(0, declared.length, ...lanes.map((lane) => lane.trackId));
     }),
-    setStripGain: vi.fn(() => true),
-    setStripPan: vi.fn(() => true),
-    setSoloMute: vi.fn(() => true),
-    setTrackStripChannelDelaySamples: vi.fn(),
-    setTrackStripPanLaw: vi.fn(),
-    setTrackStripPanMode: vi.fn(),
-    setTrackStripDualPan: vi.fn(),
-  };
+    setStripFaderDb: vi.fn(),
+    setStripPan: vi.fn(),
+    setTrackSoloMute: vi.fn(),
+    setStripChannelDelaySamples: vi.fn(),
+    setStripPanLaw: vi.fn(),
+    setStripPanMode: vi.fn(),
+    setStripDualPan: vi.fn(),
+  } satisfies MixerLaneEngine;
   const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
   return { handle, engine };
 }
@@ -80,7 +88,7 @@ describe('createMixerSync', () => {
 
     sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
     expect(engine.setTrackLanes).toHaveBeenCalledTimes(1);
-    expect(engine.setTrackLanes).toHaveBeenCalledWith([1, 2]);
+    expect(engine.setTrackLanes).toHaveBeenCalledWith([{ trackId: 1 }, { trackId: 2 }]);
     expect(sync.laneTrackIds()).toEqual([1, 2]);
     expect(sync.sceneGeneration?.()).toBe(1);
 
@@ -96,7 +104,11 @@ describe('createMixerSync', () => {
     // A reordered list with a new track keeps the declared order and appends.
     sync.sync([makeTrack(3), makeTrack(2), makeTrack(1)], neutralMaster());
     expect(engine.setTrackLanes).toHaveBeenCalledTimes(2);
-    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([1, 2, 3]);
+    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([
+      { trackId: 1 },
+      { trackId: 2 },
+      { trackId: 3 },
+    ]);
     expect(sync.laneTrackIds()).toEqual([1, 2, 3]);
   });
 
@@ -115,17 +127,17 @@ describe('createMixerSync', () => {
 
     sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
     engine.setTrackLanes.mockClear();
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
 
     sync.sync([makeTrack(1)], neutralMaster());
     expect(sync.laneTrackIds()).toEqual([1, 2]);
     expect(engine.setTrackLanes).not.toHaveBeenCalled();
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: false, mute: true });
 
     // The retired lane is muted once, not on every sync.
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setSoloMute).not.toHaveBeenCalled();
+    expect(engine.setTrackSoloMute).not.toHaveBeenCalled();
   });
 
   it('appends after a retired lane and mutes it again after the redeclaration', () => {
@@ -134,12 +146,16 @@ describe('createMixerSync', () => {
 
     sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
     sync.sync([makeTrack(1)], neutralMaster());
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
 
     sync.sync([makeTrack(1), makeTrack(3)], neutralMaster());
-    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([1, 2, 3]);
+    expect(engine.setTrackLanes).toHaveBeenLastCalledWith([
+      { trackId: 1 },
+      { trackId: 2 },
+      { trackId: 3 },
+    ]);
     expect(sync.laneTrackIds()).toEqual([1, 2, 3]);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: false, mute: true });
   });
 
   it('restores an undeleted track on its original lane with its own state', () => {
@@ -149,17 +165,17 @@ describe('createMixerSync', () => {
     sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
     sync.sync([makeTrack(1)], neutralMaster());
     engine.setTrackLanes.mockClear();
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
 
     sync.sync([makeTrack(1), makeTrack(2, { solo: true })], neutralMaster());
     expect(engine.setTrackLanes).not.toHaveBeenCalled();
     expect(sync.laneTrackIds()).toEqual([1, 2]);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: true, mute: false });
 
     // Deleting it a second time mutes the lane again.
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, true);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: false, mute: true });
   });
 
   it('sends gain, pan and solo/mute per track on the first sync', () => {
@@ -173,9 +189,9 @@ describe('createMixerSync', () => {
     });
 
     sync.sync([track], neutralMaster());
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, linearToDb(0.5) - 3);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, linearToDb(0.5) - 3);
     expect(engine.setStripPan).toHaveBeenCalledWith(1, 0.5);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: true, mute: false });
   });
 
   it('uses a safety-trimmed centered lane gain for PFL solo audition only', () => {
@@ -194,12 +210,12 @@ describe('createMixerSync', () => {
 
     sync.sync([soloed, soloSafe], neutralMaster(), undefined, undefined, 'pfl');
 
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, PFL_AUDITION_GAIN_DB);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, PFL_AUDITION_GAIN_DB);
     expect(engine.setStripPan).toHaveBeenCalledWith(1, 0);
-    expect(engine.setStripGain).toHaveBeenCalledWith(2, linearToDb(0.5) - 6);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(2, linearToDb(0.5) - 6);
     expect(engine.setStripPan).toHaveBeenCalledWith(2, -0.5);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: true, mute: false });
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: true, mute: false });
   });
 
   it('mirrors the channel alignment delay and resends only on change', () => {
@@ -209,13 +225,13 @@ describe('createMixerSync', () => {
 
     sync.sync([delayed, makeTrack(2)], neutralMaster());
     // Track 1 carries a delay; track 2 (neutral) does not need an initial no-op 0.
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(1, 128);
-    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalledWith(2, 0);
-    engine.setTrackStripChannelDelaySamples.mockClear();
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledWith(1, 128);
+    expect(engine.setStripChannelDelaySamples).not.toHaveBeenCalledWith(2, 0);
+    engine.setStripChannelDelaySamples.mockClear();
 
     // An unchanged sync sends nothing.
     sync.sync([delayed, makeTrack(2)], neutralMaster());
-    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalled();
+    expect(engine.setStripChannelDelaySamples).not.toHaveBeenCalled();
 
     // Changing the delay (rounded to whole samples) resends only that track.
     sync.sync(
@@ -225,8 +241,8 @@ describe('createMixerSync', () => {
       ],
       neutralMaster(),
     );
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledTimes(1);
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(1, 64);
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledTimes(1);
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledWith(1, 64);
   });
 
   it('adds automatic insert PDC to the manual channel delay', () => {
@@ -248,9 +264,9 @@ describe('createMixerSync', () => {
     sync.sync([latent, dry, manual], neutralMaster());
 
     // Track 1 owns the max insert latency, so it needs no compensating delay.
-    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalledWith(1, 0);
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 128);
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(3, 136);
+    expect(engine.setStripChannelDelaySamples).not.toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledWith(2, 128);
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledWith(3, 136);
   });
 
   it('defers positive PDC until a strip scene has been declared', () => {
@@ -267,14 +283,14 @@ describe('createMixerSync', () => {
     });
     sync.sync([latent, makeTrack(2)], neutralMaster());
     expect(sync.positiveChannelDelayTrackIds()).toEqual(new Set([2]));
-    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalled();
+    expect(engine.setStripChannelDelaySamples).not.toHaveBeenCalled();
 
     sync.applyChannelDelays(1);
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 12);
-    engine.setTrackStripChannelDelaySamples.mockClear();
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledWith(2, 12);
+    engine.setStripChannelDelaySamples.mockClear();
     sync.sync([latent, makeTrack(2)], neutralMaster());
     sync.applyChannelDelays(1);
-    expect(engine.setTrackStripChannelDelaySamples).not.toHaveBeenCalled();
+    expect(engine.setStripChannelDelaySamples).not.toHaveBeenCalled();
   });
 
   it('includes return-bus insert latency when synchronizing PDC', () => {
@@ -297,7 +313,7 @@ describe('createMixerSync', () => {
       },
     ]);
 
-    expect(engine.setTrackStripChannelDelaySamples).toHaveBeenCalledWith(2, 96);
+    expect(engine.setStripChannelDelaySamples).toHaveBeenCalledWith(2, 96);
   });
 
   it('mirrors pan law, pan mode and dual pan, resending only on change', () => {
@@ -306,18 +322,18 @@ describe('createMixerSync', () => {
 
     // First sync skips neutral defaults; the engine already starts with these values.
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setTrackStripPanLaw).not.toHaveBeenCalled();
-    expect(engine.setTrackStripPanMode).not.toHaveBeenCalled();
-    expect(engine.setTrackStripDualPan).not.toHaveBeenCalled();
-    engine.setTrackStripPanLaw.mockClear();
-    engine.setTrackStripPanMode.mockClear();
-    engine.setTrackStripDualPan.mockClear();
+    expect(engine.setStripPanLaw).not.toHaveBeenCalled();
+    expect(engine.setStripPanMode).not.toHaveBeenCalled();
+    expect(engine.setStripDualPan).not.toHaveBeenCalled();
+    engine.setStripPanLaw.mockClear();
+    engine.setStripPanMode.mockClear();
+    engine.setStripDualPan.mockClear();
 
     // An unchanged sync sends nothing.
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setTrackStripPanLaw).not.toHaveBeenCalled();
-    expect(engine.setTrackStripPanMode).not.toHaveBeenCalled();
-    expect(engine.setTrackStripDualPan).not.toHaveBeenCalled();
+    expect(engine.setStripPanLaw).not.toHaveBeenCalled();
+    expect(engine.setStripPanMode).not.toHaveBeenCalled();
+    expect(engine.setStripDualPan).not.toHaveBeenCalled();
 
     // Switching mode and dual pan resends only those, with clamped positions.
     sync.sync(
@@ -325,7 +341,7 @@ describe('createMixerSync', () => {
         makeTrack(1, {
           mixer: {
             ...createDefaultStrip(),
-            panLaw: 'const6dB',
+            panLaw: 'const6Db',
             panMode: 'dualPan',
             dualPan: { left: -2, right: 0.5 },
           },
@@ -333,12 +349,12 @@ describe('createMixerSync', () => {
       ],
       neutralMaster(),
     );
-    expect(engine.setTrackStripPanLaw).toHaveBeenCalledTimes(1);
-    expect(engine.setTrackStripPanLaw).toHaveBeenCalledWith(1, 'const6dB');
-    expect(engine.setTrackStripPanMode).toHaveBeenCalledTimes(1);
-    expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
-    expect(engine.setTrackStripDualPan).toHaveBeenCalledTimes(1);
-    expect(engine.setTrackStripDualPan).toHaveBeenCalledWith(1, -1, 0.5);
+    expect(engine.setStripPanLaw).toHaveBeenCalledTimes(1);
+    expect(engine.setStripPanLaw).toHaveBeenCalledWith(1, 'const6Db');
+    expect(engine.setStripPanMode).toHaveBeenCalledTimes(1);
+    expect(engine.setStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
+    expect(engine.setStripDualPan).toHaveBeenCalledTimes(1);
+    expect(engine.setStripDualPan).toHaveBeenCalledWith(1, -1, 0.5);
   });
 
   it('preserves the neutral stereo dual-pan image when only the strip pan is set', () => {
@@ -359,8 +375,8 @@ describe('createMixerSync', () => {
     );
 
     expect(engine.setStripPan).toHaveBeenCalledWith(1, 0.6);
-    expect(engine.setTrackStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
-    expect(engine.setTrackStripDualPan).not.toHaveBeenCalled();
+    expect(engine.setStripPanMode).toHaveBeenCalledWith(1, 'dualPan');
+    expect(engine.setStripDualPan).not.toHaveBeenCalled();
   });
 
   it('uses legacy track pan without a strip and clamps strip pan', () => {
@@ -371,7 +387,7 @@ describe('createMixerSync', () => {
       [makeTrack(1, { pan: -0.4 }), makeTrack(2, { mixer: { ...createDefaultStrip(), pan: 2 } })],
       neutralMaster(),
     );
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, 0);
     expect(engine.setStripPan).toHaveBeenCalledWith(1, -0.4);
     expect(engine.setStripPan).toHaveBeenCalledWith(2, 1);
   });
@@ -381,7 +397,7 @@ describe('createMixerSync', () => {
     const sync = createMixerSync(handle);
 
     sync.sync([makeTrack(1, { volume: 0 })], neutralMaster());
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, SILENCE_DB);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, SILENCE_DB);
   });
 
   it('resends only the values that changed since the last sync', () => {
@@ -389,29 +405,29 @@ describe('createMixerSync', () => {
     const sync = createMixerSync(handle);
 
     sync.sync([makeTrack(1)], neutralMaster());
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     engine.setStripPan.mockClear();
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
 
     // Unchanged state sends nothing.
     sync.sync([makeTrack(1)], neutralMaster());
-    expect(engine.setStripGain).not.toHaveBeenCalled();
+    expect(engine.setStripFaderDb).not.toHaveBeenCalled();
     expect(engine.setStripPan).not.toHaveBeenCalled();
-    expect(engine.setSoloMute).not.toHaveBeenCalled();
+    expect(engine.setTrackSoloMute).not.toHaveBeenCalled();
 
     // A mute toggle sends only the solo/mute command.
     sync.sync([makeTrack(1, { mute: true })], neutralMaster());
-    expect(engine.setStripGain).not.toHaveBeenCalled();
+    expect(engine.setStripFaderDb).not.toHaveBeenCalled();
     expect(engine.setStripPan).not.toHaveBeenCalled();
-    expect(engine.setSoloMute).toHaveBeenCalledTimes(1);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, true);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: false, mute: true });
 
     // A volume change sends only the gain command.
     sync.sync([makeTrack(1, { mute: true, volume: 0.5 })], neutralMaster());
-    expect(engine.setStripGain).toHaveBeenCalledTimes(1);
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, linearToDb(0.5));
+    expect(engine.setStripFaderDb).toHaveBeenCalledTimes(1);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, linearToDb(0.5));
     expect(engine.setStripPan).not.toHaveBeenCalled();
-    expect(engine.setSoloMute).toHaveBeenCalledTimes(1);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledTimes(1);
   });
 
   it('mirrors the master strip gain and clamped pan, deduped', () => {
@@ -419,19 +435,19 @@ describe('createMixerSync', () => {
     const sync = createMixerSync(handle);
 
     sync.sync([], { ...createDefaultStrip(), gainDb: -6, pan: -2 });
-    expect(engine.setStripGain).toHaveBeenCalledWith('master', -6);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith('master', -6);
     expect(engine.setStripPan).toHaveBeenCalledWith('master', -1);
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     engine.setStripPan.mockClear();
 
     // Unchanged master sends nothing.
     sync.sync([], { ...createDefaultStrip(), gainDb: -6, pan: -2 });
-    expect(engine.setStripGain).not.toHaveBeenCalled();
+    expect(engine.setStripFaderDb).not.toHaveBeenCalled();
     expect(engine.setStripPan).not.toHaveBeenCalled();
 
     // A pan change sends only the pan command.
     sync.sync([], { ...createDefaultStrip(), gainDb: -6, pan: 0.5 });
-    expect(engine.setStripGain).not.toHaveBeenCalled();
+    expect(engine.setStripFaderDb).not.toHaveBeenCalled();
     expect(engine.setStripPan).toHaveBeenCalledTimes(1);
     expect(engine.setStripPan).toHaveBeenCalledWith('master', 0.5);
   });
@@ -442,13 +458,13 @@ describe('createMixerSync', () => {
 
     // No solo active: the safe track is not forced into the solo group.
     sync.sync([makeTrack(1, { soloSafe: true }), makeTrack(2)], neutralMaster());
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, false);
-    engine.setSoloMute.mockClear();
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: false, mute: false });
+    engine.setTrackSoloMute.mockClear();
 
     // Track 2 soloed: the solo-safe track 1 joins the solo group (effSolo true).
     sync.sync([makeTrack(1, { soloSafe: true }), makeTrack(2, { solo: true })], neutralMaster());
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, false);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: true, mute: false });
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: true, mute: false });
   });
 
   it('expands a soloed group track to its member lanes in realtime sync', () => {
@@ -460,9 +476,9 @@ describe('createMixerSync', () => {
       neutralMaster(),
     );
 
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, false, false);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, true, false);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(3, true, false);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: false, mute: false });
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: true, mute: false });
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(3, { solo: true, mute: false });
   });
 
   it('folds the VCA group offset into a member track gain', () => {
@@ -471,13 +487,13 @@ describe('createMixerSync', () => {
     const track = makeTrack(1, { vcaId: 'vca-1', mixer: { ...createDefaultStrip(), gainDb: -3 } });
 
     sync.sync([track], neutralMaster(), new Map([['vca-1', -6]]));
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, -9);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, -9);
 
     // Raising the VCA offset re-sends only the member gain.
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     sync.sync([track], neutralMaster(), new Map([['vca-1', 6]]));
-    expect(engine.setStripGain).toHaveBeenCalledTimes(1);
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, 3);
+    expect(engine.setStripFaderDb).toHaveBeenCalledTimes(1);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, 3);
   });
 
   it('folds VCA mute and solo into member lane state', () => {
@@ -491,8 +507,8 @@ describe('createMixerSync', () => {
       new Map([['vca-1', { mute: true, solo: true }]]),
     );
 
-    expect(engine.setSoloMute).toHaveBeenCalledWith(1, true, true);
-    expect(engine.setSoloMute).toHaveBeenCalledWith(2, false, false);
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(1, { solo: true, mute: true });
+    expect(engine.setTrackSoloMute).toHaveBeenCalledWith(2, { solo: false, mute: false });
   });
 
   it('leaves non-member tracks untouched by VCA offsets', () => {
@@ -500,7 +516,7 @@ describe('createMixerSync', () => {
     const sync = createMixerSync(handle);
 
     sync.sync([makeTrack(1)], neutralMaster(), new Map([['vca-1', -6]]));
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, 0);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, 0);
   });
 
   it('sends a deleted lane nothing but its mute', () => {
@@ -508,28 +524,29 @@ describe('createMixerSync', () => {
     const sync = createMixerSync(handle);
 
     sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     engine.setStripPan.mockClear();
-    engine.setSoloMute.mockClear();
+    engine.setTrackSoloMute.mockClear();
 
     sync.sync([makeTrack(1, { volume: 0.5 })], neutralMaster());
-    expect(engine.setStripGain.mock.calls.map((call) => call[0])).not.toContain(2);
+    expect(engine.setStripFaderDb.mock.calls.map((call) => call[0])).not.toContain(2);
     expect(engine.setStripPan.mock.calls.map((call) => call[0])).not.toContain(2);
-    expect(engine.setSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
-      [2, false, true],
+    expect(engine.setTrackSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
+      [2, { solo: false, mute: true }],
     ]);
   });
 });
 
 describe('command ring refusals', () => {
+  /** The error a full command ring raises. */
+  const ringFull = () => new SonareError(ErrorCode.OutOfMemory, 'command ring full');
+
   /** Makes the ring setters accept only `budget` commands, then refuse. */
   function limitRing(engine: ReturnType<typeof makeHandle>['engine'], budget: { left: number }) {
-    for (const setter of [engine.setStripGain, engine.setStripPan, engine.setSoloMute]) {
-      const accept = setter.getMockImplementation() as (...args: never[]) => boolean;
-      setter.mockImplementation((...args: never[]) => {
-        if (budget.left <= 0) return false;
+    for (const setter of [engine.setStripFaderDb, engine.setStripPan, engine.setTrackSoloMute]) {
+      setter.mockImplementation(() => {
+        if (budget.left <= 0) throw ringFull();
         budget.left -= 1;
-        return accept(...args);
       });
     }
   }
@@ -552,16 +569,16 @@ describe('command ring refusals', () => {
       for (const track of tracks) {
         const accepted = (mock: ReturnType<typeof vi.fn>) =>
           mock.mock.results.some(
-            (result, i) => mock.mock.calls[i][0] === track.id && result.value === true,
+            (result, i) => mock.mock.calls[i][0] === track.id && result.type === 'return',
           );
-        expect(accepted(engine.setStripGain)).toBe(true);
+        expect(accepted(engine.setStripFaderDb)).toBe(true);
         expect(accepted(engine.setStripPan)).toBe(true);
-        expect(accepted(engine.setSoloMute)).toBe(true);
+        expect(accepted(engine.setTrackSoloMute)).toBe(true);
       }
       // Nothing is left pending, so no further re-sends are queued.
-      const callsBefore = engine.setStripGain.mock.calls.length;
+      const callsBefore = engine.setStripFaderDb.mock.calls.length;
       vi.advanceTimersByTime(500);
-      expect(engine.setStripGain.mock.calls.length).toBe(callsBefore);
+      expect(engine.setStripFaderDb.mock.calls.length).toBe(callsBefore);
     } finally {
       vi.useRealTimers();
     }
@@ -569,31 +586,35 @@ describe('command ring refusals', () => {
 
   it('keeps a refused value pending for the next sync even without a timer', () => {
     const { handle, engine } = makeHandle();
-    engine.setStripGain.mockReturnValueOnce(false);
+    engine.setStripFaderDb.mockImplementationOnce(() => {
+      throw ringFull();
+    });
     const sync = createMixerSync(handle);
     const tracks = [makeTrack(1, { volume: 0.5 })];
 
     sync.sync(tracks, neutralMaster());
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     sync.sync(tracks, neutralMaster());
 
-    expect(engine.setStripGain).toHaveBeenCalledTimes(1);
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, linearToDb(0.5));
+    expect(engine.setStripFaderDb).toHaveBeenCalledTimes(1);
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, linearToDb(0.5));
   });
 
   it('keeps a refused retired-lane mute pending', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle);
     sync.sync([makeTrack(1), makeTrack(2)], neutralMaster());
-    engine.setSoloMute.mockClear();
-    engine.setSoloMute.mockReturnValueOnce(false);
+    engine.setTrackSoloMute.mockClear();
+    engine.setTrackSoloMute.mockImplementationOnce(() => {
+      throw ringFull();
+    });
 
     sync.sync([makeTrack(1)], neutralMaster());
     sync.sync([makeTrack(1)], neutralMaster());
 
-    expect(engine.setSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
-      [2, false, true],
-      [2, false, true],
+    expect(engine.setTrackSoloMute.mock.calls.filter((call) => call[0] === 2)).toEqual([
+      [2, { solo: false, mute: true }],
+      [2, { solo: false, mute: true }],
     ]);
   });
 });

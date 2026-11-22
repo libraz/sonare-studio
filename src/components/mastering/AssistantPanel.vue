@@ -1,36 +1,35 @@
 <script setup lang="ts">
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { MasteringSuggestion } from '@/ui/mastering/assistant';
+import type { SuggestionAdjustment } from '@/ui/mastering/assistant';
+import { formatLevel } from '@/ui/mastering/loudness';
 import { humanizePresetName } from '@/ui/mastering/preset-catalog';
+import type { MasteringAssistantResult } from '@/wasm/index.js';
 
 /**
  * Result block for the mastering assistant: the named base preset, the preset
  * values the suggestion tuned, the assistant's explanation lines and the
  * measured loudness profile.
  * The analysis and the (undoable) preset apply are owned by the panel; this
- * component only renders the parsed suggestion.
+ * component only renders the suggestion.
  */
 
 defineProps<{
-  /** Parsed assistant suggestion to display. */
-  suggestion: MasteringSuggestion;
+  /** Assistant suggestion to display. */
+  suggestion: MasteringAssistantResult;
   /** Base preset used for this suggestion. */
   preset: string | undefined;
   /** Preset values the suggestion tuned, applied as the preset's overrides. */
-  adjustments: ReadonlyArray<{
-    key: string;
-    from: number | boolean | undefined;
-    to: number | boolean;
-  }>;
+  adjustments: ReadonlyArray<SuggestionAdjustment>;
 }>();
 
 const { t } = useI18n();
 
-/** Compact display of a flat chain value. */
-function formatValue(value: number | boolean | undefined): string {
+/** Compact display of a chain config value. */
+function formatValue(value: unknown): string {
   if (value === undefined) return '—';
   if (typeof value === 'boolean') return value ? 'on' : 'off';
-  return String(Math.round(value * 100) / 100);
+  if (typeof value === 'number') return String(Math.round(value * 100) / 100);
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 </script>
 
@@ -58,20 +57,20 @@ function formatValue(value: number | boolean | undefined): string {
         <li v-for="(line, index) in suggestion.explanation" :key="index">{{ line }}</li>
       </ul>
     </div>
-    <div v-if="suggestion.profile" class="assist-profile">
+    <div class="assist-profile">
       <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.lufs, {
-          value: suggestion.profile.integratedLufs.toFixed(1),
+          value: formatLevel(suggestion.profile.integratedLufs),
         })
       }}</span>
       <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.lra, {
-          value: suggestion.profile.lraLu.toFixed(1),
+          value: suggestion.profile.loudnessRangeLu.toFixed(1),
         })
       }}</span>
       <span class="assist-metric">{{
         formatMessage(t.shell.mastering.assistant.truePeak, {
-          value: suggestion.profile.truePeakDb.toFixed(1),
+          value: suggestion.profile.truePeakDbtp.toFixed(1),
         })
       }}</span>
     </div>

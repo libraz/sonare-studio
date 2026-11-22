@@ -492,7 +492,7 @@ describe('audioExportPreflight', () => {
     });
 
     it('asks the engine with every key, then build keys, then the catalog default', () => {
-      const timing = vi.fn((_name: string, params: Record<string, number | boolean>) => {
+      const timing = vi.fn(({ params }: { params: Record<string, number | boolean> }) => {
         if ('mix' in params) throw new Error('key not read at build time');
         return { tailSamples: params.feedback === 0.5 ? 96000 : 48000 };
       });
@@ -500,10 +500,7 @@ describe('audioExportPreflight', () => {
         {
           id: 'effects.delay.stereo',
           tailSamples: 24000,
-          params: [
-            { name: 'feedback', id: null },
-            { name: 'mix', id: 7 },
-          ],
+          params: [{ name: 'feedback' }, { name: 'mix', id: 7 }],
         },
       ];
       const resolver = insertTailResolverFromTiming(catalog, 48000, timing);

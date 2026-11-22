@@ -43,13 +43,13 @@ describe('insert descriptor drives the controls', () => {
   });
 
   it('leaves a coupled key to the engine instead of its bounds at the siblings defaults', () => {
-    const control = numberControl('voice.changer', 'retuneSemitones');
-    expect(control).toMatchObject({ min: -12, max: 12, coupledWith: ['formantMode'] });
+    const control = numberControl('dynamics.compressor', 'thresholdDb');
+    expect(control).toMatchObject({ min: -60, max: 0, coupledWith: ['autoMakeup'] });
     expect(clampToAccepted(control, 30)).toBe(30);
   });
 
   it('draws a log axis from the declared positive display floor', () => {
-    expect(numberControl('voice.changer', 'eqHighpassHz')).toMatchObject({
+    expect(numberControl('voice.changer', 'eqHighPassHz')).toMatchObject({
       min: 20,
       max: 300,
       scale: 'log',
@@ -71,7 +71,7 @@ describe('insert descriptor drives the controls', () => {
   });
 
   it('offers no value on an exclusive bound', () => {
-    const control = numberControl('dynamics.compressor', 'sidechainHpfHz');
+    const control = numberControl('dynamics.deesser', 'frequencyHz');
     expect(control.min).toBeGreaterThan(0);
     expect(() => validateProcessorControlValue(control, 0)).toThrow(RangeError);
     expect(clampToAccepted(control, 0)).toBeGreaterThan(0);
@@ -115,7 +115,12 @@ describe('new realtime inserts', () => {
   }, 60_000);
 
   it('treats voice.changer construction-only keys as rebuild keys', () => {
-    for (const key of ['retuneGrainSize', 'limiterEnableIspLimiter', 'reverbSeed', 'formantMode']) {
+    for (const key of [
+      'retuneGrainSizeSamples',
+      'limiterEnableIspLimiter',
+      'reverbSeed',
+      'formantMode',
+    ]) {
       expect(isConstructionOnlyParam('voice.changer', key), key).toBe(true);
     }
     expect(isConstructionOnlyParam('voice.changer', 'wetMix')).toBe(false);

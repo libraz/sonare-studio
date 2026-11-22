@@ -35,13 +35,13 @@ export function correlationFraction(correlation: number): number {
  * @returns The max true peak in dBTP, or undefined when neither channel has a
  *   reading (lightweight lane/bus records carry no true-peak data).
  */
-export function maxTruePeakDb(
-  levels: Pick<StereoMeterLevels, 'truePeakDbL' | 'truePeakDbR'>,
+export function maxTruePeakDbtp(
+  levels: Pick<StereoMeterLevels, 'truePeakDbtpL' | 'truePeakDbtpR'>,
 ): number | undefined {
-  const { truePeakDbL, truePeakDbR } = levels;
-  if (truePeakDbL === undefined) return truePeakDbR;
-  if (truePeakDbR === undefined) return truePeakDbL;
-  return Math.max(truePeakDbL, truePeakDbR);
+  const { truePeakDbtpL, truePeakDbtpR } = levels;
+  if (truePeakDbtpL === undefined) return truePeakDbtpR;
+  if (truePeakDbtpR === undefined) return truePeakDbtpL;
+  return Math.max(truePeakDbtpL, truePeakDbtpR);
 }
 
 /**
@@ -103,11 +103,11 @@ export function gainReductionFraction(amountDb: number): number {
  * @returns True when momentary LUFS or either true-peak channel exists.
  */
 export function hasLoudnessData(
-  levels: Pick<StereoMeterLevels, 'momentaryLufs' | 'truePeakDbL' | 'truePeakDbR'>,
+  levels: Pick<StereoMeterLevels, 'momentaryLufs' | 'truePeakDbtpL' | 'truePeakDbtpR'>,
 ): boolean {
   return (
     levels.momentaryLufs !== undefined ||
-    levels.truePeakDbL !== undefined ||
-    levels.truePeakDbR !== undefined
+    levels.truePeakDbtpL !== undefined ||
+    levels.truePeakDbtpR !== undefined
   );
 }

@@ -25,7 +25,7 @@ describe('overlapping document clips', () => {
 
     await store.loadDocument(doc);
 
-    expect(getProject().getOverlapPolicy()).toBe(1);
+    expect(getProject().overlapPolicy).toBe('allow');
     expect(store.clips.filter((clip) => clip.trackId === store.tracks[0].id)).toHaveLength(2);
   });
 
@@ -37,6 +37,6 @@ describe('overlapping document clips', () => {
 
     await store.loadDocument(doc);
 
-    expect(getProject().getOverlapPolicy()).toBe(1);
+    expect(getProject().overlapPolicy).toBe('allow');
   });
 });

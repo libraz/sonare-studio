@@ -12,7 +12,7 @@ import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 import { audioClipSegments } from './comping';
-import { pairEventsIntoNotes, type RawNote, type SerializedMidiEvent } from './midi-events';
+import { pairEventsIntoNotes, type RawNote } from './midi-events';
 import { renderAudibleAudioClipWindow } from './scheduling';
 import { normalizeTempoMap, ppqToSeconds, secondsToPpq, tempoAtPpq } from './tempo-map';
 import { type MeterGridStep, measureRangeAt, snapClipPpqToMeterGrid } from './time-signature';
@@ -117,14 +117,14 @@ function finite(value: unknown): value is number {
 function validProjectMidiEvent(value: unknown): value is ProjectMidiEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Record<string, unknown>;
-  const data0 = event.data0;
+  const word0 = event.word0;
   return (
     finite(event.ppq) &&
     event.ppq >= 0 &&
-    finite(data0) &&
-    Number.isInteger(data0) &&
-    data0 >= 0 &&
-    data0 <= 0xffffffff
+    finite(word0) &&
+    Number.isInteger(word0) &&
+    word0 >= 0 &&
+    word0 <= 0xffffffff
   );
 }
 
@@ -176,12 +176,7 @@ export function quantizeNotes<T extends { startPpq: number; durationPpq: number 
 }
 
 function eventNotes(events: ReadonlyArray<ProjectMidiEvent>): RawNote[] {
-  const serialized: SerializedMidiEvent[] = events.map((event) => ({
-    ppq: event.ppq,
-    data0: event.data0,
-    data1: event.data1 ?? 0,
-  }));
-  return pairEventsIntoNotes(serialized);
+  return pairEventsIntoNotes(events);
 }
 
 function safePcmBytes(frames: number, channels: number): number {
@@ -508,11 +503,11 @@ export async function transcribeAudioClip(
     });
     throwIfAborted(options.signal);
     validateResult(result);
-    if (!tuningReported && finite(result.tuning)) {
+    if (!tuningReported && finite(result.tuningCents)) {
       tuningReported = true;
-      options.onTuning?.(result.tuning);
+      options.onTuning?.(result.tuningCents / 100);
       // Later chunks reuse the first chunk's measurement, so one take keeps one pitch grid.
-      if (referenceHz === 'auto') referenceHz = 440 * 2 ** (result.tuning / 12);
+      if (referenceHz === 'auto') referenceHz = 440 * 2 ** (result.tuningCents / 1200);
     }
 
     // Detector PPQ sits on a constant grid at the reported tempo; take it to

@@ -76,7 +76,7 @@ describe('PatchEditor.vue', () => {
 
   it('seeds the draft from the preset base values of the track instrument', () => {
     const wrapper = mountOpen();
-    expect(wrapper.find('.patch-base').text()).toBe('based on acoustic-piano');
+    expect(wrapper.find('.patch-base').text()).toBe('based on acousticPiano');
     // fakeSynthPresetPatch reports cutoffHz 12000 / ampSustain 0.6.
     expect((wrapper.find('[data-field="cutoffHz"]').element as HTMLInputElement).value).toBe(
       '12000',
@@ -110,7 +110,7 @@ describe('PatchEditor.vue', () => {
       patch: { preset?: string; cutoffHz?: number; ampSustain?: number; lfo2RateHz?: number };
     };
     expect(instrument.kind).toBe('synth-patch');
-    expect(instrument.patch.preset).toBe('acoustic-piano');
+    expect(instrument.patch.preset).toBe('acousticPiano');
     expect(instrument.patch.cutoffHz).toBe(800);
     expect(instrument.patch.lfo2RateHz).toBe(4.5);
     // Untouched base values travel explicitly with the draft.
@@ -129,7 +129,7 @@ describe('PatchEditor.vue', () => {
     const rows = wrapper.findAll('.mod-row');
     expect(rows).toHaveLength(2);
     await selectOption(rows[0], '.mod-source', 'lfo1');
-    await selectOption(rows[0], '.mod-destination', 'pitch-cents');
+    await selectOption(rows[0], '.mod-destination', 'pitchCents');
     await rows[0].find('.mod-depth').setValue('0.5');
     // The second row stays inert (none -> none) and must not be committed.
 
@@ -139,7 +139,7 @@ describe('PatchEditor.vue', () => {
       patch: { modRoutings?: Array<{ source: string; destination: string; depth: number }> };
     };
     expect(instrument.patch.modRoutings).toEqual([
-      { source: 'lfo1', destination: 'pitch-cents', depth: 0.5 },
+      { source: 'lfo1', destination: 'pitchCents', depth: 0.5 },
     ]);
   });
 
@@ -241,9 +241,9 @@ describe('PatchEditor.vue', () => {
 
   it('rebuilds the draft when reopened after the instrument changed', async () => {
     const wrapper = mount(PatchEditor, { props: { open: false, trackId } });
-    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead', drive: 0.9 } });
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'sawLead', drive: 0.9 } });
     await wrapper.setProps({ open: true });
-    expect(wrapper.find('.patch-base').text()).toBe('based on saw-lead');
+    expect(wrapper.find('.patch-base').text()).toBe('based on sawLead');
     expect((wrapper.find('[data-field="drive"]').element as HTMLInputElement).value).toBe('0.9');
   });
 });
@@ -260,7 +260,7 @@ describe('PatchEditor.vue engine model', () => {
     (getWasmModule() as unknown as Record<string, unknown>).synthEngineParamInfo = (
       mode: string,
     ) =>
-      mode === 'bowed-string'
+      mode === 'bowedString'
         ? [
             { name: 'bowForce', type: 'number', min: 0, max: 1, default: 0.55, unit: 'none' },
             { name: 'elastoPlastic', type: 'boolean', default: 0, unit: 'none' },
@@ -268,7 +268,7 @@ describe('PatchEditor.vue engine model', () => {
         : [];
     setTrackInstrument(trackId, {
       kind: 'synth-patch',
-      patch: { engineMode: 'bowed-string', engineParams: { bowForce: 0.9 } },
+      patch: { engineMode: 'bowedString', engineParams: { bowForce: 0.9 } },
     });
     const wrapper = mount(PatchEditor, { props: { open: true, trackId } });
     const slider = wrapper.find('[data-engine-param="bowForce"]');
@@ -312,7 +312,7 @@ describe('PatchEditor.vue engine model', () => {
         activeWhen: [[{ key: 'elastoPlastic', scope: 'engine', relation: 'eq', value: true }]],
       },
     ];
-    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { engineMode: 'bowed-string' } });
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { engineMode: 'bowedString' } });
     const wrapper = mount(PatchEditor, {
       props: { open: true, trackId },
       global: { directives: { tooltip: vTooltip } },

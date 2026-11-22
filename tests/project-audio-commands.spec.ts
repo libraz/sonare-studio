@@ -53,23 +53,23 @@ interface FakeDoc {
   tracks: Array<{ id: number; kind: number; name: string }>;
   clips: Array<{
     id: number;
-    track_id: number;
-    start_ppq: number;
-    length_ppq: number;
-    source_offset_ppq: number;
+    trackId: number;
+    startPpq: number;
+    lengthPpq: number;
+    sourceOffsetPpq: number;
     gain: number;
-    source_id: number;
-    fade_in_ppq: number;
-    fade_out_ppq: number;
-    warp_ref_id?: number;
-    warp_mode?: number;
+    sourceId: number;
+    fadeIn: { lengthPpq: number };
+    fadeOut: { lengthPpq: number };
+    warpRefId?: number;
+    warpMode?: number;
   }>;
-  warp_maps?: Array<{
+  warpMaps?: Array<{
     id: number;
     name?: string;
     anchors: Array<{ warpSample: number; sourceSample: number }>;
   }>;
-  midi_content: Record<string, Array<{ ppq: number; data0: number; data1: number }>>;
+  midiContent: Record<string, Array<{ ppq: number; word0: number; word1: number }>>;
 }
 
 function readDoc(): FakeDoc {
@@ -93,14 +93,17 @@ async function flushPromises(times = 5): Promise<void> {
 }
 
 /** Reads the metadata strings the Project stores for a clip's audio source. */
-function sourceMetadata(clipId: number): { contentHash: string; externalStemRole: string } {
-  const sourceId = readDoc().clips.find((clip) => clip.id === clipId)?.source_id ?? 0;
-  const source = (
-    getProject() as unknown as {
-      sourceByIndex(index: number): { contentHash: string; externalStemRole: string };
-    }
-  ).sourceByIndex(sourceId - 1);
-  return { contentHash: source.contentHash, externalStemRole: source.externalStemRole };
+function sourceMetadata(clipId: number): { contentHash?: string; externalStemRole?: string } {
+  const sourceId = readDoc().clips.find((clip) => clip.id === clipId)?.sourceId ?? 0;
+  const source = getProject()
+    .sources()
+    .find((entry) => entry.id === sourceId);
+  return {
+    ...(source?.contentHash !== undefined ? { contentHash: source.contentHash } : {}),
+    ...(source?.externalStemRole !== undefined
+      ? { externalStemRole: source.externalStemRole }
+      : {}),
+  };
 }
 
 /** The name each band is laid down under: the source clip name plus the band. */
@@ -236,8 +239,8 @@ describe('audio track and clip commands', () => {
     const doc = readDoc();
     const docFirst = doc.clips.find((c) => c.id === first);
     const docSecond = doc.clips.find((c) => c.id === second);
-    expect(docFirst?.source_id).toBeDefined();
-    expect(docSecond?.source_id).toBe(docFirst?.source_id);
+    expect(docFirst?.sourceId).toBeDefined();
+    expect(docSecond?.sourceId).toBe(docFirst?.sourceId);
   });
 
   it('rolls back a created audio clip when rebinding its known source throws', async () => {
@@ -267,14 +270,14 @@ describe('audio track and clip commands', () => {
       warp: { enabled: true, sourceBpm: 96, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
     });
     const before = getProject().toJson();
-    const anchorsAt = () => readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors ?? [];
+    const anchorsAt = () => readDoc().warpMaps?.find((map) => map.id === clipId)?.anchors ?? [];
     const anchorsBefore = anchorsAt();
     expect(anchorsBefore.length).toBeGreaterThan(0);
 
     setProjectSampleRate(96000);
 
     expect(store.sampleRate).toBe(96000);
-    expect(getProject().getSampleRate()).toBe(96000);
+    expect(getProject().sampleRate).toBe(96000);
     expect(anchorsAt()).toEqual(
       anchorsBefore.map((anchor) => ({
         warpSample: anchor.warpSample * 2,
@@ -329,13 +332,13 @@ describe('audio track and clip commands', () => {
     });
     const docClip = readDoc().clips.find((clip) => clip.id === clipId);
     expect(docClip).toMatchObject({
-      source_offset_ppq: 1.5,
-      fade_in_ppq: 0.25,
-      fade_out_ppq: 0.5,
-      warp_ref_id: clipId,
-      warp_mode: 2,
+      sourceOffsetPpq: 1.5,
+      fadeIn: { lengthPpq: 0.25 },
+      fadeOut: { lengthPpq: 0.5 },
+      warpRefId: clipId,
+      warpMode: 2,
     });
-    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([clipId]);
+    expect(readDoc().warpMaps?.map((map) => map.id)).toEqual([clipId]);
   });
 
   it('addAudioClip undo/redo reverts the whole command at once', async () => {
@@ -362,21 +365,21 @@ describe('audio track and clip commands', () => {
       assetId: 'asset-x',
     });
     const doc = readDoc();
-    expect(doc.clips.find((c) => c.id === second)?.source_id).toBe(
-      doc.clips.find((c) => c.id === first)?.source_id,
+    expect(doc.clips.find((c) => c.id === second)?.sourceId).toBe(
+      doc.clips.find((c) => c.id === first)?.sourceId,
     );
   });
 
   it('re-registers the asset source when undo rolled the registration back', async () => {
     const trackId = addAudioTrack();
     const first = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
-    const sourcesAfterFirst = getProject().sourceCount();
+    const sourcesAfterFirst = getProject().sources().length;
     undo(); // rolls the registration back
-    expect(getProject().sourceCount()).toBe(sourcesAfterFirst - 1);
+    expect(getProject().sources().length).toBe(sourcesAfterFirst - 1);
     const again = await addAudioClip({ trackId, assetId: 'asset-x', lengthPpq: 8 });
     expect(again).not.toBe(first);
     // A fresh source was registered (no dangling rebind to the undone one).
-    expect(getProject().sourceCount()).toBe(sourcesAfterFirst);
+    expect(getProject().sources().length).toBe(sourcesAfterFirst);
     expect(store.clips.find((c) => c.id === again)).toMatchObject({ kind: 'audio' });
   });
 
@@ -433,9 +436,9 @@ describe('audio track and clip commands', () => {
     expect(midiClipId).not.toBe(-1);
     expect(detectKey).not.toHaveBeenCalled();
     expect(scaleQuantizeMidi).not.toHaveBeenCalled();
-    const midiEvents = readDoc().midi_content[String(midiClipId)];
+    const midiEvents = readDoc().midiContent[String(midiClipId)];
     expect(midiEvents.map((event) => event.ppq)).toEqual([0, 1]);
-    expect(midiEvents.map((event) => (event.data0 >>> 8) & 0x7f)).toEqual([66, 66]);
+    expect(midiEvents.map((event) => (event.word0 >>> 8) & 0x7f)).toEqual([66, 66]);
   });
 
   it('consolidates audio clips into one baked asset with gaps, gain and fades', async () => {
@@ -700,7 +703,7 @@ describe('audio track and clip commands', () => {
     expect(renderWarp).toHaveBeenCalledTimes(1);
     expect(consolidated).toMatchObject({ startPpq: 0, lengthPpq: 5, sourceOffsetPpq: 0 });
     expect(consolidated?.warp).toBeUndefined();
-    expect(readDoc().warp_maps?.some((map) => map.id === warped)).toBe(false);
+    expect(readDoc().warpMaps?.some((map) => map.id === warped)).toBe(false);
     expect(Array.from(baked.channels[0])).toEqual([
       ...Array.from({ length: 20 }, (_, i) => i * 2),
       9,
@@ -789,9 +792,9 @@ describe('audio track and clip commands', () => {
     );
     const docStemClips = stemClipIds.map((id) => doc.clips.find((clip) => clip.id === id));
     for (const clip of docStemClips) {
-      expect(clip).toMatchObject({ start_ppq: 4, length_ppq: 2, gain: 0.75 });
+      expect(clip).toMatchObject({ startPpq: 4, lengthPpq: 2, gain: 0.75 });
     }
-    expect(new Set(docStemClips.map((clip) => clip?.source_id)).size).toBe(3);
+    expect(new Set(docStemClips.map((clip) => clip?.sourceId)).size).toBe(3);
   });
 
   it('leaves imported-stem provenance off the bands it separates itself', async () => {
@@ -809,7 +812,7 @@ describe('audio track and clip commands', () => {
     for (const id of stemClipIds) {
       const clip = store.clips.find((entry) => entry.id === id);
       expect(clip?.externalStemRole).toBeUndefined();
-      expect(sourceMetadata(id).externalStemRole).toBe('');
+      expect(sourceMetadata(id).externalStemRole).toBeUndefined();
     }
     expect(store.clips.filter((clip) => clip.externalStemRole !== undefined)).toEqual([]);
   });
@@ -850,7 +853,7 @@ describe('audio track and clip commands', () => {
       undefined,
       undefined,
     ]);
-    for (const clip of reloaded) expect(sourceMetadata(clip.id).externalStemRole).toBe('');
+    for (const clip of reloaded) expect(sourceMetadata(clip.id).externalStemRole).toBeUndefined();
     expect(serializeProject()).toEqual(doc);
   });
 
@@ -861,7 +864,7 @@ describe('audio track and clip commands', () => {
     const clipsBefore = store.clips.length;
     const docTracksBefore = readDoc().tracks.length;
     const docClipsBefore = readDoc().clips.length;
-    const sourcesBefore = getProject().sourceCount();
+    const sourcesBefore = getProject().sources().length;
 
     const stemClipIds = await splitAudioClipToStems(clipId);
     expect(stemClipIds).toHaveLength(3);
@@ -873,7 +876,7 @@ describe('audio track and clip commands', () => {
     expect(store.tracks.some((track) => track.name.startsWith('Loop '))).toBe(false);
     expect(readDoc().tracks).toHaveLength(docTracksBefore);
     expect(readDoc().clips).toHaveLength(docClipsBefore);
-    expect(getProject().sourceCount()).toBe(sourcesBefore);
+    expect(getProject().sources().length).toBe(sourcesBefore);
     expect(undo()).toBe(false);
 
     expect(redo()).toBe(true);
@@ -1149,16 +1152,16 @@ describe('audio track and clip commands', () => {
       warp: { enabled: true, sourceBpm: 100, anchors: [{ ppq: 2, sourceSeconds: 1 }] },
     });
     expect(store.clips.some((clip) => clip.id === oldClipId)).toBe(false);
-    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([newClipId]);
+    expect(readDoc().warpMaps?.map((map) => map.id)).toEqual([newClipId]);
 
     expect(undo()).toBe(true);
     expect(store.clips.find((clip) => clip.id === oldClipId)?.assetId).toBe('swap-a');
     expect(store.clips.some((clip) => clip.id === newClipId)).toBe(false);
-    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([oldClipId]);
+    expect(readDoc().warpMaps?.map((map) => map.id)).toEqual([oldClipId]);
     expect(undo()).toBe(false);
     expect(redo()).toBe(true);
     expect(store.clips.find((clip) => clip.id === newClipId)?.assetId).toBe('swap-b');
-    expect(readDoc().warp_maps?.map((map) => map.id)).toEqual([newClipId]);
+    expect(readDoc().warpMaps?.map((map) => map.id)).toEqual([newClipId]);
   });
 
   it('keeps the original clip when the final asset-swap removal fails', async () => {
@@ -1185,7 +1188,7 @@ describe('audio track and clip commands', () => {
     expect(store.clips.filter((clip) => clip.trackId === trackId)).toEqual([
       expect.objectContaining({ id: clipId, assetId: 'swap-a', name: 'Original' }),
     ]);
-    expect(readDoc().clips.filter((clip) => clip.track_id === trackId)).toHaveLength(1);
+    expect(readDoc().clips.filter((clip) => clip.trackId === trackId)).toHaveLength(1);
     expect(undo()).toBe(false);
   });
 
@@ -1217,8 +1220,8 @@ describe('audio track and clip commands', () => {
       fadeOutPpq: 2,
     });
     expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
-      fade_in_ppq: 0.5,
-      fade_out_ppq: 2,
+      fadeIn: { lengthPpq: 0.5 },
+      fadeOut: { lengthPpq: 2 },
     });
 
     undo();
@@ -1267,10 +1270,10 @@ describe('audio track and clip commands', () => {
     });
     let doc = readDoc();
     expect(doc.clips.find((c) => c.id === clipId)).toMatchObject({
-      warp_ref_id: clipId,
-      warp_mode: 2,
+      warpRefId: clipId,
+      warpMode: 2,
     });
-    expect(doc.warp_maps).toEqual([
+    expect(doc.warpMaps).toEqual([
       {
         id: clipId,
         name: `clip-${clipId}-warp`,
@@ -1286,28 +1289,28 @@ describe('audio track and clip commands', () => {
     undo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
     doc = readDoc();
-    expect(doc.clips.find((c) => c.id === clipId)?.warp_ref_id).toBeUndefined();
-    expect(doc.clips.find((c) => c.id === clipId)?.warp_mode).toBeUndefined();
-    expect(doc.warp_maps).toEqual([]);
+    expect(doc.clips.find((c) => c.id === clipId)?.warpRefId).toBe(0);
+    expect(doc.clips.find((c) => c.id === clipId)?.warpMode).toBe(0);
+    expect(doc.warpMaps).toEqual([]);
     redo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({
       enabled: true,
       sourceBpm: 95,
     });
     expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
-      warp_ref_id: clipId,
-      warp_mode: 2,
+      warpRefId: clipId,
+      warpMode: 2,
     });
 
     // null clears the warp state, undoably too.
     setClipWarp(clipId, null);
     expect(store.clips.find((c) => c.id === clipId)?.warp).toBeUndefined();
-    expect(readDoc().warp_maps).toEqual([]);
+    expect(readDoc().warpMaps).toEqual([]);
     undo();
     expect(store.clips.find((c) => c.id === clipId)?.warp).toMatchObject({ sourceBpm: 95 });
     expect(readDoc().clips.find((c) => c.id === clipId)).toMatchObject({
-      warp_ref_id: clipId,
-      warp_mode: 2,
+      warpRefId: clipId,
+      warpMode: 2,
     });
   });
 
@@ -1333,12 +1336,12 @@ describe('audio track and clip commands', () => {
       ],
     });
     expect(readDoc().clips.find((clip) => clip.id === copyId)).toMatchObject({
-      warp_ref_id: copyId,
-      warp_mode: 2,
+      warpRefId: copyId,
+      warpMode: 2,
     });
     expect(
       readDoc()
-        .warp_maps?.map((map) => map.id)
+        .warpMaps?.map((map) => map.id)
         .sort((a, b) => a - b),
     ).toEqual([clipId, copyId].sort((a, b) => a - b));
 
@@ -1354,10 +1357,10 @@ describe('audio track and clip commands', () => {
       anchors: [{ ppq: 2, sourceSeconds: 1 }],
     });
     expect(readDoc().clips.find((clip) => clip.id === rightId)).toMatchObject({
-      warp_ref_id: rightId,
-      warp_mode: 2,
+      warpRefId: rightId,
+      warpMode: 2,
     });
-    expect(readDoc().warp_maps?.some((map) => map.id === rightId)).toBe(true);
+    expect(readDoc().warpMaps?.some((map) => map.id === rightId)).toBe(true);
 
     trimClip(copyId, 17, 5);
     expect(store.clips.find((c) => c.id === copyId)?.warp).toEqual({
@@ -1365,8 +1368,8 @@ describe('audio track and clip commands', () => {
       sourceBpm: 120,
       anchors: [{ ppq: 1, sourceSeconds: 0.5 }],
     });
-    expect(readDoc().clips.find((clip) => clip.id === copyId)?.warp_ref_id).toBe(copyId);
-    expect(readDoc().warp_maps?.find((map) => map.id === copyId)?.anchors).toHaveLength(3);
+    expect(readDoc().clips.find((clip) => clip.id === copyId)?.warpRefId).toBe(copyId);
+    expect(readDoc().warpMaps?.find((map) => map.id === copyId)?.anchors).toHaveLength(3);
   });
 
   it('keeps curved warp source times continuous across split and trim boundaries', async () => {
@@ -1477,12 +1480,12 @@ describe('audio track and clip commands', () => {
     clearHistory();
 
     deleteClip(clipId);
-    expect(readDoc().warp_maps?.some((map) => map.id === clipId)).toBe(false);
+    expect(readDoc().warpMaps?.some((map) => map.id === clipId)).toBe(false);
     expect(undo()).toBe(true);
-    expect(readDoc().clips.find((clip) => clip.id === clipId)?.warp_ref_id).toBe(clipId);
-    expect(readDoc().warp_maps?.some((map) => map.id === clipId)).toBe(true);
+    expect(readDoc().clips.find((clip) => clip.id === clipId)?.warpRefId).toBe(clipId);
+    expect(readDoc().warpMaps?.some((map) => map.id === clipId)).toBe(true);
     expect(redo()).toBe(true);
-    expect(readDoc().warp_maps?.some((map) => map.id === clipId)).toBe(false);
+    expect(readDoc().warpMaps?.some((map) => map.id === clipId)).toBe(false);
   });
 
   it('rehydrates native warp sample anchors when the tempo map changes', async () => {
@@ -1493,14 +1496,14 @@ describe('audio track and clip commands', () => {
       lengthPpq: 8,
       warp: { enabled: true, sourceBpm: 100 },
     });
-    const before = readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors;
+    const before = readDoc().warpMaps?.find((map) => map.id === clipId)?.anchors;
     clearHistory();
 
     setTempoSegments([{ startPpq: 0, bpm: 60 }]);
-    const after = readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors;
+    const after = readDoc().warpMaps?.find((map) => map.id === clipId)?.anchors;
     expect(after?.at(-1)?.warpSample).toBe((before?.at(-1)?.warpSample ?? 0) * 2);
     expect(undo()).toBe(true);
-    expect(readDoc().warp_maps?.find((map) => map.id === clipId)?.anchors).toEqual(before);
+    expect(readDoc().warpMaps?.find((map) => map.id === clipId)?.anchors).toEqual(before);
   });
 
   it('setClipWarp omits the anchors field when none survive sanitizing', async () => {
@@ -1593,8 +1596,8 @@ describe('audio track and clip commands', () => {
     });
     // The copy shares the source.
     const doc = readDoc();
-    expect(doc.clips.find((c) => c.id === copyId)?.source_id).toBe(
-      doc.clips.find((c) => c.id === clipId)?.source_id,
+    expect(doc.clips.find((c) => c.id === copyId)?.sourceId).toBe(
+      doc.clips.find((c) => c.id === clipId)?.sourceId,
     );
   });
 

@@ -1,6 +1,7 @@
 import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
+import { tryQueue } from '@/engine/mixer-sync';
 import { clamp01 } from '@/lib/math';
 import { createRecordingCycle, type RecordingCycle } from '@/project/loop-recording';
 import {
@@ -11,10 +12,11 @@ import {
   secondsToPpq,
 } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
-import type { SonareEngine, SonareEngineTelemetryRecord } from '@/wasm/worklet.js';
+import type { EngineTelemetry } from '@/wasm/index.js';
+import type { SonareEngine } from '@/wasm/worklet.js';
 
-/** Telemetry record type emitted once per processed audio block (SonareEngineTelemetryType.ProcessBlock). */
-const TELEMETRY_PROCESS_BLOCK = 0;
+/** Telemetry record type emitted once per processed audio block. */
+const TELEMETRY_PROCESS_BLOCK = 'processBlock';
 
 /** Default tempo assumed until {@link UseTransportReturn.setTempo} is called. */
 
@@ -26,7 +28,7 @@ export interface UseTransportReturn {
    * Playhead position in seconds, derived from engine telemetry
    * (`timelineSample / ctx.sampleRate`). Updated via requestAnimationFrame
    * polling while playing; immediate seeks update it optimistically, while
-   * future seeks commit only after process telemetry reaches their sampleTime.
+   * future seeks commit only after process telemetry reaches their renderFrame.
    */
   positionSeconds: Ref<number>;
   /**
@@ -34,7 +36,7 @@ export interface UseTransportReturn {
    * `timelineSample` through the project tempo map (which replicates the
    * engine's tempo math), so it is exact under tempo segments and ramps. Also
    * Immediate seeks update it optimistically; future seeks commit only after
-   * process telemetry reaches their sampleTime.
+   * process telemetry reaches their renderFrame.
    */
   positionPpq: Ref<number>;
   /**
@@ -69,35 +71,35 @@ export interface UseTransportReturn {
   /**
    * Starts playback via `engine.transport.play`.
    *
-   * @param sampleTime Absolute AudioContext sample time to start at; omit for ASAP.
+   * @param renderFrame Absolute AudioContext sample time to start at; omit for ASAP.
    * @returns False when the engine is unavailable or the command was rejected.
    */
-  play(sampleTime?: number): boolean;
+  play(renderFrame?: number): boolean;
   /**
    * Stops playback via `engine.transport.stop`.
    *
-   * @param sampleTime Absolute AudioContext sample time to stop at; omit for ASAP.
+   * @param renderFrame Absolute AudioContext sample time to stop at; omit for ASAP.
    * @returns False when the engine is unavailable or the command was rejected.
    */
-  stop(sampleTime?: number): boolean;
+  stop(renderFrame?: number): boolean;
   /**
    * Seeks to a timeline position in seconds via `engine.transport.seekSeconds`.
    *
    * @param seconds Target timeline position in seconds.
-   * @param sampleTime Absolute AudioContext sample time to apply the seek at; omit for ASAP.
+   * @param renderFrame Absolute AudioContext sample time to apply the seek at; omit for ASAP.
    * @returns False when the engine rejected the command; without an engine the
    *   position is held and applied when one attaches.
    */
-  seek(seconds: number, sampleTime?: number): boolean;
+  seek(seconds: number, renderFrame?: number): boolean;
   /**
    * Seeks to a timeline position in PPQ (quarter-note pulses) via `engine.transport.seekPpq`.
    *
    * @param ppq Target timeline position in quarter-note pulses (fractional allowed).
-   * @param sampleTime Absolute AudioContext sample time to apply the seek at; omit for ASAP.
+   * @param renderFrame Absolute AudioContext sample time to apply the seek at; omit for ASAP.
    * @returns False when the engine rejected the command; without an engine the
    *   position is held and applied when one attaches.
    */
-  seekPpq(ppq: number, sampleTime?: number): boolean;
+  seekPpq(ppq: number, renderFrame?: number): boolean;
   /**
    * Asks a suspended AudioContext to resume. Call it synchronously inside the
    * user gesture that starts sound: a suspended context accepts play but never advances.
@@ -154,7 +156,7 @@ export interface UseTransportReturn {
  * used; play and stop are no-ops returning `false` without an engine.
  *
  * Units: all musical positions are PPQ (quarter-note pulses, 1.0 = one quarter
- * note, fractions allowed); `sampleTime` arguments are absolute AudioContext
+ * note, fractions allowed); `renderFrame` arguments are absolute AudioContext
  * sample times (omitted = apply ASAP); `positionSeconds` is timeline seconds.
  *
  * The playhead is fed by engine ProcessBlock telemetry. While playing, a
@@ -210,7 +212,7 @@ export function useTransport(
   let scheduledSequence = 0;
   let scheduledActions: Array<{
     engine: SonareEngine;
-    sampleTime: number;
+    renderFrame: number;
     sequence: number;
     commit: () => void;
   }> = [];
@@ -222,7 +224,7 @@ export function useTransport(
     ...(beatGain === undefined ? {} : { beatGain, accentGain: Math.min(1, beatGain * 2) }),
   });
 
-  const telemetryPositionSample = (telemetry: SonareEngineTelemetryRecord): number => {
+  const telemetryPositionSample = (telemetry: EngineTelemetry): number => {
     if (Number.isFinite(telemetry.timelineSample)) return telemetry.timelineSample;
     return telemetry.audibleTimelineSample;
   };
@@ -231,8 +233,8 @@ export function useTransport(
     if (!Number.isFinite(renderFrame)) return;
     lastRenderFrame = Math.max(lastRenderFrame, renderFrame);
     const due = scheduledActions
-      .filter((action) => action.engine === engine && action.sampleTime <= renderFrame)
-      .sort((a, b) => a.sampleTime - b.sampleTime || a.sequence - b.sequence);
+      .filter((action) => action.engine === engine && action.renderFrame <= renderFrame)
+      .sort((a, b) => a.renderFrame - b.renderFrame || a.sequence - b.sequence);
     if (due.length === 0) return;
     const dueSet = new Set(due);
     scheduledActions = scheduledActions.filter((action) => !dueSet.has(action));
@@ -245,9 +247,13 @@ export function useTransport(
    * reaches the engine over the port, unordered with the command ring.
    */
   const applyTransportState = (handle: EngineHandle): void => {
-    handle.engine.transport.setLoop(loopStartPpq.value, loopEndPpq.value, loopEnabled.value);
+    handle.engine.transport.setLoop({
+      startPpq: loopStartPpq.value,
+      endPpq: loopEndPpq.value,
+      enabled: loopEnabled.value,
+    });
     handle.engine.setMetronome(metronomeConfig(metronomeEnabled.value, metronomeBeatGain));
-    handle.engine.transport.seekSeconds(ppqToSeconds(tempoMap, positionPpq.value));
+    handle.engine.transport.seekSec(ppqToSeconds(tempoMap, positionPpq.value));
   };
 
   /**
@@ -261,20 +267,18 @@ export function useTransport(
     scheduledActions = scheduledActions.filter((action) => action.engine === handle.engine);
     lastRenderFrame = 0;
     const sampleRate = handle.ctx.sampleRate;
-    unsubscribeTelemetry = handle.engine.onTelemetry(
-      (telemetry: SonareEngineTelemetryRecord): void => {
-        if (telemetry.type !== TELEMETRY_PROCESS_BLOCK) return;
-        const sample = telemetryPositionSample(telemetry);
-        const audibleSample = Number.isFinite(telemetry.audibleTimelineSample)
-          ? telemetry.audibleTimelineSample
-          : sample;
-        positionSeconds.value = sample / sampleRate;
-        positionPpq.value = samplesToPpq(tempoMap, sample, sampleRate);
-        audiblePositionSeconds.value = audibleSample / sampleRate;
-        audiblePositionPpq.value = samplesToPpq(tempoMap, audibleSample, sampleRate);
-        commitScheduledActions(handle.engine, telemetry.renderFrame);
-      },
-    );
+    unsubscribeTelemetry = handle.engine.onTelemetry((telemetry: EngineTelemetry): void => {
+      if (telemetry.type !== TELEMETRY_PROCESS_BLOCK) return;
+      const sample = telemetryPositionSample(telemetry);
+      const audibleSample = Number.isFinite(telemetry.audibleTimelineSample)
+        ? telemetry.audibleTimelineSample
+        : sample;
+      positionSeconds.value = sample / sampleRate;
+      positionPpq.value = samplesToPpq(tempoMap, sample, sampleRate);
+      audiblePositionSeconds.value = audibleSample / sampleRate;
+      audiblePositionPpq.value = samplesToPpq(tempoMap, audibleSample, sampleRate);
+      commitScheduledActions(handle.engine, telemetry.renderFrame);
+    });
     subscribedEngine = handle.engine;
     applyTransportState(handle);
   };
@@ -305,15 +309,19 @@ export function useTransport(
     rafId = globalThis.requestAnimationFrame(tick);
   };
 
-  const commitAtSampleTime = (
+  const commitAtRenderFrame = (
     handle: EngineHandle,
-    sampleTime: number | undefined,
+    renderFrame: number | undefined,
     commit: () => void,
   ): void => {
-    if (sampleTime !== undefined && Number.isFinite(sampleTime) && sampleTime > lastRenderFrame) {
+    if (
+      renderFrame !== undefined &&
+      Number.isFinite(renderFrame) &&
+      renderFrame > lastRenderFrame
+    ) {
       scheduledActions.push({
         engine: handle.engine,
-        sampleTime,
+        renderFrame,
         sequence: scheduledSequence++,
         commit,
       });
@@ -323,14 +331,14 @@ export function useTransport(
     commit();
   };
 
-  const play = (sampleTime?: number): boolean => {
+  const play = (renderFrame?: number): boolean => {
     const handle = resolveHandle();
     if (!handle) return false;
     updatePlaybackLatency(handle);
     ensureTelemetrySubscription(handle);
-    const ok = handle.engine.transport.play(sampleTime);
+    const ok = tryQueue(() => handle.engine.transport.play(renderFrame));
     if (ok) {
-      commitAtSampleTime(handle, sampleTime, () => {
+      commitAtRenderFrame(handle, renderFrame, () => {
         isPlaying.value = true;
         startPolling();
       });
@@ -338,14 +346,14 @@ export function useTransport(
     return ok;
   };
 
-  const stop = (sampleTime?: number): boolean => {
+  const stop = (renderFrame?: number): boolean => {
     const handle = resolveHandle();
     if (!handle) return false;
-    const ok = handle.engine.transport.stop(sampleTime);
+    const ok = tryQueue(() => handle.engine.transport.stop(renderFrame));
     if (ok) {
-      if (sampleTime === undefined) handle.engine.pushMidiPanic();
-      else handle.engine.pushMidiPanic(sampleTime);
-      commitAtSampleTime(handle, sampleTime, () => {
+      if (renderFrame === undefined) handle.engine.pushMidiPanic();
+      else handle.engine.pushMidiPanic(renderFrame);
+      commitAtRenderFrame(handle, renderFrame, () => {
         isPlaying.value = false;
         stopPolling();
       });
@@ -353,7 +361,7 @@ export function useTransport(
     return ok;
   };
 
-  const seek = (seconds: number, sampleTime?: number): boolean => {
+  const seek = (seconds: number, renderFrame?: number): boolean => {
     const commit = (): void => {
       positionSeconds.value = seconds;
       positionPpq.value = secondsToPpq(tempoMap, seconds);
@@ -366,16 +374,16 @@ export function useTransport(
       return true;
     }
     ensureTelemetrySubscription(handle);
-    const ok = handle.engine.transport.seekSeconds(seconds, sampleTime);
+    const ok = tryQueue(() => handle.engine.transport.seekSec(seconds, renderFrame));
     if (ok) {
-      if (sampleTime === undefined) handle.engine.pushMidiPanic();
-      else handle.engine.pushMidiPanic(sampleTime);
-      commitAtSampleTime(handle, sampleTime, commit);
+      if (renderFrame === undefined) handle.engine.pushMidiPanic();
+      else handle.engine.pushMidiPanic(renderFrame);
+      commitAtRenderFrame(handle, renderFrame, commit);
     }
     return ok;
   };
 
-  const seekPpq = (ppq: number, sampleTime?: number): boolean => {
+  const seekPpq = (ppq: number, renderFrame?: number): boolean => {
     const commit = (): void => {
       positionPpq.value = ppq;
       positionSeconds.value = ppqToSeconds(tempoMap, ppq);
@@ -388,11 +396,11 @@ export function useTransport(
       return true;
     }
     ensureTelemetrySubscription(handle);
-    const ok = handle.engine.transport.seekPpq(ppq, sampleTime);
+    const ok = tryQueue(() => handle.engine.transport.seekPpq(ppq, renderFrame));
     if (ok) {
-      if (sampleTime === undefined) handle.engine.pushMidiPanic();
-      else handle.engine.pushMidiPanic(sampleTime);
-      commitAtSampleTime(handle, sampleTime, commit);
+      if (renderFrame === undefined) handle.engine.pushMidiPanic();
+      else handle.engine.pushMidiPanic(renderFrame);
+      commitAtRenderFrame(handle, renderFrame, commit);
     }
     return ok;
   };
@@ -414,7 +422,7 @@ export function useTransport(
     // The engine keeps its sample position across a tempo change; move it back onto the shown bar.
     const handle = resolveHandle();
     if (handle && subscribedEngine === handle.engine && !isPlaying.value) {
-      handle.engine.transport.seekSeconds(positionSeconds.value);
+      handle.engine.transport.seekSec(positionSeconds.value);
     }
   };
 
@@ -422,7 +430,9 @@ export function useTransport(
     // A take is interpreted with the loop the transport plays it through.
     if (recordingCycle.active.value) return false;
     const handle = resolveHandle();
-    const ok = handle ? handle.engine.transport.setLoop(startPpq, endPpq, enabled) : true;
+    const ok = handle
+      ? tryQueue(() => handle.engine.transport.setLoop({ startPpq, endPpq, enabled }))
+      : true;
     if (ok) {
       loopStartPpq.value = startPpq;
       loopEndPpq.value = endPpq;
@@ -436,7 +446,7 @@ export function useTransport(
     const next = enabled ?? !metronomeEnabled.value;
     const gain = Number.isFinite(beatGain) ? clamp01(beatGain as number) : undefined;
     // A full command ring refuses the change; keep the toggle on the engine's state.
-    if (handle && !handle.engine.setMetronome(metronomeConfig(next, gain))) {
+    if (handle && !tryQueue(() => handle.engine.setMetronome(metronomeConfig(next, gain)))) {
       return metronomeEnabled.value;
     }
     if (gain !== undefined) metronomeBeatGain = gain;

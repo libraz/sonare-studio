@@ -1126,14 +1126,14 @@ describe('useRecording', () => {
 
   it('passes the selected realtime voice changer preset to new recorders', async () => {
     const { recording, factory, fake } = setup();
-    recording.setVoiceChangerPreset('bright-idol');
+    recording.setVoiceChangerPreset('brightIdol');
     await recording.requestMic();
 
-    expect(recording.voiceChangerPreset.value).toBe('bright-idol');
+    expect(recording.voiceChangerPreset.value).toBe('brightIdol');
     expect(factory).toHaveBeenCalledWith(
       fakeHandle,
       expect.objectContaining({
-        voiceChangerPreset: 'bright-idol',
+        voiceChangerPreset: 'brightIdol',
         streamingRetuneSemitones: 0,
       }),
     );
@@ -1195,7 +1195,7 @@ describe('useRecording', () => {
     setTrackRecordInputDeviceId(second, 'device-b');
     recording.setTrackArmed(first, true);
     recording.setTrackArmed(second, true);
-    recording.setVoiceChangerPreset('bright-idol');
+    recording.setVoiceChangerPreset('brightIdol');
     recording.setStreamingRetuneSemitones(7);
 
     await recording.requestMic();
@@ -1215,13 +1215,13 @@ describe('useRecording', () => {
     const { recording, fake } = setup();
     const trackId = addAudioTrack({ name: 'Vox' });
     recording.arm(trackId);
-    recording.setVoiceChangerPreset('bright-idol');
+    recording.setVoiceChangerPreset('brightIdol');
     await recording.record();
 
-    recording.setVoiceChangerPreset('dark-villain');
+    recording.setVoiceChangerPreset('darkVillain');
 
-    expect(recording.voiceChangerPreset.value).toBe('dark-villain');
-    expect(fake.rec.setVoiceChangerPreset).toHaveBeenCalledWith('dark-villain');
+    expect(recording.voiceChangerPreset.value).toBe('darkVillain');
+    expect(fake.rec.setVoiceChangerPreset).toHaveBeenCalledWith('darkVillain');
     expect(recording.error.value).toBeNull();
   });
 
@@ -1232,9 +1232,9 @@ describe('useRecording', () => {
     recording.arm(trackId);
     await recording.record();
 
-    recording.setVoiceChangerPreset('dark-villain');
+    recording.setVoiceChangerPreset('darkVillain');
 
-    expect(recording.voiceChangerPreset.value).toBe('dark-villain');
+    expect(recording.voiceChangerPreset.value).toBe('darkVillain');
     expect(recording.error.value).toBe(
       'Voice changer changes will apply to the next microphone binding.',
     );

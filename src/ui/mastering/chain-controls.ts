@@ -19,7 +19,7 @@ import {
   processorControlValueFromMidi,
 } from '@/project/processor-controls';
 import { getWasmModule } from '@/project/store';
-import type { MasteringInsertSlot } from '@/wasm/index.js';
+import type { MasteringInsertName, MasteringInsertSlot } from '@/wasm/index.js';
 
 /** One mastering parameter control (knob, toggle, or enum menu). */
 export type MasteringControl = ProcessorControl;
@@ -36,7 +36,7 @@ function defaultResolveParams(processor: string): string[] {
   try {
     const wasm = getWasmModule();
     if (typeof wasm.masteringInsertParamNames !== 'function') return [];
-    return wasm.masteringInsertParamNames(processor);
+    return wasm.masteringInsertParamNames(processor as MasteringInsertName);
   } catch {
     return [];
   }

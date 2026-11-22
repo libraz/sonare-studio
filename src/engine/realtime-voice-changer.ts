@@ -1,8 +1,5 @@
 import { ensureWasm } from '@/lib/wasm';
-import type {
-  RealtimeVoiceChangerConfigInput,
-  RealtimeVoiceChangerPodConfig,
-} from '@/wasm/index.js';
+import type { RealtimeVoiceChangerConfig, RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import {
   fetchWasmBinary,
   forwardWorkletRuntimeErrors,
@@ -17,10 +14,10 @@ export const REALTIME_VOICE_CHANGER_PROCESSOR = 'sonare-realtime-voice-changer-p
 
 export interface RealtimeVoiceChangerInputOptions {
   stream: MediaStream;
-  stopTracksOnClose: boolean;
+  stopTracksOnDestroy: boolean;
   preset?: RealtimeVoiceChangerConfigInput;
-  channelCount?: number;
-  blockSize?: number;
+  numChannels?: 1 | 2;
+  maxBlockSize?: number;
   signal?: AbortSignal;
   readyTimeoutMs?: number;
   /** Called when a processor in the chain crashes after startup. */
@@ -28,22 +25,21 @@ export interface RealtimeVoiceChangerInputOptions {
 }
 
 export interface RealtimeVoiceChangerRetuneInputOptions extends RealtimeVoiceChangerInputOptions {
-  semitones: number;
+  pitchSemitones: number;
 }
 
 const REALTIME_VOICE_CHANGER_NUMERIC_FIELDS = [
   'inputGainDb',
   'outputGainDb',
   'wetMix',
-  'retuneSemitones',
+  'retunePitchSemitones',
   'retuneMix',
-  'retuneGrainSize',
   'formantFactor',
   'formantAmount',
   'formantBody',
   'formantBrightness',
   'formantNasal',
-  'eqHighpassHz',
+  'eqHighPassHz',
   'eqBodyDb',
   'eqPresenceDb',
   'eqAirDb',
@@ -67,9 +63,9 @@ const REALTIME_VOICE_CHANGER_NUMERIC_FIELDS = [
   'limiterCeilingDb',
   'limiterReleaseMs',
   'limiterIspCeilingDbtp',
-] as const satisfies ReadonlyArray<keyof RealtimeVoiceChangerPodConfig>;
+] as const satisfies ReadonlyArray<keyof RealtimeVoiceChangerConfig>;
 
-function isRealtimeVoiceChangerPodConfig(value: unknown): value is RealtimeVoiceChangerPodConfig {
+function isRealtimeVoiceChangerConfig(value: unknown): value is RealtimeVoiceChangerConfig {
   if (value === null || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
   return (
@@ -83,19 +79,13 @@ function isRealtimeVoiceChangerPodConfig(value: unknown): value is RealtimeVoice
 function normalizeRealtimeVoiceChangerPreset(
   wasm: typeof import('@/wasm/index.js'),
   preset: RealtimeVoiceChangerConfigInput,
-): RealtimeVoiceChangerPodConfig | null {
-  if (typeof preset !== 'string' && isRealtimeVoiceChangerPodConfig(preset)) return preset;
+): RealtimeVoiceChangerConfig | null {
+  if (typeof preset !== 'string' && isRealtimeVoiceChangerConfig(preset)) return preset;
   if (typeof preset !== 'string') return null;
 
-  const resolver = (
-    wasm as {
-      realtimeVoiceChangerPresetConfig?: (presetId: string) => unknown;
-    }
-  ).realtimeVoiceChangerPresetConfig;
-  if (typeof resolver !== 'function') return null;
   try {
-    const config = resolver(preset);
-    return isRealtimeVoiceChangerPodConfig(config) ? config : null;
+    const config = wasm.realtimeVoiceChangerPresetConfig(preset);
+    return isRealtimeVoiceChangerConfig(config) ? config : null;
   } catch {
     return null;
   }
@@ -104,14 +94,14 @@ function normalizeRealtimeVoiceChangerPreset(
 interface VoiceChangerWorkletSetup {
   wasm: typeof import('@/wasm/index.js');
   wasmBinary: ArrayBuffer;
-  initialPreset: RealtimeVoiceChangerConfigInput | RealtimeVoiceChangerPodConfig;
+  initialPreset: RealtimeVoiceChangerConfigInput | RealtimeVoiceChangerConfig;
 }
 
 async function prepareVoiceChangerWorklet(
   preset: RealtimeVoiceChangerConfigInput | undefined,
 ): Promise<VoiceChangerWorkletSetup> {
   const [wasmBinary, wasm] = await Promise.all([fetchWasmBinary(), ensureWasm()]);
-  const initialPreset = preset ?? 'neutral-monitor';
+  const initialPreset = preset ?? 'neutralMonitor';
   return {
     wasm,
     wasmBinary,
@@ -126,7 +116,7 @@ export async function bindRealtimeVoiceChangerInput(
   options: RealtimeVoiceChangerInputOptions,
 ): Promise<MicrophoneBinding> {
   const source = ctx.createMediaStreamSource(options.stream);
-  const channelCount = Math.max(1, Math.floor(options.channelCount ?? 1));
+  const numChannels = options.numChannels ?? 1;
   let node: AudioWorkletNode | null = null;
   let setup: VoiceChangerWorkletSetup;
   try {
@@ -137,13 +127,13 @@ export async function bindRealtimeVoiceChangerInput(
     node = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
-      channelCount,
-      outputChannelCount: [channelCount],
+      channelCount: numChannels,
+      outputChannelCount: [numChannels],
       processorOptions: {
-        preset: setup.initialPreset,
+        config: setup.initialPreset,
         sampleRate: ctx.sampleRate,
-        blockSize: Math.max(1, Math.floor(options.blockSize ?? 128)),
-        channelCount,
+        maxBlockSize: Math.max(1, Math.floor(options.maxBlockSize ?? 128)),
+        numChannels,
         wasmBinary: setup.wasmBinary,
       },
     });
@@ -167,7 +157,7 @@ export async function bindRealtimeVoiceChangerInput(
     } catch {
       // Construction may have failed before the node was connected.
     }
-    if (options.stopTracksOnClose) {
+    if (options.stopTracksOnDestroy) {
       for (const track of options.stream.getTracks()) track.stop();
     }
     throw error;
@@ -184,13 +174,13 @@ export async function bindRealtimeVoiceChangerInput(
       readyNode.port.postMessage({ type: 'setConfig', config });
       return true;
     },
-    close(): void {
+    destroy(): void {
       detachRuntimeErrors();
       detachProcessorError();
       readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyNode.disconnect();
-      if (options.stopTracksOnClose) {
+      if (options.stopTracksOnDestroy) {
         for (const track of options.stream.getTracks()) track.stop();
       }
     },
@@ -204,8 +194,8 @@ export async function bindRealtimeVoiceChangerRetuneInput(
   options: RealtimeVoiceChangerRetuneInputOptions,
 ): Promise<MicrophoneBinding> {
   const source = ctx.createMediaStreamSource(options.stream);
-  const channelCount = Math.max(1, Math.floor(options.channelCount ?? 1));
-  const blockSize = Math.max(1, Math.floor(options.blockSize ?? 128));
+  const numChannels = options.numChannels ?? 1;
+  const maxBlockSize = Math.max(1, Math.floor(options.maxBlockSize ?? 128));
   const startup = new AbortController();
   const onAbort = (): void => startup.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
@@ -221,28 +211,27 @@ export async function bindRealtimeVoiceChangerRetuneInput(
     voiceNode = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
-      channelCount,
-      outputChannelCount: [channelCount],
+      channelCount: numChannels,
+      outputChannelCount: [numChannels],
       processorOptions: {
-        preset: setup.initialPreset,
+        config: setup.initialPreset,
         sampleRate: ctx.sampleRate,
-        blockSize,
-        channelCount,
+        maxBlockSize,
+        numChannels,
         wasmBinary: setup.wasmBinary,
       },
     });
     retuneNode = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
-      channelCount,
-      outputChannelCount: [channelCount],
+      channelCount: numChannels,
+      outputChannelCount: [numChannels],
       processorOptions: {
-        semitones: clampStreamingRetuneSemitones(options.semitones),
+        pitchSemitones: clampStreamingRetuneSemitones(options.pitchSemitones),
         mix: 1,
-        grainSize: 0,
         sampleRate: ctx.sampleRate,
-        blockSize,
-        channelCount,
+        maxBlockSize,
+        numChannels,
         wasmBinary: setup.wasmBinary,
       },
     });
@@ -273,7 +262,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
         // A partially built graph may contain unconnected nodes.
       }
     }
-    if (options.stopTracksOnClose) {
+    if (options.stopTracksOnDestroy) {
       for (const track of options.stream.getTracks()) track.stop();
     }
     throw error;
@@ -299,14 +288,14 @@ export async function bindRealtimeVoiceChangerRetuneInput(
     setStreamingRetuneConfig(config): void {
       readyRetuneNode.port.postMessage({ type: 'setConfig', config });
     },
-    close(): void {
+    destroy(): void {
       for (const detach of detachRuntimeErrors) detach();
       readyVoiceNode.port.postMessage({ type: 'destroy' });
       readyRetuneNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyVoiceNode.disconnect();
       readyRetuneNode.disconnect();
-      if (options.stopTracksOnClose) {
+      if (options.stopTracksOnDestroy) {
         for (const track of options.stream.getTracks()) track.stop();
       }
     },

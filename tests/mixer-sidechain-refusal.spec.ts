@@ -19,14 +19,13 @@ const ALL_REFUSALS: SidechainRefusal[] = [
 ];
 
 function check(reason: SidechainRefusal | null): SidechainCheck {
-  return { ok: reason === null, reason };
+  return reason === null ? { ok: true } : { ok: false, reason };
 }
 
 function setup(reason: SidechainRefusal | null = 'planRefused') {
   const engine = {
-    canSetLaneSidechain: vi.fn(() => check(reason)),
+    canSetStripSidechain: vi.fn(() => check(reason)),
     canSetBusSidechain: vi.fn(() => check(reason)),
-    canSetMasterSidechain: vi.fn(() => check(reason)),
   };
   const ids = {
     busIdFor: vi.fn((id: string) => ({ fx: 2, 'group:7': 5 })[id]),
@@ -48,10 +47,10 @@ function setup(reason: SidechainRefusal | null = 'planRefused') {
 }
 
 describe('createSidechainRefusalLookup', () => {
-  it('asks the lane query for an ordinary track with the store insert index', () => {
+  it('asks the strip query for an ordinary track with the store insert index', () => {
     const { engine, lookup } = setup();
     expect(lookup(1, 2, { kind: 'track', trackId: 2 })).toBe('planRefused');
-    expect(engine.canSetLaneSidechain).toHaveBeenCalledWith(1, 2, 2);
+    expect(engine.canSetStripSidechain).toHaveBeenCalledWith(1, 2, { kind: 'track', id: 2 });
   });
 
   it('returns null when the engine accepts', () => {
@@ -62,22 +61,22 @@ describe('createSidechainRefusalLookup', () => {
   it('routes group tracks and return buses through the bus query with engine ids', () => {
     const { engine, lookup } = setup('cycle');
     expect(lookup(7, 1, { kind: 'track', trackId: 1 })).toBe('cycle');
-    expect(engine.canSetBusSidechain).toHaveBeenLastCalledWith(5, 1, 'track', 1);
+    expect(engine.canSetBusSidechain).toHaveBeenLastCalledWith(5, 1, { kind: 'track', id: 1 });
     expect(lookup('bus:fx', 0, { kind: 'group', trackId: 7 })).toBe('cycle');
-    expect(engine.canSetBusSidechain).toHaveBeenLastCalledWith(2, 0, 'bus', 5);
+    expect(engine.canSetBusSidechain).toHaveBeenLastCalledWith(2, 0, { kind: 'bus', id: 5 });
   });
 
-  it('routes the master through the master query', () => {
+  it('routes the master through the strip query', () => {
     const { engine, lookup } = setup('selfKey');
     expect(lookup('master', 3, { kind: 'bus', busId: 'fx' })).toBe('selfKey');
-    expect(engine.canSetMasterSidechain).toHaveBeenCalledWith(3, 'bus', 2);
+    expect(engine.canSetStripSidechain).toHaveBeenCalledWith('master', 3, { kind: 'bus', id: 2 });
   });
 
   it('has no opinion while a bus is not mapped to the engine yet', () => {
     const { engine, lookup } = setup();
     expect(lookup('master', 0, { kind: 'bus', busId: 'missing' })).toBeNull();
     expect(lookup('bus:missing', 0, { kind: 'track', trackId: 1 })).toBeNull();
-    expect(engine.canSetMasterSidechain).not.toHaveBeenCalled();
+    expect(engine.canSetStripSidechain).not.toHaveBeenCalled();
     expect(engine.canSetBusSidechain).not.toHaveBeenCalled();
   });
 });

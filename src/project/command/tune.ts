@@ -77,7 +77,7 @@ export async function tuneAudioClipToMidiTrack(
     {
       loadAudioAsset: loadAsset,
       pitchPyin: (samples, sampleRate, frameLength, hopLength) =>
-        wasm.pitchPyin(samples, sampleRate, frameLength, hopLength),
+        wasm.pitchPyin(samples, sampleRate, { frameLength, hopLength }),
       extractNotes: (request) => wasm.extractNotes(request),
       assignNoteTargets: (request) => wasm.assignNoteTargets(request),
       renderNotes: (request) => wasm.renderNotes(request),

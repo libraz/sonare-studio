@@ -6,12 +6,7 @@ import {
   type StreamingRetuneConfig,
 } from '@/wasm/index.js';
 import type {
-  SonareEngineCaptureRequestMessage,
-  SonareEngineCommandRecord,
-  SonareEngineSyncMessage,
-  SonareEngineTransportRequestMessage,
   SonareRealtimeEngineWorkletProcessorOptions,
-  SonareRealtimeVoiceChangerMessage,
   SonareRealtimeVoiceChangerWorkletProcessorOptions,
 } from '@/wasm/worklet.js';
 import {
@@ -23,27 +18,24 @@ import {
 
 // AudioWorkletGlobalScope globals are not part of the TS DOM/WebWorker libs.
 declare const AudioWorkletProcessor: new () => { readonly port: MessagePort };
-declare function registerProcessor(
+declare function registerProcessor<Options>(
   name: string,
-  ctor: new (options?: { processorOptions?: EngineProcessorOptions }) => unknown,
+  ctor: new (options?: { processorOptions?: Options }) => unknown,
 ): void;
 
-type EngineProcessorOptions = SonareRealtimeEngineWorkletProcessorOptions & {
-  /** Sonare embind WASM bytes, supplied by the main thread (no fetch in worklets). */
-  wasmBinary?: ArrayBuffer;
-};
+type EngineProcessorOptions = SonareRealtimeEngineWorkletProcessorOptions;
 
-type VoiceChangerProcessorOptions = SonareRealtimeVoiceChangerWorkletProcessorOptions & {
-  /** Sonare embind WASM bytes, supplied by the main thread (no fetch in worklets). */
-  wasmBinary?: ArrayBuffer;
-};
+type VoiceChangerProcessorOptions = SonareRealtimeVoiceChangerWorkletProcessorOptions;
 
 type StreamingRetuneProcessorOptions = StreamingRetuneConfig & {
+  /** Sonare embind WASM bytes, supplied by the main thread (no fetch in worklets). */
   wasmBinary?: ArrayBuffer;
   sampleRate?: number;
-  blockSize?: number;
-  channelCount?: number;
+  maxBlockSize?: number;
+  numChannels?: number;
 };
+
+type EngineProcessor = InstanceType<typeof SonareRealtimeEngineWorkletProcessor>;
 
 type WorkletGlobal = typeof globalThis & {
   SonareEmbindInitPromise?: Promise<void>;
@@ -103,7 +95,7 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
 
   constructor(options?: { processorOptions?: EngineProcessorOptions }) {
     super();
-    const processorOptions = options?.processorOptions ?? {};
+    const processorOptions = (options?.processorOptions ?? {}) as EngineProcessorOptions;
     const port = this.port;
     const onMessage = (event: MessageEvent) => {
       if (this.bridge) {
@@ -139,9 +131,12 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
     })();
     void initPromise
       .then(() => {
-        this.bridge = new SonareRealtimeEngineWorkletProcessor(processorOptions, {
-          postMessage: (message) => port.postMessage(message),
-          onMeter: (meter) => port.postMessage(meter),
+        this.bridge = new SonareRealtimeEngineWorkletProcessor({
+          ...processorOptions,
+          transport: {
+            postMessage: (message) => port.postMessage(message),
+            onMeter: (meter) => port.postMessage(meter),
+          },
         });
         for (const message of this.pending) {
           this.dispatch(message);
@@ -163,19 +158,23 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
     }
     const type = (data as { type?: unknown }).type;
     if (typeof type === 'number') {
-      this.bridge.receiveCommand(data as SonareEngineCommandRecord);
+      this.bridge.receiveCommand(data as Parameters<EngineProcessor['receiveCommand']>[0]);
     } else if (type === 'captureRequest') {
       // Capture and transport RPCs have dedicated handlers that post the
       // matching response back over the port; routing them into receiveSync
       // would silently drop them and hang the caller's promise.
-      this.bridge.receiveCaptureRequest(data as SonareEngineCaptureRequestMessage);
+      this.bridge.receiveCaptureRequest(
+        data as Parameters<EngineProcessor['receiveCaptureRequest']>[0],
+      );
     } else if (type === 'transportRequest') {
-      this.bridge.receiveTransportRequest(data as SonareEngineTransportRequestMessage);
+      this.bridge.receiveTransportRequest(
+        data as Parameters<EngineProcessor['receiveTransportRequest']>[0],
+      );
     } else if (typeof type === 'string' && type.startsWith('sync')) {
       // The facade's control-plane contract: every `sync*` message must reach
       // the bridge (libsonare does not export a canonical list, so match the
       // documented prefix contract).
-      this.bridge.receiveSync(data as SonareEngineSyncMessage);
+      this.bridge.receiveSync(data as Parameters<EngineProcessor['receiveSync']>[0]);
     }
   }
 
@@ -202,7 +201,7 @@ class SonareVoiceChangerWorklet extends AudioWorkletProcessor {
 
   constructor(options?: { processorOptions?: VoiceChangerProcessorOptions }) {
     super();
-    const processorOptions = options?.processorOptions ?? {};
+    const processorOptions = (options?.processorOptions ?? {}) as VoiceChangerProcessorOptions;
     const port = this.port;
     const onMessage = (event: MessageEvent) => {
       if (this.bridge) this.dispatch(event.data);
@@ -250,7 +249,7 @@ class SonareVoiceChangerWorklet extends AudioWorkletProcessor {
     if (!this.bridge || data === null || typeof data !== 'object') return;
     const type = (data as { type?: unknown }).type;
     if (type === 'setConfig' || type === 'reset' || type === 'destroy') {
-      this.bridge.receiveMessage(data as SonareRealtimeVoiceChangerMessage);
+      this.bridge.receiveMessage(data);
     }
   }
 
@@ -276,16 +275,16 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
   private destroyed = false;
   private readonly pending: unknown[] = [];
   private readonly sampleRateValue: number;
-  private readonly blockSize: number;
-  private readonly channelCount: number;
+  private readonly maxBlockSize: number;
+  private readonly numChannels: number;
 
   constructor(options?: { processorOptions?: StreamingRetuneProcessorOptions }) {
     super();
     const processorOptions = options?.processorOptions ?? {};
     this.sampleRateValue = processorOptions.sampleRate ?? 48_000;
-    this.blockSize = Math.max(1, Math.floor(processorOptions.blockSize ?? 128));
-    this.channelCount = Math.max(1, Math.floor(processorOptions.channelCount ?? 1));
-    this.zero = new Float32Array(this.blockSize);
+    this.maxBlockSize = Math.max(1, Math.floor(processorOptions.maxBlockSize ?? 128));
+    this.numChannels = Math.max(1, Math.floor(processorOptions.numChannels ?? 1));
+    this.zero = new Float32Array(this.maxBlockSize);
     const port = this.port;
     const onMessage = (event: MessageEvent) => {
       if (this.ready) this.dispatch(event.data);
@@ -300,8 +299,8 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
     const {
       wasmBinary,
       sampleRate: _sampleRate,
-      blockSize: _blockSize,
-      channelCount: _channelCount,
+      maxBlockSize: _maxBlockSize,
+      numChannels: _numChannels,
       ...config
     } = processorOptions;
     const scope = globalThis as WorkletGlobal;
@@ -319,9 +318,9 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
       }
     })()
       .then(() => {
-        this.retunes = Array.from({ length: this.channelCount }, () => {
+        this.retunes = Array.from({ length: this.numChannels }, () => {
           const retune = new StreamingRetune(config);
-          retune.prepare(this.sampleRateValue, this.blockSize);
+          retune.prepare(this.sampleRateValue, this.maxBlockSize);
           return retune;
         });
         this.ready = true;
@@ -377,7 +376,7 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
   private destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    for (const retune of this.retunes) retune.delete();
+    for (const retune of this.retunes) retune.destroy();
     this.retunes = [];
   }
 }

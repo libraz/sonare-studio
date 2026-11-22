@@ -6,6 +6,7 @@ import { useTransport } from '@/composables/useTransport';
 import { useTransportControls } from '@/composables/useTransportControls';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
+import type { SonareEngineTransportFacade } from '@/wasm/worklet.js';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -36,9 +37,9 @@ function createEngine(state: AudioContextState = 'running') {
       play: record('play'),
       stop: record('stop'),
       seekPpq: record('seekPpq'),
-      seekSeconds: record('seekSeconds'),
+      seekSec: record('seekSec'),
       setLoop: record('setLoop'),
-    },
+    } satisfies Partial<SonareEngineTransportFacade>,
     setMetronome: record('setMetronome'),
     pushMidiPanic: record('pushMidiPanic', undefined),
     pollTelemetry: () => [],
@@ -75,10 +76,10 @@ describe('transport state held before and across engine attach', () => {
     handleRef.value = first.handle;
     expect(transport.play()).toBe(true);
     expect(first.calls).toEqual([
-      'setLoop(4,12,true)',
+      'setLoop({"startPpq":4,"endPpq":12,"enabled":true})',
       'setMetronome({"enabled":true,"beatGain":0.3,"accentGain":0.6})',
       // 8 PPQ at the default 120 BPM.
-      'seekSeconds(4)',
+      'seekSec(4)',
       'play()',
     ]);
   });
@@ -94,8 +95,8 @@ describe('transport state held before and across engine attach', () => {
     const second = createEngine();
     handleRef.value = second.handle;
     transport.play();
-    expect(second.calls).toContain('seekSeconds(3)');
-    expect(second.calls.indexOf('seekSeconds(3)')).toBeLessThan(second.calls.indexOf('play()'));
+    expect(second.calls).toContain('seekSec(3)');
+    expect(second.calls.indexOf('seekSec(3)')).toBeLessThan(second.calls.indexOf('play()'));
   });
 
   it('re-seeks a stopped engine to the shown bar when the tempo map changes', () => {
@@ -109,7 +110,7 @@ describe('transport state held before and across engine attach', () => {
     transport.setTempoMap([{ startPpq: 0, bpm: 60 }]);
     expect(transport.positionPpq.value).toBe(32);
     // At 60 BPM, PPQ 32 is 32 s; the engine must move there, not stay at 16 s.
-    expect(engine.calls).toEqual(['seekSeconds(32)']);
+    expect(engine.calls).toEqual(['seekSec(32)']);
   });
 });
 

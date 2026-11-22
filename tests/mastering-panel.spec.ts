@@ -1,6 +1,6 @@
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { nextTick } from 'vue';
 import MasteringPanel from '@/components/mastering/MasteringPanel.vue';
 import { MIDI_LEARN_KEY, useMidiLearn } from '@/composables/useMidiLearn';
@@ -8,10 +8,10 @@ import type { ExportRenderOptions } from '@/export/client';
 import type { MixdownProgressFn, MixdownResult } from '@/export/mixdown';
 import {
   addMasteringProcessor,
+  applyMasteringPresetWithOverrides,
   clearHistory,
   setMasteringEnabled,
   setMasteringPreset,
-  setMasteringPresetOverride,
   undo,
 } from '@/project/commands';
 import { getWasmModule } from '@/project/runtime';
@@ -19,20 +19,35 @@ import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { DEFAULT_PREVIEW_GAIN } from '@/ui/media/preview';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
+import type * as WasmModule from '@/wasm/index.js';
+import type { MasteringAssistantResult } from '@/wasm/index.js';
 import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
   const { vi: vitest } = await import('vitest');
   const fakeModule = createFakeWasmModule();
+  const suggestion = () => ({
+    chainConfig: {},
+    explanation: ['base preset: streaming'],
+    profile: {
+      durationSec: 1,
+      bpm: 120,
+      bpmConfidence: 0.5,
+      integratedLufs: -14,
+      loudnessRangeLu: 4,
+      truePeakDbtp: -1,
+      crestFactorDb: 9,
+      spectralCentroidHz: 2000,
+      spectralFlatness: 0.1,
+      attackPerSecond: 2,
+      sustainRatio: 0.5,
+    },
+  });
   // Distinct entry points remain mockable so tests can tell which one ran.
   Object.assign(fakeModule, {
-    masteringAssistantSuggest: vitest.fn(() =>
-      JSON.stringify({ explanation: ['base preset: streaming'] }),
-    ),
-    masteringAssistantSuggestStereo: vitest.fn(() =>
-      JSON.stringify({ explanation: ['base preset: streaming'] }),
-    ),
+    masteringAssistantSuggest: vitest.fn(suggestion),
+    masteringAssistantSuggestStereo: vitest.fn(suggestion),
   });
   return { ensureWasm: async () => fakeModule };
 });
@@ -44,11 +59,11 @@ function makeResult(value: number, lufs = -14): MixdownResult {
     totalFrames: 1,
     report: {
       peakDb: -6,
-      truePeakDb: -0.1,
+      truePeakDbtp: -0.1,
       lufs,
       momentaryLufs: -12.5,
       shortTermLufs: -13.2,
-      loudnessRange: 4.5,
+      loudnessRangeLu: 4.5,
       dynamicRangeDb: 9.1,
     },
   };
@@ -62,9 +77,8 @@ function makeResultWithoutLoudness(value: number): MixdownResult {
 
 /** The wasm double the panel resolves through ensureWasm. */
 interface MasteringWasmDouble {
-  masteringAssistantSuggest: ReturnType<typeof vi.fn>;
-  masteringAssistantSuggestStereo?: ReturnType<typeof vi.fn>;
-  masteringStreamingPreviewStereo?: (request: unknown) => string;
+  masteringAssistantSuggest: Mock<typeof WasmModule.masteringAssistantSuggest>;
+  masteringAssistantSuggestStereo?: Mock<typeof WasmModule.masteringAssistantSuggestStereo>;
 }
 
 async function masteringWasm(): Promise<MasteringWasmDouble> {
@@ -278,8 +292,7 @@ describe('MasteringPanel.vue', () => {
     await target.setValue('-14');
 
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'loudness.enabled': true,
-      'loudness.targetLufs': -14,
+      loudness: { enabled: true, targetLufs: -14 },
     });
     expect(wrapper.get('[data-preset-control="loudness.targetLufs"]').classes()).toContain(
       'overridden',
@@ -296,8 +309,7 @@ describe('MasteringPanel.vue', () => {
 
     await wrapper.get('[data-preset-control="loudness.truePeakOversample"] select').setValue('8');
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'loudness.enabled': true,
-      'loudness.truePeakOversample': 8,
+      loudness: { enabled: true, truePeakOversample: 8 },
     });
     undo();
     await nextTick();
@@ -312,7 +324,7 @@ describe('MasteringPanel.vue', () => {
 
     await denoise.setValue(true);
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.enabled': true,
+      repair: { denoise: { enabled: true } },
     });
     expect((denoise.element as HTMLInputElement).checked).toBe(true);
   });
@@ -329,16 +341,14 @@ describe('MasteringPanel.vue', () => {
     expect((reduction.element as HTMLInputElement).disabled).toBe(false);
     await reduction.setValue(80);
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.enabled': true,
-      'repair.denoise.reductionDb': 80,
+      repair: { denoise: { enabled: true, reductionDb: 80 } },
     });
     await wrapper
       .get('[data-preset-control="repair.denoise.enabled"] .preset-control-reset')
       .trigger('click');
     expect((enabled.element as HTMLInputElement).checked).toBe(false);
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.enabled': false,
-      'repair.denoise.reductionDb': 80,
+      repair: { denoise: { enabled: false, reductionDb: 80 } },
     });
 
     await wrapper
@@ -347,62 +357,25 @@ describe('MasteringPanel.vue', () => {
     expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
   });
 
-  it('shows the effective denoise state for a legacy parameter-only override', async () => {
-    setMasteringPreset('streaming');
-    setMasteringPresetOverride('repair.reductionDb', 80);
+  it('shows the effective denoise state for a parameter-only override', async () => {
+    applyMasteringPresetWithOverrides('streaming', { repair: { denoise: { reductionDb: 80 } } });
     const wrapper = mount(MasteringPanel);
     const enabled = wrapper.get('[data-preset-control="repair.denoise.enabled"] input');
     expect((enabled.element as HTMLInputElement).checked).toBe(true);
 
     await enabled.setValue(false);
     expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.reductionDb': 80,
-      'repair.denoise.enabled': false,
+      repair: { denoise: { reductionDb: 80, enabled: false } },
     });
     expect((enabled.element as HTMLInputElement).checked).toBe(false);
   });
 
-  it('normalizes duplicate denoise aliases in one undoable edit', async () => {
-    setMasteringPreset('streaming');
-    setMasteringPresetOverride('repair.denoise.reductionDb', 18);
-    setMasteringPresetOverride('repair.reductionDb', 20);
-    clearHistory();
-    const wrapper = mount(MasteringPanel);
-
-    const denoise = wrapper.get('[data-preset-control="repair.denoise.reductionDb"] input');
-    await denoise.setValue(22);
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.enabled': true,
-      'repair.denoise.reductionDb': 22,
-    });
-
-    undo();
-    await nextTick();
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.reductionDb': 18,
-      'repair.reductionDb': 20,
-    });
-
-    await wrapper
-      .get('[data-preset-control="repair.denoise.reductionDb"] .preset-control-reset')
-      .trigger('click');
-    expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
-    undo();
-    await nextTick();
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
-      'repair.denoise.reductionDb': 18,
-      'repair.reductionDb': 20,
-    });
-  });
-
-  it('preserves unknown saved overrides in Advanced and allows removing them', async () => {
-    setMasteringPreset('streaming');
-    setMasteringPresetOverride('limiter.truePeak', true);
+  it('lists override fields without a typed control in Advanced and allows removing them', async () => {
+    applyMasteringPresetWithOverrides('streaming', { eq: { tilt: { tiltDb: 2 } } });
     const wrapper = mount(MasteringPanel);
 
     const advanced = wrapper.get('.preset-override-advanced');
-    expect(advanced.text()).toContain('limiter.truePeak');
-    expect(advanced.text()).toContain('Saved by an older version');
+    expect(advanced.text()).toContain('eq.tilt.tiltDb');
     await advanced.get('.preset-override-remove').trigger('click');
     expect(store.mixer.masteringChain?.presetOverrides).toBeUndefined();
   });
@@ -419,10 +392,9 @@ describe('MasteringPanel.vue', () => {
 
     await enabled.setValue(false);
     expect(target.element.disabled).toBe(true);
-    expect(wrapper.get('[data-preset-control="loudness.ceilingDb"] input').element).toHaveProperty(
-      'disabled',
-      true,
-    );
+    expect(
+      wrapper.get('[data-preset-control="loudness.ceilingDbtp"] input').element,
+    ).toHaveProperty('disabled', true);
     expect(enabled.element.disabled).toBe(false);
   });
 
@@ -626,7 +598,7 @@ describe('MasteringPanel.vue', () => {
     );
     expect(rangeWidths[0]).toBeCloseTo(22.5);
     expect(rangeWidths[1]).toBeCloseTo(45.5);
-    // truePeakDb -0.1 exceeds the -0.3 dBTP warning threshold.
+    // truePeakDbtp -0.1 exceeds the -0.3 dBTP warning threshold.
     expect(wrapper.find('.clip-warning').exists()).toBe(true);
     expect(wrapper.find('.mono-compat').text()).toContain('Mono compatibility');
     expect(wrapper.find('.mono-compat').text()).toContain('0.42');
@@ -899,16 +871,11 @@ describe('MasteringPanel.vue', () => {
     await flush();
 
     expect(wasm.masteringAssistantSuggest).not.toHaveBeenCalled();
-    const request = wasm.masteringAssistantSuggestStereo?.mock.calls[0][0] as {
-      left: Float32Array;
-      right: Float32Array;
-      sampleRate: number;
-      params: { preset: string };
-    };
-    expect(request.left).toBeInstanceOf(Float32Array);
-    expect(request.right).toBeInstanceOf(Float32Array);
-    expect(request.sampleRate).toBe(48000);
-    expect(request.params).toEqual({ preset: 'streaming' });
+    const request = wasm.masteringAssistantSuggestStereo?.mock.calls[0][0];
+    expect(request?.left).toBeInstanceOf(Float32Array);
+    expect(request?.right).toBeInstanceOf(Float32Array);
+    expect(request?.sampleRate).toBe(48000);
+    expect(request?.preset).toBe('streaming');
     expect(store.mixer.masteringChain?.preset).toBe('streaming');
   });
 
@@ -928,23 +895,19 @@ describe('MasteringPanel.vue', () => {
     await wrapper.find('.assist-button').trigger('click');
     await flush();
 
-    const request = wasm.masteringAssistantSuggestStereo?.mock.calls[0][0] as {
-      params: { preset: string };
-    };
-    expect(request.params).toEqual({ preset: 'edm' });
+    expect(wasm.masteringAssistantSuggestStereo?.mock.calls[0][0]?.preset).toBe('edm');
     expect(store.mixer.masteringChain?.preset).toBe('edm');
   });
 
   it('applies the suggested preset with the values it tuned, undoable as one edit', async () => {
     const wasm = await masteringWasm();
-    wasm.masteringAssistantSuggestStereo?.mockReturnValueOnce(
-      JSON.stringify({
-        chainConfig: {
-          version: 1,
-          params: { 'loudness.targetLufs': -14, 'loudness.ceilingDb': -1 },
-        },
-      }),
-    );
+    const base = wasm.masteringAssistantSuggestStereo?.getMockImplementation()?.(
+      {} as never,
+    ) as MasteringAssistantResult;
+    wasm.masteringAssistantSuggestStereo?.mockReturnValueOnce({
+      ...base,
+      chainConfig: { loudness: { targetLufs: -14, ceilingDbtp: -1 } },
+    });
     addMasteringProcessor('eq.tilt');
     const fake = makeFakeRender();
     const wrapper = mount(MasteringPanel, { props: { renderMixdown: fake.render } });
@@ -958,7 +921,9 @@ describe('MasteringPanel.vue', () => {
     await flush();
 
     expect(store.mixer.masteringChain?.preset).toBe('streaming');
-    expect(store.mixer.masteringChain?.presetOverrides).toEqual({ 'loudness.targetLufs': -14 });
+    expect(store.mixer.masteringChain?.presetOverrides).toEqual({
+      loudness: { targetLufs: -14 },
+    });
     const adjustments = wrapper.findAll('.assist-adjustments li');
     expect(adjustments).toHaveLength(1);
     expect(adjustments[0].text()).toContain('loudness.targetLufs');

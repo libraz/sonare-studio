@@ -62,10 +62,9 @@ interface AmpPresetCatalogEntry {
   params: Record<string, AmpParameterValue>;
 }
 
-interface AmpPresetCatalogModule {
-  masteringAmpPresetCatalog?: () => unknown;
-  masteringInsertParamInfo?: (name: string) => unknown;
-}
+type AmpPresetCatalogModule = Partial<
+  Pick<typeof import('@/wasm/index.js'), 'masteringAmpPresetCatalog' | 'masteringInsertParamInfo'>
+>;
 
 const props = defineProps<{
   trackId: number;
@@ -158,15 +157,11 @@ function readPresetCatalog(module: unknown): AmpPresetCatalogEntry[] {
 function readNormalDefaults(module: unknown): Record<string, AmpParameterValue> {
   const fn = (module as AmpPresetCatalogModule | null)?.masteringInsertParamInfo;
   if (typeof fn !== 'function') return {};
-  const info = fn('saturation.ampSim');
+  const info = fn({ insert: 'saturation.ampSim' });
   if (!Array.isArray(info)) return {};
   const defaults: Record<string, AmpParameterValue> = {};
   for (const entry of info) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const record = entry as Record<string, unknown>;
-    if (typeof record.name === 'string' && isAmpParameterValue(record.default)) {
-      defaults[record.name] = record.default;
-    }
+    if (isAmpParameterValue(entry.default)) defaults[entry.name] = entry.default;
   }
   return defaults;
 }

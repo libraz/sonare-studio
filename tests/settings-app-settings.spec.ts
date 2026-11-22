@@ -51,7 +51,7 @@ describe('sanitizeAppSettings', () => {
       countInBars: 2,
       midiInputQuantizeDenominator: 16,
       monitorDefault: DEFAULT_APP_SETTINGS.monitorDefault,
-      recordingVoiceChangerPreset: 'bright-idol',
+      recordingVoiceChangerPreset: 'brightIdol',
       recordingRetuneSemitones: 7,
       recordingCaptureSource: 'output',
       recordingInputDeviceId: 'mic-2',
@@ -141,11 +141,35 @@ describe('sanitizeAppSettings', () => {
     expect(out.language).toBe(DEFAULT_APP_SETTINGS.language);
   });
 
-  it('defaults invalid realtime voice changer presets', () => {
+  it('upgrades stored voice changer preset ids to the core ids on load', () => {
     expect(
       sanitizeAppSettings({ recordingVoiceChangerPreset: 'dark-villain' })
         .recordingVoiceChangerPreset,
-    ).toBe('dark-villain');
+    ).toBe('darkVillain');
+    expect(
+      sanitizeAppSettings({ recordingVoiceChangerPreset: 'hardTune' }).recordingVoiceChangerPreset,
+    ).toBe('hardTune');
+  });
+
+  it('upgrades stored streaming platform ceilings to ceilingDbtp on load', () => {
+    expect(
+      sanitizeAppSettings({
+        streamingPlatforms: [
+          { name: 'Spotify', targetLufs: -14, ceilingDb: -2 },
+          { name: 'Tidal', targetLufs: -14, ceilingDbtp: -1.5 },
+        ],
+      }).streamingPlatforms,
+    ).toEqual([
+      { name: 'Spotify', targetLufs: -14, ceilingDbtp: -2 },
+      { name: 'Tidal', targetLufs: -14, ceilingDbtp: -1.5 },
+    ]);
+  });
+
+  it('defaults invalid realtime voice changer presets', () => {
+    expect(
+      sanitizeAppSettings({ recordingVoiceChangerPreset: 'darkVillain' })
+        .recordingVoiceChangerPreset,
+    ).toBe('darkVillain');
     expect(
       sanitizeAppSettings({ recordingVoiceChangerPreset: 'chipmunk' }).recordingVoiceChangerPreset,
     ).toBe(DEFAULT_APP_SETTINGS.recordingVoiceChangerPreset);

@@ -6,6 +6,7 @@ import type { EngineHandle } from '@/engine/engine';
 import type { AddRecordedMidiClipInput } from '@/project/command/midi-recording';
 import { clearHistory, setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import type { SonareEngine } from '@/wasm/worklet.js';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -15,10 +16,16 @@ vi.mock('@/lib/wasm', async () => {
 
 /** Engine handle whose transport accepts every command. */
 function fakeEngineHandle(): EngineHandle {
-  const ok = () => true;
+  const ok = () => undefined;
   return {
     engine: {
-      transport: { play: ok, stop: ok, seekPpq: ok, seekSeconds: ok, setLoop: ok },
+      transport: {
+        play: ok,
+        stop: ok,
+        seekPpq: ok,
+        seekSec: ok,
+        setLoop: ok,
+      } satisfies Partial<SonareEngine['transport']>,
       setMetronome: ok,
       pushMidiPanic: () => {},
       pollTelemetry: () => [],

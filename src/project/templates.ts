@@ -24,16 +24,16 @@ import { TRACK_COLOR_PALETTE } from './types';
  * name missing from the runtime catalog to the default preset.
  */
 const PRESET = {
-  drums: 'drum-kit',
-  bass: 'sub-bass',
-  piano: 'acoustic-piano',
-  guitar: 'electric-guitar',
-  pad: 'warm-pad',
-  lead: 'saw-lead',
+  drums: 'drumKit',
+  bass: 'subBass',
+  piano: 'acousticPiano',
+  guitar: 'electricGuitar',
+  pad: 'warmPad',
+  lead: 'sawLead',
   pluck: 'pluck',
   organ: 'organ',
   brass: 'brass',
-  churchOrgan: 'church-organ',
+  churchOrgan: 'churchOrgan',
 } as const;
 
 /** Names of the built-in templates accepted by {@link createTemplate}. */

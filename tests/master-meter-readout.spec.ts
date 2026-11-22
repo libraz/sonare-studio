@@ -58,8 +58,8 @@ describe('MasterMeterReadout', () => {
           momentaryLufs: -14.2,
           shortTermLufs: -13.8,
           integratedLufs: -12,
-          truePeakDbL: -3,
-          truePeakDbR: -1.5,
+          truePeakDbtpL: -3,
+          truePeakDbtpR: -1.5,
           correlation: 0.5,
         }),
       },
@@ -80,7 +80,7 @@ describe('MasterMeterReadout', () => {
 
   it('flags a true-peak clipping risk', async () => {
     wrapper = mount(MasterMeterReadout, {
-      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbL: -0.1, truePeakDbR: -2 }) },
+      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbtpL: -0.1, truePeakDbtpR: -2 }) },
     });
     await tick(wrapper);
     expect(wrapper.find('.mm-tp').classes()).toContain('risk');
@@ -88,7 +88,9 @@ describe('MasterMeterReadout', () => {
 
   it('shows the gain-reduction row only while the master is reducing', async () => {
     const reducing = mount(MasterMeterReadout, {
-      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbL: -3, gainReductionDb: -4.3 }) },
+      props: {
+        bridge: sourceWith({ momentaryLufs: -9, truePeakDbtpL: -3, gainReductionDb: -4.3 }),
+      },
     });
     await tick(reducing);
     expect(reducing.find('.mm-gr').exists()).toBe(true);
@@ -96,7 +98,7 @@ describe('MasterMeterReadout', () => {
     reducing.unmount();
 
     wrapper = mount(MasterMeterReadout, {
-      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbL: -3, gainReductionDb: 0 }) },
+      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbtpL: -3, gainReductionDb: 0 }) },
     });
     await tick(wrapper);
     expect(wrapper.find('.master-meter').exists()).toBe(true);
@@ -106,7 +108,7 @@ describe('MasterMeterReadout', () => {
   it('shows the loudness delta against the target and flags going over', async () => {
     const over = mount(MasterMeterReadout, {
       props: {
-        bridge: sourceWith({ momentaryLufs: -9, integratedLufs: -11, truePeakDbL: -3 }),
+        bridge: sourceWith({ momentaryLufs: -9, integratedLufs: -11, truePeakDbtpL: -3 }),
         targetLufs: -14,
       },
     });
@@ -117,7 +119,7 @@ describe('MasterMeterReadout', () => {
 
     wrapper = mount(MasterMeterReadout, {
       props: {
-        bridge: sourceWith({ momentaryLufs: -9, integratedLufs: -16, truePeakDbL: -3 }),
+        bridge: sourceWith({ momentaryLufs: -9, integratedLufs: -16, truePeakDbtpL: -3 }),
         targetLufs: -14,
       },
     });
@@ -128,7 +130,7 @@ describe('MasterMeterReadout', () => {
 
   it('hides the loudness delta until an integrated reading exists', async () => {
     wrapper = mount(MasterMeterReadout, {
-      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbL: -3 }), targetLufs: -14 },
+      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbtpL: -3 }), targetLufs: -14 },
     });
     await tick(wrapper);
     expect(wrapper.find('.master-meter').exists()).toBe(true);
@@ -137,7 +139,7 @@ describe('MasterMeterReadout', () => {
 
   it('marks an out-of-phase correlation', async () => {
     wrapper = mount(MasterMeterReadout, {
-      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbL: -3, correlation: -0.7 }) },
+      props: { bridge: sourceWith({ momentaryLufs: -9, truePeakDbtpL: -3, correlation: -0.7 }) },
     });
     await tick(wrapper);
     expect(wrapper.find('.mm-corr-fill').classes()).toContain('neg');

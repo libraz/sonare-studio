@@ -326,8 +326,8 @@ class MasteringPassEngine implements Partial<OfflineRenderEngine> {
   setTrackLanes(lanes: unknown): void {
     this.calls.push(['setTrackLanes', lanes]);
   }
-  setTrackStripJson(trackId: number, json: string): void {
-    this.calls.push(['setTrackStripJson', trackId, json]);
+  setStrip(ref: number | 'master', settings: unknown): void {
+    this.calls.push(['setStrip', ref, settings]);
   }
   setTempoSegments(segments: unknown): void {
     this.calls.push(['setTempoSegments', segments]);
@@ -339,8 +339,12 @@ class MasteringPassEngine implements Partial<OfflineRenderEngine> {
     // this double the clip simply begins at the seek position.
     this.clip = { channels: first.channels, startSample: 0 };
   }
-  resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number {
-    this.calls.push(['resolveTrackInsertAutomationId', trackId, insertIndex, paramName]);
+  resolveStripInsertAutomationId(
+    ref: number | 'master',
+    insertIndex: number,
+    paramName: string,
+  ): number {
+    this.calls.push(['resolveStripInsertAutomationId', ref, insertIndex, paramName]);
     if (this.unresolvable.has(paramName)) {
       throw new RangeError(`paramName '${paramName}' does not resolve to an automation id`);
     }
@@ -350,8 +354,8 @@ class MasteringPassEngine implements Partial<OfflineRenderEngine> {
     this.calls.push(['setAutomationLane', paramId, points]);
     this.gainByParamId.set(paramId, points as Array<{ ppq: number; value: number }>);
   }
-  pushMidiUmp(destinationId: number, word0: number): void {
-    this.calls.push(['pushMidiUmp', destinationId, word0]);
+  pushMidiUmp(destinationId: number, words: Uint32Array | number[]): void {
+    this.calls.push(['pushMidiUmp', destinationId, words]);
   }
   seekSample(sample: number): void {
     this.calls.push(['seekSample', sample]);
@@ -441,23 +445,23 @@ describe('runMasteringEnginePass', () => {
       ['setClips', [{ trackId: 1, channels: [left, right], startPpq: 4, lengthSamples: 2048 }]],
     ]);
     expect(engine.named('seekSample')).toEqual([['seekSample', 96000]]);
-    expect(engine.named('resolveTrackInsertAutomationId')).toEqual([
-      ['resolveTrackInsertAutomationId', 1, 0, 'tiltDb'],
+    expect(engine.named('resolveStripInsertAutomationId')).toEqual([
+      ['resolveStripInsertAutomationId', 1, 0, 'tiltDb'],
     ]);
     expect(engine.named('setAutomationLane')).toEqual([
       [
         'setAutomationLane',
         0xe000_0000,
         [
-          { ppq: 0, value: 0, curveToNext: 0 },
-          { ppq: 16, value: 6, curveToNext: 0 },
+          { ppq: 0, value: 0, curveToNext: 'linear' },
+          { ppq: 16, value: 6, curveToNext: 'linear' },
         ],
       ],
     ]);
-    const [[, , json]] = engine.named('setTrackStripJson') as Array<[string, number, string]>;
-    expect(JSON.parse(json).strips[0].inserts).toEqual([
-      { slot: 'pre', processor: 'eq.tilt', params: { tiltDb: 0 } },
-    ]);
+    const [[, , scene]] = engine.named('setStrip') as Array<
+      [string, number, { inserts: unknown[] }]
+    >;
+    expect(scene.inserts).toEqual([{ slot: 'pre', processor: 'eq.tilt', params: { tiltDb: 0 } }]);
     expect(engine.destroyed).toBe(true);
   });
 

@@ -3,7 +3,7 @@
  * are automated.
  *
  * The rack is authoritative as a post-bounce, whole-buffer chain applied in
- * declared order, and `masteringProcessStereo` takes one parameter value for
+ * declared order, and `masteringApplyProcessorStereo` takes one parameter value for
  * the whole call. A time-varying lane therefore has nowhere to go on that
  * path, and the render used to freeze it at the value under the render start.
  *
@@ -22,7 +22,7 @@
 
 import { resolveAutomationId } from '@/engine/automation-ids';
 import { engineAutomationPoints } from '@/engine/engine-declaration';
-import { stripSceneJson } from '@/engine/strip-sync';
+import { stripScene } from '@/engine/strip-sync';
 import {
   type AutomationParam,
   type AutomationPoint,
@@ -31,7 +31,7 @@ import {
   sanitizeAutomationPoints,
 } from '@/project/automation';
 import { masteringIndexForAutomationRef } from '@/project/automation-insert';
-import type { MasteringChainState, MixerStrip } from '@/project/mixer';
+import type { InsertSlot, MasteringChainState, MixerStrip } from '@/project/mixer';
 import {
   BLOCKS_PER_CHECKPOINT,
   type OfflineRenderEngine,
@@ -112,7 +112,7 @@ export interface MasteringEngineSlot {
   /** Index in the chain's processor list (for reporting). */
   processorIndex: number;
   /** Processor id. */
-  processor: string;
+  processor: InsertSlot['processor'];
   /** Static parameter values, including frozen values for un-drivable lanes. */
   params: Record<string, number | boolean>;
   /** Parameters the engine drives; never empty. */
@@ -125,7 +125,7 @@ export type MasteringStage =
       /** Applied by the existing whole-buffer mastering call. */
       kind: 'whole-buffer';
       processorIndex: number;
-      processor: string;
+      processor: InsertSlot['processor'];
       params: Record<string, number | boolean>;
     }
   | {
@@ -319,15 +319,15 @@ export async function runMasteringEnginePass(
   const engine = ctx.createEngine(ctx.sampleRate, RENDER_BLOCK_FRAMES);
   try {
     engine.setTrackLanes([{ trackId: MASTERING_PASS_TRACK_ID }]);
-    engine.setTrackStripJson(
+    engine.setStrip(
       MASTERING_PASS_TRACK_ID,
-      stripSceneJson(MASTERING_PASS_TRACK_ID, passStrip(stage.slots)),
+      stripScene(MASTERING_PASS_TRACK_ID, passStrip(stage.slots)),
     );
     engine.setTempoSegments(
       ctx.tempoSegments.map((segment) => ({
         startPpq: segment.startPpq,
         bpm: segment.bpm,
-        endBpm: segment.endBpm ?? 0,
+        ...(segment.endBpm !== undefined ? { endBpm: segment.endBpm } : {}),
       })),
     );
     engine.setClips([
@@ -341,7 +341,7 @@ export async function runMasteringEnginePass(
     stage.slots.forEach((slot, insertIndex) => {
       for (const binding of slot.bindings) {
         const paramId = resolveAutomationId(() =>
-          engine.resolveTrackInsertAutomationId(
+          engine.resolveStripInsertAutomationId(
             MASTERING_PASS_TRACK_ID,
             insertIndex,
             binding.paramName,

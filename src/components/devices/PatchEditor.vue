@@ -85,9 +85,8 @@ useShortcutBlockingOverlay(computed(() => props.open));
 function resolvePresetPatch(): PresetPatchResolver {
   return (preset) => {
     try {
-      const wasm = getWasmModule() as unknown as {
-        synthPresetPatch?: (name: string) => StoredSynthPatch;
-      };
+      const wasm: Partial<Pick<typeof import('@/wasm/index.js'), 'synthPresetPatch'>> =
+        getWasmModule();
       return typeof wasm.synthPresetPatch === 'function' ? wasm.synthPresetPatch(preset) : null;
     } catch {
       return null;
@@ -98,7 +97,8 @@ function resolvePresetPatch(): PresetPatchResolver {
 /** Refreshes the enum select tables from the wasm catalog when available. */
 function refreshEnums(): void {
   try {
-    const wasm = getWasmModule() as unknown as { synthEnumTables?: () => SynthEnumTables };
+    const wasm: Partial<Pick<typeof import('@/wasm/index.js'), 'synthEnumTables'>> =
+      getWasmModule();
     enums.value = resolveSynthEnums(
       typeof wasm.synthEnumTables === 'function' ? wasm.synthEnumTables() : null,
     );

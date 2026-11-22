@@ -1,5 +1,6 @@
 import { errorMessage } from '@/lib/errors';
 import { clamp } from '@/lib/math';
+import type { PanLaw } from '@/wasm/index.js';
 import { isBusAutomationTarget, parseInsertAutomationParam } from '../automation';
 import {
   assertValidMixerBusId,
@@ -18,6 +19,7 @@ import {
   hasAudibleOutputRoute,
   type InsertSlot,
   isMixerChannelLayout,
+  isSoloProcessor,
   MAX_CHANNEL_DELAY_SAMPLES,
   MAX_INPUT_TRIM_DB,
   MAX_MIXER_BUSES,
@@ -31,7 +33,8 @@ import {
   type MixerBus,
   type MixerChannelLayout,
   type MixerStrip,
-  type PanLawId,
+  PAN_LAW_IDS,
+  PAN_MODE_IDS,
   type PanModeId,
   type ProjectMixerState,
   type StripEq,
@@ -136,15 +139,13 @@ export interface ApplyMixerSceneResult {
   vcaCount: number;
 }
 
-/** Scene file indices (a file format; independent of the display order in PAN_LAW_IDS). */
-const PAN_LAW_FROM_SCENE: ReadonlyArray<PanLawId> = [
-  'const3dB',
-  'const4.5dB',
-  'const6dB',
-  'linear0dB',
-];
+function scenePanLaw(value: unknown): PanLaw | undefined {
+  return PAN_LAW_IDS.find((law) => law === value);
+}
 
-const PAN_MODE_FROM_SCENE: ReadonlyArray<PanModeId> = ['balance', 'stereoPan', 'dualPan'];
+function scenePanMode(value: unknown): PanModeId | undefined {
+  return PAN_MODE_IDS.find((mode) => mode === value);
+}
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -231,7 +232,9 @@ function sceneInserts(
   if (!Array.isArray(inserts)) return [];
   return inserts.flatMap((entry): InsertSlot[] => {
     const record = objectRecord(entry) as SceneInsert | null;
-    if (!record || typeof record.processor !== 'string' || record.processor.length === 0) return [];
+    if (!record || typeof record.processor !== 'string' || !isSoloProcessor(record.processor)) {
+      return [];
+    }
     if (validProcessors && !validProcessors.has(record.processor)) return [];
     const slot: InsertSlot = {
       id: createProcessorId(),
@@ -265,7 +268,7 @@ function sceneSends(sends: unknown, validBusIds: ReadonlySet<string>): StripSend
       levelDb: clamp(finiteNumber(record.sendDb) ?? 0, MIN_STRIP_GAIN_DB, MAX_STRIP_GAIN_DB),
       enabled: true,
     };
-    if (record.timing === 'pre' || record.timing === 'preFader') send.timing = 'preFader';
+    if (record.timing === 'preFader') send.timing = 'preFader';
     return [send];
   });
 }
@@ -295,19 +298,10 @@ function sceneStripToMixerStrip(
   if (channelDelaySamples !== undefined && channelDelaySamples !== 0) {
     next.channelDelaySamples = clamp(Math.round(channelDelaySamples), 0, MAX_CHANNEL_DELAY_SAMPLES);
   }
-  const panLaw = finiteNumber(strip.panLaw);
-  if (panLaw !== undefined && Number.isInteger(panLaw) && PAN_LAW_FROM_SCENE[panLaw]) {
-    next.panLaw = PAN_LAW_FROM_SCENE[panLaw];
-  }
-  const panMode = finiteNumber(strip.panMode);
-  if (
-    panMode !== undefined &&
-    Number.isInteger(panMode) &&
-    PAN_MODE_FROM_SCENE[panMode] &&
-    PAN_MODE_FROM_SCENE[panMode] !== DEFAULT_PAN_MODE
-  ) {
-    next.panMode = PAN_MODE_FROM_SCENE[panMode];
-  }
+  const panLaw = scenePanLaw(strip.panLaw);
+  if (panLaw !== undefined) next.panLaw = panLaw;
+  const panMode = scenePanMode(strip.panMode);
+  if (panMode !== undefined && panMode !== DEFAULT_PAN_MODE) next.panMode = panMode;
   const dualPanLeft = finiteNumber(strip.dualPanLeft);
   const dualPanRight = finiteNumber(strip.dualPanRight);
   if (dualPanLeft !== undefined || dualPanRight !== undefined) {
@@ -339,23 +333,17 @@ function sceneSurroundPan(value: unknown): SurroundPan | undefined {
   const record = objectRecord(value);
   if (!record) return undefined;
   const azimuth = finiteNumber(record.azimuth);
-  const elevation = finiteNumber(record.elevation);
   const divergence = finiteNumber(record.divergence);
   const lfe = finiteNumber(record.lfe);
-  const distance = finiteNumber(record.distance);
   const next: SurroundPan = {
     azimuth: clamp(azimuth ?? DEFAULT_SURROUND_PAN.azimuth, -180, 180),
-    elevation: elevation ?? DEFAULT_SURROUND_PAN.elevation,
     divergence: clamp(divergence ?? DEFAULT_SURROUND_PAN.divergence, 0, 1),
     lfe: clamp(lfe ?? DEFAULT_SURROUND_PAN.lfe, 0, 1),
-    distance: distance ?? DEFAULT_SURROUND_PAN.distance,
   };
   if (
     next.azimuth === DEFAULT_SURROUND_PAN.azimuth &&
-    next.elevation === DEFAULT_SURROUND_PAN.elevation &&
     next.divergence === DEFAULT_SURROUND_PAN.divergence &&
-    next.lfe === DEFAULT_SURROUND_PAN.lfe &&
-    next.distance === DEFAULT_SURROUND_PAN.distance
+    next.lfe === DEFAULT_SURROUND_PAN.lfe
   ) {
     return undefined;
   }
@@ -389,21 +377,15 @@ function applySceneBusStripFields(
   }
   const busPan = finiteNumber(bus.pan);
   if (busPan !== undefined) strip.pan = clamp(busPan, -1, 1);
-  const busPanLaw = finiteNumber(bus.panLaw);
-  if (busPanLaw !== undefined && Number.isInteger(busPanLaw)) {
-    const law = PAN_LAW_FROM_SCENE[busPanLaw];
-    if (law !== undefined) {
-      if (law === DEFAULT_PAN_LAW) delete strip.panLaw;
-      else strip.panLaw = law;
-    }
+  const law = scenePanLaw(bus.panLaw);
+  if (law !== undefined) {
+    if (law === DEFAULT_PAN_LAW) delete strip.panLaw;
+    else strip.panLaw = law;
   }
-  const busPanMode = finiteNumber(bus.panMode);
-  if (busPanMode !== undefined && Number.isInteger(busPanMode)) {
-    const mode = PAN_MODE_FROM_SCENE[busPanMode];
-    if (mode !== undefined) {
-      if (mode === DEFAULT_PAN_MODE) delete strip.panMode;
-      else strip.panMode = mode;
-    }
+  const mode = scenePanMode(bus.panMode);
+  if (mode !== undefined) {
+    if (mode === DEFAULT_PAN_MODE) delete strip.panMode;
+    else strip.panMode = mode;
   }
   const busDualLeft = finiteNumber(bus.dualPanLeft);
   const busDualRight = finiteNumber(bus.dualPanRight);
@@ -449,14 +431,14 @@ function sceneEntryHasPanner(
     return true;
   }
   const pan = finiteNumber(strip.pan);
-  const mode = finiteNumber(strip.panMode);
-  const law = finiteNumber(strip.panLaw);
+  const mode = scenePanMode(strip.panMode);
+  const law = scenePanLaw(strip.panLaw);
   const left = finiteNumber(strip.dualPanLeft);
   const right = finiteNumber(strip.dualPanRight);
   return (
     (pan !== undefined && pan !== 0) ||
-    (mode !== undefined && mode !== 0) ||
-    (law !== undefined && law !== 0) ||
+    (mode !== undefined && mode !== DEFAULT_PAN_MODE) ||
+    (law !== undefined && law !== DEFAULT_PAN_LAW) ||
     (left !== undefined && left !== DEFAULT_DUAL_PAN.left) ||
     (right !== undefined && right !== DEFAULT_DUAL_PAN.right)
   );
@@ -537,8 +519,8 @@ function buildScenePlan(
       (bus.layout === '5.1' || bus.layout === '7.1') &&
       ((finiteNumber(bus.width) !== undefined && finiteNumber(bus.width) !== 1) ||
         (finiteNumber(bus.pan) !== undefined && finiteNumber(bus.pan) !== 0) ||
-        (finiteNumber(bus.panMode) !== undefined && finiteNumber(bus.panMode) !== 0) ||
-        (finiteNumber(bus.panLaw) !== undefined && finiteNumber(bus.panLaw) !== 0) ||
+        (scenePanMode(bus.panMode) !== undefined && bus.panMode !== DEFAULT_PAN_MODE) ||
+        (scenePanLaw(bus.panLaw) !== undefined && bus.panLaw !== DEFAULT_PAN_LAW) ||
         (finiteNumber(bus.dualPanLeft) !== undefined && finiteNumber(bus.dualPanLeft) !== -1) ||
         (finiteNumber(bus.dualPanRight) !== undefined && finiteNumber(bus.dualPanRight) !== 1))
     ) {

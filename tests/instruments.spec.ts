@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearPrerenderCache,
-  deinterleave,
   MAX_PRERENDER_CACHE_ENTRIES,
   type MidiNote,
   makeDemoNotes,
@@ -14,33 +13,43 @@ import {
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 
 const wasmMock = vi.hoisted(() => {
-  const bounceWithSynthInstrument = vi.fn(
-    () => new Float32Array([0.25, -0.25, 0.5, -0.5, 0.75, -0.75]),
-  );
-  const deleteSpy = vi.fn();
+  const bounce = vi.fn(() => ({
+    channels: [new Float32Array([0.25, 0.5, 0.75]), new Float32Array([-0.25, -0.5, -0.75])],
+    sampleRate: 48000,
+  }));
+  const destroySpy = vi.fn();
 
-  class MockProject {
+  class MockProject implements Partial<InstanceType<typeof import('@/wasm/index.js')['Project']>> {
     setSampleRate = vi.fn();
     setTempoSegments = vi.fn();
     addMidiClip = vi.fn(() => ({ trackId: 1, clipId: 2 }));
     setMidiEvents = vi.fn();
-    bounceWithSynthInstrument = bounceWithSynthInstrument;
-    delete = deleteSpy;
-    static midiNoteOn = vi.fn((ppq: number, _g: number, ch: number, note: number, vel: number) => ({
-      ppq,
-      data0: (9 << 20) | (ch << 16) | (note << 8) | vel,
-    }));
-    static midiNoteOff = vi.fn((ppq: number, _g: number, ch: number, note: number, vel = 0) => ({
-      ppq,
-      data0: (8 << 20) | (ch << 16) | (note << 8) | vel,
-    }));
+    bounce = bounce;
+    destroy = destroySpy;
   }
 
-  return { bounceWithSynthInstrument, deleteSpy, MockProject };
+  const midiNoteOn = vi.fn(
+    (r: { ppq: number; channel: number; note: number; velocity: number }) => ({
+      ppq: r.ppq,
+      word0: (0x2 << 28) | (9 << 20) | (r.channel << 16) | (r.note << 8) | r.velocity,
+    }),
+  );
+  const midiNoteOff = vi.fn(
+    (r: { ppq: number; channel: number; note: number; velocity?: number }) => ({
+      ppq: r.ppq,
+      word0: (0x2 << 28) | (8 << 20) | (r.channel << 16) | (r.note << 8) | (r.velocity ?? 0),
+    }),
+  );
+
+  return { bounce, destroySpy, midiNoteOn, midiNoteOff, MockProject };
 });
 
 vi.mock('@/lib/wasm', () => ({
-  ensureWasm: vi.fn(async () => ({ Project: wasmMock.MockProject })),
+  ensureWasm: vi.fn(async () => ({
+    Project: wasmMock.MockProject,
+    midiNoteOn: wasmMock.midiNoteOn,
+    midiNoteOff: wasmMock.midiNoteOff,
+  })),
 }));
 
 const NOTES: MidiNote[] = [
@@ -52,10 +61,10 @@ const OPTS = { sampleRate: 48000 };
 
 beforeEach(() => {
   clearPrerenderCache();
-  wasmMock.bounceWithSynthInstrument.mockClear();
-  wasmMock.deleteSpy.mockClear();
-  wasmMock.MockProject.midiNoteOn.mockClear();
-  wasmMock.MockProject.midiNoteOff.mockClear();
+  wasmMock.bounce.mockClear();
+  wasmMock.destroySpy.mockClear();
+  wasmMock.midiNoteOn.mockClear();
+  wasmMock.midiNoteOff.mockClear();
 });
 
 describe('midiClipCacheKey', () => {
@@ -77,7 +86,7 @@ describe('midiClipCacheKey', () => {
     const base = midiClipCacheKey(NOTES, OPTS);
     expect(midiClipCacheKey(NOTES, { sampleRate: 44100 })).not.toBe(base);
     expect(midiClipCacheKey(NOTES, { ...OPTS, tempoBpm: 90 })).not.toBe(base);
-    expect(midiClipCacheKey(NOTES, { ...OPTS, preset: 'saw-lead' })).not.toBe(base);
+    expect(midiClipCacheKey(NOTES, { ...OPTS, preset: 'sawLead' })).not.toBe(base);
   });
 
   it('changes when any note field changes', () => {
@@ -150,19 +159,6 @@ describe('noteEventsFromNotes', () => {
   });
 });
 
-describe('deinterleave', () => {
-  it('splits interleaved stereo into planar channels', () => {
-    const planar = deinterleave(new Float32Array([1, -1, 2, -2, 3, -3]), 2);
-    expect(planar).toHaveLength(2);
-    expect(Array.from(planar[0])).toEqual([1, 2, 3]);
-    expect(Array.from(planar[1])).toEqual([-1, -2, -3]);
-  });
-
-  it('rejects a non-positive channel count', () => {
-    expect(() => deinterleave(new Float32Array(4), 0)).toThrow(RangeError);
-  });
-});
-
 describe('makeDemoNotes', () => {
   it('spans two 4/4 bars and stays in the C-major triad register', () => {
     const notes = makeDemoNotes();
@@ -182,12 +178,12 @@ describe('prerenderMidiClip', () => {
   it('bounces once and serves identical requests from the cache', async () => {
     const first = await prerenderMidiClip(NOTES, OPTS);
     const second = await prerenderMidiClip(NOTES, OPTS);
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(1);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(1);
     expect(second).toBe(first);
     expect(first).toHaveLength(2);
     expect(Array.from(first[0])).toEqual([0.25, 0.5, 0.75]);
     expect(Array.from(first[1])).toEqual([-0.25, -0.5, -0.75]);
-    expect(wasmMock.deleteSpy).toHaveBeenCalledTimes(1);
+    expect(wasmMock.destroySpy).toHaveBeenCalledTimes(1);
   });
 
   it('passes note-off velocity to the scratch project MIDI events', async () => {
@@ -195,13 +191,19 @@ describe('prerenderMidiClip', () => {
       [{ note: 60, velocity: 100, offVelocity: 37, startPpq: 0, durationPpq: 1 }],
       OPTS,
     );
-    expect(wasmMock.MockProject.midiNoteOff).toHaveBeenCalledWith(1, 0, 0, 60, 37);
+    expect(wasmMock.midiNoteOff).toHaveBeenCalledWith({
+      ppq: 1,
+      group: 0,
+      channel: 0,
+      note: 60,
+      velocity: 37,
+    });
   });
 
   it('re-bounces when render-relevant options change', async () => {
     await prerenderMidiClip(NOTES, OPTS);
     await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 90 });
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(2);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(2);
   });
 
   it('bounds the prerender cache and evicts the least-recently used render', async () => {
@@ -209,24 +211,18 @@ describe('prerenderMidiClip', () => {
     for (let i = 0; i < MAX_PRERENDER_CACHE_ENTRIES - 1; i++) {
       await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 61 + i });
     }
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(MAX_PRERENDER_CACHE_ENTRIES);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(MAX_PRERENDER_CACHE_ENTRIES);
 
     // Touch the oldest render so the next insert evicts the next-oldest key.
     expect(await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 60 })).toBe(retained);
     await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 200 });
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(
-      MAX_PRERENDER_CACHE_ENTRIES + 1,
-    );
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(MAX_PRERENDER_CACHE_ENTRIES + 1);
 
     expect(await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 60 })).toBe(retained);
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(
-      MAX_PRERENDER_CACHE_ENTRIES + 1,
-    );
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(MAX_PRERENDER_CACHE_ENTRIES + 1);
 
     await prerenderMidiClip(NOTES, { ...OPTS, tempoBpm: 61 });
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(
-      MAX_PRERENDER_CACHE_ENTRIES + 2,
-    );
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(MAX_PRERENDER_CACHE_ENTRIES + 2);
   });
 
   it('returns empty stereo buffers for an empty phrase without bouncing', async () => {
@@ -234,7 +230,7 @@ describe('prerenderMidiClip', () => {
     expect(channels).toHaveLength(2);
     expect(channels[0].length).toBe(0);
     expect(channels[1].length).toBe(0);
-    expect(wasmMock.bounceWithSynthInstrument).not.toHaveBeenCalled();
+    expect(wasmMock.bounce).not.toHaveBeenCalled();
   });
 });
 

@@ -22,19 +22,23 @@ import {
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
-  setMasteringPresetOverride,
 } from '@/project/commands';
-import { createDefaultMasteringChain, type MasteringChainState } from '@/project/mixer';
+import {
+  createDefaultMasteringChain,
+  isSoloProcessor,
+  type MasteringChainState,
+} from '@/project/mixer';
 import { getWasmModule } from '@/project/runtime';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import {
-  type MasteringSuggestion,
-  parseMasteringSuggestion,
+  type SuggestionAdjustment,
+  suggestedAdjustments,
   suggestedPresetOverrides,
 } from '@/ui/mastering/assistant';
+import { deleteChainPath, flattenChainConfig } from '@/ui/mastering/chain-config-path';
 import {
   clampControlValue,
   type MasteringControl,
@@ -71,16 +75,11 @@ import {
   type MasteringReferenceAudio,
 } from '@/ui/mastering/reference-audio';
 import {
-  type MonoCompatibilityReport,
-  parseMonoCompatibility,
-} from '@/ui/mastering/stereo-analysis';
-import {
   createDefaultStreamingPlatforms,
   invalidStreamingPlatformCount,
   normalizeStreamingPlatforms,
-  parseStreamingPreview,
-  type StreamingPlatformConfig,
   type StreamingTarget,
+  streamingTargetsFromPreview,
   streamingTargetsFromReport,
 } from '@/ui/mastering/streaming';
 import {
@@ -98,8 +97,15 @@ import {
 import { insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
-import { analyzeMatchEqToReference, type SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
-import type { MasteringPreset } from '@/wasm/index.js';
+import { analyzeMatchEqToReference } from '@/ui/sample-editor/wasm-ops';
+import type {
+  MasteringAssistantResult,
+  MasteringChainConfig,
+  MasteringPreset,
+  MasteringStreamingPreviewResult,
+  StereoMonoCompatCheckResult,
+  StreamingPlatform,
+} from '@/wasm/index.js';
 
 /**
  * Mastering panel for the editor dock: the project mastering chain as an
@@ -220,19 +226,34 @@ function togglePresetMenu(): void {
   presetMenuOpen.value = !presetMenuOpen.value;
 }
 
+/** Narrows a menu-supplied name to a core preset id through the core's catalog. */
+function corePreset(name: string): MasteringPreset | undefined {
+  return getWasmModule()
+    .masteringPresetNames()
+    .find((id) => id === name);
+}
+
 function onSelectPreset(preset: string | null): void {
   presetMenuOpen.value = false;
-  runCommand(() => setMasteringPreset(preset));
+  runCommand(() => {
+    if (preset === null) {
+      setMasteringPreset(null);
+      return;
+    }
+    const id = corePreset(preset);
+    if (id === undefined) throw new RangeError(`Unknown mastering preset: ${preset}`);
+    setMasteringPreset(id);
+  });
 }
 
 // --- Preset overrides ---------------------------------------------------------
 
 /** Runtime parameters from the selected preset, with a safe empty fallback. */
-const presetParams = computed<Readonly<Record<string, unknown>>>(() => {
+const presetParams = computed<MasteringChainConfig>(() => {
   const preset = chain.value.preset;
   if (!preset) return {};
   try {
-    return getWasmModule().masteringPresetParams(preset as MasteringPreset);
+    return getWasmModule().masteringPresetParams(preset);
   } catch {
     return {};
   }
@@ -247,11 +268,17 @@ const presetControlSections = computed(() => ({
   ),
 }));
 
+/** Override fields without a typed inspector control, listed under Advanced. */
 const presetOverrideEntries = computed(() =>
-  Object.entries(chain.value.presetOverrides ?? {})
-    .filter(([key]) => !isKnownPresetOverrideKey(key))
+  flattenChainConfig(chain.value.presetOverrides ?? {})
+    .filter(({ path }) => !isKnownPresetOverrideKey(path))
+    .map(({ path, value }) => [path, value] as const)
     .sort(([a], [b]) => a.localeCompare(b)),
 );
+
+function formatOverrideValue(value: unknown): string {
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
 
 function presetControlValue(descriptor: PresetControlDescriptor) {
   return resolvePresetControlValue(
@@ -268,7 +295,7 @@ function presetControlLabel(key: PresetControlKey): string {
       return labels.loudnessEnabled;
     case 'loudness.targetLufs':
       return labels.targetLufs;
-    case 'loudness.ceilingDb':
+    case 'loudness.ceilingDbtp':
       return labels.ceilingDb;
     case 'loudness.truePeakOversample':
       return labels.truePeakOversample;
@@ -291,7 +318,7 @@ function presetControlHint(key: PresetControlKey): string {
       return hints.loudnessEnabled;
     case 'loudness.targetLufs':
       return hints.targetLufs;
-    case 'loudness.ceilingDb':
+    case 'loudness.ceilingDbtp':
       return hints.ceilingDb;
     case 'loudness.truePeakOversample':
       return hints.truePeakOversample;
@@ -335,7 +362,7 @@ function presetControlUnit(descriptor: PresetControlDescriptor): string {
   if (descriptor.key === 'loudness.targetLufs') {
     return t.value.shell.mastering.presetOverrides.units.lufs;
   }
-  if (descriptor.key === 'loudness.ceilingDb') {
+  if (descriptor.key === 'loudness.ceilingDbtp') {
     return t.value.shell.mastering.presetOverrides.units.dbtp;
   }
   if (descriptor.key === 'loudness.releaseMs') {
@@ -359,13 +386,14 @@ function presetControlStep(descriptor: PresetControlDescriptor): number | undefi
 
 function applyPresetControl(key: string, input: unknown): void {
   const descriptor = getPresetControlDescriptor(key);
-  if (!descriptor || !chain.value.preset) return;
+  const preset = chain.value.preset;
+  if (!descriptor || !preset) return;
   try {
     const value = parsePresetControlValue(descriptor, input);
     const overrides = chain.value.presetOverrides ?? {};
     const next = presetControlOverridesForEdit(descriptor, value, presetParams.value, overrides);
     runCommand(() => {
-      applyMasteringPresetWithOverrides(chain.value.preset as string, next);
+      applyMasteringPresetWithOverrides(preset, next);
     });
   } catch {
     error.value = t.value.shell.mastering.presetOverrides.invalidValue;
@@ -386,25 +414,29 @@ function onResetPresetControl(key: PresetControlKey): void {
   const overrides = chain.value.presetOverrides ?? {};
   if (!hasPresetControlOverride(key, overrides)) return;
   const descriptor = getPresetControlDescriptor(key);
-  if (!descriptor) return;
+  const preset = chain.value.preset;
+  if (!descriptor || !preset) return;
   const next = presetControlOverridesForReset(descriptor, presetParams.value, overrides);
   runCommand(() => {
-    applyMasteringPresetWithOverrides(chain.value.preset as string, next);
+    applyMasteringPresetWithOverrides(preset, next);
   });
 }
 
 function onClearPresetOverride(key: string): void {
-  runCommand(() => setMasteringPresetOverride(key, null));
+  const preset = chain.value.preset;
+  if (!preset) return;
+  const next = deleteChainPath(chain.value.presetOverrides ?? {}, key);
+  runCommand(() => applyMasteringPresetWithOverrides(preset, next));
 }
 
 // --- Mastering assistant --------------------------------------------------------
 
-const suggestion = ref<MasteringSuggestion | null>(null);
+const suggestion = ref<MasteringAssistantResult | null>(null);
 const suggesting = ref(false);
 /** Preset values the last suggestion tuned, applied as that preset's overrides. */
 const suggestionTuning = ref<{
   preset: string;
-  entries: Array<{ key: string; from: number | boolean | undefined; to: number | boolean }>;
+  entries: SuggestionAdjustment[];
 } | null>(null);
 const suggestionAdjustments = computed(() =>
   suggestionTuning.value && suggestionTuning.value.preset === chain.value.preset
@@ -468,17 +500,16 @@ async function onAutoSuggest(): Promise<void> {
       selectedPreset && masteringPresetInfo(selectedPreset)?.kind === 'mastering'
         ? selectedPreset
         : 'streaming';
-    const params = { preset };
-    let json: string;
+    const settings = { preset };
+    let result: MasteringAssistantResult;
     if (pair && typeof suggestStereo === 'function') {
-      json = suggestStereo({ ...pair, sampleRate: source.sampleRate, params });
+      result = suggestStereo({ ...pair, sampleRate: source.sampleRate, ...settings });
     } else if (typeof suggest === 'function') {
-      json = suggest(downmixMono(source.channels), source.sampleRate, params);
+      result = suggest(downmixMono(source.channels), source.sampleRate, settings);
     } else {
       error.value = t.value.shell.mastering.assistant.unavailable;
       return;
     }
-    const parsed = parseMasteringSuggestion(json);
     if (
       previewState.value?.bypassed !== source ||
       previewRevision.value !== analyzedRevision ||
@@ -487,23 +518,14 @@ async function onAutoSuggest(): Promise<void> {
       error.value = t.value.shell.mastering.assistant.needsPreview;
       return;
     }
-    suggestion.value = parsed;
+    suggestion.value = result;
     // The assistant response describes the named base preset, so compare its
     // complete tuned chain with that preset before storing only the deltas.
-    const baseParams = parsed.chainParams
-      ? wasm.masteringPresetParams(preset as MasteringPreset)
-      : null;
-    const overrides =
-      baseParams && parsed.chainParams
-        ? suggestedPresetOverrides(parsed.chainParams, baseParams)
-        : {};
+    const baseParams = wasm.masteringPresetParams(preset);
+    const overrides = suggestedPresetOverrides(result.chainConfig, baseParams);
     suggestionTuning.value = {
       preset,
-      entries: Object.entries(overrides).map(([key, to]) => ({
-        key,
-        from: baseParams?.[key],
-        to,
-      })),
+      entries: suggestedAdjustments(result.chainConfig, baseParams),
     };
     runCommand(() => applyMasteringPresetWithOverrides(preset, overrides));
   } catch (err) {
@@ -516,9 +538,7 @@ async function onAutoSuggest(): Promise<void> {
 // --- Streaming targets ----------------------------------------------------------
 
 const streamingTargets = ref<StreamingTarget[] | null>(null);
-const streamingPlatforms = ref<StreamingPlatformConfig[]>([
-  ...appSettings.settings.streamingPlatforms,
-]);
+const streamingPlatforms = ref<StreamingPlatform[]>([...appSettings.settings.streamingPlatforms]);
 watch(
   streamingPlatforms,
   (platforms) => {
@@ -567,16 +587,16 @@ async function onCheckTargets(): Promise<void> {
     const pair = stereoPair(source.channels);
     const previewStereo = wasm.masteringStreamingPreviewStereo;
     const preview = wasm.masteringStreamingPreview;
-    let json: string;
+    let result: MasteringStreamingPreviewResult;
     if (pair && typeof previewStereo === 'function') {
-      json = previewStereo({ ...pair, sampleRate: source.sampleRate, platforms });
+      result = previewStereo({ ...pair, sampleRate: source.sampleRate, platforms });
     } else if (typeof preview === 'function') {
-      json = preview(downmixMono(source.channels), source.sampleRate, platforms);
+      result = preview(downmixMono(source.channels), source.sampleRate, { platforms });
     } else {
       error.value = t.value.shell.mastering.streaming.unavailable;
       return;
     }
-    streamingTargets.value = parseStreamingPreview(json);
+    streamingTargets.value = streamingTargetsFromPreview(result);
   } catch (err) {
     error.value = describeError(err, t.value.notices.errors);
   } finally {
@@ -587,7 +607,7 @@ async function onCheckTargets(): Promise<void> {
 function onAddStreamingPlatform(): void {
   streamingPlatforms.value = [
     ...streamingPlatforms.value,
-    { name: t.value.shell.mastering.streaming.customTarget, targetLufs: -14, ceilingDb: -1 },
+    { name: t.value.shell.mastering.streaming.customTarget, targetLufs: -14, ceilingDbtp: -1 },
   ];
   streamingTargets.value = null;
 }
@@ -600,12 +620,12 @@ function onRemoveStreamingPlatform(index: number): void {
 
 function onUpdateStreamingPlatform(
   index: number,
-  field: keyof StreamingPlatformConfig,
+  field: keyof StreamingPlatform,
   value: string,
 ): void {
   const current = streamingPlatforms.value[index];
   if (!current) return;
-  const next: StreamingPlatformConfig = { ...current };
+  const next: StreamingPlatform = { ...current };
   if (field === 'name') next.name = value;
   else next[field] = Number(value);
   streamingPlatforms.value = streamingPlatforms.value.map((entry, i) =>
@@ -750,6 +770,9 @@ function toggleAddMenu(): void {
 function onAddProcessor(processorId: string): void {
   addMenuOpen.value = false;
   runCommand(() => {
+    if (!isSoloProcessor(processorId)) {
+      throw new RangeError(`Unknown mastering processor: ${processorId}`);
+    }
     expandedIndex.value = addMasteringProcessor(processorId);
   });
 }
@@ -778,7 +801,7 @@ const suggestBlocked = computed(() =>
 // --- Preview ---------------------------------------------------------------------
 
 const previewState = shallowRef<MasteringPreviewState>();
-const monoCompatibility = ref<MonoCompatibilityReport | null>(null);
+const monoCompatibility = ref<StereoMonoCompatCheckResult | null>(null);
 
 const controller = createMasteringPreviewController({
   render: (doc, options, onProgress) =>
@@ -949,8 +972,8 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
     {
       label: t.value.shell.mastering.loudness.truePeak,
       unit: 'dBTP',
-      a: a?.truePeakDb,
-      b: b?.truePeakDb,
+      a: a?.truePeakDbtp,
+      b: b?.truePeakDbtp,
       barScale: 'level',
     },
     {
@@ -978,8 +1001,8 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
       label: t.value.shell.mastering.loudness.lra,
       hint: t.value.shell.mastering.loudness.lraHint,
       unit: 'LU',
-      a: a?.loudnessRange,
-      b: b?.loudnessRange,
+      a: a?.loudnessRangeLu,
+      b: b?.loudnessRangeLu,
       barScale: 'range' as const,
     },
     {
@@ -994,7 +1017,7 @@ const loudnessRows = computed<LoudnessRow[]>(() => {
 });
 
 const clipWarning = computed(() =>
-  isClippingRisk(previewState.value?.processed?.report.truePeakDb),
+  isClippingRisk(previewState.value?.processed?.report.truePeakDbtp),
 );
 
 /**
@@ -1061,7 +1084,7 @@ async function onCompareReference(): Promise<void> {
     }
     const wasm = await ensureWasm();
     referenceAnalysis.value = analyzeMatchEqToReference(
-      wasm as unknown as Pick<SampleEditorWasmOps, 'masteringPairAnalyze'>,
+      wasm,
       source.channels,
       source.sampleRate,
       downmixMono(reference.channels),
@@ -1087,11 +1110,14 @@ async function analyzeMonoCompatibility(): Promise<void> {
   if (!source || source.channels.length < 2) return;
   try {
     const wasm = await ensureWasm();
-    const analyze = wasm.masteringStereoAnalyze;
+    const analyze = wasm.masteringAnalyzeStereo;
     if (typeof analyze !== 'function') return;
-    monoCompatibility.value = parseMonoCompatibility(
-      analyze('stereo.monoCompatCheck', source.channels[0], source.channels[1], source.sampleRate),
-    );
+    monoCompatibility.value = analyze({
+      analysis: 'stereo.monoCompatCheck',
+      left: source.channels[0],
+      right: source.channels[1],
+      sampleRate: source.sampleRate,
+    });
   } catch {
     monoCompatibility.value = null;
   }
@@ -1288,7 +1314,7 @@ onBeforeUnmount(() => {
               <li v-for="[key, value] in presetOverrideEntries" :key="key">
                 <span class="preset-override-param">{{ key }}</span>
                 <span class="preset-override-equals">=</span>
-                <span class="preset-override-current">{{ String(value) }}</span>
+                <span class="preset-override-current">{{ formatOverrideValue(value) }}</span>
                 <span class="preset-override-note">
                   {{ t.shell.mastering.presetOverrides.unknownValue }}
                 </span>

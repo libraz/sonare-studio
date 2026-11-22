@@ -13,12 +13,14 @@ import type {
   MixerSnapshotTrack,
 } from './command/mixer-snapshots';
 import type { ControlSurfaceSettings } from './control-surface';
+import { upgradeDocumentToV5 } from './document-schema-v5';
 import type { TrackExpressionMap } from './expression-map';
 import type { ExternalStemRole } from './external-stems';
 import type { TrackProvenance } from './generation';
 import type { ExternalMidiInstrument, TrackInstrument } from './instrument';
 import type { MidiFxConfig } from './midi-fx';
 import type { MixerBus, MixerStrip, ProjectMixerState } from './mixer';
+import { getWasmModule } from './runtime';
 import type {
   ClipExpressionCurve,
   ClipKind,
@@ -115,34 +117,51 @@ import type {
  * {@link upgradeProjectDocument}, which pins such tracks to the `e-piano`
  * they were written against so they keep sounding the same.
  *
+ * Version 5: stored engine vocabulary follows libsonare 2.0 (pan laws, EQ band
+ * tokens, automation curves, synth tokens and preset names, insert processor
+ * and parameter names, nested mastering overrides). Older documents are
+ * rewritten once by {@link upgradeDocumentToV5}.
+ *
  * Loaders accept any version up to this one; version-1 documents load
  * unchanged (every clip is MIDI).
  */
-export const PROJECT_DOCUMENT_SCHEMA_VERSION = 4;
+export const PROJECT_DOCUMENT_SCHEMA_VERSION = 5;
 
-/** Default synth preset of documents written before schema version 4. */
+/** Default synth preset of documents written before schema version 4, in their 1.x spelling. */
 const PRE_V4_DEFAULT_SYNTH_PRESET = 'e-piano';
 
 /**
- * Brings an older document's implicit defaults up to the current schema.
- * Returns the input unchanged when nothing needs pinning; never mutates it.
+ * Brings an older document up to the current schema: pins pre-v4 implicit
+ * defaults, then rewrites 1.x engine vocabulary.
+ * Returns a current-version document unchanged; never mutates its input.
  *
  * @param doc Document of any supported schema version.
  * @returns A document whose implicit values mean the same as when it was written.
  */
 export function upgradeProjectDocument(doc: ProjectDocument): ProjectDocument {
-  if (doc.schemaVersion >= 4) return doc;
-  if (!doc.tracks.some((track) => track.kind === 'midi' && track.instrument === undefined)) {
+  // An unsupported version is the loader's to refuse, not ours to relabel.
+  if (!Number.isInteger(doc.schemaVersion) || doc.schemaVersion < 1 || doc.schemaVersion >= 5) {
     return doc;
   }
-  return {
-    ...doc,
-    tracks: doc.tracks.map((track) =>
-      track.kind === 'midi' && track.instrument === undefined
-        ? { ...track, instrument: { kind: 'synth-preset', preset: PRE_V4_DEFAULT_SYNTH_PRESET } }
-        : track,
-    ),
-  };
+  const pinned: ProjectDocument =
+    doc.schemaVersion < 4 &&
+    doc.tracks.some((track) => track.kind === 'midi' && track.instrument === undefined)
+      ? {
+          ...doc,
+          tracks: doc.tracks.map((track) =>
+            track.kind === 'midi' && track.instrument === undefined
+              ? {
+                  ...track,
+                  instrument: { kind: 'synth-preset', preset: PRE_V4_DEFAULT_SYNTH_PRESET },
+                }
+              : track,
+          ),
+        }
+      : doc;
+  // The tables are frozen 1.x spellings, so the result is typed only after the walk.
+  return upgradeDocumentToV5(pinned as unknown as Record<string, unknown>, (json) =>
+    getWasmModule().masteringChainConfigFromJson(json),
+  ) as unknown as ProjectDocument;
 }
 
 /** One note inside a document clip (an {@link EditorNote} without its id). */

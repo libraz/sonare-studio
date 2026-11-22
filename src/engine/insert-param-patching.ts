@@ -25,7 +25,7 @@ function insertParamKind(slot: InsertSlot, key: string, value: unknown): InsertP
   const entries = catalogParamInfo(slot.processor);
   const info = entries.find((entry) => entry.name === key);
   if (info !== undefined) {
-    if (info.id === null || info.rtSafe === false) return 'structural';
+    if (info.id === undefined || info.rtSafe === false) return 'structural';
     return info.slot === null ? 'patchableRoot' : 'patchableConditional';
   }
 

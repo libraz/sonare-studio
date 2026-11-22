@@ -3,17 +3,15 @@ import {
   getPresetControlDescriptor,
   hasPresetControlOverride,
   isKnownPresetOverrideKey,
-  LEGACY_DENOISE_OVERRIDE_KEY,
   PRESET_CONTROL_DESCRIPTORS,
   parsePresetControlValue,
-  presetControlOverrideKey,
   presetControlOverridesForEdit,
   presetControlOverridesForReset,
   resolvePresetControlValue,
 } from '@/ui/mastering/preset-controls';
 
 const target = getPresetControlDescriptor('loudness.targetLufs');
-const ceiling = getPresetControlDescriptor('loudness.ceilingDb');
+const ceiling = getPresetControlDescriptor('loudness.ceilingDbtp');
 const denoiseEnabled = getPresetControlDescriptor('repair.denoise.enabled');
 const denoise = getPresetControlDescriptor('repair.denoise.reductionDb');
 const oversample = getPresetControlDescriptor('loudness.truePeakOversample');
@@ -26,7 +24,7 @@ describe('mastering preset controls', () => {
     expect(PRESET_CONTROL_DESCRIPTORS.map(({ key }) => key)).toEqual([
       'loudness.enabled',
       'loudness.targetLufs',
-      'loudness.ceilingDb',
+      'loudness.ceilingDbtp',
       'loudness.truePeakOversample',
       'loudness.releaseMs',
       'loudness.maxLimiterGainReductionDb',
@@ -40,11 +38,11 @@ describe('mastering preset controls', () => {
     expect(
       resolvePresetControlValue(
         target,
-        { 'loudness.targetLufs': -16 },
-        { 'loudness.targetLufs': -12 },
+        { loudness: { targetLufs: -16 } },
+        { loudness: { targetLufs: -12 } },
       ),
     ).toBe(-12);
-    expect(resolvePresetControlValue(target, { 'loudness.targetLufs': -16 }, {})).toBe(-16);
+    expect(resolvePresetControlValue(target, { loudness: { targetLufs: -16 } }, {})).toBe(-16);
   });
 
   it('uses safe library defaults when wasm preset params are unavailable', () => {
@@ -54,183 +52,123 @@ describe('mastering preset controls', () => {
   });
 
   it('keeps a preset denoise stage disabled until explicitly enabled', () => {
-    expect(resolvePresetControlValue(denoiseEnabled, { 'repair.denoise.enabled': true })).toBe(
-      true,
-    );
+    expect(
+      resolvePresetControlValue(denoiseEnabled, { repair: { denoise: { enabled: true } } }),
+    ).toBe(true);
     expect(
       resolvePresetControlValue(
         denoiseEnabled,
-        { 'repair.denoise.enabled': true },
-        { 'repair.denoise.enabled': false },
+        { repair: { denoise: { enabled: true } } },
+        { repair: { denoise: { enabled: false } } },
       ),
     ).toBe(false);
-    expect(resolvePresetControlValue(denoiseEnabled, {}, { 'repair.denoise.enabled': true })).toBe(
-      true,
-    );
-    expect(resolvePresetControlValue(denoiseEnabled, { 'repair.denoise.enabled': true })).toBe(
-      true,
-    );
+    expect(
+      resolvePresetControlValue(denoiseEnabled, {}, { repair: { denoise: { enabled: true } } }),
+    ).toBe(true);
     expect(parsePresetControlValue(denoiseEnabled, true)).toBe(true);
     expect(parsePresetControlValue(denoiseEnabled, false)).toBe(false);
   });
 
-  it('shows the core implicit-enable state of older parameter-only overrides', () => {
-    const presetParams = { 'repair.denoise.enabled': false };
+  it('shows the core implicit-enable state of parameter-only overrides', () => {
+    const presetParams = { repair: { denoise: { enabled: false } } };
     expect(
       resolvePresetControlValue(denoiseEnabled, presetParams, {
-        'repair.denoise.nFft': 2048,
+        repair: { denoise: { nFft: 2048 } },
       }),
     ).toBe(true);
     expect(
       resolvePresetControlValue(denoiseEnabled, presetParams, {
-        'repair.reductionDb': 80,
-      }),
-    ).toBe(true);
-    expect(
-      resolvePresetControlValue(denoiseEnabled, presetParams, {
-        'repair.denoise.enabled': false,
-        'repair.denoise.nFft': 2048,
+        repair: { denoise: { enabled: false, nFft: 2048 } },
       }),
     ).toBe(false);
   });
 
   it('persists the displayed stage switch with a parameter-only edit', () => {
-    const next = presetControlOverridesForEdit(
-      denoise,
-      80,
-      { 'repair.denoise.enabled': false, 'repair.denoise.reductionDb': 26 },
-      {},
-    );
-    expect(next).toEqual({
-      'repair.denoise.enabled': false,
-      'repair.denoise.reductionDb': 80,
-    });
+    const presetParams = { repair: { denoise: { enabled: false, reductionDb: 26 } } };
+    const next = presetControlOverridesForEdit(denoise, 80, presetParams, {});
+    expect(next).toEqual({ repair: { denoise: { enabled: false, reductionDb: 80 } } });
 
-    const reset = presetControlOverridesForReset(
-      denoise,
-      { 'repair.denoise.enabled': false, 'repair.denoise.reductionDb': 26 },
-      next,
-    );
+    const reset = presetControlOverridesForReset(denoise, presetParams, next);
     expect(reset).toEqual({});
   });
 
   it('keeps a disabled stage explicit while another parameter override remains', () => {
-    const presetParams = {
-      'loudness.enabled': false,
-      'loudness.targetLufs': -14,
-      'loudness.ceilingDb': -1,
-    };
+    const presetParams = { loudness: { enabled: false, targetLufs: -14, ceilingDbtp: -1 } };
     const withTarget = presetControlOverridesForEdit(target, -16, presetParams, {});
     const withBoth = presetControlOverridesForEdit(ceiling, -2, presetParams, withTarget);
-    expect(withBoth).toEqual({
-      'loudness.enabled': false,
-      'loudness.targetLufs': -16,
-      'loudness.ceilingDb': -2,
-    });
+    expect(withBoth).toEqual({ loudness: { enabled: false, targetLufs: -16, ceilingDbtp: -2 } });
 
     const afterTargetReset = presetControlOverridesForReset(target, presetParams, withBoth);
-    expect(afterTargetReset).toEqual({
-      'loudness.enabled': false,
-      'loudness.ceilingDb': -2,
-    });
+    expect(afterTargetReset).toEqual({ loudness: { enabled: false, ceilingDbtp: -2 } });
 
     expect(presetControlOverridesForReset(ceiling, presetParams, afterTargetReset)).toEqual({});
   });
 
   it('restores an explicit disabled stage when resetting its switch with siblings', () => {
-    const presetParams = {
-      'repair.denoise.enabled': false,
-      'repair.denoise.reductionDb': 26,
-    };
-    const overrides = {
-      'repair.denoise.enabled': true,
-      'repair.denoise.reductionDb': 80,
-    };
+    const presetParams = { repair: { denoise: { enabled: false, reductionDb: 26 } } };
+    const overrides = { repair: { denoise: { enabled: true, reductionDb: 80 } } };
     expect(presetControlOverridesForReset(denoiseEnabled, presetParams, overrides)).toEqual({
-      'repair.denoise.enabled': false,
-      'repair.denoise.reductionDb': 80,
+      repair: { denoise: { enabled: false, reductionDb: 80 } },
     });
     expect(
       presetControlOverridesForReset(denoiseEnabled, presetParams, {
-        'repair.denoise.enabled': true,
+        repair: { denoise: { enabled: true } },
       }),
     ).toEqual({});
     expect(
       presetControlOverridesForReset(denoiseEnabled, presetParams, {
-        'repair.denoise.reductionDb': 80,
+        repair: { denoise: { reductionDb: 80 } },
       }),
-    ).toEqual({
-      'repair.denoise.enabled': false,
-      'repair.denoise.reductionDb': 80,
-    });
+    ).toEqual({ repair: { denoise: { enabled: false, reductionDb: 80 } } });
   });
 
-  it('counts unknown Advanced parameters as stage siblings during reset', () => {
-    const presetParams = { 'repair.denoise.enabled': false };
+  it('counts other stage parameters as siblings during reset', () => {
+    const presetParams = { repair: { denoise: { enabled: false } } };
     expect(
       presetControlOverridesForReset(denoiseEnabled, presetParams, {
-        'repair.denoise.enabled': true,
-        'repair.denoise.nFft': 2048,
+        repair: { denoise: { enabled: true, nFft: 2048 } },
       }),
-    ).toEqual({
-      'repair.denoise.enabled': false,
-      'repair.denoise.nFft': 2048,
-    });
+    ).toEqual({ repair: { denoise: { enabled: false, nFft: 2048 } } });
     expect(
       presetControlOverridesForReset(denoise, presetParams, {
-        'repair.denoise.enabled': true,
-        'repair.denoise.reductionDb': 80,
-        'repair.denoise.nFft': 2048,
+        repair: { denoise: { enabled: true, reductionDb: 80, nFft: 2048 } },
       }),
-    ).toEqual({
-      'repair.denoise.enabled': true,
-      'repair.denoise.nFft': 2048,
-    });
-    expect(
-      presetControlOverridesForReset(denoise, presetParams, {
-        'repair.denoise.enabled': false,
-        'repair.reductionDb': 18,
-        'repair.denoise.nFft': 2048,
-      }),
-    ).toEqual({
-      'repair.denoise.enabled': false,
-      'repair.denoise.nFft': 2048,
-    });
+    ).toEqual({ repair: { denoise: { enabled: true, nFft: 2048 } } });
   });
 
   it('preserves libsonare-valid saved values beyond customary UI ranges', () => {
     expect(
       resolvePresetControlValue(
         target,
-        { 'loudness.targetLufs': -14 },
-        { 'loudness.targetLufs': -61 },
+        { loudness: { targetLufs: -14 } },
+        { loudness: { targetLufs: -61 } },
       ),
     ).toBe(-61);
     expect(
       resolvePresetControlValue(
         denoise,
-        { 'repair.denoise.reductionDb': 26 },
-        {
-          'repair.denoise.reductionDb': 120,
-        },
+        { repair: { denoise: { reductionDb: 26 } } },
+        { repair: { denoise: { reductionDb: 120 } } },
       ),
     ).toBe(120);
     // libsonare refuses a denoise reduction above 120 dB, so such a saved value falls back.
     expect(
       resolvePresetControlValue(
         denoise,
-        { 'repair.denoise.reductionDb': 26 },
-        { 'repair.denoise.reductionDb': 121 },
+        { repair: { denoise: { reductionDb: 26 } } },
+        { repair: { denoise: { reductionDb: 121 } } },
       ),
     ).toBe(26);
   });
 
-  it('maps the legacy denoise alias without creating a second saved key', () => {
-    const overrides = { [LEGACY_DENOISE_OVERRIDE_KEY]: 18 };
-    expect(resolvePresetControlValue(denoise, {}, overrides)).toBe(18);
-    expect(presetControlOverrideKey(denoise.key, overrides)).toBe(LEGACY_DENOISE_OVERRIDE_KEY);
-    expect(hasPresetControlOverride(denoise.key, overrides)).toBe(true);
-    expect(presetControlOverrideKey(denoise.key, {})).toBe(denoise.key);
+  it('reads an override by its nested path', () => {
+    expect(
+      hasPresetControlOverride(denoise.key, { repair: { denoise: { reductionDb: 18 } } }),
+    ).toBe(true);
+    expect(hasPresetControlOverride(denoise.key, { repair: { denoise: { nFft: 2048 } } })).toBe(
+      false,
+    );
+    expect(hasPresetControlOverride(denoise.key, {})).toBe(false);
   });
 
   it('accepts supported input and rejects invalid ranges and enum values', () => {
@@ -243,7 +181,7 @@ describe('mastering preset controls', () => {
     expect(parsePresetControlValue(target, -61)).toBe(-61);
     expect(parsePresetControlValue(denoise, 120)).toBe(120);
     expect(() => parsePresetControlValue(denoise, 121)).toThrow(RangeError);
-    expect(parsePresetControlValue(getPresetControlDescriptor('loudness.ceilingDb')!, 1)).toBe(1);
+    expect(parsePresetControlValue(ceiling, 1)).toBe(1);
     expect(parsePresetControlValue(getPresetControlDescriptor('loudness.releaseMs')!, 6000)).toBe(
       6000,
     );
@@ -258,9 +196,9 @@ describe('mastering preset controls', () => {
     expect(() => parsePresetControlValue(oversample, 3)).toThrow();
   });
 
-  it('recognizes only the typed keys and the backwards-compatible alias', () => {
+  it('recognizes only the typed control paths', () => {
     expect(isKnownPresetOverrideKey('loudness.targetLufs')).toBe(true);
-    expect(isKnownPresetOverrideKey(LEGACY_DENOISE_OVERRIDE_KEY)).toBe(true);
+    expect(isKnownPresetOverrideKey('loudness.ceilingDb')).toBe(false);
     expect(isKnownPresetOverrideKey('limiter.truePeak')).toBe(false);
   });
 });

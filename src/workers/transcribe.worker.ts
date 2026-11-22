@@ -31,7 +31,7 @@ export type TranscribeWorkerResponse =
       noteCount: number;
       tempoBpm: number;
       /** Tuning used, in fractions of a semitone (given or measured). */
-      tuning: number;
+      tuningCents: number;
     }
   | { type: 'error'; error: string };
 
@@ -42,17 +42,17 @@ function isFiniteNumber(value: unknown): value is number {
 function isMidiEvent(value: unknown): value is ProjectMidiEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Record<string, unknown>;
-  const data0 = event.data0;
-  const data1 = event.data1;
+  const word0 = event.word0;
+  const word1 = event.word1;
   return (
     isFiniteNumber(event.ppq) &&
     event.ppq >= 0 &&
-    isFiniteNumber(data0) &&
-    Number.isInteger(data0) &&
-    data0 >= 0 &&
-    data0 <= 0xffffffff &&
-    (event.data1 === undefined ||
-      (isFiniteNumber(data1) && Number.isInteger(data1) && data1 >= 0 && data1 <= 0xffffffff))
+    isFiniteNumber(word0) &&
+    Number.isInteger(word0) &&
+    word0 >= 0 &&
+    word0 <= 0xffffffff &&
+    (event.word1 === undefined ||
+      (isFiniteNumber(word1) && Number.isInteger(word1) && word1 >= 0 && word1 <= 0xffffffff))
   );
 }
 
@@ -97,7 +97,7 @@ function validResult(value: unknown): value is TranscribeResult {
     noteCount * 2 === result.events.length &&
     isFiniteNumber(result.tempoBpm) &&
     result.tempoBpm > 0 &&
-    isFiniteNumber(result.tuning)
+    isFiniteNumber(result.tuningCents)
   );
 }
 
@@ -148,7 +148,7 @@ self.addEventListener('message', (event: MessageEvent<unknown>) => {
         events: result.events,
         noteCount: result.noteCount,
         tempoBpm: result.tempoBpm,
-        tuning: result.tuning,
+        tuningCents: result.tuningCents,
       } satisfies TranscribeWorkerResponse);
     })
     .catch(postError);

@@ -10,37 +10,41 @@ import {
   instrumentAutomationParam,
   masteringAutomationParam,
 } from '@/project/automation';
+import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Param ids the stub hands out: track ids map to 1000 + id (faderDb) / 2000 + id (pan). */
-function stubParamId(target: string | number, kind: 'faderDb' | 'pan'): number {
+function stubParamId(target: string | number, kind: 'faderDb' | 'pan' | 'width'): number {
   const base = kind === 'faderDb' ? 1000 : 2000;
   return target === 'master' ? base : base + Number(target);
 }
+
+/** The engine calls automation sync makes. */
+type AutomationEngine = Pick<
+  SonareEngine,
+  | 'resolveStripAutomationId'
+  | 'resolveBusAutomationId'
+  | 'setAutomationLane'
+  | 'resolveStripInsertAutomationId'
+  | 'resolveBusInsertAutomationId'
+  | 'resolveInstrumentAutomationId'
+>;
 
 /** EngineHandle stub capturing the automation commands. */
 function makeHandle(): {
   handle: EngineHandle;
   engine: {
-    automationParamId: ReturnType<typeof vi.fn>;
-    busAutomationParamId: ReturnType<typeof vi.fn>;
-    setAutomationLane: ReturnType<typeof vi.fn>;
-    resolveTrackInsertAutomationId: ReturnType<typeof vi.fn>;
-    resolveMasterInsertAutomationId: ReturnType<typeof vi.fn>;
-    resolveBusInsertAutomationId: ReturnType<typeof vi.fn>;
-    resolveInstrumentAutomationId: ReturnType<typeof vi.fn>;
+    [K in keyof AutomationEngine]: ReturnType<typeof vi.fn>;
   };
 } {
   // Insert resolvers hand out a deterministic id; an 'unknown' param name
-  // models a strip/insert/key the engine cannot resolve (returns -1).
+  // models a strip/insert/key the engine cannot resolve (a RangeError).
   const engine = {
-    automationParamId: vi.fn(stubParamId),
-    busAutomationParamId: vi.fn((busId: number) => 3000 + busId),
+    resolveStripAutomationId: vi.fn(stubParamId),
+    resolveBusAutomationId: vi.fn((busId: number) => 3000 + busId),
     setAutomationLane: vi.fn(),
-    resolveTrackInsertAutomationId: vi.fn((trackId: number, _insert: number, name: string) =>
-      name === 'unknown' ? unresolved(name) : 5000 + Number(trackId),
-    ),
-    resolveMasterInsertAutomationId: vi.fn((_insert: number, name: string) =>
-      name === 'unknown' ? unresolved(name) : 6000,
+    resolveStripInsertAutomationId: vi.fn(
+      (ref: number | 'master', _insert: number, name: string) =>
+        name === 'unknown' ? unresolved(name) : ref === 'master' ? 6000 : 5000 + Number(ref),
     ),
     resolveBusInsertAutomationId: vi.fn((busId: number, _insert: number, name: string) =>
       name === 'unknown' ? unresolved(name) : 7000 + busId,
@@ -48,7 +52,7 @@ function makeHandle(): {
     resolveInstrumentAutomationId: vi.fn((destinationId: number, name: string) =>
       name === 'unknown' ? unresolved(name) : 8000 + destinationId,
     ),
-  };
+  } satisfies AutomationEngine;
   const handle = { engine } as unknown as EngineHandle;
   return { handle, engine };
 }
@@ -133,7 +137,7 @@ describe('createAutomationSync', () => {
 
     expect(engine.setAutomationLane.mock.calls).toEqual([
       [1000, []],
-      [1000, [{ ppq: 0, value: -9, curveToNext: 0 }]],
+      [1000, [{ ppq: 0, value: -9, curveToNext: 'linear' }]],
     ]);
     expect(restoreParam).toHaveBeenCalledWith('master', 'faderDb');
   });
@@ -160,10 +164,10 @@ describe('createAutomationSync', () => {
 
     sync.sync([makeLane(busAutomationTarget('fx'), [{ ppq: 0, value: -9 }])]);
 
-    expect(engine.busAutomationParamId).toHaveBeenCalledWith(2);
-    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.resolveBusAutomationId).toHaveBeenCalledWith(2, 'faderDb');
+    expect(engine.resolveStripAutomationId).not.toHaveBeenCalled();
     expect(engine.setAutomationLane).toHaveBeenCalledWith(3002, [
-      { ppq: 0, value: -9, curveToNext: 0 },
+      { ppq: 0, value: -9, curveToNext: 'linear' },
     ]);
   });
 
@@ -195,7 +199,7 @@ describe('createAutomationSync', () => {
     expect(engine.setAutomationLane.mock.calls).toEqual([
       [3001, []],
       [3002, []],
-      [3001, [{ ppq: 0, value: -9, curveToNext: 0 }]],
+      [3001, [{ ppq: 0, value: -9, curveToNext: 'linear' }]],
     ]);
     expect(restoreParam.mock.calls).toEqual([
       [busAutomationTarget('a'), 'faderDb'],
@@ -225,7 +229,7 @@ describe('createAutomationSync', () => {
 
     expect(engine.setAutomationLane.mock.calls).toEqual([
       [3002, []],
-      [3001, [{ ppq: 0, value: -9, curveToNext: 0 }]],
+      [3001, [{ ppq: 0, value: -9, curveToNext: 'linear' }]],
     ]);
   });
 
@@ -260,10 +264,10 @@ describe('createAutomationSync', () => {
 
     sync.sync([makeLane(10, [{ ppq: 0, value: -7 }])]);
 
-    expect(engine.busAutomationParamId).toHaveBeenCalledWith(4);
-    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.resolveBusAutomationId).toHaveBeenCalledWith(4, 'faderDb');
+    expect(engine.resolveStripAutomationId).not.toHaveBeenCalled();
     expect(engine.setAutomationLane).toHaveBeenCalledWith(3004, [
-      { ppq: 0, value: -7, curveToNext: 0 },
+      { ppq: 0, value: -7, curveToNext: 'linear' },
     ]);
   });
 
@@ -282,9 +286,9 @@ describe('createAutomationSync', () => {
     ]);
 
     expect(engine.resolveBusInsertAutomationId).toHaveBeenCalledWith(4, 1, 'drive');
-    expect(engine.resolveTrackInsertAutomationId).not.toHaveBeenCalled();
+    expect(engine.resolveStripInsertAutomationId).not.toHaveBeenCalled();
     expect(engine.setAutomationLane).toHaveBeenCalledWith(7004, [
-      { ppq: 0, value: 0.5, curveToNext: 0 },
+      { ppq: 0, value: 0.5, curveToNext: 'linear' },
     ]);
   });
 
@@ -330,10 +334,10 @@ describe('createAutomationSync', () => {
       }),
     ]);
 
-    expect(engine.resolveMasterInsertAutomationId).toHaveBeenCalledTimes(1);
-    expect(engine.resolveMasterInsertAutomationId).toHaveBeenCalledWith(4, 'ceilingDb');
+    expect(engine.resolveStripInsertAutomationId).toHaveBeenCalledTimes(1);
+    expect(engine.resolveStripInsertAutomationId).toHaveBeenCalledWith('master', 4, 'ceilingDb');
     expect(engine.setAutomationLane).toHaveBeenCalledWith(6000, [
-      { ppq: 0, value: -1, curveToNext: 0 },
+      { ppq: 0, value: -1, curveToNext: 'linear' },
     ]);
     expect(sync.installedParamIds()).toStrictEqual([6000]);
   });
@@ -359,11 +363,11 @@ describe('createAutomationSync', () => {
       }),
     ]);
 
-    expect(engine.resolveTrackInsertAutomationId).toHaveBeenCalledWith(1, 2, 'thresholdDb');
-    expect(engine.resolveMasterInsertAutomationId).toHaveBeenCalledWith(4, 'ceilingDb');
+    expect(engine.resolveStripInsertAutomationId).toHaveBeenCalledWith(1, 2, 'thresholdDb');
+    expect(engine.resolveStripInsertAutomationId).toHaveBeenCalledWith('master', 4, 'ceilingDb');
   });
 
-  it('installs an effective lane with curve codes on its points', () => {
+  it('installs an effective lane with curve names on its points', () => {
     const { handle, engine } = makeHandle();
     const restoreParam = vi.fn();
     const sync = createAutomationSync(handle, { knownTrackIds: () => [1], restoreParam });
@@ -374,11 +378,11 @@ describe('createAutomationSync', () => {
         { ppq: 4, value: 0, curve: 'hold' },
       ]),
     ]);
-    expect(engine.automationParamId).toHaveBeenCalledWith(1, 'faderDb');
+    expect(engine.resolveStripAutomationId).toHaveBeenCalledWith(1, 'faderDb');
     expect(engine.setAutomationLane).toHaveBeenCalledTimes(1);
     expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
-      { ppq: 0, value: -60, curveToNext: 0 },
-      { ppq: 4, value: 0, curveToNext: 2 },
+      { ppq: 0, value: -60, curveToNext: 'linear' },
+      { ppq: 4, value: 0, curveToNext: 'hold' },
     ]);
     expect(sync.installedParamIds()).toStrictEqual([stubParamId(1, 'faderDb')]);
     expect(restoreParam).not.toHaveBeenCalled();
@@ -395,7 +399,7 @@ describe('createAutomationSync', () => {
     sync.sync([makeLane(1, [{ ppq: 0, value: -10 }])]);
 
     expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
-      { ppq: 0, value: -13, curveToNext: 0 },
+      { ppq: 0, value: -13, curveToNext: 'linear' },
     ]);
   });
 
@@ -418,22 +422,22 @@ describe('createAutomationSync', () => {
 
     sync.sync(lanes);
     expect(engine.setAutomationLane).toHaveBeenLastCalledWith(3004, [
-      { ppq: 0, value: -18, curveToNext: 0 },
-      { ppq: 4, value: -6, curveToNext: 2 },
+      { ppq: 0, value: -18, curveToNext: 'linear' },
+      { ppq: 4, value: -6, curveToNext: 'hold' },
     ]);
 
     muted = true;
     sync.sync(lanes);
     expect(engine.setAutomationLane).toHaveBeenLastCalledWith(3004, [
-      { ppq: 0, value: -120, curveToNext: 0 },
-      { ppq: 4, value: -120, curveToNext: 2 },
+      { ppq: 0, value: -120, curveToNext: 'linear' },
+      { ppq: 4, value: -120, curveToNext: 'hold' },
     ]);
 
     muted = false;
     sync.sync(lanes);
     expect(engine.setAutomationLane).toHaveBeenLastCalledWith(3004, [
-      { ppq: 0, value: -18, curveToNext: 0 },
-      { ppq: 4, value: -6, curveToNext: 2 },
+      { ppq: 0, value: -18, curveToNext: 'linear' },
+      { ppq: 4, value: -6, curveToNext: 'hold' },
     ]);
     expect(engine.setAutomationLane).toHaveBeenCalledTimes(3);
   });
@@ -466,7 +470,7 @@ describe('createAutomationSync', () => {
     sync.sync([makeLane(1, [{ ppq: 0, value: -12 }])]);
     expect(engine.setAutomationLane).toHaveBeenCalledTimes(1);
     expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
-      { ppq: 0, value: -12, curveToNext: 0 },
+      { ppq: 0, value: -12, curveToNext: 'linear' },
     ]);
   });
 
@@ -508,7 +512,7 @@ describe('createAutomationSync', () => {
     const sync = createAutomationSync(handle, { knownTrackIds, restoreParam: vi.fn() });
 
     sync.sync([makeLane(7, [{ ppq: 0, value: -6 }])]);
-    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.resolveStripAutomationId).not.toHaveBeenCalled();
     expect(engine.setAutomationLane).not.toHaveBeenCalled();
     expect(sync.installedParamIds()).toStrictEqual([]);
 
@@ -533,10 +537,10 @@ describe('createAutomationSync', () => {
     ]);
 
     // The insert lane resolves through the insert id, never the fader/pan path.
-    expect(engine.resolveTrackInsertAutomationId).toHaveBeenCalledWith(1, 0, 'drive');
-    expect(engine.automationParamId).not.toHaveBeenCalled();
+    expect(engine.resolveStripInsertAutomationId).toHaveBeenCalledWith(1, 0, 'drive');
+    expect(engine.resolveStripAutomationId).not.toHaveBeenCalled();
     expect(engine.setAutomationLane).toHaveBeenCalledWith(5001, [
-      { ppq: 0, value: 0.5, curveToNext: 0 },
+      { ppq: 0, value: 0.5, curveToNext: 'linear' },
     ]);
     expect(sync.installedParamIds()).toStrictEqual([5001]);
   });
@@ -554,7 +558,7 @@ describe('createAutomationSync', () => {
       }),
     ]);
 
-    expect(engine.resolveTrackInsertAutomationId).toHaveBeenCalledWith(1, 9, 'unknown');
+    expect(engine.resolveStripInsertAutomationId).toHaveBeenCalledWith(1, 9, 'unknown');
     expect(engine.setAutomationLane).not.toHaveBeenCalled();
     expect(sync.installedParamIds()).toStrictEqual([]);
   });
@@ -576,7 +580,7 @@ describe('createAutomationSync', () => {
     ]);
     expect(engine.setAutomationLane).toHaveBeenCalledTimes(1);
     expect(engine.setAutomationLane).toHaveBeenCalledWith(stubParamId(1, 'faderDb'), [
-      { ppq: 0, value: -12, curveToNext: 0 },
+      { ppq: 0, value: -12, curveToNext: 'linear' },
     ]);
     expect(sync.installedParamIds()).toStrictEqual([stubParamId(1, 'faderDb')]);
   });

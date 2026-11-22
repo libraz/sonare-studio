@@ -30,7 +30,7 @@ import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-tra
 const BEATS_PER_BAR = 4;
 
 /** NativeSynth preset for generated drum tracks. */
-const DRUMS_PRESET = 'drum-kit';
+const DRUMS_PRESET = 'drumKit';
 
 /** Options for {@link generateDrumsCommand}. */
 export interface GenerateDrumsParams {

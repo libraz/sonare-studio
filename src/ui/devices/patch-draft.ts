@@ -12,7 +12,6 @@ import { clamp } from '@/lib/math';
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { getWasmModule } from '@/project/runtime';
 import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@/wasm/index.js';
-import { FALLBACK_SYNTH_ENUMS } from './synth-enums';
 
 /** Editor section a patch field renders under. */
 export type PatchSection = 'osc' | 'filter' | 'amp' | 'filter-env' | 'lfo' | 'global';
@@ -634,19 +633,13 @@ export const MOD_DEPTH_MIN = -1;
 export const MOD_DEPTH_MAX = 1;
 
 /** Resolves a numeric mod enum ordinal to its name via a table. */
-function modEnumName(value: string | number, table: ReadonlyArray<string>): string {
-  if (typeof value === 'string') return value;
-  return table[value] ?? 'none';
-}
-
 /** Builds a fresh inert mod-matrix row. */
 export function createModMatrixRow(): ModMatrixRow {
   return { source: 'none', destination: 'none', depth: 0 };
 }
 
 /**
- * Converts a patch's mod routings to editable rows (numeric enum ordinals are
- * resolved to names via the published tables).
+ * Converts a patch's mod routings to editable rows.
  *
  * @param patch Patch holding the routings (possibly none).
  * @returns Editable rows (empty when the patch defines none).
@@ -654,8 +647,8 @@ export function createModMatrixRow(): ModMatrixRow {
 export function modMatrixRows(patch: StoredSynthPatch): ModMatrixRow[] {
   const routings = patch.modRoutings ?? [];
   return routings.map((routing) => ({
-    source: modEnumName(routing.source, FALLBACK_SYNTH_ENUMS.modSources),
-    destination: modEnumName(routing.destination, FALLBACK_SYNTH_ENUMS.modDestinations),
+    source: routing.source,
+    destination: routing.destination,
     depth: Number.isFinite(routing.depth) ? routing.depth : 0,
   }));
 }

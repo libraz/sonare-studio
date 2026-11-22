@@ -56,7 +56,8 @@ describe('range splice crossfade', () => {
   it('crossfades a ranged pitch shift through the wasm ops', () => {
     const input = [tone(14400, 440)];
     const mod: SampleEditorWasmOps = {
-      pitchShift: (samples) => samples.map((v) => v + 0.4) as Float32Array,
+      pitchShift: (input) =>
+        (input instanceof Float32Array ? input : input.samples).map((v) => v + 0.4),
     };
     const out = pitchShiftRange(mod, input, SAMPLE_RATE, 3, range);
     const slope = maxStep(input[0], 0, 4800);

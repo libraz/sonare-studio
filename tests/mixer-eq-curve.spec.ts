@@ -1,60 +1,60 @@
 import { describe, expect, it } from 'vitest';
 import { eqBandResponseDb, eqCurve, eqCurvePath } from '@/ui/mixer/eq-curve';
-import type { EqBand } from '@/wasm/index.js';
+import type { EqBandInput } from '@/wasm/index.js';
 
 describe('eqBandResponseDb', () => {
   it('a peak band boosts by its gain at the center frequency', () => {
-    const band: EqBand = { type: 'Peak', frequencyHz: 1000, gainDb: 6, q: 1 };
+    const band: EqBandInput = { type: 'peak', frequencyHz: 1000, gainDb: 6, q: 1 };
     expect(eqBandResponseDb(band, 1000)).toBeCloseTo(6, 1);
   });
 
   it('a peak band is near flat far from the center', () => {
-    const band: EqBand = { type: 'Peak', frequencyHz: 1000, gainDb: 6, q: 1 };
+    const band: EqBandInput = { type: 'peak', frequencyHz: 1000, gainDb: 6, q: 1 };
     expect(Math.abs(eqBandResponseDb(band, 30))).toBeLessThan(0.5);
     expect(Math.abs(eqBandResponseDb(band, 18000))).toBeLessThan(0.5);
   });
 
   it('a cut peak attenuates at the center frequency', () => {
-    const band: EqBand = { type: 'Peak', frequencyHz: 500, gainDb: -9, q: 2 };
+    const band: EqBandInput = { type: 'peak', frequencyHz: 500, gainDb: -9, q: 2 };
     expect(eqBandResponseDb(band, 500)).toBeCloseTo(-9, 1);
   });
 
   it('a low shelf boosts the lows and leaves the highs flat', () => {
-    const band: EqBand = { type: 'LowShelf', frequencyHz: 200, gainDb: 6 };
+    const band: EqBandInput = { type: 'lowShelf', frequencyHz: 200, gainDb: 6 };
     expect(eqBandResponseDb(band, 20)).toBeCloseTo(6, 0);
     expect(Math.abs(eqBandResponseDb(band, 10000))).toBeLessThan(0.5);
   });
 
   it('a high shelf boosts the highs and leaves the lows flat', () => {
-    const band: EqBand = { type: 'HighShelf', frequencyHz: 5000, gainDb: 6 };
+    const band: EqBandInput = { type: 'highShelf', frequencyHz: 5000, gainDb: 6 };
     expect(eqBandResponseDb(band, 18000)).toBeCloseTo(6, 0);
     expect(Math.abs(eqBandResponseDb(band, 100))).toBeLessThan(0.5);
   });
 
   it('a high pass attenuates below its corner', () => {
-    const band: EqBand = { type: 'HighPass', frequencyHz: 1000 };
+    const band: EqBandInput = { type: 'highPass', frequencyHz: 1000 };
     expect(eqBandResponseDb(band, 100)).toBeLessThan(-20);
     expect(Math.abs(eqBandResponseDb(band, 10000))).toBeLessThan(1);
   });
 
   it('a low pass attenuates above its corner', () => {
-    const band: EqBand = { type: 'LowPass', frequencyHz: 1000 };
+    const band: EqBandInput = { type: 'lowPass', frequencyHz: 1000 };
     expect(eqBandResponseDb(band, 10000)).toBeLessThan(-20);
     expect(Math.abs(eqBandResponseDb(band, 100))).toBeLessThan(1);
   });
 
   it('a notch cuts hard at its center', () => {
-    const band: EqBand = { type: 'Notch', frequencyHz: 1000, q: 4 };
+    const band: EqBandInput = { type: 'notch', frequencyHz: 1000, q: 4 };
     expect(eqBandResponseDb(band, 1000)).toBeLessThan(-30);
     expect(Math.abs(eqBandResponseDb(band, 100))).toBeLessThan(1);
   });
 
   it('disabled or bypassed bands are flat', () => {
     expect(
-      eqBandResponseDb({ type: 'Peak', frequencyHz: 1000, gainDb: 12, enabled: false }, 1000),
+      eqBandResponseDb({ type: 'peak', frequencyHz: 1000, gainDb: 12, enabled: false }, 1000),
     ).toBe(0);
     expect(
-      eqBandResponseDb({ type: 'Peak', frequencyHz: 1000, gainDb: 12, bypassed: true }, 1000),
+      eqBandResponseDb({ type: 'peak', frequencyHz: 1000, gainDb: 12, bypassed: true }, 1000),
     ).toBe(0);
   });
 
@@ -69,7 +69,7 @@ describe('eqBandResponseDb', () => {
 
 describe('eqCurve', () => {
   it('samples the requested number of points on an ascending log axis', () => {
-    const curve = eqCurve([{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }], 32);
+    const curve = eqCurve([{ type: 'peak', frequencyHz: 1000, gainDb: 3 }], 32);
     expect(curve).toHaveLength(32);
     expect(curve[0].hz).toBeCloseTo(20, 6);
     expect(curve[curve.length - 1].hz).toBeCloseTo(20000, 3);
@@ -79,9 +79,9 @@ describe('eqCurve', () => {
   });
 
   it('sums the responses of multiple bands', () => {
-    const bands: EqBand[] = [
-      { type: 'Peak', frequencyHz: 1000, gainDb: 6, q: 1 },
-      { type: 'Peak', frequencyHz: 1000, gainDb: -2, q: 1 },
+    const bands: EqBandInput[] = [
+      { type: 'peak', frequencyHz: 1000, gainDb: 6, q: 1 },
+      { type: 'peak', frequencyHz: 1000, gainDb: -2, q: 1 },
     ];
     const single = eqBandResponseDb(bands[0], 1000) + eqBandResponseDb(bands[1], 1000);
     const curve = eqCurve(bands, 257, 999, 1001);
@@ -91,7 +91,7 @@ describe('eqCurve', () => {
 
   it('is flat for an empty or fully inactive band list', () => {
     for (const point of eqCurve([], 8)) expect(point.db).toBe(0);
-    const inactive = eqCurve([{ type: 'Peak', gainDb: 12, enabled: false }], 8);
+    const inactive = eqCurve([{ type: 'peak', gainDb: 12, enabled: false }], 8);
     for (const point of inactive) expect(point.db).toBe(0);
   });
 });

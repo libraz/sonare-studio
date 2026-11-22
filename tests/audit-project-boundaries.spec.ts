@@ -166,11 +166,11 @@ describe('project store mirror boundaries', () => {
   it('keeps a valid tempo/meter mirror and rejects an invalid primary tempo', () => {
     expect(
       refreshTempoMeter({
-        tempo_segments: [
-          { start_ppq: 0, bpm: 0 },
-          { start_ppq: 4, bpm: 140, end_bpm: 160 },
+        tempoSegments: [
+          { startPpq: 0, bpm: 0 },
+          { startPpq: 4, bpm: 140, endBpm: 160 },
         ],
-        time_signatures: [{ start_ppq: 4, numerator: 3, denominator: 4 }],
+        timeSignatures: [{ startPpq: 4, numerator: 3, denominator: 4 }],
       }),
     ).toEqual({
       tempoSegments: [
@@ -227,13 +227,13 @@ describe('project store mirror boundaries', () => {
         clips: [
           {
             id: 1,
-            track_id: 1,
-            start_ppq: 0,
-            length_ppq: 4,
-            source_offset_ppq: 0,
+            trackId: 1,
+            startPpq: 0,
+            lengthPpq: 4,
+            sourceOffsetPpq: 0,
             gain: 1,
-            loop_mode: 0,
-            loop_length_ppq: 0,
+            loopMode: 0,
+            loop_lengthPpq: 0,
           },
         ],
       },

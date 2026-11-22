@@ -1,7 +1,7 @@
 /**
  * Microphone recording for a running engine: binds a microphone to the engine
  * node and records through the engine's native capture path
- * (configureCapture / armRecord / punch / capturedAudio).
+ * (configureCapture / armCapture / capturedAudio).
  *
  * Capture model: configureCapture allocates the engine-side capture buffer up
  * front and selects `source: 'input'`, which captures the raw microphone
@@ -31,7 +31,12 @@ import { dbToLinear } from '@/lib/db';
 import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
-import type { EngineCaptureStatus, RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+import type {
+  CapturePunch,
+  EngineCaptureStatus,
+  RealtimeVoiceChangerConfigInput,
+  StreamingRetuneConfig,
+} from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 import {
   bindRealtimeVoiceChangerInput,
@@ -121,16 +126,6 @@ const DEFAULT_LEVEL_INTERVAL_MS = 50;
  */
 const DEFAULT_CAPTURE_CHANNEL_LIMIT = 2;
 
-/**
- * The only track id `armRecord` accepts.
- *
- * Input capture is engine-global — there is one capture path, not one per
- * track — and the engine keeps the parameter for source compatibility while
- * rejecting anything but zero. Which track a take belongs to is the host's own
- * bookkeeping ({@link ActiveTake.trackId}) and never reaches the engine.
- */
-export const ENGINE_CAPTURE_TRACK_ID = 0;
-
 /** A finished take handed back by {@link Recorder.stop}. */
 export interface RecordingResult {
   /** Planar capture buffers (one per channel) at `sampleRate`. */
@@ -200,9 +195,9 @@ export interface MicrophoneBinding {
   /** Updates an in-place realtime voice changer binding, when present. */
   setVoiceChangerPreset?(preset: RealtimeVoiceChangerConfigInput): boolean;
   /** Updates an in-place StreamingRetune binding, when present. */
-  setStreamingRetuneConfig?(config: { semitones?: number; mix?: number; grainSize?: number }): void;
+  setStreamingRetuneConfig?(config: StreamingRetuneConfig): void;
   /** Disconnects the source and stops the stream tracks. */
-  close(): void;
+  destroy(): void;
 }
 
 /** Injectable dependencies and tuning for {@link createRecorder}. */
@@ -218,7 +213,7 @@ export interface RecorderOptions {
     engineNode: AudioWorkletNode,
     options: {
       stream: MediaStream;
-      stopTracksOnClose: boolean;
+      stopTracksOnDestroy: boolean;
       signal?: AbortSignal;
       onProcessorError?: () => void;
     },
@@ -317,7 +312,7 @@ export interface Recorder {
   /**
    * Starts capturing the armed track through the engine record path: sizes
    * the capture buffer for the full take, resets the capture counters, arms
-   * the engine (engine.armRecord) and sets the punch window (engine.punch)
+   * the engine (engine.armCapture) with the punch window configured
    * from `startPpq` to the max-duration bound. The caller drives the
    * transport around this call (seek — possibly earlier than `startPpq` for
    * a count-in — then play); the engine captures nothing outside the punch
@@ -402,13 +397,13 @@ function defaultGetUserMedia(): ((c: MediaStreamConstraints) => Promise<MediaStr
 async function defaultBindInput(
   ctx: AudioContext,
   engineNode: AudioWorkletNode,
-  options: { stream: MediaStream; stopTracksOnClose: boolean; signal?: AbortSignal },
+  options: { stream: MediaStream; stopTracksOnDestroy: boolean; signal?: AbortSignal },
 ): Promise<MicrophoneBinding> {
   const wasm = await ensureWasm();
   options.signal?.throwIfAborted();
   return wasm.bindMicrophoneInput(ctx, engineNode, {
     stream: options.stream,
-    stopTracksOnClose: options.stopTracksOnClose,
+    stopTracksOnDestroy: options.stopTracksOnDestroy,
   });
 }
 
@@ -509,6 +504,8 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   let operationGeneration = 0;
   let phase: 'idle' | 'starting' | 'recording' | 'stopping' | 'disposed' = 'idle';
   let captureBufferFrames = idleBufferFrames;
+  /** Punch window of the take in progress; every config re-send restates it. */
+  let capturePunch: CapturePunch | undefined;
   const levelListeners = new Set<(peak: number) => void>();
   let levelPeak = 0;
   let lastLevelEmit = 0;
@@ -546,14 +543,15 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   const sendCaptureConfig = (bufferFrames: number, recordOffsetSamples = 0): void => {
     captureBufferFrames = bufferFrames;
     handle.engine.configureCapture({
-      bufferFrames,
-      channels: captureChannelCount,
+      capacityFrames: bufferFrames,
+      numChannels: captureChannelCount,
       source: captureSource,
       recordOffsetSamples,
       inputMonitor: {
         enabled: captureSource === 'input' && monitorOn,
         gain: monitorGainValue,
       },
+      ...(capturePunch ? { punch: capturePunch } : {}),
     });
   };
 
@@ -583,13 +581,14 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     detachTrackListeners = null;
     if (take) {
       take = null;
-      handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
+      capturePunch = undefined;
+      handle.engine.armCapture({ armed: false });
       void handle.engine.resetCapture().catch(() => {
         // The device is gone; a failed reset is harmless.
       });
     }
     if (phase !== 'disposed') phase = 'idle';
-    binding.close();
+    binding.destroy();
     binding = null;
     bindingStreams = [];
     captureChannelCount = DEFAULT_CAPTURE_CHANNEL_LIMIT;
@@ -687,7 +686,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       const bound: MicrophoneBinding = {
         stream: streams[0],
         source: readyMerger,
-        close: () => {
+        destroy: () => {
           try {
             readyMerger.disconnect();
           } catch {
@@ -717,7 +716,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       if (stagedBinding) {
         detachTrackListeners?.();
         detachTrackListeners = null;
-        stagedBinding.close();
+        stagedBinding.destroy();
         if (binding === stagedBinding) {
           binding = null;
           bindingStreams = [];
@@ -777,31 +776,31 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
         ? (ctx, engineNode, bindOptions) =>
             bindRealtimeVoiceChangerRetuneInput(ctx, engineNode, {
               ...bindOptions,
-              preset: options.voiceChangerPreset ?? 'neutral-monitor',
-              semitones: retuneSemitones,
-              channelCount: 1,
+              preset: options.voiceChangerPreset ?? 'neutralMonitor',
+              pitchSemitones: retuneSemitones,
+              numChannels: 1,
             })
         : retuneSemitones !== 0
           ? (ctx, engineNode, bindOptions) =>
               bindStreamingRetuneInput(ctx, engineNode, {
                 ...bindOptions,
-                semitones: retuneSemitones,
+                pitchSemitones: retuneSemitones,
                 mix: 1,
-                channelCount: 1,
+                numChannels: 1,
               })
           : options.voiceChangerPreset
             ? (ctx, engineNode, bindOptions) =>
                 bindRealtimeVoiceChangerInput(ctx, engineNode, {
                   ...bindOptions,
-                  preset: options.voiceChangerPreset ?? 'neutral-monitor',
-                  channelCount: 1,
+                  preset: options.voiceChangerPreset ?? 'neutralMonitor',
+                  numChannels: 1,
                 })
             : defaultBindInput);
     let bound: MicrophoneBinding;
     try {
       bound = await bindInput(handle.ctx, handle.engine.node, {
         stream,
-        stopTracksOnClose: true,
+        stopTracksOnDestroy: true,
         signal,
         onProcessorError: handleInputProcessorError,
       });
@@ -810,7 +809,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       throw error;
     }
     if (disposed || signal.aborted) {
-      bound.close();
+      bound.destroy();
       if (signal.aborted) signal.throwIfAborted();
       throw new RecorderStateError('Recorder has been disposed');
     }
@@ -829,7 +828,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     } catch (error) {
       detachTrackListeners?.();
       detachTrackListeners = null;
-      bound.close();
+      bound.destroy();
       if (binding === bound) {
         binding = null;
         bindingStreams = [];
@@ -884,7 +883,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
   const setStreamingRetuneSemitones = (semitones: number): boolean => {
     if (!binding?.setStreamingRetuneConfig) return false;
     binding.setStreamingRetuneConfig({
-      semitones: clampStreamingRetuneSemitones(semitones),
+      pitchSemitones: clampStreamingRetuneSemitones(semitones),
       mix: 1,
     });
     return true;
@@ -978,23 +977,22 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     let engineArmed = false;
     phase = 'starting';
     try {
+      capturePunch = { startPpq, endPpq: punchOutPpq };
       sendCaptureConfig(Math.max(1, Math.ceil(captureDurationSeconds * sampleRate)), offsetSamples);
       await handle.engine.resetCapture();
       if (disposed || generation !== operationGeneration) {
         throw new RecorderStateError('Recorder startup was cancelled');
       }
-      handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, true);
-      engineArmed = true;
       // Punch-out = explicit endPpq or the max-duration bound; stop() disarms
       // earlier as needed. The half-open window keeps any count-in pre-roll out
       // of the buffer and lets auto-punch close sample-accurately at R.
-      if (!handle.engine.punch(startPpq, punchOutPpq)) {
-        throw new RecorderStateError('The engine rejected the capture punch window');
-      }
+      handle.engine.armCapture({ armed: true });
+      engineArmed = true;
       take = { trackId, startPpq, capturePunchOutPpq, sampleRate };
       phase = 'recording';
     } catch (error) {
-      if (engineArmed) handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
+      capturePunch = undefined;
+      if (engineArmed) handle.engine.armCapture({ armed: false });
       await handle.engine.resetCapture().catch(() => undefined);
       if (!disposed && generation === operationGeneration) phase = 'idle';
       throw error;
@@ -1008,7 +1006,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     }
     const generation = operationGeneration;
     phase = 'stopping';
-    handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
+    handle.engine.armCapture({ armed: false });
     let status: Awaited<ReturnType<EngineHandle['engine']['captureStatus']>>;
     let captured: Float32Array[];
     try {
@@ -1029,6 +1027,7 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
       throw error;
     }
     take = null;
+    capturePunch = undefined;
     phase = 'idle';
     if (status.overflowCount > 0) {
       console.warn(`Recording capture overflow: ${status.overflowCount} samples dropped`);
@@ -1063,12 +1062,13 @@ export function createRecorder(handle: EngineHandle, options: RecorderOptions = 
     detachTrackListeners = null;
     if (take) {
       take = null;
-      handle.engine.armRecord(ENGINE_CAPTURE_TRACK_ID, false);
+      capturePunch = undefined;
+      handle.engine.armCapture({ armed: false });
       void handle.engine.resetCapture().catch(() => {
         // The engine may already be tearing down; a failed reset is harmless.
       });
     }
-    binding?.close();
+    binding?.destroy();
     binding = null;
     bindingStreams = [];
     microphoneAbort?.abort(new DOMException('Recorder disposed.', 'AbortError'));

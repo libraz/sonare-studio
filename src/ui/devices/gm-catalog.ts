@@ -1,24 +1,23 @@
 /**
  * Name lookups backed by the wasm module's GM/GM2/GS catalog. Every accessor
- * degrades to "no name" while the module is not loaded or lacks a helper.
+ * degrades to "no name" while the module is not loaded or names nothing.
  */
 import { isDrumTrack } from '@/compose/tracks';
 import { getWasmModule } from '@/project/store';
 import type { EditorNote, EditorTrack } from '@/project/types';
 
-/** The optional catalog surface of the wasm module. */
-export interface GmCatalog {
-  Project?: {
-    gmInstrumentName?: (program: number) => string | null;
-    gm2InstrumentName?: (bankLsb: number, program: number) => string | null;
-    gm2DrumSetName?: (bankLsb: number) => string | null;
-    gmFamilyName?: (family: number) => string | null;
-    gmFamilyFirstProgram?: (family: number) => number;
-  };
-  synthGsDrumKitName?: (program: number) => string | null;
-  synthGsDrumKitIsVoicedApart?: (program: number) => boolean | null;
-  synthGsVariationIsVoicedApart?: (bank: number, program: number) => boolean | null;
-}
+/** The catalog surface of the wasm module. */
+export type GmCatalog = Pick<
+  typeof import('@/wasm/index.js'),
+  | 'gmInstrumentName'
+  | 'gm2InstrumentName'
+  | 'gm2DrumSetName'
+  | 'gmFamilyName'
+  | 'gmFamilyFirstProgram'
+  | 'synthGsDrumKitName'
+  | 'synthGsDrumKitIsVoicedApart'
+  | 'synthGsVariationIsVoicedApart'
+>;
 
 /** One GM instrument family (eight consecutive programs). */
 export interface GmFamily {
@@ -39,29 +38,40 @@ export function gmCatalog(): GmCatalog | null {
   }
 }
 
+/** Runs a catalog lookup; the core throws for an out-of-range number, which names nothing. */
+function lookup(read: (catalog: GmCatalog) => string | undefined): string | null {
+  const catalog = gmCatalog();
+  if (!catalog) return null;
+  try {
+    return read(catalog) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /** GM program name, or null when the module does not name it. */
 export function gmProgramName(program: number): string | null {
-  return gmCatalog()?.Project?.gmInstrumentName?.(program) ?? null;
+  return lookup((catalog) => catalog.gmInstrumentName(program));
 }
 
 /** GM2 variation name for a bank (only its LSB selects the variation), or null. */
 export function gm2ProgramName(bank: number, program: number): string | null {
-  return gmCatalog()?.Project?.gm2InstrumentName?.(bank & 0x7f, program) ?? null;
+  return lookup((catalog) => catalog.gm2InstrumentName({ bankLsb: bank & 0x7f, program }));
 }
 
 /** GM2 drum/SFX kit name for a bank LSB, or null. */
 export function gm2DrumSetName(bankLsb: number): string | null {
-  return gmCatalog()?.Project?.gm2DrumSetName?.(bankLsb) ?? null;
+  return lookup((catalog) => catalog.gm2DrumSetName(bankLsb));
 }
 
-/** All GM families; empty when the module lacks the family helpers. */
+/** All GM families; empty before the module is ready. */
 export function gmFamilies(): GmFamily[] {
-  const project = gmCatalog()?.Project;
-  if (!project?.gmFamilyName || !project.gmFamilyFirstProgram) return [];
+  const catalog = gmCatalog();
+  if (!catalog) return [];
   return Array.from({ length: GM_FAMILY_COUNT }, (_, index) => ({
     index,
-    name: project.gmFamilyName?.(index) ?? `Family ${index + 1}`,
-    firstProgram: project.gmFamilyFirstProgram?.(index) ?? index * 8,
+    name: catalog.gmFamilyName(index),
+    firstProgram: catalog.gmFamilyFirstProgram(index),
   }));
 }
 

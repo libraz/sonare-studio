@@ -156,7 +156,7 @@ describe('crossfadeClips command', () => {
 
     crossfadeClips(left, right, { lengthPpq: 1, leftSourceEndPpq: 8 });
 
-    expect(getProject().getOverlapPolicy()).toBe(1);
+    expect(getProject().overlapPolicy).toBe('allow');
 
     expect(store.clips.find((c) => c.id === left)).toMatchObject({
       lengthPpq: 5,
@@ -166,7 +166,7 @@ describe('crossfadeClips command', () => {
 
     expect(undo()).toBe(true);
     expect(store.clips.find((c) => c.id === left)?.lengthPpq).toBe(4);
-    expect(getProject().getOverlapPolicy()).toBe(0);
+    expect(getProject().overlapPolicy).toBe('disallow');
     uninstallMockOpfs();
   });
 

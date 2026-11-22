@@ -23,7 +23,7 @@ import { TRACK_COLOR_PALETTE } from '@/project/types';
 const DEMO_SAMPLE_RATE = 48000;
 
 /** Built-in pipe-organ physical model preset used for every voice. */
-const DEMO_PRESET = 'church-organ';
+const DEMO_PRESET = 'churchOrgan';
 
 /** Curated playback tempo markers for the demo's major structural changes. */
 const BWV565_PLAYBACK_TEMPO_SEGMENTS = [

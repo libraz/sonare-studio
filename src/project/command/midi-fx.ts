@@ -1,13 +1,8 @@
 import type { Project } from '@/wasm/index.js';
-import { pairEventsIntoNotesIndexed, type SerializedMidiEvent } from '../midi-events';
-import {
-  isMidiFxNoop,
-  type MidiFxConfig,
-  midiFxConfigJson,
-  sanitizeMidiFxConfig,
-} from '../midi-fx';
+import { pairEventsIntoNotesIndexed, projectMidiContent } from '../midi-events';
+import { isMidiFxNoop, type MidiFxConfig, midiFxConfig, sanitizeMidiFxConfig } from '../midi-fx';
 import { getProject, useProjectStore } from '../store';
-import type { NoteProvenanceHints, SerializedProjectDoc } from '../store-refresh';
+import type { NoteProvenanceHints } from '../store-refresh';
 import type { EditorNote, EditorTrack } from '../types';
 import { execute } from './history';
 import { requireEditableClip, requireEditableTrack } from './utils';
@@ -27,10 +22,7 @@ function captureNoteProvenance(
   clipId: number,
   notes: ReadonlyArray<EditorNote>,
 ): Map<number, number> | null {
-  const doc = JSON.parse(project.toJson()) as SerializedProjectDoc;
-  const stored = doc.midi_content?.[String(clipId)];
-  const events = Array.isArray(stored) ? (stored as SerializedMidiEvent[]) : [];
-  const recovered = pairEventsIntoNotesIndexed(events);
+  const recovered = pairEventsIntoNotesIndexed(projectMidiContent(project)[String(clipId)] ?? []);
   if (recovered.length !== notes.length) return null;
   const byOnEventIndex = new Map<number, number>();
   recovered.forEach((entry, index) => {
@@ -62,14 +54,14 @@ export function bakeClipMidiFx(clipId: number, config: MidiFxConfig): boolean {
   if ((clip.kind ?? 'midi') !== 'midi') {
     throw new RangeError(`Clip ${clipId} is not a MIDI clip`);
   }
-  const json = midiFxConfigJson(sanitizeMidiFxConfig(config));
-  if (json === null) return false;
+  const engineConfig = midiFxConfig(sanitizeMidiFxConfig(config));
+  if (engineConfig === null) return false;
   const project = getProject();
   const idByOnEventIndex = captureNoteProvenance(project, clipId, clip.notes);
   execute(1, () => {
     const result = project.bakeMidiFx({
       clipId,
-      configJson: json,
+      config: engineConfig,
       withSourceIndex: idByOnEventIndex !== null,
     });
     const sourceIndex = result?.sourceIndex;
@@ -106,7 +98,7 @@ export function setTrackMidiFx(trackId: number, config: MidiFxConfig): boolean {
   if (isMidiFxNoop(sanitized)) return clearTrackMidiFx(trackId);
   if (
     track.midiFx !== undefined &&
-    midiFxConfigJson(track.midiFx) === midiFxConfigJson(sanitized)
+    JSON.stringify(midiFxConfig(track.midiFx)) === JSON.stringify(midiFxConfig(sanitized))
   ) {
     return false;
   }

@@ -5,7 +5,6 @@ import type { RecorderOptions } from '@/engine/recorder';
 import {
   createRecorder,
   defaultRecordOffsetSamples,
-  ENGINE_CAPTURE_TRACK_ID,
   INPUT_METER_TARGET_ID,
   inputLatencySamples,
   MICROPHONE_CONSTRAINTS,
@@ -23,15 +22,14 @@ const { presetConfigs } = vi.hoisted(() => {
     inputGainDb: 0,
     outputGainDb: 0,
     wetMix: 1,
-    retuneSemitones: 0,
+    retunePitchSemitones: 0,
     retuneMix: 0,
-    retuneGrainSize: 0,
     formantFactor: 1,
     formantAmount: 0,
     formantBody: 0,
     formantBrightness: 0,
     formantNasal: 0,
-    eqHighpassHz: 75,
+    eqHighPassHz: 75,
     eqBodyDb: 0,
     eqPresenceDb: 0,
     eqAirDb: 0,
@@ -60,8 +58,8 @@ const { presetConfigs } = vi.hoisted(() => {
   });
   return {
     presetConfigs: {
-      'bright-idol': makePod({ retuneSemitones: 4, retuneMix: 1, outputGainDb: 2.2 }),
-      'dark-villain': makePod({ retuneSemitones: -9, retuneMix: 1, outputGainDb: 4.5 }),
+      brightIdol: makePod({ retunePitchSemitones: 4, retuneMix: 1, outputGainDb: 2.2 }),
+      darkVillain: makePod({ retunePitchSemitones: -9, retuneMix: 1, outputGainDb: 4.5 }),
     },
   };
 });
@@ -84,8 +82,8 @@ function meterSnapshot(targetId: number, peakDbL: number, peakDbR = peakDbL) {
     rmsDbL: -60,
     rmsDbR: -60,
     correlation: 0,
-    truePeakDbL: peakDbL,
-    truePeakDbR: peakDbR,
+    truePeakDbtpL: peakDbL,
+    truePeakDbtpR: peakDbR,
     momentaryLufs: -60,
     shortTermLufs: -60,
     integratedLufs: -60,
@@ -108,8 +106,7 @@ interface FakeCaptureStatus {
 /** Builds an EngineHandle stub with spied capture-path methods. */
 function makeHandle(sampleRate = 100, baseLatency = 0) {
   const configureCapture = vi.fn();
-  const armRecord = vi.fn(() => true);
-  const punch = vi.fn(() => true);
+  const armCapture = vi.fn();
   const resetCapture = vi.fn(async () => {});
   let status: FakeCaptureStatus = {
     capturedFrames: 0,
@@ -136,8 +133,7 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
     engine: {
       node,
       configureCapture,
-      armRecord,
-      punch,
+      armCapture,
       resetCapture,
       captureStatus,
       capturedAudio,
@@ -148,8 +144,7 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
   return {
     handle,
     configureCapture,
-    armRecord,
-    punch,
+    armCapture,
     resetCapture,
     captureStatus,
     capturedAudio,
@@ -197,7 +192,7 @@ function makeDeps(options: { channelCount?: number; trackLatencySeconds?: number
     async (_ctx: AudioContext, _node: AudioWorkletNode, opts: { stream: MediaStream }) => ({
       stream: opts.stream,
       source,
-      close: bindingClose,
+      destroy: bindingClose,
     }),
   );
   const deps: RecorderOptions = { getUserMedia, bindInput };
@@ -298,15 +293,15 @@ describe('createRecorder microphone acquisition', () => {
     expect(audio.autoGainControl).toBe(false);
     expect(bindInput).toHaveBeenCalledWith(handle.ctx, node, {
       stream,
-      stopTracksOnClose: true,
+      stopTracksOnDestroy: true,
       signal: expect.any(AbortSignal),
       onProcessorError: expect.any(Function),
     });
     // The idle config: a 1-second raw-input buffer with the monitor off.
     expect(configureCapture).toHaveBeenCalledTimes(1);
     expect(configureCapture).toHaveBeenCalledWith({
-      bufferFrames: 100,
-      channels: 2,
+      capacityFrames: 100,
+      numChannels: 2,
       source: 'input',
       recordOffsetSamples: 0,
       inputMonitor: { enabled: false, gain: 1 },
@@ -326,7 +321,7 @@ describe('createRecorder microphone acquisition', () => {
     await recorder.requestMicrophone();
 
     expect(configureCapture).toHaveBeenCalledWith(
-      expect.objectContaining({ channels: 1, source: 'input' }),
+      expect.objectContaining({ numChannels: 1, source: 'input' }),
     );
   });
 
@@ -350,11 +345,11 @@ describe('createRecorder microphone acquisition', () => {
     const { stream, getUserMedia } = makeDeps();
     const recorder = createRecorder(handle, {
       getUserMedia,
-      voiceChangerPreset: 'bright-idol',
+      voiceChangerPreset: 'brightIdol',
       streamingRetuneSemitones: 7,
     });
     const wasm = await ensureWasm();
-    const darkConfig = wasm.realtimeVoiceChangerPresetConfig('dark-villain');
+    const darkConfig = wasm.realtimeVoiceChangerPresetConfig('darkVillain');
 
     await recorder.requestMicrophone();
 
@@ -365,13 +360,15 @@ describe('createRecorder microphone acquisition', () => {
     expect(source.connect).toHaveBeenCalledWith(voiceNode);
     expect(voiceNode.connect).toHaveBeenCalledWith(retuneNode);
     expect(retuneNode.connect).toHaveBeenCalledWith(node);
-    expect(retuneNode.options.processorOptions).toMatchObject({ semitones: 7, mix: 1 });
+    expect(retuneNode.options.processorOptions).toMatchObject({ pitchSemitones: 7, mix: 1 });
 
-    expect(recorder.setVoiceChangerPreset('dark-villain')).toBe(true);
+    expect(recorder.setVoiceChangerPreset('darkVillain')).toBe(true);
     expect(
       recorder.setVoiceChangerPreset({
-        schemaVersion: 1,
+        schemaVersion: 4,
+        id: 'custom',
         name: 'custom',
+        category: 'custom',
         dsp: { formantFactor: 1.2 },
       }),
     ).toBe(false);
@@ -383,7 +380,7 @@ describe('createRecorder microphone acquisition', () => {
     expect(voiceNode.port.postMessage).toHaveBeenCalledTimes(1);
     expect(retuneNode.port.postMessage).toHaveBeenCalledWith({
       type: 'setConfig',
-      config: { semitones: -5, mix: 1 },
+      config: { pitchSemitones: -5, mix: 1 },
     });
   });
 
@@ -445,7 +442,7 @@ describe('createRecorder state machine', () => {
   });
 
   it('locks start while reset is pending and never arms after disposal', async () => {
-    const { handle, resetCapture, armRecord } = makeHandle();
+    const { handle, resetCapture, armCapture } = makeHandle();
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, { ...deps, captureSource: 'output' });
     recorder.arm(1);
@@ -461,7 +458,7 @@ describe('createRecorder state machine', () => {
     resetGate.resolve();
 
     await expect(starting).rejects.toBeInstanceOf(RecorderStateError);
-    expect(armRecord).not.toHaveBeenCalledWith(expect.anything(), true);
+    expect(armCapture).not.toHaveBeenCalledWith({ armed: true });
     expect(recorder.isRecording()).toBe(false);
   });
 
@@ -510,7 +507,7 @@ describe('createRecorder state machine', () => {
   });
 
   it('records the master output without requesting a microphone', async () => {
-    const { handle, configureCapture, armRecord, punch, setStatus, setAudio } = makeHandle(100);
+    const { handle, configureCapture, armCapture, setStatus, setAudio } = makeHandle(100);
     const { deps, getUserMedia } = makeDeps();
     const recorder = createRecorder(handle, { ...deps, captureSource: 'output' });
 
@@ -522,14 +519,14 @@ describe('createRecorder state machine', () => {
     await recorder.start({ startPpq: 2, endPpq: 4, tempoBpm: 60 });
 
     expect(configureCapture).toHaveBeenLastCalledWith({
-      bufferFrames: 200,
-      channels: 2,
+      capacityFrames: 200,
+      numChannels: 2,
       source: 'output',
       recordOffsetSamples: 0,
       inputMonitor: { enabled: false, gain: 1 },
+      punch: { startPpq: 2, endPpq: 4 },
     });
-    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, true);
-    expect(punch).toHaveBeenLastCalledWith(2, 4);
+    expect(armCapture).toHaveBeenLastCalledWith({ armed: true });
 
     setStatus({ capturedFrames: 3, source: 'output' });
     setAudio([new Float32Array([1, 2, 3])]);
@@ -542,8 +539,8 @@ describe('createRecorder state machine', () => {
 });
 
 describe('createRecorder capture', () => {
-  it('configures, resets, arms and punches in order on start', async () => {
-    const { handle, configureCapture, armRecord, punch, resetCapture } = makeHandle(100);
+  it('configures with the punch window, resets and arms in order on start', async () => {
+    const { handle, configureCapture, armCapture, resetCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -552,43 +549,46 @@ describe('createRecorder capture', () => {
 
     // Recording-size buffer: 30 s at 100 Hz = 3000 frames.
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 3000, channels: 2, source: 'input' }),
+      expect.objectContaining({ capacityFrames: 3000, numChannels: 2, source: 'input' }),
     );
     // Capture is engine-global: the armed track is the host's own bookkeeping
     // and the engine rejects any id but its own. Arming track 7 therefore still
     // arms capture 0, and passing 7 through is what stopped recording working.
-    expect(armRecord).toHaveBeenCalledWith(ENGINE_CAPTURE_TRACK_ID, true);
+    expect(armCapture).toHaveBeenCalledWith({ armed: true });
     expect(recorder.armedTrackId()).toBe(7);
     // Punch-out = startPpq + maxDuration in PPQ (30 s at 120 BPM = 60 PPQ).
-    expect(punch).toHaveBeenCalledWith(8, 68);
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ punch: { startPpq: 8, endPpq: 68 } }),
+    );
     const order = [
       configureCapture.mock.invocationCallOrder[1],
       resetCapture.mock.invocationCallOrder[0],
-      armRecord.mock.invocationCallOrder[0],
-      punch.mock.invocationCallOrder[0],
+      armCapture.mock.invocationCallOrder[0],
     ];
     expect(order).toEqual([...order].sort((a, b) => a - b));
 
     await recorder.stop();
-    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
+    expect(armCapture).toHaveBeenLastCalledWith({ armed: false });
   });
 
   it('sizes the buffer and punch window with the 300 s default duration', async () => {
-    const { handle, configureCapture, punch } = makeHandle(100);
+    const { handle, configureCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(1);
     await recorder.start({ startPpq: 4, tempoBpm: 120 });
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 30000 }),
+      expect.objectContaining({ capacityFrames: 30000 }),
     );
     // 300 s at 120 BPM = 600 PPQ.
-    expect(punch).toHaveBeenCalledWith(4, 604);
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ punch: { startPpq: 4, endPpq: 604 } }),
+    );
   });
 
   it('uses an explicit punch-out position as the capture bound', async () => {
-    const { handle, configureCapture, punch } = makeHandle(100);
+    const { handle, configureCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -598,13 +598,15 @@ describe('createRecorder capture', () => {
 
     // 12 PPQ at 120 BPM = 6 s; at 100 Hz the capture buffer is 600 frames.
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 600 }),
+      expect.objectContaining({ capacityFrames: 600 }),
     );
-    expect(punch).toHaveBeenCalledWith(8, 20);
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ punch: { startPpq: 8, endPpq: 20 } }),
+    );
   });
 
   it('uses the tempo-map punch-out for an open-ended take instead of constant BPM', async () => {
-    const { handle, punch } = makeHandle(100);
+    const { handle, configureCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -613,11 +615,13 @@ describe('createRecorder capture', () => {
     // A tempo ramp means the 300 s buffer spans more beats than 300 s at the
     // start tempo; the explicit punchOutPpq must win over the constant-BPM math.
     await recorder.start({ startPpq: 4, tempoBpm: 120, punchOutPpq: 900 });
-    expect(punch).toHaveBeenCalledWith(4, 900);
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ punch: { startPpq: 4, endPpq: 900 } }),
+    );
   });
 
   it('derives an implicit punch-out through the supplied tempo map', async () => {
-    const { handle, configureCapture, punch } = makeHandle(100);
+    const { handle, configureCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -634,10 +638,12 @@ describe('createRecorder capture', () => {
     });
 
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 3000 }),
+      expect.objectContaining({ capacityFrames: 3000 }),
     );
     // The 30-second buffer starts at 60 BPM, therefore spans 30 PPQ, not 60.
-    expect(punch).toHaveBeenCalledWith(8, 38);
+    expect(configureCapture).toHaveBeenCalledWith(
+      expect.objectContaining({ punch: { startPpq: 8, endPpq: 38 } }),
+    );
   });
 
   it('rejects a punch-out position at or before the start', async () => {
@@ -676,7 +682,7 @@ describe('createRecorder capture', () => {
   });
 
   it('sends the punch window unextended because the engine compensates the record offset', async () => {
-    const { handle, configureCapture, punch, setStatus, setAudio } = makeHandle(100);
+    const { handle, configureCapture, setStatus, setAudio } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -685,9 +691,11 @@ describe('createRecorder capture', () => {
     await recorder.start({ startPpq: 0, endPpq: 1, tempoBpm: 120, recordOffsetSamples: 10 });
     // One PPQ at 120 BPM is 50 frames; the engine reads the window in compensated time.
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 50, recordOffsetSamples: 10 }),
+      expect.objectContaining({ capacityFrames: 50, recordOffsetSamples: 10 }),
     );
-    expect(punch).toHaveBeenLastCalledWith(0, 1);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ punch: { startPpq: 0, endPpq: 1 } }),
+    );
     setStatus({ capturedFrames: 50 });
     setAudio([Float32Array.from({ length: 50 }, (_, index) => index)]);
 
@@ -708,17 +716,30 @@ describe('createRecorder capture', () => {
   });
 
   it('fails the take when the engine refuses the punch window', async () => {
-    const { handle, punch, armRecord } = makeHandle(100);
-    punch.mockReturnValueOnce(false);
+    const { handle, configureCapture, armCapture } = makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
     recorder.arm(7);
-    await expect(recorder.start({ startPpq: 0, tempoBpm: 120 })).rejects.toBeInstanceOf(
-      RecorderStateError,
-    );
-    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
+    configureCapture.mockImplementationOnce(() => {
+      throw new RangeError('punch window refused');
+    });
+    await expect(recorder.start({ startPpq: 0, tempoBpm: 120 })).rejects.toBeInstanceOf(RangeError);
+    expect(armCapture).not.toHaveBeenCalledWith({ armed: true });
     expect(recorder.isRecording()).toBe(false);
+  });
+
+  it('restates the punch window when the config is re-sent during a take', async () => {
+    const { handle, configureCapture } = makeHandle(100);
+    const { deps } = makeDeps();
+    const recorder = createRecorder(handle, deps);
+    await recorder.requestMicrophone();
+    recorder.arm(7);
+    await recorder.start({ startPpq: 4, tempoBpm: 120, maxDurationSeconds: 30 });
+    recorder.setMonitor(true);
+    expect(configureCapture).toHaveBeenLastCalledWith(
+      expect.objectContaining({ punch: { startPpq: 4, endPpq: 64 } }),
+    );
   });
 
   it('derives the default latency offset from the context latency', async () => {
@@ -794,7 +815,7 @@ describe('createRecorder capture', () => {
   });
 
   it('returns null when nothing was captured', async () => {
-    const { handle, armRecord, setStatus, setAudio, resetCapture, configureCapture } =
+    const { handle, armCapture, setStatus, setAudio, resetCapture, configureCapture } =
       makeHandle(100);
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
@@ -804,11 +825,11 @@ describe('createRecorder capture', () => {
     setAudio(rampChannels(1, 100));
     setStatus({ capturedFrames: 0 });
     expect(await recorder.stop()).toBeNull();
-    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
+    expect(armCapture).toHaveBeenLastCalledWith({ armed: false });
     // The engine capture is still reset and the idle config restored.
     expect(resetCapture).toHaveBeenCalledTimes(2);
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 100 }),
+      expect.objectContaining({ capacityFrames: 100 }),
     );
   });
 
@@ -853,7 +874,7 @@ describe('createRecorder capture', () => {
     await recorder.stop();
     expect(resetCapture).toHaveBeenCalledTimes(2); // after reading the take
     expect(configureCapture).toHaveBeenLastCalledWith(
-      expect.objectContaining({ bufferFrames: 100 }),
+      expect.objectContaining({ capacityFrames: 100 }),
     );
   });
 });
@@ -882,7 +903,7 @@ describe('createRecorder monitoring', () => {
     recorder.setMonitor(true, 2);
     expect(configureCapture).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        bufferFrames: 100,
+        capacityFrames: 100,
         recordOffsetSamples: 15,
         inputMonitor: { enabled: true, gain: 2 },
       }),
@@ -911,7 +932,7 @@ describe('createRecorder monitoring', () => {
     recorder.setMonitor(true);
     expect(configureCapture).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        bufferFrames: 3000,
+        capacityFrames: 3000,
         inputMonitor: { enabled: true, gain: 1 },
       }),
     );
@@ -999,7 +1020,7 @@ describe('createRecorder teardown', () => {
   });
 
   it('dispose during a recording disarms the engine and resets the capture', async () => {
-    const { handle, armRecord, resetCapture } = makeHandle();
+    const { handle, armCapture, resetCapture } = makeHandle();
     const { deps } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -1008,7 +1029,7 @@ describe('createRecorder teardown', () => {
 
     recorder.dispose();
     expect(recorder.isRecording()).toBe(false);
-    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
+    expect(armCapture).toHaveBeenLastCalledWith({ armed: false });
     expect(resetCapture).toHaveBeenCalledTimes(2); // start + dispose
   });
 
@@ -1054,7 +1075,7 @@ describe('createRecorder device loss', () => {
   });
 
   it('aborts an in-flight take when the device ends mid-recording', async () => {
-    const { handle, armRecord, resetCapture } = makeHandle();
+    const { handle, armCapture, resetCapture } = makeHandle();
     const { deps, endTrack } = makeDeps();
     const recorder = createRecorder(handle, deps);
     await recorder.requestMicrophone();
@@ -1065,7 +1086,7 @@ describe('createRecorder device loss', () => {
     endTrack();
 
     expect(recorder.isRecording()).toBe(false);
-    expect(armRecord).toHaveBeenLastCalledWith(ENGINE_CAPTURE_TRACK_ID, false);
+    expect(armCapture).toHaveBeenLastCalledWith({ armed: false });
     expect(resetCapture).toHaveBeenCalled();
     // The discarded take cannot be stopped (there is none in progress).
     await expect(recorder.stop()).rejects.toBeInstanceOf(RecorderStateError);
@@ -1231,7 +1252,7 @@ describe('createRecorder multi-device merge', () => {
     expect(merger.connect).toHaveBeenCalledWith(handle.engine.node);
     // The capture width follows the merged channel count, not a hardcoded 2.
     expect(configureCapture).toHaveBeenCalledWith(
-      expect.objectContaining({ channels: 2, source: 'input' }),
+      expect.objectContaining({ numChannels: 2, source: 'input' }),
     );
   });
 

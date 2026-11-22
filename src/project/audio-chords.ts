@@ -7,16 +7,16 @@
  * so what the detector hears is what plays; detection times (seconds, relative
  * to the clip start) are mapped back to absolute PPQ through the same tempo
  * map. The detector's
- * `quality` ordinals 0-15 are the editor's own (Major = 0); the qualities past
+ * quality tokens 0-15 are the editor's own (Major = 0); the qualities past
  * them are carried as a base ordinal plus extensions and omissions. The
  * app-side merge and undoable commit live in
  * command/chords.ts; this module is side-effect-free and dependency-injected
  * for testing.
  */
 
-import type { ChordQuality } from '@libraz/libcantus';
 import { type EditorQuality, libcantusQualityToEditor } from '@/compose/chord-quality';
 import type { LoadedAudioAsset } from '@/persistence/assets';
+import type { Chord, ChordQuality, detectChords } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { chordExtensionSignature, type EditorChordSymbol } from './chords';
 import { ppqToSeconds, secondsToPpq } from './tempo-map';
@@ -27,31 +27,43 @@ function chordIdentity(symbol: EditorChordSymbol): string {
   return `${symbol.rootPc}:${symbol.quality}:${chordExtensionSignature(symbol)}:${symbol.bassPc ?? -1}`;
 }
 
-/** Highest detector ordinal the editor shares one-for-one (Dominant9). */
-const LAST_SHARED_QUALITY = 15;
-
-/** Detector ordinals past the shared range, by the libcantus quality naming the same tones. */
-const DETECTED_QUALITY_BEYOND_EDITOR: Readonly<Record<number, ChordQuality>> = {
-  17: '6',
-  18: 'min6',
-  19: 'minMaj7',
-  20: '7sus4',
-  21: '11',
-  22: '13',
-  23: '7b9',
-  24: '7#9',
+/**
+ * The editor's quality for each detector token: a shared ordinal, or a base
+ * ordinal plus the extensions and omissions of the libcantus quality naming the
+ * same tones. Exhaustive over the core's tokens.
+ */
+const EDITOR_QUALITY_BY_DETECTED: Readonly<Record<ChordQuality, EditorQuality>> = {
+  major: { quality: 0 },
+  minor: { quality: 1 },
+  diminished: { quality: 2 },
+  augmented: { quality: 3 },
+  dominant7: { quality: 4 },
+  major7: { quality: 5 },
+  minor7: { quality: 6 },
+  sus2: { quality: 7 },
+  sus4: { quality: 8 },
+  unknown: { quality: 9 },
+  add9: { quality: 10 },
+  minorAdd9: { quality: 11 },
+  dim7: { quality: 12 },
+  halfDim7: { quality: 13 },
+  major9: { quality: 14 },
+  dominant9: { quality: 15 },
+  // A sus2 triad with the fourth added, which no libcantus quality names.
+  sus2Add4: { quality: 7, extensions: [5] },
+  major6: libcantusQualityToEditor('6'),
+  minor6: libcantusQualityToEditor('min6'),
+  minorMajor7: libcantusQualityToEditor('minMaj7'),
+  dominant7Sus4: libcantusQualityToEditor('7sus4'),
+  dominant11: libcantusQualityToEditor('11'),
+  dominant13: libcantusQualityToEditor('13'),
+  dominant7Flat9: libcantusQualityToEditor('7b9'),
+  dominant7Sharp9: libcantusQualityToEditor('7#9'),
 };
 
-/** Sus2Add4 (16): a sus2 triad with the fourth added, which no libcantus quality names. */
-const SUS2_ADD4: EditorQuality = { quality: 7, extensions: [5] };
-
-/** Maps a detector quality ordinal onto the editor's ordinal plus extensions and omissions. */
-export function detectedChordQuality(ordinal: number): EditorQuality {
-  if (ordinal <= LAST_SHARED_QUALITY) return { quality: ordinal };
-  if (ordinal === 16) return SUS2_ADD4;
-  const named = DETECTED_QUALITY_BEYOND_EDITOR[ordinal];
-  if (named === undefined) throw new RangeError(`Unmapped detector chord quality ${ordinal}`);
-  return libcantusQualityToEditor(named);
+/** Maps a detector quality token onto the editor's ordinal plus extensions and omissions. */
+export function detectedChordQuality(quality: ChordQuality): EditorQuality {
+  return EDITOR_QUALITY_BY_DETECTED[quality];
 }
 
 /** Onset tolerance (in PPQ) for treating two regions as contiguous. */
@@ -114,25 +126,12 @@ export function smoothDetectedChordSymbols(
 }
 
 /** A chord returned by the engine's audio detector (the fields we consume). */
-export interface DetectedAudioChord {
-  /** Root pitch class 0..11 (C = 0). */
-  root: number;
-  /** Bass pitch class 0..11; a slash chord when it differs from the root. */
-  bass: number;
-  /** ChordQuality ordinal (Major = 0), matching {@link EditorChordSymbol}. */
-  quality: number;
-  /** Window-relative start in seconds. */
-  start: number;
-  /** Window-relative end in seconds. */
-  end: number;
-}
+export type DetectedAudioChord = Pick<Chord, 'root' | 'bass' | 'quality' | 'startSec' | 'endSec'>;
 
-/** The audio chord detector signature (libsonare `detectChords`). */
-export type AudioChordDetector = (
-  samples: Float32Array,
-  sampleRate?: number,
-  options?: { tuning?: number | 'auto' },
-) => { chords: ReadonlyArray<DetectedAudioChord> };
+/** The audio chord detector (libsonare `detectChords`, positional form). */
+export type AudioChordDetector = (...args: Parameters<typeof detectChords>) => {
+  chords: ReadonlyArray<DetectedAudioChord>;
+};
 
 /** Injectable dependencies for {@link analyzeAudioClipChords}. */
 export interface AudioChordDeps {
@@ -167,7 +166,7 @@ export async function analyzeAudioClipChords(
   if (!audible) return [];
   const { mono, sampleRate, map } = audible;
   // An off-pitch recording is read on its own pitch grid.
-  const result = deps.detectChords(mono, sampleRate, { tuning: 'auto' });
+  const result = deps.detectChords(mono, sampleRate, { tuningCents: 'auto' });
   const clipEndPpq = clip.startPpq + clip.lengthPpq;
   // The window starts at clip.startPpq, so a detection time `s` lands at the PPQ
   // whose elapsed seconds is (clip start seconds + s).
@@ -175,9 +174,9 @@ export async function analyzeAudioClipChords(
   const secondsToTimelinePpq = (seconds: number): number =>
     secondsToPpq(map, clipStartSeconds + Math.max(0, seconds));
   const symbols: EditorChordSymbol[] = [];
-  for (const chord of result.chords ?? []) {
-    const startPpq = secondsToTimelinePpq(chord.start);
-    const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(chord.end));
+  for (const chord of result.chords) {
+    const startPpq = secondsToTimelinePpq(chord.startSec);
+    const endPpq = Math.min(clipEndPpq, secondsToTimelinePpq(chord.endSec));
     if (!(endPpq > startPpq)) continue;
     const { quality, extensions, omissions } = detectedChordQuality(chord.quality);
     const symbol: EditorChordSymbol = { startPpq, endPpq, rootPc: chord.root, quality };

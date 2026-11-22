@@ -1,12 +1,21 @@
 /**
  * The small, stable control surface for named mastering presets.
  *
- * libsonare exposes preset parameters as a flat map because that is useful at
- * the ABI boundary. The panel deliberately presents only the parameters a
- * mastering engineer can reasonably tune from a compact DAW inspector. Keep
- * this module free of Vue and wasm imports so the resolution and validation
- * rules can be tested in isolation.
+ * Overrides are the core's nested `MasteringChainConfig`; each control names
+ * one typed path inside it. The panel deliberately presents only the
+ * parameters a mastering engineer can reasonably tune from a compact DAW
+ * inspector. Keep this module free of Vue and wasm runtime imports so the
+ * resolution and validation rules can be tested in isolation.
  */
+
+import type { MasteringChainConfig } from '@/wasm/index.js';
+import {
+  type ChainPath,
+  deleteChainPath,
+  flattenChainConfig,
+  getChainPath,
+  setChainPath,
+} from './chain-config-path';
 
 export type PresetControlValue = number | boolean;
 
@@ -14,10 +23,11 @@ export type PresetControlSection = 'output' | 'restoration';
 
 export type PresetControlKind = 'boolean' | 'number' | 'enum';
 
+/** Control paths; each must stay a valid path of the core's chain config. */
 export type PresetControlKey =
   | 'loudness.enabled'
   | 'loudness.targetLufs'
-  | 'loudness.ceilingDb'
+  | 'loudness.ceilingDbtp'
   | 'loudness.truePeakOversample'
   | 'loudness.releaseMs'
   | 'loudness.maxLimiterGainReductionDb'
@@ -34,8 +44,6 @@ export interface PresetControlDescriptor {
   options?: readonly number[];
 }
 
-export const LEGACY_DENOISE_OVERRIDE_KEY = 'repair.reductionDb';
-
 /** The typed override paths exposed in the mastering inspector. */
 export const PRESET_CONTROL_DESCRIPTORS = [
   {
@@ -50,7 +58,7 @@ export const PRESET_CONTROL_DESCRIPTORS = [
     step: 0.1,
   },
   {
-    key: 'loudness.ceilingDb',
+    key: 'loudness.ceilingDbtp',
     section: 'output',
     kind: 'number',
     step: 0.1,
@@ -95,18 +103,11 @@ export const PRESET_CONTROL_KEYS: readonly PresetControlKey[] = PRESET_CONTROL_D
 );
 
 const FLOAT32_MAX = 3.4028234663852886e38;
-const LEGACY_DENOISE_PARAMETER_KEYS = new Set([
-  'repair.nFft',
-  'repair.hopLength',
-  'repair.ddAlpha',
-  LEGACY_DENOISE_OVERRIDE_KEY,
-  'repair.gainFloor',
-]);
 
 const DEFAULT_PRESET_CONTROL_VALUES: Readonly<Record<PresetControlKey, PresetControlValue>> = {
   'loudness.enabled': true,
   'loudness.targetLufs': -14,
-  'loudness.ceilingDb': -1,
+  'loudness.ceilingDbtp': -1,
   'loudness.truePeakOversample': 4,
   'loudness.releaseMs': 50,
   'loudness.maxLimiterGainReductionDb': 12,
@@ -114,44 +115,41 @@ const DEFAULT_PRESET_CONTROL_VALUES: Readonly<Record<PresetControlKey, PresetCon
   'repair.denoise.reductionDb': 26,
 };
 
-const hasOwn = (values: Readonly<Record<string, unknown>>, key: string): boolean =>
-  Object.hasOwn(values, key);
-
 /** Returns the descriptor for a known control path. */
 export function getPresetControlDescriptor(key: string): PresetControlDescriptor | undefined {
   return PRESET_CONTROL_DESCRIPTORS.find((descriptor) => descriptor.key === key);
 }
 
-/** True for known controls, including the legacy denoise alias. */
+/** True for a path that has a typed inspector control. */
 export function isKnownPresetOverrideKey(key: string): boolean {
-  return getPresetControlDescriptor(key) !== undefined || key === LEGACY_DENOISE_OVERRIDE_KEY;
+  return getPresetControlDescriptor(key) !== undefined;
 }
 
-/**
- * Returns the persisted key to update for a control. Existing projects that
- * used the old denoise alias keep using that one, which prevents a single edit
- * from writing both aliases. New edits use the canonical nested path.
- */
-export function presetControlOverrideKey(
+/** Reads a control's value from a config; undefined when it is absent. */
+function readControl(
+  config: MasteringChainConfig,
   key: PresetControlKey,
-  overrides: Readonly<Record<string, PresetControlValue>> = {},
-): PresetControlKey | typeof LEGACY_DENOISE_OVERRIDE_KEY {
-  if (hasOwn(overrides, key)) return key;
-  if (key === 'repair.denoise.reductionDb' && hasOwn(overrides, LEGACY_DENOISE_OVERRIDE_KEY)) {
-    return LEGACY_DENOISE_OVERRIDE_KEY;
-  }
-  return key;
+): PresetControlValue | undefined {
+  const path: ChainPath & PresetControlKey = key;
+  return getChainPath(config, path) as PresetControlValue | undefined;
+}
+
+/** Writes a control's value into a copy of a config. */
+function writeControl(
+  config: MasteringChainConfig,
+  key: PresetControlKey,
+  value: PresetControlValue,
+): MasteringChainConfig {
+  const path: ChainPath & PresetControlKey = key;
+  return setChainPath(config, path, value as never);
 }
 
 /** True when the selected control currently has a saved override. */
 export function hasPresetControlOverride(
   key: PresetControlKey,
-  overrides: Readonly<Record<string, PresetControlValue>> = {},
+  overrides: MasteringChainConfig = {},
 ): boolean {
-  return (
-    hasOwn(overrides, key) ||
-    (key === 'repair.denoise.reductionDb' && hasOwn(overrides, LEGACY_DENOISE_OVERRIDE_KEY))
-  );
+  return readControl(overrides, key) !== undefined;
 }
 
 /** Returns the stage switch that controls a parameter-only override. */
@@ -162,55 +160,44 @@ export function presetControlEnabledKey(key: PresetControlKey): PresetControlKey
   return undefined;
 }
 
-function isStageParameterOverrideKey(enabledKey: PresetControlKey, key: string): boolean {
-  if (key === enabledKey) return false;
-  if (enabledKey === 'loudness.enabled') return key.startsWith('loudness.');
-  if (enabledKey === 'repair.denoise.enabled') {
-    return key.startsWith('repair.denoise.') || LEGACY_DENOISE_PARAMETER_KEYS.has(key);
-  }
-  return false;
-}
-
-function isDescriptorOverrideKey(descriptor: PresetControlDescriptor, key: string): boolean {
-  return (
-    key === descriptor.key ||
-    (descriptor.key === 'repair.denoise.reductionDb' && key === LEGACY_DENOISE_OVERRIDE_KEY)
-  );
+/** True when a path is a parameter of the stage a switch controls. */
+function isStageParameterPath(enabledKey: PresetControlKey, path: string): boolean {
+  if (path === enabledKey) return false;
+  return path.startsWith(enabledKey.slice(0, -'enabled'.length));
 }
 
 function hasSiblingParameterOverride(
   descriptor: PresetControlDescriptor,
   enabledKey: PresetControlKey,
-  overrides: Readonly<Record<string, PresetControlValue>>,
+  overrides: MasteringChainConfig,
 ): boolean {
-  return Object.keys(overrides).some(
-    (key) =>
-      !isDescriptorOverrideKey(descriptor, key) && isStageParameterOverrideKey(enabledKey, key),
+  return flattenChainConfig(overrides).some(
+    ({ path }) => path !== descriptor.key && isStageParameterPath(enabledKey, path),
   );
 }
 
 /**
- * Builds the complete flat override bag for one inspector edit. libsonare's
- * chain parser treats a parameter-only stage override as an implicit enable,
- * so the currently displayed stage switch is persisted alongside the edited
- * value in one atomic preset command.
+ * Builds the complete override config for one inspector edit. The core treats
+ * a parameter-only stage override as an implicit enable, so the currently
+ * displayed stage switch is stored alongside the edited value in one atomic
+ * preset command.
  */
 export function presetControlOverridesForEdit(
   descriptor: PresetControlDescriptor,
   value: PresetControlValue,
-  presetParams: Readonly<Record<string, unknown>> = {},
-  overrides: Readonly<Record<string, PresetControlValue>> = {},
-): Record<string, PresetControlValue> {
-  const next = { ...overrides };
-  next[descriptor.key] = value;
-  if (descriptor.key === 'repair.denoise.reductionDb') {
-    delete next[LEGACY_DENOISE_OVERRIDE_KEY];
-  }
+  presetParams: MasteringChainConfig = {},
+  overrides: MasteringChainConfig = {},
+): MasteringChainConfig {
+  let next = writeControl(overrides, descriptor.key, value);
   const enabledKey = presetControlEnabledKey(descriptor.key);
   if (enabledKey) {
     const enabledDescriptor = getPresetControlDescriptor(enabledKey);
     if (enabledDescriptor) {
-      next[enabledKey] = resolvePresetControlValue(enabledDescriptor, presetParams, overrides);
+      next = writeControl(
+        next,
+        enabledKey,
+        resolvePresetControlValue(enabledDescriptor, presetParams, overrides),
+      );
     }
   }
   return next;
@@ -218,19 +205,15 @@ export function presetControlOverridesForEdit(
 
 /**
  * Removes one typed override. If another parameter for the same stage remains,
- * retain an explicit stage switch so libsonare cannot implicitly turn a
- * disabled stage on. Unknown Advanced keys count as parameters here too.
+ * retain an explicit stage switch so the core cannot implicitly turn a
+ * disabled stage on. Other stage parameters count as siblings here too.
  */
 export function presetControlOverridesForReset(
   descriptor: PresetControlDescriptor,
-  presetParams: Readonly<Record<string, unknown>> = {},
-  overrides: Readonly<Record<string, PresetControlValue>> = {},
-): Record<string, PresetControlValue> {
-  const next = { ...overrides };
-  delete next[descriptor.key];
-  if (descriptor.key === 'repair.denoise.reductionDb') {
-    delete next[LEGACY_DENOISE_OVERRIDE_KEY];
-  }
+  presetParams: MasteringChainConfig = {},
+  overrides: MasteringChainConfig = {},
+): MasteringChainConfig {
+  let next = deleteChainPath(overrides, descriptor.key);
   const enabledKey =
     descriptor.kind === 'boolean' && descriptor.key.endsWith('.enabled')
       ? descriptor.key
@@ -243,53 +226,57 @@ export function presetControlOverridesForReset(
     if (enabledDescriptor) {
       // Resetting the switch restores the preset state. Resetting a parameter
       // keeps the current switch state, including an explicit user toggle.
-      next[enabledKey] = resolvePresetControlValue(
-        enabledDescriptor,
-        presetParams,
-        descriptor.key === enabledKey ? {} : overrides,
+      next = writeControl(
+        next,
+        enabledKey,
+        resolvePresetControlValue(
+          enabledDescriptor,
+          presetParams,
+          descriptor.key === enabledKey ? {} : overrides,
+        ),
       );
     }
-  } else if (enabledKey && hasOwn(overrides, enabledKey) && descriptor.key !== enabledKey) {
+  } else if (
+    enabledKey &&
+    hasPresetControlOverride(enabledKey, overrides) &&
+    descriptor.key !== enabledKey
+  ) {
     const enabledDescriptor = getPresetControlDescriptor(enabledKey);
     const presetValue = enabledDescriptor
       ? resolvePresetControlValue(enabledDescriptor, presetParams)
       : undefined;
-    if (overrides[enabledKey] === presetValue) delete next[enabledKey];
+    if (readControl(overrides, enabledKey) === presetValue) {
+      next = deleteChainPath(next, enabledKey);
+    }
   }
   return next;
 }
 
 /**
  * Resolves a control using the saved override first, then the runtime preset
- * parameters, and finally the library defaults. The legacy denoise alias is
- * accepted on both sides of the ABI boundary for old project files.
+ * config, and finally the library defaults.
  */
 export function resolvePresetControlValue(
   descriptor: PresetControlDescriptor,
-  presetParams: Readonly<Record<string, unknown>> = {},
-  overrides: Readonly<Record<string, PresetControlValue>> = {},
+  presetParams: MasteringChainConfig = {},
+  overrides: MasteringChainConfig = {},
 ): PresetControlValue {
-  const overrideKey = presetControlOverrideKey(descriptor.key, overrides);
-  const override = overrides[overrideKey];
+  const override = readControl(overrides, descriptor.key);
   if (isValidPresetControlValue(descriptor, override)) return override;
 
-  // Older project files can contain parameter-only overrides. The core treats
-  // those as an implicit stage enable, so the inspector must show the same
-  // effective switch value instead of displaying the preset's off state.
+  // A parameter-only override is an implicit stage enable in the core, so the
+  // inspector must show the same effective switch value instead of the
+  // preset's off state.
   if (
     descriptor.kind === 'boolean' &&
     descriptor.key.endsWith('.enabled') &&
-    Object.keys(overrides).some((key) => isStageParameterOverrideKey(descriptor.key, key))
+    flattenChainConfig(overrides).some(({ path }) => isStageParameterPath(descriptor.key, path))
   ) {
     return true;
   }
 
-  const presetValue = presetParams[descriptor.key];
+  const presetValue = readControl(presetParams, descriptor.key);
   if (isValidPresetControlValue(descriptor, presetValue)) return presetValue;
-  if (descriptor.key === 'repair.denoise.reductionDb') {
-    const legacyPresetValue = presetParams[LEGACY_DENOISE_OVERRIDE_KEY];
-    if (isValidPresetControlValue(descriptor, legacyPresetValue)) return legacyPresetValue;
-  }
 
   return DEFAULT_PRESET_CONTROL_VALUES[descriptor.key];
 }

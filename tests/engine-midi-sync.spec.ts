@@ -3,7 +3,7 @@ import type { EngineHandle } from '@/engine/engine';
 import { pushGsSetupSysex } from '@/engine/gs-sysex';
 import { buildMidiClipSchedules, createMidiSync, midiStateAtPpq } from '@/engine/midi-sync';
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
-import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
+import { DEFAULT_MIDI_FX_CONFIG, midiFxConfig } from '@/project/midi-fx';
 import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
 import type { SynthPatch } from '@/wasm/index.js';
 
@@ -677,7 +677,7 @@ describe('buildMidiClipSchedules', () => {
       makeTrack(1, {
         instrument: {
           kind: 'synth-preset',
-          preset: 'saw-lead',
+          preset: 'sawLead',
           useGmPrograms: true,
           ...(bank !== undefined ? { gmBank: bank } : {}),
           ...(program !== undefined ? { gmProgram: program } : {}),
@@ -885,7 +885,7 @@ describe('GS setup SysEx', () => {
     await sync.sync(
       [
         makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font' } }),
-        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'sawLead' } }),
       ],
       clips,
       TEMPO_120,
@@ -899,7 +899,7 @@ describe('GS setup SysEx', () => {
     await sync.sync(
       [
         makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font' } }),
-        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'sawLead' } }),
       ],
       clips,
       TEMPO_120,
@@ -910,7 +910,7 @@ describe('GS setup SysEx', () => {
     await recreated.sync(
       [
         makeTrack(1, { instrument: { kind: 'sf2', fontId: 'font' } }),
-        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'sawLead' } }),
       ],
       clips,
       TEMPO_120,
@@ -935,8 +935,8 @@ describe('createMidiSync', () => {
     await sync.sync([track], [clip], TEMPO_120);
     sync.restoreStateAtPpq(2, 1234);
 
-    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, pcWord(0, 12), 1234);
-    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, pitchBendWord(0, 4096), 1234);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, [pcWord(0, 12)], 1234);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(1, [pitchBendWord(0, 4096)], 1234);
   });
 
   it('reports only swapped destinations and replays state to them alone', async () => {
@@ -952,8 +952,8 @@ describe('createMidiSync', () => {
         programChangeLanes: [{ channel: 0, points: [{ ppq: 1, program: 30 }] }],
       }),
     ];
-    const lead = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
-    const bass = makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
+    const lead = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'sawLead' } });
+    const bass = makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'sawLead' } });
 
     await sync.sync([lead, bass], clips, TEMPO_120);
     expect([...(sync.reboundDestinations?.() ?? [])]).toEqual([1, 2]);
@@ -965,7 +965,7 @@ describe('createMidiSync', () => {
 
     engine.pushMidiUmp.mockClear();
     sync.restoreStateAtPpq(2, undefined, rebound);
-    expect(engine.pushMidiUmp).toHaveBeenCalledWith(2, pcWord(0, 30), undefined);
+    expect(engine.pushMidiUmp).toHaveBeenCalledWith(2, [pcWord(0, 30)], undefined);
     expect(engine.pushMidiUmp).not.toHaveBeenCalledWith(1, expect.anything(), undefined);
 
     await sync.sync([lead, swapped], clips, TEMPO_120);
@@ -978,7 +978,7 @@ describe('createMidiSync', () => {
 
     await sync.sync([makeTrack(1), makeTrack(2, { kind: 'audio' })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
-    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, DEFAULT_SYNTH_PRESET);
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, { preset: DEFAULT_SYNTH_PRESET });
   });
 
   it('routes an external-midi track externally without binding an internal synth', async () => {
@@ -999,7 +999,7 @@ describe('createMidiSync', () => {
     const sync = createMidiSync(handle);
     const track = makeTrack(1, {
       externalMidiMode: 'project',
-      instrument: { kind: 'synth-preset', preset: 'saw-lead' },
+      instrument: { kind: 'synth-preset', preset: 'sawLead' },
     });
 
     await sync.sync([track], [], TEMPO_120, {
@@ -1039,9 +1039,9 @@ describe('createMidiSync', () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle, { resolvePreset: (preset) => `va:${preset}` });
 
-    const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'saw-lead' } });
+    const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'sawLead' } });
     await sync.sync([track], [], TEMPO_120);
-    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, 'va:saw-lead');
+    expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, { preset: 'va:sawLead' });
   });
 
   it('binds GM-enabled synth presets as a NativeSynth GM patch object', async () => {
@@ -1053,7 +1053,7 @@ describe('createMidiSync', () => {
         makeTrack(1, {
           instrument: {
             kind: 'synth-preset',
-            preset: 'saw-lead',
+            preset: 'sawLead',
             useGmPrograms: true,
             gmBank: 128,
             gmProgram: 25,
@@ -1065,7 +1065,7 @@ describe('createMidiSync', () => {
     );
 
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, {
-      preset: 'va:saw-lead',
+      preset: 'va:sawLead',
       useGmPrograms: true,
     });
   });
@@ -1079,16 +1079,18 @@ describe('createMidiSync', () => {
       });
       const sync = createMidiSync(handle);
       const track = makeTrack(1, {
-        instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+        instrument: { kind: 'synth-preset', preset: 'acousticPiano' },
       });
 
       await sync.sync([track], [], TEMPO_120);
 
-      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(1, 1, 'acoustic-piano');
-      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(2, 1, DEFAULT_SYNTH_PRESET);
+      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(1, 1, { preset: 'acousticPiano' });
+      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(2, 1, {
+        preset: DEFAULT_SYNTH_PRESET,
+      });
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining(
-          'synth-preset:acoustic-piano failed to bind on track 1 (Track 1) destination 1',
+          'synth-preset:acousticPiano failed to bind on track 1 (Track 1) destination 1',
         ),
         expect.any(Error),
       );
@@ -1103,10 +1105,10 @@ describe('createMidiSync', () => {
       throw new Error('failed to bind MIDI instrument');
     });
     const sync = createMidiSync(handle);
-    const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'acoustic-piano' } });
+    const track = makeTrack(1, { instrument: { kind: 'synth-preset', preset: 'acousticPiano' } });
 
     await expect(sync.sync([track], [], TEMPO_120)).rejects.toThrow(
-      'Failed to bind MIDI instrument for track 1 (Track 1) destination 1: synth-preset:acoustic-piano',
+      'Failed to bind MIDI instrument for track 1 (Track 1) destination 1: synth-preset:acousticPiano',
     );
   });
 
@@ -1117,7 +1119,7 @@ describe('createMidiSync', () => {
       const sync = createMidiSync(handle);
       const tracks = Array.from({ length: 17 }, (_, index) =>
         makeTrack(index + 1, {
-          instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+          instrument: { kind: 'synth-preset', preset: 'acousticPiano' },
         }),
       );
       const clips = tracks.map((track) => makeClip(track.id, track.id));
@@ -1125,7 +1127,9 @@ describe('createMidiSync', () => {
       await sync.sync(tracks, clips, TEMPO_120);
 
       expect(engine.setSynthInstrument).toHaveBeenCalledTimes(16);
-      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(16, 16, 'acoustic-piano');
+      expect(engine.setSynthInstrument).toHaveBeenNthCalledWith(16, 16, {
+        preset: 'acousticPiano',
+      });
       const schedules = engine.setMidiClips.mock.calls[0][0];
       expect(schedules[15]).toMatchObject({ trackId: 16, destinationId: 16 });
       expect(schedules[16]).toMatchObject({ trackId: 17, destinationId: 1 });
@@ -1138,7 +1142,7 @@ describe('createMidiSync', () => {
   it('passes a synth patch object through unchanged', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
-    const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 800 };
+    const patch: SynthPatch = { preset: 'sawLead', cutoffHz: 800 };
 
     await sync.sync([makeTrack(1, { instrument: { kind: 'synth-patch', patch } })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
@@ -1149,7 +1153,7 @@ describe('createMidiSync', () => {
   it('binds a synth patch as stored, leaving instrument lanes to the automation sync', async () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
-    const patch: SynthPatch = { preset: 'saw-lead', cutoffHz: 400 };
+    const patch: SynthPatch = { preset: 'sawLead', cutoffHz: 400 };
     await sync.sync([makeTrack(1, { instrument: { kind: 'synth-patch', patch } })], [], TEMPO_120);
     expect(engine.setSynthInstrument).toHaveBeenCalledTimes(1);
     expect(engine.setSynthInstrument).toHaveBeenCalledWith(1, patch);
@@ -1161,11 +1165,11 @@ describe('createMidiSync', () => {
     expect(sync.nativeSynthDestination(1)).toBeUndefined();
     await sync.sync(
       [
-        makeTrack(1, { instrument: { kind: 'synth-patch', patch: { preset: 'saw-lead' } } }),
-        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'e-piano' } }),
+        makeTrack(1, { instrument: { kind: 'synth-patch', patch: { preset: 'sawLead' } } }),
+        makeTrack(2, { instrument: { kind: 'synth-preset', preset: 'ePiano' } }),
         makeTrack(3, { instrument: { kind: 'sf2', fontId: 'gm' } }),
         makeTrack(4, {
-          instrument: { kind: 'synth-preset', preset: 'e-piano' },
+          instrument: { kind: 'synth-preset', preset: 'ePiano' },
           frozen: { assetId: 'baked' },
         }),
       ],
@@ -1185,10 +1189,10 @@ describe('createMidiSync', () => {
     const { handle, engine } = makeHandle();
     const sync = createMidiSync(handle);
     const midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
-    const expectedJson = midiFxConfigJson(midiFx);
+    const expectedConfig = midiFxConfig(midiFx);
 
     await sync.sync([makeTrack(1, { midiFx })], [], TEMPO_120);
-    expect(engine.setMidiFx).toHaveBeenCalledWith(1, expectedJson);
+    expect(engine.setMidiFx).toHaveBeenCalledWith(1, expectedConfig);
     expect(engine.clearMidiFx).not.toHaveBeenCalled();
 
     await sync.sync([makeTrack(1, { midiFx })], [], TEMPO_120);
@@ -1204,10 +1208,10 @@ describe('createMidiSync', () => {
       const { handle, engine } = makeHandle();
       const sync = createMidiSync(handle);
       const midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
-      const expectedJson = midiFxConfigJson(midiFx);
+      const expectedConfig = midiFxConfig(midiFx);
       const tracks = Array.from({ length: 17 }, (_, index) =>
         makeTrack(index + 1, {
-          instrument: { kind: 'synth-preset', preset: 'acoustic-piano' },
+          instrument: { kind: 'synth-preset', preset: 'acousticPiano' },
           ...(index === 16 ? { midiFx } : {}),
         }),
       );
@@ -1217,8 +1221,8 @@ describe('createMidiSync', () => {
 
       const schedules = engine.setMidiClips.mock.calls[0][0];
       expect(schedules[16]).toMatchObject({ trackId: 17, destinationId: 1 });
-      expect(engine.setMidiFx).toHaveBeenCalledWith(1, expectedJson);
-      expect(engine.setMidiFx).not.toHaveBeenCalledWith(17, expectedJson);
+      expect(engine.setMidiFx).toHaveBeenCalledWith(1, expectedConfig);
+      expect(engine.setMidiFx).not.toHaveBeenCalledWith(17, expectedConfig);
     } finally {
       warn.mockRestore();
     }
@@ -1273,7 +1277,7 @@ describe('createMidiSync', () => {
       const tracks = [makeTrack(7, { instrument: { kind: 'sf2', fontId: 'missing-font' } })];
 
       await expect(sync.sync(tracks, [], TEMPO_120)).resolves.toBeUndefined();
-      expect(engine.setSynthInstrument).toHaveBeenCalledWith(7, DEFAULT_SYNTH_PRESET);
+      expect(engine.setSynthInstrument).toHaveBeenCalledWith(7, { preset: DEFAULT_SYNTH_PRESET });
       expect(engine.setSf2Instrument).not.toHaveBeenCalled();
       expect(sync.mediaIssues?.()).toEqual([
         expect.objectContaining({

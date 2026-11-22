@@ -102,7 +102,7 @@ async function analyze(): Promise<void> {
     const wasm = await ensureWasm();
     if (current !== generation) return;
     result.value = suggestMixFromStems(stems, rendered.sampleRate, store.tempoBpm, (request) =>
-      wasm.suggestMixScene(request),
+      wasm.mixingAssistantSuggest(request),
     );
     measuredTracks.value = new Map(
       stems.map((stem) => [

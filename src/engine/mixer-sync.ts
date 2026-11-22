@@ -26,7 +26,6 @@ import {
   type MixerSoloMode,
   type MixerStrip,
   normalizeMixerSoloMode,
-  type PanLawId,
   type PanModeId,
   tracksWithVcaSolo,
   type VcaControlState,
@@ -34,12 +33,28 @@ import {
 } from '@/project/mixer';
 import { expandedSoloStates } from '@/project/scheduling';
 import type { EditorTrack } from '@/project/types';
+import { isSonareError, type PanLaw } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 import { createRetryTimer } from './retry-timer';
 
 // The fader silence floor and linear->dB conversion live in the shared
 // @/lib/db module; re-exported so existing engine importers keep one site.
 export { linearToDb, SILENCE_DB } from '@/lib/db';
+
+/**
+ * Runs one engine setter and reports whether the command was queued. A full
+ * command ring is the only refusal reported as `false`; any other error
+ * propagates.
+ */
+export function tryQueue(apply: () => void): boolean {
+  try {
+    apply();
+    return true;
+  } catch (error) {
+    if (isSonareError(error) && error.codeName === 'OutOfMemory') return false;
+    throw error;
+  }
+}
 
 /** The per-lane values mirrored to the engine, kept for change detection. */
 interface LaneState {
@@ -48,7 +63,7 @@ interface LaneState {
   solo: boolean;
   mute: boolean;
   channelDelaySamples: number;
-  panLaw: PanLawId;
+  panLaw: PanLaw;
   panMode: PanModeId;
   dualPanLeft: number;
   dualPanRight: number;
@@ -186,7 +201,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
       laneReclaimNeeded = true;
     } else if (appended.length > 0) {
       // Record the lanes only once the engine has accepted them.
-      handle.engine.setTrackLanes([...laneIds, ...appended]);
+      handle.engine.setTrackLanes([...laneIds, ...appended].map((trackId) => ({ trackId })));
       laneIds.push(...appended);
       sceneGeneration += 1;
       // A new lane declaration replaces the engine's lane state, so all live
@@ -201,7 +216,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
         continue;
       }
       if (retiredMuted.has(id)) continue;
-      if (!handle.engine.setSoloMute(id, false, true)) {
+      if (!tryQueue(() => handle.engine.setTrackSoloMute(id, { solo: false, mute: true }))) {
         refused = true;
         continue;
       }
@@ -248,19 +263,23 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
       const prev = laneStates.get(track.id);
       const applied: AppliedLaneState = { ...next };
       if (prev?.gainDb !== next.gainDb) {
-        if (!handle.engine.setStripGain(track.id, next.gainDb)) {
+        if (!tryQueue(() => handle.engine.setStripFaderDb(track.id, next.gainDb))) {
           applied.gainDb = prev?.gainDb;
           refused = true;
         }
       }
       if (prev?.pan !== next.pan) {
-        if (!handle.engine.setStripPan(track.id, next.pan)) {
+        if (!tryQueue(() => handle.engine.setStripPan(track.id, next.pan))) {
           applied.pan = prev?.pan;
           refused = true;
         }
       }
       if (prev?.solo !== next.solo || prev?.mute !== next.mute) {
-        if (!handle.engine.setSoloMute(track.id, next.solo, next.mute)) {
+        if (
+          !tryQueue(() =>
+            handle.engine.setTrackSoloMute(track.id, { solo: next.solo, mute: next.mute }),
+          )
+        ) {
           applied.solo = prev?.solo;
           applied.mute = prev?.mute;
           refused = true;
@@ -272,20 +291,20 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
           : next.channelDelaySamples !== 0
       ) {
         if (!options.deferChannelDelay) {
-          handle.engine.setTrackStripChannelDelaySamples(track.id, next.channelDelaySamples);
+          handle.engine.setStripChannelDelaySamples(track.id, next.channelDelaySamples);
         }
       }
       if (options.deferChannelDelay) pendingChannelDelays.set(track.id, next.channelDelaySamples);
       if (prev ? prev.panLaw !== next.panLaw : next.panLaw !== DEFAULT_PAN_LAW) {
-        handle.engine.setTrackStripPanLaw(track.id, next.panLaw);
+        handle.engine.setStripPanLaw(track.id, next.panLaw);
       }
       if (prev ? prev.panMode !== next.panMode : next.panMode !== DEFAULT_PAN_MODE) {
-        handle.engine.setTrackStripPanMode(track.id, next.panMode);
+        handle.engine.setStripPanMode(track.id, next.panMode);
       }
       if (prev?.dualPanLeft !== next.dualPanLeft || prev?.dualPanRight !== next.dualPanRight) {
         const defaultDualPan = !prev && next.dualPanLeft === -1 && next.dualPanRight === 1;
         if (!defaultDualPan) {
-          handle.engine.setTrackStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
+          handle.engine.setStripDualPan(track.id, next.dualPanLeft, next.dualPanRight);
         }
       }
       laneStates.set(track.id, applied);
@@ -293,14 +312,14 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
     const masterNext = { gainDb: master.gainDb, pan: clampPan(master.pan) };
     const masterApplied = { ...masterState };
     if (masterState?.gainDb !== masterNext.gainDb) {
-      if (handle.engine.setStripGain('master', masterNext.gainDb)) {
+      if (tryQueue(() => handle.engine.setStripFaderDb('master', masterNext.gainDb))) {
         masterApplied.gainDb = masterNext.gainDb;
       } else {
         refused = true;
       }
     }
     if (masterState?.pan !== masterNext.pan) {
-      if (handle.engine.setStripPan('master', masterNext.pan)) {
+      if (tryQueue(() => handle.engine.setStripPan('master', masterNext.pan))) {
         masterApplied.pan = masterNext.pan;
       } else {
         refused = true;
@@ -326,7 +345,7 @@ export function createMixerSync(handle: EngineHandle, options: MixerSyncOptions 
       for (const [trackId, delay] of pendingChannelDelays) {
         if (delay === 0 && !appliedChannelDelays.has(trackId)) continue;
         if (sceneChanged || appliedChannelDelays.get(trackId) !== delay) {
-          handle.engine.setTrackStripChannelDelaySamples(trackId, delay);
+          handle.engine.setStripChannelDelaySamples(trackId, delay);
           appliedChannelDelays.set(trackId, delay);
         }
       }

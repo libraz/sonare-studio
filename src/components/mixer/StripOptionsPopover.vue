@@ -31,7 +31,6 @@ import {
   type MixerStrip,
   PAN_LAW_IDS,
   PAN_MODE_IDS,
-  type PanLawId,
   type PanModeId,
 } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
@@ -44,6 +43,7 @@ import {
   midiLearnStripControlTargetId,
 } from '@/ui/midi/midi-learn';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
+import type { PanLaw } from '@/wasm/index.js';
 import NumericReadout from './NumericReadout.vue';
 
 /**
@@ -107,14 +107,14 @@ const polarityRight = computed(() => strip.value.polarityInvertRight === true);
 const channelDelaySamples = computed(() => strip.value.channelDelaySamples ?? 0);
 
 /** Current pan law (default when unset). */
-const panLaw = computed<PanLawId>(() => strip.value.panLaw ?? DEFAULT_PAN_LAW);
+const panLaw = computed<PanLaw>(() => strip.value.panLaw ?? DEFAULT_PAN_LAW);
 /** Current pan mode (default when unset). */
 const panMode = computed<PanModeId>(() => strip.value.panMode ?? DEFAULT_PAN_MODE);
 /** Left/right pan positions for dual-pan mode (neutral stereo when unset). */
 const dualPanLeft = computed(() => strip.value.dualPan?.left ?? -1);
 const dualPanRight = computed(() => strip.value.dualPan?.right ?? 1);
 
-/** Pan law options for the selector (labels from i18n, value = PanLawId). */
+/** Pan law options for the selector (labels from i18n, value = PanLaw). */
 const panLawOptions = computed(() =>
   PAN_LAW_IDS.map((id) => ({ value: id, label: t.value.shell.mixer.strip.panLaws[id] })),
 );
@@ -177,7 +177,8 @@ function onChannelDelayInput(event: Event): void {
 
 function onPanLawChange(value: string): void {
   if (props.target === 'master' || isSurroundBus.value) return;
-  setStripPanLaw(props.target, value as PanLawId);
+  const law = PAN_LAW_IDS.find((id) => id === value);
+  if (law !== undefined) setStripPanLaw(props.target, law);
 }
 
 function onPanModeChange(value: string): void {

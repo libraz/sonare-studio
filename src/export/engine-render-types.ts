@@ -10,13 +10,7 @@ import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { InsertLatencyResolver } from '@/project/insert-latency';
-import type {
-  EngineClip,
-  EngineTrackSend,
-  PanLawInput,
-  PanMode,
-  RealtimeEngine,
-} from '@/wasm/index.js';
+import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
 
 /** Frames processed per offline block. */
 export const RENDER_BLOCK_FRAMES = 1024;
@@ -47,25 +41,23 @@ export type OfflineRenderEngine = Pick<
   RealtimeEngine,
   | 'setTrackLanes'
   | 'setTrackBuses'
-  | 'setTrackStripJson'
-  | 'setBusStripJson'
-  | 'setMasterStripJson'
-  | 'setLaneSidechain'
-  | 'setTrackStripInsertBypassed'
-  | 'setMasterStripInsertBypassed'
-  | 'setTrackStripEqBandJson'
-  | 'setMasterStripEqBandJson'
-  | 'setSoloMute'
-  | 'setTrackStripPanLaw'
-  | 'setTrackStripPanMode'
-  | 'setTrackStripDualPan'
-  | 'setTrackStripChannelDelaySamples'
+  | 'setStrip'
+  | 'setBusStrip'
+  | 'setStripSidechain'
+  | 'setBusSidechain'
+  | 'setStripInsertBypassed'
+  | 'setBusInsertBypassed'
+  | 'setStripEqBand'
+  | 'setBusEqBand'
+  | 'setTrackSoloMute'
+  | 'setStripPanLaw'
+  | 'setStripPanMode'
+  | 'setStripDualPan'
+  | 'setStripChannelDelaySamples'
   | 'setParameter'
-  | 'resolveTrackLaneAutomationId'
+  | 'resolveStripAutomationId'
   | 'resolveBusAutomationId'
-  | 'resolveMasterAutomationId'
-  | 'resolveTrackInsertAutomationId'
-  | 'resolveMasterInsertAutomationId'
+  | 'resolveStripInsertAutomationId'
   | 'resolveBusInsertAutomationId'
   | 'resolveInstrumentAutomationId'
   | 'setAutomationLane'
@@ -83,39 +75,14 @@ export type OfflineRenderEngine = Pick<
   | 'settleParameters'
   | 'play'
   | 'stop'
-  | 'process'
   | 'destroy'
 > & {
+  /** Renders one block in place; the monitor-bus form is not used offline. */
+  process(channels: Float32Array[]): Float32Array[];
   /** Longest audible tail after the last input, in samples (2147483647 = unbounded). */
-  tailSamples?: () => number;
+  readonly tailSamples?: number;
   /** Apply one complete setup SysEx frame to an already-bound SF2 player. */
   pushMidiSysex?: (destinationId: number, data: Uint8Array, renderFrame?: number) => void;
-  /** Key a bus insert from a track or another bus (new libsonare ABI). */
-  setBusSidechain?: (
-    busId: number,
-    insertIndex: number,
-    sourceKind: number,
-    sourceId: number,
-  ) => void;
-  /** Key a master insert from a track or bus. */
-  setMasterSidechain?: (insertIndex: number, sourceKind: number, sourceId: number) => void;
-  /** Per-bus insert bypass matching track/master strips. */
-  setBusStripInsertBypassed?: (
-    busId: number,
-    insertIndex: number,
-    bypassed: boolean,
-    resetOnBypass?: boolean,
-  ) => void;
-  /** Per-bus EQ band setter. Older engines may omit it. */
-  setBusStripEqBandJson?: (busId: number, bandIndex: number, json: string) => void;
-  /** Per-bus output pan setter; omitted only by pre-bus-pan engines. */
-  setBusStripPan?: (busId: number, pan: number) => void;
-  /** Per-bus pan-law setter; omitted only by pre-bus-pan engines. */
-  setBusStripPanLaw?: (busId: number, panLaw: PanLawInput) => void;
-  /** Per-bus pan-mode setter; omitted only by pre-bus-pan engines. */
-  setBusStripPanMode?: (busId: number, panMode: PanMode | number) => void;
-  /** Per-bus dual-pan setter; omitted only by pre-bus-pan engines. */
-  setBusStripDualPan?: (busId: number, leftPan: number, rightPan: number) => void;
 };
 
 /** One engine track send (numeric engine bus id). */
@@ -307,11 +274,11 @@ export function resolveRange(options: EngineRenderOptions): {
  * @throws Error when the engine has no lane for the track.
  */
 export function trackLaneParamId(
-  engine: Pick<OfflineRenderEngine, 'resolveTrackLaneAutomationId'>,
+  engine: Pick<OfflineRenderEngine, 'resolveStripAutomationId'>,
   trackId: number,
   param: 'faderDb' | 'pan',
 ): number {
-  const id = resolveAutomationId(() => engine.resolveTrackLaneAutomationId(trackId, param));
+  const id = resolveAutomationId(() => engine.resolveStripAutomationId(trackId, param));
   if (id === undefined) throw new Error(`Engine has no lane for track ${trackId}`);
   return id;
 }
@@ -322,10 +289,10 @@ export function trackLaneParamId(
  * @throws Error when the engine does not resolve the parameter.
  */
 export function masterParamId(
-  engine: Pick<OfflineRenderEngine, 'resolveMasterAutomationId'>,
+  engine: Pick<OfflineRenderEngine, 'resolveStripAutomationId'>,
   param: 'faderDb' | 'pan',
 ): number {
-  const id = resolveAutomationId(() => engine.resolveMasterAutomationId(param));
+  const id = resolveAutomationId(() => engine.resolveStripAutomationId('master', param));
   if (id === undefined) throw new Error(`Engine has no master ${param} parameter`);
   return id;
 }

@@ -7,6 +7,7 @@
  * when the destination project does not contain them.
  */
 
+import { upgradeTrackPresetToV2 } from './document-schema-v5';
 import {
   cloneInstrument,
   loadInstrument,
@@ -20,12 +21,14 @@ import {
   MAX_STRIP_GAIN_DB,
   MIN_STRIP_GAIN_DB,
   type MixerStrip,
-  renameRetiredProcessors,
 } from './mixer';
 import type { EditorTrack } from './types';
 
-/** Current on-disk shape of a saved track/channel preset. */
-export const TRACK_CHANNEL_PRESET_SCHEMA_VERSION = 1;
+/**
+ * Current on-disk shape of a saved track/channel preset. Version 2 stores the
+ * libsonare 2.0 vocabulary; version-1 presets are upgraded on read.
+ */
+export const TRACK_CHANNEL_PRESET_SCHEMA_VERSION = 2;
 
 /** A reusable track instrument, MIDI-FX and mixer-strip configuration. */
 export interface TrackChannelPreset {
@@ -77,7 +80,8 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new RangeError('Track preset must be an object');
   }
-  const raw = value as Record<string, unknown>;
+  const stored = value as Record<string, unknown>;
+  const raw = stored.schemaVersion === 1 ? upgradeTrackPresetToV2(stored) : stored;
   if (raw.schemaVersion !== TRACK_CHANNEL_PRESET_SCHEMA_VERSION) {
     throw new RangeError('Unsupported track preset schema version');
   }
@@ -123,7 +127,6 @@ export function normalizeTrackChannelPreset(value: unknown): TrackChannelPreset 
       }
     }
   }
-  renameRetiredProcessors(strip.inserts);
   for (const send of strip.sends) {
     if (
       !send ||

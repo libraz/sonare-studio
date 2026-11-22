@@ -200,7 +200,11 @@ export function createAutomationSync(
         const insertIndex = options.masteringInsertIndexFor?.(processorIndex);
         if (insertIndex === undefined) continue;
         const insertId = resolveAutomationId(() =>
-          handle.engine.resolveMasterInsertAutomationId(insertIndex, masteringRef.paramName),
+          handle.engine.resolveStripInsertAutomationId(
+            'master',
+            insertIndex,
+            masteringRef.paramName,
+          ),
         );
         if (insertId === undefined) continue;
         paramId = insertId;
@@ -220,7 +224,11 @@ export function createAutomationSync(
         let insertId: number | undefined;
         if (lane.target === 'master') {
           insertId = resolveAutomationId(() =>
-            handle.engine.resolveMasterInsertAutomationId(storeInsertIndex, insertRef.paramName),
+            handle.engine.resolveStripInsertAutomationId(
+              'master',
+              storeInsertIndex,
+              insertRef.paramName,
+            ),
           );
         } else if (isBusAutomationTarget(lane.target)) {
           const storeBusId = busIdFromAutomationTarget(lane.target);
@@ -260,7 +268,7 @@ export function createAutomationSync(
           if (!knownTracks.has(lane.target)) continue;
           const trackId = lane.target;
           insertId = resolveAutomationId(() =>
-            handle.engine.resolveTrackInsertAutomationId(
+            handle.engine.resolveStripInsertAutomationId(
               trackId,
               storeInsertIndex,
               insertRef.paramName,
@@ -274,7 +282,7 @@ export function createAutomationSync(
         const busId = options.busIdFor?.(busIdFromAutomationTarget(lane.target));
         if (busId === undefined) continue;
         mappingSensitive = true;
-        paramId = resolveAutomationId(() => handle.engine.busAutomationParamId(busId));
+        paramId = resolveAutomationId(() => handle.engine.resolveBusAutomationId(busId, 'faderDb'));
         if (paramId === undefined) continue;
       } else if (paramId === undefined) {
         if (!isMixerAutomationParam(lane.param)) continue;
@@ -283,14 +291,16 @@ export function createAutomationSync(
         if (groupBusId !== undefined) {
           if (lane.param !== 'faderDb') continue;
           mappingSensitive = true;
-          paramId = resolveAutomationId(() => handle.engine.busAutomationParamId(groupBusId));
+          paramId = resolveAutomationId(() =>
+            handle.engine.resolveBusAutomationId(groupBusId, 'faderDb'),
+          );
         } else {
           const mixerTarget = lane.target;
           const mixerParam = lane.param;
           if (mixerTarget !== 'master' && typeof mixerTarget !== 'number') continue;
           if (mixerTarget !== 'master' && !knownTracks.has(mixerTarget)) continue;
           paramId = resolveAutomationId(() =>
-            handle.engine.automationParamId(mixerTarget, mixerParam),
+            handle.engine.resolveStripAutomationId(mixerTarget, mixerParam),
           );
         }
         if (paramId === undefined) continue;

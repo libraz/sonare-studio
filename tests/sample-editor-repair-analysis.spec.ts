@@ -9,36 +9,46 @@ import {
 import { wasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
 import type { MasteringAudioProfileDefects, MasteringRepairAnalysis } from '@/wasm/index.js';
 
-function defects(
-  overrides: Partial<MasteringAudioProfileDefects> = {},
-): MasteringAudioProfileDefects {
+interface DefectOverrides {
+  clickCount?: number;
+  clipRunCount?: number;
+  clipFlatRunCount?: number;
+  crackleSampleCount?: number;
+  cracklePerSecond?: number;
+  humFundamentalHz?: number;
+}
+
+function defects(overrides: DefectOverrides = {}): MasteringAudioProfileDefects {
   return {
-    measured: true,
-    clickCount: 0,
-    clickRejected: 0,
-    clickLongestRunSamples: 0,
-    clickPerSecond: 0,
-    crackleSampleCount: 0,
-    crackleSampleFraction: 0,
-    cracklePerSecond: 0,
-    clipSampleCount: 0,
-    clipRunCount: 0,
-    clipLongestRunSamples: 0,
-    clipSampleFraction: 0,
-    clipFlatRunCount: 0,
-    clipFlatSampleCount: 0,
-    clipLongestFlatRunSamples: 0,
-    clipFlatLevel: 0,
-    noiseFloorDbfs: -72.4,
-    noiseBandPeakDbfs: -60,
-    noiseBandPeakIndex: 0,
-    humFundamentalHz: 0,
-    humFundamentalProminence: 0,
-    humHarmonics: 0,
-    humFundamentalDbfs: -120,
-    humPeakHarmonicDbfs: -120,
-    lateDecayRatioDb: 0,
-    ...overrides,
+    click: {
+      count: overrides.clickCount ?? 0,
+      rejected: 0,
+      longestRunSamples: 0,
+      perSecond: 0,
+    },
+    crackle: {
+      sampleCount: overrides.crackleSampleCount ?? 0,
+      sampleFraction: 0,
+      perSecond: overrides.cracklePerSecond ?? 0,
+    },
+    clip: {
+      clippedSamples: 0,
+      clippedRatio: 0,
+      runCount: overrides.clipRunCount ?? 0,
+      longestRunSamples: 0,
+      flatRunCount: overrides.clipFlatRunCount ?? 0,
+      longestFlatRunSamples: 0,
+      flatSampleCount: 0,
+      flatLevel: 0,
+    },
+    noise: { floorDbfs: -72.4, bandFloorDbfs: new Float32Array(0) },
+    hum: {
+      fundamentalHz: overrides.humFundamentalHz ?? 0,
+      fundamentalProminence: 0,
+      harmonics: 0,
+      harmonicDbfs: new Float32Array(0),
+    },
+    reverb: { lateDecayRatioDb: 0 },
   };
 }
 
@@ -83,10 +93,6 @@ describe('repairDefectItems', () => {
       { kind: 'noise', value: '-72 dBFS' },
     ]);
   });
-
-  it('is empty for an unmeasured channel', () => {
-    expect(repairDefectItems(defects({ measured: false, clickCount: 5 }))).toEqual([]);
-  });
 });
 
 describe('repairChannelSummaries', () => {
@@ -96,6 +102,12 @@ describe('repairChannelSummaries', () => {
     );
     expect(rows.map((row) => row.channel)).toEqual(['L', 'R']);
     expect(rows[0].items[0]).toEqual({ kind: 'clicks', value: '1' });
+  });
+});
+
+describe('repairChannelSummaries without detectors', () => {
+  it('has no rows when the analysis carries no channel defects', () => {
+    expect(repairChannelSummaries(analysis({ channels: undefined }))).toEqual([]);
   });
 });
 

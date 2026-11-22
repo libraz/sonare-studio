@@ -312,7 +312,7 @@ export interface WarpAnchor {
 }
 
 /** Interpolation used from one expression breakpoint to the next. */
-export type ClipExpressionCurve = 'hold' | 'linear' | 's-curve';
+export type ClipExpressionCurve = 'hold' | 'linear' | 'sCurve';
 
 /** One breakpoint in a clip CC lane: a clip-window-relative beat and a value. */
 export interface ClipCcPoint {

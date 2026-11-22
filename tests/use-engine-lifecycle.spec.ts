@@ -24,7 +24,8 @@ vi.mock('@/engine/analyser', () => ({
 vi.mock('@/engine/engine', () => ({ createEngine: lifecycleMocks.createEngine }));
 vi.mock('@/engine/meters', () => ({ createMeterBridge: lifecycleMocks.createMeterBridge }));
 vi.mock('@/engine/midi-sync', () => ({ createMidiSync: lifecycleMocks.createMidiSync }));
-vi.mock('@/engine/mixer-sync', () => ({
+vi.mock('@/engine/mixer-sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/engine/mixer-sync')>()),
   createMixerSync: lifecycleMocks.createMixerSync,
   PFL_AUDITION_GAIN_DB: -12,
   pflAuditionStates: vi.fn((tracks: ReadonlyArray<unknown>) => tracks.map(() => false)),
@@ -51,6 +52,7 @@ import {
 } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
+import type { SonareEngine } from '@/wasm/worklet.js';
 
 describe('useEngineLifecycle automation restore helpers', () => {
   it('skips track insert parameter restore while a track is frozen', () => {
@@ -98,10 +100,17 @@ describe('useEngineLifecycle automation restore helpers', () => {
 function makeLifecycleHandle(): {
   handle: EngineHandle;
   setAutomationLane: ReturnType<typeof vi.fn>;
-  setBusGain: ReturnType<typeof vi.fn>;
+  setBusGainDb: ReturnType<typeof vi.fn>;
 } {
   const setAutomationLane = vi.fn();
-  const setBusGain = vi.fn();
+  const setBusGainDb = vi.fn();
+  const methods = {
+    resolveBusAutomationId: vi.fn((busId: number, _paramName: 'faderDb') => 3000 + busId),
+    setAutomationLane,
+    setBusGainDb,
+  } satisfies Partial<
+    Pick<SonareEngine, 'resolveBusAutomationId' | 'setAutomationLane' | 'setBusGainDb'>
+  >;
   const handle = {
     ctx: {
       sampleRate: 48_000,
@@ -111,15 +120,13 @@ function makeLifecycleHandle(): {
     },
     engine: {
       node: { onprocessorerror: null },
-      busAutomationParamId: vi.fn((busId: number) => 3000 + busId),
-      setAutomationLane,
-      setBusGain,
+      ...methods,
       getTransportState: vi.fn(async () => ({})),
     },
     capabilities: {},
     dispose: vi.fn(async () => undefined),
   } as unknown as EngineHandle;
-  return { handle, setAutomationLane, setBusGain };
+  return { handle, setAutomationLane, setBusGainDb };
 }
 
 function setupLifecycleForAutomationTest(): {
@@ -222,7 +229,7 @@ describe('useEngineLifecycle return-solo fader automation', () => {
 
     automation.sync([lane]);
     expect(state.handle.setAutomationLane).toHaveBeenCalledWith(3002, [
-      { ppq: 0, value: 6, curveToNext: 0 },
+      { ppq: 0, value: 6, curveToNext: 'linear' },
     ]);
     state.handle.setAutomationLane.mockClear();
 
@@ -230,15 +237,15 @@ describe('useEngineLifecycle return-solo fader automation', () => {
     automation.sync([lane]);
 
     expect(state.handle.setAutomationLane).toHaveBeenCalledWith(3002, []);
-    expect(state.handle.setBusGain).toHaveBeenCalledWith(2, SILENCE_DB);
+    expect(state.handle.setBusGainDb).toHaveBeenCalledWith(2, SILENCE_DB);
     state.handle.setAutomationLane.mockClear();
-    state.handle.setBusGain.mockClear();
+    state.handle.setBusGainDb.mockClear();
 
     state.store.mixer.buses[0].solo = false;
     automation.sync([lane]);
     automation.sync([]);
 
-    expect(state.handle.setBusGain).toHaveBeenCalledWith(2, -9);
+    expect(state.handle.setBusGainDb).toHaveBeenCalledWith(2, -9);
   });
 
   it('silences an automated group fader during return solo and restores it afterward', async () => {
@@ -276,7 +283,7 @@ describe('useEngineLifecycle return-solo fader automation', () => {
 
     automation.sync([lane]);
     expect(state.handle.setAutomationLane).toHaveBeenCalledWith(3007, [
-      { ppq: 0, value: -4, curveToNext: 0 },
+      { ppq: 0, value: -4, curveToNext: 'linear' },
     ]);
     state.handle.setAutomationLane.mockClear();
 
@@ -284,14 +291,14 @@ describe('useEngineLifecycle return-solo fader automation', () => {
     automation.sync([lane]);
 
     expect(state.handle.setAutomationLane).toHaveBeenCalledWith(3007, []);
-    expect(state.handle.setBusGain).toHaveBeenCalledWith(7, SILENCE_DB);
+    expect(state.handle.setBusGainDb).toHaveBeenCalledWith(7, SILENCE_DB);
     state.handle.setAutomationLane.mockClear();
-    state.handle.setBusGain.mockClear();
+    state.handle.setBusGainDb.mockClear();
 
     state.store.mixer.buses[0].solo = false;
     automation.sync([lane]);
     automation.sync([]);
 
-    expect(state.handle.setBusGain).toHaveBeenCalledWith(7, 0);
+    expect(state.handle.setBusGainDb).toHaveBeenCalledWith(7, 0);
   });
 });

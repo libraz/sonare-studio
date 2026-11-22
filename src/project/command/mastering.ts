@@ -1,3 +1,4 @@
+import type { MasteringChainConfig, MasteringPreset, SoloProcessor } from '@/wasm/index.js';
 import {
   cloneMasteringChain,
   createDefaultMasteringChain,
@@ -47,6 +48,20 @@ function requireMasteringProcessor(chain: MasteringChainState, index: number): I
   return chain.processors[index];
 }
 
+/** Throws RangeError for any non-finite number anywhere in a nested override config. */
+function assertFiniteConfig(node: unknown, path: string): void {
+  if (typeof node === 'number') {
+    if (!Number.isFinite(node)) {
+      throw new RangeError(`Mastering preset override "${path}" must be finite, got ${node}`);
+    }
+    return;
+  }
+  if (node === null || typeof node !== 'object') return;
+  for (const [key, child] of Object.entries(node)) {
+    assertFiniteConfig(child, path === '' ? key : `${path}.${key}`);
+  }
+}
+
 /**
  * Sets (or clears) the mastering preset as one undoable edit. The preset is a
  * wasm mastering preset name applied as a whole chain by the offline mixdown
@@ -55,7 +70,10 @@ function requireMasteringProcessor(chain: MasteringChainState, index: number): I
  * @param preset Preset name (non-empty), or null to clear.
  * @param options Gesture coalescing for preset-browsing UIs.
  */
-export function setMasteringPreset(preset: string | null, options?: CommandGestureOptions): void {
+export function setMasteringPreset(
+  preset: MasteringPreset | null,
+  options?: CommandGestureOptions,
+): void {
   const store = useProjectStore();
   if (preset !== null && (typeof preset !== 'string' || preset.length === 0)) {
     throw new RangeError('Mastering preset name must not be empty');
@@ -81,61 +99,22 @@ export function setMasteringPreset(preset: string | null, options?: CommandGestu
  * undoing it must restore both. The overrides replace any the chain had.
  *
  * @param preset Wasm mastering preset name.
- * @param overrides Flat override map; empty clears the chain's overrides.
+ * @param overrides Nested override config; empty clears the chain's overrides.
  */
 export function applyMasteringPresetWithOverrides(
-  preset: string,
-  overrides: Readonly<Record<string, number | boolean>>,
+  preset: MasteringPreset,
+  overrides: MasteringChainConfig,
 ): void {
   const store = useProjectStore();
   if (preset.length === 0) throw new RangeError('Mastering preset name must not be empty');
-  for (const [param, value] of Object.entries(overrides)) {
-    if (typeof value === 'number' && !Number.isFinite(value)) {
-      throw new RangeError(`Mastering preset override "${param}" must be finite, got ${value}`);
-    }
-  }
+  assertFiniteConfig(overrides, '');
   const chain = currentMasteringChain(store);
   executeApp(() => {
     chain.preset = preset;
     if (Object.keys(overrides).length === 0) delete chain.presetOverrides;
-    else chain.presetOverrides = { ...overrides };
+    else chain.presetOverrides = structuredClone(overrides);
     writeMasteringChain(store, chain);
     store.refresh();
-  });
-}
-
-/**
- * Sets or clears a flat override for the selected mastering preset. Overrides
- * are applied by masterAudioStereo on top of the named preset during export.
- *
- * @param param Dot-notation override key (for example 'loudness.targetLufs').
- * @param value Finite number/boolean to set, or null to clear.
- * @param options Gesture coalescing for slider drags.
- */
-export function setMasteringPresetOverride(
-  param: string,
-  value: number | boolean | null,
-  options?: CommandGestureOptions,
-): void {
-  const store = useProjectStore();
-  if (param.length === 0) throw new RangeError('Mastering preset override name must not be empty');
-  if (typeof value === 'number' && !Number.isFinite(value)) {
-    throw new RangeError(`Mastering preset override "${param}" must be finite, got ${value}`);
-  }
-  const chain = currentMasteringChain(store);
-  if (chain.preset === undefined) {
-    throw new RangeError('Mastering preset overrides require a selected preset');
-  }
-  const overrides = chain.presetOverrides ?? {};
-  const key = `mastering-preset-override:${param}`;
-  if ((overrides[param] ?? null) === value && !hasPendingGesture(key)) return;
-  patchMixerMirror(key, options, () => {
-    const nextOverrides = { ...overrides };
-    if (value === null) delete nextOverrides[param];
-    else nextOverrides[param] = value;
-    if (Object.keys(nextOverrides).length === 0) delete chain.presetOverrides;
-    else chain.presetOverrides = nextOverrides;
-    writeMasteringChain(store, chain);
   });
 }
 
@@ -151,7 +130,7 @@ export function setMasteringPresetOverride(
  * @returns The index of the new slot.
  */
 export function addMasteringProcessor(
-  processor: string,
+  processor: SoloProcessor,
   params: Record<string, number | boolean> = {},
 ): number {
   const store = useProjectStore();

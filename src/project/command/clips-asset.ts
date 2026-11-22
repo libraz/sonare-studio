@@ -29,7 +29,7 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
 
   const known = getAudioSourceId(assetId);
   const sourceId =
-    known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+    known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
   const activeTakeIndex = clip.compSegments?.[0]?.takeIndex ?? 0;
   const takes = clip.takes?.map((take, index) => ({
     ...take,
@@ -55,20 +55,24 @@ export function replaceAudioClipAsset(clipId: number, assetId: string): number {
         ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
       }),
     );
-    if (sourceId === undefined) setAudioSourceId(assetId, project.sourceCount());
+    if (sourceId === undefined) setAudioSourceId(assetId, project.sources().length);
     else edit(1, () => project.setClipSource(newClipId, sourceId));
 
     if ((clip.fadeInPpq ?? 0) > 0 || (clip.fadeOutPpq ?? 0) > 0) {
       edit(1, () =>
-        project.setClipFade(
-          newClipId,
-          { lengthPpq: clip.fadeInPpq ?? 0 },
-          { lengthPpq: clip.fadeOutPpq ?? 0 },
-        ),
+        project.setClipFade(newClipId, {
+          fadeInPpq: clip.fadeInPpq ?? 0,
+          fadeOutPpq: clip.fadeOutPpq ?? 0,
+        }),
       );
     }
     if (clip.loopEnabled) {
-      edit(1, () => project.setClipLoop(newClipId, 'loop', clip.loopLengthPpq || clip.lengthPpq));
+      edit(1, () =>
+        project.setClipLoop(newClipId, {
+          loopMode: 'loop',
+          loopLengthPpq: clip.loopLengthPpq || clip.lengthPpq,
+        }),
+      );
     }
     if (clip.warp !== undefined) {
       installProjectClipWarp(

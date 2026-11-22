@@ -15,6 +15,7 @@ import { errorMessage } from '@/lib/errors';
 import { isSwitchOn } from '@/lib/midi';
 import { formatControlValue } from '@/ui/devices/knob-math';
 import type {
+  MasteringInsertName,
   MasteringInsertParamDependency,
   MasteringInsertParamInfo,
   MasteringInsertParamUnit,
@@ -210,6 +211,7 @@ const PARAM_RANGE_RULES: ReadonlyArray<ParamRangeRule> = [
 const UNIT_LABELS: Readonly<Record<MasteringInsertParamUnit, string>> = {
   dB: 'dB',
   dBFS: 'dBFS',
+  dBTP: 'dBTP',
   LUFS: 'LUFS',
   Hz: 'Hz',
   ms: 'ms',
@@ -230,6 +232,8 @@ const UNIT_LABELS: Readonly<Record<MasteringInsertParamUnit, string>> = {
   bits: 'bit',
   count: '',
   N: 'N',
+  midiNote: '',
+  bpm: 'bpm',
   none: '',
 };
 
@@ -283,11 +287,14 @@ export function catalogParamInfo(processor: string): MasteringInsertParamInfo[] 
   let entries = byProcessor.get(key);
   if (!entries) {
     try {
-      entries = wasm.masteringInsertParamInfo(processor, processingSampleRate);
+      entries = wasm.masteringInsertParamInfo({
+        insert: processor as MasteringInsertName,
+        ...(processingSampleRate !== undefined ? { sampleRate: processingSampleRate } : {}),
+      });
     } catch {
       // A rate outside the supported range still has a rate-less answer.
       try {
-        entries = wasm.masteringInsertParamInfo(processor);
+        entries = wasm.masteringInsertParamInfo({ insert: processor as MasteringInsertName });
       } catch {
         entries = [];
       }
@@ -305,7 +312,7 @@ export function isConstructionOnlyParam(processor: string, param: string): boole
   const entries = catalogParamInfo(processor);
   let names = constructionOnlyCache.get(entries);
   if (!names) {
-    names = new Set(entries.filter((entry) => entry.id === null).map((entry) => entry.name));
+    names = new Set(entries.filter((entry) => entry.id === undefined).map((entry) => entry.name));
     constructionOnlyCache.set(entries, names);
   }
   return names.has(param);
@@ -609,7 +616,7 @@ function coupledGroup(info: ReadonlyArray<MasteringInsertParamInfo>, param: stri
     ];
     for (const next of neighbours) if (!group.includes(next)) group.push(next);
   }
-  return group.filter((key) => info.find((entry) => entry.name === key)?.slot === null);
+  return group.filter((key) => info.find((entry) => entry.name === key)?.slot === undefined);
 }
 
 /**
@@ -634,11 +641,11 @@ function assertCoupledKeysAccepted(
     if (typeof value === 'number' || typeof value === 'boolean') subset[key] = value;
   }
   try {
-    wasm.masteringInsertTiming(
-      processor,
-      subset,
-      processingSampleRate ?? CONFIGURATION_CHECK_SAMPLE_RATE,
-    );
+    wasm.masteringInsertTiming({
+      insert: processor as MasteringInsertName,
+      params: subset,
+      sampleRate: processingSampleRate ?? CONFIGURATION_CHECK_SAMPLE_RATE,
+    });
   } catch (error) {
     const detail = errorMessage(error);
     const own = info.find((entry) => entry.name === param)?.coupledWith ?? [];
@@ -691,7 +698,9 @@ export function catalogSlots(processor: string): MasteringInsertSlot[] {
   if (typeof wasm.masteringProcessorCatalog !== 'function') return [];
   let byProcessor = slotCache.get(wasm);
   if (!byProcessor) {
-    byProcessor = new Map(wasm.masteringProcessorCatalog().map((entry) => [entry.id, entry.slots]));
+    byProcessor = new Map(
+      wasm.masteringProcessorCatalog().map((entry) => [entry.id, [...entry.slots]]),
+    );
     slotCache.set(wasm, byProcessor);
   }
   return byProcessor.get(processor) ?? [];
@@ -728,7 +737,7 @@ function visibleSlotNames(
   const offeredFamilies = new Set<string>();
   // A parent slot is always listed before the slots naming it.
   for (const slot of slots) {
-    if (slot.parent !== null && !existing.has(slot.parent)) continue;
+    if (slot.parent !== undefined && !existing.has(slot.parent)) continue;
     const keys = keysBySlot.get(slot.name) ?? [];
     const exists =
       slot.activation === 'always'

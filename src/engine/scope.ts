@@ -1,5 +1,5 @@
 import type { EngineHandle } from '@/engine/engine.js';
-import type { SonareWorkletScopeSnapshot } from '@/wasm/worklet.js';
+import type { WorkletScopeSnapshot } from '@/wasm/worklet.js';
 import { MASTER_METER_TARGET_ID } from './meter-targets';
 import { createTargetListeners } from './target-listeners';
 
@@ -76,7 +76,7 @@ function scopeIsAvailable(handle: EngineHandle): boolean {
 }
 
 /** Copies an engine snapshot into a stable {@link ScopeFrame}. */
-function toFrame(snapshot: SonareWorkletScopeSnapshot): ScopeFrame {
+function toFrame(snapshot: WorkletScopeSnapshot): ScopeFrame {
   return { frame: snapshot.frame, bands: snapshot.bands, points: snapshot.points };
 }
 
@@ -99,7 +99,7 @@ export function createScopeBridge(handle: EngineHandle): ScopeBridge {
   const sources = new Map<number, ScopeSource>();
   let disposed = false;
 
-  const publish = (snapshot: SonareWorkletScopeSnapshot): void => {
+  const publish = (snapshot: WorkletScopeSnapshot): void => {
     if (disposed) return;
     const targetId = snapshot.targetId ?? MASTER_METER_TARGET_ID;
     const frame = toFrame(snapshot);

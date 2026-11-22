@@ -129,7 +129,7 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
             const sourceId =
               knownSourceId !== undefined &&
               knownSourceId >= 1 &&
-              knownSourceId <= project.sourceCount()
+              knownSourceId <= project.sources().length
                 ? knownSourceId
                 : undefined;
             const id = edit(1, () =>
@@ -140,7 +140,7 @@ export function pasteClipAt(trackId: number, startPpq: number): number | null {
                 ...(sourceId === undefined ? { sourceUri: audioAssetUri(assetId) } : {}),
               }),
             );
-            if (sourceId === undefined) setAudioSourceId(assetId, project.sourceCount());
+            if (sourceId === undefined) setAudioSourceId(assetId, project.sources().length);
             else edit(1, () => project.setClipSource(id, sourceId));
             return id;
           })();

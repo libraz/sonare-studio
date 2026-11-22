@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
+  type AudioChordDetector,
   analyzeAudioClipChords,
   type DetectedAudioChord,
   detectedChordQuality,
@@ -8,7 +9,7 @@ import {
 } from '@/project/audio-chords';
 import { chordTonePitchClasses, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import type { EditorClip } from '@/project/types';
-import { ChordQuality } from '@/wasm/index.js';
+import { CHORD_QUALITIES, type ChordQuality } from '@/wasm/index.js';
 
 /** A minimal audio clip; fields not relevant to detection use neutral values. */
 function audioClip(overrides: Partial<EditorClip> = {}): EditorClip {
@@ -39,7 +40,7 @@ function asset(frames: number, sampleRate = 48000): LoadedAudioAsset {
 
 /** Detector stub returning a fixed progression, capturing the buffer it saw. */
 function detector(chords: DetectedAudioChord[]): {
-  fn: (samples: Float32Array, sampleRate?: number) => { chords: DetectedAudioChord[] };
+  fn: AudioChordDetector;
   seen: { length: number; sampleRate?: number }[];
 } {
   const seen: { length: number; sampleRate?: number }[] = [];
@@ -56,8 +57,8 @@ describe('analyzeAudioClipChords', () => {
   it('maps detection seconds to absolute PPQ at the clip tempo and offset', async () => {
     // 120 BPM => 0.5 s per quarter (PPQ) => seconds * 2 = PPQ.
     const det = detector([
-      { root: 0, bass: 0, quality: 0, start: 0, end: 1 }, // C  -> [0, 2)
-      { root: 7, bass: 7, quality: 4, start: 1, end: 2 }, // G7 -> [2, 4)
+      { root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 1 }, // C  -> [0, 2)
+      { root: 7, bass: 7, quality: 'dominant7', startSec: 1, endSec: 2 }, // G7 -> [2, 4)
     ]);
     const symbols = await analyzeAudioClipChords(audioClip({ startPpq: 8 }), 120, {
       loadAudioAsset: async () => asset(48000),
@@ -75,9 +76,9 @@ describe('analyzeAudioClipChords', () => {
     // worth two quarters, so second 5 -> PPQ 6 and second 6 -> PPQ 8 — not the
     // PPQ 10 / 12 a constant 120 BPM, nor the PPQ 5 / 6 a constant 60 BPM, gives.
     const det = detector([
-      { root: 0, bass: 0, quality: 0, start: 0, end: 4 },
-      { root: 7, bass: 7, quality: 0, start: 4, end: 5 },
-      { root: 5, bass: 5, quality: 0, start: 5, end: 6 },
+      { root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 4 },
+      { root: 7, bass: 7, quality: 'major', startSec: 4, endSec: 5 },
+      { root: 5, bass: 5, quality: 'major', startSec: 5, endSec: 6 },
     ]);
     const symbols = await analyzeAudioClipChords(
       audioClip({ startPpq: 0, lengthPpq: 16 }),
@@ -120,7 +121,7 @@ describe('analyzeAudioClipChords', () => {
     // The clip begins at PPQ 2, two seconds into a 60 BPM section. A detection
     // at window second 2 therefore lands on absolute second 4 / PPQ 4, exactly
     // at the tempo change; the next detected second advances two PPQ at 120 BPM.
-    const det = detector([{ root: 9, bass: 9, quality: 0, start: 2, end: 3 }]);
+    const det = detector([{ root: 9, bass: 9, quality: 'major', startSec: 2, endSec: 3 }]);
     const symbols = await analyzeAudioClipChords(
       audioClip({ startPpq: 2, lengthPpq: 8 }),
       60,
@@ -135,7 +136,7 @@ describe('analyzeAudioClipChords', () => {
   });
 
   it('carries a slash bass only when the bass differs from the root', async () => {
-    const det = detector([{ root: 7, bass: 0, quality: 4, start: 0, end: 1 }]);
+    const det = detector([{ root: 7, bass: 0, quality: 'dominant7', startSec: 0, endSec: 1 }]);
     const [symbol] = await analyzeAudioClipChords(audioClip(), 120, {
       loadAudioAsset: async () => asset(48000),
       detectChords: det.fn,
@@ -145,8 +146,8 @@ describe('analyzeAudioClipChords', () => {
 
   it('clamps chord ends to the clip region and drops empty regions', async () => {
     const det = detector([
-      { root: 0, bass: 0, quality: 0, start: 0, end: 100 }, // runs past the 16-PPQ clip
-      { root: 2, bass: 2, quality: 1, start: 50, end: 60 }, // entirely past the window
+      { root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 100 }, // runs past the 16-PPQ clip
+      { root: 2, bass: 2, quality: 'minor', startSec: 50, endSec: 60 }, // entirely past the window
     ]);
     const symbols = await analyzeAudioClipChords(audioClip({ startPpq: 0, lengthPpq: 16 }), 120, {
       loadAudioAsset: async () => asset(48000),
@@ -166,7 +167,7 @@ describe('analyzeAudioClipChords', () => {
   });
 
   it('returns nothing without an asset, at non-positive tempo, or on an empty window', async () => {
-    const det = detector([{ root: 0, bass: 0, quality: 0, start: 0, end: 1 }]);
+    const det = detector([{ root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 1 }]);
     const deps = { loadAudioAsset: async () => asset(48000), detectChords: det.fn };
 
     expect(await analyzeAudioClipChords(audioClip({ assetId: undefined }), 120, deps)).toEqual([]);
@@ -181,9 +182,9 @@ describe('analyzeAudioClipChords', () => {
   it('absorbs a short single-window outlier between identical neighbours', async () => {
     // C held over four beats, but one short window mis-reads as G in the middle.
     const det = detector([
-      { root: 0, bass: 0, quality: 0, start: 0, end: 1 }, // C  -> [0, 2)
-      { root: 7, bass: 7, quality: 4, start: 1, end: 1.25 }, // G7 -> [2, 2.5), outlier
-      { root: 0, bass: 0, quality: 0, start: 1.25, end: 2 }, // C  -> [2.5, 4)
+      { root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 1 }, // C  -> [0, 2)
+      { root: 7, bass: 7, quality: 'dominant7', startSec: 1, endSec: 1.25 }, // G7 -> [2, 2.5), outlier
+      { root: 0, bass: 0, quality: 'major', startSec: 1.25, endSec: 2 }, // C  -> [2.5, 4)
     ]);
     const symbols = await analyzeAudioClipChords(audioClip({ startPpq: 0 }), 120, {
       loadAudioAsset: async () => asset(48000),
@@ -234,70 +235,72 @@ describe('smoothDetectedChordSymbols', () => {
 });
 
 describe('detectedChordQuality', () => {
-  /** Root-relative pitch classes each detector template sounds (13 adds its fifth back). */
-  const DETECTOR_TONES: Record<number, number[]> = {
-    [ChordQuality.Sus2Add4]: [0, 2, 5, 7],
-    [ChordQuality.Major6]: [0, 4, 7, 9],
-    [ChordQuality.Minor6]: [0, 3, 7, 9],
-    [ChordQuality.MinorMajor7]: [0, 3, 7, 11],
-    [ChordQuality.Dominant7Sus4]: [0, 5, 7, 10],
-    [ChordQuality.Dominant11]: [0, 2, 5, 7, 10],
-    [ChordQuality.Dominant13]: [0, 2, 4, 7, 9, 10],
-    [ChordQuality.Dominant7Flat9]: [0, 1, 4, 7, 10],
-    [ChordQuality.Dominant7Sharp9]: [0, 3, 4, 7, 10],
+  /** Root-relative pitch classes each detector quality sounds (13 adds its fifth back). */
+  const DETECTOR_TONES: Partial<Record<ChordQuality, number[]>> = {
+    sus2Add4: [0, 2, 5, 7],
+    major6: [0, 4, 7, 9],
+    minor6: [0, 3, 7, 9],
+    minorMajor7: [0, 3, 7, 11],
+    dominant7Sus4: [0, 5, 7, 10],
+    dominant11: [0, 2, 5, 7, 10],
+    dominant13: [0, 2, 4, 7, 9, 10],
+    dominant7Flat9: [0, 1, 4, 7, 10],
+    dominant7Sharp9: [0, 3, 4, 7, 10],
   };
 
   it('maps every detector quality the module publishes', () => {
-    for (const ordinal of Object.values(ChordQuality)) {
-      expect(() => detectedChordQuality(ordinal)).not.toThrow();
+    for (const quality of CHORD_QUALITIES) {
+      expect(() => detectedChordQuality(quality)).not.toThrow();
     }
   });
 
   it('keeps the shared ordinals and spells the rest with extensions', () => {
-    expect(detectedChordQuality(ChordQuality.Dominant9)).toEqual({ quality: 15 });
-    for (const [ordinal, tones] of Object.entries(DETECTOR_TONES)) {
+    expect(detectedChordQuality('dominant9')).toEqual({ quality: 15 });
+    for (const [quality, tones] of Object.entries(DETECTOR_TONES)) {
       const symbol = {
         startPpq: 0,
         endPpq: 1,
         rootPc: 0,
-        ...detectedChordQuality(Number(ordinal)),
+        ...detectedChordQuality(quality as ChordQuality),
       };
       expect(chordTonePitchClasses(symbol)).toEqual(tones);
     }
   });
 
   it('names the added qualities conventionally', () => {
-    const name = (ordinal: number) =>
-      formatChordName({ startPpq: 0, endPpq: 1, rootPc: 0, ...detectedChordQuality(ordinal) });
+    const name = (quality: ChordQuality) =>
+      formatChordName({ startPpq: 0, endPpq: 1, rootPc: 0, ...detectedChordQuality(quality) });
     expect(
-      [
-        ChordQuality.Major6,
-        ChordQuality.Minor6,
-        ChordQuality.MinorMajor7,
-        ChordQuality.Dominant7Sus4,
-        ChordQuality.Dominant11,
-        ChordQuality.Dominant13,
-        ChordQuality.Dominant7Flat9,
-        ChordQuality.Dominant7Sharp9,
-      ].map(name),
+      (
+        [
+          'major6',
+          'minor6',
+          'minorMajor7',
+          'dominant7Sus4',
+          'dominant11',
+          'dominant13',
+          'dominant7Flat9',
+          'dominant7Sharp9',
+        ] as const
+      ).map(name),
     ).toEqual(['C6', 'Cm6', 'Cm(maj7)', 'C7sus4', 'C11', 'C13', 'C7b9', 'C7#9']);
   });
 
   it('detects chords on the pitch grid of an off-pitch recording', async () => {
-    const detectChords = vi.fn(() => ({
-      chords: [{ root: 0, bass: 0, quality: 0, start: 0, end: 1 }],
+    const detectChords = vi.fn<AudioChordDetector>(() => ({
+      chords: [{ root: 0, bass: 0, quality: 'major', startSec: 0, endSec: 1 }],
     }));
     await analyzeAudioClipChords(audioClip(), 120, {
       loadAudioAsset: async () => asset(48000 * 8),
       detectChords,
     });
-    expect(detectChords).toHaveBeenCalledWith(expect.any(Float32Array), 48000, { tuning: 'auto' });
+    expect(detectChords).toHaveBeenCalledWith(expect.any(Float32Array), 48000, {
+      tuningCents: 'auto',
+    });
   });
 
   it('carries the mapped quality into the detected symbols', async () => {
-    const det = detector([
-      { root: 2, bass: 2, quality: ChordQuality.Dominant7Flat9, start: 0, end: 1 },
-    ]);
+    const det = detector([{ root: 2, bass: 2, quality: 'dominant7Flat9', startSec: 0, endSec: 1 }]);
     const symbols = await analyzeAudioClipChords(audioClip(), 120, {
       loadAudioAsset: async () => asset(48000 * 8),
       detectChords: det.fn,

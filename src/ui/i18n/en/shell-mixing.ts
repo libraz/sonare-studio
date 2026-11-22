@@ -349,10 +349,10 @@ export const shellMixing = {
       samples: 'smp',
       panLaw: 'Pan law',
       panLaws: {
-        const3dB: '-3 dB',
-        'const4.5dB': '-4.5 dB',
-        const6dB: '-6 dB',
-        linear0dB: 'Linear',
+        const3Db: '-3 dB',
+        'const4.5Db': '-4.5 dB',
+        const6Db: '-6 dB',
+        linear0Db: 'Linear',
       },
       panMode: 'Pan mode',
       panModes: {
@@ -649,7 +649,7 @@ export const shellMixing = {
       advanced: 'Advanced overrides',
       remove: 'Remove override',
       invalidValue: 'Enter a value within the supported range.',
-      unknownValue: 'Saved by an older version or another tool.',
+      unknownValue: 'No dedicated control for this value.',
     },
     reference: {
       title: 'Reference comparison',

@@ -127,7 +127,6 @@ export {
   setMasteringEnabled,
   setMasteringParam,
   setMasteringPreset,
-  setMasteringPresetOverride,
 } from './command/mastering';
 export type {
   TranscribeAudioClipToMidiOptions,

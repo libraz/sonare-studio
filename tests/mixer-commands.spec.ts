@@ -286,14 +286,14 @@ describe('mixer commands', () => {
 
   describe('pan law / mode / dual pan', () => {
     it('sets pan law, clearing the field at the default, undoably', () => {
-      setStripPanLaw(trackId, 'const6dB');
-      expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
+      setStripPanLaw(trackId, 'const6Db');
+      expect(store.tracks[0].mixer?.panLaw).toBe('const6Db');
       // The default clears the field so a neutral strip stays neutral.
-      setStripPanLaw(trackId, 'const3dB');
+      setStripPanLaw(trackId, 'const3Db');
       expect(store.tracks[0].mixer?.panLaw).toBeUndefined();
       undo();
-      expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
-      expect(() => setStripPanLaw(trackId, 'bogus' as 'const3dB')).toThrow(RangeError);
+      expect(store.tracks[0].mixer?.panLaw).toBe('const6Db');
+      expect(() => setStripPanLaw(trackId, 'bogus' as 'const3Db')).toThrow(RangeError);
     });
 
     it('keeps stereo identity when entering dual-pan from an offset pan, undoably', () => {
@@ -322,24 +322,24 @@ describe('mixer commands', () => {
       const busTarget = mixerBusStripTarget(busId);
       const groupId = addGroupTrack({ name: 'Group' });
 
-      setStripPanLaw(busTarget, 'const6dB');
+      setStripPanLaw(busTarget, 'const6Db');
       setStripPanMode(busTarget, 'dualPan');
       setStripDualPan(busTarget, -1, 0.75);
-      setStripPanLaw(groupId, 'linear0dB');
+      setStripPanLaw(groupId, 'linear0Db');
       setStripPanMode(groupId, 'stereoPan');
       setStripDualPan(groupId, -0.5, 0.5);
 
       expect(store.mixer.buses[0].strip).toMatchObject({
-        panLaw: 'const6dB',
+        panLaw: 'const6Db',
         panMode: 'dualPan',
         dualPan: { left: -1, right: 0.75 },
       });
       expect(store.tracks.find((track) => track.id === groupId)?.mixer).toMatchObject({
-        panLaw: 'linear0dB',
+        panLaw: 'linear0Db',
         panMode: 'stereoPan',
         dualPan: { left: -0.5, right: 0.5 },
       });
-      expect(() => setStripPanLaw('master', 'const6dB')).toThrow(RangeError);
+      expect(() => setStripPanLaw('master', 'const6Db')).toThrow(RangeError);
       expect(() => setStripPanMode('master', 'stereoPan')).toThrow(RangeError);
       expect(() => setStripDualPan('master', -1, 1)).toThrow(RangeError);
     });
@@ -351,7 +351,7 @@ describe('mixer commands', () => {
 
       expect(() => setStripPan(target, 0.25)).toThrow(/Surround mixer buses/);
       expect(() => setStripWidth(target, 0.5)).toThrow(/Surround mixer buses/);
-      expect(() => setStripPanLaw(target, 'const6dB')).toThrow(/Surround mixer buses/);
+      expect(() => setStripPanLaw(target, 'const6Db')).toThrow(/Surround mixer buses/);
       expect(() => setStripPanMode(target, 'stereoPan')).toThrow(/Surround mixer buses/);
       expect(() => setStripDualPan(target, -0.5, 0.5)).toThrow(/Surround mixer buses/);
       expect(store.mixer.buses[0].strip).toBeUndefined();
@@ -436,7 +436,7 @@ describe('mixer commands', () => {
     it('sets and clears the EQ undoably', () => {
       setStripEq(trackId, {
         enabled: true,
-        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+        bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }],
       });
       expect(store.tracks[0].mixer?.eq?.bands).toHaveLength(1);
       setStripEq(trackId, null);
@@ -448,7 +448,7 @@ describe('mixer commands', () => {
     });
 
     it('re-applying an identical EQ adds no undo step', () => {
-      const eq = { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }] };
+      const eq = { enabled: true, bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }] };
       setStripEq(trackId, eq);
       expect(canUndo()).toBe(true);
       undo();
@@ -457,7 +457,7 @@ describe('mixer commands', () => {
       setStripEq(trackId, eq);
       setStripEq(trackId, {
         enabled: true,
-        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+        bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }],
       });
       undo();
       expect(store.tracks[0].mixer?.eq).toBeUndefined();
@@ -476,11 +476,11 @@ describe('mixer commands', () => {
 
       setStripEq(target, {
         enabled: true,
-        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+        bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }],
       });
       expect(store.mixer.buses[0].strip?.eq).toEqual({
         enabled: true,
-        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3 }],
+        bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }],
       });
       undo();
       expect(store.mixer.buses[0].strip?.eq).toBeUndefined();
@@ -1548,21 +1548,21 @@ describe('mixer commands', () => {
               pan: 0.1,
               eq: {
                 enabled: true,
-                bands: [{ type: 'Peak', frequencyHz: 700, gainDb: -1.5 }],
+                bands: [{ type: 'peak', frequencyHz: 700, gainDb: -1.5 }],
               },
             },
             {
               id: 'room',
               role: 'aux',
               pan: -0.35,
-              panMode: 2,
+              panMode: 'dualPan',
               dualPanLeft: -1,
               dualPanRight: 0.6,
-              panLaw: 2,
+              panLaw: 'const6Db',
               inputTrimDb: -3,
               eq: {
                 enabled: true,
-                bands: [{ type: 'Peak', frequencyHz: 1200, gainDb: 2 }],
+                bands: [{ type: 'peak', frequencyHz: 1200, gainDb: 2 }],
               },
               inserts: [{ processor: 'dynamics.compressor', params: { thresholdDb: -18 } }],
             },
@@ -1577,15 +1577,15 @@ describe('mixer commands', () => {
         pan: -0.35,
         panMode: 'dualPan',
         dualPan: { left: -1, right: 0.6 },
-        panLaw: 'const6dB',
+        panLaw: 'const6Db',
         inputTrimDb: -3,
-        eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1200, gainDb: 2 }] },
+        eq: { enabled: true, bands: [{ type: 'peak', frequencyHz: 1200, gainDb: 2 }] },
         inserts: [{ processor: 'dynamics.compressor' }],
       });
       expect(store.mixer.master).toMatchObject({
         inputTrimDb: -2,
         pan: 0.1,
-        eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 700, gainDb: -1.5 }] },
+        eq: { enabled: true, bands: [{ type: 'peak', frequencyHz: 700, gainDb: -1.5 }] },
       });
     });
 
@@ -1598,7 +1598,7 @@ describe('mixer commands', () => {
               {
                 id: 'room',
                 role: 'aux',
-                eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 900, gainDb: 2 }] },
+                eq: { enabled: true, bands: [{ type: 'peak', frequencyHz: 900, gainDb: 2 }] },
                 inserts: [],
               },
             ],
@@ -1716,10 +1716,8 @@ describe('mixer commands', () => {
               sourceLayout: '5.1',
               surroundPan: {
                 azimuth: 30,
-                elevation: 2,
                 divergence: 0.25,
                 lfe: 0.1,
-                distance: 0.8,
               },
             },
           ],
@@ -1738,10 +1736,8 @@ describe('mixer commands', () => {
       expect(store.tracks[0].mixer?.sourceLayout).toBe('5.1');
       expect(store.tracks[0].mixer?.surroundPan).toEqual({
         azimuth: 30,
-        elevation: 2,
         divergence: 0.25,
         lfe: 0.1,
-        distance: 0.8,
       });
     });
 
@@ -1802,7 +1798,7 @@ describe('mixer commands', () => {
           strips: [
             {
               id: 'room-return',
-              sends: [{ destinationBusId: 'print', sendDb: -8, timing: 'pre' }],
+              sends: [{ destinationBusId: 'print', sendDb: -8, timing: 'preFader' }],
             },
           ],
           buses: [

@@ -7,53 +7,35 @@
  */
 
 import { SILENCE_DB } from '@/lib/db';
-import { type AutomationCurve, automationCurveCode } from '@/project/automation';
-import {
-  clampPan,
-  DEFAULT_PAN_LAW,
-  DEFAULT_PAN_MODE,
-  type MixerStrip,
-  type PanLawId,
-  type PanModeId,
-} from '@/project/mixer';
-import type { EqBand } from '@/wasm/index.js';
+import type { AutomationCurve } from '@/project/automation';
+import { clampPan, DEFAULT_PAN_LAW, DEFAULT_PAN_MODE, type MixerStrip } from '@/project/mixer';
+import type { EngineAutomationPoint, EqBandInput, PanLaw, PanMode } from '@/wasm/index.js';
 
-/** Raw libsonare ordinals for the project-facing pan law names. */
-const ENGINE_PAN_LAW_CODES: Readonly<Record<PanLawId, number>> = {
-  const3dB: 0,
-  'const4.5dB': 1,
-  const6dB: 2,
-  linear0dB: 3,
-};
-
-/** Raw libsonare ordinals for the project-facing pan mode names. */
-const ENGINE_PAN_MODE_CODES: Readonly<Record<PanModeId, number>> = {
-  balance: 0,
-  stereoPan: 1,
-  dualPan: 2,
-};
-
-/** Bus panner state in the numeric shape accepted by scene JSON and setters. */
+/** Bus panner state in the shape accepted by the engine's scene and setters. */
 export interface EngineBusPanState {
   pan: number;
-  panLaw: number;
-  panMode: number;
+  panLaw: PanLaw;
+  panMode: PanMode;
   dualPanLeft: number;
   dualPanRight: number;
 }
+
+/** Pan law and mode of a strip with no panner state. */
+export const ENGINE_DEFAULT_PAN_LAW: PanLaw = DEFAULT_PAN_LAW;
+export const ENGINE_DEFAULT_PAN_MODE: PanMode = DEFAULT_PAN_MODE;
 
 function finitePan(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? clampPan(value) : fallback;
 }
 
-/** Converts one app strip's optional panner fields to libsonare defaults/codes. */
+/** Fills one app strip's optional panner fields with the engine defaults. */
 export function engineBusPanState(strip: MixerStrip | undefined): EngineBusPanState {
   const panLaw = strip?.panLaw ?? DEFAULT_PAN_LAW;
   const panMode = strip?.panMode ?? DEFAULT_PAN_MODE;
   return {
     pan: finitePan(strip?.pan, 0),
-    panLaw: ENGINE_PAN_LAW_CODES[panLaw] ?? ENGINE_PAN_LAW_CODES[DEFAULT_PAN_LAW],
-    panMode: ENGINE_PAN_MODE_CODES[panMode] ?? ENGINE_PAN_MODE_CODES[DEFAULT_PAN_MODE],
+    panLaw,
+    panMode,
     dualPanLeft: finitePan(strip?.dualPan?.left, -1),
     dualPanRight: finitePan(strip?.dualPan?.right, 1),
   };
@@ -64,8 +46,8 @@ export function engineBusPanHasDsp(strip: MixerStrip | undefined): boolean {
   const state = engineBusPanState(strip);
   return (
     state.pan !== 0 ||
-    state.panLaw !== ENGINE_PAN_LAW_CODES[DEFAULT_PAN_LAW] ||
-    state.panMode !== ENGINE_PAN_MODE_CODES[DEFAULT_PAN_MODE] ||
+    state.panLaw !== ENGINE_DEFAULT_PAN_LAW ||
+    state.panMode !== ENGINE_DEFAULT_PAN_MODE ||
     state.dualPanLeft !== -1 ||
     state.dualPanRight !== 1
   );
@@ -75,18 +57,11 @@ export function engineBusPanHasDsp(strip: MixerStrip | undefined): boolean {
 export function engineMasterPannerHasDsp(strip: MixerStrip | undefined): boolean {
   const state = engineBusPanState(strip);
   return (
-    state.panLaw !== ENGINE_PAN_LAW_CODES[DEFAULT_PAN_LAW] ||
-    state.panMode !== ENGINE_PAN_MODE_CODES[DEFAULT_PAN_MODE] ||
+    state.panLaw !== ENGINE_DEFAULT_PAN_LAW ||
+    state.panMode !== ENGINE_DEFAULT_PAN_MODE ||
     state.dualPanLeft !== -1 ||
     state.dualPanRight !== 1
   );
-}
-
-/** One finite automation point in the shape accepted by the engine. */
-export interface EngineAutomationPoint {
-  ppq: number;
-  value: number;
-  curveToNext: number;
 }
 
 /** Keeps only finite automation points and encodes their curve id. */
@@ -98,7 +73,7 @@ export function engineAutomationPoints(
     .map((point) => ({
       ppq: point.ppq,
       value: point.value,
-      curveToNext: automationCurveCode(point.curve),
+      curveToNext: point.curve ?? 'linear',
     }));
 }
 
@@ -129,7 +104,7 @@ export function engineFaderAutomationPoints(
 }
 
 /** EQ bands that should be declared to the engine for a strip. */
-export function engineEqBands(strip: MixerStrip | undefined): EqBand[] {
+export function engineEqBands(strip: MixerStrip | undefined): EqBandInput[] {
   return strip?.eq?.enabled ? strip.eq.bands : [];
 }
 

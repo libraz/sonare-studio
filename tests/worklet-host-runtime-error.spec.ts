@@ -51,20 +51,20 @@ afterEach(() => {
 
 const binders = {
   'voice changer': () =>
-    bindRealtimeVoiceChangerInput(ctx, engineNode, { stream, stopTracksOnClose: false }),
+    bindRealtimeVoiceChangerInput(ctx, engineNode, { stream, stopTracksOnDestroy: false }),
   'streaming retune': () =>
-    bindStreamingRetuneInput(ctx, engineNode, { stream, stopTracksOnClose: false }),
+    bindStreamingRetuneInput(ctx, engineNode, { stream, stopTracksOnDestroy: false }),
   'voice changer into retune': () =>
     bindRealtimeVoiceChangerRetuneInput(ctx, engineNode, {
       stream,
-      stopTracksOnClose: false,
+      stopTracksOnDestroy: false,
       semitones: 3,
     }),
 };
 
 describe('input worklet hosts', () => {
   it.each(Object.entries(binders))(
-    '%s re-dispatches a runtimeError as processorerror until closed',
+    '%s re-dispatches a runtimeError as processorerror until destroyed',
     async (_name, bind) => {
       const binding = await bind();
       const errorEvent = (message: string) =>
@@ -78,7 +78,7 @@ describe('input worklet hosts', () => {
         return onError;
       });
 
-      binding.close();
+      binding.destroy();
       for (const node of FakeAudioWorkletNode.instances)
         node.port.dispatchEvent(errorEvent('late'));
       for (const onError of listeners) expect(onError).toHaveBeenCalledTimes(1);

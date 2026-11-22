@@ -19,9 +19,7 @@ describe('vendored engine integration contracts', () => {
         isMidi,
         startPpq: 0,
         lengthPpq: 4,
-        ...(isMidi
-          ? {}
-          : { audio: new Float32Array(8), audioSampleRate: 48_000, audioChannels: 1 }),
+        ...(isMidi ? {} : { channels: [new Float32Array(8)], sampleRate: 48_000 }),
       });
       const after = project.toJson();
       expect(after).not.toBe(before);
@@ -30,7 +28,7 @@ describe('vendored engine integration contracts', () => {
       project.redo();
       expect(project.toJson()).toBe(after);
     } finally {
-      project.delete();
+      project.destroy();
     }
   });
 

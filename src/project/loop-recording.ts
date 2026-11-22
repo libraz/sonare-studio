@@ -9,6 +9,7 @@
  */
 
 import { computed, type Ref, ref } from 'vue';
+import type { ProjectLoopRecordingDesc } from '@/wasm/index.js';
 import { countInStartPpq, measureRangeAt } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 
@@ -28,14 +29,8 @@ export interface LoopRecordingTakeSlice {
   channels: Float32Array[];
 }
 
-export interface NativeLoopRecordingDesc {
-  trackId: number;
-  startPpq: number;
-  loopLengthPpq: number;
-  audio: Float32Array;
-  audioChannels: number;
-  audioSampleRate: number;
-}
+/** The planar form of the core's loop-recording descriptor. */
+export type NativeLoopRecordingDesc = Extract<ProjectLoopRecordingDesc, { audio: Float32Array[] }>;
 
 /** The caller that is allowed to mutate transport state for a recording take. */
 export type RecordingTransportOwner = 'audio' | 'midi' | 'shared';
@@ -364,7 +359,7 @@ export function loopRecordingTakeSlices(
 }
 
 /**
- * Builds the PCM descriptor accepted by libsonare's Project.addLoopRecordingTakes.
+ * Builds the planar PCM descriptor accepted by libsonare's Project.addLoopRecordingTakes.
  *
  * Studio's live recording path still ingests every take into OPFS assets before
  * creating app clips, so this is an adapter/contract helper rather than the
@@ -395,18 +390,11 @@ export function nativeLoopRecordingDesc(
   if (frameCount <= 0) return null;
   const validChannels = channels.filter((channel) => channel.length >= frameCount);
   if (validChannels.length === 0) return null;
-  const audio = new Float32Array(frameCount * validChannels.length);
-  for (let frame = 0; frame < frameCount; frame++) {
-    for (let channel = 0; channel < validChannels.length; channel++) {
-      audio[frame * validChannels.length + channel] = validChannels[channel][frame];
-    }
-  }
   return {
     trackId,
     startPpq,
     loopLengthPpq,
-    audio,
-    audioChannels: validChannels.length,
+    audio: validChannels.map((channel) => channel.subarray(0, frameCount)),
     audioSampleRate: sampleRate,
   };
 }

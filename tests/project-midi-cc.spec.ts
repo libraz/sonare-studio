@@ -21,8 +21,8 @@ describe('clip expression points', () => {
       { ppq: 2, value: 64 },
     ]);
 
-    expect(sanitizePressurePoints([{ ppq: 0, value: 32, curve: 's-curve' }], 1)).toEqual([
-      { ppq: 0, value: 32, curve: 's-curve' },
+    expect(sanitizePressurePoints([{ ppq: 0, value: 32, curve: 'sCurve' }], 1)).toEqual([
+      { ppq: 0, value: 32, curve: 'sCurve' },
     ]);
   });
 

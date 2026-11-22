@@ -25,9 +25,9 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 /** Returns the fake project's event list for the store's clip, via toJson. */
-function clipEvents(clipId: number): Array<{ ppq: number; data0: number; data1: number }> {
+function clipEvents(clipId: number): Array<{ ppq: number; word0: number; word1: number }> {
   const doc = JSON.parse(getProject().toJson());
-  return doc.midi_content[String(clipId)] ?? [];
+  return doc.midiContent[String(clipId)] ?? [];
 }
 
 describe('project store', () => {
@@ -71,8 +71,8 @@ describe('project store', () => {
     project.undo();
     project.undo();
 
-    expect(JSON.parse(project.toJson()).tempo_segments).toEqual([
-      { start_ppq: 0, bpm: 100, end_bpm: 0, start_sample: 0 },
+    expect(JSON.parse(project.toJson()).tempoSegments).toEqual([
+      { startPpq: 0, bpm: 100, endBpm: 0, startSample: 0 },
     ]);
   });
 
@@ -86,7 +86,7 @@ describe('project store', () => {
     expect(getProject()).toBe(project);
     expect(undo()).toBe(true);
     expect(project.toJson()).toBe(nativeBefore);
-    expect(JSON.parse(nativeBefore).sample_rate).toBe(48000);
+    expect(JSON.parse(nativeBefore).sampleRate).toBe(48000);
   });
 
   it('addNote writes a note-on/note-off pair through to the Project', () => {
@@ -180,10 +180,10 @@ describe('project store', () => {
   it('refresh round-trips events written directly to the Project', async () => {
     const wasm = await ensureWasm();
     getProject().setMidiEvents(store.clipId, [
-      wasm.Project.midiNoteOn(1, 0, 2, 64, 100),
-      wasm.Project.midiNoteOff(2.5, 0, 2, 64, 30),
-      wasm.Project.midiNoteOn(0, 0, 0, 60, 80),
-      wasm.Project.midiNoteOff(1, 0, 0, 60),
+      wasm.midiNoteOn({ ppq: 1, group: 0, channel: 2, note: 64, velocity: 100 }),
+      wasm.midiNoteOff({ ppq: 2.5, group: 0, channel: 2, note: 64, velocity: 30 }),
+      wasm.midiNoteOn({ ppq: 0, group: 0, channel: 0, note: 60, velocity: 80 }),
+      wasm.midiNoteOff({ ppq: 1, group: 0, channel: 0, note: 60 }),
     ]);
     store.refresh();
     expect(store.notes).toHaveLength(2);

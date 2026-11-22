@@ -509,7 +509,7 @@ describe('useAppShortcutsMenu', () => {
       ['96 kHz', false],
     ]);
     rateItems()[0].run?.();
-    expect(getProject().getSampleRate()).toBe(44100);
+    expect(getProject().sampleRate).toBe(44100);
     expect(rateItems().find((entry) => entry.checked)?.label).toBe('44.1 kHz');
 
     // A loaded document's non-standard rate is listed so it stays visible.

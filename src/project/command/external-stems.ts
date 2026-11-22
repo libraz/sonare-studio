@@ -85,7 +85,7 @@ export async function importExternalStems(
       saved.push({ stem, meta });
     }
 
-    const sourceCount = project.sourceCount();
+    const sourceCount = project.sources().length;
     const plans = saved.map(({ stem, meta }) => {
       const known = getAudioSourceId(meta.id);
       const sourceId =
@@ -126,12 +126,18 @@ export async function importExternalStems(
             ...(sourceId === undefined ? { sourceUri: audioAssetUri(meta.id) } : {}),
           }),
         );
-        const clipSourceId = sourceId ?? project.sourceCount();
+        const clipSourceId = sourceId ?? project.sources().length;
         if (sourceId === undefined) setAudioSourceId(meta.id, clipSourceId);
         else edit(1, () => project.setClipSource(newClipId, sourceId));
         // The asset id is the audio's deterministic content hash, so it is what
         // the source's owning content hash records.
-        edit(1, () => project.setAudioSourceMetadata(clipSourceId, meta.id, stem.role));
+        edit(1, () =>
+          project.setAudioSourceMetadata({
+            sourceId: clipSourceId,
+            contentHash: meta.id,
+            externalStemRole: stem.role,
+          }),
+        );
         store.clips = [
           ...store.clips,
           {

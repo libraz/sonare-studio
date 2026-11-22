@@ -50,72 +50,72 @@ const PRESET_GM_PROGRAM: Readonly<Record<string, number>> = {
   saw: 81,
   square: 80,
   triangle: 81,
-  'saw-lead': 81,
-  'square-lead': 80,
-  'sub-bass': 38,
-  'warm-pad': 89,
-  'e-piano': 4,
+  sawLead: 81,
+  squareLead: 80,
+  subBass: 38,
+  warmPad: 89,
+  ePiano: 4,
   bell: 14,
   brass: 56,
   pluck: 104,
-  'classical-guitar': 24,
-  'steel-guitar': 25,
-  'electric-guitar': 26,
+  classicalGuitar: 24,
+  steelGuitar: 25,
+  electricGuitar: 26,
   harp: 46,
   harpsichord: 6,
-  'bass-acoustic': 32,
-  'bass-fingered': 33,
-  'bass-picked': 34,
-  'bass-fretless': 35,
-  'bass-slap': 36,
+  bassAcoustic: 32,
+  bassFingered: 33,
+  bassPicked: 34,
+  bassFretless: 35,
+  bassSlap: 36,
   marimba: 12,
   glass: 9,
   organ: 16,
-  'drum-kit': 0,
-  'acoustic-piano': 0,
-  'church-organ': 19,
-  'church-flute': 19,
-  'church-bourdon': 19,
-  'church-trumpet': 19,
+  drumKit: 0,
+  acousticPiano: 0,
+  churchOrgan: 19,
+  churchFlute: 19,
+  churchBourdon: 19,
+  churchTrumpet: 19,
   violin: 40,
   viola: 41,
   cello: 42,
   contrabass: 43,
   clarinet: 71,
-  'soprano-sax': 64,
-  'alto-sax': 65,
-  'tenor-sax': 66,
-  'baritone-sax': 67,
+  sopranoSax: 64,
+  altoSax: 65,
+  tenorSax: 66,
+  baritoneSax: 67,
   oboe: 68,
-  'english-horn': 69,
+  englishHorn: 69,
   bassoon: 70,
   trumpet: 56,
   trombone: 57,
   tuba: 58,
-  'french-horn': 60,
-  'muted-trumpet': 59,
+  frenchHorn: 60,
+  mutedTrumpet: 59,
   cornet: 56,
   flugelhorn: 56,
   euphonium: 57,
-  'concert-flute': 73,
+  concertFlute: 73,
   piccolo: 72,
   recorder: 74,
-  'pan-flute': 75,
+  panFlute: 75,
   shakuhachi: 77,
-  'tin-whistle': 78,
+  tinWhistle: 78,
   ocarina: 79,
-  'blown-bottle': 76,
-  'harp-plucked': 46,
+  blownBottle: 76,
+  harpPlucked: 46,
   koto: 107,
   sitar: 104,
   tanpura: 104,
-  'choir-aah': 52,
-  'choir-ooh': 53,
-  'voice-eeh': 54,
+  choirAah: 52,
+  choirOoh: 53,
+  voiceEeh: 54,
   accordion: 21,
   harmonica: 22,
   bandoneon: 23,
-  'reed-organ': 20,
+  reedOrgan: 20,
 };
 
 /** Instrument variant: an editable NativeSynth patch (possibly preset-based). */
@@ -205,7 +205,7 @@ export type TrackInstrument =
   | ExternalMidiInstrument;
 
 /** Preset rendered when a track carries no explicit instrument. */
-export const DEFAULT_SYNTH_PRESET = 'acoustic-piano';
+export const DEFAULT_SYNTH_PRESET = 'acousticPiano';
 
 /** Builds the default instrument (the {@link DEFAULT_SYNTH_PRESET} synth preset). */
 export function defaultTrackInstrument(): SynthPresetInstrument {
@@ -372,19 +372,13 @@ export function cloneInstrument(instrument: TrackInstrument): TrackInstrument {
 }
 
 /**
- * Deep-copies a persisted instrument, rewriting retired enum spellings to the
- * names the engine catalog reports so editor selects find their option.
+ * Deep-copies a persisted instrument.
  *
  * @param instrument Instrument read from a document or track preset.
  * @returns A fresh instrument in current spelling.
  */
 export function loadInstrument(instrument: TrackInstrument): TrackInstrument {
-  const out = cloneInstrument(instrument);
-  // The engine still accepts 'moog-ladder' but reports 'transistor-ladder'.
-  if (out.kind === 'synth-patch' && (out.patch.filterModel as string) === 'moog-ladder') {
-    out.patch.filterModel = 'transistor-ladder';
-  }
-  return out;
+  return cloneInstrument(instrument);
 }
 
 /** Structural equality on instruments (field order insensitive). */

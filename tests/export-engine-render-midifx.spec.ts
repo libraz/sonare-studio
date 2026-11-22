@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OfflineRenderEngine } from '@/export/engine-render';
 import { renderProjectWithEngine } from '@/export/engine-render';
-import { DEFAULT_MIDI_FX_CONFIG, midiFxConfigJson } from '@/project/midi-fx';
+import { DEFAULT_MIDI_FX_CONFIG, midiFxConfig } from '@/project/midi-fx';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
 
 /**
@@ -76,14 +76,14 @@ describe('renderProjectWithEngine MIDI-FX parity', () => {
   it('installs a track live MIDI-FX insert before scheduling its MIDI', async () => {
     const doc = makeMidiDoc();
     doc.tracks[0].midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
-    const expectedJson = midiFxConfigJson(doc.tracks[0].midiFx);
+    const expectedConfig = midiFxConfig(doc.tracks[0].midiFx);
     const { engine, named, calls } = makeRecordingEngine();
 
     await renderProjectWithEngine(doc, { deps: null, createEngine: () => engine });
 
     const midiFxCalls = named('setMidiFx');
     expect(midiFxCalls).toHaveLength(1);
-    expect(midiFxCalls[0][2]).toBe(expectedJson);
+    expect(midiFxCalls[0][2]).toEqual(expectedConfig);
     // The insert is installed after the destination's instrument and before the
     // clips it transforms, matching the live midi-sync order.
     const names = calls.map(([n]) => n);

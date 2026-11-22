@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createInsertPdcPlan,
+  type InsertTimingQuery,
   insertChainLatencySamples,
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
@@ -31,18 +32,18 @@ describe('insert latency helpers', () => {
   });
 
   it('asks the engine with only the keys read while the insert is built', () => {
-    const timing = vi.fn((_processor: string, params: Record<string, number | boolean>) => ({
-      latencySamples: typeof params.lookaheadMs === 'number' ? params.lookaheadMs * 48 : 48,
-    }));
+    const timing = vi.fn<InsertTimingQuery>((request) => {
+      const params: Record<string, unknown> = request.params ?? {};
+      return {
+        latencySamples: typeof params.lookaheadMs === 'number' ? params.lookaheadMs * 48 : 48,
+      };
+    });
     const resolve = insertLatencyResolverFromCatalog(
       [
         {
           id: 'dynamics.limiter',
           latencySamples: 48,
-          params: [
-            { name: 'releaseMs', id: 1 },
-            { name: 'lookaheadMs', id: null },
-          ],
+          params: [{ name: 'releaseMs', id: 1 }, { name: 'lookaheadMs' }],
         },
       ],
       48000,
@@ -52,7 +53,11 @@ describe('insert latency helpers', () => {
     expect(
       resolve({ processor: 'dynamics.limiter', params: { lookaheadMs: 5, releaseMs: 80 } }),
     ).toBe(240);
-    expect(timing).toHaveBeenLastCalledWith('dynamics.limiter', { lookaheadMs: 5 }, 48000);
+    expect(timing).toHaveBeenLastCalledWith({
+      insert: 'dynamics.limiter',
+      params: { lookaheadMs: 5 },
+      sampleRate: 48000,
+    });
     // A live-patched key cannot move the latency, so the answer is reused.
     expect(
       resolve({ processor: 'dynamics.limiter', params: { lookaheadMs: 5, releaseMs: 200 } }),
@@ -63,7 +68,7 @@ describe('insert latency helpers', () => {
 
   it('falls back to the catalog latency when the engine refuses a configuration', () => {
     const resolve = insertLatencyResolverFromCatalog(
-      [{ id: 'eq.linearPhase', latencySamples: 256, params: [{ name: 'kernelSize', id: null }] }],
+      [{ id: 'eq.linearPhase', latencySamples: 256, params: [{ name: 'kernelSize' }] }],
       48000,
       () => {
         throw new Error('refused');

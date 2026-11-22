@@ -1,92 +1,66 @@
 import { describe, expect, it } from 'vitest';
-import { parseMasteringSuggestion, suggestedPresetOverrides } from '@/ui/mastering/assistant';
+import { suggestedAdjustments, suggestedPresetOverrides } from '@/ui/mastering/assistant';
+import {
+  deleteChainPath,
+  flattenChainConfig,
+  getChainPath,
+  isEmptyChainConfig,
+  setChainPath,
+} from '@/ui/mastering/chain-config-path';
+import type { MasteringChainConfig } from '@/wasm/index.js';
 
-/** A representative assistant JSON payload (subset of real fields). */
-const SAMPLE = JSON.stringify({
-  chainConfig: { version: 1, params: { limiterCeilingDb: -1 } },
-  explanation: ['Loud, dense master', 'Bright spectral balance'],
-  profile: {
-    durationSec: 12.5,
-    bpm: 128,
-    bpmConfidence: 0.9,
-    integratedLufs: -8.2,
-    lraLu: 4.1,
-    truePeakDb: -0.3,
-    crestFactorDb: 7.5,
-    spectralCentroidHz: 3200,
-    spectralFlatness: 0.18,
-    attackDensity: 0.6,
-    sustainRatio: 0.4,
-  },
-});
-
-describe('parseMasteringSuggestion', () => {
-  it('extracts chain tuning, explanation and profile', () => {
-    const result = parseMasteringSuggestion(SAMPLE);
-    expect(result.explanation).toEqual(['Loud, dense master', 'Bright spectral balance']);
-    expect(result.profile).toEqual({
-      durationSec: 12.5,
-      bpm: 128,
-      bpmConfidence: 0.9,
-      integratedLufs: -8.2,
-      lraLu: 4.1,
-      truePeakDb: -0.3,
-      crestFactorDb: 7.5,
-      spectralCentroidHz: 3200,
-      spectralFlatness: 0.18,
-      attackDensity: 0.6,
-      sustainRatio: 0.4,
-    });
-    expect(result.chainParams).toEqual({ limiterCeilingDb: -1 });
-    expect(result).not.toHaveProperty('genreCandidates');
-  });
-
-  it('returns an empty suggestion for unparseable or non-object input', () => {
-    const empty = { explanation: [], profile: null, chainParams: null };
-    expect(parseMasteringSuggestion('not json')).toEqual(empty);
-    expect(parseMasteringSuggestion('42')).toEqual(empty);
-    expect(parseMasteringSuggestion('null')).toEqual(empty);
-  });
-
-  it('tolerates missing fields and drops malformed chain values', () => {
-    const result = parseMasteringSuggestion(
-      JSON.stringify({
-        chainConfig: { params: { enabled: true, gain: 1.5, invalid: 'nope' } },
-        explanation: ['ok', 5, null], // non-strings dropped
-      }),
-    );
-    expect(result.chainParams).toEqual({ enabled: true, gain: 1.5 });
-    expect(result.explanation).toEqual(['ok']);
-    expect(result.profile).toBeNull();
-  });
-
-  it('coerces non-finite and missing profile numbers to 0', () => {
-    const result = parseMasteringSuggestion(
-      JSON.stringify({ profile: { bpm: 'x', integratedLufs: -9 } }),
-    );
-    expect(result.profile?.bpm).toBe(0);
-    expect(result.profile?.integratedLufs).toBe(-9);
-    expect(result.profile?.truePeakDb).toBe(0);
-  });
-});
+const SUGGESTED: MasteringChainConfig = {
+  loudness: { targetLufs: -14, ceilingDbtp: -1 },
+  eq: { tilt: { enabled: true } },
+  dynamics: { compressor: { ratio: 2.0000001 } },
+};
+const PRESET: MasteringChainConfig = {
+  loudness: { targetLufs: -12, ceilingDbtp: -1 },
+  eq: { tilt: { enabled: false } },
+  dynamics: { compressor: { ratio: 2 } },
+};
 
 describe('suggestedPresetOverrides', () => {
-  it('keeps only the keys where the suggestion departs from the preset', () => {
-    expect(
-      suggestedPresetOverrides(
-        {
-          'loudness.targetLufs': -14,
-          'loudness.ceilingDb': -1,
-          'eq.tilt.enabled': true,
-          'dynamics.compressor.ratio': 2.0000001,
-        },
-        {
-          'loudness.targetLufs': -12,
-          'loudness.ceilingDb': -1,
-          'eq.tilt.enabled': false,
-          'dynamics.compressor.ratio': 2,
-        },
-      ),
-    ).toEqual({ 'loudness.targetLufs': -14, 'eq.tilt.enabled': true });
+  it('keeps only the fields where the suggestion departs from the preset', () => {
+    expect(suggestedPresetOverrides(SUGGESTED, PRESET)).toEqual({
+      loudness: { targetLufs: -14 },
+      eq: { tilt: { enabled: true } },
+    });
+  });
+
+  it('lists each adjustment with the preset value it replaces', () => {
+    expect(suggestedAdjustments(SUGGESTED, PRESET)).toEqual([
+      { key: 'loudness.targetLufs', from: -12, to: -14 },
+      { key: 'eq.tilt.enabled', from: false, to: true },
+    ]);
+  });
+
+  it('treats a field the preset leaves unset as an adjustment', () => {
+    expect(suggestedAdjustments({ loudness: { enabled: true } }, {})).toEqual([
+      { key: 'loudness.enabled', from: undefined, to: true },
+    ]);
+  });
+});
+
+describe('chain config paths', () => {
+  const config: MasteringChainConfig = { loudness: { targetLufs: -14, enabled: true } };
+
+  it('reads, sets and deletes by dotted path without mutating the input', () => {
+    expect(getChainPath(config, 'loudness.targetLufs')).toBe(-14);
+    expect(getChainPath(config, 'repair.denoise.enabled')).toBeUndefined();
+    const set = setChainPath(config, 'repair.denoise.reductionDb', 30);
+    expect(set).toEqual({ ...config, repair: { denoise: { reductionDb: 30 } } });
+    expect(config).toEqual({ loudness: { targetLufs: -14, enabled: true } });
+    expect(deleteChainPath(set, 'repair.denoise.reductionDb')).toEqual(config);
+  });
+
+  it('flattens to leaf paths and recognizes an empty config', () => {
+    expect(flattenChainConfig(config)).toEqual([
+      { path: 'loudness.targetLufs', value: -14 },
+      { path: 'loudness.enabled', value: true },
+    ]);
+    expect(isEmptyChainConfig(undefined)).toBe(true);
+    expect(isEmptyChainConfig({ loudness: {} })).toBe(true);
+    expect(isEmptyChainConfig(config)).toBe(false);
   });
 });

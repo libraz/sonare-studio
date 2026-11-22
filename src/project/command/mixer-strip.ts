@@ -1,4 +1,4 @@
-import type { SendTiming } from '@/wasm/index.js';
+import type { PanLaw, SendTiming } from '@/wasm/index.js';
 import {
   assertKnownBusDestination,
   assertNoBusRoutingCycle,
@@ -23,7 +23,6 @@ import {
   normalizeMixerSoloMode,
   PAN_LAW_IDS,
   PAN_MODE_IDS,
-  type PanLawId,
   type PanModeId,
   type StripEq,
   type StripSend,
@@ -406,7 +405,7 @@ export function setStripChannelDelaySamples(
  * @param target Track id or return/group bus target.
  * @param law New pan law (one of {@link PAN_LAW_IDS}).
  */
-export function setStripPanLaw(target: MixerStripTarget, law: PanLawId): void {
+export function setStripPanLaw(target: MixerStripTarget, law: PanLaw): void {
   const store = useProjectStore();
   if (target === 'master') {
     throw new RangeError('Master strip pan law is not supported by the realtime engine');

@@ -69,7 +69,7 @@ describe('track channel presets', () => {
     expect(restored.mixer).toBeUndefined();
   });
 
-  it('reads saved presets in current spelling for retired processor ids and filter models', () => {
+  it('reads version-1 presets in current spelling for retired processor ids and filter models', () => {
     addInsert(sourceId, 'eq.passiveTube');
     setTrackInstrument(sourceId, { kind: 'synth-patch', patch: { filterModel: 'svf' } });
     const saved = JSON.parse(
@@ -77,13 +77,14 @@ describe('track channel presets', () => {
         .replace('"eq.passiveTube"', '"eq.pultec"')
         .replace('"svf"', '"moog-ladder"'),
     );
+    saved.schemaVersion = 1;
 
     const preset = normalizeTrackChannelPreset(saved);
 
     expect(preset.strip.inserts[0].processor).toBe('eq.passiveTube');
     expect(preset.instrument).toEqual({
       kind: 'synth-patch',
-      patch: { filterModel: 'transistor-ladder' },
+      patch: { filterModel: 'transistorLadder' },
     });
   });
 

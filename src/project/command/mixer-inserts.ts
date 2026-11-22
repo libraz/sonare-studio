@@ -8,6 +8,7 @@ import {
   cloneStrip,
   createProcessorId,
   type InsertSlot,
+  isSoloProcessor,
   type MixerSidechainSource,
 } from '../mixer';
 import { editedProcessorParams } from '../processor-controls';
@@ -84,7 +85,7 @@ function sidechainTopologySources(
 function topologyWithoutInsertSidechain(
   store: ReturnType<typeof useProjectStore>,
   target: MixerStripTarget,
-  previousSlot: InsertSlot,
+  previousSlot: Pick<InsertSlot, 'sidechainSourceBusId' | 'sidechainSourceGroupTrackId'>,
 ) {
   const targetId = sidechainTargetTopologyId(store, target);
   const previousSources = new Set(sidechainTopologySources(previousSlot));
@@ -192,15 +193,7 @@ function validateInsertSidechainSource(
         : undefined;
   const targetBusId = sidechainTargetTopologyId(store, target);
   if (sourceBusId === undefined || targetBusId === undefined) return;
-  const nodes = topologyWithoutInsertSidechain(
-    store,
-    target,
-    previousSlot ?? {
-      processor: '',
-      params: {},
-      enabled: true,
-    },
-  );
+  const nodes = topologyWithoutInsertSidechain(store, target, previousSlot ?? {});
   const knownBusIds = new Set(nodes.map((node) => node.id));
   assertKnownBusDestination(sourceBusId, knownBusIds, targetBusId);
   assertNoBusRoutingCycle(nodes, sourceBusId, targetBusId);
@@ -239,6 +232,7 @@ export function addInsert(
   if (typeof processor !== 'string' || processor.length === 0) {
     throw new RangeError('Insert processor name must not be empty');
   }
+  if (!isSoloProcessor(processor)) throw new RangeError(`Unknown insert processor: ${processor}`);
   validateInsertParams(params);
   return executeApp(() => {
     const next = cloneStrip(strip);

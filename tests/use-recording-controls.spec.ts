@@ -195,13 +195,13 @@ describe('useRecordingControls', () => {
     expect(appSettings.set).toHaveBeenCalledWith('midiInputQuantizeDenominator', 16);
     expect(appSettings.settings.midiInputQuantizeDenominator).toBe(16);
 
-    recording.voiceChangerPreset.value = 'bright-idol';
+    recording.voiceChangerPreset.value = 'brightIdol';
     recording.streamingRetuneSemitones.value = 7;
     await nextTick();
 
-    expect(appSettings.set).toHaveBeenCalledWith('recordingVoiceChangerPreset', 'bright-idol');
+    expect(appSettings.set).toHaveBeenCalledWith('recordingVoiceChangerPreset', 'brightIdol');
     expect(appSettings.set).toHaveBeenCalledWith('recordingRetuneSemitones', 7);
-    expect(appSettings.settings.recordingVoiceChangerPreset).toBe('bright-idol');
+    expect(appSettings.settings.recordingVoiceChangerPreset).toBe('brightIdol');
     expect(appSettings.settings.recordingRetuneSemitones).toBe(7);
   });
 

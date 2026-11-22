@@ -396,7 +396,8 @@ function presetCategoryLabel(category: PresetCategory): string {
 
 function refreshPresetCatalog(): void {
   try {
-    const wasm = getWasmModule() as unknown as { synthPresetNames?: () => string[] };
+    const wasm: Partial<Pick<typeof import('@/wasm/index.js'), 'synthPresetNames'>> =
+      getWasmModule();
     presetCatalog.value =
       typeof wasm.synthPresetNames === 'function' ? wasm.synthPresetNames() : [];
   } catch {
@@ -676,16 +677,15 @@ async function loadSf2Manifest(fontId: string, bank: number): Promise<SoundFontM
         const events = Array.from({ length: 128 }, (_, candidateProgram) => {
           const tick = candidateProgram * 2;
           return [
-            ...wasm.Project.midiBankProgram(
-              tick,
-              0,
-              0,
-              (bank >> 7) & 0x7f,
-              bank & 0x7f,
-              candidateProgram,
-            ),
-            wasm.Project.midiNoteOn(tick, 0, 0, 60, 96),
-            wasm.Project.midiNoteOff(tick + 1, 0, 0, 60, 0),
+            ...wasm.midiBankProgram({
+              ppq: tick,
+              group: 0,
+              channel: 0,
+              bank: { msb: (bank >> 7) & 0x7f, lsb: bank & 0x7f },
+              program: candidateProgram,
+            }),
+            wasm.midiNoteOn({ ppq: tick, group: 0, channel: 0, note: 60, velocity: 96 }),
+            wasm.midiNoteOff({ ppq: tick + 1, group: 0, channel: 0, note: 60 }),
           ];
         }).flat();
         project.setMidiEvents(created.clipId, events);
@@ -696,7 +696,7 @@ async function loadSf2Manifest(fontId: string, bank: number): Promise<SoundFontM
         cacheSoundFontManifest(fontId, bank, entries);
         return entries;
       } finally {
-        project.delete();
+        project.destroy();
       }
     } finally {
       sf2ManifestLoads.delete(key);

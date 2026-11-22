@@ -6,6 +6,7 @@ import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
+import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -63,10 +64,11 @@ function makeAssetLoader(sampleRate = 10) {
 /** EngineHandle stub capturing engine.addClip calls. */
 function makeHandle(sampleRate = 10): { handle: EngineHandle; addClip: ReturnType<typeof vi.fn> } {
   const addClip = vi.fn(() => 500);
-  const handle = {
-    ctx: { sampleRate },
-    engine: { addClip, setWarpVoiceCapacity: vi.fn() },
-  } as unknown as EngineHandle;
+  const engine = {
+    addClip,
+    setWarpVoiceCapacity: vi.fn(),
+  } satisfies Pick<SonareEngine, 'addClip' | 'setWarpVoiceCapacity'>;
+  const handle = { ctx: { sampleRate }, engine } as unknown as EngineHandle;
   return { handle, addClip };
 }
 
@@ -107,7 +109,7 @@ describe('scheduleProjectClips with mixer state', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: makeAssetLoader(10) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = (addClip.mock.calls[0][1] as { channels: Float32Array[] }).channels;
     // The insert chain is realtime engine state: the buffer stays unprocessed.
     expect(channels[0][0]).toBeCloseTo(0.5, 6);
     expect(channels[1][0]).toBeCloseTo(0.5, 6);
@@ -122,7 +124,7 @@ describe('scheduleProjectClips with mixer state', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: makeAssetLoader(10) });
-    const opts = addClip.mock.calls[0][3] as { gain: number };
+    const opts = addClip.mock.calls[0][1] as { gain: number };
     expect(opts.gain).toBe(0.8);
   });
 
@@ -132,7 +134,7 @@ describe('scheduleProjectClips with mixer state', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: makeAssetLoader(10) });
-    expect((addClip.mock.calls[0][3] as { gain: number }).gain).toBe(0.8);
+    expect((addClip.mock.calls[0][1] as { gain: number }).gain).toBe(0.8);
   });
 
   it('leaves scheduled audio buffers pan-free (pan is engine lane state)', async () => {
@@ -142,7 +144,7 @@ describe('scheduleProjectClips with mixer state', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: makeAssetLoader(10) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = (addClip.mock.calls[0][1] as { channels: Float32Array[] }).channels;
     expect(channels[0][0]).toBeCloseTo(0.5, 6);
     expect(channels[1][0]).toBeCloseTo(0.5, 6);
   });
@@ -153,7 +155,7 @@ describe('scheduleProjectClips with mixer state', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: makeAssetLoader(10) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = (addClip.mock.calls[0][1] as { channels: Float32Array[] }).channels;
     expect(channels[0][0]).toBeCloseTo(0.5, 6);
     expect(channels[1][0]).toBeCloseTo(0.5, 6);
   });

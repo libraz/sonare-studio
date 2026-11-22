@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AUTOMATION_CURVE_CODES,
   AUTOMATION_INSERT_VALUE_LIMIT,
   type AutomationPoint,
-  automationCurveCode,
   automationLaneKey,
   busAutomationTarget,
   busIdFromAutomationTarget,
@@ -26,26 +24,6 @@ import {
 } from '@/project/automation';
 
 describe('automation model', () => {
-  describe('curve codes', () => {
-    it('maps every curve name to its wire code', () => {
-      expect(AUTOMATION_CURVE_CODES).toEqual({
-        linear: 0,
-        exponential: 1,
-        hold: 2,
-        's-curve': 3,
-      });
-    });
-
-    it('automationCurveCode defaults an absent curve to linear', () => {
-      expect(automationCurveCode()).toBe(0);
-      expect(automationCurveCode(undefined)).toBe(0);
-      expect(automationCurveCode('linear')).toBe(0);
-      expect(automationCurveCode('exponential')).toBe(1);
-      expect(automationCurveCode('hold')).toBe(2);
-      expect(automationCurveCode('s-curve')).toBe(3);
-    });
-  });
-
   describe('clampAutomationValue', () => {
     it('clamps faderDb into [-120, 24]', () => {
       expect(clampAutomationValue('faderDb', -200)).toBe(-120);
@@ -129,11 +107,11 @@ describe('automation model', () => {
 
     it('keeps known curve names and drops unknown ones', () => {
       const points = [
-        { ppq: 0, value: 0, curve: 's-curve' },
+        { ppq: 0, value: 0, curve: 'sCurve' },
         { ppq: 1, value: 0, curve: 'bogus' },
       ] as AutomationPoint[];
       expect(sanitizeAutomationPoints('pan', points)).toEqual([
-        { ppq: 0, value: 0, curve: 's-curve' },
+        { ppq: 0, value: 0, curve: 'sCurve' },
         { ppq: 1, value: 0 },
       ]);
     });
@@ -197,7 +175,7 @@ describe('automation model', () => {
 
     it('applies smoothstep easing on an s-curve segment', () => {
       const points: AutomationPoint[] = [
-        { ppq: 0, value: 0, curve: 's-curve' },
+        { ppq: 0, value: 0, curve: 'sCurve' },
         { ppq: 8, value: 8 },
       ];
       // smoothstep(0.25) = 0.15625, smoothstep(0.5) = 0.5.

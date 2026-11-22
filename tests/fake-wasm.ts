@@ -3,8 +3,8 @@
  * exercise the project store/commands without real wasm.
  *
  * The fake mimics the behaviors the production code depends on:
- * - toJson() emits the real snake_case document shape (tracks, clips,
- *   midi_content, tempo_segments, time_signatures, markers).
+ * - toJson() emits the real camelCase document shape (tracks, clips,
+ *   midiContent, tempoSegments, timeSignatures, markers, annotation).
  * - The undo history granularity matches the real binding: most edits push
  *   one history entry; addClip pushes one atomic transaction (source
  *   registration + clip add), and addMidiClip pushes one transaction for its
@@ -14,15 +14,19 @@
  * - splitClip partitions MIDI events between the halves and tracks source
  *   offsets the way the real Project does.
  * - addClip registers one source per call (inline audio fields or a
- *   by-reference sourceUri are recorded on it); sourceCount() reports the
- *   total and source ids are allocated as 1, 2, 3, ... in registration order.
+ *   by-reference sourceUri are recorded on it); sources() reports them
+ *   and source ids are allocated as 1, 2, 3, ... in registration order.
  */
+
+import { MASTERING_INSERT_NAMES } from '@/wasm/index.js';
 
 interface FakeEvent {
   ppq: number;
-  data0: number;
-  data1: number;
+  word0: number;
+  word1: number;
 }
+
+type ProjectOverlapPolicy = 'disallow' | 'allow';
 
 interface FakeTrack {
   id: number;
@@ -66,16 +70,16 @@ interface FakeMarker {
   key_minor?: boolean;
 }
 
-/** One chord stored in the annotation stream, in the toJson() snake_case shape. */
+/** One chord stored in the annotation stream, in the toJson() shape. */
 interface FakeAnnotationChord {
-  start_ppq: number;
-  end_ppq: number;
-  root_pc: number;
+  startPpq: number;
+  endPpq: number;
+  rootPc: number;
   quality: number;
-  slash_bass_pc: number;
-  roman_numeral: string;
+  slashBassPc: number;
+  romanNumeral: string;
   extensions: number[];
-  modulation_boundary: boolean;
+  modulationBoundary: boolean;
 }
 
 /** One stored assist sidecar, mirroring the wasm `ProjectAssistSidecar`. */
@@ -97,7 +101,7 @@ interface FakeWarpMap {
 /** Complete native-history state, including the allocator cursors. */
 interface FakeState {
   sampleRate: number;
-  overlapPolicy: number;
+  overlapPolicy: ProjectOverlapPolicy;
   tempoSegments: Array<{ startPpq: number; bpm: number; endBpm: number }>;
   timeSignatures: Array<{ startPpq: number; numerator: number; denominator: number }>;
   tracks: FakeTrack[];
@@ -109,6 +113,19 @@ interface FakeState {
   sources: Map<number, FakeSource>;
   assistSidecars: FakeSidecar[];
   warpMaps: Map<number, FakeWarpMap>;
+}
+
+/** The MIDI-FX config fields the fake bake reads, in the 2.0 camelCase spelling. */
+interface MidiFxConfigFields {
+  transposeSemitones?: number;
+  velocityScale?: number;
+  velocityOffset?: number;
+  velocityGamma?: number;
+  quantizePpq?: number;
+  quantizeStrength?: number;
+  chordIntervals?: number[];
+  humanizePpq?: number;
+  humanizeVelocity?: number;
 }
 
 /** Packs a UMP MIDI 1.0 channel-voice word with the real binding layout. */
@@ -143,7 +160,7 @@ function midiFxTimeShifts(
   if (humanizePpq <= 0 && !(quantizePpq > 0 && quantizeStrength > 0)) return shifts;
   const pending = new Map<string, number[]>();
   events.forEach((event, index) => {
-    const w = event.data0 >>> 0;
+    const w = event.word0 >>> 0;
     const status = (w >>> 20) & 0xf;
     if (status !== 0x8 && status !== 0x9) return;
     const key = `${(w >>> 16) & 0xf}:${(w >>> 8) & 0x7f}`;
@@ -167,9 +184,42 @@ function midiFxTimeShifts(
 }
 
 function trackKindOrdinal(kind: unknown): number {
-  if (kind === 'audio' || kind === 0) return 0;
-  if (kind === 'aux' || kind === 2) return 2;
-  return 1;
+  if (kind === undefined || kind === 'midi') return 1;
+  if (kind === 'audio') return 0;
+  if (kind === 'aux') return 2;
+  throw new TypeError(`track kind must be a name, got ${String(kind)}`);
+}
+
+const MARKER_KIND_ORDINALS: Record<string, number> = {
+  marker: 0,
+  text: 1,
+  lyric: 2,
+  cuePoint: 3,
+  keySignature: 4,
+};
+
+/** Project-encoding quality ordinals of the chord-quality names (0 = unknown). */
+const CHORD_QUALITY_ORDINALS: Record<string, number> = {
+  unknown: 0,
+  major: 1,
+  minor: 2,
+  diminished: 3,
+  augmented: 4,
+  dominant: 5,
+  halfDiminished: 6,
+  suspended: 7,
+};
+
+const WARP_MODE_ORDINALS: Record<string, number> = {
+  off: 0,
+  repitch: 1,
+  tempoSync: 2,
+  timeStretch: 3,
+};
+
+/** The serialized event shape `toJson()` emits. */
+function serializedEvent(event: FakeEvent): { ppq: number; word0: number; word1: number } {
+  return { ppq: event.ppq, word0: event.word0, word1: event.word1 };
 }
 
 function cloneState(state: FakeState): FakeState {
@@ -199,7 +249,7 @@ function cloneState(state: FakeState): FakeState {
 export class FakeProject {
   private state: FakeState = {
     sampleRate: 48000,
-    overlapPolicy: 0,
+    overlapPolicy: 'disallow',
     tempoSegments: [],
     timeSignatures: [],
     tracks: [],
@@ -221,101 +271,6 @@ export class FakeProject {
   private deleted = false;
   private soundFont: Uint8Array | null = null;
 
-  static midiNoteOn(
-    ppq: number,
-    group: number,
-    channel: number,
-    note: number,
-    velocity: number,
-  ): FakeEvent {
-    return { ppq, data0: pack(group, 0x9, channel, note, velocity), data1: 0 };
-  }
-
-  static midiNoteOff(
-    ppq: number,
-    group: number,
-    channel: number,
-    note: number,
-    velocity = 0,
-  ): FakeEvent {
-    return { ppq, data0: pack(group, 0x8, channel, note, velocity), data1: 0 };
-  }
-
-  static midiProgram(ppq: number, group: number, channel: number, program: number): FakeEvent {
-    return { ppq, data0: pack(group, 0xc, channel, program, 0), data1: 0 };
-  }
-
-  static midiCc(
-    ppq: number,
-    group: number,
-    channel: number,
-    controller: number,
-    value: number,
-  ): FakeEvent {
-    return { ppq, data0: pack(group, 0xb, channel, controller, value), data1: 0 };
-  }
-
-  static midiPolyPressure(
-    ppq: number,
-    group: number,
-    channel: number,
-    note: number,
-    pressure: number,
-  ): FakeEvent {
-    return { ppq, data0: pack(group, 0xa, channel, note, pressure), data1: 0 };
-  }
-
-  static midiChannelPressure(
-    ppq: number,
-    group: number,
-    channel: number,
-    pressure: number,
-  ): FakeEvent {
-    return { ppq, data0: pack(group, 0xd, channel, pressure, 0), data1: 0 };
-  }
-
-  static midiPitchBend(ppq: number, group: number, channel: number, bend: number): FakeEvent {
-    return { ppq, data0: pack(group, 0xe, channel, bend & 0x7f, (bend >> 7) & 0x7f), data1: 0 };
-  }
-
-  static midiBankProgram(
-    ppq: number,
-    group: number,
-    channel: number,
-    bankMsb: number,
-    bankLsb: number,
-    program: number,
-  ): FakeEvent[] {
-    // Bank select CC0/CC32 followed by the program change, like the binding.
-    return [
-      { ppq, data0: pack(group, 0xb, channel, 0, bankMsb), data1: 0 },
-      { ppq, data0: pack(group, 0xb, channel, 32, bankLsb), data1: 0 },
-      FakeProject.midiProgram(ppq, group, channel, program),
-    ];
-  }
-
-  static gmInstrumentName(program: number): string | null {
-    return FAKE_GM_INSTRUMENTS[program] ?? null;
-  }
-
-  static gmProgramForName(name: string): number {
-    return FAKE_GM_INSTRUMENTS.findIndex((entry) => entry.toLowerCase() === name.toLowerCase());
-  }
-
-  static gmFamilyName(family: number): string | null {
-    return FAKE_GM_FAMILIES[family] ?? null;
-  }
-
-  static gmFamilyFirstProgram(family: number): number {
-    return family >= 0 && family < FAKE_GM_FAMILIES.length ? family * 8 : -1;
-  }
-
-  static gm2InstrumentName(bankLsb: number, program: number): string | null {
-    if (bankLsb === 1 && program === 24) return 'Ukulele';
-    if (bankLsb === 1 && program === 25) return '12-String Guitar';
-    return FakeProject.gmInstrumentName(program);
-  }
-
   /** Pushes one history entry, then applies the mutation. */
   private edit<T>(mutate: () => T): T {
     this.history.push(cloneState(this.state));
@@ -330,17 +285,20 @@ export class FakeProject {
     });
   }
 
-  getSampleRate(): number {
+  get sampleRate(): number {
     return this.state.sampleRate;
   }
 
-  setOverlapPolicy(policy: number): void {
+  setOverlapPolicy(policy: ProjectOverlapPolicy): void {
+    if (policy !== 'disallow' && policy !== 'allow') {
+      throw new TypeError(`overlap policy must be a name, got ${String(policy)}`);
+    }
     this.edit(() => {
       this.state.overlapPolicy = policy;
     });
   }
 
-  getOverlapPolicy(): number {
+  get overlapPolicy(): ProjectOverlapPolicy {
     return this.state.overlapPolicy;
   }
 
@@ -356,14 +314,22 @@ export class FakeProject {
     });
   }
 
-  setAssistSidecar(
-    moduleId: string,
-    schemaVersion: number,
-    targetTrackId: number,
-    regionStartPpq: number,
-    regionEndPpq: number,
-    payload: Uint8Array,
-  ): void {
+  setAssistSidecar(input: {
+    moduleId: string;
+    schemaVersion?: number;
+    targetTrackId?: number;
+    regionStartPpq?: number;
+    regionEndPpq?: number;
+    payload?: Uint8Array;
+  }): void {
+    const {
+      moduleId,
+      schemaVersion = 0,
+      targetTrackId = 0,
+      regionStartPpq = 0,
+      regionEndPpq = 0,
+      payload = new Uint8Array(0),
+    } = input;
     this.edit(() => {
       // Keyed by module id + target scope (track + region): same key updates.
       const entry: FakeSidecar = {
@@ -386,14 +352,11 @@ export class FakeProject {
     });
   }
 
-  assistSidecarCount(): number {
-    return this.state.assistSidecars.length;
-  }
-
-  getAssistSidecar(index: number): FakeSidecar {
-    const sidecar = this.state.assistSidecars[index];
-    if (!sidecar) throw new RangeError(`Unknown assist sidecar index ${index}`);
-    return { ...sidecar, payload: sidecar.payload.slice() };
+  assistSidecars(): FakeSidecar[] {
+    return this.state.assistSidecars.map((sidecar) => ({
+      ...sidecar,
+      payload: sidecar.payload.slice(),
+    }));
   }
 
   setTimeSignatures(
@@ -440,14 +403,16 @@ export class FakeProject {
     lengthPpq: number;
     sourceOffsetPpq?: number;
     gain?: number;
-    audio?: Float32Array;
-    audioChannels?: number;
-    audioSampleRate?: number;
+    channels?: Float32Array[];
+    sampleRate?: number;
     sourceUri?: string;
   }): number {
     // The real binding rejects non-MIDI clips without inline audio data
     // (by-reference sources still carry a placeholder buffer).
-    if (desc.isMidi === false && (desc.audio === undefined || desc.audio.length === 0)) {
+    if (
+      desc.isMidi === false &&
+      (desc.channels === undefined || desc.channels.length === 0 || desc.channels[0].length === 0)
+    ) {
       throw new Error('audio clip requires non-empty inline audio data');
     }
     this.assertLaneFree(desc.trackId, desc.startPpq ?? 0, desc.lengthPpq);
@@ -458,11 +423,10 @@ export class FakeProject {
       this.state.sourceCount = sourceId;
       const source: FakeSource = { id: sourceId };
       if (desc.sourceUri !== undefined) source.uri = desc.sourceUri;
-      if (desc.audio !== undefined) {
-        const channels = desc.audioChannels ?? 1;
-        source.audioChannels = channels;
-        source.audioFrames = Math.floor(desc.audio.length / channels);
-        source.audioSampleRate = desc.audioSampleRate ?? 48000;
+      if (desc.channels !== undefined && desc.channels.length > 0) {
+        source.audioChannels = desc.channels.length;
+        source.audioFrames = desc.channels[0].length;
+        source.audioSampleRate = desc.sampleRate ?? 48000;
       }
       this.state.sources.set(sourceId, source);
       const id = this.nextClipId++;
@@ -484,11 +448,6 @@ export class FakeProject {
     });
   }
 
-  /** Number of audio/MIDI sources registered on the project. */
-  sourceCount(): number {
-    return this.state.sourceCount;
-  }
-
   /** Rebinds a clip to an already-registered source (one history entry). */
   setClipSource(clipId: number, sourceId: number): void {
     this.edit(() => {
@@ -498,43 +457,51 @@ export class FakeProject {
     });
   }
 
-  /** Replaces an audio source's metadata strings (one history entry). */
-  setAudioSourceMetadata(sourceId: number, contentHash: string, externalStemRole: string): void {
+  /** Replaces an audio source's metadata strings; an omitted string is cleared (one history entry). */
+  setAudioSourceMetadata(input: {
+    sourceId: number;
+    contentHash?: string;
+    externalStemRole?: string;
+  }): void {
     this.edit(() => {
-      const source = this.state.sources.get(sourceId);
-      if (!source) throw new Error(`unknown source ${sourceId}`);
-      source.contentHash = contentHash;
-      source.externalStemRole = externalStemRole;
+      const source = this.state.sources.get(input.sourceId);
+      if (!source) throw new Error(`unknown source ${input.sourceId}`);
+      source.contentHash = input.contentHash;
+      source.externalStemRole = input.externalStemRole;
     });
   }
 
-  /** Registered source by zero-based registration index (source ids are 1-based). */
-  sourceByIndex(index: number): {
+  /** Every registered source in registration order (source ids are 1-based). */
+  sources(): Array<{
     id: number;
+    kind: 'audio' | 'midi';
+    numChannels: number;
+    storageHandleId: number;
+    sampleRateHint: number;
     nameOrUri: string;
-    contentHash: string;
-    externalStemRole: string;
-  } {
-    const source = this.state.sources.get(index + 1);
-    if (!source) throw new RangeError(`Unknown source index ${index}`);
-    return {
+    contentHash?: string;
+    externalStemRole?: string;
+  }> {
+    return [...this.state.sources.values()].map((source) => ({
       id: source.id,
+      kind: source.audioChannels === undefined ? 'midi' : 'audio',
+      numChannels: source.audioChannels ?? 0,
+      storageHandleId: 0,
+      sampleRateHint: source.audioSampleRate ?? 0,
       nameOrUri: source.uri ?? '',
-      contentHash: source.contentHash ?? '',
-      externalStemRole: source.externalStemRole ?? '',
-    };
+      ...(source.contentHash !== undefined ? { contentHash: source.contentHash } : {}),
+      ...(source.externalStemRole !== undefined
+        ? { externalStemRole: source.externalStemRole }
+        : {}),
+    }));
   }
 
-  /** Sets a clip's fade-in/out lengths (one history entry). */
-  setClipFade(
-    clipId: number,
-    fadeIn?: { lengthPpq?: number },
-    fadeOut?: { lengthPpq?: number },
-  ): void {
+  /** Sets a clip's fade-in/out lengths; an omitted length is no fade (one history entry). */
+  setClipFade(clipId: number, input: { fadeInPpq?: number; fadeOutPpq?: number }): void {
     this.edit(() => {
       const clip = this.requireClip(clipId);
-      if (fadeIn !== undefined) clip.fade_in_ppq = fadeIn.lengthPpq ?? 0;
-      if (fadeOut !== undefined) clip.fade_out_ppq = fadeOut.lengthPpq ?? 0;
+      clip.fade_in_ppq = input.fadeInPpq ?? 0;
+      clip.fade_out_ppq = input.fadeOutPpq ?? 0;
     });
   }
 
@@ -583,7 +550,7 @@ export class FakeProject {
     lengthPpq: number,
     ignoreClipId?: number,
   ): void {
-    if (!this.strictLanes || this.state.overlapPolicy !== 0) return;
+    if (!this.strictLanes || this.state.overlapPolicy !== 'disallow') return;
     const eps = 1e-9;
     const clash = this.state.clips.some(
       (c) =>
@@ -616,7 +583,8 @@ export class FakeProject {
     });
   }
 
-  moveClip(clipId: number, newStartPpq: number, newTrackId?: number): void {
+  moveClip(clipId: number, newStartPpq: number, options: { trackId?: number } = {}): void {
+    const newTrackId = options.trackId;
     const moving = this.requireClip(clipId);
     this.assertLaneFree(newTrackId ?? moving.track_id, newStartPpq, moving.length_ppq, clipId);
     this.edit(() => {
@@ -700,11 +668,14 @@ export class FakeProject {
     });
   }
 
-  setClipLoop(clipId: number, loopMode: string | number, loopLengthPpq?: number): void {
+  setClipLoop(
+    clipId: number,
+    input: { loopMode: 'off' | 'loop'; loopLengthPpq?: number; loopCrossfadePpq?: number },
+  ): void {
     this.edit(() => {
       const clip = this.requireClip(clipId);
-      clip.loop_mode = loopMode === 'loop' || loopMode === 1 ? 1 : 0;
-      clip.loop_length_ppq = clip.loop_mode === 1 ? (loopLengthPpq ?? 0) : 0;
+      clip.loop_mode = input.loopMode === 'loop' ? 1 : 0;
+      clip.loop_length_ppq = clip.loop_mode === 1 ? (input.loopLengthPpq ?? 0) : 0;
     });
   }
 
@@ -716,11 +687,11 @@ export class FakeProject {
     });
   }
 
-  setClipWarpMode(clipId: number, mode: string | number): void {
+  setClipWarpMode(clipId: number, mode: 'off' | 'repitch' | 'tempoSync' | 'timeStretch'): void {
+    const value = WARP_MODE_ORDINALS[mode];
+    if (value === undefined) throw new TypeError(`warp mode must be a name, got ${String(mode)}`);
     this.edit(() => {
       const clip = this.requireClip(clipId);
-      const value =
-        mode === 'repitch' || mode === 1 ? 1 : mode === 'tempo-sync' || mode === 2 ? 2 : 0;
       if (value === 0) delete clip.warp_mode;
       else clip.warp_mode = value;
     });
@@ -754,42 +725,36 @@ export class FakeProject {
       this.requireClip(clipId);
       this.state.midi.set(
         clipId,
-        events.map((e) => ({ ppq: e.ppq, data0: e.data0, data1: e.data1 ?? 0 })),
+        events.map((e) => ({ ppq: e.ppq, word0: e.word0, word1: e.word1 ?? 0 })),
       );
     });
   }
 
   /**
    * Applies a MIDI-FX transform to a clip's stored events, mirroring the real
-   * engine's verified flat-config semantics (transpose, grid quantize, velocity
+   * engine's verified config semantics (transpose, grid quantize, velocity
    * scale/offset/gamma, bounded humanize, chord harmonize) as one undoable
    * edit. Humanize uses a deterministic index-based jitter so tests stay stable.
    *
-   * Both call forms of the real binding are accepted. The request form with
-   * `withSourceIndex` answers with per-output-event provenance in the input
-   * event's index space, as measured against the real engine: every event a
-   * chord fan-out produces reports the same origin, and the transform's own
-   * reordering is reflected in the order of the returned array.
+   * With `withSourceIndex` the result carries per-output-event provenance in
+   * the input event's index space, as measured against the real engine: every
+   * event a chord fan-out produces reports the same origin, and the
+   * transform's own reordering is reflected in the order of the returned array.
    */
-  bakeMidiFx(
-    clipIdOrRequest: number | { clipId: number; configJson: string; withSourceIndex?: boolean },
-    configJsonArg?: string,
-  ): { sourceIndex?: Int32Array } {
-    const request =
-      typeof clipIdOrRequest === 'number'
-        ? { clipId: clipIdOrRequest, configJson: configJsonArg ?? '{}', withSourceIndex: false }
-        : clipIdOrRequest;
+  bakeMidiFx(request: { clipId: number; config: MidiFxConfigFields; withSourceIndex?: boolean }): {
+    sourceIndex?: Int32Array;
+  } {
     const clipId = request.clipId;
-    const cfg = JSON.parse(request.configJson) as Record<string, number | number[]>;
-    const transpose = typeof cfg.transpose_semitones === 'number' ? cfg.transpose_semitones : 0;
-    const qPpq = typeof cfg.quantize_ppq === 'number' ? cfg.quantize_ppq : 0;
-    const qStr = typeof cfg.quantize_strength === 'number' ? cfg.quantize_strength : 0;
-    const vScale = typeof cfg.velocity_scale === 'number' ? cfg.velocity_scale : 1;
-    const vOffset = typeof cfg.velocity_offset === 'number' ? cfg.velocity_offset : 0;
-    const vGamma = typeof cfg.velocity_gamma === 'number' ? cfg.velocity_gamma : 1;
-    const hPpq = typeof cfg.humanize_ppq === 'number' ? cfg.humanize_ppq : 0;
-    const hVel = typeof cfg.humanize_velocity === 'number' ? cfg.humanize_velocity : 0;
-    const chord = Array.isArray(cfg.chord_intervals) ? cfg.chord_intervals : null;
+    const cfg = request.config;
+    const transpose = cfg.transposeSemitones ?? 0;
+    const qPpq = cfg.quantizePpq ?? 0;
+    const qStr = cfg.quantizeStrength ?? (qPpq > 0 ? 1 : 0);
+    const vScale = cfg.velocityScale ?? 1;
+    const vOffset = cfg.velocityOffset ?? 0;
+    const vGamma = cfg.velocityGamma ?? 1;
+    const hPpq = cfg.humanizePpq ?? 0;
+    const hVel = cfg.humanizeVelocity ?? 0;
+    const chord = Array.isArray(cfg.chordIntervals) ? cfg.chordIntervals : null;
     const clampU7 = (v: number) => Math.min(127, Math.max(0, Math.round(v)));
     const out: Array<{ event: FakeEvent; source: number }> = [];
     this.edit(() => {
@@ -797,7 +762,7 @@ export class FakeProject {
       const source = this.state.midi.get(clipId) ?? [];
       const timeShift = midiFxTimeShifts(source, hPpq, qPpq, qStr);
       source.forEach((event, index) => {
-        const w = event.data0 >>> 0;
+        const w = event.word0 >>> 0;
         const group = (w >>> 24) & 0xf;
         const status = (w >>> 20) & 0xf;
         const channel = (w >>> 16) & 0xf;
@@ -817,7 +782,7 @@ export class FakeProject {
         for (const interval of intervals) {
           const n = isNoteOn || isNoteOff ? clampU7(note + interval) : note;
           out.push({
-            event: { ppq, data0: pack(group, status, channel, n, value), data1: event.data1 },
+            event: { ppq, word0: pack(group, status, channel, n, value), word1: event.word1 },
             source: index,
           });
         }
@@ -837,55 +802,43 @@ export class FakeProject {
    * Counts the events {@link bakeMidiFx} would produce without mutating the
    * project, by running the same fan-out arithmetic the bake uses.
    */
-  previewMidiFxCount(request: { clipId: number; configJson: string }): number {
-    const cfg = JSON.parse(request.configJson) as Record<string, number | number[]>;
-    const chord = Array.isArray(cfg.chord_intervals) ? cfg.chord_intervals : null;
+  previewMidiFxCount(request: { clipId: number; config: MidiFxConfigFields }): number {
+    const chord = request.config.chordIntervals ?? null;
     const voices = chord && chord.length > 0 ? chord.length : 1;
     const source = this.state.midi.get(request.clipId) ?? [];
     return source.reduce((total, event) => {
-      const status = ((event.data0 >>> 0) >>> 20) & 0xf;
+      const status = ((event.word0 >>> 0) >>> 20) & 0xf;
       const isNote = status === 0x8 || status === 0x9;
       return total + (isNote ? voices : 1);
     }, 0);
   }
 
-  setMarker(markerId: number, ppq: number, name: string): number {
-    return this.edit(() => {
-      if (markerId === 0) {
-        const id = this.nextMarkerId++;
-        this.state.markers.push({ id, ppq, name });
-        return id;
-      }
-      const marker = this.state.markers.find((m) => m.id === markerId);
-      if (marker) {
-        marker.ppq = ppq;
-        marker.name = name;
-      } else {
-        this.state.markers.push({ id: markerId, ppq, name });
-      }
-      return markerId;
-    });
-  }
-
-  setMarkerEx(marker: {
+  setMarker(input: {
     id?: number;
     ppq: number;
-    name: string;
-    kind?: number;
+    name?: string;
+    kind?: string;
     keyFifths?: number;
     keyMinor?: boolean;
   }): number {
+    if (input.id === 0) throw new RangeError('marker id 0 is refused; omit it to allocate');
+    if (input.name === '') throw new RangeError('marker name must not be empty');
     return this.edit(() => {
-      const id = marker.id ?? 0;
       const entry: FakeMarker = {
-        id: id === 0 ? this.nextMarkerId++ : id,
-        ppq: marker.ppq,
-        name: marker.name,
-        kind: marker.kind,
-        key_fifths: marker.keyFifths,
-        key_minor: marker.keyMinor,
+        id: input.id ?? this.nextMarkerId++,
+        ppq: input.ppq,
+        name: input.name ?? '',
       };
-      const existing = id === 0 ? undefined : this.state.markers.find((m) => m.id === id);
+      if (input.kind !== undefined) {
+        const ordinal = MARKER_KIND_ORDINALS[input.kind];
+        if (ordinal === undefined)
+          throw new TypeError(`marker kind must be a name, got ${input.kind}`);
+        entry.kind = ordinal;
+      }
+      if (input.keyFifths !== undefined) entry.key_fifths = input.keyFifths;
+      if (input.keyMinor !== undefined) entry.key_minor = input.keyMinor;
+      const existing =
+        input.id === undefined ? undefined : this.state.markers.find((m) => m.id === input.id);
       if (existing) Object.assign(existing, entry);
       else this.state.markers.push(entry);
       return entry.id;
@@ -894,31 +847,40 @@ export class FakeProject {
 
   /**
    * Replaces the chord-symbol annotation stream (one undoable edit), mirroring
-   * the real Project's field clamping: the 255 "no pitch class" sentinel is
-   * preserved, omitted extensions become an empty array, and the stored form
-   * uses the snake_case shape that toJson() emits.
+   * the real Project's behaviour: quality is a name, an omitted pitch class is
+   * stored as the 255 "no pitch class" sentinel, omitted extensions become an
+   * empty array, and the stored form uses the camelCase shape that toJson()
+   * emits.
    */
   annotateChords(
     chords: ReadonlyArray<{
       startPpq: number;
       endPpq: number;
       rootPc?: number;
-      quality?: number;
+      quality?: string;
       slashBassPc?: number;
       extensions?: ReadonlyArray<number>;
       romanNumeral?: string;
+      modulationBoundary?: boolean;
     }>,
   ): void {
+    const qualities = chords.map((c) => {
+      const ordinal = CHORD_QUALITY_ORDINALS[c.quality ?? 'unknown'];
+      if (ordinal === undefined) {
+        throw new TypeError(`chord quality must be a name, got ${String(c.quality)}`);
+      }
+      return ordinal;
+    });
     this.edit(() => {
-      this.state.chords = chords.map((c) => ({
-        start_ppq: c.startPpq,
-        end_ppq: c.endPpq,
-        root_pc: c.rootPc ?? 255,
-        quality: c.quality ?? 0,
-        slash_bass_pc: c.slashBassPc ?? 255,
-        roman_numeral: c.romanNumeral ?? '',
+      this.state.chords = chords.map((c, index) => ({
+        startPpq: c.startPpq,
+        endPpq: c.endPpq,
+        rootPc: c.rootPc ?? 255,
+        quality: qualities[index],
+        slashBassPc: c.slashBassPc ?? 255,
+        romanNumeral: c.romanNumeral ?? '',
         extensions: c.extensions ? [...c.extensions] : [],
-        modulation_boundary: false,
+        modulationBoundary: c.modulationBoundary ?? false,
       }));
     });
   }
@@ -952,8 +914,9 @@ export class FakeProject {
     return ppq + (target - ppq) * strength;
   }
 
-  trackCount(): number {
-    return this.state.tracks.length;
+  /** The fields of `Project.tracks()` entries the specs read. */
+  tracks(): Array<{ id: number; name: string }> {
+    return this.state.tracks.map((track) => ({ id: track.id, name: track.name }));
   }
 
   /** Records the SoundFont bytes (not part of the undo history). */
@@ -965,7 +928,7 @@ export class FakeProject {
     this.soundFont = null;
   }
 
-  soundFontPresetCount(): number {
+  get soundFontPresetCount(): number {
     return this.soundFont ? 1 : 0;
   }
 
@@ -989,10 +952,10 @@ export class FakeProject {
     const programByChannel = new Map<number, number>();
     for (const events of this.state.midi.values()) {
       for (const event of events) {
-        const status = (event.data0 >>> 20) & 0xf;
-        const channel = (event.data0 >>> 16) & 0xf;
-        const data1 = (event.data0 >>> 8) & 0xff;
-        const data2 = event.data0 & 0xff;
+        const status = (event.word0 >>> 20) & 0xf;
+        const channel = (event.word0 >>> 16) & 0xf;
+        const data1 = (event.word0 >>> 8) & 0xff;
+        const data2 = event.word0 & 0xff;
         if (status === 0xb && data1 === 0) bankMsb.set(channel, data2 & 0x7f);
         else if (status === 0xb && data1 === 32) bankLsb.set(channel, data2 & 0x7f);
         else if (status === 0xc) programByChannel.set(channel, data1 & 0x7f);
@@ -1008,10 +971,7 @@ export class FakeProject {
             bank,
             program,
             backend,
-            presetName:
-              backend === 'sf2'
-                ? `SF2 ${bank}:${program}`
-                : (FakeProject.gmInstrumentName(program) ?? `Program ${program}`),
+            presetName: backend === 'sf2' ? `SF2 ${bank}:${program}` : gmInstrumentName(program),
           });
         }
       }
@@ -1019,14 +979,32 @@ export class FakeProject {
     return manifest;
   }
 
-  /** Deterministic stereo render stand-in (3 frames, interleaved L/R). */
-  bounceWithSynthInstrument(_instrument?: unknown, _options?: unknown): Float32Array {
-    return new Float32Array([0.25, -0.25, 0.5, -0.5, 0.75, -0.75]);
-  }
-
-  /** Deterministic SF2 render stand-in (2 frames, interleaved L/R). */
-  bounceWithSf2Instrument(_instrument?: unknown, _options?: unknown): Float32Array {
-    return new Float32Array([0.2, -0.2, 0.4, -0.4]);
+  /**
+   * Deterministic render stand-in: a synth binding renders 3 stereo frames, an
+   * SF2 binding 2, anything else silence of `totalFrames`.
+   */
+  bounce(
+    options: {
+      totalFrames?: number;
+      synthInstruments?: ReadonlyArray<unknown>;
+      sf2Instruments?: ReadonlyArray<unknown>;
+    } = {},
+  ): { channels: Float32Array[]; sampleRate: number } {
+    const sampleRate = this.state.sampleRate;
+    if (options.synthInstruments && options.synthInstruments.length > 0) {
+      return {
+        channels: [new Float32Array([0.25, 0.5, 0.75]), new Float32Array([-0.25, -0.5, -0.75])],
+        sampleRate,
+      };
+    }
+    if (options.sf2Instruments && options.sf2Instruments.length > 0) {
+      return {
+        channels: [new Float32Array([0.2, 0.4]), new Float32Array([-0.2, -0.4])],
+        sampleRate,
+      };
+    }
+    const frames = options.totalFrames ?? 0;
+    return { channels: [new Float32Array(frames), new Float32Array(frames)], sampleRate };
   }
 
   exportSmf(): Uint8Array {
@@ -1045,38 +1023,153 @@ export class FakeProject {
 
   toJson(): string {
     return JSON.stringify({
-      sample_rate: this.state.sampleRate,
-      tempo_segments: this.state.tempoSegments.map((s) => ({
-        start_ppq: s.startPpq,
+      sampleRate: this.state.sampleRate,
+      tempoSegments: this.state.tempoSegments.map((s) => ({
+        startPpq: s.startPpq,
         bpm: s.bpm,
-        end_bpm: s.endBpm,
-        start_sample: 0,
+        endBpm: s.endBpm,
+        startSample: 0,
       })),
-      time_signatures: this.state.timeSignatures.map((s) => ({
-        start_ppq: s.startPpq,
+      timeSignatures: this.state.timeSignatures.map((s) => ({
+        startPpq: s.startPpq,
         numerator: s.numerator,
         denominator: s.denominator,
       })),
       tracks: this.state.tracks.map((t) => ({ id: t.id, kind: t.kind, name: t.name })),
-      clips: this.state.clips.map((c) => ({ ...c })),
-      warp_maps: [...this.state.warpMaps.values()].map((map) => ({
+      clips: this.state.clips.map((c) => ({
+        id: c.id,
+        trackId: c.track_id,
+        startPpq: c.start_ppq,
+        lengthPpq: c.length_ppq,
+        sourceOffsetPpq: c.source_offset_ppq,
+        gain: c.gain,
+        loopMode: c.loop_mode,
+        loopLengthPpq: c.loop_length_ppq,
+        sourceId: c.source_id,
+        fadeIn: { curve: 0, lengthPpq: c.fade_in_ppq },
+        fadeOut: { curve: 0, lengthPpq: c.fade_out_ppq },
+        warpRefId: c.warp_ref_id ?? 0,
+        warpMode: c.warp_mode ?? 0,
+      })),
+      warpMaps: [...this.state.warpMaps.values()].map((map) => ({
         id: map.id,
         name: map.name,
         anchors: map.anchors.map((anchor) => ({ ...anchor })),
       })),
-      markers: this.state.markers.map((m) => ({ ...m })),
+      markers: this.state.markers.map((m) => ({
+        id: m.id,
+        ppq: m.ppq,
+        name: m.name,
+        ...(m.kind !== undefined ? { kind: m.kind } : {}),
+        ...(m.key_fifths !== undefined ? { keyFifths: m.key_fifths } : {}),
+        ...(m.key_minor !== undefined ? { keyMinor: m.key_minor } : {}),
+      })),
       annotation: { chords: this.state.chords.map((c) => ({ ...c })) },
-      midi_content: Object.fromEntries(
-        [...this.state.midi].map(([id, events]) => [String(id), events.map((e) => ({ ...e }))]),
+      midiContent: Object.fromEntries(
+        [...this.state.midi].map(([id, events]) => [String(id), events.map(serializedEvent)]),
       ),
-      version: 1,
+      version: 7,
     });
   }
 
-  delete(): void {
+  destroy(): void {
     if (this.deleted) throw new Error('Project deleted twice');
     this.deleted = true;
   }
+}
+
+/** Mirrors the 2.0 module-level MIDI 1.0 message builders. */
+interface FakeMidiBase {
+  ppq: number;
+  group: number;
+  channel: number;
+}
+
+export function midiNoteOn(request: FakeMidiBase & { note: number; velocity: number }): FakeEvent {
+  const { ppq, group, channel, note, velocity } = request;
+  return { ppq, word0: pack(group, 0x9, channel, note, velocity), word1: 0 };
+}
+
+export function midiNoteOff(
+  request: FakeMidiBase & { note: number; velocity?: number },
+): FakeEvent {
+  const { ppq, group, channel, note, velocity = 0 } = request;
+  return { ppq, word0: pack(group, 0x8, channel, note, velocity), word1: 0 };
+}
+
+export function midiProgram(request: FakeMidiBase & { program: number }): FakeEvent {
+  const { ppq, group, channel, program } = request;
+  return { ppq, word0: pack(group, 0xc, channel, program, 0), word1: 0 };
+}
+
+export function midiCc(request: FakeMidiBase & { controller: number; value: number }): FakeEvent {
+  const { ppq, group, channel, controller, value } = request;
+  return { ppq, word0: pack(group, 0xb, channel, controller, value), word1: 0 };
+}
+
+export function midiPolyPressure(
+  request: FakeMidiBase & { note: number; pressure: number },
+): FakeEvent {
+  const { ppq, group, channel, note, pressure } = request;
+  return { ppq, word0: pack(group, 0xa, channel, note, pressure), word1: 0 };
+}
+
+export function midiChannelPressure(request: FakeMidiBase & { pressure: number }): FakeEvent {
+  const { ppq, group, channel, pressure } = request;
+  return { ppq, word0: pack(group, 0xd, channel, pressure, 0), word1: 0 };
+}
+
+export function midiPitchBend(request: FakeMidiBase & { bend: number }): FakeEvent {
+  const { ppq, group, channel, bend } = request;
+  return { ppq, word0: pack(group, 0xe, channel, bend & 0x7f, (bend >> 7) & 0x7f), word1: 0 };
+}
+
+export function midiBankProgram(
+  request: FakeMidiBase & { program: number; bank: { msb: number; lsb: number } },
+): FakeEvent[] {
+  const { ppq, group, channel, program, bank } = request;
+  // Bank select CC0/CC32 followed by the program change, like the binding.
+  return [
+    { ppq, word0: pack(group, 0xb, channel, 0, bank.msb), word1: 0 },
+    { ppq, word0: pack(group, 0xb, channel, 32, bank.lsb), word1: 0 },
+    midiProgram({ ppq, group, channel, program }),
+  ];
+}
+
+export function gmInstrumentName(program: number): string {
+  const name = FAKE_GM_INSTRUMENTS[program];
+  if (name === undefined) throw new RangeError(`program ${program} is outside 0..127`);
+  return name;
+}
+
+export function gmProgramForName(name: string): number {
+  const index = FAKE_GM_INSTRUMENTS.findIndex(
+    (entry) => entry.toLowerCase() === name.toLowerCase(),
+  );
+  if (index < 0) throw new RangeError(`unknown General MIDI instrument name: ${name}`);
+  return index;
+}
+
+export function gmFamilyName(family: number): string {
+  const name = FAKE_GM_FAMILIES[family];
+  if (name === undefined) throw new RangeError(`family ${family} is outside 0..15`);
+  return name;
+}
+
+export function gmFamilyFirstProgram(family: number): number {
+  if (!(family >= 0 && family < FAKE_GM_FAMILIES.length)) {
+    throw new RangeError(`family ${family} is outside 0..15`);
+  }
+  return family * 8;
+}
+
+export function gm2InstrumentName(request: {
+  bankLsb: number;
+  program: number;
+}): string | undefined {
+  if (request.bankLsb === 1 && request.program === 24) return 'Ukulele';
+  if (request.bankLsb === 1 && request.program === 25) return '12-String Guitar';
+  return FAKE_GM_INSTRUMENTS[request.program];
 }
 
 /** Mirrors libsonare's scale helper for highlightedPitchClasses tests. */
@@ -1107,21 +1200,21 @@ export function scaleQuantizeMidi(root: number, modeMask: number, midi: number):
 /** Synth preset names the fake catalog reports (subset of the real build). */
 export const FAKE_SYNTH_PRESETS = [
   'sine',
-  'saw-lead',
-  'square-lead',
-  'e-piano',
-  'acoustic-piano',
-  'warm-pad',
-  'sub-bass',
+  'sawLead',
+  'squareLead',
+  'ePiano',
+  'acousticPiano',
+  'warmPad',
+  'subBass',
   'pluck',
   'organ',
   'brass',
-  'pipe-organ',
-  'bowed-string',
-  'reed',
-  'flute',
-  'electric-guitar',
-  'drum-kit',
+  'churchOrgan',
+  'violin',
+  'oboe',
+  'concertFlute',
+  'electricGuitar',
+  'drumKit',
 ] as const;
 
 const FAKE_GM_FAMILIES = [
@@ -1194,14 +1287,14 @@ export const FAKE_INSERT_PARAM_INFO: Record<
   string,
   Array<{
     name: string;
-    id: number | null;
+    id?: number;
     rtSafe: boolean;
     type: 'number' | 'boolean' | 'enum';
     unit?: string;
-    min?: number | null;
-    max?: number | null;
-    uiMin?: number | null;
-    uiMax?: number | null;
+    min?: number;
+    max?: number;
+    uiMin?: number;
+    uiMax?: number;
     scale?: 'linear' | 'log';
     default?: number | boolean;
     choices?: Array<{ name: string; value: number }>;
@@ -1279,10 +1372,9 @@ export const FAKE_INSERT_PARAM_INFO: Record<
     { name: 'sidechainHpfEnabled', id: 8, rtSafe: true, type: 'boolean' },
   ],
   'eq.parametric': [
-    { name: 'band0.enabled', id: null, rtSafe: false, type: 'boolean', default: true },
+    { name: 'band0.enabled', rtSafe: false, type: 'boolean', default: true },
     {
       name: 'band0.type',
-      id: null,
       rtSafe: false,
       type: 'enum',
       default: 0,
@@ -1301,15 +1393,14 @@ export const FAKE_INSERT_PARAM_INFO: Record<
   'dynamics.limiter': [
     { name: 'thresholdDb', id: 0, rtSafe: true, type: 'number', unit: 'dB' },
     { name: 'releaseMs', id: 1, rtSafe: true, type: 'number', unit: 'ms' },
-    { name: 'lookaheadMs', id: null, rtSafe: false, type: 'number', unit: 'ms' },
+    { name: 'lookaheadMs', rtSafe: false, type: 'number', unit: 'ms' },
   ],
   'saturation.softClipper': [
     { name: 'driveDb', id: 0, rtSafe: true, type: 'number', unit: 'dB' },
     { name: 'mix', id: 1, rtSafe: true, type: 'number' },
-    { name: 'ceiling', id: null, rtSafe: false, type: 'number' },
+    { name: 'ceiling', rtSafe: false, type: 'number' },
     {
       name: 'aliasing',
-      id: null,
       rtSafe: false,
       type: 'enum',
       default: 0,
@@ -1542,7 +1633,8 @@ export const FAKE_AMP_PRESET_CATALOG = [
   },
 ] as const;
 
-type FakeAmpParamInfo = {
+/** Builder-side description of an amp param; null reads as absent in the catalog entry. */
+type FakeAmpParamSpec = {
   name: string;
   id: number | null;
   rtSafe: boolean;
@@ -1555,12 +1647,39 @@ type FakeAmpParamInfo = {
   slot: null;
 };
 
+type FakeAmpParamInfo = {
+  name: string;
+  id?: number;
+  rtSafe: boolean;
+  type: 'boolean' | 'number' | 'enum' | 'string';
+  minExclusive: boolean;
+  maxExclusive: boolean;
+  default?: number | boolean;
+  unit?: string;
+  choices?: Array<{ name: string; value: number }>;
+};
+
+/** Catalog entry for a builder spec: an absent value is omitted, never null. */
+function fakeAmpCatalogEntry(spec: FakeAmpParamSpec): FakeAmpParamInfo {
+  return {
+    name: spec.name,
+    ...(spec.id !== null ? { id: spec.id } : {}),
+    rtSafe: spec.rtSafe,
+    type: spec.type,
+    minExclusive: false,
+    maxExclusive: false,
+    ...(spec.default !== null ? { default: spec.default } : {}),
+    ...(spec.unit !== null ? { unit: spec.unit } : {}),
+    ...(spec.choices !== null ? { choices: spec.choices } : {}),
+  };
+}
+
 function fakeAmpNumber(
   name: string,
   id: number | null,
   defaultValue: number,
   unit: string | null = null,
-): FakeAmpParamInfo {
+): FakeAmpParamSpec {
   return {
     name,
     id,
@@ -1575,7 +1694,7 @@ function fakeAmpNumber(
   };
 }
 
-function fakeAmpBoolean(name: string, id: number | null, defaultValue: boolean): FakeAmpParamInfo {
+function fakeAmpBoolean(name: string, id: number | null, defaultValue: boolean): FakeAmpParamSpec {
   return {
     name,
     id,
@@ -1594,7 +1713,7 @@ function fakeAmpEnum(
   name: string,
   choices: Array<{ name: string; value: number }>,
   defaultValue: number,
-): FakeAmpParamInfo {
+): FakeAmpParamSpec {
   return {
     name,
     id: null,
@@ -1609,7 +1728,7 @@ function fakeAmpEnum(
   };
 }
 
-const FAKE_AMP_PARAM_DEFAULTS: FakeAmpParamInfo[] = [
+const FAKE_AMP_PARAM_SPECS: FakeAmpParamSpec[] = [
   fakeAmpNumber('drive', 0, 0.5),
   fakeAmpNumber('bassDb', 1, 0, 'dB'),
   fakeAmpNumber('midDb', 2, 0, 'dB'),
@@ -1721,6 +1840,8 @@ const FAKE_AMP_PARAM_DEFAULTS: FakeAmpParamInfo[] = [
   ),
 ];
 
+const FAKE_AMP_PARAM_DEFAULTS: FakeAmpParamInfo[] = FAKE_AMP_PARAM_SPECS.map(fakeAmpCatalogEntry);
+
 /** Mirrors capabilityCatalog().masteringPresets for the fake preset names. */
 export function fakeMasteringPresetCatalog() {
   return FAKE_MASTERING_PRESETS.map((name) =>
@@ -1728,15 +1849,12 @@ export function fakeMasteringPresetCatalog() {
       ? {
           name,
           kind: 'restoration' as const,
-          targetLufs: null,
-          truePeakCeilingDb: null,
-          maxLimiterGainReductionDb: null,
         }
       : {
           name,
           kind: 'mastering' as const,
           targetLufs: -14,
-          truePeakCeilingDb: -1,
+          truePeakCeilingDbtp: -1,
           maxLimiterGainReductionDb: 12,
         },
   );
@@ -1755,30 +1873,32 @@ export function fakeMixingScenePresetNames(): string[] {
 export const FAKE_DOWNMIX_LUFS = -13;
 export const FAKE_STEREO_LUFS = -7;
 
+type FakeStreamingPlatform = { name: string; targetLufs: number; ceilingDbtp: number };
+
 /** Platform rows the streaming-preview fakes fall back to when given none. */
 const FAKE_STREAMING_PLATFORMS = [
-  { name: 'Spotify', targetLufs: -14, ceilingDb: -1 },
-  { name: 'Apple Music', targetLufs: -16, ceilingDb: -1 },
-  { name: 'YouTube', targetLufs: -14, ceilingDb: -1 },
+  { name: 'Spotify', targetLufs: -14, ceilingDbtp: -1 },
+  { name: 'Apple Music', targetLufs: -16, ceilingDbtp: -1 },
+  { name: 'YouTube', targetLufs: -14, ceilingDbtp: -1 },
 ];
 
 /** Builds the report both streaming-preview fakes return, at a given loudness. */
-function fakeStreamingPreviewJson(
-  platforms: Array<{ name: string; targetLufs: number; ceilingDb: number }>,
+function fakeStreamingPreview(
+  platforms: FakeStreamingPlatform[],
   integratedLufs: number,
-): string {
-  return JSON.stringify({
+): { platforms: Array<Record<string, number | string | boolean>> } {
+  return {
     platforms: (platforms.length ? platforms : FAKE_STREAMING_PLATFORMS).map((platform) => {
       const normalizationGainDb = platform.targetLufs - integratedLufs;
       return {
         name: platform.name,
         integratedLufs,
-        truePeakDb: -0.8,
+        truePeakDbtp: -0.8,
         normalizationGainDb,
-        ceilingRisk: -0.8 + normalizationGainDb > platform.ceilingDb,
+        ceilingRisk: -0.8 + normalizationGainDb > platform.ceilingDbtp,
       };
     }),
-  });
+  };
 }
 
 export function fakeMixingScenePresetJson(preset: string): string {
@@ -1931,21 +2051,24 @@ function fakePeak(samples: Float32Array): number {
 }
 
 /** Mirrors meteringPeakDb: sample peak in dBFS (-Infinity for silence). */
-export function fakeMeteringPeakDb(samples: Float32Array, _sampleRate = 48000): number {
-  const peak = fakePeak(samples);
+export function fakeMeteringPeakDb(
+  input: Float32Array | { samples: Float32Array; sampleRate: number },
+  _sampleRate = 48000,
+): number {
+  const peak = fakePeak(input instanceof Float32Array ? input : input.samples);
   return peak > 0 ? 20 * Math.log10(peak) : Number.NEGATIVE_INFINITY;
 }
 
 /**
- * Mirrors meteringTruePeakDb's shape; the fake skips oversampling and
+ * Mirrors meteringTruePeakDbtp's shape; the fake skips oversampling and
  * reports the plain sample peak.
  */
-export function fakeMeteringTruePeakDb(
-  samples: Float32Array,
+export function fakeMeteringTruePeakDbtp(
+  input: Float32Array | { samples: Float32Array; sampleRate: number; oversampleFactor?: number },
   _sampleRate = 48000,
-  _oversampleFactor = 0,
+  _options: { oversampleFactor?: number } = {},
 ): number {
-  return fakeMeteringPeakDb(samples);
+  return fakeMeteringPeakDb(input);
 }
 
 /**
@@ -1956,14 +2079,14 @@ export function fakeMeteringTruePeakDb(
 export function fakeMeteringDetectClipping(
   samples: Float32Array,
   _sampleRate = 48000,
-  options: { threshold?: number; minRegionSamples?: number } = {},
+  options: { thresholdDb?: number; minRegionSamples?: number } = {},
 ): {
   clippedSamples: number;
-  clippingRatio: number;
+  clippedRatio: number;
   maxClippedPeak: number;
   regions: Array<{ startSample: number; endSample: number; length: number; peak: number }>;
 } {
-  const threshold = options.threshold ?? 0.999;
+  const threshold = options.thresholdDb === undefined ? 0.999 : 10 ** (options.thresholdDb / 20);
   const minRegionSamples = options.minRegionSamples ?? 1;
   const regions: Array<{ startSample: number; endSample: number; length: number; peak: number }> =
     [];
@@ -1989,7 +2112,7 @@ export function fakeMeteringDetectClipping(
   const clippedSamples = regions.reduce((total, region) => total + region.length, 0);
   return {
     clippedSamples,
-    clippingRatio: samples.length > 0 ? clippedSamples / samples.length : 0,
+    clippedRatio: samples.length > 0 ? clippedSamples / samples.length : 0,
     maxClippedPeak: regions.reduce((max, region) => Math.max(max, region.peak), 0),
     regions,
   };
@@ -2000,9 +2123,17 @@ export function fakeMeteringDetectClipping(
  * (no K-weighting/gating; integratedLufs = -0.691 + 10*log10(mean square)).
  */
 export function fakeLufs(
-  samples: Float32Array,
+  input: Float32Array | { samples: Float32Array; sampleRate: number },
   _sampleRate = 48000,
-): { integratedLufs: number; momentaryLufs: number; shortTermLufs: number; loudnessRange: number } {
+): {
+  integratedLufs: number;
+  momentaryLufs: number;
+  shortTermLufs: number;
+  maxMomentaryLufs: number;
+  maxShortTermLufs: number;
+  loudnessRangeLu: number;
+} {
+  const samples = input instanceof Float32Array ? input : input.samples;
   let sum = 0;
   for (const sample of samples) sum += sample * sample;
   const meanSquare = samples.length > 0 ? sum / samples.length : 0;
@@ -2011,37 +2142,41 @@ export function fakeLufs(
     integratedLufs: loudness,
     momentaryLufs: loudness,
     shortTermLufs: loudness,
-    loudnessRange: 0,
+    maxMomentaryLufs: loudness,
+    maxShortTermLufs: loudness,
+    loudnessRangeLu: 0,
   };
 }
 
 /**
- * Mirrors lufsInterleaved(): channel-weighted integrated loudness from an
- * interleaved buffer (no K-weighting/gating, all channel weights 1.0, so it
- * sums the per-channel mean square). For one channel this equals fakeLufs;
- * for dual-mono stereo it reads ~+3 LU as BS.1770 requires.
+ * Mirrors lufsMultichannel(): channel-weighted integrated loudness from planar
+ * channels (no K-weighting/gating, all channel weights 1.0, so it sums the
+ * per-channel mean square). For one channel this equals fakeLufs; for
+ * dual-mono stereo it reads ~+3 LU as BS.1770 requires.
  */
-export function fakeLufsInterleaved(
-  samples: Float32Array,
-  channels: number,
-  _sampleRate = 48000,
-): { integratedLufs: number; momentaryLufs: number; shortTermLufs: number; loudnessRange: number } {
-  const frames = channels > 0 ? Math.floor(samples.length / channels) : 0;
+export function fakeLufsMultichannel(request: { channels: Float32Array[]; sampleRate: number }): {
+  integratedLufs: number;
+  momentaryLufs: number;
+  shortTermLufs: number;
+  maxMomentaryLufs: number;
+  maxShortTermLufs: number;
+  loudnessRangeLu: number;
+} {
+  const { channels } = request;
   let total = 0;
-  for (let c = 0; c < channels; c++) {
+  for (const channel of channels) {
     let sum = 0;
-    for (let i = 0; i < frames; i++) {
-      const sample = samples[i * channels + c];
-      sum += sample * sample;
-    }
-    total += frames > 0 ? sum / frames : 0;
+    for (const sample of channel) sum += sample * sample;
+    total += channel.length > 0 ? sum / channel.length : 0;
   }
   const loudness = total > 0 ? -0.691 + 10 * Math.log10(total) : Number.NEGATIVE_INFINITY;
   return {
     integratedLufs: loudness,
     momentaryLufs: loudness,
     shortTermLufs: loudness,
-    loudnessRange: 0,
+    maxMomentaryLufs: loudness,
+    maxShortTermLufs: loudness,
+    loudnessRangeLu: 0,
   };
 }
 
@@ -2049,13 +2184,13 @@ export function fakeLufsInterleaved(
  * Mirrors masterAudioStereo's result envelope; the fake applies no DSP and
  * copies the input through (preset chains need the real wasm).
  */
-export function fakeMasterAudioStereo(
-  left: Float32Array,
-  right: Float32Array,
-  sampleRate = 48000,
-  _presetName?: string,
-  _overrides?: Record<string, number | boolean> | null,
-): {
+export function fakeMasterAudioStereo(request: {
+  left: Float32Array;
+  right: Float32Array;
+  sampleRate: number;
+  preset?: string;
+  overrides?: Record<string, unknown>;
+}): {
   left: Float32Array;
   right: Float32Array;
   sampleRate: number;
@@ -2065,9 +2200,9 @@ export function fakeMasterAudioStereo(
   stages: string[];
 } {
   return {
-    left: new Float32Array(left),
-    right: new Float32Array(right),
-    sampleRate,
+    left: new Float32Array(request.left),
+    right: new Float32Array(request.right),
+    sampleRate: request.sampleRate,
     inputLufs: 0,
     outputLufs: 0,
     appliedGainDb: 0,
@@ -2095,6 +2230,19 @@ export class FakeStreamingEqualizer {
 export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
   return {
     Project: FakeProject,
+    midiNoteOn,
+    midiNoteOff,
+    midiProgram,
+    midiCc,
+    midiPolyPressure,
+    midiChannelPressure,
+    midiPitchBend,
+    midiBankProgram,
+    gmInstrumentName,
+    gmProgramForName,
+    gmFamilyName,
+    gmFamilyFirstProgram,
+    gm2InstrumentName,
     scalePitchClassEnabled,
     scaleQuantizeMidi,
     init: async () => {},
@@ -2105,6 +2253,11 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
       program === 0 ? 'Standard Kit' : program === 8 ? 'Room Kit' : null,
     synthGsDrumKitIsVoicedApart: (program: number) => program === 8,
     masteringInsertNames: () => Object.keys(FAKE_INSERT_PARAMS),
+    // The core exports no runtime list of every processor; its realtime insert
+    // names plus the fake's own catalog entries stand in for it.
+    masteringProcessorNames: () => [
+      ...new Set<string>([...MASTERING_INSERT_NAMES, ...Object.keys(FAKE_INSERT_PARAMS)]),
+    ],
     masteringProcessorCatalog: () =>
       Object.keys(FAKE_INSERT_PARAMS).map((id) => ({
         id,
@@ -2112,25 +2265,30 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
         realtimeInsertable: true,
         stereoOnly: id === 'modulation.rotary' || id === 'stereo.imager',
         latencySamples: 0,
+        tailSamples: 0,
+        channelPolicy: 'multichannel',
+        category: 'other',
+        causal: true,
         params: FAKE_INSERT_PARAM_INFO[id] ?? [],
+        slots: [],
       })),
     // A lookahead is the only build-time latency the fake inserts report.
-    masteringInsertTiming: (
-      _name: string,
-      params: Record<string, number | boolean>,
-      sampleRate: number,
-    ) => ({
+    masteringInsertTiming: (request: {
+      insert: string;
+      params?: Record<string, number | boolean>;
+      sampleRate: number;
+    }) => ({
       latencySamples:
-        typeof params.lookaheadMs === 'number'
-          ? Math.round((params.lookaheadMs * sampleRate) / 1000)
+        typeof request.params?.lookaheadMs === 'number'
+          ? Math.round((request.params.lookaheadMs * request.sampleRate) / 1000)
           : 0,
       tailSamples: 0,
     }),
     masteringInsertParamNames: (name: string) => FAKE_INSERT_PARAMS[name] ?? [],
-    masteringInsertParamInfo: (name: string) =>
-      name === 'saturation.ampSim'
+    masteringInsertParamInfo: (request: { insert: string; sampleRate?: number }) =>
+      request.insert === 'saturation.ampSim'
         ? [...FAKE_AMP_PARAM_DEFAULTS]
-        : (FAKE_INSERT_PARAM_INFO[name] ?? []),
+        : (FAKE_INSERT_PARAM_INFO[request.insert] ?? []),
     masteringAmpPresetCatalog: () =>
       FAKE_AMP_PRESET_CATALOG.map((entry) => ({
         index: entry.index,
@@ -2139,14 +2297,18 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
       })),
     masteringPresetNames: fakeMasteringPresetNames,
     capabilityCatalog: () => ({ masteringPresets: fakeMasteringPresetCatalog() }),
-    masteringPresetParams: () => ({ 'loudness.targetLufs': -12, 'loudness.ceilingDb': -1 }),
+    masteringPresetParams: () => ({ loudness: { targetLufs: -12, ceilingDbtp: -1 } }),
     mixingScenePresetNames: fakeMixingScenePresetNames,
-    mixingScenePresetJson: fakeMixingScenePresetJson,
+    mixingScenePreset: (name: string) => JSON.parse(fakeMixingScenePresetJson(name)),
     masteringStreamingPreview: (
-      _samples: Float32Array,
+      first: Float32Array | { platforms?: FakeStreamingPlatform[] },
       _sampleRate = 48000,
-      platforms: Array<{ name: string; targetLufs: number; ceilingDb: number }> = [],
-    ) => fakeStreamingPreviewJson(platforms, FAKE_DOWNMIX_LUFS),
+      options: { platforms?: FakeStreamingPlatform[] } = {},
+    ) =>
+      fakeStreamingPreview(
+        (first instanceof Float32Array ? options : first).platforms ?? [],
+        FAKE_DOWNMIX_LUFS,
+      ),
     // BS.1770 channel summing reads hotter than the mono downmix the caller
     // would otherwise have to build, which is the reason the stereo entry
     // point exists; the fake reproduces that offset so callers can tell the
@@ -2154,55 +2316,56 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     masteringStreamingPreviewStereo: (request: {
       left: Float32Array;
       right: Float32Array;
-      sampleRate?: number;
-      platforms?: Array<{ name: string; targetLufs: number; ceilingDb: number }>;
-    }) => fakeStreamingPreviewJson(request.platforms ?? [], FAKE_STEREO_LUFS),
-    masteringPairAnalyze: (request: string | { analysisName: string }) => {
-      const name = typeof request === 'string' ? request : request.analysisName;
-      if (name === 'match.matchEqCurve') {
-        return JSON.stringify({ frequencies: [100, 1000], gainDb: [1, -2] });
+      sampleRate: number;
+      platforms?: FakeStreamingPlatform[];
+    }) => fakeStreamingPreview(request.platforms ?? [], FAKE_STEREO_LUFS),
+    masteringAnalyzePair: (request: { analysis: string }) => {
+      if (request.analysis === 'match.matchEqCurve') {
+        return { frequencies: [100, 1000], gainDb: [1, -2] };
       }
-      if (name === 'match.tonalBalance') {
-        return JSON.stringify({
+      if (request.analysis === 'match.tonalBalance') {
+        return {
           bands: [{ lowHz: 100, highHz: 1000, sourceDb: -12, referenceDb: -14, deviationDb: 2 }],
-        });
+        };
       }
-      return JSON.stringify({ sourceLufs: -12, referenceLufs: -14, gainToMatchDb: -2 });
+      return { sourceLufs: -12, referenceLufs: -14, gainToMatchDb: -2 };
     },
-    masteringStereoAnalyze: (
-      _analysisName: string,
-      _left: Float32Array,
-      _right: Float32Array,
-      _sampleRate = 48000,
-    ) =>
-      JSON.stringify({
-        correlation: 0.42,
-        monoCompatWidth: 0.8,
-        monoCompatPeak: -3.2,
-        likelyMonoCompatible: true,
-      }),
+    masteringAnalyzeStereo: (_request: {
+      analysis: string;
+      left: Float32Array;
+      right: Float32Array;
+      sampleRate: number;
+    }) => ({
+      correlation: 0.42,
+      width: 0.8,
+      monoPeak: -3.2,
+      sideRms: 0.1,
+      likelyMonoCompatible: true,
+    }),
     // Pass-through one-shot stereo processor: copies the input unchanged.
-    masteringProcessStereo: (
-      _name: string,
-      left: Float32Array,
-      right: Float32Array,
-      sampleRate = 48000,
-      _params?: Record<string, number | boolean>,
-    ) => ({
-      left: new Float32Array(left),
-      right: new Float32Array(right),
-      sampleRate,
+    masteringApplyProcessorStereo: (request: {
+      processor: string;
+      left: Float32Array;
+      right: Float32Array;
+      sampleRate: number;
+      params?: Record<string, number | boolean>;
+    }) => ({
+      left: new Float32Array(request.left),
+      right: new Float32Array(request.right),
+      sampleRate: request.sampleRate,
       inputLufs: 0,
       outputLufs: 0,
       appliedGainDb: 0,
       latencySamples: 0,
+      loudnessTargetLimited: false,
+      nonFiniteSubstitutionCount: 0,
     }),
     StreamingEqualizer: FakeStreamingEqualizer,
     masterAudioStereo: fakeMasterAudioStereo,
     meteringPeakDb: fakeMeteringPeakDb,
-    meteringTruePeakDb: fakeMeteringTruePeakDb,
+    meteringTruePeakDbtp: fakeMeteringTruePeakDbtp,
     meteringDetectClipping: fakeMeteringDetectClipping,
     lufs: fakeLufs,
-    lufsInterleaved: fakeLufsInterleaved,
+    lufsMultichannel: fakeLufsMultichannel,
   } as unknown as typeof import('@/wasm/index.js');
 }

@@ -24,11 +24,18 @@
 import { linearToDb, SILENCE_DB } from '@/lib/db';
 import type {
   MAX_TRACK_LANES as ENGINE_MAX_TRACK_LANES,
-  EqBand,
+  SurroundPan as EngineSurroundPan,
+  EqBandInput,
+  MasteringChainConfig,
+  MasteringPreset,
+  PanLaw,
+  PanMode,
   SendTiming,
+  SoloProcessor,
 } from '@/wasm/index.js';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
+import { getWasmModule } from './runtime';
 
 /** Explicit source namespaces accepted by an insert sidechain key command. */
 export type MixerSidechainSource =
@@ -41,7 +48,7 @@ export interface InsertSlot {
   /** Stable identity used by automation lanes across reorder/serialization. */
   id?: string;
   /** Processor catalog name (e.g. 'dynamics.compressor', 'saturation.tape'). */
-  processor: string;
+  processor: SoloProcessor;
   /** Parameter overrides passed to the processor (camelCase keys). */
   params: Record<string, number | boolean>;
   /** False bypasses the slot without losing its parameters. */
@@ -82,58 +89,22 @@ export function isMixerChannelLayout(value: unknown): value is MixerChannelLayou
   return typeof value === 'string' && MIXER_CHANNEL_LAYOUTS.includes(value as MixerChannelLayout);
 }
 
-/** Converts a scene/model channel layout to libsonare's numeric ABI code. */
-export function mixerChannelLayoutCode(layout: MixerChannelLayout | undefined): number {
-  if (layout === 'mono') return 0;
-  if (layout === '5.1') return 2;
-  if (layout === '7.1') return 3;
-  return 1;
-}
-
 /** One strip's source position in a surround destination bus. */
-export interface SurroundPan {
-  /** Horizontal azimuth in degrees (-180..180; 0 = front-center). */
-  azimuth: number;
-  /** Reserved for future height beds; retained for scene round-trips. */
-  elevation: number;
-  /** Spread from a point source to the front bed (0..1). */
-  divergence: number;
-  /** Linear LFE send (0..1). */
-  lfe: number;
-  /** Reserved for future focus/spread controls; default is 1. */
-  distance: number;
-}
+export type SurroundPan = Required<EngineSurroundPan>;
 
 /** Default surround source position used by libsonare. */
 export const DEFAULT_SURROUND_PAN: SurroundPan = {
   azimuth: 0,
-  elevation: 0,
   divergence: 0,
   lfe: 0,
-  distance: 1,
 };
 
-/** Retired processor ids the engine still reads, mapped to the catalog id it reports. */
-const RENAMED_PROCESSORS: Readonly<Record<string, string>> = {
-  'eq.pultec': 'eq.passiveTube',
-  'eq.apiStyle': 'eq.steppedProportionalQ',
-};
-
-/** Rewrites retired processor ids in one strip/chain to their current catalog id. */
-export function renameRetiredProcessors(slots: InsertSlot[]): void {
-  for (const slot of slots) {
-    const current = RENAMED_PROCESSORS[slot.processor];
-    if (current !== undefined) slot.processor = current;
-  }
-}
-
-/** Rewrites retired processor ids throughout a project mixer state. */
-export function renameRetiredMixerProcessors(state: ProjectMixerState): void {
-  renameRetiredProcessors(state.master.inserts);
-  for (const bus of state.buses) {
-    if (bus.strip) renameRetiredProcessors(bus.strip.inserts);
-  }
-  if (state.masteringChain) renameRetiredProcessors(state.masteringChain.processors);
+/**
+ * Narrows a processor name arriving from storage, an import or the UI to a
+ * catalog id of the loaded engine.
+ */
+export function isSoloProcessor(name: string): name is SoloProcessor {
+  return (getWasmModule().masteringProcessorNames() as readonly string[]).includes(name);
 }
 
 let nextProcessorId = 1;
@@ -187,19 +158,11 @@ export interface StripSend {
 }
 
 /**
- * Strip pan law: the center-level compensation curve applied as a signal
- * pans across the stereo field. Mirrors libsonare's SonarePanLaw codes
- * (const3dB=0, const4.5dB=1, const6dB=2, linear0dB=3).
- */
-export type PanLawId = 'const3dB' | 'const4.5dB' | 'const6dB' | 'linear0dB';
-
-/**
  * Strip pan mode. 'balance' attenuates the opposite channel (default),
  * 'stereoPan' repositions the whole stereo image, 'dualPan' pans each input
- * channel independently (see {@link MixerStrip.dualPan}). Mirrors libsonare's
- * SonarePanMode codes (balance=0, stereoPan=1, dualPan=2).
+ * channel independently (see {@link MixerStrip.dualPan}). The engine's vocabulary.
  */
-export type PanModeId = 'balance' | 'stereoPan' | 'dualPan';
+export type PanModeId = PanMode;
 
 /** Independent left/right pan positions used in 'dualPan' mode. */
 export interface DualPan {
@@ -209,19 +172,22 @@ export interface DualPan {
   right: number;
 }
 
-/** Selectable pan laws in display order. */
-export const PAN_LAW_IDS: ReadonlyArray<PanLawId> = [
-  'const3dB',
-  'const4.5dB',
-  'const6dB',
-  'linear0dB',
+/**
+ * Selectable pan laws in display order. Mirrors the core's `PanLaw` union,
+ * which has no runtime list; the core-surface contract spec fails once it has.
+ */
+export const PAN_LAW_IDS: ReadonlyArray<PanLaw> = [
+  'const3Db',
+  'const4.5Db',
+  'const6Db',
+  'linear0Db',
 ];
 
 /** Selectable pan modes in display order. */
 export const PAN_MODE_IDS: ReadonlyArray<PanModeId> = ['balance', 'stereoPan', 'dualPan'];
 
 /** Default pan law (constant-power -3 dB center), matching the engine default. */
-export const DEFAULT_PAN_LAW: PanLawId = 'const3dB';
+export const DEFAULT_PAN_LAW: PanLaw = 'const3Db';
 
 /** Default pan mode (balance). */
 export const DEFAULT_PAN_MODE: PanModeId = 'balance';
@@ -247,12 +213,12 @@ export const MAX_STRIP_WIDTH = 2;
 /** Band slots of the engine's StreamingEqualizer. */
 export const MAX_STRIP_EQ_BANDS = 24;
 
-/** Channel EQ as a list of libsonare EqBand descriptors. */
+/** Channel EQ as a list of libsonare EqBandInput descriptors. */
 export interface StripEq {
   /** False bypasses the whole EQ. */
   enabled: boolean;
   /** Up to {@link MAX_STRIP_EQ_BANDS} bands. */
-  bands: EqBand[];
+  bands: EqBandInput[];
 }
 
 /** One channel strip (per track, master, or a bus). */
@@ -298,7 +264,7 @@ export interface MixerStrip {
    * Strip pan law; mirrored to the engine via the track or bus setter.
    * Absent = {@link DEFAULT_PAN_LAW}.
    */
-  panLaw?: PanLawId;
+  panLaw?: PanLaw;
   /**
    * Strip pan mode; mirrored to the engine via the track or bus setter.
    * Absent = {@link DEFAULT_PAN_MODE}.
@@ -330,12 +296,12 @@ export interface MixerStrip {
  */
 export interface MasteringChainState {
   /** Wasm mastering preset name; absent = no preset stage. */
-  preset?: string;
+  preset?: MasteringPreset;
   /**
-   * Flat mastering preset overrides passed to masterAudioStereo (dot-notation
-   * keys such as 'loudness.targetLufs'). Absent/empty = preset defaults.
+   * Nested mastering preset overrides passed to masterAudioStereo.
+   * Absent/empty = preset defaults.
    */
-  presetOverrides?: Record<string, number | boolean>;
+  presetOverrides?: MasteringChainConfig;
   /** Processor slots applied after the preset, in order. */
   processors: InsertSlot[];
 }
@@ -698,10 +664,8 @@ export function isDefaultStrip(strip: MixerStrip): boolean {
   const hasNonDefaultSurroundPan =
     surroundPan !== undefined &&
     (surroundPan.azimuth !== DEFAULT_SURROUND_PAN.azimuth ||
-      surroundPan.elevation !== DEFAULT_SURROUND_PAN.elevation ||
       surroundPan.divergence !== DEFAULT_SURROUND_PAN.divergence ||
-      surroundPan.lfe !== DEFAULT_SURROUND_PAN.lfe ||
-      surroundPan.distance !== DEFAULT_SURROUND_PAN.distance);
+      surroundPan.lfe !== DEFAULT_SURROUND_PAN.lfe);
   return (
     strip.gainDb === 0 &&
     strip.pan === 0 &&

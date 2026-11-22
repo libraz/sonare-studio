@@ -168,8 +168,13 @@ describe('engineBusGraph', () => {
       groups: [],
     });
     expect(graph.declarations).toEqual([
-      { busId: 1, gainDb: 0, channelLayout: 0, sends: [{ busId: 2, levelDb: -4, enabled: true }] },
-      { busId: 2, gainDb: -2, channelLayout: 2 },
+      {
+        busId: 1,
+        gainDb: 0,
+        channelLayout: 'mono',
+        sends: [{ busId: 2, levelDb: -4, enabled: true }],
+      },
+      { busId: 2, gainDb: -2, channelLayout: '5.1' },
     ]);
   });
 });

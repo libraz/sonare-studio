@@ -2,8 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createWebMidiOutput, routesFromTracks } from '@/engine/web-midi-output';
 import type { EditorTrack } from '@/project/types';
+import type { ExternalMidiEvent } from '@/wasm/index.js';
 
-const TRANSPORT_DESTINATION = 0xffffffff;
+/** An engine MIDI-out event as written in the tests: byte arrays, frame defaulting to 0. */
+type EmittedEvent = Omit<ExternalMidiEvent, 'bytes' | 'renderFrame'> & {
+  renderFrame?: number;
+  bytes: number[];
+};
 
 /** A fake Web MIDI output port recording everything written to it. */
 function fakePort(id: string) {
@@ -42,7 +47,7 @@ function setup(ports: ReturnType<typeof fakePort>[]) {
   const requestMIDIAccess = vi.fn().mockResolvedValue(access);
   (navigator as any).requestMIDIAccess = requestMIDIAccess;
 
-  let captured: ((events: { destinationId: number; bytes: number[] }[]) => void) | null = null;
+  let captured: ((events: ExternalMidiEvent[]) => void) | null = null;
   const handle = {
     ctx: {
       currentTime: 1,
@@ -50,7 +55,7 @@ function setup(ports: ReturnType<typeof fakePort>[]) {
       getOutputTimestamp: () => ({ contextTime: 1, performanceTime: 5000 }),
     },
     engine: {
-      onMidiOut: (cb: (events: { destinationId: number; bytes: number[] }[]) => void) => {
+      onMidiOut: (cb: (events: ExternalMidiEvent[]) => void) => {
         captured = cb;
         return () => {
           captured = null;
@@ -61,7 +66,14 @@ function setup(ports: ReturnType<typeof fakePort>[]) {
 
   return {
     handle,
-    emit: (events: { destinationId: number; bytes: number[] }[]) => captured?.(events),
+    emit: (events: EmittedEvent[]) =>
+      captured?.(
+        events.map((event) => ({
+          renderFrame: 0,
+          ...event,
+          bytes: Uint8Array.from(event.bytes),
+        })),
+      ),
     requestMIDIAccess,
   };
 }
@@ -304,7 +316,7 @@ describe('createWebMidiOutput', () => {
       { destinationId: 2, outputPortId: 'p1', channel: 0, sendClock: true },
       { destinationId: 3, outputPortId: 'p2', channel: 0 },
     ]);
-    emit([{ destinationId: TRANSPORT_DESTINATION, bytes: [0xf8] }]);
+    emit([{ bytes: [0xf8] }]);
     expect(clockPort.sent).toEqual([[0xf8]]);
     expect(plainPort.sent).toEqual([]);
     bridge.dispose();
@@ -331,7 +343,7 @@ describe('createWebMidiOutput', () => {
     await bridge.start();
     bridge.setRoutes([{ destinationId: 2, outputPortId: 'p1', channel: 0 }]);
     // renderFrame 96000 maps 1 s past the output anchor (performance 6000).
-    emit([{ destinationId: 2, renderFrame: 96000, bytes: [0x90, 60, 100] }] as never);
+    emit([{ destinationId: 2, renderFrame: 96000, bytes: [0x90, 60, 100] }]);
     const noteOnAt = port.timestamps[0] as number;
 
     bridge.setRoutes([]);
@@ -406,7 +418,7 @@ describe('createWebMidiOutput', () => {
       { destinationId: 2, outputPortId: 'healthy', channel: 0, sendClock: true },
     ]);
 
-    emit([{ destinationId: TRANSPORT_DESTINATION, bytes: [0xf8] }]);
+    emit([{ bytes: [0xf8] }]);
 
     expect(broken.send).toHaveBeenCalledTimes(1);
     expect(healthy.sent).toEqual([[0xf8]]);

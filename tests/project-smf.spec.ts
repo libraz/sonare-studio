@@ -420,7 +420,7 @@ describe('smfToProjectDocument', () => {
     expect(doc.tracks[0].name).toBe('Piano');
     expect(doc.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'sub-bass',
+      preset: 'subBass',
       useGmPrograms: true,
       gmProgram: 38,
     });
@@ -557,9 +557,9 @@ describe('smfToProjectDocument', () => {
 
     expect(doc.tracks).toHaveLength(3);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
-      { kind: 'synth-preset', preset: 'acoustic-piano', useGmPrograms: true, gmProgram: 0 },
-      { kind: 'synth-preset', preset: 'sub-bass', useGmPrograms: true, gmProgram: 38 },
-      { kind: 'synth-preset', preset: 'drum-kit', useGmPrograms: true, gmProgram: 0 },
+      { kind: 'synth-preset', preset: 'acousticPiano', useGmPrograms: true, gmProgram: 0 },
+      { kind: 'synth-preset', preset: 'subBass', useGmPrograms: true, gmProgram: 38 },
+      { kind: 'synth-preset', preset: 'drumKit', useGmPrograms: true, gmProgram: 0 },
     ]);
     expect(doc.tracks.map((track) => track.clips[0].notes[0].channel)).toEqual([0, 1, 9]);
   });
@@ -597,8 +597,8 @@ describe('smfToProjectDocument', () => {
 
     expect(doc.tracks).toHaveLength(2);
     expect(doc.tracks.map((track) => track.instrument)).toEqual([
-      { kind: 'synth-preset', preset: 'acoustic-piano', useGmPrograms: true, gmProgram: 0 },
-      { kind: 'synth-preset', preset: 'sub-bass', useGmPrograms: true, gmProgram: 38 },
+      { kind: 'synth-preset', preset: 'acousticPiano', useGmPrograms: true, gmProgram: 0 },
+      { kind: 'synth-preset', preset: 'subBass', useGmPrograms: true, gmProgram: 38 },
     ]);
     expect(doc.tracks[0].clips[0].notes).toEqual([
       { pitch: 60, velocity: 100, startPpq: 0, durationPpq: 1, channel: 0 },
@@ -618,7 +618,7 @@ describe('smfToProjectDocument', () => {
     expect(doc.tracks).toHaveLength(1);
     expect(doc.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'acoustic-piano',
+      preset: 'acousticPiano',
       useGmPrograms: true,
       gmProgram: 0,
     });
@@ -720,7 +720,7 @@ describe('smfToProjectDocument', () => {
           solo: false,
           volume: 0.5,
           pan: -0.5,
-          instrument: { kind: 'synth-preset', preset: 'sub-bass' },
+          instrument: { kind: 'synth-preset', preset: 'subBass' },
           clips: [
             {
               name: 'Bass',
@@ -749,7 +749,7 @@ describe('smfToProjectDocument', () => {
     expect(roundTrip.markers).toEqual([{ ppq: 0, name: 'Cue: Verse' }]);
     expect(roundTrip.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'sub-bass',
+      preset: 'subBass',
       useGmPrograms: true,
       gmProgram: 38,
     });
@@ -843,7 +843,7 @@ describe('smfToProjectDocument', () => {
           solo: false,
           volume: 1,
           pan: 0,
-          instrument: { kind: 'synth-preset', preset: 'e-piano' },
+          instrument: { kind: 'synth-preset', preset: 'ePiano' },
           clips: [
             {
               name: 'Lead',
@@ -1018,17 +1018,17 @@ describe('smfToProjectDocument', () => {
 
   it('maps app synth presets to GM program changes on SMF export', async () => {
     const presets = [
-      'acoustic-piano',
-      'e-piano',
+      'acousticPiano',
+      'ePiano',
       'organ',
-      'electric-guitar',
-      'sub-bass',
-      'warm-pad',
+      'electricGuitar',
+      'subBass',
+      'warmPad',
       'brass',
-      'saw-lead',
-      'square-lead',
+      'sawLead',
+      'squareLead',
       'pluck',
-      'drum-kit',
+      'drumKit',
       'sine',
     ];
     const source: ProjectDocument = {
@@ -1078,7 +1078,7 @@ describe('smfToProjectDocument', () => {
     // as the square lead, rather than misusing program 120 (guitar fret noise).
     expect(roundTrip.tracks.map((track) => track.instrument?.preset)).toEqual([
       ...presets.slice(0, -1),
-      'square-lead',
+      'squareLead',
     ]);
   });
 
@@ -1098,7 +1098,7 @@ describe('smfToProjectDocument', () => {
           solo: false,
           volume: 1,
           pan: 0,
-          instrument: { kind: 'synth-preset', preset: 'warm-pad', gmBank: 129, gmProgram: 42 },
+          instrument: { kind: 'synth-preset', preset: 'warmPad', gmBank: 129, gmProgram: 42 },
           clips: [
             {
               name: 'Phrase',
@@ -1122,7 +1122,7 @@ describe('smfToProjectDocument', () => {
 
     expect(roundTrip.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'warm-pad',
+      preset: 'warmPad',
       useGmPrograms: true,
       gmBank: 129,
       gmProgram: 42,
@@ -1147,7 +1147,7 @@ describe('smfToProjectDocument', () => {
           pan: 0,
           instrument: {
             kind: 'synth-preset',
-            preset: 'electric-guitar',
+            preset: 'electricGuitar',
             useGmPrograms: true,
             gmBank: 128,
             gmProgram: 24,
@@ -1174,7 +1174,7 @@ describe('smfToProjectDocument', () => {
     const roundTrip = await smfToProjectDocument(await projectDocumentToSmf(source), 'gs.mid');
     expect(roundTrip.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'electric-guitar',
+      preset: 'electricGuitar',
       useGmPrograms: true,
       gmBank: 128,
       gmProgram: 24,

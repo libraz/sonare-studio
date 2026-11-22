@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useWebMidi } from '@/composables/useWebMidi';
+import type { WebMidiBinding } from '@/wasm/index.js';
 
 class FakeMidiInput {
   readonly listeners = new Set<(event: { data: Uint8Array; timeStamp: number }) => void>();
@@ -37,7 +38,7 @@ class FakeLegacyMidiInput {
 
 const wasmMock = vi.hoisted(() => ({
   input: null as FakeMidiInput | FakeLegacyMidiInput | null,
-  close: vi.fn(),
+  destroy: vi.fn(),
   bindWebMidi: vi.fn(),
   isWebMidiAvailable: vi.fn(() => true),
 }));
@@ -53,8 +54,8 @@ function makeBinding(input: FakeMidiInput | FakeLegacyMidiInput) {
   return {
     access: { inputs: new Map([['input-1', input]]) },
     inputs: () => [{ id: 'input-1', name: 'Controller' }],
-    close: wasmMock.close,
-  };
+    destroy: wasmMock.destroy,
+  } satisfies Partial<Omit<WebMidiBinding, 'access'>> & { access: unknown };
 }
 
 function deferred<T>() {
@@ -67,7 +68,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   wasmMock.input = new FakeMidiInput();
-  wasmMock.close.mockClear();
+  wasmMock.destroy.mockClear();
   wasmMock.isWebMidiAvailable.mockReturnValue(true);
   wasmMock.bindWebMidi.mockReset();
   wasmMock.bindWebMidi.mockImplementation(async () => makeBinding(wasmMock.input as FakeMidiInput));
@@ -105,7 +106,7 @@ describe('useWebMidi', () => {
     });
 
     scope.stop();
-    expect(wasmMock.close).toHaveBeenCalledTimes(1);
+    expect(wasmMock.destroy).toHaveBeenCalledTimes(1);
   });
 
   it('keeps 14-bit CC and RPN state isolated per MIDI input and resets it on reconnect', async () => {
@@ -123,7 +124,7 @@ describe('useWebMidi', () => {
         { id: 'first', name: 'First' },
         { id: 'second', name: 'Second' },
       ],
-      close: wasmMock.close,
+      destroy: wasmMock.destroy,
     });
     const webMidi = useWebMidi({ onControlChange });
 
@@ -246,7 +247,7 @@ describe('useWebMidi', () => {
     pending.resolve(makeBinding(input));
 
     await expect(connecting).resolves.toBe(false);
-    expect(wasmMock.close).toHaveBeenCalledTimes(1);
+    expect(wasmMock.destroy).toHaveBeenCalledTimes(1);
     expect(input.listeners.size).toBe(0);
     expect(webMidi.connected.value).toBe(false);
   });
@@ -268,9 +269,9 @@ describe('useWebMidi', () => {
     const connectingA = webMidi.connect(engineA);
     await vi.waitFor(() => expect(wasmMock.bindWebMidi).toHaveBeenCalledTimes(1));
     const connectingB = webMidi.connect(engineB);
-    second.resolve({ ...makeBinding(secondInput), close: secondClose });
+    second.resolve({ ...makeBinding(secondInput), destroy: secondClose });
     await expect(connectingB).resolves.toBe(true);
-    first.resolve({ ...makeBinding(firstInput), close: firstClose });
+    first.resolve({ ...makeBinding(firstInput), destroy: firstClose });
     await expect(connectingA).resolves.toBe(false);
 
     expect(firstClose).toHaveBeenCalledTimes(1);
@@ -285,7 +286,7 @@ describe('useWebMidi', () => {
     const input = wasmMock.input as FakeMidiInput;
     wasmMock.bindWebMidi.mockResolvedValue({
       ...makeBinding(input),
-      close: () => {
+      destroy: () => {
         throw new Error('close failed');
       },
     });
@@ -312,7 +313,7 @@ describe('useWebMidi', () => {
         { id: 'input-1', name: 'Controller' },
         { id: 'surface-1', name: 'MCU' },
       ],
-      close: wasmMock.close,
+      destroy: wasmMock.destroy,
     }));
     (navigator as unknown as Record<string, unknown>).requestMIDIAccess = async () => ({
       inputs: new Map([
@@ -381,7 +382,7 @@ describe('useWebMidi', () => {
     pending.resolve(makeBinding(wasmMock.input as FakeMidiInput));
 
     await expect(connecting).resolves.toBe(false);
-    expect(wasmMock.close).toHaveBeenCalledTimes(1);
+    expect(wasmMock.destroy).toHaveBeenCalledTimes(1);
     expect(webMidi.connected.value).toBe(false);
     await expect(webMidi.connect({} as never)).resolves.toBe(false);
   });

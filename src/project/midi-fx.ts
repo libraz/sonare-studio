@@ -5,17 +5,18 @@
  * grid quantize, velocity scale/offset/curve, timing/velocity humanize and
  * chord harmonize. Canvas-free and side-effect-free.
  *
- * The engine accepts a flat JSON object (verified against the realtime ABI):
- * `transpose_semitones`, `quantize_ppq` + `quantize_strength`, `velocity_scale`,
- * `velocity_offset`, `velocity_gamma`, `humanize_ppq`, `humanize_velocity`,
- * `chord_intervals` and `arpeggiator_intervals` + `arpeggiator_step_ppq`
- * (+ optional `arpeggiator_gate_ppq`). Absent or identity-valued keys are
- * no-ops, so the serializer only emits keys that actually change the notes.
+ * The engine takes the core's `MidiFxConfig`: `transposeSemitones`,
+ * `quantizePpq` + `quantizeStrength`, `velocityScale`, `velocityOffset`,
+ * `velocityGamma`, `humanizePpq`, `humanizeVelocity`, `chordIntervals` and
+ * `arpeggiatorIntervals` + `arpeggiatorStepPpq` (+ optional
+ * `arpeggiatorGatePpq`). Absent or identity-valued fields are no-ops, so
+ * {@link midiFxConfig} only emits fields that actually change the notes.
  *
  * All PPQ values are in the editor convention where 1.0 = one quarter note.
  */
 
 import { clamp, clampInt } from '@/lib/math';
+import type { MidiFxConfig as EngineMidiFxConfig } from '@/wasm/index.js';
 
 /** A complete MIDI-FX transform configuration (UI-facing, pre-serialization). */
 export interface MidiFxConfig {
@@ -223,54 +224,38 @@ export function sanitizeMidiFxConfig(input: Partial<MidiFxConfig>): MidiFxConfig
   };
 }
 
-/** The flat object shape the engine's `bakeMidiFx` accepts. */
-interface MidiFxEngineConfig {
-  transpose_semitones?: number;
-  quantize_ppq?: number;
-  quantize_strength?: number;
-  velocity_scale?: number;
-  velocity_offset?: number;
-  velocity_gamma?: number;
-  humanize_ppq?: number;
-  humanize_velocity?: number;
-  chord_intervals?: number[];
-  arpeggiator_intervals?: number[];
-  arpeggiator_step_ppq?: number;
-  arpeggiator_gate_ppq?: number;
-}
-
 /**
- * Builds the engine config object from a sanitized transform, emitting only the
- * keys that actually change the notes (identity-valued fields are omitted so an
- * untouched control never perturbs the clip).
+ * Builds the engine config from a sanitized transform, emitting only the
+ * fields that actually change the notes (identity-valued fields are omitted so
+ * an untouched control never perturbs the clip).
  *
  * @param config A sanitized {@link MidiFxConfig}.
  * @returns The engine config, possibly empty when nothing is effective.
  */
-function toEngineConfig(config: MidiFxConfig): MidiFxEngineConfig {
-  const out: MidiFxEngineConfig = {};
-  if (config.transposeSemitones !== 0) out.transpose_semitones = config.transposeSemitones;
+function toEngineConfig(config: MidiFxConfig): EngineMidiFxConfig {
+  const out: EngineMidiFxConfig = {};
+  if (config.transposeSemitones !== 0) out.transposeSemitones = config.transposeSemitones;
   if (config.quantizeStrength > 0 && config.quantizeGrid > 0) {
-    out.quantize_ppq = config.quantizeGrid;
-    out.quantize_strength = config.quantizeStrength;
+    out.quantizePpq = config.quantizeGrid;
+    out.quantizeStrength = config.quantizeStrength;
   }
-  if (config.velocityScale !== 1) out.velocity_scale = config.velocityScale;
-  if (config.velocityOffset !== 0) out.velocity_offset = config.velocityOffset;
-  if (config.velocityGamma !== 1) out.velocity_gamma = config.velocityGamma;
-  if (config.humanizeTimingPpq > 0) out.humanize_ppq = config.humanizeTimingPpq;
-  if (config.humanizeVelocity > 0) out.humanize_velocity = config.humanizeVelocity;
+  if (config.velocityScale !== 1) out.velocityScale = config.velocityScale;
+  if (config.velocityOffset !== 0) out.velocityOffset = config.velocityOffset;
+  if (config.velocityGamma !== 1) out.velocityGamma = config.velocityGamma;
+  if (config.humanizeTimingPpq > 0) out.humanizePpq = config.humanizeTimingPpq;
+  if (config.humanizeVelocity > 0) out.humanizeVelocity = config.humanizeVelocity;
   if (config.chordIntervals.length > 0 && config.chordIntervals.some((i) => i !== 0)) {
-    out.chord_intervals = [...config.chordIntervals];
+    out.chordIntervals = [...config.chordIntervals];
   }
   // An arpeggio re-triggers a held note into a sequence, so any non-empty step
   // list is effective (even a single [0] step, which repeats the note). The gate
-  // key is emitted only when it shortens the step; a full gate is the legato
-  // default the engine assumes when the key is absent.
+  // is emitted only when it shortens the step; a full gate is the legato
+  // default the engine assumes when the field is absent.
   if (config.arpeggiatorIntervals.length > 0 && config.arpeggiatorRate > 0) {
-    out.arpeggiator_intervals = [...config.arpeggiatorIntervals];
-    out.arpeggiator_step_ppq = config.arpeggiatorRate;
+    out.arpeggiatorIntervals = [...config.arpeggiatorIntervals];
+    out.arpeggiatorStepPpq = config.arpeggiatorRate;
     if (config.arpeggiatorGate < 1) {
-      out.arpeggiator_gate_ppq = config.arpeggiatorRate * config.arpeggiatorGate;
+      out.arpeggiatorGatePpq = config.arpeggiatorRate * config.arpeggiatorGate;
     }
   }
   return out;
@@ -287,14 +272,13 @@ export function isMidiFxNoop(config: MidiFxConfig): boolean {
 }
 
 /**
- * Serializes a transform to the JSON string `Project.bakeMidiFx` accepts, or
- * null when the transform is a no-op (nothing to bake).
+ * Converts a transform to the core's MIDI-FX config, or null when the
+ * transform is a no-op (nothing to apply or bake).
  *
  * @param config A {@link MidiFxConfig} (sanitized internally).
- * @returns A JSON string, or null when no field is effective.
+ * @returns The core config, or null when no field is effective.
  */
-export function midiFxConfigJson(config: MidiFxConfig): string | null {
+export function midiFxConfig(config: MidiFxConfig): EngineMidiFxConfig | null {
   const engine = toEngineConfig(sanitizeMidiFxConfig(config));
-  if (Object.keys(engine).length === 0) return null;
-  return JSON.stringify(engine);
+  return Object.keys(engine).length === 0 ? null : engine;
 }

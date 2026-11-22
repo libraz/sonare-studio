@@ -78,6 +78,6 @@ describe('loadMasteringPresetCatalog', () => {
     expect(isRestorationPreset('pop')).toBe(false);
     expect(isRestorationPreset('custom')).toBe(false);
     expect(masteringPresetInfo('pop')?.targetLufs).toBe(-14);
-    expect(masteringPresetInfo('vinyl')?.targetLufs).toBeNull();
+    expect(masteringPresetInfo('vinyl')?.targetLufs).toBeUndefined();
   });
 });

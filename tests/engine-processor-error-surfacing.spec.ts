@@ -46,13 +46,13 @@ describe('recorder input processor crash', () => {
       },
       ctx: { sampleRate: 100, baseLatency: 0 },
     } as unknown as EngineHandle;
-    const close = vi.fn();
+    const destroy = vi.fn();
     let crash: (() => void) | undefined;
     const recorder = createRecorder(handle, {
       getUserMedia: async () => makeStream(),
       bindInput: async (_ctx, _node, opts) => {
         crash = opts.onProcessorError;
-        return { stream: opts.stream, source: {} as AudioNode, close };
+        return { stream: opts.stream, source: {} as AudioNode, destroy };
       },
     });
     const crashed = vi.fn();
@@ -67,7 +67,7 @@ describe('recorder input processor crash', () => {
     expect(crashed).toHaveBeenCalledTimes(1);
     expect(lost).not.toHaveBeenCalled();
     expect(recorder.hasMicrophone()).toBe(false);
-    expect(close).toHaveBeenCalled();
+    expect(destroy).toHaveBeenCalled();
   });
 });
 

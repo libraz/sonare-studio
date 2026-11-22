@@ -139,7 +139,7 @@ export function moveClipWithin(
   const project = getProject();
   edit(1, () => {
     if (newTrackId === undefined) project.moveClip(clipId, newStartPpq);
-    else project.moveClip(clipId, newStartPpq, newTrackId);
+    else project.moveClip(clipId, newStartPpq, { trackId: newTrackId });
   });
 }
 
@@ -166,14 +166,18 @@ export function shapeClipWithin(edit: AtomicProjectEdit, clipId: number, shape: 
   const project = getProject();
   if ((shape.fadeInPpq ?? 0) > 0 || (shape.fadeOutPpq ?? 0) > 0) {
     edit(1, () =>
-      project.setClipFade(
-        clipId,
-        { lengthPpq: shape.fadeInPpq ?? 0 },
-        { lengthPpq: shape.fadeOutPpq ?? 0 },
-      ),
+      project.setClipFade(clipId, {
+        fadeInPpq: shape.fadeInPpq ?? 0,
+        fadeOutPpq: shape.fadeOutPpq ?? 0,
+      }),
     );
   }
   if (shape.loopEnabled) {
-    edit(1, () => project.setClipLoop(clipId, 'loop', shape.loopLengthPpq || shape.lengthPpq));
+    edit(1, () =>
+      project.setClipLoop(clipId, {
+        loopMode: 'loop',
+        loopLengthPpq: shape.loopLengthPpq || shape.lengthPpq,
+      }),
+    );
   }
 }

@@ -25,10 +25,13 @@ import { ensureWasm } from '@/lib/wasm';
 import type { NotatedChordSymbol } from '@/notation/model';
 import { PPQ_EPSILON } from '@/notation/musicxml-shared';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
+import {
+  chordFromAnnotationEntry,
+  type EditorChordSymbol,
+  toProjectChordSymbol,
+} from '@/project/chords';
+import { readNativeDocument } from '@/project/native-document';
 import type { EditorNote } from '@/project/types';
-
-/** Sentinel used by the Project annotation encoding for "no pitch class". */
-const PC_NONE = 255;
 
 /** Estimation options for {@link estimateChordSymbols}. */
 export interface ChordEstimateOptions {
@@ -205,15 +208,22 @@ export function estimateChordSymbols(
   return out;
 }
 
-/** Slice of one serialized annotation chord inside the Project JSON document. */
-interface SerializedAnnotationChord {
-  start_ppq: number;
-  end_ppq: number;
-  root_pc: number;
-  quality: number;
-  slash_bass_pc: number;
-  roman_numeral: string;
-  extensions?: number[];
+/** Editor ordinal of a chord whose quality is not named. */
+const UNKNOWN_QUALITY = 9;
+
+/** The editor chord an estimated symbol stands for; an unnamed quality is the unknown ordinal. */
+function editorChord(chord: EstimatedChordSymbol, rootPc: number): EditorChordSymbol {
+  const symbol: EditorChordSymbol = {
+    startPpq: chord.ppq,
+    endPpq: chord.endPpq,
+    rootPc,
+    quality: chord.quality ?? UNKNOWN_QUALITY,
+  };
+  if (chord.bassPc !== undefined) symbol.bassPc = chord.bassPc;
+  if (chord.extensions !== undefined) symbol.extensions = [...chord.extensions];
+  if (chord.omissions !== undefined) symbol.omissions = [...chord.omissions];
+  if (chord.romanNumeral !== undefined) symbol.romanNumeral = chord.romanNumeral;
+  return symbol;
 }
 
 /** PPQ keys are rounded at micro-PPQ resolution to absorb float round-trips. */
@@ -223,11 +233,10 @@ const KEY_PPQ_SCALE = 1e6;
  * Round-trips estimated chord symbols through `Project.annotateChords` on a
  * scratch wasm Project and reads back the canonical annotation stream.
  *
- * The Project encoding shifts quality ordinals by one (0 = unknown,
- * 1 = major, ...) and uses 255 as the "no pitch class" sentinel; this
- * function applies both conversions in each direction. Display text and omitted
- * tones are not stored by the Project, so both are re-associated by start
- * position from the symbols handed in.
+ * The Project encoding folds the editor's qualities into the core's families
+ * plus extension degrees; this function applies that conversion in each
+ * direction. Display text and omitted tones are not stored by the Project, so
+ * both are re-associated by start position from the symbols handed in.
  *
  * The scratch Project is always released; any wasm failure rejects and the
  * caller is expected to degrade by rendering without chord symbols.
@@ -243,19 +252,13 @@ export async function canonicalizeChordSymbols(
   const scratch = new wasm.Project();
   try {
     scratch.annotateChords(
-      chords.map((chord) => ({
-        startPpq: chord.ppq,
-        endPpq: chord.endPpq,
-        rootPc: chord.rootPc ?? PC_NONE,
-        quality: chord.quality === undefined ? 0 : chord.quality + 1,
-        slashBassPc: chord.bassPc ?? PC_NONE,
-        ...(chord.extensions !== undefined ? { extensions: chord.extensions } : {}),
-        ...(chord.romanNumeral !== undefined ? { romanNumeral: chord.romanNumeral } : {}),
-      })),
+      chords.map((chord) =>
+        chord.rootPc === undefined
+          ? { startPpq: chord.ppq, endPpq: chord.endPpq }
+          : toProjectChordSymbol(editorChord(chord, chord.rootPc)),
+      ),
     );
-    const doc = JSON.parse(scratch.toJson()) as {
-      annotation?: { chords?: SerializedAnnotationChord[] };
-    };
+    const doc = readNativeDocument(scratch);
     const stored = doc.annotation?.chords;
     if (!Array.isArray(stored)) return [];
     const chordByStart = new Map(
@@ -263,31 +266,28 @@ export async function canonicalizeChordSymbols(
     );
     const out: NotatedChordSymbol[] = [];
     for (const raw of stored) {
-      if (typeof raw.root_pc !== 'number' || raw.root_pc < 0 || raw.root_pc > 11) continue;
-      const original = chordByStart.get(Math.round(raw.start_ppq * KEY_PPQ_SCALE));
-      if (original === undefined) continue;
+      const original = chordByStart.get(Math.round(raw.startPpq * KEY_PPQ_SCALE));
+      if (original === undefined || original.rootPc === undefined) continue;
+      const read = chordFromAnnotationEntry(raw, editorChord(original, original.rootPc));
+      if (read === null) continue;
       const symbol: NotatedChordSymbol = {
-        ppq: raw.start_ppq,
+        ppq: raw.startPpq,
         text: original.text,
-        rootPc: raw.root_pc,
+        rootPc: read.rootPc,
       };
-      if (raw.quality >= 1) symbol.quality = raw.quality - 1;
-      if (raw.slash_bass_pc >= 0 && raw.slash_bass_pc <= 11) symbol.bassPc = raw.slash_bass_pc;
-      if (Array.isArray(raw.extensions) && raw.extensions.length > 0) {
-        symbol.extensions = raw.extensions.filter((extension) => Number.isInteger(extension));
-      }
+      if (original.quality !== undefined) symbol.quality = read.quality;
+      if (read.bassPc !== undefined) symbol.bassPc = read.bassPc;
+      if (read.extensions !== undefined) symbol.extensions = read.extensions;
       // The Project encoding has no field for omitted tones, so the round trip
       // cannot return them. The symbol that went in is still in hand, so the
       // read-back is seeded from it rather than losing the chord's shape.
-      if (original.omissions !== undefined && original.omissions.length > 0) {
-        symbol.omissions = [...original.omissions];
-      }
-      if (raw.roman_numeral) symbol.romanNumeral = raw.roman_numeral;
+      if (read.omissions !== undefined) symbol.omissions = read.omissions;
+      if (read.romanNumeral !== undefined) symbol.romanNumeral = read.romanNumeral;
       out.push(symbol);
     }
     out.sort((a, b) => a.ppq - b.ppq);
     return out;
   } finally {
-    scratch.delete();
+    scratch.destroy();
   }
 }

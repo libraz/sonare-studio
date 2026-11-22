@@ -230,7 +230,7 @@ export const shellEditors = {
     expressionCurve: {
       hold: '保持',
       linear: '直線',
-      's-curve': 'Sカーブ',
+      sCurve: 'Sカーブ',
     },
     parameterLane: 'ノートパラメーターレーン',
     laneGroupNote: 'ノート',

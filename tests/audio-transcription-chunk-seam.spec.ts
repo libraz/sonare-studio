@@ -9,8 +9,8 @@ const SECONDS = 2 * MAX_POLYPHONIC_SECONDS + 10;
 function noteEvent(ppq: number, status: 0x8 | 0x9, pitch: number) {
   return {
     ppq,
-    data0: (0x20000000 | (status << 20) | (pitch << 8) | (status === 0x9 ? 90 : 0)) >>> 0,
-    data1: 0,
+    word0: (0x20000000 | (status << 20) | (pitch << 8) | (status === 0x9 ? 90 : 0)) >>> 0,
+    word1: 0,
   };
 }
 
@@ -49,7 +49,7 @@ async function transcribeHeld(held: HeldNote[]) {
           events,
           noteCount: events.length / 2,
           tempoBpm: 60,
-          tuning: 0,
+          tuningCents: 0,
         };
         return result;
       },

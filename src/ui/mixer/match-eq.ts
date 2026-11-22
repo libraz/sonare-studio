@@ -1,5 +1,5 @@
 import { clamp } from '@/lib/math';
-import type { EqBand } from '@/wasm/index.js';
+import type { EqBandInput } from '@/wasm/index.js';
 import { eqBandResponseDb } from './eq-curve';
 
 const MATCH_POINTS_HZ = [80, 160, 315, 630, 1250, 2500, 5000, 10000] as const;
@@ -18,7 +18,7 @@ export interface MatchFlatEqOptions {
    * the scope data before deriving a replacement, so Match flat converges
    * when the scope tap is post-EQ.
    */
-  existingBands?: ReadonlyArray<EqBand>;
+  existingBands?: ReadonlyArray<EqBandInput>;
 }
 
 function median(values: number[]): number {
@@ -39,7 +39,7 @@ function localSpectrumDb(
   bands: ArrayLike<number>,
   sampleRate: number,
   centerHz: number,
-  existingBands: ReadonlyArray<EqBand>,
+  existingBands: ReadonlyArray<EqBandInput>,
 ): number | null {
   const values: number[] = [];
   for (let index = 0; index < bands.length; index += 1) {
@@ -61,7 +61,10 @@ function localSpectrumDb(
  * toward its broad-band median. This is a realtime strip helper, not an
  * offline reference-match processor: it only uses the current scope frame.
  */
-export function matchFlatEqBands(bands: ArrayLike<number>, options: MatchFlatEqOptions): EqBand[] {
+export function matchFlatEqBands(
+  bands: ArrayLike<number>,
+  options: MatchFlatEqOptions,
+): EqBandInput[] {
   const sampleRate = options.sampleRate;
   if (!Number.isFinite(sampleRate) || sampleRate <= 0 || bands.length === 0) return [];
   const existingBands = options.existingBands ?? [];
@@ -82,9 +85,9 @@ export function matchFlatEqBands(bands: ArrayLike<number>, options: MatchFlatEqO
     .sort((a, b) => Math.abs(b.gainDb) - Math.abs(a.gainDb))
     .slice(0, options.maxBands ?? 6)
     .sort((a, b) => a.hz - b.hz);
-  return candidates.map((point): EqBand => {
+  return candidates.map((point): EqBandInput => {
     return {
-      type: 'Peak',
+      type: 'peak',
       frequencyHz: point.hz,
       gainDb: Number(point.gainDb.toFixed(1)),
       q: 1,

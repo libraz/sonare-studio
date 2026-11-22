@@ -197,7 +197,7 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
   }
   const known = getAudioSourceId(input.assetId);
   const sourceId =
-    known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+    known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
   const fadeIn = input.fadeInPpq ?? 0;
   const fadeOut = input.fadeOutPpq ?? 0;
   validateClipFadePair(fadeIn, fadeOut, finalLengthPpq);
@@ -221,15 +221,20 @@ export async function addAudioClip(input: AddAudioClipInput): Promise<number> {
       }),
     );
     if (sourceId === undefined) {
-      setAudioSourceId(input.assetId, project.sourceCount());
+      setAudioSourceId(input.assetId, project.sources().length);
     } else {
       edit(1, () => project.setClipSource(newClipId, sourceId));
     }
     if (fadeIn > 0 || fadeOut > 0) {
-      edit(1, () => project.setClipFade(newClipId, { lengthPpq: fadeIn }, { lengthPpq: fadeOut }));
+      edit(1, () => project.setClipFade(newClipId, { fadeInPpq: fadeIn, fadeOutPpq: fadeOut }));
     }
     if (input.loopEnabled) {
-      edit(1, () => project.setClipLoop(newClipId, 'loop', loopLengthPpq || finalLengthPpq));
+      edit(1, () =>
+        project.setClipLoop(newClipId, {
+          loopMode: 'loop',
+          loopLengthPpq: loopLengthPpq || finalLengthPpq,
+        }),
+      );
     }
     if (preparedWarp !== undefined) {
       installProjectClipWarp(
@@ -317,7 +322,7 @@ export function addBouncedClip(input: AddBouncedClipInput): number {
   const color = TRACK_COLOR_PALETTE[store.tracks.length % TRACK_COLOR_PALETTE.length];
   const known = getAudioSourceId(input.assetId);
   const sourceId =
-    known !== undefined && known >= 1 && known <= project.sourceCount() ? known : undefined;
+    known !== undefined && known >= 1 && known <= project.sources().length ? known : undefined;
   return executeAtomic((edit) => {
     const trackId = edit(1, () => project.addTrack({ kind: 'audio', name: input.name }));
     const newClipId = edit(1, () =>
@@ -332,7 +337,7 @@ export function addBouncedClip(input: AddBouncedClipInput): number {
       }),
     );
     if (sourceId === undefined) {
-      setAudioSourceId(input.assetId, project.sourceCount());
+      setAudioSourceId(input.assetId, project.sources().length);
     } else {
       edit(1, () => project.setClipSource(newClipId, sourceId));
     }

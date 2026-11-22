@@ -2,6 +2,7 @@ import { DRUM_NOTES, type DrumsOptions, generateDrums } from '@libraz/libcantus'
 import { describe, expect, it } from 'vitest';
 import { GM2_DRUM_BANK_MSB } from '@/project/instrument';
 import {
+  type DrumKitNameSource,
   drumNoteName,
   gm2DrumBank,
   gm2DrumKitName,
@@ -22,8 +23,8 @@ describe('gm2DrumBank', () => {
 
 describe('gm2DrumKitName', () => {
   const source = {
-    gm2DrumSetName: (lsb: number) => (lsb === 8 ? 'Room' : lsb === 0 ? 'Standard' : null),
-  };
+    gm2DrumSetName: (lsb: number) => (lsb === 8 ? 'Room' : lsb === 0 ? 'Standard' : undefined),
+  } satisfies DrumKitNameSource;
 
   it('returns the wasm kit name when available', () => {
     expect(gm2DrumKitName(0, source)).toBe('Standard');
@@ -39,8 +40,9 @@ describe('gm2DrumKitName', () => {
 
 describe('drumNoteName', () => {
   const source = {
-    gm2DrumName: (lsb: number, note: number) => (lsb === 8 && note === 38 ? 'Room Snare' : null),
-  };
+    gm2DrumName: ({ bankLsb, note }: { bankLsb: number; note: number }) =>
+      bankLsb === 8 && note === 38 ? 'Room Snare' : undefined,
+  } satisfies DrumKitNameSource;
 
   it('prefers the kit-specific name when the kit provides one', () => {
     expect(drumNoteName(38, 8, source)).toBe('Room Snare');

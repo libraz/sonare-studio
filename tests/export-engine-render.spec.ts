@@ -21,6 +21,7 @@ import type { InsertSlot } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
 import { neutralMixDocument } from '@/ui/mixer/mix-assistant';
+import type { LufsResult } from '@/wasm/index.js';
 
 const resample = vi.hoisted(() =>
   vi.fn((samples: Float32Array, sourceRate: number, targetRate: number): Float32Array => {
@@ -57,7 +58,7 @@ class FakeEngine implements OfflineRenderEngine {
   destroyed = false;
   /** Sample value process() writes into every frame. */
   fill = 0.25;
-  /** Value tailSamples() reports. */
+  /** Value tailSamples reports. */
   tail = 0;
 
   private record(name: string, ...args: unknown[]): void {
@@ -81,8 +82,13 @@ class FakeEngine implements OfflineRenderEngine {
     this.declaredBusIds = new Set((buses as Array<{ busId: number }>).map((bus) => bus.busId));
   }
   /** Stub ids keep the packed lane-position shape so tests can decode them. */
-  resolveTrackLaneAutomationId(trackId: number, paramName: 'faderDb' | 'pan'): number {
-    const laneIndex = this.declaredTrackIds.indexOf(trackId);
+  resolveStripAutomationId(ref: number | 'master', paramName: 'faderDb' | 'pan' | 'width'): number {
+    if (ref === 'master') {
+      if (paramName === 'width') return -1;
+      const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
+      return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | kind;
+    }
+    const laneIndex = this.declaredTrackIds.indexOf(ref);
     if (laneIndex < 0) return -1;
     const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
     return ENGINE_MIXER_TARGET_BASE | (laneIndex << 8) | kind;
@@ -91,55 +97,52 @@ class FakeEngine implements OfflineRenderEngine {
     if (!this.declaredBusIds.has(busId)) return -1;
     return ENGINE_MIXER_TARGET_BASE | ((254 - busId) << 8) | ENGINE_MIXER_PARAM_FADER_DB;
   }
-  resolveMasterAutomationId(paramName: 'faderDb' | 'pan' | 'width'): number {
-    if (paramName === 'width') return -1;
-    const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-    return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | kind;
+  setStrip(ref: number | 'master', settings: unknown): void {
+    this.record('setStrip', ref, settings);
   }
-  setTrackStripJson(trackId: number, json: string): void {
-    this.record('setTrackStripJson', trackId, json);
+  setBusStrip(busId: number, settings: unknown): void {
+    this.record('setBusStrip', busId, settings);
   }
-  setMasterStripJson(json: string): void {
-    this.record('setMasterStripJson', json);
+  setStripSidechain(ref: number | 'master', insertIndex: number, source: unknown): void {
+    this.record('setStripSidechain', ref, insertIndex, source);
   }
-  setBusStripJson(busId: number, json: string): void {
-    this.record('setBusStripJson', busId, json);
+  setBusSidechain(busId: number, insertIndex: number, source: unknown): void {
+    this.record('setBusSidechain', busId, insertIndex, source);
   }
-  setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number): void {
-    this.record('setLaneSidechain', trackId, insertIndex, sourceTrackId);
+  setStripInsertBypassed(
+    ref: number | 'master',
+    index: number,
+    state: { bypassed: boolean; resetOnBypass?: boolean },
+  ): void {
+    this.record('setStripInsertBypassed', ref, index, state);
   }
-  setBusSidechain(busId: number, insertIndex: number, sourceKind: number, sourceId: number): void {
-    this.record('setBusSidechain', busId, insertIndex, sourceKind, sourceId);
+  setBusInsertBypassed(
+    busId: number,
+    index: number,
+    state: { bypassed: boolean; resetOnBypass?: boolean },
+  ): void {
+    this.record('setBusInsertBypassed', busId, index, state);
   }
-  setMasterSidechain(insertIndex: number, sourceKind: number, sourceId: number): void {
-    this.record('setMasterSidechain', insertIndex, sourceKind, sourceId);
+  setStripEqBand(ref: number | 'master', bandIndex: number, band: unknown): void {
+    this.record('setStripEqBand', ref, bandIndex, band);
   }
-  setTrackStripInsertBypassed(trackId: number, index: number, bypassed: boolean): void {
-    this.record('setTrackStripInsertBypassed', trackId, index, bypassed);
+  setBusEqBand(busId: number, bandIndex: number, band: unknown): void {
+    this.record('setBusEqBand', busId, bandIndex, band);
   }
-  setMasterStripInsertBypassed(index: number, bypassed: boolean): void {
-    this.record('setMasterStripInsertBypassed', index, bypassed);
+  setTrackSoloMute(trackId: number, state: { solo: boolean; mute: boolean }): void {
+    this.record('setTrackSoloMute', trackId, state);
   }
-  setTrackStripEqBandJson(trackId: number, bandIndex: number, json: string): void {
-    this.record('setTrackStripEqBandJson', trackId, bandIndex, json);
+  setStripPanLaw(ref: number | 'master', panLaw: unknown): void {
+    this.record('setStripPanLaw', ref, panLaw);
   }
-  setMasterStripEqBandJson(bandIndex: number, json: string): void {
-    this.record('setMasterStripEqBandJson', bandIndex, json);
+  setStripPanMode(ref: number | 'master', panMode: unknown): void {
+    this.record('setStripPanMode', ref, panMode);
   }
-  setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void {
-    this.record('setSoloMute', laneIndex, solo, mute);
+  setStripDualPan(ref: number | 'master', leftPan: number, rightPan: number): void {
+    this.record('setStripDualPan', ref, leftPan, rightPan);
   }
-  setTrackStripPanLaw(trackId: number, panLaw: unknown): void {
-    this.record('setTrackStripPanLaw', trackId, panLaw);
-  }
-  setTrackStripPanMode(trackId: number, panMode: unknown): void {
-    this.record('setTrackStripPanMode', trackId, panMode);
-  }
-  setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void {
-    this.record('setTrackStripDualPan', trackId, leftPan, rightPan);
-  }
-  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void {
-    this.record('setTrackStripChannelDelaySamples', trackId, delaySamples);
+  setStripChannelDelaySamples(ref: number | 'master', delaySamples: number): void {
+    this.record('setStripChannelDelaySamples', ref, delaySamples);
   }
   setParameter(paramId: number, value: number): void {
     this.record('setParameter', paramId, value);
@@ -147,13 +150,15 @@ class FakeEngine implements OfflineRenderEngine {
   setAutomationLane(paramId: number, points: unknown): void {
     this.record('setAutomationLane', paramId, points);
   }
-  resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number {
-    this.record('resolveTrackInsertAutomationId', trackId, insertIndex, paramName);
-    return paramName === 'unknown' ? -1 : (0xe0000000 | (trackId << 16) | (insertIndex << 8)) >>> 0;
-  }
-  resolveMasterInsertAutomationId(insertIndex: number, paramName: string): number {
-    this.record('resolveMasterInsertAutomationId', insertIndex, paramName);
-    return paramName === 'unknown' ? -1 : (0xe1ff0000 | (insertIndex << 8)) >>> 0;
+  resolveStripInsertAutomationId(
+    ref: number | 'master',
+    insertIndex: number,
+    paramName: string,
+  ): number {
+    this.record('resolveStripInsertAutomationId', ref, insertIndex, paramName);
+    if (paramName === 'unknown') return -1;
+    if (ref === 'master') return (0xe1ff0000 | (insertIndex << 8)) >>> 0;
+    return (0xe0000000 | (ref << 16) | (insertIndex << 8)) >>> 0;
   }
   resolveBusInsertAutomationId(busId: number, insertIndex: number, paramName: string): number {
     this.record('resolveBusInsertAutomationId', busId, insertIndex, paramName);
@@ -172,29 +177,29 @@ class FakeEngine implements OfflineRenderEngine {
   setWarpVoiceCapacity(voices: number): void {
     this.record('setWarpVoiceCapacity', voices);
   }
-  warpStretchOverflowCount(): number {
+  get warpStretchOverflowCount(): number {
     return 0;
   }
-  tailSamples(): number {
+  get tailSamples(): number {
     return this.tail;
   }
   setMidiClips(clips: unknown): void {
     this.record('setMidiClips', clips);
   }
-  setSynthInstrument(patch?: object | string, destinationId?: number): void {
+  setSynthInstrument(destinationId?: number | null, patch?: object): void {
     this.record('setSynthInstrument', patch, destinationId);
   }
   loadSoundFont(data: Uint8Array): void {
     this.record('loadSoundFont', data);
   }
-  setSf2Instrument(config?: object, destinationId?: number): void {
+  setSf2Instrument(destinationId?: number | null, config?: object): void {
     this.record('setSf2Instrument', config, destinationId);
   }
   pushMidiSysex(destinationId: number, data: Uint8Array, renderFrame = -1): void {
     this.record('pushMidiSysex', destinationId, data, renderFrame);
   }
-  pushMidiUmp(destinationId: number, word0: number): void {
-    this.record('pushMidiUmp', destinationId, word0);
+  pushMidiUmp(destinationId: number, words: Uint32Array | number[]): void {
+    this.record('pushMidiUmp', destinationId, words);
   }
   seekSample(sample: number): void {
     this.record('seekSample', sample);
@@ -218,17 +223,27 @@ class FakeEngine implements OfflineRenderEngine {
   }
 }
 
-/** Fake engine exposing the newer bus-insert bypass ABI. */
-class BusBypassFakeEngine extends FakeEngine {
-  setBusStripInsertBypassed(busId: number, index: number, bypassed: boolean): void {
-    this.calls.push(['setBusStripInsertBypassed', busId, index, bypassed]);
-  }
+/** A complete loudness measurement whose windows all read `integratedLufs`. */
+function lufsResult(integratedLufs: number, extra: Partial<LufsResult> = {}): LufsResult {
+  return {
+    integratedLufs,
+    momentaryLufs: integratedLufs,
+    shortTermLufs: integratedLufs,
+    maxMomentaryLufs: integratedLufs,
+    maxShortTermLufs: integratedLufs,
+    loudnessRangeLu: 0,
+    ...extra,
+  };
 }
 
-class FakeEngineWithBusEq extends FakeEngine {
-  setBusStripEqBandJson(busId: number, bandIndex: number, json: string): void {
-    this.calls.push(['setBusStripEqBandJson', busId, bandIndex, json]);
-  }
+/** `setStrip` calls addressed to the master strip. */
+function masterStrips(engine: FakeEngine): Array<[string, ...unknown[]]> {
+  return engine.named('setStrip').filter(([, ref]) => ref === 'master');
+}
+
+/** `setStrip` calls addressed to a track strip. */
+function trackStrips(engine: FakeEngine): Array<[string, ...unknown[]]> {
+  return engine.named('setStrip').filter(([, ref]) => ref !== 'master');
 }
 
 const SAMPLES_PER_PPQ = 24000;
@@ -303,9 +318,9 @@ class AudibilityEngine extends FakeEngine {
     this.laneIds = lanes.map((lane) => (typeof lane === 'number' ? lane : lane.trackId));
   }
 
-  setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void {
-    super.setSoloMute(laneIndex, solo, mute);
-    this.laneSoloMute.set(laneIndex, { solo, mute });
+  setTrackSoloMute(trackId: number, state: { solo: boolean; mute: boolean }): void {
+    super.setTrackSoloMute(trackId, state);
+    this.laneSoloMute.set(this.laneIds.indexOf(trackId), state);
   }
 
   setParameter(paramId: number, value: number): void {
@@ -322,24 +337,24 @@ class AudibilityEngine extends FakeEngine {
     }
   }
 
-  setTrackStripPanLaw(trackId: number, panLaw: string): void {
-    super.setTrackStripPanLaw(trackId, panLaw);
-    this.lanePanLawByTrack.set(trackId, panLaw);
+  setStripPanLaw(ref: number | 'master', panLaw: string): void {
+    super.setStripPanLaw(ref, panLaw);
+    this.lanePanLawByTrack.set(ref as number, panLaw);
   }
 
-  setTrackStripPanMode(trackId: number, panMode: string): void {
-    super.setTrackStripPanMode(trackId, panMode);
-    this.lanePanModeByTrack.set(trackId, panMode);
+  setStripPanMode(ref: number | 'master', panMode: string): void {
+    super.setStripPanMode(ref, panMode);
+    this.lanePanModeByTrack.set(ref as number, panMode);
   }
 
-  setTrackStripDualPan(trackId: number, left: number, right: number): void {
-    super.setTrackStripDualPan(trackId, left, right);
-    this.laneDualPanByTrack.set(trackId, { left, right });
+  setStripDualPan(ref: number | 'master', left: number, right: number): void {
+    super.setStripDualPan(ref, left, right);
+    this.laneDualPanByTrack.set(ref as number, { left, right });
   }
 
-  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void {
-    super.setTrackStripChannelDelaySamples(trackId, delaySamples);
-    this.laneDelayByTrack.set(trackId, delaySamples);
+  setStripChannelDelaySamples(ref: number | 'master', delaySamples: number): void {
+    super.setStripChannelDelaySamples(ref, delaySamples);
+    this.laneDelayByTrack.set(ref as number, delaySamples);
   }
 
   private ppqToSample(ppq: number): number {
@@ -402,7 +417,7 @@ class AudibilityEngine extends FakeEngine {
       gain: clip.gain ?? 1,
       fadeInSamples: clip.fadeInSamples ?? 0,
       fadeOutSamples: clip.fadeOutSamples ?? 0,
-      ...(clip.warpMode === 'time-stretch' && clip.warpAnchors
+      ...(clip.warpMode === 'timeStretch' && clip.warpAnchors
         ? { warpAnchors: clip.warpAnchors }
         : {}),
     }));
@@ -656,9 +671,9 @@ class SoundFontAudibilityEngine extends AudibilityEngine {
     this.loadedSoundFontGain = (data[0] ?? 100) / 100;
   }
 
-  setSf2Instrument(config?: object, destinationId?: number): void {
-    super.setSf2Instrument(config, destinationId);
-    if (destinationId !== undefined) {
+  setSf2Instrument(destinationId?: number | null, config?: object): void {
+    super.setSf2Instrument(destinationId, config);
+    if (destinationId !== undefined && destinationId !== null) {
       this.soundFontGainByTrack.set(destinationId, this.loadedSoundFontGain);
     }
   }
@@ -1212,7 +1227,7 @@ describe('renderProjectWithEngine', () => {
       createEngine: () => {
         const engine = new FakeEngine();
         engine.tail = tail ?? 0;
-        if (tail === null) (engine as { tailSamples?: unknown }).tailSamples = undefined;
+        if (tail === null) Object.defineProperty(engine, 'tailSamples', { value: undefined });
         return engine;
       },
       range: { startPpq: 0, endPpq: 4 },
@@ -1933,16 +1948,16 @@ describe('renderProjectWithEngine', () => {
     // Automation: enabled lanes only, engine curve codes applied.
     const lanes = new Map(engine.named('setAutomationLane').map(([, id, points]) => [id, points]));
     expect(lanes.get(0x4d580001)).toEqual([
-      { ppq: 0, value: -24, curveToNext: 0 },
-      { ppq: 4, value: 0, curveToNext: 2 },
+      { ppq: 0, value: -24, curveToNext: 'linear' },
+      { ppq: 4, value: 0, curveToNext: 'hold' },
     ]);
-    expect(lanes.get(0x4d58ff02)).toEqual([{ ppq: 1, value: -1, curveToNext: 0 }]);
+    expect(lanes.get(0x4d58ff02)).toEqual([{ ppq: 1, value: -1, curveToNext: 'linear' }]);
     expect(lanes.has(0x4d58ff01)).toBe(false);
 
     // Instruments and MIDI schedules reach the engine.
     expect(engine.named('setSynthInstrument')[0]).toEqual([
       'setSynthInstrument',
-      'acoustic-piano',
+      { preset: 'acousticPiano' },
       1,
     ]);
     const midi = engine.named('setMidiClips')[0][1] as unknown[];
@@ -2512,13 +2527,13 @@ describe('renderProjectWithEngine', () => {
       ...doc.mixer,
       masteringChain: {
         processors: [
-          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
         ],
       },
     };
     doc.masterAutomation = [
       {
-        param: masteringAutomationParam(0, 'ceilingDb'),
+        param: masteringAutomationParam(0, 'ceilingDbtp'),
         enabled: true,
         points: masteringPoints,
       },
@@ -2540,7 +2555,7 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.limitations).toEqual([
       {
         kind: 'mastering-automation-at-render-start',
-        params: ['maximizer.truePeakLimiter.ceilingDb'],
+        params: ['maximizer.truePeakLimiter.ceilingDbtp'],
       },
     ]);
     expect(processStereo).toHaveBeenCalledWith(
@@ -2548,7 +2563,7 @@ describe('renderProjectWithEngine', () => {
       expect.any(Float32Array),
       expect.any(Float32Array),
       48000,
-      { ceilingDb: -6 },
+      { ceilingDbtp: -6 },
     );
   });
 
@@ -2572,13 +2587,13 @@ describe('renderProjectWithEngine', () => {
       ...doc.mixer,
       masteringChain: {
         processors: [
-          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
         ],
       },
     };
     doc.masterAutomation = [
       {
-        param: masteringAutomationParam(0, 'ceilingDb'),
+        param: masteringAutomationParam(0, 'ceilingDbtp'),
         enabled: true,
         points: [
           { ppq: 0, value: -6 },
@@ -2684,9 +2699,9 @@ describe('renderProjectWithEngine', () => {
       expect(engines[2].named('loadSoundFont')).toEqual([]);
       expect(engines[2].named('setSf2Instrument')).toEqual([]);
       expect(engines[2].named('setMidiClips')).toEqual([]);
-      expect(engines[0].named('setMasterStripJson')).toEqual([]);
-      expect(engines[1].named('setMasterStripJson')).toEqual([]);
-      expect(engines[2].named('setMasterStripJson')).toHaveLength(1);
+      expect(masterStrips(engines[0])).toEqual([]);
+      expect(masterStrips(engines[1])).toEqual([]);
+      expect(masterStrips(engines[2])).toHaveLength(1);
       const finalClips = engines[2].named('setClips')[0][1] as Array<{ trackId: number }>;
       expect(finalClips.slice(-2).map((clip) => clip.trackId)).toEqual([1, 3]);
     } finally {
@@ -2794,11 +2809,11 @@ describe('renderProjectWithEngine', () => {
     const instrumentCalls = engines.flatMap((engine) => engine.named('setSynthInstrument'));
 
     expect(instrumentCalls).toEqual([
-      ['setSynthInstrument', 'e-piano', 1],
+      ['setSynthInstrument', { preset: 'e-piano' }, 1],
       ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
-      ['setSynthInstrument', 'e-piano', 1],
+      ['setSynthInstrument', { preset: 'e-piano' }, 1],
       ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
-      ['setSynthInstrument', 'e-piano', 1],
+      ['setSynthInstrument', { preset: 'e-piano' }, 1],
       ['setSynthInstrument', { preset: 'saw-lead', cutoffHz: 1200 }, 3],
     ]);
     expect(result.channels[0][0]).toBeCloseTo(
@@ -2907,14 +2922,14 @@ describe('renderProjectWithEngine', () => {
     ];
     const withChain = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(withChain));
-    expect(withChain.named('setMasterStripJson')).toHaveLength(1);
+    expect(masterStrips(withChain)).toHaveLength(1);
 
     const withoutChain = new FakeEngine();
     await renderProjectWithEngine(doc, {
       ...renderOptions(withoutChain),
       includeMasterChain: false,
     });
-    expect(withoutChain.named('setMasterStripJson')).toHaveLength(0);
+    expect(masterStrips(withoutChain)).toHaveLength(0);
     const params = new Map(withoutChain.named('setParameter').map(([, id, value]) => [id, value]));
     expect(params.get(0x4d58ff01)).toBeCloseTo(-3, 5);
   });
@@ -2922,18 +2937,18 @@ describe('renderProjectWithEngine', () => {
   it('renders master panner details even without inserts or EQ', async () => {
     const doc = makeDoc();
     if (!doc.mixer) throw new Error('fixture mixer is missing');
-    doc.mixer.master.panLaw = 'const6dB';
+    doc.mixer.master.panLaw = 'const6Db';
     doc.mixer.master.panMode = 'dualPan';
     doc.mixer.master.dualPan = { left: -0.5, right: 0.75 };
     const engine = new FakeEngine();
 
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    const scenes = engine.named('setMasterStripJson');
+    const scenes = masterStrips(engine);
     expect(scenes).toHaveLength(1);
-    expect(JSON.parse(scenes[0][1] as string).strips[0]).toMatchObject({
-      panLaw: 2,
-      panMode: 2,
+    expect(scenes[0][2]).toMatchObject({
+      panLaw: 'const6Db',
+      panMode: 'dualPan',
       dualPanLeft: -0.5,
       dualPanRight: 0.75,
     });
@@ -2964,9 +2979,9 @@ describe('renderProjectWithEngine', () => {
     // A stem pass isolates its lane via mutes (solo would keep the document's
     // own soloed tracks audible too).
     const stemPass = engines[1];
-    expect(stemPass.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, false, false],
-      ['setSoloMute', 1, false, true],
+    expect(stemPass.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: false, mute: false }],
+      ['setTrackSoloMute', 2, { solo: false, mute: true }],
     ]);
 
     // Stems are pre-master: no master gain/pan and no master automation.
@@ -2979,9 +2994,9 @@ describe('renderProjectWithEngine', () => {
 
     // The mix pass keeps the document's solo/mute state and master levels.
     const mixPass = engines[0];
-    expect(mixPass.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, false, false],
-      ['setSoloMute', 1, false, false],
+    expect(mixPass.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: false, mute: false }],
+      ['setTrackSoloMute', 2, { solo: false, mute: false }],
     ]);
     const mixParams = new Map(mixPass.named('setParameter').map(([, id, value]) => [id, value]));
     expect(mixParams.get(0x4d58ff01)).toBeCloseTo(-3, 5);
@@ -3031,7 +3046,7 @@ describe('renderProjectWithEngine', () => {
     const result = await renderProjectWithEngine(makeDoc(), {
       deps: {
         mastering: null,
-        metering: { integratedLufs: () => -14 },
+        metering: { integratedLufs: () => lufsResult(-14) },
       },
       loadAudioAsset: async () => fakeAsset(),
       createEngine: () => new FakeEngine(),
@@ -3211,9 +3226,9 @@ describe('renderProjectWithEngine', () => {
         outputBusId: 2,
       },
     ]);
-    expect(busStemPass.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, false, false],
-      ['setSoloMute', 1, false, false],
+    expect(busStemPass.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: false, mute: false }],
+      ['setTrackSoloMute', 2, { solo: false, mute: false }],
     ]);
     const params = new Map(busStemPass.named('setParameter').map(([, id, value]) => [id, value]));
     expect(params.has(0x4d58ff01)).toBe(false);
@@ -3302,11 +3317,11 @@ describe('renderProjectWithEngine', () => {
       ...doc.mixer,
       masteringChain: {
         preset: 'streaming',
-        presetOverrides: { 'loudness.targetLufs': -14 },
+        presetOverrides: { loudness: { targetLufs: -14 } },
         processors: [
           { processor: 'eq.tilt', params: { tiltDb: 1 }, enabled: true },
           { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
-          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
         ],
       },
     };
@@ -3332,7 +3347,7 @@ describe('renderProjectWithEngine', () => {
       expect.any(Float32Array),
       expect.any(Float32Array),
       48000,
-      { 'loudness.targetLufs': -14 },
+      { loudness: { targetLufs: -14 } },
     );
     expect(processStereo.mock.calls.map(([name]) => name)).toEqual([
       'eq.tilt',
@@ -3370,7 +3385,7 @@ describe('renderProjectWithEngine', () => {
       master: { ...doc.mixer.master, gainDb: -6 },
       masteringChain: {
         processors: [
-          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
           { processor: 'repair.declick', params: {}, enabled: true },
         ],
       },
@@ -3386,7 +3401,7 @@ describe('renderProjectWithEngine', () => {
       deps: { mastering: { processStereo }, metering: null },
     });
 
-    expect(engine.named('setMasterStripJson')).toEqual([]);
+    expect(masterStrips(engine)).toEqual([]);
     expect(processStereo.mock.calls.map(([name]) => name)).toEqual([
       'maximizer.truePeakLimiter',
       'repair.declick',
@@ -3449,17 +3464,17 @@ describe('renderProjectWithEngine', () => {
     expect(result.report.limitations).toBeUndefined();
     // The pass is a second engine whose strip is the automated processor alone.
     expect(engines).toHaveLength(2);
-    const [[, , json]] = engines[1].named('setTrackStripJson') as Array<[string, number, string]>;
-    expect(JSON.parse(json).strips[0].inserts).toEqual([
-      { slot: 'pre', processor: 'eq.tilt', params: { tiltDb: 0 } },
-    ]);
+    const [[, , scene]] = trackStrips(engines[1]) as Array<
+      [string, number, { inserts: unknown[] }]
+    >;
+    expect(scene.inserts).toEqual([{ slot: 'pre', processor: 'eq.tilt', params: { tiltDb: 0 } }]);
     expect(engines[1].named('setAutomationLane')).toEqual([
       [
         'setAutomationLane',
         0xe0010000,
         [
-          { ppq: 0, value: 0, curveToNext: 0 },
-          { ppq: 8, value: 6, curveToNext: 0 },
+          { ppq: 0, value: 0, curveToNext: 'linear' },
+          { ppq: 8, value: 6, curveToNext: 'linear' },
         ],
       ],
     ]);
@@ -3472,13 +3487,13 @@ describe('renderProjectWithEngine', () => {
       ...doc.mixer,
       masteringChain: {
         processors: [
-          { processor: 'maximizer.truePeakLimiter', params: { ceilingDb: -1 }, enabled: true },
+          { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
         ],
       },
     };
     doc.masterAutomation = [
       {
-        param: masteringAutomationParam(0, 'ceilingDb'),
+        param: masteringAutomationParam(0, 'ceilingDbtp'),
         enabled: true,
         points: [
           { ppq: 0, value: -6 },
@@ -3502,15 +3517,17 @@ describe('renderProjectWithEngine', () => {
       expect.any(Float32Array),
       expect.any(Float32Array),
       48000,
-      { ceilingDb: -6 },
+      { ceilingDbtp: -6 },
     );
     expect(result.report.limitations).toEqual([
       {
         kind: 'mastering-automation-at-render-start',
-        params: ['maximizer.truePeakLimiter.ceilingDb'],
+        params: ['maximizer.truePeakLimiter.ceilingDbtp'],
       },
     ]);
-    expect(engine.named('resolveMasterInsertAutomationId')).toEqual([]);
+    expect(
+      engine.named('resolveStripInsertAutomationId').filter(([, ref]) => ref === 'master'),
+    ).toEqual([]);
   });
 
   it('keeps stem renders pre-master while mastering changes the final mix', async () => {
@@ -3662,7 +3679,7 @@ describe('renderProjectWithEngine', () => {
     expect(clips[0].lengthSamples).toBe(48000);
     expect(clips[0].gain).toBeCloseTo(0.8, 5);
     // The engine stretches the 24000-frame source slice over 48000 frames.
-    expect(clips[0].warpMode).toBe('time-stretch');
+    expect(clips[0].warpMode).toBe('timeStretch');
     expect(clips[0].warpAnchors).toEqual([
       { warpSample: 0, sourceSample: 0 },
       { warpSample: 48000, sourceSample: 24000 },
@@ -4113,8 +4130,8 @@ describe('renderProjectWithEngine offline mixer parity', () => {
 
     // Track 2 has no local insert latency but routes through the 128-sample
     // group bus; track 1's 256-sample insert sets the project maximum.
-    expect(engine.named('setTrackStripChannelDelaySamples')).toContainEqual([
-      'setTrackStripChannelDelaySamples',
+    expect(engine.named('setStripChannelDelaySamples')).toContainEqual([
+      'setStripChannelDelaySamples',
       2,
       128,
     ]);
@@ -4135,13 +4152,13 @@ describe('renderProjectWithEngine offline mixer parity', () => {
     };
     const liveEngine = {
       setTrackLanes: vi.fn(),
-      setStripGain: vi.fn(),
+      setStripFaderDb: vi.fn(),
       setStripPan: vi.fn(),
-      setSoloMute: vi.fn(),
-      setTrackStripChannelDelaySamples: vi.fn(),
-      setTrackStripPanLaw: vi.fn(),
-      setTrackStripPanMode: vi.fn(),
-      setTrackStripDualPan: vi.fn(),
+      setTrackSoloMute: vi.fn(),
+      setStripChannelDelaySamples: vi.fn(),
+      setStripPanLaw: vi.fn(),
+      setStripPanMode: vi.fn(),
+      setStripDualPan: vi.fn(),
     };
     const liveTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
       id: index + 1,
@@ -4165,13 +4182,13 @@ describe('renderProjectWithEngine offline mixer parity', () => {
     const offline = new FakeEngine();
     await renderProjectWithEngine(doc, { ...renderOptions(offline), insertLatency });
     const liveDelays = new Map<number, number>(liveTracks.map((track) => [track.id, 0]));
-    for (const [trackId, delay] of liveEngine.setTrackStripChannelDelaySamples.mock.calls) {
+    for (const [trackId, delay] of liveEngine.setStripChannelDelaySamples.mock.calls) {
       liveDelays.set(trackId as number, delay as number);
     }
     const offlineDelays = new Map<number, number>(
       liveTracks.filter((track) => track.kind !== 'group').map((track) => [track.id, 0]),
     );
-    for (const [, trackId, delay] of offline.named('setTrackStripChannelDelaySamples')) {
+    for (const [, trackId, delay] of offline.named('setStripChannelDelaySamples')) {
       offlineDelays.set(trackId as number, delay as number);
     }
 
@@ -4197,7 +4214,11 @@ describe('renderProjectWithEngine offline mixer parity', () => {
 
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    expect(engine.named('setSoloMute').every(([, , solo]) => solo === false)).toBe(true);
+    expect(
+      engine
+        .named('setTrackSoloMute')
+        .every(([, , state]) => (state as { solo: boolean }).solo === false),
+    ).toBe(true);
     expect(engine.named('setParameter')).toContainEqual([
       'setParameter',
       0x4d580001,
@@ -4290,7 +4311,7 @@ describe('renderProjectWithEngine offline mixer parity', () => {
 
     expect(result.channels[0]).toHaveLength(0);
     expect(result.report.lufs).toBeUndefined();
-    expect(result.report.truePeakDb).toBeUndefined();
+    expect(result.report.truePeakDbtp).toBeUndefined();
     expect(result.report.limitations).toContainEqual({
       kind: 'streaming-metering-unavailable',
       measurements: ['lufs', 'true-peak'],
@@ -4311,29 +4332,26 @@ describe('renderProjectWithEngine loudness metering', () => {
       left: Float32Array.from(left, (value) => value * 0.5),
       right: Float32Array.from(right, (value) => value * 0.25),
     }));
-    const interleavedLufs = vi.fn(() => ({
-      integratedLufs: -8.5,
-      momentaryLufs: -7.5,
-      shortTermLufs: -8,
-      loudnessRange: 3.25,
-    }));
+    const multichannelLufs = vi.fn((_channels: Float32Array[], _sampleRate: number) =>
+      lufsResult(-8.5, { momentaryLufs: -7.5, shortTermLufs: -8, loudnessRangeLu: 3.25 }),
+    );
     const dynamicRangeDb = vi.fn(() => 8.75);
 
     const result = await renderProjectWithEngine(doc, {
       ...renderOptions(new FakeEngine()),
-      deps: { mastering: { processStereo }, metering: { interleavedLufs, dynamicRangeDb } },
+      deps: { mastering: { processStereo }, metering: { multichannelLufs, dynamicRangeDb } },
     });
 
-    expect(interleavedLufs).toHaveBeenCalledTimes(1);
+    expect(multichannelLufs).toHaveBeenCalledTimes(1);
     expect(dynamicRangeDb).toHaveBeenCalledTimes(1);
-    const [samples] = interleavedLufs.mock.calls[0];
-    expect(samples[0]).toBeCloseTo(0.25 * 0.5, 5);
-    expect(samples[1]).toBeCloseTo(0.25 * 0.25, 5);
+    const [[left, right]] = multichannelLufs.mock.calls[0];
+    expect(left[0]).toBeCloseTo(0.25 * 0.5, 5);
+    expect(right[0]).toBeCloseTo(0.25 * 0.25, 5);
     expect(result.report).toMatchObject({
       lufs: -8.5,
       momentaryLufs: -7.5,
       shortTermLufs: -8,
-      loudnessRange: 3.25,
+      loudnessRangeLu: 3.25,
       dynamicRangeDb: 8.75,
     });
   });
@@ -4350,51 +4368,57 @@ describe('renderProjectWithEngine loudness metering', () => {
       left: Float32Array.from(left, (value) => value * 0.25),
       right: Float32Array.from(right, (value) => value * 0.25),
     }));
-    const interleavedLufs = vi.fn(() => -6.25);
+    const multichannelLufs = vi.fn((_channels: Float32Array[], _sampleRate: number) =>
+      lufsResult(-6.25),
+    );
 
     const result = await renderProjectWithEngine(doc, {
       ...renderOptions(new FakeEngine()),
-      deps: { mastering: { processStereo }, metering: { interleavedLufs } },
+      deps: { mastering: { processStereo }, metering: { multichannelLufs } },
       stems: true,
     });
 
-    expect(interleavedLufs).toHaveBeenCalledTimes(3);
-    const [firstStemSamples] = interleavedLufs.mock.calls[0];
-    expect(firstStemSamples[0]).toBeCloseTo(0.25, 5);
-    expect(firstStemSamples[1]).toBeCloseTo(0.25, 5);
-    const [finalMixSamples] = interleavedLufs.mock.calls[2];
-    expect(finalMixSamples[0]).toBeCloseTo(0.25 * 0.25, 5);
-    expect(finalMixSamples[1]).toBeCloseTo(0.25 * 0.25, 5);
+    expect(multichannelLufs).toHaveBeenCalledTimes(3);
+    const [[firstStemLeft, firstStemRight]] = multichannelLufs.mock.calls[0];
+    expect(firstStemLeft[0]).toBeCloseTo(0.25, 5);
+    expect(firstStemRight[0]).toBeCloseTo(0.25, 5);
+    const [[finalMixLeft, finalMixRight]] = multichannelLufs.mock.calls[2];
+    expect(finalMixLeft[0]).toBeCloseTo(0.25 * 0.25, 5);
+    expect(finalMixRight[0]).toBeCloseTo(0.25 * 0.25, 5);
     expect(result.stems?.[0].channels[0][0]).toBeCloseTo(0.25, 5);
     expect(result.stems?.[0].report?.lufs).toBe(-6.25);
     expect(result.report.lufs).toBe(-6.25);
   });
 
-  it('measures channel-weighted BS.1770 over the interleaved stereo mix', async () => {
+  it('measures channel-weighted BS.1770 over the planar stereo mix', async () => {
     const engine = new FakeEngine();
-    const interleavedLufs = vi.fn(() => -9.7);
-    const integratedLufs = vi.fn(() => -12.7);
+    const multichannelLufs = vi.fn((_channels: Float32Array[], _sampleRate: number) =>
+      lufsResult(-9.7),
+    );
+    const integratedLufs = vi.fn(() => lufsResult(-12.7));
     const result = await renderProjectWithEngine(makeDoc(), {
       ...renderOptions(engine),
-      deps: { mastering: null, metering: { interleavedLufs, integratedLufs } },
+      deps: { mastering: null, metering: { multichannelLufs, integratedLufs } },
     });
 
-    // The interleaved seam wins; the mono downmix fallback is never used.
+    // The multichannel seam wins; the mono downmix fallback is never used.
     expect(integratedLufs).not.toHaveBeenCalled();
-    expect(interleavedLufs).toHaveBeenCalledTimes(1);
-    const [samples, channels, sampleRate] = interleavedLufs.mock.calls[0];
-    expect(channels).toBe(2);
+    expect(multichannelLufs).toHaveBeenCalledTimes(1);
+    const [channels, sampleRate] = multichannelLufs.mock.calls[0];
+    expect(channels).toHaveLength(2);
     expect(sampleRate).toBe(48000);
-    expect(samples.length).toBe(result.totalFrames * 2);
-    // Both channels carry the engine fill (0.25): L then R interleaved.
-    expect(samples[0]).toBeCloseTo(0.25, 5);
-    expect(samples[1]).toBeCloseTo(0.25, 5);
+    expect(channels[0].length).toBe(result.totalFrames);
+    // Both channels carry the engine fill (0.25).
+    expect(channels[0][0]).toBeCloseTo(0.25, 5);
+    expect(channels[1][0]).toBeCloseTo(0.25, 5);
     expect(result.report.lufs).toBe(-9.7);
   });
 
   it('falls back to the mono downmix when only the legacy seam exists', async () => {
     const engine = new FakeEngine();
-    const integratedLufs = vi.fn(() => -12.7);
+    const integratedLufs = vi.fn((_samples: Float32Array, _sampleRate: number) =>
+      lufsResult(-12.7),
+    );
     const result = await renderProjectWithEngine(makeDoc(), {
       ...renderOptions(engine),
       deps: { mastering: null, metering: { integratedLufs } },
@@ -4456,7 +4480,10 @@ describe('renderProjectWithEngine loudness metering', () => {
     });
     const result = await renderProjectWithEngine(makeDoc(), {
       ...renderOptions(new FakeEngine()),
-      deps: { mastering: null, metering: { detectClipping, integratedLufs: () => -11 } },
+      deps: {
+        mastering: null,
+        metering: { detectClipping, integratedLufs: () => lufsResult(-11) },
+      },
     });
 
     expect(result.report.clipping).toBeUndefined();
@@ -4513,7 +4540,7 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     expect(clips[0].channels[0][0]).toBeCloseTo(0.75, 5);
 
     // The frozen lane gets no strip JSON; the unfrozen MIDI track still plays.
-    expect(engine.named('setTrackStripJson')).toEqual([]);
+    expect(trackStrips(engine)).toEqual([]);
     expect(engine.named('setMidiClips')).toHaveLength(1);
   });
 
@@ -4662,7 +4689,7 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     expect(params.get(0x4d580102)).toBe(0);
 
     // No master strip scene and no master levels.
-    expect(engine.named('setMasterStripJson')).toEqual([]);
+    expect(masterStrips(engine)).toEqual([]);
     expect(params.has(0x4d58ff01)).toBe(false);
     expect(params.has(0x4d58ff02)).toBe(false);
 
@@ -4674,18 +4701,18 @@ describe('renderProjectWithEngine with frozen tracks', () => {
     expect(laneIds.has(0x4d580102)).toBe(false);
     expect(laneIds.has(0x4d580001)).toBe(true);
     expect(laneIds.has(0x4d58ff02)).toBe(false);
-    expect(engine.named('resolveTrackInsertAutomationId')).toEqual([
-      ['resolveTrackInsertAutomationId', 2, 0, 'thresholdDb'],
+    expect(engine.named('resolveStripInsertAutomationId')).toEqual([
+      ['resolveStripInsertAutomationId', 2, 0, 'thresholdDb'],
     ]);
 
     // Every other lane is muted; the frozen lane stays audible.
-    expect(engine.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, false, true],
-      ['setSoloMute', 1, false, false],
+    expect(engine.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: false, mute: true }],
+      ['setTrackSoloMute', 2, { solo: false, mute: false }],
     ]);
 
     // The track's own insert chain renders into the freeze (pre-fader DSP).
-    expect(engine.named('setTrackStripJson').map(([, trackId]) => trackId)).toEqual([2]);
+    expect(trackStrips(engine).map(([, trackId]) => trackId)).toEqual([2]);
 
     // The result carries the single pass output and its peak.
     expect(result.totalFrames).toBe(4 * 24000 + 2 * 48000);
@@ -4852,14 +4879,16 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
     expect(engine.named('setBusSidechain')).toEqual([
-      ['setBusSidechain', 1, 0, 0, 2],
-      ['setBusSidechain', 2, 0, 1, 1],
-      ['setBusSidechain', 3, 0, 0, 2],
+      ['setBusSidechain', 1, 0, { kind: 'track', id: 2 }],
+      ['setBusSidechain', 2, 0, { kind: 'bus', id: 1 }],
+      ['setBusSidechain', 3, 0, { kind: 'track', id: 2 }],
     ]);
-    expect(engine.named('setMasterSidechain')).toEqual([['setMasterSidechain', 0, 1, 3]]);
+    expect(engine.named('setStripSidechain')).toEqual([
+      ['setStripSidechain', 'master', 0, { kind: 'bus', id: 3 }],
+    ]);
   });
 
-  it('binds a keyed bus insert at its compacted index on an older engine', async () => {
+  it('binds a keyed bus insert at its store index beside a bypassed insert', async () => {
     const doc = makeDoc();
     if (!doc.mixer) throw new Error('missing mixer');
     doc.mixer.buses[0].strip = {
@@ -4878,7 +4907,9 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     };
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
-    expect(engine.named('setBusSidechain')).toEqual([['setBusSidechain', 1, 0, 0, 1]]);
+    expect(engine.named('setBusSidechain')).toEqual([
+      ['setBusSidechain', 1, 1, { kind: 'track', id: 1 }],
+    ]);
   });
 
   it('declares return and group bus sends and outputs with surround width', async () => {
@@ -4906,7 +4937,7 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
       {
         busId: 1,
         gainDb: -6,
-        channelLayout: 2,
+        channelLayout: '5.1',
         outputBusId: 2,
         sends: [{ busId: 2, levelDb: -9, enabled: true, sendTiming: 'preFader' }],
       },
@@ -4932,8 +4963,8 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     };
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
-    const [, , json] = engine.named('setBusStripJson')[0] as [string, number, string];
-    expect(JSON.parse(json).buses[0].layout).toBe('5.1');
+    const [, , scene] = engine.named('setBusStrip')[0] as [string, number, { layout: string }];
+    expect(scene.layout).toBe('5.1');
   });
 
   it('drops self and duplicate bus sends the way the live engine sync does', async () => {
@@ -4995,9 +5026,9 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     const groupStemPass = engines[2];
     // The muted Drums member must stay muted even though the Drum Bus stem is
     // being isolated. Previously it was added to stemIndices and leaked audio.
-    expect(groupStemPass.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, false, true],
-      ['setSoloMute', 1, false, true],
+    expect(groupStemPass.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: false, mute: true }],
+      ['setTrackSoloMute', 2, { solo: false, mute: true }],
     ]);
   });
 
@@ -5133,7 +5164,7 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       0x4d58fc01,
-      [{ ppq: 0, value: -10, curveToNext: 0 }],
+      [{ ppq: 0, value: -10, curveToNext: 'linear' }],
     ]);
     expect(engine.named('resolveBusInsertAutomationId')).toContainEqual([
       'resolveBusInsertAutomationId',
@@ -5141,8 +5172,8 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
       0,
       'thresholdDb',
     ]);
-    expect(engine.named('resolveTrackInsertAutomationId')).not.toContainEqual([
-      'resolveTrackInsertAutomationId',
+    expect(engine.named('resolveStripInsertAutomationId')).not.toContainEqual([
+      'resolveStripInsertAutomationId',
       3,
       0,
       'thresholdDb',
@@ -5226,36 +5257,30 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     expect(buses[1].gainDb).toBeCloseTo(linearToDb(0.5) - 2 - 6, 5);
   });
 
-  it('sends only the enabled group inserts to the bus strip and keeps the group lane neutral', async () => {
+  it('declares the group inserts on the bus strip and keeps the group lane neutral', async () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(makeGroupDoc(), renderOptions(engine));
 
-    const busStrips = engine.named('setBusStripJson');
+    const busStrips = engine.named('setBusStrip');
     expect(busStrips).toHaveLength(1);
     expect(busStrips[0][1]).toBe(2);
-    expect(JSON.parse(busStrips[0][2] as string)).toEqual({
-      version: 1,
-      strips: [],
-      buses: [
-        {
-          id: 'bus-2',
-          role: 'submix',
-          inserts: [
-            { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
-          ],
-        },
+    expect(busStrips[0][2]).toEqual({
+      id: 'bus-2',
+      role: 'submix',
+      inserts: [
+        { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
+        { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
       ],
-      connections: [],
     });
 
     // The group's lane stays silent: no lane strip, fader/pan, or solo/mute.
-    expect(engine.named('setTrackStripJson').filter(([, trackId]) => trackId === 3)).toEqual([]);
+    expect(trackStrips(engine).filter(([, trackId]) => trackId === 3)).toEqual([]);
     const params = new Map(engine.named('setParameter').map(([, id, value]) => [id, value]));
     expect(params.has(0x4d580201)).toBe(false);
     expect(params.has(0x4d580202)).toBe(false);
-    expect(engine.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, false, false],
-      ['setSoloMute', 1, false, false],
+    expect(engine.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: false, mute: false }],
+      ['setTrackSoloMute', 2, { solo: false, mute: false }],
     ]);
   });
 
@@ -5265,22 +5290,22 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
       mixer: Record<string, unknown>;
     };
     group.mixer.pan = -0.4;
-    group.mixer.panLaw = 'const6dB';
+    group.mixer.panLaw = 'const6Db';
     group.mixer.panMode = 'stereoPan';
     group.mixer.eq = {
       enabled: true,
       bands: [{ enabled: true, type: 'peak', frequencyHz: 800, gainDb: 2, q: 1 }],
     };
 
-    const engine = new FakeEngineWithBusEq();
+    const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    const scene = JSON.parse(engine.named('setBusStripJson')[0][2] as string);
-    expect(scene.buses[0].id).toBe('bus-2');
-    expect(scene.buses[0]).toMatchObject({
+    const scene = engine.named('setBusStrip')[0][2] as { id: string };
+    expect(scene.id).toBe('bus-2');
+    expect(scene).toMatchObject({
       pan: -0.4,
-      panLaw: 2,
-      panMode: 1,
+      panLaw: 'const6Db',
+      panMode: 'stereoPan',
       eq: {
         enabled: true,
         bands: [{ enabled: true, type: 'peak', frequencyHz: 800, gainDb: 2, q: 1 }],
@@ -5301,7 +5326,7 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
 
     const buses = engine.named('setTrackBuses')[0][1] as Array<{ busId: number; gainDb: number }>;
     expect(buses[1].gainDb).toBe(-120);
-    expect(engine.named('setBusStripJson')).toEqual([]);
+    expect(engine.named('setBusStrip')).toEqual([]);
   });
 
   it('does not send disabled track or master EQ bands to the offline engine', async () => {
@@ -5312,22 +5337,21 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     trackMixer.inserts = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
     trackMixer.eq = {
       enabled: false,
-      bands: [{ type: 'peak', frequency: 1000, gainDb: 9, q: 1 }],
+      bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 9, q: 1 }],
     };
     const master = doc.mixer?.master as NonNullable<ProjectDocument['mixer']>['master'];
     master.inserts = [{ processor: 'dynamics.limiter', params: {}, enabled: true }];
     master.eq = {
       enabled: false,
-      bands: [{ type: 'highShelf', frequency: 8000, gainDb: 6, q: 0.7 }],
+      bands: [{ type: 'highShelf', frequencyHz: 8000, gainDb: 6, q: 0.7 }],
     };
 
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    expect(engine.named('setTrackStripJson').map(([, trackId]) => trackId)).toContain(2);
-    expect(engine.named('setMasterStripJson')).toHaveLength(1);
-    expect(engine.named('setTrackStripEqBandJson')).toEqual([]);
-    expect(engine.named('setMasterStripEqBandJson')).toEqual([]);
+    expect(trackStrips(engine).map(([, trackId]) => trackId)).toContain(2);
+    expect(masterStrips(engine)).toHaveLength(1);
+    expect(engine.named('setStripEqBand')).toEqual([]);
   });
 
   it('sends send-bus strip DSP when trim, width, or polarity is active without inserts', async () => {
@@ -5345,23 +5369,16 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    const busStrips = engine.named('setBusStripJson');
+    const busStrips = engine.named('setBusStrip');
     expect(busStrips).toHaveLength(1);
     expect(busStrips[0][1]).toBe(1);
-    expect(JSON.parse(busStrips[0][2] as string)).toEqual({
-      version: 1,
-      strips: [],
-      buses: [
-        {
-          id: 'bus-1',
-          role: 'submix',
-          inserts: [],
-          inputTrimDb: -3,
-          width: 0,
-          polarityInvertLeft: true,
-        },
-      ],
-      connections: [],
+    expect(busStrips[0][2]).toEqual({
+      id: 'bus-1',
+      role: 'submix',
+      inserts: [],
+      inputTrimDb: -3,
+      width: 0,
+      polarityInvertLeft: true,
     });
   });
 
@@ -5386,7 +5403,9 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
 
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
-    expect(engine.named('setLaneSidechain')).toEqual([['setLaneSidechain', 2, 0, 1]]);
+    expect(engine.named('setStripSidechain')).toEqual([
+      ['setStripSidechain', 2, 0, { kind: 'track', id: 1 }],
+    ]);
   });
 });
 
@@ -5402,20 +5421,20 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       pan: 0.25,
       inserts: [],
       sends: [],
-      panLaw: 'const6dB',
+      panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -0.5, right: 0.75 },
       channelDelaySamples: 12,
     };
     const liveEngine = {
       setTrackLanes: vi.fn(),
-      setStripGain: vi.fn(),
+      setStripFaderDb: vi.fn(),
       setStripPan: vi.fn(),
-      setSoloMute: vi.fn(),
-      setTrackStripChannelDelaySamples: vi.fn(),
-      setTrackStripPanLaw: vi.fn(),
-      setTrackStripPanMode: vi.fn(),
-      setTrackStripDualPan: vi.fn(),
+      setTrackSoloMute: vi.fn(),
+      setStripChannelDelaySamples: vi.fn(),
+      setStripPanLaw: vi.fn(),
+      setStripPanMode: vi.fn(),
+      setStripDualPan: vi.fn(),
     };
     const liveTracks: EditorTrack[] = doc.tracks.map((track, index) => ({
       id: index + 1,
@@ -5448,25 +5467,25 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       map.set(trackId, state);
       return state;
     };
-    for (const [trackId, gainDb] of liveEngine.setStripGain.mock.calls) {
+    for (const [trackId, gainDb] of liveEngine.setStripFaderDb.mock.calls) {
       if (typeof trackId === 'number') stateFor(liveState, trackId).gainDb = gainDb;
     }
     for (const [trackId, pan] of liveEngine.setStripPan.mock.calls) {
       if (typeof trackId === 'number') stateFor(liveState, trackId).pan = pan;
     }
-    for (const [trackId, solo, mute] of liveEngine.setSoloMute.mock.calls) {
-      stateFor(liveState, trackId).soloMute = [solo, mute];
+    for (const [trackId, state] of liveEngine.setTrackSoloMute.mock.calls) {
+      stateFor(liveState, trackId).soloMute = [state.solo, state.mute];
     }
-    for (const [trackId, delay] of liveEngine.setTrackStripChannelDelaySamples.mock.calls) {
+    for (const [trackId, delay] of liveEngine.setStripChannelDelaySamples.mock.calls) {
       stateFor(liveState, trackId).delay = delay;
     }
-    for (const [trackId, panLaw] of liveEngine.setTrackStripPanLaw.mock.calls) {
+    for (const [trackId, panLaw] of liveEngine.setStripPanLaw.mock.calls) {
       stateFor(liveState, trackId).panLaw = panLaw;
     }
-    for (const [trackId, panMode] of liveEngine.setTrackStripPanMode.mock.calls) {
+    for (const [trackId, panMode] of liveEngine.setStripPanMode.mock.calls) {
       stateFor(liveState, trackId).panMode = panMode;
     }
-    for (const [trackId, left, right] of liveEngine.setTrackStripDualPan.mock.calls) {
+    for (const [trackId, left, right] of liveEngine.setStripDualPan.mock.calls) {
       stateFor(liveState, trackId).dualPan = [left, right];
     }
     for (const [, paramId, value] of offline.named('setParameter')) {
@@ -5483,19 +5502,20 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       if (kind === ENGINE_MIXER_PARAM_FADER_DB) state.gainDb = value;
       if (kind === 2) state.pan = value;
     }
-    for (const [, laneIndex, solo, mute] of offline.named('setSoloMute')) {
-      stateFor(offlineState, offlineTrackId(laneIndex as number)).soloMute = [solo, mute];
+    for (const [, trackId, state] of offline.named('setTrackSoloMute')) {
+      const { solo, mute } = state as { solo: boolean; mute: boolean };
+      stateFor(offlineState, trackId as number).soloMute = [solo, mute];
     }
-    for (const [, trackId, delay] of offline.named('setTrackStripChannelDelaySamples')) {
+    for (const [, trackId, delay] of offline.named('setStripChannelDelaySamples')) {
       stateFor(offlineState, trackId as number).delay = delay;
     }
-    for (const [, trackId, panLaw] of offline.named('setTrackStripPanLaw')) {
+    for (const [, trackId, panLaw] of offline.named('setStripPanLaw')) {
       stateFor(offlineState, trackId as number).panLaw = panLaw;
     }
-    for (const [, trackId, panMode] of offline.named('setTrackStripPanMode')) {
+    for (const [, trackId, panMode] of offline.named('setStripPanMode')) {
       stateFor(offlineState, trackId as number).panMode = panMode;
     }
-    for (const [, trackId, left, right] of offline.named('setTrackStripDualPan')) {
+    for (const [, trackId, left, right] of offline.named('setStripDualPan')) {
       stateFor(offlineState, trackId as number).dualPan = [left, right];
     }
 
@@ -5530,7 +5550,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       drumsFader,
-      [{ ppq: 0, value: -18, curveToNext: 0 }],
+      [{ ppq: 0, value: -18, curveToNext: 'linear' }],
     ]);
   });
 
@@ -5543,16 +5563,16 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     await renderProjectWithEngine(doc, renderOptions(engine));
 
     // Mix pass: the soloed Keys lane and the solo-safe Drums lane both solo.
-    expect(engine.named('setSoloMute')).toEqual([
-      ['setSoloMute', 0, true, false],
-      ['setSoloMute', 1, true, false],
+    expect(engine.named('setTrackSoloMute')).toEqual([
+      ['setTrackSoloMute', 1, { solo: true, mute: false }],
+      ['setTrackSoloMute', 2, { solo: true, mute: false }],
     ]);
   });
 
   it('applies pan law, mode, dual-pan and channel delay; omits defaults', async () => {
     const doc = makeDoc();
     Object.assign((doc.tracks[1] as { mixer: Record<string, unknown> }).mixer, {
-      panLaw: 'const6dB',
+      panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -1, right: 1 },
       channelDelaySamples: 128,
@@ -5561,14 +5581,14 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    expect(engine.named('setTrackStripPanLaw')).toEqual([['setTrackStripPanLaw', 2, 'const6dB']]);
-    expect(engine.named('setTrackStripPanMode')).toEqual([['setTrackStripPanMode', 2, 'dualPan']]);
-    expect(engine.named('setTrackStripDualPan')).toEqual([['setTrackStripDualPan', 2, -1, 1]]);
-    expect(engine.named('setTrackStripChannelDelaySamples')).toEqual([
-      ['setTrackStripChannelDelaySamples', 2, 128],
+    expect(engine.named('setStripPanLaw')).toEqual([['setStripPanLaw', 2, 'const6Db']]);
+    expect(engine.named('setStripPanMode')).toEqual([['setStripPanMode', 2, 'dualPan']]);
+    expect(engine.named('setStripDualPan')).toEqual([['setStripDualPan', 2, -1, 1]]);
+    expect(engine.named('setStripChannelDelaySamples')).toEqual([
+      ['setStripChannelDelaySamples', 2, 128],
     ]);
     // The Keys lane keeps engine defaults, so no calls reference track 1.
-    for (const name of ['setTrackStripPanLaw', 'setTrackStripPanMode']) {
+    for (const name of ['setStripPanLaw', 'setStripPanMode']) {
       expect(engine.named(name).some(([, trackId]) => trackId === 1)).toBe(false);
     }
   });
@@ -5591,8 +5611,8 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       insertLatency: (slot) => (slot.processor === 'linear.eq' ? 128 : 0),
     });
 
-    expect(engine.named('setTrackStripChannelDelaySamples')).toEqual([
-      ['setTrackStripChannelDelaySamples', 2, 136],
+    expect(engine.named('setStripChannelDelaySamples')).toEqual([
+      ['setStripChannelDelaySamples', 2, 136],
     ]);
   });
 
@@ -5613,20 +5633,19 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     });
 
     const neutralIndex = engine.calls.findIndex(
-      ([name, trackId, json]) =>
-        name === 'setTrackStripJson' &&
+      ([name, trackId, scene]) =>
+        name === 'setStrip' &&
         trackId === 2 &&
-        typeof json === 'string' &&
-        JSON.parse(json).strips[0].inserts.length === 0,
+        (scene as { inserts: unknown[] }).inserts.length === 0,
     );
     const delayIndex = engine.calls.findIndex(
-      ([name, trackId]) => name === 'setTrackStripChannelDelaySamples' && trackId === 2,
+      ([name, trackId]) => name === 'setStripChannelDelaySamples' && trackId === 2,
     );
 
     expect(neutralIndex).toBeGreaterThanOrEqual(0);
     expect(delayIndex).toBeGreaterThan(neutralIndex);
-    expect(engine.named('setTrackStripChannelDelaySamples')).toContainEqual([
-      'setTrackStripChannelDelaySamples',
+    expect(engine.named('setStripChannelDelaySamples')).toContainEqual([
+      'setStripChannelDelaySamples',
       2,
       12,
     ]);
@@ -5675,43 +5694,18 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    expect(engine.named('setBusStripJson')).toHaveLength(1);
-    expect(JSON.parse(engine.named('setBusStripJson')[0][2] as string)).toEqual({
-      version: 1,
-      strips: [],
-      buses: [
-        {
-          id: 'bus-1',
-          role: 'submix',
-          inserts: [
-            { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
-          ],
-        },
+    expect(engine.named('setBusStrip')).toHaveLength(1);
+    expect(engine.named('setBusStrip')[0][2]).toEqual({
+      id: 'bus-1',
+      role: 'submix',
+      inserts: [
+        { slot: 'pre', processor: 'dynamics.compressor', params: { thresholdDb: -20 } },
+        { slot: 'pre', processor: 'saturation.tape', params: { drive: 0.4 } },
       ],
-      connections: [],
     });
   });
 
-  it('does not treat legacy bus EQ state as exportable bus scene DSP', async () => {
-    const doc = makeDoc();
-    (doc.mixer?.buses[0] as unknown as { strip: Record<string, unknown> }).strip = {
-      gainDb: 0,
-      pan: 0,
-      sends: [],
-      inserts: [],
-      eq: {
-        enabled: true,
-        bands: [{ enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 }],
-      },
-    };
-
-    const engine = new FakeEngine();
-    await renderProjectWithEngine(doc, renderOptions(engine));
-
-    expect(engine.named('setBusStripJson')).toEqual([]);
-  });
-
-  it('exports bus EQ when the future bus EQ offline ABI exists', async () => {
+  it('exports bus EQ through the bus strip declaration', async () => {
     const doc = makeDoc();
     const band = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
     if (doc.mixer) {
@@ -5727,14 +5721,12 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       };
     }
 
-    const engine = new FakeEngineWithBusEq();
+    const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    const scene = JSON.parse(engine.named('setBusStripJson')[0][2] as string);
-    expect(scene.buses[0].eq).toEqual({ enabled: true, bands: [band] });
-    expect(engine.named('setBusStripEqBandJson')).toEqual([
-      ['setBusStripEqBandJson', 1, 0, JSON.stringify(band)],
-    ]);
+    const scene = engine.named('setBusStrip')[0][2] as { eq: unknown };
+    expect(scene.eq).toEqual({ enabled: true, bands: [band] });
+    expect(engine.named('setBusEqBand')).toEqual([['setBusEqBand', 1, 0, band]]);
   });
 
   it('exports return-bus pan and EQ fields with neutral defaults omitted', async () => {
@@ -5744,7 +5736,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       doc.mixer.buses[0].strip = {
         gainDb: 0,
         pan: 0.25,
-        panLaw: 'linear0dB',
+        panLaw: 'linear0Db',
         panMode: 'dualPan',
         dualPan: { left: -0.5, right: 0.75 },
         sends: [],
@@ -5753,20 +5745,20 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       };
     }
 
-    const engine = new FakeEngineWithBusEq();
+    const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    const scene = JSON.parse(engine.named('setBusStripJson')[0][2] as string);
-    expect(scene.buses[0]).toMatchObject({
+    const scene = engine.named('setBusStrip')[0][2] as object;
+    expect(scene).toMatchObject({
       pan: 0.25,
-      panLaw: 3,
-      panMode: 2,
+      panLaw: 'linear0Db',
+      panMode: 'dualPan',
       dualPanLeft: -0.5,
       dualPanRight: 0.75,
       eq: { enabled: true, bands: [band] },
     });
-    expect(scene.buses[0]).not.toHaveProperty('inputTrimDb');
-    expect(scene.buses[0]).not.toHaveProperty('width');
+    expect(scene).not.toHaveProperty('inputTrimDb');
+    expect(scene).not.toHaveProperty('width');
   });
 
   it('replays bus gain automation lanes before rendering', async () => {
@@ -5791,8 +5783,8 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       'setAutomationLane',
       BUS_1_FADER_PARAM_ID,
       [
-        { ppq: 0, value: -12, curveToNext: 0 },
-        { ppq: 960, value: -3, curveToNext: 2 },
+        { ppq: 0, value: -12, curveToNext: 'linear' },
+        { ppq: 960, value: -3, curveToNext: 'hold' },
       ],
     ]);
   });
@@ -5817,7 +5809,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     ]);
   });
 
-  it('maps bus insert automation through enabled-only insert indexes in export', async () => {
+  it('keeps store indexes for bus automation beside a bypassed insert', async () => {
     const doc = makeDoc();
     if (doc.mixer) {
       doc.mixer.buses[0].strip = {
@@ -5832,11 +5824,6 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
           param: 'insert:1:thresholdDb',
           enabled: true,
           points: [{ ppq: 0, value: -24 }],
-        },
-        {
-          param: 'insert:0:drive',
-          enabled: true,
-          points: [{ ppq: 0, value: 0.5 }],
         },
       ];
     }
@@ -5844,38 +5831,11 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
 
-    expect(engine.named('resolveBusInsertAutomationId')).toEqual([
-      ['resolveBusInsertAutomationId', 1, 0, 'thresholdDb'],
-    ]);
-  });
-
-  it('keeps store indexes for bus automation when the bypass ABI declares every slot', async () => {
-    const doc = makeDoc();
-    if (doc.mixer) {
-      doc.mixer.buses[0].strip = {
-        inserts: [
-          { processor: 'saturation.tape', params: {}, enabled: false },
-          { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
-        ],
-        sends: [],
-      };
-      doc.mixer.buses[0].automation = [
-        {
-          param: 'insert:1:thresholdDb',
-          enabled: true,
-          points: [{ ppq: 0, value: -24 }],
-        },
-      ];
-    }
-
-    const engine = new BusBypassFakeEngine();
-    await renderProjectWithEngine(doc, renderOptions(engine));
-
-    expect(engine.named('setBusStripInsertBypassed')).toContainEqual([
-      'setBusStripInsertBypassed',
+    expect(engine.named('setBusInsertBypassed')).toContainEqual([
+      'setBusInsertBypassed',
       1,
       0,
-      true,
+      { bypassed: true },
     ]);
     expect(engine.named('resolveBusInsertAutomationId')).toEqual([
       ['resolveBusInsertAutomationId', 1, 1, 'thresholdDb'],
@@ -5915,12 +5875,12 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       0x4d580001,
-      [{ ppq: 0, value: -12, curveToNext: 0 }],
+      [{ ppq: 0, value: -12, curveToNext: 'linear' }],
     ]);
     expect(engine.named('setAutomationLane')).toContainEqual([
       'setAutomationLane',
       BUS_1_FADER_PARAM_ID,
-      [{ ppq: 0, value: -9, curveToNext: 0 }],
+      [{ ppq: 0, value: -9, curveToNext: 'linear' }],
     ]);
     expect(engine.named('setAutomationLane').some(([, id]) => id === MASTER_FADER_PARAM_ID)).toBe(
       false,

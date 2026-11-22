@@ -30,9 +30,9 @@ beforeAll(async () => {
 
 /** Binds the patch on a real engine, which throws on anything it refuses. */
 function acceptedByEngine(patch: StoredSynthPatch): void {
-  const engine = new wasm.RealtimeEngine(48000, 512);
+  const engine = new wasm.RealtimeEngine({ sampleRate: 48000, maxBlockSize: 512 });
   engine.setTrackLanes([{ trackId: 1 }]);
-  engine.setSynthInstrument(patch, 1);
+  engine.setSynthInstrument(1, patch);
 }
 
 const NEW_TIMES = ['ampDelayMs', 'ampHoldMs', 'filterDelayMs', 'filterHoldMs'] as const;
@@ -68,7 +68,7 @@ describe('new wrapper fields', () => {
   it('round-trips through sanitize and the library', () => {
     const patch = sanitizePatchDraft({
       preset: 'violin',
-      engineMode: 'bowed-string',
+      engineMode: 'bowedString',
       driftRateHz: 99,
       ampDelayMs: 10,
       ampHoldMs: -4,
@@ -114,7 +114,7 @@ describe('engineParams', () => {
 
   it('maps booleans to 0/1 and drops non-finite values', () => {
     const patch = sanitizePatchDraft({
-      engineMode: 'bowed-string',
+      engineMode: 'bowedString',
       engineParams: { elastoPlastic: 0.7, bowForce: Number.NaN },
     });
     expect(patch.engineParams).toEqual({ elastoPlastic: 1 });
@@ -122,7 +122,7 @@ describe('engineParams', () => {
 
   it('drops keys the engine does not list', () => {
     const patch = sanitizePatchDraft({
-      engineMode: 'bowed-string',
+      engineMode: 'bowedString',
       engineParams: { bowForce: 0.9, algorithm: 3, bogus: 1 },
     });
     expect(patch.engineParams).toEqual({ bowForce: 0.9 });
@@ -139,7 +139,7 @@ describe('engineParams', () => {
   it('prunes when the engine changes', () => {
     const params = { bowForce: 0.9, algorithm: 3 };
     expect(clampEngineParams(params, wasmEngineParamInfo('fm'))).toEqual({ algorithm: 3 });
-    expect(clampEngineParams(params, wasmEngineParamInfo('bowed-string'))).toEqual({
+    expect(clampEngineParams(params, wasmEngineParamInfo('bowedString'))).toEqual({
       bowForce: 0.9,
     });
   });
@@ -147,7 +147,7 @@ describe('engineParams', () => {
   it('is carried from a stored patch into the draft and counted as an edit', () => {
     const draft = createPatchDraft({
       kind: 'synth-patch',
-      patch: { engineMode: 'bowed-string', engineParams: { bowForce: 0.3, junk: Number.NaN } },
+      patch: { engineMode: 'bowedString', engineParams: { bowForce: 0.3, junk: Number.NaN } },
     });
     expect(draft.engineParams).toEqual({ bowForce: 0.3 });
     expect(patchEditCount(draft)).toBe(2);
@@ -208,16 +208,16 @@ describe('engine fields that do not reach the voice', () => {
   });
 
   it('reads patch fields and their defaults for a patch-scoped condition', () => {
-    const info = field('bowed-string', 'corpusScale');
-    const blocked = engineParamBlockers(info, {}, engine('bowed-string'), patchInfo());
+    const info = field('bowedString', 'corpusScale');
+    const blocked = engineParamBlockers(info, {}, engine('bowedString'), patchInfo());
     expect(blocked?.map((condition) => condition.key)).toEqual(['body', 'bodyMix']);
     const violin: StoredSynthPatch = { body: 'violin', bodyMix: 0.5 } as StoredSynthPatch;
-    expect(engineParamBlockers(info, violin, engine('bowed-string'), patchInfo())).toBeNull();
+    expect(engineParamBlockers(info, violin, engine('bowedString'), patchInfo())).toBeNull();
   });
 
   it('leaves an ungated field active', () => {
-    const info = engine('bowed-string').find((entry) => entry.activeWhen === undefined);
+    const info = engine('bowedString').find((entry) => entry.activeWhen === undefined);
     expect(info).toBeDefined();
-    if (info) expect(engineParamBlockers(info, {}, engine('bowed-string'), patchInfo())).toBeNull();
+    if (info) expect(engineParamBlockers(info, {}, engine('bowedString'), patchInfo())).toBeNull();
   });
 });

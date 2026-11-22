@@ -8,95 +8,33 @@ import {
 } from './midi-events';
 import { assignMidiLaneFields, cloneMidiLaneFields, copyMidiLaneFields } from './midi-lane-kinds';
 import {
+  type NativeClipFade,
+  type NativeProjectDocument,
+  type NativeTrack,
+  nativeClipLoops,
+  nativeTrackKind,
+} from './native-document';
+import {
   type EditorClip,
   type EditorNote,
   type EditorTrack,
   type TempoSegment,
   type TimeSignatureSegment,
   TRACK_COLOR_PALETTE,
-  type TrackKind,
 } from './types';
 
-/** Shape of one serialized tempo segment inside the Project JSON document. */
-export interface SerializedTempoSegment {
-  start_ppq: number;
-  bpm: number;
-  end_bpm?: number;
-}
-
-/** Shape of one serialized time signature inside the Project JSON document. */
-export interface SerializedTimeSignature {
-  start_ppq: number;
-  numerator: number;
-  denominator: number;
-}
-
-/** Shape of one serialized track inside the Project JSON document. */
-export interface SerializedTrack {
-  id: number;
-  kind: number;
-  name: string;
-}
-
-/** Shape of one serialized clip fade (the binding nests length and curve). */
-export interface SerializedClipFade {
-  length_ppq?: number;
-  curve?: number;
-}
-
-/** Shape of one serialized clip inside the Project JSON document. */
-export interface SerializedClip {
-  id: number;
-  track_id: number;
-  start_ppq: number;
-  length_ppq: number;
-  source_offset_ppq: number;
-  gain: number;
-  loop_mode: number;
-  loop_length_ppq: number;
-  /** Flat fade lengths (older bindings); omitted when not serialized. */
-  fade_in_ppq?: number;
-  fade_out_ppq?: number;
-  /** Nested fade objects (current binding); omitted when not serialized. */
-  fade_in?: SerializedClipFade;
-  fade_out?: SerializedClipFade;
-}
-
-/** Minimal slice of the Project JSON document this store reads. */
-export interface SerializedProjectDoc {
-  sample_rate?: number;
-  midi_content?: Record<string, unknown>;
-  tempo_segments?: SerializedTempoSegment[];
-  time_signatures?: SerializedTimeSignature[];
-  tracks?: SerializedTrack[];
-  clips?: SerializedClip[];
-  annotation?: { chords?: unknown };
-}
-
-/** Reads a clip fade length from either serialized form, or null. */
-function serializedFadePpq(
-  flat: number | undefined,
-  nested: SerializedClipFade | undefined,
-): number | null {
-  if (typeof flat === 'number') return flat;
-  if (nested && typeof nested.length_ppq === 'number') return nested.length_ppq;
-  return null;
-}
-
-/** Maps a serialized track-kind ordinal to the string form. */
-function trackKindFromOrdinal(kind: number): TrackKind {
-  if (kind === 0) return 'audio';
-  if (kind === 2) return 'aux';
-  return 'midi';
+/** Reads a clip fade length, or null when the document carries none. */
+function serializedFadePpq(fade: NativeClipFade | undefined): number | null {
+  return typeof fade?.lengthPpq === 'number' ? fade.lengthPpq : null;
 }
 
 /** Builds a default track mirror entry for a track first seen in the Project. */
-function defaultTrackMirror(serialized: SerializedTrack, index: number): EditorTrack {
+function defaultTrackMirror(serialized: NativeTrack, index: number): EditorTrack {
   return {
     id: serialized.id,
     name: serialized.name ?? `Track ${index + 1}`,
     color: TRACK_COLOR_PALETTE[index % TRACK_COLOR_PALETTE.length],
-    kind: trackKindFromOrdinal(serialized.kind),
+    kind: nativeTrackKind(serialized.kind),
     mute: false,
     solo: false,
     volume: 1,
@@ -202,18 +140,18 @@ export interface TempoMeterMirror {
 
 /** Parses tempo and meter mirror values from the Project document. */
 export function refreshTempoMeter(
-  doc: SerializedProjectDoc,
+  doc: NativeProjectDocument,
   previousTimeSignatures: ReadonlyArray<TimeSignatureSegment> = [],
 ): TempoMeterMirror {
-  const tempoDoc = Array.isArray(doc.tempo_segments) ? doc.tempo_segments : [];
+  const tempoDoc = Array.isArray(doc.tempoSegments) ? doc.tempoSegments : [];
   const tempoSegments = tempoDoc.map((s) => {
-    const segment: TempoSegment = { startPpq: s.start_ppq, bpm: s.bpm };
-    if (typeof s.end_bpm === 'number' && s.end_bpm > 0) segment.endBpm = s.end_bpm;
+    const segment: TempoSegment = { startPpq: s.startPpq, bpm: s.bpm };
+    if (typeof s.endBpm === 'number' && s.endBpm > 0) segment.endBpm = s.endBpm;
     return segment;
   });
   const bpm = tempoDoc[0]?.bpm;
   const tempoBpm = typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0 ? bpm : null;
-  const meterDoc = Array.isArray(doc.time_signatures) ? doc.time_signatures : [];
+  const meterDoc = Array.isArray(doc.timeSignatures) ? doc.timeSignatures : [];
   const groupingByMeter = new Map(
     previousTimeSignatures
       .filter((segment) => segment.grouping !== undefined)
@@ -224,11 +162,11 @@ export function refreshTempoMeter(
   );
   const timeSignatures = meterDoc.map((s) => {
     const segment: TimeSignatureSegment = {
-      startPpq: s.start_ppq,
+      startPpq: s.startPpq,
       numerator: s.numerator,
       denominator: s.denominator,
     };
-    const grouping = groupingByMeter.get(`${s.start_ppq}:${s.numerator}:${s.denominator}`);
+    const grouping = groupingByMeter.get(`${s.startPpq}:${s.numerator}:${s.denominator}`);
     if (grouping !== undefined) segment.grouping = [...grouping];
     return segment;
   });
@@ -247,7 +185,7 @@ export interface TrackMirrorResult {
  * appended.
  */
 export function buildTrackMirror(
-  doc: SerializedProjectDoc,
+  doc: NativeProjectDocument,
   previousTracks: ReadonlyArray<EditorTrack>,
 ): TrackMirrorResult {
   const docTracks = Array.isArray(doc.tracks) ? doc.tracks : [];
@@ -259,7 +197,7 @@ export function buildTrackMirror(
     if (!serialized) continue;
     // Group tracks live as aux tracks in the Project; the app-level 'group'
     // kind survives refresh as long as the Project still reports aux.
-    const projectKind = trackKindFromOrdinal(serialized.kind);
+    const projectKind = nativeTrackKind(serialized.kind);
     nextTracks.push({
       ...previous,
       name: serialized.name ?? previous.name,
@@ -291,7 +229,7 @@ export function buildTrackMirror(
  * @param allocateNoteId Allocates fresh editor note ids for unmatched notes.
  */
 export function buildClipMirror(
-  doc: SerializedProjectDoc,
+  doc: NativeProjectDocument,
   previousClips: ReadonlyArray<EditorClip>,
   trackOrder: Map<number, number>,
   activeClipId: number,
@@ -305,10 +243,10 @@ export function buildClipMirror(
   const previousClipById = new Map(previousClips.map((clip) => [clip.id, clip]));
   const docClips = Array.isArray(doc.clips) ? doc.clips : [];
   const nextClips: EditorClip[] = docClips
-    .filter((serialized) => trackOrder.has(serialized.track_id))
+    .filter((serialized) => trackOrder.has(serialized.trackId))
     .map((serialized) => {
       const previous = previousClipById.get(serialized.id);
-      const stored = doc.midi_content?.[String(serialized.id)];
+      const stored = doc.midiContent?.[String(serialized.id)];
       const events = Array.isArray(stored) ? (stored as SerializedMidiEvent[]) : [];
       const hints =
         hintMap?.get(serialized.id) ??
@@ -317,14 +255,14 @@ export function buildClipMirror(
         [];
       const entry: EditorClip = {
         id: serialized.id,
-        trackId: serialized.track_id,
+        trackId: serialized.trackId,
         name: previous?.name ?? `Clip ${serialized.id}`,
-        startPpq: serialized.start_ppq,
-        lengthPpq: serialized.length_ppq,
-        sourceOffsetPpq: serialized.source_offset_ppq ?? 0,
+        startPpq: serialized.startPpq,
+        lengthPpq: serialized.lengthPpq,
+        sourceOffsetPpq: serialized.sourceOffsetPpq ?? 0,
         gain: serialized.gain ?? 1,
-        loopEnabled: serialized.loop_mode === 1,
-        loopLengthPpq: serialized.loop_length_ppq ?? 0,
+        loopEnabled: nativeClipLoops(serialized),
+        loopLengthPpq: serialized.loopLengthPpq ?? 0,
         notes:
           provenance?.clipId === serialized.id
             ? assignNoteIdsByProvenance(events, provenance, allocateNoteId)
@@ -375,13 +313,9 @@ export function buildClipMirror(
           data: [...packet.data],
         }));
       }
-      const fadeIn =
-        serializedFadePpq(serialized.fade_in_ppq, serialized.fade_in) ?? previous?.fadeInPpq ?? 0;
+      const fadeIn = serializedFadePpq(serialized.fadeIn) ?? previous?.fadeInPpq ?? 0;
       if (fadeIn > 0) entry.fadeInPpq = fadeIn;
-      const fadeOut =
-        serializedFadePpq(serialized.fade_out_ppq, serialized.fade_out) ??
-        previous?.fadeOutPpq ??
-        0;
+      const fadeOut = serializedFadePpq(serialized.fadeOut) ?? previous?.fadeOutPpq ?? 0;
       if (fadeOut > 0) entry.fadeOutPpq = fadeOut;
       return entry;
     });

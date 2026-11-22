@@ -17,6 +17,7 @@ import {
 } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
+import type { MasteringInsertName } from '@/wasm/index.js';
 import {
   ppqSpanIntersectsRange,
   programOutputDocument,
@@ -111,16 +112,16 @@ export interface InsertTailCatalogEntry {
   id: string;
   /** Tail the processor reports at its default parameters and 48 kHz. */
   tailSamples?: number;
-  /** Parameter keys; a null id marks one the insert reads only while it is built. */
-  params?: ReadonlyArray<{ name: string; id: number | null }>;
+  /** Parameter keys; an absent id marks one the insert reads only while it is built. */
+  params?: ReadonlyArray<{ name: string; id?: number }>;
 }
 
 /** Engine query for the tail a configured insert reports (masteringInsertTiming). */
-export type InsertTailTimingQuery = (
-  processor: string,
-  params: Record<string, number | boolean>,
-  sampleRate: number,
-) => { tailSamples: number };
+export type InsertTailTimingQuery = (request: {
+  insert: MasteringInsertName;
+  params: Record<string, number | boolean>;
+  sampleRate: number;
+}) => { tailSamples: number };
 
 function tailSecondsFromSamples(samples: unknown, sampleRate: number): number {
   if (typeof samples !== 'number' || !Number.isFinite(samples) || samples <= 0) return 0;
@@ -142,7 +143,10 @@ export function insertTailResolverFromTiming(
   const answers = new Map<string, number>();
   const ask = (processor: string, params: Record<string, number | boolean>): number | undefined => {
     try {
-      return tailSecondsFromSamples(timing(processor, params, sampleRate).tailSamples, sampleRate);
+      return tailSecondsFromSamples(
+        timing({ insert: processor as MasteringInsertName, params, sampleRate }).tailSamples,
+        sampleRate,
+      );
     } catch {
       return undefined;
     }
@@ -158,7 +162,7 @@ export function insertTailResolverFromTiming(
     let tail = answers.get(cacheKey);
     if (tail === undefined) {
       const buildKeys = new Set(
-        (entry.params ?? []).filter((param) => param.id === null).map((param) => param.name),
+        (entry.params ?? []).filter((param) => param.id === undefined).map((param) => param.name),
       );
       const buildParams = Object.fromEntries(
         Object.entries(params).filter(([key]) => buildKeys.has(key)),

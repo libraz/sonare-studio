@@ -12,14 +12,8 @@
 
 import { SILENCE_DB } from '@/lib/db';
 import { groupBusTopologyId, RESERVED_MIXER_BUS_ID } from '@/project/bus-topology';
-import {
-  type MixerBus,
-  type MixerStrip,
-  mixerChannelLayoutCode,
-  type ReturnSoloRouting,
-  type StripSend,
-} from '@/project/mixer';
-import type { EngineTrackSend } from '@/wasm/index.js';
+import type { MixerBus, MixerStrip, ReturnSoloRouting, StripSend } from '@/project/mixer';
+import type { EngineBus, EngineTrackSend } from '@/wasm/index.js';
 
 /** Engine bus slots available to return buses, group buses and the discard sink. */
 export const MAX_ENGINE_BUSES = 8;
@@ -28,7 +22,7 @@ export const MAX_ENGINE_BUSES = 8;
 export interface EngineBusDeclaration {
   busId: number;
   gainDb: number;
-  channelLayout?: number;
+  channelLayout?: EngineBus['channelLayout'];
   outputBusId?: number;
   sends?: EngineTrackSend[];
 }
@@ -122,7 +116,7 @@ export function engineBusGraph(input: BusGraphInput): BusGraph {
   ): EngineBusDeclaration => {
     const entry: EngineBusDeclaration = { busId, gainDb };
     if (channelLayout !== undefined && channelLayout !== 'stereo') {
-      entry.channelLayout = mixerChannelLayoutCode(channelLayout);
+      entry.channelLayout = channelLayout;
     }
     const outputBusId = strip?.outputBusId === undefined ? undefined : resolve(strip.outputBusId);
     if (outputBusId !== undefined && outputBusId !== busId) entry.outputBusId = outputBusId;

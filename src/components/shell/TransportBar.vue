@@ -142,12 +142,12 @@ const countInOptions = computed(() =>
 
 const voiceChangerOptions = computed(() => [
   { value: 'off', label: t.value.shell.transport.voiceChangerOff },
-  { value: 'neutral-monitor', label: t.value.shell.transport.voiceChangerNeutral },
-  { value: 'bright-idol', label: t.value.shell.transport.voiceChangerBright },
-  { value: 'soft-whisper', label: t.value.shell.transport.voiceChangerSoft },
-  { value: 'deep-narrator', label: t.value.shell.transport.voiceChangerDeep },
-  { value: 'robot-mascot', label: t.value.shell.transport.voiceChangerRobot },
-  { value: 'dark-villain', label: t.value.shell.transport.voiceChangerDark },
+  { value: 'neutralMonitor', label: t.value.shell.transport.voiceChangerNeutral },
+  { value: 'brightIdol', label: t.value.shell.transport.voiceChangerBright },
+  { value: 'softWhisper', label: t.value.shell.transport.voiceChangerSoft },
+  { value: 'deepNarrator', label: t.value.shell.transport.voiceChangerDeep },
+  { value: 'robotMascot', label: t.value.shell.transport.voiceChangerRobot },
+  { value: 'darkVillain', label: t.value.shell.transport.voiceChangerDark },
   { value: 'custom-json', label: t.value.shell.transport.voiceChangerCustom },
 ]);
 

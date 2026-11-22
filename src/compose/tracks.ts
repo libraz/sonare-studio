@@ -54,11 +54,11 @@ function instrumentDeclaresPercussion(instrument: TrackInstrument | undefined): 
   if (!instrument) return false;
   if (instrument.kind === 'synth-preset') {
     return (
-      instrument.preset === 'drum-kit' ||
+      instrument.preset === 'drumKit' ||
       (instrument.useGmPrograms === true && isPercussionBank(instrument.gmBank))
     );
   }
-  if (instrument.kind === 'synth-patch') return instrument.patch.preset === 'drum-kit';
+  if (instrument.kind === 'synth-patch') return instrument.patch.preset === 'drumKit';
   if (instrument.kind === 'sf2') {
     if (isPercussionBank(instrument.bank)) return true;
     // Unmapped channels inherit the melodic track-level program, so the map

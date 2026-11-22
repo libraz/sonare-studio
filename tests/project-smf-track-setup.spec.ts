@@ -22,13 +22,13 @@ interface Event {
   d2: number;
 }
 
-function decode(events: ReadonlyArray<{ ppq: number; data0: number }>): Event[] {
+function decode(events: ReadonlyArray<{ ppq: number; word0: number }>): Event[] {
   return events.map((e) => ({
     ppq: e.ppq,
-    status: (e.data0 >> 20) & 0xf,
-    channel: (e.data0 >> 16) & 0xf,
-    d1: (e.data0 >> 8) & 0xff,
-    d2: e.data0 & 0xff,
+    status: (e.word0 >> 20) & 0xf,
+    channel: (e.word0 >> 16) & 0xf,
+    d1: (e.word0 >> 8) & 0xff,
+    d2: e.word0 & 0xff,
   }));
 }
 

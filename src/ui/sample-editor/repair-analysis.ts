@@ -36,25 +36,24 @@ export function repairChannelLabel(index: number, count: number): string {
 
 /**
  * Lists the defects a channel actually shows (non-zero counts, a found hum)
- * plus its noise floor. Empty when the channel was not measured.
+ * plus its noise floor.
  *
  * @param defects - One channel's defect block from the analysis.
  */
 export function repairDefectItems(defects: MasteringAudioProfileDefects): RepairDefectItem[] {
-  if (!defects.measured) return [];
   const items: RepairDefectItem[] = [];
-  if (defects.clickCount > 0) items.push({ kind: 'clicks', value: String(defects.clickCount) });
-  if (defects.clipRunCount > 0) {
-    items.push({ kind: 'clipping', value: String(defects.clipRunCount) });
+  if (defects.click.count > 0) items.push({ kind: 'clicks', value: String(defects.click.count) });
+  if (defects.clip.runCount > 0) {
+    items.push({ kind: 'clipping', value: String(defects.clip.runCount) });
   }
-  if (defects.crackleSampleCount > 0) {
-    items.push({ kind: 'crackle', value: `${defects.cracklePerSecond.toFixed(1)}/s` });
+  if (defects.crackle.sampleCount > 0) {
+    items.push({ kind: 'crackle', value: `${defects.crackle.perSecond.toFixed(1)}/s` });
   }
-  if (defects.humFundamentalHz > 0) {
-    items.push({ kind: 'hum', value: `${Math.round(defects.humFundamentalHz)} Hz` });
+  if (defects.hum.fundamentalHz > 0) {
+    items.push({ kind: 'hum', value: `${Math.round(defects.hum.fundamentalHz)} Hz` });
   }
-  if (Number.isFinite(defects.noiseFloorDbfs)) {
-    items.push({ kind: 'noise', value: `${defects.noiseFloorDbfs.toFixed(0)} dBFS` });
+  if (Number.isFinite(defects.noise.floorDbfs)) {
+    items.push({ kind: 'noise', value: `${defects.noise.floorDbfs.toFixed(0)} dBFS` });
   }
   return items;
 }
@@ -65,8 +64,9 @@ export function repairDefectItems(defects: MasteringAudioProfileDefects): Repair
  * @param analysis - Result of `masteringRepairAnalyze`.
  */
 export function repairChannelSummaries(analysis: MasteringRepairAnalysis): RepairChannelSummary[] {
-  return analysis.channels.map((defects, index) => ({
-    channel: repairChannelLabel(index, analysis.channels.length),
+  const channels = analysis.channels ?? [];
+  return channels.map((defects, index) => ({
+    channel: repairChannelLabel(index, channels.length),
     items: repairDefectItems(defects),
   }));
 }
@@ -78,7 +78,7 @@ export function repairChannelSummaries(analysis: MasteringRepairAnalysis): Repai
  * @param analysis - Result of `masteringRepairAnalyze`.
  */
 export function declipWithheld(analysis: MasteringRepairAnalysis): boolean {
-  return !analysis.declipThresholdSafe && analysis.defects.clipFlatRunCount > 0;
+  return !analysis.declipThresholdSafe && (analysis.defects?.clip.flatRunCount ?? 0) > 0;
 }
 
 /**

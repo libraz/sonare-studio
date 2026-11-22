@@ -19,7 +19,7 @@ import {
   type TrackInstrument,
 } from '@/project/instrument';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
-import type { ProjectMidiEvent } from '@/wasm/index.js';
+import type { ProjectMidiEvent, SynthPatch } from '@/wasm/index.js';
 
 /** One note of a MIDI phrase, positioned in quarter-note pulses (PPQ). */
 export interface MidiNote {
@@ -112,7 +112,7 @@ export const MAX_PRERENDER_CACHE_ENTRIES = 64;
 /**
  * Resolves the effective instrument of a render: the full descriptor when
  * given, otherwise the simple preset option wrapped as a 'synth-preset'
- * instrument (default 'e-piano').
+ * instrument (default 'acousticPiano').
  */
 function resolveInstrument(
   options: PrerenderMidiClipOptions,
@@ -257,44 +257,24 @@ export function midiClipCacheKey(
   return `${CACHE_KEY_VERSION}|sr=${options.sampleRate}|bpm=${tempoBpm}|${instrument}|n=${notes.length}|${hash}`;
 }
 
-/**
- * Splits an interleaved buffer into planar per-channel buffers.
- *
- * @param interleaved Interleaved samples (frame-major: L R L R ... for stereo).
- * @param channelCount Number of channels (default 2).
- * @returns One Float32Array per channel.
- */
-export function deinterleave(interleaved: Float32Array, channelCount = 2): Float32Array[] {
-  if (!Number.isInteger(channelCount) || channelCount < 1) {
-    throw new RangeError(`channelCount must be a positive integer, got ${channelCount}`);
-  }
-  const frames = Math.floor(interleaved.length / channelCount);
-  const channels: Float32Array[] = [];
-  for (let c = 0; c < channelCount; c++) {
-    const out = new Float32Array(frames);
-    for (let i = 0; i < frames; i++) {
-      out[i] = interleaved[i * channelCount + c];
-    }
-    channels.push(out);
-  }
-  return channels;
-}
-
 type WasmModule = typeof import('@/wasm/index.js');
 
 /**
- * Validates a synth preset name against the runtime catalog when the module
- * exposes it, degrading unknown names to the default preset so a stale
+ * Degrades an unknown synth preset name to the default preset so a stale
  * document or template renders audibly instead of throwing. Modules without
- * the catalog function (older builds, test mocks) pass names through. Shared
- * by the prerender path and the realtime instrument sync.
+ * the catalog function (test mocks) pass names through. Shared by the
+ * prerender path and the realtime instrument sync.
  */
-export function resolvePresetName(wasm: WasmModule, preset: string): string {
-  const list = (wasm as { synthPresetNames?: () => string[] }).synthPresetNames;
+export function resolvePresetName(
+  wasm: Partial<Pick<WasmModule, 'synthPresetNames'>>,
+  preset: string,
+): string {
+  const list = wasm.synthPresetNames;
   if (typeof list !== 'function') return preset;
   try {
-    const bare = preset.startsWith('va:') ? preset.slice(3) : preset;
-    return list().includes(bare) ? preset : DEFAULT_SYNTH_PRESET;
+    const prefix = preset.startsWith('va:') ? 'va:' : '';
+    const name = preset.slice(prefix.length);
+    return list().includes(name) ? preset : DEFAULT_SYNTH_PRESET;
   } catch {
     return preset;
   }
@@ -316,12 +296,11 @@ function sf2ProgramEvents(
     const resolved = sf2ChannelProgram(instrument, channel);
     if (resolved === null) continue;
     const program = resolved.program ?? 0;
-    if (resolved.bank !== undefined && typeof wasm.Project.midiBankProgram === 'function') {
-      const bankMsb = (resolved.bank >> 7) & 0x7f;
-      const bankLsb = resolved.bank & 0x7f;
-      events.push(...wasm.Project.midiBankProgram(0, 0, channel, bankMsb, bankLsb, program));
+    if (resolved.bank !== undefined) {
+      const bank = { msb: (resolved.bank >> 7) & 0x7f, lsb: resolved.bank & 0x7f };
+      events.push(...wasm.midiBankProgram({ ppq: 0, group: 0, channel, program, bank }));
     } else {
-      events.push(wasm.Project.midiProgram(0, 0, channel, program));
+      events.push(wasm.midiProgram({ ppq: 0, group: 0, channel, program }));
     }
   }
   return events;
@@ -342,12 +321,11 @@ function synthPresetProgramEvents(
   const events: ProjectMidiEvent[] = [];
   const program = instrument.gmProgram ?? 0;
   for (const channel of channels) {
-    if (instrument.gmBank !== undefined && typeof wasm.Project.midiBankProgram === 'function') {
-      const bankMsb = (instrument.gmBank >> 7) & 0x7f;
-      const bankLsb = instrument.gmBank & 0x7f;
-      events.push(...wasm.Project.midiBankProgram(0, 0, channel, bankMsb, bankLsb, program));
+    if (instrument.gmBank !== undefined) {
+      const bank = { msb: (instrument.gmBank >> 7) & 0x7f, lsb: instrument.gmBank & 0x7f };
+      events.push(...wasm.midiBankProgram({ ppq: 0, group: 0, channel, program, bank }));
     } else {
-      events.push(wasm.Project.midiProgram(0, 0, channel, program));
+      events.push(wasm.midiProgram({ ppq: 0, group: 0, channel, program }));
     }
   }
   return events;
@@ -399,11 +377,23 @@ export async function prerenderMidiClip(
     const { clipId } = project.addMidiClip(0, lengthPpq);
     const noteEvents = events.map((e) =>
       e.kind === 'on'
-        ? wasm.Project.midiNoteOn(e.ppq, 0, e.channel, e.note, e.velocity)
-        : wasm.Project.midiNoteOff(e.ppq, 0, e.channel, e.note, e.velocity),
+        ? wasm.midiNoteOn({
+            ppq: e.ppq,
+            group: 0,
+            channel: e.channel,
+            note: e.note,
+            velocity: e.velocity,
+          })
+        : wasm.midiNoteOff({
+            ppq: e.ppq,
+            group: 0,
+            channel: e.channel,
+            note: e.note,
+            velocity: e.velocity,
+          }),
     );
     const usedChannels = [...new Set(events.map((e) => e.channel))];
-    let interleaved: Float32Array;
+    let channels: Float32Array[];
     if (instrument.kind === 'sf2') {
       project.loadSoundFont(fontData as Uint8Array);
       const programEvents = sf2ProgramEvents(wasm, instrument, usedChannels);
@@ -418,9 +408,10 @@ export async function prerenderMidiClip(
               event.ppq === 0 ? { ...event, ppq: tempoBpm / (60 * options.sampleRate) } : event,
             );
       project.setMidiEvents(clipId, [...programEvents, ...preludeSafeNoteEvents]);
-      interleaved = project.bounceWithSf2Instrument(sf2PlaybackConfig(instrument), {
+      ({ channels } = project.bounce({
         numChannels: 2,
-      });
+        sf2Instruments: [{ instrument: sf2PlaybackConfig(instrument) }],
+      }));
     } else {
       const programEvents =
         instrument.kind === 'synth-preset'
@@ -435,18 +426,20 @@ export async function prerenderMidiClip(
               event.ppq === 0 ? { ...event, ppq: tempoBpm / (60 * options.sampleRate) } : event,
             );
       project.setMidiEvents(clipId, [...programEvents, ...preludeSafeNoteEvents]);
-      const patch =
+      const patch: SynthPatch =
         instrument.kind === 'synth-patch'
-          ? instrument.patch
+          ? (instrument.patch as SynthPatch)
           : instrument.useGmPrograms === true
             ? { preset: resolvePresetName(wasm, instrument.preset), useGmPrograms: true }
-            : resolvePresetName(wasm, instrument.preset);
-      interleaved = project.bounceWithSynthInstrument(patch, { numChannels: 2 });
+            : { preset: resolvePresetName(wasm, instrument.preset) };
+      ({ channels } = project.bounce({
+        numChannels: 2,
+        synthInstruments: [{ instrument: patch }],
+      }));
     }
-    const channels = deinterleave(interleaved, 2);
     return cachePrerender(key, channels);
   } finally {
-    project.delete();
+    project.destroy();
   }
 }
 

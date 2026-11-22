@@ -42,7 +42,7 @@ function makeResult(value: number): MixdownResult {
     channels: [new Float32Array([value]), new Float32Array([value])],
     sampleRate: 48000,
     totalFrames: 1,
-    report: { peakDb: -6, truePeakDb: -5.5, lufs: -14 },
+    report: { peakDb: -6, truePeakDbtp: -5.5, lufs: -14 },
   };
 }
 

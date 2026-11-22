@@ -17,9 +17,12 @@ import { clampInt } from '@/lib/math';
 import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
-  type StreamingPlatformConfig,
 } from '@/ui/mastering/streaming';
-import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
+import type {
+  RealtimeVoiceChangerConfigInput,
+  StreamingPlatform,
+  VoicePresetId,
+} from '@/wasm/index.js';
 
 /** Storage schema version of the settings envelope. */
 export const APP_SETTINGS_VERSION = 1;
@@ -130,7 +133,7 @@ export interface AppSettings {
    */
   loudnessTargetLufs: number;
   /** Streaming loudness targets remembered across mastering sessions. */
-  streamingPlatforms: StreamingPlatformConfig[];
+  streamingPlatforms: StreamingPlatform[];
   /** Track ids hidden in the mixer view; empty displays every track. */
   mixerHiddenTrackIds: number[];
   /** Guidance profile for placement verdicts and harmonic analysis. */
@@ -235,20 +238,40 @@ function asPianoRollNoteColorMode(
   return value === 'track' || value === 'velocity' || value === 'channel' ? value : fallback;
 }
 
+/** Preset ids stored by earlier versions, mapped to the core's current ids on load. */
+const LEGACY_VOICE_PRESET_IDS: Readonly<Record<string, VoicePresetId>> = {
+  'neutral-monitor': 'neutralMonitor',
+  'bright-idol': 'brightIdol',
+  'soft-whisper': 'softWhisper',
+  'deep-narrator': 'deepNarrator',
+  'robot-mascot': 'robotMascot',
+  'dark-villain': 'darkVillain',
+};
+
+/** Exhaustive over the core's ids, so a new preset id is a compile error here. */
+const VOICE_PRESET_IDS = {
+  neutralMonitor: true,
+  brightIdol: true,
+  softWhisper: true,
+  deepNarrator: true,
+  robotMascot: true,
+  darkVillain: true,
+  hardTune: true,
+  robotMonotone: true,
+  choirHarmony: true,
+  vocoderStrings: true,
+  megaphone: true,
+  radioVoice: true,
+} as const satisfies Record<VoicePresetId, true>;
+
 function asRecordingVoiceChangerPreset(
   value: unknown,
   fallback: RecordingVoiceChangerPreset,
 ): RecordingVoiceChangerPreset {
-  if (
-    value === 'off' ||
-    value === 'neutral-monitor' ||
-    value === 'bright-idol' ||
-    value === 'soft-whisper' ||
-    value === 'deep-narrator' ||
-    value === 'robot-mascot' ||
-    value === 'dark-villain'
-  ) {
-    return value;
+  if (value === 'off') return value;
+  if (typeof value === 'string') {
+    if (Object.hasOwn(VOICE_PRESET_IDS, value)) return value as VoicePresetId;
+    if (Object.hasOwn(LEGACY_VOICE_PRESET_IDS, value)) return LEGACY_VOICE_PRESET_IDS[value];
   }
   // Custom presets are validated by the transport editor before being set;
   // preserve their JSON shape across a reload rather than silently disabling it.
@@ -285,6 +308,15 @@ function asTrackIds(value: unknown): number[] {
     if (ids.size >= 256) break;
   }
   return [...ids];
+}
+
+/** Settings written by earlier versions name the platform ceiling `ceilingDb`. */
+function upgradeStoredPlatform(raw: unknown): StreamingPlatform {
+  if (typeof raw !== 'object' || raw === null) return raw as StreamingPlatform;
+  const { ceilingDb, ...rest } = raw as Record<string, unknown>;
+  return (
+    ceilingDb !== undefined && !('ceilingDbtp' in rest) ? { ...rest, ceilingDbtp: ceilingDb } : raw
+  ) as StreamingPlatform;
 }
 
 /**
@@ -370,7 +402,7 @@ export function sanitizeAppSettings(raw: unknown): AppSettings {
       defaults.loudnessTargetLufs,
     ),
     streamingPlatforms: Array.isArray(source.streamingPlatforms)
-      ? normalizeStreamingPlatforms(source.streamingPlatforms)
+      ? normalizeStreamingPlatforms(source.streamingPlatforms.map(upgradeStoredPlatform))
       : createDefaultStreamingPlatforms(),
     mixerHiddenTrackIds: asTrackIds(source.mixerHiddenTrackIds),
     guidanceProfile: asGuidanceProfile(source.guidanceProfile, defaults.guidanceProfile),

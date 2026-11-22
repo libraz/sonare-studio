@@ -4,27 +4,25 @@
  * strip inserts/EQ) onto a running engine, transmitting only what changed.
  *
  * Engine contract (libsonare):
- * - A track strip set via setTrackStripJson is an extra processing stage
- *   independent of the lane fader/pan owned by mixer-sync (setStripGain /
+ * - A track strip set via setStrip is an extra processing stage
+ *   independent of the lane fader/pan owned by mixer-sync (setStripFaderDb /
  *   setStripPan). Scene strips therefore omit faderDb/pan, but they do carry
  *   channel-strip DSP fields such as input trim, stereo width and polarity.
  * - The strip has a dedicated per-band EQ (separate from the inserts) edited
- *   via setStripEq. It starts empty after every strip JSON send — a full
+ *   via setStripEqBand. It starts empty after every setStrip: a full
  *   re-send replaces the whole strip, so the bypass flags and every EQ band
  *   must be replayed right after it.
- * - The scene JSON has no per-insert enabled flag: all inserts (enabled and
+ * - The scene has no per-insert enabled flag: all inserts (enabled and
  *   disabled) are declared in store order, then each disabled one is bypassed
  *   via setStripInsertBypassed, which indexes that inserts array.
  * - setTrackBuses replaces the whole bus set (max MAX_ENGINE_BUSES) and
- *   resets each bus gain to the passed gainDb; setBusGain adjusts a declared
+ *   resets each bus gain to the passed gainDb; setBusGainDb adjusts a declared
  *   bus smoothly without re-declaring.
  * - Every send must reference an already-declared bus or the engine throws.
  *   Sends are post-fader and auto-create a neutral strip engine-side, so
- *   sends alone never require a strip JSON.
- * - Older engines have no per-bus-insert bypass setter. Disabled bus inserts
- *   are then omitted from the bus scene, so toggling one rebuilds that bus
- *   strip. Engines that expose setBusStripInsertBypassed keep every bus insert
- *   declared and toggle only the bypass flag, matching track/master behavior.
+ *   sends alone never require a strip scene.
+ * - Bus inserts keep every slot declared and toggle only the bypass flag,
+ *   matching track/master behavior.
  * - The master strip has no engine-side sends; mixer.master.sends is ignored.
  */
 
@@ -44,7 +42,12 @@ import {
   vcaOffsetDb,
 } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
-import type { EngineTrackSend, EqBand } from '@/wasm/index.js';
+import type {
+  EngineTrackSend,
+  EqBandInput,
+  MixSceneStripInput,
+  SidechainSource,
+} from '@/wasm/index.js';
 import {
   type EngineBusDeclaration,
   engineBusGraph,
@@ -56,7 +59,6 @@ import {
   engineBusInsertAutomationIndex,
   engineBusPanHasDsp,
   engineBusPanState,
-  engineBusStrip,
   engineEqBands,
   engineMasterPannerHasDsp,
   stripSceneFieldsHaveDsp,
@@ -68,11 +70,12 @@ import {
   insertParamStructure,
   syncInsertNumericParams,
 } from './insert-param-patching';
+import { tryQueue } from './mixer-sync';
 import { createRetryTimer } from './retry-timer';
-import { busSceneJson, liveMasterStrip, stripSceneJson } from './strip-scene';
+import { busScene, liveMasterStrip, stripScene } from './strip-scene';
 
-export type { BusSceneJsonOptions } from './strip-scene';
-export { busSceneJson, engineBusSends, liveMasterStrip, MAX_ENGINE_BUSES, stripSceneJson };
+export type { BusSceneOptions } from './strip-scene';
+export { busScene, engineBusSends, liveMasterStrip, MAX_ENGINE_BUSES, stripScene };
 
 /** Options for {@link createStripSync}. */
 export interface StripSyncOptions {
@@ -105,41 +108,10 @@ interface StripMemory {
   busPan?: ReturnType<typeof engineBusPanState>;
 }
 
-type BusInsertBypassEngine = {
-  setBusStripInsertBypassed?: (busId: number, insertIndex: number, bypassed: boolean) => void;
-};
-
-type BusEqEngine = {
-  setBusStripEqBand?: (busId: number, bandIndex: number, band: EqBand) => void;
-};
-
-type BusPanEngine = {
-  setBusStripPan?: (busId: number, pan: number) => void;
-  setBusStripPanLaw?: (busId: number, panLaw: number) => void;
-  setBusStripPanMode?: (busId: number, panMode: number) => void;
-  setBusStripDualPan?: (busId: number, leftPan: number, rightPan: number) => void;
-};
-
-type SidechainSourceKind = 'track' | 'bus';
-
 interface SidechainBinding {
-  sourceKind: SidechainSourceKind;
+  sourceKind: SidechainSource['kind'];
   sourceId: number;
 }
-
-type SidechainEngine = {
-  setBusSidechain?: (
-    busId: number,
-    insertIndex: number,
-    sourceKind: SidechainSourceKind | number,
-    sourceId: number,
-  ) => void;
-  setMasterSidechain?: (
-    insertIndex: number,
-    sourceKind: SidechainSourceKind | number,
-    sourceId: number,
-  ) => void;
-};
 
 type SidechainSlotFields = {
   sidechainSourceBusId?: unknown;
@@ -167,7 +139,7 @@ function sidechainSource(
   }
   if (fields.sidechainSourceKind !== undefined && fields.sidechainSourceId !== undefined) {
     const kind = fields.sidechainSourceKind;
-    if (kind === 'bus' || kind === 1) {
+    if (kind === 'bus') {
       const sourceId =
         typeof fields.sidechainSourceId === 'string'
           ? resolveBus(fields.sidechainSourceId)
@@ -176,7 +148,7 @@ function sidechainSource(
             : undefined;
       return sourceId !== undefined ? { sourceKind: 'bus', sourceId } : undefined;
     }
-    if (kind === 'track' || kind === 0) {
+    if (kind === 'track') {
       const sourceId =
         typeof fields.sidechainSourceId === 'number' ? fields.sidechainSourceId : undefined;
       return sourceId !== undefined && trackIds.has(sourceId)
@@ -195,7 +167,7 @@ function isSurroundLayout(layout: MixerChannelLayout | undefined): boolean {
   return layout === '5.1' || layout === '7.1';
 }
 
-/** Returns the non-default surround metadata that strip scene JSON emits. */
+/** Returns the non-default surround metadata that the strip scene carries. */
 function stripSceneMetadata(strip: MixerStrip | undefined): {
   sourceLayout?: MixerChannelLayout;
   surroundPan?: NonNullable<MixerStrip['surroundPan']>;
@@ -205,10 +177,8 @@ function stripSceneMetadata(strip: MixerStrip | undefined): {
   const hasSurroundPan =
     surroundPan !== undefined &&
     (surroundPan.azimuth !== DEFAULT_SURROUND_PAN.azimuth ||
-      surroundPan.elevation !== DEFAULT_SURROUND_PAN.elevation ||
       surroundPan.divergence !== DEFAULT_SURROUND_PAN.divergence ||
-      surroundPan.lfe !== DEFAULT_SURROUND_PAN.lfe ||
-      surroundPan.distance !== DEFAULT_SURROUND_PAN.distance);
+      surroundPan.lfe !== DEFAULT_SURROUND_PAN.lfe);
   return {
     ...(sourceLayout !== undefined && sourceLayout !== 'stereo' ? { sourceLayout } : {}),
     ...(hasSurroundPan ? { surroundPan: { ...surroundPan } } : {}),
@@ -225,7 +195,7 @@ export interface StripSync {
   /**
    * Diffs the given state against what was last sent and emits only the changed engine calls.
    * `sceneGeneration` must advance after another mixer facade call can replay
-   * retained strip JSON and thereby clear its non-scene EQ/bypass state.
+   * the retained strip and thereby clear its non-scene EQ/bypass state.
    */
   sync(
     tracks: ReadonlyArray<EditorTrack>,
@@ -259,18 +229,6 @@ export interface StripSync {
  */
 export function createStripSync(handle: EngineHandle, options: StripSyncOptions = {}): StripSync {
   const insertCatalog = options.insertCatalog ?? null;
-  const busInsertBypass = (handle.engine as unknown as BusInsertBypassEngine)
-    .setBusStripInsertBypassed;
-  const busEq = (handle.engine as unknown as BusEqEngine).setBusStripEqBand;
-  const busPanEngine = handle.engine as unknown as BusPanEngine;
-  const sidechainEngine = handle.engine as unknown as SidechainEngine;
-  const supportsBusSidechain = typeof sidechainEngine.setBusSidechain === 'function';
-  const supportsMasterSidechain = typeof sidechainEngine.setMasterSidechain === 'function';
-  const supportsBusPan =
-    typeof busPanEngine.setBusStripPan === 'function' &&
-    typeof busPanEngine.setBusStripPanLaw === 'function' &&
-    typeof busPanEngine.setBusStripPanMode === 'function' &&
-    typeof busPanEngine.setBusStripDualPan === 'function';
   // Engine bus numbers are compacted to the currently declared bus set so UI
   // meter/scope targets stay within the engine's fixed bus telemetry range.
   // When a number is reassigned, bus-related diff caches are reset and sends /
@@ -308,30 +266,31 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       if (replacedTrackId === undefined ? desired.has(key) : binding.trackId !== replacedTrackId) {
         continue;
       }
-      handle.engine.setLaneSidechain(binding.trackId, binding.index, null);
+      handle.engine.setStripSidechain(binding.trackId, binding.index, null);
       lastSidechains.delete(key);
     }
     if (replacedTrackId !== undefined) return;
     for (const [key, binding] of desired) {
       const previous = lastSidechains.get(key);
       if (previous && previous.source === binding.source) continue;
-      handle.engine.setLaneSidechain(binding.trackId, binding.index, binding.source);
+      handle.engine.setStripSidechain(binding.trackId, binding.index, {
+        kind: 'track',
+        id: binding.source,
+      });
       lastSidechains.set(key, binding);
     }
   };
 
   const clearBusSidechains = (busId?: number): void => {
-    if (!supportsBusSidechain) return;
     for (const [key, binding] of lastBusSidechains) {
       if (busId !== undefined && binding.busId !== busId) continue;
-      sidechainEngine.setBusSidechain?.(binding.busId, binding.index, binding.sourceKind, 0);
+      handle.engine.setBusSidechain(binding.busId, binding.index, null);
       lastBusSidechains.delete(key);
     }
   };
   const clearMasterSidechains = (): void => {
-    if (!supportsMasterSidechain) return;
-    for (const [insertIndex, binding] of lastMasterSidechains) {
-      sidechainEngine.setMasterSidechain?.(insertIndex, binding.sourceKind, 0);
+    for (const insertIndex of lastMasterSidechains.keys()) {
+      handle.engine.setStripSidechain('master', insertIndex, null);
       lastMasterSidechains.delete(insertIndex);
     }
   };
@@ -349,7 +308,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     target: number | 'master',
     strip: MixerStrip | undefined,
     memory: StripMemory | undefined,
-    sendStripJson: (sceneJson: string) => void,
+    sendStrip: (scene: MixSceneStripInput) => void,
     sendInsertParam: (insertIndex: number, paramName: string, value: number) => void,
     forceScene = false,
     ensureScene = false,
@@ -398,14 +357,14 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       removedPatchableRootParam
     ) {
       // Full re-send: the engine replaces the whole strip, resetting its EQ
-      // bands and bypass flags, so both are replayed after the JSON.
-      sendStripJson(stripSceneJson(target, strip, insertCatalog));
+      // bands and bypass flags, so both are replayed after the strip.
+      sendStrip(stripScene(target, strip, insertCatalog));
       const eqBandJson: string[] = [];
       for (let i = 0; i < inserts.length; i += 1) {
-        handle.engine.setStripInsertBypassed(target, i, !enabled[i]);
+        handle.engine.setStripInsertBypassed(target, i, { bypassed: !enabled[i] });
       }
       for (let i = 0; i < effectiveEqBands.length; i += 1) {
-        handle.engine.setStripEq(target, i, effectiveEqBands[i]);
+        handle.engine.setStripEqBand(target, i, effectiveEqBands[i]);
         eqBandJson.push(JSON.stringify(effectiveEqBands[i]));
       }
       return { structureKey, insertParams, enabled, eqBandJson };
@@ -416,16 +375,16 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     syncInsertNumericParams(memory.insertParams, insertParams, sendInsertParam);
     for (let i = 0; i < enabled.length; i += 1) {
       if (memory.enabled[i] !== enabled[i]) {
-        handle.engine.setStripInsertBypassed(target, i, !enabled[i]);
+        handle.engine.setStripInsertBypassed(target, i, { bypassed: !enabled[i] });
       }
     }
     const bandCount = Math.max(memory.eqBandJson.length, effectiveEqBands.length);
     const eqBandJson: string[] = [];
     for (let i = 0; i < bandCount; i += 1) {
       // Indexes past the new band list are cleared with a disabled band.
-      const nextBand: EqBand = effectiveEqBands[i] ?? { enabled: false };
+      const nextBand: EqBandInput = effectiveEqBands[i] ?? { enabled: false };
       const json = JSON.stringify(nextBand);
-      if (memory.eqBandJson[i] !== json) handle.engine.setStripEq(target, i, nextBand);
+      if (memory.eqBandJson[i] !== json) handle.engine.setStripEqBand(target, i, nextBand);
       eqBandJson.push(json);
     }
     return { structureKey, insertParams, enabled, eqBandJson };
@@ -439,23 +398,15 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     onSceneSend?: () => void,
     channelLayout?: MixerChannelLayout,
   ): StripMemory | undefined => {
-    const supportsBypass = typeof busInsertBypass === 'function';
-    const supportsBusEq = typeof busEq === 'function';
     const surroundBus = isSurroundLayout(channelLayout);
-    const structureKey = busStripDspKey(
-      strip,
-      !supportsBypass,
-      !supportsBusPan || surroundBus,
-      channelLayout,
-    );
-    const sceneStrip = supportsBypass ? strip : engineBusStrip(strip);
-    const sceneInserts = sceneStrip?.inserts ?? [];
+    const structureKey = busStripDspKey(strip, false, surroundBus, channelLayout);
+    const sceneInserts = strip?.inserts ?? [];
     const insertParams = insertNumericParams(sceneInserts);
     const enabled = sceneInserts.map((slot) => slot.enabled);
     const removedPatchableRootParam =
       memory !== undefined &&
       hasRemovedPatchableRootParam(memory.insertParams, insertParams, sceneInserts);
-    const effectiveEqBands = supportsBusEq ? engineEqBands(strip) : [];
+    const effectiveEqBands = engineEqBands(strip);
     const hasSceneDsp =
       stripSceneFieldsHaveDsp(strip) ||
       (!surroundBus && engineBusPanHasDsp(strip)) ||
@@ -473,62 +424,49 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       removedPatchableRootParam
     ) {
       onSceneSend?.();
-      handle.engine.setBusStripJson(
+      handle.engine.setBusStrip(
         busId,
-        busSceneJson(busId, sceneStrip, insertCatalog, {
-          includeEq: supportsBusEq,
-          channelLayout,
-        }),
+        busScene(busId, strip, insertCatalog, { includeEq: true, channelLayout }),
       );
-      if (supportsBypass) {
-        enabled.forEach((slotEnabled, insertIndex) => {
-          busInsertBypass.call(handle.engine, busId, insertIndex, !slotEnabled);
-        });
-      }
+      enabled.forEach((slotEnabled, insertIndex) => {
+        handle.engine.setBusInsertBypassed(busId, insertIndex, { bypassed: !slotEnabled });
+      });
       const eqBandJson: string[] = [];
-      if (supportsBusEq) {
-        effectiveEqBands.forEach((band, bandIndex) => {
-          busEq.call(handle.engine, busId, bandIndex, band);
-          eqBandJson.push(JSON.stringify(band));
-        });
-      }
+      effectiveEqBands.forEach((band, bandIndex) => {
+        handle.engine.setBusEqBand(busId, bandIndex, band);
+        eqBandJson.push(JSON.stringify(band));
+      });
       return { structureKey, insertParams, enabled, eqBandJson, busPan };
     }
 
     syncInsertNumericParams(memory.insertParams, insertParams, (insertIndex, paramName, value) => {
-      handle.engine.setBusStripInsertParamByName(busId, insertIndex, paramName, value);
+      handle.engine.setBusInsertParam(busId, insertIndex, { name: paramName, value });
     });
-    if (supportsBypass) {
-      enabled.forEach((slotEnabled, insertIndex) => {
-        if (memory.enabled[insertIndex] !== slotEnabled) {
-          busInsertBypass.call(handle.engine, busId, insertIndex, !slotEnabled);
-        }
-      });
-    }
+    enabled.forEach((slotEnabled, insertIndex) => {
+      if (memory.enabled[insertIndex] !== slotEnabled) {
+        handle.engine.setBusInsertBypassed(busId, insertIndex, { bypassed: !slotEnabled });
+      }
+    });
     const bandCount = Math.max(memory.eqBandJson.length, effectiveEqBands.length);
     const eqBandJson: string[] = [];
-    if (supportsBusEq) {
-      for (let i = 0; i < bandCount; i += 1) {
-        const nextBand: EqBand = effectiveEqBands[i] ?? { enabled: false };
-        const json = JSON.stringify(nextBand);
-        if (memory.eqBandJson[i] !== json) busEq.call(handle.engine, busId, i, nextBand);
-        eqBandJson.push(json);
-      }
+    for (let i = 0; i < bandCount; i += 1) {
+      const nextBand: EqBandInput = effectiveEqBands[i] ?? { enabled: false };
+      const json = JSON.stringify(nextBand);
+      if (memory.eqBandJson[i] !== json) handle.engine.setBusEqBand(busId, i, nextBand);
+      eqBandJson.push(json);
     }
-    if (supportsBusPan && !surroundBus) {
+    if (!surroundBus) {
       const previousPan = memory.busPan ?? engineBusPanState(undefined);
-      if (previousPan.pan !== busPan.pan) busPanEngine.setBusStripPan?.(busId, busPan.pan);
-      if (previousPan.panLaw !== busPan.panLaw) {
-        busPanEngine.setBusStripPanLaw?.(busId, busPan.panLaw);
-      }
+      if (previousPan.pan !== busPan.pan) handle.engine.setBusPan(busId, busPan.pan);
+      if (previousPan.panLaw !== busPan.panLaw) handle.engine.setBusPanLaw(busId, busPan.panLaw);
       if (previousPan.panMode !== busPan.panMode) {
-        busPanEngine.setBusStripPanMode?.(busId, busPan.panMode);
+        handle.engine.setBusPanMode(busId, busPan.panMode);
       }
       if (
         previousPan.dualPanLeft !== busPan.dualPanLeft ||
         previousPan.dualPanRight !== busPan.dualPanRight
       ) {
-        busPanEngine.setBusStripDualPan?.(busId, busPan.dualPanLeft, busPan.dualPanRight);
+        handle.engine.setBusDualPan(busId, busPan.dualPanLeft, busPan.dualPanRight);
       }
     }
     return { structureKey, insertParams, enabled, eqBandJson, busPan };
@@ -678,7 +616,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     if (busDeclarationChanged) {
       for (const [trackId, outputBus] of lastOutputBus) {
         if (outputBus === 0) continue;
-        handle.engine.setTrackOutputBus(trackId, 0);
+        handle.engine.setTrackOutputBus(trackId, null);
         replayMasterState = true;
         lastOutputBus.set(trackId, 0);
       }
@@ -690,7 +628,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         // Retired lanes remain in the native mixer registry. Clear their
         // route before dropping host memory, otherwise a later bus removal
         // would fail set_buses validation with an output to that stale bus.
-        handle.engine.setTrackOutputBus(trackId, 0);
+        handle.engine.setTrackOutputBus(trackId, null);
         replayMasterState = true;
       }
       lastOutputBus.delete(trackId);
@@ -733,7 +671,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       for (const entry of busDeclarations) {
         if (lastBusGain.get(entry.busId) !== entry.gainDb) {
           // A refused gain stays unrecorded and is re-sent by the retry.
-          if (handle.engine.setBusGain(entry.busId, entry.gainDb)) {
+          if (tryQueue(() => handle.engine.setBusGainDb(entry.busId, entry.gainDb))) {
             lastBusGain.set(entry.busId, entry.gainDb);
           } else {
             gainRefused = true;
@@ -751,7 +689,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     for (const track of tracks) {
       const outputBus = desiredTrackOutputBus(track);
       if ((lastOutputBus.get(track.id) ?? 0) !== outputBus) {
-        handle.engine.setTrackOutputBus(track.id, outputBus);
+        handle.engine.setTrackOutputBus(track.id, outputBus === 0 ? null : outputBus);
         replayMasterState = true;
         lastOutputBus.set(track.id, outputBus);
       }
@@ -781,7 +719,7 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         reapplyBusScenes,
         () => {
           // Replacing a bus strip may drop keyed inserts whose indexes no
-          // longer exist. Clear the old binding before the native JSON setter
+          // longer exist. Clear the old binding before the native setter
           // so the later diff never tries to clear an already-dropped slot.
           clearBusSidechains(busId);
           replayMasterState = true;
@@ -827,13 +765,13 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         track.id,
         stripState,
         trackStripMemory.get(track.id),
-        (json) => {
+        (scene) => {
           replayMasterState = true;
           settleTrackSidechains(desiredSidechains, track.id);
-          handle.engine.setTrackStripJson(track.id, json);
+          handle.engine.setStrip(track.id, scene);
         },
         (insertIndex, paramName, value) =>
-          handle.engine.setTrackStripInsertParamByName(track.id, insertIndex, paramName, value),
+          handle.engine.setStripInsertParam(track.id, insertIndex, { name: paramName, value }),
         false,
         pdcTrackIds?.has(track.id) ?? false,
       );
@@ -843,105 +781,95 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
       'master',
       liveMasterStrip(mixer.master, mixer.masteringChain, insertCatalog),
       masterStripMemory,
-      (json) => {
+      (scene) => {
         // As with buses, the full master strip replacement can retire an
         // insert index. Remove its keyed source while the old chain exists.
         clearMasterSidechains();
         replayMasterState = true;
-        handle.engine.setMasterStripJson(json);
+        handle.engine.setStrip('master', scene);
       },
       (insertIndex, paramName, value) =>
-        handle.engine.setMasterStripInsertParamByName(insertIndex, paramName, value),
+        handle.engine.setStripInsertParam('master', insertIndex, { name: paramName, value }),
       replayMasterState,
     );
 
     // Insert sidechain keys, replayed after the strips exist.
     settleTrackSidechains(desiredSidechains);
 
-    // Bus and master strips use the newer keyed-source ABI. Bus source ids
-    // must be resolved after compacting the project buses, and disabled legacy
-    // bus inserts use their compacted engine index when the bypass setter is
-    // unavailable.
-    if (supportsBusSidechain) {
-      const desiredBusSidechains = new Map<
-        string,
-        { busId: number; index: number } & SidechainBinding
-      >();
-      const collectBusSidechains = (busId: number, strip: MixerStrip | undefined): void => {
-        for (let storeIndex = 0; storeIndex < (strip?.inserts.length ?? 0); storeIndex += 1) {
-          const engineIndex = engineBusInsertAutomationIndex(
-            strip,
-            storeIndex,
-            typeof busInsertBypass === 'function',
-          );
-          if (engineIndex === undefined) continue;
-          const source = sidechainSource(
-            strip?.inserts[storeIndex] as InsertSlot,
-            trackIds,
-            resolveBusId,
-          );
-          if (!source || (source.sourceKind === 'bus' && source.sourceId === busId)) continue;
-          desiredBusSidechains.set(`${busId}:${engineIndex}`, {
-            busId,
-            index: engineIndex,
-            ...source,
-          });
-        }
-      };
-      for (const bus of mixer.buses) {
-        collectBusSidechains(busNumberByStoreId.get(bus.id) as number, bus.strip);
-      }
-      for (const group of groupTracks) {
-        collectBusSidechains(groupBusByTrackId.get(group.id) as number, group.mixer);
-      }
-      for (const [key, binding] of lastBusSidechains) {
-        if (desiredBusSidechains.has(key)) continue;
-        sidechainEngine.setBusSidechain?.(binding.busId, binding.index, binding.sourceKind, 0);
-        lastBusSidechains.delete(key);
-      }
-      for (const [key, binding] of desiredBusSidechains) {
-        const previous = lastBusSidechains.get(key);
-        if (
-          previous &&
-          previous.sourceKind === binding.sourceKind &&
-          previous.sourceId === binding.sourceId
-        ) {
-          continue;
-        }
-        sidechainEngine.setBusSidechain?.(
-          binding.busId,
-          binding.index,
-          binding.sourceKind,
-          binding.sourceId,
+    // Bus source ids must be resolved after compacting the project buses.
+    const desiredBusSidechains = new Map<
+      string,
+      { busId: number; index: number } & SidechainBinding
+    >();
+    const collectBusSidechains = (busId: number, strip: MixerStrip | undefined): void => {
+      for (let storeIndex = 0; storeIndex < (strip?.inserts.length ?? 0); storeIndex += 1) {
+        const engineIndex = engineBusInsertAutomationIndex(strip, storeIndex, true);
+        if (engineIndex === undefined) continue;
+        const source = sidechainSource(
+          strip?.inserts[storeIndex] as InsertSlot,
+          trackIds,
+          resolveBusId,
         );
-        lastBusSidechains.set(key, binding);
+        if (!source || (source.sourceKind === 'bus' && source.sourceId === busId)) continue;
+        desiredBusSidechains.set(`${busId}:${engineIndex}`, {
+          busId,
+          index: engineIndex,
+          ...source,
+        });
       }
+    };
+    for (const bus of mixer.buses) {
+      collectBusSidechains(busNumberByStoreId.get(bus.id) as number, bus.strip);
+    }
+    for (const group of groupTracks) {
+      collectBusSidechains(groupBusByTrackId.get(group.id) as number, group.mixer);
+    }
+    for (const [key, binding] of lastBusSidechains) {
+      if (desiredBusSidechains.has(key)) continue;
+      handle.engine.setBusSidechain(binding.busId, binding.index, null);
+      lastBusSidechains.delete(key);
+    }
+    for (const [key, binding] of desiredBusSidechains) {
+      const previous = lastBusSidechains.get(key);
+      if (
+        previous &&
+        previous.sourceKind === binding.sourceKind &&
+        previous.sourceId === binding.sourceId
+      ) {
+        continue;
+      }
+      handle.engine.setBusSidechain(binding.busId, binding.index, {
+        kind: binding.sourceKind,
+        id: binding.sourceId,
+      });
+      lastBusSidechains.set(key, binding);
     }
 
-    if (supportsMasterSidechain) {
-      const desiredMasterSidechains = new Map<number, SidechainBinding>();
-      const master = liveMasterStrip(mixer.master, mixer.masteringChain, insertCatalog);
-      master.inserts.forEach((slot, index) => {
-        const source = sidechainSource(slot, trackIds, resolveBusId);
-        if (source) desiredMasterSidechains.set(index, source);
+    const desiredMasterSidechains = new Map<number, SidechainBinding>();
+    const master = liveMasterStrip(mixer.master, mixer.masteringChain, insertCatalog);
+    master.inserts.forEach((slot, index) => {
+      const source = sidechainSource(slot, trackIds, resolveBusId);
+      if (source) desiredMasterSidechains.set(index, source);
+    });
+    for (const index of lastMasterSidechains.keys()) {
+      if (desiredMasterSidechains.has(index)) continue;
+      handle.engine.setStripSidechain('master', index, null);
+      lastMasterSidechains.delete(index);
+    }
+    for (const [index, binding] of desiredMasterSidechains) {
+      const previous = lastMasterSidechains.get(index);
+      if (
+        previous &&
+        previous.sourceKind === binding.sourceKind &&
+        previous.sourceId === binding.sourceId
+      ) {
+        continue;
+      }
+      handle.engine.setStripSidechain('master', index, {
+        kind: binding.sourceKind,
+        id: binding.sourceId,
       });
-      for (const [index, binding] of lastMasterSidechains) {
-        if (desiredMasterSidechains.has(index)) continue;
-        sidechainEngine.setMasterSidechain?.(index, binding.sourceKind, 0);
-        lastMasterSidechains.delete(index);
-      }
-      for (const [index, binding] of desiredMasterSidechains) {
-        const previous = lastMasterSidechains.get(index);
-        if (
-          previous &&
-          previous.sourceKind === binding.sourceKind &&
-          previous.sourceId === binding.sourceId
-        ) {
-          continue;
-        }
-        sidechainEngine.setMasterSidechain?.(index, binding.sourceKind, binding.sourceId);
-        lastMasterSidechains.set(index, binding);
-      }
+      lastMasterSidechains.set(index, binding);
     }
     if (replayMasterState) stripSceneGeneration += 1;
     if (gainRefused)
@@ -955,16 +883,8 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
     busMappingGeneration: () => busMappingGeneration,
     sceneGeneration: () => stripSceneGeneration,
     busInsertIndexFor: (storeBusId, storeInsertIndex) =>
-      engineBusInsertAutomationIndex(
-        busStripsByStoreId.get(storeBusId),
-        storeInsertIndex,
-        typeof busInsertBypass === 'function',
-      ),
+      engineBusInsertAutomationIndex(busStripsByStoreId.get(storeBusId), storeInsertIndex, true),
     groupInsertIndexFor: (trackId, storeInsertIndex) =>
-      engineBusInsertAutomationIndex(
-        groupStripsByTrackId.get(trackId),
-        storeInsertIndex,
-        typeof busInsertBypass === 'function',
-      ),
+      engineBusInsertAutomationIndex(groupStripsByTrackId.get(trackId), storeInsertIndex, true),
   };
 }

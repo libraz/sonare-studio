@@ -21,7 +21,7 @@ import {
 import type { TimeSignatureSegment } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
-import type { TranscribeResult } from '@/wasm/index.js';
+import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 
 vi.mock('@/project/commands', () => ({
   addNote: vi.fn(() => 1),
@@ -274,16 +274,15 @@ describe('audio-to-MIDI rhythm quantize', () => {
       meta: { id: 'a', name: 'a', sampleRate: 1_000, numChannels: 1, numFrames: frames },
       channels: [Float32Array.from({ length: frames }, (_, frame) => (frame % 7) / 10)],
     };
-    const event = (ppq: number, status: 0x8 | 0x9, velocity: number) => ({
+    const event = (ppq: number, status: 0x8 | 0x9, velocity: number): ProjectMidiEvent => ({
       ppq,
-      data0: (0x20000000 | (status << 20) | (60 << 8) | velocity) >>> 0,
-      data1: 0,
+      word0: (0x20000000 | (status << 20) | (60 << 8) | velocity) >>> 0,
     });
     const result: TranscribeResult = {
       events: [event(1.08, 0x9, 90), event(2.2, 0x8, 0), event(3.72, 0x9, 90), event(4.1, 0x8, 0)],
       noteCount: 2,
       tempoBpm: 60,
-      tuning: 0,
+      tuningCents: 0,
     };
     const { notes } = await transcribeAudioClip(
       { assetId: 'a', startPpq: 0.3, lengthPpq: 4.5, sourceOffsetPpq: 0 },

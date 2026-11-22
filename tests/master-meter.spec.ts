@@ -5,7 +5,7 @@ import {
   gainReductionFraction,
   hasLoudnessData,
   loudnessDeltaLu,
-  maxTruePeakDb,
+  maxTruePeakDbtp,
 } from '@/ui/mixer/master-meter';
 
 describe('correlationFraction', () => {
@@ -24,16 +24,16 @@ describe('correlationFraction', () => {
   });
 });
 
-describe('maxTruePeakDb', () => {
+describe('maxTruePeakDbtp', () => {
   it('returns the louder channel when both are present', () => {
-    expect(maxTruePeakDb({ truePeakDbL: -3, truePeakDbR: -1 })).toBe(-1);
-    expect(maxTruePeakDb({ truePeakDbL: -0.2, truePeakDbR: -6 })).toBe(-0.2);
+    expect(maxTruePeakDbtp({ truePeakDbtpL: -3, truePeakDbtpR: -1 })).toBe(-1);
+    expect(maxTruePeakDbtp({ truePeakDbtpL: -0.2, truePeakDbtpR: -6 })).toBe(-0.2);
   });
 
   it('falls back to whichever channel is present', () => {
-    expect(maxTruePeakDb({ truePeakDbL: -2, truePeakDbR: undefined })).toBe(-2);
-    expect(maxTruePeakDb({ truePeakDbL: undefined, truePeakDbR: -4 })).toBe(-4);
-    expect(maxTruePeakDb({ truePeakDbL: undefined, truePeakDbR: undefined })).toBeUndefined();
+    expect(maxTruePeakDbtp({ truePeakDbtpL: -2, truePeakDbtpR: undefined })).toBe(-2);
+    expect(maxTruePeakDbtp({ truePeakDbtpL: undefined, truePeakDbtpR: -4 })).toBe(-4);
+    expect(maxTruePeakDbtp({ truePeakDbtpL: undefined, truePeakDbtpR: undefined })).toBeUndefined();
   });
 });
 
@@ -77,8 +77,8 @@ describe('loudnessDeltaLu', () => {
 describe('hasLoudnessData', () => {
   it('is true when any full-record field is present', () => {
     expect(hasLoudnessData({ momentaryLufs: -14 })).toBe(true);
-    expect(hasLoudnessData({ truePeakDbL: -1 })).toBe(true);
-    expect(hasLoudnessData({ truePeakDbR: -1 })).toBe(true);
+    expect(hasLoudnessData({ truePeakDbtpL: -1 })).toBe(true);
+    expect(hasLoudnessData({ truePeakDbtpR: -1 })).toBe(true);
   });
 
   it('is false for a lightweight lane/bus record', () => {
@@ -86,8 +86,8 @@ describe('hasLoudnessData', () => {
     expect(
       hasLoudnessData({
         momentaryLufs: undefined,
-        truePeakDbL: undefined,
-        truePeakDbR: undefined,
+        truePeakDbtpL: undefined,
+        truePeakDbtpR: undefined,
       }),
     ).toBe(false);
   });

@@ -6,13 +6,13 @@ import {
 } from '@/project/commands';
 import type { MixerSidechainSource } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
-import type { SidechainRefusal } from '@/wasm/index.js';
+import type { SidechainRefusal, SidechainSource } from '@/wasm/index.js';
 import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Engine queries answering whether a sidechain binding would be accepted. */
 export type SidechainCheckEngine = Pick<
   SonareEngine,
-  'canSetLaneSidechain' | 'canSetBusSidechain' | 'canSetMasterSidechain'
+  'canSetStripSidechain' | 'canSetBusSidechain'
 >;
 
 /** Store-to-engine bus and insert index mapping (strip-sync owns it). */
@@ -47,9 +47,7 @@ export function createSidechainRefusalLookup(
   ids: SidechainIdResolver,
   tracks: () => ReadonlyArray<Pick<EditorTrack, 'id' | 'kind'>>,
 ): SidechainRefusalLookup {
-  const engineSource = (
-    source: MixerSidechainSource,
-  ): { kind: 'track' | 'bus'; id: number } | undefined => {
+  const engineSource = (source: MixerSidechainSource): SidechainSource | undefined => {
     if (source.kind === 'track') return { kind: 'track', id: source.trackId };
     const id =
       source.kind === 'group' ? ids.groupBusIdFor(source.trackId) : ids.busIdFor(source.busId);
@@ -60,23 +58,23 @@ export function createSidechainRefusalLookup(
     const resolved = engineSource(source);
     if (!resolved) return null;
     if (target === 'master') {
-      return engine.canSetMasterSidechain(insertIndex, resolved.kind, resolved.id).reason;
+      return engine.canSetStripSidechain('master', insertIndex, resolved).reason ?? null;
     }
     if (isMixerBusStripTarget(target)) {
       const busId = mixerBusIdFromTarget(target);
       const engineBus = ids.busIdFor(busId);
       const engineIndex = ids.busInsertIndexFor(busId, insertIndex);
       if (engineBus === undefined || engineIndex === undefined) return null;
-      return engine.canSetBusSidechain(engineBus, engineIndex, resolved.kind, resolved.id).reason;
+      return engine.canSetBusSidechain(engineBus, engineIndex, resolved).reason ?? null;
     }
     if (tracks().find((track) => track.id === target)?.kind === 'group') {
       const engineBus = ids.groupBusIdFor(target);
       const engineIndex = ids.groupInsertIndexFor(target, insertIndex);
       if (engineBus === undefined || engineIndex === undefined) return null;
-      return engine.canSetBusSidechain(engineBus, engineIndex, resolved.kind, resolved.id).reason;
+      return engine.canSetBusSidechain(engineBus, engineIndex, resolved).reason ?? null;
     }
     // Lanes take track keys only; store validation refuses the rest.
     if (resolved.kind !== 'track') return null;
-    return engine.canSetLaneSidechain(target, insertIndex, resolved.id).reason;
+    return engine.canSetStripSidechain(target, insertIndex, resolved).reason ?? null;
   };
 }

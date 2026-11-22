@@ -21,7 +21,10 @@ vi.mock('@/engine/automation-sync', () => ({ createAutomationSync: mocks.createA
 vi.mock('@/engine/engine', () => ({ createEngine: mocks.createEngine }));
 vi.mock('@/engine/meters', () => ({ createMeterBridge: mocks.createMeterBridge }));
 vi.mock('@/engine/midi-sync', () => ({ createMidiSync: mocks.createMidiSync }));
-vi.mock('@/engine/mixer-sync', () => ({ createMixerSync: mocks.createMixerSync }));
+vi.mock('@/engine/mixer-sync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/engine/mixer-sync')>()),
+  createMixerSync: mocks.createMixerSync,
+}));
 vi.mock('@/engine/scope', () => ({ createScopeBridge: mocks.createScopeBridge }));
 vi.mock('@/engine/strip-sync', () => ({
   createStripSync: mocks.createStripSync,
@@ -36,6 +39,7 @@ vi.mock('@/lib/wasm', () => ({ ensureWasm: mocks.ensureWasm }));
 import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
+import { ErrorCode, SonareError } from '@/wasm/index.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -174,9 +178,11 @@ describe('useEngineLifecycle startup transaction', () => {
     vi.useFakeTimers();
     try {
       const { handle: engineHandle } = makeHandle();
-      const setStripGain = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
-      (engineHandle as unknown as { engine: Record<string, unknown> }).engine.setStripGain =
-        setStripGain;
+      const setStripFaderDb = vi.fn().mockImplementationOnce(() => {
+        throw new SonareError(ErrorCode.OutOfMemory, 'command ring full');
+      });
+      (engineHandle as unknown as { engine: Record<string, unknown> }).engine.setStripFaderDb =
+        setStripFaderDb;
       mocks.createEngine.mockResolvedValue(engineHandle);
       const state = setupLifecycle();
       await state.lifecycle.startEngine();
@@ -185,12 +191,12 @@ describe('useEngineLifecycle startup transaction', () => {
       };
 
       options.restoreParam('master', 'faderDb');
-      expect(setStripGain).toHaveBeenCalledTimes(1);
+      expect(setStripFaderDb).toHaveBeenCalledTimes(1);
 
       vi.advanceTimersByTime(200);
-      expect(setStripGain).toHaveBeenCalledTimes(2);
+      expect(setStripFaderDb).toHaveBeenCalledTimes(2);
       vi.advanceTimersByTime(500);
-      expect(setStripGain).toHaveBeenCalledTimes(2);
+      expect(setStripFaderDb).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

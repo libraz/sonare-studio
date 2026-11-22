@@ -770,7 +770,7 @@ describe('project serialization', () => {
       { ppq: 1, value: 127 },
     ]);
     setClipPitchBend(clipId, 3, [
-      { ppq: 0, value: 8192, curve: 's-curve' },
+      { ppq: 0, value: 8192, curve: 'sCurve' },
       { ppq: 1, value: 12000 },
     ]);
     setClipChannelPressure(clipId, 4, [
@@ -778,7 +778,7 @@ describe('project serialization', () => {
       { ppq: 1, value: 80 },
     ]);
     setClipPolyPressure(clipId, 5, 60, [
-      { ppq: 0, value: 30, curve: 's-curve' },
+      { ppq: 0, value: 30, curve: 'sCurve' },
       { ppq: 1, value: 90 },
     ]);
     const doc = serializeProject();
@@ -786,9 +786,9 @@ describe('project serialization', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
 
     expect(serializeProject()).toEqual(doc);
-    expect(store.activeClip?.pitchBendLanes?.[0].points[0].curve).toBe('s-curve');
+    expect(store.activeClip?.pitchBendLanes?.[0].points[0].curve).toBe('sCurve');
     expect(store.activeClip?.channelPressureLanes?.[0].points[0].curve).toBe('linear');
-    expect(store.activeClip?.polyPressureLanes?.[0].points[0].curve).toBe('s-curve');
+    expect(store.activeClip?.polyPressureLanes?.[0].points[0].curve).toBe('sCurve');
   });
 
   it('loading replaces the current project content entirely', async () => {
@@ -1175,7 +1175,7 @@ describe('MIDI export commands', () => {
   it('exportClipSmf preserves one clip with app-level MIDI metadata', async () => {
     addNote({ pitch: 60, startPpq: 0, durationPpq: 1 });
     setClipCcLane(store.clipId, 1, 0, [{ ppq: 0.25, value: 64 }]);
-    setTrackInstrument(store.activeTrackId, { kind: 'synth-preset', preset: 'sub-bass' });
+    setTrackInstrument(store.activeTrackId, { kind: 'synth-preset', preset: 'subBass' });
     store.clips = store.clips.map((clip) =>
       clip.id === store.clipId
         ? {

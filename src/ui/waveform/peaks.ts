@@ -16,23 +16,8 @@ export interface ChannelPeaks {
   max: Float32Array;
 }
 
-/** Report shape of the libsonare waveformPeaks export. */
-export interface WaveformPeaksReportLike {
-  min: Float32Array;
-  max: Float32Array;
-  channels: number;
-  bucketCount: number;
-  samplesPerBucket: number;
-}
-
 /** The subset of the libsonare module consumed by {@link computePeaks}. */
-export interface WaveformPeaksModule {
-  waveformPeaks?: (
-    samples: Float32Array,
-    channels: number,
-    options?: { samplesPerBucket?: number; validate?: boolean },
-  ) => WaveformPeaksReportLike;
-}
+export type WaveformPeaksModule = Partial<Pick<typeof import('@/wasm/index.js'), 'waveformPeaks'>>;
 
 /** Options for {@link computePeaks}. */
 export interface ComputePeaksOptions {
@@ -41,19 +26,6 @@ export interface ComputePeaksOptions {
    * delegate the bucket scan to; omit or pass null for the pure-TS path.
    */
   wasm?: WaveformPeaksModule | null;
-}
-
-/** Interleaves planar channels for the wasm delegate (frame-major). */
-function interleave(channels: ReadonlyArray<Float32Array>): Float32Array {
-  const frames = channels[0]?.length ?? 0;
-  const out = new Float32Array(frames * channels.length);
-  for (let c = 0; c < channels.length; c++) {
-    const channel = channels[c];
-    for (let i = 0; i < frames; i++) {
-      out[i * channels.length + c] = channel[i];
-    }
-  }
-  return out;
 }
 
 /** Pure-TS min/max bucket scan with exactly bucketCount buckets. */
@@ -93,16 +65,14 @@ function computePeaksPure(
  * envelope. Taking a prefix instead would drop the tail of the asset and
  * stretch everything before it across the full clip width.
  *
- * @param min Source minima (channel-major).
- * @param max Source maxima (channel-major).
- * @param offset Index of this channel's first bucket.
- * @param inCount Buckets per channel in the source (must be >= outCount).
+ * @param min Source minima of one channel.
+ * @param max Source maxima of one channel.
+ * @param inCount Buckets in the source (must be >= outCount).
  * @param outCount Buckets to produce.
  */
 function reduceBuckets(
   min: Float32Array,
   max: Float32Array,
-  offset: number,
   inCount: number,
   outCount: number,
 ): ChannelPeaks {
@@ -111,11 +81,11 @@ function reduceBuckets(
   for (let b = 0; b < outCount; b++) {
     const start = Math.floor((b * inCount) / outCount);
     const end = Math.max(start + 1, Math.floor(((b + 1) * inCount) / outCount));
-    let lo = min[offset + start];
-    let hi = max[offset + start];
+    let lo = min[start];
+    let hi = max[start];
     for (let i = start + 1; i < end; i++) {
-      const v = min[offset + i];
-      const w = max[offset + i];
+      const v = min[i];
+      const w = max[i];
       if (v < lo) lo = v;
       if (w > hi) hi = w;
     }
@@ -136,31 +106,33 @@ function computePeaksWasm(
   const frames = channels[0]?.length ?? 0;
   // The delegate derives bucket count by ceil(frames / samplesPerBucket). A
   // floor keeps that count at or above our requested resolution; when audio is
-  // sparser than pixels, skip the delegate before allocating an interleaved
-  // copy because it cannot supply every bucket anyway.
+  // sparser than pixels, skip the delegate because it cannot supply every
+  // bucket anyway.
   if (frames < bucketCount) return null;
   const samplesPerBucket = Math.max(1, Math.floor(frames / bucketCount));
-  let report: WaveformPeaksReportLike;
+  let report: ReturnType<NonNullable<WaveformPeaksModule['waveformPeaks']>>;
   try {
-    report = fn(interleave(channels), channels.length, { samplesPerBucket, validate: false });
+    report = fn({ channels: [...channels], samplesPerBucket });
   } catch {
+    // A non-finite sample is refused; the pure path scans it as an ordinary value.
     return null;
   }
   if (
     !report ||
-    report.channels !== channels.length ||
-    !(report.min instanceof Float32Array) ||
-    !(report.max instanceof Float32Array)
+    report.min.length !== channels.length ||
+    report.max.length !== channels.length ||
+    !report.min.every((plane) => plane instanceof Float32Array) ||
+    !report.max.every((plane) => plane instanceof Float32Array)
   ) {
     return null;
   }
   // The delegate derives its own bucket count from an integer samplesPerBucket
-  // and so overshoots the request; reduce each channel-major slice onto exactly
+  // and so overshoots the request; reduce each channel onto exactly
   // bucketCount buckets. A shorter report would leave the right edge blank, so
   // use the pure path instead.
   if (report.bucketCount < bucketCount) return null;
   return channels.map((_, c) =>
-    reduceBuckets(report.min, report.max, c * report.bucketCount, report.bucketCount, bucketCount),
+    reduceBuckets(report.min[c], report.max[c], report.bucketCount, bucketCount),
   );
 }
 
@@ -346,7 +318,7 @@ export class WaveformPeaksCache {
     const source = finer === null ? null : this.cache.get(`${assetId}|${finer}`);
     const computed =
       source && finer !== null
-        ? source.map((channel) => reduceBuckets(channel.min, channel.max, 0, finer, bucketCount))
+        ? source.map((channel) => reduceBuckets(channel.min, channel.max, finer, bucketCount))
         : computePeaks(channels, bucketCount, this.options);
     this.cache.set(key, computed);
     (this.levels.get(assetId) ?? this.levels.set(assetId, new Set()).get(assetId)!).add(

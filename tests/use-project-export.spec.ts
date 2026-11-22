@@ -398,7 +398,7 @@ describe('useProjectExport', () => {
       width: 1.4,
       polarityInvertLeft: true,
       channelDelaySamples: 12,
-      panLaw: 'const6dB',
+      panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -0.2, right: 0.3 },
       eq: {

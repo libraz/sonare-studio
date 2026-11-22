@@ -63,9 +63,9 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     await store.init();
   });
 
-  it('writes schema version 4', () => {
-    expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBe(4);
-    expect(serializeProject().schemaVersion).toBe(4);
+  it('writes schema version 5', () => {
+    expect(PROJECT_DOCUMENT_SCHEMA_VERSION).toBe(5);
+    expect(serializeProject().schemaVersion).toBe(5);
   });
 
   it('omits instrument/mixer fields while everything is default', () => {
@@ -82,7 +82,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     setTrackInstrument(trackId, { kind: 'sf2', fontId: 'gm-font', bank: 128, program: 25 });
     setStripGain(trackId, -4.5);
     setStripPan(trackId, 0.3);
-    setStripPanLaw(trackId, 'const6dB');
+    setStripPanLaw(trackId, 'const6Db');
     setStripPanMode(trackId, 'dualPan');
     setStripDualPan(trackId, -0.25, 0.5);
     addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18, ratio: 4 });
@@ -101,7 +101,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     expect(doc.tracks[0].mixer).toMatchObject({
       gainDb: -4.5,
       pan: 0.3,
-      panLaw: 'const6dB',
+      panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -0.25, right: 0.5 },
       inserts: [
@@ -122,7 +122,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     expect(JSON.parse(JSON.stringify(doc))).toEqual(doc);
 
     await loadProjectDocument(doc);
-    expect(store.tracks[0].mixer?.panLaw).toBe('const6dB');
+    expect(store.tracks[0].mixer?.panLaw).toBe('const6Db');
     expect(store.tracks[0].mixer?.panMode).toBe('dualPan');
     expect(store.tracks[0].mixer?.dualPan).toEqual({ left: -0.25, right: 0.5 });
     expect(store.tracks[0].pan).toBe(0.3);
@@ -155,7 +155,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     expect(saved.tracks[1]).toMatchObject({ pan: 0.8, mixer: { gainDb: -3, pan: 0.8 } });
   });
 
-  it('loads retired processor ids under their current catalog id everywhere they are stored', async () => {
+  it('loads schema-4 retired processor ids under their current catalog id everywhere they are stored', async () => {
     const trackId = store.tracks[0].id;
     addInsert(trackId, 'eq.passiveTube');
     addInsert('master', 'eq.steppedProportionalQ');
@@ -166,6 +166,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
         .replaceAll('"eq.passiveTube"', '"eq.pultec"')
         .replaceAll('"eq.steppedProportionalQ"', '"eq.apiStyle"'),
     ) as ProjectDocument;
+    legacy.schemaVersion = 4;
     expect(JSON.stringify(legacy)).toContain('"eq.pultec"');
 
     await loadProjectDocument(legacy);
@@ -224,7 +225,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
 
   it('round-trips: load + re-serialize yields the same document', async () => {
     const trackId = store.tracks[0].id;
-    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'saw-lead', drive: 0.4 } });
+    setTrackInstrument(trackId, { kind: 'synth-patch', patch: { preset: 'sawLead', drive: 0.4 } });
     setStripGain(trackId, -3);
     addInsert('master', 'maximizer.maximizer');
     const doc = serializeProject();
@@ -233,7 +234,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     expect(serializeProject()).toEqual(doc);
     expect(store.tracks[0].instrument).toEqual({
       kind: 'synth-patch',
-      patch: { preset: 'saw-lead', drive: 0.4 },
+      patch: { preset: 'sawLead', drive: 0.4 },
     });
     expect(store.tracks[0].mixer?.gainDb).toBe(-3);
     expect(store.mixer.master.inserts).toHaveLength(1);
@@ -393,7 +394,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     const busId = addMixerBus({ name: 'FX' });
     const target = mixerBusStripTarget(busId);
     setStripPan(target, -0.25);
-    setStripPanLaw(target, 'const6dB');
+    setStripPanLaw(target, 'const6Db');
     setStripPanMode(target, 'dualPan');
     setStripDualPan(target, -1, 0.6);
     setStripEq(target, {
@@ -404,7 +405,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     const doc = serializeProject();
     expect(doc.mixer?.buses[0].strip).toMatchObject({
       pan: -0.25,
-      panLaw: 'const6dB',
+      panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -1, right: 0.6 },
       eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }] },
@@ -413,7 +414,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
     expect(store.mixer.buses[0].strip).toMatchObject({
       pan: -0.25,
-      panLaw: 'const6dB',
+      panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -1, right: 0.6 },
       eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }] },
@@ -667,14 +668,14 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
 
     await loadProjectDocument(v2);
     // Pre-v4 files keep the e-piano they were written against.
-    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'e-piano' });
+    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'ePiano' });
     expect(store.tracks[0].mixer).toBeUndefined();
     expect(store.mixer).toEqual({
       master: { gainDb: 0, pan: 0, inserts: [], sends: [] },
       buses: [],
     });
     // Re-serializing upgrades to the current schema.
-    expect(serializeProject().schemaVersion).toBe(4);
+    expect(serializeProject().schemaVersion).toBe(PROJECT_DOCUMENT_SCHEMA_VERSION);
   });
 
   it('leaves current documents on the current default instrument', async () => {
@@ -700,10 +701,10 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
 describe('template instrument assignment', () => {
   it('band assigns sensible synth presets per role', () => {
     const byName = new Map(createTemplate('band').tracks.map((t) => [t.name, t.instrument]));
-    expect(byName.get('Drums')).toEqual({ kind: 'synth-preset', preset: 'drum-kit' });
-    expect(byName.get('Bass')).toEqual({ kind: 'synth-preset', preset: 'sub-bass' });
-    expect(byName.get('Piano')).toEqual({ kind: 'synth-preset', preset: 'acoustic-piano' });
-    expect(byName.get('Guitar')).toEqual({ kind: 'synth-preset', preset: 'electric-guitar' });
+    expect(byName.get('Drums')).toEqual({ kind: 'synth-preset', preset: 'drumKit' });
+    expect(byName.get('Bass')).toEqual({ kind: 'synth-preset', preset: 'subBass' });
+    expect(byName.get('Piano')).toEqual({ kind: 'synth-preset', preset: 'acousticPiano' });
+    expect(byName.get('Guitar')).toEqual({ kind: 'synth-preset', preset: 'electricGuitar' });
   });
 
   it('gm-orchestra routes percussion to a percussion-capable preset', () => {
@@ -711,7 +712,7 @@ describe('template instrument assignment', () => {
     const percussion = tracks.filter((t) => t.name === 'Timpani' || t.name === 'Percussion');
     expect(percussion).toHaveLength(2);
     for (const track of percussion) {
-      expect(track.instrument).toEqual({ kind: 'synth-preset', preset: 'drum-kit' });
+      expect(track.instrument).toEqual({ kind: 'synth-preset', preset: 'drumKit' });
     }
     // Every orchestral track carries some instrument.
     for (const track of tracks) {
@@ -721,8 +722,8 @@ describe('template instrument assignment', () => {
 
   it('programming assigns synth-oriented presets', () => {
     const byName = new Map(createTemplate('programming').tracks.map((t) => [t.name, t.instrument]));
-    expect(byName.get('Lead Synth')).toEqual({ kind: 'synth-preset', preset: 'saw-lead' });
-    expect(byName.get('Synth Bass')).toEqual({ kind: 'synth-preset', preset: 'sub-bass' });
+    expect(byName.get('Lead Synth')).toEqual({ kind: 'synth-preset', preset: 'sawLead' });
+    expect(byName.get('Synth Bass')).toEqual({ kind: 'synth-preset', preset: 'subBass' });
   });
 
   it('transcription and empty keep the default instrument', () => {

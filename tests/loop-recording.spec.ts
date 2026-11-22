@@ -173,7 +173,7 @@ describe('loopRecordingTakeSlices', () => {
 });
 
 describe('nativeLoopRecordingDesc', () => {
-  it('builds the interleaved descriptor expected by Project.addLoopRecordingTakes', () => {
+  it('builds the planar descriptor expected by Project.addLoopRecordingTakes', () => {
     const desc = nativeLoopRecordingDesc(
       7,
       [new Float32Array([1, 2, 3]), new Float32Array([10, 20, 30])],
@@ -186,10 +186,12 @@ describe('nativeLoopRecordingDesc', () => {
       trackId: 7,
       startPpq: 4,
       loopLengthPpq: 8,
-      audioChannels: 2,
       audioSampleRate: 48000,
     });
-    expect([...(desc?.audio ?? [])]).toEqual([1, 10, 2, 20, 3, 30]);
+    expect(desc?.audio.map((channel) => [...channel])).toEqual([
+      [1, 2, 3],
+      [10, 20, 30],
+    ]);
   });
 
   it('clips native descriptor audio to the shortest returned capture channel', () => {
@@ -201,8 +203,10 @@ describe('nativeLoopRecordingDesc', () => {
       4,
     );
 
-    expect(desc?.audioChannels).toBe(2);
-    expect([...(desc?.audio ?? [])]).toEqual([1, 10, 2, 20]);
+    expect(desc?.audio.map((channel) => [...channel])).toEqual([
+      [1, 2],
+      [10, 20],
+    ]);
   });
 
   it('rejects invalid native descriptor inputs', () => {

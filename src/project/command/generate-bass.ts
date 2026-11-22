@@ -20,7 +20,7 @@ import { commitTrackPlan, materializeNote, type TrackPlan } from './generate-tra
 import { generationKeyAt } from './generation-key';
 
 /** NativeSynth preset for generated bass tracks. */
-const BASS_PRESET = 'sub-bass';
+const BASS_PRESET = 'subBass';
 
 /** Options for {@link generateBassLineCommand}. */
 export interface GenerateBassParams {

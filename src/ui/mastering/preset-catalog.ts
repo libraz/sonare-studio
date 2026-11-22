@@ -8,13 +8,13 @@
  */
 
 import { getWasmModule } from '@/project/store';
-import type { CapabilityCatalogMasteringPreset, MasteringPreset } from '@/wasm/index.js';
+import type { MasteringPreset, MasteringPresetCatalogEntry } from '@/wasm/index.js';
 
 /** Preset catalogs per loaded module; a build's catalog never changes. */
-const presetCache = new WeakMap<object, readonly CapabilityCatalogMasteringPreset[]>();
+const presetCache = new WeakMap<object, readonly MasteringPresetCatalogEntry[]>();
 
 /** The loaded module's built-in presets in catalog order, or [] before init. */
-function presetInfos(): readonly CapabilityCatalogMasteringPreset[] {
+function presetInfos(): readonly MasteringPresetCatalogEntry[] {
   let wasm: ReturnType<typeof getWasmModule>;
   try {
     wasm = getWasmModule();
@@ -30,7 +30,7 @@ function presetInfos(): readonly CapabilityCatalogMasteringPreset[] {
 }
 
 /** Catalog entry of a built-in preset, or undefined for an unknown id. */
-export function masteringPresetInfo(id: string): CapabilityCatalogMasteringPreset | undefined {
+export function masteringPresetInfo(id: string): MasteringPresetCatalogEntry | undefined {
   return presetInfos().find((preset) => preset.name === id);
 }
 

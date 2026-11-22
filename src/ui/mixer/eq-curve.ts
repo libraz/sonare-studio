@@ -9,7 +9,7 @@
  */
 
 import { clamp } from '@/lib/math';
-import type { EqBand } from '@/wasm/index.js';
+import type { EqBandInput } from '@/wasm/index.js';
 
 /** One sampled point of the EQ response curve. */
 export interface EqCurvePoint {
@@ -36,8 +36,8 @@ interface BiquadCoeffs {
 }
 
 /** Computes RBJ cookbook coefficients for one band, or null for flat types. */
-function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
-  const type = band.type ?? 'Peak';
+function bandCoeffs(band: EqBandInput, sampleRate: number): BiquadCoeffs | null {
+  const type = band.type ?? 'peak';
   const f0 = clamp(band.frequencyHz ?? 1000, 1, sampleRate / 2 - 1);
   const gainDb = band.gainDb ?? 0;
   const q = Math.max(0.01, band.q ?? Math.SQRT1_2);
@@ -56,7 +56,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
   let a1: number;
   let a2: number;
   switch (type) {
-    case 'Peak':
+    case 'peak':
       b0 = 1 + alpha * a;
       b1 = -2 * cosW;
       b2 = 1 - alpha * a;
@@ -64,7 +64,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a1 = -2 * cosW;
       a2 = 1 - alpha / a;
       break;
-    case 'LowShelf':
+    case 'lowShelf':
       b0 = a * (a + 1 - (a - 1) * cosW + shelfBeta * sinW);
       b1 = 2 * a * (a - 1 - (a + 1) * cosW);
       b2 = a * (a + 1 - (a - 1) * cosW - shelfBeta * sinW);
@@ -72,7 +72,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a1 = -2 * (a - 1 + (a + 1) * cosW);
       a2 = a + 1 + (a - 1) * cosW - shelfBeta * sinW;
       break;
-    case 'HighShelf':
+    case 'highShelf':
       b0 = a * (a + 1 + (a - 1) * cosW + shelfBeta * sinW);
       b1 = -2 * a * (a - 1 + (a + 1) * cosW);
       b2 = a * (a + 1 + (a - 1) * cosW - shelfBeta * sinW);
@@ -80,7 +80,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a1 = 2 * (a - 1 - (a + 1) * cosW);
       a2 = a + 1 - (a - 1) * cosW - shelfBeta * sinW;
       break;
-    case 'LowPass':
+    case 'lowPass':
       b0 = (1 - cosW) / 2;
       b1 = 1 - cosW;
       b2 = (1 - cosW) / 2;
@@ -88,7 +88,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a1 = -2 * cosW;
       a2 = 1 - alpha;
       break;
-    case 'HighPass':
+    case 'highPass':
       b0 = (1 + cosW) / 2;
       b1 = -(1 + cosW);
       b2 = (1 + cosW) / 2;
@@ -96,7 +96,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a1 = -2 * cosW;
       a2 = 1 - alpha;
       break;
-    case 'BandPass':
+    case 'bandPass':
       b0 = alpha;
       b1 = 0;
       b2 = -alpha;
@@ -104,7 +104,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
       a1 = -2 * cosW;
       a2 = 1 - alpha;
       break;
-    case 'Notch':
+    case 'notch':
       b0 = 1;
       b1 = -2 * cosW;
       b2 = 1;
@@ -121,7 +121,7 @@ function bandCoeffs(band: EqBand, sampleRate: number): BiquadCoeffs | null {
 }
 
 /** True when the band contributes to the response. */
-function bandActive(band: EqBand): boolean {
+function bandActive(band: EqBandInput): boolean {
   return band.enabled !== false && band.bypassed !== true;
 }
 
@@ -133,7 +133,7 @@ function bandActive(band: EqBand): boolean {
  * @param sampleRate Digital axis sample rate.
  */
 export function eqBandResponseDb(
-  band: EqBand,
+  band: EqBandInput,
   hz: number,
   sampleRate = EQ_CURVE_SAMPLE_RATE,
 ): number {
@@ -166,7 +166,7 @@ export function eqBandResponseDb(
  * @param sampleRate Digital axis sample rate.
  */
 export function eqCurve(
-  bands: ReadonlyArray<EqBand>,
+  bands: ReadonlyArray<EqBandInput>,
   points = 64,
   minHz = EQ_CURVE_MIN_HZ,
   maxHz = EQ_CURVE_MAX_HZ,

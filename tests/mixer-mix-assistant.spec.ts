@@ -15,11 +15,13 @@ import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { neutralMixDocument, suggestMixFromStems } from '@/ui/mixer/mix-assistant';
 
-const suggestMixScene = vi.hoisted(() => vi.fn());
+const mixingAssistantSuggest = vi.hoisted(() =>
+  vi.fn<typeof import('@/wasm/index.js')['mixingAssistantSuggest']>(),
+);
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
-  const fakeModule = { ...createFakeWasmModule(), suggestMixScene };
+  const fakeModule = { ...createFakeWasmModule(), mixingAssistantSuggest };
   return { ensureWasm: async () => fakeModule };
 });
 
@@ -122,9 +124,9 @@ describe('suggestMixFromStems', () => {
     const left = new Float32Array(4);
     suggestMixFromStems([{ trackId: 3, name: 'Bass', left, right: left }], 48000, 96, suggest);
     expect(suggest).toHaveBeenCalledWith({
-      tracks: [{ id: 'track-3', name: 'Bass', left, right: left }],
+      tracks: [{ id: 'track-3', name: 'Bass', channels: [left, left] }],
       sampleRate: 48000,
-      options: { tempoBpm: 96 },
+      tempoBpm: 96,
     });
   });
 });
@@ -181,7 +183,7 @@ describe('MixSuggestDialog', () => {
       }),
       cancel: vi.fn(),
     }));
-    suggestMixScene.mockReturnValue({
+    mixingAssistantSuggest.mockReturnValue({
       scene: {
         version: 1,
         strips: [
@@ -197,7 +199,7 @@ describe('MixSuggestDialog', () => {
       tracks: [{ stripId: `track-${trackId}`, name: 'Keys', source: 'keys', usable: true }],
       mix: {},
       explanation: [`staged track-${trackId} towards the target`],
-    });
+    } as never);
     const wrapper = mount(MixSuggestDialog, {
       props: { open: true, loopEnabled: false, loopStartPpq: 0, loopEndPpq: 0, render },
       global: { stubs: { teleport: true } },
@@ -236,7 +238,7 @@ describe('MixSuggestDialog', () => {
     const store = useProjectStore();
     const trackId = store.tracks[0].id;
     const channel = new Float32Array(8).fill(0.2);
-    suggestMixScene.mockReturnValue({
+    mixingAssistantSuggest.mockReturnValue({
       scene: {
         version: 1,
         strips: [{ id: `track-${trackId}`, faderDb: -4 }],
@@ -246,7 +248,7 @@ describe('MixSuggestDialog', () => {
       tracks: [{ stripId: `track-${trackId}`, name: 'Keys', source: 'keys', usable: true }],
       mix: {},
       explanation: [],
-    });
+    } as never);
     const render = vi.fn(() => ({
       result: Promise.resolve({
         channels: [channel, channel],

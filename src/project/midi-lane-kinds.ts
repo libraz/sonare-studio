@@ -90,7 +90,7 @@ interface RampPoint {
 }
 
 function rampCurve(point: RampPoint): boolean {
-  return point.curve === 'linear' || point.curve === 's-curve';
+  return point.curve === 'linear' || point.curve === 'sCurve';
 }
 
 function rampPointAt<P extends RampPoint>(previous: P, next: P | undefined, ppq: number): P {

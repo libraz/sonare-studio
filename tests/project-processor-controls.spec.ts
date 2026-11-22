@@ -14,7 +14,7 @@ function stripWith(processor: string): { inserts: InsertSlot[] } {
 }
 
 function info(overrides: Partial<ProcessorParamInfo> & { name: string }): ProcessorParamInfo {
-  return { type: 'number', unit: null, min: null, max: null, default: null, ...overrides };
+  return { type: 'number', ...overrides };
 }
 
 describe('processorNumberSpec', () => {
@@ -75,11 +75,7 @@ describe('processorControlSpec', () => {
       ),
     ).toEqual({ kind: 'boolean', defaultValue: true });
     expect(
-      processorControlSpec(
-        'custom.processor',
-        'bypass',
-        info({ name: 'bypass', type: 'boolean', default: null }),
-      ),
+      processorControlSpec('custom.processor', 'bypass', info({ name: 'bypass', type: 'boolean' })),
     ).toEqual({ kind: 'boolean', defaultValue: false });
   });
 

@@ -152,9 +152,12 @@ function commit(
     if (loopChange) {
       edit(1, () => {
         if (options.loop?.enabled) {
-          project.setClipLoop(store.clipId, 'loop', options.loop.lengthPpq);
+          project.setClipLoop(store.clipId, {
+            loopMode: 'loop',
+            loopLengthPpq: options.loop.lengthPpq,
+          });
         } else {
-          project.setClipLoop(store.clipId, 'off');
+          project.setClipLoop(store.clipId, { loopMode: 'off' });
         }
       });
     }

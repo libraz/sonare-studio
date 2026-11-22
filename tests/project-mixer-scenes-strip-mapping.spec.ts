@@ -25,19 +25,19 @@ describe('applyMixerSceneJson strip mapping', () => {
     vi.restoreAllMocks();
   });
 
-  it('reads pan law and pan mode by their scene file indices', () => {
+  it('reads pan law and pan mode by their scene file names', () => {
     const trackId = store.tracks[0].id;
-    const laws = ['const3dB', 'const4.5dB', 'const6dB', 'linear0dB'];
-    laws.forEach((law, index) => {
+    const laws = ['const3Db', 'const4.5Db', 'const6Db', 'linear0Db'];
+    laws.forEach((law) => {
       applyMixerSceneJson(
-        JSON.stringify({ strips: [{ id: `track-${trackId}`, panLaw: index }], buses: [] }),
+        JSON.stringify({ strips: [{ id: `track-${trackId}`, panLaw: law }], buses: [] }),
       );
-      expect(store.tracks[0].mixer?.panLaw ?? 'const3dB').toBe(law);
+      expect(store.tracks[0].mixer?.panLaw ?? 'const3Db').toBe(law);
     });
     const modes = ['balance', 'stereoPan', 'dualPan'];
-    modes.forEach((mode, index) => {
+    modes.forEach((mode) => {
       applyMixerSceneJson(
-        JSON.stringify({ strips: [{ id: `track-${trackId}`, panMode: index }], buses: [] }),
+        JSON.stringify({ strips: [{ id: `track-${trackId}`, panMode: mode }], buses: [] }),
       );
       expect(store.tracks[0].mixer?.panMode ?? 'balance').toBe(mode);
     });

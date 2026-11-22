@@ -22,12 +22,12 @@ class FakeWorker {
         data: {
           type: 'done',
           events: [
-            { ppq: 0, data0: 0x20903c64, data1: 0 },
-            { ppq: 1, data0: 0x20803c00, data1: 0 },
+            { ppq: 0, word0: 0x20903c64, word1: 0 },
+            { ppq: 1, word0: 0x20803c00, word1: 0 },
           ],
           noteCount: 1,
           tempoBpm: 60,
-          tuning: 0,
+          tuningCents: 0,
         } satisfies TranscribeWorkerResponse,
       } as MessageEvent);
     });

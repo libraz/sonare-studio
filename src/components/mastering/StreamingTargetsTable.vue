@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from '@/ui/i18n';
+import { formatLevel } from '@/ui/mastering/loudness';
 import type { StreamingTarget } from '@/ui/mastering/streaming';
 
 /**
@@ -7,7 +8,7 @@ import type { StreamingTarget } from '@/ui/mastering/streaming';
  * integrated loudness, the normalization gain the platform would apply and the
  * resulting true peak, flagging platforms whose normalized peak risks clipping
  * the ceiling. The wasm measurement is owned by the panel; this component only
- * renders the parsed targets.
+ * renders the targets.
  */
 
 defineProps<{
@@ -40,10 +41,10 @@ function signedGain(value: number): string {
     <tbody>
       <tr v-for="target in targets" :key="target.name">
         <td class="targets-name">{{ target.name }}</td>
-        <td>{{ target.integratedLufs.toFixed(1) }}</td>
+        <td>{{ formatLevel(target.integratedLufs) }}</td>
         <td>{{ signedGain(target.normalizationGainDb) }}</td>
         <td :class="{ risk: target.ceilingRisk }" v-tooltip="target.ceilingRisk ? t.shell.mastering.streaming.ceilingRisk : ''">
-          {{ target.truePeakDb.toFixed(1) }}<svg
+          {{ target.truePeakDbtp.toFixed(1) }}<svg
             v-if="target.ceilingRisk"
             class="targets-warn-icon"
             viewBox="0 0 16 16"

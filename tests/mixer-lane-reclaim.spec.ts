@@ -8,6 +8,19 @@ import type { StripSync } from '@/engine/strip-sync';
 import { createDefaultStrip, MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import type { SonareEngine } from '@/wasm/worklet.js';
+
+type MixerLaneEngine = Pick<
+  SonareEngine,
+  | 'setTrackLanes'
+  | 'setStripFaderDb'
+  | 'setStripPan'
+  | 'setTrackSoloMute'
+  | 'setStripChannelDelaySamples'
+  | 'setStripPanLaw'
+  | 'setStripPanMode'
+  | 'setStripDualPan'
+>;
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -32,19 +45,23 @@ function track(id: number): EditorTrack {
 function makeHandle() {
   const declared: number[] = [];
   const engine = {
-    setTrackLanes: vi.fn((lanes: number[]) => {
+    setTrackLanes: vi.fn((lanes: Array<{ trackId: number }>) => {
       if (lanes.length > MAX_TRACK_LANES) throw new Error('too many lanes');
-      if (declared.some((id, index) => lanes[index] !== id)) throw new Error('append-only');
-      declared.splice(0, declared.length, ...lanes);
+      if (declared.some((id, index) => lanes[index]?.trackId !== id))
+        throw new Error('append-only');
+      declared.splice(0, declared.length, ...lanes.map((lane) => lane.trackId));
     }),
-    setStripGain: vi.fn((id: number | 'master') => id === 'master' || declared.includes(id)),
-    setStripPan: vi.fn(() => true),
-    setSoloMute: vi.fn(() => true),
-    setTrackStripChannelDelaySamples: vi.fn(),
-    setTrackStripPanLaw: vi.fn(),
-    setTrackStripPanMode: vi.fn(),
-    setTrackStripDualPan: vi.fn(),
-  };
+    setStripFaderDb: vi.fn((id: number | 'master') => {
+      if (id !== 'master' && !declared.includes(id))
+        throw new RangeError(`no lane for track ${id}`);
+    }),
+    setStripPan: vi.fn(),
+    setTrackSoloMute: vi.fn(),
+    setStripChannelDelaySamples: vi.fn(),
+    setStripPanLaw: vi.fn(),
+    setStripPanMode: vi.fn(),
+    setStripDualPan: vi.fn(),
+  } satisfies MixerLaneEngine;
   return { engine, handle: { engine, ctx: { state: 'running' } } as unknown as EngineHandle };
 }
 
@@ -61,19 +78,22 @@ describe('engine lane reclaim', () => {
     expect(sync.laneReclaimNeeded?.()).toBe(false);
 
     live.push(track(100));
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     expect(() => sync.sync(live, createDefaultStrip())).not.toThrow();
     expect(sync.laneReclaimNeeded?.()).toBe(true);
     // The live track that still has a lane keeps receiving updates.
     live[0] = { ...live[0], volume: 0.5 };
     sync.sync(live, createDefaultStrip());
-    expect(engine.setStripGain).toHaveBeenCalledWith(MAX_TRACK_LANES, expect.any(Number));
-    expect(engine.setStripGain).not.toHaveBeenCalledWith(100, expect.any(Number));
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(MAX_TRACK_LANES, expect.any(Number));
+    expect(engine.setStripFaderDb).not.toHaveBeenCalledWith(100, expect.any(Number));
 
     const rebuilt = makeHandle();
     const fresh = createMixerSync(rebuilt.handle);
     fresh.sync(live, createDefaultStrip());
-    expect(rebuilt.engine.setTrackLanes).toHaveBeenLastCalledWith([MAX_TRACK_LANES, 100]);
+    expect(rebuilt.engine.setTrackLanes).toHaveBeenLastCalledWith([
+      { trackId: MAX_TRACK_LANES },
+      { trackId: 100 },
+    ]);
     expect(fresh.laneReclaimNeeded?.()).toBe(false);
   });
 

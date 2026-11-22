@@ -26,14 +26,14 @@ describe('gmProgramForPreset', () => {
   it('maps catalog voices to their GM address when switching modes or exporting SMF', () => {
     expect(
       [
-        'e-piano',
-        'electric-guitar',
+        'ePiano',
+        'electricGuitar',
         'brass',
         'violin',
         'cello',
         'clarinet',
         'trumpet',
-        'concert-flute',
+        'concertFlute',
       ].map(gmProgramForPreset),
     ).toEqual([4, 26, 56, 40, 42, 71, 56, 73]);
   });
@@ -41,10 +41,10 @@ describe('gmProgramForPreset', () => {
 
 describe('instrumentDedupeKey', () => {
   it('keeps GM-enabled synth selections on separate destinations', () => {
-    const plain = instrumentDedupeKey({ kind: 'synth-preset', preset: 'e-piano' });
+    const plain = instrumentDedupeKey({ kind: 'synth-preset', preset: 'ePiano' });
     const gm = instrumentDedupeKey({
       kind: 'synth-preset',
-      preset: 'e-piano',
+      preset: 'ePiano',
       useGmPrograms: true,
       gmBank: 128,
       gmProgram: 25,
@@ -54,14 +54,14 @@ describe('instrumentDedupeKey', () => {
     expect(
       instrumentDedupeKey({
         kind: 'synth-preset',
-        preset: 'e-piano',
+        preset: 'ePiano',
         useGmPrograms: true,
         gmBank: 128,
         gmProgram: 26,
       }),
     ).not.toBe(gm);
     expect(
-      instrumentDedupeKey({ kind: 'synth-preset', preset: 'e-piano', useGmPrograms: false }),
+      instrumentDedupeKey({ kind: 'synth-preset', preset: 'ePiano', useGmPrograms: false }),
     ).toBe(plain);
   });
 
@@ -84,64 +84,65 @@ describe('instrumentDedupeKey', () => {
 });
 
 const wasmMock = vi.hoisted(() => {
-  const bounceWithSynthInstrument = vi.fn(
-    () => new Float32Array([0.25, -0.25, 0.5, -0.5, 0.75, -0.75]),
-  );
-  const bounceWithSf2Instrument = vi.fn(() => new Float32Array([0.2, -0.2, 0.4, -0.4]));
+  const bounce = vi.fn((request?: { sf2Instruments?: ReadonlyArray<unknown> }) => ({
+    channels:
+      request?.sf2Instruments !== undefined
+        ? [new Float32Array([0.2, 0.4]), new Float32Array([-0.2, -0.4])]
+        : [new Float32Array([0.25, 0.5, 0.75]), new Float32Array([-0.25, -0.5, -0.75])],
+    sampleRate: 48000,
+  }));
   const loadSoundFont = vi.fn();
   const setMidiEvents = vi.fn();
-  const synthPresetNames = vi.fn(() => [
-    'sine',
-    'saw-lead',
-    'e-piano',
-    'acoustic-piano',
-    'drum-kit',
-  ]);
+  const synthPresetNames = vi.fn(() => ['sine', 'sawLead', 'ePiano', 'acousticPiano', 'drumKit']);
 
-  class MockProject {
+  class MockProject implements Partial<InstanceType<typeof import('@/wasm/index.js')['Project']>> {
     setSampleRate = vi.fn();
     setTempoSegments = vi.fn();
     addMidiClip = vi.fn(() => ({ trackId: 1, clipId: 2 }));
     setMidiEvents = setMidiEvents;
-    bounceWithSynthInstrument = bounceWithSynthInstrument;
-    bounceWithSf2Instrument = bounceWithSf2Instrument;
+    bounce = bounce;
     loadSoundFont = loadSoundFont;
-    delete = vi.fn();
-    static midiNoteOn = vi.fn((ppq: number, _g: number, ch: number, note: number, vel: number) => ({
-      ppq,
-      data0: (9 << 20) | (ch << 16) | (note << 8) | vel,
-    }));
-    static midiNoteOff = vi.fn((ppq: number, _g: number, ch: number, note: number) => ({
-      ppq,
-      data0: (8 << 20) | (ch << 16) | (note << 8),
-    }));
-    static midiProgram = vi.fn((ppq: number, _g: number, ch: number, program: number) => ({
-      ppq,
-      data0: (0xc << 20) | (ch << 16) | (program << 8),
-    }));
-    static midiBankProgram = vi.fn(
-      (ppq: number, _g: number, ch: number, msb: number, lsb: number, program: number) => [
-        { ppq, data0: (0xb << 20) | (ch << 16) | msb },
-        { ppq, data0: (0xb << 20) | (ch << 16) | (32 << 8) | lsb },
-        { ppq, data0: (0xc << 20) | (ch << 16) | (program << 8) },
-      ],
-    );
+    destroy = vi.fn();
   }
 
-  return {
-    bounceWithSynthInstrument,
-    bounceWithSf2Instrument,
-    loadSoundFont,
-    setMidiEvents,
-    synthPresetNames,
-    MockProject,
+  const midi = {
+    midiNoteOn: vi.fn((r: { ppq: number; channel: number; note: number; velocity: number }) => ({
+      ppq: r.ppq,
+      word0: (0x2 << 28) | (9 << 20) | (r.channel << 16) | (r.note << 8) | r.velocity,
+    })),
+    midiNoteOff: vi.fn((r: { ppq: number; channel: number; note: number }) => ({
+      ppq: r.ppq,
+      word0: (0x2 << 28) | (8 << 20) | (r.channel << 16) | (r.note << 8),
+    })),
+    midiProgram: vi.fn((r: { ppq: number; channel: number; program: number }) => ({
+      ppq: r.ppq,
+      word0: (0x2 << 28) | (0xc << 20) | (r.channel << 16) | (r.program << 8),
+    })),
+    midiBankProgram: vi.fn(
+      (r: {
+        ppq: number;
+        channel: number;
+        program: number;
+        bank: { msb: number; lsb: number };
+      }) => [
+        { ppq: r.ppq, word0: (0x2 << 28) | (0xb << 20) | (r.channel << 16) | r.bank.msb },
+        {
+          ppq: r.ppq,
+          word0: (0x2 << 28) | (0xb << 20) | (r.channel << 16) | (32 << 8) | r.bank.lsb,
+        },
+        { ppq: r.ppq, word0: (0x2 << 28) | (0xc << 20) | (r.channel << 16) | (r.program << 8) },
+      ],
+    ),
   };
+
+  return { bounce, loadSoundFont, setMidiEvents, synthPresetNames, midi, MockProject };
 });
 
 vi.mock('@/lib/wasm', () => ({
   ensureWasm: vi.fn(async () => ({
     Project: wasmMock.MockProject,
     synthPresetNames: wasmMock.synthPresetNames,
+    ...wasmMock.midi,
   })),
 }));
 
@@ -154,53 +155,52 @@ const OPTS = { sampleRate: 48000 };
 
 beforeEach(() => {
   clearPrerenderCache();
-  wasmMock.bounceWithSynthInstrument.mockClear();
-  wasmMock.bounceWithSf2Instrument.mockClear();
+  wasmMock.bounce.mockClear();
   wasmMock.loadSoundFont.mockClear();
   wasmMock.setMidiEvents.mockClear();
 });
 
 describe('instrumentCacheSegment', () => {
   it('matches the historical preset segment for synth presets', () => {
-    expect(instrumentCacheSegment({ kind: 'synth-preset', preset: 'e-piano' })).toBe(
-      'preset=e-piano',
+    expect(instrumentCacheSegment({ kind: 'synth-preset', preset: 'ePiano' })).toBe(
+      'preset=ePiano',
     );
   });
 
   it('keys GM-enabled synth presets by mode and initial selection', () => {
-    const plain = instrumentCacheSegment({ kind: 'synth-preset', preset: 'e-piano' });
+    const plain = instrumentCacheSegment({ kind: 'synth-preset', preset: 'ePiano' });
     const gm = instrumentCacheSegment({
       kind: 'synth-preset',
-      preset: 'e-piano',
+      preset: 'ePiano',
       useGmPrograms: true,
       gmBank: 128,
       gmProgram: 25,
     });
 
-    expect(gm).toBe('preset=e-piano:gm=1:128:25');
+    expect(gm).toBe('preset=ePiano:gm=1:128:25');
     expect(gm).not.toBe(plain);
     expect(
       instrumentCacheSegment({
         kind: 'synth-preset',
-        preset: 'e-piano',
+        preset: 'ePiano',
         useGmPrograms: true,
         gmBank: 128,
         gmProgram: 26,
       }),
     ).not.toBe(gm);
     expect(
-      instrumentCacheSegment({ kind: 'synth-preset', preset: 'e-piano', useGmPrograms: false }),
+      instrumentCacheSegment({ kind: 'synth-preset', preset: 'ePiano', useGmPrograms: false }),
     ).toBe(plain);
   });
 
   it('hashes synth patches insensitively to field order', () => {
     const a = instrumentCacheSegment({
       kind: 'synth-patch',
-      patch: { preset: 'saw-lead', cutoffHz: 800, resonanceQ: 2 },
+      patch: { preset: 'sawLead', cutoffHz: 800, resonanceQ: 2 },
     });
     const b = instrumentCacheSegment({
       kind: 'synth-patch',
-      patch: { resonanceQ: 2, cutoffHz: 800, preset: 'saw-lead' },
+      patch: { resonanceQ: 2, cutoffHz: 800, preset: 'sawLead' },
     });
     expect(a).toBe(b);
     expect(a).toMatch(/^patch=[0-9a-f]{8}$/);
@@ -209,15 +209,15 @@ describe('instrumentCacheSegment', () => {
   it('changes when any patch field changes', () => {
     const base = instrumentCacheSegment({
       kind: 'synth-patch',
-      patch: { preset: 'saw-lead', cutoffHz: 800 },
+      patch: { preset: 'sawLead', cutoffHz: 800 },
     });
     expect(
-      instrumentCacheSegment({ kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 801 } }),
+      instrumentCacheSegment({ kind: 'synth-patch', patch: { preset: 'sawLead', cutoffHz: 801 } }),
     ).not.toBe(base);
     expect(
       instrumentCacheSegment({
         kind: 'synth-patch',
-        patch: { preset: 'saw-lead', cutoffHz: 800, drive: 0.5 },
+        patch: { preset: 'sawLead', cutoffHz: 800, drive: 0.5 },
       }),
     ).not.toBe(base);
   });
@@ -297,9 +297,9 @@ describe('midiClipCacheKey with instruments', () => {
     expect(
       midiClipCacheKey(NOTES, {
         ...OPTS,
-        instrument: { kind: 'synth-preset', preset: 'saw-lead' },
+        instrument: { kind: 'synth-preset', preset: 'sawLead' },
       }),
-    ).toBe(midiClipCacheKey(NOTES, { ...OPTS, preset: 'saw-lead' }));
+    ).toBe(midiClipCacheKey(NOTES, { ...OPTS, preset: 'sawLead' }));
   });
 
   it('defaults to the default preset identity', () => {
@@ -312,7 +312,7 @@ describe('midiClipCacheKey with instruments', () => {
     const preset = midiClipCacheKey(NOTES, OPTS);
     const patch = midiClipCacheKey(NOTES, {
       ...OPTS,
-      instrument: { kind: 'synth-patch', patch: { preset: 'e-piano' } },
+      instrument: { kind: 'synth-patch', patch: { preset: 'ePiano' } },
     });
     const sf2 = midiClipCacheKey(NOTES, {
       ...OPTS,
@@ -326,15 +326,15 @@ describe('midiClipCacheKey with instruments', () => {
       midiClipCacheKey(NOTES, {
         ...OPTS,
         preset: 'sine',
-        instrument: { kind: 'synth-preset', preset: 'drum-kit' },
+        instrument: { kind: 'synth-preset', preset: 'drumKit' },
       }),
-    ).toBe(midiClipCacheKey(NOTES, { ...OPTS, preset: 'drum-kit' }));
+    ).toBe(midiClipCacheKey(NOTES, { ...OPTS, preset: 'drumKit' }));
   });
 });
 
 describe('instrument helpers', () => {
   it('trackInstrument falls back to the default preset', () => {
-    expect(trackInstrument({})).toEqual({ kind: 'synth-preset', preset: 'acoustic-piano' });
+    expect(trackInstrument({})).toEqual({ kind: 'synth-preset', preset: 'acousticPiano' });
     const explicit: TrackInstrument = { kind: 'synth-preset', preset: 'sine' };
     expect(trackInstrument({ instrument: explicit })).toBe(explicit);
   });
@@ -348,19 +348,14 @@ describe('instrument helpers', () => {
     expect(instrumentEquals(copy, a)).toBe(true);
   });
 
-  it('loadInstrument rewrites the retired moog-ladder filter model and detaches', () => {
-    const legacy = {
+  it('loadInstrument returns a detached copy', () => {
+    const current: TrackInstrument = {
       kind: 'synth-patch',
-      patch: { filterModel: 'moog-ladder', cutoffHz: 800 },
-    } as unknown as TrackInstrument;
-    const loaded = loadInstrument(legacy);
-    expect(loaded).toEqual({
-      kind: 'synth-patch',
-      patch: { filterModel: 'transistor-ladder', cutoffHz: 800 },
-    });
-    expect((legacy as { patch: { filterModel: string } }).patch.filterModel).toBe('moog-ladder');
-    const current: TrackInstrument = { kind: 'synth-patch', patch: { filterModel: 'svf' } };
-    expect(loadInstrument(current)).toEqual(current);
+      patch: { filterModel: 'svf', cutoffHz: 800 },
+    };
+    const loaded = loadInstrument(current);
+    expect(loaded).toEqual(current);
+    expect(loaded).not.toBe(current);
   });
 
   it('isDefaultInstrument only accepts the default preset', () => {
@@ -374,14 +369,14 @@ describe('instrument helpers', () => {
     expect(() =>
       validateTrackInstrument({
         kind: 'synth-preset',
-        preset: 'e-piano',
+        preset: 'ePiano',
         useGmPrograms: 1 as unknown as boolean,
       }),
     ).toThrow(RangeError);
     expect(() =>
       validateTrackInstrument({
         kind: 'synth-preset',
-        preset: 'e-piano',
+        preset: 'ePiano',
         useGmPrograms: true,
         gmBank: 128,
         gmProgram: 25,
@@ -607,22 +602,38 @@ describe('instrument helpers', () => {
   });
 });
 
+/** The synth patch of the single bounce binding the last prerender requested. */
+function bouncedSynthPatch(): unknown {
+  const request = wasmMock.bounce.mock.calls[0][0] as {
+    synthInstruments?: Array<{ instrument: unknown }>;
+  };
+  return request.synthInstruments?.[0].instrument;
+}
+
+/** The SF2 config of the single bounce binding the last prerender requested. */
+function bouncedSf2Config(): unknown {
+  const request = wasmMock.bounce.mock.calls[0][0] as {
+    sf2Instruments?: Array<{ instrument: unknown }>;
+  };
+  return request.sf2Instruments?.[0].instrument;
+}
+
 describe('prerenderMidiClip per instrument kind', () => {
-  it('passes a synth patch object straight to bounceWithSynthInstrument', async () => {
-    const patch = { preset: 'saw-lead', cutoffHz: 900 };
+  it('passes a synth patch object straight to the bounce', async () => {
+    const patch = { preset: 'sawLead', cutoffHz: 900 };
     await prerenderMidiClip(NOTES, { ...OPTS, instrument: { kind: 'synth-patch', patch } });
-    expect(wasmMock.bounceWithSynthInstrument).toHaveBeenCalledTimes(1);
-    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toEqual(patch);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(1);
+    expect(bouncedSynthPatch()).toEqual(patch);
   });
 
   it('degrades unknown preset names to the default preset via the catalog', async () => {
     await prerenderMidiClip(NOTES, { ...OPTS, preset: 'no-such-preset' });
-    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toBe('acoustic-piano');
+    expect(bouncedSynthPatch()).toEqual({ preset: 'acousticPiano' });
   });
 
   it('keeps catalog-listed preset names as-is', async () => {
-    await prerenderMidiClip(NOTES, { ...OPTS, preset: 'saw-lead' });
-    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toBe('saw-lead');
+    await prerenderMidiClip(NOTES, { ...OPTS, preset: 'sawLead' });
+    expect(bouncedSynthPatch()).toEqual({ preset: 'sawLead' });
   });
 
   it('prerenders a GM-enabled preset with its initial bank/program prelude', async () => {
@@ -630,22 +641,22 @@ describe('prerenderMidiClip per instrument kind', () => {
       ...OPTS,
       instrument: {
         kind: 'synth-preset',
-        preset: 'saw-lead',
+        preset: 'sawLead',
         useGmPrograms: true,
         gmBank: 128,
         gmProgram: 25,
       },
     });
 
-    expect(wasmMock.bounceWithSynthInstrument.mock.calls[0][0]).toEqual({
-      preset: 'saw-lead',
+    expect(bouncedSynthPatch()).toEqual({
+      preset: 'sawLead',
       useGmPrograms: true,
     });
     const events = wasmMock.setMidiEvents.mock.calls[0][1] as Array<{
       ppq: number;
-      data0: number;
+      word0: number;
     }>;
-    expect(events.slice(0, 6).map((event) => (event.data0 >>> 20) & 0xf)).toEqual([
+    expect(events.slice(0, 6).map((event) => (event.word0 >>> 20) & 0xf)).toEqual([
       0xb, 0xb, 0xc, 0xb, 0xb, 0xc,
     ]);
     expect(events.slice(0, 6).every((event) => event.ppq === 0)).toBe(true);
@@ -662,10 +673,12 @@ describe('prerenderMidiClip per instrument kind', () => {
     });
     expect(loadFont).toHaveBeenCalledWith('my-font');
     expect(wasmMock.loadSoundFont).toHaveBeenCalledWith(fontBytes);
-    expect(wasmMock.bounceWithSf2Instrument).toHaveBeenCalledTimes(1);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(1);
     // No explicit gain/polyphony => empty config keeps the engine defaults.
-    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({});
-    expect(wasmMock.bounceWithSynthInstrument).not.toHaveBeenCalled();
+    expect(bouncedSf2Config()).toEqual({});
+    expect(
+      (wasmMock.bounce.mock.calls[0][0] as { synthInstruments?: unknown }).synthInstruments,
+    ).toBeUndefined();
   });
 
   it('forwards the SF2 master gain and voice cap to the bounce', async () => {
@@ -675,7 +688,7 @@ describe('prerenderMidiClip per instrument kind', () => {
       instrument: { kind: 'sf2', fontId: 'my-font', gain: 1.5, polyphony: 24 },
       loadFont,
     });
-    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: 1.5, polyphony: 24 });
+    expect(bouncedSf2Config()).toEqual({ gain: 1.5, polyphony: 24 });
   });
 
   it('forwards classic GS EFX realisation to the prerender bounce', async () => {
@@ -684,7 +697,7 @@ describe('prerenderMidiClip per instrument kind', () => {
       instrument: { kind: 'sf2', fontId: 'my-font', gsEfxRealization: 'classic' },
       loadFont: async () => new Uint8Array([4]),
     });
-    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({
+    expect(bouncedSf2Config()).toEqual({
       gsEfxRealization: 'classic',
     });
   });
@@ -696,7 +709,7 @@ describe('prerenderMidiClip per instrument kind', () => {
       loadFont: async () => new Uint8Array([4]),
     });
 
-    expect(wasmMock.bounceWithSf2Instrument.mock.calls[0][0]).toEqual({ gain: SF2_MUTE_GAIN });
+    expect(bouncedSf2Config()).toEqual({ gain: SF2_MUTE_GAIN });
   });
 
   it('prepends bank/program select events per used channel', async () => {
@@ -706,10 +719,10 @@ describe('prerenderMidiClip per instrument kind', () => {
       instrument: { kind: 'sf2', fontId: 'gm', bank: 128, program: 25 },
       loadFont,
     });
-    const events = wasmMock.setMidiEvents.mock.calls[0][1] as Array<{ data0: number }>;
+    const events = wasmMock.setMidiEvents.mock.calls[0][1] as Array<{ word0: number }>;
     // NOTES uses channels 0 and 3: two bank+program triplets precede the notes.
     expect(events.length).toBe(NOTES.length * 2 + 2 * 3);
-    const statusNibbles = events.slice(0, 6).map((e) => (e.data0 >>> 20) & 0xf);
+    const statusNibbles = events.slice(0, 6).map((e) => (e.word0 >>> 20) & 0xf);
     expect(statusNibbles).toEqual([0xb, 0xb, 0xc, 0xb, 0xb, 0xc]);
     // The PPQ-zero note starts one sample later than the bank/program prelude
     // so libsonare's unstable same-frame ordering cannot select the wrong patch.
@@ -723,11 +736,11 @@ describe('prerenderMidiClip per instrument kind', () => {
     const first = await prerenderMidiClip(NOTES, opts);
     const second = await prerenderMidiClip(NOTES, opts);
     expect(second).toBe(first);
-    expect(wasmMock.bounceWithSf2Instrument).toHaveBeenCalledTimes(1);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(1);
     await prerenderMidiClip(NOTES, {
       ...opts,
       instrument: { kind: 'sf2', fontId: 'gm', program: 4 },
     });
-    expect(wasmMock.bounceWithSf2Instrument).toHaveBeenCalledTimes(2);
+    expect(wasmMock.bounce).toHaveBeenCalledTimes(2);
   });
 });

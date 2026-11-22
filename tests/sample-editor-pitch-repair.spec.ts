@@ -94,10 +94,22 @@ describe('SampleEditor auto-tune, repair session and formant mode', () => {
 
   it('lists the recommended stages and applies them in one call', async () => {
     const analysis: MasteringRepairAnalysis = {
-      defects: { measured: true, clipFlatRunCount: 0 } as MasteringRepairAnalysis['defects'],
+      defects: { clip: { flatRunCount: 0 } } as MasteringRepairAnalysis['defects'],
       channels: [
-        { measured: true, clickCount: 4, noiseFloorDbfs: -70 },
-        { measured: true, clickCount: 0, noiseFloorDbfs: -71 },
+        {
+          click: { count: 4 },
+          clip: { runCount: 0 },
+          crackle: { sampleCount: 0 },
+          hum: { fundamentalHz: 0 },
+          noise: { floorDbfs: -70 },
+        },
+        {
+          click: { count: 0 },
+          clip: { runCount: 0 },
+          crackle: { sampleCount: 0 },
+          hum: { fundamentalHz: 0 },
+          noise: { floorDbfs: -71 },
+        },
       ] as MasteringRepairAnalysis['channels'],
       declipThresholdSafe: true,
       integratedLufs: -20.04,

@@ -48,9 +48,8 @@ import {
   MAX_MIXER_BUSES,
   normalizeMixerSoloMode,
   type ProjectMixerState,
-  renameRetiredMixerProcessors,
-  renameRetiredProcessors,
 } from './mixer';
+import { readNativeDocument } from './native-document';
 import {
   adoptProject,
   allocateMarkerId,
@@ -90,7 +89,6 @@ import {
   type NoteIdHints,
   type NoteProvenanceHints,
   refreshTempoMeter,
-  type SerializedProjectDoc,
 } from './store-refresh';
 import { DEFAULT_TEMPO_BPM } from './tempo-map';
 import {
@@ -433,10 +431,10 @@ export const useProjectStore = defineStore('project', () => {
   function refresh(idHints?: NoteIdHints, chordHints?: ReadonlyArray<EditorChordSymbol>): void {
     const live = currentProject();
     if (!live) return;
-    const doc = JSON.parse(live.toJson()) as SerializedProjectDoc;
+    const doc = readNativeDocument(live);
 
-    if (typeof doc.sample_rate === 'number' && doc.sample_rate > 0) {
-      sampleRate.value = doc.sample_rate;
+    if (typeof doc.sampleRate === 'number' && doc.sampleRate > 0) {
+      sampleRate.value = doc.sampleRate;
     }
 
     // Tempo and meter mirrors.
@@ -711,11 +709,9 @@ export const useProjectStore = defineStore('project', () => {
         );
       }
       ensureMixerProcessorIds(mixer.value);
-      renameRetiredMixerProcessors(mixer.value);
       for (const track of trackMirror) {
         if (!track.mixer) continue;
         ensureProcessorIds(track.mixer.inserts);
-        renameRetiredProcessors(track.mixer.inserts);
       }
       projectExternalMidi.value = doc.externalMidiDefault
         ? (cloneInstrument(doc.externalMidiDefault) as ExternalMidiInstrument)
@@ -878,14 +874,14 @@ export const useProjectStore = defineStore('project', () => {
       documentGeneration.value += 1;
       restorePreviousState = null;
       try {
-        previousProject?.delete();
+        previousProject?.destroy();
       } catch {
         // The new state is already complete; a destructor failure must not
         // roll it back to an object that may have been partially released.
       }
     } catch (error) {
       if (restorePreviousState) restorePreviousState();
-      created.delete();
+      created.destroy();
       throw error;
     }
   }
@@ -898,7 +894,7 @@ export const useProjectStore = defineStore('project', () => {
   function dispose(): void {
     documentGeneration.value += 1;
     runHistoryReset();
-    currentProject()?.delete();
+    currentProject()?.destroy();
     resetProjectRuntime();
     initialized.value = false;
     projectName.value = DEFAULT_PROJECT_NAME;

@@ -432,7 +432,7 @@ describe('generateTracksBatchCommand', () => {
             recordInputChannel: 3,
             recordInputDeviceId: 'device-a',
             externalMidiMode: 'project',
-            instrument: { kind: 'synth-preset', preset: 'warm-pad' },
+            instrument: { kind: 'synth-preset', preset: 'warmPad' },
             mixer: strip,
           }
         : track.id === store.tracks[0].id
@@ -547,7 +547,7 @@ describe('generateTracksBatchCommand', () => {
 
     // No orphaned track/clip survived and the Project matches its pre-state.
     expect(store.tracks.length).toBe(baseTracks);
-    expect(project.trackCount()).toBe(baseTracks);
+    expect(project.tracks()).toHaveLength(baseTracks);
     expect(project.toJson()).toBe(nativeBefore);
 
     // The undo stack stayed aligned with the Project history: a subsequent

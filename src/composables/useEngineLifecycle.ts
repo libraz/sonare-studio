@@ -13,7 +13,12 @@ import { MAX_REALTIME_SYSEX_BYTES } from '@/engine/gs-sysex';
 import { resolvePresetName } from '@/engine/instruments';
 import { createMeterBridge, type MeterBridge } from '@/engine/meters';
 import { createMidiSync } from '@/engine/midi-sync';
-import { createMixerSync, PFL_AUDITION_GAIN_DB, pflAuditionStates } from '@/engine/mixer-sync';
+import {
+  createMixerSync,
+  PFL_AUDITION_GAIN_DB,
+  pflAuditionStates,
+  tryQueue,
+} from '@/engine/mixer-sync';
 import { createRetryTimer } from '@/engine/retry-timer';
 import { createScopeBridge, type ScopeBridge } from '@/engine/scope';
 import { createStripSync, groupBusGainDb } from '@/engine/strip-sync';
@@ -36,11 +41,7 @@ import {
   masteringIndexForAutomationRef,
   stripForAutomationTarget,
 } from '@/project/automation-insert';
-import {
-  type InsertLatencyCatalogEntry,
-  type InsertTimingQuery,
-  insertLatencyResolverFromCatalog,
-} from '@/project/insert-latency';
+import { insertLatencyResolverFromCatalog } from '@/project/insert-latency';
 import { effectiveTrackInstrument } from '@/project/instrument';
 import {
   clampPan,
@@ -253,11 +254,15 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         h = await createEngine({ signal: controller.signal });
         const stagedHandle = h;
         assertActive();
-        const wasm = (await ensureWasm()) as unknown as {
-          masteringInsertNames?: () => string[];
-          masteringProcessorCatalog?: () => InsertLatencyCatalogEntry[];
-          masteringInsertTiming?: InsertTimingQuery;
-        };
+        const wasm: Partial<
+          Pick<
+            typeof import('@/wasm/index.js'),
+            | 'masteringInsertNames'
+            | 'masteringProcessorCatalog'
+            | 'masteringInsertTiming'
+            | 'synthPresetNames'
+          >
+        > = await ensureWasm();
         assertActive();
 
         const bootPromise = options.bootPromise();
@@ -270,7 +275,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         assertActive();
         const insertCatalog =
           typeof wasm.masteringInsertNames === 'function'
-            ? new Set(wasm.masteringInsertNames())
+            ? new Set<string>(wasm.masteringInsertNames())
             : null;
         const insertLatency =
           typeof wasm.masteringProcessorCatalog === 'function'
@@ -314,7 +319,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
           return strip ? insertIndexForAutomationRef(strip.inserts, { processorId }) : undefined;
         };
         const nextMidiSync = createMidiSync(stagedHandle, {
-          resolvePreset: (preset) => resolvePresetName(wasm as never, preset),
+          resolvePreset: (preset) => resolvePresetName(wasm, preset),
           onGsSetupUnapplied: (count) => {
             options.errorMessage.value = formatMessage(t.value.notices.gsSetupUnapplied, {
               count,
@@ -327,8 +332,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         const restoreRetry = createRetryTimer(() => stagedHandle.ctx.state === 'closed');
         const restoreParam = (target: AutomationTarget, param: AutomationParam): void => {
           let refused = false;
-          const accepted = (ok: boolean): void => {
-            if (!ok) refused = true;
+          const accepted = (apply: () => void): void => {
+            if (!tryQueue(apply)) refused = true;
           };
           const pushValue = (): void => {
             const instrumentRef = parseInstrumentAutomationParam(param);
@@ -366,11 +371,10 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               const value = slot?.params[masteringRef.paramName];
               const engineInsertIndex = masteringInsertIndexFor(processorIndex);
               if (typeof value === 'number' && engineInsertIndex !== undefined) {
-                stagedHandle.engine.setMasterStripInsertParamByName(
-                  engineInsertIndex,
-                  masteringRef.paramName,
+                stagedHandle.engine.setStripInsertParam('master', engineInsertIndex, {
+                  name: masteringRef.paramName,
                   value,
-                );
+                });
               }
               return;
             }
@@ -395,11 +399,10 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               if (target === 'master') {
                 const resolved = slotValue(store.mixer.master);
                 if (resolved) {
-                  stagedHandle.engine.setMasterStripInsertParamByName(
-                    resolved.index,
-                    insertRef.paramName,
-                    resolved.value,
-                  );
+                  stagedHandle.engine.setStripInsertParam('master', resolved.index, {
+                    name: insertRef.paramName,
+                    value: resolved.value,
+                  });
                 }
               } else if (isBusAutomationTarget(target)) {
                 const storeBusId = busIdFromAutomationTarget(target);
@@ -411,12 +414,10 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                   resolved?.index ?? -1,
                 );
                 if (busId !== undefined && resolved && engineInsertIndex !== undefined) {
-                  stagedHandle.engine.setBusStripInsertParamByName(
-                    busId,
-                    engineInsertIndex,
-                    insertRef.paramName,
-                    resolved.value,
-                  );
+                  stagedHandle.engine.setBusInsertParam(busId, engineInsertIndex, {
+                    name: insertRef.paramName,
+                    value: resolved.value,
+                  });
                 }
               } else if (typeof target === 'number') {
                 const track = store.tracks.find((entry) => entry.id === target);
@@ -432,21 +433,17 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                   resolved !== undefined &&
                   engineInsertIndex !== undefined
                 ) {
-                  stagedHandle.engine.setBusStripInsertParamByName(
-                    groupBusId,
-                    engineInsertIndex,
-                    insertRef.paramName,
-                    resolved.value,
-                  );
+                  stagedHandle.engine.setBusInsertParam(groupBusId, engineInsertIndex, {
+                    name: insertRef.paramName,
+                    value: resolved.value,
+                  });
                   return;
                 }
                 if (resolved !== undefined) {
-                  stagedHandle.engine.setTrackStripInsertParamByName(
-                    target,
-                    resolved.index,
-                    insertRef.paramName,
-                    resolved.value,
-                  );
+                  stagedHandle.engine.setStripInsertParam(target, resolved.index, {
+                    name: insertRef.paramName,
+                    value: resolved.value,
+                  });
                 }
               }
               return;
@@ -457,8 +454,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               const busId = nextStripSync.busIdFor(storeBusId);
               const bus = store.mixer.buses.find((entry) => entry.id === storeBusId);
               if (busId !== undefined && bus) {
-                accepted(
-                  stagedHandle.engine.setBusGain(
+                accepted(() =>
+                  stagedHandle.engine.setBusGainDb(
                     busId,
                     returnSoloRouting(store.mixer.buses).busGainDb(bus),
                   ),
@@ -468,9 +465,11 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
             }
             if (target === 'master') {
               if (param === 'faderDb') {
-                accepted(stagedHandle.engine.setStripGain('master', store.mixer.master.gainDb));
+                accepted(() =>
+                  stagedHandle.engine.setStripFaderDb('master', store.mixer.master.gainDb),
+                );
               } else {
-                accepted(
+                accepted(() =>
                   stagedHandle.engine.setStripPan('master', clampPan(store.mixer.master.pan)),
                 );
               }
@@ -488,8 +487,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                 true;
             if (pflAudition) {
               if (param === 'faderDb')
-                accepted(stagedHandle.engine.setStripGain(target, PFL_AUDITION_GAIN_DB));
-              else if (param === 'pan') accepted(stagedHandle.engine.setStripPan(target, 0));
+                accepted(() => stagedHandle.engine.setStripFaderDb(target, PFL_AUDITION_GAIN_DB));
+              else if (param === 'pan') accepted(() => stagedHandle.engine.setStripPan(target, 0));
               return;
             }
             const groupBusId =
@@ -502,8 +501,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                 : undefined;
               const vcaControls = new Map(vcaGroups.map((group) => [group.id, group]));
               const returnSolo = returnSoloRouting(store.mixer.buses);
-              accepted(
-                stagedHandle.engine.setBusGain(
+              accepted(() =>
+                stagedHandle.engine.setBusGainDb(
                   groupBusId,
                   returnSolo.active
                     ? SILENCE_DB
@@ -523,8 +522,8 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
               const vcaGainDb = vcaGroups.length
                 ? new Map(vcaGroups.map((group) => [group.id, group.gainDb]))
                 : undefined;
-              accepted(
-                stagedHandle.engine.setStripGain(
+              accepted(() =>
+                stagedHandle.engine.setStripFaderDb(
                   target,
                   laneGainDb(
                     track.volume,
@@ -534,7 +533,9 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
                 ),
               );
             } else {
-              accepted(stagedHandle.engine.setStripPan(target, clampPan(track.mixer?.pan ?? 0)));
+              accepted(() =>
+                stagedHandle.engine.setStripPan(target, clampPan(track.mixer?.pan ?? 0)),
+              );
             }
           };
           pushValue();
@@ -706,7 +707,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
       if (!h) throw new Error(t.value.notices.engineNotStarted);
       const seconds = 3;
       const frames = Math.round(h.ctx.sampleRate * seconds);
-      const buffers = await h.engine.renderOffline(frames);
+      const buffers = await h.engine.renderOffline({ totalFrames: frames });
       const lengths = buffers.map((b) => b.length).join(', ');
       options.renderInfo.value = `${buffers.length} channel(s), lengths [${lengths}] (${seconds}s @ ${h.ctx.sampleRate} Hz)`;
       console.info('renderOffline result:', buffers.length, 'channels', buffers);

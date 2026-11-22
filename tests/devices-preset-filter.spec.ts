@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { filterPresets, groupPresets, presetCategory } from '@/ui/devices/preset-filter';
 
-const CATALOG = ['sine', 'saw-lead', 'square-lead', 'e-piano', 'warm-pad', 'sub-bass', 'pluck'];
+const CATALOG = ['sine', 'sawLead', 'squareLead', 'ePiano', 'warmPad', 'subBass', 'pluck'];
 
 describe('filterPresets', () => {
   it('returns every name for a blank query', () => {
@@ -10,26 +10,26 @@ describe('filterPresets', () => {
   });
 
   it('matches case-insensitive substrings', () => {
-    expect(filterPresets(CATALOG, 'LEAD')).toEqual(['saw-lead', 'square-lead']);
-    expect(filterPresets(CATALOG, 'piano')).toEqual(['e-piano']);
+    expect(filterPresets(CATALOG, 'LEAD')).toEqual(['sawLead', 'squareLead']);
+    expect(filterPresets(CATALOG, 'piano')).toEqual(['ePiano']);
   });
 
   it('ranks prefix matches before substring matches', () => {
-    expect(filterPresets(CATALOG, 'su')).toEqual(['sub-bass']);
+    expect(filterPresets(CATALOG, 'su')).toEqual(['subBass']);
     expect(filterPresets(CATALOG, 'p')).toEqual([
       'pluck', // prefix match ranks first despite later catalog position
-      'e-piano',
-      'warm-pad',
+      'ePiano',
+      'warmPad',
     ]);
   });
 
   it('keeps catalog order within each rank group', () => {
     expect(filterPresets(CATALOG, 'a')).toEqual([
-      'saw-lead',
-      'square-lead',
-      'e-piano',
-      'warm-pad',
-      'sub-bass',
+      'sawLead',
+      'squareLead',
+      'ePiano',
+      'warmPad',
+      'subBass',
     ]);
   });
 
@@ -42,24 +42,24 @@ describe('filterPresets', () => {
   });
 
   it('classifies and groups instrument-oriented presets', () => {
-    expect(presetCategory('electric-guitar')).toBe('guitars');
+    expect(presetCategory('electricGuitar')).toBe('guitars');
     expect(presetCategory('Harpsichord')).toBe('keys');
-    expect(presetCategory('bass-picked')).toBe('basses');
+    expect(presetCategory('bassPicked')).toBe('basses');
     expect(presetCategory('Bassoon')).toBe('winds');
-    expect(presetCategory('english-horn')).toBe('winds');
-    expect(presetCategory('french-horn')).toBe('orchestral');
-    expect(presetCategory('church-organ')).toBe('organs');
+    expect(presetCategory('englishHorn')).toBe('winds');
+    expect(presetCategory('frenchHorn')).toBe('orchestral');
+    expect(presetCategory('churchOrgan')).toBe('organs');
     expect(
       groupPresets(
-        ['electric-guitar', 'Harpsichord', 'bass-picked', 'Bassoon', 'english-horn', 'saw-lead'],
+        ['electricGuitar', 'Harpsichord', 'bassPicked', 'Bassoon', 'englishHorn', 'sawLead'],
         '',
       ),
     ).toEqual([
       { category: 'keys', presets: ['Harpsichord'] },
-      { category: 'guitars', presets: ['electric-guitar'] },
-      { category: 'basses', presets: ['bass-picked'] },
-      { category: 'winds', presets: ['Bassoon', 'english-horn'] },
-      { category: 'synths', presets: ['saw-lead'] },
+      { category: 'guitars', presets: ['electricGuitar'] },
+      { category: 'basses', presets: ['bassPicked'] },
+      { category: 'winds', presets: ['Bassoon', 'englishHorn'] },
+      { category: 'synths', presets: ['sawLead'] },
     ]);
   });
 });

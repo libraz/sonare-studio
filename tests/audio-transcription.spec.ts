@@ -11,10 +11,10 @@ function noteEvent(
   velocity: number,
 ): {
   ppq: number;
-  data0: number;
-  data1: number;
+  word0: number;
+  word1: number;
 } {
-  return { ppq, data0: (0x20000000 | (status << 20) | (pitch << 8) | velocity) >>> 0, data1: 0 };
+  return { ppq, word0: (0x20000000 | (status << 20) | (pitch << 8) | velocity) >>> 0, word1: 0 };
 }
 
 function asset(sampleRate: number, frames: number, channels = 2): LoadedAudioAsset {
@@ -33,7 +33,7 @@ function asset(sampleRate: number, frames: number, channels = 2): LoadedAudioAss
 }
 
 function result(events: TranscribeResult['events']): TranscribeResult {
-  return { events, noteCount: events.length / 2, tempoBpm: 60, tuning: 0 };
+  return { events, noteCount: events.length / 2, tempoBpm: 60, tuningCents: 0 };
 }
 
 describe('transcribeAudioClip', () => {
@@ -160,7 +160,7 @@ describe('transcribeAudioClip', () => {
         loadAudioAsset: async () => asset(1_000, 1_000, 1),
         transcribe: async (_samples, _rate, _poly, options) => {
           seen = options?.referenceHz;
-          return { ...result([]), tuning: -0.31 };
+          return { ...result([]), tuningCents: -31 };
         },
       },
       { referenceHz: 'auto', onTuning: (tuning) => tunings.push(tuning) },
@@ -370,7 +370,7 @@ describe('transcribeAudioClip', () => {
                 noteEvent(at - from + 1, 0x8, 60, 0),
               ]),
             ),
-            tuning: 0.1,
+            tuningCents: 10,
           };
         },
       },
@@ -382,7 +382,7 @@ describe('transcribeAudioClip', () => {
     expect(notes.map((note) => Math.round(note.startPpq))).toEqual(onsets);
     expect(notes.every((note) => Math.round(note.durationPpq) === 1)).toBe(true);
     expect(calls[0]?.referenceHz).toBe('auto');
-    expect(calls.slice(1).every((call) => call.referenceHz === 440 * 2 ** (0.1 / 12))).toBe(true);
+    expect(calls.slice(1).every((call) => call.referenceHz === 440 * 2 ** (10 / 1200))).toBe(true);
     expect(tunings).toEqual([0.1]);
   });
 

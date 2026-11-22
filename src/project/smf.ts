@@ -9,7 +9,14 @@ import {
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { clampInt } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
-import type { ProjectMidiEvent } from '@/wasm/index.js';
+import type {
+  Project,
+  ProjectClip,
+  ProjectMarker,
+  ProjectMarkerKind,
+  ProjectMidiEvent,
+  ProjectTrack,
+} from '@/wasm/index.js';
 import {
   effectiveTrackInstrument,
   GM2_DRUM_BANK,
@@ -22,6 +29,7 @@ import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from './midi-cc';
 import {
   notesToProjectMidiEvents,
   pairEventsIntoNotes,
+  projectMidiContent,
   type SerializedMidiEvent,
 } from './midi-events';
 import {
@@ -245,57 +253,6 @@ const STATUS_PROGRAM_CHANGE = 0xc;
 const STATUS_CHANNEL_PRESSURE = 0xd;
 const STATUS_PITCH_BEND = 0xe;
 
-const MARKER_KIND_TEXT = 1;
-const MARKER_KIND_LYRIC = 2;
-const MARKER_KIND_CUE_POINT = 3;
-const MARKER_KIND_KEY_SIGNATURE = 4;
-
-interface SerializedTempoSegment {
-  start_ppq: number;
-  bpm: number;
-  end_bpm?: number;
-}
-
-interface SerializedTimeSignature {
-  start_ppq: number;
-  numerator: number;
-  denominator: number;
-}
-
-interface SerializedTrack {
-  id: number;
-  kind: number;
-  name: string;
-}
-
-interface SerializedClip {
-  id: number;
-  track_id: number;
-  start_ppq: number;
-  length_ppq: number;
-  source_offset_ppq?: number;
-  gain?: number;
-  loop_mode?: number;
-  loop_length_ppq?: number;
-}
-
-interface SerializedMarker {
-  ppq: number;
-  name: string;
-  kind?: number;
-  key_fifths?: number;
-  key_minor?: boolean;
-}
-
-interface SerializedProjectDoc {
-  tempo_segments?: SerializedTempoSegment[];
-  time_signatures?: SerializedTimeSignature[];
-  tracks?: SerializedTrack[];
-  clips?: SerializedClip[];
-  markers?: SerializedMarker[];
-  midi_content?: Record<string, unknown>;
-}
-
 interface ProgramEntry {
   ppq: number;
   channel: number;
@@ -457,7 +414,7 @@ export function inspectSmfSysEx(bytes: Uint8Array): { packets: number; payloadBy
 }
 
 function eventWord(event: SerializedMidiEvent): number {
-  return event.data0 >>> 0;
+  return event.word0 >>> 0;
 }
 
 function statusNibble(event: SerializedMidiEvent): number {
@@ -494,33 +451,22 @@ function displayClipLength(lengthPpq: number): number {
 
 /** Maps a GM program, channel and bank to the closest built-in synth preset. */
 export function presetForGmProgram(program: number, ch: number, bank?: number): string {
-  if (ch === GM_PERCUSSION_CHANNEL || isGm2DrumBank(bank)) return 'drum-kit';
-  if (program === 4 || program === 5) return 'e-piano';
-  if (program < 8) return 'acoustic-piano';
-  if (program < 16) return 'e-piano';
+  if (ch === GM_PERCUSSION_CHANNEL || isGm2DrumBank(bank)) return 'drumKit';
+  if (program === 4 || program === 5) return 'ePiano';
+  if (program < 8) return 'acousticPiano';
+  if (program < 16) return 'ePiano';
   if (program < 24) return 'organ';
-  if (program < 32) return 'electric-guitar';
-  if (program < 40) return 'sub-bass';
-  if (program < 56) return 'warm-pad';
+  if (program < 32) return 'electricGuitar';
+  if (program < 40) return 'subBass';
+  if (program < 56) return 'warmPad';
   if (program < 64) return 'brass';
   if (program < 80) return 'organ';
-  if (program === 80) return 'square-lead';
-  if (program < 88) return 'saw-lead';
-  if (program < 96) return 'warm-pad';
+  if (program === 80) return 'squareLead';
+  if (program < 88) return 'sawLead';
+  if (program < 96) return 'warmPad';
   if (program < 112) return 'pluck';
-  if (program < GM_SOUND_EFFECTS_PROGRAM) return 'drum-kit';
+  if (program < GM_SOUND_EFFECTS_PROGRAM) return 'drumKit';
   return 'sine';
-}
-
-function extractEvents(raw: unknown): SerializedMidiEvent[] {
-  return (Array.isArray(raw) ? raw : [])
-    .map((event) => event as Partial<SerializedMidiEvent>)
-    .filter(
-      (event): event is SerializedMidiEvent =>
-        typeof event.ppq === 'number' &&
-        typeof event.data0 === 'number' &&
-        typeof event.data1 === 'number',
-    );
 }
 
 function programsFromEvents(events: ReadonlyArray<SerializedMidiEvent>): ProgramEntry[] {
@@ -679,37 +625,36 @@ function sortedLanes<T extends { points: Array<{ ppq: number }> }>(lanes: Iterab
   }));
 }
 
-function markerName(marker: SerializedMarker): string {
-  if (marker.kind === MARKER_KIND_TEXT) return `Text: ${marker.name}`;
-  if (marker.kind === MARKER_KIND_LYRIC) return `Lyric: ${marker.name}`;
-  if (marker.kind === MARKER_KIND_CUE_POINT) return `Cue: ${marker.name}`;
-  if (marker.kind === MARKER_KIND_KEY_SIGNATURE) {
-    return keyMarkerName(marker.key_fifths ?? 0, marker.key_minor === true);
-  }
-  return marker.name;
+function markerName(marker: ProjectMarker): string {
+  const name = marker.name ?? '';
+  if (marker.kind === 'text') return `Text: ${name}`;
+  if (marker.kind === 'lyric') return `Lyric: ${name}`;
+  if (marker.kind === 'cuePoint') return `Cue: ${name}`;
+  if (marker.kind === 'keySignature') return keyMarkerName(marker.keyFifths, marker.keyMinor);
+  return name;
 }
 
 function markerKind(marker: DocumentMarker): {
-  kind: number;
+  kind: ProjectMarkerKind;
   name: string;
   keyFifths?: number;
   keyMinor?: boolean;
 } {
   const name = marker.name.trim();
-  if (name.startsWith('Text: ')) return { kind: MARKER_KIND_TEXT, name: name.slice(6) };
-  if (name.startsWith('Lyric: ')) return { kind: MARKER_KIND_LYRIC, name: name.slice(7) };
-  if (name.startsWith('Cue: ')) return { kind: MARKER_KIND_CUE_POINT, name: name.slice(5) };
+  if (name.startsWith('Text: ')) return { kind: 'text', name: name.slice(6) };
+  if (name.startsWith('Lyric: ')) return { kind: 'lyric', name: name.slice(7) };
+  if (name.startsWith('Cue: ')) return { kind: 'cuePoint', name: name.slice(5) };
   if (name.startsWith('Key: ')) {
     const key = keySignatureFromName(name.slice(5));
     if (key)
       return {
-        kind: MARKER_KIND_KEY_SIGNATURE,
+        kind: 'keySignature',
         name: name.slice(5),
         keyFifths: key.fifths,
         keyMinor: key.minor,
       };
   }
-  return { kind: 0, name };
+  return { kind: 'marker', name };
 }
 
 function clipFromEvents(
@@ -780,8 +725,8 @@ function clipFromEvents(
 }
 
 function trackDocument(
-  track: SerializedTrack,
-  clip: SerializedClip,
+  track: ProjectTrack,
+  clip: ProjectClip,
   events: SerializedMidiEvent[],
   index: number,
   nameSuffix = '',
@@ -824,13 +769,13 @@ function trackDocument(
     volume: 1,
     pan: 0,
     ...instrument,
-    clips: [clipFromEvents(track.name || 'MIDI Clip', clip.length_ppq, events)],
+    clips: [clipFromEvents(track.name || 'MIDI Clip', clip.lengthPpq, events)],
   };
 }
 
 function splitTrackByChannelAndProgram(
-  track: SerializedTrack,
-  clip: SerializedClip,
+  track: ProjectTrack,
+  clip: ProjectClip,
   events: SerializedMidiEvent[],
   index: number,
 ): DocumentTrack[] {
@@ -862,18 +807,18 @@ function splitTrackByChannelAndProgram(
     });
 }
 
-function documentFromProjectJson(
-  json: string,
+function documentFromProject(
+  project: Project,
   fileName?: string,
   sysEx: ReadonlyArray<SmfSysExPacket> = [],
 ): ProjectDocument {
-  const parsed = JSON.parse(json) as SerializedProjectDoc;
-  const tracksById = new Map((parsed.tracks ?? []).map((track) => [track.id, track]));
+  const tracksById = new Map(project.tracks().map((track) => [track.id, track]));
+  const midiContent = projectMidiContent(project);
   const tracks: DocumentTrack[] = [];
-  for (const clip of parsed.clips ?? []) {
-    const track = tracksById.get(clip.track_id);
-    if (track?.kind !== 1) continue;
-    const events = extractEvents(parsed.midi_content?.[String(clip.id)]);
+  for (const clip of project.clips()) {
+    const track = tracksById.get(clip.trackId);
+    if (track?.kind !== 'midi') continue;
+    const events = [...(midiContent[String(clip.id)] ?? [])];
     // A valid SMF can split into one derived track per channel/bank/program
     // group. Append iteratively rather than expanding an unbounded list as
     // call arguments, which has a much smaller engine-specific limit than the
@@ -922,22 +867,21 @@ function documentFromProjectJson(
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: projectNameFromFileName(fileName),
     sampleRate: DEFAULT_SAMPLE_RATE,
-    tempoSegments: parsed.tempo_segments?.map((segment) => ({
-      startPpq: segment.start_ppq,
+    tempoSegments: project.tempoSegments().map((segment) => ({
+      startPpq: segment.startPpq,
       bpm: segment.bpm,
-      ...(segment.end_bpm !== undefined && segment.end_bpm > 0 ? { endBpm: segment.end_bpm } : {}),
-    })) ?? [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }],
-    timeSignatures:
-      parsed.time_signatures?.map((signature) => ({
-        startPpq: signature.start_ppq,
-        numerator: signature.numerator,
-        denominator: signature.denominator,
-      })) ?? [],
+      ...(segment.endBpm !== undefined && segment.endBpm > 0 ? { endBpm: segment.endBpm } : {}),
+    })),
+    timeSignatures: project.timeSignatures().map((signature) => ({
+      startPpq: signature.startPpq,
+      numerator: signature.numerator,
+      denominator: signature.denominator,
+    })),
     tracks: documentTracks,
-    markers:
-      parsed.markers
-        ?.map((marker) => ({ ppq: marker.ppq, name: markerName(marker) }))
-        .sort((a, b) => a.ppq - b.ppq || a.name.localeCompare(b.name)) ?? [],
+    markers: project
+      .markers()
+      .map((marker) => ({ ppq: marker.ppq, name: markerName(marker) }))
+      .sort((a, b) => a.ppq - b.ppq || a.name.localeCompare(b.name)),
     sections: [],
   };
 }
@@ -1001,7 +945,15 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
       expandExpressionPoints(lane.points, expressionLength, 127),
     )) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      events.push(wasm.Project.midiCc(ppq, 0, channel, controller, clampInt(point.value, 0, 127)));
+      events.push(
+        wasm.midiCc({
+          ppq,
+          group: 0,
+          channel,
+          controller,
+          value: clampInt(point.value, 0, 127),
+        }),
+      );
     }
   }
   for (const lane of clip.pitchBendLanes ?? []) {
@@ -1011,7 +963,12 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
     )) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(
-        wasm.Project.midiPitchBend(ppq, 0, channel, clampInt(point.value, 0, MIDI_PITCH_BEND_MAX)),
+        wasm.midiPitchBend({
+          ppq,
+          group: 0,
+          channel,
+          bend: clampInt(point.value, 0, MIDI_PITCH_BEND_MAX),
+        }),
       );
     }
   }
@@ -1019,7 +976,9 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
     const channel = clampInt(lane.channel, 0, 15);
     for (const point of repeatExpression(lane.points)) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      events.push(wasm.Project.midiProgram(ppq, 0, channel, clampInt(point.program, 0, 127)));
+      events.push(
+        wasm.midiProgram({ ppq, group: 0, channel, program: clampInt(point.program, 0, 127) }),
+      );
     }
   }
   for (const lane of clip.channelPressureLanes ?? []) {
@@ -1028,7 +987,14 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
       expandExpressionPoints(lane.points, expressionLength, 127),
     )) {
       const ppq = finiteNonNegative(point.ppq, -1);
-      events.push(wasm.Project.midiChannelPressure(ppq, 0, channel, clampInt(point.value, 0, 127)));
+      events.push(
+        wasm.midiChannelPressure({
+          ppq,
+          group: 0,
+          channel,
+          pressure: clampInt(point.value, 0, 127),
+        }),
+      );
     }
   }
   for (const lane of clip.polyPressureLanes ?? []) {
@@ -1039,7 +1005,13 @@ function clipEvents(clip: DocumentClip, wasm: WasmModule): ProjectMidiEvent[] {
     )) {
       const ppq = finiteNonNegative(point.ppq, -1);
       events.push(
-        wasm.Project.midiPolyPressure(ppq, 0, channel, pitch, clampInt(point.value, 0, 127)),
+        wasm.midiPolyPressure({
+          ppq,
+          group: 0,
+          channel,
+          note: pitch,
+          pressure: clampInt(point.value, 0, 127),
+        }),
       );
     }
   }
@@ -1247,10 +1219,26 @@ function trackSetup(
   if (staticVolume !== 1 || staticPan !== 0) {
     for (const ch of channels) {
       if (staticPan !== 0) {
-        prelude.push([wasm.Project.midiCc(0, 0, ch, 10, clampInt((staticPan + 1) * 63.5, 0, 127))]);
+        prelude.push([
+          wasm.midiCc({
+            ppq: 0,
+            group: 0,
+            channel: ch,
+            controller: 10,
+            value: clampInt((staticPan + 1) * 63.5, 0, 127),
+          }),
+        ]);
       }
       if (staticVolume !== 1) {
-        prelude.push([wasm.Project.midiCc(0, 0, ch, 7, gmVolumeCc(staticVolume))]);
+        prelude.push([
+          wasm.midiCc({
+            ppq: 0,
+            group: 0,
+            channel: ch,
+            controller: 7,
+            value: gmVolumeCc(staticVolume),
+          }),
+        ]);
       }
     }
   }
@@ -1266,12 +1254,26 @@ function trackSetup(
     for (const ch of channels) {
       if (importedBank !== undefined) {
         prelude.push(
-          wasm.Project.midiBankProgram(0, 0, ch, importedBank >> 7, importedBank & 0x7f, program),
+          wasm.midiBankProgram({
+            ppq: 0,
+            group: 0,
+            channel: ch,
+            program,
+            bank: { msb: importedBank >> 7, lsb: importedBank & 0x7f },
+          }),
         );
-      } else if (preset === 'drum-kit') {
-        prelude.push(wasm.Project.midiBankProgram(0, 0, ch, GM2_DRUM_BANK_MSB, 0, program));
+      } else if (preset === 'drumKit') {
+        prelude.push(
+          wasm.midiBankProgram({
+            ppq: 0,
+            group: 0,
+            channel: ch,
+            program,
+            bank: { msb: GM2_DRUM_BANK_MSB, lsb: 0 },
+          }),
+        );
       } else {
-        prelude.push([wasm.Project.midiProgram(0, 0, ch, program)]);
+        prelude.push([wasm.midiProgram({ ppq: 0, group: 0, channel: ch, program })]);
       }
     }
   } else if (instrument?.kind === 'sf2') {
@@ -1280,10 +1282,18 @@ function trackSetup(
       if (!selection) continue;
       const program = clampInt(selection.program ?? 0, 0, 127);
       if (selection.bank === undefined) {
-        prelude.push([wasm.Project.midiProgram(0, 0, ch, program)]);
+        prelude.push([wasm.midiProgram({ ppq: 0, group: 0, channel: ch, program })]);
       } else {
         const bank = clampInt(selection.bank, 0, 16383);
-        prelude.push(wasm.Project.midiBankProgram(0, 0, ch, bank >> 7, bank & 0x7f, program));
+        prelude.push(
+          wasm.midiBankProgram({
+            ppq: 0,
+            group: 0,
+            channel: ch,
+            program,
+            bank: { msb: bank >> 7, lsb: bank & 0x7f },
+          }),
+        );
       }
     }
   }
@@ -1320,13 +1330,12 @@ async function projectFromDocument(
   }
   for (const marker of doc.markers) {
     const meta = markerKind(marker);
-    project.setMarkerEx({
-      id: 0,
+    project.setMarker({
       ppq: finiteNonNegative(marker.ppq),
-      name: meta.name,
+      ...(meta.name !== '' ? { name: meta.name } : {}),
       kind: meta.kind,
-      keyFifths: meta.keyFifths,
-      keyMinor: meta.keyMinor,
+      ...(meta.keyFifths !== undefined ? { keyFifths: meta.keyFifths } : {}),
+      ...(meta.keyMinor !== undefined ? { keyMinor: meta.keyMinor } : {}),
     });
   }
   // SMF has no native section-range construct. Preserve each section's cue at
@@ -1334,11 +1343,10 @@ async function projectFromDocument(
   // the arrangement landmarks.
   for (const section of doc.sections) {
     if (!section.name.trim()) continue;
-    project.setMarkerEx({
-      id: 0,
+    project.setMarker({
       ppq: finiteNonNegative(section.startPpq),
       name: section.name,
-      kind: MARKER_KIND_CUE_POINT,
+      kind: 'cuePoint',
     });
   }
   tallyFields(loss, SMF_DOCUMENT_FIELDS, doc, undefined);
@@ -1405,9 +1413,9 @@ export async function smfToProjectDocument(
   const project = new wasm.Project();
   try {
     project.importSmf(smfBytes);
-    return documentFromProjectJson(project.toJson(), fileName, sysEx);
+    return documentFromProject(project, fileName, sysEx);
   } finally {
-    project.delete();
+    project.destroy();
   }
 }
 
@@ -1523,7 +1531,7 @@ export async function projectDocumentToSmfWithLoss(
     const nativeSmf = new Uint8Array(project.exportSmf());
     return { bytes: appendDocumentSysEx(nativeSmf, doc), loss: loss.report() };
   } finally {
-    project.delete();
+    project.destroy();
   }
 }
 

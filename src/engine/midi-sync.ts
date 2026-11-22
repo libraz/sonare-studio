@@ -52,7 +52,7 @@ import {
 } from '@/project/instrument';
 import type { MediaCompletenessIssue } from '@/project/media-completeness';
 import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
-import { midiFxConfigJson } from '@/project/midi-fx';
+import { midiFxConfig } from '@/project/midi-fx';
 import {
   audibleMidiProjector,
   MAX_LOOP_OCCURRENCES,
@@ -732,7 +732,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         const preset = resolvePreset(instrument.preset);
         handle.engine.setSynthInstrument(
           destinationId,
-          instrument.useGmPrograms === true ? { preset, useGmPrograms: true } : preset,
+          instrument.useGmPrograms === true ? { preset, useGmPrograms: true } : { preset },
         );
         return false;
       } else if (instrument.kind === 'synth-patch') {
@@ -745,7 +745,9 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         handle.engine.setSf2Instrument(destinationId, sf2PlaybackConfig(instrument));
         return true;
       } else if (instrument.kind === 'sf2') {
-        handle.engine.setSynthInstrument(destinationId, resolvePreset(DEFAULT_SYNTH_PRESET));
+        handle.engine.setSynthInstrument(destinationId, {
+          preset: resolvePreset(DEFAULT_SYNTH_PRESET),
+        });
         return false;
       }
       return false;
@@ -765,7 +767,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
           destinationId,
           instrument.kind === 'synth-preset' && instrument.useGmPrograms === true
             ? { preset: fallbackPreset, useGmPrograms: true }
-            : fallbackPreset,
+            : { preset: fallbackPreset },
         );
         console.warn(
           `MIDI sync: ${instrumentDedupeKey(instrument)} failed to bind on track ${track.id} (${
@@ -900,12 +902,13 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
     for (const track of tracks) {
       if (track.kind !== 'midi' || track.frozen !== undefined) continue;
       const destinationId = destinationByTrack.get(track.id) ?? track.id;
-      const midiFxKey = track.midiFx !== undefined ? (midiFxConfigJson(track.midiFx) ?? '') : '';
+      const fxConfig = track.midiFx !== undefined ? midiFxConfig(track.midiFx) : null;
+      const midiFxKey = fxConfig !== null ? JSON.stringify(fxConfig) : '';
       if (lastMidiFxKeyByDestination.get(destinationId) === midiFxKey) continue;
-      if (midiFxKey === '') {
+      if (fxConfig === null) {
         handle.engine.clearMidiFx(destinationId);
       } else {
-        handle.engine.setMidiFx(destinationId, midiFxKey);
+        handle.engine.setMidiFx(destinationId, fxConfig);
       }
       lastMidiFxKeyByDestination.set(destinationId, midiFxKey);
     }
@@ -950,7 +953,7 @@ export function createMidiSync(handle: EngineHandle, options: MidiSyncOptions = 
         lastStateSource.tempoSegments,
         handle.ctx.sampleRate,
         ppq,
-        (destinationId, word0) => handle.engine.pushMidiUmp(destinationId, word0, renderFrame),
+        (destinationId, word0) => handle.engine.pushMidiUmp(destinationId, [word0], renderFrame),
         destinationIds,
       );
     },

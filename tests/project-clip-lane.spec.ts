@@ -39,8 +39,8 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 interface FakeDoc {
-  clips: Array<{ id: number; track_id: number; warp_ref_id?: number }>;
-  warp_maps?: Array<{ id: number }>;
+  clips: Array<{ id: number; trackId: number; warpRefId?: number }>;
+  warpMaps?: Array<{ id: number }>;
 }
 
 function readDoc(): FakeDoc {
@@ -262,7 +262,7 @@ describe('clip lane placement', () => {
 
     it('layers a MIDI take over an existing clip when the project allows overlap', () => {
       midi(0, 12);
-      getProject().setOverlapPolicy(1);
+      getProject().setOverlapPolicy('allow');
       clearHistory();
 
       addRecordedMidiClip({ trackId, startPpq: 4, lengthPpq: 4, notes: [] });
@@ -275,7 +275,7 @@ describe('clip lane placement', () => {
 
     it('clears the range for a MIDI overwrite recording even when the project allows overlap', () => {
       midi(0, 12);
-      getProject().setOverlapPolicy(1);
+      getProject().setOverlapPolicy('allow');
       clearHistory();
 
       overwriteRecordedMidiClip({ trackId, startPpq: 4, lengthPpq: 4, notes: [] });
@@ -428,10 +428,10 @@ describe('clip lane placement', () => {
       duplicateTime(2, 6);
 
       const doc = readDoc();
-      const onTrack = doc.clips.filter((clip) => clip.track_id === audioTrack);
+      const onTrack = doc.clips.filter((clip) => clip.trackId === audioTrack);
       expect(onTrack.length).toBeGreaterThanOrEqual(3);
-      for (const clip of onTrack) expect(clip.warp_ref_id).toBe(clip.id);
-      expect(doc.clips.find((clip) => clip.id === id)?.warp_ref_id).toBe(id);
+      for (const clip of onTrack) expect(clip.warpRefId).toBe(clip.id);
+      expect(doc.clips.find((clip) => clip.id === id)?.warpRefId).toBe(id);
       expect(lane(audioTrack)).toEqual([
         [0, 6],
         [6, 10],
@@ -443,8 +443,8 @@ describe('clip lane placement', () => {
       const { id, audioTrack } = await warped(0, 8, 'warp-b');
       const copy = duplicateClip(id, 16);
       const doc = readDoc();
-      expect(doc.clips.find((clip) => clip.id === copy)?.warp_ref_id).toBe(copy);
-      expect(doc.clips.find((clip) => clip.id === id)?.warp_ref_id).toBe(id);
+      expect(doc.clips.find((clip) => clip.id === copy)?.warpRefId).toBe(copy);
+      expect(doc.clips.find((clip) => clip.id === id)?.warpRefId).toBe(id);
       expect(lane(audioTrack)).toEqual([
         [0, 8],
         [16, 24],
@@ -463,7 +463,7 @@ describe('clip lane placement', () => {
       crossfadeClips(left, right, { lengthPpq: 1, leftSourceEndPpq: 8 });
 
       expect(store.clips.find((clip) => clip.id === left)).toMatchObject({ lengthPpq: 5 });
-      expect(readDoc().clips.find((clip) => clip.id === left)?.warp_ref_id).toBe(left);
+      expect(readDoc().clips.find((clip) => clip.id === left)?.warpRefId).toBe(left);
     });
   });
 });

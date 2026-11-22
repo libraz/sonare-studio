@@ -27,7 +27,7 @@ vi.mock('@/lib/wasm', () => ({
       toJson(): string {
         return wasmState.json;
       }
-      delete(): void {
+      destroy(): void {
         wasmState.deleted++;
       }
     },
@@ -436,33 +436,34 @@ describe('canonicalizeChordSymbols', () => {
     { ppq: 4, endPpq: 8, text: 'G7/B', rootPc: 7, quality: 4, bassPc: 11 },
   ];
 
-  it('writes the shifted project encoding and reads back audio-domain ordinals', async () => {
+  it('writes the core family encoding and reads back editor ordinals', async () => {
     wasmState.json = JSON.stringify({
       annotation: {
         chords: [
           {
-            start_ppq: 0,
-            end_ppq: 4,
-            root_pc: 0,
+            startPpq: 0,
+            endPpq: 4,
+            rootPc: 0,
             quality: 1,
-            slash_bass_pc: 255,
-            roman_numeral: '',
+            slashBassPc: 255,
+            romanNumeral: '',
           },
           {
-            start_ppq: 4,
-            end_ppq: 8,
-            root_pc: 7,
+            startPpq: 4,
+            endPpq: 8,
+            rootPc: 7,
             quality: 5,
-            slash_bass_pc: 11,
-            roman_numeral: '',
+            slashBassPc: 11,
+            romanNumeral: '',
+            extensions: [7],
           },
         ],
       },
     });
     const symbols = await canonicalizeChordSymbols(estimated);
     expect(wasmState.annotated).toEqual([
-      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 1, slashBassPc: 255 },
-      { startPpq: 4, endPpq: 8, rootPc: 7, quality: 5, slashBassPc: 11 },
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 'major' },
+      { startPpq: 4, endPpq: 8, rootPc: 7, quality: 'dominant', slashBassPc: 11, extensions: [7] },
     ]);
     expect(symbols).toEqual([
       { ppq: 0, text: 'C', rootPc: 0, quality: 0 },
@@ -479,13 +480,13 @@ describe('canonicalizeChordSymbols', () => {
       annotation: {
         chords: [
           {
-            start_ppq: 0,
-            end_ppq: 4,
-            root_pc: 0,
+            startPpq: 0,
+            endPpq: 4,
+            rootPc: 0,
             quality: 5,
-            slash_bass_pc: 255,
-            roman_numeral: '',
-            extensions: [2, 9],
+            slashBassPc: 255,
+            romanNumeral: '',
+            extensions: [7, 9, 13],
           },
         ],
       },
@@ -495,7 +496,7 @@ describe('canonicalizeChordSymbols', () => {
       { ppq: 0, text: 'C13', rootPc: 0, quality: 4, extensions: [2, 9] },
     ]);
     expect(wasmState.annotated).toEqual([
-      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 5, slashBassPc: 255, extensions: [2, 9] },
+      { startPpq: 0, endPpq: 4, rootPc: 0, quality: 'dominant', extensions: [7, 9, 13] },
     ]);
   });
 
@@ -504,12 +505,12 @@ describe('canonicalizeChordSymbols', () => {
       annotation: {
         chords: [
           {
-            start_ppq: 0,
-            end_ppq: 4,
-            root_pc: 255,
+            startPpq: 0,
+            endPpq: 4,
+            rootPc: 255,
             quality: 0,
-            slash_bass_pc: 255,
-            roman_numeral: '',
+            slashBassPc: 255,
+            romanNumeral: '',
           },
         ],
       },

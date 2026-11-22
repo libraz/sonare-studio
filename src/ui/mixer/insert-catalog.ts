@@ -25,23 +25,19 @@
 import { getWasmModule } from '@/project/store';
 import type { SoloProcessor } from '@/wasm/index.js';
 
-/** Processor classification from the wasm catalog (subset used by the popover). */
-export type InsertProcessorKind = 'realtime' | 'offline' | 'pair';
+type CoreCatalog = Pick<
+  typeof import('@/wasm/index.js'),
+  'masteringProcessorCatalog' | 'masteringProcessorNames' | 'masteringInsertNames'
+>;
 
-/** One entry of the structured wasm processor catalog (the fields we consume). */
-interface WasmCatalogEntry {
-  id: string;
-  kind: InsertProcessorKind;
-  realtimeInsertable: boolean;
-  stereoOnly: boolean;
-}
+/** One entry of the structured wasm processor catalog. */
+type WasmCatalogEntry = ReturnType<CoreCatalog['masteringProcessorCatalog']>[number];
 
-/** The wasm functions used by this module (kept loose for older builds/tests). */
-interface WasmModule {
-  masteringProcessorCatalog?: () => WasmCatalogEntry[];
-  masteringProcessorNames?: () => string[];
-  masteringInsertNames?: () => string[];
-}
+/** Processor classification from the wasm catalog. */
+export type InsertProcessorKind = WasmCatalogEntry['kind'];
+
+/** The wasm functions used by this module; test modules may provide a subset. */
+type WasmModule = Partial<CoreCatalog>;
 
 /**
  * Where an insert catalog will be used:

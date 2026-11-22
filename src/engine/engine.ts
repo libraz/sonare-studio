@@ -31,7 +31,7 @@ export interface CreateEngineOptions {
   /** Transport mode; 'auto' degrades to postMessage when SharedArrayBuffer is unavailable. */
   mode?: 'auto' | 'sab' | 'postMessage';
   /** Output channel count (default 2). */
-  channelCount?: number;
+  numChannels?: number;
   /**
    * Scope telemetry (per-target spectrum + goniometer) interval in frames.
    * 0 disables scope telemetry. Defaults to {@link DEFAULT_SCOPE_INTERVAL_FRAMES}.
@@ -352,7 +352,7 @@ export async function createEngine(options: CreateEngineOptions = {}): Promise<E
     engine = await SonareEngine.create(ctx, {
       moduleUrl: WORKLET_MODULE_URL,
       mode: options.mode ?? 'auto',
-      channelCount: options.channelCount ?? 2,
+      numChannels: options.numChannels ?? 2,
       scopeIntervalFrames: options.scopeIntervalFrames ?? DEFAULT_SCOPE_INTERVAL_FRAMES,
       scopeBands: options.scopeBands ?? DEFAULT_SCOPE_BANDS,
       nodeFactory: (context, processorName, nodeOptions) => {

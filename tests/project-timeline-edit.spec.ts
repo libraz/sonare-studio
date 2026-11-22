@@ -119,7 +119,7 @@ describe('timeline metadata transforms', () => {
         enabled: true,
         points: [
           { ppq: 0, value: -6 },
-          { ppq: 3, value: -3, curve: 's-curve' as const },
+          { ppq: 3, value: -3, curve: 'sCurve' as const },
           { ppq: 5, value: 0 },
           { ppq: 8, value: -9 },
         ],
@@ -133,8 +133,8 @@ describe('timeline metadata transforms', () => {
     ]);
     expect(deleteAutomationLanes(lanes, 4, 7)[0].points).toEqual([
       { ppq: 0, value: -6 },
-      { ppq: 3, value: -3, curve: 's-curve' },
-      { ppq: 4, value: -3, curve: 's-curve' },
+      { ppq: 3, value: -3, curve: 'sCurve' },
+      { ppq: 4, value: -3, curve: 'sCurve' },
       { ppq: 5, value: -9 },
     ]);
   });

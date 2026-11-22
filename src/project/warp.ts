@@ -9,6 +9,7 @@
 
 import { ensureWasm } from '@/lib/wasm';
 import type { Project, ProjectWarpMapDesc } from '@/wasm/index.js';
+import { nativeClipWarps, readNativeDocument } from './native-document';
 import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
 
@@ -160,17 +161,12 @@ export function installProjectClipWarp(
   tempo: NormalizedTempoMap,
   edit: ProjectWarpEdit = directProjectWarpEdit,
 ): boolean {
-  const nativeMap = projectWarpMapDesc(clip, tempo, project.getSampleRate());
+  const nativeMap = projectWarpMapDesc(clip, tempo, project.sampleRate);
   if (nativeMap === null) return false;
   edit(() => project.setWarpMap(nativeMap));
   edit(() => project.setClipWarpRef(clip.id, nativeMap.id));
-  edit(() => project.setClipWarpMode(clip.id, clip.warp?.enabled ? 'tempo-sync' : 'off'));
+  edit(() => project.setClipWarpMode(clip.id, clip.warp?.enabled ? 'tempoSync' : 'off'));
   return true;
-}
-
-interface SerializedNativeWarpState {
-  clips?: Array<{ id?: number; warp_ref_id?: number; warp_mode?: number }>;
-  warp_maps?: Array<{ id?: number }>;
 }
 
 function readProjectClipWarpState(
@@ -181,12 +177,12 @@ function readProjectClipWarpState(
   refId: number;
   hasMap: boolean;
 } {
-  const state = JSON.parse(project.toJson()) as SerializedNativeWarpState;
+  const state = readNativeDocument(project);
   const clip = state.clips?.find((entry) => entry.id === clipId);
   return {
-    hasMode: (clip?.warp_mode ?? 0) !== 0,
-    refId: clip?.warp_ref_id ?? 0,
-    hasMap: state.warp_maps?.some((map) => map.id === clipId) === true,
+    hasMode: nativeClipWarps(clip),
+    refId: clip?.warpRefId ?? 0,
+    hasMap: state.warpMaps?.some((map) => map.id === clipId) === true,
   };
 }
 
@@ -378,7 +374,7 @@ export const renderWarpedClipSource: WarpRenderFn = async (source, sampleRate) =
   const rendered: Float32Array[] = [];
   for (let first = 0; first < source.channels.length; first += 2) {
     const pair = source.channels.slice(first, first + 2).map((channel) => channel.slice());
-    const engine = new wasm.RealtimeEngine(sampleRate, 512);
+    const engine = new wasm.RealtimeEngine({ sampleRate, maxBlockSize: 512 });
     try {
       engine.setTrackLanes([{ trackId: 1 }]);
       engine.setClips([
@@ -388,16 +384,15 @@ export const renderWarpedClipSource: WarpRenderFn = async (source, sampleRate) =
           startPpq: 0,
           lengthSamples: source.lengthFrames,
           channels: pair,
-          warpMode: 'time-stretch',
+          warpMode: 'timeStretch',
           warpAnchors: source.anchors,
         },
       ]);
       engine.settleParameters();
       engine.play(0);
-      const out = engine.renderOffline([
-        new Float32Array(source.lengthFrames),
-        new Float32Array(source.lengthFrames),
-      ]);
+      const out = engine.renderOffline({
+        channels: [new Float32Array(source.lengthFrames), new Float32Array(source.lengthFrames)],
+      });
       rendered.push(...out.slice(0, pair.length));
     } finally {
       engine.destroy();

@@ -89,7 +89,7 @@ describe('regenerateDrumsRangeCommand', () => {
   it('rejects looped clips without changing native or mirror state', async () => {
     const { track, clip } = await makeDrums();
     const project = getProject();
-    project.setClipLoop(clip.id, 'loop', 4);
+    project.setClipLoop(clip.id, { loopMode: 'loop', loopLengthPpq: 4 });
     store.refresh();
     clearHistory();
     const beforeJson = project.toJson();

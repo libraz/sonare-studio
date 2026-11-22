@@ -176,9 +176,9 @@ describe('TransportBar recording settings', () => {
     const wrapper = mountBar({ recording });
 
     const selects = wrapper.findAllComponents(SelectMenu);
-    selects[5].vm.$emit('change', 'bright-idol');
+    selects[5].vm.$emit('change', 'brightIdol');
 
-    expect(recording.setVoiceChangerPreset).toHaveBeenCalledWith('bright-idol');
+    expect(recording.setVoiceChangerPreset).toHaveBeenCalledWith('brightIdol');
   });
 
   it('applies a custom realtime voice changer JSON preset', async () => {

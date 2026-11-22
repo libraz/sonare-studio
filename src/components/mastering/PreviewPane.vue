@@ -7,8 +7,8 @@ import { clamp01 } from '@/lib/math';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { formatLevel, type LoudnessRow } from '@/ui/mastering/loudness';
-import type { MonoCompatibilityReport } from '@/ui/mastering/stereo-analysis';
-import type { StreamingPlatformConfig, StreamingTarget } from '@/ui/mastering/streaming';
+import type { StreamingTarget } from '@/ui/mastering/streaming';
+import type { StereoMonoCompatCheckResult, StreamingPlatform } from '@/wasm/index.js';
 
 /**
  * Preview pane: the render controls (render / cancel), the A/B comparison
@@ -50,7 +50,7 @@ const props = defineProps<{
   /** True while a streaming-target check is in flight. */
   checkingTargets: boolean;
   /** Editable platform target configs passed to libsonare. */
-  streamingPlatforms: ReadonlyArray<StreamingPlatformConfig>;
+  streamingPlatforms: ReadonlyArray<StreamingPlatform>;
   /** Loudness readout rows (A/B per metric). */
   loudnessRows: ReadonlyArray<LoudnessRow>;
   /** True when the processed render risks clipping the ceiling. */
@@ -60,7 +60,7 @@ const props = defineProps<{
   /** Why the preset missed its loudness target; empty when it reached it. */
   targetLimited: string;
   /** Processed-render mono compatibility analysis, or null until unavailable/not measured. */
-  monoCompatibility: MonoCompatibilityReport | null;
+  monoCompatibility: StereoMonoCompatCheckResult | null;
   /** Per-platform streaming targets, or null until checked. */
   streamingTargets: ReadonlyArray<StreamingTarget> | null;
 }>();
@@ -77,7 +77,7 @@ const emit = defineEmits<{
   (
     event: 'update-streaming-platform',
     index: number,
-    field: keyof StreamingPlatformConfig,
+    field: keyof StreamingPlatform,
     value: string,
   ): void;
 }>();
@@ -273,12 +273,12 @@ function formatAttenuation(value: number): string {
             type="number"
             step="0.1"
             :aria-label="t.shell.mastering.streaming.ceiling"
-            :value="platform.ceilingDb"
+            :value="platform.ceilingDbtp"
             @input="
               emit(
                 'update-streaming-platform',
                 index,
-                'ceilingDb',
+                'ceilingDbtp',
                 ($event.target as HTMLInputElement).value,
               )
             "
@@ -314,14 +314,14 @@ function formatAttenuation(value: number): string {
     <section
       v-if="monoCompatibility"
       class="mono-compat view-enter"
-      :class="{ risk: !monoCompatibility.compatible }"
+      :class="{ risk: !monoCompatibility.likelyMonoCompatible }"
       :aria-label="t.shell.mastering.monoCompatibility.title"
     >
       <div class="mono-head">
         <span class="mono-title">{{ t.shell.mastering.monoCompatibility.title }}</span>
         <span class="mono-status">
           {{
-            monoCompatibility.compatible
+            monoCompatibility.likelyMonoCompatible
               ? t.shell.mastering.monoCompatibility.pass
               : t.shell.mastering.monoCompatibility.warn
           }}
@@ -334,11 +334,11 @@ function formatAttenuation(value: number): string {
         </div>
         <div>
           <dt>{{ t.shell.mastering.monoCompatibility.width }}</dt>
-          <dd>{{ monoCompatibility.width.toFixed(2) }}</dd>
+          <dd>{{ formatLevel(monoCompatibility.width, 2) }}</dd>
         </div>
         <div>
           <dt>{{ t.shell.mastering.monoCompatibility.monoPeak }}</dt>
-          <dd>{{ formatLevel(monoCompatibility.monoPeakDb) }} dBFS</dd>
+          <dd>{{ formatLevel(monoCompatibility.monoPeak) }} dBFS</dd>
         </div>
       </dl>
     </section>

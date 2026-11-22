@@ -81,6 +81,18 @@ function makeHandle(sampleRate = 10): {
   return { handle, addClip, removeClip };
 }
 
+/** The recorded `engine.addClip(trackId, request)` calls as `[trackId, channels, startPpq, rest]`. */
+function clipCalls(
+  addClip: ReturnType<typeof vi.fn>,
+): Array<[number, Float32Array[], number, object]> {
+  return addClip.mock.calls.map(([trackId, { channels, startPpq, ...rest }]) => [
+    trackId,
+    channels,
+    startPpq,
+    rest,
+  ]);
+}
+
 describe('audio scheduling helpers', () => {
   it('ppqSpanToSeconds converts a span at a constant tempo', () => {
     expect(ppqSpanToSeconds(2, 120)).toBe(1);
@@ -178,7 +190,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(scheduled).toEqual([{ engineClipId: 500, clipId: 10, trackId: 1 }]);
     expect(loadAudioAsset).toHaveBeenCalledWith('asset-x');
     expect(addClip).toHaveBeenCalledTimes(1);
-    const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
+    const [trackId, channels, startPpq, opts] = clipCalls(addClip)[0];
     expect(trackId).toBe(1);
     expect(startPpq).toBe(8);
     // No loudness normalization, and track volume is engine lane state:
@@ -195,9 +207,9 @@ describe('scheduleProjectClips with audio clips', () => {
     ];
     const events: string[] = [];
     const { handle, addClip } = makeHandle(10);
-    addClip.mockImplementation((_trackId, _channels, startPpq) => {
-      events.push(`add:${String(startPpq)}`);
-      return 500 + addClip.mock.calls.length;
+    addClip.mockImplementation((_trackId, request) => {
+      events.push(`add:${String(request.startPpq)}`);
+      return 500 + clipCalls(addClip).length;
     });
 
     await scheduleProjectClips(handle, {
@@ -430,7 +442,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = clipCalls(addClip)[0][1] as Float32Array[];
     expect(channels[0]).toEqual(new Float32Array([11, 12, 13, 14, 15]));
   });
 
@@ -444,7 +456,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const { handle, addClip } = makeHandle(10);
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(30) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = clipCalls(addClip)[0][1] as Float32Array[];
     expect(channels[0]).toEqual(new Float32Array([6, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
   });
 
@@ -464,8 +476,8 @@ describe('scheduleProjectClips with audio clips', () => {
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(30) });
 
     expect(addClip).toHaveBeenCalledTimes(3);
-    expect(addClip.mock.calls.map((call) => call[2])).toEqual([4, 5, 6]);
-    for (const [, channels] of addClip.mock.calls) {
+    expect(clipCalls(addClip).map((call) => call[2])).toEqual([4, 5, 6]);
+    for (const [, channels] of clipCalls(addClip)) {
       expect((channels as Float32Array[])[0]).toEqual(new Float32Array([11, 12, 13, 14, 15]));
     }
   });
@@ -481,7 +493,7 @@ describe('scheduleProjectClips with audio clips', () => {
     };
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => asset });
-    const [, channels, , opts] = addClip.mock.calls[0];
+    const [, channels, , opts] = clipCalls(addClip)[0];
     expect(opts).toMatchObject({ lengthSamples: 10, fadeInSamples: 2, fadeOutSamples: 2 });
     expect(Array.from((channels as Float32Array[])[0])).toEqual(new Array(10).fill(1));
   });
@@ -498,7 +510,7 @@ describe('scheduleProjectClips with audio clips', () => {
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => asset });
 
-    expect(addClip.mock.calls[0][1]).toEqual([new Float32Array(10).fill(1)]);
+    expect(clipCalls(addClip)[0][1]).toEqual([new Float32Array(10).fill(1)]);
   });
 
   it('resamples to the engine rate when the asset rate differs', async () => {
@@ -507,7 +519,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const { handle, addClip } = makeHandle(20); // engine at 20 Hz, asset at 10 Hz
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(10) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = clipCalls(addClip)[0][1] as Float32Array[];
     expect(channels[0].length).toBe(20);
     expect(channels[0][0]).toBeCloseTo(1, 5);
     expect(channels[0][19]).toBeCloseTo(10, 5);
@@ -607,7 +619,7 @@ describe('scheduleProjectClips with audio clips', () => {
       sampleRate: 10,
       loadAudioAsset: async () => makeAsset(10),
     });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = clipCalls(addClip)[0][1] as Float32Array[];
     expect(channels[0].length).toBe(10); // no resampling happened
   });
 
@@ -629,7 +641,7 @@ describe('scheduleProjectClips with audio clips', () => {
     });
     expect(scheduled).toEqual([{ engineClipId: 500, clipId: 10, trackId: 1 }]);
     expect(addClip).toHaveBeenCalledTimes(1);
-    const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
+    const [trackId, channels, startPpq, opts] = clipCalls(addClip)[0];
     expect(trackId).toBe(1);
     expect(startPpq).toBe(8);
     // The engine stretches the 40-frame source slice over the 20-frame window.
@@ -638,7 +650,7 @@ describe('scheduleProjectClips with audio clips', () => {
       lengthSamples: 20,
       fadeInSamples: 0,
       fadeOutSamples: 0,
-      warpMode: 'time-stretch',
+      warpMode: 'timeStretch',
       warpAnchors: [
         { warpSample: 0, sourceSample: 0 },
         { warpSample: 20, sourceSample: 40 },
@@ -665,7 +677,7 @@ describe('scheduleProjectClips with audio clips', () => {
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
     // 1..2 PPQ at 120 BPM (5 frames) plus 2..3 PPQ at 60 BPM (10 frames).
-    expect(addClip.mock.calls[0][3]).toMatchObject({
+    expect(clipCalls(addClip)[0][3]).toMatchObject({
       lengthSamples: 15,
       warpAnchors: [
         { warpSample: 0, sourceSample: 0 },
@@ -697,11 +709,11 @@ describe('scheduleProjectClips with audio clips', () => {
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(20) });
 
     expect(addClip).toHaveBeenCalledTimes(3);
-    expect(addClip.mock.calls.map((call) => call[2])).toEqual([0, 2, 4]);
+    expect(clipCalls(addClip).map((call) => call[2])).toEqual([0, 2, 4]);
     // 0..2 PPQ at 120 BPM, 2..4 at 60 BPM, then a partial 1-PPQ repeat; the
     // clip-edge fades apply only to the first/last occurrences (the one-frame
     // fade-in rounds away).
-    expect(addClip.mock.calls.map((call) => call[3])).toEqual([
+    expect(clipCalls(addClip).map((call) => call[3])).toEqual([
       expect.objectContaining({
         lengthSamples: 10,
         fadeInSamples: 0,
@@ -745,10 +757,10 @@ describe('scheduleProjectClips with audio clips', () => {
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(40) });
     expect(addClip).toHaveBeenCalledTimes(1);
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = clipCalls(addClip)[0][1] as Float32Array[];
     // Fixed-rate slice: the first 20 ramp samples verbatim, never stretched.
     expect(channels[0]).toEqual(makeAsset(40).channels[0].slice(0, 20));
-    expect(addClip.mock.calls[0][3]).not.toHaveProperty('warpMode');
+    expect(clipCalls(addClip)[0][3]).not.toHaveProperty('warpMode');
   });
 
   it('schedules a frozen track from its baked asset and skips its own clips', async () => {
@@ -767,7 +779,7 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(loadAudioAsset).toHaveBeenCalledTimes(1);
     expect(loadAudioAsset).toHaveBeenCalledWith('frozen-1');
     expect(addClip).toHaveBeenCalledTimes(1);
-    const [trackId, channels, startPpq, opts] = addClip.mock.calls[0];
+    const [trackId, channels, startPpq, opts] = clipCalls(addClip)[0];
     expect(trackId).toBe(1);
     // The baked render always starts at the timeline origin at unity gain
     // (track volume/pan stay live engine lane state).
@@ -782,7 +794,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const { handle, addClip } = makeHandle(20); // engine at 20 Hz, asset at 10 Hz
 
     await scheduleProjectClips(handle, { loadAudioAsset: async () => makeAsset(10) });
-    const channels = addClip.mock.calls[0][1] as Float32Array[];
+    const channels = clipCalls(addClip)[0][1] as Float32Array[];
     expect(channels[0].length).toBe(20);
     expect(channels[0][0]).toBeCloseTo(1, 5);
     expect(channels[0][19]).toBeCloseTo(10, 5);
@@ -865,12 +877,12 @@ describe('scheduleProjectClips with audio clips', () => {
     expect(addClip).toHaveBeenCalledTimes(2);
 
     // At 120 BPM and 10 Hz: 1 PPQ = 0.5 s = 5 frames; each segment is 2 PPQ.
-    const [, firstChannels, firstStart] = addClip.mock.calls[0];
+    const [, firstChannels, firstStart] = clipCalls(addClip)[0];
     expect(firstStart).toBe(8); // clip start + segment offset 0
     expect((firstChannels as Float32Array[])[0]).toEqual(
       new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
     );
-    const [, secondChannels, secondStart] = addClip.mock.calls[1];
+    const [, secondChannels, secondStart] = clipCalls(addClip)[1];
     expect(secondStart).toBe(10); // clip start + segment offset 2 PPQ
     // The second slice reads asset-b from source offset 2 PPQ = 10 frames.
     expect((secondChannels as Float32Array[])[0]).toEqual(
@@ -950,7 +962,7 @@ describe('scheduleProjectClips with audio clips', () => {
     const boundaryPpq = 10;
     const windowStartPpq = boundaryPpq - 0.03;
     const rendered = new Float32Array(60);
-    for (const [, channels, startPpq, opts] of addClip.mock.calls) {
+    for (const [, channels, startPpq, opts] of clipCalls(addClip)) {
       const offset = Math.round(
         ppqSpanToSeconds((startPpq as number) - windowStartPpq, 120) * sampleRate,
       );

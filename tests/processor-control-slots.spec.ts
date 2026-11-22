@@ -100,7 +100,9 @@ describe('editedProcessorParams', () => {
   it('keeps the default split when the first cutoff is supplied', () => {
     const params = editedProcessorParams('multiband.compressor', {}, 'cutoff2Hz', 8000);
     expect(params).toEqual({ cutoff0Hz: 120, cutoff1Hz: 2000, cutoff2Hz: 8000 });
-    expect(() => wasm.masteringInsertTiming('multiband.compressor', params, 48000)).not.toThrow();
+    expect(() =>
+      wasm.masteringInsertTiming({ insert: 'multiband.compressor', params, sampleRate: 48000 }),
+    ).not.toThrow();
     expect(rack('multiband.compressor', params).map((control) => control.id)).toContain(
       'band3.thresholdDb',
     );

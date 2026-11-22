@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { useTransport } from '@/composables/useTransport';
 import type { EngineHandle } from '@/engine/engine';
-import type { SonareEngineTelemetryRecord } from '@/wasm/worklet.js';
+import { type EngineTelemetry, ErrorCode, SonareError } from '@/wasm/index.js';
+
+/** The refusal a full engine command ring raises. */
+const ringFull = (): SonareError => new SonareError(ErrorCode.OutOfMemory, 'command ring full');
 
 interface MockHandle {
   handle: EngineHandle;
@@ -10,36 +13,36 @@ interface MockHandle {
     play: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
     seekPpq: ReturnType<typeof vi.fn>;
-    seekSeconds: ReturnType<typeof vi.fn>;
+    seekSec: ReturnType<typeof vi.fn>;
     setTempo: ReturnType<typeof vi.fn>;
     setLoop: ReturnType<typeof vi.fn>;
   };
   setMetronome: ReturnType<typeof vi.fn>;
   pushMidiPanic: ReturnType<typeof vi.fn>;
   pollTelemetry: ReturnType<typeof vi.fn>;
-  emitTelemetry: (record: Partial<SonareEngineTelemetryRecord>) => void;
+  emitTelemetry: (record: Partial<EngineTelemetry>) => void;
 }
 
 /** Builds a plain-object EngineHandle mock (no real AudioContext / AudioWorklet). */
 function createMockHandle(sampleRate = 48000): MockHandle {
   const transport = {
-    play: vi.fn(() => true),
-    stop: vi.fn(() => true),
-    seekPpq: vi.fn(() => true),
-    seekSeconds: vi.fn(() => true),
+    play: vi.fn(),
+    stop: vi.fn(),
+    seekPpq: vi.fn(),
+    seekSec: vi.fn(),
     setTempo: vi.fn(),
-    setLoop: vi.fn(() => true),
+    setLoop: vi.fn(),
   };
-  const setMetronome = vi.fn(() => true);
+  const setMetronome = vi.fn();
   const pushMidiPanic = vi.fn();
   const pollTelemetry = vi.fn(() => []);
-  let telemetryListener: ((record: SonareEngineTelemetryRecord) => void) | null = null;
+  let telemetryListener: ((record: EngineTelemetry) => void) | null = null;
   const engine = {
     transport,
     setMetronome,
     pushMidiPanic,
     pollTelemetry,
-    onTelemetry: vi.fn((cb: (record: SonareEngineTelemetryRecord) => void) => {
+    onTelemetry: vi.fn((cb: (record: EngineTelemetry) => void) => {
       telemetryListener = cb;
       return () => {
         telemetryListener = null;
@@ -52,14 +55,14 @@ function createMockHandle(sampleRate = 48000): MockHandle {
     capabilities: { mode: 'postMessage' },
     dispose: vi.fn(),
   } as unknown as EngineHandle;
-  const emitTelemetry = (record: Partial<SonareEngineTelemetryRecord>): void => {
+  const emitTelemetry = (record: Partial<EngineTelemetry>): void => {
     telemetryListener?.({
-      type: 0,
-      error: 0,
+      type: 'processBlock',
+      error: 'none',
       renderFrame: 0,
       timelineSample: 0,
       audibleTimelineSample: 0,
-      graphLatencySamplesQ8: 0,
+      graphLatencySamples: 0,
       value: 0,
       ...record,
     });
@@ -103,7 +106,7 @@ describe('useTransport', () => {
     expect(transport.audiblePositionPpq.value).toBeCloseTo(3.875);
   });
 
-  it('play(sampleTime) commits only when process telemetry reaches the future frame', () => {
+  it('play(renderFrame) commits only when process telemetry reaches the future frame', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     transport.play(96000);
@@ -142,7 +145,9 @@ describe('useTransport', () => {
 
   it('does not flip isPlaying when the engine rejects the command', () => {
     const mock = createMockHandle();
-    mock.transport.play.mockReturnValue(false);
+    mock.transport.play.mockImplementation(() => {
+      throw ringFull();
+    });
     const { transport } = setup(mock.handle);
     expect(transport.play()).toBe(false);
     expect(transport.isPlaying.value).toBe(false);
@@ -160,11 +165,11 @@ describe('useTransport', () => {
     expect(mock.transport.play).toHaveBeenCalledTimes(1);
   });
 
-  it('seek() delegates to seekSeconds and updates an immediate position optimistically', () => {
+  it('seek() delegates to seekSec and updates an immediate position optimistically', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     expect(transport.seek(2.5)).toBe(true);
-    expect(mock.transport.seekSeconds).toHaveBeenCalledWith(2.5, undefined);
+    expect(mock.transport.seekSec).toHaveBeenCalledWith(2.5, undefined);
     expect(mock.pushMidiPanic).toHaveBeenCalledWith();
     expect(transport.positionSeconds.value).toBe(2.5);
   });
@@ -173,7 +178,7 @@ describe('useTransport', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     expect(transport.seek(2.5, 1000)).toBe(true);
-    expect(mock.transport.seekSeconds).toHaveBeenCalledWith(2.5, 1000);
+    expect(mock.transport.seekSec).toHaveBeenCalledWith(2.5, 1000);
     expect(mock.pushMidiPanic).toHaveBeenCalledWith(1000);
     expect(transport.positionSeconds.value).toBe(0);
     mock.emitTelemetry({ renderFrame: 999, timelineSample: 0 });
@@ -213,7 +218,7 @@ describe('useTransport', () => {
     ]);
     transport.play();
     // 3 s of audio: 2 s cover ppq 0..4 at 120 BPM, then 1 s = 1 ppq at 60 BPM.
-    mock.emitTelemetry({ type: 0, timelineSample: 3 * 48000 });
+    mock.emitTelemetry({ type: 'processBlock', timelineSample: 3 * 48000 });
     expect(transport.positionPpq.value).toBeCloseTo(5, 9);
     // ppq 6 = 2 s (ppq 0..4 at 120) + 2 s (ppq 4..6 at 60).
     expect(transport.seekPpq(6)).toBe(true);
@@ -251,19 +256,25 @@ describe('useTransport', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
     expect(transport.setLoop(4, 8)).toBe(true);
-    expect(mock.transport.setLoop).toHaveBeenCalledWith(4, 8, true);
+    expect(mock.transport.setLoop).toHaveBeenCalledWith({ startPpq: 4, endPpq: 8, enabled: true });
     expect(transport.loopStartPpq.value).toBe(4);
     expect(transport.loopEndPpq.value).toBe(8);
     expect(transport.loopEnabled.value).toBe(true);
 
     transport.setLoop(0, 16, false);
-    expect(mock.transport.setLoop).toHaveBeenCalledWith(0, 16, false);
+    expect(mock.transport.setLoop).toHaveBeenCalledWith({
+      startPpq: 0,
+      endPpq: 16,
+      enabled: false,
+    });
     expect(transport.loopEnabled.value).toBe(false);
   });
 
   it('does not mirror the loop range when the engine rejects setLoop', () => {
     const mock = createMockHandle();
-    mock.transport.setLoop.mockReturnValue(false);
+    mock.transport.setLoop.mockImplementation(() => {
+      throw ringFull();
+    });
     const { transport } = setup(mock.handle);
     expect(transport.setLoop(4, 8)).toBe(false);
     expect(transport.loopEnabled.value).toBe(false);
@@ -286,7 +297,9 @@ describe('useTransport', () => {
   it('keeps the metronome state when the engine cannot queue the change', () => {
     const mock = createMockHandle();
     const { transport } = setup(mock.handle);
-    mock.setMetronome.mockReturnValueOnce(false);
+    mock.setMetronome.mockImplementationOnce(() => {
+      throw ringFull();
+    });
     expect(transport.toggleMetronome()).toBe(false);
     expect(transport.metronomeEnabled.value).toBe(false);
   });
@@ -308,7 +321,7 @@ describe('useTransport', () => {
     const { transport } = setup(mock.handle);
     transport.play();
     mock.emitTelemetry({
-      type: 0,
+      type: 'processBlock',
       timelineSample: 96000,
       audibleTimelineSample: 72000,
     });
@@ -323,7 +336,7 @@ describe('useTransport', () => {
     const { transport } = setup(mock.handle);
     transport.play();
     mock.emitTelemetry({
-      type: 0,
+      type: 'processBlock',
       timelineSample: Number.NaN,
       audibleTimelineSample: 48000,
     });
@@ -335,7 +348,7 @@ describe('useTransport', () => {
     const { transport } = setup(mock.handle);
     transport.play();
     transport.dispose();
-    mock.emitTelemetry({ type: 0, timelineSample: 48000 });
+    mock.emitTelemetry({ type: 'processBlock', timelineSample: 48000 });
     expect(transport.positionSeconds.value).toBe(0);
   });
 

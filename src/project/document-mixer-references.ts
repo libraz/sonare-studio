@@ -28,8 +28,6 @@ import {
   type InsertSlot,
   type MixerStrip,
   type ProjectMixerState,
-  renameRetiredMixerProcessors,
-  renameRetiredProcessors,
 } from './mixer';
 import type { TrackKind } from './types';
 
@@ -352,7 +350,6 @@ export function fromDocumentMixerSnapshotSlots(
     const snapshot = docSlots.slots[slot];
     if (!snapshot) continue;
     const mixer = cloneMixerState(snapshot.mixer);
-    renameRetiredMixerProcessors(mixer);
     resolveMixerSidechainSourceIds(mixer, tracks);
     snapshots[slot] = {
       mixer,
@@ -360,7 +357,6 @@ export function fromDocumentMixerSnapshotSlots(
         const track = tracks[entry.trackIndex];
         if (!track) return [];
         const trackMixer = stripWithSidechainSourceIds(entry.mixer, tracks, true);
-        renameRetiredProcessors(trackMixer.inserts);
         return [
           {
             id: track.id,

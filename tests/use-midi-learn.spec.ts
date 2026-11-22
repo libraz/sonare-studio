@@ -704,7 +704,7 @@ describe('useMidiLearn', () => {
     learn.armId(panLawId);
     learn.handleCc({ channel: 0, controller: 29, value: 127 });
     expect(learn.bindingForId(panLawId)).toEqual({ channel: 0, controller: 29 });
-    expect(setStripPanLaw).toHaveBeenCalledWith(7, 'linear0dB');
+    expect(setStripPanLaw).toHaveBeenCalledWith(7, 'linear0Db');
 
     const panModeId = midiLearnStripControlTargetId(7, 'panMode');
     learn.armId(panModeId);

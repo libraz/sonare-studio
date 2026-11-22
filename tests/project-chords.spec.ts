@@ -11,6 +11,11 @@ import {
   toProjectChordSymbol,
   toProjectChordSymbols,
 } from '@/project/chords';
+import {
+  type NativeAnnotationChord,
+  PROJECT_CHORD_QUALITY_BY_ORDINAL,
+} from '@/project/native-document';
+import type { ProjectChordSymbol } from '@/wasm/index.js';
 
 describe('sameChord', () => {
   const base: EditorChordSymbol = { startPpq: 0, endPpq: 4, rootPc: 0, quality: 4 };
@@ -142,15 +147,30 @@ describe('sanitizeChordSymbols', () => {
 });
 
 describe('toProjectChordSymbol', () => {
-  it('shifts the quality ordinal and uses the 255 slash-bass sentinel', () => {
+  it('folds the quality ordinal into a core family and omits an absent slash bass', () => {
     const symbol: EditorChordSymbol = { startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 };
     expect(toProjectChordSymbol(symbol)).toEqual({
       startPpq: 0,
       endPpq: 4,
       rootPc: 0,
-      quality: 1,
-      slashBassPc: 255,
+      quality: 'major',
     });
+  });
+
+  it('carries seventh and ninth ordinals as degrees of their family', () => {
+    const encode = (quality: number) => {
+      const { quality: family, extensions } = toProjectChordSymbol({
+        startPpq: 0,
+        endPpq: 1,
+        rootPc: 0,
+        quality,
+      });
+      return [family, extensions];
+    };
+    expect(encode(5)).toEqual(['major', [7]]);
+    expect(encode(13)).toEqual(['halfDiminished', [7]]);
+    expect(encode(8)).toEqual(['suspended', [4]]);
+    expect(encode(15)).toEqual(['dominant', [7, 9]]);
   });
 
   it('carries the slash bass, extensions, and roman numeral when present', () => {
@@ -167,40 +187,53 @@ describe('toProjectChordSymbol', () => {
       startPpq: 4,
       endPpq: 8,
       rootPc: 7,
-      quality: 5,
+      quality: 'dominant',
       slashBassPc: 0,
-      extensions: [1],
+      extensions: [7, 9],
       romanNumeral: 'V',
     });
   });
 
   it('maps a list', () => {
     expect(toProjectChordSymbols([{ startPpq: 0, endPpq: 4, rootPc: 2, quality: 1 }])).toEqual([
-      { startPpq: 0, endPpq: 4, rootPc: 2, quality: 2, slashBassPc: 255 },
+      { startPpq: 0, endPpq: 4, rootPc: 2, quality: 'minor' },
     ]);
   });
 });
+
+/** The stored `toJson()` form of an annotation entry. */
+function toStored(symbol: ProjectChordSymbol): NativeAnnotationChord {
+  return {
+    startPpq: symbol.startPpq,
+    endPpq: symbol.endPpq,
+    rootPc: symbol.rootPc ?? 255,
+    quality: PROJECT_CHORD_QUALITY_BY_ORDINAL.indexOf(symbol.quality ?? 'unknown'),
+    slashBassPc: symbol.slashBassPc ?? 255,
+    romanNumeral: symbol.romanNumeral ?? '',
+    extensions: [...(symbol.extensions ?? [])],
+  };
+}
 
 describe('chordsFromAnnotation', () => {
   it('reads the Project annotation stream back into editor symbols', () => {
     const symbols = chordsFromAnnotation({
       chords: [
         {
-          start_ppq: 4,
-          end_ppq: 8,
-          root_pc: 7,
+          startPpq: 4,
+          endPpq: 8,
+          rootPc: 7,
           quality: 5,
-          slash_bass_pc: 0,
-          roman_numeral: 'V',
-          extensions: [13],
+          slashBassPc: 0,
+          romanNumeral: 'V',
+          extensions: [7, 13],
         },
         {
-          start_ppq: 0,
-          end_ppq: 4,
-          root_pc: 0,
+          startPpq: 0,
+          endPpq: 4,
+          rootPc: 0,
           quality: 1,
-          slash_bass_pc: 255,
-          roman_numeral: '',
+          slashBassPc: 255,
+          romanNumeral: '',
         },
       ],
     });
@@ -212,10 +245,29 @@ describe('chordsFromAnnotation', () => {
         rootPc: 7,
         quality: 4,
         bassPc: 0,
-        extensions: [1],
+        extensions: [9],
         romanNumeral: 'V',
       },
     ]);
+  });
+
+  it('restores a hinted chord whose structure the Project encoding folds away', () => {
+    const hint: EditorChordSymbol = {
+      startPpq: 0,
+      endPpq: 4,
+      rootPc: 0,
+      quality: 4,
+      extensions: [2, 9],
+    };
+    const annotation = { chords: [toStored(toProjectChordSymbol(hint))] };
+    expect(chordsFromAnnotation(annotation)[0]).not.toEqual(hint);
+    expect(chordsFromAnnotation(annotation, [hint])).toEqual([hint]);
+  });
+
+  it('lets the Project win when it no longer holds the hinted chord', () => {
+    const hint: EditorChordSymbol = { startPpq: 0, endPpq: 4, rootPc: 0, quality: 4 };
+    const changed = toStored(toProjectChordSymbol({ ...hint, rootPc: 7 }));
+    expect(chordsFromAnnotation({ chords: [changed] }, [hint])[0].rootPc).toBe(7);
   });
 
   it('returns an empty list for absent or malformed annotation', () => {
@@ -227,7 +279,7 @@ describe('chordsFromAnnotation', () => {
 
   it('skips entries with an out-of-range root', () => {
     const symbols = chordsFromAnnotation({
-      chords: [{ start_ppq: 0, end_ppq: 4, root_pc: 255, quality: 0, slash_bass_pc: 255 }],
+      chords: [{ startPpq: 0, endPpq: 4, rootPc: 255, quality: 0, slashBassPc: 255 }],
     });
     expect(symbols).toEqual([]);
   });

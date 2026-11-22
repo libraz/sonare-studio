@@ -8,7 +8,7 @@
  * subscribes to those batches and writes each event to the port chosen for its
  * track, overriding the channel to the instrument's configured channel.
  *
- * Transport / clock bytes (tagged with the transport destination) are broadcast
+ * Transport / clock bytes (carrying no destination id) are broadcast
  * to every port whose track opted into clock sync.
  *
  * Engine render frames are translated through the AudioContext output clock
@@ -25,10 +25,8 @@ import {
 } from '@/lib/web-midi';
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { EditorTrack } from '@/project/types';
+import type { ExternalMidiEvent } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
-
-/** Destination sentinel the engine tags transport/clock bytes with. */
-const TRANSPORT_DESTINATION = 0xffffffff;
 
 /** A single track's external-MIDI routing: where its MIDI goes and on which channel. */
 export interface ExternalMidiRoute {
@@ -207,7 +205,10 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     ]);
   };
 
-  const rememberChannelVoice = (destinationId: number, bytes: ReadonlyArray<number>): void => {
+  const rememberChannelVoice = (
+    destinationId: number,
+    bytes: ReadonlyArray<number> | Uint8Array,
+  ): void => {
     const status = bytes[0] ?? 0;
     const type = status & 0xf0;
     if ((type !== 0x80 && type !== 0x90) || bytes.length < 3) return;
@@ -271,7 +272,7 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
 
   const sendRouted = (
     destinationId: number,
-    bytes: ReadonlyArray<number>,
+    bytes: ReadonlyArray<number> | Uint8Array,
     timestampMs?: number,
   ): boolean => {
     const route = routeByDestination.get(destinationId);
@@ -284,14 +285,12 @@ export function createWebMidiOutput(handle: EngineHandle): WebMidiOutputBridge {
     return sent;
   };
 
-  const deliver = (
-    events: ReadonlyArray<{ destinationId: number; renderFrame: number; bytes: number[] }>,
-  ): void => {
+  const deliver = (events: ReadonlyArray<ExternalMidiEvent>): void => {
     if (disposed || !access) return;
     for (const event of events) {
       if (event.bytes.length === 0) continue;
       const timestampMs = renderFramePerformanceTimestamp(handle.ctx, event.renderFrame);
-      if (event.destinationId === TRANSPORT_DESTINATION) {
+      if (event.destinationId === undefined) {
         for (const portId of clockPortIds) {
           const port = access.outputs.get(portId);
           sendToPort(port, event.bytes, timestampMs);

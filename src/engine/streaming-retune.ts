@@ -64,9 +64,9 @@ export function streamingRetuneSemitonesForScaleTarget(
 
 export interface StreamingRetuneInputOptions extends StreamingRetuneConfig {
   stream: MediaStream;
-  stopTracksOnClose: boolean;
-  channelCount?: number;
-  blockSize?: number;
+  stopTracksOnDestroy: boolean;
+  numChannels?: 1 | 2;
+  maxBlockSize?: number;
   signal?: AbortSignal;
   readyTimeoutMs?: number;
   /** Called when the processor crashes after startup. */
@@ -80,7 +80,7 @@ export async function bindStreamingRetuneInput(
   options: StreamingRetuneInputOptions,
 ): Promise<MicrophoneBinding> {
   const source = ctx.createMediaStreamSource(options.stream);
-  const channelCount = Math.max(1, Math.floor(options.channelCount ?? 1));
+  const numChannels = options.numChannels ?? 1;
   let node: AudioWorkletNode | null = null;
   try {
     // The worklet scope cannot fetch its own WASM; hand it the shared bytes.
@@ -89,15 +89,17 @@ export async function bindStreamingRetuneInput(
     node = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,
-      channelCount,
-      outputChannelCount: [channelCount],
+      channelCount: numChannels,
+      outputChannelCount: [numChannels],
       processorOptions: {
-        semitones: clampStreamingRetuneSemitones(options.semitones ?? 0),
+        pitchSemitones: clampStreamingRetuneSemitones(options.pitchSemitones ?? 0),
         mix: options.mix ?? 1,
-        grainSize: options.grainSize ?? 0,
+        ...(options.grainSizeSamples === undefined
+          ? {}
+          : { grainSizeSamples: options.grainSizeSamples }),
         sampleRate: ctx.sampleRate,
-        blockSize: Math.max(1, Math.floor(options.blockSize ?? 128)),
-        channelCount,
+        maxBlockSize: Math.max(1, Math.floor(options.maxBlockSize ?? 128)),
+        numChannels,
         wasmBinary,
       },
     });
@@ -121,7 +123,7 @@ export async function bindStreamingRetuneInput(
     } catch {
       // Construction may have failed before the node was connected.
     }
-    if (options.stopTracksOnClose) {
+    if (options.stopTracksOnDestroy) {
       for (const track of options.stream.getTracks()) track.stop();
     }
     throw error;
@@ -135,13 +137,13 @@ export async function bindStreamingRetuneInput(
     setStreamingRetuneConfig(config: StreamingRetuneConfig): void {
       readyNode.port.postMessage({ type: 'setConfig', config });
     },
-    close(): void {
+    destroy(): void {
       detachRuntimeErrors();
       detachProcessorError();
       readyNode.port.postMessage({ type: 'destroy' });
       source.disconnect();
       readyNode.disconnect();
-      if (options.stopTracksOnClose) {
+      if (options.stopTracksOnDestroy) {
         for (const track of options.stream.getTracks()) track.stop();
       }
     },

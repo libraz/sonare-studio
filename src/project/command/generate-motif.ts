@@ -43,7 +43,7 @@ import { requireEditableClip } from './utils';
 const BEATS_PER_BAR = 4;
 
 /** NativeSynth preset for a motif landing on a fresh track. */
-const MOTIF_PRESET = 'saw-lead';
+const MOTIF_PRESET = 'sawLead';
 
 /** Options for {@link generateMotifCommand}. */
 export interface GenerateMotifParams {

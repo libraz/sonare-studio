@@ -14,6 +14,7 @@ import {
   detectNoteRegions,
   detectOnsetFrames,
   estimateRoomRange,
+  estimateSourceMidi,
   harmonicRange,
   loadSampleEditorWasm,
   matchEqToReference,
@@ -40,7 +41,7 @@ import {
   voiceChangeRange,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
-import type { RirDiagnostic } from '@/wasm/index.js';
+import type { PitchResult, RirDiagnostic } from '@/wasm/index.js';
 
 const { ensureWasmMock } = vi.hoisted(() => ({ ensureWasmMock: vi.fn() }));
 vi.mock('@/lib/wasm', () => ({ ensureWasm: ensureWasmMock }));
@@ -103,12 +104,20 @@ describe('wasmOpAvailability', () => {
     const mod: SampleEditorWasmOps = {
       pitchShift: (samples) => samples,
       pitchCorrectToMidi: (samples) => samples,
+      pitchYin: () => pitchResult(440),
       masteringRepairDeclick: (samples) => samples,
       masteringRepairDeclip: (samples) => samples,
       masteringRepairDehum: (samples) => samples,
       detectOnsets: () => new Float32Array(),
       splitSilence: () => new Int32Array(),
-      masteringPairProcess: (_name, source) => ({ samples: source, sampleRate: 48000 }),
+      masteringApplyPairProcessor: ({ source }) => ({
+        samples: source,
+        sampleRate: 48000,
+        inputLufs: 0,
+        outputLufs: 0,
+        appliedGainDb: 0,
+        latencySamples: 0,
+      }),
       analyzeImpulseResponse: () => ({
         rt60: 0,
         edt: 0,
@@ -197,24 +206,25 @@ describe('wasmOpAvailability', () => {
 
 describe('matchEqToReference', () => {
   type PairRequest = {
-    processorName: string;
+    processor: string;
     source: Float32Array;
     reference: Float32Array;
     sampleRate?: number;
     referenceSampleRate?: number;
+    params?: { mix?: number };
   };
 
   it('matches each channel against the same mono reference over the range', () => {
     const reference = new Float32Array([0.5, 0.25]);
-    const masteringPairProcess = vi.fn((request: PairRequest) => {
-      expect(request.processorName).toBe('match.applyMatchEq');
+    const masteringApplyPairProcessor = vi.fn((request: PairRequest) => {
+      expect(request.processor).toBe('match.applyMatchEq');
       expect([...request.reference]).toEqual([0.5, 0.25]);
       expect(request.sampleRate).toBe(48000);
       // Return a recognizable transform: scale the source by 2.
       return { samples: request.source.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
     });
     const out = matchEqToReference(
-      { masteringPairProcess } as SampleEditorWasmOps,
+      { masteringApplyPairProcessor } as SampleEditorWasmOps,
       ch([1, 2, 3, 4], [5, 6, 7, 8]),
       48000,
       reference,
@@ -227,16 +237,16 @@ describe('matchEqToReference', () => {
       [1, 4, 6, 4],
       [5, 12, 14, 8],
     ]);
-    expect(masteringPairProcess).toHaveBeenCalledTimes(2);
+    expect(masteringApplyPairProcessor).toHaveBeenCalledTimes(2);
   });
 
   it('defaults to the whole file without a range', () => {
-    const masteringPairProcess = vi.fn((request: PairRequest) => ({
+    const masteringApplyPairProcessor = vi.fn((request: PairRequest) => ({
       samples: request.source.map((v) => -v) as Float32Array,
       sampleRate: 48000,
     }));
     const out = matchEqToReference(
-      { masteringPairProcess } as SampleEditorWasmOps,
+      { masteringApplyPairProcessor } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       new Float32Array([1]),
@@ -246,33 +256,21 @@ describe('matchEqToReference', () => {
 
   it('blends the matched signal back toward the dry segment for amount < 1', () => {
     // applyMatchEq doubles the source; abCrossfade linearly mixes a -> b by mix.
-    const masteringPairProcess = vi.fn(
-      (
-        nameOrRequest: string | PairRequest,
-        a?: Float32Array,
-        b?: Float32Array,
-        _sampleRate?: number,
-        params?: { mix?: number },
-      ) => {
-        if (typeof nameOrRequest !== 'string') {
-          expect(nameOrRequest.processorName).toBe('match.applyMatchEq');
-          return {
-            samples: nameOrRequest.source.map((v) => v * 2) as Float32Array,
-            sampleRate: 48000,
-          };
-        }
-        expect(nameOrRequest).toBe('match.abCrossfade');
-        const mix = params?.mix ?? 0;
-        return {
-          samples: (a as Float32Array).map(
-            (v, i) => v * (1 - mix) + (b as Float32Array)[i] * mix,
-          ) as Float32Array,
-          sampleRate: 48000,
-        };
-      },
-    );
+    const masteringApplyPairProcessor = vi.fn((request: PairRequest) => {
+      if (request.processor === 'match.applyMatchEq') {
+        return { samples: request.source.map((v) => v * 2) as Float32Array, sampleRate: 48000 };
+      }
+      expect(request.processor).toBe('match.abCrossfade');
+      const mix = request.params?.mix ?? 0;
+      return {
+        samples: request.source.map(
+          (v, i) => v * (1 - mix) + request.reference[i] * mix,
+        ) as Float32Array,
+        sampleRate: 48000,
+      };
+    });
     const out = matchEqToReference(
-      { masteringPairProcess } as SampleEditorWasmOps,
+      { masteringApplyPairProcessor } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       new Float32Array([1]),
@@ -281,22 +279,22 @@ describe('matchEqToReference', () => {
     );
     // dry [1, 2], matched [2, 4], blended 50/50 -> [1.5, 3].
     expect(plain(out)).toEqual([[1.5, 3]]);
-    expect(masteringPairProcess).toHaveBeenCalledWith(
-      'match.abCrossfade',
-      expect.anything(),
-      expect.anything(),
-      48000,
-      { mix: 0.5 },
-    );
+    expect(masteringApplyPairProcessor).toHaveBeenCalledWith({
+      processor: 'match.abCrossfade',
+      source: expect.anything(),
+      reference: expect.anything(),
+      sampleRate: 48000,
+      params: { mix: 0.5 },
+    });
   });
 
   it('returns the dry segment without matching when amount is 0', () => {
-    const masteringPairProcess = vi.fn((request: PairRequest) => ({
+    const masteringApplyPairProcessor = vi.fn((request: PairRequest) => ({
       samples: request.source.map((v) => v * 2) as Float32Array,
       sampleRate: 48000,
     }));
     const out = matchEqToReference(
-      { masteringPairProcess } as SampleEditorWasmOps,
+      { masteringApplyPairProcessor } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       new Float32Array([1]),
@@ -304,18 +302,18 @@ describe('matchEqToReference', () => {
       0,
     );
     expect(plain(out)).toEqual([[1, 2]]);
-    expect(masteringPairProcess).not.toHaveBeenCalled();
+    expect(masteringApplyPairProcessor).not.toHaveBeenCalled();
   });
 
   it('hands the reference and its rate to the library unresampled', () => {
     const reference = Float32Array.from({ length: 441 }, (_, index) => index);
-    const masteringPairProcess = vi.fn((request: PairRequest) => ({
+    const masteringApplyPairProcessor = vi.fn((request: PairRequest) => ({
       samples: request.source.slice(),
       sampleRate: 48000,
     }));
 
     matchEqToReference(
-      { masteringPairProcess } as SampleEditorWasmOps,
+      { masteringApplyPairProcessor } as SampleEditorWasmOps,
       ch([1, 2]),
       48000,
       reference,
@@ -324,8 +322,8 @@ describe('matchEqToReference', () => {
       44100,
     );
 
-    expect(masteringPairProcess).toHaveBeenCalledOnce();
-    const request = masteringPairProcess.mock.calls[0][0];
+    expect(masteringApplyPairProcessor).toHaveBeenCalledOnce();
+    const request = masteringApplyPairProcessor.mock.calls[0][0];
     expect(request.reference).toBe(reference);
     expect(request.sampleRate).toBe(48000);
     expect(request.referenceSampleRate).toBe(44100);
@@ -336,10 +334,10 @@ describe('matchEqToReference', () => {
       /unavailable/,
     );
     const mod: SampleEditorWasmOps = {
-      masteringPairProcess: (({ source }: PairRequest) => ({
+      masteringApplyPairProcessor: (({ source }: PairRequest) => ({
         samples: source,
         sampleRate: 48000,
-      })) as SampleEditorWasmOps['masteringPairProcess'],
+      })) as SampleEditorWasmOps['masteringApplyPairProcessor'],
     };
     expect(() => matchEqToReference(mod, ch([1]), 0, new Float32Array([1]))).toThrow(RangeError);
     expect(() =>
@@ -351,30 +349,32 @@ describe('matchEqToReference', () => {
 
 describe('analyzeMatchEqToReference', () => {
   type AnalyzeRequest = {
-    analysisName: string;
+    analysis: string;
     source: Float32Array;
     reference: Float32Array;
     sampleRate?: number;
     referenceSampleRate?: number;
   };
 
-  it('downmixes the range to mono and parses the three analyses', () => {
+  it('downmixes the range to mono and reads the three analyses', () => {
     const reference = new Float32Array([0.5, 0.25]);
-    const masteringPairAnalyze = vi.fn((request: AnalyzeRequest) => {
+    const masteringAnalyzePair = vi.fn((request: AnalyzeRequest) => {
       // The source is the channel average over the [1, 3) range: (2+6)/2, (3+7)/2.
       expect([...request.source]).toEqual([4, 5]);
       expect([...request.reference]).toEqual([0.5, 0.25]);
       expect(request.sampleRate).toBe(48000);
-      if (request.analysisName === 'match.matchEqCurve') {
-        return '{"frequencies":[100,1000],"gainDb":[1,-1]}';
+      if (request.analysis === 'match.matchEqCurve') {
+        return { frequencies: [100, 1000], gainDb: [1, -1] };
       }
-      if (request.analysisName === 'match.tonalBalance') {
-        return '{"bands":[{"lowHz":20,"highHz":200,"sourceDb":-10,"referenceDb":-12,"deviationDb":2}]}';
+      if (request.analysis === 'match.tonalBalance') {
+        return {
+          bands: [{ lowHz: 20, highHz: 200, sourceDb: -10, referenceDb: -12, deviationDb: 2 }],
+        };
       }
-      return '{"sourceLufs":-14,"referenceLufs":-9,"gainToMatchDb":5}';
+      return { sourceLufs: -14, referenceLufs: -9, gainToMatchDb: 5 };
     });
     const analysis = analyzeMatchEqToReference(
-      { masteringPairAnalyze } as unknown as SampleEditorWasmOps,
+      { masteringAnalyzePair } as unknown as SampleEditorWasmOps,
       ch([1, 2, 3, 4], [5, 6, 7, 8]),
       48000,
       reference,
@@ -385,19 +385,19 @@ describe('analyzeMatchEqToReference', () => {
       { lowHz: 20, highHz: 200, sourceDb: -10, referenceDb: -12, deviationDb: 2 },
     ]);
     expect(analysis.loudness).toEqual({ sourceLufs: -14, referenceLufs: -9, gainToMatchDb: 5 });
-    expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
+    expect(masteringAnalyzePair).toHaveBeenCalledTimes(3);
   });
 
   it('hands the reference and its rate to every pair analysis unresampled', () => {
     const reference = Float32Array.from({ length: 480 }, (_, index) => index);
-    const masteringPairAnalyze = vi.fn((request: AnalyzeRequest) => {
-      if (request.analysisName === 'match.matchEqCurve') return '{"frequencies":[],"gainDb":[]}';
-      if (request.analysisName === 'match.tonalBalance') return '{"bands":[]}';
-      return '{"sourceLufs":-12,"referenceLufs":-12,"gainToMatchDb":0}';
+    const masteringAnalyzePair = vi.fn((request: AnalyzeRequest) => {
+      if (request.analysis === 'match.matchEqCurve') return { frequencies: [], gainDb: [] };
+      if (request.analysis === 'match.tonalBalance') return { bands: [] };
+      return { sourceLufs: -12, referenceLufs: -12, gainToMatchDb: 0 };
     });
 
     analyzeMatchEqToReference(
-      { masteringPairAnalyze } as unknown as SampleEditorWasmOps,
+      { masteringAnalyzePair } as unknown as SampleEditorWasmOps,
       ch([1, 2]),
       44100,
       reference,
@@ -405,8 +405,8 @@ describe('analyzeMatchEqToReference', () => {
       48000,
     );
 
-    expect(masteringPairAnalyze).toHaveBeenCalledTimes(3);
-    for (const [request] of masteringPairAnalyze.mock.calls) {
+    expect(masteringAnalyzePair).toHaveBeenCalledTimes(3);
+    for (const [request] of masteringAnalyzePair.mock.calls) {
       expect(request.reference).toBe(reference);
       expect(request.sampleRate).toBe(44100);
       expect(request.referenceSampleRate).toBe(48000);
@@ -417,7 +417,7 @@ describe('analyzeMatchEqToReference', () => {
     expect(() => analyzeMatchEqToReference({}, ch([1]), 48000, new Float32Array([1]))).toThrow(
       /unavailable/,
     );
-    const mod: SampleEditorWasmOps = { masteringPairAnalyze: () => '{}' };
+    const mod: SampleEditorWasmOps = { masteringAnalyzePair: () => ({}) };
     expect(() => analyzeMatchEqToReference(mod, ch([1]), 0, new Float32Array([1]))).toThrow(
       RangeError,
     );
@@ -467,22 +467,14 @@ describe('detectNoteRegions', () => {
     const pitchPyin = vi.fn(
       (
         samples: Float32Array,
-        sampleRate?: number,
-        frameLength?: number,
-        hopLength?: number,
-        fmin?: number,
-        fmax?: number,
-        threshold?: number,
-        fillNa?: boolean,
+        sampleRate: number,
+        options: { frameLength?: number; hopLength?: number; fillNa?: boolean },
       ) => {
         expect([...samples]).toEqual([0.5, 0.5]);
         expect(sampleRate).toBe(48000);
-        expect(frameLength).toBe(2048);
-        expect(hopLength).toBe(512);
-        // The frequency range is left to the library: clamping it mistracks the
-        // octave of anything outside the clamp.
-        expect([fmin, fmax, threshold]).toEqual([undefined, undefined, undefined]);
-        expect(fillNa).toBe(true);
+        // The frequency range and threshold are left to the library: clamping
+        // the range mistracks the octave of anything outside the clamp.
+        expect(options).toEqual({ frameLength: 2048, hopLength: 512, fillNa: true });
         return contour;
       },
     );
@@ -493,8 +485,8 @@ describe('detectNoteRegions', () => {
       // discard every frame.
       expect([...request.voicedProb]).toEqual([1, 1, 1, 0]);
       return [
-        { frameStart: 0, frameEnd: 2, startSeconds: 0, endSeconds: 0.5, medianCents: -900 },
-        { frameStart: 2, frameEnd: 4, startSeconds: 0.5, endSeconds: 1, medianCents: -600 },
+        { frameStart: 0, frameEnd: 2, startSec: 0, endSec: 0.5, medianCents: -900 },
+        { frameStart: 2, frameEnd: 4, startSec: 0.5, endSec: 1, medianCents: -600 },
       ];
     });
 
@@ -509,9 +501,9 @@ describe('detectNoteRegions', () => {
   it('converts the median pitch of each region from cents to a MIDI number', () => {
     const pitchPyin = () => contour;
     const noteSegments = () => [
-      { frameStart: 0, frameEnd: 1, startSeconds: 0, endSeconds: 1, medianCents: -900 },
-      { frameStart: 1, frameEnd: 2, startSeconds: 1, endSeconds: 2, medianCents: 0 },
-      { frameStart: 2, frameEnd: 3, startSeconds: 2, endSeconds: 3, medianCents: 350 },
+      { frameStart: 0, frameEnd: 1, startSec: 0, endSec: 1, medianCents: -900 },
+      { frameStart: 1, frameEnd: 2, startSec: 1, endSec: 2, medianCents: 0 },
+      { frameStart: 2, frameEnd: 3, startSec: 2, endSec: 3, medianCents: 350 },
     ];
     expect(
       detectNoteRegions({ pitchPyin, noteSegments }, ch(new Array(3).fill(0)), 1).map(
@@ -523,8 +515,8 @@ describe('detectNoteRegions', () => {
   it('clamps a region to the buffer and drops one that ends up empty', () => {
     const pitchPyin = () => contour;
     const noteSegments = () => [
-      { frameStart: 0, frameEnd: 1, startSeconds: -1, endSeconds: 0.5, medianCents: 0 },
-      { frameStart: 1, frameEnd: 2, startSeconds: 8, endSeconds: 9, medianCents: 0 },
+      { frameStart: 0, frameEnd: 1, startSec: -1, endSec: 0.5, medianCents: 0 },
+      { frameStart: 1, frameEnd: 2, startSec: 8, endSec: 9, medianCents: 0 },
     ];
     // 4 frames at 8 Hz is 0.5 s of audio, so the first note clamps to [0, 4)
     // and the second starts past the end.
@@ -643,29 +635,32 @@ describe('noteMoveRange', () => {
 
 describe('splitSilenceFrames', () => {
   it('downmixes to mono and returns the interior cut frames', () => {
-    const splitSilence = vi.fn((samples: Float32Array, topDb?: number) => {
+    const splitSilence = vi.fn((samples: Float32Array, sampleRate: number, options?: object) => {
       // The detector should receive the channel average over 8 frames.
       expect([...samples]).toEqual([1, 0, 0, 0, 0, 0, 0, 0]);
-      expect(topDb).toBe(30);
+      expect(sampleRate).toBe(48000);
+      expect(options).toEqual({ topDb: 30 });
       return new Int32Array([0, 2, 5, 8]); // intervals -> interior cuts 2, 5.
     });
     const left = new Float32Array([2, 0, 0, 0, 0, 0, 0, 0]);
     const right = new Float32Array([0, 0, 0, 0, 0, 0, 0, 0]);
-    expect(splitSilenceFrames({ splitSilence }, [left, right], 30)).toEqual([2, 5]);
+    expect(splitSilenceFrames({ splitSilence }, [left, right], 48000, 30)).toEqual([2, 5]);
     expect(splitSilence).toHaveBeenCalledTimes(1);
   });
 
-  it('passes topDb through as undefined when omitted', () => {
+  it('omits topDb when not given', () => {
     const splitSilence = vi.fn(() => new Int32Array([0, 4]));
-    splitSilenceFrames({ splitSilence }, [new Float32Array(4)]);
-    expect(splitSilence).toHaveBeenCalledWith(expect.any(Float32Array), undefined);
+    splitSilenceFrames({ splitSilence }, [new Float32Array(4)], 48000);
+    expect(splitSilence).toHaveBeenCalledWith(expect.any(Float32Array), 48000, {});
   });
 
   it('throws when splitSilence is unavailable or topDb is not positive', () => {
-    expect(() => splitSilenceFrames({}, [new Float32Array([1])])).toThrow(/unavailable/);
+    expect(() => splitSilenceFrames({}, [new Float32Array([1])], 48000)).toThrow(/unavailable/);
     const mod: SampleEditorWasmOps = { splitSilence: () => new Int32Array() };
-    expect(() => splitSilenceFrames(mod, [new Float32Array([1])], 0)).toThrow(RangeError);
-    expect(() => splitSilenceFrames(mod, [new Float32Array([1])], Number.NaN)).toThrow(RangeError);
+    expect(() => splitSilenceFrames(mod, [new Float32Array([1])], 48000, 0)).toThrow(RangeError);
+    expect(() => splitSilenceFrames(mod, [new Float32Array([1])], 48000, Number.NaN)).toThrow(
+      RangeError,
+    );
   });
 });
 
@@ -685,8 +680,8 @@ describe('loadSampleEditorWasm', () => {
 describe('pitchShiftRange', () => {
   it('delegates per channel over the range and splices the result back', () => {
     const pitchShift = vi.fn(
-      (samples: Float32Array, _sampleRate: number, semitones: number) =>
-        samples.map((v) => v + semitones) as Float32Array,
+      (samples: Float32Array, _sampleRate: number, options: { pitchSemitones: number }) =>
+        samples.map((v) => v + options.pitchSemitones) as Float32Array,
     );
     const mod: SampleEditorWasmOps = { pitchShift };
     const input = ch([1, 2, 3, 4], [5, 6, 7, 8]);
@@ -705,7 +700,7 @@ describe('pitchShiftRange', () => {
 
   it('defaults to the whole file without a range', () => {
     const mod: SampleEditorWasmOps = {
-      pitchShift: (samples) => samples.map((v) => -v) as Float32Array,
+      pitchShift: (samples) => samplesOf(samples).map((v) => -v),
     };
     expect(plain(pitchShiftRange(mod, ch([1, 2]), 48000, 12))).toEqual([[-1, -2]]);
   });
@@ -720,38 +715,90 @@ describe('pitchShiftRange', () => {
   });
 });
 
+/** The audio of a positional core call; the studio never uses the request form. */
+function samplesOf(input: Float32Array | { samples: Float32Array }): Float32Array {
+  return input instanceof Float32Array ? input : input.samples;
+}
+
+/** A pitch-tracker result whose only meaningful field is the median F0. */
+function pitchResult(medianF0: number): PitchResult {
+  return {
+    f0: new Float32Array(),
+    voicedProb: new Float32Array(),
+    voicedFlag: [],
+    medianF0,
+    meanF0: medianF0,
+  };
+}
+
+describe('estimateSourceMidi', () => {
+  it('maps the tracker median F0 to a MIDI number', () => {
+    const pitchYin = vi.fn(() => pitchResult(440));
+    expect(estimateSourceMidi({ pitchYin }, new Float32Array([1, 2]), 48000)).toBeCloseTo(69);
+    expect(pitchYin).toHaveBeenCalledWith(new Float32Array([1, 2]), 48000);
+  });
+
+  it('throws when the tracker is missing or finds no pitch', () => {
+    expect(() => estimateSourceMidi({}, new Float32Array(2), 48000)).toThrow(/unavailable/);
+    expect(() =>
+      estimateSourceMidi({ pitchYin: () => pitchResult(0) }, new Float32Array(2), 48000),
+    ).toThrow(/detect a pitch/);
+  });
+});
+
 describe('pitchCorrectRange', () => {
-  it('retunes each channel over the range, auto-detecting the source pitch', () => {
+  it('estimates the source pitch on the mono downmix and retunes every channel by it', () => {
+    const pitchYin = vi.fn((samples: Float32Array) => {
+      // The detector sees the channel average over the range: ([2,3]+[6,7])/2.
+      expect([...samples]).toEqual([4, 5]);
+      return pitchResult(440);
+    });
     const pitchCorrectToMidi = vi.fn(
-      (samples: Float32Array, _sampleRate?: number, current?: number, target?: number) => {
-        // The source pitch is auto-detected (current omitted).
-        expect(current).toBeUndefined();
-        return samples.map((v) => v + (target ?? 0)) as Float32Array;
+      (
+        samples: Float32Array,
+        _sampleRate: number,
+        options: { currentMidi: number; targetMidi: number },
+      ) => {
+        expect(options.currentMidi).toBeCloseTo(69);
+        return samples.map((v) => v + options.targetMidi) as Float32Array;
       },
     );
-    const mod: SampleEditorWasmOps = { pitchCorrectToMidi };
-    const out = pitchCorrectRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 69, {
+    const mod: SampleEditorWasmOps = { pitchYin, pitchCorrectToMidi };
+    const out = pitchCorrectRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 67, {
       startFrame: 1,
       endFrame: 3,
     });
     expect(plain(out)).toEqual([
-      [1, 71, 72, 4],
-      [5, 75, 76, 8],
+      [1, 69, 70, 4],
+      [5, 73, 74, 8],
     ]);
+    expect(pitchYin).toHaveBeenCalledTimes(1);
     expect(pitchCorrectToMidi).toHaveBeenCalledTimes(2);
     expect(pitchCorrectToMidi.mock.calls[0][1]).toBe(48000);
   });
 
   it('defaults to the whole file without a range', () => {
     const mod: SampleEditorWasmOps = {
-      pitchCorrectToMidi: (samples) => samples.map((v) => -v) as Float32Array,
+      pitchYin: () => pitchResult(440),
+      pitchCorrectToMidi: (samples) => samplesOf(samples).map((v) => -v),
     };
     expect(plain(pitchCorrectRange(mod, ch([1, 2]), 48000, 60))).toEqual([[-1, -2]]);
   });
 
-  it('throws when unavailable or the target note is out of range', () => {
+  it('throws when unavailable, no pitch is found or the target note is out of range', () => {
     expect(() => pitchCorrectRange({}, ch([1]), 48000, 60)).toThrow(/unavailable/);
-    const mod: SampleEditorWasmOps = { pitchCorrectToMidi: (samples) => samples };
+    expect(() =>
+      pitchCorrectRange({ pitchCorrectToMidi: (samples) => samples }, ch([1]), 48000, 60),
+    ).toThrow(/unavailable/);
+    const unvoiced: SampleEditorWasmOps = {
+      pitchYin: () => pitchResult(0),
+      pitchCorrectToMidi: (samples) => samples,
+    };
+    expect(() => pitchCorrectRange(unvoiced, ch([1, 2]), 48000, 60)).toThrow(/detect a pitch/);
+    const mod: SampleEditorWasmOps = {
+      pitchYin: () => pitchResult(440),
+      pitchCorrectToMidi: (samples) => samples,
+    };
     expect(() => pitchCorrectRange(mod, ch([1]), 48000, 60.5)).toThrow(RangeError);
     expect(() => pitchCorrectRange(mod, ch([1]), 48000, -1)).toThrow(RangeError);
     expect(() => pitchCorrectRange(mod, ch([1]), 48000, 128)).toThrow(RangeError);
@@ -761,11 +808,14 @@ describe('pitchCorrectRange', () => {
 describe('pitchCorrectTimevaryingRange', () => {
   it('detects one mono F0 contour and applies it to every channel', () => {
     const pitchPyin = vi.fn(
-      (samples: Float32Array, sampleRate?: number, frameLength?: number, hopLength?: number) => {
+      (
+        samples: Float32Array,
+        sampleRate: number,
+        options: { frameLength?: number; hopLength?: number },
+      ) => {
         expect([...samples]).toEqual([4, 5]);
         expect(sampleRate).toBe(48000);
-        expect(frameLength).toBe(2048);
-        expect(hopLength).toBe(512);
+        expect(options).toMatchObject({ frameLength: 2048, hopLength: 512 });
         return {
           f0: new Float32Array([220, 224]),
           voicedProb: new Float32Array([0.9, 0.8]),
@@ -774,31 +824,32 @@ describe('pitchCorrectTimevaryingRange', () => {
         };
       },
     );
-    const pitchCorrectToMidiTimevarying = vi.fn(
-      (
-        samples: Float32Array,
-        f0: Float32Array,
-        targetMidi: number,
-        sampleRate?: number,
-        hopLength?: number,
-        voiced?: Int32Array,
-        ...rest: unknown[]
-      ) => {
-        expect([...f0]).toEqual([220, 224]);
-        expect(targetMidi).toBe(69);
-        expect(sampleRate).toBe(48000);
-        expect(hopLength).toBe(512);
-        expect(voiced ? [...voiced] : []).toEqual([1, 0]);
+    const pitchCorrectTimevarying = vi.fn(
+      (request: {
+        samples: Float32Array;
+        sampleRate: number;
+        f0Hz: Float32Array;
+        hopLength: number;
+        targetMode: string;
+        targetMidi: number;
+        voiced?: Int32Array;
+      }) => {
+        expect([...request.f0Hz]).toEqual([220, 224]);
+        expect(request.targetMode).toBe('midi');
+        expect(request.targetMidi).toBe(69);
+        expect(request.sampleRate).toBe(48000);
+        expect(request.hopLength).toBe(512);
+        expect(request.voiced ? [...request.voiced] : []).toEqual([1, 0]);
         // The tracker's confidence must not reach the corrector: it reads the
-        // argument as the per-frame correction weight, so forwarding it
-        // silently applies a fraction of the requested correction.
-        expect(rest).toEqual([]);
-        return samples.map((value) => value + 10) as Float32Array;
+        // field as the per-frame correction weight, so forwarding it silently
+        // applies a fraction of the requested correction.
+        expect(request).not.toHaveProperty('voicedProb');
+        return request.samples.map((value) => value + 10) as Float32Array;
       },
     );
 
     const out = pitchCorrectTimevaryingRange(
-      { pitchPyin, pitchCorrectToMidiTimevarying },
+      { pitchPyin, pitchCorrectTimevarying },
       ch([1, 2, 3, 4], [5, 6, 7, 8]),
       48000,
       69,
@@ -810,7 +861,7 @@ describe('pitchCorrectTimevaryingRange', () => {
       [5, 16, 17, 8],
     ]);
     expect(pitchPyin).toHaveBeenCalledTimes(1);
-    expect(pitchCorrectToMidiTimevarying).toHaveBeenCalledTimes(2);
+    expect(pitchCorrectTimevarying).toHaveBeenCalledTimes(2);
   });
 
   it('falls back to pitchYin and validates inputs', () => {
@@ -820,8 +871,8 @@ describe('pitchCorrectTimevaryingRange', () => {
       voicedFlag: [true],
       medianF0: 330,
     }));
-    const pitchCorrectToMidiTimevarying = vi.fn((samples: Float32Array) => samples);
-    const mod: SampleEditorWasmOps = { pitchYin, pitchCorrectToMidiTimevarying };
+    const pitchCorrectTimevarying = vi.fn((request: { samples: Float32Array }) => request.samples);
+    const mod: SampleEditorWasmOps = { pitchYin, pitchCorrectTimevarying };
 
     expect(plain(pitchCorrectTimevaryingRange(mod, ch([1]), 48000, 60))).toEqual([[1]]);
     expect(() => pitchCorrectTimevaryingRange({}, ch([1]), 48000, 60)).toThrow(/unavailable/);
@@ -833,7 +884,7 @@ describe('pitchCorrectTimevaryingRange', () => {
       pitchCorrectTimevaryingRange(
         {
           pitchYin: () => ({ f0: new Float32Array([0]), medianF0: 0 }),
-          pitchCorrectToMidiTimevarying,
+          pitchCorrectTimevarying,
         },
         ch([1]),
         48000,
@@ -857,10 +908,14 @@ describe('scaleCorrectRange', () => {
       return 67; // snap A4 -> G4
     });
     const pitchCorrectToMidi = vi.fn(
-      (samples: Float32Array, _sr?: number, current?: number, target?: number) => {
-        expect(current).toBeCloseTo(69);
-        expect(target).toBe(67);
-        return samples.map((v) => v + (target ?? 0)) as Float32Array;
+      (
+        samples: Float32Array,
+        _sr: number,
+        options: { currentMidi: number; targetMidi: number },
+      ) => {
+        expect(options.currentMidi).toBeCloseTo(69);
+        expect(options.targetMidi).toBe(67);
+        return samples.map((v) => v + options.targetMidi) as Float32Array;
       },
     );
     const mod: SampleEditorWasmOps = { pitchYin, scaleQuantizeMidi, pitchCorrectToMidi };
@@ -894,10 +949,12 @@ describe('tuneToReferenceRange', () => {
       expect([...samples]).toEqual([4, 5]);
       return 0.25; // a quarter-semitone sharp
     });
-    const pitchShift = vi.fn((samples: Float32Array, _sr: number, semitones: number) => {
-      expect(semitones).toBeCloseTo(-0.25); // correct downward to A440
-      return samples.map((v) => v * 10) as Float32Array;
-    });
+    const pitchShift = vi.fn(
+      (samples: Float32Array, _sr: number, options: { pitchSemitones: number }) => {
+        expect(options.pitchSemitones).toBeCloseTo(-0.25); // correct downward to A440
+        return samples.map((v) => v * 10) as Float32Array;
+      },
+    );
     const mod: SampleEditorWasmOps = { estimateTuning, pitchShift };
     const out = tuneToReferenceRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, {
       startFrame: 1,
@@ -957,7 +1014,7 @@ describe('voiceChangeRange', () => {
 
   it('defaults to the whole file without a range', () => {
     const mod: SampleEditorWasmOps = {
-      voiceChange: (samples) => samples.map((v) => -v) as Float32Array,
+      voiceChange: (samples) => samplesOf(samples).map((v) => -v),
     };
     expect(plain(voiceChangeRange(mod, ch([1, 2]), 48000, 0, 1, 'relative'))).toEqual([[-1, -2]]);
   });
@@ -1005,11 +1062,11 @@ describe('autoTuneRange', () => {
     expect(autoTune.mock.calls[0][0]).toMatchObject({
       sampleRate: 44100,
       key: 'detect',
-      strength: 0.8,
+      retuneAmount: 0.8,
     });
     expect(autoTune.mock.calls[1][0]).toMatchObject({
       key: { root: 9, mode: 'minor' },
-      strength: 0.8,
+      retuneAmount: 0.8,
     });
   });
 
@@ -1102,7 +1159,7 @@ describe('timeStretchRange', () => {
       timeStretch: (samples) => {
         call += 1;
         // Second channel comes back one frame longer than the first.
-        return call === 1 ? samples.slice(0, 2) : samples.slice(0, 3);
+        return call === 1 ? samplesOf(samples).slice(0, 2) : samplesOf(samples).slice(0, 3);
       },
     };
     const out = timeStretchRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 1.5);
@@ -1149,7 +1206,7 @@ describe('noteStretchRange', () => {
     const mod: SampleEditorWasmOps = {
       noteStretch: (samples) => {
         call += 1;
-        return call === 1 ? samples.slice(0, 3) : samples.slice(0, 4);
+        return call === 1 ? samplesOf(samples).slice(0, 3) : samplesOf(samples).slice(0, 4);
       },
     };
     const out = noteStretchRange(mod, ch([1, 2, 3, 4], [5, 6, 7, 8]), 48000, 1.5);
@@ -1201,7 +1258,7 @@ describe('HPSS separation', () => {
 describe('spectralDenoiseRange', () => {
   it('delegates a selection-scoped high-frequency attenuation op per channel', () => {
     const spectralEdit = vi.fn(
-      (samples: Float32Array, _sampleRate: number, _ops?: unknown[], _options?: unknown) =>
+      (samples: Float32Array, _sampleRate: number, _options?: unknown) =>
         samples.map((value) => value * 0.25) as Float32Array,
     );
 
@@ -1215,21 +1272,20 @@ describe('spectralDenoiseRange', () => {
       [1, 1.25, 1.5],
     ]);
     expect(spectralEdit).toHaveBeenCalledTimes(2);
-    expect(spectralEdit).toHaveBeenCalledWith(
-      expect.any(Float32Array),
-      48000,
-      [
+    expect(spectralEdit).toHaveBeenCalledWith(expect.any(Float32Array), 48000, {
+      ops: [
         {
           startSample: 1,
           endSample: 3,
           lowHz: 4000,
-          highHz: 0,
           gainDb: -18,
           mode: 'attenuate',
         },
       ],
-      { nFft: 2048, hopLength: 512, window: 'hann' },
-    );
+      nFft: 2048,
+      hopLength: 512,
+      window: 'hann',
+    });
   });
 
   it('validates availability and numeric parameters', () => {
@@ -1250,7 +1306,7 @@ describe('spectralDenoiseRange', () => {
 describe('spectralEditRange', () => {
   it('delegates a custom rectangular spectral op per channel', () => {
     const spectralEdit = vi.fn(
-      (samples: Float32Array, _sampleRate: number, _ops?: unknown[], _options?: unknown) =>
+      (samples: Float32Array, _sampleRate: number, _options?: unknown) =>
         samples.map((value) => value + 1) as Float32Array,
     );
 
@@ -1267,10 +1323,8 @@ describe('spectralEditRange', () => {
       [5, 6, 7],
     ]);
     expect(spectralEdit).toHaveBeenCalledTimes(2);
-    expect(spectralEdit).toHaveBeenCalledWith(
-      expect.any(Float32Array),
-      44100,
-      [
+    expect(spectralEdit).toHaveBeenCalledWith(expect.any(Float32Array), 44100, {
+      ops: [
         {
           startSample: 0,
           endSample: 2,
@@ -1280,8 +1334,10 @@ describe('spectralEditRange', () => {
           mode: 'heal',
         },
       ],
-      { nFft: 2048, hopLength: 512, window: 'hann' },
-    );
+      nFft: 2048,
+      hopLength: 512,
+      window: 'hann',
+    });
   });
 
   it('validates custom spectral edit bounds', () => {
@@ -1303,9 +1359,9 @@ describe('spectralEditRange', () => {
 
 describe('repair operations', () => {
   it('declickRange delegates with the sample rate over the range', () => {
-    const masteringRepairDeclick = vi.fn(
-      (samples: Float32Array, _sampleRate: number) => samples.map(() => 0.5) as Float32Array,
-    );
+    const masteringRepairDeclick = vi.fn((samples: Float32Array, _sampleRate: number) => ({
+      samples: samples.map(() => 0.5) as Float32Array,
+    }));
     const out = declickRange({ masteringRepairDeclick }, ch([1, 2, 3]), 44100, {
       startFrame: 1,
       endFrame: 2,
@@ -1315,9 +1371,9 @@ describe('repair operations', () => {
   });
 
   it('denoiseRange delegates per channel', () => {
-    const masteringRepairDenoiseClassical = vi.fn(
-      (samples: Float32Array) => samples.map((v) => v * 0.5) as Float32Array,
-    );
+    const masteringRepairDenoiseClassical = vi.fn((samples: Float32Array) => ({
+      samples: samples.map((v) => v * 0.5) as Float32Array,
+    }));
     const out = denoiseRange({ masteringRepairDenoiseClassical }, ch([2, 2], [4, 4]), 48000);
     expect(plain(out)).toEqual([
       [1, 1],
@@ -1326,20 +1382,21 @@ describe('repair operations', () => {
   });
 
   it('additional repair processors delegate per channel and support shortened output', () => {
-    const masteringRepairDeclip = vi.fn(
-      (samples: Float32Array) =>
-        samples.map((v) => Math.max(-0.8, Math.min(0.8, v))) as Float32Array,
-    );
-    const masteringRepairDecrackle = vi.fn(
-      (samples: Float32Array) => samples.map((v) => v * 0.75) as Float32Array,
-    );
-    const masteringRepairDehum = vi.fn(
-      (samples: Float32Array) => samples.map((v) => v - 0.1) as Float32Array,
-    );
-    const masteringRepairDereverbClassical = vi.fn(
-      (samples: Float32Array) => samples.map((v) => v * 0.25) as Float32Array,
-    );
-    const masteringRepairTrimSilence = vi.fn((samples: Float32Array) => samples.slice(1, 3));
+    const masteringRepairDeclip = vi.fn((samples: Float32Array) => ({
+      samples: samples.map((v) => Math.max(-0.8, Math.min(0.8, v))) as Float32Array,
+    }));
+    const masteringRepairDecrackle = vi.fn((samples: Float32Array) => ({
+      samples: samples.map((v) => v * 0.75) as Float32Array,
+    }));
+    const masteringRepairDehum = vi.fn((samples: Float32Array) => ({
+      samples: samples.map((v) => v - 0.1) as Float32Array,
+    }));
+    const masteringRepairDereverbClassical = vi.fn((samples: Float32Array) => ({
+      samples: samples.map((v) => v * 0.25) as Float32Array,
+    }));
+    const masteringRepairTrimSilence = vi.fn((samples: Float32Array) => ({
+      samples: samples.slice(1, 3),
+    }));
 
     expect(plain(declipRange({ masteringRepairDeclip }, ch([1, -1]), 44100))).toEqual([
       [0.800000011920929, -0.800000011920929],
@@ -1683,10 +1740,10 @@ describe('acoustic analysis helpers', () => {
 
   it('analyzes a selected impulse response after downmixing', () => {
     const analyzeImpulseResponse = vi.fn(
-      (samples: Float32Array, sampleRate?: number, bands?: number) => {
+      (samples: Float32Array, sampleRate?: number, options?: unknown) => {
         expect([...samples]).toEqual([4, 5]);
         expect(sampleRate).toBe(48000);
-        expect(bands).toBe(6);
+        expect(options).toEqual({ nOctaveBands: 6 });
         return result;
       },
     );
@@ -1745,10 +1802,12 @@ describe('acoustic analysis helpers', () => {
 
 describe('restoreRange', () => {
   it('repairs a stereo pair as one linked pair inside the range', () => {
-    const masterAudioStereo = vi.fn((left: Float32Array, right: Float32Array) => ({
-      left: Float32Array.from(left, (value) => value * 10),
-      right: Float32Array.from(right, (value) => value * 100),
-    }));
+    const masterAudioStereo = vi.fn(
+      ({ left, right }: { left: Float32Array; right: Float32Array }) => ({
+        left: Float32Array.from(left, (value) => value * 10),
+        right: Float32Array.from(right, (value) => value * 100),
+      }),
+    );
     const masterAudio = vi.fn();
     const out = restoreRange(
       { masterAudio, masterAudioStereo } as unknown as SampleEditorWasmOps,
@@ -1761,12 +1820,12 @@ describe('restoreRange', () => {
       [1, 20, 30],
       [4, 500, 600],
     ]);
-    expect(masterAudioStereo).toHaveBeenCalledWith(
-      expect.any(Float32Array),
-      expect.any(Float32Array),
-      48000,
-      'vinyl',
-    );
+    expect(masterAudioStereo).toHaveBeenCalledWith({
+      left: expect.any(Float32Array),
+      right: expect.any(Float32Array),
+      sampleRate: 48000,
+      preset: 'vinyl',
+    });
     expect(masterAudio).not.toHaveBeenCalled();
   });
 
@@ -1781,7 +1840,9 @@ describe('restoreRange', () => {
       'shellac78',
     );
     expect(plain(out)).toEqual([[-1, -2]]);
-    expect(masterAudio).toHaveBeenCalledWith(expect.any(Float32Array), 44100, 'shellac78');
+    expect(masterAudio).toHaveBeenCalledWith(expect.any(Float32Array), 44100, {
+      preset: 'shellac78',
+    });
   });
 
   it('throws when the module cannot run a preset', () => {
@@ -1791,11 +1852,10 @@ describe('restoreRange', () => {
 
 describe('stereo-linked repairs', () => {
   it('repairs a stereo pair through the linked form when the module has one', () => {
-    const mono = vi.fn((samples: Float32Array) => samples);
-    const stereo = vi.fn((left: Float32Array, right: Float32Array) => ({
-      left: Float32Array.from(left, () => 7),
-      right: Float32Array.from(right, () => 8),
-      report: {},
+    const mono = vi.fn((samples: Float32Array) => ({ samples }));
+    const stereo = vi.fn(({ left, right }: { left: Float32Array; right: Float32Array }) => ({
+      channels: [Float32Array.from(left, () => 7), Float32Array.from(right, () => 8)],
+      reports: [],
     }));
     const out = declickRange(
       {
@@ -1811,22 +1871,28 @@ describe('stereo-linked repairs', () => {
       [8, 8, 6],
     ]);
     expect(mono).not.toHaveBeenCalled();
-    expect(stereo).toHaveBeenCalledWith(expect.any(Float32Array), expect.any(Float32Array), 48000);
+    expect(stereo).toHaveBeenCalledWith({
+      left: expect.any(Float32Array),
+      right: expect.any(Float32Array),
+      sampleRate: 48000,
+    });
   });
 
   it('forwards the denoise depth to both the linked and the per-channel form', () => {
-    const mono = vi.fn((samples: Float32Array) => samples);
-    const stereo = vi.fn((left: Float32Array, right: Float32Array) => ({
-      left,
-      right,
-      report: {},
+    const mono = vi.fn((samples: Float32Array) => ({ samples }));
+    const stereo = vi.fn(({ left, right }: { left: Float32Array; right: Float32Array }) => ({
+      channels: [left, right],
+      reports: [],
     }));
     const ops = {
       masteringRepairDenoiseClassical: mono,
       masteringRepairDenoiseClassicalStereo: stereo,
     } as unknown as SampleEditorWasmOps;
     denoiseRange(ops, ch([1], [2]), 48000, null, 18);
-    expect(stereo).toHaveBeenCalledWith(expect.any(Float32Array), expect.any(Float32Array), 48000, {
+    expect(stereo).toHaveBeenCalledWith({
+      left: expect.any(Float32Array),
+      right: expect.any(Float32Array),
+      sampleRate: 48000,
       reductionDb: 18,
     });
     denoiseRange(ops, ch([1]), 48000, null, 12);

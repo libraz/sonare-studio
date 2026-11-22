@@ -408,7 +408,7 @@ export async function transcribeAudioClipToMidi(
         startPpq,
         store.timeSignatures,
       );
-      if (getProject().getOverlapPolicy() === 1) {
+      if (getProject().overlapPolicy === 'allow') {
         assertNoNewClipOverlaps(store.clips, [
           { clipId, startPpq, lengthPpq: clip.lengthPpq, trackId: clip.trackId },
         ]);

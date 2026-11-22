@@ -17,6 +17,7 @@ import {
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 import {
   ARTICULATIONS,
+  BUILTIN_SYNTH_WAVEFORMS,
   CONTROLLER_AXES,
   CONTROLLER_INPUTS,
   MPE_DIMENSIONS,
@@ -113,33 +114,28 @@ describe('clampPatchField', () => {
 describe('mod matrix rows', () => {
   it('round-trips string routings', () => {
     const patch: SynthPatch = {
-      modRoutings: [{ source: 'lfo1', destination: 'pitch-cents', depth: 0.5 }],
+      modRoutings: [{ source: 'lfo1', destination: 'pitchCents', depth: 0.5 }],
     };
     const rows = modMatrixRows(patch);
-    expect(rows).toEqual([{ source: 'lfo1', destination: 'pitch-cents', depth: 0.5 }]);
+    expect(rows).toEqual([{ source: 'lfo1', destination: 'pitchCents', depth: 0.5 }]);
     expect(modRowsToRoutings(rows)).toEqual(patch.modRoutings);
-  });
-
-  it('resolves numeric enum ordinals to names', () => {
-    const rows = modMatrixRows({ modRoutings: [{ source: 3, destination: 2, depth: 0.25 }] });
-    expect(rows).toEqual([{ source: 'lfo1', destination: 'cutoff-cents', depth: 0.25 }]);
   });
 
   it('drops inert rows and clamps depth', () => {
     const routings = modRowsToRoutings([
       createModMatrixRow(),
       { source: 'lfo1', destination: 'none', depth: 1 },
-      { source: 'none', destination: 'amp-gain', depth: 1 },
-      { source: 'velocity', destination: 'amp-gain', depth: 0 },
-      { source: 'lfo2', destination: 'pan-units', depth: 4 },
+      { source: 'none', destination: 'ampGain', depth: 1 },
+      { source: 'velocity', destination: 'ampGain', depth: 0 },
+      { source: 'lfo2', destination: 'panUnits', depth: 4 },
     ]);
-    expect(routings).toEqual([{ source: 'lfo2', destination: 'pan-units', depth: 1 }]);
+    expect(routings).toEqual([{ source: 'lfo2', destination: 'panUnits', depth: 1 }]);
   });
 
   it('caps the routing list at the ABI maximum', () => {
     const rows = Array.from({ length: 12 }, () => ({
       source: 'lfo1',
-      destination: 'pitch-cents',
+      destination: 'pitchCents',
       depth: 0.1,
     }));
     expect(modRowsToRoutings(rows)).toHaveLength(MAX_MOD_ROUTINGS);
@@ -149,10 +145,10 @@ describe('mod matrix rows', () => {
 describe('createPatchDraft', () => {
   it('seeds a preset instrument with the resolved base values', () => {
     const resolve = vi.fn(() => ({ cutoffHz: 12000, ampSustain: 0.6, waveform: 'saw' }));
-    const draft = createPatchDraft({ kind: 'synth-preset', preset: 'saw-lead' }, resolve);
-    expect(resolve).toHaveBeenCalledWith('saw-lead');
+    const draft = createPatchDraft({ kind: 'synth-preset', preset: 'sawLead' }, resolve);
+    expect(resolve).toHaveBeenCalledWith('sawLead');
     expect(draft).toMatchObject({
-      preset: 'saw-lead',
+      preset: 'sawLead',
       cutoffHz: 12000,
       ampSustain: 0.6,
       waveform: 'saw',
@@ -162,12 +158,12 @@ describe('createPatchDraft', () => {
   it('layers explicit patch fields over the preset base', () => {
     const resolve = vi.fn(() => ({ cutoffHz: 12000, drive: 0.3 }));
     const draft = createPatchDraft(
-      { kind: 'synth-patch', patch: { preset: 'saw-lead', cutoffHz: 440 } },
+      { kind: 'synth-patch', patch: { preset: 'sawLead', cutoffHz: 440 } },
       resolve,
     );
     expect(draft.cutoffHz).toBe(440);
     expect(draft.drive).toBe(0.3);
-    expect(draft.preset).toBe('saw-lead');
+    expect(draft.preset).toBe('sawLead');
   });
 
   it('starts from an init patch for sf2/missing instruments and resolver failures', () => {
@@ -183,7 +179,7 @@ describe('createPatchDraft', () => {
 
   it('carries the GM program flag over from the instrument patch', () => {
     const draft = createPatchDraft(
-      { kind: 'synth-patch', patch: { preset: 'saw-lead', useGmPrograms: true } },
+      { kind: 'synth-patch', patch: { preset: 'sawLead', useGmPrograms: true } },
       () => null,
     );
     expect(draft.useGmPrograms).toBe(true);
@@ -206,7 +202,7 @@ describe('sanitizePatchDraft', () => {
 
   it('clamps numerics and drops the keep-base enum spelling', () => {
     const patch = sanitizePatchDraft({
-      preset: 'saw-lead',
+      preset: 'sawLead',
       cutoffHz: 99999,
       drive: 0,
       lfo2RateHz: 99,
@@ -217,7 +213,7 @@ describe('sanitizePatchDraft', () => {
       gain: 0.5,
     });
     expect(patch).toEqual({
-      preset: 'saw-lead',
+      preset: 'sawLead',
       cutoffHz: 20000,
       drive: 0,
       lfo2RateHz: 20,
@@ -258,11 +254,11 @@ describe('sanitizePatchDraft', () => {
   it('filters and clamps mod routings', () => {
     const patch = sanitizePatchDraft({
       modRoutings: [
-        { source: 'none', destination: 'amp-gain', depth: 1 },
-        { source: 'lfo1', destination: 'pitch-cents', depth: -7 },
+        { source: 'none', destination: 'ampGain', depth: 1 },
+        { source: 'lfo1', destination: 'pitchCents', depth: -7 },
       ],
     });
-    expect(patch.modRoutings).toEqual([{ source: 'lfo1', destination: 'pitch-cents', depth: -1 }]);
+    expect(patch.modRoutings).toEqual([{ source: 'lfo1', destination: 'pitchCents', depth: -1 }]);
   });
 
   it('emits an empty routing list to clear inherited modulations', () => {
@@ -279,13 +275,13 @@ describe('sanitizePatchDraft', () => {
 
 describe('patchEditCount', () => {
   it('counts set fields excluding the preset reference', () => {
-    expect(patchEditCount({ preset: 'saw-lead' })).toBe(0);
+    expect(patchEditCount({ preset: 'sawLead' })).toBe(0);
     expect(
       patchEditCount({
-        preset: 'saw-lead',
+        preset: 'sawLead',
         cutoffHz: 400,
         waveform: 'saw',
-        modRoutings: [{ source: 'lfo1', destination: 'pitch-cents', depth: 0.5 }],
+        modRoutings: [{ source: 'lfo1', destination: 'pitchCents', depth: 0.5 }],
       }),
     ).toBe(3);
   });
@@ -330,14 +326,14 @@ describe('resolveSynthEnums', () => {
     const enums = resolveSynthEnums(null);
     expect(enums).toEqual(FALLBACK_SYNTH_ENUMS);
     expect(enums.waveforms).toContain('saw');
-    expect(enums.modDestinations).toContain('cutoff-cents');
+    expect(enums.modDestinations).toContain('cutoffCents');
   });
 
   it('mirrors every published constant table', () => {
     expect(FALLBACK_SYNTH_ENUMS).toEqual({
       engineModes: [...SYNTH_ENGINE_MODES],
       waveforms: [...SYNTH_OSC_WAVEFORMS],
-      builtinWaveforms: [],
+      builtinWaveforms: [...BUILTIN_SYNTH_WAVEFORMS],
       filterModels: [...SYNTH_FILTER_MODELS],
       filterOutputs: [...SYNTH_FILTER_OUTPUTS],
       bodyTypes: [...SYNTH_BODY_TYPES],
@@ -353,7 +349,7 @@ describe('resolveSynthEnums', () => {
       retriggers: [...SYNTH_RETRIGGERS],
       lfoShapes: [...SYNTH_LFO_SHAPES],
       partRigModes: [...PART_RIG_MODES],
-      sampleDescLoopModes: ['none', 'continuous', 'key-down'],
+      sampleDescLoopModes: SAMPLE_LOOP_MODES.filter((mode) => mode !== 'default'),
     });
   });
 

@@ -12,7 +12,7 @@ const {
   indexIsInitialized,
   retuneSetConfig,
   retuneReset,
-  retuneDelete,
+  retuneDestroy,
   retuneProcessMono,
   bridgeProcess,
 } = vi.hoisted(() => ({
@@ -27,7 +27,7 @@ const {
   indexIsInitialized: vi.fn(() => false),
   retuneSetConfig: vi.fn(),
   retuneReset: vi.fn(),
-  retuneDelete: vi.fn(),
+  retuneDestroy: vi.fn(),
   retuneProcessMono: vi.fn((samples: Float32Array) => samples),
   bridgeProcess: vi.fn(() => true),
 }));
@@ -53,12 +53,14 @@ vi.mock('@/wasm/worklet.js', () => ({
 vi.mock('@/wasm/index.js', () => ({
   init: indexInit,
   isInitialized: indexIsInitialized,
-  StreamingRetune: class {
+  StreamingRetune: class
+    implements Partial<InstanceType<typeof import('@/wasm/index.js').StreamingRetune>>
+  {
     constructor(readonly config: unknown) {}
     prepare = vi.fn();
     setConfig = retuneSetConfig;
     reset = retuneReset;
-    delete = retuneDelete;
+    destroy = retuneDestroy;
     processMono = retuneProcessMono;
   },
 }));
@@ -110,7 +112,7 @@ beforeEach(() => {
   indexIsInitialized.mockReturnValue(false);
   retuneSetConfig.mockClear();
   retuneReset.mockClear();
-  retuneDelete.mockClear();
+  retuneDestroy.mockClear();
   retuneProcessMono.mockClear();
   retuneProcessMono.mockImplementation((samples: Float32Array) => samples);
   bridgeProcess.mockClear();
@@ -170,7 +172,7 @@ describe('worklet-entry dispatch', () => {
     instance.port.onmessage?.({ data: { type: 'destroy' } });
     expect(retuneSetConfig).toHaveBeenCalledWith({ semitones: 7, mix: 0.5 });
     expect(retuneReset).toHaveBeenCalledTimes(1);
-    expect(retuneDelete).toHaveBeenCalledTimes(1);
+    expect(retuneDestroy).toHaveBeenCalledTimes(1);
   });
 
   it('keeps 16k realtime retune quanta free of transient TypedArray views', async () => {
@@ -202,7 +204,7 @@ describe('worklet-entry dispatch', () => {
       type: 'ready',
       runtimeTarget: 'embind',
     });
-    const setConfig = { type: 'setConfig', preset: 'bright-idol' };
+    const setConfig = { type: 'setConfig', preset: 'brightIdol' };
     const reset = { type: 'reset' };
     const destroy = { type: 'destroy' };
     instance.port.onmessage?.({ data: setConfig });

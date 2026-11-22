@@ -82,7 +82,7 @@ describe('track freeze and bounce-in-place', () => {
         deps: null,
         memoryBudgetBytes: DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
       });
-      expect(options?.resolvePreset?.('unknown-preset')).toBe('acoustic-piano');
+      expect(options?.resolvePreset?.('unknown-preset')).toBe('acousticPiano');
 
       expect(ingest).toHaveBeenCalledTimes(1);
       const [channels, sampleRate, name] = ingest.mock.calls[0];

@@ -243,7 +243,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
                 return peakOf(result.channels.map((channel) => channel.subarray(from, to)));
               })
             : null,
-        truePeakDb: result.report.truePeakDb ?? null,
+        truePeakDbtp: result.report.truePeakDbtp ?? null,
         lufs: result.report.lufs ?? null,
         wavBytes: wav.length,
         riff: String.fromCharCode(wav[0], wav[1], wav[2], wav[3]),
@@ -287,7 +287,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
     stripAutomationMode: (target: AutomationTarget) => automationStripMode(target),
     setStripAutomationMode: (target: AutomationTarget, mode: AutomationStripMode) =>
       setAutomationStripMode(target, mode),
-    automationLaneCount: () => handle.value?.engine.automationLaneCount() ?? 0,
+    automationLaneCount: () => handle.value?.engine.automationLaneCount ?? 0,
     automationInstalledParamIds: () => ctx.automationSync()?.installedParamIds() ?? [],
     seekPpq: (ppq: number) => transport.seekPpq(ppq),
     addAudioTrack: (name?: string) => addAudioTrack(name !== undefined ? { name } : {}),

@@ -6,23 +6,9 @@
 
 import type { MixdownDeps, MixdownReport } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
+import type { LufsResult } from '@/wasm/index.js';
 
-type LoudnessMeasurement =
-  | number
-  | {
-      integratedLufs: number;
-      momentaryLufs?: number;
-      shortTermLufs?: number;
-      loudnessRange?: number;
-    };
-
-function applyLoudness(report: MixdownReport, measurement: LoudnessMeasurement): void {
-  if (typeof measurement === 'number') {
-    if (Number.isFinite(measurement) || measurement === Number.NEGATIVE_INFINITY) {
-      report.lufs = measurement;
-    }
-    return;
-  }
+function applyLoudness(report: MixdownReport, measurement: LufsResult): void {
   if (
     Number.isFinite(measurement.integratedLufs) ||
     measurement.integratedLufs === Number.NEGATIVE_INFINITY
@@ -31,7 +17,9 @@ function applyLoudness(report: MixdownReport, measurement: LoudnessMeasurement):
   }
   if (Number.isFinite(measurement.momentaryLufs)) report.momentaryLufs = measurement.momentaryLufs;
   if (Number.isFinite(measurement.shortTermLufs)) report.shortTermLufs = measurement.shortTermLufs;
-  if (Number.isFinite(measurement.loudnessRange)) report.loudnessRange = measurement.loudnessRange;
+  if (Number.isFinite(measurement.loudnessRangeLu)) {
+    report.loudnessRangeLu = measurement.loudnessRangeLu;
+  }
 }
 
 /** One channel's clipping census as the metering seam reports it. */
@@ -102,27 +90,22 @@ export function buildReport(
   const report: MixdownReport = {
     peakDb: peakDb(peak),
   };
-  if (metering?.truePeakDb && totalFrames > 0) {
+  if (metering?.truePeakDbtp && totalFrames > 0) {
     try {
-      report.truePeakDb = Math.max(
-        metering.truePeakDb(mixL, sampleRate),
-        metering.truePeakDb(mixR, sampleRate),
+      report.truePeakDbtp = Math.max(
+        metering.truePeakDbtp(mixL, sampleRate),
+        metering.truePeakDbtp(mixR, sampleRate),
       );
     } catch {
       // True peak stays absent when the metering call fails.
     }
   }
-  if (totalFrames > 0 && (metering?.interleavedLufs || metering?.integratedLufs)) {
+  if (totalFrames > 0 && (metering?.multichannelLufs || metering?.integratedLufs)) {
     try {
-      if (metering.interleavedLufs) {
+      if (metering.multichannelLufs) {
         // Channel-weighted BS.1770 over the actual stereo deliverable; a mono
         // downmix would mis-measure decorrelated or panned material.
-        const interleaved = new Float32Array(totalFrames * 2);
-        for (let i = 0; i < totalFrames; i++) {
-          interleaved[2 * i] = mixL[i];
-          interleaved[2 * i + 1] = mixR[i];
-        }
-        applyLoudness(report, metering.interleavedLufs(interleaved, 2, sampleRate));
+        applyLoudness(report, metering.multichannelLufs([mixL, mixR], sampleRate));
       } else if (metering.integratedLufs) {
         applyLoudness(
           report,

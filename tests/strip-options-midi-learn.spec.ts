@@ -112,7 +112,7 @@ describe('StripOptionsPopover MIDI learn', () => {
 
     learn.handleCc({ channel: 0, controller: 29, value: 127 });
     await wrapper.vm.$nextTick();
-    expect(store.tracks[0].mixer?.panLaw).toBe('linear0dB');
+    expect(store.tracks[0].mixer?.panLaw).toBe('linear0Db');
 
     await buttons[6].trigger('click');
     expect(learn.isArmedId(panModeId)).toBe(true);

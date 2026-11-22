@@ -157,8 +157,8 @@ export function normalizeMixdownLoudness(
   // Prefer the measured true peak; fall back to the always-present sample peak
   // so an unmeasured true peak never leaves the ceiling uncapped.
   const peakReferenceDb =
-    report.truePeakDb !== undefined && Number.isFinite(report.truePeakDb)
-      ? report.truePeakDb
+    report.truePeakDbtp !== undefined && Number.isFinite(report.truePeakDbtp)
+      ? report.truePeakDbtp
       : Number.isFinite(report.peakDb)
         ? report.peakDb
         : undefined;
@@ -180,7 +180,7 @@ export function normalizeMixdownLoudness(
   return {
     ...carried,
     peakDb: report.peakDb + gainDb,
-    ...(report.truePeakDb !== undefined ? { truePeakDb: report.truePeakDb + gainDb } : {}),
+    ...(report.truePeakDbtp !== undefined ? { truePeakDbtp: report.truePeakDbtp + gainDb } : {}),
     ...(Number.isFinite(report.lufs) ? { lufs: (report.lufs as number) + gainDb } : {}),
     ...(report.momentaryLufs !== undefined ? { momentaryLufs: report.momentaryLufs + gainDb } : {}),
     ...(report.shortTermLufs !== undefined ? { shortTermLufs: report.shortTermLufs + gainDb } : {}),

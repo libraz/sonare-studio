@@ -20,14 +20,10 @@ import type {
   MasteringRepairAnalysis,
   MasteringRepairStage,
   MaterialPresetName,
+  PitchResult,
   RirDiagnostic,
 } from '@/wasm/index.js';
-import {
-  type MatchEqAnalysis,
-  parseMatchEqCurve,
-  parseReferenceLoudness,
-  parseTonalBalance,
-} from './match-eq-analysis';
+import type { MatchEqAnalysis } from './match-eq-analysis';
 import { type DetectedNote, onsetSecondsToFrames, silenceSplitMarkers } from './onsets';
 import { cutCrossfadeFrames, resolveRange, type SampleRange, spliceRange } from './ops';
 
@@ -46,7 +42,7 @@ export type SampleEditorWasmOps = Partial<
     | 'pitchCorrectToMidi'
     | 'pitchYin'
     | 'pitchPyin'
-    | 'pitchCorrectToMidiTimevarying'
+    | 'pitchCorrectTimevarying'
     | 'estimateTuning'
     | 'scaleQuantizeMidi'
     | 'autoTune'
@@ -75,8 +71,8 @@ export type SampleEditorWasmOps = Partial<
     | 'analyzeImpulseResponse'
     | 'detectAcoustic'
     | 'spectralEdit'
-    | 'masteringPairProcess'
-    | 'masteringPairAnalyze'
+    | 'masteringApplyPairProcessor'
+    | 'masteringAnalyzePair'
     | 'masterAudio'
     | 'masterAudioStereo'
     | 'masteringRepairDeclickStereo'
@@ -140,9 +136,10 @@ export function wasmOpAvailability(
 ): WasmOpAvailability {
   return {
     pitchShift: typeof ops?.pitchShift === 'function',
-    pitchCorrect: typeof ops?.pitchCorrectToMidi === 'function',
+    pitchCorrect:
+      typeof ops?.pitchCorrectToMidi === 'function' && typeof ops?.pitchYin === 'function',
     pitchCorrectTimevarying:
-      typeof ops?.pitchCorrectToMidiTimevarying === 'function' &&
+      typeof ops?.pitchCorrectTimevarying === 'function' &&
       (typeof ops?.pitchPyin === 'function' || typeof ops?.pitchYin === 'function'),
     tuneReference:
       typeof ops?.estimateTuning === 'function' && typeof ops?.pitchShift === 'function',
@@ -173,8 +170,8 @@ export function wasmOpAvailability(
       typeof ops?.masteringRepairApply === 'function',
     detectOnsets: typeof ops?.detectOnsets === 'function',
     splitSilence: typeof ops?.splitSilence === 'function',
-    matchEq: typeof ops?.masteringPairProcess === 'function',
-    matchEqAnalyze: typeof ops?.masteringPairAnalyze === 'function',
+    matchEq: typeof ops?.masteringApplyPairProcessor === 'function',
+    matchEqAnalyze: typeof ops?.masteringAnalyzePair === 'function',
     roomMorph: typeof ops?.roomMorph === 'function',
     roomMorphStereo: typeof ops?.roomMorphStereo === 'function',
     synthesizeRir: typeof ops?.synthesizeRir === 'function',
@@ -218,6 +215,16 @@ function toPlanar(segments: ReadonlyArray<Float32Array>): Float32Array[] {
   );
 }
 
+/** F0 contour of a mono signal: pYIN when the module has it, YIN otherwise. */
+function f0Contour(ops: SampleEditorWasmOps, mono: Float32Array, sampleRate: number): PitchResult {
+  const options = { frameLength: NOTE_DETECT_FRAME, hopLength: NOTE_DETECT_HOP };
+  if (typeof ops.pitchPyin === 'function') {
+    return ops.pitchPyin(mono, sampleRate, { ...options, fillNa: true });
+  }
+  if (typeof ops.pitchYin !== 'function') throw new Error('Pitch tracking is unavailable');
+  return ops.pitchYin(mono, sampleRate, options);
+}
+
 /**
  * Runs a mono segment transform per channel over the range (whole file when
  * omitted) and splices the results back. Output segments of unequal lengths
@@ -248,7 +255,7 @@ function applyRepairToRange(
   sampleRate: number,
   range: SampleRange | null | undefined,
   mono: (segment: Float32Array) => Float32Array,
-  stereo?: (left: Float32Array, right: Float32Array) => { left: Float32Array; right: Float32Array },
+  stereo?: (left: Float32Array, right: Float32Array) => ReadonlyArray<Float32Array>,
 ): Float32Array[] {
   if (channels.length !== 2 || stereo === undefined)
     return applyToRange(channels, sampleRate, range, mono);
@@ -257,11 +264,11 @@ function applyRepairToRange(
     channels[0].slice(resolved.startFrame, resolved.endFrame),
     channels[1].slice(resolved.startFrame, resolved.endFrame),
   );
-  const frames = Math.min(out.left.length, out.right.length);
+  const frames = Math.min(out[0].length, out[1].length);
   return spliceRange(
     channels,
     resolved,
-    [out.left.slice(0, frames), out.right.slice(0, frames)],
+    [out[0].slice(0, frames), out[1].slice(0, frames)],
     cutCrossfadeFrames(sampleRate),
   );
 }
@@ -285,16 +292,42 @@ export function pitchShiftRange(
   if (!Number.isFinite(semitones)) {
     throw new RangeError(`semitones must be finite, got ${semitones}`);
   }
-  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate, semitones));
+  return applyToRange(channels, sampleRate, range, (segment) =>
+    fn(segment, sampleRate, { pitchSemitones: semitones }),
+  );
+}
+
+/**
+ * Estimates the pitch a mono segment sits on, as the MIDI number the engine's
+ * pitch-correction ops take as `currentMidi`, from the core's YIN analysis.
+ *
+ * @throws Error when the module does not provide pitchYin or no pitch is found.
+ */
+export function estimateSourceMidi(
+  ops: SampleEditorWasmOps,
+  mono: Float32Array,
+  sampleRate: number,
+): number {
+  const detect = ops.pitchYin;
+  if (typeof detect !== 'function') {
+    throw new Error('Pitch correction is unavailable in this libsonare build');
+  }
+  const medianF0 = detect(mono, sampleRate).medianF0;
+  if (!(medianF0 > 0)) {
+    throw new Error('Could not detect a pitch to correct in the selection');
+  }
+  // 12-TET step index is the MIDI number the engine's pitch ops expect.
+  return stepOf(medianF0);
 }
 
 /**
  * Retunes the range to a target MIDI note (monophonic pitch correction).
- * The source pitch is auto-detected, so the segment is corrected to
- * `targetMidi` with its duration preserved.
+ * The source pitch is estimated once on the mono downmix of the range, so every
+ * channel moves by the same interval and the segment keeps its duration.
  *
  * @param targetMidi - Target note as a MIDI number in [0, 127].
- * @throws Error when the module does not provide pitchCorrectToMidi.
+ * @throws Error when the module does not provide pitchCorrectToMidi or pitchYin,
+ *   or no pitch is found.
  * @throws RangeError when targetMidi is not an integer in [0, 127].
  */
 export function pitchCorrectRange(
@@ -305,15 +338,19 @@ export function pitchCorrectRange(
   range?: SampleRange | null,
 ): Float32Array[] {
   const fn = ops.pitchCorrectToMidi;
-  if (typeof fn !== 'function') {
+  if (typeof fn !== 'function' || typeof ops.pitchYin !== 'function') {
     throw new Error('Pitch correction is unavailable in this libsonare build');
   }
   if (!Number.isInteger(targetMidi) || targetMidi < 0 || targetMidi > 127) {
     throw new RangeError(`targetMidi must be an integer in [0, 127], got ${targetMidi}`);
   }
-  return applyToRange(channels, sampleRate, range, (segment) =>
-    fn(segment, sampleRate, undefined, targetMidi),
+  const resolved = resolveNonEmptyRange(channels, range);
+  const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
+  const currentMidi = estimateSourceMidi(ops, downmixToMono(segments), sampleRate);
+  const planar = toPlanar(
+    segments.map((segment) => fn(segment, sampleRate, { currentMidi, targetMidi })),
   );
+  return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
 }
 
 /**
@@ -336,7 +373,7 @@ export function pitchCorrectTimevaryingRange(
   targetMidi: number,
   range?: SampleRange | null,
 ): Float32Array[] {
-  const correct = ops.pitchCorrectToMidiTimevarying;
+  const correct = ops.pitchCorrectTimevarying;
   const detect = ops.pitchPyin ?? ops.pitchYin;
   if (typeof correct !== 'function' || typeof detect !== 'function') {
     throw new Error('Time-varying pitch correction is unavailable in this libsonare build');
@@ -346,16 +383,7 @@ export function pitchCorrectTimevaryingRange(
   }
   const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
-  const contour = detect(
-    downmixToMono(segments),
-    sampleRate,
-    NOTE_DETECT_FRAME,
-    NOTE_DETECT_HOP,
-    undefined,
-    undefined,
-    undefined,
-    true,
-  );
+  const contour = f0Contour(ops, downmixToMono(segments), sampleRate);
   const f0 = contour.f0;
   if (!f0 || f0.length === 0 || !Array.from(f0).some((hz) => hz > 0 && Number.isFinite(hz))) {
     throw new Error('Could not detect a pitch contour in the selection');
@@ -365,7 +393,15 @@ export function pitchCorrectTimevaryingRange(
       ? Int32Array.from(contour.voicedFlag, (flag) => (flag ? 1 : 0))
       : undefined;
   const corrected = segments.map((segment) =>
-    correct(segment, f0, targetMidi, sampleRate, NOTE_DETECT_HOP, voiced),
+    correct({
+      samples: segment,
+      sampleRate,
+      f0Hz: f0,
+      hopLength: NOTE_DETECT_HOP,
+      targetMode: 'midi',
+      targetMidi,
+      voiced,
+    }),
   );
   const planar = toPlanar(corrected);
   return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
@@ -399,7 +435,9 @@ export function tuneToReferenceRange(
     throw new Error('Could not detect a tuning offset in the selection');
   }
   const semitones = -tuning;
-  const corrected = segments.map((segment) => shift(segment, sampleRate, semitones));
+  const corrected = segments.map((segment) =>
+    shift(segment, sampleRate, { pitchSemitones: semitones }),
+  );
   const planar = toPlanar(corrected);
   return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
 }
@@ -426,11 +464,10 @@ export function scaleCorrectRange(
   modeMask: number,
   range?: SampleRange | null,
 ): Float32Array[] {
-  const detect = ops.pitchYin;
   const quantize = ops.scaleQuantizeMidi;
   const correct = ops.pitchCorrectToMidi;
   if (
-    typeof detect !== 'function' ||
+    typeof ops.pitchYin !== 'function' ||
     typeof quantize !== 'function' ||
     typeof correct !== 'function'
   ) {
@@ -438,15 +475,10 @@ export function scaleCorrectRange(
   }
   const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
-  const medianF0 = detect(downmixToMono(segments), sampleRate).medianF0;
-  if (!(medianF0 > 0)) {
-    throw new Error('Could not detect a pitch to correct in the selection');
-  }
-  // 12-TET step index is the MIDI number the engine's pitch ops expect.
-  const currentMidi = stepOf(medianF0);
+  const currentMidi = estimateSourceMidi(ops, downmixToMono(segments), sampleRate);
   const targetMidi = quantize(root, modeMask, currentMidi);
   const corrected = segments.map((segment) =>
-    correct(segment, sampleRate, currentMidi, targetMidi),
+    correct(segment, sampleRate, { currentMidi, targetMidi }),
   );
   const planar = toPlanar(corrected);
   return spliceRange(channels, resolved, planar, cutCrossfadeFrames(sampleRate));
@@ -478,13 +510,13 @@ export function autoTuneRange(
   }
   const resolved = resolveNonEmptyRange(channels, range);
   const segments = channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame));
-  const first = fn({ samples: segments[0], sampleRate, key, strength });
+  const first = fn({ samples: segments[0], sampleRate, key, retuneAmount: strength });
   const shared: AutoTuneKey = { root: first.key.root, mode: first.key.mode };
   const tuned = [
     first.samples,
     ...segments
       .slice(1)
-      .map((samples) => fn({ samples, sampleRate, key: shared, strength }).samples),
+      .map((samples) => fn({ samples, sampleRate, key: shared, retuneAmount: strength }).samples),
   ];
   return {
     channels: spliceRange(channels, resolved, tuned, cutCrossfadeFrames(sampleRate)),
@@ -636,12 +668,13 @@ export function spectralEditRange(
     startSample: resolved.startFrame,
     endSample: resolved.endFrame,
     lowHz: options.lowHz,
-    highHz: options.highHz,
+    ...(options.highHz > 0 ? { highHz: options.highHz } : {}),
     gainDb: options.gainDb,
     mode: options.mode,
   };
   const processed = channels.map((channel) =>
-    fn(channel, sampleRate, [edit], {
+    fn(channel, sampleRate, {
+      ops: [edit],
       nFft: SPECTRAL_EDIT_FFT_SIZE,
       hopLength: NOTE_DETECT_HOP,
       window: 'hann',
@@ -670,7 +703,9 @@ export function timeStretchRange(
   if (!Number.isFinite(rate) || rate <= 0) {
     throw new RangeError(`rate must be > 0, got ${rate}`);
   }
-  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate, rate));
+  return applyToRange(channels, sampleRate, range, (segment) =>
+    fn(segment, sampleRate, { speedRatio: rate }),
+  );
 }
 
 /**
@@ -780,8 +815,8 @@ export function declickRange(
     channels,
     sampleRate,
     range,
-    (segment) => fn(segment, sampleRate),
-    stereo && ((left, right) => stereo(left, right, sampleRate)),
+    (segment) => fn(segment, sampleRate).samples,
+    stereo && ((left, right) => stereo({ left, right, sampleRate }).channels),
   );
 }
 
@@ -808,8 +843,11 @@ export function restoreRange(
     channels,
     sampleRate,
     range,
-    (segment) => mono(segment, sampleRate, preset).samples,
-    (left, right) => stereo(left, right, sampleRate, preset),
+    (segment) => mono(segment, sampleRate, { preset }).samples,
+    (left, right) => {
+      const out = stereo({ left, right, sampleRate, preset });
+      return [out.left, out.right];
+    },
   );
 }
 
@@ -837,8 +875,8 @@ export function denoiseRange(
     channels,
     sampleRate,
     range,
-    (segment) => fn(segment, sampleRate, options),
-    stereo && ((left, right) => stereo(left, right, sampleRate, options)),
+    (segment) => fn(segment, sampleRate, options).samples,
+    stereo && ((left, right) => stereo({ left, right, sampleRate, ...options }).channels),
   );
 }
 
@@ -857,8 +895,8 @@ export function declipRange(
     channels,
     sampleRate,
     range,
-    (segment) => fn(segment, sampleRate),
-    stereo && ((left, right) => stereo(left, right, sampleRate)),
+    (segment) => fn(segment, sampleRate).samples,
+    stereo && ((left, right) => stereo({ left, right, sampleRate }).channels),
   );
 }
 
@@ -877,8 +915,8 @@ export function decrackleRange(
     channels,
     sampleRate,
     range,
-    (segment) => fn(segment, sampleRate),
-    stereo && ((left, right) => stereo(left, right, sampleRate)),
+    (segment) => fn(segment, sampleRate).samples,
+    stereo && ((left, right) => stereo({ left, right, sampleRate }).channels),
   );
 }
 
@@ -897,8 +935,8 @@ export function dehumRange(
     channels,
     sampleRate,
     range,
-    (segment) => fn(segment, sampleRate),
-    stereo && ((left, right) => stereo(left, right, sampleRate)),
+    (segment) => fn(segment, sampleRate).samples,
+    stereo && ((left, right) => stereo({ left, right, sampleRate }).channels),
   );
 }
 
@@ -917,8 +955,8 @@ export function dereverbRange(
     channels,
     sampleRate,
     range,
-    (segment) => fn(segment, sampleRate),
-    stereo && ((left, right) => stereo(left, right, sampleRate)),
+    (segment) => fn(segment, sampleRate).samples,
+    stereo && ((left, right) => stereo({ left, right, sampleRate }).channels),
   );
 }
 
@@ -932,7 +970,7 @@ export function trimSilenceRange(
   if (typeof fn !== 'function') {
     throw new Error('Trim silence is unavailable in this libsonare build');
   }
-  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate));
+  return applyToRange(channels, sampleRate, range, (segment) => fn(segment, sampleRate).samples);
 }
 
 /**
@@ -1026,6 +1064,7 @@ export function detectOnsetFrames(
 export function splitSilenceFrames(
   ops: SampleEditorWasmOps,
   channels: ReadonlyArray<Float32Array>,
+  sampleRate: number,
   topDb?: number,
 ): number[] {
   const fn = ops.splitSilence;
@@ -1036,7 +1075,10 @@ export function splitSilenceFrames(
     throw new RangeError(`topDb must be > 0, got ${topDb}`);
   }
   const mono = downmixToMono(channels);
-  return silenceSplitMarkers(fn(mono, topDb), mono.length);
+  return silenceSplitMarkers(
+    fn(mono, sampleRate, topDb === undefined ? {} : { topDb }),
+    mono.length,
+  );
 }
 
 /**
@@ -1076,24 +1118,17 @@ export function detectNoteRegions(
   sampleRate: number,
 ): DetectedNote[] {
   const segment = ops.noteSegments;
-  const detect = ops.pitchPyin ?? ops.pitchYin;
-  if (typeof segment !== 'function' || typeof detect !== 'function') {
+  if (
+    typeof segment !== 'function' ||
+    (typeof ops.pitchPyin !== 'function' && typeof ops.pitchYin !== 'function')
+  ) {
     throw new Error('Note detection is unavailable in this libsonare build');
   }
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
     throw new RangeError(`sampleRate must be > 0, got ${sampleRate}`);
   }
   const mono = downmixToMono(channels);
-  const contour = detect(
-    mono,
-    sampleRate,
-    NOTE_DETECT_FRAME,
-    NOTE_DETECT_HOP,
-    undefined,
-    undefined,
-    undefined,
-    true,
-  );
+  const contour = f0Contour(ops, mono, sampleRate);
   const f0 = contour.f0;
   const flags = contour.voicedFlag;
   if (!f0 || f0.length === 0 || !flags || flags.length !== f0.length) return [];
@@ -1105,8 +1140,8 @@ export function detectNoteRegions(
   });
   const notes: DetectedNote[] = [];
   for (const region of regions) {
-    const startFrame = Math.max(0, Math.round(region.startSeconds * sampleRate));
-    const endFrame = Math.min(mono.length, Math.round(region.endSeconds * sampleRate));
+    const startFrame = Math.max(0, Math.round(region.startSec * sampleRate));
+    const endFrame = Math.min(mono.length, Math.round(region.endSec * sampleRate));
     if (endFrame <= startFrame) continue;
     // The segmenter reports pitch in cents from its A440 reference.
     notes.push({ startFrame, endFrame, midi: 69 + region.medianCents / 100 });
@@ -1131,7 +1166,7 @@ const MATCH_EQ_CROSSFADE_PROCESSOR = 'match.abCrossfade';
  * compensated and equal-length to the dry segment, so the blend is sample-
  * aligned.
  *
- * @param ops Wasm op surface (must provide masteringPairProcess).
+ * @param ops Wasm op surface (must provide masteringApplyPairProcessor).
  * @param channels Source channels (planar).
  * @param sampleRate Source sample rate in Hz (> 0).
  * @param reference Mono reference samples (non-empty).
@@ -1139,7 +1174,7 @@ const MATCH_EQ_CROSSFADE_PROCESSOR = 'match.abCrossfade';
  * @param amount Match strength in [0, 1] (defaults to 1 = fully matched);
  *   non-finite values are treated as 1.
  * @param referenceSampleRate Reference rate; the library resamples it to `sampleRate`.
- * @throws Error when the module does not provide masteringPairProcess.
+ * @throws Error when the module does not provide masteringApplyPairProcessor.
  * @throws RangeError on a non-positive sample rate or an empty reference.
  */
 export function matchEqToReference(
@@ -1151,7 +1186,7 @@ export function matchEqToReference(
   amount = 1,
   referenceSampleRate = sampleRate,
 ): Float32Array[] {
-  const fn = ops.masteringPairProcess;
+  const fn = ops.masteringApplyPairProcessor;
   if (typeof fn !== 'function') {
     throw new Error('Match EQ is unavailable in this libsonare build');
   }
@@ -1168,7 +1203,7 @@ export function matchEqToReference(
   return applyToRange(channels, sampleRate, range, (segment) => {
     if (mix <= 0) return segment;
     const matched = fn({
-      processorName: MATCH_EQ_PROCESSOR,
+      processor: MATCH_EQ_PROCESSOR,
       source: segment,
       reference,
       sampleRate,
@@ -1178,7 +1213,13 @@ export function matchEqToReference(
     // Parallel match: blend the dry segment (mix=0) with the matched version
     // (mix=1). abCrossfade requires equal-length operands, which holds because
     // apply_match_eq preserves the input length.
-    return fn(MATCH_EQ_CROSSFADE_PROCESSOR, segment, matched, sampleRate, { mix }).samples;
+    return fn({
+      processor: MATCH_EQ_CROSSFADE_PROCESSOR,
+      source: segment,
+      reference: matched,
+      sampleRate,
+      params: { mix },
+    }).samples;
   });
 }
 
@@ -1194,13 +1235,13 @@ const MATCH_REFERENCE_LOUDNESS = 'match.referenceLoudness';
  * comparison. Unlike {@link matchEqToReference} this produces no audio — it is a
  * read-only inspection of what a match would correct.
  *
- * @param ops Wasm op surface (must provide masteringPairAnalyze).
+ * @param ops Wasm op surface (must provide masteringAnalyzePair).
  * @param channels Source channels (planar).
  * @param sampleRate Source sample rate in Hz (> 0).
  * @param reference Mono reference samples (non-empty).
  * @param range Range to analyze (whole file when omitted).
  * @param referenceSampleRate Reference rate; the library resamples it to `sampleRate`.
- * @throws Error when the module does not provide masteringPairAnalyze.
+ * @throws Error when the module does not provide masteringAnalyzePair.
  * @throws RangeError on a non-positive sample rate, an empty reference or an
  *   empty range.
  */
@@ -1212,7 +1253,7 @@ export function analyzeMatchEqToReference(
   range?: SampleRange | null,
   referenceSampleRate = sampleRate,
 ): MatchEqAnalysis {
-  const fn = ops.masteringPairAnalyze;
+  const fn = ops.masteringAnalyzePair;
   if (typeof fn !== 'function') {
     throw new Error('Match EQ analysis is unavailable in this libsonare build');
   }
@@ -1233,10 +1274,17 @@ export function analyzeMatchEqToReference(
     channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
   );
   const pair = { source, reference, sampleRate, referenceSampleRate };
+  const { sourceLufs, referenceLufs, gainToMatchDb } = fn({
+    analysis: MATCH_REFERENCE_LOUDNESS,
+    ...pair,
+  });
   return {
-    curve: parseMatchEqCurve(fn({ analysisName: MATCH_EQ_CURVE, ...pair })),
-    tonalBalance: parseTonalBalance(fn({ analysisName: MATCH_TONAL_BALANCE, ...pair })),
-    loudness: parseReferenceLoudness(fn({ analysisName: MATCH_REFERENCE_LOUDNESS, ...pair })),
+    curve: fn({ analysis: MATCH_EQ_CURVE, ...pair }),
+    tonalBalance: fn({ analysis: MATCH_TONAL_BALANCE, ...pair }).bands,
+    loudness:
+      sourceLufs === undefined || referenceLufs === undefined || gainToMatchDb === undefined
+        ? null
+        : { sourceLufs, referenceLufs, gainToMatchDb },
   };
 }
 
@@ -1533,7 +1581,7 @@ export function analyzeImpulseResponseRange(
     throw new Error('Impulse response analysis is unavailable in this libsonare build');
   }
   const mono = monoSelection(channels, sampleRate, range);
-  return acousticSummary(fn(mono, sampleRate, 6), 'impulse');
+  return acousticSummary(fn(mono, sampleRate, { nOctaveBands: 6 }), 'impulse');
 }
 
 /**

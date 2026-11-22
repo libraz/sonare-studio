@@ -204,7 +204,7 @@ describe('normalizeMixdownLoudness', () => {
 
     const report = normalizeMixdownLoudness(
       [left, right],
-      { peakDb: -6, truePeakDb: -5.5, lufs: -20 },
+      { peakDb: -6, truePeakDbtp: -5.5, lufs: -20 },
       -14,
     );
 
@@ -212,7 +212,7 @@ describe('normalizeMixdownLoudness', () => {
     expect(right[0]).toBeCloseTo(-0.5 * 10 ** (4.5 / 20), 6);
     expect(report).toEqual({
       peakDb: -1.5,
-      truePeakDb: -1,
+      truePeakDbtp: -1,
       lufs: -15.5,
     });
   });
@@ -222,22 +222,22 @@ describe('normalizeMixdownLoudness', () => {
       [new Float32Array([0.1]), new Float32Array([0.1])],
       {
         peakDb: -20,
-        truePeakDb: -19,
+        truePeakDbtp: -19,
         lufs: -20,
         momentaryLufs: -18,
         shortTermLufs: -19,
-        loudnessRange: 4,
+        loudnessRangeLu: 4,
       },
       -14,
     );
 
     expect(report).toMatchObject({
       peakDb: -14,
-      truePeakDb: -13,
+      truePeakDbtp: -13,
       lufs: -14,
       momentaryLufs: -12,
       shortTermLufs: -13,
-      loudnessRange: 4,
+      loudnessRangeLu: 4,
     });
   });
 
@@ -252,7 +252,7 @@ describe('normalizeMixdownLoudness', () => {
 
     const attenuated = normalizeMixdownLoudness(
       [new Float32Array([0.9]), new Float32Array([0.9])],
-      { peakDb: 0.5, truePeakDb: 1, lufs: -6, clipping },
+      { peakDb: 0.5, truePeakDbtp: 1, lufs: -6, clipping },
       -14,
     );
     // The counts describe samples crossing a fixed threshold, so they cannot
@@ -261,7 +261,7 @@ describe('normalizeMixdownLoudness', () => {
 
     const unchanged = normalizeMixdownLoudness(
       [new Float32Array([0.9]), new Float32Array([0.9])],
-      { peakDb: -1, truePeakDb: -1, lufs: Number.NaN, clipping },
+      { peakDb: -1, truePeakDbtp: -1, lufs: Number.NaN, clipping },
       Number.NaN,
     );
     expect(unchanged.clipping).toEqual(clipping);
@@ -274,11 +274,11 @@ describe('normalizeMixdownLoudness', () => {
     ];
     const report = normalizeMixdownLoudness(
       channels,
-      { peakDb: -20, truePeakDb: -19.5, lufs: -20 },
+      { peakDb: -20, truePeakDbtp: -19.5, lufs: -20 },
       -14,
     );
     expect(report.lufs).toBe(-14);
-    expect(report.truePeakDb).toBe(-13.5);
+    expect(report.truePeakDbtp).toBe(-13.5);
   });
 
   it('leaves audio unchanged when loudness is unavailable and the peak is under the ceiling', () => {

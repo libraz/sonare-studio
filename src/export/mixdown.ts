@@ -10,6 +10,13 @@
  */
 
 import { ensureWasm } from '@/lib/wasm';
+import type {
+  LufsResult,
+  MasteringChainConfig,
+  MasteringPreset,
+  MasteringProcessorParams,
+  SoloProcessor,
+} from '@/wasm/index.js';
 
 /** Thrown when an offline render is cancelled via its shouldCancel option. */
 export class MixdownCancelledError extends Error {
@@ -39,9 +46,9 @@ export type MixdownProgressFn = (progress: number, stage: string) => void;
 
 /** Mastering seam used to apply the project mastering chain to the mix bus. */
 export interface MasteringDeps {
-  /** One-shot stereo processor invocation (masteringProcessStereo shape). */
+  /** One-shot stereo processor invocation (masteringApplyProcessorStereo shape). */
   processStereo(
-    name: string,
+    name: SoloProcessor,
     left: Float32Array,
     right: Float32Array,
     sampleRate: number,
@@ -52,11 +59,11 @@ export interface MasteringDeps {
    * wasm module does not expose it; preset stages are then skipped.
    */
   applyPreset?(
-    preset: string,
+    preset: MasteringPreset,
     left: Float32Array,
     right: Float32Array,
     sampleRate: number,
-    overrides?: Record<string, number | boolean>,
+    overrides?: MasteringChainConfig,
   ): {
     left: Float32Array;
     right: Float32Array;
@@ -69,38 +76,17 @@ export interface MasteringDeps {
 
 /** Metering seam used for the post-render loudness/peak report. */
 export interface MeteringDeps {
-  /** Inter-sample (true) peak of one channel in dBFS. */
-  truePeakDb?(samples: Float32Array, sampleRate: number): number;
+  /** Inter-sample (true) peak of one channel in dBTP. */
+  truePeakDbtp?(samples: Float32Array, sampleRate: number): number;
   /** Integrated loudness of a mono downmix in LUFS. */
-  integratedLufs?(
-    samples: Float32Array,
-    sampleRate: number,
-  ):
-    | number
-    | {
-        integratedLufs: number;
-        momentaryLufs?: number;
-        shortTermLufs?: number;
-        loudnessRange?: number;
-      };
+  integratedLufs?(samples: Float32Array, sampleRate: number): LufsResult;
   /**
    * Channel-weighted integrated loudness (ITU-R BS.1770 / EBU R128) measured
-   * directly from an interleaved buffer of `frames * channels` samples. This is
-   * the standards-correct measurement of a stereo deliverable; the mono
+   * directly from planar channels of equal length. This is the
+   * standards-correct measurement of a stereo deliverable; the mono
    * `integratedLufs` is only a fallback for builds without this seam.
    */
-  interleavedLufs?(
-    samples: Float32Array,
-    channels: number,
-    sampleRate: number,
-  ):
-    | number
-    | {
-        integratedLufs: number;
-        momentaryLufs?: number;
-        shortTermLufs?: number;
-        loudnessRange?: number;
-      };
+  multichannelLufs?(channels: Float32Array[], sampleRate: number): LufsResult;
   /** Dynamic range of a mono downmix in dB. */
   dynamicRangeDb?(samples: Float32Array, sampleRate: number): number;
   /**
@@ -168,8 +154,8 @@ export interface ClippingSummary {
 export interface MixdownReport {
   /** Sample peak in dBFS (-Infinity for silence). Always present. */
   peakDb: number;
-  /** Inter-sample (true) peak in dBFS; absent without a metering seam. */
-  truePeakDb?: number;
+  /** Inter-sample (true) peak in dBTP; absent without a metering seam. */
+  truePeakDbtp?: number;
   /** Integrated loudness of the mono downmix in LUFS; absent without a metering seam. */
   lufs?: number;
   /** Momentary loudness in LUFS; absent when the metering seam does not provide it. */
@@ -177,7 +163,7 @@ export interface MixdownReport {
   /** Short-term loudness in LUFS; absent when the metering seam does not provide it. */
   shortTermLufs?: number;
   /** Loudness range in LU; absent when the metering seam does not provide it. */
-  loudnessRange?: number;
+  loudnessRangeLu?: number;
   /** Dynamic range in dB; absent without a dynamic-range metering seam. */
   dynamicRangeDb?: number;
   /**
@@ -245,11 +231,11 @@ export interface MixdownResult {
 type MixdownWasmSurface = Partial<
   Pick<
     typeof import('@/wasm/index.js'),
-    | 'masteringProcessStereo'
+    | 'masteringApplyProcessorStereo'
     | 'masterAudioStereo'
-    | 'meteringTruePeakDb'
+    | 'meteringTruePeakDbtp'
     | 'lufs'
-    | 'lufsInterleaved'
+    | 'lufsMultichannel'
     | 'meteringDynamicRange'
     | 'meteringDetectClipping'
   >
@@ -262,19 +248,31 @@ type MixdownWasmSurface = Partial<
  */
 export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
   const wasm: MixdownWasmSurface = await ensureWasm();
-  const processStereo = wasm.masteringProcessStereo;
+  const processStereo = wasm.masteringApplyProcessorStereo;
   let mastering: MasteringDeps | null = null;
   if (typeof processStereo === 'function') {
     mastering = {
       processStereo: (name, left, right, sampleRate, params) => {
-        const out = processStereo(name as never, left, right, sampleRate, params);
+        const out = processStereo({
+          processor: name,
+          left,
+          right,
+          sampleRate,
+          params: params as MasteringProcessorParams<SoloProcessor>,
+        });
         return { left: out.left, right: out.right };
       },
     };
     const masterAudioStereo = wasm.masterAudioStereo;
     if (typeof masterAudioStereo === 'function') {
       mastering.applyPreset = (preset, left, right, sampleRate, overrides) => {
-        const out = masterAudioStereo(left, right, sampleRate, preset as never, overrides);
+        const out = masterAudioStereo({
+          left,
+          right,
+          sampleRate,
+          preset,
+          ...(overrides ? { overrides } : {}),
+        });
         return {
           left: out.left,
           right: out.right,
@@ -285,18 +283,18 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
     }
   }
   const metering: MeteringDeps = {};
-  const truePeakDb = wasm.meteringTruePeakDb;
-  if (typeof truePeakDb === 'function') {
-    metering.truePeakDb = (samples, sampleRate) => truePeakDb(samples, sampleRate);
+  const truePeakDbtp = wasm.meteringTruePeakDbtp;
+  if (typeof truePeakDbtp === 'function') {
+    metering.truePeakDbtp = (samples, sampleRate) => truePeakDbtp(samples, sampleRate);
   }
   const lufs = wasm.lufs;
   if (typeof lufs === 'function') {
     metering.integratedLufs = (samples, sampleRate) => lufs(samples, sampleRate);
   }
-  const lufsInterleaved = wasm.lufsInterleaved;
-  if (typeof lufsInterleaved === 'function') {
-    metering.interleavedLufs = (samples, channels, sampleRate) =>
-      lufsInterleaved(samples, channels, sampleRate);
+  const lufsMultichannel = wasm.lufsMultichannel;
+  if (typeof lufsMultichannel === 'function') {
+    metering.multichannelLufs = (channels, sampleRate) =>
+      lufsMultichannel({ channels, sampleRate });
   }
   const dynamicRange = wasm.meteringDynamicRange;
   if (typeof dynamicRange === 'function') {
@@ -310,9 +308,9 @@ export async function createWasmMixdownDeps(): Promise<MixdownDeps> {
   return {
     mastering,
     metering:
-      metering.truePeakDb ||
+      metering.truePeakDbtp ||
       metering.integratedLufs ||
-      metering.interleavedLufs ||
+      metering.multichannelLufs ||
       metering.dynamicRangeDb ||
       metering.detectClipping
         ? metering

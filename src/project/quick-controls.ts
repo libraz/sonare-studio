@@ -18,6 +18,7 @@ import {
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 import type {
   MasteringAmpPresetCatalogEntry,
+  MasteringInsertName,
   MasteringInsertSlot,
   SynthEnumTables,
 } from '@/wasm/index.js';
@@ -205,7 +206,7 @@ function isPluckedStringPreset(
     return true;
   }
   const mode = basePatch?.engineMode;
-  return mode === 'karplus-strong' || mode === 3 || basePatch?.body === 'guitar';
+  return mode === 'karplusStrong' || basePatch?.body === 'guitar';
 }
 
 /** Resolves the runtime NativeSynth enum tables, retaining complete fallbacks. */
@@ -304,7 +305,7 @@ function defaultResolveInsertParams(processor: string): string[] {
   try {
     const wasm = getWasmModule();
     if (typeof wasm.masteringInsertParamNames !== 'function') return [];
-    return wasm.masteringInsertParamNames(processor);
+    return wasm.masteringInsertParamNames(processor as MasteringInsertName);
   } catch {
     return [];
   }
@@ -378,7 +379,7 @@ export function isAmpConstructionOnlyParam(
   const info = paramInfo.find((entry) => entry.name === param);
   return (
     AMP_CONSTRUCTION_ONLY_PARAMS.has(param) ||
-    info?.id === null ||
+    (info !== undefined && info.id === undefined) ||
     (info as { rtSafe?: boolean } | undefined)?.rtSafe === false
   );
 }

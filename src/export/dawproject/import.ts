@@ -42,6 +42,7 @@ import { isAutomatableSynthParam } from '@/project/instrument';
 import {
   createDefaultStrip,
   type InsertSlot,
+  isSoloProcessor,
   type MixerBus,
   type StripSend,
   type VcaGroup,
@@ -367,7 +368,8 @@ function readInsertDevices(
       if (
         device.tagName !== 'BuiltinDevice' ||
         device.getAttribute('deviceVendor') !== SONARE_DEVICE_VENDOR ||
-        !processor
+        !processor ||
+        !isSoloProcessor(processor)
       ) {
         losses.push({ kind: 'foreign-device', trackName, device: processor || device.tagName });
         return null;

@@ -11,7 +11,7 @@ import {
 import { createDefaultMixerState, createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
-import type { EqBand } from '@/wasm/index.js';
+import type { EqBandInput } from '@/wasm/index.js';
 
 type EngineCall = [string, ...unknown[]];
 
@@ -51,86 +51,77 @@ class DeclarationRecorder implements OfflineRenderEngine {
   setTrackBuses(buses: unknown): void {
     this.record('setTrackBuses', buses);
   }
-  setTrackStripJson(trackId: number, json: string): void {
-    this.record('setTrackStripJson', trackId, json);
+  setStrip(target: number | 'master', strip: unknown): void {
+    this.record('setStrip', target, strip);
   }
-  setBusStripJson(busId: number, json: string): void {
-    this.record('setBusStripJson', busId, json);
+  setBusStrip(busId: number, strip: unknown): void {
+    this.record('setBusStrip', busId, strip);
   }
-  setMasterStripJson(json: string): void {
-    this.record('setMasterStripJson', json);
+  setStripSidechain(target: number | 'master', insertIndex: number, source: unknown): void {
+    this.record('setStripSidechain', target, insertIndex, source);
   }
-  setLaneSidechain(trackId: number, insertIndex: number, sourceTrackId: number | null): void {
-    this.record('setLaneSidechain', trackId, insertIndex, sourceTrackId);
+  setBusSidechain(busId: number, insertIndex: number, source: unknown): void {
+    this.record('setBusSidechain', busId, insertIndex, source);
   }
-  setTrackStripInsertBypassed(trackId: number, index: number, bypassed: boolean): void {
-    this.record('setTrackStripInsertBypassed', trackId, index, bypassed);
+  setStripInsertBypassed(
+    target: number | 'master',
+    index: number,
+    state: { bypassed: boolean },
+  ): void {
+    this.record('setStripInsertBypassed', target, index, state.bypassed);
   }
-  setMasterStripInsertBypassed(index: number, bypassed: boolean): void {
-    this.record('setMasterStripInsertBypassed', index, bypassed);
+  setBusInsertBypassed(busId: number, index: number, state: { bypassed: boolean }): void {
+    this.record('setBusInsertBypassed', busId, index, state.bypassed);
   }
-  setTrackStripEqBandJson(trackId: number, bandIndex: number, json: string): void {
-    this.record('setTrackStripEqBandJson', trackId, bandIndex, json);
+  setStripEqBand(target: number | 'master', bandIndex: number, band: EqBandInput): void {
+    this.record('setStripEqBand', target, bandIndex, band);
   }
-  setMasterStripEqBandJson(bandIndex: number, json: string): void {
-    this.record('setMasterStripEqBandJson', bandIndex, json);
+  setBusEqBand(busId: number, bandIndex: number, band: EqBandInput): void {
+    this.record('setBusEqBand', busId, bandIndex, band);
   }
-  setStripInsertBypassed(target: number | 'master', index: number, bypassed: boolean): void {
-    this.record('setStripInsertBypassed', target, index, bypassed);
+  setTrackSoloMute(trackId: number, state: { solo: boolean; mute: boolean }): void {
+    this.record('setTrackSoloMute', trackId, state.solo, state.mute);
   }
-  setStripEq(target: number | 'master', bandIndex: number, band: EqBand): void {
-    this.record('setStripEq', target, bandIndex, band);
+  setStripPanLaw(trackId: number, panLaw: unknown): void {
+    this.record('setStripPanLaw', trackId, panLaw);
   }
-  setSoloMute(laneIndex: number, solo: boolean, mute: boolean): void {
-    this.record('setSoloMute', laneIndex, solo, mute);
+  setStripPanMode(trackId: number, panMode: unknown): void {
+    this.record('setStripPanMode', trackId, panMode);
   }
-  setTrackStripPanLaw(trackId: number, panLaw: unknown): void {
-    this.record('setTrackStripPanLaw', trackId, panLaw);
+  setStripDualPan(trackId: number, leftPan: number, rightPan: number): void {
+    this.record('setStripDualPan', trackId, leftPan, rightPan);
   }
-  setTrackStripPanMode(trackId: number, panMode: unknown): void {
-    this.record('setTrackStripPanMode', trackId, panMode);
+  setStripChannelDelaySamples(trackId: number, delaySamples: number): void {
+    this.record('setStripChannelDelaySamples', trackId, delaySamples);
   }
-  setTrackStripDualPan(trackId: number, leftPan: number, rightPan: number): void {
-    this.record('setTrackStripDualPan', trackId, leftPan, rightPan);
-  }
-  setTrackStripChannelDelaySamples(trackId: number, delaySamples: number): void {
-    this.record('setTrackStripChannelDelaySamples', trackId, delaySamples);
-  }
-  setParameter(paramId: number, value: number): void {
-    this.record('setParameter', paramId, value);
-  }
-  automationParamId(target: number | 'master', param: 'faderDb' | 'pan'): number {
-    this.record('automationParamId', target, param);
+  resolveStripAutomationId(target: number | 'master', param: 'faderDb' | 'pan' | 'width'): number {
+    this.record('resolveStripAutomationId', target, param);
+    if (param === 'width') return -1;
     if (target === 'master') return stubMasterParamId(param);
     return stubTrackParamId(target, param);
   }
-  resolveTrackLaneAutomationId(trackId: number, param: 'faderDb' | 'pan'): number {
-    return stubTrackParamId(trackId, param);
-  }
-  resolveMasterAutomationId(param: 'faderDb' | 'pan' | 'width'): number {
-    return param === 'width' ? -1 : stubMasterParamId(param);
-  }
   resolveBusAutomationId(busId: number, _param: 'faderDb'): number {
-    return stubBusParamId(busId);
-  }
-  busAutomationParamId(busId: number): number {
-    this.record('busAutomationParamId', busId);
+    this.record('resolveBusAutomationId', busId);
     return stubBusParamId(busId);
   }
   setAutomationLane(paramId: number, points: unknown): void {
     this.record('setAutomationLane', paramId, points);
   }
-  resolveTrackInsertAutomationId(trackId: number, insertIndex: number, paramName: string): number {
-    this.record('resolveTrackInsertAutomationId', trackId, insertIndex, paramName);
-    return (0xe0000000 | (trackId << 16) | (insertIndex << 8) | paramName.length) >>> 0;
-  }
-  resolveMasterInsertAutomationId(insertIndex: number, paramName: string): number {
-    this.record('resolveMasterInsertAutomationId', insertIndex, paramName);
-    return (0xe1000000 | (insertIndex << 8) | paramName.length) >>> 0;
+  resolveStripInsertAutomationId(
+    target: number | 'master',
+    insertIndex: number,
+    paramName: string,
+  ): number {
+    this.record('resolveStripInsertAutomationId', target, insertIndex, paramName);
+    const base = target === 'master' ? 0xe1000000 : 0xe0000000 | (target << 16);
+    return (base | (insertIndex << 8) | paramName.length) >>> 0;
   }
   resolveBusInsertAutomationId(busId: number, insertIndex: number, paramName: string): number {
     this.record('resolveBusInsertAutomationId', busId, insertIndex, paramName);
     return (0xe2000000 | (busId << 16) | (insertIndex << 8) | paramName.length) >>> 0;
+  }
+  setParameter(paramId: number, value: number): void {
+    this.record('setParameter', paramId, value);
   }
   setTempoSegments(segments: unknown): void {
     this.record('setTempoSegments', segments);
@@ -138,63 +129,62 @@ class DeclarationRecorder implements OfflineRenderEngine {
   setClips(clips: unknown): void {
     this.record('setClips', clips);
   }
+  get warpStretchOverflowCount(): number {
+    return 0;
+  }
+  settleParameters(): void {
+    this.record('settleParameters');
+  }
+  resolveInstrumentAutomationId(destinationId: number, paramName: string): number {
+    this.record('resolveInstrumentAutomationId', destinationId, paramName);
+    return 0;
+  }
   setWarpVoiceCapacity(voices: number): void {
     this.record('setWarpVoiceCapacity', voices);
-  }
-  warpStretchOverflowCount(): number {
-    return 0;
   }
   setMidiClips(clips: unknown): void {
     this.record('setMidiClips', clips);
   }
-  setSynthInstrument(patch?: object | string, destinationId?: number): void {
-    this.record('setSynthInstrument', patch, destinationId);
+  setSynthInstrument(destinationId: number, patch?: object): void {
+    this.record('setSynthInstrument', destinationId, patch);
   }
   loadSoundFont(data: Uint8Array): void {
     this.record('loadSoundFont', data);
   }
-  setSf2Instrument(config?: object, destinationId?: number): void {
-    this.record('setSf2Instrument', config, destinationId);
+  setSf2Instrument(destinationId: number, config?: object): void {
+    this.record('setSf2Instrument', destinationId, config);
   }
-  setMidiFx(destinationId: number, json: string): void {
-    this.record('setMidiFx', destinationId, json);
+  setMidiFx(destinationId: number, config: object): void {
+    this.record('setMidiFx', destinationId, config);
   }
-  setSends(trackId: number, sends: unknown): void {
-    this.record('setSends', trackId, sends);
+  setTrackSends(trackId: number, sends: unknown): void {
+    this.record('setTrackSends', trackId, sends);
   }
-  setBusGain(busId: number, gainDb: number): void {
-    this.record('setBusGain', busId, gainDb);
+  setBusGainDb(busId: number, gainDb: number): void {
+    this.record('setBusGainDb', busId, gainDb);
   }
-  setTrackOutputBus(trackId: number, busId: number): void {
+  setTrackOutputBus(trackId: number, busId: number | null): void {
     this.record('setTrackOutputBus', trackId, busId);
   }
-  setTrackStripInsertParamByName(
-    trackId: number,
+  setStripInsertParam(
+    target: number | 'master',
     insertIndex: number,
-    paramName: string,
-    value: number,
+    param: { name: string; value: number },
   ): void {
-    this.record('setTrackStripInsertParamByName', trackId, insertIndex, paramName, value);
+    this.record('setStripInsertParam', target, insertIndex, param);
   }
-  setMasterStripInsertParamByName(insertIndex: number, paramName: string, value: number): void {
-    this.record('setMasterStripInsertParamByName', insertIndex, paramName, value);
-  }
-  setBusStripInsertParamByName(
+  setBusInsertParam(
     busId: number,
     insertIndex: number,
-    paramName: string,
-    value: number,
+    param: { name: string; value: number },
   ): void {
-    this.record('setBusStripInsertParamByName', busId, insertIndex, paramName, value);
+    this.record('setBusInsertParam', busId, insertIndex, param);
   }
-  pushMidiUmp(destinationId: number, word0: number): void {
-    this.record('pushMidiUmp', destinationId, word0);
+  pushMidiUmp(destinationId: number, words: readonly number[]): void {
+    this.record('pushMidiUmp', destinationId, words);
   }
   seekSample(sample: number): void {
     this.record('seekSample', sample);
-  }
-  settleParameters(): void {
-    this.record('settleParameters');
   }
   play(): void {
     this.record('play');
@@ -215,7 +205,9 @@ function makeStrip(overrides: Partial<MixerStrip> = {}): MixerStrip {
   return { ...createDefaultStrip(), ...overrides };
 }
 
-const eqBands: EqBand[] = [{ enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 3, q: 1 }];
+const eqBands: EqBandInput[] = [
+  { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 3, q: 1 },
+];
 
 function parityFixture(): {
   doc: ProjectDocument;
@@ -336,15 +328,15 @@ function normalize(calls: readonly EngineCall[]): SemanticCall[] {
   const result: SemanticCall[] = [];
   for (const call of calls) {
     const [name, ...args] = call;
-    if (name === 'setTrackStripJson') result.push(['strip-json', 'track', args[0], args[1]]);
-    if (name === 'setBusStripJson') result.push(['strip-json', 'bus', args[0], args[1]]);
-    if (name === 'setMasterStripJson') result.push(['strip-json', 'master', args[0]]);
-    if (name === 'setTrackStripInsertBypassed') {
-      result.push(['strip-bypass', 'track', args[0], args[1], args[2]]);
+    if (name === 'setStrip') {
+      const [target, strip] = args;
+      result.push(
+        target === 'master'
+          ? ['strip', 'master', JSON.stringify(strip)]
+          : ['strip', 'track', target, JSON.stringify(strip)],
+      );
     }
-    if (name === 'setMasterStripInsertBypassed') {
-      result.push(['strip-bypass', 'master', args[0], args[1]]);
-    }
+    if (name === 'setBusStrip') result.push(['strip', 'bus', args[0], JSON.stringify(args[1])]);
     if (name === 'setStripInsertBypassed') {
       const [target, index, bypassed] = args;
       result.push(
@@ -353,13 +345,7 @@ function normalize(calls: readonly EngineCall[]): SemanticCall[] {
           : ['strip-bypass', 'track', target, index, bypassed],
       );
     }
-    if (name === 'setTrackStripEqBandJson') {
-      result.push(['strip-eq', 'track', args[0], args[1], args[2]]);
-    }
-    if (name === 'setMasterStripEqBandJson') {
-      result.push(['strip-eq', 'master', args[0], args[1]]);
-    }
-    if (name === 'setStripEq') {
+    if (name === 'setStripEqBand') {
       const [target, bandIndex, band] = args;
       result.push(
         target === 'master'
@@ -367,11 +353,7 @@ function normalize(calls: readonly EngineCall[]): SemanticCall[] {
           : ['strip-eq', 'track', target, bandIndex, JSON.stringify(band)],
       );
     }
-    if (
-      name === 'resolveTrackInsertAutomationId' ||
-      name === 'resolveMasterInsertAutomationId' ||
-      name === 'resolveBusInsertAutomationId'
-    ) {
+    if (name === 'resolveStripInsertAutomationId' || name === 'resolveBusInsertAutomationId') {
       result.push([name, ...args]);
     }
     if (name === 'setAutomationLane') result.push(['automation', args[0], JSON.stringify(args[1])]);

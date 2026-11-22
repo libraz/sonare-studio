@@ -54,7 +54,7 @@ let nextSectionId = 1;
 // Audio sources are registered on the wasm Project once per asset; this map
 // remembers the Project-side source id per asset id for the current Project
 // instance (reset whenever the Project is replaced). It is advisory: callers
-// must re-validate entries against project.sourceCount() because undo can
+// must re-validate entries against project.sources().length because undo can
 // roll source registrations back (see addAudioClip in src/project/commands.ts).
 let audioSourceIds = new Map<string, number>();
 
@@ -120,7 +120,7 @@ export function allocateSectionId(): number {
 /**
  * Returns the wasm Project source id previously registered for an asset, or
  * undefined. Entries can be stale after undo; validate against
- * project.sourceCount() before reuse.
+ * project.sources().length before reuse.
  */
 export function getAudioSourceId(assetId: string): number | undefined {
   return audioSourceIds.get(assetId);
@@ -140,11 +140,10 @@ export function setAudioSourceId(assetId: string, sourceId: number): void {
  * "asset:<id>" URI. One silent frame keeps the wasm-side copy minimal.
  */
 export function placeholderSourceAudio(): {
-  audio: Float32Array;
-  audioChannels: number;
-  audioSampleRate: number;
+  channels: Float32Array[];
+  sampleRate: number;
 } {
-  return { audio: new Float32Array(1), audioChannels: 1, audioSampleRate: DEFAULT_SAMPLE_RATE };
+  return { channels: [new Float32Array(1)], sampleRate: DEFAULT_SAMPLE_RATE };
 }
 
 /**

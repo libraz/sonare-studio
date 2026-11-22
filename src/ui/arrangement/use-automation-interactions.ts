@@ -29,8 +29,8 @@ export const AUTOMATION_POINT_HIT_RADIUS_PX = 6;
 const CURVE_CYCLE: Record<AutomationCurve, AutomationCurve> = {
   linear: 'exponential',
   exponential: 'hold',
-  hold: 's-curve',
-  's-curve': 'linear',
+  hold: 'sCurve',
+  sCurve: 'linear',
 };
 
 /** Geometry of one expanded automation sublane in viewport px. */

@@ -252,9 +252,7 @@ function setClipFadesWithin(
   const clip = store.clips.find((entry) => entry.id === clipId);
   if (clip === undefined) return;
   if ((clip.fadeInPpq ?? 0) === fadeInPpq && (clip.fadeOutPpq ?? 0) === fadeOutPpq) return;
-  edit(1, () =>
-    getProject().setClipFade(clipId, { lengthPpq: fadeInPpq }, { lengthPpq: fadeOutPpq }),
-  );
+  edit(1, () => getProject().setClipFade(clipId, { fadeInPpq, fadeOutPpq }));
   store.refresh();
   store.clips = store.clips.map((entry) => {
     if (entry.id !== clipId) return entry;
@@ -293,7 +291,7 @@ function clearLoopClipRangeWithin(
     if (phasePpq > 0) {
       const headId = duplicateClipParkedWithin(edit, source);
       const parkedPpq = store.clips.find((clip) => clip.id === headId)?.startPpq ?? 0;
-      edit(1, () => getProject().setClipLoop(headId, 'off'));
+      edit(1, () => getProject().setClipLoop(headId, { loopMode: 'off' }));
       store.refresh();
       trimClipWithin(edit, headId, parkedPpq + phasePpq, passEndPpq - endPpq);
       setClipFadesWithin(edit, headId, 0, passEndPpq < clipEndPpq ? 0 : fadeOutPpq);
@@ -367,6 +365,6 @@ export function makeRoomForRecordingWithin(
   startPpq: number,
   endPpq: number,
 ): void {
-  if (getProject().getOverlapPolicy() !== 0) return;
+  if (getProject().overlapPolicy !== 'disallow') return;
   clearLaneRangeWithin(edit, trackId, startPpq, endPpq);
 }

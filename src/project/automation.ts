@@ -5,6 +5,8 @@
  * by the commands layer (src/project/commands.ts).
  */
 
+import type { AutomationCurve as EngineAutomationCurve } from '@/wasm/index.js';
+
 /** A mixer bus automation target encoded with its stable project bus id. */
 export type BusAutomationTarget = `bus:${string}`;
 
@@ -68,8 +70,8 @@ export interface InstrumentParamRef {
   paramName: string;
 }
 
-/** Interpolation curve from a point toward the next one. */
-export type AutomationCurve = 'linear' | 'exponential' | 'hold' | 's-curve';
+/** Interpolation curve from a point toward the next one (the engine's vocabulary). */
+export type AutomationCurve = EngineAutomationCurve;
 
 /** One automation point on a lane. */
 export interface AutomationPoint {
@@ -93,13 +95,16 @@ export interface AutomationLaneState {
   enabled: boolean;
 }
 
-/** Numeric wire codes per automation curve (engine/persistence encoding). */
-export const AUTOMATION_CURVE_CODES: Record<AutomationCurve, number> = {
-  linear: 0,
-  exponential: 1,
-  hold: 2,
-  's-curve': 3,
-};
+/**
+ * Every {@link AutomationCurve} name, for validating stored data. Mirrors the
+ * core union, which has no runtime list; the core-surface contract spec fails once it has.
+ */
+export const AUTOMATION_CURVES: ReadonlySet<string> = new Set<AutomationCurve>([
+  'linear',
+  'exponential',
+  'hold',
+  'sCurve',
+]);
 
 /** Minimum fader automation value in dB (treated as -inf by the fader law). */
 export const AUTOMATION_FADER_DB_MIN = -120;
@@ -121,16 +126,6 @@ export const AUTOMATION_PAN_MAX = 1;
  * src/project/insert-param-domains.ts.
  */
 export const AUTOMATION_INSERT_VALUE_LIMIT = 1e6;
-
-/**
- * Returns the numeric wire code of a curve.
- *
- * @param curve Curve name; absent defaults to 'linear'.
- * @returns The matching {@link AUTOMATION_CURVE_CODES} entry.
- */
-export function automationCurveCode(curve?: AutomationCurve): number {
-  return AUTOMATION_CURVE_CODES[curve ?? 'linear'];
-}
 
 /**
  * Clamps an automation value into the parameter's valid range.
@@ -310,7 +305,7 @@ export function parseInstrumentAutomationParam(param: string): InstrumentParamRe
 
 /** True when the value is one of the {@link AutomationCurve} names. */
 function isAutomationCurve(value: unknown): value is AutomationCurve {
-  return typeof value === 'string' && value in AUTOMATION_CURVE_CODES;
+  return typeof value === 'string' && AUTOMATION_CURVES.has(value);
 }
 
 /** True when the value is a valid {@link AutomationParam}. */
@@ -375,7 +370,7 @@ function signOrPositive(value: number): number {
  * - 'exponential' interpolates in an epsilon-shifted log domain of the
  *   magnitudes when both endpoints share a sign; endpoints straddling zero
  *   fall back to linear.
- * - 's-curve' applies smoothstep easing to the blend factor.
+ * - 'sCurve' applies smoothstep easing to the blend factor.
  * - 'linear' (and absent) blends linearly.
  *
  * @param points Lane points sorted by ascending PPQ.
@@ -416,7 +411,7 @@ export function evaluateAutomationValue(
       const lb = Math.log(Math.abs(b.value) + EXPONENTIAL_EPSILON);
       return sa * (Math.exp(la + (lb - la) * t) - EXPONENTIAL_EPSILON);
     }
-    case 's-curve': {
+    case 'sCurve': {
       const shaped = t * t * (3 - 2 * t);
       return a.value + (b.value - a.value) * shaped;
     }

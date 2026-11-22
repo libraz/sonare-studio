@@ -1,13 +1,13 @@
 import type { EngineHandle } from '@/engine/engine.js';
 import { SILENCE_DB } from '@/lib/db';
-import type { SonareWorkletMeterSnapshot } from '@/wasm/worklet.js';
+import type { WorkletMeterSnapshot } from '@/wasm/worklet.js';
 import { MASTER_METER_TARGET_ID } from './meter-targets';
 import { createTargetListeners } from './target-listeners';
 
 /**
  * Latest stereo level readings exposed by a {@link MeterBridge}.
  *
- * Mirrors the engine's `SonareWorkletMeterSnapshot` payload minus the
+ * Mirrors the engine's `WorkletMeterSnapshot` payload minus the
  * discriminator and target id, with all peak/RMS dB values normalized to
  * finite numbers (clamped to {@link SILENCE_DB}). The optional fields
  * come from full records (the master target): they are passed through
@@ -28,9 +28,9 @@ export interface StereoMeterLevels {
   /** Stereo correlation in [-1, 1]. */
   correlation: number;
   /** Left channel true peak in dBTP (full records only). */
-  truePeakDbL?: number;
+  truePeakDbtpL?: number;
   /** Right channel true peak in dBTP (full records only). */
-  truePeakDbR?: number;
+  truePeakDbtpR?: number;
   /** Momentary loudness in LUFS (full records only). */
   momentaryLufs?: number;
   /** Short-term loudness in LUFS (full records only). */
@@ -118,7 +118,7 @@ function clampDb(db: number): number {
 }
 
 /** Normalizes an engine snapshot, omitting non-finite full-record fields. */
-function toLevels(snapshot: SonareWorkletMeterSnapshot): StereoMeterLevels {
+function toLevels(snapshot: WorkletMeterSnapshot): StereoMeterLevels {
   const levels: StereoMeterLevels = {
     frame: snapshot.frame,
     peakDbL: clampDb(snapshot.peakDbL),
@@ -127,8 +127,8 @@ function toLevels(snapshot: SonareWorkletMeterSnapshot): StereoMeterLevels {
     rmsDbR: clampDb(snapshot.rmsDbR),
     correlation: snapshot.correlation,
   };
-  if (Number.isFinite(snapshot.truePeakDbL)) levels.truePeakDbL = snapshot.truePeakDbL;
-  if (Number.isFinite(snapshot.truePeakDbR)) levels.truePeakDbR = snapshot.truePeakDbR;
+  if (Number.isFinite(snapshot.truePeakDbtpL)) levels.truePeakDbtpL = snapshot.truePeakDbtpL;
+  if (Number.isFinite(snapshot.truePeakDbtpR)) levels.truePeakDbtpR = snapshot.truePeakDbtpR;
   if (Number.isFinite(snapshot.momentaryLufs)) levels.momentaryLufs = snapshot.momentaryLufs;
   if (Number.isFinite(snapshot.shortTermLufs)) levels.shortTermLufs = snapshot.shortTermLufs;
   if (Number.isFinite(snapshot.integratedLufs)) levels.integratedLufs = snapshot.integratedLufs;
@@ -158,7 +158,7 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   let disposed = false;
   let rafId = 0;
 
-  const publish = (snapshot: SonareWorkletMeterSnapshot): void => {
+  const publish = (snapshot: WorkletMeterSnapshot): void => {
     const targetId = snapshot.targetId ?? MASTER_METER_TARGET_ID;
     const levels = toLevels(snapshot);
     latestByTarget.set(targetId, levels);

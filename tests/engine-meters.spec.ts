@@ -6,12 +6,10 @@ import {
   type StereoMeterLevels,
 } from '@/engine/meters';
 import { SILENCE_DB } from '@/lib/db';
-import type { SonareWorkletMeterSnapshot } from '@/wasm/worklet.js';
+import type { WorkletMeterSnapshot } from '@/wasm/worklet.js';
 
 /** Full engine meter record with overridable fields. */
-function makeSnapshot(
-  overrides: Partial<SonareWorkletMeterSnapshot> = {},
-): SonareWorkletMeterSnapshot {
+function makeSnapshot(overrides: Partial<WorkletMeterSnapshot> = {}): WorkletMeterSnapshot {
   return {
     type: 'meter',
     targetId: 0,
@@ -21,12 +19,14 @@ function makeSnapshot(
     rmsDbL: -12,
     rmsDbR: -13,
     correlation: 0.5,
-    truePeakDbL: -5.5,
-    truePeakDbR: -6.5,
+    truePeakDbtpL: -5.5,
+    truePeakDbtpR: -6.5,
     momentaryLufs: -14,
     shortTermLufs: -15,
     integratedLufs: -16,
     gainReductionDb: 0,
+    inputPeakDbL: -6,
+    inputPeakDbR: -7,
     ...overrides,
   };
 }
@@ -34,15 +34,15 @@ function makeSnapshot(
 /** EngineHandle stub capturing the onMeter callback and pollMeters calls. */
 function makeHandle(mode: 'sab' | 'postMessage' = 'postMessage'): {
   handle: EngineHandle;
-  emit: (snapshot: SonareWorkletMeterSnapshot) => void;
+  emit: (snapshot: WorkletMeterSnapshot) => void;
   pollMeters: ReturnType<typeof vi.fn>;
   unsubscribe: ReturnType<typeof vi.fn>;
 } {
-  let captured: ((snapshot: SonareWorkletMeterSnapshot) => void) | null = null;
+  let captured: ((snapshot: WorkletMeterSnapshot) => void) | null = null;
   const unsubscribe = vi.fn();
-  const pollMeters = vi.fn(() => [] as SonareWorkletMeterSnapshot[]);
+  const pollMeters = vi.fn(() => [] as WorkletMeterSnapshot[]);
   const engine = {
-    onMeter: vi.fn((cb: (snapshot: SonareWorkletMeterSnapshot) => void) => {
+    onMeter: vi.fn((cb: (snapshot: WorkletMeterSnapshot) => void) => {
       captured = cb;
       return unsubscribe;
     }),
@@ -129,9 +129,9 @@ describe('createMeterBridge', () => {
     const { handle, emit } = makeHandle();
     const bridge = createMeterBridge(handle);
 
-    emit(makeSnapshot({ truePeakDbL: -4.2, momentaryLufs: -14.5, gainReductionDb: -3.5 }));
-    expect(bridge.latest.truePeakDbL).toBe(-4.2);
-    expect(bridge.latest.truePeakDbR).toBe(-6.5);
+    emit(makeSnapshot({ truePeakDbtpL: -4.2, momentaryLufs: -14.5, gainReductionDb: -3.5 }));
+    expect(bridge.latest.truePeakDbtpL).toBe(-4.2);
+    expect(bridge.latest.truePeakDbtpR).toBe(-6.5);
     expect(bridge.latest.momentaryLufs).toBe(-14.5);
     expect(bridge.latest.shortTermLufs).toBe(-15);
     expect(bridge.latest.integratedLufs).toBe(-16);
@@ -139,16 +139,16 @@ describe('createMeterBridge', () => {
 
     emit(
       makeSnapshot({
-        truePeakDbL: Number.NEGATIVE_INFINITY,
-        truePeakDbR: Number.NEGATIVE_INFINITY,
+        truePeakDbtpL: Number.NEGATIVE_INFINITY,
+        truePeakDbtpR: Number.NEGATIVE_INFINITY,
         momentaryLufs: Number.NEGATIVE_INFINITY,
         shortTermLufs: Number.NEGATIVE_INFINITY,
         integratedLufs: Number.NEGATIVE_INFINITY,
         gainReductionDb: Number.NaN,
       }),
     );
-    expect(bridge.latest).not.toHaveProperty('truePeakDbL');
-    expect(bridge.latest).not.toHaveProperty('truePeakDbR');
+    expect(bridge.latest).not.toHaveProperty('truePeakDbtpL');
+    expect(bridge.latest).not.toHaveProperty('truePeakDbtpR');
     expect(bridge.latest).not.toHaveProperty('momentaryLufs');
     expect(bridge.latest).not.toHaveProperty('shortTermLufs');
     expect(bridge.latest).not.toHaveProperty('integratedLufs');

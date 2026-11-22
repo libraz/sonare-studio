@@ -99,7 +99,7 @@ describe('StripEqSection', () => {
   it('exposes placement, phase and dynamic EQ band options', async () => {
     setStripEq(trackId, {
       enabled: true,
-      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
+      bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
     });
     const wrapper = mountEq();
 
@@ -107,21 +107,21 @@ describe('StripEqSection', () => {
     const menu = useContextMenuState();
     expect(menu.items.map((item) => item.id)).toEqual(
       expect.arrayContaining([
-        'placement:Mid',
-        'placement:Side',
-        'phase:LinearPhase',
+        'placement:mid',
+        'placement:side',
+        'phase:linearPhase',
         'dynamic:down',
         'dynamic:up',
       ]),
     );
 
-    menu.items.find((item) => item.id === 'placement:Mid')?.run?.();
-    menu.items.find((item) => item.id === 'phase:LinearPhase')?.run?.();
+    menu.items.find((item) => item.id === 'placement:mid')?.run?.();
+    menu.items.find((item) => item.id === 'phase:linearPhase')?.run?.();
     menu.items.find((item) => item.id === 'dynamic:down')?.run?.();
 
     expect(store.tracks[0].mixer?.eq?.bands[0]).toMatchObject({
-      placement: 'Mid',
-      phase: 'LinearPhase',
+      placement: 'mid',
+      phase: 'linearPhase',
       dynamic: true,
       thresholdDb: -24,
       ratio: 2,
@@ -130,8 +130,8 @@ describe('StripEqSection', () => {
       releaseMs: 120,
     });
 
-    menu.items.find((item) => item.id === 'placement:Stereo')?.run?.();
-    menu.items.find((item) => item.id === 'phase:Inherit')?.run?.();
+    menu.items.find((item) => item.id === 'placement:stereo')?.run?.();
+    menu.items.find((item) => item.id === 'phase:inherit')?.run?.();
     menu.items.find((item) => item.id === 'dynamic:off')?.run?.();
 
     const band = store.tracks[0].mixer?.eq?.bands[0];
@@ -163,7 +163,7 @@ describe('StripEqSection', () => {
   it('arms and clears EQ band MIDI learn targets from the band menu', async () => {
     setStripEq(trackId, {
       enabled: true,
-      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
+      bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
     });
     const learn = useMidiLearn();
     const wrapper = mountEqWithMidiLearn(learn);
@@ -208,7 +208,7 @@ describe('StripEqSection', () => {
   it('closes an in-flight band gesture when unmounted', async () => {
     setStripEq(trackId, {
       enabled: true,
-      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
+      bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
     });
     clearHistory();
     const wrapper = mountEq();
@@ -218,14 +218,14 @@ describe('StripEqSection', () => {
 
     setStripEq(trackId, {
       enabled: true,
-      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 9, q: 1, enabled: true }],
+      bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 9, q: 1, enabled: true }],
     });
     expect(undo()).toBe(true);
     expect(store.tracks[0].mixer?.eq?.bands[0]?.gainDb).toBe(6);
   });
 
   it('keeps existing EQ bands when Match flat confirmation is cancelled', async () => {
-    const existing = { type: 'Peak' as const, frequencyHz: 1000, gainDb: 4, q: 1, enabled: true };
+    const existing = { type: 'peak' as const, frequencyHz: 1000, gainDb: 4, q: 1, enabled: true };
     setStripEq(trackId, { enabled: true, bands: [existing] });
     const spectrum = new Array<number>(64).fill(-56);
     spectrum[2] = -30;

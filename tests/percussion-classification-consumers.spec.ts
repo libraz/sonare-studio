@@ -138,7 +138,7 @@ describe('track-level percussion classification', () => {
   it('picks the section-drum target from the drum classification, not the name', () => {
     const tracks = [
       track({ id: 1, name: 'Drums', percussion: false }),
-      track({ id: 2, name: 'Part 2', instrument: { kind: 'synth-preset', preset: 'drum-kit' } }),
+      track({ id: 2, name: 'Part 2', instrument: { kind: 'synth-preset', preset: 'drumKit' } }),
       track({ id: 3, name: 'Part 3' }),
     ];
     const clips = [clip(1, 3, [note(1, 36, 9), note(2, 38, 9)])];
@@ -242,7 +242,7 @@ describe('composition commands on percussion', () => {
     for (const pitch of [36, 38, 42]) addNote({ pitch, startPpq: 0, durationPpq: 1, channel: 0 });
     store.tracks = store.tracks.map((entry) =>
       entry.id === kitId
-        ? { ...entry, instrument: { kind: 'synth-preset', preset: 'drum-kit' } }
+        ? { ...entry, instrument: { kind: 'synth-preset', preset: 'drumKit' } }
         : entry,
     );
     setProjectChords([cMajor]);

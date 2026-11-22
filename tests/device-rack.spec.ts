@@ -111,7 +111,7 @@ describe('DeviceRack.vue', () => {
   it('captions the default instrument of the active MIDI track', () => {
     const wrapper = mount(DeviceRack);
     expect(wrapper.find('.rack-track').text()).toBe(store.tracks[0].name);
-    expect(wrapper.find('.instrument-name').text()).toBe('acoustic-piano');
+    expect(wrapper.find('.instrument-name').text()).toBe('acousticPiano');
     expect(wrapper.find('.instrument-kind').text()).toBe('Preset');
     expect(wrapper.find('.instrument-source').text()).toBe('Built-in NativeSynth fallback preset');
   });
@@ -122,7 +122,7 @@ describe('DeviceRack.vue', () => {
     await flushPromises();
 
     expect(auditionMock.play).toHaveBeenCalledWith(
-      { kind: 'synth-preset', preset: 'acoustic-piano' },
+      { kind: 'synth-preset', preset: 'acousticPiano' },
       undefined,
       undefined,
       { normalize: true },
@@ -195,13 +195,13 @@ describe('DeviceRack.vue', () => {
 
     await wrapper.find('.preset-search input').setValue('lead');
     const options = wrapper.findAll('.preset-option');
-    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['saw-lead', 'square-lead']);
+    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['sawLead', 'squareLead']);
     expect(wrapper.find('.preset-group-title').text()).toBe('Synths');
 
     await options[0].trigger('click');
-    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'saw-lead' });
+    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'sawLead' });
     expect(wrapper.find('.instrument-picker').exists()).toBe(false);
-    expect(wrapper.find('.instrument-name').text()).toBe('saw-lead');
+    expect(wrapper.find('.instrument-name').text()).toBe('sawLead');
   });
 
   it('selects a built-in GM program and reopens on its GM settings', async () => {
@@ -216,7 +216,7 @@ describe('DeviceRack.vue', () => {
 
     expect(store.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'acoustic-piano',
+      preset: 'acousticPiano',
       useGmPrograms: true,
       gmBank: 0,
       gmProgram: 24,
@@ -241,7 +241,7 @@ describe('DeviceRack.vue', () => {
 
     expect(store.tracks[0].instrument).toEqual({
       kind: 'synth-preset',
-      preset: 'acoustic-piano',
+      preset: 'acousticPiano',
       useGmPrograms: true,
       gmBank: 128,
       gmProgram: 24,
@@ -286,7 +286,7 @@ describe('DeviceRack.vue', () => {
   });
 
   it('opens the drum kit picker for a drum-kit preset on an empty track', async () => {
-    setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'drum-kit' });
+    setTrackInstrument(trackId, { kind: 'synth-preset', preset: 'drumKit' });
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');
     await wrapper
@@ -314,16 +314,16 @@ describe('DeviceRack.vue', () => {
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');
 
-    await wrapper.find('.preset-search input').setValue('pipe');
+    await wrapper.find('.preset-search input').setValue('church');
     let options = wrapper.findAll('.preset-option');
-    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['pipe-organ']);
+    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['churchOrgan']);
 
-    await wrapper.find('.preset-search input').setValue('bowed');
+    await wrapper.find('.preset-search input').setValue('violin');
     options = wrapper.findAll('.preset-option');
-    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['bowed-string']);
+    expect(options.map((o) => o.find('.preset-name').text())).toEqual(['violin']);
 
     await options[0].trigger('click');
-    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'bowed-string' });
+    expect(store.tracks[0].instrument).toEqual({ kind: 'synth-preset', preset: 'violin' });
   });
 
   it('opens the instrument picker from a shell request', async () => {
@@ -689,12 +689,12 @@ describe('DeviceRack.vue', () => {
   it('summarizes the patch tab and opens the patch editor', async () => {
     setTrackInstrument(trackId, {
       kind: 'synth-patch',
-      patch: { preset: 'saw-lead', cutoffHz: 500 },
+      patch: { preset: 'sawLead', cutoffHz: 500 },
     });
     const wrapper = mount(DeviceRack);
     await wrapper.find('.instrument-button').trigger('click');
     // A synth-patch instrument lands on the Patch tab directly.
-    expect(wrapper.find('.patch-summary').text()).toBe('saw-lead · 1 edit');
+    expect(wrapper.find('.patch-summary').text()).toBe('sawLead · 1 edit');
     await wrapper.find('.edit-patch').trigger('click');
     expect(wrapper.find('[aria-label="Patch editor"]').exists()).toBe(true);
   });

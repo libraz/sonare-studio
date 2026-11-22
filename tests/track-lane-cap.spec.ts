@@ -17,6 +17,19 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import type { SonareEngine } from '@/wasm/worklet.js';
+
+type MixerLaneEngine = Pick<
+  SonareEngine,
+  | 'setTrackLanes'
+  | 'setStripFaderDb'
+  | 'setStripPan'
+  | 'setTrackSoloMute'
+  | 'setStripChannelDelaySamples'
+  | 'setStripPanLaw'
+  | 'setStripPanMode'
+  | 'setStripDualPan'
+>;
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -83,18 +96,18 @@ describe('mixer sync over the lane cap', () => {
   it('declares the first lanes, keeps syncing them and reports the overflow', () => {
     const declared: number[] = [];
     const engine = {
-      setTrackLanes: vi.fn((lanes: number[]) => {
+      setTrackLanes: vi.fn((lanes: Array<{ trackId: number }>) => {
         if (lanes.length > MAX_TRACK_LANES) throw new RangeError('too many lanes');
-        declared.splice(0, declared.length, ...lanes);
+        declared.splice(0, declared.length, ...lanes.map((lane) => lane.trackId));
       }),
-      setStripGain: vi.fn(() => true),
-      setStripPan: vi.fn(() => true),
-      setSoloMute: vi.fn(() => true),
-      setTrackStripChannelDelaySamples: vi.fn(),
-      setTrackStripPanLaw: vi.fn(),
-      setTrackStripPanMode: vi.fn(),
-      setTrackStripDualPan: vi.fn(),
-    };
+      setStripFaderDb: vi.fn(),
+      setStripPan: vi.fn(),
+      setTrackSoloMute: vi.fn(),
+      setStripChannelDelaySamples: vi.fn(),
+      setStripPanLaw: vi.fn(),
+      setStripPanMode: vi.fn(),
+      setStripDualPan: vi.fn(),
+    } satisfies MixerLaneEngine;
     const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
     const sync = createMixerSync(handle);
     const tracks = Array.from({ length: MAX_TRACK_LANES + 3 }, (_, index) => track(index + 1));
@@ -102,11 +115,14 @@ describe('mixer sync over the lane cap', () => {
     expect(declared).toEqual(tracks.slice(0, MAX_TRACK_LANES).map((entry) => entry.id));
     expect(sync.laneOverflowCount?.()).toBe(3);
 
-    engine.setStripGain.mockClear();
+    engine.setStripFaderDb.mockClear();
     tracks[0] = { ...tracks[0], volume: 0.5 };
     expect(() => sync.sync(tracks, createDefaultStrip())).not.toThrow();
-    expect(engine.setStripGain).toHaveBeenCalledWith(1, expect.any(Number));
-    expect(engine.setStripGain).not.toHaveBeenCalledWith(MAX_TRACK_LANES + 1, expect.any(Number));
+    expect(engine.setStripFaderDb).toHaveBeenCalledWith(1, expect.any(Number));
+    expect(engine.setStripFaderDb).not.toHaveBeenCalledWith(
+      MAX_TRACK_LANES + 1,
+      expect.any(Number),
+    );
 
     sync.sync(tracks.slice(0, MAX_TRACK_LANES), createDefaultStrip());
     expect(sync.laneOverflowCount?.()).toBe(0);

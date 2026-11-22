@@ -13,9 +13,9 @@ beforeAll(async () => {
 
 describe('instrument automation parameters', () => {
   it('are realtime-safe engine parameters whose editor range the engine accepts', () => {
-    const engine = new wasm.RealtimeEngine(48000, 512);
+    const engine = new wasm.RealtimeEngine({ sampleRate: 48000, maxBlockSize: 512 });
     engine.setTrackLanes([{ trackId: 1 }]);
-    engine.setSynthInstrument('saw-lead', 1);
+    engine.setSynthInstrument(1, { preset: 'sawLead' });
     for (const name of AUTOMATABLE_SYNTH_PARAMS) {
       const id = engine.resolveInstrumentAutomationId(1, name);
       expect(id, name).toBeGreaterThanOrEqual(0);

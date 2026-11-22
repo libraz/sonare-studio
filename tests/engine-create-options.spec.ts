@@ -51,13 +51,13 @@ describe('createEngine options', () => {
     const create = SonareRealtimeEngineNode.create(
       { sampleRate: 48000 } as unknown as BaseAudioContext,
       {
-        ...options,
+        ...(options as Parameters<typeof SonareRealtimeEngineNode.create>[1]),
         moduleUrl: undefined,
         engineAbiVersion: 1,
         nodeFactory: () => {
           throw new NodeConstructionReached();
         },
-      } as Parameters<typeof SonareRealtimeEngineNode.create>[1],
+      },
     );
     await expect(create).rejects.toBeInstanceOf(NodeConstructionReached);
   });

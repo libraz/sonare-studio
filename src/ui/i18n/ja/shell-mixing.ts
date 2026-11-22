@@ -355,10 +355,10 @@ export const shellMixing = {
       samples: 'smp',
       panLaw: 'パンの法則',
       panLaws: {
-        const3dB: '-3 dB',
-        'const4.5dB': '-4.5 dB',
-        const6dB: '-6 dB',
-        linear0dB: 'リニア',
+        const3Db: '-3 dB',
+        'const4.5Db': '-4.5 dB',
+        const6Db: '-6 dB',
+        linear0Db: 'リニア',
       },
       panMode: 'パンモード',
       panModes: {
@@ -656,7 +656,7 @@ export const shellMixing = {
       advanced: '詳細な上書き',
       remove: '上書きを削除',
       invalidValue: '対応範囲内の値を入力してください。',
-      unknownValue: '旧バージョンまたは別ツールで保存された値です。',
+      unknownValue: 'この値には専用のコントロールがありません。',
     },
     reference: {
       title: 'リファレンス比較',

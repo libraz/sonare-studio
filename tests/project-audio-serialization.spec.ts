@@ -134,11 +134,11 @@ describe('project serialization with audio clips (schema v2)', () => {
     await loadProjectDocument(doc);
 
     const fakeDoc = JSON.parse(getProject().toJson()) as {
-      clips: Array<{ id: number; source_id: number }>;
+      clips: Array<{ id: number; sourceId: number }>;
     };
     const audioClips = store.clips.filter((c) => c.kind === 'audio');
     const sourceIds = audioClips.map(
-      (clip) => fakeDoc.clips.find((c) => c.id === clip.id)?.source_id,
+      (clip) => fakeDoc.clips.find((c) => c.id === clip.id)?.sourceId,
     );
     expect(sourceIds[0]).toBeDefined();
     expect(sourceIds[1]).toBe(sourceIds[0]);
@@ -211,14 +211,14 @@ describe('project serialization with audio clips (schema v2)', () => {
       ],
     });
     const native = JSON.parse(getProject().toJson()) as {
-      clips: Array<{ id: number; warp_ref_id?: number; warp_mode?: number }>;
-      warp_maps: Array<{ id: number }>;
+      clips: Array<{ id: number; warpRefId?: number; warpMode?: number }>;
+      warpMaps: Array<{ id: number }>;
     };
     expect(native.clips.find((clip) => clip.id === mirror?.id)).toMatchObject({
-      warp_ref_id: mirror?.id,
-      warp_mode: 2,
+      warpRefId: mirror?.id,
+      warpMode: 2,
     });
-    expect(native.warp_maps.some((map) => map.id === mirror?.id)).toBe(true);
+    expect(native.warpMaps.some((map) => map.id === mirror?.id)).toBe(true);
     expect(serializeProject()).toEqual(doc);
   });
 

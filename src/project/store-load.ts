@@ -318,7 +318,7 @@ export function hydrateProjectFromDocument(
       return false;
     })
   ) {
-    created.setOverlapPolicy(1);
+    created.setOverlapPolicy('allow');
   }
   const tempo =
     doc.tempoSegments.length > 0 ? doc.tempoSegments : [{ startPpq: 0, bpm: DEFAULT_TEMPO_BPM }];
@@ -485,15 +485,15 @@ export function hydrateProjectFromDocument(
             ...placeholderSourceAudio(),
             sourceUri: audioAssetUri(assetId),
           });
-          loadedSourceIds.set(assetId, created.sourceCount());
+          loadedSourceIds.set(assetId, created.sources().length);
           // External-stem provenance rides the source, so replay it once
           // per asset, on the clip that registered the source.
           if (isExternalStemRole(clip.externalStemRole)) {
-            created.setAudioSourceMetadata(
-              created.sourceCount(),
-              typeof clip.contentHash === 'string' ? clip.contentHash : '',
-              clip.externalStemRole,
-            );
+            created.setAudioSourceMetadata({
+              sourceId: created.sources().length,
+              ...(typeof clip.contentHash === 'string' ? { contentHash: clip.contentHash } : {}),
+              externalStemRole: clip.externalStemRole,
+            });
           }
         } else {
           // Later clips register a throwaway placeholder source and are
@@ -510,11 +510,10 @@ export function hydrateProjectFromDocument(
           created.setClipSource(newClipId, existingSource);
         }
         if ((clip.fadeInPpq ?? 0) > 0 || (clip.fadeOutPpq ?? 0) > 0) {
-          created.setClipFade(
-            newClipId,
-            { lengthPpq: clip.fadeInPpq ?? 0 },
-            { lengthPpq: clip.fadeOutPpq ?? 0 },
-          );
+          created.setClipFade(newClipId, {
+            fadeInPpq: clip.fadeInPpq ?? 0,
+            fadeOutPpq: clip.fadeOutPpq ?? 0,
+          });
         }
       } else {
         newClipId = created.addClip({
@@ -532,11 +531,10 @@ export function hydrateProjectFromDocument(
         }
       }
       if (clip.loopEnabled) {
-        created.setClipLoop(
-          newClipId,
-          'loop',
-          finiteAtLeast(clip.loopLengthPpq, Number.EPSILON, lengthPpq),
-        );
+        created.setClipLoop(newClipId, {
+          loopMode: 'loop',
+          loopLengthPpq: finiteAtLeast(clip.loopLengthPpq, Number.EPSILON, lengthPpq),
+        });
       }
       if (
         isAudio &&

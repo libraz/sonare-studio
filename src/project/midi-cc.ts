@@ -56,7 +56,7 @@ export const PIANO_ROLL_CC_LANES: readonly CcLaneOption[] = [
 ];
 
 /** Expression-lane interpolation modes stored on breakpoints. */
-export const CLIP_EXPRESSION_CURVES: readonly ClipExpressionCurve[] = ['hold', 'linear', 's-curve'];
+export const CLIP_EXPRESSION_CURVES: readonly ClipExpressionCurve[] = ['hold', 'linear', 'sCurve'];
 
 /** Returns true when `curve` is a supported clip expression curve. */
 export function isClipExpressionCurve(curve: unknown): curve is ClipExpressionCurve {
@@ -206,13 +206,13 @@ export function sanitizeProgramChangePoints(
 
 /** Eases a segment fraction t in [0, 1] by the breakpoint's curve. */
 export function curveT(curve: ClipExpressionCurve | undefined, t: number): number {
-  if (curve === 's-curve') return t * t * (3 - 2 * t);
+  if (curve === 'sCurve') return t * t * (3 - 2 * t);
   return t;
 }
 
 /**
  * Expands expression breakpoint curves into MIDI-event positions. Hold keeps
- * one event per breakpoint; linear and s-curve segments add generated points
+ * one event per breakpoint; linear and sCurve segments add generated points
  * between adjacent breakpoints.
  */
 export function expandExpressionPoints<
