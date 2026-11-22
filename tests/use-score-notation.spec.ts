@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { NotatedMeasure, NotatedScore } from '@/notation/model';
+import type { NotatedEvent, NotatedMeasure, NotatedScore, NoteValue } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import type { EditorClip, EditorSection, EditorTrack } from '@/project/types';
 import { scoreKeyMarkerName, scoreLyricMarkerName } from '@/ui/score/marker-editors';
@@ -953,15 +953,18 @@ describe('applyKeySignatureMarks', () => {
 
 describe('applyMultiMeasureRests', () => {
   it('marks consecutive silent grand-staff measures as a multi-measure rest', () => {
-    const whole = { base: 'whole' as const, dots: 0 };
-    const fullRest = (voice: 1 | 2, startPpq: number) => ({
-      kind: 'rest' as const,
+    const whole: NoteValue = { base: 'whole', dots: 0 };
+    const fullRest = (voice: 1 | 2, startPpq: number): NotatedEvent => ({
+      kind: 'rest',
+      pitches: [],
       voice,
       startPpq,
       durationPpq: 4,
       value: whole,
+      tieStart: false,
+      tieStop: false,
     });
-    const measures = [0, 1].map((index) => ({
+    const measures: NotatedMeasure[] = [0, 1].map((index) => ({
       index,
       startPpq: index * 4,
       lengthPpq: 4,

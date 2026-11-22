@@ -1,4 +1,5 @@
 import { flushPromises, type VueWrapper } from '@vue/test-utils';
+import type SelectMenu from '@/components/shell/SelectMenu.vue';
 
 /**
  * Test helpers for driving the custom `SelectMenu` component, which replaced the
@@ -68,4 +69,15 @@ export async function readOptionLabels(wrapper: VueWrapper, selector: string): P
   await wrapper.get(`${selector} .select-trigger`).trigger('keydown', { key: 'Escape' });
   await flushPromises();
   return labels;
+}
+
+/** Props of a mounted SelectMenu, read from the generic SFC's setup context type. */
+export type SelectMenuProps = NonNullable<ReturnType<typeof SelectMenu>['__ctx']>['props'];
+
+/**
+ * Typed props of a found SelectMenu. Test-utils cannot infer the props of a
+ * generic component, so `findComponent(SelectMenu).props(key)` is untyped.
+ */
+export function selectMenuProps(select: VueWrapper): SelectMenuProps {
+  return select.props() as SelectMenuProps;
 }

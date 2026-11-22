@@ -15,6 +15,7 @@ import {
   isDefaultInstrument,
   loadInstrument,
   SF2_MUTE_GAIN,
+  type Sf2Instrument,
   sf2ChannelProgram,
   sf2PlaybackConfig,
   type TrackInstrument,
@@ -466,7 +467,7 @@ describe('instrument helpers', () => {
   });
 
   it('sf2ChannelProgram resolves the map entry then the track default', () => {
-    const instrument = {
+    const instrument: Sf2Instrument = {
       kind: 'sf2',
       fontId: 'gm',
       bank: 0,
@@ -475,7 +476,7 @@ describe('instrument helpers', () => {
         { channel: 0, program: 40 },
         { channel: 9, bank: (120 << 7) | 1, program: 0 },
       ],
-    } as const;
+    };
     // A mapped channel with only a program keeps its bank undefined.
     expect(sf2ChannelProgram(instrument, 0)).toEqual({ bank: undefined, program: 40 });
     // The drum channel carries the GM2 drum bank.

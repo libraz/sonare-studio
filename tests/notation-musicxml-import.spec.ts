@@ -558,14 +558,17 @@ describe('importMusicXml round-trip with the serializer', () => {
       '<duration>192</duration></note></measure></part></score-partwise>';
     const document = importMusicXml(xml);
     const clip = document.tracks[0].clips[0];
-    const score = quantizeToScore(clip.notes, {
-      divisionPpq: 1 / 6,
-      timeSig: { beats: 4, beatUnit: 4 },
-      keyFifths: 0,
-      clipStartPpq: 0,
-      clipLengthPpq: clip.lengthPpq,
-      pickupLengthPpq: document.pickupLengthPpq,
-    });
+    const score = quantizeToScore(
+      clip.notes.map((note, id) => ({ id, ...note })),
+      {
+        divisionPpq: 1 / 6,
+        timeSig: { beats: 4, beatUnit: 4 },
+        keyFifths: 0,
+        clipStartPpq: 0,
+        clipLengthPpq: clip.lengthPpq,
+        pickupLengthPpq: document.pickupLengthPpq,
+      },
+    );
 
     expect(() => serializeMusicXml(score)).not.toThrow();
     expect(score.parts[0].measures[0].lengthPpq).toBeCloseTo(2 / 3, 12);

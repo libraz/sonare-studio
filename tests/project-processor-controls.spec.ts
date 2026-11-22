@@ -14,7 +14,7 @@ import { setWasmModule } from '@/project/runtime';
 import { coreWasmBinary } from './core-package';
 
 /** Strip-shaped value carrying a single insert slot. */
-function stripWith(processor: string): { inserts: InsertSlot[] } {
+function stripWith(processor: InsertSlot['processor']): { inserts: InsertSlot[] } {
   return { inserts: [{ processor, params: {}, enabled: true }] };
 }
 
@@ -170,11 +170,13 @@ describe('insertAutomationDomain', () => {
   });
 
   it('draws an uncatalogued parameter in the range its rack control uses', () => {
+    // @ts-expect-error a processor outside the catalog leaves every parameter uncatalogued
     expect(insertAutomationDomain(stripWith('custom.processor'), 'insert:0:detector')).toEqual({
       min: 0,
       max: 1,
       unit: '',
     });
+    // @ts-expect-error a processor outside the catalog leaves every parameter uncatalogued
     expect(insertAutomationDomain(stripWith('custom.processor'), 'insert:0:releaseMs')).toEqual({
       min: 0,
       max: 5000,

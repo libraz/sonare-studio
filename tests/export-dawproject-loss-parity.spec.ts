@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { inspectDawprojectExportLoss } from '@/export/dawproject/export-loss';
+import type { DocumentAutomationLane } from '@/project/document-schema';
 import type { DocumentClip, DocumentTrack, ProjectDocument } from '@/project/serialization';
 
 function track(overrides: Partial<DocumentTrack> = {}): DocumentTrack {
@@ -29,7 +30,11 @@ function doc(tracks: DocumentTrack[]): ProjectDocument {
   };
 }
 
-const panLane = { param: 'pan', enabled: true, points: [{ ppq: 0, value: 0.5 }] } as const;
+const panLane: DocumentAutomationLane = {
+  param: 'pan',
+  enabled: true,
+  points: [{ ppq: 0, value: 0.5 }],
+};
 
 function audioClip(warp: DocumentClip['warp']): DocumentClip {
   return {

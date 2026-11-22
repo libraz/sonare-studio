@@ -1,8 +1,11 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessReadout.vue';
+import type { LoudnessRow } from '@/ui/mastering/loudness';
 
-const ROWS = [{ label: 'Integrated', a: -9.4, b: -14.2, unit: 'LUFS' }];
+const ROWS: LoudnessRow[] = [
+  { label: 'Integrated', a: -9.4, b: -14.2, unit: 'LUFS', barScale: 'level' },
+];
 
 describe('MasteringLoudnessReadout', () => {
   it('shows why the preset missed its loudness target, apart from the clipping alert', () => {

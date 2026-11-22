@@ -14,6 +14,7 @@ import {
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { fakeMeterSource } from './fakes/engine';
+import { selectMenuProps } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -139,6 +140,6 @@ describe('ChannelStrip output-bus selector', () => {
     const wrapper = mountStrip(trackId);
     setStripOutputBus(trackId, busId);
     await wrapper.vm.$nextTick();
-    expect(wrapper.findComponent(SelectMenu).props('modelValue')).toBe(busId);
+    expect(selectMenuProps(wrapper.findComponent(SelectMenu)).modelValue).toBe(busId);
   });
 });

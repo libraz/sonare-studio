@@ -25,6 +25,7 @@ import {
   saveFont,
 } from '@/project/fonts';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+import { documentClip } from './fakes/project';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 function makeDocument(
@@ -49,19 +50,7 @@ function makeDocument(
               volume: 1,
               pan: 0,
               ...(refs.fontId ? { instrument: { kind: 'sf2' as const, fontId: refs.fontId } } : {}),
-              clips: refs.assetId
-                ? [
-                    {
-                      name: 'Audio',
-                      startPpq: 0,
-                      lengthPpq: 4,
-                      sourceOffsetPpq: 0,
-                      gain: 1,
-                      notes: [],
-                      assetId: refs.assetId,
-                    },
-                  ]
-                : [],
+              clips: refs.assetId ? [documentClip({ name: 'Audio', assetId: refs.assetId })] : [],
             },
           ]
         : [],

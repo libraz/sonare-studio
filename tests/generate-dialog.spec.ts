@@ -3,7 +3,9 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import ChordGenerateDialog from '@/components/compose/ChordGenerateDialog.vue';
-import TrackGenerateDialog from '@/components/compose/TrackGenerateDialog.vue';
+import TrackGenerateDialog, {
+  type TrackGenerateOpenWith,
+} from '@/components/compose/TrackGenerateDialog.vue';
 import { setProjectChords } from '@/project/command/chords';
 import { setTrackFrozen } from '@/project/command/clips-state';
 import { clearHistory, undo } from '@/project/command/history';
@@ -150,7 +152,7 @@ describe('ChordGenerateDialog', () => {
 });
 
 describe('TrackGenerateDialog', () => {
-  async function open(openWith: unknown = null): Promise<VueWrapper> {
+  async function open(openWith: TrackGenerateOpenWith | null = null): Promise<VueWrapper> {
     wrapper = mount(TrackGenerateDialog, {
       props: { open: true, openWith },
       attachTo: document.body,
@@ -504,7 +506,8 @@ describe('TrackGenerateDialog', () => {
     const { generateTracksBatchCommand } = await import('@/project/command/generate-batch');
     generateTracksBatchCommand([{ part: 'drums', params: { bars: 4 }, target: { kind: 'new' } }]);
     const drums = store.tracks.find((track) => track.name === 'Drums');
-    await open({ part: 'drums', target: { kind: 'replaceTrack', trackId: drums?.id } });
+    if (!drums) throw new Error('missing generated drums fixture');
+    await open({ part: 'drums', target: { kind: 'replaceTrack', trackId: drums.id } });
     const boxes = partCheckboxes();
     // Drums (index 1) is pre-checked; others are not.
     expect(boxes[1].checked).toBe(true);
@@ -657,7 +660,10 @@ describe('TrackGenerateDialog', () => {
     if (activeClip) {
       store.clips = store.clips.map((clip) =>
         clip.id === activeClip.id
-          ? { ...clip, notes: [{ pitch: 60, startPpq: 0, durationPpq: 4, channel: 0 }] }
+          ? {
+              ...clip,
+              notes: [{ id: 1, pitch: 60, velocity: 100, startPpq: 0, durationPpq: 4, channel: 0 }],
+            }
           : clip,
       );
     }
@@ -684,7 +690,10 @@ describe('TrackGenerateDialog', () => {
     if (activeClip) {
       store.clips = store.clips.map((clip) =>
         clip.id === activeClip.id
-          ? { ...clip, notes: [{ pitch: 60, startPpq: 0, durationPpq: 4, channel: 0 }] }
+          ? {
+              ...clip,
+              notes: [{ id: 1, pitch: 60, velocity: 100, startPpq: 0, durationPpq: 4, channel: 0 }],
+            }
           : clip,
       );
     }

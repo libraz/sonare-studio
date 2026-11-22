@@ -43,7 +43,7 @@ function midiClip(
     gain: 1,
     loopEnabled: false,
     loopLengthPpq: 0,
-    notes: notes.map((note, id) => ({ id, velocity: 100, ...note })),
+    notes: notes.map((note, id) => ({ id, velocity: 100, channel: 0, ...note })),
   };
 }
 
@@ -74,7 +74,9 @@ function deps(overrides: Partial<TuneToMidiDeps> = {}): TuneToMidiDeps {
     pitchPyin: vi.fn(() => ({ f0: new Float32Array([440]), voicedFlag: [1] })),
     extractNotes: vi.fn(() => [note(0, 100)]),
     assignNoteTargets: vi.fn((request) => ({ notes: request.notes, assignedCount: 1 })),
-    renderNotes: vi.fn((request) => Float32Array.from(request.samples, (value) => value * 2)),
+    renderNotes: vi.fn<TuneToMidiDeps['renderNotes']>((request) =>
+      Float32Array.from(request.samples, (value) => value * 2),
+    ),
     ...overrides,
   };
 }

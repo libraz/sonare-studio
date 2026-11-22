@@ -1,5 +1,5 @@
 import { NoteSafety } from '@libraz/libcantus';
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { mount } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
@@ -47,7 +47,7 @@ const painter: Painter = {
   dispose: vi.fn(),
 };
 
-let wrapper: VueWrapper | null = null;
+let wrapper: ReturnType<typeof mountGrid> | null = null;
 
 afterEach(() => {
   wrapper?.unmount();
@@ -84,7 +84,7 @@ function mountGrid(
       revision: 0,
       painter,
       notes: [makeNote()],
-      selection: new Set(),
+      selection: new Set<number>(),
       highlightedPitchClasses: Array.from({ length: 12 }, () => false),
       gridPpq: 0.25,
       clipLengthPpq: 16,
@@ -382,7 +382,7 @@ describe('NoteGridCanvas placement column', () => {
         revision: 0,
         painter,
         notes: [],
-        selection: new Set(),
+        selection: new Set<number>(),
         highlightedPitchClasses: Array.from({ length: 12 }, () => false),
         gridPpq: 0.25,
         clipLengthPpq: 16,

@@ -45,6 +45,7 @@ async function openFileMenu(): Promise<VueWrapper> {
     props: {
       autosaveLastSavedAt: null,
       canRedo: false,
+      canInstallPwa: false,
       canUndo: false,
       deviceRackOpen: false,
       dirty: false,
@@ -74,6 +75,7 @@ describe('AppHeader export menu', () => {
       props: {
         autosaveLastSavedAt: null,
         canRedo: false,
+        canInstallPwa: false,
         canUndo: false,
         deviceRackOpen: false,
         dirty: false,
@@ -115,6 +117,7 @@ describe('AppHeader export menu', () => {
       props: {
         autosaveLastSavedAt: null,
         canRedo: false,
+        canInstallPwa: false,
         canUndo: false,
         deviceRackOpen: false,
         dirty: false,
@@ -136,6 +139,7 @@ describe('AppHeader export menu', () => {
       props: {
         autosaveLastSavedAt: null,
         canRedo: false,
+        canInstallPwa: false,
         canUndo: false,
         deviceRackOpen: false,
         dirty: false,
@@ -154,6 +158,7 @@ describe('AppHeader export menu', () => {
       props: {
         autosaveLastSavedAt: null,
         canRedo: false,
+        canInstallPwa: false,
         canUndo: true,
         deviceRackOpen: false,
         dirty: false,

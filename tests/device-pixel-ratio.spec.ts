@@ -7,7 +7,7 @@ import {
 describe('observeDevicePixelRatio', () => {
   it('re-arms at the new ratio and detaches on dispose', () => {
     let ratio = 1;
-    let listener: (() => void) | null = null;
+    let listener = null as (() => void) | null;
     const remove = vi.fn();
     const queries: string[] = [];
     const environment: DevicePixelRatioEnvironment = {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { insertAutomationParam, instrumentAutomationParam } from '@/project/automation';
+import type { MixerStrip } from '@/project/mixer';
 import {
   AUTOMATION_LANE_HEIGHT_PX,
   AUTOMATION_LANE_PAD_PX,
@@ -290,7 +291,9 @@ describe('automationLaneDomain', () => {
       min: 20,
       max: 20000,
     });
-    const strip = { inserts: [{ processor: 'dynamics.compressor', params: {}, enabled: true }] };
+    const strip: Pick<MixerStrip, 'inserts'> = {
+      inserts: [{ processor: 'dynamics.compressor', params: {}, enabled: true }],
+    };
     expect(automationLaneDomain(strip, insertAutomationParam(0, 'thresholdDb'))).toEqual({
       min: -60,
       max: 0,

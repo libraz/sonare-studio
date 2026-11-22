@@ -16,6 +16,7 @@ import { useProjectStore } from '@/project/store';
 import { midiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { resetAutomationStripModes } from '@/ui/mixer/automation-mode';
 import { fakeMeterSource } from './fakes/engine';
+import { selectMenuProps } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -152,12 +153,12 @@ describe('BusStrip automation UI', () => {
 
     expect(wrapper.find('input[aria-label="Channel delay"]').exists()).toBe(false);
     const selects = wrapper.findAllComponents(SelectMenu);
-    expect(selects.map((select) => select.props('ariaLabel'))).toEqual(
+    expect(selects.map((select) => selectMenuProps(select).ariaLabel)).toEqual(
       expect.arrayContaining(['Pan law', 'Pan mode']),
     );
 
     selects
-      .find((select) => select.props('ariaLabel') === 'Pan mode')
+      .find((select) => selectMenuProps(select).ariaLabel === 'Pan mode')
       ?.vm.$emit('change', 'dualPan');
     await wrapper.vm.$nextTick();
 

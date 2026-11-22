@@ -196,6 +196,7 @@ describe('hitTestGhost', () => {
       startPpq: 4,
       durationPpq: 2,
       color: 'rgba(0, 0, 0, 0.32)',
+      trackName: 'Track',
       ...over,
     };
   }

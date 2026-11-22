@@ -1,7 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AudioAssetMeta } from '@/persistence/assets';
-import type { AudioTranscription, AudioTranscriptionClip } from '@/project/audio-transcription';
+import type {
+  AudioTranscription,
+  AudioTranscriptionClip,
+  transcribeAudioClip,
+} from '@/project/audio-transcription';
 import {
   addAudioClip,
   addAudioTrack,
@@ -232,19 +236,12 @@ describe('transcribeAudioClipToMidi', () => {
     const clipId = await sourceClip();
     const controller = new AbortController();
     const pending = deferred<AudioTranscription>();
-    const transcribe = vi.fn(
-      (
-        _clip: AudioTranscriptionClip,
-        _tempo: number,
-        _deps: unknown,
-        options: { signal?: AbortSignal },
-      ) => {
-        options.signal?.addEventListener('abort', () => pending.resolve(read([note(67)])), {
-          once: true,
-        });
-        return pending.promise;
-      },
-    );
+    const transcribe = vi.fn<typeof transcribeAudioClip>((_clip, _tempo, _deps, options) => {
+      options?.signal?.addEventListener('abort', () => pending.resolve(read([note(67)])), {
+        once: true,
+      });
+      return pending.promise;
+    });
     const beforeTracks = store.tracks.length;
     const operation = transcribeAudioClipToMidi(clipId, { signal: controller.signal, transcribe });
     controller.abort();

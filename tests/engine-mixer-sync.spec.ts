@@ -297,7 +297,7 @@ describe('createMixerSync', () => {
   it('includes return-bus insert latency when synchronizing PDC', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle, {
-      insertLatency: (slot) => (slot.processor === 'linear.return' ? 96 : 0),
+      insertLatency: (slot) => (slot.processor === 'eq.linearPhase' ? 96 : 0),
     });
     const routed = makeTrack(1, {
       mixer: { ...createDefaultStrip(), outputBusId: 'return-fx' },
@@ -309,7 +309,7 @@ describe('createMixerSync', () => {
         id: 'return-fx',
         strip: {
           ...createDefaultStrip(),
-          inserts: [{ processor: 'linear.return', params: {}, enabled: true }],
+          inserts: [{ processor: 'eq.linearPhase', params: {}, enabled: true }],
         },
       },
     ]);

@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  type MasteringAutomationLane,
   type MasteringCapabilityLookup,
   type MasteringCatalogEntry,
+  type MasteringStage,
   masteringCapabilityFromCatalog,
   planMasteringStages,
   runMasteringEnginePass,
 } from '@/export/mastering-automation';
-import { masteringAutomationParam } from '@/project/automation';
+import { type AutomationParam, masteringAutomationParam } from '@/project/automation';
 import type { InsertSlot, MasteringChainState } from '@/project/mixer';
 import { FakeRenderEngine } from './fakes/engine';
 
@@ -63,7 +65,7 @@ const capability = masteringCapabilityFromCatalog(CATALOG);
 const noCapability: MasteringCapabilityLookup = () => undefined;
 
 function slot(
-  processor: string,
+  processor: InsertSlot['processor'],
   params: Record<string, number | boolean>,
   id?: string,
 ): InsertSlot {
@@ -74,7 +76,7 @@ function chainOf(...processors: InsertSlot[]): MasteringChainState {
   return { processors };
 }
 
-function ramp(param: string, from: number, to: number) {
+function ramp(param: AutomationParam, from: number, to: number): MasteringAutomationLane {
   return {
     param,
     enabled: true,
@@ -82,7 +84,7 @@ function ramp(param: string, from: number, to: number) {
       { ppq: 0, value: from },
       { ppq: 16, value: to },
     ],
-  } as const;
+  };
 }
 
 describe('planMasteringStages', () => {
@@ -396,7 +398,7 @@ class MasteringPassEngine extends FakeRenderEngine {
   }
 }
 
-const RAMP_STAGE = {
+const RAMP_STAGE: Extract<MasteringStage, { kind: 'engine' }> = {
   kind: 'engine',
   latencySamples: 0,
   slots: [
@@ -415,7 +417,7 @@ const RAMP_STAGE = {
       ],
     },
   ],
-} as const;
+};
 
 function ascending(frames: number, offset = 0): Float32Array {
   const out = new Float32Array(frames);

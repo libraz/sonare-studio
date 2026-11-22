@@ -560,7 +560,7 @@ interface Scene {
   startPpq: number;
   lengthPpq?: number;
   lines?: VoiceLine[];
-  active?: EditorNote[];
+  active?: ReadonlyArray<EditorNote>;
   chords?: ChordTimeline;
   keyMap?: KeyMap;
   profile?: GuidanceProfile;

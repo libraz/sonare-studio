@@ -14,8 +14,10 @@ describe('ProcessorSlot', () => {
         dropTarget: false,
         canMoveUp: false,
         canMoveDown: false,
+        processorRuntime: 'unknown',
         controls: [
           {
+            kind: 'number',
             id: 'pivotHz',
             name: 'Pivot Hz',
             value: 1000,
@@ -46,6 +48,7 @@ describe('ProcessorSlot', () => {
         dropTarget: false,
         canMoveUp: false,
         canMoveDown: false,
+        processorRuntime: 'unknown',
         controls: [
           {
             kind: 'boolean',

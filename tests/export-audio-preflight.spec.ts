@@ -518,10 +518,14 @@ describe('audioExportPreflight', () => {
     });
 
     it('caps an unbounded engine answer', () => {
-      const resolver = insertTailResolverFromTiming([{ id: 'x' }], 48000, () => ({
-        tailSamples: 2147483647,
-      }));
-      expect(resolver({ processor: 'x', params: {} })).toBe(120);
+      const resolver = insertTailResolverFromTiming(
+        [{ id: 'effects.delay.stereo' }],
+        48000,
+        () => ({
+          tailSamples: 2147483647,
+        }),
+      );
+      expect(resolver({ processor: 'effects.delay.stereo', params: {} })).toBe(120);
     });
   });
 });

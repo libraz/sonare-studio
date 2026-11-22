@@ -58,7 +58,7 @@ function interactions(overrides: Partial<Parameters<typeof useScoreInteractions>
       timeSignatures: [],
       notes: [{ id: 11, startPpq: 0, durationPpq: 1 }],
     } as never,
-    getTimemap: () => [{ qstamp: 0, on: ['note-1'] }],
+    getTimemap: () => [{ tstamp: 0, qstamp: 0, on: ['note-1'] }],
     getDivisionPpq: () => 0.25,
     seek: vi.fn(),
     isAnnotateEnabled: () => true,
@@ -176,7 +176,7 @@ describe('useScoreInteractions', () => {
         timeSignatures: [],
         notes: [],
       } as never,
-      getTimemap: () => [{ qstamp: 2, on: [xmlId] }],
+      getTimemap: () => [{ tstamp: 0, qstamp: 2, on: [xmlId] }],
       seek,
       onAnnotateClick,
     });
@@ -215,7 +215,7 @@ describe('useScoreInteractions', () => {
         },
         notes: [],
       } as never,
-      getTimemap: () => [{ qstamp: 1.5, on: ['note-1'] }],
+      getTimemap: () => [{ tstamp: 0, qstamp: 1.5, on: ['note-1'] }],
       onInsertAt,
     });
 
@@ -250,7 +250,7 @@ describe('useScoreInteractions', () => {
         },
         notes: [],
       } as never,
-      getTimemap: () => [{ qstamp: 2.25, on: ['note-1'] }],
+      getTimemap: () => [{ tstamp: 0, qstamp: 2.25, on: ['note-1'] }],
       onInsertAt,
     });
 
@@ -285,7 +285,7 @@ describe('useScoreInteractions', () => {
         },
         notes: [],
       } as never,
-      getTimemap: () => [{ qstamp: 5, on: ['note-1'] }],
+      getTimemap: () => [{ tstamp: 0, qstamp: 5, on: ['note-1'] }],
       onInsertAt,
     });
 

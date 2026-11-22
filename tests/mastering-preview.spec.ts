@@ -158,7 +158,7 @@ describe('createMasteringPreviewController', () => {
 
     doc.name = 'Mutated after request';
     doc.mixer?.masteringChain?.processors.push({
-      processor: 'limiter.peak',
+      processor: 'dynamics.limiter',
       params: {},
       enabled: true,
     });

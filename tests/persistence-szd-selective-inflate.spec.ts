@@ -23,7 +23,7 @@ function emptyDocument(): ProjectDocument {
 function archiveWithUninflatableMedia(): Uint8Array {
   const bytes = encodeSzd(
     emptyDocument(),
-    { savedAt: new Date('2025-01-01T00:00:00Z') },
+    { savedAt: '2025-01-01T00:00:00.000Z' },
     {
       assets: [
         {

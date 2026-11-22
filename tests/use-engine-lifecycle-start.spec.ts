@@ -54,7 +54,7 @@ function deferred<T>() {
 
 function makeHandle() {
   let stateListener: (() => void) | null = null;
-  const dispose = vi.fn(async () => undefined);
+  const dispose = vi.fn<() => Promise<void>>(async () => undefined);
   const handle = fakeEngineHandle({
     ctx: {
       sampleRate: 48_000,
@@ -299,7 +299,7 @@ describe('useEngineLifecycle startup transaction', () => {
     const firstAnalyser = state.analyser.value as unknown as ReturnType<typeof makeDisposable>;
     const firstScope = state.scope.value as unknown as ReturnType<typeof makeDisposable>;
 
-    first.handle.engine.node.onprocessorerror?.(new Event('processorerror'));
+    first.handle.engine.node.onprocessorerror?.(new ErrorEvent('processorerror'));
 
     expect(state.handle.value).toBeNull();
     expect(state.bridge.value).toBeNull();
@@ -324,7 +324,7 @@ describe('useEngineLifecycle startup transaction', () => {
     const state = setupLifecycle();
     await state.lifecycle.startEngine();
 
-    first.handle.engine.node.onprocessorerror?.(new Event('processorerror'));
+    first.handle.engine.node.onprocessorerror?.(new ErrorEvent('processorerror'));
     await vi.waitFor(() => expect(state.lifecycle.cleanupFailures.value).toHaveLength(1));
     expect(state.lifecycle.cleanupFailures.value[0]).toMatchObject({ stage: 'engine' });
     expect(state.errorMessage.value).toContain('destroy failed');

@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { exportDawproject, importDawproject } from '@/export/dawproject';
-import type { NotatedScore } from '@/notation/model';
+import type { NotatedScore, NoteValue } from '@/notation/model';
 import { serializeMusicXml } from '@/notation/musicxml';
 import { importMusicXmlWithReport } from '@/notation/musicxml-import';
 import type { ProjectDocument } from '@/project/serialization';
@@ -107,9 +107,9 @@ function scoreFixture(): NotatedScore {
 
 /** Representative engraved score: grand staff, two voices, chords, and ties. */
 function richScoreFixture(): NotatedScore {
-  const quarter = { base: 'quarter' as const, dots: 0 };
-  const half = { base: 'half' as const, dots: 0 };
-  const whole = { base: 'whole' as const, dots: 0 };
+  const quarter: NoteValue = { base: 'quarter', dots: 0 };
+  const half: NoteValue = { base: 'half', dots: 0 };
+  const whole: NoteValue = { base: 'whole', dots: 0 };
   return {
     metadata: { title: 'Validator rich score' },
     divisions: 960,

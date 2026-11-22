@@ -65,7 +65,7 @@ describe('useWebMidiOutputs', () => {
   });
 
   it('removes EventTarget statechange handlers on scope dispose', async () => {
-    let listener: ((event: unknown) => void) | null = null;
+    let listener = null as ((event: unknown) => void) | null;
     const access: FakeMidiAccess = {
       outputs: new Map([['out-1', { id: 'out-1', name: 'Main Out' }]]),
       onstatechange: null,

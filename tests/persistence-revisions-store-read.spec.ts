@@ -22,7 +22,11 @@ describe('revision store snapshot read', () => {
 
     const snapshot = await readProjectRevisionStoreUnlocked();
 
-    expect(getFile.mock.contexts.filter((handle) => handle.name === 'index.json')).toHaveLength(1);
+    expect(
+      getFile.mock.contexts.filter(
+        (handle) => handle instanceof MemoryFileHandle && handle.name === 'index.json',
+      ),
+    ).toHaveLength(1);
     expect(snapshot.index).toEqual([saved]);
     expect(snapshot.indexBytes).not.toBeNull();
     expect(JSON.parse(new TextDecoder().decode(snapshot.indexBytes as Uint8Array))).toEqual([

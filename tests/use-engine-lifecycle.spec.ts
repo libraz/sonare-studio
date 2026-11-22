@@ -66,7 +66,7 @@ describe('useEngineLifecycle automation restore helpers', () => {
   });
 
   it('removes AudioContext state listeners on dispose', () => {
-    let listener: (() => void) | null = null;
+    let listener = null as (() => void) | null;
     const ctx = {
       state: 'suspended',
       addEventListener: (_type: 'statechange', next: () => void) => {

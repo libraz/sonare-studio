@@ -43,7 +43,7 @@ describe('TrackHeaderList scroll reveal', () => {
   });
 
   it('asks the container to reveal the row and focuses without native scroll', async () => {
-    let rafCallback: FrameRequestCallback | null = null;
+    let rafCallback = null as FrameRequestCallback | null;
     vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
       rafCallback = cb;
       return 1;

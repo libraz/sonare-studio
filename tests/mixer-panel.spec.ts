@@ -18,6 +18,7 @@ import {
   setStripPan,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { selectMenuProps } from './helpers/select-menu';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -208,7 +209,9 @@ describe('MixerPanel.vue', () => {
     expect(ranges[1]?.attributes('disabled')).toBeDefined();
     const pannerSelects = optionsWrapper.findAllComponents(SelectMenu);
     expect(pannerSelects).toHaveLength(2);
-    expect(pannerSelects.every((select) => select.props('reason') === stereoOnly)).toBe(true);
+    expect(pannerSelects.every((select) => selectMenuProps(select).reason === stereoOnly)).toBe(
+      true,
+    );
     optionsWrapper.unmount();
   });
 
@@ -278,9 +281,9 @@ describe('MixerPanel.vue', () => {
     });
 
     const layoutSelect = wrapper.findAllComponents(SelectMenu)[1];
-    const surroundOption = layoutSelect
-      .props('options')
-      .find((option: { value: string; disabled?: boolean }) => option.value === '5.1');
+    const surroundOption = selectMenuProps(layoutSelect).options.find(
+      (option) => option.value === '5.1',
+    );
     expect(surroundOption?.disabled).toBe(true);
 
     await layoutSelect.vm.$emit('change', '5.1');
