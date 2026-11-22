@@ -3,7 +3,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { toSafetyProfile } from '@/compose/guidance-profile';
-import { editableDrumTracks, harmonicNotes, isDrumTrack } from '@/compose/tracks';
+import type { SectionId } from '@/compose/section-shaping';
 import { describeError } from '@/lib/errors';
 import { clamp01 } from '@/lib/math';
 import {
@@ -15,19 +15,13 @@ import {
   MIN_DRUM_DIFFICULTY,
   type TrackPart,
 } from '@/project/commands';
-import { normalizeGenerationSeed, partForTrack, partSeed } from '@/project/generation';
-import { projectMidiNoteOccurrences } from '@/project/midi-projection';
+import { normalizeGenerationSeed, partSeed } from '@/project/generation';
 import { MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds, secondsToPpq } from '@/project/tempo-map';
-import {
-  advanceBarsPpq,
-  barNumberAt,
-  barStartPpq,
-  barsBetweenPpq,
-  isFourFourBarRange,
-} from '@/project/time-signature';
-import { clipKind } from '@/project/types';
+import { advanceBarsPpq, barsBetweenPpq, isFourFourBarRange } from '@/project/time-signature';
+import { useTrackGenerateSources } from '@/ui/compose/use-track-generate-sources';
+import { useTrackGenerateTargets } from '@/ui/compose/use-track-generate-targets';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -231,79 +225,18 @@ function onDurationChange(event: Event): void {
 
 // --- Length basis --------------------------------------------------------------
 
-/** Chord progression length in whole bars (0 when there is no chord track). */
-const chordProgressionBars = computed(() => {
-  const end = store.chords.reduce((max, chord) => Math.max(max, chord.endPpq), 0);
-  return Math.max(0, Math.round(barsBetweenPpq(store.timeSignatures, 0, end)));
-});
-
-/** Active editable MIDI clip (enables motif's clip targets). */
-const activeMidiClip = computed(() => {
-  const clip = store.activeClip;
-  const track = clip ? store.tracks.find((entry) => entry.id === clip.trackId) : null;
-  return clip !== null && clipKind(clip) === 'midi' && track?.frozen === undefined ? clip : null;
-});
-
-/** True when the active editable MIDI clip belongs to a percussion track (no motif target). */
-const activeClipIsDrum = computed(() => {
-  const clip = activeMidiClip.value;
-  if (clip === null) return false;
-  return isDrumTrack(
-    store.tracks.find((entry) => entry.id === clip.trackId),
-    clip.notes,
-  );
-});
-
-/** Active MIDI clip used as the counter-melody source, including frozen clips. */
-const counterSourceClip = computed(() => {
-  const clip = store.activeClip;
-  return clip !== null && clipKind(clip) === 'midi' ? clip : null;
-});
-
-/** True when the counter-melody source clip belongs to a percussion track. */
-const counterSourceIsDrum = computed(() => {
-  const clip = counterSourceClip.value;
-  if (clip === null) return false;
-  const track = store.tracks.find((entry) => entry.id === clip.trackId);
-  return isDrumTrack(track, clip.notes);
-});
-
-/** Active MIDI clip's melody length in bars, or null when none is active. */
-const counterBars = computed(() => {
-  const clip = counterSourceClip.value;
-  if (clip === null || counterSourceIsDrum.value) return null;
-  const track = store.tracks.find((entry) => entry.id === clip.trackId);
-  const projected = projectMidiNoteOccurrences(clip);
-  const notes = track === undefined ? projected : harmonicNotes(track, projected);
-  if (notes.length === 0) return null;
-  const end = notes.reduce((max, note) => Math.max(max, note.startPpq + note.durationPpq), 0);
-  return Math.max(1, Math.round(barsBetweenPpq(store.timeSignatures, 0, end)));
-});
-
-const hasChords = computed(() => store.chords.length > 0);
-const hasEditableMidiClip = computed(() =>
-  store.clips.some((clip) => {
-    if (clipKind(clip) !== 'midi') return false;
-    const track = store.tracks.find((entry) => entry.id === clip.trackId);
-    return track?.frozen === undefined;
-  }),
-);
-/** A melody clip is enough to open the motif/drum/counter workflow without chords. */
-const hasGeneratorSource = computed(() => hasChords.value || hasEditableMidiClip.value);
-const counterAvailable = computed(() => counterBars.value !== null);
-
-/** Why a part cannot be generated right now, or null when it can. */
-function partBlocked(part: TrackPart): string | null {
-  return firstBlock(
-    [!hasChords.value && (part === 'bass' || part === 'backing'), g.value.chordsRequired],
-    [part === 'counter' && counterSourceIsDrum.value, g.value.counterDrumSource],
-    [part === 'counter' && !counterAvailable.value, g.value.counterUnavailable],
-  );
-}
-
-function isPartAvailable(part: TrackPart): boolean {
-  return partBlocked(part) === null;
-}
+const {
+  chordProgressionBars,
+  activeMidiClip,
+  activeClipIsDrum,
+  counterBars,
+  hasChords,
+  hasEditableMidiClip,
+  hasGeneratorSource,
+  counterAvailable,
+  partBlocked,
+  isPartAvailable,
+} = useTrackGenerateSources({ g });
 
 // --- Part parameters -----------------------------------------------------------
 
@@ -355,7 +288,6 @@ const GROOVES: ReadonlyArray<{
   { id: 'house', labelKey: 'grooveHouse' },
   { id: 'synthpop', labelKey: 'grooveSynthpop' },
 ];
-type SectionId = 'intro' | 'verse' | 'prechorus' | 'chorus' | 'bridge' | 'outro';
 const SECTIONS: ReadonlyArray<{
   id: SectionId;
   labelKey:
@@ -391,44 +323,27 @@ const DRUM_DIFFICULTIES: ReadonlyArray<number> = Array.from(
   (_unused, index) => MIN_DRUM_DIFFICULTY + index,
 );
 
-/** Range controls used only when a drum track's existing material is targeted. */
-const DRUM_RANGE_MANUAL = 'manual';
-const drumRangeStartBar = ref(1);
-const drumRangeLengthBars = ref(4);
-const drumRangeSectionId = ref(DRUM_RANGE_MANUAL);
-
-interface SavedDrumSection {
-  id: number;
-  name: string;
-  startBar: number;
-  lengthBars: number;
-}
-
-/** Saved arrangement sections that can be addressed on the generator's 4/4 grid. */
-const savedDrumSections = computed<ReadonlyArray<SavedDrumSection>>(() =>
-  store.sections.flatMap((section) => {
-    const startBar = barNumberAt(store.timeSignatures, section.startPpq);
-    const spanBars = barsBetweenPpq(store.timeSignatures, section.startPpq, section.endPpq);
-    const lengthBars = Math.round(spanBars);
-    if (
-      barStartPpq(store.timeSignatures, startBar) !== section.startPpq ||
-      Math.abs(spanBars - lengthBars) > 1e-9 ||
-      startBar < 1 ||
-      lengthBars < 1 ||
-      !isFourFourBarRange(store.timeSignatures, section.startPpq, lengthBars)
-    ) {
-      return [];
-    }
-    return [
-      {
-        id: section.id,
-        name: section.name.trim() || formatMessage(g.value.rangeUnnamedSection, { id: section.id }),
-        startBar,
-        lengthBars,
-      },
-    ];
-  }),
-);
+const {
+  DRUM_RANGE_MANUAL,
+  drumRangeStartBar,
+  drumRangeLengthBars,
+  drumRangeSectionId,
+  savedDrumSections,
+  isDrumRangeTarget,
+  drumRangeValidation,
+  onDrumRangeSectionChange,
+  onTargetChanged,
+  encodeTarget,
+  decodeTarget,
+  targetOptions,
+} = useTrackGenerateTargets({
+  g,
+  parts,
+  drumSection,
+  drumNextSection,
+  activeMidiClip,
+  activeClipIsDrum,
+});
 
 type BassStyle = 'root' | 'rootFifth' | 'pop' | 'walking' | 'arpeggio';
 const BASS_STYLES: ReadonlyArray<{
@@ -536,219 +451,6 @@ watch(
   },
   { immediate: true },
 );
-
-// --- Targets -------------------------------------------------------------------
-
-function targetTrackId(value: string, prefix: 'replace' | 'range'): number | null {
-  if (!value.startsWith(`${prefix}:`)) return null;
-  const trackId = Number(value.slice(prefix.length + 1));
-  return Number.isInteger(trackId) && trackId >= 0 ? trackId : null;
-}
-
-const drumRangeTrackId = computed(() => targetTrackId(parts.drums.target, 'range'));
-const isDrumRangeTarget = computed(() => drumRangeTrackId.value !== null);
-
-const drumRangeStartPpq = computed(() =>
-  barStartPpq(store.timeSignatures, Math.round(drumRangeStartBar.value)),
-);
-const drumRangeEndPpq = computed(() =>
-  advanceBarsPpq(
-    store.timeSignatures,
-    drumRangeStartPpq.value,
-    Math.round(drumRangeLengthBars.value),
-  ),
-);
-
-const drumRangeTargetClipEndPpq = computed(() => {
-  const trackId = drumRangeTrackId.value;
-  if (trackId === null) return 0;
-  return store.clips
-    .filter((clip) => clip.trackId === trackId)
-    .reduce((end, clip) => Math.max(end, clip.startPpq + clip.lengthPpq), 0);
-});
-const drumRangeTargetClipStartPpq = computed(() => {
-  const trackId = drumRangeTrackId.value;
-  if (trackId === null) return 0;
-  const starts = store.clips
-    .filter((clip) => clip.trackId === trackId)
-    .map((clip) => clip.startPpq);
-  return starts.length === 0 ? 0 : Math.min(...starts);
-});
-
-/** A translated, actionable validation message shown before the command runs. */
-const drumRangeValidation = computed(() => {
-  if (!isDrumRangeTarget.value) return null;
-  const start = drumRangeStartBar.value;
-  const length = drumRangeLengthBars.value;
-  if (!Number.isInteger(start) || start < 1 || !Number.isInteger(length) || length < 1) {
-    return g.value.rangeInvalid;
-  }
-  if (!isFourFourBarRange(store.timeSignatures, drumRangeStartPpq.value, length)) {
-    return g.value.rangeMeterError;
-  }
-  const clipStart = drumRangeTargetClipStartPpq.value;
-  if (clipStart > 0 && drumRangeStartPpq.value < clipStart) {
-    return formatMessage(g.value.rangeBeforeTrack, {
-      start: barNumberAt(store.timeSignatures, clipStart),
-    });
-  }
-  const clipEnd = drumRangeTargetClipEndPpq.value;
-  if (clipEnd > 0 && drumRangeEndPpq.value > clipEnd) {
-    return formatMessage(g.value.rangeOutsideTrack, {
-      end: Math.round(barsBetweenPpq(store.timeSignatures, 0, clipEnd)),
-    });
-  }
-  const intersecting = store.clips.filter(
-    (clip) =>
-      clip.trackId === drumRangeTrackId.value &&
-      clipKind(clip) === 'midi' &&
-      clip.startPpq < drumRangeEndPpq.value &&
-      clip.startPpq + clip.lengthPpq > drumRangeStartPpq.value,
-  );
-  const targetClip = intersecting[0];
-  if (
-    intersecting.length !== 1 ||
-    targetClip === undefined ||
-    targetClip.startPpq > drumRangeStartPpq.value ||
-    targetClip.startPpq + targetClip.lengthPpq < drumRangeEndPpq.value
-  ) {
-    return g.value.rangeSingleClip;
-  }
-  if (targetClip.loopEnabled) return g.value.rangeLoopedClip;
-  return null;
-});
-
-function onDrumRangeSectionChange(): void {
-  if (drumRangeSectionId.value === DRUM_RANGE_MANUAL) return;
-  const sectionId = Number(drumRangeSectionId.value.slice('section:'.length));
-  const section = savedDrumSections.value.find((entry) => entry.id === sectionId);
-  if (section === undefined) {
-    drumRangeSectionId.value = DRUM_RANGE_MANUAL;
-    return;
-  }
-  drumRangeStartBar.value = section.startBar;
-  drumRangeLengthBars.value = section.lengthBars;
-  applyDrumSectionContext(
-    barStartPpq(store.timeSignatures, section.startBar),
-    barStartPpq(store.timeSignatures, section.startBar + section.lengthBars),
-  );
-}
-
-function onTargetChanged(part: TrackPart): void {
-  if (part === 'drums' && isDrumRangeTarget.value) {
-    // Selecting a range target immediately exposes the scope controls so a
-    // user never has to guess which part of the track will be overwritten.
-    parts.drums.expanded = true;
-  }
-}
-
-/** Maps common section names to the generator's section shaping presets. */
-function sectionIdFromName(name: string): SectionId | null {
-  const normalized = name.trim().toLocaleLowerCase();
-  if (/(pre.?chorus|prechorus|bメロ|サビ前)/u.test(normalized)) return 'prechorus';
-  if (/(chorus|hook|サビ)/u.test(normalized)) return 'chorus';
-  if (/(intro|イントロ)/u.test(normalized)) return 'intro';
-  if (/(verse|aメロ)/u.test(normalized)) return 'verse';
-  if (/(bridge|間奏|ブリッジ)/u.test(normalized)) return 'bridge';
-  if (/(outro|エンディング|アウトロ)/u.test(normalized)) return 'outro';
-  return null;
-}
-
-/** Loads the saved section's style and its following section into drum controls. */
-function applyDrumSectionContext(startPpq: number, endPpq: number): void {
-  const section = store.sections.find(
-    (entry) => entry.startPpq === startPpq && entry.endPpq === endPpq,
-  );
-  if (section === undefined) return;
-
-  const sectionId = sectionIdFromName(section.name);
-  if (sectionId !== null) drumSection.value = sectionId;
-
-  const next = store.sections.find((entry) => entry.startPpq === endPpq);
-  const nextId = next === undefined ? null : sectionIdFromName(next.name);
-  drumNextSection.value = nextId ?? (sectionId === 'prechorus' ? 'chorus' : 'same');
-
-  const saved = savedDrumSections.value.find((entry) => entry.id === section.id);
-  drumRangeSectionId.value = saved === undefined ? DRUM_RANGE_MANUAL : `section:${section.id}`;
-}
-
-function encodeTarget(target: BatchTarget): string {
-  if (target.kind === 'new') return 'new';
-  if (target.kind === 'replaceTrack') return `replace:${target.trackId}`;
-  if (target.kind === 'replaceRange') {
-    drumRangeStartBar.value = barNumberAt(store.timeSignatures, target.startPpq);
-    drumRangeLengthBars.value = Math.max(
-      1,
-      Math.round(barsBetweenPpq(store.timeSignatures, target.startPpq, target.endPpq)),
-    );
-    applyDrumSectionContext(target.startPpq, target.endPpq);
-    return `range:${target.trackId}`;
-  }
-  return `clip:${target.mode}`;
-}
-
-function decodeTarget(value: string): BatchTarget {
-  if (value.startsWith('replace:')) {
-    return { kind: 'replaceTrack', trackId: Number(value.slice('replace:'.length)) };
-  }
-  const rangeTrackId = targetTrackId(value, 'range');
-  if (rangeTrackId !== null) {
-    return {
-      kind: 'replaceRange',
-      trackId: rangeTrackId,
-      startPpq: drumRangeStartPpq.value,
-      endPpq: drumRangeEndPpq.value,
-    };
-  }
-  if (value === 'clip:append') return { kind: 'clip', mode: 'append' };
-  if (value === 'clip:replace') return { kind: 'clip', mode: 'replace' };
-  return { kind: 'new' };
-}
-
-/** Replacement candidates for a part: tracks recorded as (or named after) it. */
-function replaceCandidates(part: TrackPart): { value: string; label: string }[] {
-  const matching = store.tracks.filter(
-    (track) => track.frozen === undefined && partForTrack(track) === part,
-  );
-  // Empty MIDI lanes are useful in a prepared arrangement (for example
-  // Soprano/Tenor/Pedal in an organ template). Offer them after a known part,
-  // while never stealing a hand-authored lane that already contains notes.
-  const emptyMidi = store.tracks.filter(
-    (track) =>
-      track.frozen === undefined &&
-      track.kind === 'midi' &&
-      partForTrack(track) === null &&
-      store.clips
-        .filter((clip) => clip.trackId === track.id && clipKind(clip) === 'midi')
-        .every((clip) => clip.notes.length === 0),
-  );
-  return [...matching, ...emptyMidi].map((track) => ({
-    value: `replace:${track.id}`,
-    label: formatMessage(g.value.targetReplace, { name: track.name }),
-  }));
-}
-
-/** Full target dropdown for a part. */
-function targetOptions(part: TrackPart): { value: string; label: string }[] {
-  const options: { value: string; label: string }[] = [{ value: 'new', label: g.value.targetNew }];
-  if (part === 'motif' && activeMidiClip.value !== null && !activeClipIsDrum.value) {
-    options.push(
-      { value: 'clip:append', label: g.value.targetClipAppend },
-      { value: 'clip:replace', label: g.value.targetClipReplace },
-    );
-  }
-  const replacements = replaceCandidates(part);
-  options.push(...replacements);
-  if (part === 'drums') {
-    for (const track of editableDrumTracks(store.tracks, store.clips)) {
-      options.push({
-        value: `range:${track.id}`,
-        label: formatMessage(g.value.targetReplaceRange, { name: track.name }),
-      });
-    }
-  }
-  return options;
-}
 
 // --- Derived checklist state ---------------------------------------------------
 
