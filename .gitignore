@@ -20,3 +20,6 @@ public/worklet-manifest.json
 
 # TypeScript incremental build state -> ignored.
 *.tsbuildinfo
+
+# Vitest reporter output -> ignored.
+.vitest/
