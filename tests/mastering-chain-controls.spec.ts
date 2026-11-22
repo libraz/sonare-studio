@@ -1,53 +1,48 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { InsertSlot } from '@/project/mixer';
 import { clampControlValue, masteringProcessorControls } from '@/ui/mastering/chain-controls';
+import type { SoloProcessor } from '@/wasm/index.js';
+import * as core from '@/wasm/index.js';
+import { fakeParamInfo, unsupportedProcessor } from './fakes/engine';
 
 const COMPRESSOR_INFO = [
-  {
+  fakeParamInfo({
     name: 'thresholdDb',
-    type: 'number',
     unit: 'dB',
-    min: null,
-    max: null,
     default: -18,
     uiMin: -60,
     uiMax: 0,
-  },
-  {
+  }),
+  fakeParamInfo({
     name: 'attackMs',
-    type: 'number',
     unit: 'ms',
     min: 0,
-    max: null,
     default: 10,
     uiMin: 0.1,
     uiMax: 200,
     scale: 'log',
-  },
-  {
+  }),
+  fakeParamInfo({
     name: 'releaseMs',
-    type: 'number',
     unit: 'ms',
     min: 0,
-    max: null,
     default: 100,
     uiMin: 0.1,
     uiMax: 2000,
     scale: 'log',
-  },
-  {
+  }),
+  fakeParamInfo({
     name: 'makeupGainDb',
-    type: 'number',
     unit: 'dB',
-    min: null,
     max: 770.636,
     default: 0,
     uiMin: -12,
     uiMax: 24,
-  },
-] as const;
+  }),
+];
 
-function slot(processor: string, params: Record<string, number> = {}): InsertSlot {
+function slot(processor: SoloProcessor, params: Record<string, number> = {}): InsertSlot {
   return { processor, params, enabled: true };
 }
 
@@ -87,7 +82,7 @@ describe('mastering chain controls', () => {
   });
 
   it('keeps name heuristics only for unknown custom processors', () => {
-    const controls = masteringProcessorControls(slot('custom.weird'), () => [
+    const controls = masteringProcessorControls(slot(unsupportedProcessor('custom.weird')), () => [
       'resonanceQ',
       'q',
       'quantize',
@@ -108,7 +103,7 @@ describe('mastering chain controls', () => {
   it('shows every catalog parameter and prioritizes explicitly saved values', () => {
     const catalog = Array.from({ length: 12 }, (_, index) => `param${index + 1}`);
     const controls = masteringProcessorControls(
-      slot('custom.wide', { customGain: 0.5 }),
+      slot('utility.gain', { customGain: 0.5 }),
       () => catalog,
     );
 
@@ -126,5 +121,33 @@ describe('mastering chain controls', () => {
 
     expect(clampControlValue(control, 900)).toBe(200);
     expect(clampControlValue(control, -5)).toBe(0.1);
+  });
+});
+
+describe('mastering chain controls against the real core catalog', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('derives the display range of compressor controls from the core descriptors', () => {
+    const controls = masteringProcessorControls(
+      slot('dynamics.compressor', { thresholdDb: -18 }),
+      () => core.masteringInsertParamNames('dynamics.compressor'),
+      () => core.masteringInsertParamInfo({ insert: 'dynamics.compressor' }),
+    );
+
+    expect(controls.map((control) => control.id)).toEqual(
+      expect.arrayContaining(['thresholdDb', 'attackMs', 'releaseMs']),
+    );
+    expect(controls.find((control) => control.id === 'thresholdDb')).toMatchObject({
+      min: -60,
+      max: 0,
+    });
+    expect(controls.find((control) => control.id === 'attackMs')).toMatchObject({
+      min: 0.1,
+      max: 200,
+      scale: 'log',
+    });
+    expect(controls.find((control) => control.id === 'thresholdDb')?.value).toBe(-18);
   });
 });

@@ -22,7 +22,7 @@ import {
   partSeed,
   sanitizeProvenance,
 } from '@/project/generation';
-import { createDefaultStrip } from '@/project/mixer';
+import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { getProject, useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';
@@ -407,7 +407,7 @@ describe('generateTracksBatchCommand', () => {
     const unrelatedNoteId = addNote({ pitch: 48, startPpq: 0, durationPpq: 1 });
     setNoteAnnotation(unrelatedClip.id, unrelatedNoteId, { articulation: 'tenuto' });
     const beforeScoreAnnotations = cloneScoreAnnotations(store.scoreAnnotations);
-    const strip = {
+    const strip: MixerStrip = {
       ...createDefaultStrip(),
       inserts: [
         {

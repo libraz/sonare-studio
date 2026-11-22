@@ -13,6 +13,7 @@ import {
   setTrackGroup,
 } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { fakeMeterSource } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -21,18 +22,7 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 function meterSource(levels: Partial<StereoMeterLevels>): MeterSource {
-  return {
-    latest: {
-      frame: 0,
-      peakDbL: -12,
-      peakDbR: -12,
-      rmsDbL: -18,
-      rmsDbR: -18,
-      correlation: 0,
-      ...levels,
-    },
-    subscribe: () => () => {},
-  };
+  return fakeMeterSource(levels);
 }
 
 /** Mounts a channel strip with the heavy children stubbed but SelectMenu real. */

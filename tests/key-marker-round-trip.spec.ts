@@ -28,9 +28,9 @@ vi.mock('@/lib/wasm', async () => {
 
 function documentWithMarkers(names: readonly string[]): ProjectDocument {
   return {
-    version: 1,
+    schemaVersion: 1,
     name: 'keys',
-    ppq: 480,
+    sampleRate: 48000,
     tempoSegments: [{ startPpq: 0, bpm: 120 }],
     timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
     tracks: [
@@ -60,7 +60,7 @@ function documentWithMarkers(names: readonly string[]): ProjectDocument {
     ],
     markers: names.map((name, index) => ({ ppq: index, name })),
     sections: [],
-  } as ProjectDocument;
+  };
 }
 
 /** Every `FF 59 02 sf mi` key-signature meta event in an SMF byte stream. */

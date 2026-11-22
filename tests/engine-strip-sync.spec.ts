@@ -11,12 +11,15 @@ import {
 import {
   createDefaultMixerState,
   createDefaultStrip,
+  type InsertSlot,
   type MixerBus,
   type MixerStrip,
   type ProjectMixerState,
+  type SurroundPan,
 } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
 import { type EqBandInput, ErrorCode, SonareError } from '@/wasm/index.js';
+import { fakeEngineHandle, unsupportedProcessor } from './fakes/engine';
 
 type RuntimeModule = NonNullable<ReturnType<typeof import('@/project/runtime').currentWasmModule>>;
 const runtimeState = vi.hoisted(() => ({ ready: true }));
@@ -34,7 +37,7 @@ vi.mock('@/project/processor-controls', async (importOriginal) => ({
   catalogParamInfo: (processor: string) => {
     const rootParams: Record<string, string[]> = {
       'dynamics.compressor': ['thresholdDb'],
-      'gate.expander': ['floorDb'],
+      'dynamics.gate': ['rangeDb'],
       'saturation.ampSim': [
         'drive',
         'bassDb',
@@ -176,7 +179,7 @@ function makeHandle(): {
     setBusPanMode: vi.fn(),
     setBusDualPan: vi.fn(),
   };
-  const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine, ctx: { state: 'running' } });
   return { handle, engine };
 }
 
@@ -241,13 +244,14 @@ describe('stripScene', () => {
       7,
       makeStrip({
         sourceLayout: '5.1',
+        // Fields the 1.x engine carried and 2.0 refuses; the scene must not forward them.
         surroundPan: {
           azimuth: 45,
           elevation: 2,
           divergence: 0.25,
           lfe: 0.1,
           distance: 0.8,
-        },
+        } as SurroundPan,
       }),
     );
     expect(scene).toMatchObject({
@@ -277,7 +281,7 @@ describe('stripScene', () => {
 
   it('skips validation when the catalog is null', () => {
     const strip = makeStrip({
-      inserts: [{ processor: 'made.up', params: {}, enabled: true }],
+      inserts: [{ processor: unsupportedProcessor('made.up'), params: {}, enabled: true }],
     });
     expect(() => stripScene(1, strip, null)).not.toThrow();
   });
@@ -330,10 +334,8 @@ describe('createStripSync', () => {
       sourceLayout: '5.1',
       surroundPan: {
         azimuth: 30,
-        elevation: 0,
         divergence: 0,
         lfe: 0,
-        distance: 1,
       },
     });
 
@@ -345,10 +347,8 @@ describe('createStripSync', () => {
       sourceLayout: '7.1',
       surroundPan: {
         azimuth: -45,
-        elevation: 1,
         divergence: 0.25,
         lfe: 0.1,
-        distance: 0.8,
       },
     });
     sync.sync([makeTrack(1, next)], makeMixer());
@@ -359,7 +359,7 @@ describe('createStripSync', () => {
   it('toggles only the bypass flag when an insert is enabled/disabled', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const inserts = [
+    const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
       { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
     ];
@@ -611,7 +611,7 @@ describe('createStripSync', () => {
     const sync = createStripSync(handle);
     const stripFor = (value: number): MixerStrip =>
       makeStrip({
-        inserts: [{ processor: 'made.up', params: { value }, enabled: true }],
+        inserts: [{ processor: unsupportedProcessor('made.up'), params: { value }, enabled: true }],
       });
 
     sync.sync([makeTrack(1, stripFor(0.1))], makeMixer());
@@ -657,8 +657,8 @@ describe('createStripSync', () => {
         frequencyHz: 120,
         gainDb: -2,
         enabled: true,
-        placement: 'Mid',
-        phase: 'LinearPhase',
+        placement: 'mid',
+        phase: 'linearPhase',
         dynamic: true,
         thresholdDb: -24,
         ratio: 2,
@@ -790,16 +790,18 @@ describe('createStripSync', () => {
     let masterScene: { inserts: Array<{ params: unknown }> } | undefined;
     const masterEq = new Map<number, EqBandInput>();
     const masterBypassed = new Map<number, boolean>();
-    engine.setStrip.mockImplementation(
-      (target: number | 'master', scene: { inserts: Array<{ params: unknown }> }) => {
-        if (target !== 'master') return;
-        // The realtime facade retains and replays the scene when lanes are
-        // redeclared, but that scene does not carry the EQ/bypass side channels.
-        masterScene = scene;
-        masterEq.clear();
-        masterBypassed.clear();
-      },
-    );
+    const declareStrip = (
+      target: number | 'master',
+      scene: { inserts: Array<{ params: unknown }> },
+    ): void => {
+      if (target !== 'master') return;
+      // The realtime facade retains and replays the scene when lanes are
+      // redeclared, but that scene does not carry the EQ/bypass side channels.
+      masterScene = scene;
+      masterEq.clear();
+      masterBypassed.clear();
+    };
+    engine.setStrip.mockImplementation(declareStrip);
     engine.setStripEqBand.mockImplementation(
       (target: number | 'master', index: number, next: EqBandInput) => {
         if (target === 'master') masterEq.set(index, next);
@@ -819,7 +821,7 @@ describe('createStripSync', () => {
     // Simulate a new lane declaration in the facade. It replaces the master
     // strip from its retained scene, so the dedicated side-channel state is
     // now empty until StripSync sees the next scene generation.
-    engine.setStrip('master', masterScene);
+    if (masterScene) declareStrip('master', masterScene);
     expect(masterEq).toEqual(new Map());
     expect(masterBypassed).toEqual(new Map());
     clearCalls(engine);
@@ -868,7 +870,7 @@ describe('createStripSync', () => {
       makeMixer({
         master,
         masteringChain: {
-          preset: 'club',
+          preset: 'pop',
           processors: [
             { processor: 'repair.declick', params: {}, enabled: true },
             { processor: 'stereo.imager', params: { width: 1.2 }, enabled: true },
@@ -1240,7 +1242,7 @@ describe('createStripSync', () => {
   it('clears bypass state when a new logical bus reuses a bus number', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const insert = { processor: 'saturation.tape', params: { drive: 0.8 } };
+    const insert = { processor: 'saturation.tape', params: { drive: 0.8 } } as const;
     const bypassed = {
       ...makeBus('bypassed'),
       strip: makeStrip({ inserts: [{ ...insert, enabled: false }] }),
@@ -1399,7 +1401,9 @@ describe('busScene', () => {
   });
 
   it('rejects a processor not in the insert catalog, unless the catalog is null', () => {
-    const strip = makeStrip({ inserts: [{ processor: 'made.up', params: {}, enabled: true }] });
+    const strip = makeStrip({
+      inserts: [{ processor: unsupportedProcessor('made.up'), params: {}, enabled: true }],
+    });
     expect(() => busScene(1, strip, new Set(['dynamics.compressor']))).toThrow(
       'Unsupported insert processor: made.up',
     );
@@ -1497,7 +1501,7 @@ describe('createStripSync group routing', () => {
   it('sends user bus inserts via the bus strip and clears them when removed', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const inserts = [
+    const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
       { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
     ];
@@ -1656,7 +1660,7 @@ describe('createStripSync group routing', () => {
       ...makeBus('FX'),
       strip: makeStrip({
         inserts: [
-          { processor: 'gate.expander', params: { floorDb: -80 }, enabled: false },
+          { processor: 'dynamics.gate', params: { rangeDb: -80 }, enabled: false },
           { processor: 'dynamics.compressor', params: { thresholdDb }, enabled: true },
         ],
       }),
@@ -1680,7 +1684,7 @@ describe('createStripSync group routing', () => {
       expect(this).toBe(engine);
     });
     const sync = createStripSync(handle);
-    const inserts = [
+    const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
       { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
     ];
@@ -1703,8 +1707,8 @@ describe('createStripSync group routing', () => {
   });
 
   it('provides ABI-correct automation indexes for return-bus inserts', () => {
-    const inserts = [
-      { processor: 'gate.expander', params: {}, enabled: false },
+    const inserts: InsertSlot[] = [
+      { processor: 'dynamics.gate', params: {}, enabled: false },
       { processor: 'dynamics.compressor', params: {}, enabled: true },
     ];
     const bus = { ...makeBus('FX'), strip: makeStrip({ inserts }) };
@@ -1744,7 +1748,7 @@ describe('createStripSync group routing', () => {
   it('declares every group insert via the bus strip and re-sends only on structural changes', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const inserts = [
+    const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
       { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
     ];
@@ -1762,7 +1766,10 @@ describe('createStripSync group routing', () => {
     expect(totalCalls(engine)).toBe(0);
 
     // Swapping a processor re-sends the whole bus scene.
-    const swapped = [inserts[0], { ...inserts[1], processor: 'saturation.softClipper' }];
+    const swapped: InsertSlot[] = [
+      inserts[0],
+      { ...inserts[1], processor: 'saturation.softClipper' },
+    ];
     sync.sync([makeGroupTrack(10, makeStrip({ inserts: swapped }))], makeMixer());
     expect(engine.setBusStrip).toHaveBeenCalledTimes(1);
     expect(engine.setBusStrip).toHaveBeenCalledWith(
@@ -1774,7 +1781,7 @@ describe('createStripSync group routing', () => {
   it('uses bus insert bypass ABI for group bus enable toggles when available', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const inserts = [
+    const inserts: InsertSlot[] = [
       { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },
       { processor: 'saturation.tape', params: { drive: 0.4 }, enabled: false },
     ];
@@ -1794,8 +1801,8 @@ describe('createStripSync group routing', () => {
   });
 
   it('provides ABI-correct automation indexes for group inserts', () => {
-    const inserts = [
-      { processor: 'gate.expander', params: {}, enabled: false },
+    const inserts: InsertSlot[] = [
+      { processor: 'dynamics.gate', params: {}, enabled: false },
       { processor: 'dynamics.compressor', params: {}, enabled: true },
     ];
     const group = makeGroupTrack(10, makeStrip({ inserts }));
@@ -1814,7 +1821,7 @@ describe('createStripSync group routing', () => {
         10,
         makeStrip({
           inserts: [
-            { processor: 'gate.expander', params: { floorDb: -80 }, enabled: false },
+            { processor: 'dynamics.gate', params: { rangeDb: -80 }, enabled: false },
             { processor: 'dynamics.compressor', params: { thresholdDb }, enabled: true },
           ],
         }),
@@ -1835,7 +1842,7 @@ describe('createStripSync group routing', () => {
   it('re-sends the bus strip when only its output trim changes', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const inserts = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
+    const inserts: InsertSlot[] = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
 
     sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
     clearCalls(engine);
@@ -1857,7 +1864,7 @@ describe('createStripSync group routing', () => {
   it('adjusts only the bus gain when the audible group level changes', () => {
     const { handle, engine } = makeHandle();
     const sync = createStripSync(handle);
-    const inserts = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
+    const inserts: InsertSlot[] = [{ processor: 'dynamics.compressor', params: {}, enabled: true }];
 
     sync.sync([makeGroupTrack(10, makeStrip({ inserts }))], makeMixer());
     clearCalls(engine);

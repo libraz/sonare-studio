@@ -9,7 +9,8 @@ import {
   engineFaderAutomationPoints,
   stripSceneFieldsHaveDsp,
 } from '@/engine/engine-declaration';
-import { createDefaultStrip } from '@/project/mixer';
+import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
+import type { EqBandInput } from '@/wasm/index.js';
 
 describe('engine declaration helpers', () => {
   it('filters invalid automation points and encodes curve names', () => {
@@ -43,13 +44,13 @@ describe('engine declaration helpers', () => {
   });
 
   it('declares EQ bands only while the strip EQ is enabled', () => {
-    const bands = [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }];
+    const bands: EqBandInput[] = [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }];
     expect(engineEqBands({ ...createDefaultStrip(), eq: { enabled: false, bands } })).toEqual([]);
     expect(engineEqBands({ ...createDefaultStrip(), eq: { enabled: true, bands } })).toBe(bands);
   });
 
   it('omits disabled inserts from bus strip scenes', () => {
-    const strip = {
+    const strip: MixerStrip = {
       ...createDefaultStrip(),
       inserts: [
         { processor: 'dynamics.compressor', params: {}, enabled: false },

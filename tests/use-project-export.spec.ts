@@ -144,7 +144,7 @@ describe('useProjectExport', () => {
       displayQuantizeKey: '8',
       chordsEnabled: true,
     };
-    store.sections = [{ id: 1, name: 'Verse', startPpq: 0, color: '#000000' }];
+    store.sections = [{ id: 1, name: 'Verse', startPpq: 0, endPpq: 4, color: '#000000' }];
     store.markers = [{ id: 1, name: 'Intro', ppq: 0 }];
     const { downloadBlobFile, projectExport } = setup();
 
@@ -359,7 +359,7 @@ describe('useProjectExport', () => {
     store.clips[0].takes = [{ assetId: 'take-2', name: 'Take 2' }];
     store.clips[0].compSegments = [{ startPpq: 0, takeIndex: 0, crossfadePpq: 0.02 }];
     store.clips[0].warp = { enabled: false, sourceBpm: 96 };
-    store.tracks[0].instrument = { kind: 'synth-preset', preset: 'bright-piano' };
+    store.tracks[0].instrument = { kind: 'synth-preset', preset: 'acousticPiano' };
     store.tracks[0].midiFx = { ...DEFAULT_MIDI_FX_CONFIG, transposeSemitones: 12 };
     store.projectExternalMidi = {
       kind: 'external-midi',
@@ -367,7 +367,7 @@ describe('useProjectExport', () => {
       channel: 0,
     };
     store.tracks[0].externalMidiMode = 'project';
-    store.sections = [{ name: 'Chorus', color: '#123456', startPpq: 4, endPpq: 8 }];
+    store.sections = [{ id: 2, name: 'Chorus', color: '#123456', startPpq: 4, endPpq: 8 }];
     store.chords = [{ startPpq: 0, endPpq: 4, rootPc: 0, quality: 0 }];
     store.displayTransposeSemitones = 12;
     store.midiCcBindings.set('gain:master', { channel: 0, controller: 7 });
@@ -403,7 +403,7 @@ describe('useProjectExport', () => {
       dualPan: { left: -0.2, right: 0.3 },
       eq: {
         enabled: true,
-        bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 3, q: 1 }],
+        bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3, q: 1 }],
       },
       inserts: [
         {
@@ -494,7 +494,7 @@ describe('useProjectExport', () => {
   it('continues DAWproject export after acknowledging lossy items', async () => {
     await loadProjectDocument(makeDoc('midi'));
     const store = useProjectStore();
-    store.tracks[0].instrument = { kind: 'synth-preset', preset: 'bright-piano' };
+    store.tracks[0].instrument = { kind: 'synth-preset', preset: 'acousticPiano' };
     vi.mocked(confirmDialog).mockResolvedValueOnce(true);
     const { downloadBlobFile, projectExport } = setup();
 

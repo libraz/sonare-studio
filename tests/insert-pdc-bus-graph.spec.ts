@@ -10,8 +10,14 @@ import {
   setStripOutputBus,
   setTrackGroup,
 } from '@/project/commands';
+import type { DocumentTrack } from '@/project/document-schema';
 import { createInsertPdcPlan, insertLatencyResolverFromCatalog } from '@/project/insert-latency';
-import { audibleOutputBusId, createDefaultStrip, type InsertSlot } from '@/project/mixer';
+import {
+  audibleOutputBusId,
+  createDefaultStrip,
+  type InsertSlot,
+  type MixerStrip,
+} from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { trackChannelPresetFromTrack } from '@/project/track-preset';
@@ -22,10 +28,13 @@ vi.mock('@/lib/wasm', async () => {
   return { ensureWasm: async () => fakeModule };
 });
 
-const resolve = insertLatencyResolverFromCatalog([{ id: 'lookahead', latencySamples: 240 }]);
-const latentStrip = () => ({
+const resolve = insertLatencyResolverFromCatalog(
+  [{ id: 'dynamics.brickwallLimiter', latencySamples: 240 }],
+  48000,
+);
+const latentStrip = (): MixerStrip => ({
   ...createDefaultStrip(),
-  inserts: [{ processor: 'lookahead', params: {}, enabled: true }],
+  inserts: [{ processor: 'dynamics.brickwallLimiter', params: {}, enabled: true }],
 });
 
 describe('insert PDC over the bus graph', () => {
@@ -122,10 +131,26 @@ describe('audible output routes', () => {
   });
 
   it('estimates the tail through a chained bus and not through a member route', () => {
-    const tail = (seconds: number): InsertSlot => ({
-      processor: `tail-${seconds}`,
+    const tailProcessors = {
+      1: 'effects.reverb.room',
+      2: 'effects.reverb.plate',
+      9: 'effects.reverb.fdn',
+    } as const satisfies Record<number, InsertSlot['processor']>;
+    const tail = (seconds: keyof typeof tailProcessors): InsertSlot => ({
+      processor: tailProcessors[seconds],
       params: {},
       enabled: true,
+    });
+    const docTrack = (
+      track: Pick<DocumentTrack, 'name' | 'kind' | 'mixer'> & Partial<DocumentTrack>,
+    ): DocumentTrack => ({
+      color: '#60a5fa',
+      mute: false,
+      solo: false,
+      volume: 1,
+      pan: 0,
+      clips: [],
+      ...track,
     });
     const strip = (inserts: InsertSlot[], outputBusId?: string) => ({
       ...createDefaultStrip(),
@@ -139,9 +164,9 @@ describe('audible output routes', () => {
       tempoSegments: [{ startPpq: 0, bpm: 120 }],
       timeSignatures: [{ startPpq: 0, numerator: 4, denominator: 4 }],
       tracks: [
-        { name: 'Drums', kind: 'audio', clips: [], mixer: strip([], 'x') },
-        { name: 'Group', kind: 'group', clips: [], mixer: strip([]) },
-        { name: 'Member', kind: 'audio', clips: [], groupIndex: 1, mixer: strip([], 'big') },
+        docTrack({ name: 'Drums', kind: 'audio', mixer: strip([], 'x') }),
+        docTrack({ name: 'Group', kind: 'group', mixer: strip([]) }),
+        docTrack({ name: 'Member', kind: 'audio', groupIndex: 1, mixer: strip([], 'big') }),
       ],
       markers: [],
       sections: [],
@@ -153,8 +178,9 @@ describe('audible output routes', () => {
           { id: 'big', name: 'Big', gainDb: 0, strip: strip([tail(9)]) },
         ],
       },
-    } as ProjectDocument;
-    const resolve = (slot: Pick<InsertSlot, 'processor'>) => Number(slot.processor.slice(5));
+    };
+    const resolve = (slot: Pick<InsertSlot, 'processor'>) =>
+      Number(Object.entries(tailProcessors).find(([, name]) => name === slot.processor)?.[0] ?? 0);
 
     expect(estimatedTailSeconds(doc, new Set([0]), resolve)).toBe(3);
     expect(estimatedTailSeconds(doc, new Set([2]), resolve)).toBe(0);

@@ -1,19 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createInsertPdcPlan,
+  type InsertPdcTrack,
   type InsertTimingQuery,
   insertChainLatencySamples,
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
 import { createDefaultStrip } from '@/project/mixer';
+import * as core from '@/wasm/index.js';
 
 describe('insert latency helpers', () => {
   it('sums enabled insert latencies from catalog metadata', () => {
     const resolve = insertLatencyResolverFromCatalog(
       [
-        { id: 'linear.eq', latencySamples: 128.4 },
-        { id: 'lookahead.limiter', latencySamples: 64 },
-        { id: 'bad', latencySamples: -1 },
+        { id: 'eq.linearPhase', latencySamples: 128.4 },
+        { id: 'dynamics.brickwallLimiter', latencySamples: 64 },
+        { id: 'dynamics.gate', latencySamples: -1 },
       ],
       48000,
     );
@@ -21,10 +24,10 @@ describe('insert latency helpers', () => {
     expect(
       insertChainLatencySamples(
         [
-          { processor: 'linear.eq', params: {}, enabled: true },
-          { processor: 'lookahead.limiter', params: {}, enabled: false },
-          { processor: 'bad', params: {}, enabled: true },
-          { processor: 'unknown', params: {}, enabled: true },
+          { processor: 'eq.linearPhase', params: {}, enabled: true },
+          { processor: 'dynamics.brickwallLimiter', params: {}, enabled: false },
+          { processor: 'dynamics.gate', params: {}, enabled: true },
+          { processor: 'effects.reverb.room', params: {}, enabled: true },
         ],
         resolve,
       ),
@@ -63,7 +66,7 @@ describe('insert latency helpers', () => {
       resolve({ processor: 'dynamics.limiter', params: { lookaheadMs: 5, releaseMs: 200 } }),
     ).toBe(240);
     expect(timing).toHaveBeenCalledTimes(1);
-    expect(resolve({ processor: 'unknown', params: { lookaheadMs: 5 } })).toBe(0);
+    expect(resolve({ processor: 'effects.reverb.room', params: { lookaheadMs: 5 } })).toBe(0);
   });
 
   it('falls back to the catalog latency when the engine refuses a configuration', () => {
@@ -79,13 +82,16 @@ describe('insert latency helpers', () => {
   });
 
   it('includes routed return/group latency while excluding an unused return bus', () => {
-    const resolve = insertLatencyResolverFromCatalog([
-      { id: 'track.linear', latencySamples: 32 },
-      { id: 'return.linear', latencySamples: 96 },
-      { id: 'unused.linear', latencySamples: 4096 },
-      { id: 'group.linear', latencySamples: 64 },
-    ]);
-    const tracks = [
+    const resolve = insertLatencyResolverFromCatalog(
+      [
+        { id: 'eq.minimumPhase', latencySamples: 32 },
+        { id: 'dynamics.limiter', latencySamples: 96 },
+        { id: 'dynamics.expander', latencySamples: 4096 },
+        { id: 'eq.graphic', latencySamples: 64 },
+      ],
+      48000,
+    );
+    const tracks: InsertPdcTrack[] = [
       {
         id: 1,
         kind: 'audio',
@@ -96,7 +102,7 @@ describe('insert latency helpers', () => {
         kind: 'audio',
         mixer: {
           ...createDefaultStrip(),
-          inserts: [{ processor: 'track.linear', params: {}, enabled: true }],
+          inserts: [{ processor: 'eq.minimumPhase', params: {}, enabled: true }],
         },
       },
       {
@@ -110,7 +116,7 @@ describe('insert latency helpers', () => {
         kind: 'group',
         mixer: {
           ...createDefaultStrip(),
-          inserts: [{ processor: 'group.linear', params: {}, enabled: true }],
+          inserts: [{ processor: 'eq.graphic', params: {}, enabled: true }],
         },
       },
     ];
@@ -121,14 +127,14 @@ describe('insert latency helpers', () => {
           id: 'return-fx',
           strip: {
             ...createDefaultStrip(),
-            inserts: [{ processor: 'return.linear', params: {}, enabled: true }],
+            inserts: [{ processor: 'dynamics.limiter', params: {}, enabled: true }],
           },
         },
         {
           id: 'unused-latent-return',
           strip: {
             ...createDefaultStrip(),
-            inserts: [{ processor: 'unused.linear', params: {}, enabled: true }],
+            inserts: [{ processor: 'dynamics.expander', params: {}, enabled: true }],
           },
         },
       ],
@@ -139,5 +145,22 @@ describe('insert latency helpers', () => {
     expect(pdc.delayFor(tracks[0])).toBe(0);
     expect(pdc.delayFor(tracks[1])).toBe(64);
     expect(pdc.delayFor(tracks[2])).toBe(32);
+  });
+});
+
+describe('insert latency against the real core catalog', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('reports the latency of a linear-phase EQ and none for a zero-latency insert', () => {
+    const resolve = insertLatencyResolverFromCatalog(
+      core.masteringProcessorCatalog(),
+      48000,
+      core.masteringInsertTiming,
+    );
+
+    expect(resolve({ processor: 'eq.linearPhase', params: {} })).toBeGreaterThan(0);
+    expect(resolve({ processor: 'utility.gain', params: {} })).toBe(0);
   });
 });

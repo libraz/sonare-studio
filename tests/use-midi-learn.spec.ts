@@ -479,6 +479,9 @@ describe('useMidiLearn', () => {
         color: '#fff',
         solo: false,
         mute: false,
+        volume: 1,
+        pan: 0,
+        order: 0,
         mixer: {
           gainDb: 0,
           pan: 0,
@@ -561,6 +564,9 @@ describe('useMidiLearn', () => {
         color: '#fff',
         solo: false,
         mute: false,
+        volume: 1,
+        pan: 0,
+        order: 0,
         mixer: {
           gainDb: 0,
           pan: 0,
@@ -568,7 +574,7 @@ describe('useMidiLearn', () => {
           sends: [],
           eq: {
             enabled: true,
-            bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
+            bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
           },
         },
       },
@@ -584,7 +590,7 @@ describe('useMidiLearn', () => {
         enabled: true,
         bands: [
           {
-            type: 'Peak',
+            type: 'peak',
             frequencyHz: ccToLogRange(127, 20, 20000),
             gainDb: 0,
             q: 1,
@@ -668,6 +674,9 @@ describe('useMidiLearn', () => {
         color: '#fff',
         solo: false,
         mute: false,
+        volume: 1,
+        pan: 0.25,
+        order: 0,
         mixer: { gainDb: 0, pan: 0.25, inserts: [], sends: [] },
       },
     ];

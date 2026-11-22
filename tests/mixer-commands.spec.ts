@@ -74,6 +74,7 @@ import {
   MAX_MIXER_BUSES,
   MAX_VCA_GROUPS,
   returnSoloRouting,
+  type StripEq,
 } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import {
@@ -448,7 +449,10 @@ describe('mixer commands', () => {
     });
 
     it('re-applying an identical EQ adds no undo step', () => {
-      const eq = { enabled: true, bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }] };
+      const eq: StripEq = {
+        enabled: true,
+        bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 3 }],
+      };
       setStripEq(trackId, eq);
       expect(canUndo()).toBe(true);
       undo();
@@ -705,9 +709,9 @@ describe('mixer commands', () => {
 
     it('removing a bus keeps the mastering chain', () => {
       const busId = addMixerBus();
-      setMasteringPreset('club');
+      setMasteringPreset('pop');
       removeMixerBus(busId);
-      expect(store.mixer.masteringChain?.preset).toBe('club');
+      expect(store.mixer.masteringChain?.preset).toBe('pop');
     });
 
     it('removing a bus cascades the sends referencing it', () => {
@@ -1330,7 +1334,7 @@ describe('mixer commands', () => {
 
     it('applies a mixer scene preset as one undoable template', () => {
       setMixerSoloMode('pfl');
-      setMasteringPreset('club');
+      setMasteringPreset('pop');
       const result = applyMixerSceneJson(fakeMixingScenePresetJson('vocalReverbSend'));
 
       expect(result).toEqual({ trackCount: 1, busCount: 1, vcaCount: 0 });
@@ -1352,7 +1356,7 @@ describe('mixer commands', () => {
         },
       ]);
       expect(store.mixer.soloMode).toBe('pfl');
-      expect(store.mixer.masteringChain?.preset).toBe('club');
+      expect(store.mixer.masteringChain?.preset).toBe('pop');
 
       expect(undo()).toBe(true);
       expect(store.mixer.buses).toEqual([]);
@@ -1403,7 +1407,7 @@ describe('mixer commands', () => {
       addInsert(trackId, 'saturation.tape', { drive: 0.4 });
       addInsert('master', 'eq.tilt', { tiltDb: 1 });
       addMasteringProcessor('maximizer.truePeakLimiter', { ceilingDb: -1 });
-      const oldBusId = addMixerBus('Old return');
+      const oldBusId = addMixerBus({ name: 'Old return' });
       addInsert(mixerBusStripTarget(oldBusId), 'dynamics.compressor', { thresholdDb: -18 });
       const trackProcessorId = store.tracks[0].mixer?.inserts[0].id as string;
       const masterProcessorId = store.mixer.master.inserts[0].id as string;

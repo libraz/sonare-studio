@@ -15,6 +15,7 @@ import { MAX_MIXER_BUSES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import { midiLearnBusStripControlTargetId } from '@/ui/midi/midi-learn';
 import { resetAutomationStripModes } from '@/ui/mixer/automation-mode';
+import { fakeMeterSource } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -23,18 +24,7 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 function meterSource(levels: Partial<StereoMeterLevels>): MeterSource {
-  return {
-    latest: {
-      frame: 0,
-      peakDbL: -12,
-      peakDbR: -12,
-      rmsDbL: -18,
-      rmsDbR: -18,
-      correlation: 0,
-      ...levels,
-    },
-    subscribe: () => () => {},
-  };
+  return fakeMeterSource(levels);
 }
 
 describe('BusStrip automation UI', () => {
@@ -171,8 +161,8 @@ describe('BusStrip automation UI', () => {
       ?.vm.$emit('change', 'dualPan');
     await wrapper.vm.$nextTick();
 
-    const left = wrapper.get('input[aria-label="Dual pan L"]');
-    const right = wrapper.get('input[aria-label="Dual pan R"]');
+    const left = wrapper.get<HTMLInputElement>('input[aria-label="Dual pan L"]');
+    const right = wrapper.get<HTMLInputElement>('input[aria-label="Dual pan R"]');
     expect(left.element.value).toBe('-1');
     expect(right.element.value).toBe('1');
 

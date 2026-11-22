@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+type EngineCreateOptions = NonNullable<
+  Parameters<typeof import('@/wasm/worklet.js').SonareEngine.create>[1]
+>;
+
 const hoisted = vi.hoisted(() => ({
-  captured: [] as Record<string, unknown>[],
+  captured: [] as EngineCreateOptions[],
 }));
 
 vi.mock('@/wasm/worklet.js', async (importOriginal) => {
@@ -10,7 +14,7 @@ vi.mock('@/wasm/worklet.js', async (importOriginal) => {
     ...actual,
     init: vi.fn(async () => undefined),
     SonareEngine: {
-      create: vi.fn(async (_ctx: unknown, options: Record<string, unknown>) => {
+      create: vi.fn(async (_ctx: unknown, options: EngineCreateOptions) => {
         hoisted.captured.push(options);
         throw new Error('captured');
       }),
@@ -21,6 +25,7 @@ vi.mock('@/wasm/sonare.wasm?url', () => ({ default: '/sonare.wasm' }));
 
 import { createEngine } from '@/engine/engine';
 import { SonareRealtimeEngineNode } from '@/wasm/worklet.js';
+import { fakeAudioContext } from './fakes/engine';
 
 class NodeConstructionReached extends Error {}
 
@@ -48,17 +53,14 @@ describe('createEngine options', () => {
 
     // The engine validates every option before it builds the worklet node, so
     // reaching the node factory proves the app's options passed validation.
-    const create = SonareRealtimeEngineNode.create(
-      { sampleRate: 48000 } as unknown as BaseAudioContext,
-      {
-        ...(options as Parameters<typeof SonareRealtimeEngineNode.create>[1]),
-        moduleUrl: undefined,
-        engineAbiVersion: 1,
-        nodeFactory: () => {
-          throw new NodeConstructionReached();
-        },
+    const create = SonareRealtimeEngineNode.create(fakeAudioContext({ sampleRate: 48000 }), {
+      ...options,
+      moduleUrl: undefined,
+      engineAbiVersion: 1,
+      nodeFactory: () => {
+        throw new NodeConstructionReached();
       },
-    );
+    });
     await expect(create).rejects.toBeInstanceOf(NodeConstructionReached);
   });
 });

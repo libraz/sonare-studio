@@ -56,7 +56,7 @@ describe('StripEqSection scope gating and labels', () => {
   it('localizes the MIDI learn menu labels', async () => {
     setStripEq(trackId, {
       enabled: true,
-      bands: [{ type: 'Peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
+      bands: [{ type: 'peak', frequencyHz: 1000, gainDb: 0, q: 1, enabled: true }],
     });
     const learn = useMidiLearn();
     const wrapper = mount(StripEqSection, {

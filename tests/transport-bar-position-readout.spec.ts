@@ -2,6 +2,7 @@ import { mount } from '@vue/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
+import { fakeEngineHandle } from './fakes/engine';
 
 function recording() {
   return {
@@ -34,7 +35,7 @@ describe('TransportBar position readout', () => {
         bridge: null,
         canRecord: true,
         countInChoices: [{ value: 0 }, { value: 1 }],
-        handle: {},
+        handle: fakeEngineHandle(),
         hasLocatorWindow: true,
         isCountingIn: false,
         isPlaying: true,

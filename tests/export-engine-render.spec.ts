@@ -1,9 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
-import type { OfflineRenderEngine } from '@/export/engine-render';
 import {
   offlineAutomationLimitations,
   renderProjectWithEngine,
@@ -18,12 +16,21 @@ import {
   instrumentAutomationParam,
   masteringAutomationParam,
 } from '@/project/automation';
-import type { InsertSlot } from '@/project/mixer';
+import type { DocumentMixerBus, DocumentMixerState } from '@/project/document-schema';
+import type { InsertSlot, MixerStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
 import { neutralMixDocument } from '@/ui/mixer/mix-assistant';
-import type { LufsResult } from '@/wasm/index.js';
+import type { EngineClip, EngineTrackLane, EqBandInput, LufsResult } from '@/wasm/index.js';
 import * as core from '@/wasm/index.js';
+import {
+  ENGINE_MIXER_LANE_MASTER,
+  ENGINE_MIXER_PARAM_FADER_DB,
+  ENGINE_MIXER_PARAM_PAN,
+  ENGINE_MIXER_TARGET_BASE,
+  FakeRenderEngine as FakeEngine,
+  fakeEngineHandle,
+} from './fakes/engine';
 import {
   recordedClipPageProvider,
   recordedClipPageProviders,
@@ -64,177 +71,6 @@ beforeEach(() => {
   resample.mockClear();
 });
 
-/** Records every engine call and renders a constant sample value. */
-class FakeEngine implements OfflineRenderEngine {
-  calls: Array<[string, ...unknown[]]> = [];
-  destroyed = false;
-  /** Sample value process() writes into every frame. */
-  fill = 0.25;
-  /** Value tailSamples reports. */
-  tail = 0;
-
-  private record(name: string, ...args: unknown[]): void {
-    this.calls.push([name, ...args]);
-  }
-  named(name: string): Array<[string, ...unknown[]]> {
-    return this.calls.filter(([n]) => n === name);
-  }
-
-  private declaredTrackIds: number[] = [];
-  private declaredBusIds = new Set<number>();
-
-  setTrackLanes(lanes: unknown): void {
-    this.record('setTrackLanes', lanes);
-    this.declaredTrackIds = (lanes as Array<number | { trackId: number }>).map((lane) =>
-      typeof lane === 'number' ? lane : lane.trackId,
-    );
-  }
-  setTrackBuses(buses: unknown): void {
-    this.record('setTrackBuses', buses);
-    this.declaredBusIds = new Set((buses as Array<{ busId: number }>).map((bus) => bus.busId));
-  }
-  /** Stub ids keep the packed lane-position shape so tests can decode them. */
-  resolveStripAutomationId(ref: number | 'master', paramName: 'faderDb' | 'pan' | 'width'): number {
-    if (ref === 'master') {
-      if (paramName === 'width') return -1;
-      const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-      return ENGINE_MIXER_TARGET_BASE | (ENGINE_MIXER_LANE_MASTER << 8) | kind;
-    }
-    const laneIndex = this.declaredTrackIds.indexOf(ref);
-    if (laneIndex < 0) return -1;
-    const kind = paramName === 'pan' ? ENGINE_MIXER_PARAM_PAN : ENGINE_MIXER_PARAM_FADER_DB;
-    return ENGINE_MIXER_TARGET_BASE | (laneIndex << 8) | kind;
-  }
-  resolveBusAutomationId(busId: number, _paramName: 'faderDb'): number {
-    if (!this.declaredBusIds.has(busId)) return -1;
-    return ENGINE_MIXER_TARGET_BASE | ((254 - busId) << 8) | ENGINE_MIXER_PARAM_FADER_DB;
-  }
-  setStrip(ref: number | 'master', settings: unknown): void {
-    this.record('setStrip', ref, settings);
-  }
-  setBusStrip(busId: number, settings: unknown): void {
-    this.record('setBusStrip', busId, settings);
-  }
-  setStripSidechain(ref: number | 'master', insertIndex: number, source: unknown): void {
-    this.record('setStripSidechain', ref, insertIndex, source);
-  }
-  setBusSidechain(busId: number, insertIndex: number, source: unknown): void {
-    this.record('setBusSidechain', busId, insertIndex, source);
-  }
-  setStripInsertBypassed(
-    ref: number | 'master',
-    index: number,
-    state: { bypassed: boolean; resetOnBypass?: boolean },
-  ): void {
-    this.record('setStripInsertBypassed', ref, index, state);
-  }
-  setBusInsertBypassed(
-    busId: number,
-    index: number,
-    state: { bypassed: boolean; resetOnBypass?: boolean },
-  ): void {
-    this.record('setBusInsertBypassed', busId, index, state);
-  }
-  setStripEqBand(ref: number | 'master', bandIndex: number, band: unknown): void {
-    this.record('setStripEqBand', ref, bandIndex, band);
-  }
-  setBusEqBand(busId: number, bandIndex: number, band: unknown): void {
-    this.record('setBusEqBand', busId, bandIndex, band);
-  }
-  setTrackSoloMute(trackId: number, state: { solo: boolean; mute: boolean }): void {
-    this.record('setTrackSoloMute', trackId, state);
-  }
-  setStripPanLaw(ref: number | 'master', panLaw: unknown): void {
-    this.record('setStripPanLaw', ref, panLaw);
-  }
-  setStripPanMode(ref: number | 'master', panMode: unknown): void {
-    this.record('setStripPanMode', ref, panMode);
-  }
-  setStripDualPan(ref: number | 'master', leftPan: number, rightPan: number): void {
-    this.record('setStripDualPan', ref, leftPan, rightPan);
-  }
-  setStripChannelDelaySamples(ref: number | 'master', delaySamples: number): void {
-    this.record('setStripChannelDelaySamples', ref, delaySamples);
-  }
-  setParameter(paramId: number, value: number): void {
-    this.record('setParameter', paramId, value);
-  }
-  setAutomationLane(paramId: number, points: unknown): void {
-    this.record('setAutomationLane', paramId, points);
-  }
-  resolveStripInsertAutomationId(
-    ref: number | 'master',
-    insertIndex: number,
-    paramName: string,
-  ): number {
-    this.record('resolveStripInsertAutomationId', ref, insertIndex, paramName);
-    if (paramName === 'unknown') return -1;
-    if (ref === 'master') return (0xe1ff0000 | (insertIndex << 8)) >>> 0;
-    return (0xe0000000 | (ref << 16) | (insertIndex << 8)) >>> 0;
-  }
-  resolveBusInsertAutomationId(busId: number, insertIndex: number, paramName: string): number {
-    this.record('resolveBusInsertAutomationId', busId, insertIndex, paramName);
-    return paramName === 'unknown' ? -1 : (0xe1fe0000 | (busId << 8) | insertIndex) >>> 0;
-  }
-  resolveInstrumentAutomationId(destinationId: number, paramName: string): number {
-    this.record('resolveInstrumentAutomationId', destinationId, paramName);
-    return paramName === 'unknown' ? -1 : (0xc0000000 | (destinationId << 8)) >>> 0;
-  }
-  setTempoSegments(segments: unknown): void {
-    this.record('setTempoSegments', segments);
-  }
-  setClips(clips: unknown): void {
-    this.record('setClips', clips);
-  }
-  setWarpVoiceCapacity(voices: number): void {
-    this.record('setWarpVoiceCapacity', voices);
-  }
-  get warpStretchOverflowCount(): number {
-    return 0;
-  }
-  get tailSamples(): number {
-    return this.tail;
-  }
-  setMidiClips(clips: unknown): void {
-    this.record('setMidiClips', clips);
-  }
-  setSynthInstrument(destinationId?: number | null, patch?: object): void {
-    this.record('setSynthInstrument', patch, destinationId);
-  }
-  loadSoundFont(data: Uint8Array): void {
-    this.record('loadSoundFont', data);
-  }
-  setSf2Instrument(destinationId?: number | null, config?: object): void {
-    this.record('setSf2Instrument', config, destinationId);
-  }
-  pushMidiSysex(destinationId: number, data: Uint8Array, renderFrame = -1): void {
-    this.record('pushMidiSysex', destinationId, data, renderFrame);
-  }
-  pushMidiUmp(destinationId: number, words: Uint32Array | number[]): void {
-    this.record('pushMidiUmp', destinationId, words);
-  }
-  seekSample(sample: number): void {
-    this.record('seekSample', sample);
-  }
-  settleParameters(): void {
-    this.record('settleParameters');
-  }
-  play(): void {
-    this.record('play');
-  }
-  stop(): void {
-    this.record('stop');
-  }
-  process(channels: Float32Array[]): Float32Array[] {
-    this.record('process', channels[0].length);
-    for (const channel of channels) channel.fill(this.fill);
-    return channels;
-  }
-  destroy(): void {
-    this.destroyed = true;
-  }
-}
-
 /** A complete loudness measurement whose windows all read `integratedLufs`. */
 function lufsResult(integratedLufs: number, extra: Partial<LufsResult> = {}): LufsResult {
   return {
@@ -260,10 +96,6 @@ function trackStrips(engine: FakeEngine): Array<[string, ...unknown[]]> {
 
 const SAMPLES_PER_PPQ = 24000;
 const MASTER_FADER_PARAM_ID = 0x4d58ff01;
-const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
-const ENGINE_MIXER_PARAM_FADER_DB = 1;
-const ENGINE_MIXER_PARAM_PAN = 2;
-const ENGINE_MIXER_LANE_MASTER = 0xff;
 const BUS_1_FADER_PARAM_ID = 0x4d58fd01;
 
 /** Decodes the status nibble from a packed MIDI 1.0 UMP channel-voice word. */
@@ -325,9 +157,9 @@ class AudibilityEngine extends FakeEngine {
     fadeOutSamples: number;
   }> = [];
 
-  setTrackLanes(lanes: Array<number | { trackId: number }>): void {
+  setTrackLanes(lanes: EngineTrackLane[]): void {
     super.setTrackLanes(lanes);
-    this.laneIds = lanes.map((lane) => (typeof lane === 'number' ? lane : lane.trackId));
+    this.laneIds = lanes.map((lane) => lane.trackId);
   }
 
   setTrackSoloMute(trackId: number, state: { solo: boolean; mute: boolean }): void {
@@ -405,34 +237,27 @@ class AudibilityEngine extends FakeEngine {
     }
   }
 
-  setClips(
-    clips: Array<{
-      trackId: number;
-      channels?: Float32Array[];
-      pageProvider?: unknown;
-      startPpq: number;
-      lengthSamples: number;
-      gain?: number;
-      fadeInSamples?: number;
-      fadeOutSamples?: number;
-      warpMode?: string;
-      warpAnchors?: Array<{ warpSample: number; sourceSample: number }>;
-    }>,
-  ): void {
+  setClips(clips: EngineClip[]): void {
     super.setClips(clips);
-    this.audioClips = clips.map((clip) => ({
-      trackId: clip.trackId,
-      channels: clip.channels ?? [],
-      ...(clip.pageProvider !== undefined ? { pageProvider: clip.pageProvider } : {}),
-      startSample: this.ppqToSample(clip.startPpq),
-      lengthSamples: clip.lengthSamples,
-      gain: clip.gain ?? 1,
-      fadeInSamples: clip.fadeInSamples ?? 0,
-      fadeOutSamples: clip.fadeOutSamples ?? 0,
-      ...(clip.warpMode === 'timeStretch' && clip.warpAnchors
-        ? { warpAnchors: clip.warpAnchors }
-        : {}),
-    }));
+    this.audioClips = clips.map((clip) => {
+      // The offline renderer always schedules clips by lane and with a length.
+      if (clip.trackId === undefined || clip.lengthSamples === undefined) {
+        throw new Error('clip is missing trackId or lengthSamples');
+      }
+      return {
+        trackId: clip.trackId,
+        channels: clip.channels ?? [],
+        ...(clip.pageProvider !== undefined ? { pageProvider: clip.pageProvider } : {}),
+        startSample: this.ppqToSample(clip.startPpq),
+        lengthSamples: clip.lengthSamples,
+        gain: clip.gain ?? 1,
+        fadeInSamples: clip.fadeInSamples ?? 0,
+        fadeOutSamples: clip.fadeOutSamples ?? 0,
+        ...(clip.warpMode === 'timeStretch' && clip.warpAnchors
+          ? { warpAnchors: clip.warpAnchors }
+          : {}),
+      };
+    });
   }
 
   /** The source frame a clip frame reads: warp anchors interpolated linearly. */
@@ -696,6 +521,19 @@ class SoundFontAudibilityEngine extends AudibilityEngine {
 }
 
 /** Minimal valid document: one MIDI track and one audio track + a send bus. */
+/** The document's mixer state; every fixture built by makeDoc has one. */
+function docMixer(doc: ProjectDocument): DocumentMixerState {
+  if (!doc.mixer) throw new Error('fixture mixer is missing');
+  return doc.mixer;
+}
+
+/** The strip of document track `index`; fixtures that call this give that track one. */
+function trackMixer(doc: ProjectDocument, index: number): MixerStrip {
+  const { mixer } = doc.tracks[index];
+  if (!mixer) throw new Error(`fixture track ${index} has no mixer`);
+  return mixer;
+}
+
 function makeDoc(): ProjectDocument {
   return {
     schemaVersion: 3,
@@ -1256,10 +1094,10 @@ describe('renderProjectWithEngine', () => {
   it('uses bounded time-effect history before a windowed render', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       master: {
         ...doc.mixer!.master,
-        inserts: [{ processor: 'reverb.algorithmic', params: { decaySeconds: 20 }, enabled: true }],
+        inserts: [{ processor: 'effects.reverb.fdn', params: {}, enabled: true }],
       },
     };
     const engine = new FakeEngine();
@@ -1425,7 +1263,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[0].mixer = { gainDb: -6, pan: 0, inserts: [], sends: [] };
     doc.tracks[0].vcaId = 'vca-1';
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       vcaGroups: [{ id: 'vca-1', name: 'VCA 1', gainDb: -3 }],
     };
     doc.tracks[0].clips[0].notes = [
@@ -1449,7 +1287,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[1].mute = true;
     doc.tracks[0].vcaId = 'vca-1';
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       vcaGroups: [{ id: 'vca-1', name: 'VCA 1', gainDb: 0, mute: true }],
     };
 
@@ -1467,7 +1305,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[1].clips[0].startPpq = 0;
     doc.tracks[1].clips[0].lengthPpq = 4;
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       vcaGroups: [{ id: 'vca-1', name: 'VCA 1', gainDb: 0, solo: true }],
     };
 
@@ -2019,7 +1857,7 @@ describe('renderProjectWithEngine', () => {
   it('routes a track output bus into its lane descriptor', async () => {
     const doc = makeDoc();
     // Route the Keys track (engine track 1) into bus 'bus-a' (engine bus 1).
-    (doc.tracks[0] as { mixer?: Record<string, unknown> }).mixer = {
+    doc.tracks[0].mixer = {
       gainDb: 0,
       pan: 0,
       inserts: [],
@@ -2061,7 +1899,7 @@ describe('renderProjectWithEngine', () => {
 
   it('exports a soloed return the way it auditions', async () => {
     const doc = makeDoc();
-    const buses = doc.mixer?.buses as Array<Record<string, unknown>>;
+    const { buses } = docMixer(doc);
     buses[0].solo = true;
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
@@ -2322,9 +2160,7 @@ describe('renderProjectWithEngine', () => {
     doc.tracks[0].clips[0].notes = [
       { pitch: 60, velocity: 96, startPpq: 1, durationPpq: 0.5, channel: 0 },
     ];
-    doc.mixer!.master.inserts = [
-      { processor: 'reverb.algorithmic', params: { decaySeconds: 5 }, enabled: true },
-    ];
+    doc.mixer!.master.inserts = [{ processor: 'effects.reverb.fdn', params: {}, enabled: true }];
     const fontBytes = new Uint8Array([7]);
     const loadFont = vi.fn(async () => fontBytes);
     const engine = new FakeEngine();
@@ -2538,7 +2374,7 @@ describe('renderProjectWithEngine', () => {
     const doc = makeDoc();
     doc.tracks[1].mute = true;
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
@@ -2598,7 +2434,7 @@ describe('renderProjectWithEngine', () => {
       },
     ];
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
@@ -3361,7 +3197,7 @@ describe('renderProjectWithEngine', () => {
   it('applies the mastering preset and enabled processors to the final stereo mix only', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         preset: 'streaming',
         presetOverrides: { loudness: { targetLufs: -14 } },
@@ -3407,7 +3243,7 @@ describe('renderProjectWithEngine', () => {
 
   it('reports a mastering preset that stopped short of its loudness target', async () => {
     const doc = makeDoc();
-    doc.mixer = { ...doc.mixer, masteringChain: { preset: 'kpop', processors: [] } };
+    doc.mixer = { ...docMixer(doc), masteringChain: { preset: 'kpop', processors: [] } };
     const applyPreset = vi.fn((_preset, left: Float32Array, right: Float32Array) => ({
       left,
       right,
@@ -3428,8 +3264,8 @@ describe('renderProjectWithEngine', () => {
   it('applies every mastering processor offline in declared rack order', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
-      master: { ...doc.mixer.master, gainDb: -6 },
+      ...docMixer(doc),
+      master: { ...docMixer(doc).master, gainDb: -6 },
       masteringChain: {
         processors: [
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
@@ -3459,7 +3295,7 @@ describe('renderProjectWithEngine', () => {
   it('drives a time-varying mastering parameter through its own engine pass', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [
           { processor: 'saturation.tape', params: { driveDb: 3 }, enabled: true },
@@ -3531,7 +3367,7 @@ describe('renderProjectWithEngine', () => {
   it('applies static mastering processor automation to offline mastering params', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [
           { processor: 'maximizer.truePeakLimiter', params: { ceilingDbtp: -1 }, enabled: true },
@@ -3580,7 +3416,7 @@ describe('renderProjectWithEngine', () => {
   it('keeps stem renders pre-master while mastering changes the final mix', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
       },
@@ -3607,7 +3443,7 @@ describe('renderProjectWithEngine', () => {
   it('can include the final stereo master as a stem without another engine pass', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
       },
@@ -3653,7 +3489,7 @@ describe('renderProjectWithEngine', () => {
     }
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [{ processor: 'eq.tilt', params: {}, enabled: true }],
       },
@@ -4158,10 +3994,10 @@ describe('renderProjectWithEngine', () => {
 describe('renderProjectWithEngine offline mixer parity', () => {
   it('maps document group membership into the live PDC identity plan', async () => {
     const doc = makeGroupDoc();
-    (doc.tracks[0] as { mixer: Record<string, unknown> }).mixer = {
+    doc.tracks[0].mixer = {
       gainDb: 0,
       pan: 0,
-      inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+      inserts: [{ processor: 'eq.linearPhase', params: {}, enabled: true }],
       sends: [],
     };
     const engine = new FakeEngine();
@@ -4169,7 +4005,7 @@ describe('renderProjectWithEngine offline mixer parity', () => {
     await renderProjectWithEngine(doc, {
       ...renderOptions(engine),
       insertLatency: (slot) => {
-        if (slot.processor === 'linear.eq') return 256;
+        if (slot.processor === 'eq.linearPhase') return 256;
         if (slot.processor === 'dynamics.compressor') return 128;
         return 0;
       },
@@ -4186,14 +4022,14 @@ describe('renderProjectWithEngine offline mixer parity', () => {
 
   it('matches live PDC delays for every audible lane through a latent group bus', async () => {
     const doc = makeGroupDoc();
-    (doc.tracks[0] as { mixer: Record<string, unknown> }).mixer = {
+    doc.tracks[0].mixer = {
       gainDb: 0,
       pan: 0,
-      inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+      inserts: [{ processor: 'eq.linearPhase', params: {}, enabled: true }],
       sends: [],
     };
     const insertLatency = (slot: { processor: string }): number => {
-      if (slot.processor === 'linear.eq') return 256;
+      if (slot.processor === 'eq.linearPhase') return 256;
       if (slot.processor === 'dynamics.compressor') return 128;
       return 0;
     };
@@ -4222,7 +4058,7 @@ describe('renderProjectWithEngine offline mixer parity', () => {
       mixer: track.mixer,
       ...(track.groupIndex === undefined ? {} : { groupId: track.groupIndex + 1 }),
     }));
-    createMixerSync({ engine: liveEngine, ctx: { state: 'running' } } as unknown as EngineHandle, {
+    createMixerSync(fakeEngineHandle({ engine: liveEngine, ctx: { state: 'running' } }), {
       insertLatency,
     }).sync(liveTracks, doc.mixer!.master);
 
@@ -4295,7 +4131,7 @@ describe('renderProjectWithEngine offline mixer parity', () => {
       name: 'B',
       gainDb: -3,
       automation: [{ param: 'faderDb', enabled: true, points: [{ ppq: 0, value: 12 }] }],
-    } as (typeof doc.mixer.buses)[number]);
+    } as DocumentMixerBus);
     doc.mixer!.buses[0].solo = true;
     doc.tracks[2].automation = [
       { param: 'faderDb', enabled: true, points: [{ ppq: 0, value: 12 }] },
@@ -4370,7 +4206,7 @@ describe('renderProjectWithEngine loudness metering', () => {
   it('meters the final stereo mix after mastering processors', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
       },
@@ -4406,7 +4242,7 @@ describe('renderProjectWithEngine loudness metering', () => {
   it('meters exported stems separately from the final mastered mix', async () => {
     const doc = makeDoc();
     doc.mixer = {
-      ...doc.mixer,
+      ...docMixer(doc),
       masteringChain: {
         processors: [{ processor: 'maximizer.truePeakLimiter', params: {}, enabled: true }],
       },
@@ -5405,6 +5241,8 @@ describe('renderProjectWithEngine with group tracks and sidechains', () => {
     const doc = makeDoc();
     if (doc.mixer) {
       doc.mixer.buses[0].strip = {
+        gainDb: 0,
+        pan: 0,
         inputTrimDb: -3,
         width: 0,
         polarityInvertLeft: true,
@@ -5498,10 +5336,10 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
       mixer: track.mixer,
       ...(track.groupIndex === undefined ? {} : { groupId: track.groupIndex + 1 }),
     }));
-    createMixerSync({
-      engine: liveEngine,
-      ctx: { state: 'running' },
-    } as unknown as EngineHandle).sync(liveTracks, doc.mixer!.master);
+    createMixerSync(fakeEngineHandle({ engine: liveEngine, ctx: { state: 'running' } })).sync(
+      liveTracks,
+      doc.mixer!.master,
+    );
 
     const offline = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(offline));
@@ -5618,7 +5456,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('applies pan law, mode, dual-pan and channel delay; omits defaults', async () => {
     const doc = makeDoc();
-    Object.assign((doc.tracks[1] as { mixer: Record<string, unknown> }).mixer, {
+    Object.assign(trackMixer(doc, 1), {
       panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -1, right: 1 },
@@ -5643,20 +5481,20 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('adds automatic insert PDC to offline track channel delays', async () => {
     const doc = makeDoc();
-    (doc.tracks[0] as { mixer: Record<string, unknown> }).mixer = {
+    doc.tracks[0].mixer = {
       gainDb: 0,
       pan: 0,
-      inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+      inserts: [{ processor: 'eq.linearPhase', params: {}, enabled: true }],
       sends: [],
     };
-    Object.assign((doc.tracks[1] as { mixer: Record<string, unknown> }).mixer, {
+    Object.assign(trackMixer(doc, 1), {
       channelDelaySamples: 8,
     });
 
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, {
       ...renderOptions(engine),
-      insertLatency: (slot) => (slot.processor === 'linear.eq' ? 128 : 0),
+      insertLatency: (slot) => (slot.processor === 'eq.linearPhase' ? 128 : 0),
     });
 
     expect(engine.named('setStripChannelDelaySamples')).toEqual([
@@ -5666,7 +5504,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('declares a neutral strip before PDC on a lane without strip DSP', async () => {
     const doc = makeDoc();
-    (doc.tracks[0] as { mixer: Record<string, unknown> }).mixer = {
+    doc.tracks[0].mixer = {
       gainDb: 0,
       pan: 0,
       inserts: [{ processor: 'saturation.ampSim', params: {}, enabled: true }],
@@ -5701,8 +5539,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('marks a pre-fader send in the lane descriptor', async () => {
     const doc = makeDoc();
-    (doc.tracks[1] as { mixer: { sends: Array<Record<string, unknown>> } }).mixer.sends[0].timing =
-      'preFader';
+    trackMixer(doc, 1).sends[0].timing = 'preFader';
 
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
@@ -5715,8 +5552,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('preserves disabled sends as disabled lane descriptors', async () => {
     const doc = makeDoc();
-    (doc.tracks[1] as { mixer: { sends: Array<Record<string, unknown>> } }).mixer.sends[0].enabled =
-      false;
+    trackMixer(doc, 1).sends[0].enabled = false;
 
     const engine = new FakeEngine();
     await renderProjectWithEngine(doc, renderOptions(engine));
@@ -5755,7 +5591,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('exports bus EQ through the bus strip declaration', async () => {
     const doc = makeDoc();
-    const band = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
+    const band: EqBandInput = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
     if (doc.mixer) {
       doc.mixer.buses[0].strip = {
         gainDb: 0,
@@ -5779,7 +5615,7 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
 
   it('exports return-bus pan and EQ fields with neutral defaults omitted', async () => {
     const doc = makeDoc();
-    const band = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
+    const band: EqBandInput = { enabled: true, type: 'peak', frequencyHz: 1200, gainDb: 4, q: 1 };
     if (doc.mixer) {
       doc.mixer.buses[0].strip = {
         gainDb: 0,
@@ -5861,6 +5697,8 @@ describe('renderProjectWithEngine mixer parity with live playback', () => {
     const doc = makeDoc();
     if (doc.mixer) {
       doc.mixer.buses[0].strip = {
+        gainDb: 0,
+        pan: 0,
         inserts: [
           { processor: 'saturation.tape', params: {}, enabled: false },
           { processor: 'dynamics.compressor', params: { thresholdDb: -20 }, enabled: true },

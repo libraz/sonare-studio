@@ -59,7 +59,7 @@ describe('eqBandResponseDb', () => {
   });
 
   it('band types without a biquad equivalent render flat', () => {
-    expect(eqBandResponseDb({ type: 'TiltShelf', frequencyHz: 700, gainDb: 6 }, 700)).toBe(0);
+    expect(eqBandResponseDb({ type: 'tiltShelf', frequencyHz: 700, gainDb: 6 }, 700)).toBe(0);
   });
 
   it('defaults to a peak at 1 kHz', () => {

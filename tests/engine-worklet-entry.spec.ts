@@ -1,4 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { StreamingRetuneConfig } from '@/wasm/index.js';
 
 const {
   init,
@@ -16,7 +18,7 @@ const {
   retuneProcessMono,
   bridgeProcess,
 } = vi.hoisted(() => ({
-  init: vi.fn(() => Promise.resolve()),
+  init: vi.fn<typeof import('@/wasm/worklet.js').init>(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
   receiveSync: vi.fn(),
   receiveCommand: vi.fn(),
@@ -56,7 +58,7 @@ vi.mock('@/wasm/index.js', () => ({
   StreamingRetune: class
     implements Partial<InstanceType<typeof import('@/wasm/index.js').StreamingRetune>>
   {
-    constructor(readonly config: unknown) {}
+    constructor(readonly initialConfig?: StreamingRetuneConfig) {}
     prepare = vi.fn();
     setConfig = retuneSetConfig;
     reset = retuneReset;
@@ -167,10 +169,11 @@ describe('worklet-entry dispatch', () => {
       type: 'ready',
       runtimeTarget: 'embind',
     });
-    instance.port.onmessage?.({ data: { type: 'setConfig', config: { semitones: 7, mix: 0.5 } } });
+    const retuneConfig: StreamingRetuneConfig = { pitchSemitones: 7, mix: 0.5 };
+    instance.port.onmessage?.({ data: { type: 'setConfig', config: retuneConfig } });
     instance.port.onmessage?.({ data: { type: 'reset' } });
     instance.port.onmessage?.({ data: { type: 'destroy' } });
-    expect(retuneSetConfig).toHaveBeenCalledWith({ semitones: 7, mix: 0.5 });
+    expect(retuneSetConfig).toHaveBeenCalledWith(retuneConfig);
     expect(retuneReset).toHaveBeenCalledTimes(1);
     expect(retuneDestroy).toHaveBeenCalledTimes(1);
   });
@@ -231,8 +234,7 @@ describe('worklet-entry dispatch', () => {
       wasmBinary,
       moduleFactory,
     });
-    const options = init.mock.calls[0]?.[0] as { locateFile: (path: string) => string };
-    expect(options.locateFile('sonare.wasm')).toBe('sonare.wasm');
+    expect(init.mock.calls[0]?.[0]?.locateFile?.('sonare.wasm', '')).toBe('sonare.wasm');
     expect(instance.port.postMessage).toHaveBeenCalledWith({
       type: 'ready',
       runtimeTarget: 'embind',
@@ -353,5 +355,21 @@ describe('worklet-entry dispatch', () => {
     const out = [new Float32Array([0.5, 0.5])];
     expect(instance.process([], [out])).toBe(true);
     expect(Array.from(out[0])).toEqual([0, 0]);
+  });
+});
+
+describe('streaming retune config against the real core', () => {
+  it('applies the config the worklet forwards', async () => {
+    const actual = await vi.importActual<typeof import('@/wasm/index.js')>('@/wasm/index.js');
+    await actual.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    const retune = new actual.StreamingRetune();
+    try {
+      retune.prepare(48000, 128);
+      const config: StreamingRetuneConfig = { pitchSemitones: 7, mix: 0.5 };
+      retune.setConfig(config);
+      expect(retune.config()).toMatchObject(config);
+    } finally {
+      retune.destroy();
+    }
   });
 });

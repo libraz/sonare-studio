@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import StripMeter from '@/components/mixer/StripMeter.vue';
 import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
+import { fakeMeterSource } from './fakes/engine';
 
 function canvasContext(): Partial<CanvasRenderingContext2D> {
   return {
@@ -12,18 +13,7 @@ function canvasContext(): Partial<CanvasRenderingContext2D> {
 }
 
 function sourceWith(levels: Partial<StereoMeterLevels>): MeterSource {
-  return {
-    latest: {
-      frame: 0,
-      peakDbL: -18,
-      peakDbR: -18,
-      rmsDbL: -24,
-      rmsDbR: -24,
-      correlation: 0,
-      ...levels,
-    },
-    subscribe: () => () => {},
-  };
+  return fakeMeterSource({ peakDbL: -18, peakDbR: -18, rmsDbL: -24, rmsDbR: -24, ...levels });
 }
 
 let rafCallbacks: FrameRequestCallback[] = [];

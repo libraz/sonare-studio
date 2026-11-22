@@ -1,8 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ref } from 'vue';
+import { readFileSync } from 'node:fs';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { shallowRef } from 'vue';
 import { useTransport } from '@/composables/useTransport';
 import type { EngineHandle } from '@/engine/engine';
+import * as core from '@/wasm/index.js';
 import { type EngineTelemetry, ErrorCode, SonareError } from '@/wasm/index.js';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** The refusal a full engine command ring raises. */
 const ringFull = (): SonareError => new SonareError(ErrorCode.OutOfMemory, 'command ring full');
@@ -49,12 +52,12 @@ function createMockHandle(sampleRate = 48000): MockHandle {
       };
     }),
   };
-  const handle = {
+  const handle = fakeEngineHandle({
     engine,
     ctx: { sampleRate, baseLatency: 0.01, outputLatency: 0.02 },
     capabilities: { mode: 'postMessage' },
     dispose: vi.fn(),
-  } as unknown as EngineHandle;
+  });
   const emitTelemetry = (record: Partial<EngineTelemetry>): void => {
     telemetryListener?.({
       type: 'processBlock',
@@ -74,7 +77,7 @@ describe('useTransport', () => {
   const disposers: Array<() => void> = [];
 
   const setup = (handle: EngineHandle | null) => {
-    const handleRef = ref<EngineHandle | null>(handle);
+    const handleRef = shallowRef<EngineHandle | null>(handle);
     const transport = useTransport(() => handleRef.value);
     disposers.push(transport.dispose);
     return { transport, handleRef };
@@ -327,7 +330,7 @@ describe('useTransport', () => {
     });
     expect(transport.positionSeconds.value).toBe(2);
     // Non-ProcessBlock records (e.g. errors) must not move the playhead.
-    mock.emitTelemetry({ type: 1, timelineSample: 480000 });
+    mock.emitTelemetry({ type: 'error', timelineSample: 480000 });
     expect(transport.positionSeconds.value).toBe(2);
   });
 
@@ -365,5 +368,58 @@ describe('useTransport', () => {
 
     transport.dispose();
     expect(cancelAnimationFrame).toHaveBeenCalledWith(51);
+  });
+});
+
+describe('useTransport against the real engine telemetry', () => {
+  beforeAll(async () => {
+    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  });
+
+  it('follows the timeline position the engine reports per block', () => {
+    const real = new core.RealtimeEngine({
+      sampleRate: 48000,
+      maxBlockSize: 128,
+      commandCapacity: 64,
+    });
+    let listener: ((record: EngineTelemetry) => void) | null = null;
+    const handle = fakeEngineHandle({
+      engine: {
+        transport: {
+          play: () => real.play(),
+          stop: () => real.stop(),
+          seekPpq: vi.fn(),
+          seekSec: vi.fn(),
+          setTempo: vi.fn(),
+          setLoop: vi.fn(),
+        },
+        setMetronome: vi.fn(),
+        pushMidiPanic: vi.fn(),
+        onTelemetry: (cb: (record: EngineTelemetry) => void) => {
+          listener = cb;
+          return () => {
+            listener = null;
+          };
+        },
+        pollTelemetry: () => {
+          for (const record of real.drainTelemetry()) listener?.(record);
+        },
+      },
+      ctx: { sampleRate: 48000, baseLatency: 0, outputLatency: 0 },
+    });
+    const handleRef = shallowRef<EngineHandle | null>(handle);
+    const transport = useTransport(() => handleRef.value);
+    try {
+      expect(transport.play()).toBe(true);
+      for (let block = 0; block < 4; block++) {
+        real.process([new Float32Array(128), new Float32Array(128)]);
+      }
+      handle.engine.pollTelemetry();
+
+      expect(transport.positionSeconds.value).toBeCloseTo(512 / 48000, 9);
+    } finally {
+      transport.dispose();
+      real.destroy();
+    }
   });
 });

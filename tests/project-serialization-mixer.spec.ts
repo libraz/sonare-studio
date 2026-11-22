@@ -86,7 +86,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     setStripPanMode(trackId, 'dualPan');
     setStripDualPan(trackId, -0.25, 0.5);
     addInsert(trackId, 'dynamics.compressor', { thresholdDb: -18, ratio: 4 });
-    setStripEq(trackId, { enabled: true, bands: [{ type: 'Peak', frequencyHz: 900, gainDb: 2 }] });
+    setStripEq(trackId, { enabled: true, bands: [{ type: 'peak', frequencyHz: 900, gainDb: 2 }] });
     const busId = addMixerBus({ name: 'FX' });
     setSend(trackId, busId, { levelDb: -12 });
     setStripGain('master', -1.5);
@@ -112,7 +112,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
         },
       ],
       sends: [{ busId, levelDb: -12, enabled: true }],
-      eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 900, gainDb: 2 }] },
+      eq: { enabled: true, bands: [{ type: 'peak', frequencyHz: 900, gainDb: 2 }] },
     });
     expect(doc.tracks[0].pan).toBe(0.3);
     expect(doc.mixer?.master.gainDb).toBe(-1.5);
@@ -339,10 +339,8 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     if (sourceStrip) {
       sourceStrip.surroundPan = {
         azimuth: 45,
-        elevation: 0,
         divergence: 0.25,
         lfe: 0.2,
-        distance: 1,
       };
     }
 
@@ -399,7 +397,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
     setStripDualPan(target, -1, 0.6);
     setStripEq(target, {
       enabled: true,
-      bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }],
+      bands: [{ type: 'peak', frequencyHz: 1500, gainDb: 2.5 }],
     });
 
     const doc = serializeProject();
@@ -408,7 +406,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
       panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -1, right: 0.6 },
-      eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }] },
+      eq: { enabled: true, bands: [{ type: 'peak', frequencyHz: 1500, gainDb: 2.5 }] },
     });
 
     await loadProjectDocument(JSON.parse(JSON.stringify(doc)) as ProjectDocument);
@@ -417,7 +415,7 @@ describe('project serialization with instruments and mixer (schema v4)', () => {
       panLaw: 'const6Db',
       panMode: 'dualPan',
       dualPan: { left: -1, right: 0.6 },
-      eq: { enabled: true, bands: [{ type: 'Peak', frequencyHz: 1500, gainDb: 2.5 }] },
+      eq: { enabled: true, bands: [{ type: 'peak', frequencyHz: 1500, gainDb: 2.5 }] },
     });
   });
 
