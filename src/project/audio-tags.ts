@@ -10,6 +10,15 @@
  */
 
 import type { AudioAssetTags } from '@/persistence/assets';
+import type {
+  BpmAnalysisResult,
+  DynamicsResult,
+  KeyCandidate,
+  KeyDetection,
+  LufsResult,
+  RhythmResult,
+  TimbreResult,
+} from '@/wasm/index.js';
 
 interface MeterReading {
   numerator?: number;
@@ -18,12 +27,16 @@ interface MeterReading {
 }
 
 /**
- * The analysis functions consumed on import. Matches the libsonare module
- * surface, but any compatible implementation works.
+ * The analysis functions consumed on import. Each result is typed from the
+ * libsonare result it reads, so a renamed core field fails to compile here;
+ * any implementation returning those fields works.
  */
 export interface AudioAnalysisFunctions {
   /** Detailed tempo analysis; preferred over detectBpm when present. */
-  analyzeBpm?: (samples: Float32Array, sampleRate?: number) => { bpm: number; confidence?: number };
+  analyzeBpm?: (
+    samples: Float32Array,
+    sampleRate?: number,
+  ) => Pick<BpmAnalysisResult, 'bpm'> & Partial<Pick<BpmAnalysisResult, 'confidence'>>;
   /** Returns the detected tempo in BPM (mono samples + sample rate). */
   detectBpm?: (samples: Float32Array, sampleRate?: number) => number;
   /** Returns the detected key; an off-pitch recording is read on its own pitch grid. */
@@ -31,55 +44,47 @@ export interface AudioAnalysisFunctions {
     samples: Float32Array,
     sampleRate?: number,
     options?: { tuning?: number | 'auto' },
-  ) => { name: string; shortName?: string; confidence?: number };
+  ) => Pick<KeyDetection, 'name'> & Partial<Pick<KeyDetection, 'shortName' | 'confidence'>>;
   /** Detailed key candidates; used when detectKey is absent. */
   detectKeyCandidates?: (
     samples: Float32Array,
     sampleRate?: number,
-  ) => Array<{ key?: { name?: string; shortName?: string; confidence?: number } }>;
+  ) => Array<{ key?: Partial<Pick<KeyCandidate['key'], 'name' | 'shortName' | 'confidence'>> }>;
   /** Rhythm analysis; used for meter, groove and rhythm-feel tags. */
   analyzeRhythm?: (
     samples: Float32Array,
     sampleRate?: number,
-  ) => {
-    bpm?: number;
-    timeSignature?: MeterReading;
-    grooveType?: string;
-    syncopation?: number;
-    patternRegularity?: number;
-    tempoStability?: number;
-  };
+  ) => Partial<
+    Pick<
+      RhythmResult,
+      'bpm' | 'grooveType' | 'syncopation' | 'patternRegularity' | 'tempoStability'
+    >
+  > & { timeSignature?: MeterReading };
   /** Dynamics analysis; used for asset inspector tags. */
   analyzeDynamics?: (
     samples: Float32Array,
     sampleRate?: number,
-  ) => {
-    dynamicRangeDb?: number;
-    peakDb?: number;
-    rmsDb?: number;
-    crestFactor?: number;
-    loudnessRangeDb?: number;
-    isCompressed?: boolean;
-  };
+  ) => Partial<
+    Pick<
+      DynamicsResult,
+      'dynamicRangeDb' | 'peakDb' | 'rmsDb' | 'crestFactor' | 'loudnessRangeLu' | 'isCompressed'
+    >
+  >;
   /** Timbre analysis; used for asset inspector tags. */
   analyzeTimbre?: (
     samples: Float32Array,
     sampleRate?: number,
-  ) => {
-    brightness?: number;
-    warmth?: number;
-    density?: number;
-    roughness?: number;
-    complexity?: number;
-  };
+  ) => Partial<
+    Pick<TimbreResult, 'brightness' | 'warmth' | 'density' | 'roughness' | 'complexity'>
+  >;
   /** Returns the EBU R128 loudness (mono samples + sample rate). */
-  lufs?: (samples: Float32Array, sampleRate?: number) => { integratedLufs: number };
+  lufs?: (samples: Float32Array, sampleRate?: number) => Pick<LufsResult, 'integratedLufs'>;
   /** Returns the BS.1770 channel-summed loudness of an interleaved buffer. */
   lufsInterleaved?: (
     samples: Float32Array,
     channels: number,
     sampleRate?: number,
-  ) => { integratedLufs: number };
+  ) => Pick<LufsResult, 'integratedLufs'>;
 }
 
 /** The stored channels, interleaved, for the loudness measurement. */
@@ -198,7 +203,7 @@ export function analyzeAudioTags(
     if (finite(dynamics?.peakDb)) tags.peakDb = dynamics.peakDb;
     if (finite(dynamics?.rmsDb)) tags.rmsDb = dynamics.rmsDb;
     if (finite(dynamics?.crestFactor)) tags.crestFactor = dynamics.crestFactor;
-    if (finite(dynamics?.loudnessRangeDb)) tags.loudnessRangeDb = dynamics.loudnessRangeDb;
+    if (finite(dynamics?.loudnessRangeLu)) tags.loudnessRangeDb = dynamics.loudnessRangeLu;
     if (typeof dynamics?.isCompressed === 'boolean') tags.isCompressed = dynamics.isCompressed;
   });
 

@@ -108,7 +108,7 @@ describe('ingestAudioBuffer', () => {
           peakDb: -1.2,
           rmsDb: -15.4,
           crestFactor: 14.2,
-          loudnessRangeDb: 5.1,
+          loudnessRangeLu: 5.1,
           isCompressed: false,
         }),
         analyzeTimbre: () => ({
@@ -189,7 +189,7 @@ describe('ingestAudioBuffer', () => {
           peakDb: -0.8,
           rmsDb: -16.2,
           crestFactor: 11.1,
-          loudnessRangeDb: 4.6,
+          loudnessRangeLu: 4.6,
           isCompressed: false,
         }),
         analyzeTimbre: () => ({
