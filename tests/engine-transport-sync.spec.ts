@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createTransportSync } from '@/engine/transport-sync';
 import type { EditorMarker, TempoSegment, TimeSignatureSegment } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** EngineHandle stub capturing the transport commands. */
 function makeHandle(): {
@@ -17,7 +18,7 @@ function makeHandle(): {
     setTimeSignatureSegments: vi.fn(),
     setMarkers: vi.fn(),
   };
-  const handle = { engine } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine });
   return { handle, engine };
 }
 

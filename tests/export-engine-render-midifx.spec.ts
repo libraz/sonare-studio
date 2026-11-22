@@ -3,37 +3,16 @@ import type { OfflineRenderEngine } from '@/export/engine-render';
 import { renderProjectWithEngine } from '@/export/engine-render';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfig } from '@/project/midi-fx';
 import { PROJECT_DOCUMENT_SCHEMA_VERSION, type ProjectDocument } from '@/project/serialization';
+import { FakeRenderEngine } from './fakes/engine';
 
-/**
- * A recording offline engine: a Proxy that stubs every method as a call
- * recorder (so it tracks the whole command stream without re-declaring the
- * large OfflineRenderEngine surface), with real returns only for the few
- * methods renderProjectWithEngine reads a value from.
- */
+/** A recording offline engine over the shared typed fake. */
 function makeRecordingEngine(): {
   engine: OfflineRenderEngine;
   calls: Array<[string, ...unknown[]]>;
   named: (name: string) => Array<[string, ...unknown[]]>;
 } {
-  const calls: Array<[string, ...unknown[]]> = [];
-  const realReturns: Record<string, (...args: unknown[]) => unknown> = {
-    process: (channels) => channels,
-    destroy: () => undefined,
-  };
-  const engine = new Proxy(
-    {},
-    {
-      get(_target, prop: string) {
-        return (...args: unknown[]) => {
-          calls.push([prop, ...args]);
-          // Automation ids are numbers on the real engine; any resolvable id will do here.
-          if (prop.startsWith('resolve') && prop.endsWith('AutomationId')) return 0;
-          return realReturns[prop]?.(...args);
-        };
-      },
-    },
-  ) as unknown as OfflineRenderEngine;
-  return { engine, calls, named: (name) => calls.filter(([n]) => n === name) };
+  const engine = new FakeRenderEngine();
+  return { engine, calls: engine.calls, named: (name) => engine.named(name) };
 }
 
 /** A one-MIDI-track document carrying a single audible note. */

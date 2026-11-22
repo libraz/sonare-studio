@@ -2,6 +2,7 @@ import type { WorkletScopeSnapshot } from '@libraz/libsonare/worklet';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createScopeBridge } from '@/engine/scope';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** One scope snapshot with overridable fields. */
 function makeSnapshot(overrides: Partial<WorkletScopeSnapshot> = {}): WorkletScopeSnapshot {
@@ -17,7 +18,7 @@ function makeSnapshot(overrides: Partial<WorkletScopeSnapshot> = {}): WorkletSco
 
 /** EngineHandle stub capturing the onScope callback and pollScope calls. */
 function makeHandle(
-  capabilities: { mode?: 'sab' | 'postMessage'; runtimeTarget?: 'embind' | 'sonare-rt' } = {},
+  capabilities: { mode?: 'sab' | 'postMessage'; runtimeTarget?: 'embind' } = {},
 ): {
   handle: EngineHandle;
   emit: (snapshot: WorkletScopeSnapshot) => void;
@@ -33,14 +34,14 @@ function makeHandle(
     return unsubscribe;
   });
   const engine = { onScope, pollScope };
-  const handle = {
+  const handle = fakeEngineHandle({
     engine,
     ctx: { sampleRate: 48000 },
     capabilities: {
       mode: capabilities.mode ?? 'sab',
       runtimeTarget: capabilities.runtimeTarget ?? 'embind',
     },
-  } as unknown as EngineHandle;
+  });
   return { handle, emit: (snapshot) => captured?.(snapshot), pollScope, onScope, unsubscribe };
 }
 
@@ -50,22 +51,17 @@ afterEach(() => {
 });
 
 describe('createScopeBridge', () => {
-  it('is available only in SAB mode on the embind runtime', () => {
+  it('is available only in SAB mode', () => {
     const sabBridge = createScopeBridge(
       makeHandle({ mode: 'sab', runtimeTarget: 'embind' }).handle,
     );
     const postMessageBridge = createScopeBridge(makeHandle({ mode: 'postMessage' }).handle);
-    const nonEmbindBridge = createScopeBridge(
-      makeHandle({ mode: 'sab', runtimeTarget: 'sonare-rt' }).handle,
-    );
 
     expect(sabBridge.available).toBe(true);
     expect(postMessageBridge.available).toBe(false);
-    expect(nonEmbindBridge.available).toBe(false);
 
     sabBridge.dispose();
     postMessageBridge.dispose();
-    nonEmbindBridge.dispose();
   });
 
   it('does not subscribe to the engine when scope is unavailable', () => {

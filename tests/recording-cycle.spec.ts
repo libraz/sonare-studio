@@ -13,6 +13,7 @@ import type { AddRecordedMidiClipInput } from '@/project/command/midi-recording'
 import { addAudioTrack, clearHistory } from '@/project/commands';
 import { createRecordingCycle } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -21,9 +22,9 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 /** Engine handle whose transport accepts every command. */
-function fakeEngineHandle(): EngineHandle {
+function transportEngineHandle(): EngineHandle {
   const ok = () => undefined;
-  return {
+  return fakeEngineHandle({
     engine: {
       transport: {
         play: ok,
@@ -38,7 +39,7 @@ function fakeEngineHandle(): EngineHandle {
       onTelemetry: () => () => {},
     },
     ctx: { sampleRate: 48000, baseLatency: 0, outputLatency: 0, state: 'running' },
-  } as unknown as EngineHandle;
+  });
 }
 
 /** Recorder double that returns a preset capture. */
@@ -132,7 +133,7 @@ describe('the loop a take records through', () => {
   });
 
   const realTransport = () => {
-    const handle = fakeEngineHandle();
+    const handle = transportEngineHandle();
     const transport = useTransport(() => handle);
     disposers.push(transport.dispose);
     return transport;
@@ -160,7 +161,7 @@ describe('the loop a take records through', () => {
     // The engine captures [1, 4) on every pass: 2.5 passes of 3 PPQ at 120 BPM.
     const passFrames = 72000;
     const capture = new Float32Array(passFrames * 2.5);
-    const handle = fakeEngineHandle();
+    const handle = transportEngineHandle();
     const recording = useRecording(() => handle, transport, {
       createRecorder: () =>
         fakeRecorder(() => ({ channels: [capture], sampleRate: 48000, startPpq: 0 })),

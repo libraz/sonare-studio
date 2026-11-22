@@ -7,6 +7,7 @@ import {
   type StereoMeterLevels,
 } from '@/engine/meters';
 import { SILENCE_DB } from '@/lib/db';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Full engine meter record with overridable fields. */
 function makeSnapshot(overrides: Partial<WorkletMeterSnapshot> = {}): WorkletMeterSnapshot {
@@ -48,7 +49,7 @@ function makeHandle(mode: 'sab' | 'postMessage' = 'postMessage'): {
     }),
     pollMeters,
   };
-  const handle = { engine, capabilities: { mode } } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine, capabilities: { mode } });
   return {
     handle,
     emit: (snapshot) => captured?.(snapshot),

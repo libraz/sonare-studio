@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { engineBusGraph } from '@/engine/bus-graph';
-import type { EngineHandle } from '@/engine/engine';
 import { createStripSync } from '@/engine/strip-sync';
 import { buildBusRouting } from '@/export/engine-render-context';
 import {
@@ -13,6 +12,7 @@ import {
 } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/project/runtime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/project/runtime')>()),
@@ -85,7 +85,7 @@ function liveProgram(specs: TrackSpec[], mixer: ProjectMixerState) {
     setBusStripJson: vi.fn(),
     setLaneSidechain: vi.fn(),
   };
-  const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine, ctx: { state: 'running' } });
   createStripSync(handle).sync(liveTracks(specs), mixer);
   const lastFor = (fn: ReturnType<typeof vi.fn>, trackId: number) =>
     fn.mock.calls.filter((call) => call[0] === trackId).at(-1)?.[1];

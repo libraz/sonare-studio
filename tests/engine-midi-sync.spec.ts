@@ -6,6 +6,7 @@ import { buildMidiClipSchedules, createMidiSync, midiStateAtPpq } from '@/engine
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfig } from '@/project/midi-fx';
 import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Render rate of the mock engine context. */
 const SAMPLE_RATE = 48000;
@@ -123,7 +124,7 @@ function makeHandle(): {
     setMidiDestinationExternal: vi.fn(),
     setExternalMidiClockEnabled: vi.fn(),
   };
-  const handle = { ctx: { sampleRate: SAMPLE_RATE }, engine } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ ctx: { sampleRate: SAMPLE_RATE }, engine });
   return { handle, engine };
 }
 

@@ -47,12 +47,19 @@ const SRC_ALLOWED: Record<string, { count: number; reason: string }> = {
 /** Test casts to a core type: file → count and why. */
 const TEST_ALLOWED: Record<string, { count: number; reason: string }> = {};
 
+/** App-side engine types a fake must be built for through `tests/fakes/engine.ts`. */
+const ENGINE_TYPES = new Set(['EngineHandle', 'OfflineRenderEngine', 'SidechainCheckEngine']);
+
 function listed(patterns: string[]): string[] {
-  return execFileSync('git', ['ls-files', '-co', '--exclude-standard', ...patterns], { cwd: ROOT })
+  const files = execFileSync('git', ['ls-files', '-co', '--exclude-standard', ...patterns], {
+    cwd: ROOT,
+  })
     .toString()
     .trim()
     .split('\n')
     .filter((file) => file !== '');
+  expect(files.length, `no files matched ${patterns.join(' ')}`).toBeGreaterThan(0);
+  return files;
 }
 
 function scriptText(file: string): string {
@@ -151,5 +158,18 @@ describe('core cast guard', () => {
       return n;
     });
     expect(counts).toEqual(allowedCounts(TEST_ALLOWED));
+  });
+
+  it('tests build engine fakes from the shared typed fakes, never by a cast', () => {
+    const counts = countsBy(listed(['tests/*.ts']), (sf) => {
+      let n = 0;
+      const visit = (node: ts.Node): void => {
+        if (isEscape(node) && mentions(node.type, ENGINE_TYPES)) n += 1;
+        ts.forEachChild(node, visit);
+      };
+      visit(sf);
+      return n;
+    });
+    expect(counts).toEqual({});
   });
 });

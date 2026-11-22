@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import { createMidiSync } from '@/engine/midi-sync';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 const TEMPO_120: TempoSegment[] = [{ startPpq: 0, bpm: 120 }];
 
@@ -23,7 +23,7 @@ function makeHandle() {
     setMidiDestinationExternal: vi.fn(),
     setExternalMidiClockEnabled: vi.fn(),
   };
-  const handle = { ctx: { sampleRate: 48000 }, engine } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ ctx: { sampleRate: 48000 }, engine });
   return { handle, engine };
 }
 

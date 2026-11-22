@@ -1,7 +1,6 @@
 import type { EqBandInput } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import { createAutomationSync } from '@/engine/automation-sync';
-import type { EngineHandle } from '@/engine/engine';
 import { createStripSync } from '@/engine/strip-sync';
 import { type OfflineRenderEngine, renderProjectWithEngine } from '@/export/engine-render';
 import {
@@ -12,6 +11,7 @@ import {
 import { createDefaultMixerState, createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 type EngineCall = [string, ...unknown[]];
 
@@ -377,7 +377,7 @@ describe('engine declaration parity', () => {
     });
 
     const liveEngine = new DeclarationRecorder();
-    const handle = { engine: liveEngine } as unknown as EngineHandle;
+    const handle = fakeEngineHandle({ engine: liveEngine });
     const stripSync = createStripSync(handle);
     stripSync.sync(tracks, mixer);
     createAutomationSync(handle, {

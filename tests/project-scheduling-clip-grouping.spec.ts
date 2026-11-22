@@ -1,10 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 function makeTrack(id: number): EditorTrack {
   return {
@@ -57,14 +57,14 @@ describe('scheduleProjectClips clip lookup', () => {
     store.tracks = [1, 2, 3, 4, 5, 6, 7, 8].map(makeTrack);
     store.clips = [10, 11, 12].map((id, index) => makeClip(id, index + 1, counter));
     let nextId = 500;
-    const handle = {
+    const handle = fakeEngineHandle({
       ctx: { sampleRate: 10 },
       engine: {
         addClip: vi.fn(() => nextId++),
         removeClip: vi.fn(),
         setWarpVoiceCapacity: vi.fn(),
       },
-    } as unknown as EngineHandle;
+    });
     const asset: LoadedAudioAsset = {
       meta: { id: 'asset-x', name: 'A', sampleRate: 10, numChannels: 1, numFrames: 10 },
       channels: [new Float32Array(10)],

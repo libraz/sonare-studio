@@ -11,6 +11,7 @@ import {
   instrumentAutomationParam,
   masteringAutomationParam,
 } from '@/project/automation';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Param ids the stub hands out: track ids map to 1000 + id (faderDb) / 2000 + id (pan). */
 function stubParamId(target: string | number, kind: 'faderDb' | 'pan' | 'width'): number {
@@ -53,7 +54,7 @@ function makeHandle(): {
       name === 'unknown' ? unresolved(name) : 8000 + destinationId,
     ),
   } satisfies AutomationEngine;
-  const handle = { engine } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine });
   return { handle, engine };
 }
 

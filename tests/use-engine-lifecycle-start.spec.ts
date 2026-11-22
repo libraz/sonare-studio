@@ -40,6 +40,7 @@ import { ErrorCode, SonareError } from '@libraz/libsonare';
 import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -54,7 +55,7 @@ function deferred<T>() {
 function makeHandle() {
   let stateListener: (() => void) | null = null;
   const dispose = vi.fn(async () => undefined);
-  const handle = {
+  const handle = fakeEngineHandle({
     ctx: {
       sampleRate: 48_000,
       state: 'running',
@@ -68,7 +69,7 @@ function makeHandle() {
     engine: { node: { onprocessorerror: null } },
     capabilities: {},
     dispose,
-  } as unknown as EngineHandle;
+  });
   return { dispose, handle };
 }
 

@@ -5,6 +5,7 @@ import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB, SILENCE_DB } from '@/engine/mixer-sync';
 import { createDefaultStrip, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -60,7 +61,7 @@ function makeHandle(): {
     setStripPanMode: vi.fn(),
     setStripDualPan: vi.fn(),
   } satisfies MixerLaneEngine;
-  const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine, ctx: { state: 'running' } });
   return { handle, engine };
 }
 

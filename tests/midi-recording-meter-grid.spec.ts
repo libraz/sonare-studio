@@ -7,6 +7,7 @@ import type { EngineHandle } from '@/engine/engine';
 import type { AddRecordedMidiClipInput } from '@/project/command/midi-recording';
 import { clearHistory, setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -15,9 +16,9 @@ vi.mock('@/lib/wasm', async () => {
 });
 
 /** Engine handle whose transport accepts every command. */
-function fakeEngineHandle(): EngineHandle {
+function transportEngineHandle(): EngineHandle {
   const ok = () => undefined;
-  return {
+  return fakeEngineHandle({
     engine: {
       transport: {
         play: ok,
@@ -32,7 +33,7 @@ function fakeEngineHandle(): EngineHandle {
       onTelemetry: () => () => {},
     },
     ctx: { sampleRate: 48000, baseLatency: 0, outputLatency: 0, state: 'running' },
-  } as unknown as EngineHandle;
+  });
 }
 
 describe('MIDI input quantize on the project meter grid', () => {
@@ -49,7 +50,7 @@ describe('MIDI input quantize on the project meter grid', () => {
     // 5/8 bars are 2.5 PPQ, so the second bar starts at 2.5 and its first 1/8 off-beat is 3.0.
     setTimeSignatures([{ startPpq: 0, numerator: 5, denominator: 8 }]);
     store.quantizeSwing = 100;
-    const handle = fakeEngineHandle();
+    const handle = transportEngineHandle();
     const transport = useTransport(() => handle);
     const calls: AddRecordedMidiClipInput[] = [];
     const recording = useMidiRecording(transport, {

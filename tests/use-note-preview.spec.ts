@@ -5,6 +5,7 @@ import { useNotePreview } from '@/composables/useNotePreview';
 import type { EngineHandle } from '@/engine/engine';
 import { addTrack, clearHistory, setActiveTrack, setTrackPercussion } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -21,18 +22,20 @@ function makeHandle() {
   const pushMidiProgram = vi.fn();
   const pushMidiChannelPressure = vi.fn();
   const pushMidiPolyPressure = vi.fn();
-  const handle = shallowRef<EngineHandle | null>({
-    engine: {
-      pushMidiNoteOn,
-      pushMidiNoteOff,
-      pushMidiCc,
-      pushMidiPitchBend,
-      pushMidiProgram,
-      pushMidiChannelPressure,
-      pushMidiPolyPressure,
-    },
-    ctx: { sampleRate: 48000 },
-  } as unknown as EngineHandle);
+  const handle = shallowRef<EngineHandle | null>(
+    fakeEngineHandle({
+      engine: {
+        pushMidiNoteOn,
+        pushMidiNoteOff,
+        pushMidiCc,
+        pushMidiPitchBend,
+        pushMidiProgram,
+        pushMidiChannelPressure,
+        pushMidiPolyPressure,
+      },
+      ctx: { sampleRate: 48000 },
+    }),
+  );
   return { handle, pushMidiNoteOn, pushMidiNoteOff, pushMidiCc };
 }
 

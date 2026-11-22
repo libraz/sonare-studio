@@ -1,7 +1,6 @@
 import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync } from '@/engine/mixer-sync';
 import {
   addAudioTrack,
@@ -18,6 +17,7 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 type MixerLaneEngine = Pick<
   SonareEngine,
@@ -108,7 +108,7 @@ describe('mixer sync over the lane cap', () => {
       setStripPanMode: vi.fn(),
       setStripDualPan: vi.fn(),
     } satisfies MixerLaneEngine;
-    const handle = { engine, ctx: { state: 'running' } } as unknown as EngineHandle;
+    const handle = fakeEngineHandle({ engine, ctx: { state: 'running' } });
     const sync = createMixerSync(handle);
     const tracks = Array.from({ length: MAX_TRACK_LANES + 3 }, (_, index) => track(index + 1));
     expect(() => sync.sync(tracks, createDefaultStrip())).not.toThrow();

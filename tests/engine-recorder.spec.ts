@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import { REALTIME_VOICE_CHANGER_PROCESSOR } from '@/engine/realtime-voice-changer';
 import type { RecorderOptions } from '@/engine/recorder';
 import {
@@ -16,6 +15,7 @@ import {
 import { STREAMING_RETUNE_PROCESSOR } from '@/engine/streaming-retune';
 import { ensureWasm } from '@/lib/wasm';
 import { normalizeTempoMap } from '@/project/tempo-map';
+import { fakeEngineHandle } from './fakes/engine';
 
 const { presetConfigs } = vi.hoisted(() => {
   const makePod = (overrides: Record<string, number | boolean>) => ({
@@ -127,9 +127,9 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
     meterCallback = callback;
     return meterUnsubscribe;
   });
-  const node = { engineNode: true };
+  const node = { numberOfOutputs: 1 };
   const ctx = { sampleRate, baseLatency };
-  const handle = {
+  const handle = fakeEngineHandle({
     engine: {
       node,
       configureCapture,
@@ -140,7 +140,7 @@ function makeHandle(sampleRate = 100, baseLatency = 0) {
       onMeter,
     },
     ctx,
-  } as unknown as EngineHandle;
+  });
   return {
     handle,
     configureCapture,

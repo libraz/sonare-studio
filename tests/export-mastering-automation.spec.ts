@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { OfflineRenderEngine } from '@/export/engine-render';
 import {
   type MasteringCapabilityLookup,
   type MasteringCatalogEntry,
@@ -9,6 +8,7 @@ import {
 } from '@/export/mastering-automation';
 import { masteringAutomationParam } from '@/project/automation';
 import type { InsertSlot, MasteringChainState } from '@/project/mixer';
+import { FakeRenderEngine } from './fakes/engine';
 
 /**
  * Catalog metadata mirroring what the shipped engine reports for these
@@ -306,7 +306,7 @@ describe('planMasteringStages', () => {
  * parameter from the seek position onward. Rendering is a pure delay plus an
  * optional per-sample gain so a test can assert sample alignment exactly.
  */
-class MasteringPassEngine implements Partial<OfflineRenderEngine> {
+class MasteringPassEngine extends FakeRenderEngine {
   calls: Array<[string, ...unknown[]]> = [];
   destroyed = false;
   /** Automation ids this engine refuses to resolve, by parameter name. */
@@ -317,7 +317,9 @@ class MasteringPassEngine implements Partial<OfflineRenderEngine> {
   private playing = false;
   private gainByParamId = new Map<number, Array<{ ppq: number; value: number }>>();
 
-  constructor(private readonly latencySamples = 0) {}
+  constructor(private readonly latencySamples = 0) {
+    super();
+  }
 
   named(name: string): Array<[string, ...unknown[]]> {
     return this.calls.filter(([called]) => called === name);
@@ -423,7 +425,7 @@ function ascending(frames: number, offset = 0): Float32Array {
 
 describe('runMasteringEnginePass', () => {
   const context = (engine: MasteringPassEngine) => ({
-    createEngine: () => engine as unknown as OfflineRenderEngine,
+    createEngine: () => engine,
     sampleRate: 48000,
     startSample: 0,
     startPpq: 0,
@@ -542,7 +544,7 @@ describe('runMasteringEnginePass input planes', () => {
     const frames = 10 * 1024 + 300;
     const stage = RAMP_STAGE as unknown as Parameters<typeof runMasteringEnginePass>[0];
     await runMasteringEnginePass(stage, ascending(frames), ascending(frames, 1), {
-      createEngine: () => engine as unknown as OfflineRenderEngine,
+      createEngine: () => engine,
       sampleRate: 48000,
       startSample: 0,
       startPpq: 0,

@@ -10,6 +10,7 @@ import {
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -180,10 +181,10 @@ function makeAsset(): LoadedAudioAsset {
 /** EngineHandle stub capturing engine.addClip calls. */
 function makeHandle(): { handle: EngineHandle; addClip: ReturnType<typeof vi.fn> } {
   const addClip = vi.fn(() => 500);
-  const handle = {
+  const handle = fakeEngineHandle({
     ctx: { sampleRate: 10 },
     engine: { addClip, setWarpVoiceCapacity: vi.fn() },
-  } as unknown as EngineHandle;
+  });
   return { handle, addClip };
 }
 

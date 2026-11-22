@@ -26,7 +26,7 @@ function setup(reason: SidechainRefusal | null = 'planRefused') {
   const engine = {
     canSetStripSidechain: vi.fn(() => check(reason)),
     canSetBusSidechain: vi.fn(() => check(reason)),
-  };
+  } satisfies SidechainCheckEngine;
   const ids = {
     busIdFor: vi.fn((id: string) => ({ fx: 2, 'group:7': 5 })[id]),
     groupBusIdFor: vi.fn((trackId: number) => (trackId === 7 ? 5 : undefined)),
@@ -38,11 +38,7 @@ function setup(reason: SidechainRefusal | null = 'planRefused') {
     { id: 2, kind: 'audio' as const },
     { id: 7, kind: 'group' as const },
   ];
-  const lookup = createSidechainRefusalLookup(
-    engine as unknown as SidechainCheckEngine,
-    ids,
-    () => tracks,
-  );
+  const lookup = createSidechainRefusalLookup(engine, ids, () => tracks);
   return { engine, lookup };
 }
 

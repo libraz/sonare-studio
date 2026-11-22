@@ -1,11 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, type Mock, vi } from 'vitest';
 import { createAnalyserBridge } from '@/engine/analyser';
 import type { EngineHandle } from '@/engine/engine';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Records connect/disconnect targets so taps can be asserted. */
 interface FakeNode {
-  connect: ReturnType<typeof vi.fn>;
-  disconnect: ReturnType<typeof vi.fn>;
+  connect: Mock<() => void>;
+  disconnect: Mock<() => void>;
 }
 
 function fakeAnalyser(): {
@@ -42,7 +43,7 @@ function makeHandle(options: { withAnalyser?: boolean } = {}): {
   createChannelSplitter: ReturnType<typeof vi.fn>;
 } {
   const withAnalyser = options.withAnalyser ?? true;
-  const node: FakeNode = { connect: vi.fn(), disconnect: vi.fn() };
+  const node: FakeNode = { connect: vi.fn<() => void>(), disconnect: vi.fn<() => void>() };
   const createAnalyser = vi.fn(() => fakeAnalyser());
   const createChannelSplitter = vi.fn(() => ({
     connect: vi.fn(),
@@ -53,10 +54,10 @@ function makeHandle(options: { withAnalyser?: boolean } = {}): {
     createAnalyser: withAnalyser ? createAnalyser : undefined,
     createChannelSplitter: withAnalyser ? createChannelSplitter : undefined,
   };
-  const handle = {
+  const handle = fakeEngineHandle({
     ctx,
     engine: { node },
-  } as unknown as EngineHandle;
+  });
   return { handle, node, createAnalyser, createChannelSplitter };
 }
 

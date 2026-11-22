@@ -3,12 +3,12 @@ import { createPinia, setActivePinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
 import { effectScope, ref, shallowRef } from 'vue';
 import { useEngineProjectSync } from '@/composables/useEngineProjectSync';
-import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, type MixerSync } from '@/engine/mixer-sync';
 import type { StripSync } from '@/engine/strip-sync';
 import { createDefaultStrip, MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 type MixerLaneEngine = Pick<
   SonareEngine,
@@ -62,7 +62,7 @@ function makeHandle() {
     setStripPanMode: vi.fn(),
     setStripDualPan: vi.fn(),
   } satisfies MixerLaneEngine;
-  return { engine, handle: { engine, ctx: { state: 'running' } } as unknown as EngineHandle };
+  return { engine, handle: fakeEngineHandle({ engine, ctx: { state: 'running' } }) };
 }
 
 describe('engine lane reclaim', () => {

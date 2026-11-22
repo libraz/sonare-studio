@@ -7,6 +7,7 @@ import { useTransport } from '@/composables/useTransport';
 import { useTransportControls } from '@/composables/useTransportControls';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -45,7 +46,7 @@ function createEngine(state: AudioContextState = 'running') {
     pollTelemetry: () => [],
     onTelemetry: () => () => {},
   };
-  const handle = { engine, ctx } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ engine, ctx });
   return { handle, calls, ctx };
 }
 

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { EngineHandle } from '@/engine/engine';
 import { listenProcessorError } from '@/engine/engine';
 import { createMidiSync } from '@/engine/midi-sync';
 import { createRecorder } from '@/engine/recorder';
 import type { EditorClip, EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 function makeStream() {
   const track = {
@@ -36,16 +36,15 @@ describe('listenProcessorError', () => {
 
 describe('recorder input processor crash', () => {
   it('tears down the binding and notifies onInputProcessorError, not onMicrophoneLost', async () => {
-    const handle = {
+    const handle = fakeEngineHandle({
       engine: {
         node: {},
         configureCapture: vi.fn(),
-        armRecord: vi.fn(() => true),
         resetCapture: vi.fn(async () => {}),
         onMeter: vi.fn(() => () => {}),
       },
       ctx: { sampleRate: 100, baseLatency: 0 },
-    } as unknown as EngineHandle;
+    });
     const destroy = vi.fn();
     let crash: (() => void) | undefined;
     const recorder = createRecorder(handle, {
@@ -85,7 +84,7 @@ describe('midi sync unapplied GS setup', () => {
       setMidiDestinationExternal: vi.fn(),
       setExternalMidiClockEnabled: vi.fn(),
     };
-    const handle = { ctx: { sampleRate: 48000 }, engine } as unknown as EngineHandle;
+    const handle = fakeEngineHandle({ ctx: { sampleRate: 48000 }, engine });
     const onGsSetupUnapplied = vi.fn();
     const sync = createMidiSync(handle, {
       loadFont: async () => new Uint8Array([1]),

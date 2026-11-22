@@ -7,6 +7,7 @@ import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -68,7 +69,7 @@ function makeHandle(sampleRate = 10): { handle: EngineHandle; addClip: ReturnTyp
     addClip,
     setWarpVoiceCapacity: vi.fn(),
   } satisfies Pick<SonareEngine, 'addClip' | 'setWarpVoiceCapacity'>;
-  const handle = { ctx: { sampleRate }, engine } as unknown as EngineHandle;
+  const handle = fakeEngineHandle({ ctx: { sampleRate }, engine });
   return { handle, addClip };
 }
 

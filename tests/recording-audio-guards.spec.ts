@@ -3,13 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { useRecording } from '@/composables/useRecording';
 import type { UseTransportReturn } from '@/composables/useTransport';
-import type { EngineHandle } from '@/engine/engine';
 import type { Recorder, RecordingResult } from '@/engine/recorder';
 import type { AudioAssetMeta } from '@/persistence/assets';
 import { clearAudioAssetCache } from '@/persistence/assets';
 import { addAudioTrack, clearHistory } from '@/project/commands';
 import { createRecordingCycle } from '@/project/loop-recording';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
@@ -109,7 +109,7 @@ function makeRecorder() {
   };
 }
 
-const handle = { engine: {}, ctx: { sampleRate: 48000 } } as unknown as EngineHandle;
+const handle = fakeEngineHandle({ engine: {}, ctx: { sampleRate: 48000 } });
 
 describe('audio recording guards', () => {
   let store: ReturnType<typeof useProjectStore>;

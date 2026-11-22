@@ -53,6 +53,7 @@ import {
 } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
+import { fakeEngineHandle } from './fakes/engine';
 
 describe('useEngineLifecycle automation restore helpers', () => {
   it('skips track insert parameter restore while a track is frozen', () => {
@@ -111,7 +112,7 @@ function makeLifecycleHandle(): {
   } satisfies Partial<
     Pick<SonareEngine, 'resolveBusAutomationId' | 'setAutomationLane' | 'setBusGainDb'>
   >;
-  const handle = {
+  const handle = fakeEngineHandle({
     ctx: {
       sampleRate: 48_000,
       state: 'running',
@@ -121,11 +122,10 @@ function makeLifecycleHandle(): {
     engine: {
       node: { onprocessorerror: null },
       ...methods,
-      getTransportState: vi.fn(async () => ({})),
     },
     capabilities: {},
     dispose: vi.fn(async () => undefined),
-  } as unknown as EngineHandle;
+  });
   return { handle, setAutomationLane, setBusGainDb };
 }
 

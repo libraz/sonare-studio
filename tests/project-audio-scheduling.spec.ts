@@ -16,6 +16,7 @@ import {
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack } from '@/project/types';
+import { fakeEngineHandle } from './fakes/engine';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {
@@ -74,10 +75,10 @@ function makeHandle(sampleRate = 10): {
 } {
   const addClip = vi.fn(() => 500);
   const removeClip = vi.fn();
-  const handle = {
+  const handle = fakeEngineHandle({
     ctx: { sampleRate },
     engine: { addClip, removeClip, setWarpVoiceCapacity: vi.fn() },
-  } as unknown as EngineHandle;
+  });
   return { handle, addClip, removeClip };
 }
 

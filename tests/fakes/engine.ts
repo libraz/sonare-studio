@@ -242,14 +242,15 @@ export type DeepPartial<T> = {
 export function fakeEngineHandle(
   parts: {
     engine?: DeepPartial<SonareEngine>;
-    ctx?: Partial<AudioContext>;
+    ctx?: DeepPartial<AudioContext>;
     capabilities?: Partial<EngineHandle['capabilities']>;
     dispose?: EngineHandle['dispose'];
   } = {},
 ): EngineHandle {
   const engine = parts.engine ?? {};
   assertWhole<SonareEngine>(engine);
-  const ctx = fakeAudioContext(parts.ctx);
+  const ctx = parts.ctx ?? {};
+  assertWhole<AudioContext>(ctx);
   return {
     engine,
     ctx,
