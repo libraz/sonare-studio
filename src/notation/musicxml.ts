@@ -10,29 +10,9 @@
  * on any particular whitespace beyond well-formedness.
  */
 
-import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
-import {
-  type FieldDispositions,
-  type LossReport,
-  LossTally,
-  tallyFields,
-} from '@/export/loss-descriptor';
 import { clamp } from '@/lib/math';
-import type {
-  NoteArticulation,
-  NoteDynamics,
-  NoteLineSpan,
-  NoteOrnament,
-} from '@/project/annotations';
-import type {
-  DocumentAutomationLane,
-  DocumentClip,
-  DocumentTrack,
-  ProjectDocument,
-} from '@/project/serialization';
-import { staffForMeanPitch } from './grand-staff';
+import type { NoteDynamics, NoteLineSpan } from '@/project/annotations';
 import {
-  beatGroupPpq,
   measureHasMultiRestStructure,
   type NotatedBarlineStyle,
   type NotatedChordSymbol,
@@ -53,7 +33,6 @@ import {
   type NotatedVoiceNumber,
   type NoteValue,
   ppqToDivisions,
-  ppqToNoteValue,
   timeSigLengthPpq,
 } from './model';
 import {
@@ -73,20 +52,29 @@ import {
   type LyricIndex,
   slurPlacement,
 } from './musicxml-annotation-index';
+import { clefForMeasure, measureAttributesXml } from './musicxml-attributes';
 import { type BeamIndex, beamXml, buildBeamIndex } from './musicxml-beams';
+import {
+  lineSpanDirectionXml,
+  measureTextDirectionXml,
+  rehearsalDirectionXml,
+  tempoDirectionXml,
+  tempoTextDirectionXml,
+} from './musicxml-directions';
 import { groupChordSymbolsByMeasure, harmonyXml } from './musicxml-harmony';
+import { notationsXml, tupletBracketXml } from './musicxml-notations';
+import { pitchedInstrumentId, scorePartXml } from './musicxml-part-list';
 import {
   eventUsesPercussionMap,
   noteheadXml,
   partUsesPercussionMap,
   percussionDisplay,
-  percussionInstrumentDefinitions,
   percussionInstrumentId,
   percussionLegendDirectionXml,
-  percussionTechnicalXml,
   unpitchedXml,
 } from './musicxml-percussion';
-import { PPQ_EPSILON, type ScoreInstrumentDefinition, type StaffNumber } from './musicxml-shared';
+import { PPQ_EPSILON, type StaffNumber, tempoText } from './musicxml-shared';
+import { buildStaffMap } from './musicxml-staves';
 import {
   appendScoreCredits,
   appendScoreDefaults,
@@ -96,23 +84,12 @@ import {
 import { type Step, spellPitchInKeySignature } from './pitch-spelling';
 import { scoreNoteXmlId } from './source-identity';
 
-/** MIDI split point between the staves of a grand staff (middle C / C4). */
-const GRAND_STAFF_SPLIT_MIDI = 60;
-
-/**
- * MusicXML articulation element name per annotation marking.
- *
- * A marking absent from this table has no element of its own in the format and
- * is written as `<other-articulation>` carrying its name, which is what the
- * schema provides for a technique it does not enumerate; a reader that knows
- * the name gets the intent, and one that does not still parses the file.
- */
-const ARTICULATION_ELEMENT: Readonly<Partial<Record<NoteArticulation, string>>> = {
-  staccato: 'staccato',
-  accent: 'accent',
-  tenuto: 'tenuto',
-  marcato: 'strong-accent',
-};
+export {
+  inspectMusicXmlExportLoss,
+  MUSICXML_EXPORT_LOSS_KINDS,
+  type MusicXmlExportLossKind,
+} from './musicxml-export-loss';
+export { extractPartScore, extractPartsScore } from './score-parts';
 
 /**
  * Serializes a {@link NotatedScore} to a MusicXML 4.0 `score-partwise`
@@ -183,142 +160,6 @@ function validatePartIds(score: NotatedScore): void {
     }
     seen.add(part.id);
   }
-}
-
-/**
- * Returns a new score containing one part, preserving shared score annotations
- * useful for a printed part. The input score is not mutated.
- */
-export function extractPartScore(
-  score: NotatedScore,
-  partIdOrIndex: string | number,
-): NotatedScore {
-  const index =
-    typeof partIdOrIndex === 'number'
-      ? partIdOrIndex
-      : score.parts.findIndex((part) => part.id === partIdOrIndex);
-  const part = score.parts[index];
-  if (part === undefined) {
-    throw new RangeError(`Unknown score part: ${String(partIdOrIndex)}`);
-  }
-  return extractPartsScore(score, [index]);
-}
-
-/**
- * Returns a new score containing the selected parts in the requested order.
- *
- * The source score and all of its part/event objects are read only; only the
- * top-level score, metadata and parts array are copied. Shared score-level
- * notation data (annotations, lyrics, breaks, harmonies, and so on) remains
- * available to the serializer, which naturally ignores entries that do not
- * resolve onto a selected part.
- *
- * A one-part selection gets the selected part's name as `metadata.partName`,
- * matching {@link extractPartScore}; multi-part selections preserve the
- * source metadata unchanged.
- */
-export function extractPartsScore(
-  score: NotatedScore,
-  indices: ReadonlyArray<number>,
-): NotatedScore {
-  if (indices.length === 0) {
-    throw new RangeError('At least one score part must be selected');
-  }
-  const seenIndices = new Set<number>();
-  const parts = indices.map((index) => {
-    if (!Number.isInteger(index) || index < 0 || index >= score.parts.length) {
-      throw new RangeError(`Unknown score part index: ${String(index)}`);
-    }
-    if (seenIndices.has(index)) {
-      throw new RangeError(`Score part indices must be unique: ${index}`);
-    }
-    seenIndices.add(index);
-    return score.parts[index];
-  });
-  const metadata =
-    parts.length === 1
-      ? { ...score.metadata, partName: parts[0].name }
-      : score.metadata === undefined
-        ? undefined
-        : { ...score.metadata };
-  return { ...score, metadata, parts };
-}
-
-/** Builds a score-part entry with a deterministic abbreviation. */
-function scorePartXml(part: NotatedPart): string {
-  const name = escapeXml(part.name);
-  const abbreviation = escapeXml(partAbbreviation(part.name));
-  const instruments = scorePartInstrumentsXml(part);
-  return `<score-part id="${escapeXml(part.id)}"><part-name>${name}</part-name><part-abbreviation>${abbreviation}</part-abbreviation>${instruments}</score-part>`;
-}
-
-/** Pitched MIDI channels explicitly carried by this part's note events. */
-function pitchedChannels(part: NotatedPart): number[] {
-  const channels = new Set<number>();
-  for (const measure of part.measures) {
-    for (const voice of measure.voices) {
-      for (const event of voice.events) {
-        if (event.kind !== 'note') continue;
-        for (const channel of event.midiChannels ?? []) {
-          if (channel !== GM_PERCUSSION_CHANNEL && channel >= 0 && channel <= 15) {
-            channels.add(channel);
-          }
-        }
-      }
-    }
-  }
-  return [...channels].sort((a, b) => a - b);
-}
-
-function pitchedInstrumentId(partId: string, channel: number): string {
-  return `${escapeXml(partId)}-C${channel + 1}`;
-}
-
-function pitchedInstrumentDefinitions(part: NotatedPart): ScoreInstrumentDefinition[] {
-  return pitchedChannels(part).map((channel) => ({
-    id: pitchedInstrumentId(part.id, channel),
-    name: `${part.name || 'Part'} channel ${channel + 1}`,
-    channel: channel + 1,
-  }));
-}
-
-/**
- * MusicXML requires all `<score-instrument>` entries to precede every
- * `<midi-instrument>` entry inside a score-part. Keep that content-model order
- * even when a part carries several pitched channels or a drum map.
- */
-function scorePartInstrumentsXml(part: NotatedPart): string {
-  const definitions = [
-    ...pitchedInstrumentDefinitions(part),
-    ...(partUsesPercussionMap(part) ? percussionInstrumentDefinitions(part) : []),
-  ];
-  const scoreInstruments = definitions
-    .map(
-      ({ id, name }) =>
-        `<score-instrument id="${id}"><instrument-name>${escapeXml(name)}</instrument-name></score-instrument>`,
-    )
-    .join('');
-  const midiInstruments = definitions
-    .map(({ id, channel, unpitched }) => {
-      const midiUnpitched =
-        unpitched === undefined ? '' : `<midi-unpitched>${unpitched}</midi-unpitched>`;
-      return `<midi-instrument id="${id}"><midi-channel>${channel}</midi-channel>${midiUnpitched}</midi-instrument>`;
-    })
-    .join('');
-  return scoreInstruments + midiInstruments;
-}
-
-/** Derives a compact part abbreviation when the model has no explicit one. */
-function partAbbreviation(name: string): string {
-  const trimmed = name.trim();
-  if (trimmed === '') return '';
-  const words = trimmed.split(/\s+/);
-  if (words.length === 1) return trimmed.length <= 12 ? trimmed : `${trimmed.slice(0, 11)}.`;
-  const initials = words
-    .filter((word) => /[A-Za-z0-9]/.test(word))
-    .map((word) => word[0].toUpperCase())
-    .join('');
-  return initials.length > 0 && initials.length <= 6 ? initials : `${trimmed.slice(0, 11)}.`;
 }
 
 /**
@@ -542,69 +383,6 @@ function measurePrintXml(
   }
 }
 
-/** Builds a rehearsal mark direction for section labels. */
-function rehearsalDirectionXml(label: string | undefined): string {
-  const text = label?.trim();
-  if (!text) return '';
-  return `<direction placement="above"><direction-type><rehearsal default-y="40">${escapeXml(text)}</rehearsal></direction-type></direction>`;
-}
-
-/** Builds a metronome tempo direction plus playback tempo. */
-function tempoDirectionXml(
-  mark: NotatedTempoMark,
-  timeSig: NotatedTimeSig,
-  divisions: number,
-): string {
-  const { bpm } = mark;
-  if (!Number.isFinite(bpm) || bpm <= 0) return '';
-  const beatGroup = beatGroupPpq(timeSig);
-  const perMinute = tempoText(bpm / beatGroup);
-  const playbackTempo = tempoText(bpm);
-  const offset = directionOffsetXml(mark.offsetPpq, divisions);
-  return `<direction placement="above"><direction-type><metronome>${metronomeBeatUnitXml(beatGroup)}<per-minute>${perMinute}</per-minute></metronome></direction-type>${offset}<sound tempo="${playbackTempo}"/></direction>`;
-}
-
-/** Builds the metronome beat unit for a PPQ beat group. */
-function metronomeBeatUnitXml(ppq: number): string {
-  const value = ppqToNoteValue(ppq);
-  return `<beat-unit>${value.base}</beat-unit>${'<beat-unit-dot/>'.repeat(value.dots)}`;
-}
-
-/** Builds a textual tempo directive such as rit., accel. or a tempo. */
-function tempoTextDirectionXml(mark: NotatedTempoText, divisions: number): string {
-  const text = mark.text.trim();
-  if (!text) return '';
-  const sound =
-    mark.bpm !== undefined && Number.isFinite(mark.bpm) && mark.bpm > 0
-      ? `<sound tempo="${tempoText(mark.bpm)}"/>`
-      : '';
-  const offset = directionOffsetXml(mark.offsetPpq ?? 0, divisions);
-  return `<direction placement="above"><direction-type><words default-y="30" font-style="italic">${escapeXml(text)}</words></direction-type>${offset}${sound}</direction>`;
-}
-
-/** MusicXML direction offset, omitted at the containing measure start. */
-function directionOffsetXml(offsetPpq: number, divisions: number): string {
-  if (!Number.isFinite(offsetPpq) || offsetPpq <= PPQ_EPSILON) return '';
-  return `<offset>${ppqToDivisions(offsetPpq, divisions)}</offset>`;
-}
-
-/** Builds a general text direction. */
-function measureTextDirectionXml(mark: NotatedMeasureText): string {
-  const text = mark.text.trim();
-  if (!text) return '';
-  const defaultY =
-    mark.defaultY !== undefined && Number.isFinite(mark.defaultY)
-      ? ` default-y="${mark.defaultY}"`
-      : '';
-  return `<direction placement="above"><direction-type><words${defaultY}>${escapeXml(text)}</words></direction-type></direction>`;
-}
-
-/** Formats BPM with at most one decimal place. */
-function tempoText(bpm: number): string {
-  const rounded = Math.round(bpm * 10) / 10;
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
-}
-
 /** True when the marked measure can safely represent a multi-measure rest. */
 function isSerializableMultiMeasureRest(
   measure: NotatedMeasure,
@@ -652,95 +430,6 @@ function barlineXml(style: NotatedBarlineStyle | undefined, repeatEnd: boolean):
       return '<barline location="right"><bar-style>light-heavy</bar-style></barline>';
     case undefined:
       return '';
-  }
-}
-
-/**
- * Builds the `<attributes>` element for a measure, emitting only what
- * changed: divisions/key/clef in the first measure, time on every change.
- *
- * @returns The element string, or undefined when nothing needs emitting.
- */
-function measureAttributesXml(
-  measure: NotatedMeasure,
-  clef: NotatedClef,
-  score: NotatedScore,
-  prevTimeSig: NotatedTimeSig | undefined,
-  prevClef: NotatedClef | undefined,
-  keyFifths: number | undefined,
-  percussion: boolean,
-): string | undefined {
-  const isFirst = prevTimeSig === undefined;
-  const parts: string[] = [];
-  if (isFirst) {
-    parts.push(`<divisions>${score.divisions}</divisions>`);
-    parts.push(`<key><fifths>${keyFifths ?? score.keyFifths}</fifths></key>`);
-  } else if (keyFifths !== undefined) {
-    parts.push(`<key><fifths>${keyFifths}</fifths></key>`);
-  }
-  const timeChanged =
-    prevTimeSig === undefined ||
-    prevTimeSig.beats !== measure.timeSig.beats ||
-    prevTimeSig.beatUnit !== measure.timeSig.beatUnit;
-  if (timeChanged) {
-    parts.push(
-      `<time><beats>${measure.timeSig.beats}</beats><beat-type>${measure.timeSig.beatUnit}</beat-type></time>`,
-    );
-  }
-  if (isFirst || clef !== prevClef) {
-    parts.push(clefXml(clef, percussion));
-  }
-  if (isFirst && !percussion) parts.push(transposeXml(score.transposeSemitones ?? 0));
-  return parts.length > 0 ? `<attributes>${parts.join('')}</attributes>` : undefined;
-}
-
-/** Chooses a conservative temporary clef for a single-staff measure. */
-function clefForMeasure(
-  partClef: NotatedClef,
-  measure: NotatedMeasure,
-  prevClef: NotatedClef | undefined,
-): NotatedClef {
-  if (partClef === 'grand') return 'grand';
-  const pitches = measure.voices.flatMap((voice) =>
-    voice.events.flatMap((event) => (event.kind === 'note' ? event.pitches : [])),
-  );
-  if (pitches.length === 0) return prevClef ?? partClef;
-  const mean = pitches.reduce((sum, pitch) => sum + pitch, 0) / pitches.length;
-  if (partClef === 'treble' && mean < 52) return 'bass';
-  if (partClef === 'bass' && mean >= 67) return 'treble';
-  return partClef;
-}
-
-/**
- * Returns the `<transpose>` that maps written pitches back to sounding ones
- * for an engraving shifted up by `semitones`, or '' when there is no shift.
- */
-function transposeXml(semitones: number): string {
-  if (semitones === 0) return '';
-  const octaves = Math.trunc(-semitones / 12);
-  const chromatic = -semitones - octaves * 12;
-  return `<transpose><chromatic>${chromatic}</chromatic>${
-    octaves === 0 ? '' : `<octave-change>${octaves}</octave-change>`
-  }</transpose>`;
-}
-
-/**
- * Returns the clef (and staves, for grand staff) attribute fragment.
- */
-function clefXml(clef: NotatedClef, percussion = false): string {
-  if (percussion) return '<clef><sign>percussion</sign></clef>';
-  switch (clef) {
-    case 'treble':
-      return '<clef><sign>G</sign><line>2</line></clef>';
-    case 'bass':
-      return '<clef><sign>F</sign><line>4</line></clef>';
-    case 'grand':
-      return (
-        '<staves>2</staves>' +
-        '<part-symbol top-staff="1" bottom-staff="2">brace</part-symbol>' +
-        '<clef number="1"><sign>G</sign><line>2</line></clef>' +
-        '<clef number="2"><sign>F</sign><line>4</line></clef>'
-      );
   }
 }
 
@@ -853,49 +542,6 @@ function inferredDynamics(event: NotatedEvent): NoteDynamics | undefined {
 function dynamicsPlacement(event: NotatedEvent, measure: NotatedMeasure): string {
   if (measure.voices.length < 2) return 'below';
   return slurPlacement(event);
-}
-
-type OctaveLineSpan = Exclude<NoteLineSpan, 'pedal' | 'glissando'>;
-
-/**
- * MusicXML octave-shift semantics for the four editor ottava markings.
- *
- * MusicXML's direction is relative to the true pitch in the note data, not
- * the visual direction of the printed 8va/8vb label: an 8va label moves the
- * written notes up, so its MusicXML shift is `down`; 8vb is the inverse.
- */
-const OCTAVE_SHIFT_BY_LINE_SPAN: Readonly<
-  Record<OctaveLineSpan, { placement: 'above' | 'below'; shift: 'up' | 'down'; size: 8 | 15 }>
-> = {
-  'ottava-up': { placement: 'above', shift: 'down', size: 8 },
-  'ottava-down': { placement: 'below', shift: 'up', size: 8 },
-  'ottava-15-up': { placement: 'above', shift: 'down', size: 15 },
-  'ottava-15-down': { placement: 'below', shift: 'up', size: 15 },
-};
-
-function octaveShiftDirection(lineSpan: OctaveLineSpan): {
-  placement: 'above' | 'below';
-  shift: 'up' | 'down';
-  size: 8 | 15;
-} {
-  return OCTAVE_SHIFT_BY_LINE_SPAN[lineSpan];
-}
-
-/** Builds non-glissando span directions. */
-function lineSpanDirectionXml(
-  lineSpan: LineSpanRender & { type: Exclude<NoteLineSpan, 'glissando'> },
-  position: 'start' | 'stop',
-  staffXml: string,
-): string {
-  if (lineSpan.type === 'pedal') {
-    const line = lineSpan.pedalStyle === 'sign' ? 'no' : 'yes';
-    const sign =
-      lineSpan.pedalStyle === 'sign' ? ` sign="${position === 'start' ? 'yes' : 'no'}"` : '';
-    return `<direction placement="below"><direction-type><pedal type="${position}" line="${line}"${sign} number="${lineSpan.number}"/></direction-type>${staffXml}</direction>`;
-  }
-  const { placement, shift, size } = octaveShiftDirection(lineSpan.type);
-  const type = position === 'stop' ? 'stop' : shift;
-  return `<direction placement="${placement}"><direction-type><octave-shift type="${type}" size="${size}" number="${lineSpan.number}"/></direction-type>${staffXml}</direction>`;
 }
 
 /**
@@ -1081,424 +727,4 @@ function tieXml(event: NotatedEvent): string {
     xml += '<tie type="start"/>';
   }
   return xml;
-}
-
-/**
- * Builds the `<notations>` element of one `<note>`, or an empty string when
- * there is nothing to notate. Tied marks appear on every chord note; slurs
- * and articulations only on the first chord note (`isFirstPitch`).
- */
-function notationsXml(
-  event: NotatedEvent,
-  annotations: AnnotationIndex,
-  isFirstPitch: boolean,
-  percussion = false,
-  midi?: number,
-  measure?: NotatedMeasure,
-  pitchIndex = 0,
-): string {
-  let inner = '';
-  if (event.tieStop) {
-    inner += '<tied type="stop"/>';
-  }
-  if (event.tieStart) {
-    inner += '<tied type="start"/>';
-  }
-  if (isFirstPitch) {
-    inner += tupletBracketXml(event, measure);
-    for (const number of annotations.slurStops.get(event) ?? []) {
-      inner += `<slur type="stop" number="${number}"/>`;
-    }
-    for (const number of annotations.slurStarts.get(event) ?? []) {
-      const placement = annotations.slurStartPlacements.get(event)?.get(number);
-      const placementXml = placement === undefined ? '' : ` placement="${placement}"`;
-      inner += `<slur type="start" number="${number}"${placementXml}/>`;
-    }
-    for (const lineSpan of annotations.lineSpanStops.get(event) ?? []) {
-      if (lineSpan.type === 'glissando') {
-        const lineType =
-          lineSpan.glissandoLineType === undefined
-            ? ''
-            : ` line-type="${lineSpan.glissandoLineType}"`;
-        inner += `<glissando type="stop" number="${lineSpan.number}"${lineType}/>`;
-      }
-    }
-    for (const lineSpan of annotations.lineSpanStarts.get(event) ?? []) {
-      if (lineSpan.type === 'glissando') {
-        const lineType =
-          lineSpan.glissandoLineType === undefined
-            ? ''
-            : ` line-type="${lineSpan.glissandoLineType}"`;
-        inner +=
-          lineSpan.glissandoText === undefined
-            ? `<glissando type="start" number="${lineSpan.number}"${lineType}/>`
-            : `<glissando type="start" number="${lineSpan.number}"${lineType}>${escapeXml(lineSpan.glissandoText)}</glissando>`;
-      }
-    }
-    const articulation = annotations.articulations.get(event);
-    if (articulation !== undefined) {
-      inner += `<articulations>${articulationXml(articulation, event)}</articulations>`;
-    } else if (percussion && event.velocity !== undefined && event.velocity >= 112) {
-      inner += `<articulations><accent placement="${slurPlacement(event)}"/></articulations>`;
-    }
-    const ornament = annotations.ornaments.get(event);
-    if (ornament !== undefined) {
-      inner += ornamentXml(ornament);
-    }
-  }
-  if (!percussion) {
-    // Fingering is per-note: each chord pitch carries its own finger number.
-    const fingering = event.fingering?.[pitchIndex];
-    if (fingering !== undefined) {
-      inner += `<technical><fingering>${fingering}</fingering></technical>`;
-    }
-  }
-  if (percussion && midi !== undefined) {
-    const technical = percussionTechnicalXml(midi);
-    if (technical !== '') inner += technical;
-    if (measure !== undefined && isPercussionRoll(event, measure, midi, annotations)) {
-      inner += '<ornaments><tremolo type="single">3</tremolo></ornaments>';
-    }
-  }
-  return inner === '' ? '' : `<notations>${inner}</notations>`;
-}
-
-/** Emits tuplet bracket start/stop marks for the first and last event in a group. */
-function tupletBracketXml(event: NotatedEvent, measure: NotatedMeasure | undefined): string {
-  if (!event.value.tuplet || measure === undefined) return '';
-  const voice = measure.voices.find((entry) => entry.voice === event.voice);
-  if (!voice) return '';
-  const index = voice.events.indexOf(event);
-  if (index < 0) return '';
-  const prev = voice.events[index - 1];
-  const next = voice.events[index + 1];
-  const sameGroup = (candidate: NotatedEvent | undefined): boolean =>
-    candidate !== undefined &&
-    (event.tupletGroupId !== undefined
-      ? candidate.tupletGroupId === event.tupletGroupId
-      : candidate.tupletGroupId === undefined && sameTuplet(candidate, event));
-  const hasPrev =
-    sameGroup(prev) && Math.abs(prev.startPpq + prev.durationPpq - event.startPpq) < PPQ_EPSILON;
-  const hasNext =
-    sameGroup(next) && Math.abs(event.startPpq + event.durationPpq - next.startPpq) < PPQ_EPSILON;
-  let xml = '';
-  if (!hasPrev) xml += '<tuplet type="start"/>';
-  if (!hasNext) xml += '<tuplet type="stop"/>';
-  return xml;
-}
-
-/** True when two events belong to the same simple tuplet ratio. */
-function sameTuplet(a: NotatedEvent, b: NotatedEvent): boolean {
-  const left = a.value.tuplet;
-  const right = b.value.tuplet;
-  return (
-    left !== undefined &&
-    right !== undefined &&
-    left.actual === right.actual &&
-    left.normal === right.normal &&
-    a.value.base === b.value.base
-  );
-}
-
-/**
- * Returns true when repeated short drum notes should carry a roll/tremolo mark.
- *
- * The reading is of the figure, not of one note: four sixteenths on the snare
- * inside a beat read as a roll only together. So a technique written on any of
- * them stands the guess down for all of them — the figure has been described,
- * and a run of ghost notes marked as a roll would contradict what it says.
- */
-function isPercussionRoll(
-  event: NotatedEvent,
-  measure: NotatedMeasure,
-  midi: number,
-  annotations: AnnotationIndex,
-): boolean {
-  if (!isRollCandidate(midi) || event.durationPpq > 0.25 + PPQ_EPSILON) return false;
-  const groupLen = beatGroupPpq(measure.timeSig);
-  const groupIndex = Math.floor((event.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON);
-  let count = 0;
-  for (const voice of measure.voices) {
-    for (const candidate of voice.events) {
-      if (
-        candidate.kind !== 'note' ||
-        candidate.voice !== event.voice ||
-        candidate.durationPpq > 0.25 + PPQ_EPSILON ||
-        !candidate.pitches.includes(midi)
-      ) {
-        continue;
-      }
-      const candidateGroup = Math.floor(
-        (candidate.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON,
-      );
-      if (candidateGroup !== groupIndex) continue;
-      if (annotations.articulations.has(candidate)) return false;
-      count++;
-    }
-  }
-  return count >= 3;
-}
-
-/** Drum notes for which rapid repeated hits are conventionally roll-like. */
-function isRollCandidate(midi: number): boolean {
-  return [37, 38, 40, 41, 43, 45, 47, 48, 50].includes(midi);
-}
-
-/** Builds a voice-aware articulation element. */
-function articulationXml(articulation: NoteArticulation, event: NotatedEvent): string {
-  const placement = slurPlacement(event);
-  const element = ARTICULATION_ELEMENT[articulation];
-  return element === undefined
-    ? `<other-articulation placement="${placement}">${escapeXml(articulation)}</other-articulation>`
-    : `<${element} placement="${placement}"/>`;
-}
-
-/** Builds a MusicXML ornament or expression notation. */
-function ornamentXml(ornament: NoteOrnament): string {
-  switch (ornament) {
-    case 'trill':
-      return '<ornaments><trill-mark/></ornaments>';
-    case 'turn':
-      return '<ornaments><turn/></ornaments>';
-    case 'mordent':
-      return '<ornaments><mordent/></ornaments>';
-    case 'fermata':
-      return '<fermata type="upright"/>';
-  }
-}
-
-/**
- * Returns the staff a note event belongs to in a grand staff: treble when the
- * chord's mean pitch reaches middle C, bass otherwise.
- *
- * Using the centre of mass rather than the lowest pitch keeps a chord whose
- * body sits above middle C on the treble staff even when its lowest note dips
- * just below the split, which matches how a player reads a right-hand voicing.
- * A single note reduces to comparing that pitch against the split point.
- */
-function noteStaff(
-  event: NotatedEvent,
-  overrides: ReadonlyMap<NotatedEvent, StaffNumber>,
-): StaffNumber {
-  const override = overrides.get(event);
-  if (override !== undefined) return override;
-  if (event.staff === 1 || event.staff === 2) return event.staff;
-  if (event.pitches.length === 0) return 1;
-  const mean = event.pitches.reduce((sum, pitch) => sum + pitch, 0) / event.pitches.length;
-  return staffForMeanPitch(mean, GRAND_STAFF_SPLIT_MIDI);
-}
-
-/**
- * Assigns a staff to every event of a grand-staff part. Notes split at
- * middle C by their mean pitch; rests inherit the staff of the preceding
- * note in the same voice (chained across measures), leading rests adopt the
- * first note's staff, and all-rest voices default to staff 1.
- */
-function buildStaffMap(
-  part: NotatedPart,
-  overrides: ReadonlyMap<NotatedEvent, StaffNumber> = new Map(),
-): Map<NotatedEvent, StaffNumber> {
-  const staffMap = new Map<NotatedEvent, StaffNumber>();
-  const eventsByVoice = new Map<NotatedVoiceNumber, NotatedEvent[]>();
-  for (const measure of part.measures) {
-    for (const voice of measure.voices) {
-      const list = eventsByVoice.get(voice.voice);
-      if (list === undefined) {
-        eventsByVoice.set(voice.voice, [...voice.events]);
-      } else {
-        list.push(...voice.events);
-      }
-    }
-  }
-  for (const events of eventsByVoice.values()) {
-    let current: StaffNumber | undefined;
-    const leadingRests: NotatedEvent[] = [];
-    for (const event of events) {
-      if (event.kind === 'note') {
-        const staff = noteStaff(event, overrides);
-        for (const rest of leadingRests) {
-          staffMap.set(rest, staff);
-        }
-        leadingRests.length = 0;
-        staffMap.set(event, staff);
-        current = staff;
-      } else if (current === undefined) {
-        leadingRests.push(event);
-      } else {
-        staffMap.set(event, current);
-      }
-    }
-    for (const rest of leadingRests) {
-      staffMap.set(rest, 1);
-    }
-  }
-  return staffMap;
-}
-
-/** Every class the MusicXML export loss dialog can list, in dialog order. */
-export const MUSICXML_EXPORT_LOSS_KINDS = [
-  'nonMidiTracks',
-  'offGridNotes',
-  'expressionLanes',
-  'sysExPackets',
-  'automationLanes',
-  'tempoRamps',
-] as const;
-
-export type MusicXmlExportLossKind = (typeof MUSICXML_EXPORT_LOSS_KINDS)[number];
-
-interface MusicXmlExportContext {
-  /** Display quantize grid the score is engraved on, in PPQ. */
-  divisionPpq: number;
-}
-
-function offGrid(value: number, divisionPpq: number): boolean {
-  if (!(divisionPpq > 0)) return false;
-  const steps = value / divisionPpq;
-  return Math.abs(steps - Math.round(steps)) * divisionPpq > PPQ_EPSILON;
-}
-
-function enabledLaneCount(lanes: ReadonlyArray<DocumentAutomationLane> | undefined): number {
-  return (lanes ?? []).filter((lane) => lane.enabled && lane.points.length > 0).length;
-}
-
-// The score is notation: mixer, instrument and session state is outside what
-// MusicXML models, so only musical content the engraving cannot show is lost.
-const DOCUMENT_FIELDS: FieldDispositions<
-  ProjectDocument,
-  MusicXmlExportLossKind,
-  MusicXmlExportContext
-> = {
-  schemaVersion: 'derived',
-  name: 'written',
-  sampleRate: 'not-content',
-  tempoSegments: {
-    lost: 'tempoRamps',
-    count: (segments) =>
-      segments.filter(
-        (segment, index) =>
-          index < segments.length - 1 &&
-          segment.endBpm !== undefined &&
-          segment.endBpm !== segment.bpm,
-      ).length,
-  },
-  timeSignatures: 'written',
-  pickupLengthPpq: 'written',
-  generationSeed: 'not-content',
-  scaleHighlight: 'written',
-  tracks: 'written',
-  markers: 'written',
-  sections: 'written',
-  masterAutomation: { lost: 'automationLanes', count: enabledLaneCount },
-  chords: 'written',
-  mixer: {
-    lost: 'automationLanes',
-    count: (mixer) =>
-      (mixer?.buses ?? []).reduce((n, bus) => n + enabledLaneCount(bus.automation), 0),
-  },
-  externalMidiDefault: 'not-content',
-  score: 'written',
-  midiCcBindings: 'not-content',
-  controlSurface: 'not-content',
-  mixerSnapshots: 'not-content',
-};
-
-const TRACK_FIELDS: FieldDispositions<
-  DocumentTrack,
-  MusicXmlExportLossKind,
-  MusicXmlExportContext
-> = {
-  name: 'written',
-  musicXmlPartId: 'written',
-  color: 'not-content',
-  kind: 'written',
-  mute: 'not-content',
-  solo: 'not-content',
-  volume: 'not-content',
-  pan: 'not-content',
-  clips: 'written',
-  instrument: 'written',
-  externalMidiMode: 'not-content',
-  midiFx: 'not-content',
-  mixer: 'not-content',
-  automation: { lost: 'automationLanes', count: enabledLaneCount },
-  groupIndex: 'not-content',
-  soloSafe: 'not-content',
-  percussion: 'written',
-  generated: 'not-content',
-  vcaId: 'not-content',
-  chordFollow: 'not-content',
-  expressionMap: 'not-content',
-  frozen: 'not-content',
-  recordInputChannel: 'not-content',
-  recordInputDeviceId: 'not-content',
-  pitchRange: 'not-content',
-  leadFollow: 'not-content',
-};
-
-const CLIP_FIELDS: FieldDispositions<DocumentClip, MusicXmlExportLossKind, MusicXmlExportContext> =
-  {
-    name: 'not-content',
-    startPpq: 'written',
-    lengthPpq: 'written',
-    sourceOffsetPpq: 'written',
-    gain: 'not-content',
-    loopEnabled: 'written',
-    loopLengthPpq: 'written',
-    notes: {
-      lost: 'offGridNotes',
-      count: (notes, _clip, context) =>
-        notes.filter(
-          (note) =>
-            offGrid(note.startPpq, context.divisionPpq) ||
-            offGrid(note.durationPpq, context.divisionPpq),
-        ).length,
-    },
-    kind: 'written',
-    assetId: 'not-content',
-    externalStemRole: 'not-content',
-    contentHash: 'not-content',
-    fadeInPpq: 'not-content',
-    fadeOutPpq: 'not-content',
-    takes: 'not-content',
-    compSegments: 'not-content',
-    midiTakes: 'not-content',
-    midiActiveTakeIndex: 'not-content',
-    midiCompSegments: 'not-content',
-    warp: 'not-content',
-    ccLanes: { lost: 'expressionLanes' },
-    pitchBendLanes: { lost: 'expressionLanes' },
-    programChangeLanes: { lost: 'expressionLanes' },
-    channelPressureLanes: { lost: 'expressionLanes' },
-    polyPressureLanes: { lost: 'expressionLanes' },
-    smfSysEx: { lost: 'sysExPackets' },
-    scoreAnnotations: 'written',
-  };
-
-/**
- * Lists the musical content a MusicXML export of `doc` cannot carry: audio
- * tracks, expression and automation, SysEx, tempo ramps, and notes the
- * display quantize grid moves.
- *
- * @param doc The tracks and clips being engraved (one clip for a clip export).
- * @param divisionPpq Display quantize grid in PPQ.
- */
-export function inspectMusicXmlExportLoss(
-  doc: ProjectDocument,
-  divisionPpq: number,
-): LossReport<MusicXmlExportLossKind> {
-  const loss = new LossTally(MUSICXML_EXPORT_LOSS_KINDS);
-  const context: MusicXmlExportContext = { divisionPpq };
-  tallyFields(loss, DOCUMENT_FIELDS, doc, context);
-  for (const track of doc.tracks) {
-    if (track.kind !== 'midi') {
-      if (track.clips.length > 0) loss.add('nonMidiTracks', 1, track.name);
-      continue;
-    }
-    tallyFields(loss, TRACK_FIELDS, track, context);
-    for (const clip of track.clips) {
-      if ((clip.kind ?? 'midi') === 'midi') tallyFields(loss, CLIP_FIELDS, clip, context);
-    }
-  }
-  return loss.report();
 }

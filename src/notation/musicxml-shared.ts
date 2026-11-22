@@ -57,3 +57,9 @@ export function inferChordRootMidi(pitches: readonly number[]): number | undefin
   }
   return root;
 }
+
+/** Formats BPM with at most one decimal place. */
+export function tempoText(bpm: number): string {
+  const rounded = Math.round(bpm * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
