@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "license": "AGPL-3.0-or-later",
   "private": true,
+  "homepage": "https://sonare-studio.libraz.net",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/libraz/sonare-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/libraz/sonare-studio/issues"
+  },
   "type": "module",
   "packageManager": "yarn@4.19.0",
   "scripts": {
