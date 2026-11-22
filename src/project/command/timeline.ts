@@ -646,6 +646,153 @@ export function insertTime(atPpq: number, lengthPpq: number): void {
   });
 }
 
+type TimelineStore = ReturnType<typeof useProjectStore>;
+type DuplicatedClip = { id: number; targetStartPpq: number };
+
+/** Copies each source clip's window into parking space past the final ripple boundary. */
+function parkDuplicatedClipWindows(
+  edit: AtomicProjectEdit,
+  sourceClips: EditorClip[],
+  originalClips: EditorClip[],
+  startPpq: number,
+  endPpq: number,
+): DuplicatedClip[] {
+  const lengthPpq = endPpq - startPpq;
+  // A normal project disallows overlapping clips. Keep temporary copies past
+  // the final ripple boundary, then place their trimmed windows in the gap.
+  let parkingStartPpq =
+    Math.max(endPpq, ...originalClips.map((clip) => clip.startPpq + clip.lengthPpq)) +
+    lengthPpq +
+    1;
+  return sourceClips.map((source) => {
+    const windowStartPpq = Math.max(startPpq, source.startPpq);
+    const windowEndPpq = Math.min(endPpq, source.startPpq + source.lengthPpq);
+    const parking = parkingStartPpq;
+    parkingStartPpq += source.lengthPpq + 1;
+    return {
+      id: duplicateClipWindowForTimeline(edit, source, windowStartPpq, windowEndPpq, parking),
+      targetStartPpq: windowStartPpq + lengthPpq,
+    };
+  });
+}
+
+/** Ripples the original clips right of the window, splitting one that spans its end. */
+function rippleClipsPastDuplicatedWindow(
+  edit: AtomicProjectEdit,
+  originalClips: EditorClip[],
+  endPpq: number,
+  lengthPpq: number,
+): void {
+  // Ripple only original clips; temporary copies stay parked until the gap
+  // is clear. They are moved into it after the timeline metadata is updated.
+  const rippleMoves: LaneMove[] = [];
+  for (const clip of originalClips) {
+    const end = clip.startPpq + clip.lengthPpq;
+    if (clip.startPpq >= endPpq) {
+      rippleMoves.push({ clipId: clip.id, startPpq: clip.startPpq + lengthPpq });
+    } else if (end > endPpq) {
+      const rightId = splitClipWithin(edit, clip.id, endPpq);
+      rippleMoves.push({ clipId: rightId, startPpq: endPpq + lengthPpq });
+    }
+  }
+  moveClipsWithin(edit, rippleMoves);
+}
+
+/** Adds copies of the window's markers and sections shifted by the window length. */
+function duplicateMarkersAndSections(
+  store: TimelineStore,
+  sourceMarkers: TimelineStore['markers'],
+  sourceSections: TimelineStore['sections'],
+  startPpq: number,
+  endPpq: number,
+): void {
+  const lengthPpq = endPpq - startPpq;
+  store.markers = [
+    ...store.markers,
+    ...sourceMarkers
+      .filter((marker) => marker.ppq >= startPpq && marker.ppq < endPpq)
+      .map((marker) => ({ ...marker, id: allocateMarkerId(), ppq: marker.ppq + lengthPpq })),
+  ].sort((left, right) => left.ppq - right.ppq || left.id - right.id);
+  store.sections = [
+    ...store.sections,
+    ...sourceSections.flatMap((section) => {
+      const copiedStartPpq = Math.max(startPpq, section.startPpq);
+      const copiedEndPpq = Math.min(endPpq, section.endPpq);
+      return copiedEndPpq > copiedStartPpq
+        ? [
+            {
+              ...section,
+              id: allocateSectionId(),
+              startPpq: copiedStartPpq + lengthPpq,
+              endPpq: copiedEndPpq + lengthPpq,
+            },
+          ]
+        : [];
+    }),
+  ].sort(
+    (left, right) =>
+      left.startPpq - right.startPpq || left.endPpq - right.endPpq || left.id - right.id,
+  );
+}
+
+/** Duplicates the window's tempo and meter segments and pushes both maps to the engine. */
+function duplicateTempoAndMeters(
+  edit: AtomicProjectEdit,
+  store: TimelineStore,
+  sourceTempo: TimelineStore['tempoSegments'],
+  sourceMeters: TimelineStore['timeSignatures'],
+  startPpq: number,
+  endPpq: number,
+): void {
+  store.tempoSegments = duplicateTimelineMapWindow(
+    store.tempoSegments,
+    sourceTempo,
+    startPpq,
+    endPpq,
+  );
+  store.timeSignatures = duplicateTimelineMapWindow(
+    store.timeSignatures,
+    sourceMeters,
+    startPpq,
+    endPpq,
+  );
+  edit(1, () =>
+    getProject().setTempoSegments(
+      store.tempoSegments.map((segment) => ({
+        startPpq: segment.startPpq,
+        bpm: segment.bpm,
+        endBpm: segment.endBpm ?? 0,
+      })),
+    ),
+  );
+  edit(1, () =>
+    getProject().setTimeSignatures(
+      store.timeSignatures.map((segment) => ({
+        startPpq: segment.startPpq,
+        numerator: segment.numerator,
+        denominator: segment.denominator,
+      })),
+    ),
+  );
+}
+
+/** Selects the duplicated clips and focuses the editor on the first copy. */
+function selectDuplicatedClips(store: TimelineStore, copies: DuplicatedClip[]): void {
+  // Timeline duplication selects the copied clips in the arrangement. Clip
+  // ids are not note ids, so never leak them into the active piano-roll
+  // selection; the next note command must start with an empty, valid set.
+  store.clipSelection = new Set(copies.map((copy) => copy.id));
+  store.selection = new Set();
+  if (copies[0]) {
+    store.clipId = copies[0].id;
+    store.activeTrackId = store.clips.find((clip) => clip.id === copies[0]?.id)?.trackId ?? -1;
+    // The preceding refresh read the source clip. Refresh once more after
+    // moving the editor focus so note edits target the copied clip.
+    store.refresh();
+    store.selection = new Set();
+  }
+}
+
 /**
  * Duplicates a timeline window directly after itself, rippling later content
  * right. The copied arrangement includes every clip intersection plus markers,
@@ -681,99 +828,17 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
   const nextChords = duplicateChordSymbols(store.chords, startPpq, endPpq);
 
   executeAtomic((edit) => {
-    // A normal project disallows overlapping clips. Keep temporary copies past
-    // the final ripple boundary, then place their trimmed windows in the gap.
-    let parkingStartPpq =
-      Math.max(endPpq, ...originalClips.map((clip) => clip.startPpq + clip.lengthPpq)) +
-      lengthPpq +
-      1;
-    const copies = sourceClips.map((source) => {
-      const windowStartPpq = Math.max(startPpq, source.startPpq);
-      const windowEndPpq = Math.min(endPpq, source.startPpq + source.lengthPpq);
-      const parking = parkingStartPpq;
-      parkingStartPpq += source.lengthPpq + 1;
-      return {
-        id: duplicateClipWindowForTimeline(edit, source, windowStartPpq, windowEndPpq, parking),
-        targetStartPpq: windowStartPpq + lengthPpq,
-      };
-    });
-
-    // Ripple only original clips; temporary copies stay parked until the gap
-    // is clear. They are moved into it after the timeline metadata is updated.
-    const rippleMoves: LaneMove[] = [];
-    for (const clip of originalClips) {
-      const end = clip.startPpq + clip.lengthPpq;
-      if (clip.startPpq >= endPpq) {
-        rippleMoves.push({ clipId: clip.id, startPpq: clip.startPpq + lengthPpq });
-      } else if (end > endPpq) {
-        const rightId = splitClipWithin(edit, clip.id, endPpq);
-        rippleMoves.push({ clipId: rightId, startPpq: endPpq + lengthPpq });
-      }
-    }
-    moveClipsWithin(edit, rippleMoves);
+    const copies = parkDuplicatedClipWindows(edit, sourceClips, originalClips, startPpq, endPpq);
+    rippleClipsPastDuplicatedWindow(edit, originalClips, endPpq, lengthPpq);
     applyTimelineMetadata(edit, 'insert', endPpq, lengthPpq);
-    store.markers = [
-      ...store.markers,
-      ...sourceMarkers
-        .filter((marker) => marker.ppq >= startPpq && marker.ppq < endPpq)
-        .map((marker) => ({ ...marker, id: allocateMarkerId(), ppq: marker.ppq + lengthPpq })),
-    ].sort((left, right) => left.ppq - right.ppq || left.id - right.id);
-    store.sections = [
-      ...store.sections,
-      ...sourceSections.flatMap((section) => {
-        const copiedStartPpq = Math.max(startPpq, section.startPpq);
-        const copiedEndPpq = Math.min(endPpq, section.endPpq);
-        return copiedEndPpq > copiedStartPpq
-          ? [
-              {
-                ...section,
-                id: allocateSectionId(),
-                startPpq: copiedStartPpq + lengthPpq,
-                endPpq: copiedEndPpq + lengthPpq,
-              },
-            ]
-          : [];
-      }),
-    ].sort(
-      (left, right) =>
-        left.startPpq - right.startPpq || left.endPpq - right.endPpq || left.id - right.id,
-    );
+    duplicateMarkersAndSections(store, sourceMarkers, sourceSections, startPpq, endPpq);
     store.automationLanes = duplicateAutomationWindow(
       store.automationLanes,
       sourceAutomation,
       startPpq,
       endPpq,
     );
-    store.tempoSegments = duplicateTimelineMapWindow(
-      store.tempoSegments,
-      sourceTempo,
-      startPpq,
-      endPpq,
-    );
-    store.timeSignatures = duplicateTimelineMapWindow(
-      store.timeSignatures,
-      sourceMeters,
-      startPpq,
-      endPpq,
-    );
-    edit(1, () =>
-      getProject().setTempoSegments(
-        store.tempoSegments.map((segment) => ({
-          startPpq: segment.startPpq,
-          bpm: segment.bpm,
-          endBpm: segment.endBpm ?? 0,
-        })),
-      ),
-    );
-    edit(1, () =>
-      getProject().setTimeSignatures(
-        store.timeSignatures.map((segment) => ({
-          startPpq: segment.startPpq,
-          numerator: segment.numerator,
-          denominator: segment.denominator,
-        })),
-      ),
-    );
+    duplicateTempoAndMeters(edit, store, sourceTempo, sourceMeters, startPpq, endPpq);
     moveClipsWithin(
       edit,
       copies.map((copy) => ({ clipId: copy.id, startPpq: copy.targetStartPpq })),
@@ -782,19 +847,7 @@ export function duplicateTime(startPpq: number, endPpq: number): void {
     store.refresh();
     reinstallTimelineWarps(edit);
     store.refresh();
-    // Timeline duplication selects the copied clips in the arrangement. Clip
-    // ids are not note ids, so never leak them into the active piano-roll
-    // selection; the next note command must start with an empty, valid set.
-    store.clipSelection = new Set(copies.map((copy) => copy.id));
-    store.selection = new Set();
-    if (copies[0]) {
-      store.clipId = copies[0].id;
-      store.activeTrackId = store.clips.find((clip) => clip.id === copies[0]?.id)?.trackId ?? -1;
-      // The preceding refresh read the source clip. Refresh once more after
-      // moving the editor focus so note edits target the copied clip.
-      store.refresh();
-      store.selection = new Set();
-    }
+    selectDuplicatedClips(store, copies);
   });
 }
 
