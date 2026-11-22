@@ -72,6 +72,7 @@ This is what a change looks like by the time it is merged. The maintainer checks
 - Keep a new export option off by default, so existing exports stay byte-identical.
 - When the engine lacks something a feature needs, report it to libsonare rather than working around it in the app.
 - Add tests under `tests/` for the code you changed. Where a change fixes a defect, include a test that fails without the fix.
+- Back a feature named in the README or a guide page with an end-to-end scenario that reaches it through the UI: menus, panels, dock tabs and keys. A scenario that reaches a feature through a `window.__sonareDebug` hook covers the engine path, not the claim.
 - Write comments in English and give exported symbols a TSDoc comment.
 
 ### Commit messages
