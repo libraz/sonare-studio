@@ -293,9 +293,9 @@ describe('how far an arrival reaches', () => {
     );
   });
 
-  // libcantus gives a lone held tonic that ends the piece no timeline segment,
-  // so the authentic cadence into the final bar is lost.
-  it.fails('closes the inferred reading on the final authentic cadence', () => {
+  // A lone held tonic that ends the piece reads as the key's triad on it, so
+  // the authentic cadence into the final bar is kept.
+  it('closes the inferred reading on the final authentic cadence', () => {
     const notes = periodicMelody();
     const inferred = cadenceOnsets(notes, buildGuidance(guidanceInput({ notes })).byNoteId);
     expect(inferred).toContainEqual(expect.objectContaining({ at: 60, type: 'authentic' }));

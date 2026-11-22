@@ -252,10 +252,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@libraz/libcantus@npm:1.4.2":
-  version: 1.4.2
-  resolution: "@libraz/libcantus@npm:1.4.2"
-  checksum: 10c0/cf51e95ec4c53430168333e78078d7ecb402cf2fc1d5d181b55a9d846e7d5845f55c0ddfb486e79353da9eb6e0250bdc42731e189dbb16259c54b3892f17b646
+"@libraz/libcantus@npm:1.4.3":
+  version: 1.4.3
+  resolution: "@libraz/libcantus@npm:1.4.3"
+  checksum: 10c0/72eb0598945aad6a60256b0c0c90e2116812838ae97671b24ed509d84fa8e202645c1a5e5d6b30ebe3a4de483505b52651fa5d93faad6982525c0bd864c47ec5
   languageName: node
   linkType: hard
 
@@ -1788,7 +1788,7 @@ __metadata:
     "@biomejs/biome": "npm:^2.6"
     "@breezystack/lamejs": "npm:^1.2.7"
     "@fontsource-variable/bricolage-grotesque": "npm:^5.3.0"
-    "@libraz/libcantus": "npm:1.4.2"
+    "@libraz/libcantus": "npm:1.4.3"
     "@types/node": "npm:^26"
     "@vitejs/plugin-vue": "npm:^6"
     "@vitest/coverage-v8": "npm:^5.1.1"
