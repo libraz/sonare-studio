@@ -5,12 +5,7 @@ import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
-import {
-  type AnchorRect,
-  placeTooltip,
-  type TooltipPlacement,
-  type TooltipSide,
-} from './tour-placement';
+import { type AnchorRect, placeTooltip, type TooltipPlacement } from './tour-placement';
 import { TourSequence, type TourStep } from './tour-steps';
 
 /**

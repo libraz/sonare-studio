@@ -8,7 +8,7 @@
  * scheduled redraw through an internal watcher.
  */
 
-import { markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
+import { markRaw, onBeforeUnmount, onMounted, type Ref, watch } from 'vue';
 import { getCanvasContext } from '@/components/piano-roll/theme';
 import { clamp } from '@/lib/math';
 import type { LoadedAudioAsset } from '@/persistence/assets';
@@ -69,6 +69,10 @@ const NOTE_LABEL_MIN_GAP_PX = 26;
 
 /** Options for {@link useSampleViewport}. */
 export interface UseSampleViewportOptions {
+  /** Scroll wrapper element ref, bound by the owning template. */
+  wrapRef: Ref<HTMLDivElement | null>;
+  /** Waveform canvas element ref, bound by the owning template. */
+  canvasRef: Ref<HTMLCanvasElement | null>;
   /** Currently loaded asset ref (null when none). */
   asset: Ref<LoadedAudioAsset | null>;
   /** Selection draft ref (drives the selection overlay). */
@@ -110,10 +114,8 @@ export class VisiblePeaksCache {
 
 /** Viewport rendering/navigation surface returned by {@link useSampleViewport}. */
 export function useSampleViewport(options: UseSampleViewportOptions) {
-  const { asset, selection, onsetFrames, noteRegions, formatNote, selRange } = options;
-
-  const wrapRef = ref<HTMLDivElement | null>(null);
-  const canvasRef = ref<HTMLCanvasElement | null>(null);
+  const { asset, selection, onsetFrames, noteRegions, formatNote, selRange, wrapRef, canvasRef } =
+    options;
 
   /** Non-reactive: redraws are scheduled explicitly after viewport changes. */
   let viewport: SampleViewport | null = null;
@@ -339,8 +341,6 @@ export function useSampleViewport(options: UseSampleViewportOptions) {
   });
 
   return {
-    wrapRef,
-    canvasRef,
     scheduleDraw,
     getViewport,
     syncViewportToFrames,

@@ -16,7 +16,6 @@ import { useAppSettings } from '@/composables/useAppSettings';
 import { useOutsidePointerDown } from '@/composables/useOutsidePointerDown';
 import { renderMixdownInWorker } from '@/export/client';
 import { formatClippingCensus } from '@/export/export-issue-format';
-import type { MixdownResult } from '@/export/mixdown';
 import { dbToLinear } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
@@ -83,7 +82,6 @@ import {
   type MasteringReferenceAudio,
 } from '@/ui/mastering/reference-audio';
 import {
-  createDefaultStreamingPlatforms,
   invalidStreamingPlatformCount,
   normalizeStreamingPlatforms,
   type StreamingTarget,
@@ -816,12 +814,6 @@ previewState.value = controller.state();
 const variant = ref<'processed' | 'bypassed'>('processed');
 /** Monitor-only A/B level matching; enabled by default for fair comparisons. */
 const levelMatchEnabled = ref(true);
-
-const activeResult = computed<MixdownResult | null>(() => {
-  const state = previewState.value;
-  if (!state) return null;
-  return variant.value === 'processed' ? state.processed : state.bypassed;
-});
 
 const canPlayPreview = computed(
   () => !!previewState.value?.processed && !!previewState.value?.bypassed,

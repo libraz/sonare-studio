@@ -56,7 +56,7 @@ type MidiRecording = ReturnType<typeof useMidiRecording>;
 type Shortcuts = ReturnType<typeof useShortcuts>;
 type FocusZone = 'arrange' | 'editor';
 
-interface ArrangementCommands {
+export interface ArrangementCommands {
   cutAtPlayhead: () => void;
   zoomHorizontal: (factor: number) => void;
   zoomToFit: () => void;
@@ -81,6 +81,7 @@ export interface AppShortcutsMenuOptions {
   isGlobalShortcutBlocked?: () => boolean;
   layouts: Ref<readonly { name: string }[]>;
   loopEnabled: Ref<boolean>;
+  arrangementRef: Ref<ArrangementCommands | null>;
   pianoRollRef: Ref<PianoRollCommands | null>;
   opfsAvailable: boolean;
   /** Current transport playhead, used to place pasted note selections. */
@@ -140,7 +141,6 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   const store = useProjectStore();
   const { t } = useI18n();
   const focusZone = ref<FocusZone>('editor');
-  const arrangementRef = ref<ArrangementCommands | null>(null);
   const menuPlatform = detectPlatform();
 
   function selectAllNotes(): void {
@@ -369,7 +369,7 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         return true;
       }
       case 'arrange.splitClipAtPlayhead':
-        arrangementRef.value?.cutAtPlayhead();
+        options.arrangementRef.value?.cutAtPlayhead();
         return true;
       case 'arrange.deleteClip':
         deleteClip(store.clipId);
@@ -407,15 +407,15 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
         options.toggleScorePanel();
         return true;
       case 'view.zoomIn':
-        if (focusZone.value === 'arrange') arrangementRef.value?.zoomHorizontal(1.2);
+        if (focusZone.value === 'arrange') options.arrangementRef.value?.zoomHorizontal(1.2);
         else options.pianoRollRef.value?.zoomHorizontal(1.2);
         return true;
       case 'view.zoomOut':
-        if (focusZone.value === 'arrange') arrangementRef.value?.zoomHorizontal(1 / 1.2);
+        if (focusZone.value === 'arrange') options.arrangementRef.value?.zoomHorizontal(1 / 1.2);
         else options.pianoRollRef.value?.zoomHorizontal(1 / 1.2);
         return true;
       case 'view.zoomToFit':
-        if (focusZone.value === 'arrange') arrangementRef.value?.zoomToFit();
+        if (focusZone.value === 'arrange') options.arrangementRef.value?.zoomToFit();
         else options.pianoRollRef.value?.fitSelection();
         return true;
       case 'tool.select':
@@ -783,7 +783,6 @@ export function useAppShortcutsMenu(options: AppShortcutsMenuOptions) {
   }
 
   return {
-    arrangementRef,
     focusZone,
     commandPaletteItems,
     layoutMenu,

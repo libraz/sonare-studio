@@ -475,7 +475,6 @@ function choosePreset(preset: string): void {
 const fonts = ref<SoundFontMeta[]>([]);
 const fontsLoading = ref(false);
 const sf2Selection = ref(createSf2Selection(null));
-const sf2FileInput = ref<HTMLInputElement | null>(null);
 // Whether the SF2 tab shows the multi-timbral channel map. Seeded from the
 // loaded instrument so a saved channel map reopens expanded.
 const sf2MultiTimbral = ref(false);
@@ -1471,7 +1470,6 @@ const instrumentSourceCaption = computed(() => {
               <label class="load-sf2">
                 {{ t.shell.devicesPanel.loadSf2 }}
                 <input
-                  ref="sf2FileInput"
                   class="load-sf2-input"
                   type="file"
                   accept=".sf2"

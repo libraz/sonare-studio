@@ -58,7 +58,11 @@ describe('useSampleViewport', () => {
     const selection = ref<null | { startFrame: number; endFrame: number }>(null);
     const Host = defineComponent({
       setup() {
+        const wrapRef = ref<HTMLDivElement | null>(null);
+        const canvasRef = ref<HTMLCanvasElement | null>(null);
         const viewport = useSampleViewport({
+          wrapRef,
+          canvasRef,
           asset,
           selection,
           onsetFrames: ref([]),
@@ -67,8 +71,7 @@ describe('useSampleViewport', () => {
           selRange: () => null,
         });
         viewport.syncViewportToFrames(40);
-        return () =>
-          h('div', { ref: viewport.wrapRef }, [h('canvas', { ref: viewport.canvasRef })]);
+        return () => h('div', { ref: wrapRef }, [h('canvas', { ref: canvasRef })]);
       },
     });
 
@@ -120,7 +123,11 @@ describe('useSampleViewport', () => {
     const selection = ref<null | { startFrame: number; endFrame: number }>(null);
     const Host = defineComponent({
       setup() {
-        const viewport = useSampleViewport({
+        const wrapRef = ref<HTMLDivElement | null>(null);
+        const canvasRef = ref<HTMLCanvasElement | null>(null);
+        useSampleViewport({
+          wrapRef,
+          canvasRef,
           asset: ref(null),
           selection,
           onsetFrames: ref([]),
@@ -128,8 +135,7 @@ describe('useSampleViewport', () => {
           formatNote: (midi: number) => String(Math.round(midi)),
           selRange: () => null,
         });
-        return () =>
-          h('div', { ref: viewport.wrapRef }, [h('canvas', { ref: viewport.canvasRef })]);
+        return () => h('div', { ref: wrapRef }, [h('canvas', { ref: canvasRef })]);
       },
     });
 
@@ -173,7 +179,11 @@ describe('useSampleViewport', () => {
     const selection = ref<null | { startFrame: number; endFrame: number }>(null);
     const Host = defineComponent({
       setup() {
+        const wrapRef = ref<HTMLDivElement | null>(null);
+        const canvasRef = ref<HTMLCanvasElement | null>(null);
         const viewport = useSampleViewport({
+          wrapRef,
+          canvasRef,
           asset,
           selection,
           onsetFrames: ref([]),
@@ -182,8 +192,7 @@ describe('useSampleViewport', () => {
           selRange: () => selection.value,
         });
         viewport.syncViewportToFrames(40);
-        return () =>
-          h('div', { ref: viewport.wrapRef }, [h('canvas', { ref: viewport.canvasRef })]);
+        return () => h('div', { ref: wrapRef }, [h('canvas', { ref: canvasRef })]);
       },
     });
 

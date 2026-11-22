@@ -75,7 +75,7 @@ import {
   type PitchRangePresetId,
 } from '@/project/pitch-range';
 import { catalogParamInfo } from '@/project/processor-controls';
-import { getWasmModule, useProjectStore } from '@/project/store';
+import { useProjectStore } from '@/project/store';
 import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
 import {
   type EditorClip,
@@ -85,7 +85,6 @@ import {
 } from '@/project/types';
 import {
   type ArrangementRowLayout,
-  AUTOMATION_LANE_HEIGHT_PX,
   reorderRowIndexForDelta,
   TAKE_LANE_HEIGHT_PX,
   trackActiveTakeIndex,

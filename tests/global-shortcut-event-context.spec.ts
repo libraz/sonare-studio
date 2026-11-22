@@ -54,7 +54,9 @@ function harness(actionId: string, overrides: Record<string, unknown> = {}) {
   const match = vi.fn(() => actionId);
   const togglePlayback = vi.fn();
   const nudgeByBar = vi.fn();
+  const arrangementRef = ref(null);
   const menu = useAppShortcutsMenu({
+    arrangementRef,
     deviceRackOpen: ref(false),
     commandPaletteOpen: ref(false),
     editorTool: ref('select'),
@@ -79,7 +81,7 @@ function harness(actionId: string, overrides: Record<string, unknown> = {}) {
     togglePlayback,
     ...overrides,
   } as never);
-  return { menu, match, togglePlayback, nudgeByBar };
+  return { menu, match, togglePlayback, nudgeByBar, arrangementRef };
 }
 
 function keydown(init: KeyboardEventInit, target?: EventTarget): KeyboardEvent {
@@ -156,9 +158,9 @@ describe('global shortcut event context', () => {
 
     it('disables split when the playhead is outside the clip and refuses the shortcut', () => {
       const positionPpq = ref(40);
-      const { menu } = harness('arrange.splitClipAtPlayhead', { positionPpq });
+      const { menu, arrangementRef } = harness('arrange.splitClipAtPlayhead', { positionPpq });
       const cutAtPlayhead = vi.fn();
-      menu.arrangementRef.value = { cutAtPlayhead } as never;
+      arrangementRef.value = { cutAtPlayhead } as never;
 
       expect(row(menu, 'arrange.splitClipAtPlayhead')?.disabledReason).toBeTruthy();
       const event = keydown({ key: 'b' });

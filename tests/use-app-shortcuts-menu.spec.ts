@@ -30,6 +30,7 @@ describe('useAppShortcutsMenu', () => {
     const match = vi.fn(() => 'transport.togglePlayback');
     const togglePlayback = vi.fn();
     const menu = useAppShortcutsMenu({
+      arrangementRef: ref(null),
       deviceRackOpen: ref(false),
       commandPaletteOpen: ref(false),
       editorTool: ref('select'),
@@ -141,6 +142,7 @@ describe('useAppShortcutsMenu', () => {
     const match = vi.fn(() => 'app.commandPalette');
     const commandPaletteOpen = ref(false);
     const menu = useAppShortcutsMenu({
+      arrangementRef: ref(null),
       deviceRackOpen: ref(false),
       commandPaletteOpen,
       editorTool: ref('select'),

@@ -53,7 +53,7 @@ import { useActionGuards } from '@/composables/useActionGuards';
 import { useAppLifecycle } from '@/composables/useAppLifecycle';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { type DockTab, useAppShellLayout } from '@/composables/useAppShellLayout';
-import { useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
+import { type ArrangementCommands, useAppShortcutsMenu } from '@/composables/useAppShortcutsMenu';
 import { liveDocumentFlushes, useAutosave } from '@/composables/useAutosave';
 import { useEditorTool } from '@/composables/useEditorTool';
 import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
@@ -98,7 +98,6 @@ import { persistedProjectStateKey } from '@/project/persisted-state';
 import { evaluateProjectCapacity, formatProjectCapacityIssue } from '@/project/project-capacity';
 import { serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
-import { isAudioClip } from '@/project/types';
 import { installPwaReloadPreparation } from '@/pwa';
 import { installPwaLaunchQueue, type PwaLaunchQueue } from '@/pwa-launch';
 import { clearAudioClipData } from '@/ui/arrangement/audio-clip-data';
@@ -141,6 +140,7 @@ const analyser = shallowRef<AnalyserBridge | null>(null);
 const scope = shallowRef<ScopeBridge | null>(null);
 
 const transport = useTransport(() => handle.value);
+const arrangementRef = ref<ArrangementCommands | null>(null);
 const pianoRollRef = ref<{
   fitSelection: () => void;
   zoomHorizontal: (factor: number) => void;
@@ -403,7 +403,6 @@ const {
   openStartScreen,
   continueSession,
   openDemo,
-  markClean,
   closeProjectMenu,
   openNewDialog,
   onCreateProject,
@@ -482,7 +481,6 @@ const {
   onAudioImportChange,
   onRedetectClipTempo,
   onStemImportChange,
-  placeAssetAtPlayhead,
 } = useProjectAudioAssets({
   closeProjectMenu,
   positionPpq,
@@ -498,7 +496,6 @@ const {
   applyNow,
   applyToEngine,
   disposeEngineProjectSync,
-  effectiveTempoSegments,
   hasMidiSync,
   scheduleApply,
   sendLiveExternalMidi,
@@ -528,32 +525,26 @@ const {
   transport,
 });
 
-const {
-  disposeEngineLifecycle,
-  ensureEngineStarted,
-  playTestTone,
-  renderOffline,
-  restartEngine,
-  startEngine,
-} = useEngineLifecycle({
-  bridge,
-  analyser,
-  scope,
-  ctxState,
-  errorMessage,
-  handle,
-  renderInfo,
-  transport,
-  applyToEngine,
-  bootPromise: () => bootPromise,
-  runAction,
-  resetEngineProjectSync: disposeEngineProjectSync,
-  setEngineSyncHandles,
-  syncAutomationState,
-  syncMidiState,
-  syncMixerState,
-  syncTransportState,
-});
+const { disposeEngineLifecycle, ensureEngineStarted, playTestTone, renderOffline, restartEngine } =
+  useEngineLifecycle({
+    bridge,
+    analyser,
+    scope,
+    ctxState,
+    errorMessage,
+    handle,
+    renderInfo,
+    transport,
+    applyToEngine,
+    bootPromise: () => bootPromise,
+    runAction,
+    resetEngineProjectSync: disposeEngineProjectSync,
+    setEngineSyncHandles,
+    syncAutomationState,
+    syncMidiState,
+    syncMixerState,
+    syncTransportState,
+  });
 
 setEngineRebuildHandler(restartEngine);
 
@@ -655,7 +646,6 @@ const {
   applyTempo,
   bbtDisplay,
   bbtDraft,
-  bbtEditing,
   hasLocatorWindow,
   nudgeByBar,
   onBbtCommit,
@@ -744,16 +734,6 @@ function onOpenGenerateKey(): void {
   listsInitialTab.value = 'key';
 }
 
-const EDITOR_DOCK_TABS: readonly DockTab[] = [
-  'roll',
-  'mixer',
-  'mastering',
-  'steps',
-  'lists',
-  'media',
-  'sample',
-];
-
 function dockTabId(tab: DockTab): string {
   return `editor-dock-tab-${tab}`;
 }
@@ -816,79 +796,74 @@ const { onWindowPointerDown } = useOutsidePopovers([
 
 // --- App-level keyboard shortcuts ---------------------------------------------
 
-const {
-  arrangementRef,
-  commandPaletteItems,
-  focusZone,
-  layoutMenu,
-  menuBarModel,
-  onGlobalKeyDown,
-} = useAppShortcutsMenu({
-  commandPaletteOpen,
-  canRecord,
-  deviceRackOpen,
-  editorTool,
-  handle,
-  helpOpen,
-  isGlobalShortcutBlocked: () => globalShortcutsBlocked.value,
-  isPlaying,
-  isRecording,
-  layouts: namedLayouts.layouts,
-  loopEnabled,
-  opfsAvailable,
-  pianoRollRef,
-  positionPpq,
-  midiRecording,
-  recentNames: recentMenuNames,
-  recording,
-  scoreVisible,
-  settingsOpen,
-  shortcuts,
-  applyNamedLayout,
-  exportDawproject: exportDawprojectAction,
-  exportBrowserBackup: exportBrowserBackupAction,
-  exportMidi2: exportMidi2Action,
-  exportMusicXml: exportMusicXmlAction,
-  exportSmf: exportSmfAction,
-  exportSzd: exportSzdAction,
-  importAudio: importAudioAction,
-  importStems: importStemsAction,
-  importBrowserBackup: importBrowserBackupAction,
-  importDawproject: importDawprojectAction,
-  importMusicXml: importMusicXmlAction,
-  importMidi: importMidiAction,
-  nudgeByBar,
-  openAbout,
-  openDiagnostics,
-  openExportDialog,
-  openChordGenerateDialog,
-  openTrackGenerateDialog: () => openTrackGenerateDialog(),
-  openKeyChangeDialog,
-  openNewDialog,
-  openOpenDialog,
-  openRevisionsDialog,
-  openRecentProject,
-  openStartScreen,
-  openDemo,
-  openShortcutsHelp,
-  openWelcomeTour,
-  onError: (message) => {
-    errorMessage.value = message;
-  },
-  saveCurrentLayout: saveCurrentLayoutAction,
-  saveProjectAction,
-  saveProjectAsAction,
-  seekToEnd,
-  seekToStart,
-  setEditorTool,
-  setLeftLocator,
-  setRightLocator,
-  toggleDeviceRack,
-  toggleLoop,
-  togglePlayback,
-  toggleRecord,
-  toggleScorePanel,
-});
+const { commandPaletteItems, focusZone, layoutMenu, menuBarModel, onGlobalKeyDown } =
+  useAppShortcutsMenu({
+    arrangementRef,
+    commandPaletteOpen,
+    canRecord,
+    deviceRackOpen,
+    editorTool,
+    handle,
+    helpOpen,
+    isGlobalShortcutBlocked: () => globalShortcutsBlocked.value,
+    isPlaying,
+    isRecording,
+    layouts: namedLayouts.layouts,
+    loopEnabled,
+    opfsAvailable,
+    pianoRollRef,
+    positionPpq,
+    midiRecording,
+    recentNames: recentMenuNames,
+    recording,
+    scoreVisible,
+    settingsOpen,
+    shortcuts,
+    applyNamedLayout,
+    exportDawproject: exportDawprojectAction,
+    exportBrowserBackup: exportBrowserBackupAction,
+    exportMidi2: exportMidi2Action,
+    exportMusicXml: exportMusicXmlAction,
+    exportSmf: exportSmfAction,
+    exportSzd: exportSzdAction,
+    importAudio: importAudioAction,
+    importStems: importStemsAction,
+    importBrowserBackup: importBrowserBackupAction,
+    importDawproject: importDawprojectAction,
+    importMusicXml: importMusicXmlAction,
+    importMidi: importMidiAction,
+    nudgeByBar,
+    openAbout,
+    openDiagnostics,
+    openExportDialog,
+    openChordGenerateDialog,
+    openTrackGenerateDialog: () => openTrackGenerateDialog(),
+    openKeyChangeDialog,
+    openNewDialog,
+    openOpenDialog,
+    openRevisionsDialog,
+    openRecentProject,
+    openStartScreen,
+    openDemo,
+    openShortcutsHelp,
+    openWelcomeTour,
+    onError: (message) => {
+      errorMessage.value = message;
+    },
+    saveCurrentLayout: saveCurrentLayoutAction,
+    saveProjectAction,
+    saveProjectAsAction,
+    seekToEnd,
+    seekToStart,
+    setEditorTool,
+    setLeftLocator,
+    setRightLocator,
+    toggleDeviceRack,
+    toggleLoop,
+    togglePlayback,
+    toggleRecord,
+    toggleScorePanel,
+  });
 
 // --- Lifecycle ----------------------------------------------------------------
 

@@ -148,7 +148,11 @@ const {
   setSelectionRange,
 } = selectionControls;
 
+const wrapRef = ref<HTMLDivElement | null>(null);
+const canvasRef = ref<HTMLCanvasElement | null>(null);
 const viewportControls = useSampleViewport({
+  wrapRef,
+  canvasRef,
   asset,
   selection,
   onsetFrames,
@@ -156,7 +160,7 @@ const viewportControls = useSampleViewport({
   formatNote: (midi) => formatMidiNote(midi, noteNameSystem.value),
   selRange: () => selRange.value,
 });
-const { wrapRef, canvasRef, scheduleDraw, zoomToFit, onWheel } = viewportControls;
+const { scheduleDraw, zoomToFit, onWheel } = viewportControls;
 
 const { onDetectTransients, onDetectNotes, onSplitSilence, onClearTransients } = markers;
 
