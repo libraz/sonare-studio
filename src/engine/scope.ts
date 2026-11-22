@@ -72,7 +72,7 @@ export interface ScopeBridge extends ScopeSource {
 
 /** True when the negotiated capabilities can carry scope telemetry. */
 function scopeIsAvailable(handle: EngineHandle): boolean {
-  return handle.capabilities.mode === 'sab' && handle.capabilities.runtimeTarget === 'embind';
+  return handle.capabilities.mode === 'sab';
 }
 
 /** Copies an engine snapshot into a stable {@link ScopeFrame}. */
