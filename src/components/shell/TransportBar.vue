@@ -227,6 +227,7 @@ function onApplyCustomVoicePreset(): void {
     customVoiceError.value = t.value.shell.transport.voiceChangerJsonInvalid;
     return;
   }
+  // JSON boundary: the checks above establish the envelope; the core validates the rest.
   props.recording.setVoiceChangerPreset(parsed as unknown as CustomVoiceChangerPreset);
 }
 

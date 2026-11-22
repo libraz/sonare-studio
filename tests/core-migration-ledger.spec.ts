@@ -84,6 +84,31 @@ const STUDIO_OWNED: ReadonlyArray<{ name: string; files: string[]; reason: strin
     reason: 'spec-local defect overrides',
     files: ['tests/sample-editor-repair-analysis.spec.ts'],
   },
+  {
+    name: 'setCaptureSource',
+    reason: 'studio recording composable',
+    files: [
+      'src/composables/useRecordingControls.ts',
+      'tests/recording-cycle.spec.ts',
+      'tests/use-recording-controls.spec.ts',
+      'tests/use-recording.spec.ts',
+    ],
+  },
+  {
+    name: 'setInputMonitor',
+    reason: 'E2E debug surface',
+    files: ['scripts/e2e/scenarios/input-monitor.mjs'],
+  },
+  ...['beatTimes', 'beatStrengths'].map((name) => ({
+    name,
+    reason: 'studio analysis-worker protocol',
+    files: ['src/project/audio-analysis-client.ts'],
+  })),
+  {
+    name: 'keyConfidence',
+    reason: 'persisted audio tag key',
+    files: ['src/project/audio-tags.ts'],
+  },
   ...['sidechainHpfHz', 'sidechainHpfEnabled', 'retuneGrainSize', 'elevation'].map((name) => ({
     name,
     reason: 'reads 1.x keys out of a v5 document to migrate them',
@@ -91,10 +116,31 @@ const STUDIO_OWNED: ReadonlyArray<{ name: string; files: string[]; reason: strin
   })),
 ];
 
-/** `file name` pairs {@link STUDIO_OWNED} suppressed during the last scan. */
+/**
+ * Common studio vocabulary allowed in any file. Typed access to a core value is
+ * guarded by the compiler and by core-cast-guard; this check covers the
+ * untyped remainder, where words this generic would only be noise.
+ */
+const STUDIO_VOCABULARY: ReadonlyArray<{ name: string; reason: string }> = [
+  { name: 'end', reason: 'ranges, streams and gestures' },
+  { name: 'time', reason: 'DAWproject points and studio events' },
+  { name: 'duration', reason: 'DOM media, containers and note fields' },
+  { name: 'distance', reason: 'pointer hit-testing' },
+  { name: 'frequency', reason: 'Web Audio oscillators and E2E readouts' },
+  { name: 'masteringChain', reason: 'studio mixer state' },
+  { name: 'messages', reason: 'worker-client spec fakes' },
+  { name: 'timestamps', reason: 'Web MIDI output spec fakes' },
+  { name: 'roman', reason: 'theory-engine reharmonization results' },
+];
+
+/** `file name` pairs, and bare vocabulary names, suppressed during the last scan. */
 const suppressed = new Set<string>();
 
 function studioOwned(file: string, name: string): boolean {
+  if (STUDIO_VOCABULARY.some((entry) => entry.name === name)) {
+    suppressed.add(name);
+    return true;
+  }
   const owned = STUDIO_OWNED.some((entry) => entry.name === name && entry.files.includes(file));
   if (owned) suppressed.add(`${file} ${name}`);
   return owned;
@@ -123,16 +169,32 @@ function retiredNames(entries: LedgerEntry[]): { exports: Set<string>; members: 
   return { exports, members };
 }
 
-/** Every identifier the vendored 2.0 declarations spell, in any position. */
+/**
+ * The internal embind module description: it keeps raw binding names the
+ * public wrappers renamed, so a name declared only there is not reachable.
+ */
+const RAW_MODULE_DECLS = 'sonare.d.ts';
+
+/** Every identifier the vendored 2.0 public declarations spell outside comments. */
 function declaredNames(): Set<string> {
   const names = new Set<string>();
+  const scanner = ts.createScanner(ts.ScriptTarget.ESNext, true);
   const walk = (dir: string): void => {
     for (const item of readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, item.name);
       if (item.isDirectory()) walk(full);
-      else if (item.name.endsWith('.d.ts')) {
-        for (const match of readFileSync(full, 'utf8').matchAll(/[A-Za-z_$][\w$]*/g)) {
-          names.add(match[0]);
+      else if (item.name.endsWith('.d.ts') && item.name !== RAW_MODULE_DECLS) {
+        scanner.setText(readFileSync(full, 'utf8'));
+        for (
+          let token = scanner.scan();
+          token !== ts.SyntaxKind.EndOfFileToken;
+          token = scanner.scan()
+        ) {
+          if (token === ts.SyntaxKind.Identifier || token >= ts.SyntaxKind.FirstKeyword) {
+            names.add(scanner.getTokenText());
+          } else if (token === ts.SyntaxKind.StringLiteral) {
+            names.add(scanner.getTokenValue());
+          }
         }
       }
     }
@@ -235,9 +297,10 @@ describe('libsonare migration ledger', () => {
     expect(members.has('createClipPageProvider')).toBe(true);
     expect(retiredUses(exports, members)).toEqual([]);
     // An allowance that no longer matches anything is stale and must go.
-    const stale = STUDIO_OWNED.flatMap(({ name, files }) =>
-      files.map((file) => `${file} ${name}`),
-    ).filter((key) => !suppressed.has(key));
+    const stale = [
+      ...STUDIO_OWNED.flatMap(({ name, files }) => files.map((file) => `${file} ${name}`)),
+      ...STUDIO_VOCABULARY.map(({ name }) => name),
+    ].filter((key) => !suppressed.has(key));
     expect(stale).toEqual([]);
   });
 });
