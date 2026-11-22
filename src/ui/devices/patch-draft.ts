@@ -757,8 +757,8 @@ export function createPatchDraft(
 /**
  * Sanitizes a draft into a StoredSynthPatch ready to commit: numeric fields are
  * clamped to their spec ranges (non-finite values are dropped), enum fields are
- * kept as strings, mod routings are filtered/clamped/capped, and
- * binding-internal fields (destinationId) are never emitted. Engine params
+ * kept as strings, mod routings are filtered/clamped/capped, and keys
+ * outside the patch schema are never emitted. Engine params
  * are reduced to the keys the patch's engine lists, clamped to the descriptor.
  *
  * @param draft Editor draft (not mutated).

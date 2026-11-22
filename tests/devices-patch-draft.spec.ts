@@ -190,8 +190,9 @@ describe('createPatchDraft', () => {
     expect(draft.useGmPrograms).toBe(true);
   });
 
-  it('never copies the binding-internal destinationId', () => {
+  it('never copies a key outside the patch schema', () => {
     const draft = createPatchDraft(
+      // @ts-expect-error persisted JSON can carry keys the patch schema does not declare
       { kind: 'synth-patch', patch: { destinationId: 3, gain: 0.5 } },
       () => null,
     );

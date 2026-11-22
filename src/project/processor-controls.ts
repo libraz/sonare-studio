@@ -570,12 +570,12 @@ function cutoffsInEffect(
  * cutoffs in effect: a partial cutoff set replaces the default split, so the
  * edit would otherwise drop the default cutoffs and their bands.
  */
-export function editedProcessorParams<T extends Readonly<Record<string, unknown>>>(
+export function editedProcessorParams(
   processor: string,
-  params: T,
+  params: Readonly<Record<string, InsertParamValue>>,
   param: string,
   value: InsertParamValue,
-): T {
+): Record<string, InsertParamValue> {
   const bounded =
     typeof value === 'number' ? withinSiblings(processor, params, param, value) : value;
   assertCoupledKeysAccepted(processor, { ...params, [param]: bounded }, param);

@@ -1077,10 +1077,9 @@ describe('smfToProjectDocument', () => {
 
     // Standard GM has no plain sine voice: its closest melodic program imports
     // as the square lead, rather than misusing program 120 (guitar fret noise).
-    expect(roundTrip.tracks.map((track) => track.instrument?.preset)).toEqual([
-      ...presets.slice(0, -1),
-      'squareLead',
-    ]);
+    expect(roundTrip.tracks.map((track) => track.instrument)).toMatchObject(
+      [...presets.slice(0, -1), 'squareLead'].map((preset) => ({ kind: 'synth-preset', preset })),
+    );
   });
 
   it('preserves imported GM bank/program metadata when exporting SMF again', async () => {

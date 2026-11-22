@@ -218,11 +218,13 @@ describe('serializeMusicXml metadata header', () => {
       keyFifths: 0,
       noteAnnotations: {
         1: { dynamics: 'mf', articulation: 'accent', slurToNoteId: 2 },
-        2: { lyric: { text: 'la', syllabic: 'single' } },
       },
+      lyrics: [{ ppq: 1 / 3, text: 'la', syllabic: 'single' }],
     };
 
-    expectValidMusicXmlNoteOrder(parse(serializeMusicXml(score)));
+    const xml = serializeMusicXml(score);
+    expect(xml).toContain('<lyric');
+    expectValidMusicXmlNoteOrder(parse(xml));
   });
 
   it('always records the encoding software', () => {

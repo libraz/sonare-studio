@@ -9,7 +9,7 @@ class ResizeObserverStub {
   observe(): void {}
 }
 
-const painter: Painter = { dispose: vi.fn(), flush: vi.fn(), schedule: vi.fn() };
+const painter: Painter = { dispose: vi.fn(), schedule: vi.fn() };
 const range = new TimelineRange({ widthPx: 800, heightPx: 1280, pxPerPpq: 100, rowHeight: 10 });
 
 describe('KeyboardColumn', () => {

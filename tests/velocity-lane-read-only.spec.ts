@@ -11,7 +11,7 @@ vi.mock('@/project/commands', () => commands);
 
 const range = new TimelineRange({ widthPx: 800, heightPx: 100, pxPerPpq: 100 });
 
-const painter: Painter = { dispose: vi.fn(), flush: vi.fn(), schedule: vi.fn() };
+const painter: Painter = { dispose: vi.fn(), schedule: vi.fn() };
 const notes: EditorNote[] = [
   { id: 1, pitch: 60, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0 },
 ];

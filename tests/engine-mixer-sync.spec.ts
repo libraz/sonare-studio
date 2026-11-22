@@ -249,12 +249,12 @@ describe('createMixerSync', () => {
   it('adds automatic insert PDC to the manual channel delay', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle, {
-      insertLatency: (slot) => (slot.processor === 'linear.eq' ? 128 : 0),
+      insertLatency: (slot) => (slot.processor === 'eq.linearPhase' ? 128 : 0),
     });
     const latent = makeTrack(1, {
       mixer: {
         ...createDefaultStrip(),
-        inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+        inserts: [{ processor: 'eq.linearPhase', params: {}, enabled: true }],
       },
     });
     const dry = makeTrack(2);
@@ -273,13 +273,13 @@ describe('createMixerSync', () => {
   it('defers positive PDC until a strip scene has been declared', () => {
     const { handle, engine } = makeHandle();
     const sync = createMixerSync(handle, {
-      insertLatency: (slot) => (slot.processor === 'linear.eq' ? 12 : 0),
+      insertLatency: (slot) => (slot.processor === 'eq.linearPhase' ? 12 : 0),
       deferChannelDelay: true,
     });
     const latent = makeTrack(1, {
       mixer: {
         ...createDefaultStrip(),
-        inserts: [{ processor: 'linear.eq', params: {}, enabled: true }],
+        inserts: [{ processor: 'eq.linearPhase', params: {}, enabled: true }],
       },
     });
     sync.sync([latent, makeTrack(2)], neutralMaster());

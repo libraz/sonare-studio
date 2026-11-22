@@ -76,7 +76,7 @@ function projectFixture(): ProjectDocument {
 
 function scoreFixture(): NotatedScore {
   return {
-    title: 'MusicXML fuzz seed',
+    metadata: { title: 'MusicXML fuzz seed' },
     divisions: 960,
     keyFifths: 0,
     parts: [
@@ -90,7 +90,6 @@ function scoreFixture(): NotatedScore {
             startPpq: 0,
             lengthPpq: 1,
             timeSig: { beats: 4, beatUnit: 4 },
-            implicit: true,
             voices: [
               {
                 voice: 1,

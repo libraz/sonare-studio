@@ -58,7 +58,7 @@ const binders = {
     bindRealtimeVoiceChangerRetuneInput(ctx, engineNode, {
       stream,
       stopTracksOnDestroy: false,
-      semitones: 3,
+      pitchSemitones: 3,
     }),
 };
 

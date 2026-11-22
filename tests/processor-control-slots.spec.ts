@@ -20,7 +20,7 @@ beforeAll(async () => {
   await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
 });
 
-function rack(processor: string, params: Record<string, number | boolean>) {
+function rack(processor: string, params: Readonly<Record<string, unknown>>) {
   const info = catalogParamInfo(processor);
   return processorControls(
     processor,
@@ -101,7 +101,11 @@ describe('editedProcessorParams', () => {
     const params = editedProcessorParams('multiband.compressor', {}, 'cutoff2Hz', 8000);
     expect(params).toEqual({ cutoff0Hz: 120, cutoff1Hz: 2000, cutoff2Hz: 8000 });
     expect(() =>
-      wasm.masteringInsertTiming({ insert: 'multiband.compressor', params, sampleRate: 48000 }),
+      wasm.masteringInsertTiming({
+        insert: 'multiband.compressor',
+        params: params as wasm.MasteringInsertTimingRequest<'multiband.compressor'>['params'],
+        sampleRate: 48000,
+      }),
     ).not.toThrow();
     expect(rack('multiband.compressor', params).map((control) => control.id)).toContain(
       'band3.thresholdDb',

@@ -67,7 +67,7 @@ function validateXml(schema: string, xml: string, name: string): void {
 
 function scoreFixture(): NotatedScore {
   return {
-    title: 'Validator & Roundtrip',
+    metadata: { title: 'Validator & Roundtrip' },
     divisions: 960,
     keyFifths: 0,
     parts: [
@@ -111,7 +111,7 @@ function richScoreFixture(): NotatedScore {
   const half = { base: 'half' as const, dots: 0 };
   const whole = { base: 'whole' as const, dots: 0 };
   return {
-    title: 'Validator rich score',
+    metadata: { title: 'Validator rich score' },
     divisions: 960,
     keyFifths: 1,
     chordSymbols: [

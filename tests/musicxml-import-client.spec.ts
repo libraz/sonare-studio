@@ -59,10 +59,10 @@ describe('importMusicXmlInWorker', () => {
           markers: [],
           sections: [],
         },
-        report: { issues: [{ feature: 'lyrics', count: 2 }] },
+        report: { entries: [{ kind: 'lyrics', count: 2, details: [] }] },
       },
     });
-    await expect(promise).resolves.toMatchObject({ report: { issues: [{ count: 2 }] } });
+    await expect(promise).resolves.toMatchObject({ report: { entries: [{ count: 2 }] } });
     expect(worker.terminated).toBe(true);
   });
 

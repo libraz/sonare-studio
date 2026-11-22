@@ -21,6 +21,7 @@ import {
   trackInstrument,
   validateTrackInstrument,
 } from '@/project/instrument';
+import type { SerializedMidiEvent } from '@/project/midi-events';
 
 describe('gmProgramForPreset', () => {
   it('maps catalog voices to their GM address when switching modes or exporting SMF', () => {
@@ -721,7 +722,7 @@ describe('prerenderMidiClip per instrument kind', () => {
       instrument: { kind: 'sf2', fontId: 'gm', bank: 128, program: 25 },
       loadFont,
     });
-    const events = wasmMock.setMidiEvents.mock.calls[0][1] as Array<{ word0: number }>;
+    const events = wasmMock.setMidiEvents.mock.calls[0][1] as SerializedMidiEvent[];
     // NOTES uses channels 0 and 3: two bank+program triplets precede the notes.
     expect(events.length).toBe(NOTES.length * 2 + 2 * 3);
     const statusNibbles = events.slice(0, 6).map((e) => (e.word0 >>> 20) & 0xf);

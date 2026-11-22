@@ -58,8 +58,8 @@ describe('generation key follows Key markers', () => {
       generateProgressionCommand({ bars: 4, seed: 1 });
       const chords = [...store.chords];
       return {
-        chords: chords.map(({ root, quality, startPpq, endPpq }) => ({
-          root,
+        chords: chords.map(({ rootPc, quality, startPpq, endPpq }) => ({
+          rootPc,
           quality,
           startPpq,
           endPpq,

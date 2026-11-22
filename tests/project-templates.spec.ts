@@ -112,7 +112,12 @@ describe('project templates', () => {
       'Manual II Tenor',
       'Pedal Bass',
     ]);
-    expect(doc.tracks.every((track) => track.instrument?.preset === 'churchOrgan')).toBe(true);
+    expect(
+      doc.tracks.every(
+        (track) =>
+          track.instrument?.kind === 'synth-preset' && track.instrument.preset === 'churchOrgan',
+      ),
+    ).toBe(true);
     expect(doc.tracks.map((track) => track.pitchRange)).toEqual([
       { low: 60, high: 79 },
       { low: 55, high: 74 },

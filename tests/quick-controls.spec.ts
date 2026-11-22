@@ -43,7 +43,8 @@ describe('quick controls', () => {
       const cutoff = controls.find((c) => c.id === 'cutoffHz');
       expect(cutoff).toMatchObject({ name: 'Cutoff', min: 20, max: 20000, unit: 'Hz' });
       const sustain = controls.find((c) => c.id === 'ampSustain');
-      expect(sustain?.unit).toBeUndefined();
+      expect(sustain?.kind).toBe('number');
+      expect(sustain?.kind === 'number' ? sustain.unit : undefined).toBeUndefined();
     });
 
     it('resolves preset base values through the resolver seam', () => {

@@ -26,7 +26,7 @@ describe('mixer bus topology', () => {
           { id: 'print', name: 'Print', gainDb: 0 },
         ],
       },
-      [{ id: 10, mixer: { gainDb: 0, pan: 0, inserts: [], sends: [], outputBusId: 'fx' } }],
+      [{ id: 10, mixer: { inserts: [], sends: [], outputBusId: 'fx' } }],
     );
 
     expect(nodes).toEqual([

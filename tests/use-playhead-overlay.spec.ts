@@ -19,7 +19,6 @@ describe('usePlayheadOverlay', () => {
     vi.stubGlobal('cancelAnimationFrame', cancelAnimationFrame);
     const painter: Painter = {
       schedule: vi.fn(),
-      flush: vi.fn(),
       dispose: vi.fn(),
     };
 
@@ -60,7 +59,7 @@ describe('usePlayheadOverlay', () => {
     } as unknown as CanvasRenderingContext2D;
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx);
 
-    const painter: Painter = { schedule: vi.fn(), flush: vi.fn(), dispose: vi.fn() };
+    const painter: Painter = { schedule: vi.fn(), dispose: vi.fn() };
     const range = new TimelineRange({ widthPx: 1000, heightPx: 40, pxPerPpq: 100 });
     const position = ref(0);
     let overlay!: ReturnType<typeof usePlayheadOverlay>;
