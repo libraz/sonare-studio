@@ -1,45 +1,18 @@
-import {
-  type ComputedRef,
-  computed,
-  nextTick,
-  onScopeDispose,
-  type Ref,
-  ref,
-  watch,
-  watchEffect,
-} from 'vue';
+import { type ComputedRef, computed, nextTick, type Ref, ref, watch } from 'vue';
 import type { useAutosave } from '@/composables/useAutosave';
 import { promptDialog } from '@/composables/useDialogs';
-import { confirmLossReport } from '@/composables/useLossConfirm';
-import { importDawprojectWithMediaResult } from '@/export/dawproject';
+import { useForeignFormatImports } from '@/composables/useForeignFormatImports';
+import { useLiveMediaLeases } from '@/composables/useLiveMediaLeases';
+import { useProjectFileExports } from '@/composables/useProjectFileExports';
+import { useProjectRevisions } from '@/composables/useProjectRevisions';
 import { describeError } from '@/lib/errors';
-import { preflightXmlBytes } from '@/lib/xml-preflight';
-import { importMusicXmlInWorker } from '@/notation/musicxml-import-client';
-import { extractMusicXmlFromMxl } from '@/notation/musicxml-mxl';
-import { leaseAudioAssets, leaseFonts } from '@/persistence/asset-leases';
-import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
-import {
-  createBrowserBackupWithReport,
-  reclaimOrphanedRestoreStagesAtStartup,
-  restoreBrowserBackup,
-} from '@/persistence/backup';
-import {
-  gatherProjectBundleWithReport,
-  type ProjectBundleRestoreLease,
-  restoreProjectBundle,
-} from '@/persistence/bundle';
+import { reclaimOrphanedRestoreStagesAtStartup, restoreBrowserBackup } from '@/persistence/backup';
+import { type ProjectBundleRestoreLease, restoreProjectBundle } from '@/persistence/bundle';
 import { garbageCollectMedia } from '@/persistence/gc';
 import {
-  downloadBrowserBackup,
-  downloadSzd,
-  matchPickedExternalAudioFile,
   type PickedSzdFile,
   pickAndReadBrowserBackup,
-  pickAndReadDawproject,
-  pickAndReadExternalAudioFiles,
   pickAndReadSzd,
-  pickViaInputElement,
-  readFileBytesBounded,
   readSzdFile,
 } from '@/persistence/local-file';
 import {
@@ -56,40 +29,21 @@ import {
   sanitizeProjectName,
   saveProjectChecked,
 } from '@/persistence/opfs';
-import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
-import {
-  deleteProjectRevision,
-  deleteProjectRevisions,
-  listProjectRevisions,
-  loadProjectRevision,
-  type ProjectRevision,
-  saveProjectRevision,
-} from '@/persistence/revisions';
+import { deleteProjectRevisions } from '@/persistence/revisions';
 import {
   decodeSzdInWorker,
   decodeSzdWithBundleInWorker,
   encodeSzd,
-  encodeSzdStreaming,
   SZD_FILE_EXTENSION,
 } from '@/persistence/szd';
-import {
-  collectReferencedAudioAssetIds,
-  createAssetReferenceGuard,
-} from '@/project/asset-references';
 import { collectHistoryReferencedMediaIds } from '@/project/commands';
 import { makeBwv565Document } from '@/project/demo/bwv565';
-import { exportProjectClipFile, exportProjectSmf } from '@/project/export';
-import {
-  formatMediaCompletenessReport,
-  type MediaCompletenessReport,
-} from '@/project/media-completeness';
 import { persistedProjectStateKey } from '@/project/persisted-state';
 import {
   loadProjectDocument,
   type ProjectDocument,
   serializeProject,
 } from '@/project/serialization';
-import { smfToProjectDocument } from '@/project/smf';
 import { useProjectStore } from '@/project/store';
 import { createTemplate, type TemplateName } from '@/project/templates';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -145,7 +99,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const opfsAvailable = isOpfsAvailable();
   const projectMenuOpen = ref(false);
   const projectMenuRoot = ref<HTMLElement | null>(null);
-  const midiImportInput = ref<HTMLInputElement | null>(null);
   const newDialogOpen = ref(false);
   const openDialogOpen = ref(false);
   // The launcher covers the shell from first paint; `booting` keeps its actions
@@ -154,9 +107,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   const booting = ref(true);
   const hasAutosave = ref(false);
   const storedProjects = ref<StoredProjectInfo[]>([]);
-  /** Named revisions of the project the document is saved under. */
-  const revisions = ref<ProjectRevision[]>([]);
-  const revisionsDialogOpen = ref(false);
   const recentProjects = ref<string[]>(loadRecentProjects());
 
   async function replaceProjectDocument(document: ProjectDocument): Promise<void> {
@@ -183,91 +133,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     ),
   );
 
-  // Hold a tab-lifetime lease over the live document's media so another tab's
-  // GC — which cannot see this tab's unsaved Pinia document, and whose autosave
-  // slot may be up to 30 s behind — never deletes an asset or SoundFont this
-  // tab still references. The lease is broadcast cross-tab (asset-leases.ts).
-  const liveAssetLease = leaseAudioAssets([]);
-  const liveFontLease = leaseFonts([]);
-  // A bundle lease that could not be handed off immediately stays here until
-  // the live-document lease can acquire the same ids. This is deliberately
-  // safer than dropping protection during a concurrent tab's delete intent.
-  const pendingBundleRestoreLeases = new Set<ProjectBundleRestoreLease>();
-  let bundleLeaseRetryTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function updateLiveMediaLeases(): void {
-    const fontIds = new Set<string>();
-    for (const track of store.tracks) {
-      if (track.instrument?.kind === 'sf2' && track.instrument.fontId) {
-        fontIds.add(track.instrument.fontId);
-      }
-    }
-    const historyRefs = collectHistoryReferencedMediaIds();
-    const assetIds = collectReferencedAudioAssetIds(store.clips, store.tracks);
-    for (const assetId of historyRefs.assetIds) assetIds.add(assetId);
-    for (const fontId of historyRefs.fontIds) fontIds.add(fontId);
-    liveAssetLease.update(assetIds);
-    liveFontLease.update(fontIds);
-  }
-
-  function releasePendingBundleRestoreLeases(): void {
-    for (const lease of pendingBundleRestoreLeases) lease.release();
-    pendingBundleRestoreLeases.clear();
-    if (bundleLeaseRetryTimer !== undefined) {
-      clearTimeout(bundleLeaseRetryTimer);
-      bundleLeaseRetryTimer = undefined;
-    }
-  }
-
-  function scheduleBundleLeaseRetry(): void {
-    if (pendingBundleRestoreLeases.size === 0 || bundleLeaseRetryTimer !== undefined) return;
-    // GC waits at most one known-peer lease-synchronization interval before
-    // completing its intent, so retry after that window while the temporary
-    // bundle lease remains continuously advertised.
-    bundleLeaseRetryTimer = setTimeout(() => {
-      bundleLeaseRetryTimer = undefined;
-      try {
-        updateLiveMediaLeases();
-        releasePendingBundleRestoreLeases();
-      } catch (error) {
-        errorMessage.value = describeError(error, t.value.notices.errors);
-        scheduleBundleLeaseRetry();
-      }
-    }, 1_100);
-  }
-
-  function handOffBundleRestoreLease(lease: ProjectBundleRestoreLease): void {
-    try {
-      // Do this explicitly rather than merely waiting for the watcher: the
-      // temporary bundle lease may be released only after the tab-lifetime
-      // lease has definitely acquired every document reference.
-      updateLiveMediaLeases();
-      lease.release();
-    } catch (error) {
-      pendingBundleRestoreLeases.add(lease);
-      errorMessage.value = describeError(error, t.value.notices.errors);
-      scheduleBundleLeaseRetry();
-    }
-  }
-
-  watchEffect(() => {
-    try {
-      updateLiveMediaLeases();
-      releasePendingBundleRestoreLeases();
-    } catch (error) {
-      // A live document reference must never be silently abandoned. Existing
-      // pending bundle leases remain held and the retry path keeps trying.
-      errorMessage.value = describeError(error, t.value.notices.errors);
-      scheduleBundleLeaseRetry();
-    }
-  });
-  onScopeDispose(() => {
-    if (bundleLeaseRetryTimer !== undefined) clearTimeout(bundleLeaseRetryTimer);
-    for (const lease of pendingBundleRestoreLeases) lease.release();
-    pendingBundleRestoreLeases.clear();
-    liveAssetLease.release();
-    liveFontLease.release();
-  });
+  const { pendingBundleRestoreLeases, scheduleBundleLeaseRetry, handOffBundleRestoreLease } =
+    useLiveMediaLeases({ errorMessage });
 
   /**
    * Reclaims OPFS audio/SoundFont storage no project references any more, after
@@ -322,21 +189,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     await markClean(documentKey);
     openDialogOpen.value = false;
     startScreenOpen.value = false;
-  }
-
-  async function confirmIncompletePortableExport(
-    report: MediaCompletenessReport,
-  ): Promise<boolean> {
-    if (report.complete) return true;
-    return confirmLossAction(
-      formatMessage(t.value.shell.project.mediaCompleteness.message, {
-        items: formatMediaCompletenessReport(report),
-      }),
-      {
-        title: t.value.shell.project.mediaCompleteness.title,
-        confirmLabel: t.value.shell.project.mediaCompleteness.confirm,
-      },
-    );
   }
 
   /**
@@ -629,146 +481,22 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     await importSzdFile(await readSzdFile(file));
   }
 
-  function importMidiAction(): void {
-    closeProjectMenu();
-    midiImportInput.value?.click();
-  }
-
-  function importMusicXmlAction(): void {
-    closeProjectMenu();
-    void runAction(async () => {
-      if (!(await confirmDiscard())) return;
-      const picked = await pickViaInputElement({
-        accept: '.musicxml,.xml,.mxl',
-        read: async (files) => {
-          const file = files[0];
-          if (!file) return null;
-          preflightXmlBytes(file.size, file.name);
-          const isMxl = file.name.toLowerCase().endsWith('.mxl');
-          return {
-            name: file.name,
-            text: isMxl
-              ? extractMusicXmlFromMxl(new Uint8Array(await file.arrayBuffer()), file.name)
-              : await file.text(),
-          };
-        },
-      });
-      if (!picked) return;
-      const imported = await importMusicXmlInWorker(picked.text, picked.name);
-      if (
-        !(await confirmLossReport(
-          imported.report,
-          t.value.shell.project.musicXmlLoss,
-          confirmLossAction,
-        ))
-      ) {
-        return;
-      }
-      await replaceProjectDocument(imported.document);
-      await settleLoadedProject();
-    });
-  }
-
-  function createExternalAudioResolver(): (path: string) => Promise<Uint8Array | null> {
-    let pickedFiles = null as ReturnType<typeof pickAndReadExternalAudioFiles> | null;
-    const explicitRelinks = new Map<string, Uint8Array | null>();
-    return async (path: string) => {
-      if (explicitRelinks.has(path)) return explicitRelinks.get(path) ?? null;
-      pickedFiles ??= pickAndReadExternalAudioFiles();
-      const files = await pickedFiles;
-      if (!files || files.length === 0) return null;
-      const match = matchPickedExternalAudioFile(path, files);
-      if (match.status === 'exact-path' || match.status === 'unique-basename') {
-        return match.file.bytes;
-      }
-      if (match.status === 'unresolved') return null;
-
-      const candidates = match.files
-        .map((file) => file.relativePath ?? file.name)
-        .sort()
-        .join('\n');
-      const confirmed = await confirmAction(
-        formatMessage(t.value.shell.project.externalMediaRelink.message, {
-          path,
-          candidates,
-        }),
-        {
-          title: t.value.shell.project.externalMediaRelink.title,
-          confirmLabel: t.value.shell.project.externalMediaRelink.confirm,
-        },
-      );
-      if (!confirmed) {
-        explicitRelinks.set(path, null);
-        return null;
-      }
-      const selected = await pickAndReadExternalAudioFiles();
-      const selectedMatch = matchPickedExternalAudioFile(path, selected ?? []);
-      const resolved =
-        selectedMatch.status === 'exact-path' || selectedMatch.status === 'unique-basename'
-          ? selectedMatch.file.bytes
-          : selected?.length === 1
-            ? selected[0].bytes
-            : null;
-      explicitRelinks.set(path, resolved);
-      return resolved;
-    };
-  }
-
-  function importDawprojectAction(): void {
-    closeProjectMenu();
-    void runAction(async () => {
-      if (!(await confirmDiscard())) return;
-      const picked = await pickAndReadDawproject();
-      if (!picked) return;
-      if (!picked.name.toLowerCase().endsWith('.dawproject')) {
-        errorMessage.value = formatMessage(t.value.shell.project.importDawprojectInvalidType, {
-          name: picked.name,
-        });
-        return;
-      }
-      // Leases hold every ingested asset through the loss dialog until the
-      // imported document references it.
-      const assets = createAudioAssetTransaction();
-      try {
-        const imported = await importDawprojectWithMediaResult(picked.bytes, {
-          resolveExternalAudio: createExternalAudioResolver(),
-          save: assets.save,
-        });
-        if (
-          !(await confirmLossReport(
-            imported.loss,
-            t.value.shell.project.dawprojectImportLoss,
-            confirmLossAction,
-          ))
-        ) {
-          await assets.rollback();
-          return;
-        }
-        await replaceProjectDocument(imported.document);
-        assets.commit();
-      } catch (error) {
-        await assets.rollback(createAssetReferenceGuard(store));
-        throw error;
-      }
-      await settleLoadedProject();
-    });
-  }
-
-  function onMidiImportChange(event: Event): void {
-    const input = event.target as HTMLInputElement | null;
-    const file = input?.files?.[0] ?? null;
-    if (input) input.value = '';
-    if (!file) return;
-    void runAction(async () => {
-      if (!(await confirmDiscard())) return;
-      const doc = await smfToProjectDocument(
-        await readFileBytesBounded(file, MAX_SMF_FILE_BYTES),
-        file.name,
-      );
-      await replaceProjectDocument(doc);
-      await settleLoadedProject();
-    });
-  }
+  const {
+    midiImportInput,
+    importMidiAction,
+    importMusicXmlAction,
+    importDawprojectAction,
+    onMidiImportChange,
+  } = useForeignFormatImports({
+    closeProjectMenu,
+    confirmAction,
+    confirmDiscard,
+    confirmLossAction,
+    errorMessage,
+    replaceProjectDocument,
+    settleLoadedProject,
+    runAction,
+  });
 
   async function writeProjectToOpfs(
     name: string,
@@ -893,102 +621,36 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     })();
   }
 
-  /** Snapshots the current document under a user-supplied label. */
-  function saveRevisionAction(): void {
-    closeProjectMenu();
-    void (async () => {
-      const label = await promptDialog({
-        title: t.value.dialogs.prompts.saveRevisionTitle,
-        message: t.value.dialogs.prompts.saveRevisionMessage,
-        defaultValue: '',
-        placeholder: t.value.dialogs.prompts.revisionLabelPlaceholder,
-        confirmLabel: t.value.dialogs.prompts.save,
-      });
-      if (!label) return;
-      void runAction(async () => {
-        const doc = serializeProject();
-        doc.name = store.projectName;
-        const bytes = encodeSzd(doc, { savedAt: new Date().toISOString() });
-        await saveProjectRevision(
-          savedProjectSlot.value ?? store.projectName,
-          label,
-          bytes,
-          Date.now(),
-        );
-        await refreshRevisions();
-      });
-    })();
-  }
+  const {
+    revisions,
+    revisionsDialogOpen,
+    saveRevisionAction,
+    refreshRevisions,
+    openRevisionsDialog,
+    restoreRevision,
+    deleteRevision,
+  } = useProjectRevisions({
+    closeProjectMenu,
+    confirmDiscard,
+    dirty,
+    markClean,
+    opfsAvailable,
+    reclaimUnusedMedia,
+    replaceProjectDocument,
+    runAction,
+    saveLoadedProjectToAutosave,
+    savedProjectSlot,
+    startScreenOpen,
+  });
 
-  /** Reloads the revision list of the project the document is saved under. */
-  async function refreshRevisions(): Promise<void> {
-    if (!opfsAvailable) {
-      revisions.value = [];
-      return;
-    }
-    revisions.value = await listProjectRevisions(savedProjectSlot.value ?? store.projectName);
-  }
-
-  function openRevisionsDialog(): void {
-    closeProjectMenu();
-    revisionsDialogOpen.value = true;
-    void runAction(refreshRevisions);
-  }
-
-  /** Replaces the live document with a stored revision (discard confirmed). */
-  function restoreRevision(slot: string): void {
-    void (async () => {
-      if (!(await confirmDiscard())) return;
-      void runAction(async () => {
-        // Restoring a revision replaces only the live document. The slot and
-        // the revision this tab last loaded or saved stay the Save baseline,
-        // so a save from another tab since then still raises a conflict.
-        const bytes = await loadProjectRevision(slot);
-        await replaceProjectDocument(await decodeSzdInWorker(bytes));
-        const documentKey = await saveLoadedProjectToAutosave();
-        await markClean(documentKey);
-        // The autosave protects crash recovery, but it is not the named
-        // project commit promised by the revisions dialog. Keep the restored
-        // document dirty so opening another project still asks whether to
-        // discard it until an explicit Save succeeds.
-        dirty.value = true;
-        revisionsDialogOpen.value = false;
-        startScreenOpen.value = false;
-      });
-    })();
-  }
-
-  function deleteRevision(slot: string): void {
-    void runAction(async () => {
-      await deleteProjectRevision(slot);
-      await refreshRevisions();
-      // A dropped revision can be the last reference to imported media.
-      await reclaimUnusedMedia();
+  const { exportSzdAction, exportBrowserBackupAction, exportSmfAction, exportMidi2Action } =
+    useProjectFileExports({
+      closeProjectMenu,
+      confirmLossAction,
+      downloadBlobFile,
+      opfsAvailable,
+      runAction,
     });
-  }
-
-  function exportSzdAction(): void {
-    closeProjectMenu();
-    void runAction(async () => {
-      const doc = serializeProject();
-      // Disk exports travel to other machines/browsers, so bundle the
-      // referenced audio + SoundFonts the OPFS store would otherwise hold.
-      const gathered = opfsAvailable ? await gatherProjectBundleWithReport(doc) : undefined;
-      if (gathered && !(await confirmIncompletePortableExport(gathered.report))) return;
-      const bundle = gathered?.bundle;
-      const bytes = await encodeSzdStreaming(doc, { savedAt: new Date().toISOString() }, bundle);
-      downloadSzd(store.projectName, bytes);
-    });
-  }
-
-  function exportBrowserBackupAction(): void {
-    closeProjectMenu();
-    void runAction(async () => {
-      const backup = await createBrowserBackupWithReport();
-      if (!(await confirmIncompletePortableExport(backup.completeness))) return;
-      downloadBrowserBackup('sonare-studio', backup.bytes);
-    });
-  }
 
   function importBrowserBackupAction(): void {
     closeProjectMenu();
@@ -1027,48 +689,6 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
           },
         );
       }
-    });
-  }
-
-  function exportSmfAction(): void {
-    closeProjectMenu();
-    void runAction(async () => {
-      const result = await exportProjectSmf();
-      const copy = t.value.shell.project.midiExportLoss;
-      if (
-        !(await confirmLossReport(
-          result.loss,
-          { ...copy.smf, items: copy.items },
-          confirmLossAction,
-        ))
-      ) {
-        return;
-      }
-      downloadBlobFile(
-        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
-        result.filename,
-      );
-    });
-  }
-
-  function exportMidi2Action(): void {
-    closeProjectMenu();
-    void runAction(async () => {
-      const result = exportProjectClipFile();
-      const copy = t.value.shell.project.midiExportLoss;
-      if (
-        !(await confirmLossReport(
-          result.loss,
-          { ...copy.midi2, items: copy.items },
-          confirmLossAction,
-        ))
-      ) {
-        return;
-      }
-      downloadBlobFile(
-        new Blob([new Uint8Array(result.bytes)], { type: 'audio/midi' }),
-        result.filename,
-      );
     });
   }
 

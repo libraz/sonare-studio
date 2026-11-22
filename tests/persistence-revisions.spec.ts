@@ -358,16 +358,17 @@ describe('project revisions', () => {
 
 describe('revision entry points', () => {
   const persistence = readSource('src/composables/useProjectPersistence.ts');
+  const revisionActions = readSource('src/composables/useProjectRevisions.ts');
 
   it('snapshots the live document under a prompted label', () => {
-    expect(persistence).toContain('await saveProjectRevision(');
-    expect(persistence).toContain('savedProjectSlot.value ?? store.projectName');
+    expect(revisionActions).toContain('await saveProjectRevision(');
+    expect(revisionActions).toContain('savedProjectSlot.value ?? store.projectName');
   });
 
   it('restores into the editor without overwriting the stored project', () => {
-    expect(persistence).toContain('const bytes = await loadProjectRevision(slot);');
+    expect(revisionActions).toContain('const bytes = await loadProjectRevision(slot);');
     const restore = sourceWindow(
-      persistence,
+      revisionActions,
       'function restoreRevision',
       'function deleteRevision',
     );
