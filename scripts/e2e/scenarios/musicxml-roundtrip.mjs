@@ -1,10 +1,10 @@
 import { openEmptyProject, openFreshPage, skipTour } from '../fresh-page.mjs';
-import { strToU8, untilDoneAcceptingConfirms, zipSync } from '../harness.mjs';
+import { untilDoneAcceptingConfirms, unzipSync } from '../harness.mjs';
 
 /**
- * MusicXML: the active clip exports through the File menu, and both the plain
- * file and a compressed .mxl wrapping one import back through the File menu
- * with their notes intact. Each import starts from a project that differs from
+ * MusicXML: the active clip exports through the File menu as a plain file and
+ * as a compressed .mxl, and each imports back through the File menu with its
+ * notes intact. Each import starts from a project that differs from
  * what the file holds, so only a real import can satisfy the check. Runs in its
  * own browser context because an import replaces the open project.
  */
@@ -25,11 +25,11 @@ const MELODY_B = [
 const SCRATCH = [{ pitch: 90, startPpq: 0, durationPpq: 1 }];
 const TOLERANCE_PPQ = 0.01;
 
-const CONTAINER_XML =
-  '<?xml version="1.0" encoding="UTF-8"?>' +
-  '<container><rootfiles>' +
-  '<rootfile full-path="score.musicxml" media-type="application/vnd.recordare.musicxml+xml"/>' +
-  '</rootfiles></container>';
+const MXL_MIME = 'application/vnd.recordare.musicxml';
+const FORMATS = {
+  musicxml: { item: /^Export clip as MusicXML/, extension: '.musicxml' },
+  mxl: { item: /^Export clip as compressed MusicXML/, extension: '.mxl' },
+};
 
 /** Every MIDI note in the open project, in timeline order. */
 const projectNotes = (page) =>
@@ -67,29 +67,45 @@ const addClip = (page, label, startPpq, notes) =>
     [label, startPpq, notes],
   );
 
-/** Exports the active clip through the File menu and returns the MusicXML text. */
-async function exportActiveClip(page) {
+/** Exports the active clip through the File menu and returns the file's bytes. */
+async function exportActiveClip(page, format) {
+  const { item, extension } = FORMATS[format];
   await page.evaluate(() => {
     window.__previousDownload = window.__sonareDebug.lastDownload();
   });
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page
-    .locator('.menu-panel [role="menuitem"]')
-    .filter({ hasText: /^Export .*MusicXML/ })
-    .click();
+  await page.locator('.menu-panel [role="menuitem"]').filter({ hasText: item }).click();
   await untilDoneAcceptingConfirms(
     page,
     () =>
-      page.evaluate(() => {
+      page.evaluate((ext) => {
         const download = window.__sonareDebug.lastDownload();
-        return (
-          download?.filename.endsWith('.musicxml') === true &&
-          download !== window.__previousDownload
-        );
-      }),
+        return download?.filename.endsWith(ext) === true && download !== window.__previousDownload;
+      }, extension),
     60000,
   );
-  return page.evaluate(() => window.__sonareDebug.lastDownload().blob.text());
+  const bytes = await page.evaluate(async () => [
+    ...new Uint8Array(await window.__sonareDebug.lastDownload().blob.arrayBuffer()),
+  ]);
+  return Buffer.from(bytes);
+}
+
+/** Problems with an .mxl archive against the container rule, empty when it conforms. */
+function mxlProblems(bytes) {
+  const problems = [];
+  const firstName = bytes.subarray(30, 30 + bytes.readUInt16LE(26)).toString();
+  if (bytes.readUInt32LE(0) !== 0x04034b50 || firstName !== 'mimetype') {
+    problems.push(`first entry is ${JSON.stringify(firstName)}, not mimetype`);
+  }
+  if (bytes.readUInt16LE(8) !== 0) problems.push('mimetype is compressed');
+  const entries = unzipSync(new Uint8Array(bytes));
+  if (Buffer.from(entries.mimetype ?? []).toString() !== MXL_MIME) {
+    problems.push('mimetype content differs');
+  }
+  const container = Buffer.from(entries['META-INF/container.xml'] ?? []).toString();
+  const rootPath = container.match(/<rootfile[^>]*full-path="([^"]+)"/)?.[1];
+  if (!rootPath || !entries[rootPath]) problems.push(`rootfile ${rootPath} is not archived`);
+  return problems;
 }
 
 /** Takes the discard prompt a dirty project raises before an import, when there is one. */
@@ -138,7 +154,7 @@ export async function run(ctx) {
     await skipTour(page);
 
     await addClip(page, 'MusicXML melody', 0, MELODY_A);
-    const xml = await exportActiveClip(page);
+    const xml = (await exportActiveClip(page, 'musicxml')).toString();
     const pitched = (xml.match(/<pitch>/g) ?? []).length;
     if (!xml.includes('<score-partwise') || pitched !== MELODY_A.length) {
       fail(`the exported file is not the clip's score: ${pitched} pitched notes`);
@@ -160,19 +176,18 @@ export async function run(ctx) {
       'MusicXML',
     );
 
-    // Compressed .mxl: a different melody, exported from the app, wrapped in an archive.
+    // Compressed .mxl: a different melody, exported from the app as an archive.
     await addClip(page, 'Second melody', 100, MELODY_B);
-    const second = await exportActiveClip(page);
-    const mxl = zipSync({
-      'META-INF/container.xml': strToU8(CONTAINER_XML),
-      'score.musicxml': strToU8(second),
-    });
+    const mxl = await exportActiveClip(page, 'mxl');
+    const problems = mxlProblems(mxl);
+    if (problems.length > 0) fail(`the exported .mxl breaks the container rule: ${problems}`);
+    else console.info(`.mxl exported: ${mxl.length} bytes, container conforms`);
     await importFile(
       page,
       {
         name: 'second.mxl',
-        mimeType: 'application/vnd.recordare.musicxml',
-        buffer: Buffer.from(mxl),
+        mimeType: MXL_MIME,
+        buffer: mxl,
       },
       MELODY_B,
       fail,
