@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, ref } from 'vue';
+import { readLocalStorage, writeLocalStorage } from '@/lib/local-storage';
 import {
   applyLayoutState,
   captureLayoutState,
@@ -48,20 +49,11 @@ export interface UseLayoutsReturn {
 
 /** Reads stored user layouts; corrupt or missing payloads yield none. */
 function readStored(): NamedLayout[] {
-  try {
-    return decodeUserLayouts(window.localStorage.getItem(LAYOUTS_STORAGE_KEY));
-  } catch {
-    return [];
-  }
+  return decodeUserLayouts(readLocalStorage(LAYOUTS_STORAGE_KEY));
 }
 
-/** Best-effort write; storage failures are ignored. */
 function writeStored(layouts: ReadonlyArray<NamedLayout>): void {
-  try {
-    window.localStorage.setItem(LAYOUTS_STORAGE_KEY, encodeUserLayouts(layouts));
-  } catch {
-    // Layouts stay in memory for the session.
-  }
+  writeLocalStorage(LAYOUTS_STORAGE_KEY, encodeUserLayouts(layouts));
 }
 
 // Single shared state so the settings dialog and the shell agree.

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { readLocalStorage, writeLocalStorage } from '@/lib/local-storage';
 import { hasNativeEnterBehavior } from '@/ui/accessibility/keyboard';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
@@ -110,19 +111,11 @@ function findTarget(selector: string): Element | null {
 }
 
 function markSeen(): void {
-  try {
-    localStorage.setItem(props.storageKey, '1');
-  } catch {
-    // Storage unavailable (private mode etc.); the tour just reappears.
-  }
+  writeLocalStorage(props.storageKey, '1');
 }
 
 function wasSeen(): boolean {
-  try {
-    return localStorage.getItem(props.storageKey) !== null;
-  } catch {
-    return false;
-  }
+  return readLocalStorage(props.storageKey) !== null;
 }
 
 /** Starts the tour from the first available step. Safe to call repeatedly. */

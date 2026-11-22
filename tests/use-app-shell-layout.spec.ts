@@ -32,6 +32,7 @@ describe('useAppShellLayout', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -66,6 +67,40 @@ describe('useAppShellLayout', () => {
     layout.toggleScorePanel();
     expect(window.localStorage.getItem('sonare-studio.dockTab')).toBe('media');
     expect(window.localStorage.getItem('sonare-studio.scoreVisible')).toBe('0');
+    layout.disposeLayout();
+  });
+
+  it('falls back to defaults for missing or corrupt stored values', () => {
+    window.localStorage.setItem('sonare-studio.arrangeHeightPx', 'abc');
+    window.localStorage.setItem('sonare-studio.scoreHeightPx', '10');
+    window.localStorage.setItem('sonare-studio.dockTab', 'nope');
+    window.localStorage.setItem('sonare-studio.scoreVisible', 'yes');
+
+    const layout = useAppShellLayout();
+
+    expect(layout.arrangeHeight.value).toBe(440);
+    expect(layout.scoreResized.value).toBe(false);
+    expect(layout.dockTab.value).toBe('roll');
+    expect(layout.scoreVisible.value).toBe(false);
+    layout.disposeLayout();
+  });
+
+  it('uses defaults when storage reads throw and keeps working when writes throw', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+
+    const layout = useAppShellLayout();
+
+    expect(layout.arrangeHeight.value).toBe(440);
+    expect(layout.dockTab.value).toBe('roll');
+    expect(layout.scoreResized.value).toBe(false);
+    expect(() =>
+      layout.onDividerKeydown(new KeyboardEvent('keydown', { key: 'Home' })),
+    ).not.toThrow();
     layout.disposeLayout();
   });
 

@@ -82,6 +82,7 @@ import type { MeterBridge } from '@/engine/meters';
 import type { ScopeBridge } from '@/engine/scope';
 import { DEBUG_SURFACE_ENABLED } from '@/lib/debug-surface';
 import { describeError, errorMessage as thrownMessage } from '@/lib/errors';
+import { readLocalStorage } from '@/lib/local-storage';
 import { clamp01 } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import {
@@ -779,13 +780,7 @@ const {
 const TOUR_SEEN_KEY = 'sonare-studio.tourSeen';
 watch(startScreenOpen, (open, wasOpen) => {
   if (!wasOpen || open) return;
-  let seen = false;
-  try {
-    seen = localStorage.getItem(TOUR_SEEN_KEY) !== null;
-  } catch {
-    seen = false;
-  }
-  if (!seen) tourRef.value?.open();
+  if (readLocalStorage(TOUR_SEEN_KEY) === null) tourRef.value?.open();
 });
 
 const globalShortcutsBlocked = computed(() => shortcutBlockingOverlayOpen.value);

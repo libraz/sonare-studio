@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SHORTCUTS_STORAGE_KEY, useShortcuts } from '@/composables/useShortcuts';
 import {
   findConflicts,
@@ -216,6 +216,10 @@ describe('useShortcuts', () => {
     useShortcuts().resetAll();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('persists overrides and reports them', () => {
     const shortcuts = useShortcuts();
     expect(shortcuts.isOverridden('edit.undo')).toBe(false);
@@ -280,6 +284,28 @@ describe('useShortcuts', () => {
     window.localStorage.setItem(SHORTCUTS_STORAGE_KEY, 'not json');
     shortcuts.reload();
     expect(shortcuts.keysFor('edit.undo')).toEqual(['mod+z']);
+  });
+});
+
+describe('useShortcuts storage failures', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('keeps defaults on reload and in-memory overrides when storage throws', () => {
+    const shortcuts = useShortcuts();
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => shortcuts.reload()).not.toThrow();
+    expect(shortcuts.keysFor('edit.undo')).toEqual(['mod+z']);
+    expect(() => shortcuts.setKeys('edit.undo', ['ctrl+y'])).not.toThrow();
+    expect(shortcuts.keysFor('edit.undo')).toEqual(['mod+y']);
+    vi.restoreAllMocks();
+    shortcuts.resetAll();
   });
 });
 

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { APP_SETTINGS_STORAGE_KEY, useAppSettings } from '@/composables/useAppSettings';
 import { DEFAULT_APP_GUIDANCE_PROFILE } from '@/compose/guidance-profile';
 import {
@@ -273,6 +273,10 @@ describe('useAppSettings', () => {
     useAppSettings().reset();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('starts from defaults', () => {
     expect({ ...useAppSettings().settings }).toEqual(DEFAULT_APP_SETTINGS);
   });
@@ -324,6 +328,28 @@ describe('useAppSettings', () => {
     );
     app.reload();
     expect(app.settings.countInBars).toBe(4);
+  });
+
+  it('reload falls back to defaults on a corrupt payload', () => {
+    const app = useAppSettings();
+    app.set('countInBars', 4);
+    window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, '{not json');
+    app.reload();
+    expect(app.settings.countInBars).toBe(DEFAULT_APP_SETTINGS.countInBars);
+  });
+
+  it('reload falls back to defaults and set stays in memory when storage throws', () => {
+    const app = useAppSettings();
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => app.reload()).not.toThrow();
+    expect({ ...app.settings }).toEqual(DEFAULT_APP_SETTINGS);
+    expect(() => app.set('countInBars', 3)).not.toThrow();
+    expect(app.settings.countInBars).toBe(3);
   });
 
   it('applies theme and language to the document', () => {

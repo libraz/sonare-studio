@@ -2,9 +2,9 @@
  * Recently-opened project tracker, persisted to localStorage. The shell records
  * a project name whenever it is opened or saved; the most recent name comes
  * first and the list is capped. The list-shaping helpers are pure (and
- * unit-tested); the localStorage glue is a thin best-effort wrapper that never
- * throws.
+ * unit-tested); the localStorage glue never throws.
  */
+import { readLocalStorage, writeLocalStorage } from '@/lib/local-storage';
 
 /** localStorage key holding the recent-project name list. */
 export const RECENT_PROJECTS_STORAGE_KEY = 'sonare-studio.recentProjects';
@@ -53,12 +53,7 @@ export function parseRecent(raw: unknown): string[] {
 
 /** Reads the recent-project list from storage; failures yield an empty list. */
 export function loadRecentProjects(): string[] {
-  let text: string | null = null;
-  try {
-    text = window.localStorage.getItem(RECENT_PROJECTS_STORAGE_KEY);
-  } catch {
-    return [];
-  }
+  const text = readLocalStorage(RECENT_PROJECTS_STORAGE_KEY);
   if (text === null) return [];
   try {
     return parseRecent(JSON.parse(text));
@@ -67,11 +62,7 @@ export function loadRecentProjects(): string[] {
   }
 }
 
-/** Best-effort write of the recent-project list; storage failures are ignored. */
+/** Writes the recent-project list; recents stay in memory when storage refuses. */
 export function saveRecentProjects(names: readonly string[]): void {
-  try {
-    window.localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify(names));
-  } catch {
-    // Recents stay in memory for the session.
-  }
+  writeLocalStorage(RECENT_PROJECTS_STORAGE_KEY, JSON.stringify(names));
 }

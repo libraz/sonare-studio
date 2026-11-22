@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   loadRecentProjects,
   MAX_RECENT_PROJECTS,
@@ -47,6 +47,7 @@ describe('parseRecent', () => {
 
 describe('load/save round-trip', () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     window.localStorage.removeItem(RECENT_PROJECTS_STORAGE_KEY);
   });
 
@@ -62,5 +63,16 @@ describe('load/save round-trip', () => {
   it('recovers from malformed storage', () => {
     window.localStorage.setItem(RECENT_PROJECTS_STORAGE_KEY, '{not json');
     expect(loadRecentProjects()).toEqual([]);
+  });
+
+  it('yields an empty list when storage reads throw and ignores refused writes', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(loadRecentProjects()).toEqual([]);
+    expect(() => saveRecentProjects(['x'])).not.toThrow();
   });
 });

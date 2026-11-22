@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { LAYOUTS_STORAGE_KEY, useLayouts } from '@/composables/useLayouts';
 import {
@@ -128,6 +128,10 @@ describe('useLayouts', () => {
     useLayouts().reload();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('lists the built-in presets first', () => {
     const layouts = useLayouts();
     expect(layouts.presets.map((preset) => preset.name)).toEqual([
@@ -242,5 +246,26 @@ describe('useLayouts', () => {
     );
     layouts.reload();
     expect(layouts.userLayouts.value.map((layout) => layout.name)).toEqual(['External']);
+  });
+
+  it('yields no layouts for a corrupt payload', () => {
+    const layouts = useLayouts();
+    window.localStorage.setItem(LAYOUTS_STORAGE_KEY, '{not json');
+    layouts.reload();
+    expect(layouts.userLayouts.value).toEqual([]);
+  });
+
+  it('reloads empty and still saves in memory when storage throws', () => {
+    const layouts = useLayouts();
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    expect(() => layouts.reload()).not.toThrow();
+    expect(layouts.userLayouts.value).toEqual([]);
+    expect(layouts.saveCurrent('Mine', makeBindings())).toBe(true);
+    expect(layouts.userLayouts.value.map((layout) => layout.name)).toEqual(['Mine']);
   });
 });

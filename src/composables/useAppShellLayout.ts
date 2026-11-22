@@ -1,4 +1,5 @@
 import { computed, type Ref, ref } from 'vue';
+import { readLocalStorage, writeLocalStorage } from '@/lib/local-storage';
 import {
   ARRANGE_HEIGHT_MAX_PX,
   ARRANGE_HEIGHT_MIN_PX,
@@ -47,61 +48,36 @@ export function clampArrangementHeight(next: number, viewportHeight: number): nu
 }
 
 function readStoredNumber(key: string, min: number, fallback: number): number {
-  try {
-    const value = Number(window.localStorage.getItem(key));
-    if (Number.isFinite(value) && value >= min) return value;
-  } catch {
-    // Storage access can be denied; fall through to the default.
-  }
-  return fallback;
+  const raw = readLocalStorage(key);
+  if (raw === null) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= min ? value : fallback;
 }
 
 /** Reads a stored number, or null when absent/invalid (to detect "never set"). */
 function readStoredNumberOrNull(key: string, min: number): number | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (raw === null) return null;
-    const value = Number(raw);
-    if (Number.isFinite(value) && value >= min) return value;
-  } catch {
-    // Storage access can be denied.
-  }
-  return null;
+  const raw = readLocalStorage(key);
+  if (raw === null) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= min ? value : null;
 }
 
 function readStoredFlag(key: string, fallback: boolean): boolean {
-  try {
-    const value = window.localStorage.getItem(key);
-    return value === null ? fallback : value === '1';
-  } catch {
-    return fallback;
-  }
+  const value = readLocalStorage(key);
+  return value === null ? fallback : value === '1';
 }
 
 function writeStoredFlag(key: string, value: boolean): void {
-  try {
-    window.localStorage.setItem(key, value ? '1' : '0');
-  } catch {
-    // Persisting the panel state is best-effort only.
-  }
+  writeLocalStorage(key, value ? '1' : '0');
 }
 
 function readStoredDockTab(): DockTab {
-  try {
-    const tab = window.localStorage.getItem(DOCK_TAB_KEY);
-    if (tab !== null && DOCK_TABS.has(tab as DockTab)) return tab as DockTab;
-  } catch {
-    // Storage access can be denied; use the default tab.
-  }
-  return 'roll';
+  const tab = readLocalStorage(DOCK_TAB_KEY);
+  return tab !== null && DOCK_TABS.has(tab as DockTab) ? (tab as DockTab) : 'roll';
 }
 
 function persistDockTab(tab: DockTab): void {
-  try {
-    window.localStorage.setItem(DOCK_TAB_KEY, tab);
-  } catch {
-    // Persisting the selected tab is best-effort only.
-  }
+  writeLocalStorage(DOCK_TAB_KEY, tab);
 }
 
 export function useAppShellLayout() {
@@ -140,11 +116,7 @@ export function useAppShellLayout() {
   }
 
   function persistArrangeHeight(): void {
-    try {
-      window.localStorage.setItem(ARRANGE_HEIGHT_KEY, String(Math.round(arrangeHeight.value)));
-    } catch {
-      // Persisting the height is best-effort only.
-    }
+    writeLocalStorage(ARRANGE_HEIGHT_KEY, String(Math.round(arrangeHeight.value)));
   }
 
   function onDividerPointerDown(event: PointerEvent): void {
@@ -199,11 +171,7 @@ export function useAppShellLayout() {
   }
 
   function persistScoreHeight(): void {
-    try {
-      window.localStorage.setItem(SCORE_HEIGHT_KEY, String(Math.round(scoreHeight.value)));
-    } catch {
-      // Persisting the height is best-effort only.
-    }
+    writeLocalStorage(SCORE_HEIGHT_KEY, String(Math.round(scoreHeight.value)));
   }
 
   /** Current rendered pixel height of the score panel (the divider's next sibling). */

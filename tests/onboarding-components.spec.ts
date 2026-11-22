@@ -44,6 +44,7 @@ describe('WelcomeTour', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     resetShortcutBlockingOverlaysForTest();
     document.body.replaceChildren();
     localStorage.removeItem(STORAGE_KEY);
@@ -65,6 +66,22 @@ describe('WelcomeTour', () => {
     await nextTick();
     await nextTick();
     expect(wrapper.find('.tour-tooltip').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('treats throwing storage as unseen and still closes', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota');
+    });
+    const wrapper = mountTour();
+    await nextTick();
+    await nextTick();
+    expect(wrapper.find('.tour-tooltip').exists()).toBe(true);
+    await wrapper.find('.tour-skip').trigger('click');
+    expect(wrapper.emitted('close')).toBeTruthy();
     wrapper.unmount();
   });
 

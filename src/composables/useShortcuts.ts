@@ -1,5 +1,6 @@
 import type { ComputedRef, Ref } from 'vue';
 import { computed, ref } from 'vue';
+import { readLocalStorage, writeLocalStorage } from '@/lib/local-storage';
 import { normalizeComboString } from '@/ui/settings/key-combo';
 import {
   findConflicts,
@@ -49,12 +50,7 @@ export interface UseShortcutsReturn {
 
 /** Reads stored overrides; invalid payloads yield no overrides. */
 function readStored(): ShortcutOverrides {
-  let text: string | null = null;
-  try {
-    text = window.localStorage.getItem(SHORTCUTS_STORAGE_KEY);
-  } catch {
-    return {};
-  }
+  const text = readLocalStorage(SHORTCUTS_STORAGE_KEY);
   if (text === null) return {};
   let parsed: unknown;
   try {
@@ -80,16 +76,11 @@ function readStored(): ShortcutOverrides {
   return out;
 }
 
-/** Best-effort write; storage failures are ignored. */
 function writeStored(overrides: ShortcutOverrides): void {
-  try {
-    window.localStorage.setItem(
-      SHORTCUTS_STORAGE_KEY,
-      JSON.stringify({ version: SHORTCUT_OVERRIDES_VERSION, overrides }),
-    );
-  } catch {
-    // Overrides stay in memory for the session.
-  }
+  writeLocalStorage(
+    SHORTCUTS_STORAGE_KEY,
+    JSON.stringify({ version: SHORTCUT_OVERRIDES_VERSION, overrides }),
+  );
 }
 
 // Single shared override state so the dialog, help overlay and the shell's

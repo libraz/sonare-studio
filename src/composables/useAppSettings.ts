@@ -1,4 +1,5 @@
 import { type ComputedRef, computed, reactive, readonly, ref, watch } from 'vue';
+import { readLocalStorage, writeLocalStorage } from '@/lib/local-storage';
 import type { ResolvedAppLanguage, ResolvedAppTheme } from '@/ui/settings/app-settings';
 import {
   type AppSettings,
@@ -31,22 +32,13 @@ export interface UseAppSettingsReturn {
   reload(): void;
 }
 
-/** Reads the stored envelope; returns defaults when storage is unavailable. */
+/** Reads the stored envelope; returns defaults when absent, corrupt or unreadable. */
 function readStored(): AppSettings {
-  try {
-    return decodeAppSettings(window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY));
-  } catch {
-    return { ...DEFAULT_APP_SETTINGS };
-  }
+  return decodeAppSettings(readLocalStorage(APP_SETTINGS_STORAGE_KEY));
 }
 
-/** Best-effort write; storage failures (quota, privacy mode) are ignored. */
 function writeStored(settings: AppSettings): void {
-  try {
-    window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, encodeAppSettings(settings));
-  } catch {
-    // Settings stay in memory for the session.
-  }
+  writeLocalStorage(APP_SETTINGS_STORAGE_KEY, encodeAppSettings(settings));
 }
 
 // Single shared state so every caller observes the same preferences.
