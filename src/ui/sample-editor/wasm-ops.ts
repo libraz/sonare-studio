@@ -205,6 +205,25 @@ function resolveNonEmptyRange(
   return resolved;
 }
 
+/**
+ * Downmixes the range (whole file when omitted) to one mono segment for an
+ * analysis call.
+ *
+ * @throws RangeError on an empty range.
+ */
+export function analysisMono(
+  channels: ReadonlyArray<Float32Array>,
+  range?: SampleRange | null,
+): Float32Array {
+  const resolved = resolveRange(channels, range);
+  if (resolved.endFrame <= resolved.startFrame) {
+    throw new RangeError('Cannot analyze an empty range');
+  }
+  return downmixToMono(
+    channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
+  );
+}
+
 /** Trims per-channel results to the shortest so the set stays planar. */
 function toPlanar(segments: ReadonlyArray<Float32Array>): Float32Array[] {
   const minFrames = Math.min(...segments.map((segment) => segment.length));
@@ -1254,13 +1273,7 @@ export function analyzeMatchEqToReference(
   if (!Number.isFinite(referenceSampleRate) || referenceSampleRate <= 0) {
     throw new RangeError(`referenceSampleRate must be > 0, got ${referenceSampleRate}`);
   }
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot analyze an empty range');
-  }
-  const source = downmixToMono(
-    channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
-  );
+  const source = analysisMono(channels, range);
   const pair = { source, reference, sampleRate, referenceSampleRate };
   const { sourceLufs, referenceLufs, gainToMatchDb } = fn({
     analysis: MATCH_REFERENCE_LOUDNESS,

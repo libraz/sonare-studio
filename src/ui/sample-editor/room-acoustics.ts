@@ -6,10 +6,14 @@
  */
 
 import type { MaterialPresetName, RirDiagnostic } from '@libraz/libsonare';
-import { downmixToMono } from '@/lib/audio-channels';
 import { clamp } from '@/lib/math';
-import { resolveRange, type SampleRange } from './ops';
-import { assertSampleRate, finitePositive, type SampleEditorWasmOps } from './wasm-ops';
+import type { SampleRange } from './ops';
+import {
+  analysisMono,
+  assertSampleRate,
+  finitePositive,
+  type SampleEditorWasmOps,
+} from './wasm-ops';
 
 /** Audio rendered through a synthesized room, with what the synthesis changed. */
 export interface RoomRenderResult {
@@ -183,21 +187,6 @@ function averageFinite(values: ArrayLike<number> | undefined, min = -Infinity): 
     : Number.NaN;
 }
 
-function monoSelection(
-  channels: ReadonlyArray<Float32Array>,
-  sampleRate: number,
-  range?: SampleRange | null,
-): Float32Array {
-  assertSampleRate(sampleRate);
-  const resolved = resolveRange(channels, range);
-  if (resolved.endFrame <= resolved.startFrame) {
-    throw new RangeError('Cannot analyze an empty range');
-  }
-  return downmixToMono(
-    channels.map((channel) => channel.slice(resolved.startFrame, resolved.endFrame)),
-  );
-}
-
 function acousticSummary(
   result: AcousticAnalysisResult,
   kind: AcousticAnalysisSummary['kind'],
@@ -261,7 +250,8 @@ export function estimateRoomRange(
   if (typeof fn !== 'function') {
     throw new Error('Room estimation is unavailable in this libsonare build');
   }
-  const mono = monoSelection(channels, sampleRate, range);
+  assertSampleRate(sampleRate);
+  const mono = analysisMono(channels, range);
   const estimate = fn(mono, sampleRate, { mode: 'auto', nOctaveBands: 6 });
   const rt60Mid = averageFinite(estimate.rt60Bands, 0);
   return {
@@ -293,7 +283,8 @@ export function analyzeImpulseResponseRange(
   if (typeof fn !== 'function') {
     throw new Error('Impulse response analysis is unavailable in this libsonare build');
   }
-  const mono = monoSelection(channels, sampleRate, range);
+  assertSampleRate(sampleRate);
+  const mono = analysisMono(channels, range);
   return acousticSummary(fn(mono, sampleRate, { nOctaveBands: 6 }), 'impulse');
 }
 
@@ -313,6 +304,7 @@ export function detectAcousticRange(
   if (typeof fn !== 'function') {
     throw new Error('Acoustic detection is unavailable in this libsonare build');
   }
-  const mono = monoSelection(channels, sampleRate, range);
+  assertSampleRate(sampleRate);
+  const mono = analysisMono(channels, range);
   return acousticSummary(fn(mono, sampleRate, { nOctaveBands: 6 }), 'blind');
 }
