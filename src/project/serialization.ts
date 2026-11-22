@@ -54,7 +54,9 @@ import { cloneStrip, createDefaultStrip, isDefaultMixerState } from './mixer';
 import { isValidPitchRange } from './pitch-range';
 import { getProject, useProjectStore } from './store';
 import { normalizeProcessorMidiLearnTarget } from './target-reference-registry';
-import { type EditorClip, type EditorNote, MAJOR_MODE_MASK } from './types';
+import { type EditorClip, type EditorNote, type EditorTrack, MAJOR_MODE_MASK } from './types';
+
+type ProjectStore = ReturnType<typeof useProjectStore>;
 
 export * from './document-schema';
 
@@ -162,6 +164,132 @@ function toDocumentStashNote(note: DocumentNote): DocumentNote {
 }
 
 /**
+ * Serializes one track entry; clip lists and track positions are precomputed
+ * by the caller.
+ *
+ * @param store Project store the track belongs to.
+ * @param track Track mirror entry.
+ * @param trackClips The track's clips, in store order.
+ * @param trackIndexById Position of each track id in `store.tracks`.
+ */
+function serializeTrack(
+  store: ProjectStore,
+  track: EditorTrack,
+  trackClips: readonly EditorClip[],
+  trackIndexById: ReadonlyMap<number, number>,
+): DocumentTrack {
+  const audiblePan = track.mixer?.pan ?? track.pan;
+  const legacyVolume = Number.isFinite(track.volume) && track.volume >= 0 ? track.volume : 1;
+  const needsVolumeMigration = legacyVolume !== 1;
+  const out: DocumentTrack = {
+    name: track.name,
+    color: track.color,
+    kind: track.kind,
+    mute: track.mute,
+    solo: track.solo,
+    // v4 canonical form: the audible fader lives in mixer.gainDb. Keep a
+    // unity value only because the v3 document shape is still consumed by
+    // older readers.
+    volume: 1,
+    // Compatibility mirror for older readers. MixerStrip.pan is the
+    // canonical audible value in current projects.
+    pan: audiblePan,
+    clips: trackClips.map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
+  };
+  if (track.musicXmlPartId !== undefined) out.musicXmlPartId = track.musicXmlPartId;
+  if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
+  if (track.externalMidiMode === 'project' && store.projectExternalMidi !== null) {
+    out.externalMidiMode = 'project';
+  }
+  // The live MIDI-FX transform rides the track; serialize it only when it
+  // actually changes notes (an identity transform stays out of the document).
+  if (track.midiFx !== undefined) {
+    const midiFx = sanitizeMidiFxConfig(track.midiFx);
+    if (!isMidiFxNoop(midiFx)) out.midiFx = midiFx;
+  }
+  if (track.mixer !== undefined || needsVolumeMigration) {
+    const baseMixer = track.mixer ?? createDefaultStrip();
+    const mixer = cloneStrip(baseMixer);
+    if (needsVolumeMigration) mixer.gainDb += linearToDb(legacyVolume);
+    // Insert sidechain sources are session track ids; store them as
+    // positional indices (dangling references drop out).
+    out.mixer = stripWithSidechainSourceIndices(mixer, store.tracks);
+  }
+  if (track.groupId !== undefined) {
+    const groupIndex = trackIndexById.get(track.groupId);
+    if (groupIndex !== undefined) out.groupIndex = groupIndex;
+  }
+  if (track.soloSafe === true) out.soloSafe = true;
+  // Persist both true and false: false is a meaningful "not percussion"
+  // override, distinct from an absent flag (fall back to the heuristic).
+  if (track.percussion !== undefined) out.percussion = track.percussion;
+  // The generation record says where the track came from, so it survives
+  // renames and edits; it is dropped only when there was never one.
+  if (track.generated !== undefined) out.generated = { ...track.generated };
+  if (track.chordFollow !== undefined) out.chordFollow = track.chordFollow;
+  if (track.expressionMap !== undefined) out.expressionMap = track.expressionMap;
+  // VCA group ids are app-level strings, stable within a document, so they
+  // round-trip directly (dangling ids are dropped on load).
+  if (track.vcaId !== undefined) out.vcaId = track.vcaId;
+  if (track.frozen !== undefined) out.frozen = { ...track.frozen };
+  if (
+    track.kind === 'audio' &&
+    track.recordInputChannel !== undefined &&
+    Number.isInteger(track.recordInputChannel) &&
+    track.recordInputChannel >= 0
+  ) {
+    out.recordInputChannel = track.recordInputChannel;
+  }
+  if (
+    track.kind === 'audio' &&
+    typeof track.recordInputDeviceId === 'string' &&
+    track.recordInputDeviceId.length > 0
+  ) {
+    out.recordInputDeviceId = track.recordInputDeviceId;
+  }
+  // A malformed range never reaches the store through setTrackPitchRange,
+  // but a directly mutated mirror is still sanitized before it is written.
+  if (track.pitchRange !== undefined && isValidPitchRange(track.pitchRange)) {
+    out.pitchRange = { ...track.pitchRange };
+  }
+  if (track.leadFollow !== undefined) {
+    // The followed track and a stash entry's origin clip are session ids
+    // with no place in the document; store them positionally like
+    // groupIndex (a dangling track reference drops the whole
+    // relationship, a dangling clip reference drops just that entry).
+    const leadTrackIndex = trackIndexById.get(track.leadFollow.leadTrackId);
+    if (leadTrackIndex !== undefined) {
+      out.leadFollow = {
+        leadTrackIndex,
+        stash: track.leadFollow.stash.flatMap((entry) => {
+          const clipIndex = trackClips.findIndex((clip) => clip.id === entry.clipId);
+          return clipIndex < 0 ? [] : [{ clipIndex, note: toDocumentStashNote(entry.note) }];
+        }),
+      };
+    }
+  }
+  // Track automation rides the track entry (track ids are session-scoped,
+  // so a document never stores lane targets); omitted when there is none.
+  const automation = store.automationLanes.filter(
+    (lane) => lane.target === track.id && !(track.kind === 'group' && lane.param === 'pan'),
+  );
+  if (automation.length > 0) out.automation = automation.map(toDocumentAutomationLane);
+  return out;
+}
+
+/** Writes each bus's automation lanes onto its document strip (omitted when none). */
+function attachBusAutomation(
+  mixer: DocumentMixerState,
+  lanes: readonly AutomationLaneState[],
+): void {
+  for (const bus of mixer.buses) {
+    const target = busAutomationTarget(bus.id);
+    const automation = lanes.filter((lane) => lane.target === target);
+    if (automation.length > 0) bus.automation = automation.map(toDocumentAutomationLane);
+  }
+}
+
+/**
  * Serializes the current project (store mirror + Project sample rate) into a
  * plain {@link ProjectDocument}. The result contains no session ids and is
  * safe to JSON.stringify.
@@ -172,116 +300,26 @@ function toDocumentStashNote(note: DocumentNote): DocumentNote {
 export function serializeProject(): ProjectDocument {
   const store = useProjectStore();
   const project = getProject();
+  // One pass each: clips grouped per track in store order, and track positions.
+  const clipsByTrack = new Map<number, EditorClip[]>();
+  for (const clip of store.clips) {
+    const trackClips = clipsByTrack.get(clip.trackId);
+    if (trackClips === undefined) clipsByTrack.set(clip.trackId, [clip]);
+    else trackClips.push(clip);
+  }
+  const trackIndexById = new Map<number, number>();
+  store.tracks.forEach((track, index) => {
+    if (!trackIndexById.has(track.id)) trackIndexById.set(track.id, index);
+  });
   const doc: ProjectDocument = {
     schemaVersion: PROJECT_DOCUMENT_SCHEMA_VERSION,
     name: store.projectName,
     sampleRate: project.sampleRate,
     tempoSegments: store.tempoSegments.map((segment) => ({ ...segment })),
     timeSignatures: store.timeSignatures.map((segment) => ({ ...segment })),
-    tracks: store.tracks.map((track) => {
-      const audiblePan = track.mixer?.pan ?? track.pan;
-      const legacyVolume = Number.isFinite(track.volume) && track.volume >= 0 ? track.volume : 1;
-      const needsVolumeMigration = legacyVolume !== 1;
-      const out: DocumentTrack = {
-        name: track.name,
-        color: track.color,
-        kind: track.kind,
-        mute: track.mute,
-        solo: track.solo,
-        // v4 canonical form: the audible fader lives in mixer.gainDb. Keep a
-        // unity value only because the v3 document shape is still consumed by
-        // older readers.
-        volume: 1,
-        // Compatibility mirror for older readers. MixerStrip.pan is the
-        // canonical audible value in current projects.
-        pan: audiblePan,
-        clips: store.clips
-          .filter((clip) => clip.trackId === track.id)
-          .map((clip) => toDocumentClip(clip, store.scoreAnnotations[clip.id])),
-      };
-      if (track.musicXmlPartId !== undefined) out.musicXmlPartId = track.musicXmlPartId;
-      if (track.instrument !== undefined) out.instrument = cloneInstrument(track.instrument);
-      if (track.externalMidiMode === 'project' && store.projectExternalMidi !== null) {
-        out.externalMidiMode = 'project';
-      }
-      // The live MIDI-FX transform rides the track; serialize it only when it
-      // actually changes notes (an identity transform stays out of the document).
-      if (track.midiFx !== undefined) {
-        const midiFx = sanitizeMidiFxConfig(track.midiFx);
-        if (!isMidiFxNoop(midiFx)) out.midiFx = midiFx;
-      }
-      if (track.mixer !== undefined || needsVolumeMigration) {
-        const baseMixer = track.mixer ?? createDefaultStrip();
-        const mixer = cloneStrip(baseMixer);
-        if (needsVolumeMigration) mixer.gainDb += linearToDb(legacyVolume);
-        // Insert sidechain sources are session track ids; store them as
-        // positional indices (dangling references drop out).
-        out.mixer = stripWithSidechainSourceIndices(mixer, store.tracks);
-      }
-      if (track.groupId !== undefined) {
-        const groupIndex = store.tracks.findIndex((entry) => entry.id === track.groupId);
-        if (groupIndex >= 0) out.groupIndex = groupIndex;
-      }
-      if (track.soloSafe === true) out.soloSafe = true;
-      // Persist both true and false: false is a meaningful "not percussion"
-      // override, distinct from an absent flag (fall back to the heuristic).
-      if (track.percussion !== undefined) out.percussion = track.percussion;
-      // The generation record says where the track came from, so it survives
-      // renames and edits; it is dropped only when there was never one.
-      if (track.generated !== undefined) out.generated = { ...track.generated };
-      if (track.chordFollow !== undefined) out.chordFollow = track.chordFollow;
-      if (track.expressionMap !== undefined) out.expressionMap = track.expressionMap;
-      // VCA group ids are app-level strings, stable within a document, so they
-      // round-trip directly (dangling ids are dropped on load).
-      if (track.vcaId !== undefined) out.vcaId = track.vcaId;
-      if (track.frozen !== undefined) out.frozen = { ...track.frozen };
-      if (
-        track.kind === 'audio' &&
-        track.recordInputChannel !== undefined &&
-        Number.isInteger(track.recordInputChannel) &&
-        track.recordInputChannel >= 0
-      ) {
-        out.recordInputChannel = track.recordInputChannel;
-      }
-      if (
-        track.kind === 'audio' &&
-        typeof track.recordInputDeviceId === 'string' &&
-        track.recordInputDeviceId.length > 0
-      ) {
-        out.recordInputDeviceId = track.recordInputDeviceId;
-      }
-      // A malformed range never reaches the store through setTrackPitchRange,
-      // but a directly mutated mirror is still sanitized before it is written.
-      if (track.pitchRange !== undefined && isValidPitchRange(track.pitchRange)) {
-        out.pitchRange = { ...track.pitchRange };
-      }
-      if (track.leadFollow !== undefined) {
-        // The followed track and a stash entry's origin clip are session ids
-        // with no place in the document; store them positionally like
-        // groupIndex (a dangling track reference drops the whole
-        // relationship, a dangling clip reference drops just that entry).
-        const leadTrackIndex = store.tracks.findIndex(
-          (entry) => entry.id === track.leadFollow?.leadTrackId,
-        );
-        if (leadTrackIndex >= 0) {
-          const trackClips = store.clips.filter((clip) => clip.trackId === track.id);
-          out.leadFollow = {
-            leadTrackIndex,
-            stash: track.leadFollow.stash.flatMap((entry) => {
-              const clipIndex = trackClips.findIndex((clip) => clip.id === entry.clipId);
-              return clipIndex < 0 ? [] : [{ clipIndex, note: toDocumentStashNote(entry.note) }];
-            }),
-          };
-        }
-      }
-      // Track automation rides the track entry (track ids are session-scoped,
-      // so a document never stores lane targets); omitted when there is none.
-      const automation = store.automationLanes.filter(
-        (lane) => lane.target === track.id && !(track.kind === 'group' && lane.param === 'pan'),
-      );
-      if (automation.length > 0) out.automation = automation.map(toDocumentAutomationLane);
-      return out;
-    }),
+    tracks: store.tracks.map((track) =>
+      serializeTrack(store, track, clipsByTrack.get(track.id) ?? [], trackIndexById),
+    ),
     markers: store.markers.map((marker) => ({ ppq: marker.ppq, name: marker.name })),
     sections: store.sections.map((section) => ({
       name: section.name,
@@ -321,11 +359,7 @@ export function serializeProject(): ProjectDocument {
     // The realtime/export engines have no master-send lane. Drop legacy
     // master sends so silent UI-only routing does not persist.
     mixer.master.sends = [];
-    for (const bus of mixer.buses) {
-      const target = busAutomationTarget(bus.id);
-      const automation = store.automationLanes.filter((lane) => lane.target === target);
-      if (automation.length > 0) bus.automation = automation.map(toDocumentAutomationLane);
-    }
+    attachBusAutomation(mixer, store.automationLanes);
     doc.mixer = mixer;
   }
   if (store.projectExternalMidi !== null) {
