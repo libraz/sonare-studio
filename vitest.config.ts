@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [vue()],
   resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
   test: {
+    include: ['tests/**/*.spec.ts'],
     environment: 'jsdom',
     globals: true,
     setupFiles: ['tests/setup.ts'],
