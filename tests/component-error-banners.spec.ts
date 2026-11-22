@@ -86,6 +86,7 @@ describe('component error banners', () => {
   it('routes every banner in every component through describeError', () => {
     for (const path of [
       'src/components/arrangement/TrackHeaderList.vue',
+      'src/ui/arrangement/use-track-header-menu.ts',
       'src/components/devices/DeviceRack.vue',
       'src/components/mixer/MixerPanel.vue',
       'src/components/step-sequencer/StepSequencer.vue',

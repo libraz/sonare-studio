@@ -4,17 +4,10 @@ import AddTrackMenu from '@/components/arrangement/track-header/AddTrackMenu.vue
 import TrackAutomationStrip from '@/components/arrangement/track-header/TrackAutomationStrip.vue';
 import TrackTakeRows from '@/components/arrangement/track-header/TrackTakeRows.vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
-import { confirmDestructive, promptDialog } from '@/composables/useDialogs';
-import { isDrumTrack } from '@/compose/tracks';
+import { confirmDestructive } from '@/composables/useDialogs';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
-import { isOpfsAvailable } from '@/persistence/opfs';
-import {
-  deleteTrackChannelPreset,
-  listTrackChannelPresets,
-  saveTrackChannelPreset,
-} from '@/persistence/track-presets';
 import {
   type AutomationLaneState,
   type AutomationParam,
@@ -26,12 +19,7 @@ import {
   addAudioTrack,
   addGroupTrack,
   addTrack,
-  addVcaGroup,
-  applyTrackChannelPreset,
-  copyTrackChannelPreset,
   flattenClipMidiComp,
-  hasCopiedTrackChannelPreset,
-  pasteTrackChannelPreset,
   removeTrack,
   removeTracks,
   renameTrack,
@@ -39,14 +27,9 @@ import {
   setActiveTrack,
   setAutomationLaneEnabled,
   setStripPan,
-  setTrackChordFollow,
   setTrackColor,
-  setTrackExpressionMap,
   setTrackGroup,
-  setTrackLeadFollow,
   setTrackMute,
-  setTrackPercussion,
-  setTrackPitchRange,
   setTrackRecordInputChannel,
   setTrackRecordInputDeviceId,
   setTrackSelection,
@@ -58,9 +41,6 @@ import {
   type TrackPart,
 } from '@/project/commands';
 import { flattenTrackComps } from '@/project/comp-flatten';
-import { EXPRESSION_MAP_PRESETS, matchingExpressionMapPreset } from '@/project/expression-map';
-import { bounceTrackRange, freezeTrack, unfreezeTrack } from '@/project/freeze';
-import { partForTrack } from '@/project/generation';
 import {
   AUTOMATABLE_SYNTH_PARAMS,
   type AutomatableSynthParam,
@@ -68,15 +48,8 @@ import {
   synthParamReachesSoundingVoices,
   trackInstrument,
 } from '@/project/instrument';
-import { MAX_VCA_GROUPS } from '@/project/mixer';
-import {
-  PITCH_RANGE_PRESET_IDS,
-  PITCH_RANGE_PRESETS,
-  type PitchRangePresetId,
-} from '@/project/pitch-range';
 import { catalogParamInfo } from '@/project/processor-controls';
 import { useProjectStore } from '@/project/store';
-import { type TrackChannelPreset, trackChannelPresetFromTrack } from '@/project/track-preset';
 import {
   type EditorClip,
   type EditorTrack,
@@ -90,12 +63,12 @@ import {
   trackActiveTakeIndex,
   trackTakeRowCount,
 } from '@/ui/arrangement/automation-rows';
+import { useTrackFreezeBounce } from '@/ui/arrangement/use-track-freeze-bounce';
+import { useTrackHeaderMenu } from '@/ui/arrangement/use-track-header-menu';
 import { patchFieldSpec } from '@/ui/devices/patch-draft';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
-import { shortcutHint } from '@/ui/settings/shortcut-hint';
 
 /**
  * Track header column of the arrangement view: one header per track lane with
@@ -242,18 +215,6 @@ const trackKindLabel = computed<Record<TrackKind, string>>(() => ({
 
 /** Surfaced when a command rejects (e.g. empty rename). */
 const error = ref('');
-const savedTrackPresets = ref<TrackChannelPreset[]>([]);
-
-async function refreshSavedTrackPresets(): Promise<void> {
-  savedTrackPresets.value = await listTrackChannelPresets();
-}
-
-onMounted(() => {
-  if (!isOpfsAvailable()) return;
-  void refreshSavedTrackPresets().catch((reason: unknown) => {
-    error.value = describeError(reason, t.value.notices.errors);
-  });
-});
 
 // --- Inline rename ---------------------------------------------------------
 
@@ -406,33 +367,6 @@ async function onDelete(track: EditorTrack): Promise<void> {
 
 function isGroupCollapsed(track: EditorTrack): boolean {
   return track.kind === 'group' && (props.collapsedGroupIds?.includes(track.id) ?? false);
-}
-
-async function savePreset(track: EditorTrack): Promise<void> {
-  const name = await promptDialog({
-    title: t.value.shell.arrangement.trackHeader.saveChannelPreset,
-    message: t.value.shell.arrangement.trackHeader.saveChannelPresetMessage,
-    defaultValue: track.name,
-    confirmLabel: t.value.shell.arrangement.trackHeader.savePreset,
-  });
-  if (!name) return;
-  try {
-    await saveTrackChannelPreset(trackChannelPresetFromTrack(track, name));
-    await refreshSavedTrackPresets();
-    error.value = '';
-  } catch (reason) {
-    error.value = describeError(reason, t.value.notices.errors);
-  }
-}
-
-async function deletePreset(name: string): Promise<void> {
-  try {
-    await deleteTrackChannelPreset(name);
-    await refreshSavedTrackPresets();
-    error.value = '';
-  } catch (reason) {
-    error.value = describeError(reason, t.value.notices.errors);
-  }
 }
 
 // --- Group membership --------------------------------------------------------
@@ -639,68 +573,16 @@ async function onFlattenTakes(track: EditorTrack): Promise<void> {
   }
 }
 
-// --- Freeze & bounce-in-place ------------------------------------------------
-
-/** Ids of tracks with an in-flight freeze render. */
-const freezingIds = ref(new Set<number>());
-/** Ids of tracks with an in-flight bounce render. */
-const bouncingIds = ref(new Set<number>());
-
-/** True while the track's freeze render is pending. */
-function isFreezing(track: EditorTrack): boolean {
-  return freezingIds.value.has(track.id);
-}
-
-/** True while the track's bounce render is pending. */
-function isBouncing(track: EditorTrack): boolean {
-  return bouncingIds.value.has(track.id);
-}
-
-/** Freezes an unfrozen track (async bake) or unfreezes a frozen one. */
-async function onToggleFreeze(track: EditorTrack): Promise<void> {
-  if (freezingIds.value.has(track.id)) return;
-  if (track.frozen) {
-    unfreezeTrack(track.id);
-    return;
-  }
-  freezingIds.value.add(track.id);
-  try {
-    await freezeTrack(track.id);
-  } catch (err) {
-    console.warn(`Freezing track ${track.id} failed`, err);
-  } finally {
-    freezingIds.value.delete(track.id);
-  }
-}
-
-/** True when the track has at least one clip to bounce. */
-function trackHasClips(track: EditorTrack): boolean {
-  return store.clips.some((clip) => clip.trackId === track.id);
-}
-
-/** A track's notes across all of its clips, for {@link isDrumTrack}. */
-function notesOfTrack(track: EditorTrack) {
-  return (store.clipsByTrack.get(track.id) ?? []).flatMap((clip) => clip.notes);
-}
-
-/** True when the track's saved pitch range matches this preset exactly. */
-function matchesPitchRangePreset(track: EditorTrack, id: PitchRangePresetId): boolean {
-  const range = track.pitchRange;
-  const preset = PITCH_RANGE_PRESETS[id];
-  return range !== undefined && range.low === preset.low && range.high === preset.high;
-}
-
-/** Tracks `track` may follow: not itself, not percussion, not already following another. */
-function leadFollowCandidates(track: EditorTrack): EditorTrack[] {
-  return store.tracks.filter(
-    (entry) =>
-      entry.id !== track.id &&
-      entry.leadFollow === undefined &&
-      !isDrumTrack(entry, notesOfTrack(entry)),
-  );
-}
-
-const headerReasons = computed(() => t.value.shell.arrangement.trackHeader.reasons);
+const freezeBounce = useTrackFreezeBounce({ props });
+const {
+  isFreezing,
+  isBouncing,
+  onToggleFreeze,
+  trackHasClips,
+  onBounce,
+  freezeBlocked,
+  bounceBlocked,
+} = freezeBounce;
 
 function frozenReason(track: EditorTrack): string | null {
   return firstBlock([track.frozen !== undefined, t.value.reasons.trackFrozen]);
@@ -711,74 +593,8 @@ function armBlocked(track: EditorTrack): string | null {
   return isArmed(track) ? null : frozenReason(track);
 }
 
-function freezeBlocked(track: EditorTrack): string | null {
-  return firstBlock([isFreezing(track), t.value.reasons.busy]);
-}
-
-function bounceBlocked(track: EditorTrack): string | null {
-  return firstBlock([isBouncing(track), t.value.reasons.busy]);
-}
-
 function flattenBlocked(track: EditorTrack): string | null {
   return frozenReason(track);
-}
-
-/**
- * Why `track` cannot take part in lead following: percussion neither follows
- * nor leads, and a track already followed would form a chain by following.
- */
-function leadFollowBlocked(track: EditorTrack): string | null {
-  return firstBlock(
-    [isDrumTrack(track, notesOfTrack(track)), headerReasons.value.percussionNoLeadFollow],
-    [
-      store.tracks.some((entry) => entry.leadFollow?.leadTrackId === track.id),
-      headerReasons.value.alreadyLead,
-    ],
-  );
-}
-
-/** Saved presets live in OPFS, so every preset action needs it. */
-const presetStorageBlocked = computed(() =>
-  firstBlock([!isOpfsAvailable(), t.value.reasons.noStorage]),
-);
-const savedPresetsBlocked = computed(() =>
-  firstBlock(presetStorageBlocked.value, [
-    savedTrackPresets.value.length === 0,
-    headerReasons.value.noSavedPresets,
-  ]),
-);
-
-/**
- * PPQ range a bounce covers: the transport loop region when enabled and
- * valid, otherwise the track's full clip span (null when the track has no
- * clips).
- */
-function bounceRangeFor(track: EditorTrack): { startPpq: number; endPpq: number } | null {
-  const loopStart = props.loopStartPpq ?? 0;
-  const loopEnd = props.loopEndPpq ?? 0;
-  if (props.loopEnabled && loopStart >= 0 && loopEnd > loopStart) {
-    return { startPpq: loopStart, endPpq: loopEnd };
-  }
-  const clips = store.clips.filter((clip) => clip.trackId === track.id);
-  if (clips.length === 0) return null;
-  const startPpq = Math.min(...clips.map((clip) => clip.startPpq));
-  const endPpq = Math.max(...clips.map((clip) => clip.startPpq + clip.lengthPpq));
-  return endPpq > startPpq ? { startPpq, endPpq } : null;
-}
-
-/** Bounces the track in place over the range from {@link bounceRangeFor}. */
-async function onBounce(track: EditorTrack): Promise<void> {
-  if (bouncingIds.value.has(track.id)) return;
-  const range = bounceRangeFor(track);
-  if (range === null) return;
-  bouncingIds.value.add(track.id);
-  try {
-    await bounceTrackRange(track.id, range.startPpq, range.endPpq);
-  } catch (err) {
-    console.warn(`Bouncing track ${track.id} failed`, err);
-  } finally {
-    bouncingIds.value.delete(track.id);
-  }
 }
 
 /**
@@ -908,280 +724,19 @@ function onGripPointerCancel(): void {
   reorderDrag.value = null;
 }
 
-// --- Right-click menu ------------------------------------------------------
-
-/** Builds and opens the track header's right-click action menu. */
-function onContextMenu(track: EditorTrack, event: MouseEvent): void {
-  if (store.trackSelection.has(track.id)) {
-    setTrackSelection(store.trackSelection, track.id);
-  } else {
-    setActiveTrack(track.id);
-  }
-  selectionAnchorTrackId.value = track.id;
-  const items: ContextMenuItem[] = [
-    {
-      id: 'rename',
-      label: t.value.shell.arrangement.trackHeader.rename,
-      disabledReason: frozenReason(track),
-      run: () => startRename(track),
-    },
-    { id: 'sep-1', separator: true },
-    {
-      id: 'mute',
-      label: track.mute
-        ? t.value.shell.arrangement.trackHeader.unmute
-        : t.value.shell.arrangement.trackHeader.mute,
-      hint: shortcutHint('track.toggleMute'),
-      run: () => setTrackMute(track.id, !track.mute),
-    },
-    {
-      id: 'solo',
-      label: track.solo
-        ? t.value.shell.arrangement.trackHeader.unsolo
-        : t.value.shell.arrangement.trackHeader.solo,
-      hint: shortcutHint('track.toggleSolo'),
-      run: () => setTrackSolo(track.id, !track.solo),
-    },
-  ];
-  if (track.kind === 'audio' || track.kind === 'midi') {
-    items.push({
-      id: 'arm',
-      label: isArmed(track)
-        ? t.value.shell.arrangement.trackHeader.disarmRecording
-        : t.value.shell.arrangement.trackHeader.recordEnable,
-      hint: shortcutHint('track.toggleArm'),
-      disabledReason: armBlocked(track),
-      run: () => onToggleArm(track),
-    });
-  }
-  if (track.kind === 'midi') {
-    items.push({
-      id: 'change-instrument',
-      label: t.value.shell.arrangement.trackHeader.changeInstrument,
-      run: () => emit('changeInstrument', track.id),
-    });
-    const header = t.value.shell.arrangement.trackHeader;
-    items.push(
-      { id: 'sep-percussion', separator: true },
-      {
-        id: 'percussion-auto',
-        label: `${header.percussion}: ${header.percussionAuto}`,
-        checked: track.percussion === undefined,
-        run: () => setTrackPercussion(track.id, null),
-      },
-      {
-        id: 'percussion-on',
-        label: `${header.percussion}: ${header.percussionOn}`,
-        checked: track.percussion === true,
-        run: () => setTrackPercussion(track.id, true),
-      },
-      {
-        id: 'percussion-off',
-        label: `${header.percussion}: ${header.percussionOff}`,
-        checked: track.percussion === false,
-        run: () => setTrackPercussion(track.id, false),
-      },
-      { id: 'sep-expression-map', separator: true },
-      {
-        id: 'expression-map-off',
-        label: `${header.expressionMap}: ${header.expressionMapOff}`,
-        checked: track.expressionMap === undefined,
-        run: () => setTrackExpressionMap(track.id, null),
-      },
-      ...EXPRESSION_MAP_PRESETS.map((preset) => ({
-        id: `expression-map-${preset.id}`,
-        label: `${header.expressionMap}: ${header.expressionMapPresets[preset.id]}`,
-        checked: matchingExpressionMapPreset(track.expressionMap)?.id === preset.id,
-        run: () => setTrackExpressionMap(track.id, preset.map),
-      })),
-      { id: 'sep-chord-follow', separator: true },
-      {
-        id: 'chord-follow-off',
-        label: `${header.chordFollow}: ${header.chordFollowOff}`,
-        checked: track.chordFollow === undefined,
-        run: () => setTrackChordFollow(track.id, null),
-      },
-      {
-        id: 'chord-follow-tones',
-        label: `${header.chordFollow}: ${header.chordFollowChordTones}`,
-        checked: track.chordFollow === 'chordTones',
-        run: () => setTrackChordFollow(track.id, 'chordTones'),
-      },
-      {
-        id: 'chord-follow-root',
-        label: `${header.chordFollow}: ${header.chordFollowRoot}`,
-        checked: track.chordFollow === 'root',
-        run: () => setTrackChordFollow(track.id, 'root'),
-      },
-      { id: 'sep-pitch-lead-follow', separator: true },
-      {
-        id: 'pitch-range',
-        label: header.pitchRange,
-        children: [
-          {
-            id: 'pitch-range-off',
-            label: header.pitchRangeOff,
-            checked: track.pitchRange === undefined,
-            run: () => setTrackPitchRange(track.id, null),
-          },
-          ...PITCH_RANGE_PRESET_IDS.map((id) => ({
-            id: `pitch-range-${id}`,
-            label: header.pitchRangePresets[id],
-            checked: matchesPitchRangePreset(track, id),
-            run: () => setTrackPitchRange(track.id, PITCH_RANGE_PRESETS[id]),
-          })),
-        ],
-      },
-      {
-        id: 'lead-follow',
-        label: header.leadFollow,
-        disabledReason: leadFollowBlocked(track),
-        children: [
-          {
-            id: 'lead-follow-off',
-            label: header.leadFollowOff,
-            checked: track.leadFollow === undefined,
-            run: () => setTrackLeadFollow(track.id, null),
-          },
-          ...leadFollowCandidates(track).map((candidate) => ({
-            id: `lead-follow-${candidate.id}`,
-            label: candidate.name,
-            checked: track.leadFollow?.leadTrackId === candidate.id,
-            run: () => setTrackLeadFollow(track.id, candidate.id),
-          })),
-        ],
-      },
-    );
-  }
-  if (track.kind === 'group') {
-    const memberIds = store.tracks
-      .filter((entry) => entry.groupId === track.id)
-      .map((entry) => entry.id);
-    items.push({ id: 'sep-group-members', separator: true });
-    items.push({
-      id: 'select-group-members',
-      label: t.value.shell.arrangement.trackHeader.selectGroupMembers,
-      disabledReason: firstBlock([memberIds.length === 0, headerReasons.value.noGroupMembers]),
-      run: () => setTrackSelection([track.id, ...memberIds], track.id),
-    });
-  }
-  items.push(
-    { id: 'sep-channel-preset', separator: true },
-    {
-      id: 'copy-channel-settings',
-      label: t.value.shell.arrangement.trackHeader.copyChannelSettings,
-      run: () => copyTrackChannelPreset(track.id),
-    },
-    {
-      id: 'paste-channel-settings',
-      label: t.value.shell.arrangement.trackHeader.pasteChannelSettings,
-      disabledReason: firstBlock([
-        !hasCopiedTrackChannelPreset(),
-        headerReasons.value.noCopiedChannel,
-      ]),
-      run: () => pasteTrackChannelPreset(track.id),
-    },
-    {
-      id: 'save-channel-preset',
-      label: t.value.shell.arrangement.trackHeader.savePreset,
-      disabledReason: presetStorageBlocked.value,
-      run: () => savePreset(track),
-    },
-    {
-      id: 'apply-channel-preset',
-      label: t.value.shell.arrangement.trackHeader.applyPreset,
-      disabledReason: savedPresetsBlocked.value,
-      children: savedTrackPresets.value.map((preset) => ({
-        id: `apply-channel-preset-${preset.name}`,
-        label: preset.name,
-        run: () => applyTrackChannelPreset(track.id, preset),
-      })),
-    },
-    {
-      id: 'delete-channel-preset',
-      label: t.value.shell.arrangement.trackHeader.deletePreset,
-      disabledReason: savedPresetsBlocked.value,
-      children: savedTrackPresets.value.map((preset) => ({
-        id: `delete-channel-preset-${preset.name}`,
-        label: preset.name,
-        danger: true,
-        run: () => deletePreset(preset.name),
-      })),
-    },
-  );
-  items.push(
-    { id: 'sep-2', separator: true },
-    {
-      id: 'color',
-      label: t.value.shell.arrangement.trackHeader.nextColor,
-      run: () => cycleColor(track),
-    },
-  );
-  if (track.kind !== 'group') {
-    items.push({
-      id: 'freeze',
-      label: track.frozen
-        ? t.value.shell.arrangement.trackHeader.unfreeze
-        : t.value.shell.arrangement.trackHeader.freeze,
-      disabledReason: freezeBlocked(track),
-      run: () => {
-        void onToggleFreeze(track);
-      },
-    });
-    if (trackHasClips(track)) {
-      items.push({
-        id: 'bounce',
-        label: t.value.shell.arrangement.trackHeader.bounceInPlace,
-        disabledReason: bounceBlocked(track),
-        run: () => {
-          void onBounce(track);
-        },
-      });
-    }
-  }
-  const groups = store.mixer.vcaGroups ?? [];
-  if (groups.length > 0 || groups.length < MAX_VCA_GROUPS) {
-    items.push({ id: 'sep-vca', separator: true });
-    for (const group of groups) {
-      const assigned = track.vcaId === group.id;
-      items.push({
-        id: `vca-${group.id}`,
-        label: group.name,
-        checked: assigned,
-        run: () => setTrackVca(track.id, assigned ? null : group.id),
-      });
-    }
-    if (groups.length < MAX_VCA_GROUPS) {
-      items.push({
-        id: 'vca-new',
-        label: t.value.shell.arrangement.trackHeader.newVcaGroup,
-        run: () => setTrackVca(track.id, addVcaGroup()),
-      });
-    }
-  }
-  const generatedPart = partForTrack(track);
-  if (generatedPart !== null) {
-    items.push(
-      { id: 'sep-regenerate', separator: true },
-      {
-        id: 'regenerate',
-        label: t.value.shell.arrangement.trackHeader.regenerate,
-        disabledReason: frozenReason(track),
-        run: () => emit('regenerateTrack', track.id, generatedPart),
-      },
-    );
-  }
-  items.push(
-    { id: 'sep-3', separator: true },
-    {
-      id: 'delete',
-      label: t.value.shell.arrangement.trackHeader.removeTrack,
-      danger: true,
-      run: () => void onDelete(track),
-    },
-  );
-  openContextMenu(event.clientX, event.clientY, items);
-}
+const { onContextMenu } = useTrackHeaderMenu({
+  error,
+  selectionAnchorTrackId,
+  freezeBounce,
+  startRename,
+  frozenReason,
+  isArmed,
+  armBlocked,
+  onToggleArm,
+  cycleColor,
+  onDelete,
+  emit,
+});
 
 /** Row classes: active highlight, frozen tint plus reorder drag feedback. */
 function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
