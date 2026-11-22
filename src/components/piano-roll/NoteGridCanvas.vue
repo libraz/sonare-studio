@@ -18,7 +18,7 @@ import type {
 import { MIN_NOTE_WIDTH_PX } from '@/ui/canvas/hit-test';
 import type { Painter } from '@/ui/canvas/painter';
 import { playheadX } from '@/ui/canvas/playhead-x';
-import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import { MAX_PITCH, MIN_PITCH, type TimelineRange } from '@/ui/canvas/timeline-range';
 import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { formatMessage, useI18n } from '@/ui/i18n';
@@ -303,8 +303,8 @@ const accessibleNoteBases = computed<
           {
             id: 'pitch',
             label: t.value.shell.pianoRoll.accessibility.pitch,
-            min: 0,
-            max: 127,
+            min: MIN_PITCH,
+            max: MAX_PITCH,
             step: 1,
             value: note.pitch,
             valueText: formatPitch(note.pitch),

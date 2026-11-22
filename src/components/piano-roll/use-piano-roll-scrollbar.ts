@@ -13,6 +13,9 @@ import { clamp } from '@/lib/math';
 import { useProjectStore } from '@/project/store';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 
+/** Smallest scrollbar thumb size, in percent of the track. */
+const MIN_THUMB_PERCENT = 4;
+
 /** In-flight scrollbar drag captured on pointerdown. */
 interface ScrollDrag {
   axis: 'h' | 'v';
@@ -77,7 +80,7 @@ export function usePianoRollScrollbar(options: UsePianoRollScrollbarOptions): Pi
   const vThumbStyle = computed<ThumbStyle>(() => {
     void revision.value;
     const content = Math.max(1, range.contentHeightPx);
-    const sizePct = clamp((range.heightPx / content) * 100, 4, 100);
+    const sizePct = clamp((range.heightPx / content) * 100, MIN_THUMB_PERCENT, 100);
     const topPct = Math.min(100 - sizePct, (range.scrollY / content) * 100);
     return { top: `${topPct}%`, height: `${sizePct}%` };
   });
@@ -88,7 +91,7 @@ export function usePianoRollScrollbar(options: UsePianoRollScrollbarOptions): Pi
     void store.notes;
     const content = Math.max(1e-6, contentPpq());
     const span = range.endPpq - range.startPpq;
-    const sizePct = clamp((span / content) * 100, 4, 100);
+    const sizePct = clamp((span / content) * 100, MIN_THUMB_PERCENT, 100);
     const leftPct = Math.min(100 - sizePct, (range.startPpq / content) * 100);
     return { left: `${leftPct}%`, width: `${sizePct}%` };
   });

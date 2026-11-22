@@ -11,6 +11,7 @@ import {
   groupBusTopologyId,
   mixerBusTopology,
 } from '@/project/bus-topology';
+import { cloneJson } from '@/project/clone-json';
 import type { CommandGestureOptions, MixerStripTarget } from '@/project/commands';
 import {
   isMixerBusStripTarget,
@@ -230,10 +231,6 @@ function coupledNote(control: QuickControl): string {
 }
 
 /** Formatted knob value with the control's unit. */
-function controlDisplay(control: QuickControl): string {
-  return formatProcessorControlValue(control);
-}
-
 function onBooleanToggle(control: Extract<QuickControl, { kind: 'boolean' }>): void {
   onParamChange(control, !control.value, true);
 }
@@ -296,7 +293,7 @@ function copySlot(index: number): void {
   const slot = strip.value.inserts[index];
   if (!slot) return;
   const { id: _id, ...copy } = slot;
-  insertClipboard = JSON.parse(JSON.stringify(copy)) as Omit<InsertSlot, 'id'>;
+  insertClipboard = cloneJson(copy);
 }
 
 function pasteSlot(index: number): void {
@@ -660,7 +657,7 @@ onBeforeUnmount(() => {
             :scale="control.scale"
             :default-value="control.defaultValue"
             :label="control.name"
-            :display="controlDisplay(control)"
+            :display="formatProcessorControlValue(control)"
             :note="coupledNote(control)"
             :size="22"
             :midi-learn-state="learnState(control)"
@@ -676,11 +673,11 @@ onBeforeUnmount(() => {
               :class="{ on: control.value }"
               :aria-label="control.name"
               :aria-pressed="control.value"
-              v-tooltip="`${control.name}: ${controlDisplay(control)}`"
+              v-tooltip="`${control.name}: ${formatProcessorControlValue(control)}`"
               :data-control="control.id"
               @click="onBooleanToggle(control)"
             >
-              {{ controlDisplay(control) }}
+              {{ formatProcessorControlValue(control) }}
             </button>
             <div v-if="learnState(control)" class="insert-param-midi">
               <button
@@ -716,7 +713,7 @@ onBeforeUnmount(() => {
               :model-value="control.value"
               :options="control.options"
               :aria-label="control.name"
-              :title="`${control.name}: ${controlDisplay(control)}`"
+              :title="`${control.name}: ${formatProcessorControlValue(control)}`"
               size="sm"
               @change="(value) => onEnumChange(control, value)"
             />

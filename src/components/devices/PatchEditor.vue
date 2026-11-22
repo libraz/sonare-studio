@@ -280,10 +280,6 @@ function engineValue(info: SynthParamInfo): number {
   return draft.value.engineParams?.[info.name] ?? engineParamDefault(info);
 }
 
-function engineLabel(info: SynthParamInfo): string {
-  return humanizeEngineParamName(info.name);
-}
-
 function engineUnit(info: SynthParamInfo): string | undefined {
   const label = unitLabel(info.unit);
   return label === '' ? undefined : label;
@@ -711,7 +707,7 @@ function onKeydown(event: KeyboardEvent): void {
                 class="engine-control"
                 v-tooltip="{ text: info.name, reason: engineInactive.get(info.name) }"
               >
-                <span class="field-label">{{ engineLabel(info) }}</span>
+                <span class="field-label">{{ humanizeEngineParamName(info.name) }}</span>
                 <input
                   v-if="info.type === 'boolean'"
                   type="checkbox"
@@ -754,9 +750,9 @@ function onKeydown(event: KeyboardEvent): void {
                 type="button"
                 class="engine-reset"
                 :data-engine-reset="info.name"
-                :aria-label="formatMessage(t.shell.patchEditor.engineModel.reset, { name: engineLabel(info) })"
+                :aria-label="formatMessage(t.shell.patchEditor.engineModel.reset, { name: humanizeEngineParamName(info.name) })"
                 v-tooltip="
-                  formatMessage(t.shell.patchEditor.engineModel.reset, { name: engineLabel(info) }) +
+                  formatMessage(t.shell.patchEditor.engineModel.reset, { name: humanizeEngineParamName(info.name) }) +
                   ' (' +
                   formatMessage(t.shell.patchEditor.engineModel.base, {
                     value: formatControlValue(engineParamDefault(info), engineUnit(info)),

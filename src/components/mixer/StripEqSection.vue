@@ -157,15 +157,18 @@ function bandLabel(band: EqBandInput, index: number): string {
   }
 }
 
+/** Centre frequency assumed for a band that carries none. */
+const DEFAULT_BAND_FREQUENCY_HZ = 1000;
+
 /** Reset frequency and Q per band type; unlisted types use {@link BAND_FALLBACK}. */
 const BAND_DEFAULTS: Partial<Record<EqBandType, { frequencyHz: number; q: number }>> = {
   highPass: { frequencyHz: 80, q: Math.SQRT1_2 },
   lowShelf: { frequencyHz: 120, q: Math.SQRT1_2 },
-  peak: { frequencyHz: 1000, q: 0.9 },
+  peak: { frequencyHz: DEFAULT_BAND_FREQUENCY_HZ, q: 0.9 },
   highShelf: { frequencyHz: 8000, q: Math.SQRT1_2 },
   lowPass: { frequencyHz: 12000, q: Math.SQRT1_2 },
 };
-const BAND_FALLBACK = { frequencyHz: 1000, q: Math.SQRT1_2 };
+const BAND_FALLBACK = { frequencyHz: DEFAULT_BAND_FREQUENCY_HZ, q: Math.SQRT1_2 };
 
 /** Centre frequency of a band appended with the add button. */
 const ADDED_BAND_FREQ = 3000;
@@ -334,7 +337,7 @@ function setBandType(index: number, type: EqBandType): void {
   const next: EqBandInput = {
     ...band,
     type,
-    frequencyHz: clampToRange(band.frequencyHz ?? 1000, range),
+    frequencyHz: clampToRange(band.frequencyHz ?? DEFAULT_BAND_FREQUENCY_HZ, range),
   };
   commitBands(bands.map((b, i) => (i === index ? next : b)));
 }
@@ -538,7 +541,11 @@ function openBandMenu(index: number, event: MouseEvent): void {
 type BandField = 'frequencyHz' | 'gainDb' | 'q';
 
 /** Neutral fallback per field when a band has no stored value yet. */
-const FIELD_FALLBACK: Record<BandField, number> = { frequencyHz: 1000, gainDb: 0, q: 0.7 };
+const FIELD_FALLBACK: Record<BandField, number> = {
+  frequencyHz: DEFAULT_BAND_FREQUENCY_HZ,
+  gainDb: 0,
+  q: 0.7,
+};
 
 /** Builds the next EQ state with one band field replaced. */
 function withBandField(bandIndex: number, field: BandField, value: number): StripEq {
@@ -646,13 +653,13 @@ function onQChange(bandIndex: number, value: number, commit: boolean): void {
           {{ bandLabel(band, index) }}
         </button>
         <MixerKnob
-          :value="band.frequencyHz ?? 1000"
+          :value="band.frequencyHz ?? DEFAULT_BAND_FREQUENCY_HZ"
           :min="freqRange(band).min"
           :max="freqRange(band).max"
           scale="log"
           :aria-label="formatMessage(t.shell.mixer.eq.frequency, { label: bandLabel(band, index) })"
           :default-value="defaultFreq(band)"
-          :display="`${formatHz(band.frequencyHz ?? 1000)} Hz`"
+          :display="`${formatHz(band.frequencyHz ?? DEFAULT_BAND_FREQUENCY_HZ)} Hz`"
           :size="18"
           :reason="bandsBlocked"
           @change="(value, commit) => onFreqChange(index, value, commit)"

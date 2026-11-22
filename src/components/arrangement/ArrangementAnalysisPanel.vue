@@ -10,6 +10,7 @@ import type { MotifRelationship, TrackMotifs } from '@/compose/motifs';
 import type { RankedCadence } from '@/compose/phrases';
 import { setActiveClip } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -141,7 +142,7 @@ function positionLabel(ppq: number): string {
 function pitchLabel(pitch: number): string {
   // A conflict pitch always comes from note data in the MIDI range; falling
   // back to the raw number keeps a malformed one from throwing mid-render.
-  if (!Number.isInteger(pitch) || pitch < 0 || pitch > 127) return String(pitch);
+  if (!Number.isInteger(pitch) || pitch < MIN_PITCH || pitch > MAX_PITCH) return String(pitch);
   return formatPitch(pitch);
 }
 

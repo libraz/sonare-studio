@@ -5,6 +5,7 @@ import { clamp } from '@/lib/math';
 import { updateNotes } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import type { EditorNote, EditorNoteUpdate } from '@/project/types';
+import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
 
@@ -154,8 +155,11 @@ function buildUpdates(key: FieldKey, value: number, anchor: EditorNote): EditorN
       }));
     }
     case 'pitch': {
-      const delta = clamp(value, 0, 127) - anchor.pitch;
-      return targets.map((note) => ({ id: note.id, pitch: clamp(note.pitch + delta, 0, 127) }));
+      const delta = clamp(value, MIN_PITCH, MAX_PITCH) - anchor.pitch;
+      return targets.map((note) => ({
+        id: note.id,
+        pitch: clamp(note.pitch + delta, MIN_PITCH, MAX_PITCH),
+      }));
     }
     case 'velocity': {
       const delta = clamp(value, 1, 127) - anchor.velocity;

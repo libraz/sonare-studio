@@ -7,6 +7,7 @@ import { confirmDialog } from '@/composables/useDialogs';
 import { useGestureTransaction } from '@/composables/useGestureTransaction';
 import { describeError } from '@/lib/errors';
 import { clampInt } from '@/lib/math';
+import { cloneJson } from '@/project/clone-json';
 import { applyNoteEdits } from '@/project/commands';
 import { unfreezeTrack } from '@/project/freeze';
 import { audibleMidiSourceWindow, midiTimelinePpqToSource } from '@/project/midi-projection';
@@ -76,10 +77,6 @@ const undoStack = ref<PatternHistoryEntry[]>([]);
 const redoStack = ref<PatternHistoryEntry[]>([]);
 const MAX_PATTERN_HISTORY = 100;
 
-function snapshot(value: StepPattern): StepPattern {
-  return JSON.parse(JSON.stringify(value)) as StepPattern;
-}
-
 function pushHistory(entry: PatternHistoryEntry): void {
   undoStack.value = [...undoStack.value.slice(-(MAX_PATTERN_HISTORY - 1)), entry];
   redoStack.value = [];
@@ -89,14 +86,14 @@ function pushHistory(entry: PatternHistoryEntry): void {
 const gesture = useGestureTransaction<PatternHistoryEntry>({ commit: pushHistory });
 
 function beginPointerGesture(): void {
-  gesture.begin({ pattern: snapshot(pattern.value), rootPitch: rootPitch.value });
+  gesture.begin({ pattern: cloneJson(pattern.value), rootPitch: rootPitch.value });
 }
 
 function setPattern(next: StepPattern, previousRootPitch = rootPitch.value): void {
   if (gesture.active) {
     gesture.markDirty();
   } else {
-    pushHistory({ pattern: snapshot(pattern.value), rootPitch: previousRootPitch });
+    pushHistory({ pattern: cloneJson(pattern.value), rootPitch: previousRootPitch });
   }
   pattern.value = next;
 }
@@ -106,7 +103,7 @@ function undoPattern(): void {
   if (!previous) return;
   redoStack.value = [
     ...redoStack.value,
-    { pattern: snapshot(pattern.value), rootPitch: rootPitch.value },
+    { pattern: cloneJson(pattern.value), rootPitch: rootPitch.value },
   ];
   undoStack.value = undoStack.value.slice(0, -1);
   pattern.value = previous.pattern;
@@ -118,7 +115,7 @@ function redoPattern(): void {
   if (!next) return;
   undoStack.value = [
     ...undoStack.value,
-    { pattern: snapshot(pattern.value), rootPitch: rootPitch.value },
+    { pattern: cloneJson(pattern.value), rootPitch: rootPitch.value },
   ];
   redoStack.value = redoStack.value.slice(0, -1);
   pattern.value = next.pattern;

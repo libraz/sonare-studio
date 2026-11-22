@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { DISPLAY_TRANSPOSE_MAX, DISPLAY_TRANSPOSE_MIN } from '@/project/annotations';
+import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
 import { SCORE_PAGE_FORMATS, type ScorePageFormatKey } from '@/ui/score/layout';
 
@@ -102,7 +103,7 @@ const barsPerPageModel = computed<number>({
 const grandStaffSplitPitchModel = computed<number>({
   get: () => props.grandStaffSplitPitch,
   set: (value) => {
-    if (Number.isInteger(value) && value >= 0 && value <= 127) {
+    if (Number.isInteger(value) && value >= MIN_PITCH && value <= MAX_PITCH) {
       emit('update:grandStaffSplitPitch', value);
     }
   },

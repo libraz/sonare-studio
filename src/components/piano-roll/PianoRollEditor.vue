@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import ChordLane from '@/components/arrangement/ChordLane.vue';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
@@ -14,7 +14,6 @@ import { isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import {
-  addNote,
   addNotes,
   addNotesInNewClip,
   deleteNotes,
@@ -170,7 +169,6 @@ const {
   laneCc,
   lanePitchBend,
   laneChannelPressure,
-  lanePolyPressure,
   noteLaneActive,
   selectNoteLane,
   selectCcLane,
@@ -504,7 +502,9 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   const maximum = sourceWindowEndPpq.value;
   if (payload.kind === 'set') {
     if (payload.controlId === 'pitch') {
-      applyKeyboardUpdates([{ id: note.id, pitch: clamp(Math.round(payload.value), 0, 127) }]);
+      applyKeyboardUpdates([
+        { id: note.id, pitch: clamp(Math.round(payload.value), MIN_PITCH, MAX_PITCH) },
+      ]);
     } else if (payload.controlId === 'start') {
       applyKeyboardUpdates([
         {
@@ -528,7 +528,7 @@ function onNoteKeyboardAction(payload: NoteKeyboardAction): void {
   const step = Math.max(0.0625, store.snapEnabled ? gridPpq.value : 0.0625) * (coarse ? 4 : 1);
   if (direction === 'up' || direction === 'down') {
     const delta = direction === 'up' ? (coarse ? 12 : 1) : coarse ? -12 : -1;
-    applyKeyboardUpdates([{ id: note.id, pitch: clamp(note.pitch + delta, 0, 127) }]);
+    applyKeyboardUpdates([{ id: note.id, pitch: clamp(note.pitch + delta, MIN_PITCH, MAX_PITCH) }]);
     return;
   }
   const delta =
@@ -630,9 +630,9 @@ function resolveScalePitch(pitch: number): number {
   if (!mask.some(Boolean) || mask[((pitch % 12) + 12) % 12]) return pitch;
   for (let distance = 1; distance <= 12; distance++) {
     const up = pitch + distance;
-    if (up <= 127 && mask[((up % 12) + 12) % 12]) return up;
+    if (up <= MAX_PITCH && mask[((up % 12) + 12) % 12]) return up;
     const down = pitch - distance;
-    if (down >= 0 && mask[((down % 12) + 12) % 12]) return down;
+    if (down >= MIN_PITCH && mask[((down % 12) + 12) % 12]) return down;
   }
   return pitch;
 }

@@ -26,10 +26,10 @@ import { floorLocalPpqToMeterGrid } from './timeline-meter';
 import { visibleNotesInWindow } from './visible-notes';
 
 /** Smallest note duration a resize can produce (a sixty-fourth note in PPQ). */
-export const DEFAULT_MIN_DURATION_PPQ = 0.0625;
+const DEFAULT_MIN_DURATION_PPQ = 0.0625;
 
 /** Velocity given to notes created with the draw tool. */
-export const DEFAULT_DRAW_VELOCITY = 96;
+const DEFAULT_DRAW_VELOCITY = 96;
 
 /** A pointer position in note-grid viewport px coordinates. */
 export interface InteractionPoint {
