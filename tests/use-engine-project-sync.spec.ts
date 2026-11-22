@@ -692,7 +692,7 @@ describe('useEngineProjectSync', () => {
     await store.init();
     const handle = shallowRef({ engine: { removeClip: vi.fn() } });
     vi.mocked(scheduleProjectClips).mockImplementation(async (_handle, options) => {
-      options.onMediaIssue?.({
+      options?.onMediaIssue?.({
         kind: 'audio-asset',
         mediaId: 'missing-live',
         role: 'take',

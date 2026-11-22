@@ -508,8 +508,8 @@ describe('score annotation serialization', () => {
     const document = serializeProject();
     await loadProjectDocument(JSON.parse(JSON.stringify(document)) as ProjectDocument);
     const loadedCopy = store.clips.find((clip) => clip.startPpq === 8);
-    expect(loadedCopy).toBeDefined();
-    const [loadedFirst, loadedSecond, loadedTarget] = loadedCopy?.notes ?? [];
+    if (!loadedCopy) throw new Error('the copied clip did not load');
+    const [loadedFirst, loadedSecond, loadedTarget] = loadedCopy.notes;
     expect(store.scoreAnnotations[loadedCopy.id]).toEqual({
       [loadedFirst.id]: { dynamics: 'p' },
       [loadedSecond.id]: {

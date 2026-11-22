@@ -380,7 +380,7 @@ class FakeMediaRecorder extends EventTarget {
   }
 
   stop(): void {
-    this.emitData(fixtureForMimeType(this.options.mimeType));
+    this.emitData(fixtureForMimeType(this.options.mimeType ?? ''));
   }
 }
 

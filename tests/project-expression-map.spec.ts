@@ -39,7 +39,8 @@ const STATUS_NOTE_ON = 0x90;
 const STATUS_CONTROL_CHANGE = 0xb0;
 
 /** Decodes an engine event word into its status/data bytes. */
-function decode(word: number): { status: number; data0: number; data1: number } {
+/** Splits a channel-voice word; an event without one decodes as status 0. */
+function decode(word = 0): { status: number; data0: number; data1: number } {
   return {
     status: (word >>> 16) & 0xf0,
     data0: (word >>> 8) & 0x7f,
