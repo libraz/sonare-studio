@@ -19,6 +19,22 @@ export const BUILD_COMMIT =
 /** ISO-8601 build timestamp, or an empty string when unknown. */
 export const BUILD_TIME = typeof __SONARE_BUILD_TIME__ === 'string' ? __SONARE_BUILD_TIME__ : '';
 
+/** Public repository holding this app's source, offered to every user under AGPL-3.0 section 13. */
+export const SOURCE_REPOSITORY_URL = 'https://github.com/libraz/sonare-studio';
+
+/** SPDX identifier of the app's licence. */
+export const LICENSE_SPDX = 'AGPL-3.0-or-later';
+
+/** The source tree the running build was made from, or the default branch when the commit is unknown. */
+export function sourceTreeUrl(commit: string): string {
+  return `${SOURCE_REPOSITORY_URL}/tree/${commit === '' ? 'main' : commit}`;
+}
+
+/** The licence text as of the running build, or as of the default branch when the commit is unknown. */
+export function licenseUrl(commit: string): string {
+  return `${SOURCE_REPOSITORY_URL}/blob/${commit === '' ? 'main' : commit}/LICENSE`;
+}
+
 /**
  * Formats a build timestamp in the viewer's own time zone, so the displayed
  * moment matches the clock the user compares it against. Returns an empty

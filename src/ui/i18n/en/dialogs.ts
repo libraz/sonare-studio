@@ -260,5 +260,8 @@ export const dialogs = {
     audioEngine: 'Audio engine',
     available: 'available',
     unavailable: 'unavailable',
+    source: 'Source code',
+    license: 'License',
+    opensInNewTab: 'opens in a new tab',
   },
 } as const;

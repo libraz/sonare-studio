@@ -265,5 +265,8 @@ export const dialogs = {
     audioEngine: 'オーディオエンジン',
     available: '利用可能',
     unavailable: '利用不可',
+    source: 'ソースコード',
+    license: 'ライセンス',
+    opensInNewTab: '新しいタブで開く',
   },
 } as const;

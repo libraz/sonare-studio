@@ -2,13 +2,24 @@
 import { computed } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BrandMark from '@/components/shell/BrandMark.vue';
-import { APP_VERSION, BUILD_COMMIT, BUILD_TIME, formatBuildTime } from '@/lib/build-info';
+import {
+  APP_VERSION,
+  BUILD_COMMIT,
+  BUILD_TIME,
+  formatBuildTime,
+  LICENSE_SPDX,
+  licenseUrl,
+  SOURCE_REPOSITORY_URL,
+  sourceTreeUrl,
+} from '@/lib/build-info';
 import { useI18n } from '@/ui/i18n';
 
 /**
  * About dialog — the app's identity and runtime build/environment facts
  * (app build stamp, audio-engine version, cross-origin isolation) that used to
- * clutter the transport bar and the Diagnostics disclosure. Read-only.
+ * clutter the transport bar and the Diagnostics disclosure, plus the source and
+ * licence links AGPL-3.0 section 13 requires a network-served build to offer.
+ * Read-only.
  */
 
 defineProps<{
@@ -28,6 +39,8 @@ const emit = defineEmits<{
 const { locale, t } = useI18n();
 
 const builtAt = computed(() => formatBuildTime(BUILD_TIME, locale.value));
+/** Shown as `owner/repo`; the link itself opens the tree at the running commit. */
+const repositoryName = new URL(SOURCE_REPOSITORY_URL).pathname.slice(1);
 </script>
 
 <template>
@@ -39,11 +52,11 @@ const builtAt = computed(() => formatBuildTime(BUILD_TIME, locale.value));
         <BrandMark size="lg" />
         <p class="about-tagline">{{ t.dialogs.about.tagline }}</p>
         <p v-if="APP_VERSION" class="about-stamp">
-          <span class="about-stamp-label">{{ t.dialogs.about.appVersion }}</span>
+          <span class="about-visually-hidden">{{ t.dialogs.about.appVersion }}</span>
           <span class="about-stamp-version">{{ APP_VERSION }}</span>
           <template v-if="BUILD_COMMIT">
             <span class="about-stamp-sep" aria-hidden="true">·</span>
-            <span class="about-stamp-label">{{ t.dialogs.about.commit }}</span>
+            <span class="about-visually-hidden">{{ t.dialogs.about.commit }}</span>
             <span class="about-stamp-commit">{{ BUILD_COMMIT }}</span>
           </template>
         </p>
@@ -65,6 +78,27 @@ const builtAt = computed(() => formatBuildTime(BUILD_TIME, locale.value));
               <span class="about-status-dot" aria-hidden="true"></span>
               {{ isolated ? t.dialogs.about.available : t.dialogs.about.unavailable }}
             </span>
+          </dd>
+        </div>
+      </dl>
+
+      <dl class="about-facts">
+        <div class="about-row">
+          <dt>{{ t.dialogs.about.source }}</dt>
+          <dd>
+            <a class="about-link" :href="sourceTreeUrl(BUILD_COMMIT)" target="_blank" rel="noopener noreferrer">
+              {{ repositoryName }}
+              <span class="about-visually-hidden">({{ t.dialogs.about.opensInNewTab }})</span>
+            </a>
+          </dd>
+        </div>
+        <div class="about-row">
+          <dt>{{ t.dialogs.about.license }}</dt>
+          <dd>
+            <a class="about-link" :href="licenseUrl(BUILD_COMMIT)" target="_blank" rel="noopener noreferrer">
+              {{ LICENSE_SPDX }}
+              <span class="about-visually-hidden">({{ t.dialogs.about.opensInNewTab }})</span>
+            </a>
           </dd>
         </div>
       </dl>
@@ -116,7 +150,7 @@ const builtAt = computed(() => formatBuildTime(BUILD_TIME, locale.value));
 }
 
 /* The chip is bare numbers on screen; assistive tech still gets the field names. */
-.about-stamp-label {
+.about-visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -174,6 +208,27 @@ const builtAt = computed(() => formatBuildTime(BUILD_TIME, locale.value));
   color: var(--text-1);
   font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;
+}
+
+/* Links read as values in the card, revealing the accent only on interaction. */
+.about-link {
+  margin: calc(-1 * var(--sp-1)) calc(-1 * var(--sp-2));
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  text-decoration: underline;
+  text-decoration-color: var(--text-4);
+  text-underline-offset: 3px;
+}
+
+.about-link:hover {
+  color: var(--accent);
+  text-decoration-color: currentColor;
+}
+
+.about-link:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 
 /* Product name beside its version — the version is the fact, the name is context. */

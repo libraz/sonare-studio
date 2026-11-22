@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import AboutDialog from '@/components/shell/AboutDialog.vue';
-import { formatBuildTime } from '@/lib/build-info';
+import { formatBuildTime, licenseUrl, sourceTreeUrl } from '@/lib/build-info';
 import { formatTimestamp } from '@/lib/date-format';
 
 // The build stamp is injected by Vite defines, which are absent under Vitest,
@@ -61,6 +61,21 @@ describe('About dialog build stamp', () => {
     expect(text).toContain('abc1234');
     // The stamp is localized, so only its year is stable across languages.
     expect(text).toContain('2026');
+  });
+});
+
+describe('About dialog source offer', () => {
+  it('links the source tree and the licence at the running commit', () => {
+    open();
+    const hrefs = [...document.body.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain('https://github.com/libraz/sonare-studio/tree/abc1234');
+    expect(hrefs).toContain('https://github.com/libraz/sonare-studio/blob/abc1234/LICENSE');
+    expect(document.body.textContent).toContain('AGPL-3.0-or-later');
+  });
+
+  it('falls back to the default branch when the commit is unknown', () => {
+    expect(sourceTreeUrl('')).toBe('https://github.com/libraz/sonare-studio/tree/main');
+    expect(licenseUrl('')).toBe('https://github.com/libraz/sonare-studio/blob/main/LICENSE');
   });
 });
 
