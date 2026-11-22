@@ -1,6 +1,13 @@
 import { clamp01 } from '@/lib/math';
 import { CLIP_LANE_EPSILON } from './command/clip-lane';
 import { type NoteBoundaryEvent, pairNoteBoundariesIntoNotes, type RawNote } from './midi-events';
+import {
+  type AnyMidiLaneKind,
+  MIDI_LANE_KINDS,
+  type MidiLaneField,
+  type MidiLaneFields,
+  type MidiLaneOf,
+} from './midi-lane-kinds';
 import { snapPpqToSwingMeterGrid } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 
@@ -269,4 +276,103 @@ export function finalizeRecording(
   const lengthPpq = Math.max(stopPpq - startPpq, lastEnd);
   if (!(lengthPpq > 0)) return null;
   return { notes, lengthPpq };
+}
+
+/**
+ * One captured expression point (CC, pitch bend, program change or pressure),
+ * tagged with the lane list it records into.
+ */
+export interface RecordedExpressionEvent {
+  /** Lane list the point records into. */
+  field: MidiLaneField;
+  /** Identity fields of the lane, with an empty point list. */
+  lane: MidiLaneOf<MidiLaneField>;
+  /** Value fields of the point, without a position. */
+  value: { value: number } | { program: number };
+  /** Captured transport position. */
+  ppq: number;
+}
+
+function relativeExpressionPpq(
+  ppq: number,
+  startPpq: number,
+  loopLengthPpq: number,
+): number | null {
+  if (!Number.isFinite(ppq)) return null;
+  const relative = ppq - startPpq;
+  if (relative < -1e-9) return null;
+  if (loopLengthPpq > 0) {
+    return ((relative % loopLengthPpq) + loopLengthPpq) % loopLengthPpq;
+  }
+  return Math.max(0, relative);
+}
+
+/**
+ * Length of a take holding captured expression: the loop length when looping,
+ * otherwise the longest of the finalized notes, the punch span and the last point.
+ */
+export function expressionLengthPpq(
+  capturedExpression: ReadonlyArray<{ ppq: number }>,
+  startPpq: number,
+  stopPpq: number,
+  loopLengthPpq: number,
+  finalizedLengthPpq: number,
+): number {
+  if (loopLengthPpq > 0) return loopLengthPpq;
+  const lastExpressionPpq = capturedExpression.reduce(
+    (max, event) => (Number.isFinite(event.ppq) ? Math.max(max, event.ppq) : max),
+    startPpq,
+  );
+  return Math.max(finalizedLengthPpq, stopPpq - startPpq, lastExpressionPpq - startPpq);
+}
+
+type AnyLane = MidiLaneOf<MidiLaneField>;
+type AnyPoint = AnyLane['points'][number];
+
+function buildKindLanes(
+  kind: AnyMidiLaneKind,
+  events: ReadonlyArray<RecordedExpressionEvent>,
+  startPpq: number,
+  loopLengthPpq: number,
+  lengthPpq: number,
+): AnyLane[] {
+  const byLane = new Map<string, AnyLane>();
+  for (const event of events) {
+    const ppq = relativeExpressionPpq(event.ppq, startPpq, loopLengthPpq);
+    if (ppq === null) continue;
+    const key = kind.key(event.lane);
+    const lane = byLane.get(key) ?? kind.shell(event.lane);
+    (lane.points as AnyPoint[]).push({ ...event.value, ppq } as AnyPoint);
+    byLane.set(key, lane);
+  }
+  return [...byLane.values()]
+    .map((lane) => ({ ...lane, points: kind.sanitize(lane.points, lengthPpq) }) as AnyLane)
+    .filter((lane) => lane.points.length > 0);
+}
+
+/**
+ * Groups captured expression points into clip lanes relative to `startPpq`,
+ * folded into the loop when `loopLengthPpq` > 0. Every kind with captured
+ * points gets its field, even when normalization leaves it no lane.
+ */
+export function buildRecordedExpressionLanes(
+  events: ReadonlyArray<RecordedExpressionEvent>,
+  startPpq: number,
+  loopLengthPpq: number,
+  lengthPpq: number,
+): Partial<MidiLaneFields> {
+  const fields: Partial<Record<MidiLaneField, AnyLane[]>> = {};
+  for (const kind of MIDI_LANE_KINDS) {
+    const ofKind = events.filter((event) => event.field === kind.field);
+    if (ofKind.length === 0) continue;
+    fields[kind.field] = buildKindLanes(kind, ofKind, startPpq, loopLengthPpq, lengthPpq);
+  }
+  return fields as Partial<MidiLaneFields>;
+}
+
+/** The lane lists of `fields` that hold at least one lane. */
+export function nonEmptyLaneFields(fields: Partial<MidiLaneFields>): Partial<MidiLaneFields> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, lanes]) => lanes.length > 0),
+  ) as Partial<MidiLaneFields>;
 }

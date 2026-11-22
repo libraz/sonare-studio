@@ -22,18 +22,17 @@ import type {
   RecordingCycleWindow,
   RecordingStartPlan,
 } from '@/project/loop-recording';
-import {
-  sanitizeCcPoints,
-  sanitizePitchBendPoints,
-  sanitizePressurePoints,
-} from '@/project/midi-cc';
 import type { NoteBoundaryEvent } from '@/project/midi-events';
 import {
+  buildRecordedExpressionLanes,
+  expressionLengthPpq,
   finalizeRecording,
   foldRecordedNotesIntoLoop,
   lastCompleteLoopPassStartPpq,
   lastLoopPassWithEventsStartPpq,
   loopPassStartsWithEvents,
+  nonEmptyLaneFields,
+  type RecordedExpressionEvent,
   selectLastCompleteLoopPassEvents,
   selectLastCompleteLoopPassNotes,
 } from '@/project/midi-recording';
@@ -45,14 +44,7 @@ import {
   ppqToSeconds as ppqToSecondsMap,
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
-import type {
-  ClipCcLane,
-  ClipChannelPressureLane,
-  ClipPitchBendLane,
-  ClipPolyPressureLane,
-  ClipProgramChangeLane,
-  MidiClipTake,
-} from '@/project/types';
+import type { MidiClipTake } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { createCountInController, resolveTransportRecordingPlan } from './recording-count-in';
 import type { UseTransportReturn } from './useTransport';
@@ -195,18 +187,10 @@ export function useMidiRecording(
   const cycleRecordMode = ref<MidiCycleRecordMode>('takes');
 
   let buffer: NoteBoundaryEvent[] = [];
-  let ccBuffer: Array<CapturedControlChangeEvent & { ppq: number }> = [];
-  let pitchBendBuffer: Array<CapturedPitchBendEvent & { ppq: number }> = [];
-  let programChangeBuffer: Array<CapturedProgramChangeEvent & { ppq: number }> = [];
-  let channelPressureBuffer: Array<CapturedChannelPressureEvent & { ppq: number }> = [];
-  let polyPressureBuffer: Array<CapturedPolyPressureEvent & { ppq: number }> = [];
+  let expressionBuffer: RecordedExpressionEvent[] = [];
   const clearCaptureBuffers = (): void => {
     buffer = [];
-    ccBuffer = [];
-    pitchBendBuffer = [];
-    programChangeBuffer = [];
-    channelPressureBuffer = [];
-    polyPressureBuffer = [];
+    expressionBuffer = [];
   };
   let held = new Map<string, CapturedNoteEvent>();
   // Notes pressed during a count-in are tracked separately. They are not
@@ -404,197 +388,48 @@ export function useMidiRecording(
     held.delete(key);
   };
 
-  const captureControlChange = (event: CapturedControlChangeEvent): void => {
-    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
-    ccBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
-  };
-
-  const capturePitchBend = (event: CapturedPitchBendEvent): void => {
-    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
-    pitchBendBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
-  };
-
-  const captureProgramChange = (event: CapturedProgramChangeEvent): void => {
-    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
-    programChangeBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
-  };
-
-  const captureChannelPressure = (event: CapturedChannelPressureEvent): void => {
-    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
-    channelPressureBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
-  };
-
-  const capturePolyPressure = (event: CapturedPolyPressureEvent): void => {
-    if (!isRecording.value || eventIsBeforePunch(event.timeStampMs)) return;
-    polyPressureBuffer.push({ ...event, ppq: expressionPointPpq(event.timeStampMs) });
-  };
-
-  function relativeExpressionPpq(
-    ppq: number,
-    startPpq: number,
-    loopLengthPpq: number,
-  ): number | null {
-    if (!Number.isFinite(ppq)) return null;
-    const relative = ppq - startPpq;
-    if (relative < -1e-9) return null;
-    if (loopLengthPpq > 0) {
-      return ((relative % loopLengthPpq) + loopLengthPpq) % loopLengthPpq;
-    }
-    return Math.max(0, relative);
+  function captureExpression(
+    timeStampMs: number | undefined,
+    event: Omit<RecordedExpressionEvent, 'ppq'>,
+  ): void {
+    if (!isRecording.value || eventIsBeforePunch(timeStampMs)) return;
+    expressionBuffer.push({ ...event, ppq: expressionPointPpq(timeStampMs) });
   }
 
-  function expressionLengthPpq(
-    capturedExpression: ReadonlyArray<{ ppq: number }>,
-    startPpq: number,
-    stopPpq: number,
-    loopLengthPpq: number,
-    finalizedLengthPpq: number,
-  ): number {
-    if (loopLengthPpq > 0) return loopLengthPpq;
-    const lastExpressionPpq = capturedExpression.reduce(
-      (max, event) => (Number.isFinite(event.ppq) ? Math.max(max, event.ppq) : max),
-      startPpq,
-    );
-    return Math.max(finalizedLengthPpq, stopPpq - startPpq, lastExpressionPpq - startPpq);
-  }
+  const captureControlChange = (event: CapturedControlChangeEvent): void =>
+    captureExpression(event.timeStampMs, {
+      field: 'ccLanes',
+      lane: { controller: event.controller, channel: event.channel, points: [] },
+      value: { value: event.value },
+    });
 
-  function buildCcLanes(
-    events: ReadonlyArray<CapturedControlChangeEvent & { ppq: number }>,
-    startPpq: number,
-    loopLengthPpq: number,
-    lengthPpq: number,
-  ): ClipCcLane[] {
-    const byLane = new Map<string, ClipCcLane>();
-    for (const event of events) {
-      const ppq = relativeExpressionPpq(event.ppq, startPpq, loopLengthPpq);
-      if (ppq === null) continue;
-      const key = `${event.controller}:${event.channel}`;
-      const lane =
-        byLane.get(key) ??
-        ({
-          controller: event.controller,
-          channel: event.channel,
-          points: [],
-        } satisfies ClipCcLane);
-      lane.points.push({ ppq, value: event.value });
-      byLane.set(key, lane);
-    }
-    return [...byLane.values()]
-      .map((lane) => ({ ...lane, points: sanitizeCcPoints(lane.points, lengthPpq) }))
-      .filter((lane) => lane.points.length > 0);
-  }
+  const capturePitchBend = (event: CapturedPitchBendEvent): void =>
+    captureExpression(event.timeStampMs, {
+      field: 'pitchBendLanes',
+      lane: { channel: event.channel, points: [] },
+      value: { value: event.value },
+    });
 
-  function buildPitchBendLanes(
-    events: ReadonlyArray<CapturedPitchBendEvent & { ppq: number }>,
-    startPpq: number,
-    loopLengthPpq: number,
-    lengthPpq: number,
-  ): ClipPitchBendLane[] {
-    const byLane = new Map<number, ClipPitchBendLane>();
-    for (const event of events) {
-      const ppq = relativeExpressionPpq(event.ppq, startPpq, loopLengthPpq);
-      if (ppq === null) continue;
-      const lane =
-        byLane.get(event.channel) ??
-        ({
-          channel: event.channel,
-          points: [],
-        } satisfies ClipPitchBendLane);
-      lane.points.push({ ppq, value: event.value });
-      byLane.set(event.channel, lane);
-    }
-    return [...byLane.values()]
-      .map((lane) => ({ ...lane, points: sanitizePitchBendPoints(lane.points, lengthPpq) }))
-      .filter((lane) => lane.points.length > 0);
-  }
+  const captureProgramChange = (event: CapturedProgramChangeEvent): void =>
+    captureExpression(event.timeStampMs, {
+      field: 'programChangeLanes',
+      lane: { channel: event.channel, points: [] },
+      value: { program: event.program },
+    });
 
-  function buildChannelPressureLanes(
-    events: ReadonlyArray<CapturedChannelPressureEvent & { ppq: number }>,
-    startPpq: number,
-    loopLengthPpq: number,
-    lengthPpq: number,
-  ): ClipChannelPressureLane[] {
-    const byLane = new Map<number, ClipChannelPressureLane>();
-    for (const event of events) {
-      const ppq = relativeExpressionPpq(event.ppq, startPpq, loopLengthPpq);
-      if (ppq === null) continue;
-      const lane =
-        byLane.get(event.channel) ??
-        ({
-          channel: event.channel,
-          points: [],
-        } satisfies ClipChannelPressureLane);
-      lane.points.push({ ppq, value: event.value });
-      byLane.set(event.channel, lane);
-    }
-    return [...byLane.values()]
-      .map((lane) => ({ ...lane, points: sanitizePressurePoints(lane.points, lengthPpq) }))
-      .filter((lane) => lane.points.length > 0);
-  }
+  const captureChannelPressure = (event: CapturedChannelPressureEvent): void =>
+    captureExpression(event.timeStampMs, {
+      field: 'channelPressureLanes',
+      lane: { channel: event.channel, points: [] },
+      value: { value: event.value },
+    });
 
-  function buildProgramChangeLanes(
-    events: ReadonlyArray<CapturedProgramChangeEvent & { ppq: number }>,
-    startPpq: number,
-    loopLengthPpq: number,
-    lengthPpq: number,
-  ): ClipProgramChangeLane[] {
-    const byLane = new Map<number, ClipProgramChangeLane>();
-    for (const event of events) {
-      const ppq = relativeExpressionPpq(event.ppq, startPpq, loopLengthPpq);
-      if (ppq === null) continue;
-      const lane =
-        byLane.get(event.channel) ??
-        ({
-          channel: event.channel,
-          points: [],
-        } satisfies ClipProgramChangeLane);
-      lane.points.push({ ppq, program: event.program });
-      byLane.set(event.channel, lane);
-    }
-    return [...byLane.values()]
-      .map((lane) => ({
-        ...lane,
-        points: lane.points
-          .map((point) => ({ ppq: point.ppq, program: Math.round(point.program) }))
-          .filter(
-            (point) =>
-              Number.isFinite(point.ppq) &&
-              point.ppq >= 0 &&
-              point.ppq <= lengthPpq &&
-              Number.isInteger(point.program) &&
-              point.program >= 0 &&
-              point.program <= 127,
-          )
-          .sort((a, b) => a.ppq - b.ppq),
-      }))
-      .filter((lane) => lane.points.length > 0);
-  }
-
-  function buildPolyPressureLanes(
-    events: ReadonlyArray<CapturedPolyPressureEvent & { ppq: number }>,
-    startPpq: number,
-    loopLengthPpq: number,
-    lengthPpq: number,
-  ): ClipPolyPressureLane[] {
-    const byLane = new Map<string, ClipPolyPressureLane>();
-    for (const event of events) {
-      const ppq = relativeExpressionPpq(event.ppq, startPpq, loopLengthPpq);
-      if (ppq === null) continue;
-      const key = `${event.channel}:${event.pitch}`;
-      const lane =
-        byLane.get(key) ??
-        ({
-          channel: event.channel,
-          pitch: event.pitch,
-          points: [],
-        } satisfies ClipPolyPressureLane);
-      lane.points.push({ ppq, value: event.value });
-      byLane.set(key, lane);
-    }
-    return [...byLane.values()]
-      .map((lane) => ({ ...lane, points: sanitizePressurePoints(lane.points, lengthPpq) }))
-      .filter((lane) => lane.points.length > 0);
-  }
+  const capturePolyPressure = (event: CapturedPolyPressureEvent): void =>
+    captureExpression(event.timeStampMs, {
+      field: 'polyPressureLanes',
+      lane: { channel: event.channel, pitch: event.pitch, points: [] },
+      value: { value: event.value },
+    });
 
   const record = (startAtPpq?: number | RecordingStartPlan): boolean => {
     error.value = null;
@@ -709,11 +544,7 @@ export function useMidiRecording(
       });
     }
     const captured = buffer;
-    const capturedCc = ccBuffer;
-    const capturedPitchBend = pitchBendBuffer;
-    const capturedProgramChange = programChangeBuffer;
-    const capturedChannelPressure = channelPressureBuffer;
-    const capturedPolyPressure = polyPressureBuffer;
+    const capturedExpressionEvents = expressionBuffer;
     clearCaptureBuffers();
     held = new Map();
     preRollHeld = new Map();
@@ -733,14 +564,7 @@ export function useMidiRecording(
     });
     try {
       recordingCounter += 1;
-      const capturedLoopEvents = [
-        ...captured,
-        ...capturedCc,
-        ...capturedPitchBend,
-        ...capturedProgramChange,
-        ...capturedChannelPressure,
-        ...capturedPolyPressure,
-      ];
+      const capturedLoopEvents = [...captured, ...capturedExpressionEvents];
       const completedLoopPassStart =
         loopLengthPpq > 0
           ? (lastLoopPassWithEventsStartPpq(capturedLoopEvents, originPpq, loopLengthPpq) ??
@@ -756,63 +580,16 @@ export function useMidiRecording(
               completedLoopPassStart,
             )
           : (finalized?.notes ?? []);
-      const loopCc =
+      const capturedExpression =
         completedLoopPassStart !== null
           ? selectLastCompleteLoopPassEvents(
-              capturedCc,
+              capturedExpressionEvents,
               originPpq,
               stopPpq,
               loopLengthPpq,
               completedLoopPassStart,
             )
-          : capturedCc;
-      const loopPitchBend =
-        completedLoopPassStart !== null
-          ? selectLastCompleteLoopPassEvents(
-              capturedPitchBend,
-              originPpq,
-              stopPpq,
-              loopLengthPpq,
-              completedLoopPassStart,
-            )
-          : capturedPitchBend;
-      const loopProgramChange =
-        completedLoopPassStart !== null
-          ? selectLastCompleteLoopPassEvents(
-              capturedProgramChange,
-              originPpq,
-              stopPpq,
-              loopLengthPpq,
-              completedLoopPassStart,
-            )
-          : capturedProgramChange;
-      const loopChannelPressure =
-        completedLoopPassStart !== null
-          ? selectLastCompleteLoopPassEvents(
-              capturedChannelPressure,
-              originPpq,
-              stopPpq,
-              loopLengthPpq,
-              completedLoopPassStart,
-            )
-          : capturedChannelPressure;
-      const loopPolyPressure =
-        completedLoopPassStart !== null
-          ? selectLastCompleteLoopPassEvents(
-              capturedPolyPressure,
-              originPpq,
-              stopPpq,
-              loopLengthPpq,
-              completedLoopPassStart,
-            )
-          : capturedPolyPressure;
-      const capturedExpression = [
-        ...loopCc,
-        ...loopPitchBend,
-        ...loopProgramChange,
-        ...loopChannelPressure,
-        ...loopPolyPressure,
-      ];
+          : capturedExpressionEvents;
       const expressionLoopLengthPpq = completedLoopPassStart !== null ? 0 : loopLengthPpq;
       let lengthPpq =
         completedLoopPassStart !== null
@@ -825,30 +602,13 @@ export function useMidiRecording(
               finalized?.lengthPpq ?? 0,
             );
       if (lengthPpq <= 0) return null;
-      let ccLanes = buildCcLanes(loopCc, originPpq, expressionLoopLengthPpq, lengthPpq);
-      let pitchBendLanes = buildPitchBendLanes(
-        loopPitchBend,
-        originPpq,
-        expressionLoopLengthPpq,
-        lengthPpq,
-      );
-      let programChangeLanes = buildProgramChangeLanes(
-        loopProgramChange,
-        originPpq,
-        expressionLoopLengthPpq,
-        lengthPpq,
-      );
-      let channelPressureLanes = buildChannelPressureLanes(
-        loopChannelPressure,
-        originPpq,
-        expressionLoopLengthPpq,
-        lengthPpq,
-      );
-      let polyPressureLanes = buildPolyPressureLanes(
-        loopPolyPressure,
-        originPpq,
-        expressionLoopLengthPpq,
-        lengthPpq,
+      let laneFields = nonEmptyLaneFields(
+        buildRecordedExpressionLanes(
+          capturedExpression,
+          originPpq,
+          expressionLoopLengthPpq,
+          lengthPpq,
+        ),
       );
       const midiTakes: MidiClipTake[] = [];
       if (loopLengthPpq > 0) {
@@ -864,36 +624,8 @@ export function useMidiRecording(
                 passStart,
               )
             : [];
-          const takeCc = selectLastCompleteLoopPassEvents(
-            capturedCc,
-            originPpq,
-            stopPpq,
-            loopLengthPpq,
-            passStart,
-          );
-          const takePitchBend = selectLastCompleteLoopPassEvents(
-            capturedPitchBend,
-            originPpq,
-            stopPpq,
-            loopLengthPpq,
-            passStart,
-          );
-          const takeProgramChange = selectLastCompleteLoopPassEvents(
-            capturedProgramChange,
-            originPpq,
-            stopPpq,
-            loopLengthPpq,
-            passStart,
-          );
-          const takeChannelPressure = selectLastCompleteLoopPassEvents(
-            capturedChannelPressure,
-            originPpq,
-            stopPpq,
-            loopLengthPpq,
-            passStart,
-          );
-          const takePolyPressure = selectLastCompleteLoopPassEvents(
-            capturedPolyPressure,
+          const takeExpression = selectLastCompleteLoopPassEvents(
+            capturedExpressionEvents,
             originPpq,
             stopPpq,
             loopLengthPpq,
@@ -902,84 +634,23 @@ export function useMidiRecording(
           midiTakes.push({
             name: `Take ${takeIndex + 1}`,
             notes: takeNotes,
-            ...(takeCc.length > 0
-              ? { ccLanes: buildCcLanes(takeCc, originPpq, 0, loopLengthPpq) }
-              : {}),
-            ...(takePitchBend.length > 0
-              ? {
-                  pitchBendLanes: buildPitchBendLanes(takePitchBend, originPpq, 0, loopLengthPpq),
-                }
-              : {}),
-            ...(takeProgramChange.length > 0
-              ? {
-                  programChangeLanes: buildProgramChangeLanes(
-                    takeProgramChange,
-                    originPpq,
-                    0,
-                    loopLengthPpq,
-                  ),
-                }
-              : {}),
-            ...(takeChannelPressure.length > 0
-              ? {
-                  channelPressureLanes: buildChannelPressureLanes(
-                    takeChannelPressure,
-                    originPpq,
-                    0,
-                    loopLengthPpq,
-                  ),
-                }
-              : {}),
-            ...(takePolyPressure.length > 0
-              ? {
-                  polyPressureLanes: buildPolyPressureLanes(
-                    takePolyPressure,
-                    originPpq,
-                    0,
-                    loopLengthPpq,
-                  ),
-                }
-              : {}),
+            ...buildRecordedExpressionLanes(takeExpression, originPpq, 0, loopLengthPpq),
           });
         }
       }
       if (loopLengthPpq > 0 && cycleRecordMode.value === 'overdub') {
         notes = finalized ? foldRecordedNotesIntoLoop(finalized.notes, loopLengthPpq) : [];
         lengthPpq = loopLengthPpq;
-        ccLanes = buildCcLanes(capturedCc, originPpq, loopLengthPpq, lengthPpq);
-        pitchBendLanes = buildPitchBendLanes(
-          capturedPitchBend,
-          originPpq,
-          loopLengthPpq,
-          lengthPpq,
-        );
-        programChangeLanes = buildProgramChangeLanes(
-          capturedProgramChange,
-          originPpq,
-          loopLengthPpq,
-          lengthPpq,
-        );
-        channelPressureLanes = buildChannelPressureLanes(
-          capturedChannelPressure,
-          originPpq,
-          loopLengthPpq,
-          lengthPpq,
-        );
-        polyPressureLanes = buildPolyPressureLanes(
-          capturedPolyPressure,
-          originPpq,
-          loopLengthPpq,
-          lengthPpq,
+        laneFields = nonEmptyLaneFields(
+          buildRecordedExpressionLanes(
+            capturedExpressionEvents,
+            originPpq,
+            loopLengthPpq,
+            lengthPpq,
+          ),
         );
       }
-      if (
-        notes.length === 0 &&
-        ccLanes.length === 0 &&
-        pitchBendLanes.length === 0 &&
-        programChangeLanes.length === 0 &&
-        channelPressureLanes.length === 0 &&
-        polyPressureLanes.length === 0
-      ) {
+      if (notes.length === 0 && Object.keys(laneFields).length === 0) {
         return null;
       }
       const input: AddRecordedMidiClipInput = {
@@ -987,11 +658,7 @@ export function useMidiRecording(
         startPpq: originPpq,
         lengthPpq,
         notes,
-        ...(ccLanes.length > 0 ? { ccLanes } : {}),
-        ...(pitchBendLanes.length > 0 ? { pitchBendLanes } : {}),
-        ...(programChangeLanes.length > 0 ? { programChangeLanes } : {}),
-        ...(channelPressureLanes.length > 0 ? { channelPressureLanes } : {}),
-        ...(polyPressureLanes.length > 0 ? { polyPressureLanes } : {}),
+        ...laneFields,
         ...(cycleRecordMode.value === 'takes' && midiTakes.length > 1
           ? { midiTakes, activeMidiTakeIndex: midiTakes.length - 1 }
           : {}),
