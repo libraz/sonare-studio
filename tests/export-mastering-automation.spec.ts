@@ -540,7 +540,8 @@ describe('runMasteringEnginePass input planes', () => {
   it('reuses zeroed silent input planes across blocks', async () => {
     const engine = new InputTrackingEngine();
     const frames = 10 * 1024 + 300;
-    await runMasteringEnginePass(RAMP_STAGE, ascending(frames), ascending(frames, 1), {
+    const stage = RAMP_STAGE as unknown as Parameters<typeof runMasteringEnginePass>[0];
+    await runMasteringEnginePass(stage, ascending(frames), ascending(frames, 1), {
       createEngine: () => engine as unknown as OfflineRenderEngine,
       sampleRate: 48000,
       startSample: 0,
