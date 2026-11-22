@@ -535,6 +535,31 @@ async function preflightMasteringBuffer(
   return plan.frozenParams;
 }
 
+/** Everything the export steps share once preflight has accepted the request. */
+interface ExportPlan {
+  doc: ProjectDocument;
+  exportModel: ExportOptionsModel;
+  memoryBudgetBytes: number;
+  targets: ExportTarget[];
+  targetLufs: number;
+}
+
+interface ExportTarget {
+  encoder: AudioEncoder;
+  encodeOptions: Record<string, unknown>;
+}
+
+type StemConsumer = (
+  stem: MixdownStem,
+  index: number,
+  total: number,
+  target: ExportTarget,
+  writer: ReturnType<typeof createStemsZipWriter>,
+  meter: PayloadMemoryMeter,
+) => Promise<void>;
+
+type ExportRenderResult = Awaited<ExportRenderHandle['result']>;
+
 async function onExport(): Promise<void> {
   if (!canExport.value) return;
   const encoders = selectedEncoders.value;
@@ -550,90 +575,55 @@ async function onExport(): Promise<void> {
   const downloadFn = props.download ?? downloadViaAnchor;
   const controller = new AbortController();
   let handle: ExportRenderHandle | null = null;
-  let wavStream: WavStreamWriter | null = null;
+  // Assigned inside step functions; the cast keeps the catch block from narrowing it to null.
+  let wavStream = null as WavStreamWriter | null;
   cancelRender = () => {
     controller.abort(new MixdownCancelledError());
     handle?.cancel();
   };
-  try {
+  let consumedStemCount = 0;
+  let stemsPeakDb = -Infinity;
+
+  /** Snapshots the document and options the export runs against. */
+  function prepareRequest(): Pick<ExportPlan, 'doc' | 'exportModel' | 'memoryBudgetBytes'> {
     const doc = structuredClone(props.getDocument()) as ProjectDocument;
     const exportModel: ExportOptionsModel = { ...model.value };
     if (documentBusStemsBlock(doc) !== null) exportModel.includeBusStems = false;
-    const memoryBudgetBytes = exportModel.memoryBudgetMiB * MEBIBYTE;
-    stage.value = 'preflight';
-    const preflight = await audioExportPreflight(doc, {
-      range: exportModel.range,
-      loopRegion: props.loopRegion,
-      releaseTailSeconds: exportModel.releaseTailSeconds,
-      includeMasterChain: exportModel.includeMasterChain,
-      signal: controller.signal,
-    });
+    return { doc, exportModel, memoryBudgetBytes: exportModel.memoryBudgetMiB * MEBIBYTE };
+  }
+
+  /** Throws when the preflight found blockers. */
+  function assertPreflightClear(preflight: Awaited<ReturnType<typeof audioExportPreflight>>): void {
+    if (preflight.blockers.length === 0) return;
     const issueStrings = t.value.dialogs.exportAudio.issue;
-    if (preflight.blockers.length > 0) {
-      const lines = preflight.blockers.map((blocker) =>
-        formatPreflightBlocker(blocker, issueStrings),
-      );
-      throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${lines.join('\n')}`);
-    }
-    const masteringFrozenParams = await preflightMasteringBuffer(
-      doc,
-      exportModel,
-      props.loopRegion,
-      controller.signal,
+    const lines = preflight.blockers.map((blocker) =>
+      formatPreflightBlocker(blocker, issueStrings),
     );
-    const acceptedLimitations = [
+    throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${lines.join('\n')}`);
+  }
+
+  /** Limitations and warnings the user must accept before the export starts. */
+  function collectAcceptedLimitations(
+    doc: ProjectDocument,
+    preflight: Awaited<ReturnType<typeof audioExportPreflight>>,
+    masteringFrozenParams: string[],
+  ): string[] {
+    const issueStrings = t.value.dialogs.exportAudio.issue;
+    return [
       ...offlineAutomationLimitations(doc, masteringFrozenParams).map((limitation) =>
         formatExportLimitation(limitation, issueStrings),
       ),
       ...preflight.warnings.map((warning) => formatPreflightWarning(warning, issueStrings)),
     ];
-    if (acceptedLimitations.length > 0) {
-      const proceed = await confirmDialog({
-        title: t.value.dialogs.exportAudio.preflightWarningTitle,
-        message: `${t.value.dialogs.exportAudio.preflightWarningMessage}\n\n${acceptedLimitations.join('\n')}`,
-        confirmLabel: t.value.dialogs.exportAudio.automationWarningContinue,
-      });
-      if (!proceed) {
-        cancelled.value = true;
-        return;
-      }
-      controller.signal.throwIfAborted();
-    }
-    const range =
-      exportModel.range === 'loop' && props.loopRegion
-        ? props.loopRegion
-        : { startPpq: 0, endPpq: Number.POSITIVE_INFINITY };
-    const metadataLoss = inspectAudioExportLoss(
-      audioFileMetadataForDocument(doc, {
-        sampleRate: exportModel.sampleRate,
-        startPpq: range.startPpq,
-        endPpq: range.endPpq,
-      }),
-      encoders,
-    );
-    if (metadataLoss.entries.length > 0) {
-      if (!(await confirmLossReport(metadataLoss, t.value.dialogs.exportAudio.metadataLoss))) {
-        cancelled.value = true;
-        return;
-      }
-      controller.signal.throwIfAborted();
-    }
-    if (memoryBudgetBytes > DEFAULT_EXPORT_MEMORY_BUDGET_BYTES) {
-      const proceed = await confirmDialog({
-        title: t.value.dialogs.exportAudio.memoryBudgetWarningTitle,
-        message: t.value.dialogs.exportAudio.memoryBudgetWarningMessage.replace(
-          '{amount}',
-          `${exportModel.memoryBudgetMiB} MiB`,
-        ),
-        confirmLabel: t.value.dialogs.exportAudio.memoryBudgetWarningContinue,
-      });
-      if (!proceed) {
-        cancelled.value = true;
-        return;
-      }
-      controller.signal.throwIfAborted();
-    }
-    const targets = encoders.map((encoder) => {
+  }
+
+  /** One encoder + encode-options pair per selected format. */
+  function buildTargets(
+    doc: ProjectDocument,
+    exportModel: ExportOptionsModel,
+    range: MixdownRangePpq,
+  ): ExportTarget[] {
+    return encoders.map((encoder) => {
       const targetModel = { ...exportModel, encoderId: encoder.id };
       const encodeOptions = encodeOptionsForModel(targetModel, {
         compressedEncoderIds: compressedEncoderIds.value,
@@ -655,7 +645,16 @@ async function onExport(): Promise<void> {
       });
       return { encoder, encodeOptions };
     });
-    const targetLufs = appSettings.settings.loudnessTargetLufs;
+  }
+
+  /** Starts the worker render, streaming stems or WAV chunks as they arrive, and awaits the result. */
+  async function render(plan: ExportPlan): Promise<{
+    result: ExportRenderResult;
+    stemsWriter: ReturnType<typeof createStemsZipWriter> | null;
+    stemMemory: PayloadMemoryMeter;
+    consumeStem: StemConsumer;
+  }> {
+    const { doc, exportModel, memoryBudgetBytes, targets } = plan;
     const primaryTarget = targets[0]!;
     const stemMemory = new PayloadMemoryMeter({
       operation: 'audio-export',
@@ -687,13 +686,11 @@ async function onExport(): Promise<void> {
         }),
       });
     }
-    let consumedStemCount = 0;
-    let stemsPeakDb = -Infinity;
     const consumeStem = async (
       stem: MixdownStem,
       index: number,
       total: number,
-      target: (typeof targets)[number],
+      target: ExportTarget,
       writer: ReturnType<typeof createStemsZipWriter>,
       meter: PayloadMemoryMeter,
     ): Promise<void> => {
@@ -767,6 +764,15 @@ async function onExport(): Promise<void> {
       const problems = mediaIssues.map(formatMediaIssue);
       throw new Error(`${t.value.dialogs.exportAudio.preflightBlocked}\n${problems.join('\n')}`);
     }
+    return { result, stemsWriter, stemMemory, consumeStem };
+  }
+
+  /** Normalizes loudness for mixdowns and confirms clipping; null when the user declines. */
+  async function normalizeAndConfirmClipping(
+    plan: ExportPlan,
+    result: ExportRenderResult,
+  ): Promise<MixdownReport | null> {
+    const { exportModel, targets, targetLufs } = plan;
     progress.value = 1;
     stage.value = 'encode';
     const normalizedReport =
@@ -801,10 +807,23 @@ async function onExport(): Promise<void> {
       });
       if (!proceed) {
         cancelled.value = true;
-        return;
+        return null;
       }
       controller.signal.throwIfAborted();
     }
+    return normalizedReport;
+  }
+
+  /** Encodes and downloads the result in the selected mode; returns the delivered filenames. */
+  async function deliver(
+    plan: ExportPlan,
+    result: ExportRenderResult,
+    stemsWriter: ReturnType<typeof createStemsZipWriter> | null,
+    stemMemory: PayloadMemoryMeter,
+    consumeStem: StemConsumer,
+  ): Promise<string[]> {
+    const { exportModel, memoryBudgetBytes, targets } = plan;
+    const primaryTarget = targets[0]!;
     const filenames: string[] = [];
     if (exportModel.mode === 'stems') {
       const stems: Array<MixdownStem | null> = result.stems ? [...result.stems] : [];
@@ -886,6 +905,84 @@ async function onExport(): Promise<void> {
         }
       }
     }
+    return filenames;
+  }
+
+  try {
+    const { doc, exportModel, memoryBudgetBytes } = prepareRequest();
+    stage.value = 'preflight';
+    const preflight = await audioExportPreflight(doc, {
+      range: exportModel.range,
+      loopRegion: props.loopRegion,
+      releaseTailSeconds: exportModel.releaseTailSeconds,
+      includeMasterChain: exportModel.includeMasterChain,
+      signal: controller.signal,
+    });
+    assertPreflightClear(preflight);
+    const masteringFrozenParams = await preflightMasteringBuffer(
+      doc,
+      exportModel,
+      props.loopRegion,
+      controller.signal,
+    );
+    const acceptedLimitations = collectAcceptedLimitations(doc, preflight, masteringFrozenParams);
+    if (acceptedLimitations.length > 0) {
+      const proceed = await confirmDialog({
+        title: t.value.dialogs.exportAudio.preflightWarningTitle,
+        message: `${t.value.dialogs.exportAudio.preflightWarningMessage}\n\n${acceptedLimitations.join('\n')}`,
+        confirmLabel: t.value.dialogs.exportAudio.automationWarningContinue,
+      });
+      if (!proceed) {
+        cancelled.value = true;
+        return;
+      }
+      controller.signal.throwIfAborted();
+    }
+    const range =
+      exportModel.range === 'loop' && props.loopRegion
+        ? props.loopRegion
+        : { startPpq: 0, endPpq: Number.POSITIVE_INFINITY };
+    const metadataLoss = inspectAudioExportLoss(
+      audioFileMetadataForDocument(doc, {
+        sampleRate: exportModel.sampleRate,
+        startPpq: range.startPpq,
+        endPpq: range.endPpq,
+      }),
+      encoders,
+    );
+    if (metadataLoss.entries.length > 0) {
+      if (!(await confirmLossReport(metadataLoss, t.value.dialogs.exportAudio.metadataLoss))) {
+        cancelled.value = true;
+        return;
+      }
+      controller.signal.throwIfAborted();
+    }
+    if (memoryBudgetBytes > DEFAULT_EXPORT_MEMORY_BUDGET_BYTES) {
+      const proceed = await confirmDialog({
+        title: t.value.dialogs.exportAudio.memoryBudgetWarningTitle,
+        message: t.value.dialogs.exportAudio.memoryBudgetWarningMessage.replace(
+          '{amount}',
+          `${exportModel.memoryBudgetMiB} MiB`,
+        ),
+        confirmLabel: t.value.dialogs.exportAudio.memoryBudgetWarningContinue,
+      });
+      if (!proceed) {
+        cancelled.value = true;
+        return;
+      }
+      controller.signal.throwIfAborted();
+    }
+    const plan: ExportPlan = {
+      doc,
+      exportModel,
+      memoryBudgetBytes,
+      targets: buildTargets(doc, exportModel, range),
+      targetLufs: appSettings.settings.loudnessTargetLufs,
+    };
+    const { result, stemsWriter, stemMemory, consumeStem } = await render(plan);
+    const normalizedReport = await normalizeAndConfirmClipping(plan, result);
+    if (!normalizedReport) return;
+    const filenames = await deliver(plan, result, stemsWriter, stemMemory, consumeStem);
     report.value = normalizedReport;
     reportSampleRate.value = result.sampleRate;
     for (const filename of filenames) emit('exported', { filename, report: normalizedReport });
