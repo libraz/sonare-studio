@@ -3,7 +3,7 @@ import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref,
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { confirmDialog } from '@/composables/useDialogs';
-import { describeError } from '@/lib/errors';
+import { describeError, isAbortError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
@@ -320,10 +320,6 @@ function shortestTitle(note: ShortestNote): string {
   return note === 'auto'
     ? copy.value.shortestAutoTitle
     : formatMessage(copy.value.shortestTitle, { n: note });
-}
-
-function isAbortError(value: unknown): boolean {
-  return value instanceof Error && value.name === 'AbortError';
 }
 
 async function run(): Promise<void> {

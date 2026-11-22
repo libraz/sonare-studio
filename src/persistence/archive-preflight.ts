@@ -1,4 +1,5 @@
 import { type UnzipFileInfo, type Unzipped, unzip, unzipSync } from 'fflate';
+import { GIBIBYTE, MEBIBYTE } from '@/lib/bytes';
 
 /** Resource ceilings checked from ZIP metadata before each entry is inflated. */
 export interface ArchiveLimits {
@@ -22,10 +23,10 @@ export interface PreflightedArchive {
 }
 
 export const DEFAULT_ARCHIVE_LIMITS: ArchiveLimits = Object.freeze({
-  maxCompressedBytes: 1024 * 1024 * 1024,
-  maxUncompressedBytes: 1024 * 1024 * 1024,
+  maxCompressedBytes: GIBIBYTE,
+  maxUncompressedBytes: GIBIBYTE,
   maxEntries: 10_000,
-  maxEntryBytes: 512 * 1024 * 1024,
+  maxEntryBytes: 512 * MEBIBYTE,
   maxCompressionRatio: 2000,
   maxPathLength: 1024,
 });

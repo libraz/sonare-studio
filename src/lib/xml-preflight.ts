@@ -1,3 +1,5 @@
+import { MEBIBYTE } from '@/lib/bytes';
+
 export interface XmlLimits {
   maxBytes: number;
   maxElements: number;
@@ -5,7 +7,7 @@ export interface XmlLimits {
 }
 
 /** Largest XML or SVG document the app hands to DOMParser, in bytes. */
-export const MAX_XML_DOCUMENT_BYTES = 32 * 1024 * 1024;
+export const MAX_XML_DOCUMENT_BYTES = 32 * MEBIBYTE;
 
 export const DEFAULT_XML_LIMITS: XmlLimits = Object.freeze({
   maxBytes: MAX_XML_DOCUMENT_BYTES,

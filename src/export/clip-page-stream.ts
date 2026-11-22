@@ -12,6 +12,8 @@
  * against a real engine directly.
  */
 
+import { KIBIBYTE, MEBIBYTE } from '@/lib/bytes';
+
 /** Bytes per stored sample (little-endian float32). */
 const BYTES_PER_SAMPLE = 4;
 
@@ -30,13 +32,13 @@ export const CLIP_STREAM_WINDOW_PAGES = CLIP_STREAM_PAGES_AHEAD + CLIP_STREAM_PA
  * chain; this budget buys back throughput while staying far below what the
  * decoded path would have held.
  */
-export const DEFAULT_CLIP_STREAM_RESIDENT_BUDGET_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_CLIP_STREAM_RESIDENT_BUDGET_BYTES = 64 * MEBIBYTE;
 
 /** Smallest page worth reading (below this, per-read overhead dominates). */
-export const MIN_CLIP_STREAM_PAGE_BYTES = 256 * 1024;
+export const MIN_CLIP_STREAM_PAGE_BYTES = 256 * KIBIBYTE;
 
 /** Largest page, so one long clip cannot claim the whole budget. */
-export const MAX_CLIP_STREAM_PAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_CLIP_STREAM_PAGE_BYTES = 4 * MEBIBYTE;
 
 /** One audio clip segment the render can read straight from its asset. */
 export interface AudioClipStreamPlan {

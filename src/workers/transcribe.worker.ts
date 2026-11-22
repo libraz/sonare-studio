@@ -1,5 +1,6 @@
 import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
+import { isFiniteNumber } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 
 /** Keep the worker boundary safe even when called outside the project adapter. */
@@ -34,10 +35,6 @@ export type TranscribeWorkerResponse =
       tuningCents: number;
     }
   | { type: 'error'; error: string };
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
 
 function isMidiEvent(value: unknown): value is ProjectMidiEvent {
   if (typeof value !== 'object' || value === null) return false;

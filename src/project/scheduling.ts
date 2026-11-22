@@ -16,6 +16,7 @@
 
 import type { EngineHandle } from '@/engine/engine';
 import type { MidiNote } from '@/engine/instruments';
+import { MEBIBYTE } from '@/lib/bytes';
 import { errorMessage } from '@/lib/errors';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import {
@@ -650,7 +651,7 @@ export interface ScheduledProjectClip {
 }
 
 /** Peak budget for one decoded source asset + next schedule + old schedule. */
-export const DEFAULT_LIVE_SCHEDULE_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
+export const DEFAULT_LIVE_SCHEDULE_MEMORY_BUDGET_BYTES = 512 * MEBIBYTE;
 
 /** Options for {@link scheduleProjectClips}. */
 export interface ScheduleProjectClipsOptions {

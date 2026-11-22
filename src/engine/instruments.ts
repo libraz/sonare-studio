@@ -11,6 +11,7 @@
 import type { ProjectMidiEvent, SynthPatch } from '@libraz/libsonare';
 import { ensureWasm } from '@/lib/wasm';
 import { loadFont as loadStoredFont } from '@/project/fonts';
+import { fnv1a32Hex } from '@/project/hash';
 import {
   DEFAULT_SYNTH_PRESET,
   instrumentCacheSegment,
@@ -157,16 +158,6 @@ function cachedPrerender(key: string): Float32Array[] | undefined {
   return cached;
 }
 
-/** 32-bit FNV-1a hash of a string. */
-function fnv1a32(input: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
 /** Throws if a note has out-of-range or non-finite fields. */
 function validateNote(n: MidiNote): void {
   const channel = n.channel ?? 0;
@@ -253,7 +244,7 @@ export function midiClipCacheKey(
     )
     .sort()
     .join(';');
-  const hash = fnv1a32(canonical).toString(16).padStart(8, '0');
+  const hash = fnv1a32Hex(canonical);
   return `${CACHE_KEY_VERSION}|sr=${options.sampleRate}|bpm=${tempoBpm}|${instrument}|n=${notes.length}|${hash}`;
 }
 

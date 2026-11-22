@@ -14,6 +14,7 @@
  * project archive (see src/project/document-schema.ts).
  */
 
+import { MEBIBYTE } from '@/lib/bytes';
 import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a';
 import {
   bytesEqual,
@@ -184,7 +185,7 @@ export function audioAssetUri(assetId: string): string {
 const audioCache = new Map<string, LoadedAudioAsset>();
 
 /** Default retained PCM budget for the decoded-audio LRU (256 MiB). */
-export const DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET = 256 * 1024 * 1024;
+export const DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET = 256 * MEBIBYTE;
 
 let audioCacheByteBudget = DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET;
 let audioCacheBytes = 0;

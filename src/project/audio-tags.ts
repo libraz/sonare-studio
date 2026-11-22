@@ -20,6 +20,7 @@ import type {
   RhythmResult,
   TimbreResult,
 } from '@libraz/libsonare';
+import { isFiniteNumber } from '@/lib/math';
 import type { AudioAssetTags } from '@/persistence/assets';
 
 /**
@@ -101,10 +102,6 @@ const STEP_COST = {
 } as const;
 const TOTAL_COST = Object.values(STEP_COST).reduce((sum, cost) => sum + cost, 0);
 
-function finite(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
 /** Splits a frame-major buffer into one array per channel. */
 function splitChannels(interleaved: Float32Array, channels: number): Float32Array[] {
   const frames = Math.floor(interleaved.length / channels);
@@ -155,12 +152,12 @@ export function analyzeAudioTags(
   step(STEP_COST.bpm, () => {
     if (typeof analysis.analyzeBpm === 'function') {
       const result = analysis.analyzeBpm(mono, sampleRate);
-      if (finite(result?.bpm) && result.bpm > 0) tags.bpm = result.bpm;
-      if (finite(result?.confidence)) tags.bpmConfidence = result.confidence;
+      if (isFiniteNumber(result?.bpm) && result.bpm > 0) tags.bpm = result.bpm;
+      if (isFiniteNumber(result?.confidence)) tags.bpmConfidence = result.confidence;
     }
     if (tags.bpm === undefined && typeof analysis.detectBpm === 'function') {
       const bpm = analysis.detectBpm(mono, sampleRate);
-      if (finite(bpm) && bpm > 0) tags.bpm = bpm;
+      if (isFiniteNumber(bpm) && bpm > 0) tags.bpm = bpm;
     }
   });
 
@@ -173,13 +170,14 @@ export function analyzeAudioTags(
     }
     const label = key?.shortName || key?.name;
     if (typeof label === 'string' && label.length > 0) tags.key = label;
-    if (finite(key?.confidence)) tags.keyConfidence = key.confidence;
+    if (isFiniteNumber(key?.confidence)) tags.keyConfidence = key.confidence;
   });
 
   step(STEP_COST.rhythm, () => {
     if (typeof analysis.analyzeRhythm !== 'function') return;
     const rhythm = analysis.analyzeRhythm(mono, sampleRate);
-    if (tags.bpm === undefined && finite(rhythm?.bpm) && rhythm.bpm > 0) tags.bpm = rhythm.bpm;
+    if (tags.bpm === undefined && isFiniteNumber(rhythm?.bpm) && rhythm.bpm > 0)
+      tags.bpm = rhythm.bpm;
     const meter = rhythm?.timeSignature;
     if (
       Number.isInteger(meter?.numerator) &&
@@ -188,35 +186,36 @@ export function analyzeAudioTags(
       (meter?.denominator ?? 0) > 0
     ) {
       tags.timeSignature = `${meter?.numerator}/${meter?.denominator}`;
-      if (finite(meter?.confidence)) tags.timeSignatureConfidence = meter.confidence;
+      if (isFiniteNumber(meter?.confidence)) tags.timeSignatureConfidence = meter.confidence;
     }
     if (typeof rhythm?.grooveType === 'string' && rhythm.grooveType.length > 0) {
       tags.grooveType = rhythm.grooveType;
     }
-    if (finite(rhythm?.syncopation)) tags.syncopation = rhythm.syncopation;
-    if (finite(rhythm?.patternRegularity)) tags.patternRegularity = rhythm.patternRegularity;
-    if (finite(rhythm?.tempoStability)) tags.tempoStability = rhythm.tempoStability;
+    if (isFiniteNumber(rhythm?.syncopation)) tags.syncopation = rhythm.syncopation;
+    if (isFiniteNumber(rhythm?.patternRegularity))
+      tags.patternRegularity = rhythm.patternRegularity;
+    if (isFiniteNumber(rhythm?.tempoStability)) tags.tempoStability = rhythm.tempoStability;
   });
 
   step(STEP_COST.dynamics, () => {
     if (typeof analysis.analyzeDynamics !== 'function') return;
     const dynamics = analysis.analyzeDynamics(mono, sampleRate);
-    if (finite(dynamics?.dynamicRangeDb)) tags.dynamicRangeDb = dynamics.dynamicRangeDb;
-    if (finite(dynamics?.peakDb)) tags.peakDb = dynamics.peakDb;
-    if (finite(dynamics?.rmsDb)) tags.rmsDb = dynamics.rmsDb;
-    if (finite(dynamics?.crestFactor)) tags.crestFactor = dynamics.crestFactor;
-    if (finite(dynamics?.loudnessRangeLu)) tags.loudnessRangeDb = dynamics.loudnessRangeLu;
+    if (isFiniteNumber(dynamics?.dynamicRangeDb)) tags.dynamicRangeDb = dynamics.dynamicRangeDb;
+    if (isFiniteNumber(dynamics?.peakDb)) tags.peakDb = dynamics.peakDb;
+    if (isFiniteNumber(dynamics?.rmsDb)) tags.rmsDb = dynamics.rmsDb;
+    if (isFiniteNumber(dynamics?.crestFactor)) tags.crestFactor = dynamics.crestFactor;
+    if (isFiniteNumber(dynamics?.loudnessRangeLu)) tags.loudnessRangeDb = dynamics.loudnessRangeLu;
     if (typeof dynamics?.isCompressed === 'boolean') tags.isCompressed = dynamics.isCompressed;
   });
 
   step(STEP_COST.timbre, () => {
     if (typeof analysis.analyzeTimbre !== 'function') return;
     const timbre = analysis.analyzeTimbre(mono, sampleRate);
-    if (finite(timbre?.brightness)) tags.brightness = timbre.brightness;
-    if (finite(timbre?.warmth)) tags.warmth = timbre.warmth;
-    if (finite(timbre?.density)) tags.density = timbre.density;
-    if (finite(timbre?.roughness)) tags.roughness = timbre.roughness;
-    if (finite(timbre?.complexity)) tags.complexity = timbre.complexity;
+    if (isFiniteNumber(timbre?.brightness)) tags.brightness = timbre.brightness;
+    if (isFiniteNumber(timbre?.warmth)) tags.warmth = timbre.warmth;
+    if (isFiniteNumber(timbre?.density)) tags.density = timbre.density;
+    if (isFiniteNumber(timbre?.roughness)) tags.roughness = timbre.roughness;
+    if (isFiniteNumber(timbre?.complexity)) tags.complexity = timbre.complexity;
   });
 
   step(STEP_COST.lufs, () => {
@@ -230,7 +229,7 @@ export function analyzeAudioTags(
     } else if ((loudness === undefined || loudness.channels === 1) && analysis.lufs) {
       measured = analysis.lufs(mono, sampleRate);
     }
-    if (finite(measured?.integratedLufs)) tags.lufs = measured.integratedLufs;
+    if (isFiniteNumber(measured?.integratedLufs)) tags.lufs = measured.integratedLufs;
   });
 
   return tags;

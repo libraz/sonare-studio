@@ -14,6 +14,7 @@ import {
   LossTally,
   tallyFields,
 } from '@/export/loss-descriptor';
+import { MEBIBYTE } from '@/lib/bytes';
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { clampInt } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
@@ -62,7 +63,7 @@ export const SMF_TEMPO_RAMP_MAX_ERROR_BPM = 0.1;
 const MAX_SMF_TEMPO_RAMP_STEPS = 4096;
 /** Bound opaque sidecar data so an imported SMF cannot bloat a project document. */
 export const MAX_SMF_SYSEX_PACKETS = 4096;
-export const MAX_SMF_SYSEX_BYTES = 1024 * 1024;
+export const MAX_SMF_SYSEX_BYTES = MEBIBYTE;
 
 /**
  * Feature classes a MIDI-file export (SMF or MIDI 2.0 clip file) can drop, in

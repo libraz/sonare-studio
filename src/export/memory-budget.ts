@@ -1,12 +1,12 @@
+import { KIBIBYTE, MEBIBYTE } from '@/lib/bytes';
 import { PayloadMemoryLimitError, type PayloadMemoryOperation } from '@/lib/payload-memory';
 
-export const MEBIBYTE = 1024 * 1024;
 export const DEFAULT_EXPORT_MEMORY_BUDGET_BYTES = 1024 * MEBIBYTE;
 export const DEFAULT_SCORE_EXPORT_MEMORY_BUDGET_BYTES = 256 * MEBIBYTE;
 /** Encoder container/header slack added on top of the PCM size. */
-const ENCODER_SLACK_BYTES = 64 * 1024;
+const ENCODER_SLACK_BYTES = 64 * KIBIBYTE;
 /** Working buffers the MP3 encoder holds beyond its input and output. */
-const MP3_SCRATCH_BYTES = 64 * 1024;
+const MP3_SCRATCH_BYTES = 64 * KIBIBYTE;
 
 export interface RenderPayloadMemoryEstimate {
   totalFrames: number;

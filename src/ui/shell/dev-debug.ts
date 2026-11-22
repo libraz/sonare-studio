@@ -9,6 +9,7 @@ import type { MidiSync } from '@/engine/midi-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
 import { peakDb } from '@/lib/db';
+import { fnv1a32Bytes } from '@/lib/fnv1a';
 import { clamp } from '@/lib/math';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import type { AutomationParam, AutomationPoint, AutomationTarget } from '@/project/automation';
@@ -89,12 +90,6 @@ function peakOf(channels: Float32Array[]): number {
     }
   }
   return peakDb(peak);
-}
-
-function fnv1a(bytes: Uint8Array): string {
-  let hash = 0x811c9dc5;
-  for (const byte of bytes) hash = Math.imul(hash ^ byte, 0x01000193);
-  return (hash >>> 0).toString(16);
 }
 
 async function ingestTone(
@@ -240,7 +235,7 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
         lufs: result.report.lufs ?? null,
         wavBytes: wav.length,
         riff: String.fromCharCode(wav[0], wav[1], wav[2], wav[3]),
-        hash: fnv1a(wav),
+        hash: fnv1a32Bytes(wav).toString(16),
         stems:
           result.stems?.map((stem) => ({
             trackIndex: stem.trackIndex,

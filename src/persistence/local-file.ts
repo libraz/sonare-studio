@@ -8,6 +8,7 @@
  */
 
 import { downloadBlob } from '@/lib/download';
+import { isAbortError } from '@/lib/errors';
 import { ensureFileExtension } from '@/lib/filename';
 import {
   MAX_BACKUP_ARCHIVE_COMPRESSED_BYTES,
@@ -299,7 +300,7 @@ async function pickAndReadArchive(spec: ArchivePickerSpec): Promise<PickedLocalF
       return await readPickedFile(await handle.getFile(), spec.maxBytes);
     } catch (error) {
       // The picker rejects with AbortError when the user cancels.
-      if (error instanceof Error && error.name === 'AbortError') return null;
+      if (isAbortError(error)) return null;
       throw error;
     }
   }
@@ -382,7 +383,7 @@ export async function pickAndReadExternalAudioFiles(): Promise<PickedExternalAud
       validateExternalAudioTotal(files);
       return await Promise.all(files.map(readPickedExternalAudioFile));
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') return null;
+      if (isAbortError(error)) return null;
       throw error;
     }
   }

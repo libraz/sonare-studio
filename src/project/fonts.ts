@@ -13,6 +13,7 @@
  * (TrackInstrument 'sf2' variant); the bytes never enter the project archive.
  */
 
+import { MEBIBYTE } from '@/lib/bytes';
 import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a';
 import {
   bytesEqual,
@@ -85,10 +86,10 @@ export interface SaveFontInput {
 }
 
 /** Default upper bound for decoded SF2 bytes kept for playback reuse. */
-export const DEFAULT_FONT_CACHE_BYTE_BUDGET = 64 * 1024 * 1024;
+export const DEFAULT_FONT_CACHE_BYTE_BUDGET = 64 * MEBIBYTE;
 
 /** Default upper bound for compact SoundFont program-manifest lookups. */
-export const DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET = 4 * 1024 * 1024;
+export const DEFAULT_FONT_MANIFEST_CACHE_BYTE_BUDGET = 4 * MEBIBYTE;
 
 interface CachedFont {
   meta: SoundFontMeta;

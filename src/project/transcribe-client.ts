@@ -1,4 +1,5 @@
 import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
+import { isFiniteNumber } from '@/lib/math';
 import type {
   TranscribeWorkerRequest,
   TranscribeWorkerResponse,
@@ -42,10 +43,6 @@ function abortError(reason: unknown): Error {
 
 function errorFromWorkerEvent(event: ErrorEvent): Error {
   return new Error(event.message || 'Transcription worker failed');
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function validEvent(value: unknown): value is ProjectMidiEvent {

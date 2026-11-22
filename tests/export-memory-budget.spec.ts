@@ -4,8 +4,8 @@ import {
   assertRenderPayloadMemory,
   estimateCodecPayloadMemory,
   estimateRenderPayloadMemory,
-  MEBIBYTE,
 } from '@/export/memory-budget';
+import { MEBIBYTE } from '@/lib/bytes';
 import { PayloadMemoryMeter, utf8ByteLength } from '@/lib/payload-memory';
 
 describe('export payload memory benchmarks', () => {

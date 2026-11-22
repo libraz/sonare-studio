@@ -3,20 +3,7 @@
  * project layer (instrument and mixer-strip identity).
  */
 
-/**
- * 32-bit FNV-1a hash of a string.
- *
- * @param input String to hash.
- * @returns Unsigned 32-bit hash value.
- */
-export function fnv1a32(input: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
+import { fnv1a32 } from '@/lib/fnv1a';
 
 /** Renders a 32-bit FNV-1a hash of a string as 8 hex characters. */
 export function fnv1a32Hex(input: string): string {

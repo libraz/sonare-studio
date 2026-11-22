@@ -12,3 +12,8 @@ export function clamp01(value: number): number {
 export function clampInt(value: number, min: number, max: number, fallback = min): number {
   return Number.isFinite(value) ? clamp(Math.round(value), min, max) : fallback;
 }
+
+/** True for a number that is neither NaN nor infinite. */
+export function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}

@@ -6,6 +6,7 @@
  * schema-valid for other DAWs.
  */
 
+import { MEBIBYTE } from '@/lib/bytes';
 import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
 import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
@@ -18,7 +19,7 @@ import { busChannelId, MASTER_CHANNEL_ID } from './format';
 export const SONARE_DEVICE_VENDOR = 'sonare-studio';
 export const SONARE_DAWPROJECT_METADATA_ENTRY = 'sonare-studio.json';
 /** Dedicated bound for the optional vendor extension, below generic ZIP limits. */
-export const MAX_SONARE_DAWPROJECT_METADATA_BYTES = 4 * 1024 * 1024;
+export const MAX_SONARE_DAWPROJECT_METADATA_BYTES = 4 * MEBIBYTE;
 const MAX_METADATA_OBJECT_ENTRIES = 4096;
 const MAX_METADATA_STRING_LENGTH = 1024;
 

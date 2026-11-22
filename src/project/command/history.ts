@@ -1,4 +1,5 @@
 import { type Ref, ref, shallowReactive, shallowRef } from 'vue';
+import { MEBIBYTE } from '@/lib/bytes';
 import { cloneScoreAnnotations, type ScoreAnnotations } from '../annotations';
 import { type AutomationLaneState, cloneAutomationLane } from '../automation';
 import type { EditorChordSymbol } from '../chords';
@@ -24,7 +25,7 @@ import type {
 const MAX_HISTORY = 100;
 
 /** Default memory budget for detached mirror snapshots (64 MiB). */
-export const DEFAULT_HISTORY_BYTE_BUDGET = 64 * 1024 * 1024;
+export const DEFAULT_HISTORY_BYTE_BUDGET = 64 * MEBIBYTE;
 
 let historyByteBudget = DEFAULT_HISTORY_BYTE_BUDGET;
 let historyBytes = 0;

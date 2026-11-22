@@ -1,5 +1,7 @@
 /** Deterministic payload accounting with optional browser-heap sampling. */
 
+import { MEBIBYTE } from '@/lib/bytes';
+
 export interface PayloadMemorySample {
   label: string;
   unit: string;
@@ -48,8 +50,8 @@ export class PayloadMemoryLimitError extends Error {
     budgetBytes: number,
     detail?: string,
   ) {
-    const requiredMiB = Math.ceil(requiredBytes / (1024 * 1024));
-    const budgetMiB = Math.floor(budgetBytes / (1024 * 1024));
+    const requiredMiB = Math.ceil(requiredBytes / MEBIBYTE);
+    const budgetMiB = Math.floor(budgetBytes / MEBIBYTE);
     super(
       `${detail ?? OPERATION_LABELS[operation]} needs about ${requiredMiB} MiB of working memory, exceeding the ${budgetMiB} MiB browser budget.`,
     );

@@ -1,5 +1,7 @@
 /** Shared filesystem/archive safety primitives. */
 
+import { MEBIBYTE } from '@/lib/bytes';
+
 /** Safe base-name shape for OPFS media and archive entries. */
 export const MEDIA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -43,7 +45,7 @@ export function createRandomId(): string {
 }
 
 /** Chunk size for streaming bytes into or out of OPFS files. */
-export const OPFS_IO_CHUNK_BYTES = 4 * 1024 * 1024;
+export const OPFS_IO_CHUNK_BYTES = 4 * MEBIBYTE;
 
 /** Thrown when an OPFS write runs out of origin storage quota. */
 export class OpfsQuotaExceededError extends Error {

@@ -1,3 +1,5 @@
+import { GIBIBYTE, KIBIBYTE, MEBIBYTE } from '@/lib/bytes';
+
 export { formatTimestamp, type TimestampFormat } from '@/lib/date-format';
 
 /**
@@ -8,8 +10,8 @@ export { formatTimestamp, type TimestampFormat } from '@/lib/date-format';
  * one decimal place and the largest applicable unit.
  */
 export function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
-  return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < KIBIBYTE) return `${bytes} B`;
+  if (bytes >= GIBIBYTE) return `${(bytes / GIBIBYTE).toFixed(1)} GB`;
+  if (bytes >= MEBIBYTE) return `${(bytes / MEBIBYTE).toFixed(1)} MB`;
+  return `${(bytes / KIBIBYTE).toFixed(1)} KB`;
 }

@@ -9,6 +9,8 @@
 
 import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
+import { MEBIBYTE } from '@/lib/bytes';
+import { isFiniteNumber } from '@/lib/math';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { audioClipSegments } from './comping';
@@ -39,7 +41,7 @@ const MIN_POLYPHONIC_CHUNK_SECONDS = 30;
 /** The detector receives at most this sample rate. */
 export const MAX_TRANSCRIPTION_SAMPLE_RATE = 48_000;
 /** Conservative preparation budget for decoded/rendered/transferred PCM. */
-export const DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES = 256 * 1024 * 1024;
+export const DEFAULT_TRANSCRIPTION_MEMORY_BUDGET_BYTES = 256 * MEBIBYTE;
 
 export interface AudioTranscriptionClip {
   id?: number;
@@ -110,18 +112,14 @@ function throwIfAborted(signal?: AbortSignal): void {
   throw error;
 }
 
-function finite(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value);
-}
-
 function validProjectMidiEvent(value: unknown): value is ProjectMidiEvent {
   if (typeof value !== 'object' || value === null) return false;
   const event = value as Record<string, unknown>;
   const word0 = event.word0;
   return (
-    finite(event.ppq) &&
+    isFiniteNumber(event.ppq) &&
     event.ppq >= 0 &&
-    finite(word0) &&
+    isFiniteNumber(word0) &&
     Number.isInteger(word0) &&
     word0 >= 0 &&
     word0 <= 0xffffffff
@@ -136,7 +134,7 @@ function validateResult(result: TranscribeResult): void {
     !Number.isInteger(result.noteCount) ||
     result.noteCount < 0 ||
     result.noteCount * 2 !== result.events.length ||
-    !finite(result.tempoBpm) ||
+    !isFiniteNumber(result.tempoBpm) ||
     result.tempoBpm <= 0
   ) {
     throw new Error('Transcription returned an invalid result');
@@ -503,7 +501,7 @@ export async function transcribeAudioClip(
     });
     throwIfAborted(options.signal);
     validateResult(result);
-    if (!tuningReported && finite(result.tuningCents)) {
+    if (!tuningReported && isFiniteNumber(result.tuningCents)) {
       tuningReported = true;
       options.onTuning?.(result.tuningCents / 100);
       // Later chunks reuse the first chunk's measurement, so one take keeps one pitch grid.

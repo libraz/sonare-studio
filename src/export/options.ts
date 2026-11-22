@@ -6,8 +6,9 @@
  */
 
 import { MAX_RELEASE_TAIL_SECONDS } from '@/export/engine-render-types';
-import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES, MEBIBYTE } from '@/export/memory-budget';
+import { DEFAULT_EXPORT_MEMORY_BUDGET_BYTES } from '@/export/memory-budget';
 import type { MixdownRangePpq, MixdownReport } from '@/export/mixdown';
+import { MEBIBYTE } from '@/lib/bytes';
 import { dbToLinear } from '@/lib/db';
 import { ensureFileExtension, sanitizeFilenameBase } from '@/lib/filename';
 import { PayloadMemoryMeter, type PayloadMemorySample } from '@/lib/payload-memory';

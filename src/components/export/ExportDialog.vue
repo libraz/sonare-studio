@@ -41,7 +41,6 @@ import {
   assertCodecPayloadMemory,
   DEFAULT_EXPORT_MEMORY_BUDGET_BYTES,
   estimateCodecPayloadMemory,
-  MEBIBYTE,
 } from '@/export/memory-budget';
 import {
   type ExportMediaIssue,
@@ -70,6 +69,7 @@ import {
 } from '@/export/options';
 import type { WavBitDepth } from '@/export/wav';
 import { createWavStreamWriter, type WavStreamWriter } from '@/export/wav-stream';
+import { MEBIBYTE } from '@/lib/bytes';
 import { peakDb } from '@/lib/db';
 import { downloadBlob } from '@/lib/download';
 import { errorMessage as thrownMessage } from '@/lib/errors';

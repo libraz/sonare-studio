@@ -10,6 +10,7 @@
  * any per-frame OPFS access.
  */
 
+import { MEBIBYTE } from '@/lib/bytes';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { getWasmModule } from '@/project/store';
 import {
@@ -28,7 +29,7 @@ let peaksCache: WaveformPeaksCache | null = null;
 let cacheEpoch = 0;
 
 /** Decoded PCM held by this render cache must never outlive a bounded budget. */
-export const MAX_AUDIO_CLIP_CACHE_BYTES = 128 * 1024 * 1024;
+export const MAX_AUDIO_CLIP_CACHE_BYTES = 128 * MEBIBYTE;
 
 function assetByteLength(asset: LoadedAudioAsset): number {
   return asset.channels.reduce((total, channel) => total + channel.byteLength, 0);

@@ -1,3 +1,4 @@
+import { isAbortError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type AudioAssetMeta, audioAssetUri, loadAsset } from '@/persistence/assets';
@@ -77,10 +78,6 @@ function isStemSourceCurrent(
   return (
     getProject() === project && current !== undefined && stemSourceToken(store, current) === token
   );
-}
-
-function isAbortError(error: unknown): boolean {
-  return (error instanceof Error || error instanceof DOMException) && error.name === 'AbortError';
 }
 
 /**
