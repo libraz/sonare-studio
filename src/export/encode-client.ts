@@ -9,6 +9,7 @@ import { WAV_ENCODER_ID } from './codecs';
 import { FLAC_ENCODER_ID } from './flac';
 import { MP3_ENCODER_ID } from './mp3';
 
+// The codecs the bundled worker implements; a built-in encoder outside the worker would not join it.
 const WORKER_ENCODER_IDS = new Set<string>([WAV_ENCODER_ID, FLAC_ENCODER_ID, MP3_ENCODER_ID]);
 
 export type AudioEncodeWorkerFactory = () => Worker;
