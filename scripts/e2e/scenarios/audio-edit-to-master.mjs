@@ -99,7 +99,7 @@ async function editSample(page) {
 
 async function downloadWav(page, includeMaster) {
   await page.locator('#menubar-trigger-file').click();
-  await page.locator('[id="menubar-file-file.exportAudio"]').click();
+  await page.locator('[id="menubar-file-file_2e_exportAudio"]').click();
   const dialog = page.locator('.modal-card:has(.export-button)');
   await dialog.waitFor();
   await dialog.locator('.wav-bit-depth [role="combobox"]').click();
@@ -145,7 +145,7 @@ async function configureMaster(page) {
     .filter({ hasText: 'Streaming' })
     .first()
     .click();
-  const ceiling = page.locator('[data-preset-control="loudness.ceilingDb"] input');
+  const ceiling = page.locator('[data-preset-control="loudness.ceilingDbtp"] input');
   await ceiling.fill('-6');
   await ceiling.press('Tab');
   assert((await ceiling.inputValue()) === '-6', 'Mastering ceiling did not accept -6 dB');
@@ -153,7 +153,7 @@ async function configureMaster(page) {
 
 async function saveAndReopen(page) {
   await page.locator('#menubar-trigger-file').click();
-  await page.locator('[id="menubar-file-file.saveAs"]').click();
+  await page.locator('[id="menubar-file-file_2e_saveAs"]').click();
   const prompt = page.locator('.modal-card:has(.dialog-input)');
   await prompt.locator('.dialog-input').fill(PROJECT_NAME);
   await prompt.locator('button.primary').click();
@@ -216,7 +216,7 @@ export async function run({ page: sharedPage, baseUrl }) {
     );
     await page.getByRole('tab', { name: 'Mastering', exact: true }).click();
     assert(
-      (await page.locator('[data-preset-control="loudness.ceilingDb"] input').inputValue()) ===
+      (await page.locator('[data-preset-control="loudness.ceilingDbtp"] input').inputValue()) ===
         '-6',
       'Mastering ceiling did not survive reopening',
     );

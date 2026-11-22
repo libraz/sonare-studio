@@ -8,7 +8,7 @@ export async function run(ctx) {
   // Save the project to OPFS via the project menu, then reload the page and
   // continue the autosaved session: the project must survive.
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page.locator('[id="menubar-file-file.save"]').click();
+  await page.locator('[id="menubar-file-file_2e_save"]').click();
   // The save action is fire-and-forget, and the autosave readout is a standing
   // status element that appears on the first periodic autosave and never leaves
   // — waiting for it to exist proves nothing once that has happened, and the

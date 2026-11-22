@@ -179,13 +179,13 @@ async function openFileMenu(page) {
 
 async function openRevisions(page) {
   await openFileMenu(page);
-  await page.locator('[id="menubar-file-file.revisions"]').click();
+  await page.locator('[id="menubar-file-file_2e_revisions"]').click();
   await page.locator('.modal-card:has(.stored-list)').waitFor({ state: 'visible' });
 }
 
 async function saveAs(page) {
   await openFileMenu(page);
-  await page.locator('[id="menubar-file-file.saveAs"]').click();
+  await page.locator('[id="menubar-file-file_2e_saveAs"]').click();
   const prompt = page.locator('.modal-card:has(.dialog-input)');
   await prompt.waitFor({ state: 'visible' });
   await prompt.locator('.dialog-input').fill(PROJECT_NAME);
@@ -227,7 +227,7 @@ async function restoreWith(page, confirmLabel) {
 
 async function saveCurrentProject(page) {
   await openFileMenu(page);
-  await page.locator('[id="menubar-file-file.save"]').click();
+  await page.locator('[id="menubar-file-file_2e_save"]').click();
   await page.locator('.dirty-dot').waitFor({ state: 'detached', timeout: 30000 });
 }
 
@@ -313,16 +313,18 @@ export async function run({ page, baseUrl, fail }) {
       }
     }
     await isolated.page.locator('#menubar-trigger-edit').click();
-    const undo = isolated.page.locator('[id="menubar-edit-edit.undo"]');
+    const undo = isolated.page.locator('[id="menubar-edit-edit_2e_undo"]');
     if (!(await undo.isDisabled())) {
       const undoState = await isolated.page.evaluate(() => ({
-        matches: [...document.querySelectorAll('[id="menubar-edit-edit.undo"]')].map((element) => ({
-          text: (element.textContent ?? '').trim(),
-          disabled: element.getAttribute('aria-disabled'),
-          hidden: element.getAttribute('hidden') !== null,
-          display: getComputedStyle(element).display,
-          parent: element.parentElement?.className ?? null,
-        })),
+        matches: [...document.querySelectorAll('[id="menubar-edit-edit_2e_undo"]')].map(
+          (element) => ({
+            text: (element.textContent ?? '').trim(),
+            disabled: element.getAttribute('aria-disabled'),
+            hidden: element.getAttribute('hidden') !== null,
+            display: getComputedStyle(element).display,
+            parent: element.parentElement?.className ?? null,
+          }),
+        ),
         editMenu: document.querySelector('#menubar-trigger-edit')?.getAttribute('aria-expanded'),
       }));
       fail(

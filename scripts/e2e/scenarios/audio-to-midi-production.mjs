@@ -12,7 +12,7 @@ const PHRASE = [
   { frequency: 391.995436, start: 0.96, end: 1.32, pitch: 67 },
 ];
 const SOURCE_SECONDS = 1.5;
-const SYNTH_PRESET = 'saw-lead';
+const SYNTH_PRESET = 'sawLead';
 
 /** A short, deterministic C4/E4/G4 melody with click-free edges and gaps. */
 function melodyWavBytes() {
@@ -505,7 +505,7 @@ async function audition(page, midiClipId) {
 
 async function saveAs(page) {
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page.locator('[id="menubar-file-file.saveAs"]').click();
+  await page.locator('[id="menubar-file-file_2e_saveAs"]').click();
   const prompt = page.locator('.modal-card:has(.dialog-input)');
   await prompt.waitFor({ state: 'visible', timeout: 10000 });
   await prompt.locator('.dialog-input').fill(PROJECT_NAME);
@@ -535,7 +535,7 @@ async function reopenSavedProject(page) {
 
 async function exportSmf(page) {
   await page.click('.app-menubar__trigger:has-text("File")');
-  const item = page.locator('[id="menubar-file-file.exportSmf"]');
+  const item = page.locator('[id="menubar-file-file_2e_exportSmf"]');
   await item.waitFor({ state: 'visible' });
   const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
   await item.click();
@@ -548,7 +548,7 @@ async function exportSmf(page) {
 
 async function exportWav(page, expectedDurationSeconds, notes) {
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page.locator('[id="menubar-file-file.exportAudio"]').click();
+  await page.locator('[id="menubar-file-file_2e_exportAudio"]').click();
   const dialog = page.getByRole('dialog', { name: 'Export audio' });
   await dialog.waitFor({ state: 'visible', timeout: 10000 });
   const bitDepth = dialog.locator('.wav-bit-depth .select-trigger');

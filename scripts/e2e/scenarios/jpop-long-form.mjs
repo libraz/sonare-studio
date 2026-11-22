@@ -18,7 +18,7 @@ async function newEmptyProject(page, baseUrl) {
 
 async function openChordGenerator(page) {
   await page.locator('#menubar-trigger-generate').click();
-  await page.locator('[id="menubar-generate-generate.progression"]').click();
+  await page.locator('[id="menubar-generate-generate_2e_progression"]').click();
 }
 
 export async function run({ page, baseUrl, fail }) {

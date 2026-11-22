@@ -41,7 +41,7 @@ export async function run(ctx) {
     const names = [
       ...document.querySelectorAll('.instrument-picker .preset-option .preset-name'),
     ].map((el) => (el.textContent ?? '').trim());
-    return names.find((name) => name === 'saw-lead') ?? names.find((name) => name !== 'e-piano');
+    return names.find((name) => name === 'sawLead') ?? names.find((name) => name !== 'ePiano');
   });
   if (!presetName) {
     fail('no alternative synth preset offered by the instrument picker');
@@ -68,16 +68,16 @@ export async function run(ctx) {
   }
 
   // Two presets must render audibly different buffers through the real wasm.
-  const probeA = await page.evaluate(() => window.__sonareDebug.renderProbe('e-piano'));
+  const probeA = await page.evaluate(() => window.__sonareDebug.renderProbe('ePiano'));
   const probeB = await page.evaluate(
     (name) => window.__sonareDebug.renderProbe(name),
-    presetName ?? 'saw-lead',
+    presetName ?? 'sawLead',
   );
   if (probeA.frames === 0 || probeB.frames === 0 || probeA.hash === probeB.hash) {
     fail(`presets render identical audio: ${JSON.stringify({ probeA, probeB })}`);
   } else {
     console.info(
-      `render probe differs: e-piano ${probeA.hash} (peak ${probeA.peak.toFixed(4)}) vs ` +
+      `render probe differs: ePiano ${probeA.hash} (peak ${probeA.peak.toFixed(4)}) vs ` +
         `${presetName} ${probeB.hash} (peak ${probeB.peak.toFixed(4)})`,
     );
   }

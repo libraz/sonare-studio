@@ -164,7 +164,7 @@ export async function run({ page, fail }) {
   // Save As is deliberately driven through the File menu so the named slot,
   // rather than the crash-recovery autosave slot, is what the next open uses.
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page.locator('[id="menubar-file-file.saveAs"]').click();
+  await page.locator('[id="menubar-file-file_2e_saveAs"]').click();
   const prompt = page.locator('.modal-card:has(.dialog-input)');
   await prompt.waitFor({ state: 'visible' });
   await prompt.locator('.dialog-input').fill(PROJECT_NAME);
@@ -211,7 +211,7 @@ export async function run({ page, fail }) {
   // Loading a named project must start with a fresh command history. The menu
   // state is the public UI signal that no pre-open edits are still undoable.
   await page.click('#menubar-trigger-edit');
-  const undo = page.locator('[id="menubar-edit-edit.undo"]');
+  const undo = page.locator('[id="menubar-edit-edit_2e_undo"]');
   if (!(await undo.isDisabled()))
     fail('named-project open retained an Undo entry from before reload');
   await page.keyboard.press('Escape');

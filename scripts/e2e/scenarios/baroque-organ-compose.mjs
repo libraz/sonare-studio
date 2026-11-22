@@ -9,7 +9,7 @@ function trackOf(document, name) {
 
 async function openTracks(page) {
   await page.locator('#menubar-trigger-generate').click();
-  await page.locator('[id="menubar-generate-generate.tracks"]').click();
+  await page.locator('[id="menubar-generate-generate_2e_tracks"]').click();
   await page.locator('.part-list').waitFor({ state: 'visible' });
 }
 
@@ -59,7 +59,7 @@ export async function run({ page, baseUrl, fail }) {
       template.tracks.length !== 4 ||
       template.tracks.some(
         (track) =>
-          track.instrument?.preset !== 'church-organ' ||
+          track.instrument?.preset !== 'churchOrgan' ||
           !track.pitchRange ||
           track.clips[0]?.lengthPpq !== 256,
       )
@@ -83,7 +83,7 @@ export async function run({ page, baseUrl, fail }) {
     if (trackOf(subject, 'Manual I Soprano').clips[0]?.notes.length === 0) {
       fail('Soprano subject was not generated');
     }
-    if (subject.tracks.length !== 4 || subject.tracks[0].instrument?.preset !== 'church-organ') {
+    if (subject.tracks.length !== 4 || subject.tracks[0].instrument?.preset !== 'churchOrgan') {
       fail('subject generation changed the organ track identity or instrument');
     }
 
@@ -114,7 +114,7 @@ export async function run({ page, baseUrl, fail }) {
     // A harmonic foundation can be added after the contrapuntal subject. The
     // bass generator then writes into the prepared pedal lane in place.
     await page.locator('#menubar-trigger-generate').click();
-    await page.locator('[id="menubar-generate-generate.progression"]').click();
+    await page.locator('[id="menubar-generate-generate_2e_progression"]').click();
     await page.locator('.bars-input').fill('64');
     await page.locator('.generate-confirm').click();
     await page.locator('.continue-tracks').click();
@@ -128,7 +128,7 @@ export async function run({ page, baseUrl, fail }) {
     }
     if (
       fourVoices.tracks.length !== 4 ||
-      fourVoices.tracks.some((track) => track.instrument?.preset !== 'church-organ')
+      fourVoices.tracks.some((track) => track.instrument?.preset !== 'churchOrgan')
     ) {
       fail('generating organ voices created extra tracks or changed their sound');
     }

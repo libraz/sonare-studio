@@ -26,7 +26,7 @@ export async function run({ page, fail }) {
   }
 
   await page.click('#menubar-trigger-edit');
-  const copy = page.locator('[id="menubar-edit-edit.copy"]');
+  const copy = page.locator('[id="menubar-edit-edit_2e_copy"]');
   if ((await copy.getAttribute('aria-disabled')) === 'true')
     fail('Edit Copy is disabled for a selected arrangement clip');
   await copy.click();
@@ -94,7 +94,7 @@ export async function run({ page, fail }) {
     return;
   }
   await page.click('#menubar-trigger-edit');
-  const cut = page.locator('[id="menubar-edit-edit.cut"]');
+  const cut = page.locator('[id="menubar-edit-edit_2e_cut"]');
   if ((await cut.getAttribute('aria-disabled')) === 'true')
     fail('Edit Cut is disabled for an arrangement clip');
   await cut.click();
@@ -106,7 +106,7 @@ export async function run({ page, fail }) {
     fail('clipboard Paste test is no longer at bar one');
   }
   await page.click('#menubar-trigger-edit');
-  const editPaste = page.locator('[id="menubar-edit-edit.paste"]');
+  const editPaste = page.locator('[id="menubar-edit-edit_2e_paste"]');
   if ((await editPaste.getAttribute('aria-disabled')) === 'true') {
     fail('Edit Paste is disabled after cutting the active clip');
   } else {

@@ -149,7 +149,7 @@ async function mixerState(page) {
 
 async function saveAs(page) {
   await page.locator('.app-menubar__trigger:has-text("File")').click();
-  await page.locator('[id="menubar-file-file.saveAs"]').click();
+  await page.locator('[id="menubar-file-file_2e_saveAs"]').click();
   const prompt = page.locator('.modal-card:has(.dialog-input)');
   await prompt.waitFor({ state: 'visible' });
   await prompt.locator('.dialog-input').fill(PROJECT_NAME);

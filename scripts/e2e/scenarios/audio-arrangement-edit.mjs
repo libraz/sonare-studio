@@ -211,7 +211,7 @@ export async function run({ page, baseUrl, fail }) {
     notes: window.__sonareDebug.noteCount(),
     instruments: window.__sonareDebug.trackInstruments(),
   }));
-  if (imported.tracks !== 4 || imported.notes !== 8 || !imported.instruments.includes('drum-kit')) {
+  if (imported.tracks !== 4 || imported.notes !== 8 || !imported.instruments.includes('drumKit')) {
     fail(
       `multitrack MIDI fixture was not loaded before audio editing: ${JSON.stringify(imported)}`,
     );

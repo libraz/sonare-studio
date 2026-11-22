@@ -24,7 +24,7 @@ function notesIn(track, firstPpq, endPpq) {
 
 async function openChordGenerator(page) {
   await page.locator('#menubar-trigger-generate').click();
-  await page.locator('[id="menubar-generate-generate.progression"]').click();
+  await page.locator('[id="menubar-generate-generate_2e_progression"]').click();
 }
 
 async function openPrechorusDrums(page) {

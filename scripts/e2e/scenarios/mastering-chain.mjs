@@ -52,7 +52,7 @@ export async function run(ctx) {
     '.mastering-panel [data-preset-control="loudness.targetLufs"] input',
   );
   const ceilingDb = page.locator(
-    '.mastering-panel [data-preset-control="loudness.ceilingDb"] input',
+    '.mastering-panel [data-preset-control="loudness.ceilingDbtp"] input',
   );
   const denoiseEnabled = page.locator(
     '.mastering-panel [data-preset-control="repair.denoise.enabled"] input',
@@ -130,7 +130,7 @@ export async function run(ctx) {
     '.mastering-panel [data-preset-control="loudness.targetLufs"] input',
   );
   const remountedCeiling = page.locator(
-    '.mastering-panel [data-preset-control="loudness.ceilingDb"] input',
+    '.mastering-panel [data-preset-control="loudness.ceilingDbtp"] input',
   );
   if (
     (await remountedTarget.inputValue()) !== '-9' ||

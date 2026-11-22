@@ -29,7 +29,7 @@ export async function run(ctx) {
   console.info('remapped shortcut persisted across reload and still works');
 
   await page.click('.app-menubar__trigger:has-text("Options")');
-  await page.locator('[id="menubar-options-options.settings"]').click();
+  await page.locator('[id="menubar-options-options_2e_settings"]').click();
   await page.waitForSelector('[role="dialog"][aria-label="Settings"]', { timeout: 5000 });
   await page.click('[role="dialog"][aria-label="Settings"] [role="tab"]:has-text("Shortcuts")');
   await page.click('tr[data-action-id="view.toggleScorePanel"] button[aria-label^="Reset keys"]');

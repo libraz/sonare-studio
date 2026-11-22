@@ -22,7 +22,7 @@ export async function run({ page, baseUrl, fail }) {
   }
 
   await page.click('#menubar-trigger-generate');
-  await page.click('[id="menubar-generate-generate.tracks"]');
+  await page.click('[id="menubar-generate-generate_2e_tracks"]');
   await page.locator('.gate-create').click();
   await page.locator('.generate-confirm').click();
   await page.locator('.continue-tracks').click();
@@ -162,7 +162,7 @@ export async function run({ page, baseUrl, fail }) {
   // The previously unavailable counter melody becomes possible once the
   // selected lead clip contains notes.
   await page.click('#menubar-trigger-generate');
-  await page.click('[id="menubar-generate-generate.tracks"]');
+  await page.click('[id="menubar-generate-generate_2e_tracks"]');
   await page.locator('.part-list').waitFor();
   const counterBox = page.locator('.part-row').nth(3).locator('.part-check input');
   if (await counterBox.isDisabled()) fail('counter melody stayed disabled after lead notes');

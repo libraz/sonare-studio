@@ -178,7 +178,7 @@ export async function run({ page, baseUrl, fail }) {
   if (
     summary.tracks !== 4 ||
     summary.activeNotes !== 8 ||
-    !summary.instruments.includes('drum-kit')
+    !summary.instruments.includes('drumKit')
   ) {
     fail(`imported song lost its parts: ${JSON.stringify(summary)}`);
   }

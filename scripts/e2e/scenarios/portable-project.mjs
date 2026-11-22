@@ -199,7 +199,7 @@ async function shortExport(page) {
 async function exportSzd(page) {
   const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
   await page.click('.app-menubar__trigger:has-text("File")');
-  await page.locator('[id="menubar-file-file.exportSzd"]').click();
+  await page.locator('[id="menubar-file-file_2e_exportSzd"]').click();
   const download = await downloadPromise;
   const path = await download.path();
   if (!path) throw new Error('portable SZD export produced no readable download path');
