@@ -2,8 +2,8 @@
  * Audio stem separation: runs libsonare's `hpss` (with its residual) over an audio
  * clip's played source window, splitting it into harmonic, percussive and
  * residual stems (each keeping the source channel count). `phaseVocoder`
- * repairs a band whose length drifted from the source window, and `nnFilter`
- * refines each band only when it returns an equal-length matrix.
+ * repairs a band whose length drifted from the source window. The split is
+ * lossless: the three bands sum back to the source window.
  *
  * `separateAudioClipComponents` splits the same rendered window into an
  * arbitrary number of NMF components through an injected async `decompose`
@@ -23,13 +23,7 @@
  * clip creation lives in command/stems.
  */
 
-import type {
-  HpssRequest,
-  HpssResult,
-  Matrix2D,
-  NnFilterRequest,
-  PhaseVocoderRequest,
-} from '@libraz/libsonare';
+import type { HpssRequest, HpssResult, PhaseVocoderRequest } from '@libraz/libsonare';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   type AudibleAudioClipFields,
@@ -45,12 +39,13 @@ export type StemKind = 'harmonic' | 'percussive' | 'residual';
 export const STEM_KINDS: ReadonlyArray<StemKind> = ['harmonic', 'percussive', 'residual'];
 
 /**
- * The stem separator: libsonare `hpss`, called with `withResidual: true` so one
- * mono channel splits into three equal-length bands at the same sample rate.
+ * The stem separator: libsonare `hpss`, called with `withResidual: true` and a
+ * hard mask so one mono channel splits into three equal-length bands at the same
+ * sample rate. Under the soft mask the residual is silent.
  */
 export type AudioStemSeparator = (request: HpssRequest) => HpssResult;
 
-/** Optional repair/refinement functions (libsonare `phaseVocoder`, `nnFilter`). */
+/** Optional repair function (libsonare `phaseVocoder`). */
 export interface AudioStemEnhancers {
   /** Repairs separator output length drift back to the source window length. */
   phaseVocoder?: (
@@ -58,8 +53,6 @@ export interface AudioStemEnhancers {
     sampleRate: number,
     options: Pick<PhaseVocoderRequest, 'speedRatio'>,
   ) => Float32Array;
-  /** Refines a band in place when it returns an equal-length matrix. */
-  nnFilter?: (request: NnFilterRequest) => Matrix2D;
 }
 
 /** Injectable dependencies for {@link separateAudioClipStems}. */
@@ -107,45 +100,33 @@ function fitStemLength(
   return out;
 }
 
-function refineStemWaveform(
-  samples: Float32Array,
-  nnFilter?: AudioStemEnhancers['nnFilter'],
-): Float32Array {
-  if (typeof nnFilter !== 'function' || samples.length === 0) return samples;
-  try {
-    const refined = nnFilter({
-      s: { data: samples, rows: 1, cols: samples.length },
-      aggregate: 'mean',
-      k: 7,
-      width: 1,
-    }).data;
-    return refined.length === samples.length ? refined : samples;
-  } catch {
-    return samples;
-  }
-}
-
 function processStemChannel(
   channel: Float32Array,
   sampleRate: number,
   deps: AudioStemsDeps,
 ): Record<StemKind, Float32Array> {
-  const split = deps.separateStems({ samples: channel, sampleRate, withResidual: true });
+  const split = deps.separateStems({
+    samples: channel,
+    sampleRate,
+    withResidual: true,
+    hardMask: true,
+  });
   if (!split.residual) throw new Error('hpss returned no residual despite withResidual');
   const residual = split.residual;
   return {
-    harmonic: refineStemWaveform(
-      fitStemLength(split.harmonic, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
-      deps.enhancers?.nnFilter,
+    harmonic: fitStemLength(
+      split.harmonic,
+      channel.length,
+      sampleRate,
+      deps.enhancers?.phaseVocoder,
     ),
-    percussive: refineStemWaveform(
-      fitStemLength(split.percussive, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
-      deps.enhancers?.nnFilter,
+    percussive: fitStemLength(
+      split.percussive,
+      channel.length,
+      sampleRate,
+      deps.enhancers?.phaseVocoder,
     ),
-    residual: refineStemWaveform(
-      fitStemLength(residual, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
-      deps.enhancers?.nnFilter,
-    ),
+    residual: fitStemLength(residual, channel.length, sampleRate, deps.enhancers?.phaseVocoder),
   };
 }
 

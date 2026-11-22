@@ -22,7 +22,6 @@ vi.mock('@/lib/wasm', async () => {
     ...(createFakeWasmModule() as unknown as Record<string, unknown>),
     hpss: real.hpss,
     phaseVocoder: real.phaseVocoder,
-    nnFilter: real.nnFilter,
   };
   return { ensureWasm: async () => wasmModule.current };
 });

@@ -226,7 +226,6 @@ export async function splitAudioClipToStems(clipId: number): Promise<number[]> {
       separateStems: wasm.hpss,
       enhancers: {
         phaseVocoder: wasm.phaseVocoder,
-        nnFilter: wasm.nnFilter,
       },
     },
   );

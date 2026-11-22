@@ -345,58 +345,6 @@ describe('separateAudioClipStems', () => {
     expect(stems[1].channels[0][47999]).toBe(0);
   });
 
-  it('refines waveform stems through nnFilter when it returns equal-length matrix data', async () => {
-    const calls: Array<{ length: number; nFeatures: number; nFrames: number }> = [];
-    const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
-      loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
-      separateStems: ({ samples, sampleRate }) => ({
-        harmonic: new Float32Array(samples.length).fill(1),
-        percussive: new Float32Array(samples.length).fill(2),
-        residual: new Float32Array(samples.length).fill(3),
-        sampleRate,
-      }),
-      enhancers: {
-        nnFilter: ({ s }) => {
-          calls.push({ length: s.data.length, nFeatures: s.rows, nFrames: s.cols });
-          return { ...s, data: s.data.map((value) => value + 0.25) };
-        },
-      },
-    });
-
-    expect(calls).toEqual([
-      { length: 48000, nFeatures: 1, nFrames: 48000 },
-      { length: 48000, nFeatures: 1, nFrames: 48000 },
-      { length: 48000, nFeatures: 1, nFrames: 48000 },
-    ]);
-    expect(stems[0].channels[0][0]).toBe(1.25);
-    expect(stems[1].channels[0][0]).toBe(2.25);
-    expect(stems[2].channels[0][0]).toBe(3.25);
-  });
-
-  it('keeps separator waveform stems when nnFilter cannot produce a same-length result', async () => {
-    const stems = await separateAudioClipStems(clipWindow({ lengthPpq: 2 }), 120, {
-      loadAudioAsset: async () => asset([0.5], WINDOW_FRAMES),
-      separateStems: ({ samples, sampleRate }) => ({
-        harmonic: new Float32Array(samples.length).fill(1),
-        percussive: new Float32Array(samples.length).fill(2),
-        residual: new Float32Array(samples.length).fill(3),
-        sampleRate,
-      }),
-      enhancers: {
-        nnFilter: ({ s }) => {
-          const cols = s.cols - 1;
-          if (s.data[0] === 1) return { data: new Float32Array(cols).fill(9), rows: 1, cols };
-          if (s.data[0] === 2) throw new Error('nnFilter failed');
-          return { data: new Float32Array(0), rows: 1, cols: 0 };
-        },
-      },
-    });
-
-    expect(stems[0].channels[0][0]).toBe(1);
-    expect(stems[1].channels[0][0]).toBe(2);
-    expect(stems[2].channels[0][0]).toBe(3);
-  });
-
   it('returns [] without an asset, at a non-positive tempo, or on an empty window', async () => {
     const { fn } = separator();
     await expect(
