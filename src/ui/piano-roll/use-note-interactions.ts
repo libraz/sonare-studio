@@ -9,6 +9,9 @@
  */
 
 import { type Ref, ref, shallowRef } from 'vue';
+import { clampMoveDelta } from '@/components/piano-roll/nudge-bounds';
+import { floorLocalPpqToMeterGrid } from '@/components/piano-roll/timeline-meter';
+import { visibleNotesInWindow } from '@/components/piano-roll/visible-notes';
 import { clamp, clampInt } from '@/lib/math';
 import { DEFAULT_NOTE_VELOCITY } from '@/lib/midi';
 import type { EditorNote, EditorNoteUpdate, NewEditorNote } from '@/project/types';
@@ -22,9 +25,6 @@ import {
 } from '@/ui/canvas/hit-test';
 import { MAX_PITCH, MIN_PITCH, snapPpqToStep } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
-import { clampMoveDelta } from './nudge-bounds';
-import { floorLocalPpqToMeterGrid } from './timeline-meter';
-import { visibleNotesInWindow } from './visible-notes';
 
 /** Smallest note duration a resize can produce (a sixty-fourth note in PPQ). */
 const DEFAULT_MIN_DURATION_PPQ = 0.0625;

@@ -1,10 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
-import { usePianoRollNoteMenu } from '@/components/piano-roll/use-piano-roll-note-menu';
 import * as commands from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
+import { usePianoRollNoteMenu } from '@/ui/piano-roll/use-piano-roll-note-menu';
 
 vi.mock('@/project/commands', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/project/commands')>()),

@@ -5,11 +5,11 @@
  */
 
 import type { Ref } from 'vue';
-import type { TheoryCardHold } from '@/components/compose/use-theory-card-hold';
+import { type GhostNote, hitTestGhost } from '@/components/piano-roll/overlay';
 import type { EditorNote } from '@/project/types';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
+import type { TheoryCardHold } from '@/ui/compose/use-theory-card-hold';
 import type { EditorToolId } from '@/ui/editor/tools';
-import { type GhostNote, hitTestGhost } from './overlay';
 import type {
   InteractionModifiers,
   InteractionPoint,

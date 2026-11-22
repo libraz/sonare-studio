@@ -15,7 +15,7 @@ import {
 } from './helpers/arrangement-view-mount';
 import { readSource } from './helpers/source-text';
 
-const pianoRoll = readSource('src/components/piano-roll/use-piano-roll-note-menu.ts');
+const pianoRoll = readSource('src/ui/piano-roll/use-piano-roll-note-menu.ts');
 
 describe('groove template entry points', () => {
   it('captures and applies a groove from the piano-roll quantize menu', () => {

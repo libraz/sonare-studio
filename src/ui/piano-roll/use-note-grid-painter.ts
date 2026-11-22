@@ -8,6 +8,22 @@
 
 import { NoteSafety } from '@libraz/libcantus';
 import { onBeforeUnmount, onMounted, type Ref, watch } from 'vue';
+import {
+  drawPlacementColumn,
+  drawResolutionArrows,
+} from '@/components/piano-roll/guidance-overlay-paint';
+import type { GhostNote } from '@/components/piano-roll/overlay';
+import {
+  DEFAULT_NOTE_COLOR,
+  fillRoundRect,
+  getCanvasContext,
+  isBlackKey,
+  type NoteColorFn,
+  PIANO_ROLL_COLORS,
+  strokeRoundRect,
+} from '@/components/piano-roll/theme';
+import { localRulerTicks } from '@/components/piano-roll/timeline-meter';
+import { visibleNotesInWindow } from '@/components/piano-roll/visible-notes';
 import type { ResolutionArrow } from '@/composables/useCompositionGuidance';
 import { useNoteNames } from '@/composables/useNoteNames';
 import type { PlacementColumn } from '@/composables/usePlacementGuidance';
@@ -22,20 +38,7 @@ import { playheadX } from '@/ui/canvas/playhead-x';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { createLayerId, useCanvasSurface } from '@/ui/canvas/use-canvas-surface';
 import { CANVAS_FONT_SIZE_PX, canvasFont } from '@/ui/theme/tokens';
-import { drawPlacementColumn, drawResolutionArrows } from './guidance-overlay-paint';
-import type { GhostNote } from './overlay';
-import {
-  DEFAULT_NOTE_COLOR,
-  fillRoundRect,
-  getCanvasContext,
-  isBlackKey,
-  type NoteColorFn,
-  PIANO_ROLL_COLORS,
-  strokeRoundRect,
-} from './theme';
-import { localRulerTicks } from './timeline-meter';
 import type { InteractionPoint, NoteInteractions } from './use-note-interactions';
-import { visibleNotesInWindow } from './visible-notes';
 
 /** Configuration for {@link useNoteGridPainter}. */
 export interface UseNoteGridPainterOptions {

@@ -9,8 +9,8 @@
  */
 
 import { type ComputedRef, computed, type Ref, ref } from 'vue';
+import type { LaneParamId } from '@/components/piano-roll/lane-params';
 import type { ClipExpressionCurve } from '@/project/types';
-import type { LaneParamId } from './lane-params';
 
 /** Reactive lane-mode state and selectors returned by {@link usePianoRollLanes}. */
 export interface PianoRollLanes {

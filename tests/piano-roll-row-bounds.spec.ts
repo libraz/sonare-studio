@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { centerRangeOnPitch } from '@/components/piano-roll/use-piano-roll-viewport';
-import { MAX_ROW_HEIGHT, MIN_ROW_HEIGHT } from '@/components/piano-roll/use-piano-roll-zoom';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { centerRangeOnPitch } from '@/ui/piano-roll/use-piano-roll-viewport';
+import { MAX_ROW_HEIGHT, MIN_ROW_HEIGHT } from '@/ui/piano-roll/use-piano-roll-zoom';
 
 describe('piano-roll row bounds and centering', () => {
   it('exports the shared row-height bounds', () => {

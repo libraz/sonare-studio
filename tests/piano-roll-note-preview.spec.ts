@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { isReactive } from 'vue';
-import { useNoteInteractions } from '@/components/piano-roll/use-note-interactions';
 import type { EditorNote } from '@/project/types';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { useNoteInteractions } from '@/ui/piano-roll/use-note-interactions';
 
 function note(id: number, pitch: number, startPpq: number): EditorNote {
   return { id, pitch, velocity: 96, startPpq, durationPpq: 1, channel: 0 };

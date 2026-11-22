@@ -6,7 +6,6 @@ import { ref } from 'vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import { PIANO_ROLL_COLORS } from '@/components/piano-roll/theme';
 import { floorLocalPpqToMeterGrid } from '@/components/piano-roll/timeline-meter';
-import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
 import { useStepInput } from '@/composables/useStepInput';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { analyzeAudioClipMelody } from '@/project/audio-melody';
@@ -22,6 +21,7 @@ import {
 import type { TimeSignatureSegment } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import type { NoteInteractions } from '@/ui/piano-roll/use-note-interactions';
 
 vi.mock('@/project/commands', () => ({
   addNote: vi.fn(() => 1),

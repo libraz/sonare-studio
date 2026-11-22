@@ -9,11 +9,11 @@ import { useProjectStore } from '@/project/store';
 import { firstBlock } from '@/ui/disabled-reason';
 import { EDITOR_TOOL_DEFS } from '@/ui/editor/tools';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { ZOOM_BUTTON_STEP } from '@/ui/piano-roll/use-piano-roll-zoom';
 import { DEFAULT_APP_SETTINGS } from '@/ui/settings/app-settings';
 import GuidanceLegend from './GuidanceLegend.vue';
 import MidiFxPanel from './MidiFxPanel.vue';
 import OrnamentPanel from './OrnamentPanel.vue';
-import { ZOOM_BUTTON_STEP } from './use-piano-roll-zoom';
 
 /**
  * Toolbar above the piano-roll grid, in three regions: the editing toggles and

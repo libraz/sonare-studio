@@ -108,7 +108,7 @@ describe('component error banners', () => {
       'src/ui/mixer/use-insert-reorder.ts',
       'src/ui/mixer/use-insert-sidechain.ts',
       'src/components/mixer/MixSuggestDialog.vue',
-      'src/components/piano-roll/use-piano-roll-viewport.ts',
+      'src/ui/piano-roll/use-piano-roll-viewport.ts',
       'src/components/sample-editor/SampleEditor.vue',
       'src/components/score/ScorePanel.vue',
       'src/ui/devices/use-sound-font-manifest-probe.ts',

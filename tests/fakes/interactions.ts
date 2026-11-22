@@ -6,10 +6,10 @@
 
 import { vi } from 'vitest';
 import { ref } from 'vue';
-import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
 import type { AutomationInteractions } from '@/ui/arrangement/use-automation-interactions';
 import type { ClipInteractions } from '@/ui/arrangement/use-clip-interactions';
 import type { TakeInteractions } from '@/ui/arrangement/use-take-interactions';
+import type { NoteInteractions } from '@/ui/piano-roll/use-note-interactions';
 
 export function fakeClipInteractions(overrides: Partial<ClipInteractions> = {}): ClipInteractions {
   return {

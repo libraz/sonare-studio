@@ -1,9 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
-import { usePianoRollScrollbar } from '@/components/piano-roll/use-piano-roll-scrollbar';
-import { usePianoRollZoom, ZOOM_BUTTON_STEP } from '@/components/piano-roll/use-piano-roll-zoom';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import { usePianoRollScrollbar } from '@/ui/piano-roll/use-piano-roll-scrollbar';
+import { usePianoRollZoom, ZOOM_BUTTON_STEP } from '@/ui/piano-roll/use-piano-roll-zoom';
 
 function elementWithSize(width: number, height: number): HTMLElement {
   const element = document.createElement('div');

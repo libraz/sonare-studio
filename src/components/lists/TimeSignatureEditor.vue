@@ -12,6 +12,7 @@ import { useProjectStore } from '@/project/store';
 import type { TimeSignatureSegment } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { useDraftList } from '@/ui/lists/use-draft-list';
 import type { NumericInputValue } from '@/ui/numeric-input';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
@@ -21,7 +22,6 @@ import {
   TIME_SIGNATURE_DENOMINATORS,
   validateTimeSignatureRows,
 } from './row-validation';
-import { useDraftList } from './use-draft-list';
 
 /**
  * Time-signature list editor: one row per meter segment (bar position,

@@ -2,7 +2,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import TheoryCardView from '@/components/compose/TheoryCardView.vue';
-import { useTheoryCardHold } from '@/components/compose/use-theory-card-hold';
 import { keyFifthsForScaleHighlight } from '@/components/lists/key-modes';
 import ScoreAnnotationPalette from '@/components/score/ScoreAnnotationPalette.vue';
 import ScoreToolbar from '@/components/score/ScoreToolbar.vue';
@@ -43,6 +42,7 @@ import { clipMeasureGrid } from '@/project/time-signature';
 import { clipKind } from '@/project/types';
 import type { AccessibleObjectItem } from '@/ui/accessibility/object-navigation';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
+import { useTheoryCardHold } from '@/ui/compose/use-theory-card-hold';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { ScoreLayoutSettings } from '@/ui/score/layout';
 import {

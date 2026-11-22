@@ -4,12 +4,12 @@ import {
   floorLocalPpqToMeterGrid,
   snapLocalPpqToMeterGrid,
 } from '@/components/piano-roll/timeline-meter';
+import type { EditorNote, TimeSignatureSegment } from '@/project/types';
+import { TimelineRange } from '@/ui/canvas/timeline-range';
 import {
   type InteractionCommands,
   useNoteInteractions,
-} from '@/components/piano-roll/use-note-interactions';
-import type { EditorNote, TimeSignatureSegment } from '@/project/types';
-import { TimelineRange } from '@/ui/canvas/timeline-range';
+} from '@/ui/piano-roll/use-note-interactions';
 
 const FOUR_FOUR: TimeSignatureSegment[] = [{ startPpq: 0, numerator: 4, denominator: 4 }];
 

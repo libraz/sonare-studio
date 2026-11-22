@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
 import { PIANO_ROLL_COLORS } from '@/components/piano-roll/theme';
-import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
 import type { PlacementColumn } from '@/composables/usePlacementGuidance';
 import type { TheoryCard } from '@/compose/explain';
 import type { GuidanceSegment } from '@/compose/guidance';
@@ -12,6 +11,7 @@ import type { PlacementLevel, PlacementVerdict } from '@/compose/placement';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import type { NoteInteractions } from '@/ui/piano-roll/use-note-interactions';
 
 function makeNote(over: Partial<EditorNote> = {}): EditorNote {
   return {

@@ -1,15 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
-import { useNoteInteractions } from '@/components/piano-roll/use-note-interactions';
-import {
-  describePlacementVerdict,
-  usePlacementCell,
-} from '@/components/piano-roll/use-placement-cell';
 import type { PlacementVerdict } from '@/compose/placement';
 import type { EditorNote } from '@/project/types';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { MESSAGES } from '@/ui/i18n';
+import { useNoteInteractions } from '@/ui/piano-roll/use-note-interactions';
+import { describePlacementVerdict, usePlacementCell } from '@/ui/piano-roll/use-placement-cell';
 
 function note(over: Partial<EditorNote> = {}): EditorNote {
   return { id: 1, pitch: 60, velocity: 96, startPpq: 0, durationPpq: 1, channel: 0, ...over };

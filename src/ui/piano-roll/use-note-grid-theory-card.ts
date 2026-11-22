@@ -5,10 +5,10 @@
  */
 
 import { type ComputedRef, computed, type Ref, ref, watch } from 'vue';
-import { type TheoryCardHold, useTheoryCardHold } from '@/components/compose/use-theory-card-hold';
+import type { GhostNote } from '@/components/piano-roll/overlay';
 import type { TheoryCard } from '@/compose/explain';
 import type { EditorNote } from '@/project/types';
-import type { GhostNote } from './overlay';
+import { type TheoryCardHold, useTheoryCardHold } from '@/ui/compose/use-theory-card-hold';
 import type { InteractionPoint, NoteInteractions } from './use-note-interactions';
 
 /** Configuration for {@link useNoteGridTheoryCard}. */

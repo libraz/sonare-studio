@@ -39,6 +39,18 @@ import type { AccessibleObjectAdjustment } from '@/ui/accessibility/object-navig
 import { usePlayheadFollow } from '@/ui/arrangement/use-playhead-follow';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { useNoteInteractions } from '@/ui/piano-roll/use-note-interactions';
+import { usePianoRollCcLanes } from '@/ui/piano-roll/use-piano-roll-cc-lanes';
+import { usePianoRollLanes } from '@/ui/piano-roll/use-piano-roll-lanes';
+import { usePianoRollNoteMenu } from '@/ui/piano-roll/use-piano-roll-note-menu';
+import { usePianoRollScrollbar } from '@/ui/piano-roll/use-piano-roll-scrollbar';
+import { centerRangeOnPitch, usePianoRollViewport } from '@/ui/piano-roll/use-piano-roll-viewport';
+import {
+  MAX_ROW_HEIGHT,
+  MIN_ROW_HEIGHT,
+  usePianoRollZoom,
+} from '@/ui/piano-roll/use-piano-roll-zoom';
+import { describePlacementVerdict, usePlacementCell } from '@/ui/piano-roll/use-placement-cell';
 import BreakpointLane from './BreakpointLane.vue';
 import KeyboardColumn from './KeyboardColumn.vue';
 import { changedNoteUpdates } from './keyboard-note-updates';
@@ -58,14 +70,6 @@ import {
   localMeasureRange,
   snapLocalPpqToMeterGrid,
 } from './timeline-meter';
-import { useNoteInteractions } from './use-note-interactions';
-import { usePianoRollCcLanes } from './use-piano-roll-cc-lanes';
-import { usePianoRollLanes } from './use-piano-roll-lanes';
-import { usePianoRollNoteMenu } from './use-piano-roll-note-menu';
-import { usePianoRollScrollbar } from './use-piano-roll-scrollbar';
-import { centerRangeOnPitch, usePianoRollViewport } from './use-piano-roll-viewport';
-import { MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, usePianoRollZoom } from './use-piano-roll-zoom';
-import { describePlacementVerdict, usePlacementCell } from './use-placement-cell';
 import VelocityLane from './VelocityLane.vue';
 
 /**

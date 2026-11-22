@@ -6,13 +6,13 @@
  */
 
 import { computed, onBeforeUnmount, type Ref, ref, watch } from 'vue';
+import { barBeatFromPpq, parseBarBeat } from '@/components/lists/bar-beat';
+import { formatRowIssue, type RowIssue } from '@/components/lists/row-validation';
 import { errorMessage } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
 import { type EditorClip, isAudioClip } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import { barBeatFromPpq, parseBarBeat } from './bar-beat';
-import { formatRowIssue, type RowIssue } from './row-validation';
 
 /** Options for {@link useDraftList}. */
 export interface DraftListOptions<Row extends { key: number }> {

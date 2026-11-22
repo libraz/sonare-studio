@@ -6,11 +6,11 @@ import { useProjectStore } from '@/project/store';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { useDraftList } from '@/ui/lists/use-draft-list';
 import { isBlankInput, type NumericInputValue } from '@/ui/numeric-input';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
 import ListIcon from './ListIcon.vue';
 import { MAX_BPM, MIN_BPM, mergeTempoSegments, validateTempoRows } from './row-validation';
-import { useDraftList } from './use-draft-list';
 
 /**
  * Tempo-map list editor: one row per tempo segment (position in bars.beats,

@@ -2,8 +2,8 @@ import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defineComponent, h, nextTick } from 'vue';
-import { usePianoRollViewport } from '@/components/piano-roll/use-piano-roll-viewport';
 import { useProjectStore } from '@/project/store';
+import { usePianoRollViewport } from '@/ui/piano-roll/use-piano-roll-viewport';
 
 afterEach(() => {
   vi.restoreAllMocks();

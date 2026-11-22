@@ -11,13 +11,13 @@
  */
 
 import { computed, markRaw, onBeforeUnmount, onMounted, type Ref, ref, watch } from 'vue';
+import { createNoteExtentCache } from '@/components/piano-roll/content-extent';
+import { contentCenterPitch } from '@/components/piano-roll/overlay';
 import { describeError } from '@/lib/errors';
 import { useProjectStore } from '@/project/store';
 import { createPainter, type Painter } from '@/ui/canvas/painter';
 import { MAX_PITCH, TimelineRange } from '@/ui/canvas/timeline-range';
 import { useI18n } from '@/ui/i18n';
-import { createNoteExtentCache } from './content-extent';
-import { contentCenterPitch } from './overlay';
 
 /** Default horizontal zoom in px per quarter note (zoomed out for an overview). */
 const DEFAULT_PX_PER_PPQ = 38;

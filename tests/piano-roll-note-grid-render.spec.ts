@@ -3,10 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
 import AccessibleObjectNavigator from '@/components/accessibility/AccessibleObjectNavigator.vue';
 import NoteGridCanvas from '@/components/piano-roll/NoteGridCanvas.vue';
-import type { NoteInteractions } from '@/components/piano-roll/use-note-interactions';
 import type { EditorNote } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
+import type { NoteInteractions } from '@/ui/piano-roll/use-note-interactions';
 
 function makeNote(over: Partial<EditorNote> = {}): EditorNote {
   return { id: 1, pitch: 60, velocity: 96, startPpq: 1, durationPpq: 1, channel: 0, ...over };

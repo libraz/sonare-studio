@@ -13,13 +13,13 @@ import type { Painter } from '@/ui/canvas/painter';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import type { EditorToolId } from '@/ui/editor/tools';
 import { useI18n } from '@/ui/i18n';
+import { useNoteGridAccessibility } from '@/ui/piano-roll/use-note-grid-accessibility';
+import { useNoteGridPainter } from '@/ui/piano-roll/use-note-grid-painter';
+import { useNoteGridPointer } from '@/ui/piano-roll/use-note-grid-pointer';
+import { useNoteGridTheoryCard } from '@/ui/piano-roll/use-note-grid-theory-card';
+import type { InteractionPoint, NoteInteractions } from '@/ui/piano-roll/use-note-interactions';
 import type { GhostNote } from './overlay';
 import type { NoteColorFn } from './theme';
-import { useNoteGridAccessibility } from './use-note-grid-accessibility';
-import { useNoteGridPainter } from './use-note-grid-painter';
-import { useNoteGridPointer } from './use-note-grid-pointer';
-import { useNoteGridTheoryCard } from './use-note-grid-theory-card';
-import type { InteractionPoint, NoteInteractions } from './use-note-interactions';
 
 /**
  * Scrollable/zoomable note grid canvas of the piano roll: pitch rows, beat and

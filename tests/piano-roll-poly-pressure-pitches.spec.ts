@@ -1,10 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
-import { usePianoRollCcLanes } from '@/components/piano-roll/use-piano-roll-cc-lanes';
-import type { PianoRollLanes } from '@/components/piano-roll/use-piano-roll-lanes';
 import { addNote, clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
+import { usePianoRollCcLanes } from '@/ui/piano-roll/use-piano-roll-cc-lanes';
+import type { PianoRollLanes } from '@/ui/piano-roll/use-piano-roll-lanes';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');

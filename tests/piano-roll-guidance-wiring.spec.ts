@@ -41,7 +41,7 @@ describe('piano-roll placement guidance wiring', () => {
   });
 
   it('leaves the motion partners to the one status formatter', () => {
-    const cell = readSource('src/components/piano-roll/use-placement-cell.ts');
+    const cell = readSource('src/ui/piano-roll/use-placement-cell.ts');
     expect(cell).toContain('verdict.motionPartners');
     expect(editor).not.toContain('motionPartners');
   });
