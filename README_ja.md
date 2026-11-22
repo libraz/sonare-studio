@@ -27,7 +27,7 @@
 
 ## はじめに
 
-[sonare-studio.libraz.net](https://sonare-studio.libraz.net) でこのリポジトリのビルドを公開しているので、インストールせずに使えます。そこで開いたファイルはどこにもアップロードされません。アプリの実行には、最近の Chromium 系または Firefox 系のブラウザが必要です。ローカルで動かすには、Node 24 と Yarn 4（`mise.toml` で固定）が必要です。
+[sonare-studio.libraz.net](https://sonare-studio.libraz.net) でこのリポジトリのビルドを公開しているので、インストールせずに使えます。そこで開いたファイルはどこにもアップロードされません。アプリの実行には、最近の Chromium 系または Firefox 系のブラウザが必要です。ローカルで動かすには、Node 26 と Yarn 4（`mise.toml` で固定）が必要です。
 
 ```sh
 yarn install

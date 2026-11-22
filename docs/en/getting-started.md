@@ -4,7 +4,7 @@
 
 - A current Chromium- or Firefox-based browser. The app needs AudioWorklet, WebAssembly, OPFS, and SharedArrayBuffer where available.
 - **Cross-origin isolation.** The dev and preview servers, and the bundled `public/_headers`, send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`, which SharedArrayBuffer requires. Without isolation the engine falls back to a postMessage transport and still works.
-- To run it locally: Node 24 and Yarn 4, pinned in `mise.toml` via [mise](https://mise.jdx.dev).
+- To run it locally: Node 26 and Yarn 4, pinned in `mise.toml` via [mise](https://mise.jdx.dev).
 
 ## Run locally
 

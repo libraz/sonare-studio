@@ -27,7 +27,7 @@
 
 ## Getting started
 
-[sonare-studio.libraz.net](https://sonare-studio.libraz.net) serves the hosted build of this repository, so there is nothing to install to use it, and nothing you open there is uploaded. The app needs a current Chromium- or Firefox-based browser. To run it locally you need Node 24 and Yarn 4 (pinned in `mise.toml`):
+[sonare-studio.libraz.net](https://sonare-studio.libraz.net) serves the hosted build of this repository, so there is nothing to install to use it, and nothing you open there is uploaded. The app needs a current Chromium- or Firefox-based browser. To run it locally you need Node 26 and Yarn 4 (pinned in `mise.toml`):
 
 ```sh
 yarn install

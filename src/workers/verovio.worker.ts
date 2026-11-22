@@ -13,11 +13,7 @@
  * because the worker cannot recover without a replacement instance.
  */
 
-// Verovio ships no TypeScript declarations; the imports are suppressed and the
-// toolkit surface is re-typed locally (see VerovioToolkit interface below).
-// @ts-expect-error -- 'verovio/esm' has no type declarations
 import { VerovioToolkit } from 'verovio/esm';
-// @ts-expect-error -- 'verovio/wasm' has no type declarations
 import createVerovioModule from 'verovio/wasm';
 import { errorMessage } from '@/lib/errors';
 
@@ -69,7 +65,11 @@ export type VerovioResponse =
   | { id: number; type: 'error'; error: string }
   | { id: number; type: 'fatal'; error: string };
 
-/** The subset of the Verovio toolkit API this worker uses (package has no .d.ts). */
+/**
+ * The subset of the Verovio toolkit API this worker uses, as it behaves at
+ * runtime: `loadData` returns 1 or 0 (the package declares a boolean), and the
+ * timemap carries `qstamp` because this worker never requests fractions.
+ */
 interface Toolkit {
   loadData(data: string): number;
   setOptions(options: VerovioOptions): void;
@@ -96,7 +96,7 @@ class ToolkitInitializationError extends Error {
 
 /** Single shared toolkit instance; created once when the worker boots. */
 const toolkitPromise: Promise<Toolkit> = createVerovioModule()
-  .then((module: unknown) => new VerovioToolkit(module) as Toolkit)
+  .then((module) => new VerovioToolkit(module) as unknown as Toolkit)
   .catch((error: unknown) => {
     throw new ToolkitInitializationError(error);
   });

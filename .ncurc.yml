@@ -1,0 +1,16 @@
+# Packages `ncu -u` must not raise, and why. Drop an entry once its blocker is
+# gone so the next run picks the package up again.
+#
+# A reject only stops ncu from rewriting the range; the range still takes
+# minor and patch releases on install.
+packageManager: yarn
+reject:
+  # typescript: vue-tsc 3.3.14 resolves `typescript/lib/tsc`, which v7 no longer
+  # exports; `vue-tsc --noEmit` stops with: Error [ERR_PACKAGE_PATH_NOT_EXPORTED]:
+  # Package subpath './lib/tsc' is not defined by "exports" in .../typescript/package.json
+  - typescript
+  # @libraz/libcantus: 1.4.0 changes how chords, keys and cadences are read, and
+  # tests/notation-chords.spec.ts > estimateChordSymbols > skips empty measures and
+  # names a bare octave without a third fails with: AssertionError: expected [] to
+  # have a length of 1 but got +0. Taking it is its own change, test by test.
+  - "@libraz/libcantus"

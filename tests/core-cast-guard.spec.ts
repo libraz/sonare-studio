@@ -19,8 +19,8 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 /** Remaining `src/` escapes: file → count and why. */
 const SRC_ALLOWED: Record<string, { count: number; reason: string }> = {
   'src/workers/verovio.worker.ts': {
-    count: 3,
-    reason: 'verovio ships no declarations; worker global scope',
+    count: 2,
+    reason: "verovio's declared loadData and timemap differ from its runtime; worker global scope",
   },
   'src/workers/musicxml-import.worker.ts': { count: 1, reason: 'worker global scope' },
   'src/workers/audio-encode.worker.ts': { count: 1, reason: 'worker global scope' },

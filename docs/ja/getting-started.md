@@ -4,7 +4,7 @@
 
 - Chromium 系または Firefox 系の最近のブラウザ。AudioWorklet、WebAssembly、OPFS を使い、利用できる場合は SharedArrayBuffer も使います。
 - **クロスオリジン分離**。開発サーバーとプレビューサーバー、および同梱の `public/_headers` が `Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` を送ります。SharedArrayBuffer にはこれが必要です。分離されていない環境では、エンジンは postMessage 経由の通信に切り替わり、動作は続きます。
-- ローカルで動かすには Node 24 と Yarn 4 が必要です。[mise](https://mise.jdx.dev) を使って `mise.toml` で固定しています。
+- ローカルで動かすには Node 26 と Yarn 4 が必要です。[mise](https://mise.jdx.dev) を使って `mise.toml` で固定しています。
 
 ## ローカルで動かす
 

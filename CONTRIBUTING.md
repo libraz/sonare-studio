@@ -32,7 +32,7 @@ The rest of this document has two parts. [Checklist](#checklist) describes what 
 
 ## Development setup
 
-Node 24 and Yarn 4 (the versions are pinned in `mise.toml` and `package.json`). Use Yarn; npm, pnpm and bun are not supported in this repository.
+Node 26 and Yarn 4 (the versions are pinned in `mise.toml`, `.node-version` and `package.json`). Use Yarn; npm, pnpm and bun are not supported in this repository.
 
 ```bash
 yarn install
