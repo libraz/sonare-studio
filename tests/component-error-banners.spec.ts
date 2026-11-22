@@ -98,6 +98,8 @@ describe('component error banners', () => {
       'src/components/compose/TrackGenerateDialog.vue',
       'src/components/devices/PatchEditor.vue',
       'src/components/mastering/MasteringPanel.vue',
+      'src/ui/mastering/use-mastering-preview.ts',
+      'src/ui/mastering/use-mastering-preview-analysis.ts',
       'src/components/mixer/InsertRack.vue',
       'src/components/mixer/MixSuggestDialog.vue',
       'src/components/piano-roll/use-piano-roll-viewport.ts',
