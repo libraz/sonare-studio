@@ -9,7 +9,7 @@ import type { MidiSync } from '@/engine/midi-sync';
 import { renderMixdownInWorker } from '@/export/client';
 import { encodeWav } from '@/export/wav';
 import { peakDb } from '@/lib/db';
-import { fnv1a32Bytes } from '@/lib/fnv1a';
+import { FNV1A_OFFSET_BASIS, FNV1A_PRIME, fnv1a32Bytes } from '@/lib/fnv1a';
 import { clamp } from '@/lib/math';
 import { ingestAudioBuffer } from '@/project/audio-import';
 import type { AutomationParam, AutomationPoint, AutomationTarget } from '@/project/automation';
@@ -395,14 +395,14 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
       );
       let sum = 0;
       let count = 0;
-      let hash = 0x811c9dc5;
+      let hash = FNV1A_OFFSET_BASIS;
       for (const channel of channels) {
         for (const sample of channel) {
           sum += Math.abs(sample);
           count += 1;
           const q = clamp(Math.round(sample * 32767), -32768, 32767) & 0xffff;
-          hash = Math.imul(hash ^ (q & 0xff), 0x01000193);
-          hash = Math.imul(hash ^ (q >> 8), 0x01000193);
+          hash = Math.imul(hash ^ (q & 0xff), FNV1A_PRIME);
+          hash = Math.imul(hash ^ (q >> 8), FNV1A_PRIME);
         }
       }
       return {

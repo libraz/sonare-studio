@@ -8,6 +8,7 @@
  * {@link OpfsUnavailableError} the UI can present.
  */
 
+import { FNV1A_OFFSET_BASIS, FNV1A_PRIME } from '@/lib/fnv1a';
 import { isNotFoundError, writeOpfsFile } from './fs-utils';
 import { withPersistenceMutationLock } from './mutation-lock';
 import { prepareProjectRename } from './revisions';
@@ -85,13 +86,13 @@ export interface ProjectRenameHooks {
 
 /** Content revision used for compare-and-swap named saves. */
 export function projectBytesRevision(bytes: Uint8Array): string {
-  let first = 0x811c9dc5;
+  let first = FNV1A_OFFSET_BASIS;
   let second = 0x9e3779b9;
   // Indexed typed-array access stays on the fast path for multi-megabyte
   // archives; `for…of` creates an iterator step for every byte.
   for (let index = 0; index < bytes.length; index += 1) {
     const byte = bytes[index];
-    first = Math.imul(first ^ byte, 0x01000193) >>> 0;
+    first = Math.imul(first ^ byte, FNV1A_PRIME) >>> 0;
     second = Math.imul(second ^ byte, 0x85ebca6b) >>> 0;
   }
   return `${bytes.byteLength.toString(36)}-${first.toString(16).padStart(8, '0')}${second
