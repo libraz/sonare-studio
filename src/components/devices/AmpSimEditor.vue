@@ -62,8 +62,9 @@ interface AmpPresetCatalogEntry {
   params: Record<string, AmpParameterValue>;
 }
 
-type AmpPresetCatalogModule = Partial<
-  Pick<typeof import('@/wasm/index.js'), 'masteringAmpPresetCatalog' | 'masteringInsertParamInfo'>
+type AmpPresetCatalogModule = Pick<
+  typeof import('@/wasm/index.js'),
+  'masteringAmpPresetCatalog' | 'masteringInsertParamInfo'
 >;
 
 const props = defineProps<{
@@ -148,17 +149,12 @@ function normalizePresetCatalog(value: unknown): AmpPresetCatalogEntry[] {
     .sort((left, right) => left.index - right.index);
 }
 
-function readPresetCatalog(module: unknown): AmpPresetCatalogEntry[] {
-  const fn = (module as AmpPresetCatalogModule | null)?.masteringAmpPresetCatalog;
-  if (typeof fn !== 'function') return [];
-  return normalizePresetCatalog(fn());
+function readPresetCatalog(module: AmpPresetCatalogModule): AmpPresetCatalogEntry[] {
+  return normalizePresetCatalog(module.masteringAmpPresetCatalog());
 }
 
-function readNormalDefaults(module: unknown): Record<string, AmpParameterValue> {
-  const fn = (module as AmpPresetCatalogModule | null)?.masteringInsertParamInfo;
-  if (typeof fn !== 'function') return {};
-  const info = fn({ insert: 'saturation.ampSim' });
-  if (!Array.isArray(info)) return {};
+function readNormalDefaults(module: AmpPresetCatalogModule): Record<string, AmpParameterValue> {
+  const info = module.masteringInsertParamInfo({ insert: 'saturation.ampSim' });
   const defaults: Record<string, AmpParameterValue> = {};
   for (const entry of info) {
     if (isAmpParameterValue(entry.default)) defaults[entry.name] = entry.default;
@@ -166,7 +162,7 @@ function readNormalDefaults(module: unknown): Record<string, AmpParameterValue> 
   return defaults;
 }
 
-function setPresetCatalog(module: unknown): void {
+function setPresetCatalog(module: AmpPresetCatalogModule): void {
   try {
     try {
       normalDefaults.value = readNormalDefaults(module);
@@ -187,7 +183,7 @@ function setPresetCatalog(module: unknown): void {
 
 // The store normally has an initialized module already, which lets the panel
 // paint the actual values on its first render. The async path covers opening
-// the panel during application startup and older builds without this API.
+// the panel during application startup.
 try {
   setPresetCatalog(getWasmModule());
 } catch {

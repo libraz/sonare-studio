@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MediaBrowser from '@/components/media/MediaBrowser.vue';
+import { ensureWasm } from '@/lib/wasm';
 import { clearAudioAssetLeases } from '@/persistence/asset-leases';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
@@ -483,15 +484,16 @@ describe('MediaBrowser', () => {
     expect(wrapper.find('.error').text()).toBe('PCM payload missing');
   });
 
-  it('hides the tempo-sync toggle when the module lacks timeStretch', async () => {
+  it('hides the tempo-sync toggle when the module fails to initialize', async () => {
+    vi.mocked(ensureWasm).mockRejectedValueOnce(new Error('init failed'));
     const wrapper = await mountBrowser();
     expect(wrapper.find('.sync-toggle').exists()).toBe(false);
   });
 
   it('stretches the preview to the project tempo when sync is enabled', async () => {
     const timeStretch = vi.fn(
-      (samples: Float32Array, _sr: number, rate: number) =>
-        new Float32Array(Math.round(samples.length / rate)),
+      (request: { samples: Float32Array; sampleRate: number; speedRatio: number }) =>
+        new Float32Array(Math.round(request.samples.length / request.speedRatio)),
     );
     wasmModule.current = { timeStretch };
     assetStore.listAssets.mockResolvedValue([meta({ id: 'a1', name: 'Loop', tags: { bpm: 120 } })]);
@@ -512,7 +514,7 @@ describe('MediaBrowser', () => {
     await flushPromises();
     // Rate 0.5 (60 / 120) doubles the buffer length.
     expect(timeStretch).toHaveBeenCalledTimes(2);
-    expect(timeStretch.mock.calls[0][2]).toBe(0.5);
+    expect(timeStretch.mock.calls[0][0]).toMatchObject({ sampleRate: 48000, speedRatio: 0.5 });
     expect(context.sources[0].buffer?.length).toBe(96000);
   });
 

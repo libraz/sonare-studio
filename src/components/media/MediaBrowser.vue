@@ -362,13 +362,12 @@ function assetSummary(asset: AudioAssetMeta): string {
 
 onMounted(() => {
   void refresh();
-  // Probe the optional one-shot time stretcher; tempo-synced preview is
-  // silently unavailable when the module does not expose it.
+  // Tempo-synced preview needs the module; without it previews play unstretched.
   void ensureWasm()
-    .then((mod) => {
+    .then(({ timeStretch }) => {
       if (disposed) return;
-      const fn = (mod as { timeStretch?: unknown }).timeStretch;
-      if (typeof fn === 'function') timeStretchFn.value = fn as TimeStretchFunction;
+      timeStretchFn.value = (samples, sampleRate, rate) =>
+        timeStretch({ samples, sampleRate, speedRatio: rate });
     })
     .catch(() => {
       // No wasm module: previews still work, just without tempo sync.

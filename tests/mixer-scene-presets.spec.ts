@@ -1,37 +1,49 @@
-import { describe, expect, it } from 'vitest';
-import { FALLBACK_INSERT_CATALOG } from '@/ui/mixer/insert-catalog';
-import { FALLBACK_MIXER_SCENE_PRESETS, loadMixerScenePresetJson } from '@/ui/mixer/scene-presets';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-function sceneProcessors(sceneJson: string): string[] {
-  const scene = JSON.parse(sceneJson) as {
-    buses?: Array<{ inserts?: Array<{ processor?: unknown }> }>;
-    strips?: Array<{ inserts?: Array<{ processor?: unknown }> }>;
+const { getWasmModuleMock } = vi.hoisted(() => ({ getWasmModuleMock: vi.fn() }));
+vi.mock('@/project/store', () => ({ getWasmModule: getWasmModuleMock }));
+
+import {
+  loadMixerScenePreset,
+  loadMixerScenePresetCatalog,
+  loadMixerScenePresetJson,
+} from '@/ui/mixer/scene-presets';
+
+const DOCUMENT = { version: 1, strips: [], buses: [], vcaGroups: [], connections: [] };
+
+function fakeCore() {
+  return {
+    mixingScenePresetNames: () => ['vocalReverbSend', 'drumBusSubgroup'],
+    mixingScenePreset: vi.fn(() => DOCUMENT),
   };
-  const processors: string[] = [];
-  for (const bus of scene.buses ?? []) {
-    for (const insert of bus.inserts ?? []) {
-      if (typeof insert.processor === 'string') processors.push(insert.processor);
-    }
-  }
-  for (const strip of scene.strips ?? []) {
-    for (const insert of strip.inserts ?? []) {
-      if (typeof insert.processor === 'string') processors.push(insert.processor);
-    }
-  }
-  return processors;
 }
 
-describe('fallback mixer scene presets', () => {
-  it('only reference processors available in the fallback realtime insert catalog', () => {
-    const fallbackProcessors = new Set(FALLBACK_INSERT_CATALOG);
-    const invalid: string[] = [];
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
-    for (const preset of FALLBACK_MIXER_SCENE_PRESETS) {
-      for (const processor of sceneProcessors(loadMixerScenePresetJson(preset))) {
-        if (!fallbackProcessors.has(processor)) invalid.push(`${preset}:${processor}`);
-      }
-    }
+describe('mixer scene presets', () => {
+  it('lists the core preset names', () => {
+    getWasmModuleMock.mockReturnValue(fakeCore());
+    expect(loadMixerScenePresetCatalog()).toEqual(['vocalReverbSend', 'drumBusSubgroup']);
+  });
 
-    expect(invalid).toEqual([]);
+  it('returns the core scene document for a known preset', () => {
+    const core = fakeCore();
+    getWasmModuleMock.mockReturnValue(core);
+    expect(loadMixerScenePreset('drumBusSubgroup')).toBe(DOCUMENT);
+    expect(core.mixingScenePreset).toHaveBeenCalledWith('drumBusSubgroup');
+  });
+
+  it('serializes the document for the JSON scene import', () => {
+    getWasmModuleMock.mockReturnValue(fakeCore());
+    expect(JSON.parse(loadMixerScenePresetJson('vocalReverbSend'))).toEqual(DOCUMENT);
+  });
+
+  it('rejects a preset the core does not name', () => {
+    const core = fakeCore();
+    getWasmModuleMock.mockReturnValue(core);
+    expect(() => loadMixerScenePreset('nope')).toThrow(RangeError);
+    expect(core.mixingScenePreset).not.toHaveBeenCalled();
   });
 });

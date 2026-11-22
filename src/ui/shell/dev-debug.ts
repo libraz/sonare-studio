@@ -167,16 +167,9 @@ export function installSonareDevDebug(ctx: DevDebugContext): void {
           }
         : null;
     },
-    // Lane order as the mixer sync declared it and as the engine facade holds
-    // it. Meters read the first, automation ids resolve through the second, so
-    // a divergence points one at the other's track.
-    laneOrder: () => ({
-      studio: [...ctx.mixerLaneTrackIds()],
-      engine:
-        (handle.value?.engine as { mixerLanes?: () => { trackId: number }[] } | undefined)
-          ?.mixerLanes?.()
-          .map((lane) => lane.trackId) ?? null,
-    }),
+    // Lane order as the mixer sync declared it; the engine facade exposes no
+    // reader for the order it holds.
+    laneOrder: () => ({ studio: [...ctx.mixerLaneTrackIds()] }),
     armedTrackId: () => recording.armedTrackId.value,
     recordingState: () => recording.state.value,
     isRecording: () => recording.isRecording.value,

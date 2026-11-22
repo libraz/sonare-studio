@@ -198,29 +198,22 @@ function readParams(value: unknown): Record<string, number | boolean> {
 }
 
 function loadRealtimeInsertCatalog(): ReadonlySet<string> | null {
+  let wasm: Pick<
+    ReturnType<typeof getWasmModule>,
+    'masteringProcessorCatalog' | 'masteringInsertNames'
+  >;
   try {
-    const wasm = getWasmModule() as unknown as {
-      masteringInsertNames?: () => string[];
-      masteringProcessorCatalog?: () => Array<{
-        id: string;
-        realtimeInsertable?: boolean;
-      }>;
-    };
-    const entries = wasm.masteringProcessorCatalog?.();
-    if (entries && entries.length > 0) {
-      return new Set(
-        entries
-          .filter((entry) => entry.realtimeInsertable === true)
-          .map((entry) => entry.id)
-          .filter((id) => id.length > 0),
-      );
-    }
-    const names = wasm.masteringInsertNames?.();
-    if (names && names.length > 0) return new Set(names);
+    wasm = getWasmModule();
   } catch {
     // Store may not be initialized in isolated command tests; keep legacy behavior.
+    return null;
   }
-  return null;
+  const entries = wasm.masteringProcessorCatalog();
+  if (entries.length > 0) {
+    return new Set(entries.filter((entry) => entry.realtimeInsertable).map((entry) => entry.id));
+  }
+  const names = wasm.masteringInsertNames();
+  return names.length > 0 ? new Set(names) : null;
 }
 
 function sceneInserts(

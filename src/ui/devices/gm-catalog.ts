@@ -32,7 +32,7 @@ const GM_FAMILY_COUNT = 16;
 /** The wasm catalog surface, or null before the module is ready. */
 export function gmCatalog(): GmCatalog | null {
   try {
-    return getWasmModule() as unknown as GmCatalog;
+    return getWasmModule();
   } catch {
     return null;
   }

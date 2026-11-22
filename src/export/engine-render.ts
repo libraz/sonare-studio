@@ -277,7 +277,7 @@ export async function renderProjectWithEngine(
           sampleRate: rate,
           maxBlockSize: blockSize,
           commandCapacity: 4096,
-        }) as unknown as OfflineRenderEngine;
+        });
     }
     if (deps === undefined) {
       const { createWasmMixdownDeps } = await import('@/export/mixdown');
