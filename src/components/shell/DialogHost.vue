@@ -23,7 +23,7 @@ watch(
   (request) => {
     if (request?.kind === 'prompt') {
       promptValue.value = request.defaultValue;
-      void nextTick(() => {
+      void nextTick().then(() => {
         inputRef.value?.focus();
         inputRef.value?.select();
       });

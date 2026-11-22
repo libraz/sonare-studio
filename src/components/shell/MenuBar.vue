@@ -83,7 +83,7 @@ function setPanelEl(id: string, el: HTMLElement | null): void {
 function openMenu(id: string, focusPanel = false): void {
   openId.value = id;
   activeRowId.value = null;
-  if (focusPanel) void nextTick(() => panelEls.get(id)?.focus());
+  if (focusPanel) void nextTick().then(() => panelEls.get(id)?.focus());
 }
 
 function close(focusTrigger = false): void {

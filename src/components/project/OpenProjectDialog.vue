@@ -37,7 +37,7 @@ const activeRowId = computed(() =>
 
 /** Scrolls the active row into view after the DOM reflects the selection. */
 function scrollSelectedIntoView(): void {
-  void nextTick(() => {
+  void nextTick().then(() => {
     const row = listRef.value?.querySelector<HTMLElement>(`#${rowId(selectedIndex.value)}`);
     row?.scrollIntoView({ block: 'nearest' });
   });

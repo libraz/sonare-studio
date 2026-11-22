@@ -113,7 +113,7 @@ function openMenu(): void {
     0,
     props.options.findIndex((o) => o.value === props.modelValue),
   );
-  void nextTick(() => {
+  void nextTick().then(() => {
     reposition();
     scrollActiveIntoView();
   });

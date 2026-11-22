@@ -58,7 +58,7 @@ watch(
     if (open && !wasOpen) {
       const active = document.activeElement;
       previousFocus = active instanceof HTMLElement ? active : null;
-      void nextTick(() => dialogRef.value?.focus());
+      void nextTick().then(() => dialogRef.value?.focus());
     } else if (!open && wasOpen) {
       if (previousFocus?.isConnected) previousFocus.focus();
       previousFocus = null;

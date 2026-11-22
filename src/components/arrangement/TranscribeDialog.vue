@@ -176,7 +176,7 @@ function onModeKeydown(event: KeyboardEvent, current: 'melody' | 'polyphonic'): 
   const next = event.key === 'ArrowLeft' ? 'melody' : 'polyphonic';
   if (next !== current) {
     chooseMode(next);
-    if (mode.value === next) void nextTick(() => modeButtons[next]?.focus());
+    if (mode.value === next) void nextTick().then(() => modeButtons[next]?.focus());
   }
 }
 
@@ -200,7 +200,7 @@ function onTuningKeydown(event: KeyboardEvent, current: TuningMode): void {
   const next = event.key === 'ArrowLeft' ? 'concert' : 'auto';
   if (next !== current) {
     chooseTuning(next);
-    if (tuningMode.value === next) void nextTick(() => tuningButtons[next]?.focus());
+    if (tuningMode.value === next) void nextTick().then(() => tuningButtons[next]?.focus());
   }
 }
 
@@ -224,7 +224,7 @@ function onShortestKeydown(event: KeyboardEvent, current: ShortestNote): void {
   const next = SHORTEST_NOTES[clamp(index, 0, SHORTEST_NOTES.length - 1)];
   if (next !== current) {
     chooseShortest(next);
-    if (shortestNote.value === next) void nextTick(() => shortestButtons.get(next)?.focus());
+    if (shortestNote.value === next) void nextTick().then(() => shortestButtons.get(next)?.focus());
   }
 }
 
@@ -249,7 +249,7 @@ function onVoicesKeydown(event: KeyboardEvent, current: MaxVoices): void {
   const next = MAX_VOICES[clamp(index, 0, MAX_VOICES.length - 1)];
   if (next !== current) {
     chooseVoices(next);
-    if (maxVoices.value === next) void nextTick(() => voicesButtons.get(next)?.focus());
+    if (maxVoices.value === next) void nextTick().then(() => voicesButtons.get(next)?.focus());
   }
 }
 
@@ -276,7 +276,7 @@ function onTidyKeydown(event: KeyboardEvent, current: boolean): void {
   const next = event.key === 'ArrowRight';
   if (next !== current) {
     chooseTidy(next);
-    if (tidy.value === next) void nextTick(() => tidyButtons[next ? 'on' : 'off']?.focus());
+    if (tidy.value === next) void nextTick().then(() => tidyButtons[next ? 'on' : 'off']?.focus());
   }
 }
 
@@ -300,7 +300,7 @@ function onTempoKeydown(event: KeyboardEvent, current: boolean): void {
   if (next !== current) {
     chooseTempo(next);
     if (matchTempo.value === next) {
-      void nextTick(() => tempoButtons[next ? 'match' : 'keep']?.focus());
+      void nextTick().then(() => tempoButtons[next ? 'match' : 'keep']?.focus());
     }
   }
 }

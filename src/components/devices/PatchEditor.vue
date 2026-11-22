@@ -138,7 +138,7 @@ watch(
     }
     refreshEnums();
     buildDraft();
-    void nextTick(() => {
+    void nextTick().then(() => {
       dialogRef.value?.focus();
       drawEnvelope();
     });

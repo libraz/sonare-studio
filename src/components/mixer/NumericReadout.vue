@@ -48,7 +48,7 @@ function startEditing(): void {
   if (locked.value) return;
   draft.value = String(props.value);
   editing.value = true;
-  void nextTick(() => {
+  void nextTick().then(() => {
     input.value?.focus();
     input.value?.select();
   });

@@ -187,7 +187,7 @@ function syncStep(): void {
   stepCount.value = progress.count;
   hasBack.value = sequence.hasBack;
   isLast.value = !sequence.hasNext;
-  void nextTick(() => {
+  void nextTick().then(() => {
     reposition();
     tooltipRef.value?.focus();
   });
@@ -270,7 +270,7 @@ watch(visible, (isVisible) => {
 onMounted(() => {
   if (props.autoStart && !wasSeen()) {
     // Wait a tick so the shell has rendered the anchor elements.
-    void nextTick(() => open());
+    void nextTick().then(() => open());
   }
 });
 

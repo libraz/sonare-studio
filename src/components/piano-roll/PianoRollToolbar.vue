@@ -138,7 +138,7 @@ function toggleView(): void {
   const trigger = viewTrigger.value;
   if (trigger) viewLeft.value = trigger.offsetLeft;
   viewOpen.value = !viewOpen.value;
-  if (viewOpen.value) void nextTick(() => viewPopover.value?.focus());
+  if (viewOpen.value) void nextTick().then(() => viewPopover.value?.focus());
 }
 
 useOutsidePointerDown(

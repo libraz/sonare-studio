@@ -115,7 +115,7 @@ function setActiveCell(row: number, step: number, focus = false): void {
   emit('select-row', activeRow.value);
   liveStatus.value = activeCellLabel.value;
   if (focus) {
-    void nextTick(() => {
+    void nextTick().then(() => {
       gridRoot.value
         ?.querySelector<HTMLElement>(
           `[data-step-grid-active="true"][data-row="${activeRow.value}"][data-step="${activeStep.value}"]`,

@@ -70,7 +70,7 @@ onMounted(() => {
   // Focus the dialog itself, not its dismiss action: a screen reader then
   // announces the panel's name, and the first Tab reaches the bindings rather
   // than leaving the close button pre-armed under Enter.
-  void nextTick(() => panel.value?.focus());
+  void nextTick().then(() => panel.value?.focus());
 });
 
 /** The two bindable parameters per strip, in column order. */

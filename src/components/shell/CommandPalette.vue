@@ -53,7 +53,9 @@ watch(
     activeIndex.value = 0;
     // AppModal focuses its dialog on the first tick; claim focus for the
     // combobox on the following tick so aria-activedescendant has one owner.
-    void nextTick(() => nextTick(() => inputRoot.value?.querySelector('input')?.focus()));
+    void nextTick().then(() =>
+      nextTick().then(() => inputRoot.value?.querySelector('input')?.focus()),
+    );
   },
   { immediate: true },
 );
@@ -66,7 +68,7 @@ watch(filtered, () => {
 function scrollActiveIntoView(): void {
   const id = activeOptionId.value;
   if (!id) return;
-  void nextTick(() => document.getElementById(id)?.scrollIntoView({ block: 'nearest' }));
+  void nextTick().then(() => document.getElementById(id)?.scrollIntoView({ block: 'nearest' }));
 }
 
 function move(delta: 1 | -1): void {
