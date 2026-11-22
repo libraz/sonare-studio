@@ -1682,6 +1682,26 @@ __metadata:
   languageName: node
   linkType: hard
 
+"playwright-core@npm:1.65.1":
+  version: 1.65.1
+  resolution: "playwright-core@npm:1.65.1"
+  bin:
+    playwright-core: cli.js
+  checksum: 10c0/4406d4f8eff668a93aaada8382d25fcce8da5f679e9f31311888178d631ed0270eb40c0288129e41e15709c957a31932cac9753fdb332547a19bc3541d317e44
+  languageName: node
+  linkType: hard
+
+"playwright@npm:^1.65.1":
+  version: 1.65.1
+  resolution: "playwright@npm:1.65.1"
+  dependencies:
+    playwright-core: "npm:1.65.1"
+  bin:
+    playwright: cli.js
+  checksum: 10c0/30ce029c9fb2a6e88cf81b150b978fd60edb59b8af5a6460f5576f0fe6e2bb739454109f0ce4904eac63cb2cf10390518d7d71d335fd695b5897734a5af7250d
+  languageName: node
+  linkType: hard
+
 "postcss@npm:^8.5.17, postcss@npm:^8.5.19":
   version: 8.5.24
   resolution: "postcss@npm:8.5.24"
@@ -1838,6 +1858,7 @@ __metadata:
     jspdf: "npm:^4.2.1"
     npm-check-updates: "npm:^23.1.1"
     pinia: "npm:^4"
+    playwright: "npm:^1.65.1"
     saxes: "npm:^6.0.0"
     svg2pdf.js: "npm:^2.8.1"
     typescript: "npm:^6"

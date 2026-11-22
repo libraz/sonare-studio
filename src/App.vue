@@ -891,7 +891,8 @@ const {
 
 // --- Lifecycle ----------------------------------------------------------------
 
-if (import.meta.env.DEV) {
+// The E2E build (VITE_SONARE_E2E=1) keeps the debug surface the smoke scenarios drive.
+if (import.meta.env.DEV || import.meta.env.VITE_SONARE_E2E === '1') {
   installSonareDevDebug({
     store,
     recording,

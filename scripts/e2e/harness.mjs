@@ -9,47 +9,11 @@
  */
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 const projectRequire = createRequire(new URL('../../package.json', import.meta.url));
 
 /** fflate's unzip, resolved from the project. */
 export const { unzipSync } = projectRequire('fflate');
-
-/**
- * Loads an optional dev dependency from wherever it happens to be installed.
- *
- * Both temp roots are tried because they differ: os.tmpdir() is the per-user
- * $TMPDIR (/var/folders/... on macOS), while "npm --prefix /tmp install" —
- * what the runner tells you to run — installs under the literal /tmp.
- */
-export function loadModule(name) {
-  const tempRoots = [...new Set([tmpdir(), '/tmp'])];
-  const loaders = [
-    ...tempRoots.map((root) => ({
-      label: join(root, 'node_modules'),
-      require: createRequire(join(root, 'sonare-e2e-loader.cjs')),
-    })),
-    { label: 'project node_modules', require: projectRequire },
-    {
-      label: 'current working directory',
-      require: createRequire(join(process.cwd(), 'package.json')),
-    },
-  ];
-  const errors = [];
-  for (const loader of loaders) {
-    try {
-      return loader.require(name);
-    } catch (error) {
-      errors.push(`${loader.label}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  throw new Error(
-    `Unable to load ${name}. Install it with "npm --prefix /tmp install ${name}" ` +
-      `or make it available in the project. Tried:\n${errors.join('\n')}`,
-  );
-}
 
 /** Builds a mono 16-bit PCM WAV file containing a sine tone. */
 export function makeWavBytes(seconds, frequencyHz, sampleRate = 44100, amplitude = 0.8) {
@@ -143,7 +107,7 @@ export async function untilDoneAcceptingConfirms(page, isDone, timeoutMs) {
 
 /** Launches the browser the scenarios drive. */
 export async function launchBrowser() {
-  const { chromium } = loadModule('playwright');
+  const { chromium } = projectRequire('playwright');
   const browserChannel = process.env.SONARE_E2E_BROWSER_CHANNEL;
   const executablePath = process.env.SONARE_E2E_BROWSER_EXECUTABLE;
   if (executablePath && !existsSync(executablePath)) {

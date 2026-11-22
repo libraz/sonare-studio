@@ -1,26 +1,42 @@
 /**
- * Runs the E2E smoke against a dev server of its own.
+ * Runs the E2E smoke against a production build of this tree.
  *
- * Starts `yarn dev` on a dedicated strict port, waits until it serves, runs
- * `scripts/e2e-smoke.mjs` against it with any arguments passed through, then
- * stops the server. A fresh server per run keeps a stale or foreign server on
- * the usual port from standing in for this tree.
+ * Builds the app once into `.e2e-dist/` with the debug surface the scenarios
+ * drive (`VITE_SONARE_E2E=1`), serves it statically on a dedicated strict
+ * port, runs `scripts/e2e-smoke.mjs` against it with any arguments passed
+ * through, then stops the server. A static build cannot hot-reload, so an edit
+ * made while the run is in flight cannot change what the run is testing, and a
+ * stale or foreign server on the usual port cannot stand in for this tree.
  *
  * Usage:
  *   yarn e2e
  *   yarn e2e --through=realtime-mute
  *   SONARE_E2E_PORT=5300 yarn e2e
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const port = Number(process.env.SONARE_E2E_PORT ?? 5299);
 const baseUrl = `http://localhost:${port}`;
 const READY_TIMEOUT_MS = 120_000;
 
-const server = spawn('yarn', ['dev', '--port', String(port), '--strictPort'], {
-  detached: true,
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+const OUT_DIR = '.e2e-dist';
+
+for (const args of [['build:worklet'], ['vite', 'build', '--outDir', OUT_DIR, '--emptyOutDir']]) {
+  const step = spawnSync('yarn', args, {
+    stdio: 'inherit',
+    env: { ...process.env, VITE_SONARE_E2E: '1' },
+  });
+  if (step.status !== 0) process.exit(step.status ?? 1);
+}
+
+const server = spawn(
+  'yarn',
+  ['vite', 'preview', '--outDir', OUT_DIR, '--port', String(port), '--strictPort'],
+  {
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  },
+);
 let serverLog = '';
 const keepLog = (chunk) => {
   serverLog += chunk;
@@ -52,7 +68,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 async function waitForServer() {
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (serverExited) throw new Error(`dev server exited before serving:\n${serverLog}`);
+    if (serverExited) throw new Error(`preview server exited before serving:\n${serverLog}`);
     try {
       const res = await fetch(baseUrl);
       if (res.ok) return;
@@ -61,7 +77,7 @@ async function waitForServer() {
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(`dev server did not serve ${baseUrl} within ${READY_TIMEOUT_MS} ms`);
+  throw new Error(`preview server did not serve ${baseUrl} within ${READY_TIMEOUT_MS} ms`);
 }
 
 await waitForServer();

@@ -45,6 +45,7 @@
     "@vue/test-utils": "^2.5",
     "jsdom": "^30",
     "npm-check-updates": "^23.1.1",
+    "playwright": "^1.65.1",
     "typescript": "^6",
     "vite": "^8",
     "vitest": "^5",

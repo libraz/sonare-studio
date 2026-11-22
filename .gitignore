@@ -17,3 +17,4 @@ backup/
 public/assets/sonare-engine-worklet-*.js
 public/worklet-manifest.json
 .worklet-build/
+.e2e-dist/

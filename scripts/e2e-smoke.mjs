@@ -12,8 +12,7 @@
  * one left behind. A scenario that throws is reported and the run continues,
  * and the summary at the end says which ones passed.
  *
- * Playwright is resolved from the temp roots first (both $TMPDIR and /tmp),
- * then the project and current working directory. By default the bundled
+ * Playwright is the project's own dev dependency. By default the bundled
  * Playwright Chromium is used; set SONARE_E2E_BROWSER_CHANNEL=chrome to force
  * the local Chrome channel, or SONARE_E2E_BROWSER_EXECUTABLE=/path/to/browser
  * to use a specific binary. Set SONARE_E2E_HEADLESS=0 to debug with a visible
