@@ -27,8 +27,8 @@ import {
   type DetectedBeats,
   detectBeatsInWorker,
 } from './audio-analysis-client';
+import { type AudibleAudioClipFields, renderAudibleAudioClipWindow } from './audio-clip-render';
 import { type BeatGrid, fitBeatGrid } from './beat-grid';
-import { type AudibleAudioClipFields, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
 import { normalizeTempoMap } from './tempo-map';
 import { meterBarLengthPpq, timeSignatureAt } from './time-signature';

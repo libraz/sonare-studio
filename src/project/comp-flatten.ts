@@ -9,6 +9,7 @@ import { OperationGeneration } from '@/lib/operation-generation';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
 import { createAssetReferenceGuard } from './asset-references';
+import { type AudioClipSliceTempo, renderAudibleAudioClipWindow } from './audio-clip-render';
 import { dropClipTakesBatch } from './commands';
 import { audioClipSegments } from './comping';
 import {
@@ -16,7 +17,6 @@ import {
   beginProjectOperation,
   StaleProjectOperationError,
 } from './operation';
-import { type AudioClipSliceTempo, renderAudibleAudioClipWindow } from './scheduling';
 import { useProjectStore } from './store';
 import { normalizeTempoMap } from './tempo-map';
 import type { EditorClip } from './types';

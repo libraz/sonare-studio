@@ -35,7 +35,7 @@ import {
   type AudibleAudioClipFields,
   type AudioClipSliceTempo,
   renderAudibleAudioClipWindow,
-} from './scheduling';
+} from './audio-clip-render';
 import type { WarpRenderFn } from './warp';
 
 /** The three bands `hpss` with `withResidual` separates a signal into. */

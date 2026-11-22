@@ -1,8 +1,8 @@
 /**
  * Notation file I/O: MusicXML download helpers and filename utilities.
  *
- * Standard MIDI File import/export lives in the canonical {@link
- * import('@/project/smf')} module (the project-level path the UI wires); this
+ * Standard MIDI File import and export live in {@link import('@/project/smf-import')}
+ * and {@link import('@/project/smf')} (the project-level paths the UI wires); this
  * module deliberately stays focused on MusicXML and filename handling.
  */
 

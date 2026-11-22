@@ -9,12 +9,12 @@
 
 import { errorMessage } from '@/lib/errors';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
-import { audioClipSegments } from '@/project/comping';
 import {
   audioClipSegmentSource,
   audioClipSegmentSourceAtRate,
   engineClipPlayback,
-} from '@/project/scheduling';
+} from '@/project/audio-clip-render';
+import { audioClipSegments } from '@/project/comping';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqDurationSamples } from '@/project/tempo-map';
 import {

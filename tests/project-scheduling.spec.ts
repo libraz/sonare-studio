@@ -2,13 +2,9 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import {
-  clipPlaybackNotes,
-  scheduleProjectClips,
-  type TrackAudibilityState,
-  trackAudibilityStates,
-} from '@/project/scheduling';
+import { clipPlaybackNotes, scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
+import { type TrackAudibilityState, trackAudibilityStates } from '@/project/track-audibility';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
 import { fakeEngineHandle } from './fakes/engine';
 

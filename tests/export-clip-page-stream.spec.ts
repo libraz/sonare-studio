@@ -19,7 +19,7 @@ import {
 } from '@/export/clip-page-stream';
 import { buildAudioClips, preflightAudioClipMemory } from '@/export/engine-render-clips';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
-import { sliceAudioClipWindow } from '@/project/scheduling';
+import { sliceAudioClipWindow } from '@/project/audio-clip-render';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { coreWasmBinary } from './core-package';

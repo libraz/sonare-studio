@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { NotatedMeasure, NotatedScore } from '@/notation/model';
 import type { ProjectDocument } from '@/project/serialization';
-import { projectDocumentToSmf, smfToProjectDocument } from '@/project/smf';
+import { projectDocumentToSmf } from '@/project/smf';
+import { smfToProjectDocument } from '@/project/smf-import';
 import {
   SCORE_KEY_MODES,
   SCORE_KEY_ROOTS,

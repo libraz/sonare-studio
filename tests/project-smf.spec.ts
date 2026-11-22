@@ -1,15 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectDocument } from '@/project/serialization';
 import {
-  extractSmfSysEx,
   gmVolumeCc,
-  inspectSmfSysEx,
   projectDocumentToSmf,
   projectDocumentToSmfWithLoss,
   SMF_TEMPO_RAMP_MAX_ERROR_BPM,
   sampleTempoRampsForSmf,
-  smfToProjectDocument,
 } from '@/project/smf';
+import { extractSmfSysEx, inspectSmfSysEx, smfToProjectDocument } from '@/project/smf-import';
 import { coreWasmBinary } from './core-package';
 
 vi.mock('@/lib/wasm', async () => {

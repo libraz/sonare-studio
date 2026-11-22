@@ -20,7 +20,7 @@ import {
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
 import { createAssetReferenceGuard } from '@/project/asset-references';
 import type { ProjectDocument } from '@/project/serialization';
-import { smfToProjectDocument } from '@/project/smf';
+import { smfToProjectDocument } from '@/project/smf-import';
 import { useProjectStore } from '@/project/store';
 import { formatMessage, useI18n } from '@/ui/i18n';
 

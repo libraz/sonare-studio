@@ -9,6 +9,11 @@ import {
 } from '../annotations';
 import { createAssetReferenceGuard } from '../asset-references';
 import { renderAudibleClipMono } from '../audible-clip-window';
+import {
+  applyAudioClipFades,
+  resampleChannelsLinear,
+  sliceAudioClipWindow,
+} from '../audio-clip-render';
 import { ingestAudioBuffer } from '../audio-import';
 import { MIN_SLICE_PPQ, quantizeSlices, transientCutsPpq } from '../audio-slice';
 import { clipSplitBlockReason, LOOP_CLIP_SPLIT_ERROR } from '../clip-split';
@@ -26,7 +31,6 @@ import {
   beginProjectOperation,
   StaleProjectOperationError,
 } from '../operation';
-import { applyAudioClipFades, resampleChannelsLinear, sliceAudioClipWindow } from '../scheduling';
 import {
   getAudioSourceId,
   getProject,

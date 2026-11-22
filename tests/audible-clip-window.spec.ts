@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { renderAudibleAudioClipWindow } from '@/project/scheduling';
+import { renderAudibleAudioClipWindow } from '@/project/audio-clip-render';
 
 /** A 10 Hz stereo ramp, so each PPQ at 60 BPM is ten distinct frames. */
 function rampAsset(frames: number): LoadedAudioAsset {

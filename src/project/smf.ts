@@ -44,28 +44,11 @@ import {
 import { DEFAULT_TEMPO_BPM } from './tempo-map';
 import type { SmfSysExPacket } from './types';
 
-export {
-  extractSmfSysEx,
-  inspectSmfSysEx,
-  smfToProjectDocument,
-} from './smf-import';
-export { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from './smf-shared';
-
 const SMF_EDGE_PAD_PPQ = 1 / 480;
 /** Largest permitted instantaneous tempo error while approximating a ramp. */
 export const SMF_TEMPO_RAMP_MAX_ERROR_BPM = 0.1;
 /** Prevent pathological documents from creating an unbounded SMF meta stream. */
 const MAX_SMF_TEMPO_RAMP_STEPS = 4096;
-
-export {
-  MIDI_EXPORT_LOSS_KINDS,
-  type MidiExportLossKind,
-  type MidiExportTrackContext,
-  midiExportTrackContext,
-  SMF_CLIP_FIELDS,
-  SMF_DOCUMENT_FIELDS,
-  SMF_TRACK_FIELDS,
-} from './smf-export-loss';
 
 function clipHasMidiEvents(clip: DocumentClip): boolean {
   return (

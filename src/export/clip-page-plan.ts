@@ -14,8 +14,8 @@
  */
 
 import type { AudioAssetMeta } from '@/persistence/assets';
+import { audioClipWindowFrames } from '@/project/audio-clip-render';
 import { audioClipSegments } from '@/project/comping';
-import { audioClipWindowFrames } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { AudioClipStreamPlan } from './clip-page-stream';

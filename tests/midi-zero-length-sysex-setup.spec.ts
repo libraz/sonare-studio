@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { collectGsSetupSysex } from '@/engine/gs-sysex';
 import { type NoteBoundaryEvent, pairNoteBoundariesIntoNotes } from '@/project/midi-events';
-import { extractSmfSysEx } from '@/project/smf';
+import { extractSmfSysEx } from '@/project/smf-import';
 
 function boundary(
   over: Partial<NoteBoundaryEvent> & Pick<NoteBoundaryEvent, 'ppq' | 'kind'>,

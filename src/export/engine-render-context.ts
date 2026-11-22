@@ -22,10 +22,10 @@ import {
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { trackAudibilityStates } from '@/project/scheduling';
 import type { ProjectDocument } from '@/project/serialization';
 import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
+import { trackAudibilityStates } from '@/project/track-audibility';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
 import { type EngineClipSpec, RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
 

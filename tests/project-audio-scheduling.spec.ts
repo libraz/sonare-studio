@@ -4,14 +4,16 @@ import type { EngineHandle } from '@/engine/engine';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
-  AudioScheduleReplaceError,
   applyAudioClipFades,
-  discardUnownedScheduledClips,
   ppqSpanToSeconds,
-  replaceScheduledProjectClips,
   resampleChannelsLinear,
-  scheduleProjectClips,
   sliceAudioClipWindow,
+} from '@/project/audio-clip-render';
+import {
+  AudioScheduleReplaceError,
+  discardUnownedScheduledClips,
+  replaceScheduledProjectClips,
+  scheduleProjectClips,
 } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap } from '@/project/tempo-map';

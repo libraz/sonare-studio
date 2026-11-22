@@ -20,7 +20,7 @@ import {
   SMF_CLIP_FIELDS,
   SMF_DOCUMENT_FIELDS,
   SMF_TRACK_FIELDS,
-} from './smf';
+} from './smf-export-loss';
 
 const MIDI2_DOCUMENT_FIELDS: FieldDispositions<ProjectDocument, MidiExportLossKind> = {
   ...SMF_DOCUMENT_FIELDS,

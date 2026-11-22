@@ -23,7 +23,7 @@ import {
   placeholderSourceAudio,
 } from './runtime';
 import type { DocumentClip, DocumentNote, ProjectDocument } from './serialization';
-import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from './smf';
+import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from './smf-shared';
 import { DEFAULT_TEMPO_BPM, normalizeTempoMap } from './tempo-map';
 import type {
   ClipKind,

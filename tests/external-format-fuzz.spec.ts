@@ -13,7 +13,8 @@ import {
 } from '@/persistence/resource-limits';
 import { decodeSzd, encodeSzd, SzdFormatError } from '@/persistence/szd';
 import type { ProjectDocument } from '@/project/serialization';
-import { projectDocumentToSmf, smfToProjectDocument } from '@/project/smf';
+import { projectDocumentToSmf } from '@/project/smf';
+import { smfToProjectDocument } from '@/project/smf-import';
 import { coreWasmBinary } from './core-package';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 

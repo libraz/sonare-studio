@@ -8,12 +8,12 @@
 
 import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { MIN_LOOP_WINDOW_PPQ } from './midi-projection';
 import {
   type AudibleAudioClipFields,
   audioClipWindowFrames,
   renderAudibleAudioClipWindow,
-} from './scheduling';
+} from './audio-clip-render';
+import { MIN_LOOP_WINDOW_PPQ } from './midi-projection';
 import { type NormalizedTempoMap, normalizeTempoMap } from './tempo-map';
 import type { TempoSegment } from './types';
 import { type WarpRenderFn, warpSegments } from './warp';

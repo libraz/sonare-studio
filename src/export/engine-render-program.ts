@@ -47,8 +47,9 @@ import {
   tracksWithVcaSolo,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { DEFAULT_WARP_VOICES, expandedSoloStates, MAX_WARP_VOICES } from '@/project/scheduling';
+import { DEFAULT_WARP_VOICES, MAX_WARP_VOICES } from '@/project/scheduling';
 import type { ProjectDocument } from '@/project/serialization';
+import { expandedSoloStates } from '@/project/track-audibility';
 import type { BusRouting } from './engine-render-context';
 import {
   busFaderParamId,

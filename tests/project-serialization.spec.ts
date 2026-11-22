@@ -45,7 +45,7 @@ import {
   type ProjectDocument,
   serializeProject,
 } from '@/project/serialization';
-import { extractSmfSysEx } from '@/project/smf';
+import { extractSmfSysEx } from '@/project/smf-import';
 import { useProjectStore } from '@/project/store';
 import { createTemplate } from '@/project/templates';
 import { MAJOR_MODE_MASK } from '@/project/types';

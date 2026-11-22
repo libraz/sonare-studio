@@ -13,7 +13,8 @@ import {
   PROJECT_DOCUMENT_SCHEMA_VERSION,
   serializeProject,
 } from './serialization';
-import { type MidiExportLossKind, projectDocumentToSmfWithLoss } from './smf';
+import { projectDocumentToSmfWithLoss } from './smf';
+import type { MidiExportLossKind } from './smf-export-loss';
 import { getProject, useProjectStore } from './store';
 import { translateTempoMapForExport } from './tempo-map-export';
 

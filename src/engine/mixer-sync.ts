@@ -32,7 +32,7 @@ import {
   type VcaControlState,
   vcaOffsetDb,
 } from '@/project/mixer';
-import { expandedSoloStates } from '@/project/scheduling';
+import { expandedSoloStates } from '@/project/track-audibility';
 import type { EditorTrack } from '@/project/types';
 import type { EngineHandle } from './engine';
 import { createRetryTimer } from './retry-timer';

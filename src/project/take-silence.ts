@@ -12,7 +12,7 @@
 
 import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import { sliceAudioClipWindow } from './scheduling';
+import { sliceAudioClipWindow } from './audio-clip-render';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { ClipTake } from './types';
 

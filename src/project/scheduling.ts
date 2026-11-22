@@ -39,30 +39,6 @@ import { type NormalizedTempoMap, normalizeTempoMap, ppqDurationSamples } from '
 import type { EditorClip, EditorNote, EditorTrack } from './types';
 import { clipKind } from './types';
 
-export {
-  type AudibleAudioClipFields,
-  type AudibleClipFrameWindow,
-  type AudioClipSegmentSource,
-  type AudioClipSliceTempo,
-  applyAudioClipFades,
-  audioClipSegmentSource,
-  audioClipSegmentSourceAtRate,
-  audioClipWindowFrames,
-  engineClipPlayback,
-  ppqSpanToSeconds,
-  type RenderedAudibleAudioClip,
-  renderAudibleAudioClipWindow,
-  resampleChannelsLinear,
-  type SegmentRenderableAudioClip,
-  sliceAudioClipWindow,
-} from './audio-clip-render';
-export {
-  expandedSoloStates,
-  type TrackAudibilityState,
-  type TrackSoloExpansionOptions,
-  trackAudibilityStates,
-} from './track-audibility';
-
 /**
  * The note-window subset of a clip needed to derive its playback notes:
  * satisfied by editor mirror clips and by document clips alike.

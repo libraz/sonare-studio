@@ -17,7 +17,7 @@ import {
   type AudibleAudioClipFields,
   audioClipWindowFrames,
   renderAudibleAudioClipWindow,
-} from './scheduling';
+} from './audio-clip-render';
 import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';
 import { type WarpRenderFn, warpSegments } from './warp';

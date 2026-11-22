@@ -12,7 +12,7 @@ import { type EditorChordSymbol, sanitizeChordSymbols } from '@/project/chords';
 import type { DocumentInsertSlot } from '@/project/document-mixer-references';
 import type { InsertSlot, VcaGroup } from '@/project/mixer';
 import type { DocumentClip, DocumentSection, ProjectDocument } from '@/project/serialization';
-import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from '@/project/smf';
+import { MAX_SMF_SYSEX_BYTES, MAX_SMF_SYSEX_PACKETS } from '@/project/smf-shared';
 import type { SmfSysExPacket } from '@/project/types';
 import { busChannelId, MASTER_CHANNEL_ID } from './format';
 
