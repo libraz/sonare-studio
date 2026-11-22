@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noUnusedLocals": true,
     "jsx": "preserve",
     "noEmit": true,
     "skipLibCheck": true,
