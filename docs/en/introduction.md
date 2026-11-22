@@ -16,6 +16,11 @@ sonare studio is experimental software with no warranty. It is pre-1.0: the `.sz
 
 How the pieces fit together is on the [architecture](architecture.md) page.
 
+## Related projects
+
+- **[libsonare-mcp](https://github.com/libraz/libsonare-mcp)** is an MCP server that lets an AI assistant analyze, edit, master, mix and compose audio and MIDI through libsonare.
+- The libsonare documentation site is [libsonare.libraz.net](https://libsonare.libraz.net).
+
 ## What it does
 
 **Arrange.** Multi-track timeline with MIDI and audio clips, sections, markers, a chord lane and a tempo/meter map. Clips split, crossfade, warp and freeze; sections can be detected from the material and coloured by what recurs.

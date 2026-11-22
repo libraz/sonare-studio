@@ -1,9 +1,11 @@
 # sonare studio
 
+[![CI](https://img.shields.io/github/actions/workflow/status/libraz/sonare-studio/ci.yml?branch=main&label=CI)](https://github.com/libraz/sonare-studio/actions)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](https://github.com/libraz/sonare-studio/blob/main/LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![Platform](https://img.shields.io/badge/platform-browser%20%7C%20WebAssembly-lightgrey)](https://github.com/libraz/sonare-studio)
+[![Demo](https://img.shields.io/badge/demo-sonare--studio.libraz.net-2563eb)](https://sonare-studio.libraz.net)
 
 **sonare studio は、ブラウザの中だけで動き、何もアップロードしない DAW です。** アレンジ、ピアノロール、ミキサー、マスタリング、浄書した譜面、理論に基づく作曲のすべてが、WebAssembly のオーディオエンジンでタブの中で動きます。プロジェクトは、普通のファイルとして書き出すまで、ブラウザ自身のストレージに置かれます。
 
@@ -36,12 +38,6 @@ yarn build    # production build into dist/
 ```
 
 スタート画面では、新規プロジェクトか同梱デモを選べます。**Play** を押すと、オーディオエンジンが自動で起動します。ビルドの配信方法は[デプロイ](https://github.com/libraz/sonare-studio/blob/main/docs/ja/deployment.md)にあります。
-
-## 関連プロジェクト
-
-- **[libsonare](https://github.com/libraz/libsonare)** — このアプリが動作の土台とする、WebAssembly にコンパイルした C++17 のオーディオエンジン。プロジェクトモデル、DSP、マスタリング、解析、オフラインレンダリングを担当します。[ドキュメント](https://libsonare.libraz.net)
-- **[libsonare-mcp](https://github.com/libraz/libsonare-mcp)** — AI アシスタントが libsonare を通じて、オーディオと MIDI の解析、編集、マスタリング、ミックス、作曲を行うための MCP サーバー。
-- **[libcantus](https://github.com/libraz/libcantus)** — 作曲機能とガイダンス機能を支える TypeScript の音楽理論ライブラリ。
 
 ## ドキュメント
 

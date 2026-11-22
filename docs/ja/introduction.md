@@ -16,6 +16,11 @@ sonare studio は、無保証の実験的なソフトウェアです。1.0 前�
 
 各部品のつながりは、[アーキテクチャ](architecture.md)のページにあります。
 
+## 関連プロジェクト
+
+- **[libsonare-mcp](https://github.com/libraz/libsonare-mcp)** は、AI アシスタントが libsonare を通じてオーディオと MIDI の解析、編集、マスタリング、ミックス、作曲を行うための MCP サーバーです。
+- libsonare のドキュメントサイトは [libsonare.libraz.net](https://libsonare.libraz.net) です。
+
 ## できること
 
 **アレンジ**。MIDI クリップとオーディオクリップ、セクション、マーカー、コードレーン、テンポ／拍子マップを持つマルチトラックのタイムラインです。クリップは分割、クロスフェード、ワープ、フリーズができます。セクションは素材から検出でき、繰り返し方に応じて色が付きます。

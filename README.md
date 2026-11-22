@@ -1,9 +1,11 @@
 # sonare studio
 
+[![CI](https://img.shields.io/github/actions/workflow/status/libraz/sonare-studio/ci.yml?branch=main&label=CI)](https://github.com/libraz/sonare-studio/actions)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-green)](https://github.com/libraz/sonare-studio/blob/main/LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
 [![Platform](https://img.shields.io/badge/platform-browser%20%7C%20WebAssembly-lightgrey)](https://github.com/libraz/sonare-studio)
+[![Demo](https://img.shields.io/badge/demo-sonare--studio.libraz.net-2563eb)](https://sonare-studio.libraz.net)
 
 **sonare studio is a DAW that runs entirely in the browser, with nothing uploaded.** Arrangement, piano roll, mixer, mastering, an engraved score and theory-driven composition all run inside the tab on a WebAssembly audio engine, and projects stay in the browser's own storage until you export them as ordinary files.
 
@@ -36,12 +38,6 @@ yarn build    # production build into dist/
 ```
 
 The start screen offers a new project or the bundled demo. Press **Play** and the audio engine boots on its own. Serving a build is covered in [Deployment](https://github.com/libraz/sonare-studio/blob/main/docs/en/deployment.md).
-
-## Related projects
-
-- **[libsonare](https://github.com/libraz/libsonare)** — the C++17 audio engine compiled to WebAssembly that this app runs on: project model, DSP, mastering, analysis and offline rendering. [Documentation](https://libsonare.libraz.net)
-- **[libsonare-mcp](https://github.com/libraz/libsonare-mcp)** — an MCP server that lets an AI assistant analyze, edit, master, mix and compose audio and MIDI through libsonare.
-- **[libcantus](https://github.com/libraz/libcantus)** — the TypeScript music-theory library behind the composition and guidance features.
 
 ## Documentation
 
