@@ -521,3 +521,35 @@ describe('runMasteringEnginePass', () => {
     expect(engine.destroyed).toBe(true);
   });
 });
+
+describe('runMasteringEnginePass input planes', () => {
+  class InputTrackingEngine extends MasteringPassEngine {
+    readonly inputs = new Set<Float32Array>();
+    processCalls = 0;
+    dirtyInputs = 0;
+    process(channels: Float32Array[]): Float32Array[] {
+      this.processCalls += 1;
+      for (const channel of channels) {
+        this.inputs.add(channel);
+        if (channel.some((sample) => sample !== 0)) this.dirtyInputs += 1;
+      }
+      return super.process(channels);
+    }
+  }
+
+  it('reuses zeroed silent input planes across blocks', async () => {
+    const engine = new InputTrackingEngine();
+    const frames = 10 * 1024 + 300;
+    await runMasteringEnginePass(RAMP_STAGE, ascending(frames), ascending(frames, 1), {
+      createEngine: () => engine as unknown as OfflineRenderEngine,
+      sampleRate: 48000,
+      startSample: 0,
+      startPpq: 0,
+      tempoSegments: [{ startPpq: 0, bpm: 120 }],
+    });
+
+    expect(engine.processCalls).toBe(12);
+    expect(engine.dirtyInputs).toBe(0);
+    expect(engine.inputs.size).toBeLessThanOrEqual(4);
+  });
+});

@@ -15,6 +15,24 @@ import type { InsertLatencyResolver } from '@/project/insert-latency';
 /** Frames processed per offline block. */
 export const RENDER_BLOCK_FRAMES = 1024;
 
+/**
+ * Returns a source of silent stereo input planes for `process()`. The engine
+ * renders into its inputs, so the pair is re-zeroed on every call and only
+ * reallocated when the block length changes; read the output before the next call.
+ */
+export function silentBlockInputs(): (frames: number) => [Float32Array, Float32Array] {
+  let pair: [Float32Array, Float32Array] | null = null;
+  return (frames) => {
+    if (pair?.[0].length === frames) {
+      pair[0].fill(0);
+      pair[1].fill(0);
+    } else {
+      pair = [new Float32Array(frames), new Float32Array(frames)];
+    }
+    return pair;
+  };
+}
+
 /** Blocks between progress/cancellation checkpoints (~0.7 s at 48 kHz). */
 export const BLOCKS_PER_CHECKPOINT = 32;
 

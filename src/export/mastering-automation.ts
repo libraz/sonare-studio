@@ -41,6 +41,7 @@ import {
   BLOCKS_PER_CHECKPOINT,
   type OfflineRenderEngine,
   RENDER_BLOCK_FRAMES,
+  silentBlockInputs,
 } from './engine-render-types';
 
 /** What the engine catalog says one mastering processor can do. */
@@ -361,8 +362,9 @@ export async function runMasteringEnginePass(
     // The pass starts exactly where the mix does, so there is nothing before
     // it to pre-roll: one priming block with the transport stopped applies the
     // automation at the seek position and settles the parameter smoothers.
+    const silentInputs = silentBlockInputs();
     engine.seekSample(ctx.startSample);
-    engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
+    engine.process(silentInputs(RENDER_BLOCK_FRAMES));
     engine.settleParameters();
     engine.play();
 
@@ -373,7 +375,7 @@ export async function runMasteringEnginePass(
     let blocksSinceYield = 0;
     while (done < renderFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, renderFrames - done);
-      const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
+      const out = engine.process(silentInputs(blockFrames));
       // Inserts delay their output by the latency they report; drop exactly
       // that many leading frames so the stage stays time-aligned with the mix.
       const target = done - latency;

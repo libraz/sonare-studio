@@ -142,6 +142,7 @@ import {
   RENDER_BLOCK_FRAMES,
   type RenderPass,
   resolveRange,
+  silentBlockInputs,
   trackLaneParamId,
 } from './engine-render-types';
 import { documentTempoSegments, planExportRender } from './render-plan';
@@ -1265,17 +1266,18 @@ export async function renderProjectWithEngine(
     const left = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     const right = onChunk ? null : new Float32Array(totalFrames + captureOffset);
     const windowStart = startSample - prerollFrames;
+    const silentInputs = silentBlockInputs();
     engine.seekSample(windowStart);
     // The priming block runs stopped, so no clip audio is read yet; the pages
     // only have to be in place before the first block that plays.
-    engine.process([new Float32Array(RENDER_BLOCK_FRAMES), new Float32Array(RENDER_BLOCK_FRAMES)]);
+    engine.process(silentInputs(RENDER_BLOCK_FRAMES));
     engine.settleParameters();
     engine.play();
     let prerollDone = 0;
     while (prerollDone < prerollFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, prerollFrames - prerollDone);
       await streams?.advance(windowStart + prerollDone, blockFrames);
-      const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
+      const out = engine.process(silentInputs(blockFrames));
       if (capturePreroll && left && right) {
         left.set(out[0].subarray(0, blockFrames), prerollDone);
         right.set((out[1] ?? out[0]).subarray(0, blockFrames), prerollDone);
@@ -1287,7 +1289,7 @@ export async function renderProjectWithEngine(
     while (framesDone < totalFrames) {
       const blockFrames = Math.min(RENDER_BLOCK_FRAMES, totalFrames - framesDone);
       await streams?.advance(startSample + framesDone, blockFrames);
-      const out = engine.process([new Float32Array(blockFrames), new Float32Array(blockFrames)]);
+      const out = engine.process(silentInputs(blockFrames));
       if (onChunk) {
         // process() may reuse its output storage on the next block; each
         // consumer receives ownership of a compact transferable copy.
