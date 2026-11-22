@@ -2119,6 +2119,38 @@ describe('renderProjectWithEngine', () => {
     expect(engines[2].named('pushMidiSysex')).toEqual([]);
   });
 
+  it('warns about unsupported SysEx once per render, not once per pass', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const doc = makeDoc();
+      doc.tracks[0].clips[0].smfSysEx = [
+        {
+          ppq: 4,
+          status: 0xf0,
+          data: [0x41, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7f, 0x00, 0x41, 0xf7],
+        },
+      ];
+      const engines: FakeEngine[] = [];
+      await renderProjectWithEngine(doc, {
+        ...renderOptions(new FakeEngine()),
+        createEngine: () => {
+          const engine = new FakeEngine();
+          engines.push(engine);
+          return engine;
+        },
+        stems: true,
+      });
+
+      expect(engines.length).toBeGreaterThan(1);
+      const sysexWarnings = warn.mock.calls.filter(([message]) =>
+        String(message).includes('SMF SysEx packet'),
+      );
+      expect(sysexWarnings).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('keeps project-inherited external MIDI tracks out of the offline synth renderer', async () => {
     const doc = makeDoc();
     doc.tracks[0].externalMidiMode = 'project';
