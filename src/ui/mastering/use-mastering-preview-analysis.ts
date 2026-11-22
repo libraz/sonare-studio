@@ -12,6 +12,7 @@ import type {
 } from '@libraz/libsonare';
 import { type ComputedRef, computed, type Ref, ref, type ShallowRef, shallowRef, watch } from 'vue';
 import { useAppSettings } from '@/composables/useAppSettings';
+import { downmixToMono } from '@/lib/audio-channels';
 import { describeError } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { applyMasteringPresetWithOverrides } from '@/project/commands';
@@ -128,7 +129,7 @@ export function useMasteringPreviewAnalysis(
    * The rendered channels as a left/right pair, or null when the render is not
    * stereo. A `0.5 * (left + right)` downmix cancels on decorrelated material and
    * measures the program several dB low, so a stereo render is analyzed through
-   * the channel-summing entry points instead of {@link downmixMono}.
+   * the channel-summing entry points instead of {@link downmixToMono}.
    */
   function stereoPair(
     channels: ReadonlyArray<Float32Array>,
@@ -136,20 +137,6 @@ export function useMasteringPreviewAnalysis(
     if (channels.length !== 2) return null;
     const [left, right] = channels;
     return left && right ? { left, right } : null;
-  }
-
-  /** Averages the rendered channels to a mono buffer for the assistant. */
-  function downmixMono(channels: ReadonlyArray<Float32Array>): Float32Array {
-    if (channels.length === 1) return channels[0];
-    const frames = channels[0]?.length ?? 0;
-    const out = new Float32Array(frames);
-    for (const channel of channels) {
-      const n = Math.min(frames, channel.length);
-      for (let i = 0; i < n; i++) out[i] += channel[i];
-    }
-    const inv = channels.length === 0 ? 0 : 1 / channels.length;
-    for (let i = 0; i < frames; i++) out[i] *= inv;
-    return out;
   }
 
   /**
@@ -185,7 +172,7 @@ export function useMasteringPreviewAnalysis(
       if (pair && typeof suggestStereo === 'function') {
         result = suggestStereo({ ...pair, sampleRate: source.sampleRate, ...settings });
       } else if (typeof suggest === 'function') {
-        result = suggest(downmixMono(source.channels), source.sampleRate, settings);
+        result = suggest(downmixToMono(source.channels), source.sampleRate, settings);
       } else {
         error.value = t.value.shell.mastering.assistant.unavailable;
         return;
@@ -275,7 +262,7 @@ export function useMasteringPreviewAnalysis(
       if (pair && typeof previewStereo === 'function') {
         result = previewStereo({ ...pair, sampleRate: source.sampleRate, platforms });
       } else if (typeof preview === 'function') {
-        result = preview(downmixMono(source.channels), source.sampleRate, { platforms });
+        result = preview(downmixToMono(source.channels), source.sampleRate, { platforms });
       } else {
         error.value = t.value.shell.mastering.streaming.unavailable;
         return;
@@ -360,7 +347,7 @@ export function useMasteringPreviewAnalysis(
         wasm,
         source.channels,
         source.sampleRate,
-        downmixMono(reference.channels),
+        downmixToMono(reference.channels),
         null,
         reference.sampleRate,
       );
