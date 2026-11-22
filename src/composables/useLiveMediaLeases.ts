@@ -20,10 +20,8 @@ export interface LiveMediaLeasesOptions {
 
 /** Bundle-lease hand-off returned by {@link useLiveMediaLeases}. */
 export interface LiveMediaLeases {
-  /** Bundle leases still awaiting hand-off; pair an add with {@link scheduleBundleLeaseRetry}. */
-  pendingBundleRestoreLeases: Set<ProjectBundleRestoreLease>;
-  /** Retries the pending hand-offs after one lease-synchronization interval. */
-  scheduleBundleLeaseRetry(): void;
+  /** Keeps a bundle lease held and retries its hand-off until the live lease takes over. */
+  holdBundleRestoreLease(lease: ProjectBundleRestoreLease): void;
   /** Moves a bundle lease's ids onto the live-document lease, then releases it. */
   handOffBundleRestoreLease(lease: ProjectBundleRestoreLease): void;
 }
@@ -33,7 +31,7 @@ export interface LiveMediaLeases {
  * for the lifetime of the calling scope.
  *
  * @param options - The error banner lease failures are reported to.
- * @returns The pending bundle leases and their hand-off operations.
+ * @returns The bundle-lease hold and hand-off operations.
  */
 export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLeases {
   const { errorMessage } = options;
@@ -93,6 +91,11 @@ export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLe
     }, 1_100);
   }
 
+  function holdBundleRestoreLease(lease: ProjectBundleRestoreLease): void {
+    pendingBundleRestoreLeases.add(lease);
+    scheduleBundleLeaseRetry();
+  }
+
   function handOffBundleRestoreLease(lease: ProjectBundleRestoreLease): void {
     try {
       // Do this explicitly rather than merely waiting for the watcher: the
@@ -101,9 +104,8 @@ export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLe
       updateLiveMediaLeases();
       lease.release();
     } catch (error) {
-      pendingBundleRestoreLeases.add(lease);
       errorMessage.value = describeError(error, t.value.notices.errors);
-      scheduleBundleLeaseRetry();
+      holdBundleRestoreLease(lease);
     }
   }
 
@@ -126,5 +128,5 @@ export function useLiveMediaLeases(options: LiveMediaLeasesOptions): LiveMediaLe
     liveFontLease.release();
   });
 
-  return { pendingBundleRestoreLeases, scheduleBundleLeaseRetry, handOffBundleRestoreLease };
+  return { holdBundleRestoreLease, handOffBundleRestoreLease };
 }

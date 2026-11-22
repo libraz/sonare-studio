@@ -133,8 +133,9 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
     ),
   );
 
-  const { pendingBundleRestoreLeases, scheduleBundleLeaseRetry, handOffBundleRestoreLease } =
-    useLiveMediaLeases({ errorMessage });
+  const { holdBundleRestoreLease, handOffBundleRestoreLease } = useLiveMediaLeases({
+    errorMessage,
+  });
 
   /**
    * Reclaims OPFS audio/SoundFont storage no project references any more, after
@@ -460,8 +461,7 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
             // The document now references these ids. Keep the temporary lease
             // until the retryable live-lease handoff succeeds; deleting them
             // here would turn a recoverable autosave failure into data loss.
-            pendingBundleRestoreLeases.add(restoreLease);
-            scheduleBundleLeaseRetry();
+            holdBundleRestoreLease(restoreLease);
           } else {
             try {
               await restoreLease.rollback();
