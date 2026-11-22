@@ -52,7 +52,12 @@ import {
   type TrackInstrument,
 } from '@/project/instrument';
 import type { MediaCompletenessIssue } from '@/project/media-completeness';
-import { expandExpressionPoints, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
+import {
+  expandExpressionPoints,
+  MIDI_CC_MAX,
+  MIDI_CHANNEL_MAX,
+  MIDI_PITCH_BEND_MAX,
+} from '@/project/midi-cc';
 import { midiFxConfig } from '@/project/midi-fx';
 import {
   audibleMidiProjector,
@@ -268,12 +273,12 @@ export function buildMidiClipSchedules(
     if (sf2 || gmSynth) {
       const preludeFrame = Math.max(0, startSample - 1);
       const channels = new Set([
-        ...notes.map((entry) => clamp(entry.note.channel ?? 0, 0, 15)),
-        ...ccLanes.map((lane) => clamp(lane.channel, 0, 15)),
-        ...pitchBendLanes.map((lane) => clamp(lane.channel, 0, 15)),
-        ...programChangeLanes.map((lane) => clamp(lane.channel, 0, 15)),
-        ...channelPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
-        ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, 15)),
+        ...notes.map((entry) => clamp(entry.note.channel ?? 0, 0, MIDI_CHANNEL_MAX)),
+        ...ccLanes.map((lane) => clamp(lane.channel, 0, MIDI_CHANNEL_MAX)),
+        ...pitchBendLanes.map((lane) => clamp(lane.channel, 0, MIDI_CHANNEL_MAX)),
+        ...programChangeLanes.map((lane) => clamp(lane.channel, 0, MIDI_CHANNEL_MAX)),
+        ...channelPressureLanes.map((lane) => clamp(lane.channel, 0, MIDI_CHANNEL_MAX)),
+        ...polyPressureLanes.map((lane) => clamp(lane.channel, 0, MIDI_CHANNEL_MAX)),
       ]);
       for (const channel of [...channels].sort((a, b) => a - b)) {
         const resolved = sf2 ? sf2ChannelProgram(sf2, channel) : synthPresetGmProgram(gmSynth);
@@ -316,8 +321,8 @@ export function buildMidiClipSchedules(
 
     for (const entry of notes) {
       const note = entry.note;
-      const channel = clamp(note.channel ?? 0, 0, 15);
-      const velocity = clamp(Math.round(note.velocity), 1, 127);
+      const channel = clamp(note.channel ?? 0, 0, MIDI_CHANNEL_MAX);
+      const velocity = clamp(Math.round(note.velocity), 1, MIDI_CC_MAX);
       let onFrame = ppqToSamples(tempoMap, entry.timelineStartPpq, sampleRate);
       if (shiftFrameZero && onFrame === 0) onFrame = 1;
       const expression = expressionMapEntryFor(
@@ -379,7 +384,7 @@ export function buildMidiClipSchedules(
           STATUS_NOTE_OFF,
           channel,
           note.pitch,
-          clamp(note.offVelocity ?? 0, 0, 127),
+          clamp(note.offVelocity ?? 0, 0, MIDI_CC_MAX),
         ),
       );
     }
@@ -388,10 +393,11 @@ export function buildMidiClipSchedules(
     // ramped segments. Points are clip-window relative; out-of-window points
     // are dropped.
     for (const lane of ccLanes) {
-      const channel = clamp(lane.channel, 0, 15);
-      const controller = clamp(lane.controller, 0, 127);
+      const channel = clamp(lane.channel, 0, MIDI_CHANNEL_MAX);
+      const controller = clamp(lane.controller, 0, MIDI_CC_MAX);
+      const points = expandExpressionPoints(lane.points, windowPpq, MIDI_CC_MAX);
       for (const repeatOffset of repeatOffsets) {
-        for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
+        for (const point of points) {
           if (looping && point.ppq >= windowPpq) continue;
           const localPpq = repeatOffset + point.ppq;
           if (localPpq > clip.lengthPpq) continue;
@@ -403,7 +409,7 @@ export function buildMidiClipSchedules(
               STATUS_CONTROL_CHANGE,
               channel,
               controller,
-              clamp(point.value, 0, 127),
+              clamp(point.value, 0, MIDI_CC_MAX),
             ),
           );
         }
@@ -412,22 +418,23 @@ export function buildMidiClipSchedules(
 
     // Pitch bend is a 14-bit value encoded LSB first in MIDI 1.0.
     for (const lane of pitchBendLanes) {
-      const channel = clamp(lane.channel, 0, 15);
+      const channel = clamp(lane.channel, 0, MIDI_CHANNEL_MAX);
+      const points = expandExpressionPoints(lane.points, windowPpq, MIDI_PITCH_BEND_MAX);
       for (const repeatOffset of repeatOffsets) {
-        for (const point of expandExpressionPoints(lane.points, windowPpq, MIDI_PITCH_BEND_MAX)) {
+        for (const point of points) {
           if (looping && point.ppq >= windowPpq) continue;
           const localPpq = repeatOffset + point.ppq;
           if (localPpq > clip.lengthPpq) continue;
           let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
           if (shiftFrameZero && frame === 0) frame = 1;
-          const value = clamp(Math.round(point.value), 0, 16383);
+          const value = clamp(Math.round(point.value), 0, MIDI_PITCH_BEND_MAX);
           events.push(voiceEvent(frame, STATUS_PITCH_BEND, channel, value & 0x7f, value >> 7));
         }
       }
     }
 
     for (const lane of programChangeLanes) {
-      const channel = clamp(lane.channel, 0, 15);
+      const channel = clamp(lane.channel, 0, MIDI_CHANNEL_MAX);
       for (const repeatOffset of repeatOffsets) {
         for (const point of lane.points) {
           if (!Number.isFinite(point.ppq) || point.ppq < 0 || point.ppq > windowPpq) continue;
@@ -441,7 +448,7 @@ export function buildMidiClipSchedules(
               frame,
               STATUS_PROGRAM_CHANGE,
               channel,
-              clamp(Math.round(point.program), 0, 127),
+              clamp(Math.round(point.program), 0, MIDI_CC_MAX),
               0,
             ),
           );
@@ -452,32 +459,46 @@ export function buildMidiClipSchedules(
     // Aftertouch lanes preserve imported performance pressure data. Channel
     // pressure has one 7-bit data byte; poly pressure carries note + pressure.
     for (const lane of channelPressureLanes) {
-      const channel = clamp(lane.channel, 0, 15);
+      const channel = clamp(lane.channel, 0, MIDI_CHANNEL_MAX);
+      const points = expandExpressionPoints(lane.points, windowPpq, MIDI_CC_MAX);
       for (const repeatOffset of repeatOffsets) {
-        for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
+        for (const point of points) {
           if (looping && point.ppq >= windowPpq) continue;
           const localPpq = repeatOffset + point.ppq;
           if (localPpq > clip.lengthPpq) continue;
           let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
           if (shiftFrameZero && frame === 0) frame = 1;
           events.push(
-            voiceEvent(frame, STATUS_CHANNEL_PRESSURE, channel, clamp(point.value, 0, 127), 0),
+            voiceEvent(
+              frame,
+              STATUS_CHANNEL_PRESSURE,
+              channel,
+              clamp(point.value, 0, MIDI_CC_MAX),
+              0,
+            ),
           );
         }
       }
     }
     for (const lane of polyPressureLanes) {
-      const channel = clamp(lane.channel, 0, 15);
-      const pitch = clamp(lane.pitch, 0, 127);
+      const channel = clamp(lane.channel, 0, MIDI_CHANNEL_MAX);
+      const pitch = clamp(lane.pitch, 0, MIDI_CC_MAX);
+      const points = expandExpressionPoints(lane.points, windowPpq, MIDI_CC_MAX);
       for (const repeatOffset of repeatOffsets) {
-        for (const point of expandExpressionPoints(lane.points, windowPpq, 127)) {
+        for (const point of points) {
           if (looping && point.ppq >= windowPpq) continue;
           const localPpq = repeatOffset + point.ppq;
           if (localPpq > clip.lengthPpq) continue;
           let frame = ppqToSamples(tempoMap, clip.startPpq + localPpq, sampleRate);
           if (shiftFrameZero && frame === 0) frame = 1;
           events.push(
-            voiceEvent(frame, STATUS_POLY_PRESSURE, channel, pitch, clamp(point.value, 0, 127)),
+            voiceEvent(
+              frame,
+              STATUS_POLY_PRESSURE,
+              channel,
+              pitch,
+              clamp(point.value, 0, MIDI_CC_MAX),
+            ),
           );
         }
       }

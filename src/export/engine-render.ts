@@ -202,6 +202,24 @@ export function trimDecayedTail<T extends readonly Float32Array[]>(
     : (channels.map((channel) => channel.slice(0, end)) as unknown as T);
 }
 
+/** Pass plan that renders the whole document mix (no stem/freeze isolation). */
+function documentPassPlan(
+  includeMasterChain: boolean,
+  sf2TrackIndices: ReadonlySet<number>,
+): RenderPass {
+  return {
+    masterStrip: includeMasterChain,
+    masterLevels: true,
+    stemIndices: null,
+    stemRouting: 'document',
+    separateReturnStems: false,
+    busStemId: null,
+    freezeIndex: null,
+    sf2TrackIndices,
+    usePreRenderedSf2: false,
+  };
+}
+
 /**
  * Renders a project document to a stereo mixdown (and optional per-track
  * stems) through offline engine instances. See the module doc comment for
@@ -1153,17 +1171,7 @@ export async function renderProjectWithEngine(
     try {
       configureEngine(
         probe,
-        freezePass ?? {
-          masterStrip: includeMasterChain,
-          masterLevels: true,
-          stemIndices: null,
-          stemRouting: 'document',
-          separateReturnStems: false,
-          busStemId: null,
-          freezeIndex: null,
-          sf2TrackIndices: activeSf2TrackIndices,
-          usePreRenderedSf2: false,
-        },
+        freezePass ?? documentPassPlan(includeMasterChain, activeSf2TrackIndices),
         [],
         false,
       );
@@ -1396,17 +1404,7 @@ export async function renderProjectWithEngine(
   if (streamingMixdownEligible) {
     let streamPeak = 0;
     await runPass(
-      {
-        masterStrip: includeMasterChain,
-        masterLevels: true,
-        stemIndices: null,
-        stemRouting: 'document',
-        separateReturnStems: false,
-        busStemId: null,
-        freezeIndex: null,
-        sf2TrackIndices: activeSf2TrackIndices,
-        usePreRenderedSf2: false,
-      },
+      documentPassPlan(includeMasterChain, activeSf2TrackIndices),
       'engine.render',
       0,
       0.9,

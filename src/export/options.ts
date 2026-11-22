@@ -42,7 +42,7 @@ export type ExportMode = 'mixdown' | 'stems';
 export const EXPORT_MEMORY_BUDGET_MIB = [512, 1024, 2048, 4096] as const;
 export type ExportMemoryBudgetMiB = (typeof EXPORT_MEMORY_BUDGET_MIB)[number];
 
-export function isExportMemoryBudgetMiB(value: number): value is ExportMemoryBudgetMiB {
+function isExportMemoryBudgetMiB(value: number): value is ExportMemoryBudgetMiB {
   return (EXPORT_MEMORY_BUDGET_MIB as ReadonlyArray<number>).includes(value);
 }
 
@@ -53,7 +53,7 @@ export const COMPRESSED_EXPORT_BITRATES = [128, 192, 256, 320] as const;
 export type CompressedExportBitrate = (typeof COMPRESSED_EXPORT_BITRATES)[number];
 
 /** Returns whether a value is one of the selectable compressed export bitrates. */
-export function isCompressedExportBitrate(value: number): value is CompressedExportBitrate {
+function isCompressedExportBitrate(value: number): value is CompressedExportBitrate {
   return (COMPRESSED_EXPORT_BITRATES as ReadonlyArray<number>).includes(value);
 }
 

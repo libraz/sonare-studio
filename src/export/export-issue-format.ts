@@ -40,7 +40,7 @@ export interface ExportIssueStrings {
 }
 
 /** Formats one asset-reference label (e.g. `frozen track "Keys"`). */
-export function formatAudioAssetLabel(label: AudioAssetLabel, strings: ExportIssueStrings): string {
+function formatAudioAssetLabel(label: AudioAssetLabel, strings: ExportIssueStrings): string {
   switch (label.kind) {
     case 'frozen-track':
       return strings.label.frozenTrack.replace('{name}', label.name);

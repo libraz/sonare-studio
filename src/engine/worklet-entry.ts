@@ -12,6 +12,7 @@ import {
   StreamingRetune,
 } from '@libraz/libsonare/worklet';
 import { errorMessage } from '@/lib/errors';
+import { DEFAULT_WORKLET_MAX_BLOCK_SIZE } from './worklet-block-size';
 
 // AudioWorkletGlobalScope globals are not part of the TS DOM/WebWorker libs.
 declare const AudioWorkletProcessor: new () => { readonly port: MessagePort };
@@ -239,7 +240,10 @@ class SonareStreamingRetuneWorklet extends AudioWorkletProcessor {
     super();
     const processorOptions = options?.processorOptions ?? {};
     this.sampleRateValue = processorOptions.sampleRate ?? 48_000;
-    this.maxBlockSize = Math.max(1, Math.floor(processorOptions.maxBlockSize ?? 128));
+    this.maxBlockSize = Math.max(
+      1,
+      Math.floor(processorOptions.maxBlockSize ?? DEFAULT_WORKLET_MAX_BLOCK_SIZE),
+    );
     this.numChannels = Math.max(1, Math.floor(processorOptions.numChannels ?? 1));
     this.zero = new Float32Array(this.maxBlockSize);
     const port = this.port;

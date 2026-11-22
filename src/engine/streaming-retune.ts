@@ -1,4 +1,5 @@
 import type { StreamingRetuneConfig } from '@libraz/libsonare';
+import { pitchClassOf } from '@/lib/pitch';
 import {
   fetchWasmBinary,
   forwardWorkletRuntimeErrors,
@@ -6,6 +7,7 @@ import {
   waitForWorkletReady,
 } from './engine';
 import type { MicrophoneBinding } from './recorder';
+import { DEFAULT_WORKLET_MAX_BLOCK_SIZE } from './worklet-block-size';
 
 export const STREAMING_RETUNE_PROCESSOR = 'sonare-streaming-retune-processor';
 export const STREAMING_RETUNE_MIN_SEMITONES = -24;
@@ -20,8 +22,6 @@ export interface StreamingRetuneMidiTarget {
   currentMidi: number;
   targetMidi: number;
 }
-
-const pitchClassOf = (midi: number): number => ((Math.round(midi) % 12) + 12) % 12;
 
 export function clampStreamingRetuneSemitones(semitones: number): number {
   if (!Number.isFinite(semitones)) return 0;
@@ -42,14 +42,14 @@ export function streamingRetuneSemitonesForScaleTarget(
   if (!Number.isFinite(currentMidi) || !Number.isFinite(scale.rootPc)) return 0;
   const modeMask = Math.trunc(scale.modeMask) & 0xfff;
   if (modeMask === 0) return 0;
-  const rootPc = pitchClassOf(scale.rootPc);
+  const rootPc = pitchClassOf(Math.round(scale.rootPc));
   const baseMidi = Math.round(currentMidi);
   let bestMidi = baseMidi;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (let distance = 0; distance <= 24; distance += 1) {
     const candidates = distance === 0 ? [baseMidi] : [baseMidi - distance, baseMidi + distance];
     for (const candidate of candidates) {
-      const interval = (pitchClassOf(candidate) - rootPc + 12) % 12;
+      const interval = (pitchClassOf(Math.round(candidate)) - rootPc + 12) % 12;
       if (((modeMask >> interval) & 1) === 0) continue;
       const actualDistance = Math.abs(candidate - baseMidi);
       if (actualDistance < bestDistance) {
@@ -98,7 +98,10 @@ export async function bindStreamingRetuneInput(
           ? {}
           : { grainSizeSamples: options.grainSizeSamples }),
         sampleRate: ctx.sampleRate,
-        maxBlockSize: Math.max(1, Math.floor(options.maxBlockSize ?? 128)),
+        maxBlockSize: Math.max(
+          1,
+          Math.floor(options.maxBlockSize ?? DEFAULT_WORKLET_MAX_BLOCK_SIZE),
+        ),
         numChannels,
         wasmBinary,
       },

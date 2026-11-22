@@ -11,6 +11,7 @@ import {
 } from './engine';
 import type { MicrophoneBinding } from './recorder';
 import { clampStreamingRetuneSemitones, STREAMING_RETUNE_PROCESSOR } from './streaming-retune';
+import { DEFAULT_WORKLET_MAX_BLOCK_SIZE } from './worklet-block-size';
 
 /** AudioWorklet processor name registered by src/engine/worklet-entry.ts. */
 export const REALTIME_VOICE_CHANGER_PROCESSOR = 'sonare-realtime-voice-changer-processor';
@@ -112,6 +113,27 @@ async function prepareVoiceChangerWorklet(
   };
 }
 
+function createVoiceChangerNode(
+  ctx: AudioContext,
+  setup: VoiceChangerWorkletSetup,
+  numChannels: number,
+  maxBlockSize: number,
+): AudioWorkletNode {
+  return new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    channelCount: numChannels,
+    outputChannelCount: [numChannels],
+    processorOptions: {
+      config: setup.initialPreset,
+      sampleRate: ctx.sampleRate,
+      maxBlockSize,
+      numChannels,
+      wasmBinary: setup.wasmBinary,
+    },
+  });
+}
+
 /** Connects microphone input through libsonare's realtime voice changer before the engine input. */
 export async function bindRealtimeVoiceChangerInput(
   ctx: AudioContext,
@@ -127,19 +149,12 @@ export async function bindRealtimeVoiceChangerInput(
     // the shared bytes and a main-thread-normalized initial config.
     setup = await prepareVoiceChangerWorklet(options.preset);
     options.signal?.throwIfAborted();
-    node = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: numChannels,
-      outputChannelCount: [numChannels],
-      processorOptions: {
-        config: setup.initialPreset,
-        sampleRate: ctx.sampleRate,
-        maxBlockSize: Math.max(1, Math.floor(options.maxBlockSize ?? 128)),
-        numChannels,
-        wasmBinary: setup.wasmBinary,
-      },
-    });
+    node = createVoiceChangerNode(
+      ctx,
+      setup,
+      numChannels,
+      Math.max(1, Math.floor(options.maxBlockSize ?? DEFAULT_WORKLET_MAX_BLOCK_SIZE)),
+    );
     await waitForWorkletReady(node.port, {
       processor: node,
       signal: options.signal,
@@ -198,7 +213,10 @@ export async function bindRealtimeVoiceChangerRetuneInput(
 ): Promise<MicrophoneBinding> {
   const source = ctx.createMediaStreamSource(options.stream);
   const numChannels = options.numChannels ?? 1;
-  const maxBlockSize = Math.max(1, Math.floor(options.maxBlockSize ?? 128));
+  const maxBlockSize = Math.max(
+    1,
+    Math.floor(options.maxBlockSize ?? DEFAULT_WORKLET_MAX_BLOCK_SIZE),
+  );
   const startup = new AbortController();
   const onAbort = (): void => startup.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
@@ -211,19 +229,7 @@ export async function bindRealtimeVoiceChangerRetuneInput(
     // both processors the shared bytes and the normalized initial config.
     setup = await prepareVoiceChangerWorklet(options.preset);
     startup.signal.throwIfAborted();
-    voiceNode = new AudioWorkletNode(ctx, REALTIME_VOICE_CHANGER_PROCESSOR, {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: numChannels,
-      outputChannelCount: [numChannels],
-      processorOptions: {
-        config: setup.initialPreset,
-        sampleRate: ctx.sampleRate,
-        maxBlockSize,
-        numChannels,
-        wasmBinary: setup.wasmBinary,
-      },
-    });
+    voiceNode = createVoiceChangerNode(ctx, setup, numChannels, maxBlockSize);
     retuneNode = new AudioWorkletNode(ctx, STREAMING_RETUNE_PROCESSOR, {
       numberOfInputs: 1,
       numberOfOutputs: 1,

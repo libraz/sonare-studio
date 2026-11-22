@@ -16,7 +16,7 @@ import {
   registerEncoder,
 } from './codecs';
 import { PRODUCER_NAME } from './constants';
-import { quantizePcmSample, tpdfDitherLsb } from './pcm-quantize';
+import { type PcmFullScale, pcmFullScale, quantizePcmSample, tpdfDitherLsb } from './pcm-quantize';
 import { assertPlanarChannels } from './planar-channels';
 
 export const FLAC_ENCODER_ID = 'flac';
@@ -329,9 +329,13 @@ function utf8Uint(value: number): number[] {
   throw new RangeError(`FLAC frame number too large: ${value}`);
 }
 
+const FULL_SCALE: Readonly<Record<FlacBitDepth, PcmFullScale>> = {
+  16: pcmFullScale(16),
+  24: pcmFullScale(24),
+};
+
 function quantizeSample(sample: number, bitDepth: FlacBitDepth, ditherLsb = 0): number {
-  const positiveMax = bitDepth === 16 ? 0x7fff : 0x7fffff;
-  const negativeMax = bitDepth === 16 ? 0x8000 : 0x800000;
+  const { positiveMax, negativeMax } = FULL_SCALE[bitDepth];
   return quantizePcmSample(sample, positiveMax, negativeMax, ditherLsb);
 }
 

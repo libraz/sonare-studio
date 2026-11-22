@@ -1,5 +1,5 @@
 /** Delay before a refused engine command is re-sent. */
-export const COMMAND_RETRY_MS = 50;
+const COMMAND_RETRY_MS = 50;
 
 /** Queue of re-sends for commands the engine's command ring refused. */
 export interface RetryTimer {

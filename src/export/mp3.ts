@@ -17,7 +17,7 @@ import {
   listEncoders,
   registerEncoder,
 } from './codecs';
-import { quantizePcmSample } from './pcm-quantize';
+import { pcmFullScale, quantizePcmSample } from './pcm-quantize';
 import { assertPlanarChannels } from './planar-channels';
 
 /** Registry id of the MP3 encoder. */
@@ -174,11 +174,17 @@ function infoFrame(audio: Uint8Array, inputFrames: number): Uint8Array {
   return out;
 }
 
+const PCM16_FULL_SCALE = pcmFullScale(16);
+
 /** Converts one bounded float block to signed 16-bit PCM with hard clipping. */
 function floatBlockTo16(samples: Float32Array, start: number, end: number): Int16Array {
   const out = new Int16Array(end - start);
   for (let i = start; i < end; i++) {
-    out[i - start] = quantizePcmSample(samples[i], 0x7fff, 0x8000);
+    out[i - start] = quantizePcmSample(
+      samples[i],
+      PCM16_FULL_SCALE.positiveMax,
+      PCM16_FULL_SCALE.negativeMax,
+    );
   }
   return out;
 }

@@ -17,7 +17,11 @@ import {
 } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { type NormalizedTempoMap, ppqDurationSamples } from '@/project/tempo-map';
-import { audioClipSegmentKey, frozenTrackStreamKey } from './clip-page-plan';
+import {
+  audioClipSegmentKey,
+  frozenTrackStreamKey,
+  segmentIntersectsRange,
+} from './clip-page-plan';
 import type { EngineClipSpec } from './engine-render-types';
 import type { ExportMediaIssue } from './mixdown';
 
@@ -57,16 +61,6 @@ export interface AudioClipMemoryPreflight {
   preparedClipBytes: number;
   /** Minimal clip facts used to include frozen audio in an open-ended window. */
   audioWindowClips: Array<{ startPpq: number; lengthSamples: number }>;
-}
-
-function segmentIntersectsRange(
-  startPpq: number,
-  lengthPpq: number,
-  range: AudioClipBuildContext['range'],
-): boolean {
-  if (!range) return true;
-  const endPpq = startPpq + lengthPpq;
-  return endPpq > range.startPpq && (range.endPpq === null || startPpq < range.endPpq);
 }
 
 function safeAddBytes(total: number, bytes: number): number {

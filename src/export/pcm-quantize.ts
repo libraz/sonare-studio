@@ -8,6 +8,22 @@
  * input; keeping this in one place guarantees they quantize the same way.
  */
 
+/** Positive and negative full-scale magnitudes of a signed PCM bit depth. */
+export interface PcmFullScale {
+  positiveMax: number;
+  negativeMax: number;
+}
+
+/**
+ * Full-scale codes for an N-bit signed PCM sample (0x7fff / 0x8000 for 16-bit).
+ *
+ * @param bits Integer bit depth.
+ */
+export function pcmFullScale(bits: number): PcmFullScale {
+  const negativeMax = 2 ** (bits - 1);
+  return { positiveMax: negativeMax - 1, negativeMax };
+}
+
 /**
  * Scales a sample already clamped to [-1, 1] onto the signed-PCM range without
  * rounding, so callers that add dither can do so before quantizing.

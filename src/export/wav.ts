@@ -13,7 +13,7 @@
 import { utf8ByteLength } from '@/lib/payload-memory';
 import type { AudioFileMetadata } from './audio-file-metadata';
 import { PRODUCER_NAME } from './constants';
-import { quantizePcmSample, tpdfDitherLsb } from './pcm-quantize';
+import { pcmFullScale, quantizePcmSample, tpdfDitherLsb } from './pcm-quantize';
 import { assertPlanarChannels } from './planar-channels';
 
 /** Output sample format: integer bit depth, or '32f' for IEEE float. */
@@ -35,6 +35,9 @@ export interface EncodeWavOptions {
 function bytesPerSample(bitDepth: WavBitDepth): number {
   return bitDepth === '32f' ? 4 : bitDepth / 8;
 }
+
+const PCM16_FULL_SCALE = pcmFullScale(16);
+const PCM24_FULL_SCALE = pcmFullScale(24);
 
 /** Largest value representable by a classic RIFF/WAVE 32-bit chunk-size field. */
 export const WAV_RIFF_SIZE_MAX = 0xffff_ffff;
@@ -346,8 +349,8 @@ function writeSamples(
           cursor,
           quantizePcmSample(
             sample,
-            0x7fff,
-            0x8000,
+            PCM16_FULL_SCALE.positiveMax,
+            PCM16_FULL_SCALE.negativeMax,
             dither
               ? random
                 ? random() - random()
@@ -357,7 +360,11 @@ function writeSamples(
           true,
         );
       } else {
-        const value = quantizePcmSample(sample, 0x7fffff, 0x800000);
+        const value = quantizePcmSample(
+          sample,
+          PCM24_FULL_SCALE.positiveMax,
+          PCM24_FULL_SCALE.negativeMax,
+        );
         view.setUint8(cursor, value & 0xff);
         view.setUint8(cursor + 1, (value >> 8) & 0xff);
         view.setUint8(cursor + 2, (value >> 16) & 0xff);

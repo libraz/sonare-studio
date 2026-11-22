@@ -60,7 +60,8 @@ export interface AudioClipStreamPlanContext {
   minFrames?: number;
 }
 
-function segmentIntersectsRange(
+/** Whether a segment overlaps the render range; no range means everything overlaps. */
+export function segmentIntersectsRange(
   startPpq: number,
   lengthPpq: number,
   range: AudioClipStreamPlanContext['range'],

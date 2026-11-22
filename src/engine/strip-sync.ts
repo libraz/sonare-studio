@@ -218,6 +218,28 @@ export interface StripSync {
 }
 
 /**
+ * Diffs the effective EQ bands against the last-sent JSON and re-sends changed
+ * slots; indexes past the new list are cleared with a disabled band.
+ *
+ * @returns The JSON memory for the new band list.
+ */
+function diffEqBands(
+  previousJson: readonly string[],
+  bands: readonly EqBandInput[],
+  setBand: (index: number, band: EqBandInput) => void,
+): string[] {
+  const bandCount = Math.max(previousJson.length, bands.length);
+  const eqBandJson: string[] = [];
+  for (let i = 0; i < bandCount; i += 1) {
+    const nextBand: EqBandInput = bands[i] ?? { enabled: false };
+    const json = JSON.stringify(nextBand);
+    if (previousJson[i] !== json) setBand(i, nextBand);
+    eqBandJson.push(json);
+  }
+  return eqBandJson;
+}
+
+/**
  * Creates a strip sync bound to one engine handle. Create a fresh instance
  * per engine start: all sent-state memory restarts with the engine. The
  * caller must run mixer-sync first so the mixer lanes are already declared in
@@ -378,15 +400,9 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         handle.engine.setStripInsertBypassed(target, i, { bypassed: !enabled[i] });
       }
     }
-    const bandCount = Math.max(memory.eqBandJson.length, effectiveEqBands.length);
-    const eqBandJson: string[] = [];
-    for (let i = 0; i < bandCount; i += 1) {
-      // Indexes past the new band list are cleared with a disabled band.
-      const nextBand: EqBandInput = effectiveEqBands[i] ?? { enabled: false };
-      const json = JSON.stringify(nextBand);
-      if (memory.eqBandJson[i] !== json) handle.engine.setStripEqBand(target, i, nextBand);
-      eqBandJson.push(json);
-    }
+    const eqBandJson = diffEqBands(memory.eqBandJson, effectiveEqBands, (index, band) =>
+      handle.engine.setStripEqBand(target, index, band),
+    );
     return { structureKey, insertParams, enabled, eqBandJson };
   };
 
@@ -447,14 +463,9 @@ export function createStripSync(handle: EngineHandle, options: StripSyncOptions 
         handle.engine.setBusInsertBypassed(busId, insertIndex, { bypassed: !slotEnabled });
       }
     });
-    const bandCount = Math.max(memory.eqBandJson.length, effectiveEqBands.length);
-    const eqBandJson: string[] = [];
-    for (let i = 0; i < bandCount; i += 1) {
-      const nextBand: EqBandInput = effectiveEqBands[i] ?? { enabled: false };
-      const json = JSON.stringify(nextBand);
-      if (memory.eqBandJson[i] !== json) handle.engine.setBusEqBand(busId, i, nextBand);
-      eqBandJson.push(json);
-    }
+    const eqBandJson = diffEqBands(memory.eqBandJson, effectiveEqBands, (index, band) =>
+      handle.engine.setBusEqBand(busId, index, band),
+    );
     if (!surroundBus) {
       const previousPan = memory.busPan ?? engineBusPanState(undefined);
       if (previousPan.pan !== busPan.pan) handle.engine.setBusPan(busId, busPan.pan);

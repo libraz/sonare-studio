@@ -1,4 +1,5 @@
 import { clampInt } from '@/lib/math';
+import { MIDI_CC_MAX, MIDI_PITCH_BEND_MAX } from '@/project/midi-cc';
 import type { DocumentClip } from '@/project/serialization';
 import type { DawprojectImportLoss } from './import';
 import { children } from './xml-read';
@@ -79,7 +80,7 @@ function readOfficialMidiExpressionTarget(target: Element):
     return { ok: false, reason: midiTargetAttributeLossReason('channel', channel.reason) };
   }
   if (expression === 'channelController') {
-    const controller = readMidiTargetInteger(target, 'controller', 0, 127);
+    const controller = readMidiTargetInteger(target, 'controller', 0, MIDI_CC_MAX);
     if (!controller.ok) {
       return {
         ok: false,
@@ -92,7 +93,7 @@ function readOfficialMidiExpressionTarget(target: Element):
     };
   }
   if (expression === 'polyPressure') {
-    const key = readMidiTargetInteger(target, 'key', 0, 127);
+    const key = readMidiTargetInteger(target, 'key', 0, MIDI_CC_MAX);
     if (!key.ok) {
       return { ok: false, reason: midiTargetAttributeLossReason('key', key.reason) };
     }
@@ -117,7 +118,7 @@ function readLegacyMidiExpressionTarget(parameter: string):
   };
   const channel = readIndex(parts[2], 0, 15);
   if (parts[1] === 'cc' && parts.length === 4) {
-    const controller = readIndex(parts[3], 0, 127);
+    const controller = readIndex(parts[3], 0, MIDI_CC_MAX);
     return channel === null || controller === null
       ? { ok: false, reason: 'malformed-point' }
       : { ok: true, target: { expression: 'channelController', channel, controller } };
@@ -138,7 +139,7 @@ function readLegacyMidiExpressionTarget(parameter: string):
       : { ok: true, target: { expression: 'channelPressure', channel } };
   }
   if (parts[1] === 'polyPressure' && parts.length === 4) {
-    const key = readIndex(parts[3], 0, 127);
+    const key = readIndex(parts[3], 0, MIDI_CC_MAX);
     return channel === null || key === null
       ? { ok: false, reason: 'malformed-point' }
       : { ok: true, target: { expression: 'polyPressure', channel, key } };
@@ -237,9 +238,9 @@ export function readMidiExpressionPoints(
       target.expression === 'channelController' ||
       target.expression === 'channelPressure' ||
       target.expression === 'polyPressure'
-        ? 127
+        ? MIDI_CC_MAX
         : target.expression === 'pitchBend'
-          ? 16383
+          ? MIDI_PITCH_BEND_MAX
           : null;
     const parsedPoints = readMidiExpressionPointsElement(
       points,
@@ -256,7 +257,7 @@ export function readMidiExpressionPoints(
         controller: target.controller as number,
         points: parsedPoints.map((point) => ({
           ppq: point.ppq,
-          value: clampInt(point.value, 0, 127),
+          value: clampInt(point.value, 0, MIDI_CC_MAX),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
@@ -265,7 +266,7 @@ export function readMidiExpressionPoints(
         channel: target.channel,
         points: parsedPoints.map((point) => ({
           ppq: point.ppq,
-          value: clampInt(point.value, 0, 16383),
+          value: clampInt(point.value, 0, MIDI_PITCH_BEND_MAX),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
@@ -274,7 +275,7 @@ export function readMidiExpressionPoints(
         channel: target.channel,
         points: parsedPoints.map((point) => ({
           ppq: point.ppq,
-          program: clampInt(point.value, 0, 127),
+          program: clampInt(point.value, 0, MIDI_CC_MAX),
         })),
       });
     } else if (target.expression === 'channelPressure') {
@@ -282,7 +283,7 @@ export function readMidiExpressionPoints(
         channel: target.channel,
         points: parsedPoints.map((point) => ({
           ppq: point.ppq,
-          value: clampInt(point.value, 0, 127),
+          value: clampInt(point.value, 0, MIDI_CC_MAX),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });
@@ -292,7 +293,7 @@ export function readMidiExpressionPoints(
         pitch: target.key as number,
         points: parsedPoints.map((point) => ({
           ppq: point.ppq,
-          value: clampInt(point.value, 0, 127),
+          value: clampInt(point.value, 0, MIDI_CC_MAX),
           ...(point.curve !== undefined ? { curve: point.curve } : {}),
         })),
       });

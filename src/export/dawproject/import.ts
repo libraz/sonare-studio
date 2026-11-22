@@ -247,7 +247,7 @@ function lossDetail(loss: DawprojectImportLoss): string {
 }
 
 /** Combines media issues and parser losses into the dialog report. */
-export function dawprojectImportLossReport(
+function dawprojectImportLossReport(
   losses: ReadonlyArray<DawprojectImportLoss>,
   mediaIssues: ReadonlyArray<DawprojectMediaIssue>,
 ): LossReport<DawprojectImportLossKind> {
