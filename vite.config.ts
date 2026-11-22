@@ -1,10 +1,6 @@
-// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { execFileSync } from 'node:child_process';
-// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { resolve } from 'node:path';
-// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { env } from 'node:process';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, type Plugin } from 'vite';

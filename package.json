@@ -7,7 +7,7 @@
   "packageManager": "yarn@4.18.1",
   "scripts": {
     "dev": "yarn build:worklet && vite",
-    "build": "yarn build:worklet && vue-tsc --noEmit && vite build",
+    "build": "yarn build:worklet && yarn typecheck && vite build",
     "build:worklet": "vite build --config vite.worklet.config.ts",
     "preview": "vite preview",
     "copy:wasm": "./scripts/copy-wasm.sh",
@@ -19,8 +19,9 @@
     "lint:fix": "biome check --write .",
     "ncu": "NO_UPDATE_NOTIFIER=1 ncu",
     "ncu:update": "NO_UPDATE_NOTIFIER=1 ncu -u",
-    "typecheck": "vue-tsc --noEmit",
-    "verify": "yarn lint && yarn test && yarn test:external-formats && yarn build",
+    "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.node.json",
+    "typecheck:tests": "node scripts/typecheck-tests.mjs",
+    "verify": "yarn lint && yarn typecheck:tests && yarn test && yarn test:external-formats && yarn build",
     "e2e": "node scripts/e2e-local.mjs",
     "ci": "yarn verify && yarn e2e"
   },
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6",
+    "@types/node": "^24",
     "@vitejs/plugin-vue": "^6",
     "@vitest/coverage-v8": "^5.0.5",
     "@vue/compiler-dom": "^3.5",

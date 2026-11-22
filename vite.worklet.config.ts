@@ -1,6 +1,4 @@
-// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-// @ts-expect-error Build config runs in Node; the browser app intentionally omits global Node types.
 import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 

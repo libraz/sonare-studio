@@ -19,7 +19,7 @@ const emit = defineEmits<{ action: []; dismiss: [] }>();
 
 const { t } = useI18n();
 
-let dismissTimer: ReturnType<typeof window.setTimeout> | undefined;
+let dismissTimer: number | undefined;
 
 function clearDismissTimer(): void {
   if (dismissTimer === undefined) return;

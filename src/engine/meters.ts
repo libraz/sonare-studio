@@ -210,11 +210,11 @@ export function createMeterBridge(handle: EngineHandle): MeterBridge {
   const raf =
     typeof requestAnimationFrame === 'function'
       ? requestAnimationFrame
-      : (cb: FrameRequestCallback): number => setTimeout(() => cb(performance.now()), 16);
+      : (cb: FrameRequestCallback): number => self.setTimeout(() => cb(performance.now()), 16);
   const cancelRaf =
     typeof cancelAnimationFrame === 'function'
       ? cancelAnimationFrame
-      : (id: number): void => clearTimeout(id);
+      : (id: number): void => self.clearTimeout(id);
 
   // Ring records carry no per-insert values, so only SAB mode needs the poll,
   // and only while an insert gain-reduction listener exists.
