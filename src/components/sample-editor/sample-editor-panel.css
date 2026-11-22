@@ -5,11 +5,6 @@
   gap: var(--sp-3);
 }
 
-/* A bare select sizes to its value; at full width it would take a wrapped row of its own. */
-.toolbar > .select-menu {
-  width: auto;
-}
-
 .toolbar label {
   display: inline-flex;
   align-items: center;
