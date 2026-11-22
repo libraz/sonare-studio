@@ -1,3 +1,4 @@
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { describe, expect, it, vi } from 'vitest';
 import { createAutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
@@ -10,7 +11,6 @@ import {
   instrumentAutomationParam,
   masteringAutomationParam,
 } from '@/project/automation';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Param ids the stub hands out: track ids map to 1000 + id (faderDb) / 2000 + id (pan). */
 function stubParamId(target: string | number, kind: 'faderDb' | 'pan' | 'width'): number {

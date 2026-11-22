@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import type { EstimateMeterRequest } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
@@ -10,8 +11,7 @@ import {
   estimateAudioClipMeter,
   ODD_METER_CANDIDATES,
 } from '@/project/audio-tempo';
-import type { EstimateMeterRequest } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { meterEstimate, timeSignature } from './fakes/analysis';
 
 /** A minimal audio-clip window with neutral defaults. */
@@ -313,7 +313,7 @@ describe('clip analysis signal', () => {
 
 describe('estimateAudioClipMeter with the real core', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('reads a four-beat bar from accents on every fourth beat', async () => {

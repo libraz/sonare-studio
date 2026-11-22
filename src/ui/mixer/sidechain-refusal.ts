@@ -1,3 +1,5 @@
+import type { SidechainRefusal, SidechainSource } from '@libraz/libsonare';
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import type { StripSync } from '@/engine/strip-sync';
 import {
   isMixerBusStripTarget,
@@ -6,8 +8,6 @@ import {
 } from '@/project/commands';
 import type { MixerSidechainSource } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
-import type { SidechainRefusal, SidechainSource } from '@/wasm/index.js';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Engine queries answering whether a sidechain binding would be accepted. */
 export type SidechainCheckEngine = Pick<

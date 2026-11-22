@@ -15,6 +15,7 @@
  */
 
 import type { NoteNameSystem } from '@libraz/libcantus';
+import type { ProjectChordQuality, ProjectChordSymbol } from '@libraz/libsonare';
 import {
   chordSuffix,
   normalizedChordExtensions,
@@ -22,7 +23,6 @@ import {
   TONE_PCS_BY_QUALITY,
 } from '@/compose/chord-quality';
 import { chordPitchClassName } from '@/notation/pitch-spelling';
-import type { ProjectChordQuality, ProjectChordSymbol } from '@/wasm/index.js';
 import type { NativeAnnotationChord } from './native-document';
 
 /** One selectable chord quality: audio-domain ordinal, name suffix, and label. */

@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { useSampleMarkers } from '@/ui/sample-editor/use-sample-markers';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { noteSegment, pitchResult } from './fakes/analysis';
 
 /** A three-note contour: two legato notes then one after a rest. */
@@ -141,7 +141,7 @@ describe('useSampleMarkers note detection', () => {
 
 describe('useSampleMarkers note detection with the real core', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('finds the note of a sustained A4 through pYIN and the segmenter', async () => {

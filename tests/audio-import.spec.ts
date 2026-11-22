@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downmixToMono } from '@/lib/audio-channels';
 import { clearAudioAssetLeases, isAudioAssetLeased } from '@/persistence/asset-leases';
@@ -8,7 +8,7 @@ import { garbageCollectMedia } from '@/persistence/gc';
 import { MAX_EXTERNAL_AUDIO_FILE_BYTES } from '@/persistence/resource-limits';
 import { decodeAndIngest, ingestAudioBuffer } from '@/project/audio-import';
 import { analyzeAudioTags } from '@/project/audio-tags';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { rhythmResult } from './fakes/analysis';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
@@ -391,7 +391,7 @@ describe('decodeAndIngest', () => {
 
 describe('analyzeAudioTags with the real core', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('reads tempo, key, meter and loudness tags from a click track', () => {

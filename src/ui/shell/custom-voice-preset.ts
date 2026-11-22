@@ -8,7 +8,7 @@ import type {
   RealtimeVoiceChangerConfig,
   RealtimeVoiceChangerConfigInput,
   VoicePresetId,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 
 /** A preset document: the config input that is neither a built-in id nor the flat config. */
 export type CustomVoicePreset = Exclude<
@@ -35,7 +35,7 @@ export const CUSTOM_VOICE_PRESET_TEMPLATE = `${JSON.stringify(
  * @returns The normalized document, or null when the core refuses it.
  */
 export function parseCustomVoicePreset(
-  core: Pick<typeof import('@/wasm/index.js'), 'realtimeVoiceChangerValidatePresetJson'>,
+  core: Pick<typeof import('@libraz/libsonare'), 'realtimeVoiceChangerValidatePresetJson'>,
   json: string,
 ): CustomVoicePreset | null {
   const verdict = core.realtimeVoiceChangerValidatePresetJson(json);

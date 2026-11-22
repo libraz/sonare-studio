@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { StereoMonoCompatCheckResult, StreamingPlatform } from '@libraz/libsonare';
 import { computed } from 'vue';
 import MasteringLoudnessReadout from '@/components/mastering/MasteringLoudnessReadout.vue';
 import StreamingTargetsTable from '@/components/mastering/StreamingTargetsTable.vue';
@@ -8,7 +9,6 @@ import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
 import { formatLevel, type LoudnessRow } from '@/ui/mastering/loudness';
 import type { StreamingTarget } from '@/ui/mastering/streaming';
-import type { StereoMonoCompatCheckResult, StreamingPlatform } from '@/wasm/index.js';
 
 /**
  * Preview pane: the render controls (render / cancel), the A/B comparison

@@ -11,6 +11,7 @@
  * the live tracks.
  */
 
+import { isSonareError, type PanLaw } from '@libraz/libsonare';
 import {
   createInsertPdcPlan,
   type InsertLatencyResolver,
@@ -33,7 +34,6 @@ import {
 } from '@/project/mixer';
 import { expandedSoloStates } from '@/project/scheduling';
 import type { EditorTrack } from '@/project/types';
-import { isSonareError, type PanLaw } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 import { createRetryTimer } from './retry-timer';
 

@@ -27,7 +27,7 @@ import {
   SYNTH_OSC_WAVEFORMS,
   SYNTH_RETRIGGERS,
   type SynthEnumTables,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 
 /** Fallback tables built from the core's exported SYNTH_* constants. */
 export const FALLBACK_SYNTH_ENUMS: SynthEnumTables = {

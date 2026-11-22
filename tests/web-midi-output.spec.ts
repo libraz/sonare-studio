@@ -1,8 +1,8 @@
+import type { ExternalMidiEvent } from '@libraz/libsonare';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createWebMidiOutput, routesFromTracks } from '@/engine/web-midi-output';
 import type { EditorTrack } from '@/project/types';
-import type { ExternalMidiEvent } from '@/wasm/index.js';
 
 /** An engine MIDI-out event as written in the tests: byte arrays, frame defaulting to 0. */
 type EmittedEvent = Omit<ExternalMidiEvent, 'bytes' | 'renderFrame'> & {

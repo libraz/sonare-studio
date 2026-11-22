@@ -148,7 +148,7 @@ export default defineConfig({
   server: { headers: coiHeaders, hmr: env.SONARE_E2E_NO_HMR === '1' ? false : undefined },
   preview: { headers: coiHeaders },
   worker: { format: 'es' },
-  // sonare.wasm is imported from src/wasm; exclude from optimization and serve as-is.
-  optimizeDeps: { exclude: ['@/wasm/index.js'] },
+  // The core loads its own wasm by URL; pre-bundling would break that, so serve it as-is.
+  optimizeDeps: { exclude: ['@libraz/libsonare'] },
   build: { target: 'esnext' },
 });

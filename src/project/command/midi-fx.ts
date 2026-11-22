@@ -1,4 +1,4 @@
-import type { Project } from '@/wasm/index.js';
+import type { Project } from '@libraz/libsonare';
 import { pairEventsIntoNotesIndexed, projectMidiContent } from '../midi-events';
 import { isMidiFxNoop, type MidiFxConfig, midiFxConfig, sanitizeMidiFxConfig } from '../midi-fx';
 import { getProject, useProjectStore } from '../store';

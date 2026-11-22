@@ -1,3 +1,4 @@
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
@@ -17,7 +18,6 @@ import {
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 type MixerLaneEngine = Pick<
   SonareEngine,

@@ -36,10 +36,10 @@ vi.mock('@/engine/web-midi-output', () => ({
 }));
 vi.mock('@/lib/wasm', () => ({ ensureWasm: mocks.ensureWasm }));
 
+import { ErrorCode, SonareError } from '@libraz/libsonare';
 import { useEngineLifecycle } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
-import { ErrorCode, SonareError } from '@/wasm/index.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

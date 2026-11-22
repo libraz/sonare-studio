@@ -8,6 +8,7 @@
  * strip-addressed quick-control targets directly.
  */
 
+import type { MasteringInsertName, MasteringInsertSlot } from '@libraz/libsonare';
 import { clamp } from '@/lib/math';
 import type { InsertSlot } from '@/project/mixer';
 import {
@@ -19,7 +20,6 @@ import {
   processorControlValueFromMidi,
 } from '@/project/processor-controls';
 import { getWasmModule } from '@/project/store';
-import type { MasteringInsertName, MasteringInsertSlot } from '@/wasm/index.js';
 
 /** One mastering parameter control (knob, toggle, or enum menu). */
 export type MasteringControl = ProcessorControl;

@@ -1,13 +1,13 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   CUSTOM_VOICE_PRESET_TEMPLATE,
   parseCustomVoicePreset,
 } from '@/ui/shell/custom-voice-preset';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 beforeAll(async () => {
-  await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  await core.init({ wasmBinary: coreWasmBinary() });
 });
 
 describe('custom voice preset', () => {

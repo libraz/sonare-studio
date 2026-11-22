@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MixAssistantResult } from '@libraz/libsonare';
 import { computed, ref, shallowRef, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
@@ -17,7 +18,6 @@ import {
   neutralMixDocument,
   suggestMixFromStems,
 } from '@/ui/mixer/mix-assistant';
-import type { MixAssistantResult } from '@/wasm/index.js';
 
 /**
  * Suggests a mix from the tracks' dry material and applies it only on the

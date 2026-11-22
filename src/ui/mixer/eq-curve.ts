@@ -8,8 +8,8 @@
  * flat — the graph is a visual aid, not the audible path.
  */
 
+import type { EqBandInput } from '@libraz/libsonare';
 import { clamp } from '@/lib/math';
-import type { EqBandInput } from '@/wasm/index.js';
 
 /** One sampled point of the EQ response curve. */
 export interface EqCurvePoint {

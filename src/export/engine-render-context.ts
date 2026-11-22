@@ -5,6 +5,7 @@
  * renderer (engine-render.ts) replays their output onto fresh engines.
  */
 
+import type { EngineBus } from '@libraz/libsonare';
 import { engineBusGraph, MAX_ENGINE_BUSES } from '@/engine/bus-graph';
 import { buildMidiClipSchedules, type ScheduledMidiClip } from '@/engine/midi-sync';
 import { groupBusGainDb } from '@/engine/strip-sync';
@@ -26,7 +27,6 @@ import type { ProjectDocument } from '@/project/serialization';
 import { collectActiveSoundFontUsage } from '@/project/soundfont-conflicts';
 import { type NormalizedTempoMap, ppqToSamples } from '@/project/tempo-map';
 import type { EditorClip, EditorTrack, TempoSegment } from '@/project/types';
-import type { EngineBus } from '@/wasm/index.js';
 import { type EngineClipSpec, RELEASE_TAIL_SECONDS, type SendSpec } from './engine-render-types';
 
 /** One engine track lane spec (numeric ids, optional sends/output bus). */

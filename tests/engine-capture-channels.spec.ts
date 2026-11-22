@@ -1,13 +1,13 @@
-import { readFileSync } from 'node:fs';
+import { init, SonareRealtimeEngineWorkletProcessor } from '@libraz/libsonare/worklet';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { init, SonareRealtimeEngineWorkletProcessor } from '@/wasm/worklet.js';
+import { coreWasmBinary } from './core-package';
 
 /** `SonareEngineCommandType.ArmRecord`; the enum is not exported from the worklet entry. */
 const ARM_RECORD = 13;
 
 beforeAll(async () => {
   await init({
-    wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`),
+    wasmBinary: coreWasmBinary(),
   } as Parameters<typeof init>[0]);
 });
 

@@ -22,11 +22,11 @@
  *   the offline mastering chain only.
  */
 
+import type { SoloProcessor } from '@libraz/libsonare';
 import { getWasmModule } from '@/project/store';
-import type { SoloProcessor } from '@/wasm/index.js';
 
 type CoreCatalog = Pick<
-  typeof import('@/wasm/index.js'),
+  typeof import('@libraz/libsonare'),
   'masteringProcessorCatalog' | 'masteringProcessorNames' | 'masteringInsertNames'
 >;
 

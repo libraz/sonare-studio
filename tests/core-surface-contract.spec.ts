@@ -1,8 +1,8 @@
 /**
- * Contract between the studio and the vendored libsonare surface in `src/wasm/`.
+ * Contract between the studio and the installed libsonare surface.
  *
  * Type-checks every tracked `src/` and `tests/` file (Vue files through their
- * `<script>` blocks) against the vendored declarations and fails on each
+ * `<script>` blocks) against the package's declarations and fails on each
  * diagnostic the core surface causes: an import the core no longer exports, a
  * member missing on a core type, an object key a core request type does not
  * declare, or a call that no longer matches a core signature. `tests/` sits
@@ -15,14 +15,14 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import * as core from '@libraz/libsonare';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { AUTOMATION_CURVES } from '@/project/automation';
 import { PAN_LAW_IDS } from '@/project/mixer';
-import * as core from '@/wasm/index.js';
+import { CORE_DIST_DIR } from './core-package';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const WASM_DIR = path.join(ROOT, 'src', 'wasm');
 
 /** Unknown member, unknown object key, unknown export, call and assignment mismatches. */
 const MEMBER_CODES = new Set([2339, 2551]);
@@ -41,7 +41,6 @@ function trackedSources(): string[] {
     .toString()
     .trim()
     .split('\n')
-    .filter((f) => !f.startsWith('src/wasm/'))
     .map((f) => path.join(ROOT, f));
 }
 
@@ -89,7 +88,7 @@ function createProgram(files: string[]): ts.Program {
 
 function declaredInCore(declarations: readonly ts.Declaration[] | undefined): boolean {
   return (declarations ?? []).some((d) =>
-    path.resolve(d.getSourceFile().fileName).startsWith(WASM_DIR + path.sep),
+    path.resolve(d.getSourceFile().fileName).startsWith(CORE_DIST_DIR + path.sep),
   );
 }
 
@@ -192,9 +191,9 @@ function extendsCore(checker: ts.TypeChecker, node: ts.InterfaceDeclaration): bo
 function handDeclaredCoreMirrors(): string[] {
   const program = studio();
   const checker = program.getTypeChecker();
-  const index = program.getSourceFile(path.join(WASM_DIR, 'index.d.ts'));
+  const index = program.getSourceFile(path.join(CORE_DIST_DIR, 'index.d.ts'));
   const moduleSymbol = index && checker.getSymbolAtLocation(index);
-  if (!moduleSymbol) throw new Error('vendored index.d.ts is not in the program');
+  if (!moduleSymbol) throw new Error('the core index.d.ts is not in the program');
   const classes = checker
     .getExportsOfModule(moduleSymbol)
     .map((symbol) =>
@@ -205,7 +204,7 @@ function handDeclaredCoreMirrors(): string[] {
   const found: string[] = [];
   for (const sf of program.getSourceFiles()) {
     const file = path.relative(ROOT, sf.fileName).replace(/\.vue\.ts$/, '.vue');
-    if (!file.startsWith('src/') || file.startsWith('src/wasm/')) continue;
+    if (!file.startsWith('src/')) continue;
     const visit = (node: ts.Node): void => {
       const candidate = ts.isInterfaceDeclaration(node)
         ? !extendsCore(checker, node)
@@ -248,8 +247,8 @@ function handDeclaredCoreMirrors(): string[] {
   return found;
 }
 
-describe('vendored libsonare surface', () => {
-  it('every studio and test use of the core matches the vendored declarations', {
+describe('installed libsonare surface', () => {
+  it('every studio and test use of the core matches the package declarations', {
     timeout: 180_000,
   }, () => {
     const program = studio();
@@ -304,9 +303,9 @@ describe('hand-written mirrors of core vocabulary', () => {
   });
 });
 
-/** The exports of the vendored `index.d.ts`. */
+/** The exports of the core's `index.d.ts`. */
 function coreExports(): ts.Symbol[] {
-  const index = path.join(WASM_DIR, 'index.d.ts');
+  const index = path.join(CORE_DIST_DIR, 'index.d.ts');
   const program = ts.createProgram([index], { noEmit: true, skipLibCheck: true, types: [] });
   const checker = program.getTypeChecker();
   const moduleSymbol = checker.getSymbolAtLocation(program.getSourceFile(index)!);

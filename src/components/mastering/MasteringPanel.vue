@@ -1,4 +1,12 @@
 <script setup lang="ts">
+import type {
+  MasteringAssistantResult,
+  MasteringChainConfig,
+  MasteringPreset,
+  MasteringStreamingPreviewResult,
+  StereoMonoCompatCheckResult,
+  StreamingPlatform,
+} from '@libraz/libsonare';
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import AssistantPanel from '@/components/mastering/AssistantPanel.vue';
 import PresetSelector from '@/components/mastering/PresetSelector.vue';
@@ -98,14 +106,6 @@ import { insertEditErrorMessage } from '@/ui/mixer/insert-edit-error';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
 import type { MatchEqAnalysis } from '@/ui/sample-editor/match-eq-analysis';
 import { analyzeMatchEqToReference } from '@/ui/sample-editor/wasm-ops';
-import type {
-  MasteringAssistantResult,
-  MasteringChainConfig,
-  MasteringPreset,
-  MasteringStreamingPreviewResult,
-  StereoMonoCompatCheckResult,
-  StreamingPlatform,
-} from '@/wasm/index.js';
 
 /**
  * Mastering panel for the editor dock: the project mastering chain as an

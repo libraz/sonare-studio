@@ -1,5 +1,5 @@
+import type { EqBandInput } from '@libraz/libsonare';
 import { clamp } from '@/lib/math';
-import type { EqBandInput } from '@/wasm/index.js';
 import { eqBandResponseDb } from './eq-curve';
 
 const MATCH_POINTS_HZ = [80, 160, 315, 630, 1250, 2500, 5000, 10000] as const;

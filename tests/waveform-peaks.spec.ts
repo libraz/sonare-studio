@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import type { WaveformPeaksReport, WaveformPeaksRequest } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   type ChannelPeaks,
@@ -8,8 +9,7 @@ import {
   mergePeaks,
   type WaveformPeaksModule,
 } from '@/ui/waveform/peaks';
-import type { WaveformPeaksReport, WaveformPeaksRequest } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { waveformPeaksReport } from './fakes/analysis';
 
 /** Shorthand for a peaks pair from plain number arrays. */
@@ -269,7 +269,7 @@ describe('computeWindowPeaks', () => {
 
 describe('computePeaks against the real core', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('matches the pure path bucket for bucket', () => {

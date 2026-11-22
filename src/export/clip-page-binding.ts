@@ -10,7 +10,7 @@
  * the provider primitive plus a reader.
  */
 
-import { ClipPageProvider } from '@/wasm/index.js';
+import { ClipPageProvider } from '@libraz/libsonare';
 import type { ClipPageBinding, ClipPageBindingFactory } from './clip-page-stream';
 
 /** Reads a frame range of a stored asset as planar channel buffers. */

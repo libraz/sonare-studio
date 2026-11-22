@@ -1,20 +1,20 @@
-import { readFileSync } from 'node:fs';
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import TransportBar from '@/components/shell/TransportBar.vue';
 import { CUSTOM_VOICE_PRESET_TEMPLATE } from '@/ui/shell/custom-voice-preset';
+import { coreWasmBinary } from './core-package';
 import { fakeEngineHandle } from './fakes/engine';
 
 vi.mock('@/lib/wasm', async () => {
-  const core = await import('@/wasm/index.js');
+  const core = await import('@libraz/libsonare');
   return { ensureWasm: async () => core };
 });
 
 beforeAll(async () => {
-  const core = await import('@/wasm/index.js');
-  await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  const core = await import('@libraz/libsonare');
+  await core.init({ wasmBinary: coreWasmBinary() });
 });
 
 function makeRecording(overrides: Record<string, unknown> = {}) {

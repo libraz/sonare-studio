@@ -43,6 +43,7 @@ vi.mock('@/engine/web-midi-output', () => ({
 }));
 vi.mock('@/lib/wasm', () => ({ ensureWasm: lifecycleMocks.ensureWasm }));
 
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import {
   bindAudioContextState,
   canRestoreTrackInsertAutomationParam,
@@ -52,7 +53,6 @@ import {
 } from '@/composables/useEngineLifecycle';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 describe('useEngineLifecycle automation restore helpers', () => {
   it('skips track insert parameter restore while a track is frozen', () => {

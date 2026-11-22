@@ -1,3 +1,4 @@
+import type { MasteringAudioProfileDefects, MasteringRepairAnalysis } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import {
   checkedRepairStages,
@@ -7,7 +8,6 @@ import {
   repairDefectItems,
 } from '@/ui/sample-editor/repair-analysis';
 import { wasmOpAvailability } from '@/ui/sample-editor/wasm-ops';
-import type { MasteringAudioProfileDefects, MasteringRepairAnalysis } from '@/wasm/index.js';
 
 interface DefectOverrides {
   clickCount?: number;

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { isSonareError } from '@libraz/libsonare';
 import { strToU8, zipSync } from 'fflate';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DawprojectImportError, exportDawproject, importDawproject } from '@/export/dawproject';
@@ -14,16 +14,16 @@ import {
 import { decodeSzd, encodeSzd, SzdFormatError } from '@/persistence/szd';
 import type { ProjectDocument } from '@/project/serialization';
 import { projectDocumentToSmf, smfToProjectDocument } from '@/project/smf';
-import { isSonareError } from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { installMockOpfs, uninstallMockOpfs } from './opfs-mock';
 
 vi.mock('@/lib/wasm', async () => {
-  const wasm = await import('@/wasm/index.js');
+  const wasm = await import('@libraz/libsonare');
   let module: typeof wasm | null = null;
   return {
     ensureWasm: async () => {
       if (!module) {
-        const wasmBinary = readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`);
+        const wasmBinary = coreWasmBinary();
         await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
         module = wasm;
       }

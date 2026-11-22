@@ -10,10 +10,10 @@
  * group's ref is the live track id or the offline document track index.
  */
 
+import type { EngineBus, EngineTrackSend } from '@libraz/libsonare';
 import { SILENCE_DB } from '@/lib/db';
 import { groupBusTopologyId, RESERVED_MIXER_BUS_ID } from '@/project/bus-topology';
 import type { MixerBus, MixerStrip, ReturnSoloRouting, StripSend } from '@/project/mixer';
-import type { EngineBus, EngineTrackSend } from '@/wasm/index.js';
 
 /** Engine bus slots available to return buses, group buses and the discard sink. */
 export const MAX_ENGINE_BUSES = 8;

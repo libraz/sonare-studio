@@ -9,7 +9,6 @@
  * failing the import. Pure module, so the analysis worker can load it.
  */
 
-import type { AudioAssetTags } from '@/persistence/assets';
 import type {
   BpmAnalysisResult,
   DynamicsResult,
@@ -20,7 +19,8 @@ import type {
   LufsResult,
   RhythmResult,
   TimbreResult,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import type { AudioAssetTags } from '@/persistence/assets';
 
 /**
  * The analysis functions consumed on import. Each result is typed from the

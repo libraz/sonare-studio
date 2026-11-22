@@ -17,7 +17,9 @@ export interface ChannelPeaks {
 }
 
 /** The subset of the libsonare module consumed by {@link computePeaks}. */
-export type WaveformPeaksModule = Partial<Pick<typeof import('@/wasm/index.js'), 'waveformPeaks'>>;
+export type WaveformPeaksModule = Partial<
+  Pick<typeof import('@libraz/libsonare'), 'waveformPeaks'>
+>;
 
 /** Options for {@link computePeaks}. */
 export interface ComputePeaksOptions {

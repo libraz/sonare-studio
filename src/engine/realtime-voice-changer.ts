@@ -1,5 +1,8 @@
+import type {
+  RealtimeVoiceChangerConfig,
+  RealtimeVoiceChangerConfigInput,
+} from '@libraz/libsonare';
 import { ensureWasm } from '@/lib/wasm';
-import type { RealtimeVoiceChangerConfig, RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import {
   fetchWasmBinary,
   forwardWorkletRuntimeErrors,
@@ -77,7 +80,7 @@ function isRealtimeVoiceChangerConfig(value: unknown): value is RealtimeVoiceCha
 
 /** Resolves only inputs safe to send over the realtime worklet control port. */
 function normalizeRealtimeVoiceChangerPreset(
-  wasm: typeof import('@/wasm/index.js'),
+  wasm: typeof import('@libraz/libsonare'),
   preset: RealtimeVoiceChangerConfigInput,
 ): RealtimeVoiceChangerConfig | null {
   if (typeof preset !== 'string' && isRealtimeVoiceChangerConfig(preset)) return preset;
@@ -92,7 +95,7 @@ function normalizeRealtimeVoiceChangerPreset(
 }
 
 interface VoiceChangerWorkletSetup {
-  wasm: typeof import('@/wasm/index.js');
+  wasm: typeof import('@libraz/libsonare');
   wasmBinary: ArrayBuffer;
   initialPreset: RealtimeVoiceChangerConfigInput | RealtimeVoiceChangerConfig;
 }

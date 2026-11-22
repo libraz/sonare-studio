@@ -1,6 +1,6 @@
+import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
-import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 
 /** Keep the worker boundary safe even when called outside the project adapter. */
 const MAX_POLYPHONIC_SAMPLES = 14_400_000;

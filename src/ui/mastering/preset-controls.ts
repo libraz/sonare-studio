@@ -8,7 +8,7 @@
  * resolution and validation rules can be tested in isolation.
  */
 
-import type { MasteringChainConfig } from '@/wasm/index.js';
+import type { MasteringChainConfig } from '@libraz/libsonare';
 import {
   type ChainPath,
   deleteChainPath,

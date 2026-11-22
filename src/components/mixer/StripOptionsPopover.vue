@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { PanLaw } from '@libraz/libsonare';
 import { computed, inject, ref } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
@@ -43,7 +44,6 @@ import {
   midiLearnStripControlTargetId,
 } from '@/ui/midi/midi-learn';
 import { formatDb, formatPan } from '@/ui/mixer/db-scale';
-import type { PanLaw } from '@/wasm/index.js';
 import NumericReadout from './NumericReadout.vue';
 
 /**

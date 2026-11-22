@@ -1,3 +1,5 @@
+import type { EngineTelemetry } from '@libraz/libsonare';
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
@@ -12,8 +14,6 @@ import {
   secondsToPpq,
 } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
-import type { EngineTelemetry } from '@/wasm/index.js';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Telemetry record type emitted once per processed audio block. */
 const TELEMETRY_PROCESS_BLOCK = 'processBlock';

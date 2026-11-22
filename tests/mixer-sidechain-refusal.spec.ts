@@ -1,3 +1,4 @@
+import type { SidechainCheck, SidechainRefusal } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import { en } from '@/ui/i18n/en';
 import { ja } from '@/ui/i18n/ja';
@@ -5,7 +6,6 @@ import {
   createSidechainRefusalLookup,
   type SidechainCheckEngine,
 } from '@/ui/mixer/sidechain-refusal';
-import type { SidechainCheck, SidechainRefusal } from '@/wasm/index.js';
 
 const ALL_REFUSALS: SidechainRefusal[] = [
   'invalidTarget',

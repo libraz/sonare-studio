@@ -70,7 +70,7 @@ interface AmpModelChoice {
 }
 
 type AmpPresetCatalogModule = Pick<
-  typeof import('@/wasm/index.js'),
+  typeof import('@libraz/libsonare'),
   'masteringAmpPresetCatalog' | 'masteringInsertParamInfo'
 >;
 

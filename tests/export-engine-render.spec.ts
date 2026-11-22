@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import type { EngineClip, EngineTrackLane, EqBandInput, LufsResult } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB } from '@/engine/mixer-sync';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
@@ -21,8 +22,7 @@ import type { InsertSlot, MixerStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
 import { neutralMixDocument } from '@/ui/mixer/mix-assistant';
-import type { EngineClip, EngineTrackLane, EqBandInput, LufsResult } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import {
   ENGINE_MIXER_LANE_MASTER,
   ENGINE_MIXER_PARAM_FADER_DB,
@@ -58,7 +58,7 @@ const resample = vi.hoisted(() =>
   }),
 );
 
-vi.mock('@/wasm/index.js', async (importOriginal) => {
+vi.mock('@libraz/libsonare', async (importOriginal) => {
   const { withRecordingClipPageProvider } = await import('./recording-clip-page-provider');
   return withRecordingClipPageProvider(await importOriginal());
 });
@@ -5806,7 +5806,7 @@ class PagingAudibilityEngine extends AudibilityEngine {
 
 describe('renderProjectWithEngine paged audio clips', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
   beforeEach(resetRecordedClipPageProviders);
 

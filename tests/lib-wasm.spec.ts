@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const wasm = vi.hoisted(() => ({ init: vi.fn() }));
 
-vi.mock('@/wasm/index.js', () => wasm);
+vi.mock('@libraz/libsonare', () => wasm);
 
 describe('ensureWasm', () => {
   it('retries module initialization after a failed attempt', async () => {

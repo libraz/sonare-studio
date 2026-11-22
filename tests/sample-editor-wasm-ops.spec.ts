@@ -1,4 +1,41 @@
-import { readFileSync } from 'node:fs';
+import type {
+  AnalyzeImpulseResponseRequest,
+  AutoTuneRequest,
+  DetectAcousticRequest,
+  DetectOnsetsRequest,
+  EstimateRoomRequest,
+  EstimateTuningRequest,
+  HarmonicRequest,
+  MasterAudioRequest,
+  MasterAudioStereoRequest,
+  MasteringAnalyzePairRequest,
+  MasteringApplyPairProcessorRequest,
+  MasteringRepairAnalyzeRequest,
+  MasteringRepairApplyRequest,
+  MasteringRepairDeclickRequest,
+  MasteringRepairDeclickStereoRequest,
+  MasteringRepairDeclipRequest,
+  MasteringRepairDenoiseClassicalRequest,
+  MasteringRepairDenoiseClassicalStereoRequest,
+  MasteringRepairTrimSilenceRequest,
+  NoteMoveRequest,
+  NoteSegmentsRequest,
+  NoteStretchRequest,
+  PitchCorrectTimevaryingRequest,
+  PitchCorrectToMidiRequest,
+  PitchPyinRequest,
+  PitchShiftRequest,
+  PitchYinRequest,
+  RirDiagnostic,
+  RoomMorphRequest,
+  RoomMorphStereoRequest,
+  SpectralEditRequest,
+  SplitSilenceRequest,
+  SynthesizeRirRequest,
+  TimeStretchRequest,
+  VoiceChangeRequest,
+} from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   analyzeImpulseResponseRange,
@@ -42,44 +79,7 @@ import {
   voiceChangeRange,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
-import type {
-  AnalyzeImpulseResponseRequest,
-  AutoTuneRequest,
-  DetectAcousticRequest,
-  DetectOnsetsRequest,
-  EstimateRoomRequest,
-  EstimateTuningRequest,
-  HarmonicRequest,
-  MasterAudioRequest,
-  MasterAudioStereoRequest,
-  MasteringAnalyzePairRequest,
-  MasteringApplyPairProcessorRequest,
-  MasteringRepairAnalyzeRequest,
-  MasteringRepairApplyRequest,
-  MasteringRepairDeclickRequest,
-  MasteringRepairDeclickStereoRequest,
-  MasteringRepairDeclipRequest,
-  MasteringRepairDenoiseClassicalRequest,
-  MasteringRepairDenoiseClassicalStereoRequest,
-  MasteringRepairTrimSilenceRequest,
-  NoteMoveRequest,
-  NoteSegmentsRequest,
-  NoteStretchRequest,
-  PitchCorrectTimevaryingRequest,
-  PitchCorrectToMidiRequest,
-  PitchPyinRequest,
-  PitchShiftRequest,
-  PitchYinRequest,
-  RirDiagnostic,
-  RoomMorphRequest,
-  RoomMorphStereoRequest,
-  SpectralEditRequest,
-  SplitSilenceRequest,
-  SynthesizeRirRequest,
-  TimeStretchRequest,
-  VoiceChangeRequest,
-} from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import {
   acousticResult,
   analyzeImpulseResponseFn,
@@ -1989,7 +1989,7 @@ describe('against the real core', () => {
   }
 
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('shifts pitch through the request the core accepts', () => {

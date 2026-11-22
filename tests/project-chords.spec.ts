@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { ProjectChordSymbol } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import { TONE_PCS_BY_QUALITY } from '@/compose/chord-quality';
 import {
@@ -12,7 +13,6 @@ import {
   toProjectChordSymbols,
 } from '@/project/chords';
 import type { NativeAnnotationChord } from '@/project/native-document';
-import type { ProjectChordSymbol } from '@/wasm/index.js';
 
 describe('sameChord', () => {
   const base: EditorChordSymbol = { startPpq: 0, endPpq: 4, rootPc: 0, quality: 4 };

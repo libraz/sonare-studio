@@ -256,7 +256,7 @@ export function useEngineLifecycle(options: EngineLifecycleOptions) {
         assertActive();
         const wasm: Partial<
           Pick<
-            typeof import('@/wasm/index.js'),
+            typeof import('@libraz/libsonare'),
             | 'masteringInsertNames'
             | 'masteringProcessorCatalog'
             | 'masteringInsertTiming'

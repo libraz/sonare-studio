@@ -1,3 +1,4 @@
+import type { NoteObject } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
@@ -8,7 +9,6 @@ import {
 } from '@/project/audio-tune-to-midi';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import type { EditorClip } from '@/project/types';
-import type { NoteObject } from '@/wasm/index.js';
 
 const TEMPO_120 = normalizeTempoMap([{ startPpq: 0, bpm: 120 }]);
 

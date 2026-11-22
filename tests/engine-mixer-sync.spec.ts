@@ -1,10 +1,10 @@
+import { ErrorCode, SonareError } from '@libraz/libsonare';
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createMixerSync, linearToDb, PFL_AUDITION_GAIN_DB, SILENCE_DB } from '@/engine/mixer-sync';
 import { createDefaultStrip, laneGainDb, type MixerStrip, vcaOffsetDb } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
-import { ErrorCode, SonareError } from '@/wasm/index.js';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {

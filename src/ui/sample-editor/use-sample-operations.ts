@@ -10,6 +10,13 @@
  * emits `asset-created` and switches the editor to the new version.
  */
 
+import type {
+  AutoTuneKey,
+  MasteringRepairAnalysis,
+  MasteringRepairStageName,
+  PitchClass,
+  RirDiagnostic,
+} from '@libraz/libsonare';
 import { computed, type Ref, ref, watch } from 'vue';
 import { useNoteNames } from '@/composables/useNoteNames';
 import { downmixToMono } from '@/lib/audio-channels';
@@ -23,13 +30,6 @@ import {
 } from '@/persistence/assets';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import { humanizePresetName, restorationPresets } from '@/ui/mastering/preset-catalog';
-import type {
-  AutoTuneKey,
-  MasteringRepairAnalysis,
-  MasteringRepairStageName,
-  PitchClass,
-  RirDiagnostic,
-} from '@/wasm/index.js';
 import type { VersionHistoryState } from './history';
 import { parseNumber, parsePercentFraction } from './input-parse';
 import type { MatchEqAnalysis } from './match-eq-analysis';

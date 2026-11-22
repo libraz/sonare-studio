@@ -1,10 +1,10 @@
 /**
  * A real libsonare `ClipPageProvider` that also records what it was handed, so
  * a spec can assert on the pages a render supplied. Install it with
- * `vi.mock('@/wasm/index.js', ...)` through {@link withRecordingClipPageProvider};
+ * `vi.mock('@libraz/libsonare', ...)` through {@link withRecordingClipPageProvider};
  * the core module must be initialized before a provider is constructed.
  */
-import type * as Core from '@/wasm/index.js';
+import type * as Core from '@libraz/libsonare';
 
 export interface RecordedClipPageProvider {
   provider: Core.ClipPageProvider;

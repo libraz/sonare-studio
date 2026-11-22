@@ -11,16 +11,16 @@
  * descriptor leaves open.
  */
 
-import { errorMessage } from '@/lib/errors';
-import { isSwitchOn } from '@/lib/midi';
-import { formatControlValue } from '@/ui/devices/knob-math';
 import type {
   MasteringInsertName,
   MasteringInsertParamDependency,
   MasteringInsertParamInfo,
   MasteringInsertParamUnit,
   MasteringInsertSlot,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { errorMessage } from '@/lib/errors';
+import { isSwitchOn } from '@/lib/midi';
+import { formatControlValue } from '@/ui/devices/knob-math';
 import { type AutomationParam, parseInsertAutomationParam } from './automation';
 import { insertIndexForAutomationRef } from './automation-insert';
 import {

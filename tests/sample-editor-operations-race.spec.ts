@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import type { RirDiagnostic, RoomMorphRequest } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, ref } from 'vue';
@@ -9,8 +10,7 @@ import type { SampleRange } from '@/ui/sample-editor/ops';
 import { SAMPLE_OPERATION_TIMEOUT_MS } from '@/ui/sample-editor/ops-client';
 import { useSampleOperations } from '@/ui/sample-editor/use-sample-operations';
 import type { SampleEditorWasmOps } from '@/ui/sample-editor/wasm-ops';
-import type { RirDiagnostic, RoomMorphRequest } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { roomMorphFn, roomMorphResult } from './fakes/analysis';
 
 const assetStore = vi.hoisted(() => {
@@ -231,7 +231,7 @@ describe('sample editor operation ownership', () => {
   });
   describe('with the real core', () => {
     beforeAll(async () => {
-      await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+      await core.init({ wasmBinary: coreWasmBinary() });
     });
 
     // The editor's default room preset is 4 x 3 m, which the core refuses

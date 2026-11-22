@@ -10,18 +10,18 @@
  * call).
  */
 
+import type {
+  MasteringAmpPresetCatalogEntry,
+  MasteringInsertName,
+  MasteringInsertSlot,
+  SynthEnumTables,
+} from '@libraz/libsonare';
 import {
   decodePatchFieldValue,
   type NumericPatchField,
   patchFieldSpec,
 } from '@/ui/devices/patch-draft';
 import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
-import type {
-  MasteringAmpPresetCatalogEntry,
-  MasteringInsertName,
-  MasteringInsertSlot,
-  SynthEnumTables,
-} from '@/wasm/index.js';
 import {
   type CommandGestureOptions,
   isMixerBusStripTarget,

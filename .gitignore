@@ -11,10 +11,9 @@ CLAUDE.md
 AGENT.md
 backup/
 
-# Note: src/wasm is NOT ignored (committed because Pages builds need it bundled).
-# The content-addressed AudioWorklet bundle and its manifest are build:worklet
-# artifacts -> ignored.
-public/assets/sonare-engine-worklet-*.js
+# The content-addressed AudioWorklet bundle, the chunks it emits and its
+# manifest are build:worklet artifacts -> ignored.
+public/assets/
 public/worklet-manifest.json
 .worklet-build/
 .e2e-dist/

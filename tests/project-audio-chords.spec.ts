@@ -1,3 +1,4 @@
+import { CHORD_QUALITIES, type ChordQuality } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
@@ -9,7 +10,6 @@ import {
 } from '@/project/audio-chords';
 import { chordTonePitchClasses, type EditorChordSymbol, formatChordName } from '@/project/chords';
 import type { EditorClip } from '@/project/types';
-import { CHORD_QUALITIES, type ChordQuality } from '@/wasm/index.js';
 
 /** A minimal audio clip; fields not relevant to detection use neutral values. */
 function audioClip(overrides: Partial<EditorClip> = {}): EditorClip {

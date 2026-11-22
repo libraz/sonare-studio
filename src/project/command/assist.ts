@@ -1,4 +1,4 @@
-import type { ProjectAssistSidecar } from '@/wasm/index.js';
+import type { ProjectAssistSidecar } from '@libraz/libsonare';
 import { getProject } from '../store';
 import { execute } from './history';
 import { validatePpq } from './utils';

@@ -1,3 +1,4 @@
+import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +22,6 @@ import {
 import type { TimeSignatureSegment } from '@/project/types';
 import type { Painter } from '@/ui/canvas/painter';
 import { TimelineRange } from '@/ui/canvas/timeline-range';
-import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 
 vi.mock('@/project/commands', () => ({
   addNote: vi.fn(() => 1),

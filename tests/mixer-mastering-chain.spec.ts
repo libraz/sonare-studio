@@ -1,3 +1,4 @@
+import type { MasteringPreset, SoloProcessor } from '@libraz/libsonare';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { masteringAutomationParam } from '@/project/automation';
@@ -23,7 +24,6 @@ import {
 import { loadProjectDocument, serializeProject } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
-import type { MasteringPreset, SoloProcessor } from '@/wasm/index.js';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');

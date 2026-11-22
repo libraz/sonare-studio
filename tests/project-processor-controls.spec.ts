@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { InsertSlot } from '@/project/mixer';
 import {
@@ -11,7 +11,7 @@ import {
   processorNumberSpec,
 } from '@/project/processor-controls';
 import { setWasmModule } from '@/project/runtime';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 /** Strip-shaped value carrying a single insert slot. */
 function stripWith(processor: string): { inserts: InsertSlot[] } {
@@ -185,7 +185,7 @@ describe('insertAutomationDomain', () => {
 
 describe('closed-set parameters on the real catalog', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
     setWasmModule(core);
   });
 

@@ -8,10 +8,10 @@
  * the base mod matrix.
  */
 
+import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@libraz/libsonare';
 import { clamp } from '@/lib/math';
 import type { StoredSynthPatch, TrackInstrument } from '@/project/instrument';
 import { getWasmModule } from '@/project/runtime';
-import type { SynthModRouting, SynthParamCondition, SynthParamInfo } from '@/wasm/index.js';
 
 /** Editor section a patch field renders under. */
 export type PatchSection = 'osc' | 'filter' | 'amp' | 'filter-env' | 'lfo' | 'global';

@@ -11,7 +11,6 @@
  * the processor its id or slot index names, so strips are upgraded first.
  */
 
-import type { ChainPath, ChainPathValue } from '@/ui/mastering/chain-config-path';
 import type {
   AutomationCurve,
   EqBandPhase,
@@ -29,7 +28,8 @@ import type {
   SynthFilterOutput,
   SynthModDestination,
   SynthModSource,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import type { ChainPath, ChainPathValue } from '@/ui/mastering/chain-config-path';
 
 type Json = Record<string, unknown>;
 type Table<T extends string = string> = Readonly<Record<string, T>>;
@@ -368,7 +368,7 @@ function mergeInto(target: Json, source: Json): void {
 
 /** The core calls the upgrade reads mastering presets and chain configurations through. */
 export type UpgradeCore = Pick<
-  typeof import('@/wasm/index.js'),
+  typeof import('@libraz/libsonare'),
   | 'masteringChainConfigFromJson'
   | 'masteringInsertNames'
   | 'masteringInsertParamInfo'

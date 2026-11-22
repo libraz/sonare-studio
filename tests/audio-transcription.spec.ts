@@ -1,8 +1,8 @@
+import type { TranscribeResult } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { MAX_POLYPHONIC_SECONDS, transcribeAudioClip } from '@/project/audio-transcription';
 import type { WarpedClipSource } from '@/project/warp';
-import type { TranscribeResult } from '@/wasm/index.js';
 
 function noteEvent(
   ppq: number,

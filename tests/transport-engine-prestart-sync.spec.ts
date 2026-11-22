@@ -1,3 +1,4 @@
+import type { SonareEngineTransportFacade } from '@libraz/libsonare/worklet';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope, reactive, ref, shallowRef } from 'vue';
@@ -6,7 +7,6 @@ import { useTransport } from '@/composables/useTransport';
 import { useTransportControls } from '@/composables/useTransportControls';
 import type { EngineHandle } from '@/engine/engine';
 import { useProjectStore } from '@/project/store';
-import type { SonareEngineTransportFacade } from '@/wasm/worklet.js';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');

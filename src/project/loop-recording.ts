@@ -8,8 +8,8 @@
  * loop that interprets a capture is always the loop the transport played.
  */
 
+import type { ProjectLoopRecordingDesc } from '@libraz/libsonare';
 import { computed, type Ref, ref } from 'vue';
-import type { ProjectLoopRecordingDesc } from '@/wasm/index.js';
 import { countInStartPpq, measureRangeAt } from './time-signature';
 import type { TimeSignatureSegment } from './types';
 

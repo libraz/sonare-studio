@@ -3,16 +3,16 @@
  * types so a spec cannot feed production code a shape the core no longer makes.
  */
 
-import type { EngineHandle } from '@/engine/engine';
-import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
-import type { OfflineRenderEngine } from '@/export/engine-render-types';
 import type {
   MasteringInsertParamInfo,
   MidiFxConfig,
   RealtimeEngine,
   SoloProcessor,
-} from '@/wasm/index.js';
-import type { SonareEngine } from '@/wasm/worklet.js';
+} from '@libraz/libsonare';
+import type { SonareEngine } from '@libraz/libsonare/worklet';
+import type { EngineHandle } from '@/engine/engine';
+import type { MeterSource, StereoMeterLevels } from '@/engine/meters';
+import type { OfflineRenderEngine } from '@/export/engine-render-types';
 
 export const ENGINE_MIXER_TARGET_BASE = 0x4d580000;
 export const ENGINE_MIXER_PARAM_FADER_DB = 1;

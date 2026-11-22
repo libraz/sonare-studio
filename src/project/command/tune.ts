@@ -1,7 +1,7 @@
+import type { NoteTargetUnmatchedPolicy } from '@libraz/libsonare';
 import { ensureWasm } from '@/lib/wasm';
 import { createAudioAssetTransaction } from '@/persistence/asset-transaction';
 import { loadAsset } from '@/persistence/assets';
-import type { NoteTargetUnmatchedPolicy } from '@/wasm/index.js';
 import { createAssetReferenceGuard } from '../asset-references';
 import { tuneAudioClipToMidi } from '../audio-tune-to-midi';
 import { getProject, useProjectStore } from '../store';

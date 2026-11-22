@@ -1,13 +1,13 @@
-import { readFileSync } from 'node:fs';
+import * as wasm from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { AUTOMATABLE_SYNTH_PARAMS } from '@/project/instrument';
 import { patchFieldSpec } from '@/ui/devices/patch-draft';
-import * as wasm from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 // Checked against the real engine: its parameterInfo describes every hosted
 // instrument parameter, which a stub cannot.
 beforeAll(async () => {
-  const wasmBinary = readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`);
+  const wasmBinary = coreWasmBinary();
   await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
 });
 

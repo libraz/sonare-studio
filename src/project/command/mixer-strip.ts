@@ -1,4 +1,4 @@
-import type { PanLaw, SendTiming } from '@/wasm/index.js';
+import type { PanLaw, SendTiming } from '@libraz/libsonare';
 import {
   assertKnownBusDestination,
   assertNoBusRoutingCycle,

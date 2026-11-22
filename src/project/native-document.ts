@@ -13,7 +13,7 @@ import type {
   ProjectTimeSignatureSegment,
   ProjectTrackKind,
   ProjectWarpMode,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 
 /** One track entry. */
 export interface NativeTrack {

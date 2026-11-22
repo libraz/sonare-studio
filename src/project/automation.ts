@@ -5,7 +5,7 @@
  * by the commands layer (src/project/commands.ts).
  */
 
-import type { AutomationCurve as EngineAutomationCurve } from '@/wasm/index.js';
+import type { AutomationCurve as EngineAutomationCurve } from '@libraz/libsonare';
 
 /** A mixer bus automation target encoded with its stable project bus id. */
 export type BusAutomationTarget = `bus:${string}`;

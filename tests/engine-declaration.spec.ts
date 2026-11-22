@@ -1,3 +1,4 @@
+import type { EqBandInput } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import {
   engineAutomationPoints,
@@ -10,7 +11,6 @@ import {
   stripSceneFieldsHaveDsp,
 } from '@/engine/engine-declaration';
 import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
-import type { EqBandInput } from '@/wasm/index.js';
 
 describe('engine declaration helpers', () => {
   it('filters invalid automation points and encodes curve names', () => {

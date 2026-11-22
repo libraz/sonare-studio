@@ -10,14 +10,15 @@ import {
   scoreKeyMarkerName,
 } from '@/ui/score/marker-editors';
 import { applyKeySignatureMarks, transposeKeyFifths } from '@/ui/score/use-score-notation';
+import { coreWasmBinary } from './core-package';
 
 vi.mock('@/lib/wasm', async () => {
-  const [wasm, fs] = await Promise.all([import('@/wasm/index.js'), import('node:fs')]);
+  const wasm = await import('@libraz/libsonare');
   let module: typeof wasm | null = null;
   return {
     ensureWasm: async () => {
       if (!module) {
-        const wasmBinary = fs.readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`);
+        const wasmBinary = coreWasmBinary();
         await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
         module = wasm;
       }

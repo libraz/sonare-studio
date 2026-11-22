@@ -1,8 +1,8 @@
+import type { MelodyPoint } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { analyzeAudioClipMelody } from '@/project/audio-melody';
 import { MAJOR_MODE_MASK } from '@/project/types';
-import type { MelodyPoint } from '@/wasm/index.js';
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(

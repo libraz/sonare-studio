@@ -1,15 +1,15 @@
+import type {
+  EqBandInput,
+  MixSceneBusInput,
+  MixSceneInsert,
+  MixSceneStripInput,
+} from '@libraz/libsonare';
 import {
   DEFAULT_SURROUND_PAN,
   type MasteringChainState,
   type MixerChannelLayout,
   type MixerStrip,
 } from '@/project/mixer';
-import type {
-  EqBandInput,
-  MixSceneBusInput,
-  MixSceneInsert,
-  MixSceneStripInput,
-} from '@/wasm/index.js';
 import {
   ENGINE_DEFAULT_PAN_LAW,
   ENGINE_DEFAULT_PAN_MODE,

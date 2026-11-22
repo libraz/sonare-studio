@@ -7,8 +7,8 @@
  * module is loaded the catalog is empty.
  */
 
+import type { MasteringPreset, MasteringPresetCatalogEntry } from '@libraz/libsonare';
 import { getWasmModule } from '@/project/store';
-import type { MasteringPreset, MasteringPresetCatalogEntry } from '@/wasm/index.js';
 
 /** Preset catalogs per loaded module; a build's catalog never changes. */
 const presetCache = new WeakMap<object, readonly MasteringPresetCatalogEntry[]>();

@@ -12,10 +12,10 @@
  * the bottom, so the points where the open project changes are countable.
  */
 
-import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
+import type { Project, ProjectMidiEvent } from '@libraz/libsonare';
 import { notesToProjectMidiEvents, type RawNote } from './midi-events';
 
-type WasmModule = typeof import('@/wasm/index.js');
+type WasmModule = typeof import('@libraz/libsonare');
 
 export type { WasmModule };
 

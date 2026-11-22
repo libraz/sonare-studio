@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { NoteTargetUnmatchedPolicy } from '@libraz/libsonare';
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
@@ -94,7 +95,6 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { type ContextMenuItem, openContextMenu } from '@/ui/menu/context-menu';
 import { shortcutHint } from '@/ui/settings/shortcut-hint';
 import { snapChoices } from '@/ui/shell/app-shell-options';
-import type { NoteTargetUnmatchedPolicy } from '@/wasm/index.js';
 import ArrangementAnalysisPanel from './ArrangementAnalysisPanel.vue';
 import ArrangementCanvas from './ArrangementCanvas.vue';
 import ChordLane from './ChordLane.vue';

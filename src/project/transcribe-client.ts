@@ -1,4 +1,4 @@
-import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
+import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import type {
   TranscribeWorkerRequest,
   TranscribeWorkerResponse,

@@ -1,8 +1,8 @@
+import sonareWasmUrl from '@libraz/libsonare/wasm?url';
+import type { SonareRealtimeEngineNodeCapabilities } from '@libraz/libsonare/worklet';
+import { init as initWorkletModule, SonareEngine } from '@libraz/libsonare/worklet';
 import { errorMessage } from '@/lib/errors';
 import { requestPwaEngineRecovery } from '@/pwa';
-import sonareWasmUrl from '@/wasm/sonare.wasm?url';
-import type { SonareRealtimeEngineNodeCapabilities } from '@/wasm/worklet.js';
-import { init as initWorkletModule, SonareEngine } from '@/wasm/worklet.js';
 
 /**
  * Content-addressed same-origin AudioWorklet bundle, injected from the

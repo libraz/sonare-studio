@@ -1,3 +1,4 @@
+import type { RealtimeEngine } from '@libraz/libsonare';
 import { computed, getCurrentScope, onScopeDispose, type Ref, ref, watch } from 'vue';
 import { type ControlSurfaceOptions, useControlSurface } from '@/composables/useControlSurface';
 import { useMidiLearn } from '@/composables/useMidiLearn';
@@ -8,9 +9,8 @@ import { useWebMidi } from '@/composables/useWebMidi';
 import { DEFAULT_SAMPLE_RATE } from '@/project/runtime';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { MidiLearnTransportAction } from '@/ui/midi/midi-learn';
-import type { RealtimeEngine } from '@/wasm/index.js';
 
-type WasmModule = typeof import('@/wasm/index.js');
+type WasmModule = typeof import('@libraz/libsonare');
 
 type StepInput = ReturnType<typeof useStepInput>;
 type RunAction = (action: () => Promise<void>) => Promise<void>;

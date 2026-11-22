@@ -21,7 +21,6 @@
  * chain is an additional export-only stage.
  */
 
-import { linearToDb, SILENCE_DB } from '@/lib/db';
 import type {
   MAX_TRACK_LANES as ENGINE_MAX_TRACK_LANES,
   SurroundPan as EngineSurroundPan,
@@ -32,7 +31,8 @@ import type {
   PanMode,
   SendTiming,
   SoloProcessor,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { linearToDb, SILENCE_DB } from '@/lib/db';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 import { getWasmModule } from './runtime';

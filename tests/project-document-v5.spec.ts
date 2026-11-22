@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import * as wasm from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { upgradeProjectDocument } from '@/project/document-schema';
 import {
@@ -11,7 +12,7 @@ import {
 } from '@/project/document-schema-v5';
 import { setWasmModule } from '@/project/runtime';
 import type { ProjectDocument } from '@/project/serialization';
-import * as wasm from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 type Json = Record<string, unknown>;
 
@@ -31,7 +32,7 @@ function leaves(value: unknown, prefix = '', out: Json = {}): Json {
 
 beforeAll(async () => {
   await wasm.init({
-    wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`),
+    wasmBinary: coreWasmBinary(),
   } as Parameters<typeof wasm.init>[0]);
   setWasmModule(wasm);
 });

@@ -15,10 +15,10 @@
  * and asset loader from the running app.
  */
 
+import type { EstimateMeterRequest, MeterEstimate } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
 import { ensureWasm } from '@/lib/wasm';
 import { type LoadedAudioAsset, loadAsset } from '@/persistence/assets';
-import type { EstimateMeterRequest, MeterEstimate } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import {
   analyzeBeatAccentsInWorker,

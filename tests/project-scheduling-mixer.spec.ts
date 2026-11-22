@@ -1,3 +1,4 @@
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
@@ -6,7 +7,6 @@ import { createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import { scheduleProjectClips } from '@/project/scheduling';
 import { useProjectStore } from '@/project/store';
 import type { EditorClip, EditorNote, EditorTrack } from '@/project/types';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 /** Builds a track mirror entry with overridable fields. */
 function makeTrack(id: number, overrides: Partial<EditorTrack> = {}): EditorTrack {

@@ -8,6 +8,11 @@
  */
 
 import type { NoteNameSystem } from '@libraz/libcantus';
+import type {
+  RealtimeVoiceChangerConfigInput,
+  StreamingPlatform,
+  VoicePresetId,
+} from '@libraz/libsonare';
 import { DEFAULT_APP_GUIDANCE_PROFILE, type GuidanceProfile } from '@/compose/guidance-profile';
 import {
   STREAMING_RETUNE_MAX_SEMITONES,
@@ -18,11 +23,6 @@ import {
   createDefaultStreamingPlatforms,
   normalizeStreamingPlatforms,
 } from '@/ui/mastering/streaming';
-import type {
-  RealtimeVoiceChangerConfigInput,
-  StreamingPlatform,
-  VoicePresetId,
-} from '@/wasm/index.js';
 
 /** Storage schema version of the settings envelope. */
 export const APP_SETTINGS_VERSION = 1;

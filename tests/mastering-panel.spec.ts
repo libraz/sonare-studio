@@ -1,3 +1,5 @@
+import type * as WasmModule from '@libraz/libsonare';
+import type { MasteringAssistantResult } from '@libraz/libsonare';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
@@ -19,8 +21,6 @@ import type { ProjectDocument } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
 import { DEFAULT_PREVIEW_GAIN } from '@/ui/media/preview';
 import { midiLearnMasteringTargetId } from '@/ui/midi/midi-learn';
-import type * as WasmModule from '@/wasm/index.js';
-import type { MasteringAssistantResult } from '@/wasm/index.js';
 import { asAudioContext, createFakeAudioContext } from './fake-audio-context';
 
 vi.mock('@/lib/wasm', async () => {

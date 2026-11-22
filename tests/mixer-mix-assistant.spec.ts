@@ -16,7 +16,7 @@ import { useProjectStore } from '@/project/store';
 import { neutralMixDocument, suggestMixFromStems } from '@/ui/mixer/mix-assistant';
 
 const mixingAssistantSuggest = vi.hoisted(() =>
-  vi.fn<typeof import('@/wasm/index.js')['mixingAssistantSuggest']>(),
+  vi.fn<typeof import('@libraz/libsonare')['mixingAssistantSuggest']>(),
 );
 
 vi.mock('@/lib/wasm', async () => {

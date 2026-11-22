@@ -6,7 +6,7 @@ const { bridgeProcess, voiceProcess, retuneProcessMono } = vi.hoisted(() => ({
   retuneProcessMono: vi.fn((samples: Float32Array) => samples),
 }));
 
-vi.mock('@/wasm/worklet.js', () => ({
+vi.mock('@libraz/libsonare/worklet', () => ({
   init: vi.fn(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
   SonareRealtimeEngineWorkletProcessor: class {
@@ -17,7 +17,7 @@ vi.mock('@/wasm/worklet.js', () => ({
   },
 }));
 
-vi.mock('@/wasm/index.js', () => ({
+vi.mock('@libraz/libsonare', () => ({
   init: vi.fn(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
   StreamingRetune: class {

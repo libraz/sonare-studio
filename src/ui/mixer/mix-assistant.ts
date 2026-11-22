@@ -11,6 +11,7 @@
  * the scene maps back onto the tracks it was measured from.
  */
 
+import type { MixAssistantResult, MixingAssistantSuggestRequest } from '@libraz/libsonare';
 import {
   insertAutomationParam,
   parseInsertAutomationParam,
@@ -18,7 +19,6 @@ import {
 } from '@/project/automation';
 import { createDefaultStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
-import type { MixAssistantResult, MixingAssistantSuggestRequest } from '@/wasm/index.js';
 
 /** A track's dry render as the assistant reads it. */
 export interface MixAssistantStem {

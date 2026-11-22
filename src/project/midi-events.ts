@@ -1,4 +1,4 @@
-import type { Project, ProjectMidiEvent } from '@/wasm/index.js';
+import type { Project, ProjectMidiEvent } from '@libraz/libsonare';
 import { readNativeDocument } from './native-document';
 import type { EditorNote } from './types';
 
@@ -217,7 +217,7 @@ interface NoteBoundary {
 }
 
 /** The module's note-message builders. */
-type MidiEventFactory = Pick<typeof import('@/wasm/index.js'), 'midiNoteOn' | 'midiNoteOff'>;
+type MidiEventFactory = Pick<typeof import('@libraz/libsonare'), 'midiNoteOn' | 'midiNoteOff'>;
 
 /**
  * Expands editor notes into a sorted flat event list for Project.setMidiEvents.

@@ -1,6 +1,6 @@
 /**
  * Checks studio and test sources against libsonare's WASM migration ledger,
- * vendored as `src/wasm/migration-ledger.toml` by `scripts/copy-migration-ledger.sh`.
+ * as the installed package ships it.
  *
  * Every name the ledger lists as removed or renamed from 1.x, and that no 2.0
  * declaration still spells, must not appear as an import from the core or as
@@ -10,17 +10,13 @@
  * a member the core no longer has.
  */
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { parse } from 'smol-toml';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { CORE_DIST_DIR, coreMigrationLedger, type LedgerEntry } from './core-package';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const WASM_DIR = path.join(ROOT, 'src', 'wasm');
-const LEDGER = path.join(WASM_DIR, 'migration-ledger.toml');
-const LEDGER_META = path.join(WASM_DIR, 'migration-ledger.json');
 
 /** Ledger kinds whose old name is a top-level export (reached by import). */
 const EXPORT_KINDS = new Set(['function', 'class', 'type', 'export']);
@@ -146,15 +142,6 @@ function studioOwned(file: string, name: string): boolean {
   return owned;
 }
 
-interface LedgerEntry {
-  kind: string;
-  old: string;
-  new?: string;
-  removed?: string | boolean;
-  changed?: string;
-  to?: string;
-}
-
 /** Old names gone from 2.0: renamed, removed, or renamed while reshaped. */
 function retiredNames(entries: LedgerEntry[]): { exports: Set<string>; members: Set<string> } {
   const exports = new Set<string>();
@@ -175,7 +162,7 @@ function retiredNames(entries: LedgerEntry[]): { exports: Set<string>; members: 
  */
 const RAW_MODULE_DECLS = 'sonare.d.ts';
 
-/** Every identifier the vendored 2.0 public declarations spell outside comments. */
+/** Every identifier the installed 2.0 public declarations spell outside comments. */
 function declaredNames(): Set<string> {
   const names = new Set<string>();
   const scanner = ts.createScanner(ts.ScriptTarget.ESNext, true);
@@ -199,7 +186,7 @@ function declaredNames(): Set<string> {
       }
     }
   };
-  walk(WASM_DIR);
+  walk(CORE_DIST_DIR);
   return names;
 }
 
@@ -221,7 +208,7 @@ function trackedSources(): string[] {
     .toString()
     .trim()
     .split('\n')
-    .filter((f) => f !== '' && !f.startsWith('src/wasm/'));
+    .filter((f) => f !== '');
 }
 
 function scriptText(file: string): string {
@@ -277,12 +264,9 @@ function retiredUses(exports: Set<string>, members: Set<string>): string[] {
 }
 
 describe('libsonare migration ledger', () => {
-  const text = readFileSync(LEDGER, 'utf8');
-  const entries = (parse(text) as { entry: LedgerEntry[] }).entry;
+  const entries = coreMigrationLedger().entry;
 
-  it('is the copy its metadata records', () => {
-    const meta = JSON.parse(readFileSync(LEDGER_META, 'utf8')) as { sha256: string };
-    expect(createHash('sha256').update(text).digest('hex')).toBe(meta.sha256);
+  it('lists the retired surface', () => {
     expect(entries.length).toBeGreaterThan(0);
   });
 

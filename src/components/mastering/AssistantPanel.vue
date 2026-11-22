@@ -1,9 +1,9 @@
 <script setup lang="ts">
+import type { MasteringAssistantResult } from '@libraz/libsonare';
 import { formatMessage, useI18n } from '@/ui/i18n';
 import type { SuggestionAdjustment } from '@/ui/mastering/assistant';
 import { formatLevel } from '@/ui/mastering/loudness';
 import { humanizePresetName } from '@/ui/mastering/preset-catalog';
-import type { MasteringAssistantResult } from '@/wasm/index.js';
 
 /**
  * Result block for the mastering assistant: the named base preset, the preset

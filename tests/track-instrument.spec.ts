@@ -95,7 +95,9 @@ const wasmMock = vi.hoisted(() => {
   const setMidiEvents = vi.fn();
   const synthPresetNames = vi.fn(() => ['sine', 'sawLead', 'ePiano', 'acousticPiano', 'drumKit']);
 
-  class MockProject implements Partial<InstanceType<typeof import('@/wasm/index.js')['Project']>> {
+  class MockProject
+    implements Partial<InstanceType<typeof import('@libraz/libsonare')['Project']>>
+  {
     setSampleRate = vi.fn();
     setTempoSegments = vi.fn();
     addMidiClip = vi.fn(() => ({ trackId: 1, clipId: 2 }));

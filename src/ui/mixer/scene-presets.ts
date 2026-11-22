@@ -1,5 +1,5 @@
+import type { MixSceneDocument, MixScenePreset } from '@libraz/libsonare';
 import { getWasmModule } from '@/project/store';
-import type { MixSceneDocument, MixScenePreset } from '@/wasm/index.js';
 
 const LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   vocalReverbSend: 'Vocal Reverb Send',

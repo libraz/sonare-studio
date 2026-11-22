@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import * as wasm from '@libraz/libsonare';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   catalogParamInfo,
@@ -7,7 +7,7 @@ import {
   InsertConfigurationRefusedError,
   processorControls,
 } from '@/project/processor-controls';
-import * as wasm from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 // Which keys exist only under a condition is the engine catalog's to say.
 vi.mock('@/project/runtime', async (importOriginal) => ({
@@ -16,7 +16,7 @@ vi.mock('@/project/runtime', async (importOriginal) => ({
 }));
 
 beforeAll(async () => {
-  const wasmBinary = readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`);
+  const wasmBinary = coreWasmBinary();
   await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
 });
 

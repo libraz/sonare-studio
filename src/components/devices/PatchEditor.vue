@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SynthEnumTables, SynthParamCondition, SynthParamInfo } from '@libraz/libsonare';
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import SelectMenu from '@/components/shell/SelectMenu.vue';
 import { describeError } from '@/lib/errors';
@@ -40,7 +41,6 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import { useShortcutBlockingOverlay } from '@/ui/overlay-registry';
 import { wrapTabFocus } from '@/ui/settings/focus-trap';
 import { TOKENS } from '@/ui/theme/tokens';
-import type { SynthEnumTables, SynthParamCondition, SynthParamInfo } from '@/wasm/index.js';
 
 /**
  * Modal NativeSynth patch editor. The dialog edits a local draft seeded from
@@ -85,7 +85,7 @@ useShortcutBlockingOverlay(computed(() => props.open));
 function resolvePresetPatch(): PresetPatchResolver {
   return (preset) => {
     try {
-      const wasm: Partial<Pick<typeof import('@/wasm/index.js'), 'synthPresetPatch'>> =
+      const wasm: Partial<Pick<typeof import('@libraz/libsonare'), 'synthPresetPatch'>> =
         getWasmModule();
       return typeof wasm.synthPresetPatch === 'function' ? wasm.synthPresetPatch(preset) : null;
     } catch {
@@ -97,7 +97,7 @@ function resolvePresetPatch(): PresetPatchResolver {
 /** Refreshes the enum select tables from the wasm catalog when available. */
 function refreshEnums(): void {
   try {
-    const wasm: Partial<Pick<typeof import('@/wasm/index.js'), 'synthEnumTables'>> =
+    const wasm: Partial<Pick<typeof import('@libraz/libsonare'), 'synthEnumTables'>> =
       getWasmModule();
     enums.value = resolveSynthEnums(
       typeof wasm.synthEnumTables === 'function' ? wasm.synthEnumTables() : null,

@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
+import type { StreamingRetuneConfig } from '@libraz/libsonare';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { StreamingRetuneConfig } from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 const {
   init,
@@ -18,7 +18,7 @@ const {
   retuneProcessMono,
   bridgeProcess,
 } = vi.hoisted(() => ({
-  init: vi.fn<typeof import('@/wasm/worklet.js').init>(() => Promise.resolve()),
+  init: vi.fn<typeof import('@libraz/libsonare/worklet').init>(() => Promise.resolve()),
   isInitialized: vi.fn(() => false),
   receiveSync: vi.fn(),
   receiveCommand: vi.fn(),
@@ -34,7 +34,7 @@ const {
   bridgeProcess: vi.fn(() => true),
 }));
 
-vi.mock('@/wasm/worklet.js', () => ({
+vi.mock('@libraz/libsonare/worklet', () => ({
   init,
   isInitialized,
   SonareRealtimeEngineWorkletProcessor: class {
@@ -52,11 +52,11 @@ vi.mock('@/wasm/worklet.js', () => ({
   },
 }));
 
-vi.mock('@/wasm/index.js', () => ({
+vi.mock('@libraz/libsonare', () => ({
   init: indexInit,
   isInitialized: indexIsInitialized,
   StreamingRetune: class
-    implements Partial<InstanceType<typeof import('@/wasm/index.js').StreamingRetune>>
+    implements Partial<InstanceType<typeof import('@libraz/libsonare').StreamingRetune>>
   {
     constructor(readonly initialConfig?: StreamingRetuneConfig) {}
     prepare = vi.fn();
@@ -360,8 +360,8 @@ describe('worklet-entry dispatch', () => {
 
 describe('streaming retune config against the real core', () => {
   it('applies the config the worklet forwards', async () => {
-    const actual = await vi.importActual<typeof import('@/wasm/index.js')>('@/wasm/index.js');
-    await actual.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    const actual = await vi.importActual<typeof import('@libraz/libsonare')>('@libraz/libsonare');
+    await actual.init({ wasmBinary: coreWasmBinary() });
     const retune = new actual.StreamingRetune();
     try {
       retune.prepare(48000, 128);

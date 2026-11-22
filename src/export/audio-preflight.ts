@@ -1,5 +1,6 @@
 /** Audio-export preflight for omissions that would otherwise become silence. */
 
+import type { MasteringInsertName } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
 import {
   type AudioAssetMeta,
@@ -19,7 +20,6 @@ import {
 } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
-import type { MasteringInsertName } from '@/wasm/index.js';
 import {
   ppqSpanIntersectsRange,
   programOutputDocument,

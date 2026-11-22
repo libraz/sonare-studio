@@ -16,6 +16,7 @@
  * receives a dense batch late.
  */
 
+import type { ExternalMidiEvent } from '@libraz/libsonare';
 import {
   listenStateChange,
   type MidiAccessLike,
@@ -25,7 +26,6 @@ import {
 } from '@/lib/web-midi';
 import { type ExternalMidiInstrument, effectiveTrackInstrument } from '@/project/instrument';
 import type { EditorTrack } from '@/project/types';
-import type { ExternalMidiEvent } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 
 /** A single track's external-MIDI routing: where its MIDI goes and on which channel. */

@@ -1,7 +1,7 @@
+import type { TranscribeResult } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { MAX_POLYPHONIC_SECONDS, transcribeAudioClip } from '@/project/audio-transcription';
-import type { TranscribeResult } from '@/wasm/index.js';
 
 const RATE = 1_000;
 const SECONDS = 2 * MAX_POLYPHONIC_SECONDS + 10;

@@ -97,7 +97,7 @@ export function gm2DrumBank(kitLsb: number): number {
  * this module stays free of a hard dependency on the wasm store.
  */
 export type DrumKitNameSource = Partial<
-  Pick<typeof import('@/wasm/index.js'), 'gm2DrumSetName' | 'gm2DrumName'>
+  Pick<typeof import('@libraz/libsonare'), 'gm2DrumSetName' | 'gm2DrumName'>
 >;
 
 /**

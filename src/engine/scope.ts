@@ -1,5 +1,5 @@
+import type { WorkletScopeSnapshot } from '@libraz/libsonare/worklet';
 import type { EngineHandle } from '@/engine/engine.js';
-import type { WorkletScopeSnapshot } from '@/wasm/worklet.js';
 import { MASTER_METER_TARGET_ID } from './meter-targets';
 import { createTargetListeners } from './target-listeners';
 

@@ -1,5 +1,5 @@
+import type { RealtimeEngine } from '@libraz/libsonare';
 import type { SmfSysExPacket } from '@/project/types';
-import type { RealtimeEngine } from '@/wasm/index.js';
 
 /** Maximum SysEx frame accepted by libsonare's realtime engine. */
 export const MAX_REALTIME_SYSEX_BYTES = 512;

@@ -9,15 +9,15 @@
  * buses/sends, realtime instruments, automation, tempo map) by construction.
  */
 
-import { ensureWasm } from '@/lib/wasm';
-import type { InsertParamValue } from '@/project/mixer';
 import type {
   LufsResult,
   MasteringChainConfig,
   MasteringPreset,
   MasteringProcessorParams,
   SoloProcessor,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { ensureWasm } from '@/lib/wasm';
+import type { InsertParamValue } from '@/project/mixer';
 
 /** Thrown when an offline render is cancelled via its shouldCancel option. */
 export class MixdownCancelledError extends Error {
@@ -231,7 +231,7 @@ export interface MixdownResult {
 /** Narrow runtime view of the wasm module used to build the default seams. */
 type MixdownWasmSurface = Partial<
   Pick<
-    typeof import('@/wasm/index.js'),
+    typeof import('@libraz/libsonare'),
     | 'masteringApplyProcessorStereo'
     | 'masterAudioStereo'
     | 'meteringTruePeakDbtp'

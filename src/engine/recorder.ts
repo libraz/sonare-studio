@@ -27,16 +27,16 @@
  * here starts playback.
  */
 
-import { dbToLinear } from '@/lib/db';
-import { errorMessage } from '@/lib/errors';
-import { ensureWasm } from '@/lib/wasm';
-import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import type {
   CapturePunch,
   EngineCaptureStatus,
   RealtimeVoiceChangerConfigInput,
   StreamingRetuneConfig,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { dbToLinear } from '@/lib/db';
+import { errorMessage } from '@/lib/errors';
+import { ensureWasm } from '@/lib/wasm';
+import { type NormalizedTempoMap, ppqToSeconds, secondsToPpq } from '@/project/tempo-map';
 import type { EngineHandle } from './engine';
 import {
   bindRealtimeVoiceChangerInput,

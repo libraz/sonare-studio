@@ -1,8 +1,8 @@
+import type { WebMidiBinding, WebMidiEngine } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { effectScope } from 'vue';
 import { useWebMidi } from '@/composables/useWebMidi';
-import type { WebMidiBinding, WebMidiEngine } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
 import { webMidiInputInfo } from './fakes/analysis';
 
 class FakeMidiInput {

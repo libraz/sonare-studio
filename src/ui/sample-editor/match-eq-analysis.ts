@@ -8,7 +8,7 @@ import type {
   MatchEqCurveResult,
   MatchReferenceLoudnessResult,
   MatchTonalBalanceBand,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 
 /** The combined Match EQ analysis shown next to the applied match. */
 export interface MatchEqAnalysis {

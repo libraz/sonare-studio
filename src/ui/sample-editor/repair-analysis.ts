@@ -8,7 +8,7 @@ import type {
   MasteringRepairAnalysis,
   MasteringRepairStage,
   MasteringRepairStageName,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 
 /** One measured defect in a channel summary; `kind` selects the localized label. */
 export interface RepairDefectItem {

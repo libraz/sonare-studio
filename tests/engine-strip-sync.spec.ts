@@ -1,3 +1,4 @@
+import { type EqBandInput, ErrorCode, SonareError } from '@libraz/libsonare';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { linearToDb } from '@/engine/mixer-sync';
@@ -18,7 +19,6 @@ import {
   type SurroundPan,
 } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
-import { type EqBandInput, ErrorCode, SonareError } from '@/wasm/index.js';
 import { fakeEngineHandle, unsupportedProcessor } from './fakes/engine';
 
 type RuntimeModule = NonNullable<ReturnType<typeof import('@/project/runtime').currentWasmModule>>;

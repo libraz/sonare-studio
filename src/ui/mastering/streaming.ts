@@ -11,12 +11,12 @@
  * platform configs so users are not limited to the wasm build's default list.
  */
 
-import type { MixdownReport } from '@/export/mixdown';
 import type {
   MasteringStreamingPreviewPlatform,
   MasteringStreamingPreviewResult,
   StreamingPlatform,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import type { MixdownReport } from '@/export/mixdown';
 
 /** Editable default target set shown by the mastering panel. */
 export const DEFAULT_STREAMING_PLATFORMS: readonly StreamingPlatform[] = [

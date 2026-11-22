@@ -1,3 +1,4 @@
+import type { MasteringStreamingPreviewResult } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import {
   invalidStreamingPlatformCount,
@@ -5,7 +6,6 @@ import {
   streamingTargetsFromPreview,
   streamingTargetsFromReport,
 } from '@/ui/mastering/streaming';
-import type { MasteringStreamingPreviewResult } from '@/wasm/index.js';
 
 /** A representative streaming-preview result. */
 const SAMPLE: MasteringStreamingPreviewResult = {

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   createInsertPdcPlan,
@@ -8,7 +8,7 @@ import {
   insertLatencyResolverFromCatalog,
 } from '@/project/insert-latency';
 import { createDefaultStrip } from '@/project/mixer';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 describe('insert latency helpers', () => {
   it('sums enabled insert latencies from catalog metadata', () => {
@@ -150,7 +150,7 @@ describe('insert latency helpers', () => {
 
 describe('insert latency against the real core catalog', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('reports the latency of a linear-phase EQ and none for a zero-latency insert', () => {

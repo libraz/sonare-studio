@@ -16,7 +16,7 @@
  * by the project document (PROJECT_DOCUMENT_SCHEMA_VERSION).
  */
 
-import type { SynthPatch } from '@/wasm/index.js';
+import type { SynthPatch } from '@libraz/libsonare';
 import { cloneJson } from './clone-json';
 import { canonicalJson, fnv1a32Hex } from './hash';
 

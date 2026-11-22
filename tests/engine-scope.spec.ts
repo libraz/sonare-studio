@@ -1,7 +1,7 @@
+import type { WorkletScopeSnapshot } from '@libraz/libsonare/worklet';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { createScopeBridge } from '@/engine/scope';
-import type { WorkletScopeSnapshot } from '@/wasm/worklet.js';
 
 /** One scope snapshot with overridable fields. */
 function makeSnapshot(overrides: Partial<WorkletScopeSnapshot> = {}): WorkletScopeSnapshot {

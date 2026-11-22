@@ -52,7 +52,7 @@ function listed(patterns: string[]): string[] {
     .toString()
     .trim()
     .split('\n')
-    .filter((file) => file !== '' && !file.startsWith('src/wasm/'));
+    .filter((file) => file !== '');
 }
 
 function scriptText(file: string): string {

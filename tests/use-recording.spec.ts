@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import type { RealtimeVoiceChangerConfigInput } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed, effectScope, ref, shallowRef } from 'vue';
@@ -27,8 +28,7 @@ import {
   CUSTOM_VOICE_PRESET_TEMPLATE,
   parseCustomVoicePreset,
 } from '@/ui/shell/custom-voice-preset';
-import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { fakeEngineHandle } from './fakes/engine';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
@@ -1716,7 +1716,7 @@ describe('useRecording', () => {
 
 describe('custom voice changer presets against the real core', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   const build = (config: RealtimeVoiceChangerConfigInput) =>

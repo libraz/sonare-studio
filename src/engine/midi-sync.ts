@@ -25,6 +25,7 @@
  *   note velocities retain their musical meaning.
  */
 
+import type { EngineMidiClipSchedule, EngineMidiEvent } from '@libraz/libsonare';
 import {
   type GsSysExDestination,
   MAX_REALTIME_SYSEX_BYTES,
@@ -65,7 +66,6 @@ import {
 } from '@/project/soundfont-conflicts';
 import { normalizeTempoMap, ppqToSamples } from '@/project/tempo-map';
 import { clipKind, type EditorClip, type EditorTrack, type TempoSegment } from '@/project/types';
-import type { EngineMidiClipSchedule, EngineMidiEvent } from '@/wasm/index.js';
 import type { EngineHandle } from './engine';
 
 /** A compiled MIDI event; studio always places it at an explicit render frame. */

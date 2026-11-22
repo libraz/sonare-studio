@@ -61,7 +61,7 @@ import {
   type WasmOpAvailability,
   wasmOpAvailability,
 } from '@/ui/sample-editor/wasm-ops';
-import type { MasteringRepairStageName } from '@/wasm/index.js';
+import type { MasteringRepairStageName } from '@libraz/libsonare';
 
 /**
  * Sample editor panel: shows the full waveform of one stored audio asset

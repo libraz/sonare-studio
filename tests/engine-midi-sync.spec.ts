@@ -1,3 +1,4 @@
+import type { SynthPatch } from '@libraz/libsonare';
 import { describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import { pushGsSetupSysex } from '@/engine/gs-sysex';
@@ -5,7 +6,6 @@ import { buildMidiClipSchedules, createMidiSync, midiStateAtPpq } from '@/engine
 import { DEFAULT_SYNTH_PRESET } from '@/project/instrument';
 import { DEFAULT_MIDI_FX_CONFIG, midiFxConfig } from '@/project/midi-fx';
 import type { EditorClip, EditorNote, EditorTrack, TempoSegment } from '@/project/types';
-import type { SynthPatch } from '@/wasm/index.js';
 
 /** Render rate of the mock engine context. */
 const SAMPLE_RATE = 48000;

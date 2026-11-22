@@ -3,6 +3,7 @@
  * offline export renderer (see engine-render.ts).
  */
 
+import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@libraz/libsonare';
 import { resolveAutomationId } from '@/engine/automation-ids';
 import type { InsertTailResolver } from '@/export/audio-preflight';
 import type { ClipPageBindingFactory } from '@/export/clip-page-stream';
@@ -10,7 +11,6 @@ import type { MasteringCapabilityLookup } from '@/export/mastering-automation';
 import type { MixdownDeps, MixdownRange, MixdownRangePpq, MixdownStem } from '@/export/mixdown';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import type { InsertLatencyResolver } from '@/project/insert-latency';
-import type { EngineClip, EngineTrackSend, RealtimeEngine } from '@/wasm/index.js';
 
 /** Frames processed per offline block. */
 export const RENDER_BLOCK_FRAMES = 1024;

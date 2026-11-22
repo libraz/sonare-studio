@@ -13,13 +13,6 @@
  * command/tune.
  */
 
-import { downmixToMono } from '@/lib/audio-channels';
-import type { LoadedAudioAsset } from '@/persistence/assets';
-import {
-  NOTE_DETECT_FRAME,
-  NOTE_DETECT_HOP,
-  NOTE_DETECT_THRESHOLD_CENTS,
-} from '@/ui/sample-editor/wasm-ops';
 import type {
   AssignNoteTargetsRequest,
   AssignNoteTargetsResult,
@@ -28,7 +21,14 @@ import type {
   NoteTarget,
   NoteTargetUnmatchedPolicy,
   RenderNotesRequest,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { downmixToMono } from '@/lib/audio-channels';
+import type { LoadedAudioAsset } from '@/persistence/assets';
+import {
+  NOTE_DETECT_FRAME,
+  NOTE_DETECT_HOP,
+  NOTE_DETECT_THRESHOLD_CENTS,
+} from '@/ui/sample-editor/wasm-ops';
 import { projectMidiNoteOccurrences } from './midi-projection';
 import { type NormalizedTempoMap, ppqToSeconds } from './tempo-map';
 import type { EditorClip } from './types';

@@ -102,7 +102,7 @@ import type {
   VoiceChangeRequest,
   WaveformPeaksReport,
   WebMidiInputInfo,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 
 // ---------------------------------------------------------------------------
 // Function fakes

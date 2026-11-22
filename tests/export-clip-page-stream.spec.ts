@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAssetClipPageBindingFactory } from '@/export/clip-page-binding';
 import {
@@ -22,13 +22,13 @@ import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { sliceAudioClipWindow } from '@/project/scheduling';
 import type { DocumentClip, ProjectDocument } from '@/project/serialization';
 import { normalizeTempoMap } from '@/project/tempo-map';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import {
   recordedClipPageProviders,
   resetRecordedClipPageProviders,
 } from './recording-clip-page-provider';
 
-vi.mock('@/wasm/index.js', async (importOriginal) => {
+vi.mock('@libraz/libsonare', async (importOriginal) => {
   const { withRecordingClipPageProvider } = await import('./recording-clip-page-provider');
   return withRecordingClipPageProvider(await importOriginal());
 });
@@ -478,7 +478,7 @@ describe('AudioClipStreamSession', () => {
 
 describe('createAssetClipPageBindingFactory', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
   beforeEach(resetRecordedClipPageProviders);
 

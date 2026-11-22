@@ -1,3 +1,4 @@
+import type { Section } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
@@ -7,7 +8,6 @@ import {
 } from '@/project/audio-sections';
 import { groupSectionRepeats, sectionChromaVector } from '@/project/section-repeats';
 import { TRACK_COLOR_PALETTE } from '@/project/types';
-import type { Section } from '@/wasm/index.js';
 
 /** A minimal audio-clip window with neutral defaults. */
 function clipWindow(

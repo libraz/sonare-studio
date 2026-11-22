@@ -14,8 +14,8 @@
  * dependency-injected for testing; the merge/commit lives in command/timeline.
  */
 
+import type { ChromaResult, Section, SectionAnalysis, SectionType } from '@libraz/libsonare';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import type { ChromaResult, Section, SectionAnalysis, SectionType } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import {
   type ChromaFeatures,

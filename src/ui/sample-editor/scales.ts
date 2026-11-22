@@ -9,7 +9,7 @@
  */
 
 import { type NoteNameSystem, namedScaleMask, type ScaleName } from '@libraz/libcantus';
-import type { KeyMode } from '@/wasm/index.js';
+import type { KeyMode } from '@libraz/libsonare';
 import { pitchClassNames } from './note-names';
 
 /**

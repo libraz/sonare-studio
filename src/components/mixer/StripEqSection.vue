@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { EqBandInput, EqBandPhase, EqBandType, EqStereoPlacement } from '@libraz/libsonare';
 import { computed, inject, onBeforeUnmount, shallowRef, watch } from 'vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { MIDI_LEARN_KEY } from '@/composables/useMidiLearn';
@@ -24,7 +25,6 @@ import {
   spectrumDbToFraction,
 } from '@/ui/mixer/spectrum-model';
 import { createValueGesture, type ValueGesture } from '@/ui/mixer/strip-gestures';
-import type { EqBandInput, EqBandPhase, EqBandType, EqStereoPlacement } from '@/wasm/index.js';
 import MixerKnob from './MixerKnob.vue';
 
 /**

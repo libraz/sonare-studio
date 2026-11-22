@@ -38,6 +38,7 @@
  * while keeping bus, master and mastering processing in the one final pass.
  */
 
+import type { SidechainSource } from '@libraz/libsonare';
 import { resolveAutomationId } from '@/engine/automation-ids';
 import {
   ENGINE_DEFAULT_PAN_LAW,
@@ -120,7 +121,6 @@ import { DEFAULT_WARP_VOICES, expandedSoloStates, MAX_WARP_VOICES } from '@/proj
 import type { ProjectDocument } from '@/project/serialization';
 import { hasSoundFontSlotConflict } from '@/project/soundfont-conflicts';
 import { normalizeTempoMap, samplesToPpq } from '@/project/tempo-map';
-import type { SidechainSource } from '@/wasm/index.js';
 import { buildAudioClips, preflightAudioClipMemory } from './engine-render-clips';
 import {
   buildBusRouting,

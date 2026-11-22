@@ -1,3 +1,4 @@
+import type { EqBandInput } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import { createAutomationSync } from '@/engine/automation-sync';
 import type { EngineHandle } from '@/engine/engine';
@@ -11,7 +12,6 @@ import {
 import { createDefaultMixerState, createDefaultStrip, type MixerStrip } from '@/project/mixer';
 import type { ProjectDocument } from '@/project/serialization';
 import type { EditorTrack } from '@/project/types';
-import type { EqBandInput } from '@/wasm/index.js';
 
 type EngineCall = [string, ...unknown[]];
 

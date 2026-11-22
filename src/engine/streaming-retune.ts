@@ -1,4 +1,4 @@
-import type { StreamingRetuneConfig } from '@/wasm/index.js';
+import type { StreamingRetuneConfig } from '@libraz/libsonare';
 import {
   fetchWasmBinary,
   forwardWorkletRuntimeErrors,

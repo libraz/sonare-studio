@@ -8,7 +8,7 @@ import type { EditorNote, EditorTrack } from '@/project/types';
 
 /** The catalog surface of the wasm module. */
 export type GmCatalog = Pick<
-  typeof import('@/wasm/index.js'),
+  typeof import('@libraz/libsonare'),
   | 'gmInstrumentName'
   | 'gm2InstrumentName'
   | 'gm2DrumSetName'

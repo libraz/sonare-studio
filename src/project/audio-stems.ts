@@ -23,14 +23,14 @@
  * clip creation lives in command/stems.
  */
 
-import type { LoadedAudioAsset } from '@/persistence/assets';
 import type {
   HpssRequest,
   HpssResult,
   Matrix2D,
   NnFilterRequest,
   PhaseVocoderRequest,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import type { LoadedAudioAsset } from '@/persistence/assets';
 import {
   type AudibleAudioClipFields,
   type AudioClipSliceTempo,

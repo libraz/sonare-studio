@@ -8,6 +8,7 @@
  * (src/engine/midi-sync.ts).
  */
 
+import type { ProjectMidiEvent, SynthPatch } from '@libraz/libsonare';
 import { ensureWasm } from '@/lib/wasm';
 import { loadFont as loadStoredFont } from '@/project/fonts';
 import {
@@ -19,7 +20,6 @@ import {
   type TrackInstrument,
 } from '@/project/instrument';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
-import type { ProjectMidiEvent, SynthPatch } from '@/wasm/index.js';
 
 /** One note of a MIDI phrase, positioned in quarter-note pulses (PPQ). */
 export interface MidiNote {
@@ -257,7 +257,7 @@ export function midiClipCacheKey(
   return `${CACHE_KEY_VERSION}|sr=${options.sampleRate}|bpm=${tempoBpm}|${instrument}|n=${notes.length}|${hash}`;
 }
 
-type WasmModule = typeof import('@/wasm/index.js');
+type WasmModule = typeof import('@libraz/libsonare');
 
 /**
  * Degrades an unknown synth preset name to the default preset so a stale

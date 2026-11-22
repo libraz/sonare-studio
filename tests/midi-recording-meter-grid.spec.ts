@@ -1,3 +1,4 @@
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMidiRecording } from '@/composables/useMidiRecording';
@@ -6,7 +7,6 @@ import type { EngineHandle } from '@/engine/engine';
 import type { AddRecordedMidiClipInput } from '@/project/command/midi-recording';
 import { clearHistory, setTimeSignatures } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');

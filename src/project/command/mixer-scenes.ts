@@ -1,6 +1,6 @@
+import type { PanLaw } from '@libraz/libsonare';
 import { errorMessage } from '@/lib/errors';
 import { clamp } from '@/lib/math';
-import type { PanLaw } from '@/wasm/index.js';
 import { isBusAutomationTarget, parseInsertAutomationParam } from '../automation';
 import {
   assertValidMixerBusId,

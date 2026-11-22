@@ -1,6 +1,6 @@
+import type { Project } from '@libraz/libsonare';
 import { linearToDb } from '@/lib/db';
 import { audioAssetUri } from '@/persistence/assets';
-import type { Project } from '@/wasm/index.js';
 import { annotationsFromDocument, type ScoreAnnotations } from './annotations';
 import { type AutomationLaneState, sanitizeAutomationEntries } from './automation';
 import { type EditorChordSymbol, sanitizeChordSymbols, toProjectChordSymbols } from './chords';

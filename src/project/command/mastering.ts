@@ -1,4 +1,4 @@
-import type { MasteringChainConfig, MasteringPreset, SoloProcessor } from '@/wasm/index.js';
+import type { MasteringChainConfig, MasteringPreset, SoloProcessor } from '@libraz/libsonare';
 import {
   cloneMasteringChain,
   createDefaultMasteringChain,

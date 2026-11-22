@@ -1,20 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
-import { AUTOMATABLE_SYNTH_PARAMS } from '@/project/instrument';
-import {
-  adsrEnvelopePoints,
-  clampPatchField,
-  createModMatrixRow,
-  createPatchDraft,
-  MAX_MOD_ROUTINGS,
-  modMatrixRows,
-  modRowsToRoutings,
-  PATCH_FIELD_SPECS,
-  patchEditCount,
-  patchFieldSpec,
-  patchFieldsForSection,
-  sanitizePatchDraft,
-} from '@/ui/devices/patch-draft';
-import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 import {
   ARTICULATIONS,
   BUILTIN_SYNTH_WAVEFORMS,
@@ -35,7 +18,24 @@ import {
   SYNTH_OSC_WAVEFORMS,
   SYNTH_RETRIGGERS,
   type SynthPatch,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { describe, expect, it, vi } from 'vitest';
+import { AUTOMATABLE_SYNTH_PARAMS } from '@/project/instrument';
+import {
+  adsrEnvelopePoints,
+  clampPatchField,
+  createModMatrixRow,
+  createPatchDraft,
+  MAX_MOD_ROUTINGS,
+  modMatrixRows,
+  modRowsToRoutings,
+  PATCH_FIELD_SPECS,
+  patchEditCount,
+  patchFieldSpec,
+  patchFieldsForSection,
+  sanitizePatchDraft,
+} from '@/ui/devices/patch-draft';
+import { FALLBACK_SYNTH_ENUMS, resolveSynthEnums } from '@/ui/devices/synth-enums';
 
 describe('patchFieldsForSection', () => {
   it('partitions every spec into exactly one section', () => {

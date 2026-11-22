@@ -1,3 +1,4 @@
+import type { WorkletMeterSnapshot } from '@libraz/libsonare/worklet';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineHandle } from '@/engine/engine';
 import {
@@ -6,7 +7,6 @@ import {
   type StereoMeterLevels,
 } from '@/engine/meters';
 import { SILENCE_DB } from '@/lib/db';
-import type { WorkletMeterSnapshot } from '@/wasm/worklet.js';
 
 /** Full engine meter record with overridable fields. */
 function makeSnapshot(overrides: Partial<WorkletMeterSnapshot> = {}): WorkletMeterSnapshot {

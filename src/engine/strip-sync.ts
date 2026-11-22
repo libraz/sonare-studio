@@ -26,6 +26,12 @@
  * - The master strip has no engine-side sends; mixer.master.sends is ignored.
  */
 
+import type {
+  EngineTrackSend,
+  EqBandInput,
+  MixSceneStripInput,
+  SidechainSource,
+} from '@libraz/libsonare';
 import { SILENCE_DB } from '@/lib/db';
 import { clamp } from '@/lib/math';
 import {
@@ -42,12 +48,6 @@ import {
   vcaOffsetDb,
 } from '@/project/mixer';
 import type { EditorTrack } from '@/project/types';
-import type {
-  EngineTrackSend,
-  EqBandInput,
-  MixSceneStripInput,
-  SidechainSource,
-} from '@/wasm/index.js';
 import {
   type EngineBusDeclaration,
   engineBusGraph,

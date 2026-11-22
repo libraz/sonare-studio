@@ -6,10 +6,10 @@
  * validity rule changes.
  */
 
+import type { EngineAutomationPoint, EqBandInput, PanLaw, PanMode } from '@libraz/libsonare';
 import { SILENCE_DB } from '@/lib/db';
 import type { AutomationCurve } from '@/project/automation';
 import { clampPan, DEFAULT_PAN_LAW, DEFAULT_PAN_MODE, type MixerStrip } from '@/project/mixer';
-import type { EngineAutomationPoint, EqBandInput, PanLaw, PanMode } from '@/wasm/index.js';
 
 /** Bus panner state in the shape accepted by the engine's scene and setters. */
 export interface EngineBusPanState {

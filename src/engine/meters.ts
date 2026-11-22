@@ -1,6 +1,6 @@
+import type { WorkletMeterSnapshot } from '@libraz/libsonare/worklet';
 import type { EngineHandle } from '@/engine/engine.js';
 import { SILENCE_DB } from '@/lib/db';
-import type { WorkletMeterSnapshot } from '@/wasm/worklet.js';
 import { MASTER_METER_TARGET_ID } from './meter-targets';
 import { createTargetListeners } from './target-listeners';
 

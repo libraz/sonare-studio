@@ -13,8 +13,8 @@
  */
 
 import { nearestStep, noteToPitchClass, tryParseNote } from '@libraz/libcantus';
+import type { KeyDetection, MelodyOptions, MelodyPoint, MelodyResult } from '@libraz/libsonare';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import type { KeyDetection, MelodyOptions, MelodyPoint, MelodyResult } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { quantizeNotes } from './audio-transcription';
 import { ppqToSeconds, secondsToPpq } from './tempo-map';

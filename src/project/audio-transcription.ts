@@ -7,10 +7,10 @@
  * contract and one set of memory guards.
  */
 
+import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
 import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
-import type { ProjectMidiEvent, TranscribeResult } from '@/wasm/index.js';
 import { audioClipSegments } from './comping';
 import { pairEventsIntoNotes, type RawNote } from './midi-events';
 import { renderAudibleAudioClipWindow } from './scheduling';

@@ -1,3 +1,4 @@
+import type { MasteringRepairAnalysis } from '@libraz/libsonare';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -5,7 +6,6 @@ import SampleEditor from '@/components/sample-editor/SampleEditor.vue';
 import { ensureWasm } from '@/lib/wasm';
 import type { AudioAssetMeta, LoadedAudioAsset } from '@/persistence/assets';
 import { useProjectStore } from '@/project/store';
-import type { MasteringRepairAnalysis } from '@/wasm/index.js';
 
 const assetStore = vi.hoisted(() => {
   const deleteAsset = vi.fn(async () => undefined);

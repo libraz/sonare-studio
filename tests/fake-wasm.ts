@@ -24,8 +24,8 @@ import type {
   ProjectMarkerKind,
   ProjectTrackKind,
   ProjectWarpMode,
-} from '@/wasm/index.js';
-import { MASTERING_INSERT_NAMES } from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { MASTERING_INSERT_NAMES } from '@libraz/libsonare';
 
 interface FakeEvent {
   ppq: number;
@@ -2231,7 +2231,7 @@ export class FakeStreamingEqualizer {
 }
 
 /** Builds a fake module compatible with the `@/lib/wasm` ensureWasm result. */
-export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
+export function createFakeWasmModule(): typeof import('@libraz/libsonare') {
   return {
     Project: FakeProject,
     midiNoteOn,
@@ -2371,5 +2371,5 @@ export function createFakeWasmModule(): typeof import('@/wasm/index.js') {
     meteringDetectClipping: fakeMeteringDetectClipping,
     lufs: fakeLufs,
     lufsMultichannel: fakeLufsMultichannel,
-  } as unknown as typeof import('@/wasm/index.js');
+  } as unknown as typeof import('@libraz/libsonare');
 }

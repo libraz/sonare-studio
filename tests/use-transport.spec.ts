@@ -1,10 +1,10 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
+import { type EngineTelemetry, ErrorCode, SonareError } from '@libraz/libsonare';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { shallowRef } from 'vue';
 import { useTransport } from '@/composables/useTransport';
 import type { EngineHandle } from '@/engine/engine';
-import * as core from '@/wasm/index.js';
-import { type EngineTelemetry, ErrorCode, SonareError } from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { fakeEngineHandle } from './fakes/engine';
 
 /** The refusal a full engine command ring raises. */
@@ -373,7 +373,7 @@ describe('useTransport', () => {
 
 describe('useTransport against the real engine telemetry', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('follows the timeline position the engine reports per block', () => {

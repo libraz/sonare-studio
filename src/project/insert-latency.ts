@@ -3,7 +3,7 @@ import type {
   MasteringInsertParamInfo,
   MasteringInsertTiming,
   MasteringInsertTimingRequest,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 import {
   audibleOutputBusId,
   busOutputChain,

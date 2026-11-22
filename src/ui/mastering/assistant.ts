@@ -9,7 +9,7 @@
  * where it differs from the selected preset become the project's overrides.
  */
 
-import type { MasteringChainConfig } from '@/wasm/index.js';
+import type { MasteringChainConfig } from '@libraz/libsonare';
 import { flattenChainConfig, getChainPath, setChainValue } from './chain-config-path';
 
 /** One field the suggestion tuned away from its base preset. */

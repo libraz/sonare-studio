@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Sf2ProgramStatus } from '@libraz/libsonare';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import DeviceInsertChain from '@/components/devices/DeviceInsertChain.vue';
 import Sf2ChannelMap from '@/components/devices/Sf2ChannelMap.vue';
@@ -75,7 +76,6 @@ import { formatMessage, useI18n } from '@/ui/i18n';
 import type { AutomationWriteScheduleEvent } from '@/ui/mixer/automation-mode';
 import { type InsertProcessorEntry, loadInsertCatalogEntries } from '@/ui/mixer/insert-catalog';
 import { formatSize } from '@/ui/shell/format';
-import type { Sf2ProgramStatus } from '@/wasm/index.js';
 import StripAutomationControls from '../mixer/StripAutomationControls.vue';
 import AmpSimEditor from './AmpSimEditor.vue';
 import PatchEditor from './PatchEditor.vue';
@@ -396,7 +396,7 @@ function presetCategoryLabel(category: PresetCategory): string {
 
 function refreshPresetCatalog(): void {
   try {
-    const wasm: Partial<Pick<typeof import('@/wasm/index.js'), 'synthPresetNames'>> =
+    const wasm: Partial<Pick<typeof import('@libraz/libsonare'), 'synthPresetNames'>> =
       getWasmModule();
     presetCatalog.value =
       typeof wasm.synthPresetNames === 'function' ? wasm.synthPresetNames() : [];

@@ -7,8 +7,8 @@
  * need PCM render it through the same engine mode.
  */
 
+import type { Project, ProjectWarpMapDesc } from '@libraz/libsonare';
 import { ensureWasm } from '@/lib/wasm';
-import type { Project, ProjectWarpMapDesc } from '@/wasm/index.js';
 import { nativeClipWarps, readNativeDocument } from './native-document';
 import { type NormalizedTempoMap, ppqToSamples } from './tempo-map';
 import type { ClipWarp, WarpAnchor } from './types';

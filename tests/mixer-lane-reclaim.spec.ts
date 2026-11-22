@@ -1,3 +1,4 @@
+import type { SonareEngine } from '@libraz/libsonare/worklet';
 import { createPinia, setActivePinia } from 'pinia';
 import { describe, expect, it, vi } from 'vitest';
 import { effectScope, ref, shallowRef } from 'vue';
@@ -8,7 +9,6 @@ import type { StripSync } from '@/engine/strip-sync';
 import { createDefaultStrip, MAX_TRACK_LANES } from '@/project/mixer';
 import { useProjectStore } from '@/project/store';
 import type { EditorTrack } from '@/project/types';
-import type { SonareEngine } from '@/wasm/worklet.js';
 
 type MixerLaneEngine = Pick<
   SonareEngine,

@@ -10,9 +10,9 @@
  * dependency-injected; the command wires the wasm call and the undoable edit.
  */
 
+import type { AlignTakeToReferenceRequest, AlignTakeToReferenceResult } from '@libraz/libsonare';
 import { downmixToMono } from '@/lib/audio-channels';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import type { AlignTakeToReferenceRequest, AlignTakeToReferenceResult } from '@/wasm/index.js';
 import {
   type AudibleAudioClipFields,
   audioClipWindowFrames,

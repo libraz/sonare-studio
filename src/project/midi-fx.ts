@@ -15,8 +15,8 @@
  * All PPQ values are in the editor convention where 1.0 = one quarter note.
  */
 
+import type { MidiFxConfig as EngineMidiFxConfig } from '@libraz/libsonare';
 import { clamp, clampInt } from '@/lib/math';
-import type { MidiFxConfig as EngineMidiFxConfig } from '@/wasm/index.js';
 
 /** A complete MIDI-FX transform configuration (UI-facing, pre-serialization). */
 export interface MidiFxConfig {

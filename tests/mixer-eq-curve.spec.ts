@@ -1,6 +1,6 @@
+import type { EqBandInput } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import { eqBandResponseDb, eqCurve, eqCurvePath } from '@/ui/mixer/eq-curve';
-import type { EqBandInput } from '@/wasm/index.js';
 
 describe('eqBandResponseDb', () => {
   it('a peak band boosts by its gain at the center frequency', () => {

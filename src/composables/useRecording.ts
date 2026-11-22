@@ -16,6 +16,7 @@
  * than two passes stays one clip, clamped to the same window.
  */
 
+import type { RealtimeVoiceChangerConfigInput } from '@libraz/libsonare';
 import type { MaybeRefOrGetter, Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, toValue, watch } from 'vue';
 import type { EngineHandle } from '@/engine/engine';
@@ -53,7 +54,6 @@ import {
   secondsToPpq as secondsToPpqMap,
 } from '@/project/tempo-map';
 import { formatMessage, useI18n } from '@/ui/i18n';
-import type { RealtimeVoiceChangerConfigInput } from '@/wasm/index.js';
 import { createCountInController, resolveTransportRecordingPlan } from './recording-count-in';
 import type { UseTransportReturn } from './useTransport';
 

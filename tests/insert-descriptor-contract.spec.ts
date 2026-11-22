@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import * as wasm from '@libraz/libsonare';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   catalogParamInfo,
@@ -16,11 +16,11 @@ import {
   groupInsertCatalogEntries,
   loadInsertCatalogEntries,
 } from '@/ui/mixer/insert-catalog';
-import * as wasm from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 beforeAll(async () => {
   await wasm.init({
-    wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`),
+    wasmBinary: coreWasmBinary(),
   } as Parameters<typeof wasm.init>[0]);
   setWasmModule(wasm as unknown as Parameters<typeof setWasmModule>[0]);
 });

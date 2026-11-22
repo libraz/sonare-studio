@@ -1,13 +1,13 @@
-import { readFileSync } from 'node:fs';
+import * as core from '@libraz/libsonare';
 import { strFromU8, unzipSync } from 'fflate';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { exportDawproject, importDawproject } from '@/export/dawproject';
 import { setWasmModule } from '@/project/runtime';
 import type { ProjectDocument } from '@/project/serialization';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 beforeAll(async () => {
-  await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+  await core.init({ wasmBinary: coreWasmBinary() });
   setWasmModule(core);
 });
 

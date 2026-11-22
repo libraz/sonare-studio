@@ -1,20 +1,20 @@
-import { errorMessage } from '@/lib/errors';
 import {
   init as initIndexModule,
   isInitialized as isIndexInitialized,
   StreamingRetune,
   type StreamingRetuneConfig,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
 import type {
   SonareRealtimeEngineWorkletProcessorOptions,
   SonareRealtimeVoiceChangerWorkletProcessorOptions,
-} from '@/wasm/worklet.js';
+} from '@libraz/libsonare/worklet';
 import {
   init,
   isInitialized,
   SonareRealtimeEngineWorkletProcessor,
   SonareRealtimeVoiceChangerWorkletProcessor,
-} from '@/wasm/worklet.js';
+} from '@libraz/libsonare/worklet';
+import { errorMessage } from '@/lib/errors';
 
 // AudioWorkletGlobalScope globals are not part of the TS DOM/WebWorker libs.
 declare const AudioWorkletProcessor: new () => { readonly port: MessagePort };

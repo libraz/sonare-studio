@@ -1,14 +1,14 @@
-import { readFileSync } from 'node:fs';
+import * as wasm from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { LoadedAudioAsset } from '@/persistence/assets';
 import { alignClipWarp, thinAnchors } from '@/project/take-alignment';
 import { normalizeTempoMap } from '@/project/tempo-map';
 import { warpSourceSecondsAt } from '@/project/warp';
-import * as wasm from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 
 // The alignment itself runs in the real engine; a stub could not match chroma.
 beforeAll(async () => {
-  const wasmBinary = readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`);
+  const wasmBinary = coreWasmBinary();
   await wasm.init({ wasmBinary } as Parameters<typeof wasm.init>[0]);
 });
 

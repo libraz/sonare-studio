@@ -4,7 +4,7 @@
  * compile error here rather than a silently ignored override.
  */
 
-import type { MasteringChainConfig } from '@/wasm/index.js';
+import type { MasteringChainConfig } from '@libraz/libsonare';
 
 type Leaf = number | boolean | string;
 

@@ -1,3 +1,4 @@
+import type { HpssRequest } from '@libraz/libsonare';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAudioAssetCache, listAssets, loadAsset, saveAsset } from '@/persistence/assets';
@@ -35,7 +36,6 @@ import {
 } from '@/project/serialization';
 import { getProject, useProjectStore } from '@/project/store';
 import { type WarpedClipSource, warpSourceSecondsAt } from '@/project/warp';
-import type { HpssRequest } from '@/wasm/index.js';
 import { installMockOpfs, MemoryFileHandle, uninstallMockOpfs } from './opfs-mock';
 
 const wasmModule = vi.hoisted(() => ({

@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type EngineCreateOptions = NonNullable<
-  Parameters<typeof import('@/wasm/worklet.js').SonareEngine.create>[1]
+  Parameters<typeof import('@libraz/libsonare/worklet').SonareEngine.create>[1]
 >;
 
 const hoisted = vi.hoisted(() => ({
   captured: [] as EngineCreateOptions[],
 }));
 
-vi.mock('@/wasm/worklet.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/wasm/worklet.js')>();
+vi.mock('@libraz/libsonare/worklet', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@libraz/libsonare/worklet')>();
   return {
     ...actual,
     init: vi.fn(async () => undefined),
@@ -21,10 +21,10 @@ vi.mock('@/wasm/worklet.js', async (importOriginal) => {
     },
   };
 });
-vi.mock('@/wasm/sonare.wasm?url', () => ({ default: '/sonare.wasm' }));
+vi.mock('@libraz/libsonare/wasm?url', () => ({ default: '/sonare.wasm' }));
 
+import { SonareRealtimeEngineNode } from '@libraz/libsonare/worklet';
 import { createEngine } from '@/engine/engine';
-import { SonareRealtimeEngineNode } from '@/wasm/worklet.js';
 import { fakeAudioContext } from './fakes/engine';
 
 class NodeConstructionReached extends Error {}

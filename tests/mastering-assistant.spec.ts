@@ -1,3 +1,4 @@
+import type { MasteringChainConfig } from '@libraz/libsonare';
 import { describe, expect, it } from 'vitest';
 import { suggestedAdjustments, suggestedPresetOverrides } from '@/ui/mastering/assistant';
 import {
@@ -7,7 +8,6 @@ import {
   isEmptyChainConfig,
   setChainPath,
 } from '@/ui/mastering/chain-config-path';
-import type { MasteringChainConfig } from '@/wasm/index.js';
 
 const SUGGESTED: MasteringChainConfig = {
   loudness: { targetLufs: -14, ceilingDbtp: -1 },

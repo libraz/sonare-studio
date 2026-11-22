@@ -1,3 +1,11 @@
+import type {
+  Project,
+  ProjectClip,
+  ProjectMarker,
+  ProjectMarkerKind,
+  ProjectMidiEvent,
+  ProjectTrack,
+} from '@libraz/libsonare';
 import { keyMarkerName, keySignatureFromName } from '@/compose/key-name';
 import { GM_PERCUSSION_CHANNEL } from '@/compose/tracks';
 import {
@@ -9,14 +17,6 @@ import {
 import { dbToLinear, linearToDb } from '@/lib/db';
 import { clampInt } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
-import type {
-  Project,
-  ProjectClip,
-  ProjectMarker,
-  ProjectMarkerKind,
-  ProjectMidiEvent,
-  ProjectTrack,
-} from '@/wasm/index.js';
 import {
   effectiveTrackInstrument,
   GM2_DRUM_BANK,
@@ -266,7 +266,7 @@ interface TrackGroupKey {
   bank?: number;
 }
 
-type WasmModule = typeof import('@/wasm/index.js');
+type WasmModule = typeof import('@libraz/libsonare');
 
 function projectNameFromFileName(fileName?: string): string {
   const trimmed = (fileName ?? '').trim();

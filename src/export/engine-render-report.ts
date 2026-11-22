@@ -4,9 +4,9 @@
  * metering seam, matching the renderMixdown report shape.
  */
 
+import type { LufsResult } from '@libraz/libsonare';
 import type { MixdownDeps, MixdownReport } from '@/export/mixdown';
 import { peakDb } from '@/lib/db';
-import type { LufsResult } from '@/wasm/index.js';
 
 function applyLoudness(report: MixdownReport, measurement: LufsResult): void {
   if (

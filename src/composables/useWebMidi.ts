@@ -1,10 +1,10 @@
+import type { RealtimeEngine, WebMidiBinding, WebMidiInputInfo } from '@libraz/libsonare';
 import type { Ref } from 'vue';
 import { getCurrentScope, onScopeDispose, ref, watch } from 'vue';
 import { errorMessage } from '@/lib/errors';
 import { ensureWasm } from '@/lib/wasm';
 import { listenMidiMessages, midiNavigator } from '@/lib/web-midi';
 import { MidiCc14BitTracker } from '@/ui/midi/midi-cc-input';
-import type { RealtimeEngine, WebMidiBinding, WebMidiInputInfo } from '@/wasm/index.js';
 
 // Structural input/event types derived from the binding so they stay in sync
 // with the library (MidiInputLike / MidiMessageEventLike are not exported).

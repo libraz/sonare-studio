@@ -4,11 +4,11 @@ const hoisted = vi.hoisted(() => ({
   create: vi.fn(),
 }));
 
-vi.mock('@/wasm/worklet.js', () => ({
+vi.mock('@libraz/libsonare/worklet', () => ({
   init: vi.fn(async () => undefined),
   SonareEngine: { create: hoisted.create },
 }));
-vi.mock('@/wasm/sonare.wasm?url', () => ({ default: '/sonare.wasm' }));
+vi.mock('@libraz/libsonare/wasm?url', () => ({ default: '/sonare.wasm' }));
 
 import { createEngine } from '@/engine/engine';
 

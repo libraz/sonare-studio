@@ -14,9 +14,9 @@
  * for testing.
  */
 
+import type { Chord, ChordQuality, detectChords } from '@libraz/libsonare';
 import { type EditorQuality, libcantusQualityToEditor } from '@/compose/chord-quality';
 import type { LoadedAudioAsset } from '@/persistence/assets';
-import type { Chord, ChordQuality, detectChords } from '@/wasm/index.js';
 import { renderAudibleClipMono } from './audible-clip-window';
 import { chordExtensionSignature, type EditorChordSymbol } from './chords';
 import { ppqToSeconds, secondsToPpq } from './tempo-map';

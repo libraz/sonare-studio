@@ -9,9 +9,6 @@
  */
 
 import { stepOf } from '@libraz/libcantus';
-import { downmixToMono } from '@/lib/audio-channels';
-import { clamp } from '@/lib/math';
-import { ensureWasm } from '@/lib/wasm';
 import type {
   AutoTuneKey,
   FormantMode,
@@ -22,7 +19,10 @@ import type {
   MaterialPresetName,
   PitchResult,
   RirDiagnostic,
-} from '@/wasm/index.js';
+} from '@libraz/libsonare';
+import { downmixToMono } from '@/lib/audio-channels';
+import { clamp } from '@/lib/math';
+import { ensureWasm } from '@/lib/wasm';
 import type { MatchEqAnalysis } from './match-eq-analysis';
 import { type DetectedNote, onsetSecondsToFrames, silenceSplitMarkers } from './onsets';
 import { cutCrossfadeFrames, resolveRange, type SampleRange, spliceRange } from './ops';
@@ -37,7 +37,7 @@ const SPECTRAL_EDIT_FFT_SIZE = 2048;
 /** The subset of the libsonare module consumed by the sample editor. */
 export type SampleEditorWasmOps = Partial<
   Pick<
-    typeof import('@/wasm/index.js'),
+    typeof import('@libraz/libsonare'),
     | 'pitchShift'
     | 'pitchCorrectToMidi'
     | 'pitchYin'

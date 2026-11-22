@@ -1,9 +1,9 @@
-import { readFileSync } from 'node:fs';
+import type { SoloProcessor } from '@libraz/libsonare';
+import * as core from '@libraz/libsonare';
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { InsertSlot } from '@/project/mixer';
 import { clampControlValue, masteringProcessorControls } from '@/ui/mastering/chain-controls';
-import type { SoloProcessor } from '@/wasm/index.js';
-import * as core from '@/wasm/index.js';
+import { coreWasmBinary } from './core-package';
 import { fakeParamInfo, unsupportedProcessor } from './fakes/engine';
 
 const COMPRESSOR_INFO = [
@@ -126,7 +126,7 @@ describe('mastering chain controls', () => {
 
 describe('mastering chain controls against the real core catalog', () => {
   beforeAll(async () => {
-    await core.init({ wasmBinary: readFileSync(`${process.cwd()}/src/wasm/sonare.wasm`) });
+    await core.init({ wasmBinary: coreWasmBinary() });
   });
 
   it('derives the display range of compressor controls from the core descriptors', () => {
