@@ -14,9 +14,17 @@
  * project archive (see src/project/document-schema.ts).
  */
 
-import { MEBIBYTE } from '@/lib/bytes';
-import { FNV1A_OFFSET_BASIS, FNV1A_SECOND_SEED, fnv1a32Bytes } from '@/lib/fnv1a';
-import { isFiniteNumber } from '@/lib/math';
+import { cacheAsset, cachedAsset, cacheSavedAsset, removeCachedAsset } from './asset-cache';
+import { AssetNotFoundError, InvalidAssetError } from './asset-errors';
+import { computeAssetId, deinterleaveChannels, interleaveChannels } from './asset-pcm';
+import {
+  aliasesEqual,
+  decodeStoredRecord,
+  recordFromMeta,
+  sanitizeAudioAssetTags,
+  validatedContentMeta,
+  validateMeta,
+} from './asset-sidecar';
 import {
   bytesEqual,
   isNotFoundError,
@@ -35,6 +43,20 @@ import {
   MAX_AUDIO_SAMPLES,
 } from './resource-limits';
 
+export {
+  audioAssetCacheStats,
+  clearAudioAssetCache,
+  configureAudioAssetCacheByteBudget,
+  DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET,
+} from './asset-cache';
+export { AssetNotFoundError, InvalidAssetError } from './asset-errors';
+export {
+  computeAssetId,
+  deinterleaveChannels,
+  interleaveChannels,
+  interleavedPcmBytes,
+} from './asset-pcm';
+
 /** Directory under the OPFS root that holds the audio assets. */
 const ASSETS_DIR = 'assets';
 
@@ -43,22 +65,6 @@ const PCM_EXTENSION = '.pcm';
 
 /** File extension of the JSON metadata sidecar. */
 const META_EXTENSION = '.json';
-
-/** Thrown when no stored asset matches the requested id. */
-export class AssetNotFoundError extends Error {
-  constructor(id: string) {
-    super(`No stored audio asset with id "${id}"`);
-    this.name = 'AssetNotFoundError';
-  }
-}
-
-/** Thrown when asset inputs or stored asset files are malformed. */
-export class InvalidAssetError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InvalidAssetError';
-  }
-}
 
 /** Optional analysis tags attached to an asset on import. */
 export interface AudioAssetTags {
@@ -132,17 +138,6 @@ export interface AudioAssetAlias {
   tags?: AudioAssetTags;
 }
 
-interface StoredAudioAssetRecord {
-  schemaVersion: 2;
-  content: {
-    id: string;
-    sampleRate: number;
-    numChannels: number;
-    numFrames: number;
-  };
-  aliases: AudioAssetAlias[];
-}
-
 /** Result used by save→project transactions to roll back newly published content. */
 export interface SavedAudioAsset {
   meta: AudioAssetMeta;
@@ -182,151 +177,6 @@ export function audioAssetUri(assetId: string): string {
   return `asset:${assetId}`;
 }
 
-/** In-memory cache of loaded assets (playback re-schedules often). */
-const audioCache = new Map<string, LoadedAudioAsset>();
-
-/** Default retained PCM budget for the decoded-audio LRU (256 MiB). */
-export const DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET = 256 * MEBIBYTE;
-
-let audioCacheByteBudget = DEFAULT_AUDIO_ASSET_CACHE_BYTE_BUDGET;
-let audioCacheBytes = 0;
-
-function loadedAssetBytes(asset: LoadedAudioAsset): number {
-  return asset.channels.reduce((sum, channel) => sum + channel.byteLength, 0);
-}
-
-function removeCachedAsset(id: string): void {
-  const existing = audioCache.get(id);
-  if (!existing) return;
-  audioCache.delete(id);
-  audioCacheBytes -= loadedAssetBytes(existing);
-}
-
-function cachedAsset(id: string): LoadedAudioAsset | undefined {
-  const cached = audioCache.get(id);
-  if (!cached) return undefined;
-  // Map insertion order is the LRU order. Returned buffers remain alive for
-  // current consumers even if a later insertion evicts this cache reference.
-  audioCache.delete(id);
-  audioCache.set(id, cached);
-  return cached;
-}
-
-function cacheAsset(id: string, asset: LoadedAudioAsset): void {
-  removeCachedAsset(id);
-  const bytes = loadedAssetBytes(asset);
-  if (bytes > audioCacheByteBudget) return;
-  while (audioCache.size > 0 && audioCacheBytes + bytes > audioCacheByteBudget) {
-    const oldest = audioCache.keys().next().value;
-    if (oldest === undefined) break;
-    removeCachedAsset(oldest);
-  }
-  audioCache.set(id, asset);
-  audioCacheBytes += bytes;
-}
-
-/**
- * Warms the cache after a save, deinterleaving only when the result is kept.
- * Unchanged content never re-deinterleaves: a cached entry just takes the
- * latest metadata, and an uncached one stays uncached.
- */
-function cacheSavedAsset(
-  meta: AudioAssetMeta,
-  interleaved: Float32Array,
-  numChannels: number,
-  created: boolean,
-): void {
-  const existing = audioCache.get(meta.id);
-  if (!created && !existing) return;
-  if (interleaved.byteLength > audioCacheByteBudget) {
-    removeCachedAsset(meta.id);
-    return;
-  }
-  const channels =
-    !created && existing ? existing.channels : deinterleaveChannels(interleaved, numChannels);
-  cacheAsset(meta.id, { meta, channels });
-}
-
-/** Current decoded-audio LRU usage for diagnostics and memory tests. */
-export function audioAssetCacheStats(): {
-  entries: number;
-  bytes: number;
-  budgetBytes: number;
-  /** Least-recently-used to most-recently-used ids. */
-  ids: string[];
-} {
-  return {
-    entries: audioCache.size,
-    bytes: audioCacheBytes,
-    budgetBytes: audioCacheByteBudget,
-    ids: [...audioCache.keys()],
-  };
-}
-
-/** Sets the decoded-audio cache byte budget and evicts least-recently-used entries. */
-export function configureAudioAssetCacheByteBudget(bytes: number): void {
-  if (!Number.isFinite(bytes) || bytes < 0) {
-    throw new RangeError(`Audio cache byte budget must be finite and >= 0, got ${bytes}`);
-  }
-  audioCacheByteBudget = Math.floor(bytes);
-  while (audioCacheBytes > audioCacheByteBudget && audioCache.size > 0) {
-    const oldest = audioCache.keys().next().value;
-    if (oldest === undefined) break;
-    removeCachedAsset(oldest);
-  }
-}
-
-const NUMERIC_TAG_KEYS = [
-  'bpm',
-  'bpmConfidence',
-  'keyConfidence',
-  'timeSignatureConfidence',
-  'syncopation',
-  'patternRegularity',
-  'tempoStability',
-  'dynamicRangeDb',
-  'peakDb',
-  'rmsDb',
-  'crestFactor',
-  'loudnessRangeDb',
-  'brightness',
-  'warmth',
-  'density',
-  'roughness',
-  'complexity',
-  'lufs',
-] as const satisfies ReadonlyArray<keyof AudioAssetTags>;
-
-const STRING_TAG_KEYS = [
-  'key',
-  'timeSignature',
-  'grooveType',
-  'form',
-] as const satisfies ReadonlyArray<keyof AudioAssetTags>;
-
-function sanitizeAudioAssetTags(raw: AudioAssetTags | undefined): AudioAssetTags | undefined {
-  if (!raw) return undefined;
-  const tags: AudioAssetTags = {};
-  for (const key of NUMERIC_TAG_KEYS) {
-    const value = raw[key];
-    if (isFiniteNumber(value)) {
-      if (key !== 'bpm' || value > 0) tags[key] = value;
-    }
-  }
-  for (const key of STRING_TAG_KEYS) {
-    const value = raw[key];
-    if (typeof value === 'string' && value.length > 0) tags[key] = value;
-  }
-  if (typeof raw.isCompressed === 'boolean') tags.isCompressed = raw.isCompressed;
-  return Object.keys(tags).length > 0 ? tags : undefined;
-}
-
-/** Drops all cached asset audio (tests, memory pressure handling). */
-export function clearAudioAssetCache(): void {
-  audioCache.clear();
-  audioCacheBytes = 0;
-}
-
 /** Throws {@link InvalidAssetError} unless the id is a safe file base name. */
 function validateAssetId(id: string): string {
   if (!MEDIA_ID_PATTERN.test(id)) {
@@ -335,210 +185,9 @@ function validateAssetId(id: string): string {
   return id;
 }
 
-/**
- * Computes the deterministic content id of an audio buffer: two seeded
- * 32-bit FNV-1a passes over the raw sample bytes plus a header covering
- * sample rate and channel count, rendered as 16 hex characters.
- *
- * @param interleaved Interleaved samples (frame-major).
- * @param sampleRate Sample rate in Hz.
- * @param numChannels Channel count.
- * @returns A stable 16-character hex id.
- */
-export function computeAssetId(
-  interleaved: Float32Array,
-  sampleRate: number,
-  numChannels: number,
-): string {
-  const header = new TextEncoder().encode(
-    `f32|sr=${sampleRate}|ch=${numChannels}|n=${interleaved.length}|`,
-  );
-  const body = new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength);
-  const a = fnv1a32Bytes(body, fnv1a32Bytes(header, FNV1A_OFFSET_BASIS));
-  const b = fnv1a32Bytes(body, fnv1a32Bytes(header, FNV1A_SECOND_SEED));
-  return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
-}
-
-/**
- * Interleaves planar channel buffers into one frame-major buffer.
- *
- * @param channels Planar channel buffers of equal length (>= 1 channel).
- * @returns Interleaved samples (L R L R ... for stereo).
- * @throws InvalidAssetError on empty input or mismatched channel lengths.
- */
-export function interleaveChannels(channels: ReadonlyArray<Float32Array>): Float32Array {
-  if (channels.length === 0) {
-    throw new InvalidAssetError('Audio must have at least one channel');
-  }
-  const frames = channels[0].length;
-  for (const channel of channels) {
-    if (channel.length !== frames) {
-      throw new InvalidAssetError('All channels must have the same length');
-    }
-  }
-  const out = new Float32Array(frames * channels.length);
-  for (let c = 0; c < channels.length; c++) {
-    const channel = channels[c];
-    for (let i = 0; i < frames; i++) {
-      out[i * channels.length + c] = channel[i];
-    }
-  }
-  return out;
-}
-
-/**
- * Produces an owned byte representation of planar PCM suitable for archive
- * entries and byte-for-byte conflict checks.
- */
-export function interleavedPcmBytes(channels: ReadonlyArray<Float32Array>): Uint8Array {
-  const interleaved = interleaveChannels(channels);
-  return new Uint8Array(interleaved.buffer, interleaved.byteOffset, interleaved.byteLength).slice();
-}
-
-/**
- * Splits an interleaved buffer into planar per-channel buffers.
- *
- * @param interleaved Interleaved samples (frame-major).
- * @param numChannels Channel count (positive integer dividing the length).
- * @returns One Float32Array per channel.
- */
-export function deinterleaveChannels(
-  interleaved: Float32Array,
-  numChannels: number,
-): Float32Array[] {
-  if (!Number.isInteger(numChannels) || numChannels < 1 || numChannels > MAX_AUDIO_CHANNELS) {
-    throw new InvalidAssetError(`numChannels must be a positive integer, got ${numChannels}`);
-  }
-  if (interleaved.length === 0 || interleaved.length > MAX_AUDIO_SAMPLES) {
-    throw new InvalidAssetError(
-      `Audio sample count must be between 1 and ${MAX_AUDIO_SAMPLES}, got ${interleaved.length}`,
-    );
-  }
-  if (interleaved.length % numChannels !== 0) {
-    throw new InvalidAssetError(
-      `Interleaved length ${interleaved.length} is not divisible by ${numChannels} channels`,
-    );
-  }
-  const frames = interleaved.length / numChannels;
-  const channels: Float32Array[] = [];
-  for (let c = 0; c < numChannels; c++) {
-    const out = new Float32Array(frames);
-    for (let i = 0; i < frames; i++) {
-      out[i] = interleaved[i * numChannels + c];
-    }
-    channels.push(out);
-  }
-  return channels;
-}
-
 /** Resolves (creating on demand) the "assets/" directory handle. */
 function assetsDirectory(): Promise<FileSystemDirectoryHandle> {
   return opfsDirectory(ASSETS_DIR);
-}
-
-function validatedContentMeta(
-  value: Partial<AudioAssetMeta>,
-  id: string,
-  alias: AudioAssetAlias,
-): AudioAssetMeta {
-  if (
-    value.id !== id ||
-    typeof value.sampleRate !== 'number' ||
-    !Number.isFinite(value.sampleRate) ||
-    value.sampleRate <= 0 ||
-    value.sampleRate > MAX_AUDIO_SAMPLE_RATE ||
-    !Number.isInteger(value.numChannels) ||
-    (value.numChannels as number) < 1 ||
-    (value.numChannels as number) > MAX_AUDIO_CHANNELS ||
-    !Number.isInteger(value.numFrames) ||
-    (value.numFrames as number) < 1 ||
-    !Number.isSafeInteger((value.numFrames as number) * (value.numChannels as number)) ||
-    (value.numFrames as number) * (value.numChannels as number) > MAX_AUDIO_SAMPLES
-  ) {
-    throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
-  }
-  return {
-    id,
-    name: alias.name,
-    sampleRate: value.sampleRate,
-    numChannels: value.numChannels as number,
-    numFrames: value.numFrames as number,
-    ...(alias.tags ? { tags: { ...alias.tags } } : {}),
-  };
-}
-
-function validateAlias(value: unknown, id: string): AudioAssetAlias {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new InvalidAssetError(`Asset "${id}": malformed metadata alias`);
-  }
-  const raw = value as Partial<AudioAssetAlias>;
-  if (typeof raw.name !== 'string' || raw.name.length === 0) {
-    throw new InvalidAssetError(`Asset "${id}": malformed metadata alias`);
-  }
-  const tags =
-    typeof raw.tags === 'object' && raw.tags !== null
-      ? sanitizeAudioAssetTags(raw.tags as AudioAssetTags)
-      : undefined;
-  return { name: raw.name, ...(tags ? { tags } : {}) };
-}
-
-function recordFromMeta(meta: AudioAssetMeta, aliases: AudioAssetAlias[]): StoredAudioAssetRecord {
-  return {
-    schemaVersion: 2,
-    content: {
-      id: meta.id,
-      sampleRate: meta.sampleRate,
-      numChannels: meta.numChannels,
-      numFrames: meta.numFrames,
-    },
-    aliases: aliases.map((alias) => ({
-      name: alias.name,
-      ...(alias.tags ? { tags: { ...alias.tags } } : {}),
-    })),
-  };
-}
-
-function decodeStoredRecord(
-  value: unknown,
-  id: string,
-): { meta: AudioAssetMeta; aliases: AudioAssetAlias[]; record: StoredAudioAssetRecord } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new InvalidAssetError(`Asset "${id}": metadata sidecar is not a JSON object`);
-  }
-  const raw = value as Partial<StoredAudioAssetRecord> & Partial<AudioAssetMeta>;
-  if (raw.schemaVersion === 2) {
-    if (
-      typeof raw.content !== 'object' ||
-      raw.content === null ||
-      !Array.isArray(raw.aliases) ||
-      raw.aliases.length === 0
-    ) {
-      throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
-    }
-    const aliases = raw.aliases.map((alias) => validateAlias(alias, id));
-    const meta = validatedContentMeta(
-      raw.content as Partial<AudioAssetMeta>,
-      id,
-      aliases[aliases.length - 1],
-    );
-    return { meta, aliases, record: recordFromMeta(meta, aliases) };
-  }
-  // Legacy v1 sidecars stored the mutable display metadata beside content.
-  if (typeof raw.name !== 'string' || raw.name.length === 0) {
-    throw new InvalidAssetError(`Asset "${id}": malformed metadata sidecar`);
-  }
-  const alias = validateAlias({ name: raw.name, tags: raw.tags }, id);
-  const meta = validatedContentMeta(raw, id, alias);
-  return { meta, aliases: [alias], record: recordFromMeta(meta, [alias]) };
-}
-
-/** Validates a parsed sidecar object into an {@link AudioAssetMeta}. */
-function validateMeta(value: unknown, id: string): AudioAssetMeta {
-  return decodeStoredRecord(value, id).meta;
-}
-
-function aliasesEqual(a: AudioAssetAlias, b: AudioAssetAlias): boolean {
-  return a.name === b.name && JSON.stringify(a.tags ?? {}) === JSON.stringify(b.tags ?? {});
 }
 
 async function readOptionalFile(

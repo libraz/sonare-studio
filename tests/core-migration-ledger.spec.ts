@@ -44,7 +44,11 @@ const STUDIO_OWNED: ReadonlyArray<{ name: string; files: string[]; reason: strin
   {
     name: 'aliases',
     reason: 'asset and font sidecar alias lists',
-    files: ['src/persistence/assets.ts', 'src/project/fonts.ts'],
+    files: [
+      'src/persistence/assets.ts',
+      'src/persistence/asset-sidecar.ts',
+      'src/project/fonts.ts',
+    ],
   },
   {
     name: 'durationSeconds',
