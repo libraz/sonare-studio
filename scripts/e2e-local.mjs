@@ -11,10 +11,24 @@
  * Usage:
  *   yarn e2e
  *   yarn e2e --through=realtime-mute
+ *   yarn e2e --only boot,piano-roll
  *   SONARE_E2E_PORT=5300 yarn e2e
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
+import { parseRunnerArgs } from './e2e/args.mjs';
+import { scenarios } from './e2e/scenarios.mjs';
+
+// Refused before the build, so a mistyped flag costs nothing.
+const runnerArgs = process.argv.slice(2);
+if (
+  parseRunnerArgs(
+    runnerArgs,
+    scenarios.map((scenario) => scenario.name),
+  ).baseUrl
+) {
+  throw new Error('yarn e2e serves its own build; pass no base URL');
+}
 
 const port = Number(process.env.SONARE_E2E_PORT ?? 5299);
 const baseUrl = `http://localhost:${port}`;
@@ -91,11 +105,9 @@ async function waitForServer() {
 }
 
 await waitForServer();
-const smoke = spawn(
-  process.execPath,
-  ['scripts/e2e-smoke.mjs', baseUrl, ...process.argv.slice(2)],
-  { stdio: 'inherit' },
-);
+const smoke = spawn(process.execPath, ['scripts/e2e-smoke.mjs', baseUrl, ...runnerArgs], {
+  stdio: 'inherit',
+});
 const code = await new Promise((resolve) => smoke.on('exit', (c) => resolve(c ?? 1)));
 stopServer();
 process.exit(code);

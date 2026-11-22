@@ -25,42 +25,30 @@
  *   node scripts/e2e-smoke.mjs --through=audio-record
  *   node scripts/e2e-smoke.mjs --only=boot,piano-roll,score
  *
+ * An unknown flag, scenario or extra positional argument is refused.
+ *
  * `--only` runs exactly the named scenarios and `--through` runs everything up
  * to and including one, which is how a single scenario is iterated on without
  * paying for the whole run. Both keep the registry's order. Nothing replays a
  * scenario's prerequisites for you: a scenario dropped from the run is state
  * the later ones will not find.
  */
+import { parseRunnerArgs } from './e2e/args.mjs';
 import { reportOutcomes, runScenarios } from './e2e/harness.mjs';
 import { scenarios } from './e2e/scenarios.mjs';
 
-const args = process.argv.slice(2);
-const flag = (name) => args.find((arg) => arg.startsWith(`--${name}=`))?.split('=')[1];
-const baseUrl = args.find((arg) => !arg.startsWith('--')) ?? 'http://localhost:5199';
+const parsed = parseRunnerArgs(
+  process.argv.slice(2),
+  scenarios.map((scenario) => scenario.name),
+);
+const baseUrl = parsed.baseUrl ?? 'http://localhost:5199';
 
-if (args.includes('--list')) {
+if (parsed.list) {
   for (const scenario of scenarios) console.info(scenario.name);
   process.exit(0);
 }
 
-function selected() {
-  const only = flag('only');
-  if (only !== undefined) {
-    const wanted = new Set(only.split(',').map((part) => part.trim()));
-    const unknown = [...wanted].filter((n) => !scenarios.some((s) => s.name === n));
-    if (unknown.length > 0) throw new Error(`Unknown scenario(s): ${unknown.join(', ')}`);
-    return scenarios.filter((scenario) => wanted.has(scenario.name));
-  }
-  const through = flag('through');
-  if (through !== undefined) {
-    const end = scenarios.findIndex((scenario) => scenario.name === through);
-    if (end < 0) throw new Error(`Unknown scenario: ${through}`);
-    return scenarios.slice(0, end + 1);
-  }
-  return scenarios;
-}
-
-const chosen = selected();
+const chosen = scenarios.filter((scenario) => parsed.selected.includes(scenario.name));
 console.info(`running ${chosen.length}/${scenarios.length} scenario(s) against ${baseUrl}\n`);
 const { outcomes } = await runScenarios(chosen, baseUrl);
 process.exitCode = reportOutcomes(outcomes);
