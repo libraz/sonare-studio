@@ -26,7 +26,9 @@ function abortError(reason: unknown): Error {
   if (typeof DOMException !== 'undefined') {
     return new DOMException('Component split was aborted', 'AbortError');
   }
-  return new Error('Component split was aborted');
+  const error = new Error('Component split was aborted');
+  error.name = 'AbortError';
+  return error;
 }
 
 /**

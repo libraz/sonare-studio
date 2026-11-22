@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { isAbortError } from '@/lib/errors';
 import { decomposeStemsInWorker } from '@/project/decompose-stems-client';
 import type { DecomposeStemsWorkerResponse } from '@/workers/decompose-stems.worker';
 
@@ -88,6 +89,21 @@ describe('decomposeStemsInWorker', () => {
       }),
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(worker.messages).toHaveLength(0);
+  });
+
+  it('rejects with an AbortError where DOMException is missing', async () => {
+    vi.stubGlobal('DOMException', undefined);
+    try {
+      const controller = new AbortController();
+      controller.abort('stopped');
+      const failure = await decomposeStemsInWorker([Float32Array.from([1])], 48000, 2, {
+        signal: controller.signal,
+        workerFactory: () => new FakeWorker() as unknown as Worker,
+      }).catch((error: unknown) => error);
+      expect(isAbortError(failure)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('turns worker construction and postMessage failures into rejections', async () => {
