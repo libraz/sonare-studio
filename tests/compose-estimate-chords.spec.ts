@@ -82,9 +82,12 @@ describe('estimateChordsFromTracks', () => {
       {
         track: track(1, 'Hybrid'),
         notes: [
+          // G and B survive the channel-10 filter, so the first range still names a chord.
           note(60, 0, 3, 9),
           note(64, 0, 3, 9),
+          note(62, 0, 3, 9),
           note(67, 0, 3),
+          note(71, 0, 3),
           note(62, 4, 3),
           note(65, 4, 3),
           note(69, 4, 3),

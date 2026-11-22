@@ -256,17 +256,17 @@ describe('BWV 565 counterpoint verdicts', () => {
       }
     }
 
-    // Every note carries a staff reading, and the line rewrites one in twenty-five
+    // Every note carries a staff reading, and the line rewrites one in twenty-one
     // of them: the raised leading tone above all, which the signature alone spells
     // Db against the C# the score writes and the analysis reads.
     expect(notes).toBe(3795);
     expect(engraved).toBe(3795);
-    expect([...rewritten.values()].reduce((total, count) => total + count, 0)).toBe(152);
+    expect([...rewritten.values()].reduce((total, count) => total + count, 0)).toBe(182);
     expect(Object.fromEntries(rewritten)).toEqual({
-      'Db->C#': 121,
-      'Gb->F#': 28,
+      'Db->C#': 139,
+      'Gb->F#': 39,
       'Ab->G#': 2,
-      'Eb->D#': 1,
+      'Eb->D#': 2,
     });
     // Naming the notes off the line leaves the counterpoint readings, which are
     // spelled from the tonic instead, exactly as the pass above pins them.

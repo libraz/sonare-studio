@@ -275,9 +275,29 @@ describe('how far an arrival reaches', () => {
     const authoredMarked = cadenceOnsets(notes, authored.byNoteId).length;
     const inferredMarked = cadenceOnsets(notes, inferred.byNoteId).length;
     expect(authoredMarked).toBe(8);
-    expect(inferredMarked).toBe(4);
     expect(authoredMarked / notes.length).toBeLessThan(0.2);
-    expect(inferredMarked / notes.length).toBeLessThan(0.1);
+    expect(inferredMarked / notes.length).toBeLessThan(0.2);
+  });
+
+  it('credits each inferred half cadence to the dominant bar it closes', () => {
+    // A dominant held through a bar closes its phrase on that bar, so the
+    // inferred reading ranks the half cadences beside the authentic ones.
+    const notes = periodicMelody();
+    const inferred = cadenceOnsets(notes, buildGuidance(guidanceInput({ notes })).byNoteId);
+    expect(inferred.filter((onset) => onset.type === 'half').map((onset) => onset.at)).toEqual([
+      8, 24, 40, 56,
+    ]);
+    expect(inferred.filter((onset) => onset.type === 'authentic').map((onset) => onset.at)).toEqual(
+      expect.arrayContaining([12, 28, 44]),
+    );
+  });
+
+  // libcantus gives a lone held tonic that ends the piece no timeline segment,
+  // so the authentic cadence into the final bar is lost.
+  it.fails('closes the inferred reading on the final authentic cadence', () => {
+    const notes = periodicMelody();
+    const inferred = cadenceOnsets(notes, buildGuidance(guidanceInput({ notes })).byNoteId);
+    expect(inferred).toContainEqual(expect.objectContaining({ at: 60, type: 'authentic' }));
   });
 
   it('gives the arpeggiated toccata no cadence line anywhere', () => {

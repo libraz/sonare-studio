@@ -312,10 +312,14 @@ describe('estimateChordSymbols', () => {
     expect(symbols[0]).toMatchObject({ text: 'Bb', rootPc: 10 });
   });
 
-  it('skips empty measures and names a bare octave without a third', () => {
-    const symbols = estimateChordSymbols([note(60, 0, 2), note(72, 0, 2)], OPTIONS);
+  it('skips empty measures and names a bare fifth without a third', () => {
+    const symbols = estimateChordSymbols([note(60, 0, 2), note(67, 0, 2)], OPTIONS);
     expect(symbols).toHaveLength(1);
     expect(symbols[0]).toMatchObject({ ppq: 0, endPpq: 4, text: 'C5', rootPc: 0 });
+  });
+
+  it('names no chord over a single sounding pitch class', () => {
+    expect(estimateChordSymbols([note(60, 0, 2), note(72, 0, 2)], OPTIONS)).toEqual([]);
   });
 
   it('reads every note it is given, percussion channel included', () => {
