@@ -27,8 +27,12 @@ import {
   saveProjectChecked,
 } from '@/persistence/opfs';
 import { MAX_SMF_FILE_BYTES } from '@/persistence/resource-limits';
-import { loadProjectRevision } from '@/persistence/revisions';
-import { encodeSzd } from '@/persistence/szd';
+import {
+  listProjectRevisions,
+  loadProjectRevision,
+  saveProjectRevision,
+} from '@/persistence/revisions';
+import { decodeSzd, encodeSzd } from '@/persistence/szd';
 import {
   addNote,
   clearMixerSnapshots,
@@ -246,6 +250,9 @@ describe('useProjectPersistence autosave refresh after load', () => {
     clearMixerSnapshots();
     vi.mocked(loadProjectWithRevision).mockReset();
     vi.mocked(loadProjectRevision).mockReset();
+    vi.mocked(saveProjectRevision).mockReset();
+    vi.mocked(listProjectRevisions).mockReset();
+    vi.mocked(listProjectRevisions).mockResolvedValue([]);
     vi.mocked(renameProject).mockReset();
     vi.mocked(loadProjectWithRevision).mockResolvedValue({
       bytes: encodeSzd(makeDocument('Stored Project')),
@@ -999,6 +1006,86 @@ describe('useProjectPersistence autosave refresh after load', () => {
     await flushPromises();
 
     expect(vi.mocked(saveProjectChecked).mock.calls.at(-1)?.[2]).toBe('revision-2');
+  });
+
+  it('saves a revision under the opened slot with the typed label and the live document', async () => {
+    vi.mocked(loadProjectWithRevision).mockResolvedValue({
+      bytes: encodeSzd(makeDocument('Stored Project')),
+      revision: 'revision-1',
+    });
+    const listed = [
+      {
+        slot: 'revision-slot',
+        projectName: 'Stored Slot',
+        label: 'Take 1',
+        savedAt: 1700000000000,
+        size: 1,
+      },
+    ];
+    vi.mocked(listProjectRevisions).mockResolvedValue(listed);
+    vi.mocked(promptDialog).mockResolvedValue('Take 1');
+    const { persistence } = setup();
+    await persistence.openStoredProject('Stored Slot');
+    await flushPromises();
+    // The document title and the slot it is saved under are distinct.
+    useProjectStore().projectName = 'Retitled';
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    try {
+      persistence.saveRevisionAction();
+      await flushPromises();
+    } finally {
+      now.mockRestore();
+    }
+
+    expect(saveProjectRevision).toHaveBeenCalledTimes(1);
+    const [slot, label, bytes, savedAt] = vi.mocked(saveProjectRevision).mock.calls[0];
+    expect([slot, label, savedAt]).toEqual(['Stored Slot', 'Take 1', 1700000000000]);
+    expect(decodeSzd(bytes).name).toBe('Retitled');
+    expect(listProjectRevisions).toHaveBeenCalledWith('Stored Slot');
+    expect(persistence.revisions.value).toEqual(listed);
+  });
+
+  it('saves a revision under the project name before the document has a slot', async () => {
+    await useProjectStore().init();
+    vi.mocked(promptDialog).mockResolvedValue('First');
+    const { persistence } = setup();
+
+    persistence.saveRevisionAction();
+    await flushPromises();
+
+    expect(vi.mocked(saveProjectRevision).mock.calls[0][0]).toBe(useProjectStore().projectName);
+    expect(listProjectRevisions).toHaveBeenCalledWith(useProjectStore().projectName);
+  });
+
+  it('saves no revision when the label prompt is cancelled or left empty', async () => {
+    await useProjectStore().init();
+    const { errorMessage, persistence } = setup();
+
+    vi.mocked(promptDialog).mockResolvedValueOnce(null);
+    persistence.saveRevisionAction();
+    await flushPromises();
+    vi.mocked(promptDialog).mockResolvedValueOnce('');
+    persistence.saveRevisionAction();
+    await flushPromises();
+
+    expect(promptDialog).toHaveBeenCalledTimes(2);
+    expect(saveProjectRevision).not.toHaveBeenCalled();
+    expect(listProjectRevisions).not.toHaveBeenCalled();
+    expect(errorMessage.value).toBe('');
+  });
+
+  it('reports a failed revision save and leaves the revision list alone', async () => {
+    await useProjectStore().init();
+    vi.mocked(promptDialog).mockResolvedValue('Doomed');
+    vi.mocked(saveProjectRevision).mockRejectedValue(new Error('quota exceeded'));
+    const { errorMessage, persistence } = setup();
+
+    persistence.saveRevisionAction();
+    await flushPromises();
+
+    expect(errorMessage.value).toBe('quota exceeded');
+    expect(listProjectRevisions).not.toHaveBeenCalled();
+    expect(persistence.revisions.value).toEqual([]);
   });
 
   it('renames a saved project through the persistence UI action', async () => {

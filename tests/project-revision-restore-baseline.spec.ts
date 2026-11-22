@@ -120,6 +120,10 @@ describe('restoring a revision keeps the save baseline', () => {
     persistence.restoreRevision('snapshot');
     await flushPromises();
     await nextTask();
+    // The restore itself must have run, not failed before touching the baseline.
+    expect(errors).toEqual([]);
+    expect(loadProjectRevision).toHaveBeenCalledWith('snapshot');
+    expect(useProjectStore().projectName).toBe('Restored');
     expect(loadProjectWithRevision).not.toHaveBeenCalled();
 
     persistence.saveProjectAction();
