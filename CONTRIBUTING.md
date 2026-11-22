@@ -54,7 +54,11 @@ yarn e2e --through=audio-record            # from the start up to one scenario
 
 ## What CI requires
 
-There are no CI workflows in this repository. Before merging, the maintainer runs `yarn ci`, which is `yarn verify` (lint, type checks, tests, build) followed by the end-to-end run, so a pull request that has not been through it is fine.
+| Workflow                   | Trigger                         | Runs                                                              |
+| -------------------------- | ------------------------------- | ----------------------------------------------------------------- |
+| `.github/workflows/ci.yml` | push and pull request to `main` | immutable install, lint, spec type check, tests, production build |
+
+A red check is no reason to hold a pull request back. The external-format tests and the end-to-end run are not in the workflow: before merging, the maintainer runs `yarn ci`, which is `yarn verify` (lint, type checks, tests, external-format tests, build) followed by the end-to-end run.
 
 ## Checklist
 

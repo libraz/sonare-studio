@@ -32,6 +32,6 @@ Open the printed URL. The start screen offers a new project, the bundled demo (T
 | `yarn typecheck`                | `vue-tsc --noEmit`                                                                                     |
 | `yarn verify`                   | lint, spec type check, tests, external-format tests, build                                             |
 | `yarn e2e`                      | Browser end-to-end run against a static production build                                               |
-| `yarn ci`                       | `verify`, then `e2e`                                                                                   |
+| `yarn ci`                       | `verify`, then `e2e`: the full check run before merge, of which the CI workflow runs a part            |
 
 The test layout and the end-to-end harness are described in [CONTRIBUTING.md](../../CONTRIBUTING.md).

@@ -32,6 +32,6 @@ yarn dev
 | `yarn typecheck`                | `vue-tsc --noEmit`                                                                               |
 | `yarn verify`                   | lint、スペックの型チェック、テスト、外部形式テスト、ビルド                                       |
 | `yarn e2e`                      | 静的な本番ビルドに対するブラウザ E2E の実行                                                      |
-| `yarn ci`                       | `verify` のあとに `e2e` を実行                                                                   |
+| `yarn ci`                       | `verify` のあとに `e2e` を実行（マージ前の完全な確認。CI ワークフローはその一部）                |
 
 テストの構成と E2E ハーネスは、[CONTRIBUTING.md](../../CONTRIBUTING.md)（英語のみ）で説明しています。

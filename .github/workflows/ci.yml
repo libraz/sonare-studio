@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      # Node 25 and newer ship without corepack; yarn comes from packageManager.
+      - name: Enable corepack
+        run: npm install -g corepack@0.36 && corepack enable
+
+      # .yarnrc.yml keeps the package cache in the repo, not the global folder.
+      - uses: actions/cache@v6
+        with:
+          path: .yarn/cache
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
+
+      - run: yarn install --immutable
+      - run: yarn lint
+      - run: yarn typecheck:tests
+      - run: yarn test
+      - run: yarn build
