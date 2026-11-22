@@ -15,7 +15,7 @@ import { PayloadMemoryMeter, type PayloadMemorySample } from '@/lib/payload-memo
 import { createStreamingZipWriter, DETERMINISTIC_ZIP_MTIME } from '@/lib/streaming-zip';
 import type { ExportRenderOptions } from '@/workers/export.worker';
 import { isBrowserMediaEncoderId } from './browser-media';
-import { WAV_ENCODER_ID } from './codecs';
+import { type AudioEncoder, WAV_ENCODER_ID } from './codecs';
 import { FLAC_ENCODER_ID, type FlacBitDepth } from './flac';
 import {
   DEFAULT_MP3_BITRATE,
@@ -339,6 +339,16 @@ export function exportFileName(baseName: string, extension: string): string {
 /** Derives the stems archive filename: '<base> stems.zip'. */
 export function stemsZipFileName(baseName: string): string {
   return `${sanitizeFileBaseName(baseName)} stems.zip`;
+}
+
+export function stemsZipFileNameForEncoder(
+  baseName: string,
+  encoder: AudioEncoder,
+  selectedCount: number,
+): string {
+  return selectedCount === 1
+    ? stemsZipFileName(baseName)
+    : `${stemsZipFileName(baseName).slice(0, -4)} ${encoder.id}.zip`;
 }
 
 /**

@@ -161,3 +161,8 @@ export function formatClippingCensus(
       )
   );
 }
+
+/** Formats a dB / LUFS value for the report ('-inf' for silence). */
+export function formatLevel(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(1) : '-inf';
+}
