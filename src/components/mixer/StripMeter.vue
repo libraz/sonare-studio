@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { MeterSource } from '@/engine/meters';
 import { useI18n } from '@/ui/i18n';
-import { FADER_HEIGHT, formatDb } from '@/ui/mixer/db-scale';
+import { FADER_HEIGHT, formatDb, SILENCE_TEXT } from '@/ui/mixer/db-scale';
 import { drawMeterBar } from '@/ui/mixer/meter-draw';
 import {
   advanceMeterChannel,
@@ -74,7 +74,7 @@ let peakText = '';
 
 /** Displays the floor as silence while preserving numeric peak values above it. */
 function showPeakHold(holdDb: number): void {
-  const text = holdDb <= props.minDb ? '-inf' : formatDb(holdDb);
+  const text = holdDb <= props.minDb ? SILENCE_TEXT : formatDb(holdDb);
   if (text === peakText || !peakRef.value) return;
   peakText = text;
   peakRef.value.textContent = text;

@@ -63,9 +63,9 @@ describe('formatDb', () => {
     expect(formatDb(-0.01)).toBe('0.0');
   });
 
-  it('renders the silence floor as -inf', () => {
-    expect(formatDb(-96)).toBe('-inf');
-    expect(formatDb(-90)).toBe('-inf');
+  it('renders the silence floor as -∞', () => {
+    expect(formatDb(-96)).toBe('-∞');
+    expect(formatDb(-90)).toBe('-∞');
     expect(formatDb(-89.9)).toBe('-89.9');
   });
 

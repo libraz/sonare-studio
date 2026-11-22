@@ -1,4 +1,5 @@
 import { clamp } from '@/lib/math';
+import { SILENCE_TEXT } from '@/ui/mixer/db-scale';
 /**
  * Loudness readout helpers for the mastering preview: numeric formatting,
  * bar-meter fractions and the true-peak clip warning threshold.
@@ -53,7 +54,7 @@ export function rangeBarFraction(value: number | undefined, max = RANGE_BAR_MAX_
 }
 
 /**
- * Formats a dB (or LUFS) value for the readout: one decimal, '-∞' for
+ * Formats a dB (or LUFS) value for the readout: one decimal, {@link SILENCE_TEXT} for
  * negative infinity, an em dash when unavailable.
  *
  * @param value The level, or undefined when the metering one-shot is absent.
@@ -62,7 +63,7 @@ export function rangeBarFraction(value: number | undefined, max = RANGE_BAR_MAX_
  */
 export function formatLevel(value: number | undefined, digits = 1): string {
   if (value === undefined || Number.isNaN(value)) return '—';
-  if (value === Number.NEGATIVE_INFINITY) return '-∞';
+  if (value === Number.NEGATIVE_INFINITY) return SILENCE_TEXT;
   if (!Number.isFinite(value)) return '—';
   return value.toFixed(digits);
 }

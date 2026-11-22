@@ -46,13 +46,13 @@ async function tick(ts = 0): Promise<void> {
 }
 
 describe('StripMeter peak readout', () => {
-  it('shows -inf at the silence floor and numeric values above it', async () => {
+  it('shows -∞ at the silence floor and numeric values above it', async () => {
     wrapper = mount(StripMeter, {
       props: { bridge: sourceWith({}) },
       global: { directives: { tooltip: {} } },
     });
 
-    expect(wrapper.find('.strip-meter-peak').text()).toBe('-inf');
+    expect(wrapper.find('.strip-meter-peak').text()).toBe('-∞');
     await tick();
     expect(wrapper.find('.strip-meter-peak').text()).toBe('-18.0');
   });

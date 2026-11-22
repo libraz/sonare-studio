@@ -35,7 +35,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-/** Lowest gain shown before the field reads as silence ("-inf"). */
+/** Lowest gain the field shows; at or below it the clip is silent. */
 const GAIN_FLOOR_DB = -60;
 
 /** True for audio clips, which carry a source tempo. */
@@ -52,12 +52,11 @@ const redetectBlocked = computed(() =>
   ]),
 );
 
-/** The clip gain expressed in dB ('-inf' below the floor). */
-const gainDb = computed<string>(() => {
+/** The gain field value in dB: the floor for a silent clip, else one decimal. */
+const gainFieldDb = computed<number | string>(() => {
   const gain = props.clip?.gain ?? 1;
-  if (gain <= 0) return '-inf';
-  const db = peakDb(gain);
-  return db <= GAIN_FLOOR_DB ? '-inf' : db.toFixed(1);
+  const db = gain > 0 ? peakDb(gain) : Number.NEGATIVE_INFINITY;
+  return db <= GAIN_FLOOR_DB ? GAIN_FLOOR_DB : db.toFixed(1);
 });
 
 /** Quarter-note units carry one beat per unit, so fades read directly in beats. */
@@ -70,7 +69,7 @@ function onGainInput(event: Event): void {
   const db = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(db)) return;
   // At or below the floor the clip is silenced (linear gain 0), matching how a
-  // fader bottoms out to -inf.
+  // fader bottoms out to silence.
   setClipGain(props.clip.id, db <= GAIN_FLOOR_DB ? 0 : dbToLinear(db));
 }
 
@@ -116,7 +115,7 @@ function onLoopToggle(): void {
         class="ci-num"
         type="number"
         step="0.5"
-        :value="gainDb === '-inf' ? GAIN_FLOOR_DB : gainDb"
+        :value="gainFieldDb"
         :disabled="!!editBlocked"
         :aria-label="t.shell.arrangement.clipInspector.gainAria"
         v-tooltip="{ text: t.shell.arrangement.clipInspector.gainTitle, reason: editBlocked }"

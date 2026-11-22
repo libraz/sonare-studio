@@ -84,6 +84,19 @@ describe('ClipInspector', () => {
     expect(setClipGain).toHaveBeenCalledWith(7, 0);
   });
 
+  it('shows the gain field in dB, at the floor for a silent clip', () => {
+    const field = (gain: number): string => {
+      wrapper?.unmount();
+      wrapper = mount(ClipInspector, { props: { clip: audioClip({ gain }) } });
+      return wrapper.find<HTMLInputElement>('input[aria-label="Clip gain in decibels"]').element
+        .value;
+    };
+    expect(field(0.5)).toBe('-6.0');
+    expect(field(0)).toBe('-60');
+    expect(field(10 ** (-70 / 20))).toBe('-60');
+    expect(field(10 ** (-59 / 20))).toBe('-59.0');
+  });
+
   it('clamps fade lengths to the clip length and keeps the other fade', async () => {
     wrapper = mount(ClipInspector, { props: { clip: audioClip({ fadeOutPpq: 2 }) } });
     await wrapper.find('input[aria-label="Fade-in length in beats"]').setValue('99');

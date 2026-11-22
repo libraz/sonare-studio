@@ -19,8 +19,11 @@ export const FADER_MAX_DB = 24;
 /** Default fader throw in px; the strip meter beside it matches. */
 export const FADER_HEIGHT = 132;
 
-/** Gain at or below this many dB is displayed as -inf. */
+/** Gain at or below this many dB is displayed as silence. */
 export const SILENCE_DISPLAY_DB = -90;
+
+/** On-screen text for a silent level or gain (negative infinity dB). */
+export const SILENCE_TEXT = '-∞';
 
 /**
  * Fader taper anchor points as [position, dB] pairs, ascending in both
@@ -75,13 +78,13 @@ export function dbToFaderPosition(db: number): number {
 
 /**
  * Formats a dB value for display: explicit sign for boosts, one decimal,
- * '-inf' at or below the silence floor.
+ * {@link SILENCE_TEXT} at or below the silence floor.
  *
  * @param db Gain in dB.
  * @param fractionDigits Decimal places (default 1).
  */
 export function formatDb(db: number, fractionDigits = 1): string {
-  if (db <= SILENCE_DISPLAY_DB) return '-inf';
+  if (db <= SILENCE_DISPLAY_DB) return SILENCE_TEXT;
   const text = Math.abs(db).toFixed(fractionDigits);
   // Avoid '-0.0' for tiny negative values that round to zero.
   if (Number(text) === 0) return (0).toFixed(fractionDigits);
