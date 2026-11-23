@@ -1004,9 +1004,9 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#setStripSurroundPan` | — |
 | `SonareEngine#setSynthInstrument` | audio-record, audio-to-midi-production, boot, composition-flow, groove, imported-song-edit, midi-clip-envelope, placement-guide, project-revisions, project-switch-sync, rack-instrument, step-input, track-and-clip |
 | `SonareEngine#setTempo` | — |
-| `SonareEngine#setTempoSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, pop-arrangement, project-revisions, project-switch-sync, tempo-map, tempo-map-edit, warp, warp-toggle |
+| `SonareEngine#setTempoSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, project-revisions, project-switch-sync, tempo-map, tempo-map-edit, warp, warp-toggle |
 | `SonareEngine#setTimeSignature` | — |
-| `SonareEngine#setTimeSignatureSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, meter-map, pop-arrangement, project-revisions, project-switch-sync |
+| `SonareEngine#setTimeSignatureSegments` | audio-edit-to-master, audio-record, audio-to-midi-production, boot, composition-flow, first-play-mixer, groove, imported-song-edit, master-fader, master-meter-readouts, meter-map, project-revisions, project-switch-sync |
 | `SonareEngine#setTrackBuses` | bus-master-sidechain, bus-routing, export-equivalence, mix-suggestion, sidechain |
 | `SonareEngine#setTrackLanes` | audio-alignment, audio-edit-to-master, audio-record, audio-to-midi-production, automation-ramp, boot, bus-master-sidechain, bus-routing, composition-flow, cycle-recording, first-play-mixer, freeze-bounce, groove, imported-song-edit, master-fader, master-meter-readouts, midi-clip-envelope, placement-guide, pop-arrangement, project-revisions, project-switch-sync, sidechain, step-input, track-and-clip, vca-strips, warp, warp-toggle |
 | `SonareEngine#setTrackMonitorMode` | — |

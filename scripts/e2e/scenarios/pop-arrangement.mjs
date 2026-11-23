@@ -59,8 +59,14 @@ export async function run({ page, fail }) {
   // Settle before undoing, so the engine has scheduled the copy the undo must remove.
   await settle(page);
   const scheduledRepeated = await scheduledIds(page);
-  if (scheduledRepeated.length !== scheduledBefore.length * 2) {
-    fail(`engine did not schedule the duplicated audio: ${JSON.stringify(scheduledRepeated)}`);
+  // The original stays scheduled as it was; only the copy is added.
+  if (
+    scheduledRepeated.length !== scheduledBefore.length * 2 ||
+    scheduledBefore.some((id) => !scheduledRepeated.includes(id))
+  ) {
+    fail(
+      `engine schedule after the duplicate is ${JSON.stringify(scheduledRepeated)}, expected ${JSON.stringify(scheduledBefore)} plus the copy`,
+    );
   }
   const repeated = await page.evaluate(() => ({
     chords: window.__sonareDebug.chordRanges(),
@@ -104,11 +110,11 @@ export async function run({ page, fail }) {
     withAudio.length,
   );
   await settle(page);
-  // The duplicate's tempo breakpoint goes away again, so the engine clip ids change; the count must not.
+  // Undo removes only the copy, leaving the original's engine clip in place.
   const scheduledUndone = await scheduledIds(page);
-  if (scheduledUndone.length !== scheduledBefore.length) {
+  if (JSON.stringify(scheduledUndone) !== JSON.stringify(scheduledBefore)) {
     fail(
-      `Undo left ${scheduledUndone.length} engine clip(s) scheduled, expected ${scheduledBefore.length}`,
+      `Undo left the engine schedule at ${JSON.stringify(scheduledUndone)}, expected ${JSON.stringify(scheduledBefore)}`,
     );
   }
   if (
