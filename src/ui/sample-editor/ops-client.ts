@@ -1,5 +1,6 @@
 /** Disposable-worker client for non-WASM offline sample operations. */
 
+import { runDisposableWorker } from '@/lib/disposable-worker';
 import type { SampleOperationRequest, SampleOperationResponse } from '@/workers/sample-ops.worker';
 import type { SampleRange } from './ops';
 
@@ -40,18 +41,6 @@ function createWorker(): Worker {
   return new Worker(new URL('../../workers/sample-ops.worker.ts', import.meta.url), {
     type: 'module',
   });
-}
-
-function abortError(reason: unknown): Error {
-  if (reason instanceof Error) return reason;
-  if (typeof DOMException !== 'undefined') {
-    return new DOMException('Sample operation was aborted', 'AbortError');
-  }
-  return new Error('Sample operation was aborted');
-}
-
-function errorFromWorkerEvent(event: ErrorEvent): Error {
-  return new Error(event.message || 'Sample operation worker failed');
 }
 
 function validateTimeout(timeoutMs: number): number {
@@ -117,41 +106,22 @@ export function runSampleOperationInWorker(
   const timeoutMs = validateTimeout(
     options.timeoutMs === undefined ? SAMPLE_OPERATION_TIMEOUT_MS : options.timeoutMs,
   );
-  const signal = options.signal;
 
-  return new Promise<Float32Array[]>((resolve, reject) => {
-    let worker: Worker | null = null;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let settled = false;
-    let abortListener: (() => void) | undefined;
-
-    const cleanup = (): void => {
-      if (timer !== undefined) clearTimeout(timer);
-      timer = undefined;
-      if (signal && abortListener) signal.removeEventListener('abort', abortListener);
-      abortListener = undefined;
-      if (worker) {
-        worker.removeEventListener('message', onMessage as EventListener);
-        worker.removeEventListener('error', onError as EventListener);
-        try {
-          worker.terminate();
-        } catch {
-          // Termination is best effort; preserve the operation's settled result.
-        }
-      }
-      worker = null;
-    };
-
-    const settle = (result: { value: Float32Array[] } | { error: unknown }): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if ('error' in result) reject(result.error);
-      else resolve(result.value);
-    };
-
-    const onMessage = (event: MessageEvent<SampleOperationResponse>): void => {
-      const response = event.data;
+  return runDisposableWorker<SampleOperationResponse, Float32Array[]>({
+    create,
+    signal: options.signal,
+    abortMessage: 'Sample operation was aborted',
+    failMessage: 'Sample operation worker failed',
+    timeout: { ms: timeoutMs, error: () => new SampleOperationTimeoutError(timeoutMs) },
+    post(worker) {
+      const channels = source.map((channel) => new Float32Array(channel));
+      const request: SampleOperationRequest = { ...operation, channels, range, owned: true };
+      worker.postMessage(
+        request,
+        channels.map((channel) => channel.buffer),
+      );
+    },
+    receive(response, settle) {
       if (!response || (response.type !== 'done' && response.type !== 'error')) {
         settle({ error: new Error('Sample operation worker returned an invalid response') });
         return;
@@ -168,39 +138,6 @@ export function runSampleOperationInWorker(
         return;
       }
       settle({ value: response.channels });
-    };
-
-    const onError = (event: ErrorEvent): void => {
-      settle({ error: errorFromWorkerEvent(event) });
-    };
-
-    const onAbort = (): void => {
-      settle({ error: abortError(signal?.reason) });
-    };
-
-    const onTimeout = (): void => {
-      settle({ error: new SampleOperationTimeoutError(timeoutMs) });
-    };
-
-    try {
-      if (signal?.aborted) {
-        settle({ error: abortError(signal.reason) });
-        return;
-      }
-      worker = create();
-      const channels = source.map((channel) => new Float32Array(channel));
-      worker.addEventListener('message', onMessage as EventListener);
-      worker.addEventListener('error', onError as EventListener);
-      abortListener = onAbort;
-      signal?.addEventListener('abort', abortListener, { once: true });
-      timer = setTimeout(onTimeout, timeoutMs);
-      const request: SampleOperationRequest = { ...operation, channels, range, owned: true };
-      worker.postMessage(
-        request,
-        channels.map((channel) => channel.buffer),
-      );
-    } catch (error) {
-      settle({ error });
-    }
+    },
   });
 }

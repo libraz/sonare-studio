@@ -1,10 +1,10 @@
 import type { ProjectMidiEvent, TranscribeResult } from '@libraz/libsonare';
+import { runDisposableWorker } from '@/lib/disposable-worker';
 import { isFiniteNumber } from '@/lib/math';
 import type {
   TranscribeWorkerRequest,
   TranscribeWorkerResponse,
 } from '@/workers/transcribe.worker';
-import { workerEventError } from './worker-client-errors';
 
 /** Factory override used by tests and non-browser embeddings. */
 export type TranscribeWorkerFactory = () => Worker;
@@ -30,16 +30,6 @@ function createWorker(): Worker {
   return new Worker(new URL('../workers/transcribe.worker.ts', import.meta.url), {
     type: 'module',
   });
-}
-
-function abortError(reason: unknown): Error {
-  if (reason instanceof Error) return reason;
-  if (typeof DOMException !== 'undefined') {
-    return new DOMException('Transcription was aborted', 'AbortError');
-  }
-  const error = new Error('Transcription was aborted');
-  error.name = 'AbortError';
-  return error;
 }
 
 function validEvent(value: unknown): value is ProjectMidiEvent {
@@ -94,36 +84,30 @@ export function transcribeAudioInWorker(
   const { signal, workerFactory } = options;
   const create = workerFactory ?? createWorker;
 
-  return new Promise<TranscribeResult>((resolve, reject) => {
-    let worker: Worker | null = null;
-    let settled = false;
-    let abortListener: (() => void) | undefined;
-
-    const cleanup = (): void => {
-      if (signal && abortListener) signal.removeEventListener('abort', abortListener);
-      abortListener = undefined;
-      if (worker) {
-        worker.removeEventListener('message', onMessage as EventListener);
-        worker.removeEventListener('error', onError as EventListener);
-        try {
-          worker.terminate();
-        } catch {
-          // Termination is best effort; preserve the settled result.
-        }
-      }
-      worker = null;
-    };
-
-    const settle = (result: { value: TranscribeResult } | { error: unknown }): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if ('error' in result) reject(result.error);
-      else resolve(result.value);
-    };
-
-    const onMessage = (event: MessageEvent<TranscribeWorkerResponse>): void => {
-      const response = event.data;
+  return runDisposableWorker<TranscribeWorkerResponse, TranscribeResult>({
+    create,
+    signal,
+    abortMessage: 'Transcription was aborted',
+    failMessage: 'Transcription worker failed',
+    post(worker) {
+      const copied = new Float32Array(samples);
+      const request: TranscribeWorkerRequest = {
+        samples: copied,
+        sampleRate,
+        polyphonic,
+        ...(options.sourceSampleRate !== undefined
+          ? { sourceSampleRate: options.sourceSampleRate }
+          : {}),
+        ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
+        ...(options.tempoBpm !== undefined ? { tempoBpm: options.tempoBpm } : {}),
+        ...(options.minNoteDivision !== undefined
+          ? { minNoteDivision: options.minNoteDivision }
+          : {}),
+        ...(options.maxPolyphony !== undefined ? { maxPolyphony: options.maxPolyphony } : {}),
+      };
+      worker.postMessage(request, [copied.buffer]);
+    },
+    receive(response, settle) {
       if (response?.type === 'error') {
         settle({ error: new Error(response.error) });
         return;
@@ -140,44 +124,6 @@ export function transcribeAudioInWorker(
           tuningCents: response.tuningCents,
         },
       });
-    };
-
-    const onError = (event: ErrorEvent): void => {
-      settle({ error: workerEventError(event, 'Transcription worker failed') });
-    };
-
-    const onAbort = (): void => {
-      settle({ error: abortError(signal?.reason) });
-    };
-
-    try {
-      if (signal?.aborted) {
-        settle({ error: abortError(signal.reason) });
-        return;
-      }
-      worker = create();
-      const copied = new Float32Array(samples);
-      const request: TranscribeWorkerRequest = {
-        samples: copied,
-        sampleRate,
-        polyphonic,
-        ...(options.sourceSampleRate !== undefined
-          ? { sourceSampleRate: options.sourceSampleRate }
-          : {}),
-        ...(options.referenceHz !== undefined ? { referenceHz: options.referenceHz } : {}),
-        ...(options.tempoBpm !== undefined ? { tempoBpm: options.tempoBpm } : {}),
-        ...(options.minNoteDivision !== undefined
-          ? { minNoteDivision: options.minNoteDivision }
-          : {}),
-        ...(options.maxPolyphony !== undefined ? { maxPolyphony: options.maxPolyphony } : {}),
-      };
-      worker.addEventListener('message', onMessage as EventListener);
-      worker.addEventListener('error', onError as EventListener);
-      abortListener = onAbort;
-      signal?.addEventListener('abort', abortListener, { once: true });
-      worker.postMessage(request, [copied.buffer]);
-    } catch (error) {
-      settle({ error });
-    }
+    },
   });
 }
