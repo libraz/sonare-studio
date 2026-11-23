@@ -58,12 +58,17 @@ export function useScoreAnnotations(options: UseScoreAnnotationsOptions) {
     return store.scoreAnnotations[clipId]?.[id] ?? {};
   });
 
-  /** Opens the palette on a note of a clip without a pointer, switching Annotate on. */
-  function openPalette(noteId: number, clipId: number): void {
-    annotateEnabled.value = true;
+  /** Clears every armed slur, hairpin and line/span target. */
+  function disarmTargets(): void {
     slurArmed.value = false;
     hairpinArmed.value = null;
     lineSpanArmed.value = null;
+  }
+
+  /** Opens the palette on a note of a clip without a pointer, switching Annotate on. */
+  function openPalette(noteId: number, clipId: number): void {
+    annotateEnabled.value = true;
+    disarmTargets();
     annotationNoteId.value = noteId;
     annotationClipId.value = clipId;
     palettePos.value = { x: 24, y: 48 };
@@ -107,42 +112,29 @@ export function useScoreAnnotations(options: UseScoreAnnotationsOptions) {
       return;
     }
     const clickedClipId = store.clipId;
-    const sameClip = annotationClipId.value === clickedClipId;
-    if (
-      sameClip &&
-      slurArmed.value &&
+    // A second click on another note of the palette's clip completes an armed target.
+    const completesTarget =
+      annotationClipId.value === clickedClipId &&
       annotationNoteId.value !== null &&
-      clicked !== annotationNoteId.value
-    ) {
+      clicked !== annotationNoteId.value;
+    if (completesTarget && slurArmed.value) {
       slurArmed.value = false;
       applyAnnotation({ slurToNoteId: clicked });
       return;
     }
-    if (
-      sameClip &&
-      hairpinArmed.value !== null &&
-      annotationNoteId.value !== null &&
-      clicked !== annotationNoteId.value
-    ) {
+    if (completesTarget && hairpinArmed.value !== null) {
       const hairpin = hairpinArmed.value;
       hairpinArmed.value = null;
       applyAnnotation({ hairpin, hairpinToNoteId: clicked });
       return;
     }
-    if (
-      sameClip &&
-      lineSpanArmed.value !== null &&
-      annotationNoteId.value !== null &&
-      clicked !== annotationNoteId.value
-    ) {
+    if (completesTarget && lineSpanArmed.value !== null) {
       const lineSpan = lineSpanArmed.value;
       lineSpanArmed.value = null;
       applyAnnotation({ addLineSpan: { lineSpan, lineSpanToNoteId: clicked } });
       return;
     }
-    slurArmed.value = false;
-    hairpinArmed.value = null;
-    lineSpanArmed.value = null;
+    disarmTargets();
     annotationNoteId.value = clicked;
     annotationClipId.value = clickedClipId;
     const wrap = svgHost.value?.parentElement;
@@ -183,9 +175,7 @@ export function useScoreAnnotations(options: UseScoreAnnotationsOptions) {
   function closePalette(): void {
     annotationNoteId.value = null;
     annotationClipId.value = null;
-    slurArmed.value = false;
-    hairpinArmed.value = null;
-    lineSpanArmed.value = null;
+    disarmTargets();
   }
 
   watch(annotateEnabled, (enabled) => {
