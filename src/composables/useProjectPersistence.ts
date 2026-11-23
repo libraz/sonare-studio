@@ -319,8 +319,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }
 
   async function openStoredProject(name: string): Promise<void> {
-    if (!(await confirmDiscard())) return;
     void runAction(async () => {
+      if (!(await confirmDiscard())) return;
       const stored = await loadProjectWithRevision(name);
       await replaceProjectDocument(await decodeSzdInWorker(stored.bytes));
       store.projectName = name;
@@ -340,14 +340,17 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }
 
   async function deleteStoredProject(name: string): Promise<void> {
-    if (
-      !(await confirmAction(formatMessage(t.value.dialogs.prompts.deleteProjectMessage, { name }), {
-        title: t.value.dialogs.prompts.deleteProjectTitle,
-        confirmLabel: t.value.common.delete,
-      }))
-    )
-      return;
     void runAction(async () => {
+      if (
+        !(await confirmAction(
+          formatMessage(t.value.dialogs.prompts.deleteProjectMessage, { name }),
+          {
+            title: t.value.dialogs.prompts.deleteProjectTitle,
+            confirmLabel: t.value.common.delete,
+          },
+        ))
+      )
+        return;
       await deleteProject(name);
       // Deleting the slot the open project was saved to strands its revision
       // baseline, which would make the next save fail its optimistic-revision
@@ -390,15 +393,15 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }
 
   async function renameStoredProject(name: string): Promise<void> {
-    const next = await promptDialog({
-      title: t.value.dialogs.openProject.renameTitle,
-      message: formatMessage(t.value.dialogs.openProject.renameMessage, { name }),
-      defaultValue: name,
-      placeholder: name,
-      confirmLabel: t.value.dialogs.openProject.rename,
-    });
-    if (next === null) return;
     void runAction(async () => {
+      const next = await promptDialog({
+        title: t.value.dialogs.openProject.renameTitle,
+        message: formatMessage(t.value.dialogs.openProject.renameMessage, { name }),
+        defaultValue: name,
+        placeholder: name,
+        confirmLabel: t.value.dialogs.openProject.rename,
+      });
+      if (next === null) return;
       const safeName = projectSlotName(next);
       await renameProject(name, safeName);
       if (sanitizeProjectName(name) === savedProjectSlot.value) {
@@ -412,8 +415,8 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
   }
 
   async function importSzdFile(launched?: PickedSzdFile): Promise<void> {
-    if (!(await confirmDiscard())) return;
     void runAction(async () => {
+      if (!(await confirmDiscard())) return;
       const picked = launched ?? (await pickAndReadSzd());
       if (!picked) return;
       // Guard against a non-project file slipping past the picker hint: the

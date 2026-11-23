@@ -122,25 +122,23 @@ export function useProjectRevisions(options: ProjectRevisionsOptions): ProjectRe
 
   /** Replaces the live document with a stored revision (discard confirmed). */
   function restoreRevision(slot: string): void {
-    void (async () => {
+    void runAction(async () => {
       if (!(await confirmDiscard())) return;
-      void runAction(async () => {
-        // Restoring a revision replaces only the live document. The slot and
-        // the revision this tab last loaded or saved stay the Save baseline,
-        // so a save from another tab since then still raises a conflict.
-        const bytes = await loadProjectRevision(slot);
-        await replaceProjectDocument(await decodeSzdInWorker(bytes));
-        const documentKey = await saveLoadedProjectToAutosave();
-        await markClean(documentKey);
-        // The autosave protects crash recovery, but it is not the named
-        // project commit promised by the revisions dialog. Keep the restored
-        // document dirty so opening another project still asks whether to
-        // discard it until an explicit Save succeeds.
-        dirty.value = true;
-        revisionsDialogOpen.value = false;
-        startScreenOpen.value = false;
-      });
-    })();
+      // Restoring a revision replaces only the live document. The slot and
+      // the revision this tab last loaded or saved stay the Save baseline,
+      // so a save from another tab since then still raises a conflict.
+      const bytes = await loadProjectRevision(slot);
+      await replaceProjectDocument(await decodeSzdInWorker(bytes));
+      const documentKey = await saveLoadedProjectToAutosave();
+      await markClean(documentKey);
+      // The autosave protects crash recovery, but it is not the named
+      // project commit promised by the revisions dialog. Keep the restored
+      // document dirty so opening another project still asks whether to
+      // discard it until an explicit Save succeeds.
+      dirty.value = true;
+      revisionsDialogOpen.value = false;
+      startScreenOpen.value = false;
+    });
   }
 
   function deleteRevision(slot: string): void {
