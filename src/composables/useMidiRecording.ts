@@ -563,7 +563,6 @@ export function useMidiRecording(
       timeSignatures: store.timeSignatures,
     });
     try {
-      recordingCounter += 1;
       const capturedLoopEvents = [...captured, ...capturedExpressionEvents];
       const completedLoopPassStart =
         loopLengthPpq > 0
@@ -653,6 +652,8 @@ export function useMidiRecording(
       if (notes.length === 0 && Object.keys(laneFields).length === 0) {
         return null;
       }
+      // The take number is spent only once a clip lands, as audio recording does.
+      const nextRecordingCounter = recordingCounter + 1;
       const input: AddRecordedMidiClipInput = {
         trackId,
         startPpq: originPpq,
@@ -662,11 +663,14 @@ export function useMidiRecording(
         ...(cycleRecordMode.value === 'takes' && midiTakes.length > 1
           ? { midiTakes, activeMidiTakeIndex: midiTakes.length - 1 }
           : {}),
-        name: `MIDI Recording ${recordingCounter}`,
+        name: `MIDI Recording ${nextRecordingCounter}`,
       };
-      return loopLengthPpq > 0 && cycleRecordMode.value === 'overwrite'
-        ? overwriteClip(input)
-        : addClip(input);
+      const clipId =
+        loopLengthPpq > 0 && cycleRecordMode.value === 'overwrite'
+          ? overwriteClip(input)
+          : addClip(input);
+      recordingCounter = nextRecordingCounter;
+      return clipId;
     } catch (err) {
       error.value = formatMessage(t.value.notices.recording.storeFailed, {
         detail: describeError(err, t.value.notices.errors),
