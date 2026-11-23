@@ -1,4 +1,5 @@
 import type { Ref } from 'vue';
+import { isInsideSelectList } from './useOutsidePointerDown';
 
 interface PopoverTarget {
   close: () => void;
@@ -7,7 +8,12 @@ interface PopoverTarget {
 }
 
 function isOutsidePress(root: HTMLElement | null, event: PointerEvent): boolean {
-  return root !== null && event.target instanceof Node && !root.contains(event.target);
+  return (
+    root !== null &&
+    event.target instanceof Node &&
+    !root.contains(event.target) &&
+    !isInsideSelectList(event.target)
+  );
 }
 
 export function useOutsidePopovers(targets: PopoverTarget[]) {

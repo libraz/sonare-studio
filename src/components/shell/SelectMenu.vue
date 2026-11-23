@@ -297,6 +297,7 @@ onBeforeUnmount(() => {
         ref="listRef"
         class="select-list"
         :class="`is-${props.size}`"
+        data-select-list
         :style="menuStyle"
         role="listbox"
         :aria-label="props.ariaLabel"

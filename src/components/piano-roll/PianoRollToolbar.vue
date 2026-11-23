@@ -143,11 +143,7 @@ function toggleView(): void {
 
 useOutsidePointerDown(
   viewOpen,
-  (target) =>
-    !!viewPopover.value?.contains(target) ||
-    !!viewTrigger.value?.contains(target) ||
-    // A SelectMenu list teleports outside the popover; a press inside it is still ours.
-    (target instanceof Element && !!target.closest('[role="listbox"]')),
+  (target) => !!viewPopover.value?.contains(target) || !!viewTrigger.value?.contains(target),
   () => {
     viewOpen.value = false;
   },
