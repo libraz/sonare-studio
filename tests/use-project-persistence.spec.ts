@@ -2,6 +2,7 @@ import { flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
+import { useAppSettings } from '@/composables/useAppSettings';
 import { promptDialog } from '@/composables/useDialogs';
 import { useProjectPersistence } from '@/composables/useProjectPersistence';
 import { importDawprojectWithMediaResult } from '@/export/dawproject';
@@ -45,6 +46,7 @@ import {
   serializeProject,
 } from '@/project/serialization';
 import { useProjectStore } from '@/project/store';
+import { DEFAULT_APP_SETTINGS } from '@/ui/settings/app-settings';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -313,6 +315,31 @@ describe('useProjectPersistence autosave refresh after load', () => {
     expect(confirmAction.mock.calls[1][1]).toMatchObject({
       title: 'Some backup media was skipped',
     });
+  });
+
+  it('labels skipped backup media in the active language', async () => {
+    vi.mocked(pickAndReadBrowserBackup).mockResolvedValue({
+      name: 'backup.sonare-backup',
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    vi.mocked(restoreBrowserBackup).mockResolvedValue({
+      projects: 1,
+      assets: 0,
+      fonts: 0,
+      skippedAssetIds: ['bad-audio'],
+      skippedFontIds: ['bad-font'],
+    });
+    useAppSettings().set('language', 'ja');
+    try {
+      const { confirmAction, persistence } = setup();
+      persistence.importBrowserBackupAction();
+      await flushPromises();
+      expect(confirmAction.mock.calls[1][0]).toContain('• オーディオ: bad-audio');
+      expect(confirmAction.mock.calls[1][0]).toContain('• SoundFont: bad-font');
+      expect(confirmAction.mock.calls[1][0]).not.toContain('Audio:');
+    } finally {
+      useAppSettings().set('language', DEFAULT_APP_SETTINGS.language);
+    }
   });
 
   it('refreshes the autosave slot after opening a stored project', async () => {

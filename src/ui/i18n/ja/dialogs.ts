@@ -13,6 +13,8 @@ export const dialogs = {
     restoreBackupMediaSkippedTitle: '一部のバックアップメディアを復元できませんでした',
     restoreBackupMediaSkippedMessage:
       'バックアップは復元されましたが、次の不正または不完全なメディアは復元できませんでした。\n{items}',
+    restoreBackupSkippedAudio: 'オーディオ: {id}',
+    restoreBackupSkippedSoundFont: 'SoundFont: {id}',
     saveRevisionTitle: 'リビジョンを保存',
     saveRevisionMessage: 'あとで戻れるように、このリビジョンに名前を付けます。',
     revisionLabelPlaceholder: 'リビジョン名',

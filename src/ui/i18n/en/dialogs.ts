@@ -13,6 +13,8 @@ export const dialogs = {
     restoreBackupMediaSkippedTitle: 'Some backup media was skipped',
     restoreBackupMediaSkippedMessage:
       'The backup was restored, but these invalid or incomplete media entries could not be recovered:\n{items}',
+    restoreBackupSkippedAudio: 'Audio: {id}',
+    restoreBackupSkippedSoundFont: 'SoundFont: {id}',
     saveRevisionTitle: 'Save revision',
     saveRevisionMessage: 'Name this revision so you can return to it later.',
     revisionLabelPlaceholder: 'Revision name',

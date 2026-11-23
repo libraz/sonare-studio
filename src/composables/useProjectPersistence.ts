@@ -661,9 +661,14 @@ export function useProjectPersistence(options: ProjectPersistenceOptions) {
       }
       await refreshStoredProjects();
       await reclaimUnusedMedia();
+      const prompts = t.value.dialogs.prompts;
       const skipped = [
-        ...(restored.skippedAssetIds ?? []).map((id) => `Audio: ${id}`),
-        ...(restored.skippedFontIds ?? []).map((id) => `SoundFont: ${id}`),
+        ...(restored.skippedAssetIds ?? []).map((id) =>
+          formatMessage(prompts.restoreBackupSkippedAudio, { id }),
+        ),
+        ...(restored.skippedFontIds ?? []).map((id) =>
+          formatMessage(prompts.restoreBackupSkippedSoundFont, { id }),
+        ),
       ];
       if (skipped.length > 0) {
         await confirmLossAction(
