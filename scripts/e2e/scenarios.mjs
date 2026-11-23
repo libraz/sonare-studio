@@ -9,6 +9,7 @@
  */
 
 import * as audio_alignment from './scenarios/audio-alignment.mjs';
+import * as audio_analysis from './scenarios/audio-analysis.mjs';
 import * as audio_arrangement_edit from './scenarios/audio-arrangement-edit.mjs';
 import * as audio_edit_to_master from './scenarios/audio-edit-to-master.mjs';
 import * as audio_import from './scenarios/audio-import.mjs';
@@ -17,6 +18,7 @@ import * as audio_to_midi_production from './scenarios/audio-to-midi-production.
 import * as audio_transcribe from './scenarios/audio-transcribe.mjs';
 import * as automation_ramp from './scenarios/automation-ramp.mjs';
 import * as automation_write from './scenarios/automation-write.mjs';
+import * as autosave_restore from './scenarios/autosave-restore.mjs';
 import * as baroque_organ_compose from './scenarios/baroque-organ-compose.mjs';
 import * as boot from './scenarios/boot.mjs';
 import * as bus_master_sidechain from './scenarios/bus-master-sidechain.mjs';
@@ -30,6 +32,7 @@ import * as drum_kit from './scenarios/drum-kit.mjs';
 import * as export_dawproject from './scenarios/export-dawproject.mjs';
 import * as export_dialog from './scenarios/export-dialog.mjs';
 import * as export_equivalence from './scenarios/export-equivalence.mjs';
+import * as export_formats from './scenarios/export-formats.mjs';
 import * as export_midi from './scenarios/export-midi.mjs';
 import * as expression_maps from './scenarios/expression-maps.mjs';
 import * as first_play_mixer from './scenarios/first-play-mixer.mjs';
@@ -91,6 +94,7 @@ import * as stem_separation from './scenarios/stem-separation.mjs';
 import * as step_input from './scenarios/step-input.mjs';
 import * as step_sequencer from './scenarios/step-sequencer.mjs';
 import * as strip_sends from './scenarios/strip-sends.mjs';
+import * as takes_comping from './scenarios/takes-comping.mjs';
 import * as tempo_map from './scenarios/tempo-map.mjs';
 import * as tempo_map_edit from './scenarios/tempo-map-edit.mjs';
 import * as theory_hover from './scenarios/theory-hover.mjs';
@@ -194,6 +198,10 @@ export const scenarios = [
   first_play_mixer,
   master_fader,
   loudness,
+  takes_comping,
+  audio_analysis,
+  export_formats,
+  autosave_restore,
   freeze_bounce_ui,
   musicxml_roundtrip,
   stem_separation,
