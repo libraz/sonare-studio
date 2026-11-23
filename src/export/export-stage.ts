@@ -9,6 +9,8 @@
  * progress ticker honest rather than blanking on an unexpected stage.
  */
 
+import { formatMessage } from '@/ui/i18n/format';
+
 /** Localized label templates keyed by stage kind (`{name}`/`{index}`/`{total}` params). */
 export interface ExportStageLabels {
   preflight: string;
@@ -57,18 +59,19 @@ export function formatExportStage(stage: string, labels: ExportStageLabels): str
   }
   const encodeStem = ENCODE_STEM.exec(stage);
   if (encodeStem) {
-    return labels.encodeStem.replace('{index}', encodeStem[1]).replace('{total}', encodeStem[2]);
+    return formatMessage(labels.encodeStem, { index: encodeStem[1], total: encodeStem[2] });
   }
   const renderStem = RENDER_STEM.exec(stage);
-  if (renderStem) return labels.renderStem.replace('{index}', ordinal(renderStem[1]));
+  if (renderStem) return formatMessage(labels.renderStem, { index: ordinal(renderStem[1]) });
   const renderBusStem = RENDER_BUS_STEM.exec(stage);
-  if (renderBusStem) return labels.renderBusStem.replace('{index}', ordinal(renderBusStem[1]));
+  if (renderBusStem)
+    return formatMessage(labels.renderBusStem, { index: ordinal(renderBusStem[1]) });
   const renderSf2 = RENDER_SF2.exec(stage);
-  if (renderSf2) return labels.renderStem.replace('{index}', ordinal(renderSf2[1]));
+  if (renderSf2) return formatMessage(labels.renderStem, { index: ordinal(renderSf2[1]) });
   const masteringPreset = MASTERING_PRESET.exec(stage);
-  if (masteringPreset) return labels.masteringPreset.replace('{name}', masteringPreset[1]);
+  if (masteringPreset) return formatMessage(labels.masteringPreset, { name: masteringPreset[1] });
   const mastering = MASTERING_PROCESSOR.exec(stage);
-  if (mastering) return labels.mastering.replace('{name}', mastering[1]);
+  if (mastering) return formatMessage(labels.mastering, { name: mastering[1] });
   return stage;
 }
 

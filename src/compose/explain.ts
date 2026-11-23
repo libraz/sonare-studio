@@ -14,6 +14,7 @@ import type { HarmonyRole, LockLevel, NoteNameSystem, TheoryLabel } from '@libra
 import { NoteSafety, ReasonFlag } from '@libraz/libcantus';
 import { formatSpelledPitch, pitchClassNames, pitchClassOf } from '@/lib/pitch';
 import { type SpelledPitch, spellPitchInKeySignature } from '@/notation/pitch-spelling';
+import { formatMessage } from '@/ui/i18n/format';
 import type { NoteAnalysis, VerticalInfo } from './guidance';
 import type { CadenceType } from './harmonic-analysis';
 
@@ -334,7 +335,7 @@ function labelText(label: TheoryLabel, labels: TheoryLabels): string | undefined
     case 'avoid':
       return labels.labels.avoid;
     case 'tension':
-      return labels.labels.tension.replace('{degree}', String(label.degree));
+      return formatMessage(labels.labels.tension, { degree: label.degree });
     case 'anticipation':
       return labels.labels.anticipation;
     case 'escape':
@@ -494,9 +495,10 @@ function counterpointLines(
     const name = labels.intervalNames[String(simple)] ?? '';
     out.push({
       label: labels.lines.counterpoint,
-      text: labels.counterpoint.toBass
-        .replace('{interval}', name)
-        .replace('{consonance}', labels.counterpoint.consonance[vertical.consonance]),
+      text: formatMessage(labels.counterpoint.toBass, {
+        interval: name,
+        consonance: labels.counterpoint.consonance[vertical.consonance],
+      }),
     });
   }
   const reasons = analysis.safety?.reasons ?? 0;
@@ -516,7 +518,7 @@ function counterpointLines(
       label: labels.lines.counterpoint,
       text:
         tracks.length > 0
-          ? cp.against.replace('{verdict}', text).replace('{tracks}', tracks.join(', '))
+          ? formatMessage(cp.against, { verdict: text, tracks: tracks.join(', ') })
           : text,
       ...(term !== undefined ? { term } : {}),
     });
@@ -526,7 +528,7 @@ function counterpointLines(
     push(
       'suspension',
       target !== undefined
-        ? cp.suspension.replace('{target}', pitchName(target, keyFifths, system))
+        ? formatMessage(cp.suspension, { target: pitchName(target, keyFifths, system) })
         : cp.suspensionNoTarget,
       ReasonFlag.Suspension,
     );
@@ -571,10 +573,9 @@ function placementLines(
     const term = labels.glossary[suspension ? 'suspension' : 'needsResolution'];
     out.push({
       label: labels.lines.counterpoint,
-      text: (suspension ? cp.unresolvedSuspension : cp.unresolvedNonChordTone).replace(
-        '{expected}',
+      text: formatMessage(suspension ? cp.unresolvedSuspension : cp.unresolvedNonChordTone, {
         expected,
-      ),
+      }),
       ...(term !== undefined ? { term } : {}),
     });
   }
@@ -589,7 +590,7 @@ function placementLines(
   for (const [name, pitches] of pitchesByTrack) {
     out.push({
       label: labels.lines.counterpoint,
-      text: cp.accompanimentThinned.replace('{track}', name).replace('{pitch}', pitches.join(', ')),
+      text: formatMessage(cp.accompanimentThinned, { track: name, pitch: pitches.join(', ') }),
     });
   }
   return out;
@@ -662,14 +663,16 @@ export function buildTheoryCard(
     // track is the composer's own progression and is reported plainly.
     lines.push({
       label: labels.cadence.label,
-      text: labels.cadenceArrival.replace('{cadence}', labels.cadence[analysis.cadence.type]),
+      text: formatMessage(labels.cadenceArrival, {
+        cadence: labels.cadence[analysis.cadence.type],
+      }),
       ...(analysis.cadence.inferred ? { badge: labels.inferred } : {}),
     });
   }
   if (ctx.keySet) {
     const text =
       analysis.degree > 0
-        ? labels.scaleDegree.replace('{degree}', String(analysis.degree)) +
+        ? formatMessage(labels.scaleDegree, { degree: analysis.degree }) +
           (analysis.isScaleTone ? '' : labels.nonScaleSuffix)
         : labels.nonScaleTone;
     // Every word on this line is measured from the key, so a key nobody chose
@@ -719,9 +722,7 @@ export function buildTheoryCard(
     const verdict = safety === NoteSafety.Dissonant ? 'dissonant' : 'warning';
     lines.push({
       label: labels.lines.safety,
-      text: labels.sustainedSafety[verdict]
-        .replace('{bar}', String(bar))
-        .replace('{beat}', String(beat)),
+      text: formatMessage(labels.sustainedSafety[verdict], { bar, beat }),
     });
   }
   return { title, lines };

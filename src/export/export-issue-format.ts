@@ -8,6 +8,7 @@
  * progress-stage formatter (see {@link ./export-stage}).
  */
 
+import { formatMessage } from '@/ui/i18n/format';
 import type { AudioAssetLabel, AudioExportBlocker, AudioExportWarning } from './audio-preflight';
 import type { ClippingSummary, ExportLimitation } from './mixdown';
 
@@ -43,9 +44,9 @@ export interface ExportIssueStrings {
 function formatAudioAssetLabel(label: AudioAssetLabel, strings: ExportIssueStrings): string {
   switch (label.kind) {
     case 'frozen-track':
-      return strings.label.frozenTrack.replace('{name}', label.name);
+      return formatMessage(strings.label.frozenTrack, { name: label.name });
     case 'audio-clip':
-      return strings.label.audioClip.replace('{name}', label.name);
+      return formatMessage(strings.label.audioClip, { name: label.name });
   }
 }
 
@@ -56,21 +57,21 @@ export function formatPreflightBlocker(
 ): string {
   switch (blocker.kind) {
     case 'audio-clip-no-media':
-      return strings.blocker.audioClipNoMedia
-        .replace('{clip}', blocker.clip)
-        .replace('{track}', blocker.track);
+      return formatMessage(strings.blocker.audioClipNoMedia, {
+        clip: blocker.clip,
+        track: blocker.track,
+      });
     case 'media-missing':
-      return strings.blocker.mediaMissing
-        .replace(
-          '{labels}',
-          blocker.labels.map((label) => formatAudioAssetLabel(label, strings)).join(', '),
-        )
-        .replace('{id}', blocker.assetId)
-        .replace('{reason}', blocker.reason);
+      return formatMessage(strings.blocker.mediaMissing, {
+        labels: blocker.labels.map((label) => formatAudioAssetLabel(label, strings)).join(', '),
+        id: blocker.assetId,
+        reason: blocker.reason,
+      });
     case 'soundfont-missing':
-      return strings.blocker.soundFontMissing
-        .replace('{id}', blocker.fontId)
-        .replace('{reason}', blocker.reason);
+      return formatMessage(strings.blocker.soundFontMissing, {
+        id: blocker.fontId,
+        reason: blocker.reason,
+      });
   }
 }
 
@@ -81,15 +82,16 @@ export function formatPreflightWarning(
 ): string {
   switch (warning.kind) {
     case 'external-midi-silent':
-      return strings.warning.externalMidiSilent.replace('{track}', warning.track);
+      return formatMessage(strings.warning.externalMidiSilent, { track: warning.track });
     case 'release-tail-short':
-      return strings.warning.releaseTailShort
-        .replace('{current}', String(warning.currentSeconds))
-        .replace('{suggested}', String(warning.suggestedSeconds));
+      return formatMessage(strings.warning.releaseTailShort, {
+        current: warning.currentSeconds,
+        suggested: warning.suggestedSeconds,
+      });
     case 'solo-active':
-      return strings.warning.soloActive.replace('{tracks}', warning.tracks.join(', '));
+      return formatMessage(strings.warning.soloActive, { tracks: warning.tracks.join(', ') });
     case 'return-solo-active':
-      return strings.warning.returnSoloActive.replace('{buses}', warning.buses.join(', '));
+      return formatMessage(strings.warning.returnSoloActive, { buses: warning.buses.join(', ') });
     case 'silent-mixdown':
       return strings.warning.silentMixdown;
   }
@@ -107,21 +109,21 @@ export function formatExportLimitation(
       // Naming the frozen parameters only helps once the render knows which
       // stages it did drive; a whole-rack limitation keeps the plain wording.
       return params !== undefined && params.length > 0 && named !== undefined
-        ? named.replace('{params}', params.join(', '))
+        ? formatMessage(named, { params: params.join(', ') })
         : strings.limitation.masteringAutomationAtStart;
     }
     case 'mastering-loudness-target-limited':
-      return strings.limitation.masteringLoudnessTargetLimited.replace(
-        '{lufs}',
-        limitation.outputLufs.toFixed(1),
-      );
+      return formatMessage(strings.limitation.masteringLoudnessTargetLimited, {
+        lufs: limitation.outputLufs.toFixed(1),
+      });
     case 'warp-voices-exceeded':
       return strings.limitation.warpVoicesExceeded;
     case 'streaming-metering-unavailable':
-      return (
+      return formatMessage(
         strings.limitation.streamingMeteringUnavailable ??
-        'Streaming export could not measure: {measurements}'
-      ).replace('{measurements}', limitation.measurements.join(', '));
+          'Streaming export could not measure: {measurements}',
+        { measurements: limitation.measurements.join(', ') },
+      );
   }
 }
 
@@ -146,18 +148,15 @@ export function formatClippingCensus(
 ): string {
   if (!clipping) return '';
   const percent = clipping.clippingRatio * 100;
-  return (
-    template
-      .replace('{samples}', clipping.clippedSamples.toLocaleString('en-US'))
-      // Rounding a handful of clipped samples in a long render to "0.00%" would
-      // read as "nothing happened" next to a non-zero sample count.
-      .replace('{percent}', percent > 0 && percent < 0.01 ? '<0.01' : percent.toFixed(2))
-      .replace('{regions}', String(clipping.regionCount))
-      .replace(
-        '{time}',
-        sampleRate > 0
-          ? `${(clipping.firstRegionStartSample / sampleRate).toFixed(2)} s`
-          : `${clipping.firstRegionStartSample}`,
-      )
-  );
+  return formatMessage(template, {
+    samples: clipping.clippedSamples.toLocaleString('en-US'),
+    // Rounding a handful of clipped samples in a long render to "0.00%" would
+    // read as "nothing happened" next to a non-zero sample count.
+    percent: percent > 0 && percent < 0.01 ? '<0.01' : percent.toFixed(2),
+    regions: clipping.regionCount,
+    time:
+      sampleRate > 0
+        ? `${(clipping.firstRegionStartSample / sampleRate).toFixed(2)} s`
+        : `${clipping.firstRegionStartSample}`,
+  });
 }

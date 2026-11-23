@@ -16,6 +16,7 @@
  *    meter or scope. A drift test locks the two together.
  */
 
+import { formatMessage } from '@/ui/i18n/format';
 import {
   type ExternalMidiInstrument,
   effectiveTrackInstrument,
@@ -118,13 +119,12 @@ export function formatProjectCapacityIssue(
 ): string {
   switch (issue.kind) {
     case 'mixer-lane-meters':
-      return strings.mixerLaneMeters
-        .replace('{lanes}', String(issue.lanes))
-        .replace('{limit}', String(issue.limit));
+      return formatMessage(strings.mixerLaneMeters, { lanes: issue.lanes, limit: issue.limit });
     case 'internal-midi-instruments':
-      return strings.internalMidiInstruments
-        .replace('{tracks}', String(issue.overflowTracks))
-        .replace('{limit}', String(issue.limit));
+      return formatMessage(strings.internalMidiInstruments, {
+        tracks: issue.overflowTracks,
+        limit: issue.limit,
+      });
     default: {
       const exhaustive: never = issue;
       return String(exhaustive);

@@ -26,7 +26,7 @@ import type { WavBitDepth } from '@/export/wav';
 import type { ProjectDocument } from '@/project/serialization';
 import { firstBlock } from '@/ui/disabled-reason';
 import { type RenderFn, useAudioExportRun } from '@/ui/export/use-audio-export-run';
-import { useI18n } from '@/ui/i18n';
+import { formatMessage, useI18n } from '@/ui/i18n';
 import { formatLevel } from '@/ui/mastering/loudness';
 import { formatSampleRate } from '@/ui/media/asset-list';
 
@@ -310,10 +310,9 @@ const progressStageLabel = computed(() =>
 );
 
 const normalizeLoudnessLabel = computed(() =>
-  t.value.dialogs.exportAudio.normalizeLoudness.replace(
-    '{target}',
-    appSettings.settings.loudnessTargetLufs.toFixed(0),
-  ),
+  formatMessage(t.value.dialogs.exportAudio.normalizeLoudness, {
+    target: appSettings.settings.loudnessTargetLufs.toFixed(0),
+  }),
 );
 
 function onClose(): void {

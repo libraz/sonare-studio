@@ -183,7 +183,7 @@ const structureSummary = computed<string>(() => {
   const grouping = hypermeter.value;
   if (phrases.value.length === 0 || grouping === null) return '';
   const strings = t.value.shell.arrangementAnalysis;
-  return `${strings.phraseCount.replace('{count}', String(phrases.value.length))} / ${strings.hyperbar.replace('{bars}', String(grouping.groupBars))}`;
+  return `${formatMessage(strings.phraseCount, { count: phrases.value.length })} / ${formatMessage(strings.hyperbar, { bars: grouping.groupBars })}`;
 });
 
 /**
@@ -213,8 +213,8 @@ function confidenceLabel(cadence: RankedCadence): string {
 /** How often a figure is stated, and how long it is. */
 function motifLabel(motif: TrackMotifs['motifs'][number]): string {
   const strings = t.value.shell.arrangementAnalysis;
-  const times = strings.motifStatements.replace('{count}', String(motif.statements.length));
-  return `${times} / ${strings.motifNotes.replace('{count}', String(motif.noteCount))}`;
+  const times = formatMessage(strings.motifStatements, { count: motif.statements.length });
+  return `${times} / ${formatMessage(strings.motifNotes, { count: motif.noteCount })}`;
 }
 
 /** The shape a figure traces, and whether its statements move in pitch. */

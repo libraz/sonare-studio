@@ -477,10 +477,9 @@ export function useAudioExportRun(
         targets.some((target) => isIntegerPcmExport(target.encoder.id, exportModel)) &&
         clippingPeak > 0
       ) {
-        const peakMessage = t.value.dialogs.exportAudio.clippingWarningMessage.replace(
-          '{peak}',
-          formatLevel(clippingPeak),
-        );
+        const peakMessage = formatMessage(t.value.dialogs.exportAudio.clippingWarningMessage, {
+          peak: formatLevel(clippingPeak),
+        });
         // The census is what makes the choice answerable: continuing past one
         // stray overshoot is not the same decision as continuing past a passage.
         const census = formatClippingCensus(
@@ -648,10 +647,9 @@ export function useAudioExportRun(
       if (memoryBudgetBytes > DEFAULT_EXPORT_MEMORY_BUDGET_BYTES) {
         const proceed = await confirmDialog({
           title: t.value.dialogs.exportAudio.memoryBudgetWarningTitle,
-          message: t.value.dialogs.exportAudio.memoryBudgetWarningMessage.replace(
-            '{amount}',
-            `${exportModel.memoryBudgetMiB} MiB`,
-          ),
+          message: formatMessage(t.value.dialogs.exportAudio.memoryBudgetWarningMessage, {
+            amount: `${exportModel.memoryBudgetMiB} MiB`,
+          }),
           confirmLabel: t.value.dialogs.exportAudio.memoryBudgetWarningContinue,
         });
         if (!proceed) {
