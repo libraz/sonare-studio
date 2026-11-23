@@ -9,57 +9,29 @@ import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import EmptyState from '@/components/shell/EmptyState.vue';
 import { useAppSettings } from '@/composables/useAppSettings';
 import { useCompositionGuidance } from '@/composables/useCompositionGuidance';
-import { useNoteNames } from '@/composables/useNoteNames';
-import type { TheoryCard } from '@/compose/explain';
 import { GM_PERCUSSION_CHANNEL, isDrumTrack, preferredNoteChannel } from '@/compose/tracks';
 import { describeError } from '@/lib/errors';
 import { clamp } from '@/lib/math';
 import { scoreClipWindow } from '@/notation/score-clip-window';
 import { VerovioClient } from '@/notation/verovio';
 import {
-  type NoteHairpin,
-  type NoteLineSpan,
   SCORE_DISPLAY_QUANTIZE_DIVISION_PPQ,
   type ScoreDisplayQuantizeKey,
   type ScoreDisplaySettings,
-  type ScoreNoteAnnotation,
 } from '@/project/annotations';
-import {
-  addNote,
-  applyNoteEdits,
-  clearNoteAnnotation,
-  clearTrackMidiFx,
-  type NoteAnnotationUpdate,
-  setActiveClip,
-  setDisplayTranspose,
-  setMarker,
-  setNoteAnnotation,
-  setSelection,
-} from '@/project/commands';
-import { projectMidiNoteOccurrences } from '@/project/midi-projection';
+import { addNote, applyNoteEdits, clearTrackMidiFx, setDisplayTranspose } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
-import { clipMeasureGrid } from '@/project/time-signature';
-import { clipKind } from '@/project/types';
-import type { AccessibleObjectItem } from '@/ui/accessibility/object-navigation';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
-import { useTheoryCardHold } from '@/ui/compose/use-theory-card-hold';
-import { formatMessage, useI18n } from '@/ui/i18n';
-import { isImeComposing } from '@/ui/keyboard/ime';
+import { useI18n } from '@/ui/i18n';
 import type { ScoreLayoutSettings } from '@/ui/score/layout';
-import {
-  SCORE_KEY_MODES,
-  SCORE_KEY_ROOTS,
-  SCORE_LYRIC_SYLLABICS,
-  type ScoreKeyMode,
-  type ScoreKeyRoot,
-  scoreEditPpq,
-  scoreKeyMarkerName,
-  scoreLyricMarkerName,
-} from '@/ui/score/marker-editors';
 import { scoreOmitsMidiFx } from '@/ui/score/midi-fx-notice';
 import { type PlayheadSync, usePlayheadSync } from '@/ui/score/use-playhead-sync';
+import { useScoreAccessibleNotes } from '@/ui/score/use-score-accessible-notes';
+import { useScoreAnnotations } from '@/ui/score/use-score-annotations';
 import { useScoreInteractions } from '@/ui/score/use-score-interactions';
+import { useScoreMarkerTools } from '@/ui/score/use-score-marker-tools';
 import { useScoreNotation } from '@/ui/score/use-score-notation';
+import { CARD_POINTER_OFFSET_PX, useScoreTheoryCard } from '@/ui/score/use-score-theory-card';
 
 /**
  * Engraved score view over the piano-roll clip.
@@ -93,7 +65,6 @@ const emit = defineEmits<{
 
 const store = useProjectStore();
 const { t } = useI18n();
-const { formatPitch } = useNoteNames();
 const appSettings = useAppSettings();
 
 /** Delay after the last note edit before the score is re-transcribed. */
@@ -129,12 +100,6 @@ const dqKey = projectScoreSetting('displayQuantizeKey');
 const chordsEnabled = projectScoreSetting('chordsEnabled');
 const fullScoreEnabled = projectScoreSetting('fullScoreEnabled');
 const estimateFingering = projectScoreSetting('estimateFingering');
-const lyricInput = ref('');
-const lyricVerseInput = ref(1);
-const lyricSyllabicInput = ref<(typeof SCORE_LYRIC_SYLLABICS)[number]>('single');
-const lyricExtendInput = ref(false);
-const keyRootInput = ref<ScoreKeyRoot>('C');
-const keyModeInput = ref<ScoreKeyMode>('major');
 
 /** Display Quantize options for the toolbar select. */
 const dqOptions = computed(() =>
@@ -143,43 +108,6 @@ const dqOptions = computed(() =>
     label: choice.label,
   })),
 );
-const keyRootOptions = computed(() =>
-  SCORE_KEY_ROOTS.map((root) => ({ value: root, label: root })),
-);
-const keyModeOptions = computed(() =>
-  SCORE_KEY_MODES.map((mode) => ({ value: mode, label: t.value.shell.score.keyModes[mode] })),
-);
-const lyricSyllabicOptions = computed(() =>
-  SCORE_LYRIC_SYLLABICS.map((value) => ({
-    value,
-    label: t.value.shell.score.lyricSyllabics[value],
-  })),
-);
-
-// --- Annotation state ----------------------------------------------------------
-
-/** True while the Annotate tool is active (note clicks open the palette). */
-const annotateEnabled = ref(false);
-/** Editor note id the floating palette currently edits (null = closed). */
-const annotationNoteId = ref<number | null>(null);
-/** Clip half of the palette's composite note identity. */
-const annotationClipId = ref<number | null>(null);
-/** Palette position relative to the score body wrapper, in pixels. */
-const palettePos = ref({ x: 0, y: 0 });
-/** True while waiting for the slur target click ("slur to next selected"). */
-const slurArmed = ref(false);
-/** Hairpin type waiting for a target click, or null when not armed. */
-const hairpinArmed = ref<NoteHairpin | null>(null);
-/** Line/span type waiting for a target click, or null when not armed. */
-const lineSpanArmed = ref<NoteLineSpan | null>(null);
-
-/** Current annotation of the palette's target note (empty when none). */
-const annotationCurrent = computed<ScoreNoteAnnotation>(() => {
-  const id = annotationNoteId.value;
-  const clipId = annotationClipId.value;
-  if (id === null || clipId === null) return {};
-  return store.scoreAnnotations[clipId]?.[id] ?? {};
-});
 
 const pageFormat = projectScoreSetting('pageFormat');
 const landscape = projectScoreSetting('landscape');
@@ -221,90 +149,6 @@ const screenClipLengthPpq = computed(() => clipScoreWindow.value.clipLengthPpq);
 /** On-screen zoom as a rounded percentage for the toolbar readout. */
 const zoomPercent = computed(() => Math.round(viewZoom.value * 100));
 const midiFxNoticeVisible = computed(() => scoreOmitsMidiFx(store.activeTrack));
-
-interface AccessibleScoreSource {
-  item: AccessibleObjectItem;
-  clipId: number;
-  noteId: number;
-  occurrence: number;
-  startPpq: number;
-}
-
-/** Source-note occurrences mirrored by the current active/full-score engraving. */
-const accessibleScoreSources = computed<AccessibleScoreSource[]>(() => {
-  const windowStart = store.clipStartPpq;
-  const windowEnd = windowStart + screenClipLengthPpq.value;
-  const clips = fullScoreEnabled.value
-    ? store.clips.filter(
-        (clip) =>
-          clipKind(clip) === 'midi' &&
-          clip.startPpq < windowEnd &&
-          clip.startPpq + clip.lengthPpq > windowStart,
-      )
-    : store.activeClip && clipKind(store.activeClip) === 'midi'
-      ? [store.activeClip]
-      : [];
-  return clips
-    .flatMap((clip) => {
-      const trackName = store.tracks.find((track) => track.id === clip.trackId)?.name ?? clip.name;
-      return projectMidiNoteOccurrences(clip)
-        .filter(
-          (note) => note.startPpq < windowEnd && note.startPpq + note.durationPpq > windowStart,
-        )
-        .map((note) => ({
-          item: {
-            id: `score-${clip.id}-${note.id}-${note.sourceIdentity.occurrence}`,
-            label: formatMessage(t.value.shell.score.accessibility.note, {
-              track: trackName,
-              pitch: formatPitch(note.pitch),
-              start: note.startPpq.toFixed(2),
-              length: note.durationPpq.toFixed(2),
-            }),
-            selected: clip.id === store.clipId && store.selection.has(note.id),
-          },
-          clipId: clip.id,
-          noteId: note.id,
-          occurrence: note.sourceIdentity.occurrence,
-          startPpq: note.startPpq,
-        }));
-    })
-    .sort(
-      (a, b) =>
-        a.startPpq - b.startPpq ||
-        a.clipId - b.clipId ||
-        a.noteId - b.noteId ||
-        a.occurrence - b.occurrence,
-    );
-});
-
-const accessibleScoreItems = computed(() =>
-  accessibleScoreSources.value.map((source) => source.item),
-);
-
-function accessibleScoreSource(id: string): AccessibleScoreSource | undefined {
-  return accessibleScoreSources.value.find((source) => source.item.id === id);
-}
-
-function activateAccessibleScoreNote(id: string): void {
-  const source = accessibleScoreSource(id);
-  if (!source) return;
-  if (source.clipId !== store.clipId) setActiveClip(source.clipId);
-  setSelection([source.noteId]);
-  emit('seek', source.startPpq);
-}
-
-function annotateAccessibleScoreNote(id: string): void {
-  const source = accessibleScoreSource(id);
-  if (!source) return;
-  activateAccessibleScoreNote(id);
-  annotateEnabled.value = true;
-  slurArmed.value = false;
-  hairpinArmed.value = null;
-  lineSpanArmed.value = null;
-  annotationNoteId.value = source.noteId;
-  annotationClipId.value = source.clipId;
-  palettePos.value = { x: 24, y: 48 };
-}
 
 /** Multiplies the on-screen zoom by a factor, clamped to the zoom bounds. */
 function zoomView(factor: number): void {
@@ -387,6 +231,68 @@ playhead = usePlayheadSync({
   getFollowEnabled: () => appSettings.settings.scrollFollowPlayhead,
 });
 
+// --- Annotation palette ------------------------------------------------------------
+
+const {
+  annotateEnabled,
+  annotationNoteId,
+  annotationClipId,
+  palettePos,
+  slurArmed,
+  hairpinArmed,
+  lineSpanArmed,
+  annotationCurrent,
+  openPalette,
+  armSlur,
+  armHairpin,
+  armLineSpan,
+  onAnnotateClick,
+  onAnnotateStaffDrag,
+  applyAnnotation,
+  clearAnnotation,
+  closePalette,
+} = useScoreAnnotations({
+  store,
+  svgHost,
+  tryScoreEdit,
+  transcribe: () => notation.transcribe(),
+});
+
+const {
+  accessibleScoreSources,
+  accessibleScoreItems,
+  activateAccessibleScoreNote,
+  annotateAccessibleScoreNote,
+} = useScoreAccessibleNotes({
+  store,
+  getFullScoreEnabled: () => fullScoreEnabled.value,
+  getScreenClipLengthPpq: () => screenClipLengthPpq.value,
+  seek: (ppq) => emit('seek', ppq),
+  openPalette,
+});
+
+const {
+  lyricInput,
+  lyricVerseInput,
+  lyricSyllabicInput,
+  lyricExtendInput,
+  keyRootInput,
+  keyModeInput,
+  keyRootOptions,
+  keyModeOptions,
+  lyricSyllabicOptions,
+  onLyricEnter,
+  addLyricMarker,
+  addKeyMarker,
+} = useScoreMarkerTools({
+  store,
+  getPositionPpq: () => props.positionPpq?.(),
+  getScreenClipLengthPpq: () => screenClipLengthPpq.value,
+  getSources: () => accessibleScoreSources.value,
+  tryScoreEdit,
+  transcribe: () => notation.transcribe(),
+});
+
 // --- Click-to-seek / select ------------------------------------------------------
 
 const interactions = useScoreInteractions({
@@ -431,138 +337,14 @@ const interactions = useScoreInteractions({
 // --- Theory hover card -------------------------------------------------------------
 
 const guidance = useCompositionGuidance({ enabled: () => props.guidanceEnabled !== false });
-/** Theory card for the note under the pointer, or null when none is hovered. */
-const hoverCard = ref<TheoryCard | null>(null);
-/** Note whose card is currently resolved, avoiding repeated theory work on pointermove. */
-const hoverCardNoteId = ref<number | null>(null);
-/** Position of the hover card within the score body wrap, in px. */
-const hoverCardPos = ref({ x: 0, y: 0 });
-/** Offset of the hover card from the pointer that picked its note up, in px. */
-const CARD_POINTER_OFFSET_PX = 12;
-
-const cardHold = useTheoryCardHold(() => {
-  hoverCardNoteId.value = null;
-  hoverCard.value = null;
-});
-
-// Chord edits and Undo can change the reading of a note while the pointer
-// stays still. Refresh the visible card without waiting for another hover.
-watch(
-  [() => store.chords, () => (hoverCardNoteId.value === null ? null : guidance.noteCard.value)],
-  () => {
-    const noteId = hoverCardNoteId.value;
-    if (noteId !== null) hoverCard.value = guidance.noteCard.value?.(noteId) ?? null;
-  },
-);
-
-/**
- * Combined score-body pointer move: forwards to the annotate staff-drag tracker
- * and, outside annotate mode, resolves the theory card for the hovered note.
- * The card is pinned where its note was picked up — one that follows the pointer
- * can never be aimed at, so its ⓘ affordance would be out of reach.
- */
-function onScorePointerMove(event: PointerEvent): void {
-  interactions.onSvgPointerMove(event);
-  if (annotateEnabled.value) {
-    cardHold.dismiss();
-    return;
-  }
-  const resolve = guidance.noteCard.value;
-  const ids = resolve ? interactions.noteIdsAtEvent(event) : [];
-  const noteId = ids[0] ?? null;
-  if (noteId === null || !resolve) {
-    cardHold.release();
-    return;
-  }
-  cardHold.keep();
-  if (noteId === hoverCardNoteId.value) return;
-  hoverCardNoteId.value = noteId;
-  hoverCard.value = resolve(noteId);
-  if (hoverCard.value === null) return;
-  const rect = svgHost.value?.parentElement?.getBoundingClientRect();
-  hoverCardPos.value = {
-    x: event.clientX - (rect?.left ?? 0) + CARD_POINTER_OFFSET_PX,
-    y: event.clientY - (rect?.top ?? 0) + CARD_POINTER_OFFSET_PX,
-  };
-}
-
-/**
- * Starts the theory card's dismissal when the pointer leaves the score body.
- * The card sits outside the body, so reaching its ⓘ leaves the body too — the
- * grace period is what lets the pointer get there.
- */
-function onScorePointerLeave(): void {
-  cardHold.release();
-}
-
-// --- Annotation palette ------------------------------------------------------------
-
-/**
- * Annotate-mode note click: completes an armed slur/hairpin (click A, arm,
- * click B), otherwise retargets the floating palette at the clicked note.
- */
-function onAnnotateClick(event: MouseEvent, ids: number[]): void {
-  const clicked = ids[0];
-  if (clicked === undefined) {
-    closePalette();
-    return;
-  }
-  const clickedClipId = store.clipId;
-  const sameClip = annotationClipId.value === clickedClipId;
-  if (
-    sameClip &&
-    slurArmed.value &&
-    annotationNoteId.value !== null &&
-    clicked !== annotationNoteId.value
-  ) {
-    slurArmed.value = false;
-    applyAnnotation({ slurToNoteId: clicked });
-    return;
-  }
-  if (
-    sameClip &&
-    hairpinArmed.value !== null &&
-    annotationNoteId.value !== null &&
-    clicked !== annotationNoteId.value
-  ) {
-    const hairpin = hairpinArmed.value;
-    hairpinArmed.value = null;
-    applyAnnotation({ hairpin, hairpinToNoteId: clicked });
-    return;
-  }
-  if (
-    sameClip &&
-    lineSpanArmed.value !== null &&
-    annotationNoteId.value !== null &&
-    clicked !== annotationNoteId.value
-  ) {
-    const lineSpan = lineSpanArmed.value;
-    lineSpanArmed.value = null;
-    applyAnnotation({ addLineSpan: { lineSpan, lineSpanToNoteId: clicked } });
-    return;
-  }
-  slurArmed.value = false;
-  hairpinArmed.value = null;
-  lineSpanArmed.value = null;
-  annotationNoteId.value = clicked;
-  annotationClipId.value = clickedClipId;
-  const wrap = svgHost.value?.parentElement;
-  const rect = wrap?.getBoundingClientRect();
-  palettePos.value = {
-    x: event.clientX - (rect?.left ?? 0) + 8,
-    y: event.clientY - (rect?.top ?? 0) + 8,
-  };
-}
-
-/** Annotate-mode vertical drag: force the clicked note onto the upper/lower staff. */
-function onAnnotateStaffDrag(ids: number[], staff: 1 | 2): void {
-  const id = ids[0];
-  if (id === undefined) return;
-  if (tryScoreEdit(() => setNoteAnnotation(store.clipId, id, { staffOverride: staff }))) {
-    closePalette();
-    void notation.transcribe();
-  }
-}
+const { hoverCard, hoverCardPos, cardHold, onScorePointerMove, onScorePointerLeave } =
+  useScoreTheoryCard({
+    store,
+    guidance,
+    interactions,
+    svgHost,
+    isAnnotateEnabled: () => annotateEnabled.value,
+  });
 
 /** Score-local add-note key; delete, undo and locator keys bubble to the global handler. */
 function onScoreKeyDown(event: KeyboardEvent): void {
@@ -596,31 +378,6 @@ function tryScoreEdit(edit: () => void): boolean {
   }
 }
 
-/** Applies a field-wise annotation edit to the palette's target note. */
-function applyAnnotation(update: NoteAnnotationUpdate): void {
-  const id = annotationNoteId.value;
-  const clipId = annotationClipId.value;
-  if (id === null || clipId === null) return;
-  tryScoreEdit(() => setNoteAnnotation(clipId, id, update));
-}
-
-/** Removes every annotation of the target note. */
-function clearAnnotation(): void {
-  const id = annotationNoteId.value;
-  const clipId = annotationClipId.value;
-  if (id === null || clipId === null) return;
-  tryScoreEdit(() => clearNoteAnnotation(clipId, id));
-}
-
-/** Closes the floating palette and disarms any pending slur. */
-function closePalette(): void {
-  annotationNoteId.value = null;
-  annotationClipId.value = null;
-  slurArmed.value = false;
-  hairpinArmed.value = null;
-  lineSpanArmed.value = null;
-}
-
 /** Removes the active track's live MIDI FX as one undoable edit. */
 function clearActiveTrackMidiFx(): void {
   const trackId = store.activeTrack?.id;
@@ -631,58 +388,6 @@ function clearActiveTrackMidiFx(): void {
 /** Layout popover change handler for the display transpose select. */
 function onTransposeChange(value: number): void {
   tryScoreEdit(() => setDisplayTranspose(value));
-}
-
-function markerEditPpq(): number {
-  return scoreEditPpq(props.positionPpq?.(), store.clipStartPpq, store.clipLengthPpq);
-}
-
-function nearestLyricOnset(ppq: number): number {
-  const sources = accessibleScoreSources.value;
-  if (sources.length === 0) throw new RangeError(t.value.shell.score.lyricNoNote);
-  return sources.reduce((nearest, source) =>
-    Math.abs(source.startPpq - ppq) < Math.abs(nearest.startPpq - ppq) ? source : nearest,
-  ).startPpq;
-}
-
-function onLyricEnter(event: KeyboardEvent): void {
-  if (isImeComposing(event)) return;
-  event.preventDefault();
-  addLyricMarker();
-}
-
-function addLyricMarker(): void {
-  const edited = tryScoreEdit(() => {
-    const name = scoreLyricMarkerName(lyricInput.value, {
-      verse: lyricVerseInput.value,
-      syllabic: lyricSyllabicInput.value,
-      extend: lyricExtendInput.value,
-    });
-    setMarker(null, nearestLyricOnset(markerEditPpq()), name);
-    lyricInput.value = '';
-  });
-  if (edited) void notation.transcribe();
-}
-
-/** Tolerance for an edit position sitting exactly on a measure start. */
-const MEASURE_EPSILON_PPQ = 1e-6;
-
-function addKeyMarker(): void {
-  const edited = tryScoreEdit(() => {
-    const editPpq = markerEditPpq();
-    const ppq = clipMeasureGrid(
-      store.timeSignatures,
-      store.clipStartPpq,
-      store.clipStartPpq + screenClipLengthPpq.value,
-      store.pickupLengthPpq,
-    ).reduce(
-      (start, measure) =>
-        measure.startPpq <= editPpq + MEASURE_EPSILON_PPQ ? measure.startPpq : start,
-      store.clipStartPpq,
-    );
-    setMarker(null, ppq, scoreKeyMarkerName(keyRootInput.value, keyModeInput.value));
-  });
-  if (edited) void notation.transcribe();
 }
 
 // --- Reactive re-transcription -----------------------------------------------------
@@ -753,19 +458,6 @@ watch(
 );
 watch([barsPerSystem, barsPerPage], () => void notation.transcribe());
 watch(grandStaffSplitPitch, () => void notation.transcribe());
-watch(annotateEnabled, (enabled) => {
-  if (!enabled) closePalette();
-});
-// The palette targets a note of the active clip; close it when its note
-// disappears (deleted or replaced by other edits). Clip switches are handled by
-// the immediate transcribe watcher above.
-watch(
-  () => store.notes,
-  (notes) => {
-    const id = annotationNoteId.value;
-    if (id !== null && !notes.some((note) => note.id === id)) closePalette();
-  },
-);
 
 /** True while a freshly swapped-in page SVG plays its page-turn fade. */
 const pageTurning = ref(false);
@@ -1000,27 +692,9 @@ onBeforeUnmount(() => {
           @apply="applyAnnotation"
           @clear="clearAnnotation"
           @close="closePalette"
-          @slur-armed-change="
-            slurArmed = $event;
-            if ($event) {
-              hairpinArmed = null;
-              lineSpanArmed = null;
-            }
-          "
-          @hairpin-armed-change="
-            hairpinArmed = $event;
-            if ($event !== null) {
-              slurArmed = false;
-              lineSpanArmed = null;
-            }
-          "
-          @line-span-armed-change="
-            lineSpanArmed = $event;
-            if ($event !== null) {
-              slurArmed = false;
-              hairpinArmed = null;
-            }
-          "
+          @slur-armed-change="armSlur"
+          @hairpin-armed-change="armHairpin"
+          @line-span-armed-change="armLineSpan"
         />
       </Transition>
     </div>
