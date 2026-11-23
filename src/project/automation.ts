@@ -232,6 +232,11 @@ export function isInstrumentAutomationParam(param: string): param is InstrumentA
   return param.startsWith('instrument:');
 }
 
+/** Reads a legacy token's position index; only the decimal digits the encoders write qualify. */
+function legacyIndex(text: string): number | undefined {
+  return /^\d+$/.test(text) ? Number(text) : undefined;
+}
+
 /**
  * Decodes either stable or legacy insert automation tokens. Only the identity
  * separator is structural, so parameter names containing ':' survive.
@@ -257,8 +262,8 @@ export function parseInsertAutomationParam(param: string): InsertParamRef | unde
       return undefined;
     }
   }
-  const insertIndex = Number(identityText);
-  if (!Number.isInteger(insertIndex) || insertIndex < 0) return undefined;
+  const insertIndex = legacyIndex(identityText);
+  if (insertIndex === undefined) return undefined;
   return { insertIndex, paramName };
 }
 
@@ -285,8 +290,8 @@ export function parseMasteringAutomationParam(param: string): MasteringParamRef 
       return undefined;
     }
   }
-  const processorIndex = Number(identityText);
-  if (!Number.isInteger(processorIndex) || processorIndex < 0) return undefined;
+  const processorIndex = legacyIndex(identityText);
+  if (processorIndex === undefined) return undefined;
   return { processorIndex, paramName };
 }
 
