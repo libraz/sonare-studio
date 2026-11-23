@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { dialogQueue, resolveDialog } from '@/composables/useDialogs';
 import { useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import AppModal from './AppModal.vue';
 
 /**
@@ -52,7 +53,7 @@ function onCancel(): void {
 }
 
 function onPromptKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter') {
+  if (event.key === 'Enter' && !isImeComposing(event)) {
     event.preventDefault();
     onConfirm();
   }

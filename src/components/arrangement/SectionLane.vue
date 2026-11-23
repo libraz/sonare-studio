@@ -10,6 +10,7 @@ import { DRAG_THRESHOLD_PX } from '@/ui/canvas/drag-threshold';
 import type { TimelineRange } from '@/ui/canvas/timeline-range';
 import { firstBlock } from '@/ui/disabled-reason';
 import { useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import { openContextMenu } from '@/ui/menu/context-menu';
 import { colorWithAlpha } from './theme';
 
@@ -226,6 +227,12 @@ function commitRename(): void {
   setSections(store.sections.map((s) => (s.id === sectionId ? { ...s, name } : { ...s })));
 }
 
+function onRenameEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  event.preventDefault();
+  commitRename();
+}
+
 function cancelRename(): void {
   editingSectionId.value = -1;
 }
@@ -288,7 +295,7 @@ function onLaneDoubleClick(event: MouseEvent): void {
         :aria-label="t.shell.arrangement.sectionName"
         @click.stop
         @pointerdown.stop
-        @keydown.enter.prevent="commitRename"
+        @keydown.enter="onRenameEnter"
         @keydown.escape.prevent="cancelRename"
         @blur="commitRename"
       />

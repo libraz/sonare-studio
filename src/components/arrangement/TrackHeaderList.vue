@@ -53,6 +53,7 @@ import { useTrackFreezeBounce } from '@/ui/arrangement/use-track-freeze-bounce';
 import { useTrackHeaderMenu } from '@/ui/arrangement/use-track-header-menu';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import { dbToFaderPosition, faderPositionToDb, formatDb } from '@/ui/mixer/db-scale';
 
 /**
@@ -242,6 +243,12 @@ function commitRename(): void {
   } catch (err) {
     error.value = describeError(err, t.value.notices.errors);
   }
+}
+
+function onRenameEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  event.preventDefault();
+  commitRename();
 }
 
 function cancelRename(): void {
@@ -736,7 +743,7 @@ function rowClass(track: EditorTrack, index: number): Record<string, boolean> {
                   class="track-name-input"
                   :aria-label="t.shell.arrangement.trackHeader.trackName"
                   @click.stop
-                  @keydown.enter.prevent="commitRename"
+                  @keydown.enter="onRenameEnter"
                   @keydown.escape.prevent="cancelRename"
                   @blur="commitRename"
                 />

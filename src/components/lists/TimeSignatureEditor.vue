@@ -12,6 +12,7 @@ import { useProjectStore } from '@/project/store';
 import type { TimeSignatureSegment } from '@/project/types';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import { useDraftList } from '@/ui/lists/use-draft-list';
 import type { NumericInputValue } from '@/ui/numeric-input';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
@@ -144,6 +145,13 @@ function detectFromClip(): Promise<void> {
 }
 
 /** Validates the draft and commits it as one undoable meter-map edit. */
+/** Enter applies the draft unless it is confirming an IME composition. */
+function onEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  event.preventDefault();
+  apply();
+}
+
 function apply(): void {
   if (!dirty.value) return;
   const issues: string[] = [];
@@ -203,7 +211,7 @@ function apply(): void {
               inputmode="decimal"
               :aria-label="formatMessage(t.shell.lists.meter.entryPosition, { row: index + 1 })"
               @input="markDirty"
-              @keydown.enter.prevent="apply"
+              @keydown.enter="onEnter"
               @keydown.esc.prevent="revert"
             />
           </td>
@@ -217,7 +225,7 @@ function apply(): void {
               step="1"
               :aria-label="formatMessage(t.shell.lists.meter.entryBeats, { row: index + 1 })"
               @input="markDirty"
-              @keydown.enter.prevent="apply"
+              @keydown.enter="onEnter"
               @keydown.esc.prevent="revert"
             />
           </td>
@@ -239,7 +247,7 @@ function apply(): void {
               placeholder="2+2+3"
               :aria-label="formatMessage(t.shell.lists.meter.entryGrouping, { row: index + 1 })"
               @input="markDirty"
-              @keydown.enter.prevent="apply"
+              @keydown.enter="onEnter"
               @keydown.esc.prevent="revert"
             />
           </td>

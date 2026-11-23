@@ -14,6 +14,7 @@ import { useProjectStore } from '@/project/store';
 import { normalizeTempoMap, ppqDurationSeconds } from '@/project/tempo-map';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 
 /**
  * Flow A: the chord-progression editor. Writes the project's single chord
@@ -260,7 +261,7 @@ function onSelectMode(next: Mode): void {
 }
 
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && !event.isComposing && phase.value === 'edit') {
+  if (event.key === 'Enter' && !isImeComposing(event) && phase.value === 'edit') {
     event.preventDefault();
     onGenerate();
   }

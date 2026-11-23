@@ -3,6 +3,7 @@ import { computed, nextTick, ref, useId, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import SearchField from '@/components/shell/SearchField.vue';
 import { useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 
 export interface CommandPaletteItem {
   id: string;
@@ -94,6 +95,7 @@ function onKeydown(event: KeyboardEvent): void {
       move(-1);
       break;
     case 'Enter': {
+      if (isImeComposing(event)) return;
       const command = filtered.value[activeIndex.value];
       if (!command) return;
       event.preventDefault();

@@ -44,6 +44,7 @@ import type { AccessibleObjectItem } from '@/ui/accessibility/object-navigation'
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { useTheoryCardHold } from '@/ui/compose/use-theory-card-hold';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import type { ScoreLayoutSettings } from '@/ui/score/layout';
 import {
   SCORE_KEY_MODES,
@@ -644,6 +645,12 @@ function nearestLyricOnset(ppq: number): number {
   ).startPpq;
 }
 
+function onLyricEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  event.preventDefault();
+  addLyricMarker();
+}
+
 function addLyricMarker(): void {
   const edited = tryScoreEdit(() => {
     const name = scoreLyricMarkerName(lyricInput.value, {
@@ -868,7 +875,7 @@ onBeforeUnmount(() => {
           type="text"
           :placeholder="t.shell.score.lyricPlaceholder"
           :aria-label="t.shell.score.lyricText"
-          @keydown.enter.prevent="addLyricMarker"
+          @keydown.enter="onLyricEnter"
         />
       </label>
       <button type="button" @click="addLyricMarker">{{ t.shell.score.addLyric }}</button>

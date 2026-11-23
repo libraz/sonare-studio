@@ -213,7 +213,8 @@ function onKeydown(event: KeyboardEvent): void {
     case 'Enter':
     case ' ':
       event.preventDefault();
-      if (!open.value) openMenu();
+      if (event.key === ' ' && open.value && typeahead !== '') onTypeahead(event.key);
+      else if (!open.value) openMenu();
       else {
         const option = props.options[activeIndex.value];
         if (option) choose(option);
@@ -229,7 +230,15 @@ function onKeydown(event: KeyboardEvent): void {
       if (open.value) closeMenu(false);
       break;
     default:
-      if (open.value && event.key.length === 1) onTypeahead(event.key);
+      if (
+        open.value &&
+        event.key.length === 1 &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
+        onTypeahead(event.key);
+      }
       break;
   }
 }

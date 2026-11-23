@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from 'vue';
 import { clamp } from '@/lib/math';
 import { useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import { type NumericInputValue, parseNumber } from '@/ui/numeric-input';
 
 /**
@@ -65,6 +66,7 @@ function finish(commit: boolean): void {
 
 function onKeyDown(event: KeyboardEvent): void {
   if (event.key === 'Enter') {
+    if (isImeComposing(event)) return;
     event.preventDefault();
     finish(true);
   } else if (event.key === 'Escape') {

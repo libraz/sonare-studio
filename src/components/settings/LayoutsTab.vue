@@ -5,6 +5,7 @@ import { confirmDestructive, promptDialog } from '@/composables/useDialogs';
 import { useLayouts } from '@/composables/useLayouts';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import { type LayoutBindings, localizedLayoutName } from '@/ui/settings/layouts';
 
 /**
@@ -41,6 +42,12 @@ const saveBlocked = computed(() =>
 function applyLayout(name: string): void {
   if (props.layoutBindings === null) return;
   namedLayouts.apply(name, props.layoutBindings);
+}
+
+function onNameEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  event.preventDefault();
+  saveCurrentLayout();
 }
 
 function saveCurrentLayout(): void {
@@ -166,7 +173,7 @@ function renameLayout(name: string): void {
         type="text"
         :placeholder="t.settings.layouts.layoutNamePlaceholder"
         :aria-label="t.settings.layouts.newLayoutName"
-        @keydown.enter.prevent="saveCurrentLayout"
+        @keydown.enter="onNameEnter"
       />
       <button
         type="button"

@@ -6,6 +6,7 @@ import { useProjectStore } from '@/project/store';
 import { DEFAULT_TEMPO_BPM } from '@/project/tempo-map';
 import type { TempoSegment } from '@/project/types';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 import { useDraftList } from '@/ui/lists/use-draft-list';
 import { isBlankInput, type NumericInputValue } from '@/ui/numeric-input';
 import { formatBarBeat, parseBarBeat } from './bar-beat';
@@ -123,6 +124,13 @@ function detectMapFromClip(): Promise<void> {
 }
 
 /** Validates the draft and commits it as one undoable tempo-map edit. */
+/** Enter applies the draft unless it is confirming an IME composition. */
+function onEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
+  event.preventDefault();
+  apply();
+}
+
 function apply(): void {
   if (!dirty.value) return;
   const issues: string[] = [];
@@ -168,7 +176,7 @@ function apply(): void {
                 formatMessage(t.shell.lists.tempo.entryPosition, { row: index + 1 })
               "
               @input="markDirty"
-              @keydown.enter.prevent="apply"
+              @keydown.enter="onEnter"
               @keydown.esc.prevent="revert"
             />
           </td>
@@ -182,7 +190,7 @@ function apply(): void {
               step="0.1"
               :aria-label="formatMessage(t.shell.lists.tempo.entryBpm, { row: index + 1 })"
               @input="markDirty"
-              @keydown.enter.prevent="apply"
+              @keydown.enter="onEnter"
               @keydown.esc.prevent="revert"
             />
           </td>
@@ -197,7 +205,7 @@ function apply(): void {
               placeholder="—"
               :aria-label="formatMessage(t.shell.lists.tempo.entryRamp, { row: index + 1 })"
               @input="markDirty"
-              @keydown.enter.prevent="apply"
+              @keydown.enter="onEnter"
               @keydown.esc.prevent="revert"
             />
           </td>

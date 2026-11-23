@@ -8,6 +8,7 @@ import type { EditorNote, EditorNoteUpdate } from '@/project/types';
 import { MAX_PITCH, MIN_PITCH } from '@/ui/canvas/timeline-range';
 import { firstBlock } from '@/ui/disabled-reason';
 import { formatMessage, useI18n } from '@/ui/i18n';
+import { isImeComposing } from '@/ui/keyboard/ime';
 
 /**
  * Info Line: a horizontal strip above the piano roll showing the selected
@@ -202,6 +203,7 @@ function onCommit(field: FieldDef, event: Event): void {
 
 /** Enter commits by blurring (the change event fires the commit). */
 function onEnter(event: KeyboardEvent): void {
+  if (isImeComposing(event)) return;
   (event.target as HTMLInputElement).blur();
 }
 
