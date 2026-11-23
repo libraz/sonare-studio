@@ -29,6 +29,11 @@ function docWithSysEx(ppqs: number[]): ProjectDocument {
       {
         name: 'Synth',
         kind: 'midi',
+        color: '#888888',
+        mute: false,
+        solo: false,
+        volume: 1,
+        pan: 0,
         clips: [
           {
             name: 'Clip',
@@ -36,11 +41,13 @@ function docWithSysEx(ppqs: number[]): ProjectDocument {
             lengthPpq: 4,
             sourceOffsetPpq: 0,
             gain: 1,
+            loopEnabled: false,
+            loopLengthPpq: 4,
             notes: [],
             smfSysEx: ppqs.map((ppq) => ({ ppq, status: 0xf0, data: [0x41, 0x10, 0x42] })),
           },
         ],
-      } as ProjectDocument['tracks'][number],
+      },
     ],
     markers: [],
     sections: [],
