@@ -143,11 +143,20 @@ class SonareEngineWorklet extends AudioWorkletProcessor {
       this.bridge.receiveTransportRequest(
         data as Parameters<EngineProcessor['receiveTransportRequest']>[0],
       );
+    } else if (type === 'insertGainReductionRequest') {
+      this.bridge.receiveInsertGainReductionRequest(
+        data as Parameters<EngineProcessor['receiveInsertGainReductionRequest']>[0],
+      );
+    } else if (type === 'engineReadRequest') {
+      this.bridge.receiveReadRequest(data as Parameters<EngineProcessor['receiveReadRequest']>[0]);
     } else if (typeof type === 'string' && type.startsWith('sync')) {
       // The facade's control-plane contract: every `sync*` message must reach
       // the bridge (libsonare does not export a canonical list, so match the
       // documented prefix contract).
       this.bridge.receiveSync(data as Parameters<EngineProcessor['receiveSync']>[0]);
+    } else {
+      // Ring commands posted after an ordered message wait for its sequence.
+      this.bridge.noteSyncSequence((data as { syncSequence?: unknown }).syncSequence);
     }
   }
 

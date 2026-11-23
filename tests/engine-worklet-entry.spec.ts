@@ -9,6 +9,9 @@ const {
   receiveCommand,
   receiveCaptureRequest,
   receiveTransportRequest,
+  receiveInsertGainReductionRequest,
+  receiveReadRequest,
+  noteSyncSequence,
   voiceReceiveMessage,
   retuneSetConfig,
   retuneReset,
@@ -22,6 +25,9 @@ const {
   receiveCommand: vi.fn(),
   receiveCaptureRequest: vi.fn(),
   receiveTransportRequest: vi.fn(),
+  receiveInsertGainReductionRequest: vi.fn(),
+  receiveReadRequest: vi.fn(),
+  noteSyncSequence: vi.fn(),
   voiceReceiveMessage: vi.fn(),
   retuneSetConfig: vi.fn(),
   retuneReset: vi.fn(),
@@ -38,6 +44,9 @@ vi.mock('@libraz/libsonare/worklet', () => ({
     receiveCommand = receiveCommand;
     receiveCaptureRequest = receiveCaptureRequest;
     receiveTransportRequest = receiveTransportRequest;
+    receiveInsertGainReductionRequest = receiveInsertGainReductionRequest;
+    receiveReadRequest = receiveReadRequest;
+    noteSyncSequence = noteSyncSequence;
     process = bridgeProcess;
   },
   SonareRealtimeVoiceChangerWorkletProcessor: class {
@@ -99,6 +108,9 @@ beforeEach(() => {
   receiveCommand.mockClear();
   receiveCaptureRequest.mockClear();
   receiveTransportRequest.mockClear();
+  receiveInsertGainReductionRequest.mockClear();
+  receiveReadRequest.mockClear();
+  noteSyncSequence.mockClear();
   voiceReceiveMessage.mockClear();
   retuneSetConfig.mockClear();
   retuneReset.mockClear();
@@ -269,6 +281,37 @@ describe('worklet-entry dispatch', () => {
     expect(receiveCaptureRequest).toHaveBeenCalledWith(capture);
     expect(receiveTransportRequest).toHaveBeenCalledWith(transport);
     expect(receiveSync).not.toHaveBeenCalled();
+  });
+
+  // The facade posts these in order with the SAB ring: until the bridge notes
+  // their sequence, every later ring command (fader, mute, transport) is held.
+  it('routes insert gain-reduction and engine read RPCs to their handlers', async () => {
+    const instance = await createReadyProcessor();
+    const gainReduction = {
+      type: 'insertGainReductionRequest',
+      requestId: 3,
+      targetId: 0,
+      syncSequence: 716,
+    };
+    const read = {
+      type: 'engineReadRequest',
+      requestId: 4,
+      op: 'articulation',
+      destinationId: 1,
+      channel: 0,
+      syncSequence: 717,
+    };
+    instance.port.onmessage?.({ data: gainReduction });
+    instance.port.onmessage?.({ data: read });
+    expect(receiveInsertGainReductionRequest).toHaveBeenCalledWith(gainReduction);
+    expect(receiveReadRequest).toHaveBeenCalledWith(read);
+    expect(receiveSync).not.toHaveBeenCalled();
+  });
+
+  it('notes the sequence of an unrouted ordered message so the ring is released', async () => {
+    const instance = await createReadyProcessor();
+    instance.port.onmessage?.({ data: { type: 'futureRequest', syncSequence: 9 } });
+    expect(noteSyncSequence).toHaveBeenCalledWith(9);
   });
 
   it('routes numeric message types to receiveCommand', async () => {
