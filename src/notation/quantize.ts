@@ -31,13 +31,19 @@
  */
 
 import { notatedChannel, percussionNoteTest } from '@/compose/tracks';
+import {
+  type DurationPiece,
+  decomposeNote,
+  decomposeRest,
+  isMultipleOf,
+  isRepresentableDuration,
+  roundToLattice,
+} from '@/notation/duration-spelling';
 import { estimateFingeringForUnits } from '@/notation/fingering';
-import { assignGrandStaffUnits } from '@/notation/grand-staff';
 import {
   beatGroupPpq,
   beatOriginPpq,
   DEFAULT_DIVISIONS,
-  NOTE_VALUE_BASES,
   type NotatedClef,
   type NotatedEvent,
   type NotatedMeasure,
@@ -45,11 +51,10 @@ import {
   type NotatedTimeSig,
   type NotatedVoice,
   type NotatedVoiceNumber,
-  type NoteValue,
-  noteValueToPpq,
 } from '@/notation/model';
 import { openingPickupPpq } from '@/notation/score-clip-window';
-import { type AssignedVoiceUnits, EPSILON, meanPitch, type VoiceUnit } from '@/notation/voice-unit';
+import { assignVoiceUnits, percussionVoiceGroup } from '@/notation/voice-assignment';
+import { EPSILON, type VoiceUnit } from '@/notation/voice-unit';
 import type { MidiSourceIdentity } from '@/project/midi-projection';
 import {
   clipMeasureGrid,
@@ -158,13 +163,6 @@ interface GridNote {
   sourceIdentity?: MidiSourceIdentity;
 }
 
-/** A representable duration slice produced by decomposition. */
-interface DurationPiece {
-  startPpq: number;
-  durationPpq: number;
-  value: NoteValue;
-}
-
 /** One notated measure of the score window. */
 interface ScoreMeasure {
   index: number;
@@ -193,62 +191,6 @@ interface ResolvedOptions {
   grandStaffSplitPitch: number;
   displayTransposeSemitones: number;
   estimateFingering: boolean;
-}
-
-/** All 21 representable note values, longest first, with their PPQ lengths. */
-const VALUES_DESC: ReadonlyArray<{ value: NoteValue; ppq: number }> = (() => {
-  const all: Array<{ value: NoteValue; ppq: number }> = [];
-  for (const base of NOTE_VALUE_BASES) {
-    for (const dots of [0, 1, 2] as const) {
-      const value: NoteValue = { base, dots };
-      all.push({ value, ppq: noteValueToPpq(value) });
-    }
-    const triplet: NoteValue = { base, dots: 0, tuplet: { actual: 3, normal: 2 } };
-    all.push({ value: triplet, ppq: noteValueToPpq(triplet) });
-  }
-  all.sort((a, b) => b.ppq - a.ppq);
-  return all;
-})();
-
-/**
- * Binary note values only, longest first.  Tuplets are valid *exact* spellings,
- * but mixing them into greedy fallback can strand an unspellable remainder
- * (for example 11/16 after picking a quarter-note triplet).
- */
-const BINARY_VALUES_DESC = VALUES_DESC.filter(({ value }) => value.tuplet === undefined);
-
-/** Tuplet values only, used as a second exact-cover family when binary fails. */
-const TUPLET_VALUES_DESC = VALUES_DESC.filter(({ value }) => value.tuplet !== undefined);
-
-/** Length of the shortest binary value; binary onsets are multiples of it. */
-const SMALLEST_BINARY_PPQ = BINARY_VALUES_DESC[BINARY_VALUES_DESC.length - 1].ppq;
-
-/** Returns true when `value` is an integral multiple of `step` within tolerance. */
-function isMultipleOf(value: number, step: number): boolean {
-  const ratio = value / step;
-  return Math.abs(ratio - Math.round(ratio)) <= EPSILON;
-}
-
-/** Rounds `value` to the nearest point of a lattice anchored at zero. */
-function roundToLattice(value: number, lattice: number): number {
-  return Math.round(value / lattice) * lattice;
-}
-
-/** Returns true when `ppq` is a duration the model can spell directly. */
-function isRepresentableDuration(ppq: number): boolean {
-  return exactNoteValue(ppq) !== undefined;
-}
-
-/** Returns the single exact NoteValue for a duration, or undefined when none matches. */
-function exactNoteValue(ppq: number): NoteValue | undefined {
-  for (const { value, ppq: valuePpq } of VALUES_DESC) {
-    if (Math.abs(ppq - valuePpq) <= EPSILON) {
-      return value.tuplet
-        ? { base: value.base, dots: value.dots, tuplet: { ...value.tuplet } }
-        : { base: value.base, dots: value.dots };
-    }
-  }
-  return undefined;
 }
 
 /** Validates raw options and snaps clip bounds to the 64th-note lattice. */
@@ -535,311 +477,6 @@ function canClusterTogether(a: GridNote, b: GridNote, percussion: boolean): bool
     return false;
   }
   return !percussion || percussionVoiceGroup(a.pitch) === percussionVoiceGroup(b.pitch);
-}
-
-/** Drum-set voice group: 1 = upper kit voice, 2 = kick/low-foot voice. */
-function percussionVoiceGroup(pitch: number): 1 | 2 {
-  switch (pitch) {
-    case 35:
-    case 36:
-      return 2;
-    default:
-      return 1;
-  }
-}
-
-/** Union of two identity lists, keeping first-seen order. */
-function mergeSourceIdentities(
-  a: readonly MidiSourceIdentity[] | undefined,
-  b: readonly MidiSourceIdentity[] | undefined,
-): MidiSourceIdentity[] {
-  const merged = [...(a ?? [])];
-  for (const identity of b ?? []) {
-    const known = merged.some(
-      (m) =>
-        m.clipId === identity.clipId &&
-        m.noteId === identity.noteId &&
-        m.occurrence === identity.occurrence,
-    );
-    if (!known) merged.push({ ...identity });
-  }
-  return merged;
-}
-
-/**
- * Pipeline step 3: assign units to at most `maxVoices` monophonic voices.
- *
- * Greedy interval scheduling: for each onset, free voices (lowest number
- * first) receive the simultaneous units in descending pitch order, so among
- * simultaneous onsets the higher pitch lands in voice 1. A unit arriving
- * while every voice is still sounding merges into the busy voice whose
- * sounding event has the nearest mean pitch (ties pick the lower voice):
- * same-onset overflow joins that event as a chord (union of pitches, longer
- * end wins); later-onset overflow truncates the sounding event at the new
- * onset so the voice stays monophonic and the new onset is preserved.
- *
- * Returns one unit list per used voice (no holes: lower voices fill first).
- */
-function separateVoices(units: VoiceUnit[], maxVoices: number): VoiceUnit[][] {
-  const voices: VoiceUnit[][] = Array.from({ length: maxVoices }, () => []);
-  let i = 0;
-  while (i < units.length) {
-    let j = i;
-    while (j < units.length && Math.abs(units[j].startPpq - units[i].startPpq) <= EPSILON) j++;
-    const start = units[i].startPpq;
-    const free: number[] = [];
-    for (let v = 0; v < maxVoices; v++) {
-      const last = voices[v][voices[v].length - 1];
-      if (!last || last.endPpq <= start + EPSILON) free.push(v);
-    }
-    for (let u = i; u < j; u++) {
-      const unit = units[u];
-      const freeVoice = free.shift();
-      if (freeVoice !== undefined) {
-        voices[freeVoice].push(unit);
-        continue;
-      }
-      // Overflow: every voice is sounding. Merge into the nearest by pitch.
-      let best = 0;
-      let bestDist = Number.POSITIVE_INFINITY;
-      for (let v = 0; v < maxVoices; v++) {
-        const last = voices[v][voices[v].length - 1];
-        const dist = Math.abs(meanPitch(last.pitches) - meanPitch(unit.pitches));
-        if (dist < bestDist - EPSILON) {
-          best = v;
-          bestDist = dist;
-        }
-      }
-      const last = voices[best][voices[best].length - 1];
-      if (Math.abs(last.startPpq - unit.startPpq) <= EPSILON) {
-        // Same onset: widen the sounding event into a chord.
-        last.pitches = [...new Set([...last.pitches, ...unit.pitches])].sort((a, b) => a - b);
-        last.channels = [...new Set([...last.channels, ...unit.channels])].sort((a, b) => a - b);
-        last.ids = [...new Set([...last.ids, ...unit.ids])].sort((a, b) => a - b);
-        last.sourceIdentities = mergeSourceIdentities(last.sourceIdentities, unit.sourceIdentities);
-        last.velocity = Math.max(last.velocity, unit.velocity);
-        last.endPpq = Math.max(last.endPpq, unit.endPpq);
-      } else {
-        // Later onset: cut the sounding event short and start the new one.
-        last.endPpq = unit.startPpq;
-        voices[best].push(unit);
-      }
-    }
-    i = j;
-  }
-  return voices.filter((v) => v.length > 0);
-}
-
-/**
- * Assigns a drum-set part to its conventional two voices: upper kit material
- * is voice 1 and kick/low-foot material is voice 2. Each group remains
- * monophonic, so overlapping notes in one group retain the normal overflow
- * handling instead of moving between the two engraved voices.
- */
-function separatePercussionVoices(units: VoiceUnit[]): AssignedVoiceUnits[] {
-  const byGroup: Record<1 | 2, VoiceUnit[]> = { 1: [], 2: [] };
-  for (const unit of units) {
-    byGroup[percussionVoiceGroup(unit.pitches[0])].push(unit);
-  }
-  return ([1, 2] as const).flatMap((group) => {
-    const groupUnits = separateVoices(byGroup[group], 1)[0];
-    return groupUnits ? [{ voice: group as NotatedVoiceNumber, units: groupUnits }] : [];
-  });
-}
-
-function grandStaffVoiceNumber(staff: 1 | 2, index: number): NotatedVoiceNumber {
-  const voice = staff === 1 ? index + 1 : index + 3;
-  if (voice < 1 || voice > 4) {
-    throw new RangeError(`quantizeToScore: grand-staff voice index out of range: ${voice}`);
-  }
-  return voice as NotatedVoiceNumber;
-}
-
-/**
- * Assigns clustered units to notated voices.
- *
- * Single-staff parts keep the historical one-pool assignment. Grand-staff
- * parts split units by pitch center first, then assign voices independently
- * on each staff: upper staff uses voices 1/2, lower staff uses voices 3/4.
- */
-function assignVoiceUnits(
-  units: VoiceUnit[],
-  clef: NotatedClef | undefined,
-  maxVoices: number,
-  grandStaffSplitPitch: number,
-  percussion: boolean,
-): AssignedVoiceUnits[] {
-  if (clef !== 'grand') {
-    if (percussion && maxVoices >= 2) return separatePercussionVoices(units);
-    return separateVoices(units, maxVoices).map((voiceUnits, index) => ({
-      voice: (index + 1) as NotatedVoiceNumber,
-      units: voiceUnits,
-    }));
-  }
-
-  const { upper, lower } = assignGrandStaffUnits(units, grandStaffSplitPitch);
-  const perStaffVoices = Math.min(2, maxVoices);
-  const assignments: AssignedVoiceUnits[] = [];
-  for (const [staff, staffUnits] of [
-    [1, upper],
-    [2, lower],
-  ] as const) {
-    const voices = separateVoices(staffUnits, perStaffVoices);
-    // A grand staff must have a complete rest voice on both staves even when
-    // one hand is silent for the entire clip. This keeps the MusicXML part
-    // structurally complete and gives the serializer an explicit staff target.
-    if (voices.length === 0) {
-      assignments.push({ voice: grandStaffVoiceNumber(staff, 0), staff, units: [] });
-      continue;
-    }
-    voices.forEach((voiceUnits, index) => {
-      assignments.push({ voice: grandStaffVoiceNumber(staff, index), staff, units: voiceUnits });
-    });
-  }
-  for (const staff of [1, 2] as const) {
-    if (!assignments.some((assignment) => assignment.staff === staff)) {
-      assignments.push({ voice: grandStaffVoiceNumber(staff, 0), staff, units: [] });
-    }
-  }
-  assignments.sort((a, b) => a.voice - b.voice);
-  return assignments;
-}
-
-/** First beat-group boundary strictly after `ppq` on a grid starting at `originPpq`. */
-function nextGroupBoundary(ppq: number, originPpq: number, groupLen: number): number {
-  const rel = ppq - originPpq;
-  return originPpq + (Math.floor(rel / groupLen + EPSILON) + 1) * groupLen;
-}
-
-/**
- * Greedy decomposition of `[start, end)` into representable values, largest
- * first, with an exact-match check (which is how dotted values appear) before
- * every greedy pick. All boundaries are 64th-note multiples by construction,
- * so the loop always terminates exactly.
- */
-function greedyPiecesForValues(
-  start: number,
-  end: number,
-  values: ReadonlyArray<{ value: NoteValue; ppq: number }>,
-): DurationPiece[] | undefined {
-  const out: DurationPiece[] = [];
-  let cursor = start;
-  while (end - cursor > EPSILON) {
-    const remaining = end - cursor;
-    const value = values.find((candidate) => candidate.ppq <= remaining + EPSILON)?.value;
-    if (!value) {
-      return undefined;
-    }
-    const durationPpq = noteValueToPpq(value);
-    out.push({ startPpq: cursor, durationPpq, value });
-    cursor += durationPpq;
-  }
-  return out;
-}
-
-function greedyPieces(start: number, end: number): DurationPiece[] {
-  const exact = exactNoteValue(end - start);
-  if (exact) return [{ startPpq: start, durationPpq: end - start, value: exact }];
-
-  // Keep each fallback decomposition within a single rhythmic family.  Trying
-  // binary values first preserves conventional spelling, while the tuplet
-  // family covers valid triplet-grid durations such as 5/6.
-  const binary = greedyPiecesForValues(start, end, BINARY_VALUES_DESC);
-  if (binary) return binary;
-  const tuplet = greedyPiecesForValues(start, end, TUPLET_VALUES_DESC);
-  if (tuplet) return tuplet;
-
-  throw new RangeError(`quantizeToScore: cannot notate duration ${end - start}`);
-}
-
-/**
- * Pipeline step 5 (notes): decompose one within-measure note segment into
- * tied representable values.
- *
- * Exactly-representable durations stay whole when they are no longer than one
- * beat group or begin on a group boundary. Longer off-beat durations are tied
- * at the last group boundary before their end, preserving the central beat of
- * the measure while avoiding an unnecessarily short first fragment.
- * Otherwise the segment splits at the next beat-group boundary and both
- * halves recurse, falling back to greedy largest-first packing inside a
- * single group.
- */
-function decomposeNote(
-  start: number,
-  end: number,
-  originPpq: number,
-  groupLen: number,
-): DurationPiece[] {
-  const exact = exactNoteValue(end - start);
-  const crossesBoundary = nextGroupBoundary(start, originPpq, groupLen) < end - EPSILON;
-  // A value starting off the binary lattice cannot stay whole across a beat boundary.
-  const startsOffLattice = !isMultipleOf(start - originPpq, SMALLEST_BINARY_PPQ);
-  if (exact && !(startsOffLattice && crossesBoundary)) {
-    const groupPosition = (start - originPpq) / groupLen;
-    const startsOnGroupBoundary = Math.abs(groupPosition - Math.round(groupPosition)) <= EPSILON;
-    if (end - start <= groupLen + EPSILON || startsOnGroupBoundary) {
-      return [{ startPpq: start, durationPpq: end - start, value: exact }];
-    }
-    const lastBoundaryIndex = Math.floor((end - originPpq) / groupLen - EPSILON);
-    const boundary = originPpq + lastBoundaryIndex * groupLen;
-    if (boundary > start + EPSILON) {
-      return [
-        ...greedyPieces(start, boundary),
-        ...decomposeNote(boundary, end, originPpq, groupLen),
-      ];
-    }
-  }
-  const boundary = nextGroupBoundary(start, originPpq, groupLen);
-  if (boundary < end - EPSILON) {
-    return [
-      ...decomposeNote(start, boundary, originPpq, groupLen),
-      ...decomposeNote(boundary, end, originPpq, groupLen),
-    ];
-  }
-  return greedyPieces(start, end);
-}
-
-/**
- * Pipeline step 6 (rests): decompose a gap into rest values.
- *
- * Unlike notes, rests split at beat-group boundaries even when the total gap
- * is exactly representable (no syncopated rests), except that a gap covering
- * the whole measure always becomes one measure rest. Its nominal note value
- * is ignored by the MusicXML serializer, which emits `<rest measure="yes"/>`.
- */
-function decomposeRest(
-  start: number,
-  end: number,
-  measureStartPpq: number,
-  measureLengthPpq: number,
-  originPpq: number,
-  groupLen: number,
-): DurationPiece[] {
-  const coversMeasure =
-    start <= measureStartPpq + EPSILON && end >= measureStartPpq + measureLengthPpq - EPSILON;
-  if (coversMeasure) {
-    return [
-      {
-        startPpq: start,
-        durationPpq: end - start,
-        // A 5/4 or 5/8 measure has no ordinary single notehead value, but
-        // measure rests deliberately omit `<type>` in MusicXML.
-        value: exactNoteValue(end - start) ?? { base: 'whole', dots: 0 },
-      },
-    ];
-  }
-  const boundary = nextGroupBoundary(start, originPpq, groupLen);
-  if (boundary < end - EPSILON) {
-    return [
-      ...decomposeRest(start, boundary, measureStartPpq, measureLengthPpq, originPpq, groupLen),
-      ...decomposeRest(boundary, end, measureStartPpq, measureLengthPpq, originPpq, groupLen),
-    ];
-  }
-  const exact = exactNoteValue(end - start);
-  if (exact) {
-    return [{ startPpq: start, durationPpq: end - start, value: exact }];
-  }
-  return greedyPieces(start, end);
 }
 
 /**
