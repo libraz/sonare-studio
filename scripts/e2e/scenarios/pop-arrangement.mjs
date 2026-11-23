@@ -3,6 +3,10 @@ import { makeWavBytes } from '../harness.mjs';
 /** Repeat a generated pop section with its chords, MIDI parts and reference audio. */
 export const name = 'pop-arrangement';
 
+/** Waits until every debounced audio-schedule apply and MIDI sync has finished. */
+const settle = (page) => page.evaluate(() => window.__sonareDebug.whenEngineSyncIdle());
+const scheduledIds = (page) => page.evaluate(() => window.__sonareDebug.scheduledClipIds());
+
 export async function run({ page, fail }) {
   const completedDialog = page.locator('.modal-card:has(.track-done)');
   if (await completedDialog.isVisible()) {
@@ -34,6 +38,8 @@ export async function run({ page, fail }) {
     (count) => window.__sonareDebug.clipCount() === count + 1,
     before.clips.length,
   );
+  await settle(page);
+  const scheduledBefore = await scheduledIds(page);
   const withAudio = await page.evaluate(() => window.__sonareDebug.clipRanges());
   const audio = withAudio.find((clip) => clip.kind === 'audio');
   if (audio?.startPpq !== 0) fail(`reference audio missed bar one: ${JSON.stringify(audio)}`);
@@ -50,6 +56,12 @@ export async function run({ page, fail }) {
     (count) => window.__sonareDebug.clipCount() === count * 2,
     withAudio.length,
   );
+  // Settle before undoing, so the engine has scheduled the copy the undo must remove.
+  await settle(page);
+  const scheduledRepeated = await scheduledIds(page);
+  if (scheduledRepeated.length !== scheduledBefore.length * 2) {
+    fail(`engine did not schedule the duplicated audio: ${JSON.stringify(scheduledRepeated)}`);
+  }
   const repeated = await page.evaluate(() => ({
     chords: window.__sonareDebug.chordRanges(),
     clips: window.__sonareDebug.clipRanges(),
@@ -91,6 +103,14 @@ export async function run({ page, fail }) {
     (count) => window.__sonareDebug.clipCount() === count,
     withAudio.length,
   );
+  await settle(page);
+  // The duplicate's tempo breakpoint goes away again, so the engine clip ids change; the count must not.
+  const scheduledUndone = await scheduledIds(page);
+  if (scheduledUndone.length !== scheduledBefore.length) {
+    fail(
+      `Undo left ${scheduledUndone.length} engine clip(s) scheduled, expected ${scheduledBefore.length}`,
+    );
+  }
   if (
     (await page.evaluate(() => window.__sonareDebug.chordRanges())).length !== before.chords.length
   ) {
@@ -101,6 +121,10 @@ export async function run({ page, fail }) {
     (count) => window.__sonareDebug.clipCount() === count * 2,
     withAudio.length,
   );
+  await settle(page);
+  if ((await scheduledIds(page)).length !== scheduledBefore.length * 2) {
+    fail('Redo did not reschedule the duplicated audio on the engine');
+  }
   if (
     (await page.evaluate(() => window.__sonareDebug.chordRanges())).length !==
     before.chords.length * 2

@@ -947,7 +947,7 @@ Each row is a call on libsonare's public surface and the scenarios that reach it
 | `SonareEngine#pushMidiSysex` | — |
 | `SonareEngine#pushMidiUmp` | — |
 | `SonareEngine#rememberInsertAutomationId` | — |
-| `SonareEngine#removeClip` | bus-master-sidechain, bus-routing, cycle-recording, freeze-bounce, sidechain, tempo-map, tempo-map-edit, vca-strips, warp-toggle |
+| `SonareEngine#removeClip` | bus-master-sidechain, bus-routing, cycle-recording, freeze-bounce, pop-arrangement, sidechain, tempo-map, tempo-map-edit, vca-strips, warp-toggle |
 | `SonareEngine#renderOffline` | — |
 | `SonareEngine#resetCapture` | audio-record, cycle-recording |
 | `SonareEngine#resetMasterLoudnessMeter` | — |
