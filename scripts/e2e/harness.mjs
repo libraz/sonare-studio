@@ -177,26 +177,56 @@ export async function runScenarios(scenarios, baseUrl) {
         console.error(`FAIL [${scenario.name}]: ${thrown}`);
       }
       const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
-      outcomes.push({ name: scenario.name, failures, thrown, ms });
+      outcomes.push({
+        name: scenario.name,
+        failures,
+        thrown,
+        ms,
+        knownEngineDefect: scenario.knownEngineDefect ?? null,
+      });
     }
-    return { outcomes, failed: outcomes.filter((o) => o.failures.length > 0 || o.thrown).length };
+    return { outcomes, failed: outcomes.filter(countsAsFailed).length };
   } finally {
     await browser.close();
   }
 }
 
+const problemCount = (outcome) => outcome.failures.length + (outcome.thrown ? 1 : 0);
+
+/**
+ * A scenario exporting `knownEngineDefect` covers a feature an engine defect
+ * currently breaks: its failure is reported as XFAIL and does not fail the
+ * run, and once the engine is fixed it passes like any other scenario.
+ */
+const countsAsFailed = (outcome) => problemCount(outcome) > 0 && !outcome.knownEngineDefect;
+
 /** Prints the per-scenario summary and returns the process exit code. */
 export function reportOutcomes(outcomes) {
   console.info('\n--- scenario summary ---');
   for (const outcome of outcomes) {
-    const count = outcome.failures.length + (outcome.thrown ? 1 : 0);
-    const mark = count === 0 ? 'PASS' : 'FAIL';
+    const count = problemCount(outcome);
+    const mark = count === 0 ? 'PASS' : outcome.knownEngineDefect ? 'XFAIL' : 'FAIL';
     console.info(
       `${mark} ${outcome.name.padEnd(24)} ${(outcome.ms / 1000).toFixed(1)}s` +
-        (count === 0 ? '' : `  (${count} problem${count === 1 ? '' : 's'})`),
+        (count === 0 ? '' : `  (${count} problem${count === 1 ? '' : 's'})`) +
+        (count > 0 && outcome.knownEngineDefect
+          ? `  engine defect: ${outcome.knownEngineDefect}`
+          : ''),
     );
+    if (count === 0 && outcome.knownEngineDefect) {
+      console.info(
+        `  ${outcome.name} passes; the engine defect it tracks is fixed, drop knownEngineDefect`,
+      );
+    }
   }
-  const failed = outcomes.filter((o) => o.failures.length > 0 || o.thrown);
-  console.info(`${outcomes.length - failed.length}/${outcomes.length} scenarios passed`);
+  const failed = outcomes.filter(countsAsFailed);
+  const expected = outcomes.filter((o) => problemCount(o) > 0 && o.knownEngineDefect);
+  console.info(
+    `${outcomes.length - failed.length - expected.length}/${outcomes.length} scenarios passed`,
+  );
+  console.info(
+    `${expected.length} XFAIL (open engine defects)` +
+      (expected.length > 0 ? `: ${expected.map((o) => o.name).join(', ')}` : ''),
+  );
   return failed.length === 0 ? 0 : 1;
 }
