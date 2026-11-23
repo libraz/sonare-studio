@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { type ComponentPublicInstance, computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import AppModal from '@/components/shell/AppModal.vue';
 import BusyIndicator from '@/components/shell/BusyIndicator.vue';
 import { confirmDialog } from '@/composables/useDialogs';
 import { describeError, isAbortError } from '@/lib/errors';
-import { clamp } from '@/lib/math';
 import { ensureWasm } from '@/lib/wasm';
 import { setActiveClip, transcribeAudioClipToMidi } from '@/project/commands';
 import { MAX_TRACK_LANES } from '@/project/mixer';
@@ -44,21 +43,6 @@ const detectedReference = ref('');
 const busy = ref(false);
 const error = ref('');
 const controller = ref<AbortController | null>(null);
-const modeButtons: Record<'melody' | 'polyphonic', HTMLButtonElement | null> = {
-  melody: null,
-  polyphonic: null,
-};
-const tuningButtons: Record<TuningMode, HTMLButtonElement | null> = {
-  concert: null,
-  auto: null,
-};
-const shortestButtons = new Map<ShortestNote, HTMLButtonElement>();
-const voicesButtons = new Map<MaxVoices, HTMLButtonElement>();
-const tidyButtons: Record<'off' | 'on', HTMLButtonElement | null> = { off: null, on: null };
-const tempoButtons: Record<'keep' | 'match', HTMLButtonElement | null> = {
-  keep: null,
-  match: null,
-};
 
 const copy = computed(() => t.value.shell.arrangement.transcribe);
 const clip = computed(() =>
@@ -170,45 +154,11 @@ function chooseMode(next: 'melody' | 'polyphonic'): void {
   error.value = '';
 }
 
-function onModeKeydown(event: KeyboardEvent, current: 'melody' | 'polyphonic'): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const next = event.key === 'ArrowLeft' ? 'melody' : 'polyphonic';
-  if (next !== current) {
-    chooseMode(next);
-    if (mode.value === next) void nextTick().then(() => modeButtons[next]?.focus());
-  }
-}
-
-function setModeButton(
-  name: 'melody' | 'polyphonic',
-  element: Element | ComponentPublicInstance | null,
-): void {
-  modeButtons[name] = element instanceof HTMLButtonElement ? element : null;
-}
-
 function chooseTuning(next: TuningMode): void {
   if (busy.value) return;
   tuningMode.value = next;
   detectedReference.value = '';
   error.value = '';
-}
-
-function onTuningKeydown(event: KeyboardEvent, current: TuningMode): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const next = event.key === 'ArrowLeft' ? 'concert' : 'auto';
-  if (next !== current) {
-    chooseTuning(next);
-    if (tuningMode.value === next) void nextTick().then(() => tuningButtons[next]?.focus());
-  }
-}
-
-function setTuningButton(
-  name: TuningMode,
-  element: Element | ComponentPublicInstance | null,
-): void {
-  tuningButtons[name] = element instanceof HTMLButtonElement ? element : null;
 }
 
 function chooseShortest(next: ShortestNote): void {
@@ -217,45 +167,10 @@ function chooseShortest(next: ShortestNote): void {
   error.value = '';
 }
 
-function onShortestKeydown(event: KeyboardEvent, current: ShortestNote): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const index = SHORTEST_NOTES.indexOf(current) + (event.key === 'ArrowLeft' ? -1 : 1);
-  const next = SHORTEST_NOTES[clamp(index, 0, SHORTEST_NOTES.length - 1)];
-  if (next !== current) {
-    chooseShortest(next);
-    if (shortestNote.value === next) void nextTick().then(() => shortestButtons.get(next)?.focus());
-  }
-}
-
-function setShortestButton(
-  name: ShortestNote,
-  element: Element | ComponentPublicInstance | null,
-): void {
-  if (element instanceof HTMLButtonElement) shortestButtons.set(name, element);
-  else shortestButtons.delete(name);
-}
-
 function chooseVoices(next: MaxVoices): void {
   if (voicesBlocked.value) return;
   maxVoices.value = next;
   error.value = '';
-}
-
-function onVoicesKeydown(event: KeyboardEvent, current: MaxVoices): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const index = MAX_VOICES.indexOf(current) + (event.key === 'ArrowLeft' ? -1 : 1);
-  const next = MAX_VOICES[clamp(index, 0, MAX_VOICES.length - 1)];
-  if (next !== current) {
-    chooseVoices(next);
-    if (maxVoices.value === next) void nextTick().then(() => voicesButtons.get(next)?.focus());
-  }
-}
-
-function setVoicesButton(name: MaxVoices, element: Element | ComponentPublicInstance | null): void {
-  if (element instanceof HTMLButtonElement) voicesButtons.set(name, element);
-  else voicesButtons.delete(name);
 }
 
 function voicesTitle(voices: MaxVoices): string {
@@ -270,46 +185,10 @@ function chooseTidy(next: boolean): void {
   error.value = '';
 }
 
-function onTidyKeydown(event: KeyboardEvent, current: boolean): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const next = event.key === 'ArrowRight';
-  if (next !== current) {
-    chooseTidy(next);
-    if (tidy.value === next) void nextTick().then(() => tidyButtons[next ? 'on' : 'off']?.focus());
-  }
-}
-
-function setTidyButton(
-  name: 'off' | 'on',
-  element: Element | ComponentPublicInstance | null,
-): void {
-  tidyButtons[name] = element instanceof HTMLButtonElement ? element : null;
-}
-
 function chooseTempo(next: boolean): void {
   if (runningBlocked.value || (next && matchTempoBlocked.value)) return;
   matchTempo.value = next;
   error.value = '';
-}
-
-function onTempoKeydown(event: KeyboardEvent, current: boolean): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  event.preventDefault();
-  const next = event.key === 'ArrowRight';
-  if (next !== current) {
-    chooseTempo(next);
-    if (matchTempo.value === next) {
-      void nextTick().then(() => tempoButtons[next ? 'match' : 'keep']?.focus());
-    }
-  }
-}
-
-function setTempoButton(
-  name: 'keep' | 'match',
-  element: Element | ComponentPublicInstance | null,
-): void {
-  tempoButtons[name] = element instanceof HTMLButtonElement ? element : null;
 }
 
 function shortestLabel(note: ShortestNote): string {
@@ -401,19 +280,16 @@ onBeforeUnmount(abort);
     <div class="transcribe-fields">
       <p class="transcribe-description">{{ copy.description }}</p>
 
-      <div class="transcribe-mode" role="radiogroup" :aria-label="copy.modeLabel">
+      <div class="transcribe-mode" role="radiogroup" v-radiogroup :aria-label="copy.modeLabel">
         <button
           type="button"
           class="transcribe-mode-option"
           :class="{ active: mode === 'melody' }"
           role="radio"
           :aria-checked="mode === 'melody'"
-          :tabindex="mode === 'melody' ? 0 : -1"
-          :ref="(element) => setModeButton('melody', element)"
           :disabled="!!runningBlocked"
           v-tooltip="{ reason: runningBlocked }"
           @click="chooseMode('melody')"
-          @keydown="onModeKeydown($event, 'melody')"
         >
           <span class="transcribe-mode-label">{{ copy.melody }}</span>
           <span class="transcribe-mode-description">{{ copy.melodyDescription }}</span>
@@ -424,12 +300,9 @@ onBeforeUnmount(abort);
           :class="{ active: mode === 'polyphonic' }"
           role="radio"
           :aria-checked="mode === 'polyphonic'"
-          :tabindex="mode === 'polyphonic' ? 0 : -1"
-          :ref="(element) => setModeButton('polyphonic', element)"
           :disabled="!!runningBlocked"
           v-tooltip="{ reason: runningBlocked }"
           @click="chooseMode('polyphonic')"
-          @keydown="onModeKeydown($event, 'polyphonic')"
         >
           <span class="transcribe-mode-label">{{ copy.polyphonic }}</span>
           <span class="transcribe-mode-description">{{ copy.polyphonicDescription }}</span>
@@ -438,19 +311,16 @@ onBeforeUnmount(abort);
 
       <div class="transcribe-setting transcribe-tuning">
         <span class="transcribe-setting-label">{{ copy.tuningLabel }}</span>
-        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.tuningLabel">
+        <div class="transcribe-setting-options" role="radiogroup" v-radiogroup :aria-label="copy.tuningLabel">
           <button
             type="button"
             class="transcribe-setting-option"
             :class="{ active: tuningMode === 'concert' }"
             role="radio"
             :aria-checked="tuningMode === 'concert'"
-            :tabindex="tuningMode === 'concert' ? 0 : -1"
-            :ref="(element) => setTuningButton('concert', element)"
             :disabled="!!runningBlocked"
             v-tooltip="{ text: copy.tuningConcertTitle, reason: runningBlocked }"
             @click="chooseTuning('concert')"
-            @keydown="onTuningKeydown($event, 'concert')"
           >
             {{ copy.tuningConcert }}
           </button>
@@ -460,12 +330,9 @@ onBeforeUnmount(abort);
             :class="{ active: tuningMode === 'auto' }"
             role="radio"
             :aria-checked="tuningMode === 'auto'"
-            :tabindex="tuningMode === 'auto' ? 0 : -1"
-            :ref="(element) => setTuningButton('auto', element)"
             :disabled="!!runningBlocked"
             v-tooltip="{ text: copy.tuningAutoTitle, reason: runningBlocked }"
             @click="chooseTuning('auto')"
-            @keydown="onTuningKeydown($event, 'auto')"
           >
             {{ copy.tuningAuto }}
           </button>
@@ -474,7 +341,7 @@ onBeforeUnmount(abort);
 
       <div class="transcribe-setting transcribe-shortest">
         <span class="transcribe-setting-label">{{ copy.shortestLabel }}</span>
-        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.shortestLabel">
+        <div class="transcribe-setting-options" role="radiogroup" v-radiogroup :aria-label="copy.shortestLabel">
           <button
             v-for="note in SHORTEST_NOTES"
             :key="note"
@@ -483,12 +350,9 @@ onBeforeUnmount(abort);
             :class="{ active: shortestNote === note }"
             role="radio"
             :aria-checked="shortestNote === note"
-            :tabindex="shortestNote === note ? 0 : -1"
-            :ref="(element) => setShortestButton(note, element)"
             :disabled="!!runningBlocked"
             v-tooltip="{ text: shortestTitle(note), reason: runningBlocked }"
             @click="chooseShortest(note)"
-            @keydown="onShortestKeydown($event, note)"
           >
             {{ shortestLabel(note) }}
           </button>
@@ -497,7 +361,7 @@ onBeforeUnmount(abort);
 
       <div class="transcribe-setting transcribe-voices">
         <span class="transcribe-setting-label">{{ copy.voicesLabel }}</span>
-        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.voicesLabel">
+        <div class="transcribe-setting-options" role="radiogroup" v-radiogroup :aria-label="copy.voicesLabel">
           <button
             v-for="voices in MAX_VOICES"
             :key="voices"
@@ -506,12 +370,9 @@ onBeforeUnmount(abort);
             :class="{ active: mode === 'polyphonic' && maxVoices === voices }"
             role="radio"
             :aria-checked="mode === 'polyphonic' && maxVoices === voices"
-            :tabindex="maxVoices === voices ? 0 : -1"
-            :ref="(element) => setVoicesButton(voices, element)"
             :disabled="!!voicesBlocked"
             v-tooltip="{ text: voicesTitle(voices), reason: voicesBlocked }"
             @click="chooseVoices(voices)"
-            @keydown="onVoicesKeydown($event, voices)"
           >
             {{ voices === 'auto' ? copy.voicesAuto : voices }}
           </button>
@@ -520,19 +381,16 @@ onBeforeUnmount(abort);
 
       <div class="transcribe-setting transcribe-tempo">
         <span class="transcribe-setting-label">{{ copy.tempoLabel }}</span>
-        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.tempoLabel">
+        <div class="transcribe-setting-options" role="radiogroup" v-radiogroup :aria-label="copy.tempoLabel">
           <button
             type="button"
             class="transcribe-setting-option"
             :class="{ active: !matchTempo }"
             role="radio"
             :aria-checked="!matchTempo"
-            :tabindex="matchTempo ? -1 : 0"
-            :ref="(element) => setTempoButton('keep', element)"
             :disabled="!!runningBlocked"
             v-tooltip="{ text: copy.tempoKeepTitle, reason: runningBlocked }"
             @click="chooseTempo(false)"
-            @keydown="onTempoKeydown($event, false)"
           >
             {{ copy.tempoKeep }}
           </button>
@@ -542,12 +400,9 @@ onBeforeUnmount(abort);
             :class="{ active: matchTempo }"
             role="radio"
             :aria-checked="matchTempo"
-            :tabindex="matchTempo ? 0 : -1"
-            :ref="(element) => setTempoButton('match', element)"
             :disabled="!!matchTempoBlocked"
             v-tooltip="{ text: copy.tempoMatchTitle, reason: matchTempoBlocked }"
             @click="chooseTempo(true)"
-            @keydown="onTempoKeydown($event, true)"
           >
             {{ copy.tempoMatch }}
           </button>
@@ -556,19 +411,16 @@ onBeforeUnmount(abort);
 
       <div class="transcribe-setting transcribe-tidy">
         <span class="transcribe-setting-label">{{ copy.tidyLabel }}</span>
-        <div class="transcribe-setting-options" role="radiogroup" :aria-label="copy.tidyLabel">
+        <div class="transcribe-setting-options" role="radiogroup" v-radiogroup :aria-label="copy.tidyLabel">
           <button
             type="button"
             class="transcribe-setting-option"
             :class="{ active: !tidy }"
             role="radio"
             :aria-checked="!tidy"
-            :tabindex="tidy ? -1 : 0"
-            :ref="(element) => setTidyButton('off', element)"
             :disabled="!!runningBlocked"
             v-tooltip="{ text: copy.tidyOffTitle, reason: runningBlocked }"
             @click="chooseTidy(false)"
-            @keydown="onTidyKeydown($event, false)"
           >
             {{ copy.tidyOff }}
           </button>
@@ -578,12 +430,9 @@ onBeforeUnmount(abort);
             :class="{ active: tidy }"
             role="radio"
             :aria-checked="tidy"
-            :tabindex="tidy ? 0 : -1"
-            :ref="(element) => setTidyButton('on', element)"
             :disabled="!!runningBlocked"
             v-tooltip="{ text: copy.tidyOnTitle, reason: runningBlocked }"
             @click="chooseTidy(true)"
-            @keydown="onTidyKeydown($event, true)"
           >
             {{ copy.tidyOn }}
           </button>

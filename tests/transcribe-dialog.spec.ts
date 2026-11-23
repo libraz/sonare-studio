@@ -82,6 +82,8 @@ describe('TranscribeDialog', () => {
     ];
     expect(modes).toHaveLength(2);
     expect(modes[0]?.getAttribute('aria-checked')).toBe('true');
+    // The modal takes focus on the tick after it opens; arrow keys come after that.
+    await nextTick();
     modes[0]?.focus();
     modes[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     await nextTick();
@@ -123,6 +125,8 @@ describe('TranscribeDialog', () => {
     ];
     expect(notes.map((el) => el.textContent?.trim())).toEqual(['Auto', '1/8', '1/16', '1/32']);
     expect(notes[0]?.getAttribute('aria-checked')).toBe('true');
+    // The modal takes focus on the tick after it opens; arrow keys come after that.
+    await nextTick();
     notes[0]?.focus();
     notes[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     await nextTick();
@@ -317,6 +321,8 @@ describe('TranscribeDialog', () => {
       ...document.body.querySelectorAll<HTMLElement>('.transcribe-tidy [role="radio"]'),
     ];
     expect(choices.map((el) => el.getAttribute('aria-checked'))).toEqual(['true', 'false']);
+    // The modal takes focus on the tick after it opens; arrow keys come after that.
+    await nextTick();
     choices[0]?.focus();
     choices[0]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     await nextTick();
