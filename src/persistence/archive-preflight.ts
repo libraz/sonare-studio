@@ -254,6 +254,11 @@ function archiveEntryValidator(
   };
 }
 
+/** Copies inflated entries onto a null prototype so an archive-supplied name never resolves an Object member. */
+function ownEntries(extracted: Unzipped): Unzipped {
+  return Object.assign(Object.create(null) as Unzipped, extracted);
+}
+
 function readableArchiveError(error: unknown, signal?: AbortSignal): Error {
   if (error instanceof ArchivePreflightError) return error;
   if (signal?.aborted) {
@@ -286,7 +291,7 @@ export function preflightAndUnzip(
   }
   signal?.throwIfAborted();
   return {
-    entries: extracted,
+    entries: ownEntries(extracted),
     report: validator.report(),
   };
 }
@@ -341,7 +346,7 @@ export function preflightAndUnzipInWorker(
         if (settled) return;
         settled = true;
         cleanup();
-        resolve({ entries, report: validator.report() });
+        resolve({ entries: ownEntries(entries), report: validator.report() });
       });
       if (signal?.aborted) onAbort();
     } catch (error) {
