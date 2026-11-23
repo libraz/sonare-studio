@@ -145,6 +145,28 @@ export function beatGroupPpq(timeSig: NotatedTimeSig): number {
   return compound ? beatLen * 3 : beatLen;
 }
 
+/** The parts of a measure that place its beats. */
+type MeasureBeatFrame = Pick<NotatedMeasure, 'index' | 'startPpq' | 'lengthPpq' | 'timeSig'>;
+
+/**
+ * Whether a measure is an opening short bar: a pickup, or a window that opens
+ * mid-bar. Either one ends on a barline rather than starting on one.
+ */
+export function isPickupMeasure(measure: MeasureBeatFrame): boolean {
+  return measure.index === 0 && measure.lengthPpq < timeSigLengthPpq(measure.timeSig) - PPQ_EPSILON;
+}
+
+/**
+ * Where a measure's beat grid starts: its own start for a full bar or one cut
+ * short by a meter change, and one full bar before its end for a pickup, whose
+ * beats are those of the bar it completes.
+ */
+export function beatOriginPpq(measure: MeasureBeatFrame): number {
+  return isPickupMeasure(measure)
+    ? measure.startPpq + measure.lengthPpq - timeSigLengthPpq(measure.timeSig)
+    : measure.startPpq;
+}
+
 /**
  * Converts a PPQ position or duration to integral MusicXML divisions.
  *

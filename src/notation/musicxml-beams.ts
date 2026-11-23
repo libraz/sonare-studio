@@ -6,7 +6,13 @@
  */
 
 import { maxOf } from '@/lib/math';
-import type { NotatedEvent, NotatedMeasure, NotatedTimeSig, NotatedVoice } from './model';
+import {
+  beatOriginPpq,
+  type NotatedEvent,
+  type NotatedMeasure,
+  type NotatedTimeSig,
+  type NotatedVoice,
+} from './model';
 import { PPQ_EPSILON, type StaffNumber } from './musicxml-shared';
 /** MusicXML beam level per beammable note value. */
 export const BEAM_LEVEL_BY_BASE: Readonly<Record<string, number | undefined>> = {
@@ -44,7 +50,7 @@ export function buildBeamIndex(
   for (const event of voice.events) {
     const staff = staffMap?.get(event);
     const startsNewBeatGroup =
-      group.length > 0 && isBeamGroupBoundary(event.startPpq, measure.startPpq, groupLengths);
+      group.length > 0 && isBeamGroupBoundary(event.startPpq, measure, groupLengths);
     if (beamLevel(event) === 0 || staff !== groupStaff || startsNewBeatGroup) {
       flush();
       if (beamLevel(event) > 0) {
@@ -88,14 +94,18 @@ export function beamGroupLengthsPpq(timeSig: NotatedTimeSig): number[] {
   return groups.map((beats) => beats * beatLen);
 }
 
-/** Returns true for additive beam-group boundaries after the measure start. */
+/**
+ * Returns true for additive beam-group boundaries after the measure start. The
+ * groups are laid from the measure's beat origin, so a pickup's groups are the
+ * ones of the bar it completes.
+ */
 export function isBeamGroupBoundary(
   ppq: number,
-  measureStartPpq: number,
+  measure: NotatedMeasure,
   groupLengths: readonly number[],
 ): boolean {
-  if (ppq <= measureStartPpq + PPQ_EPSILON) return false;
-  let boundary = measureStartPpq;
+  if (ppq <= measure.startPpq + PPQ_EPSILON) return false;
+  let boundary = beatOriginPpq(measure);
   for (const length of groupLengths) {
     boundary += length;
     if (Math.abs(ppq - boundary) < PPQ_EPSILON) return true;

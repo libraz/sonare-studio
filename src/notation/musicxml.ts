@@ -13,6 +13,7 @@
 import { clamp } from '@/lib/math';
 import type { NoteDynamics, NoteLineSpan } from '@/project/annotations';
 import {
+  isPickupMeasure,
   measureHasMultiRestStructure,
   type NotatedBarlineStyle,
   type NotatedChordSymbol,
@@ -273,14 +274,10 @@ function serializeMeasure(
   // A bar shorter than its meter is an opening pickup or a bar cut by a meter
   // change; `implicit` tells a reader to advance by its content, not a full bar.
   const isShort = measure.lengthPpq < timeSigLengthPpq(measure.timeSig) - PPQ_EPSILON;
-  const isPickup = measure.index === 0 && isShort;
+  const isPickup = isPickupMeasure(measure);
   const scoreHasOpeningPickup = score.parts.some((part) => {
     const firstMeasure = part.measures[0];
-    return (
-      firstMeasure !== undefined &&
-      firstMeasure.index === 0 &&
-      firstMeasure.lengthPpq < timeSigLengthPpq(firstMeasure.timeSig) - PPQ_EPSILON
-    );
+    return firstMeasure !== undefined && isPickupMeasure(firstMeasure);
   });
   const measureNumber = measure.index + (scoreHasOpeningPickup ? 0 : 1);
   lines.push(

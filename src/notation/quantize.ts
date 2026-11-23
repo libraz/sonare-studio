@@ -35,6 +35,7 @@ import { estimateFingeringForUnits } from '@/notation/fingering';
 import { assignGrandStaffUnits } from '@/notation/grand-staff';
 import {
   beatGroupPpq,
+  beatOriginPpq,
   DEFAULT_DIVISIONS,
   NOTE_VALUE_BASES,
   type NotatedClef,
@@ -707,10 +708,10 @@ function assignVoiceUnits(
   return assignments;
 }
 
-/** First beat-group boundary strictly after `ppq` within a measure. */
-function nextGroupBoundary(ppq: number, measureStartPpq: number, groupLen: number): number {
-  const rel = ppq - measureStartPpq;
-  return measureStartPpq + (Math.floor(rel / groupLen + EPSILON) + 1) * groupLen;
+/** First beat-group boundary strictly after `ppq` on a grid starting at `originPpq`. */
+function nextGroupBoundary(ppq: number, originPpq: number, groupLen: number): number {
+  const rel = ppq - originPpq;
+  return originPpq + (Math.floor(rel / groupLen + EPSILON) + 1) * groupLen;
 }
 
 /**
@@ -769,33 +770,33 @@ function greedyPieces(start: number, end: number): DurationPiece[] {
 function decomposeNote(
   start: number,
   end: number,
-  measureStartPpq: number,
+  originPpq: number,
   groupLen: number,
 ): DurationPiece[] {
   const exact = exactNoteValue(end - start);
-  const crossesBoundary = nextGroupBoundary(start, measureStartPpq, groupLen) < end - EPSILON;
+  const crossesBoundary = nextGroupBoundary(start, originPpq, groupLen) < end - EPSILON;
   // A value starting off the binary lattice cannot stay whole across a beat boundary.
-  const startsOffLattice = !isMultipleOf(start - measureStartPpq, SMALLEST_BINARY_PPQ);
+  const startsOffLattice = !isMultipleOf(start - originPpq, SMALLEST_BINARY_PPQ);
   if (exact && !(startsOffLattice && crossesBoundary)) {
-    const groupPosition = (start - measureStartPpq) / groupLen;
+    const groupPosition = (start - originPpq) / groupLen;
     const startsOnGroupBoundary = Math.abs(groupPosition - Math.round(groupPosition)) <= EPSILON;
     if (end - start <= groupLen + EPSILON || startsOnGroupBoundary) {
       return [{ startPpq: start, durationPpq: end - start, value: exact }];
     }
-    const lastBoundaryIndex = Math.floor((end - measureStartPpq) / groupLen - EPSILON);
-    const boundary = measureStartPpq + lastBoundaryIndex * groupLen;
+    const lastBoundaryIndex = Math.floor((end - originPpq) / groupLen - EPSILON);
+    const boundary = originPpq + lastBoundaryIndex * groupLen;
     if (boundary > start + EPSILON) {
       return [
         ...greedyPieces(start, boundary),
-        ...decomposeNote(boundary, end, measureStartPpq, groupLen),
+        ...decomposeNote(boundary, end, originPpq, groupLen),
       ];
     }
   }
-  const boundary = nextGroupBoundary(start, measureStartPpq, groupLen);
+  const boundary = nextGroupBoundary(start, originPpq, groupLen);
   if (boundary < end - EPSILON) {
     return [
-      ...decomposeNote(start, boundary, measureStartPpq, groupLen),
-      ...decomposeNote(boundary, end, measureStartPpq, groupLen),
+      ...decomposeNote(start, boundary, originPpq, groupLen),
+      ...decomposeNote(boundary, end, originPpq, groupLen),
     ];
   }
   return greedyPieces(start, end);
@@ -814,6 +815,7 @@ function decomposeRest(
   end: number,
   measureStartPpq: number,
   measureLengthPpq: number,
+  originPpq: number,
   groupLen: number,
 ): DurationPiece[] {
   const coversMeasure =
@@ -829,11 +831,11 @@ function decomposeRest(
       },
     ];
   }
-  const boundary = nextGroupBoundary(start, measureStartPpq, groupLen);
+  const boundary = nextGroupBoundary(start, originPpq, groupLen);
   if (boundary < end - EPSILON) {
     return [
-      ...decomposeRest(start, boundary, measureStartPpq, measureLengthPpq, groupLen),
-      ...decomposeRest(boundary, end, measureStartPpq, measureLengthPpq, groupLen),
+      ...decomposeRest(start, boundary, measureStartPpq, measureLengthPpq, originPpq, groupLen),
+      ...decomposeRest(boundary, end, measureStartPpq, measureLengthPpq, originPpq, groupLen),
     ];
   }
   const exact = exactNoteValue(end - start);
@@ -866,7 +868,7 @@ function splitUnitsIntoMeasures(
       for (const piece of decomposeNote(
         segStart,
         segEnd,
-        measure.startPpq,
+        beatOriginPpq(measure),
         beatGroupPpq(measure.timeSig),
       )) {
         pieces.push({ ...piece, measureIndex: measure.index });
@@ -902,7 +904,7 @@ function splitUnitsIntoMeasures(
 
 /** Builds one gap-free NotatedVoice for a measure by filling gaps with rests. */
 function fillVoiceMeasure(
-  measure: { startPpq: number; lengthPpq: number },
+  measure: ScoreMeasure,
   events: NotatedEvent[],
   groupLen: number,
   voice: NotatedVoiceNumber,
@@ -910,8 +912,16 @@ function fillVoiceMeasure(
 ): NotatedVoice {
   const out: NotatedEvent[] = [];
   const measureEnd = measure.startPpq + measure.lengthPpq;
+  const originPpq = beatOriginPpq(measure);
   const pushRests = (from: number, to: number) => {
-    for (const piece of decomposeRest(from, to, measure.startPpq, measure.lengthPpq, groupLen)) {
+    for (const piece of decomposeRest(
+      from,
+      to,
+      measure.startPpq,
+      measure.lengthPpq,
+      originPpq,
+      groupLen,
+    )) {
       out.push({
         kind: 'rest',
         pitches: [],

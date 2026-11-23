@@ -4,7 +4,7 @@
  */
 
 import type { NoteArticulation, NoteOrnament } from '@/project/annotations';
-import { beatGroupPpq, type NotatedEvent, type NotatedMeasure } from './model';
+import { beatGroupPpq, beatOriginPpq, type NotatedEvent, type NotatedMeasure } from './model';
 import { type AnnotationIndex, slurPlacement } from './musicxml-annotation-index';
 import { percussionTechnicalXml } from './musicxml-percussion';
 import { PPQ_EPSILON } from './musicxml-shared';
@@ -158,7 +158,8 @@ function isPercussionRoll(
 ): boolean {
   if (!isRollCandidate(midi) || event.durationPpq > 0.25 + PPQ_EPSILON) return false;
   const groupLen = beatGroupPpq(measure.timeSig);
-  const groupIndex = Math.floor((event.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON);
+  const origin = beatOriginPpq(measure);
+  const groupIndex = Math.floor((event.startPpq - origin) / groupLen + PPQ_EPSILON);
   let count = 0;
   for (const voice of measure.voices) {
     for (const candidate of voice.events) {
@@ -170,9 +171,7 @@ function isPercussionRoll(
       ) {
         continue;
       }
-      const candidateGroup = Math.floor(
-        (candidate.startPpq - measure.startPpq) / groupLen + PPQ_EPSILON,
-      );
+      const candidateGroup = Math.floor((candidate.startPpq - origin) / groupLen + PPQ_EPSILON);
       if (candidateGroup !== groupIndex) continue;
       if (annotations.articulations.has(candidate)) return false;
       count++;
