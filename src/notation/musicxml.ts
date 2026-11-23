@@ -270,8 +270,10 @@ function serializeMeasure(
   multiMeasureRest: NotatedMultiMeasureRest | undefined,
   inferredDynamicsByVoice: Map<NotatedVoiceNumber, NoteDynamics>,
 ): void {
-  const isPickup =
-    measure.index === 0 && measure.lengthPpq < timeSigLengthPpq(measure.timeSig) - PPQ_EPSILON;
+  // A bar shorter than its meter is an opening pickup or a bar cut by a meter
+  // change; `implicit` tells a reader to advance by its content, not a full bar.
+  const isShort = measure.lengthPpq < timeSigLengthPpq(measure.timeSig) - PPQ_EPSILON;
+  const isPickup = measure.index === 0 && isShort;
   const scoreHasOpeningPickup = score.parts.some((part) => {
     const firstMeasure = part.measures[0];
     return (
@@ -282,7 +284,11 @@ function serializeMeasure(
   });
   const measureNumber = measure.index + (scoreHasOpeningPickup ? 0 : 1);
   lines.push(
-    isPickup ? '<measure number="0" implicit="yes">' : `<measure number="${measureNumber}">`,
+    isPickup
+      ? '<measure number="0" implicit="yes">'
+      : isShort
+        ? `<measure number="${measureNumber}" implicit="yes">`
+        : `<measure number="${measureNumber}">`,
   );
   const printXml = measurePrintXml(measureBreak, prevTimeSig === undefined);
   if (printXml !== '') {
