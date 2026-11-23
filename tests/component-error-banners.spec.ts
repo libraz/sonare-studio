@@ -7,7 +7,7 @@ import { PayloadMemoryLimitError } from '@/lib/payload-memory';
 import { clearHistory } from '@/project/commands';
 import { useProjectStore } from '@/project/store';
 import { MESSAGES } from '@/ui/i18n';
-import { readSource } from './helpers/source-text';
+import { listSourceFiles, readSource } from './helpers/source-text';
 
 vi.mock('@/lib/wasm', async () => {
   const { createFakeWasmModule } = await import('./fake-wasm');
@@ -84,35 +84,44 @@ describe('component error banners', () => {
   }
 
   it('routes every banner in every component through describeError', () => {
-    for (const path of [
-      'src/components/arrangement/TrackHeaderList.vue',
-      'src/ui/arrangement/use-track-freeze-bounce.ts',
-      'src/ui/arrangement/use-track-header-menu.ts',
-      'src/components/devices/DeviceRack.vue',
-      'src/components/mixer/MixerPanel.vue',
-      'src/components/step-sequencer/StepSequencer.vue',
-      'src/components/arrangement/ArrangementView.vue',
-      'src/ui/arrangement/use-arrangement-processing.ts',
-      'src/ui/arrangement/use-arrangement-clip-menu.ts',
-      'src/ui/arrangement/use-arrangement-ruler-menu.ts',
-      'src/components/arrangement/TranscribeDialog.vue',
-      'src/components/compose/TrackGenerateDialog.vue',
-      'src/components/devices/PatchEditor.vue',
-      'src/components/mastering/MasteringPanel.vue',
-      'src/ui/mastering/use-mastering-preview.ts',
-      'src/ui/mastering/use-mastering-preview-analysis.ts',
-      'src/components/mixer/InsertRack.vue',
-      'src/components/mixer/InsertAddMenu.vue',
-      'src/ui/mixer/use-insert-clipboard.ts',
-      'src/ui/mixer/use-insert-params.ts',
-      'src/ui/mixer/use-insert-reorder.ts',
-      'src/ui/mixer/use-insert-sidechain.ts',
-      'src/components/mixer/MixSuggestDialog.vue',
-      'src/ui/piano-roll/use-piano-roll-viewport.ts',
-      'src/components/sample-editor/SampleEditor.vue',
-      'src/components/score/ScorePanel.vue',
-      'src/ui/devices/use-sound-font-manifest-probe.ts',
-    ]) {
+    // Banner writers: callers of describeError or of the insert-edit wrapper around it.
+    // The two defining modules are the only places errorMessage( may appear.
+    const definitions = new Set(['src/lib/errors.ts', 'src/ui/mixer/insert-edit-error.ts']);
+    const derived = listSourceFiles('src', ['.ts', '.vue']).filter(
+      (path) =>
+        !definitions.has(path) && /describeError|insertEditErrorMessage/.test(readSource(path)),
+    );
+    expect(derived).toEqual(
+      expect.arrayContaining([
+        'src/ui/mixer/use-insert-params.ts',
+        'src/components/arrangement/TrackHeaderList.vue',
+        'src/ui/arrangement/use-track-freeze-bounce.ts',
+        'src/ui/arrangement/use-track-header-menu.ts',
+        'src/components/devices/DeviceRack.vue',
+        'src/components/mixer/MixerPanel.vue',
+        'src/components/step-sequencer/StepSequencer.vue',
+        'src/components/arrangement/ArrangementView.vue',
+        'src/ui/arrangement/use-arrangement-processing.ts',
+        'src/ui/arrangement/use-arrangement-clip-menu.ts',
+        'src/ui/arrangement/use-arrangement-ruler-menu.ts',
+        'src/components/arrangement/TranscribeDialog.vue',
+        'src/components/compose/TrackGenerateDialog.vue',
+        'src/components/devices/PatchEditor.vue',
+        'src/components/mastering/MasteringPanel.vue',
+        'src/ui/mastering/use-mastering-preview.ts',
+        'src/ui/mastering/use-mastering-preview-analysis.ts',
+        'src/components/mixer/InsertAddMenu.vue',
+        'src/ui/mixer/use-insert-clipboard.ts',
+        'src/ui/mixer/use-insert-reorder.ts',
+        'src/ui/mixer/use-insert-sidechain.ts',
+        'src/components/mixer/MixSuggestDialog.vue',
+        'src/ui/piano-roll/use-piano-roll-viewport.ts',
+        'src/components/sample-editor/SampleEditor.vue',
+        'src/components/score/ScorePanel.vue',
+        'src/ui/devices/use-sound-font-manifest-probe.ts',
+      ]),
+    );
+    for (const path of derived) {
       const source = readSource(path);
       expect(source, path).not.toMatch(/\berrorMessage\(/);
     }
