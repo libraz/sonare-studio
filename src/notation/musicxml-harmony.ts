@@ -171,10 +171,16 @@ function chordDegreeForExtension(
       return { value: 9, alter: 0 };
     case 3:
       return { value: 9, alter: 1 };
+    // A third or fifth the quality lacks (a suspended or diminished chord) is
+    // added at its own degree rather than as a compound one.
+    case 4:
+      return { value: 3, alter: 0 };
     case 5:
       return { value: 11, alter: 0 };
     case 6:
       return { value: 11, alter: 1 };
+    case 7:
+      return { value: 5, alter: 0 };
     case 8:
       return { value: 13, alter: -1 };
     case 9:
