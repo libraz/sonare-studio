@@ -15,7 +15,7 @@ export interface DisposableWorkerRequest<Res, T> {
   timeout?: { ms: number; error: () => Error };
   /** Builds and posts the request; anything thrown rejects the run. */
   post(worker: Worker): void;
-  /** Handles one reply: call `settle` to finish, or return to wait for the next one. */
+  /** Handles one reply: call `settle` to finish, or return to wait for the next one; a throw rejects the run. */
   receive(response: Res, settle: WorkerSettle<T>): void;
 }
 
@@ -74,7 +74,11 @@ export function runDisposableWorker<Res, T>(request: DisposableWorkerRequest<Res
     };
 
     const onMessage = (event: MessageEvent<Res>): void => {
-      request.receive(event.data, settle);
+      try {
+        request.receive(event.data, settle);
+      } catch (error) {
+        settle({ error });
+      }
     };
 
     const onError = (event: ErrorEvent): void => {
